@@ -62,9 +62,11 @@ def float (source : Option String) (fallback : Float) : Float :=
 
 /-! ### Text state -/
 
-/-- Attributes of a text element that the strict reader paints with. -/
+/-- Attributes of a text element that the strict reader paints with, kept on its lowered
+group. `pointer-events` is one: the character cells (`cellPaths`) are hit by the text's own
+value (SVG 2 §15.6), not the initial one. -/
 def paintKeys := ["fill","stroke","fill-opacity","stroke-opacity","color","display","visibility","opacity",
-  "stroke-linejoin","stroke-linecap","stroke-miterlimit"]
+  "stroke-linejoin","stroke-linecap","stroke-miterlimit","pointer-events"]
 
 structure TextState where
   size : Float := 16
@@ -179,6 +181,14 @@ structure Run where
   onPath : Option PathRef := none
 
 instance : Inhabited Run := ⟨{text := "", size := 0, strokeWidth := 0, paint := []}⟩
+
+/-- A paint attribute the lowered group may carry: every one but a `pointer-events` whose
+value the strict reader does not know (`NativeSVG.pointerEventsValues`). That one is left
+out, as all were before, so an unknown keyword on a text element does not refuse the picture. -/
+def paintKept (a : NamespaceAttribute) : Bool :=
+  a.name.localPart != "pointer-events" ||
+    (let v := a.value.trimAscii.toString.toLower
+     v == "inherit" || NativeSVG.pointerEventsValues.any (·.toLower == v))
 
 def paintOf (attrs : List NamespaceAttribute) : List NamespaceAttribute :=
   attrs.filter fun a => a.name.namespace_.isNone && paintKeys.contains a.name.localPart
@@ -821,7 +831,7 @@ def lowerSfntWith (fonts : Array Font) (lookup : String → Option NamespaceNode
     k := stop
   -- Paths: one group for each run, as the SVG font path does.
   let opacity := (plainAttr attrs "opacity").toList.map (mkAttr "opacity")
-  let groupPaint := fun (a : List NamespaceAttribute) => a.filter (·.name.localPart != "opacity")
+  let groupPaint := fun (a : List NamespaceAttribute) => a.filter fun x => x.name.localPart != "opacity" && paintKept x
   let mut groups : Array NamespaceNode := #[]
   let mut box : Option (Float × Float × Float × Float) := none
   let mut cursor := 0
