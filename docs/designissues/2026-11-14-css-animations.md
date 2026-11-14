@@ -211,6 +211,22 @@ cascade of that document: 31 to 41 ms there), and fixed:
   the effect stacks at the new time and the animated elements styled again (`Host.measureNow`).
 - A write that changes nothing in a document's tree (a new node, a clone, a change of a node that is in
   no tree: `Page.detachedWrite`) keeps the kept styles; `CSS.restyleWith` takes an arena that grew.
+- A write of an element's `class` is noted under the element's parent (`Reads.wrote`, `subtree`).
+  When no rule of the page has `:has()` (`CSS.attributesReachParentOnly`, kept as `Carry.parentOnly`)
+  and the noted subtrees hold at most `Page.subtreeLimit` (512) nodes, the next measure styles those
+  subtrees again and makes the style change for the elements in them, as for a `style` attribute
+  write; otherwise the styles are made whole, as before. Why the parent: without `:has()` the matching
+  of an element reads its ancestors, the earlier siblings of itself and of its ancestors, and for
+  `:nth-child(… of …)` the siblings of those, so a class is read only for elements under its
+  element's parent. Found on `css/css-transitions/properties-value-001.html` and its two `inherit`
+  companions (STALL in check 43586303902): each of 580 tests writes `class` on two elements five
+  times and reads after each, and every read made a cascade of the document and a style change over
+  the 50 running transitions of its slice (`transition: all`: both styles of each compared).
+  Timed on the start phase of that harness through `Host.measureNow` under the interpreter (per
+  measure, same values read on both paths): 10 tests in a slice 187 ms whole, 56 ms partial; 50 tests
+  3,634 ms whole, 279 ms partial. What is left grows with the slice because every rule of the slice
+  ends in the same class (`#test-N .transition`), so each element tries all of them (the rule buckets
+  are by the last compound); the whole path paid that for every element.
 
 ## Bounds
 
@@ -226,6 +242,10 @@ What a page controls, and what bounds it:
 - The keyframes of one effect, the stops of `linear()`, the commands of a `path()`: bounded by the
   text they come in (a `node_query` text is at most `Hosts.Dom.maxString`; a sheet at most its
   reader's limit); every loop over them is a `for` over that text or list. No count of their own.
+- The partial path after `class` writes: at most `Page.subtreeLimit` (512) nodes are read for it
+  (`subtreesWithin_length`, proved); a larger subtree, or more than 32 noted elements, takes the whole
+  path. The partial path after `style` attribute writes has no such count: the subtree of the written
+  element, whatever its size.
 - Recursion: none in `Rendering/Animation` survives as a call (the tail-recursion gate passes).
 - Missing: a bound on the time of one style change as a number of steps; ended animations are kept.
 
@@ -249,8 +269,11 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
   as changing nothing there. `CSS.restyleWith_nil` (same arena: the styles given), `restyleWith_nil_size`
   (an arena that grew: a style for every node). `Computed.styleAttributeDiff_same`: a longhand two
   `style` attributes declare alike is not in their difference.
-- `Reads.wrote_other`, `Reads.wrote_version` (`Hosts/Page`): a write that is not of a `style`
-  attribute forgets the noted elements, and every `wrote` leaves the note exact for the new version;
+- `Page.subtreesWithin_length` (the nodes the partial path reads after `class` writes are at most
+  `subtreeLimit`), `Reads.wrote_subtree`, `Reads.wrote_keeps_subtree` (a `class` write marks that a
+  subtree is to be read again, and only a measure takes the mark away).
+- `Reads.wrote_other`, `Reads.wrote_version` (`Hosts/Page`): a write that is neither of a `style`
+  nor of a `class` attribute forgets the noted elements, and every `wrote` leaves the note exact for the new version;
   a write path that raises the version another way leaves `styleVersion` behind, and the next measure
   is of the whole document.
 - `Easing.bezNum_mono`: the x of a cubic Bézier with x1 and x2 in [0, 1] does not decrease with the
@@ -279,6 +302,11 @@ computed values; the three test paths over a model page; the cascade order of an
 keyframes argument; the timing dictionary's checks; the playback sequences of the tests.
 
 Open:
+
+- That the styles after a `class` write are those of the parent's subtree styled again when no rule
+  has `:has()` is argued from the selector grammar and tested (three documents against a sheet with
+  descendant, child, `+`, `~`, `:not()`, `:is()`, `:nth-child(… of …)`, `:nth-last-child(… of …)` and
+  attribute selectors, compared with the whole cascade); it is not proved over `DOM.Selectors.matches`.
 
 - That `solveT`'s bisection ends at the nearest parameter is tested, not proved (the x it searches
   is proved monotone: `Easing.bezNum_mono`).
