@@ -233,7 +233,9 @@ def other (quota : Nat) (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
       | none => (s, fail "NotFoundError")
       | some n =>
         if lockedUnder l p then (s, fail "NoModificationAllowedError")
-        else if n.isDir && !recursive && !(t.children p).isEmpty then (s, fail "InvalidModificationError")
+        -- the root of the origin private file system removes its contents whatever `recursive`
+        -- says (it is made again, empty, by the next getDirectory)
+        else if n.isDir && !recursive && p != [] && !(t.children p).isEmpty then (s, fail "InvalidModificationError")
         else (tick (t.removeAll p), ok)
   | "stat" =>
     match t.lookup (pathOf (strAt a 1)) with
@@ -456,6 +458,8 @@ private def answers (s : Shelf) (cmds : List (List String)) : Shelf × List Stri
 private def s1 : Shelf := (answers {} [["get", "", "dir", "d", "1"], ["get", "dir", "a.txt", "f", "1"], ["get", "", "b", "f", "1"]]).1
 #guard (answers {} [["get", "", "dir", "d", "1"], ["get", "dir", "a.txt", "f", "1"], ["get", "", "b", "f", "1"]]).2 == ["ok", "ok", "ok"]
 #guard (answers s1 [["perm", "read"], ["perm", "readwrite"], ["perm", "x"]]).2 == ["ok granted", "ok granted", "ok denied"]
+-- the root's remove() empties it
+#guard (answers (answers s1 [["remove", "", "", "0"]]).1 [["list", ""]]).2 == ["ok"]
 -- the pickers: refused, and the shelf is unchanged
 #guard (answers s1 [["picker", "open", "0", "", ""], ["picker", "save", "1", "", ""], ["list", ""]]).2 == ["!SecurityError", "!TypeError", "ok dir d b f"]
 #guard (answers s1 [["list", ""], ["list", "dir"], ["list", "nope"]]).2 == ["ok dir d b f", "ok a.txt f", "!NotFoundError"]
