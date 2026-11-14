@@ -129,36 +129,34 @@ def attrText (body : List CV) : String :=
 def selectorFunctions : List String := ["is", "not", "where", "has", "matches", "-webkit-any", "host", "host-context", "slotted"]
 
 /-- The canonical text of a selector (CSSOM §6.7.2 "serialize a group of selectors"), from
-its tokens: one space for the descendant combinator, ` > `, ` + `, ` ~ `, `, `. -/
+its tokens: one space for the descendant combinator, ` > `, ` + `, ` ~ `, `, `. The loop
+over the tokens is a tail call; the arguments of `:is()` and its like are one level down
+(at most `maxNesting` levels). -/
 def selectorTokensText : Nat → List CV → String
   | 0, _ => ""
   | fuel + 1, cvs =>
-    let cvs := trimWs cvs
-    let rec go : Nat → List CV → String → Bool → String
-      | 0, _, out, _ => out
-      | f + 1, cvs, out, pendingSpace =>
-        match cvs with
-        | [] => out
-        | cv :: rest =>
-          let emit := fun (s : String) => go f rest (out ++ (if pendingSpace then " " else "") ++ s) false
-          match cv with
-          | .tok .ws => go f rest out (!out.isEmpty)
-          | .tok .comma => go f (rest.dropWhile CV.isWs) (out ++ ", ") false
-          | .tok (.delim c) =>
-            if c == '>' || c == '+' || c == '~' then go f (rest.dropWhile CV.isWs) (out ++ " " ++ String.singleton c ++ " ") false
-            else emit (String.singleton c)
-          | .tok (.ident s) => emit (serializeIdent s)
-          | .tok (.hash s _) => emit ("#" ++ serializeIdent s)
-          | .tok .colon => emit ":"
-          | .tok t => emit t.css
-          | .block '[' body => emit ("[" ++ attrText body ++ "]")
-          | .block o body => emit (String.singleton o ++ rawText body ++ String.singleton (closerChar o))
-          | .fn name args =>
-            let n := lower name
-            if selectorFunctions.contains n then emit (n ++ "(" ++ selectorTokensText fuel args ++ ")")
-            else emit (n ++ "(" ++ rawText args ++ ")")
-          | .raw s => emit s
-    go (cvs.length + 1) cvs "" false
+    let piece := fun (cv : CV) => match cv with
+      | .tok (.ident s) => serializeIdent s
+      | .tok (.hash s _) => "#" ++ serializeIdent s
+      | .tok t => t.css
+      | .block '[' body => "[" ++ attrText body ++ "]"
+      | .block o body => String.singleton o ++ rawText body ++ String.singleton (closerChar o)
+      | .fn name args =>
+        let n := lower name
+        if selectorFunctions.contains n then n ++ "(" ++ selectorTokensText fuel args ++ ")"
+        else n ++ "(" ++ rawText args ++ ")"
+      | .raw s => s
+    -- state: the text so far, a pending descendant space, values to skip white space before
+    let step := fun (acc : String × Bool × Bool) (cv : CV) =>
+      let (out, pendingSpace, afterCombinator) := acc
+      match cv with
+      | .tok .ws => (out, !out.isEmpty && !afterCombinator, afterCombinator)
+      | .tok .comma => (out ++ ", ", false, true)
+      | .tok (.delim c) =>
+        if c == '>' || c == '+' || c == '~' then (out ++ " " ++ String.singleton c ++ " ", false, true)
+        else (out ++ (if pendingSpace then " " else "") ++ String.singleton c, false, false)
+      | cv => (out ++ (if pendingSpace then " " else "") ++ piece cv, false, false)
+    ((trimWs cvs).foldl step ("", false, false)).1
 
 /-- The canonical text of a selector text, when `DOM.Selectors` reads it; `none` is a
 SyntaxError. -/
@@ -217,69 +215,57 @@ def declRules : List (String × String × Nat) :=
    ("counter-style", "CounterStyle", 11), ("position-try", "PositionTry", 0),
    ("font-palette-values", "FontPaletteValues", 0), ("view-transition", "ViewTransition", 0)]
 
-mutual
-  /-- A rule as written as a CSSOM rule; `none` when it is not a rule this engine has. -/
-  def ruleOf : Nat → RawRule → Option Rule
-    | 0, _ => none
-    | fuel + 1, raw =>
-      let cs := raw.prelude.toList
-      match cs with
-      | '@' :: rest =>
-        let name := lower (String.ofList (rest.takeWhile isNameChar))
-        let after := preludeText (String.ofList (rest.dropWhile isNameChar))
-        let head := "@" ++ name ++ (if after == "" then "" else " " ++ after)
-        match raw.body with
+/-- A rule as written as a CSSOM rule; `none` when it is not a rule this engine has. The
+recursion is on the nesting of group rules (`depth` levels are read); the rules of one
+block are a `filterMap`. -/
+def ruleOf : Nat → RawRule → Option Rule
+  | 0, _ => none
+  | fuel + 1, raw =>
+    let cs := raw.prelude.toList
+    match cs with
+    | '@' :: rest =>
+      let name := lower (String.ofList (rest.takeWhile isNameChar))
+      let after := preludeText (String.ofList (rest.dropWhile isNameChar))
+      let head := "@" ++ name ++ (if after == "" then "" else " " ++ after)
+      match raw.body with
+      | none =>
+        if name == "import" then some ⟨"Import", 3, after, "", head ++ ";"⟩
+        else if name == "namespace" then some ⟨"Namespace", 10, after, "", head ++ ";"⟩
+        else if name == "layer" && after != "" then some ⟨"LayerStatement", 0, after, "", head ++ ";"⟩
+        else none
+      | some body =>
+        match groupRules.find? (·.1 == name) with
+        | some (_, kind, type) =>
+          let inner := ((rawRules body).filterMap (ruleOf fuel)).map (·.cssText)
+          let text := if inner.isEmpty then head ++ " {\n}" else head ++ " {\n" ++ "\n".intercalate (inner.map indent) ++ "\n}"
+          some ⟨kind, type, after, body, text⟩
         | none =>
-          if name == "import" then some ⟨"Import", 3, after, "", head ++ ";"⟩
-          else if name == "namespace" then some ⟨"Namespace", 10, after, "", head ++ ";"⟩
-          else if name == "layer" && after != "" then some ⟨"LayerStatement", 0, after, "", head ++ ";"⟩
-          else none
-        | some body =>
-          match groupRules.find? (·.1 == name) with
+          match declRules.find? (·.1 == name) with
           | some (_, kind, type) =>
-            let inner := (rulesLoop fuel (rawRules body) []).map (·.cssText)
-            let text := if inner.isEmpty then head ++ " {\n}" else head ++ " {\n" ++ "\n".intercalate (inner.map indent) ++ "\n}"
+            -- descriptors are kept as written (they are not properties of the table)
+            let decls := (splitTop ';' (body.length + 1) body.toList 0 none [] []).filterMap fun piece =>
+              (declOf piece).map fun (n, v, _) => lower n ++ ": " ++ trimText v ++ ";"
+            let text := if decls.isEmpty then head ++ " { }" else head ++ " { " ++ " ".intercalate decls ++ " }"
             some ⟨kind, type, after, body, text⟩
           | none =>
-            match declRules.find? (·.1 == name) with
-            | some (_, kind, type) =>
-              -- descriptors are kept as written (they are not properties of the table)
-              let decls := (splitTop ';' (body.length + 1) body.toList 0 none [] []).filterMap fun piece =>
-                (declOf piece).map fun (n, v, _) => lower n ++ ": " ++ trimText v ++ ";"
-              let text := if decls.isEmpty then head ++ " { }" else head ++ " { " ++ " ".intercalate decls ++ " }"
-              some ⟨kind, type, after, body, text⟩
-            | none =>
-              if name == "keyframes" || name == "-webkit-keyframes" then
-                let frames := (rawRules body).map fun r => preludeText r.prelude ++ " { " ++ (Block.parse (r.body.getD "")).text ++ " }"
-                let text := "@keyframes " ++ after ++ " { " ++ (if frames.isEmpty then "" else "\n  " ++ "\n  ".intercalate frames ++ "\n") ++ "}"
-                some ⟨"Keyframes", 7, after, body, text⟩
-              else if name == "font-feature-values" then some ⟨"FontFeatureValues", 14, after, body, head ++ " { " ++ trimText body ++ " }"⟩
-              else none
-      | _ =>
-        match raw.body, selectorText raw.prelude with
-        | some body, some sel =>
-          let block := (Block.parse body).text
-          some ⟨"Style", 1, sel, body, sel ++ " { " ++ block ++ (if block == "" then "" else " ") ++ "}"⟩
-        | _, _ => none
-  /-- The rules of a list of rules as written; those that are not rules are dropped. -/
-  def rulesLoop : Nat → List RawRule → List Rule → List Rule
-    | 0, _, acc => acc.reverse
-    | fuel + 1, raws, acc =>
-      match raws with
-      | [] => acc.reverse
-      | r :: rest =>
-        match ruleOf fuel r with
-        | some rule => rulesLoop fuel rest (rule :: acc)
-        | none => rulesLoop fuel rest acc
-end
+            if name == "keyframes" || name == "-webkit-keyframes" then
+              let frames := (rawRules body).map fun r => preludeText r.prelude ++ " { " ++ (Block.parse (r.body.getD "")).text ++ " }"
+              let text := "@keyframes " ++ after ++ " { " ++ (if frames.isEmpty then "" else "\n  " ++ "\n  ".intercalate frames ++ "\n") ++ "}"
+              some ⟨"Keyframes", 7, after, body, text⟩
+            else if name == "font-feature-values" then some ⟨"FontFeatureValues", 14, after, body, head ++ " { " ++ trimText body ++ " }"⟩
+            else none
+    | _ =>
+      match raw.body, selectorText raw.prelude with
+      | some body, some sel =>
+        let block := (Block.parse body).text
+        some ⟨"Style", 1, sel, body, sel ++ " { " ++ block ++ (if block == "" then "" else " ") ++ "}"⟩
+      | _, _ => none
 
 /-- The most nesting of group rules that is read. -/
 def nesting : Nat := 64
 
 /-- The rules of a sheet text. -/
-def rulesOf (text : String) : List Rule :=
-  let raws := rawRules text
-  rulesLoop (raws.length + nesting) raws []
+def rulesOf (text : String) : List Rule := (rawRules text).filterMap (ruleOf nesting)
 
 /-- The text of a sheet with these rules. -/
 def textOf (rules : List Rule) : String := "\n".intercalate (rules.map (·.cssText))

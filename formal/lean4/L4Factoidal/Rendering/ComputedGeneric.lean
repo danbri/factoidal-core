@@ -174,8 +174,8 @@ def computedLonghand (v : View) : Nat → Nat → String → String
         else if custom then value
         else CssValues.computed (ctxOf value) p value
 
-/-- The most ancestors and variable links a computed value follows. -/
-def depthBound : Nat := 1024
+/-- The most ancestors and variable links a computed value follows (each is a stack frame). -/
+def depthBound : Nat := 256
 
 /-- The computed value of any property of the table on element `id`: a longhand, a
 shorthand put together from its longhands, or a shorthand that is kept whole. -/

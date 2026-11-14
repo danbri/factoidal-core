@@ -216,7 +216,7 @@ def splitCommas (cvs : List CV) : List (List CV) :=
 
 mutual
   /-- One calc value: a number, a dimension, a percentage, a keyword, a parenthesised sum
-  or a math function. -/
+  or a math function. The recursion is on the nesting of the value. -/
   def calcOperand : Nat → CV → Option Calc
     | 0, _ => none
     | fuel + 1, cv =>
@@ -232,9 +232,19 @@ mutual
         let n := lower name
         if n == "calc" then calcExpr fuel args
         else if mathFunctions.contains n then
-          match calcArgs fuel n (splitCommas args) [] with
-          | some xs => some (.fn n xs)
-          | none => none
+          -- the comma-separated arguments: a rounding strategy is the first argument of
+          -- `round()`, and `none` may stand for the ends of `clamp()`
+          let groups := splitCommas args
+          let parsed := ((List.range groups.length).zip groups).mapM fun (i, g) =>
+            let word := match stripWs g with
+              | [.tok (.ident s)] => some (lower s)
+              | _ => none
+            match word with
+            | some w =>
+              if (n == "round" && i == 0 && roundingStrategies.contains w) || (n == "clamp" && w == "none") then some (Calc.kw w)
+              else calcExpr fuel g
+            | none => calcExpr fuel g
+          parsed.map fun xs => .fn n xs
         else none
       | _ => none
   /-- A calc sum over component values (white space included). -/
@@ -244,28 +254,6 @@ mutual
       match calcItems (calcOperand fuel) cvs true [] with
       | some items => if items.isEmpty then none else calcSum (items.length + 2) items []
       | none => none
-  /-- The comma-separated arguments of a math function. A rounding strategy is the first
-  argument of `round()`, and `none` may stand for the ends of `clamp()`. -/
-  def calcArgs : Nat → String → List (List CV) → List Calc → Option (List Calc)
-    | 0, _, _, _ => none
-    | fuel + 1, name, groups, acc =>
-      match groups with
-      | [] => some acc.reverse
-      | g :: rest =>
-        let word := match stripWs g with
-          | [.tok (.ident s)] => some (lower s)
-          | _ => none
-        match word with
-        | some w =>
-          if (name == "round" && acc.isEmpty && roundingStrategies.contains w) || (name == "clamp" && w == "none") then
-            calcArgs fuel name rest (.kw w :: acc)
-          else match calcExpr fuel g with
-            | some x => calcArgs fuel name rest (x :: acc)
-            | none => none
-        | none =>
-          match calcExpr fuel g with
-          | some x => calcArgs fuel name rest (x :: acc)
-          | none => none
 end
 
 /-- The calculation of a math function component value. -/
@@ -280,54 +268,43 @@ def allSame : List Ty → Option Ty
   | [] => none
   | t :: rest => if rest.all (· == t) then some t else none
 
-mutual
-  /-- The type of a calculation (§10.2), with percentages typed as `pctAs`; `none` when the
-  calculation is ill-typed. -/
-  def Calc.type (pctAs : Kind) : Nat → Calc → Option Ty
-    | 0, _ => none
-    | fuel + 1, c =>
-      match c with
-      | .val _ "" => some {}
-      | .val _ "%" => some (Ty.ofKind pctAs)
-      | .val _ u => (unitKind u).map Ty.ofKind
-      | .kw _ => some {}
-      | .neg x => Calc.type pctAs fuel x
-      | .inv x => (Calc.type pctAs fuel x).map Ty.inv
-      | .sum xs => (typesOf pctAs fuel xs).bind allSame
-      | .prod xs => (typesOf pctAs fuel xs).map fun ts => ts.foldl Ty.mul {}
-      | .fn name args =>
-        let args' := args.filter fun a => match a with
-          | .kw k => !(roundingStrategies.contains k || k == "none")
-          | _ => true
-        match typesOf pctAs fuel args' with
-        | none => none
-        | some ts =>
-          let n := ts.length
-          let num : Ty := {}
-          match name with
-          | "min" | "max" | "hypot" => if n ≥ 1 then allSame ts else none
-          | "clamp" => if args.length == 3 && n ≥ 1 then allSame ts else none
-          | "round" => if n == 2 then allSame ts else if n == 1 && ts.head? == some num then some num else none
-          | "mod" | "rem" => if n == 2 then allSame ts else none
-          | "sin" | "cos" | "tan" => if n == 1 && (ts.head? == some num || ts.head? == some (Ty.ofKind .angle)) then some num else none
-          | "asin" | "acos" | "atan" => if n == 1 && ts.head? == some num then some (Ty.ofKind .angle) else none
-          | "atan2" => if n == 2 && (allSame ts).isSome then some (Ty.ofKind .angle) else none
-          | "pow" => if n == 2 && ts.all (· == num) then some num else none
-          | "log" => if (n == 1 || n == 2) && ts.all (· == num) then some num else none
-          | "sqrt" | "exp" => if n == 1 && ts.all (· == num) then some num else none
-          | "abs" => if n == 1 then ts.head? else none
-          | "sign" => if n == 1 then some num else none
-          | _ => none
-  def typesOf (pctAs : Kind) : Nat → List Calc → Option (List Ty)
-    | 0, _ => none
-    | fuel + 1, xs =>
-      match xs with
-      | [] => some []
-      | x :: rest =>
-        match Calc.type pctAs fuel x, typesOf pctAs fuel rest with
-        | some t, some ts => some (t :: ts)
-        | _, _ => none
-end
+/-- The type of a calculation (§10.2), with percentages typed as `pctAs`; `none` when the
+calculation is ill-typed. The recursion is on the nesting of the calculation. -/
+def Calc.type (pctAs : Kind) : Nat → Calc → Option Ty
+  | 0, _ => none
+  | fuel + 1, c =>
+    match c with
+    | .val _ "" => some {}
+    | .val _ "%" => some (Ty.ofKind pctAs)
+    | .val _ u => (unitKind u).map Ty.ofKind
+    | .kw _ => some {}
+    | .neg x => Calc.type pctAs fuel x
+    | .inv x => (Calc.type pctAs fuel x).map Ty.inv
+    | .sum xs => (xs.mapM (Calc.type pctAs fuel)).bind allSame
+    | .prod xs => (xs.mapM (Calc.type pctAs fuel)).map fun ts => ts.foldl Ty.mul {}
+    | .fn name args =>
+      let args' := args.filter fun a => match a with
+        | .kw k => !(roundingStrategies.contains k || k == "none")
+        | _ => true
+      match args'.mapM (Calc.type pctAs fuel) with
+      | none => none
+      | some ts =>
+        let n := ts.length
+        let num : Ty := {}
+        match name with
+        | "min" | "max" | "hypot" => if n ≥ 1 then allSame ts else none
+        | "clamp" => if args.length == 3 && n ≥ 1 then allSame ts else none
+        | "round" => if n == 2 then allSame ts else if n == 1 && ts.head? == some num then some num else none
+        | "mod" | "rem" => if n == 2 then allSame ts else none
+        | "sin" | "cos" | "tan" => if n == 1 && (ts.head? == some num || ts.head? == some (Ty.ofKind .angle)) then some num else none
+        | "asin" | "acos" | "atan" => if n == 1 && ts.head? == some num then some (Ty.ofKind .angle) else none
+        | "atan2" => if n == 2 && (allSame ts).isSome then some (Ty.ofKind .angle) else none
+        | "pow" => if n == 2 && ts.all (· == num) then some num else none
+        | "log" => if (n == 1 || n == 2) && ts.all (· == num) then some num else none
+        | "sqrt" | "exp" => if n == 1 && ts.all (· == num) then some num else none
+        | "abs" => if n == 1 then ts.head? else none
+        | "sign" => if n == 1 then some num else none
+        | _ => none
 
 /-! ### Simplification -/
 
@@ -408,101 +385,86 @@ def sameUnitValues (xs : List Calc) : Option (List Rat × String) :=
     else none
   | _ => none
 
-mutual
-  /-- Simplify a calculation (§10.10.1): units made canonical, numbers folded, sums and
-  products flattened, like terms added, and functions over like values computed. -/
-  def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
-    | 0, c => c
-    | fuel + 1, c =>
-      match c with
-      | .val v u => canonVal ctx v u
-      | .kw k => .kw k
-      | .neg x => negate (Calc.simp ctx fuel x)
-      | .inv x =>
-        match Calc.simp ctx fuel x with
-        | .val v "" => if v == 0 then .inv (.val v "") else .val (1 / v) ""
-        | y => .inv y
-      | .sum xs =>
-        let ys := (simpList ctx fuel xs).flatMap fun y => match y with
-          | .sum zs => zs
-          | z => [z]
-        let units := ys.foldl (fun acc y => match y with
-          | .val v u => addUnit acc u v
-          | _ => acc) []
-        let others := ys.filter fun y => match y with
-          | .val _ _ => false
-          | _ => true
-        let terms := (units.map fun (u, v) => Calc.val v u) ++ others
-        match terms.mergeSort termLe with
-        | [] => .val 0 ""
-        | [t] => t
-        | ts => .sum ts
-      | .prod xs =>
-        let ys := (simpList ctx fuel xs).flatMap fun y => match y with
-          | .prod zs => zs
-          | z => [z]
-        let n := ys.foldl (fun acc y => match y with
-          | .val v "" => acc * v
-          | _ => acc) (1 : Rat)
-        let rest : List Calc := ys.filter fun y => match y with
-          | .val _ "" => false
-          | _ => true
-        match rest with
-        | [] => .val n ""
-        | [.val v u] => .val (n * v) u
-        | [.sum ts] => .sum (ts.map fun t => match t with
-            | .val v u => .val (n * v) u
-            | t => if n == 1 then t else .prod [.val n "", t])
-        | [.val v u, .inv (.val w u')] =>
-          if u == u' && w != 0 then .val (n * v / w) "" else .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
-        | rest => .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
-      | .fn name args =>
-        let ys := simpList ctx fuel args
-        let strategy := match ys with
-          | .kw k :: _ => if roundingStrategies.contains k then k else "nearest"
-          | _ => "nearest"
-        let operands := ys.filter fun y => match y with
-          | .kw k => !roundingStrategies.contains k
-          | _ => true
-        match sameUnitValues operands with
-        | some (vs, u) =>
-          match evalFn name strategy vs u with
-          | some r => r
-          | none => .fn name ys
+/-- Simplify a calculation (§10.10.1): units made canonical, numbers folded, sums and
+products flattened, like terms added, and functions over like values computed. The
+recursion is on the nesting of the calculation. -/
+def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
+  | 0, c => c
+  | fuel + 1, c =>
+    match c with
+    | .val v u => canonVal ctx v u
+    | .kw k => .kw k
+    | .neg x => negate (Calc.simp ctx fuel x)
+    | .inv x =>
+      match Calc.simp ctx fuel x with
+      | .val v "" => if v == 0 then .inv (.val v "") else .val (1 / v) ""
+      | y => .inv y
+    | .sum xs =>
+      let ys := (xs.map (Calc.simp ctx fuel)).flatMap fun y => match y with
+        | .sum zs => zs
+        | z => [z]
+      let units := ys.foldl (fun acc y => match y with
+        | .val v u => addUnit acc u v
+        | _ => acc) []
+      let others := ys.filter fun y => match y with
+        | .val _ _ => false
+        | _ => true
+      let terms := (units.map fun (u, v) => Calc.val v u) ++ others
+      match terms.mergeSort termLe with
+      | [] => .val 0 ""
+      | [t] => t
+      | ts => .sum ts
+    | .prod xs =>
+      let ys := (xs.map (Calc.simp ctx fuel)).flatMap fun y => match y with
+        | .prod zs => zs
+        | z => [z]
+      let n := ys.foldl (fun acc y => match y with
+        | .val v "" => acc * v
+        | _ => acc) (1 : Rat)
+      let rest : List Calc := ys.filter fun y => match y with
+        | .val _ "" => false
+        | _ => true
+      match rest with
+      | [] => .val n ""
+      | [.val v u] => .val (n * v) u
+      | [.sum ts] => .sum (ts.map fun t => match t with
+          | .val v u => .val (n * v) u
+          | t => if n == 1 then t else .prod [.val n "", t])
+      | [.val v u, .inv (.val w u')] =>
+        if u == u' && w != 0 then .val (n * v / w) "" else .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
+      | rest => .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
+    | .fn name args =>
+      let ys := args.map (Calc.simp ctx fuel)
+      let strategy := match ys with
+        | .kw k :: _ => if roundingStrategies.contains k then k else "nearest"
+        | _ => "nearest"
+      let operands := ys.filter fun y => match y with
+        | .kw k => !roundingStrategies.contains k
+        | _ => true
+      match sameUnitValues operands with
+      | some (vs, u) =>
+        match evalFn name strategy vs u with
+        | some r => r
         | none => .fn name ys
-  def simpList (ctx : Option Ctx) : Nat → List Calc → List Calc
-    | 0, xs => xs
-    | fuel + 1, xs =>
-      match xs with
-      | [] => []
-      | x :: rest => Calc.simp ctx fuel x :: simpList ctx fuel rest
-end
+      | none => .fn name ys
 
 /-! ### Serialisation -/
 
-mutual
-  /-- The text of a calculation inside a math function (§10.14). `nested` puts a sum in
-  parentheses. -/
-  def Calc.css : Nat → Bool → Calc → String
-    | 0, _, _ => ""
-    | fuel + 1, nested, c =>
-      match c with
-      | .val v "" => fmtRat v
-      | .val v u => fmtRat v ++ u
-      | .kw k => k
-      | .neg x => "-1 * " ++ Calc.css fuel true x
-      | .inv x => "1 / " ++ Calc.css fuel true x
-      | .sum xs =>
-        let body := sumCss fuel xs true
-        if nested then "(" ++ body ++ ")" else body
-      | .prod xs => prodCss fuel xs true
-      | .fn name args => name ++ "(" ++ argsCss fuel args true ++ ")"
-  def sumCss : Nat → List Calc → Bool → String
-    | 0, _, _ => ""
-    | fuel + 1, xs, first =>
-      match xs with
-      | [] => ""
-      | x :: rest =>
+/-- The text of a calculation inside a math function (§10.14). `nested` puts a sum in
+parentheses. The recursion is on the nesting; the terms of a sum, the factors of a product
+and the arguments of a function are folds. -/
+def Calc.css : Nat → Bool → Calc → String
+  | 0, _, _ => ""
+  | fuel + 1, nested, c =>
+    match c with
+    | .val v "" => fmtRat v
+    | .val v u => fmtRat v ++ u
+    | .kw k => k
+    | .neg x => "-1 * " ++ Calc.css fuel true x
+    | .inv x => "1 / " ++ Calc.css fuel true x
+    | .sum xs =>
+      let body := (xs.foldl (fun (acc : String × Bool) x =>
+        let first := acc.2
         let piece := match x with
           | .val v u =>
             if first then Calc.css fuel true (.val v u)
@@ -510,24 +472,17 @@ mutual
             else " + " ++ Calc.css fuel true (.val v u)
           | .neg y => (if first then "-1 * " else " - ") ++ Calc.css fuel true y
           | y => (if first then "" else " + ") ++ Calc.css fuel true y
-        piece ++ sumCss fuel rest false
-  def prodCss : Nat → List Calc → Bool → String
-    | 0, _, _ => ""
-    | fuel + 1, xs, first =>
-      match xs with
-      | [] => ""
-      | x :: rest =>
+        (acc.1 ++ piece, false)) ("", true)).1
+      if nested then "(" ++ body ++ ")" else body
+    | .prod xs =>
+      (xs.foldl (fun (acc : String × Bool) x =>
+        let first := acc.2
         let piece := match x with
           | .inv y => (if first then "1 / " else " / ") ++ Calc.css fuel true y
           | y => (if first then "" else " * ") ++ Calc.css fuel true y
-        piece ++ prodCss fuel rest false
-  def argsCss : Nat → List Calc → Bool → String
-    | 0, _, _ => ""
-    | fuel + 1, xs, first =>
-      match xs with
-      | [] => ""
-      | x :: rest => (if first then "" else ", ") ++ Calc.css fuel false x ++ argsCss fuel rest false
-end
+        (acc.1 ++ piece, false)) ("", true)).1
+    | .fn name args =>
+      name ++ "(" ++ ", ".intercalate (args.map (Calc.css fuel false)) ++ ")"
 
 /-- A bound on the recursion over a calculation. -/
 def Calc.depth : Nat → Calc → Nat

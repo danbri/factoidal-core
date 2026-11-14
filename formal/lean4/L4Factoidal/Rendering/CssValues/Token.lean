@@ -276,14 +276,17 @@ def tokensLoop : Nat → List Char → Array Tok → Array Tok
         tokensLoop fuel r (acc.push t)
       else tokensLoop fuel rest (acc.push (.delim c))
 
-/-- §3.3: preprocess the input stream (CR, FF and CRLF become LF; NUL becomes U+FFFD). -/
-def preprocess : List Char → List Char
-  | '\r' :: '\n' :: rest => '\n' :: preprocess rest
-  | '\r' :: rest => '\n' :: preprocess rest
-  | '\x0c' :: rest => '\n' :: preprocess rest
-  | '\x00' :: rest => Char.ofNat 0xFFFD :: preprocess rest
-  | c :: rest => c :: preprocess rest
-  | [] => []
+/-- §3.3: preprocess the input stream (CR, FF and CRLF become LF; NUL becomes U+FFFD).
+Tail recursive: `acc` is reversed. -/
+def preprocessLoop : List Char → List Char → List Char
+  | '\r' :: '\n' :: rest, acc => preprocessLoop rest ('\n' :: acc)
+  | '\r' :: rest, acc => preprocessLoop rest ('\n' :: acc)
+  | '\x0c' :: rest, acc => preprocessLoop rest ('\n' :: acc)
+  | '\x00' :: rest, acc => preprocessLoop rest (Char.ofNat 0xFFFD :: acc)
+  | c :: rest, acc => preprocessLoop rest (c :: acc)
+  | [], acc => acc.reverse
+
+def preprocess (cs : List Char) : List Char := preprocessLoop cs []
 
 /-- The tokens of a CSS text. -/
 def tokenize (s : String) : List Tok :=
@@ -297,34 +300,44 @@ def closerOf : Char → Tok
   | '[' => .rbracket
   | _ => .rbrace
 
+/-- The deepest nesting of functions and blocks that is read. A value nested deeper is
+not a value any property takes; reading it would only use stack. -/
+def maxNesting : Nat := 64
+
 /-- §5.4.7–§5.4.9: component values up to the token `close` (or the end of the input, which
-closes every open block). Answers the values and the tokens after the closing token. -/
-def parseCVs : Nat → List Tok → Option Tok → List CV → List CV × List Tok
-  | 0, ts, _, acc => (acc.reverse, ts)
-  | fuel + 1, ts, close, acc =>
+closes every open block). Answers the values and the tokens after the closing token. The
+loop over the tokens of one level is a tail call; a function or block one level down is a
+call, and there are at most `maxNesting` levels: an opening token beyond that is read as a
+bad token, so the value is invalid. -/
+def parseCVs : Nat → Nat → List Tok → Option Tok → List CV → List CV × List Tok
+  | 0, _, ts, _, acc => (acc.reverse, ts)
+  | fuel + 1, depth, ts, close, acc =>
     match ts with
     | [] => (acc.reverse, [])
     | t :: rest =>
       if some t == close then (acc.reverse, rest)
-      else match t with
-        | .func name =>
-          let (args, rest') := parseCVs fuel rest (some .rparen) []
-          parseCVs fuel rest' close (.fn name args :: acc)
-        | .lparen =>
-          let (body, rest') := parseCVs fuel rest (some .rparen) []
-          parseCVs fuel rest' close (.block '(' body :: acc)
-        | .lbracket =>
-          let (body, rest') := parseCVs fuel rest (some .rbracket) []
-          parseCVs fuel rest' close (.block '[' body :: acc)
-        | .lbrace =>
-          let (body, rest') := parseCVs fuel rest (some .rbrace) []
-          parseCVs fuel rest' close (.block '{' body :: acc)
-        | t => parseCVs fuel rest close (.tok t :: acc)
+      else
+        let opener : Option (Option String × Char) := match t with
+          | .func name => some (some name, '(')
+          | .lparen => some (none, '(')
+          | .lbracket => some (none, '[')
+          | .lbrace => some (none, '{')
+          | _ => none
+        match opener with
+        | none => parseCVs fuel depth rest close (.tok t :: acc)
+        | some (name, o) =>
+          if depth ≥ maxNesting then parseCVs fuel depth rest close (.tok .badStr :: acc)
+          else
+            let (body, rest') := parseCVs fuel (depth + 1) rest (some (closerOf o)) []
+            let cv := match name with
+              | some n => CV.fn n body
+              | none => CV.block o body
+            parseCVs fuel depth rest' close (cv :: acc)
 
 /-- The component values of a CSS text. -/
 def CV.parse (s : String) : List CV :=
   let ts := tokenize s
-  (parseCVs (2 * ts.length + 2) ts none []).1
+  (parseCVs (2 * ts.length + 2) 0 ts none []).1
 
 def CV.isWs : CV → Bool
   | .tok .ws => true
@@ -438,7 +451,8 @@ def spaceBetween (a b : CV) : Bool :=
 
 mutual
   /-- The canonical text of one component value: a function with its name as the value
-  parser gave it (the grammar's spelling), its contents serialised as a list. -/
+  parser gave it (the grammar's spelling), its contents serialised as a list. The recursion
+  is on the nesting only (at most `maxNesting` for parsed values). -/
   def CV.css : Nat → CV → String
     | 0, _ => ""
     | fuel + 1, cv =>
@@ -448,14 +462,15 @@ mutual
       | .block o body => String.singleton o ++ cssList fuel body ++ String.singleton (closerChar o)
       | .raw s => s
   /-- The canonical text of a list of component values: one space between values, none
-  before a comma. -/
+  before a comma. A fold over the list. -/
   def cssList : Nat → List CV → String
     | 0, _ => ""
     | fuel + 1, cvs =>
-      match cvs with
-      | [] => ""
-      | [a] => CV.css fuel a
-      | a :: b :: rest => CV.css fuel a ++ (if spaceBetween a b then " " else "") ++ cssList fuel (b :: rest)
+      (cvs.foldl (fun (acc : String × Option CV) cv =>
+        let sep := match acc.2 with
+          | some prev => if spaceBetween prev cv then " " else ""
+          | none => ""
+        (acc.1 ++ sep ++ CV.css fuel cv, some cv)) ("", none)).1
 end
 
 /-- A bound on the recursion of `cssList` for a list: the size of the tree. -/

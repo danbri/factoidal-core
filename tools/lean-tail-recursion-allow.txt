@@ -2295,3 +2295,24 @@ L4Factoidal_DOM_Editing_isEditableF  # (b) one call per ancestor of the node (th
 L4Factoidal_DOM_Editing_isCollapsedBlockPropF  # (b) one call per level of the subtree of an inline element ("collapsed block prop" of the editing draft); fuel is the arena size
 L4Factoidal_DOM_Editing_isEffectivelyContainedF  # (b) one call per level of the subtree of the node ("effectively contained" of the editing draft); fuel is the arena size
 L4Factoidal_DOM_Editing_forceValue  # (b) one call per level of the subtree of the node ("force the value" of the editing draft recurses on children); fuel is the arena size
+# --- CSS values (Rendering/CssValues, ComputedGeneric): 2026-11-14. Lists are folds or tail calls; what recurses is nesting, and each nesting has a constant bound.
+L4Factoidal_Rendering_CssValues_parseCVs  # (c) one call per level of nested functions and blocks; at most maxNesting = 64 levels (a deeper opener is read as a bad token); the tokens of a level are a tail call
+L4Factoidal_Rendering_CssValues_calcOperand  # (c) the nesting of one calc() value, at most maxNesting = 64 (parseCVs)
+L4Factoidal_Rendering_CssValues_calcExpr  # (c) mutual with calcOperand: the nesting of one calc() value, at most 64
+L4Factoidal_Rendering_CssValues_Calc_type  # (c) the nesting of a calculation tree made by calcOperand, at most 64
+L4Factoidal_Rendering_CssValues_Calc_simp  # (c) the nesting of a calculation tree, at most 64
+L4Factoidal_Rendering_CssValues_Calc_css  # (c) the nesting of a calculation tree, at most 64; terms, factors and arguments are folds
+L4Factoidal_Rendering_CssValues_Calc_depth  # (c) the nesting of a calculation tree, at most 64
+L4Factoidal_Rendering_CssValues_vdsLevel  # (c) the nesting of a grammar text of the property table (Data.lean, generated; no page input)
+L4Factoidal_Rendering_CssValues_vdsSepLoop  # (c) mutual with vdsLevel: a grammar text of the property table
+L4Factoidal_Rendering_CssValues_vdsSeq  # (c) mutual with vdsLevel: a grammar text of the property table
+L4Factoidal_Rendering_CssValues_vdsTerm  # (c) mutual with vdsLevel: a grammar text of the property table
+L4Factoidal_Rendering_CssValues_matchG  # (c) fuel matchFuel = 96: grammar nesting and non-terminal expansion; repetitions of a multiplier are a loop (repLoop)
+L4Factoidal_Rendering_CssValues_seqWith  # (c) the juxtaposed items of one grammar of the property table (not the value's length)
+L4Factoidal_Rendering_CssValues_setWith  # (c) the parts of one || or && of a grammar of the property table
+L4Factoidal_Rendering_CssValues_Color_specF  # (c) fuel 32: the nesting of colour functions (color-mix, light-dark, relative colours)
+L4Factoidal_Rendering_CssValues_Color_resolveF  # (c) fuel 32: the nesting of colour functions
+L4Factoidal_Rendering_ComputedGeneric_computedLonghand  # (b) the ancestors of an element and the chain of var() links, at most depthBound = 256 frames
+L4Factoidal_Rendering_ComputedGeneric_substitute  # (c) the nesting of var() fallbacks and functions of one value, fuel 16
+L4Factoidal_Rendering_CssSheet_ruleOf  # (c) the nesting of group rules, at most nesting = 64; the rules of a block are a filterMap
+L4Factoidal_Rendering_CssSheet_selectorTokensText  # (c) the nesting of :is()/:not() arguments, at most maxNesting = 64; the tokens of a selector are a fold

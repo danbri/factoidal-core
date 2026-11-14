@@ -195,10 +195,9 @@ def anyOrderShorthands : List String :=
    "border-block-start", "border-block-end", "border-inline-start", "border-inline-end",
    "outline", "column-rule", "row-rule", "text-decoration", "list-style", "flex-flow", "text-emphasis", "columns"]
 
-/-- Split a list into runs of `n`. -/
-def chunks (n : Nat) : Nat → List String → List (List String)
-  | 0, _ => []
-  | fuel + 1, xs => if xs.isEmpty || n == 0 then [] else xs.take n :: chunks n fuel (xs.drop n)
+/-- A list as three runs of `n` (the widths, styles and colours of a border shorthand). -/
+def thirds (n : Nat) (xs : List String) : List (List String) :=
+  [xs.take n, (xs.drop n).take n, xs.drop (2 * n)]
 
 /-- The shape of a shorthand that has a generic one. -/
 def shapeOf (row : Property) : Option Shape :=
@@ -207,7 +206,7 @@ def shapeOf (row : Property) : Option Shape :=
   else if pairShorthands.contains row.name && n == 2 then some .pair
   else if anyOrderShorthands.contains row.name && n ≥ 2 then some (.anyOrder (row.longhands.map fun l => [l]))
   else if (row.name == "border" || row.name == "border-block" || row.name == "border-inline") && n % 3 == 0 && n ≥ 3 then
-    some (.anyOrder (chunks (n / 3) 3 row.longhands))
+    some (.anyOrder (thirds (n / 3) row.longhands))
   else none
 
 /-- The values of the tagged matches, in order: property name and canonical text. -/

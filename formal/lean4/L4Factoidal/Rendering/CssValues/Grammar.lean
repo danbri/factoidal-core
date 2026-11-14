@@ -276,33 +276,43 @@ def seqWith (m : G → List CV → Res) : List G → Bool → List CV → Res
       ((m g ts).flatMap fun (o1, r1) =>
         (seqWith m gs (emitted || !o1.isEmpty) r1).map fun (o2, r2) => (o1 ++ o2, r2)).take cap
 
-/-- A multiplier: more repetitions first, each taking at least one value. -/
-def repWith (m : G → List CV → Res) (g : G) (lo : Nat) (hi : Option Nat) (comma : Bool) : Nat → Nat → List CV → Res
-  | 0, n, ts => if n ≥ lo then [([], ts)] else []
-  | fuel + 1, n, ts =>
-    let stop : Res := if n ≥ lo then [([], ts)] else []
-    if (hi.map fun h => decide (n ≥ h)).getD false then stop
+/-- A multiplier, as a loop over the number of repetitions (a tail call, so a list of any
+length uses no stack): `frontier` holds the matches of `n` repetitions (their values in
+reverse, the values left), `done` the finished matches, the most repetitions first. Each
+repetition takes at least one value. -/
+def repLoop (m : G → List CV → Res) (g : G) (lo : Nat) (hi : Option Nat) (comma : Bool) :
+    Nat → Nat → List (List (List CV) × List CV) → Res → Res
+  | 0, _, _, done => done
+  | fuel + 1, n, frontier, done =>
+    if frontier.isEmpty then done
     else
-      let start : Option (List CV) :=
-        if comma && n > 0 then
-          match ts with
-          | .tok .comma :: r => some r
-          | _ => none
-        else some ts
-      match start with
-      | none => stop
-      | some ts1 =>
-        let more : Res := (m g ts1).flatMap fun (o1, r1) =>
-          if r1.length < ts1.length then
-            (repWith m g lo hi comma fuel (n + 1) r1).map fun (o2, r2) =>
-              ((if comma && n > 0 then [CV.tok .comma] else []) ++ o1 ++ o2, r2)
-          else []
-        (more ++ stop).take cap
+      let stops : Res := if n ≥ lo then frontier.map fun (chunks, ts) => (chunks.reverse.flatten, ts) else []
+      let done := (stops ++ done).take cap
+      if (hi.map fun h => decide (n ≥ h)).getD false then done
+      else
+        let next := (frontier.flatMap fun (chunks, ts) =>
+          let start : Option (List CV) :=
+            if comma && n > 0 then
+              match ts with
+              | .tok .comma :: r => some r
+              | _ => none
+            else some ts
+          match start with
+          | none => []
+          | some ts1 =>
+            (m g ts1).filterMap fun (o1, r1) =>
+              if r1.length < ts1.length then
+                some ((if comma && n > 0 then CV.tok .comma :: o1 else o1) :: chunks, r1)
+              else none).take cap
+        repLoop m g lo hi comma fuel (n + 1) next done
 
-/-- Insert by index. -/
-def insertIdx (x : Nat × List CV) : List (Nat × List CV) → List (Nat × List CV)
-  | [] => [x]
-  | y :: ys => if x.1 ≤ y.1 then x :: y :: ys else y :: insertIdx x ys
+/-- A multiplier: more repetitions first. -/
+def repWith (m : G → List CV → Res) (g : G) (lo : Nat) (hi : Option Nat) (comma : Bool) (ts : List CV) : Res :=
+  repLoop m g lo hi comma (ts.length + 2) 0 [([], ts)] []
+
+/-- Insert by index: the list stays in the order of the grammar. -/
+def insertIdx (x : Nat × List CV) (xs : List (Nat × List CV)) : List (Nat × List CV) :=
+  (xs.filter fun y => y.1 < x.1) ++ x :: (xs.filter fun y => !(y.1 < x.1))
 
 /-- `||` (`all = false`) and `&&` (`all = true`): the parts in any order, each at most
 once and each taking at least one value; the output is in the order of the grammar. -/
@@ -423,7 +433,7 @@ def matchG (env : Env) : Nat → G → List CV → Res
     | .oneOf gs => (gs.flatMap fun g' => matchG env fuel g' ts).take cap
     | .anyOf gs => setWith (matchG env fuel) false (gs.length + 1) (indexed gs) [] ts
     | .allOf gs => setWith (matchG env fuel) true (gs.length + 1) (indexed gs) [] ts
-    | .rep g' lo hi comma => repWith (matchG env fuel) g' lo hi comma (ts.length + 1) 0 ts
+    | .rep g' lo hi comma => repWith (matchG env fuel) g' lo hi comma ts
     | .req g' => (matchG env fuel g' ts).filter fun (o, _) => !o.isEmpty
 
 /-- The depth the matcher may go to: grammar nesting plus non-terminal expansion. -/
