@@ -641,9 +641,11 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       for(;driverSeen<logs.length;driverSeen++){
         const line=logs[driverSeen];
         if(!line.startsWith("__wpt_driver "))continue;
-        let req:{keys?:Record<string,unknown>[]};
+        let req:{keys?:Record<string,unknown>[];cookies?:string};
         try{req=JSON.parse(line.slice(13));}catch{continue;}
         for(const k of req.keys??[]){take(turn=await ss({...k,action:"key",session:turn.session}));did=true;}
+        // WebDriver "Delete All Cookies": the engine empties the page session's jar
+        if(req.cookies==="delete"){take(turn=await ss({action:"cookies",session:turn.session}));did=true;}
       }
       return did;
     };

@@ -340,6 +340,14 @@ def setFromHeader (jar : Jar) (site : Site) (now : Nat) (text : String) : Jar :=
     let kept := if (rest.filter (·.host == c.host)).length ≥ maxPerHost then rest.drop 1 else rest
     { cookies := kept ++ [c], next := jar.next + 1 }
 
+/-- A `Set-Cookie` field of a response to a request that is (`sameSite`) or is not same-site
+with the page that made it (§5.7 step 15): a response to a cross-site request sets only
+`SameSite=None` cookies. -/
+def setFromHeaderIn (jar : Jar) (site : Site) (now : Nat) (sameSite : Bool) (text : String) : Jar :=
+  match parseForHeader site now text with
+  | none => jar
+  | some c => if !sameSite && c.sameSite != 1 then jar else setFromHeader jar site now text
+
 /-! ## The `Cookie` field of a request (§5.8.3) -/
 
 /-- A cookie that a request to `site` (its URL's host, path and scheme) carries at `now`.
@@ -595,6 +603,34 @@ theorem setFromHeader_keeps_host (jar : Jar) (site : Site) (now : Nat) (text : S
         · simp only [List.mem_singleton] at hk
           rw [hk]
           exact .inr hn
+
+/-- Kind: privacy theorem (SameSite on setting). Says: a response to a cross-site request
+changes the jar only when its field makes a `SameSite=None` cookie. -/
+theorem setFromHeaderIn_cross (jar : Jar) (site : Site) (now : Nat) (text : String) :
+    setFromHeaderIn jar site now false text = jar ∨
+      ∃ c, parseForHeader site now text = some c ∧ c.sameSite = 1 := by
+  unfold setFromHeaderIn
+  split
+  · exact .inl rfl
+  · rename_i c hc
+    by_cases h1 : c.sameSite = 1
+    · exact .inr ⟨c, hc, h1⟩
+    · left
+      have : (c.sameSite != 1) = true := by simp [h1]
+      simp [this]
+
+/-- Kind: privacy invariant. Says: as `setFromHeader_keeps_host`, for the same-site rule's
+form: a response never adds a cookie for another host. -/
+theorem setFromHeaderIn_keeps_host (jar : Jar) (site : Site) (now : Nat) (ss : Bool) (text : String) (c : Cookie)
+    (h : c ∈ (setFromHeaderIn jar site now ss text).cookies) :
+    (∃ o ∈ jar.cookies, o.name = c.name ∧ o.value = c.value ∧ o.host = c.host ∧ o.httpOnly = c.httpOnly) ∨
+      c.host = site.host := by
+  unfold setFromHeaderIn at h
+  split at h
+  · exact .inl ⟨c, h, rfl, rfl, rfl, rfl⟩
+  · split at h
+    · exact .inl ⟨c, h, rfl, rfl, rfl, rfl⟩
+    · exact setFromHeader_keeps_host jar site now text c h
 
 /-! ## Checks (RFC 6265bis and the cases of WPT cookies/) -/
 

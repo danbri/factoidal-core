@@ -4,7 +4,8 @@
 // line, as results do; the runner then gives the engine the input of the user it asks for
 // (scriptSession action `key`), and the page sees trusted events. What a key does is the
 // engine's decision (DOM.Editing.keyCommand); this file only names the keys of WebDriver.
-// Done: send_keys and the key actions of action_sequence. Not done: pointer actions, click.
+// Done: send_keys, the key actions of action_sequence, delete_all_cookies. Not done: pointer
+// actions, click.
 (function () {
   'use strict';
   if (!window.test_driver_internal) return;
@@ -43,6 +44,12 @@
     window.addEventListener('keyup', seen, true);
     console.log('__wpt_driver ' + JSON.stringify({ id: ++serial, keys: events }));
   });
+  // "Delete All Cookies" (WebDriver §14.5): the runner asks the engine between two slices of
+  // at most 16 ms of the page's time, so the deletion is done before this resolves.
+  window.test_driver_internal.delete_all_cookies = function () {
+    console.log('__wpt_driver ' + JSON.stringify({ id: ++serial, cookies: 'delete' }));
+    return new Promise(resolve => setTimeout(resolve, 40));
+  };
   // "Element Send Keys" (WebDriver §12.5.3): the element is focused; a modifier in the text
   // stays down until the end of the text or the null key.
   window.test_driver_internal.send_keys = function (element, keys) {

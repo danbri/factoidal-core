@@ -69,9 +69,6 @@ structure State where
   net : L4Factoidal.Net.Xhr.State := {}
   /-- The page's Web Storage areas (`Net.Storage`, ops 80 to 85): in memory, by origin. -/
   storage : L4Factoidal.Net.Storage.Store := {}
-  /-- The cookies scripts set and read (`Net.Cookies`, ops 96 and 97): in memory, each its
-  host's; none is sent or received on the network. -/
-  cookies : L4Factoidal.Net.Cookies.Jar := {}
   rng : Option Crypto.WebCrypto.Drbg := none
   /-- Generate calls of the generator so far (SP 800-90A's reseed counter). -/
   draws : Nat := 0
@@ -612,8 +609,10 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if 86 ≤ code && code < 90 then pure' (L4Factoidal.Net.FetchRules.op code fs)
     -- `document.cookie`: the host and the secure flag are the session's page's, never arguments.
     else if code == 96 || code == 97 then
-      let (cookies, r) := L4Factoidal.Net.Cookies.op s.cookies s.net.page.origin s.net.page.secure code fs
-      ({ s with cookies }, r)
+      -- the jar is the network's too (`Net.Xhr.State.cookies`); the time a script gives is kept
+      let (cookies, r) := L4Factoidal.Net.Cookies.op s.net.cookies s.net.page.origin s.net.page.secure code fs
+      let now := max s.net.now ((L4Factoidal.Net.Cookies.strAt fs 1).toNat?.getD 0)
+      ({ s with net := { s.net with cookies, now } }, r)
     -- The values the SVG DOM reflects: a length, a number, a number list, a transform list.
     else if 92 ≤ code && code < 96 then pure' (L4Factoidal.DOM.SvgValues.op code fs)
     -- Service workers: `register()`'s URL checks and registration matching (pure, no state).
