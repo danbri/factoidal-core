@@ -278,3 +278,138 @@ engine 25c3a4510:
 | schema.org | 59–87 | 1,167 |
 
 The numbers after the changes are added when an engine with them has drawn the pages.
+
+## The afternoon: what the pages still lacked, and the time to a first frame
+
+### Animated values on screen
+
+The cascade that scripts read has the values of running animations and transitions; the
+frame a host painted did not: `opacity: 0; animation: fade-in .3s forwards` stayed
+invisible. Three pieces were missing. A render's layout request is filtered by
+`WebDocument.layoutFields`, and `animated` was not in the list, so the field never reached
+`elementState` in a render. No host carried the list: `page-load.mjs takeAnimated(page, turn)`
+keeps a turn's `animated` on the host's record of the page, `pageLayoutFields` gives it to
+every request, and the window, Textnaut and the Hub draw again when it changed. And no
+turn answered it: `WebScripts.animatedOf` gives the animated values of the session's last
+layout when that layout is of the page as it is now and of the timeline's time now, and
+nothing when the layout is older (a host keeps the list it has; an old value is never
+given as the present one). A render replays the session's commands over the parsed page
+and keeps the arena's node numbers, so the session's numbers are the render's.
+
+Open: a page whose scripts read no layout in a turn gets no new values, and a page with
+no script has no session at all. Both need the style change made at each frame.
+
+### `@import`
+
+No `@import` was followed: the sheet reader left the rule out and no host fetched its
+sheet. `Rendering/ImportTree.lean` walks the imports of a sheet depth first from the
+sheets a host has given: an import whose sheet is given is read in place of its rule,
+under the rule's layer, `supports()` condition and media query list (`wrapImport`), its
+own imports first; one that is not given is listed for the host (`inspect` answers
+`imports`). The host fetches what is listed and asks again (`page-load.mjs loadImports`),
+and the request field `imported` carries the sheets to every layout. A sheet imported
+twice applies once, at its first place.
+
+### Sheets and images that arrive after the scripts started
+
+The script session's layout request was fixed at its start. A session action may now
+carry `layout` (`WebScripts.takeLayout`): the session's layout reads use it from then on,
+and what it kept of the old layout is dropped. The window sends it when a sheet, an
+imported sheet or an image arrived after the start.
+
+### `srcset` and `picture`
+
+An `img` was its `src`. The source is now chosen by `HTML.ImageSource` in one nominal
+environment (1280 by 800, one device pixel a CSS pixel), so that the list a host fetches
+and every layout name the same image; candidates in a format the engine does not decode
+(WebP, AVIF) are passed over, and the `src` stands when nothing else is left. BBC News
+then asks for its JPEG candidates instead of WebP.
+
+### The time to a first frame in the window
+
+Measured on a quiet M1 with the macOS engine of main ca652ad26, the window off screen at
+1280 by 1600 and text size 100%, in ms from the start of the process to the first frame
+presented; the engine is the same in both columns, only the host differs:
+
+| Page | host of main | host with the changes below |
+|---|---|---|
+| Hacker News | 6,988 | 4,416 |
+| gov.uk | 14,179 | 4,147 |
+| w3.org | 11,688 | 3,026 |
+| Wikipedia | 11,399 | 6,340 |
+| schema.org | 5,029 | 1,696 |
+| MDN (grid) | 52,842 | 38,787 |
+| lean-lang.org | none in 200 s | none in 200 s |
+| BBC News | none in 200 s | none in 200 s |
+
+What the host did that it need not have done:
+
+- It read the QuickJS guest (1.25 MB) and gave it to the engine, which decodes and
+  validates it, at every start: 0.55 to 1.3 s before the first fetch. The guest is now
+  loaded when a page first runs on it.
+- Its first compile of a page, made before the window's size is known and never shown,
+  asked for the CPU probe, which draws the page's inline SVG on the CPU: 8.5 s on gov.uk.
+  It asks for none now.
+- It waited for every image's bytes, and the engine decoded each, before the first
+  frame. The window now reads the bytes while the page is laid out, shows the page with
+  the alternative texts, gives the engine the images once a frame is on screen, and
+  draws again (`setImagesAfterFirstFrame`, `startImages`, the page's `revision`). Runs
+  that compare frames or replay input wait for the images as before.
+- It fetched linked sheets and scripts one after another: 3.1 s for the 31 sheets of
+  lean-lang.org, 0.57 s six at a time (`inOrder`, the document's order kept).
+- The `fontFaces` question computed the style of every element to find the faces the
+  text uses, also when the page's rules name every face and the answer does not depend
+  on it: 0.46 s on gov.uk, 1.6 s on lean-lang.org (`WebDocument.facesFetched`).
+
+What is left, by page: MDN is the scripts' start turn (25 to 37 s for 1.42 million
+instructions: every layout read after a write is a cascade of the page) and 4.2 to 4.8 s
+a layout; lean-lang.org and BBC News do not end their start turn in 200 s (BBC's 62
+module scripts are fetched inside the turn, one host round trip each); Wikipedia is its
+layout, 1.7 s.
+
+### The WPT runner held no page font
+
+The engine lays text out with the font a host holds, and draws with a page's web fonts
+only inside that font's profile; with none held every page is laid out in the bitmap
+face and no web font is used. The hosts hold Noto Sans. The WPT runner held nothing, so
+a page's own font (Ahem in most layout tests) was fetched, checked and held, and its text
+was still measured in the bitmap face: nine letters of `font: 10px/1 Ahem` were 77.14px
+wide, not 90px. The runner now holds the font the hosts hold; the canvas text tests keep
+their own font in its place. On ten pages that link `/fonts/ahem.css`: 87 to 174 of 300
+subtests.
+
+### Bounds (work driven by a page), this part
+
+| Work | Bound | State |
+|---|---|---|
+| sheets read for one sheet's imports | 64 (`ImportTree.maxSheets`; `sheetsOf_length`, `lackingOf_length`), 8 deep (`maxDepth`), each URL once | proved for the counts; the depth and the once-only rule by construction, tested |
+| imported sheets of a request | 256 sheets, 4 MiB of text (`importedSheets`) | by construction, tested |
+| rounds of asking a host for imports | 9 rounds, 64 sheets (`loadImports`) | host code, tested |
+| the animated values of a turn | those of the last layout; no cascade, no layout made (`animatedOf`) | proved (`animatedOf_fresh`, `_written`, `_earlier`) |
+| the `fontFaces` question | no cascade when every face is named by a rule (`facesFetched_declared`) | proved |
+| fetches at once in the loader | 6 (`inOrder`), no work started after a failure | host code, tested |
+
+### Proved, tested, open (this part)
+
+Proved: `ImportTree.sheetsOf_length`, `lackingOf_length`, `walk_no_imports`, `walk_zero`;
+`WebDocument.wrapImport_plain`, `animated_imported_layout_fields`, `facesFetched_declared`;
+`WebScripts.takeLayout_start`, `takeLayout_absent`, `animatedOf_fresh`, `animatedOf_written`,
+`animatedOf_earlier`; `WebRender.imageSource_plain`.
+
+Tested only: the import walk's order, cycles and limits (guards in `ImportTree.lean`); the
+host side (`host_parity_test.ts`: `takeAnimated`, `loadImports`, images after the first
+frame with a stand-in engine, `inOrder`); the runner's page font (ten WPT pages, and a
+cloud check of the layout directories).
+
+Open:
+
+- The style change at each frame for a page whose scripts read no layout, and for a page
+  with no script (animations there never show).
+- A generic `monospace` face. Code on MDN and lean-lang.org is drawn in the proportional
+  face. The initial `font-family` of the engine is `monospace` (from the bitmap face), so
+  a held monospace font would draw all unstyled text until the initial value changes.
+- SVG images as vectors (see above); the picture drawn on the CPU costs about 19 µs a
+  pixel.
+- A store per image; JPEG and PNG over 1,048,576 pixels; WebP and AVIF.
+- The main-thread engine's first call costs 0.4 to 0.5 s in the window.
+- The engine could use a page's web fonts with no page font held (the runner's case).
