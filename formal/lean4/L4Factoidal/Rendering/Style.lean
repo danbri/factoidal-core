@@ -2136,11 +2136,17 @@ the caller (`WebDocument.measure`) checks both. -/
 
 /-- The styles `base` with the subtrees of `roots` styled again, parents before children
 (the step of `computeAllWith`). `base` must be the styles of the same tree with text
-scale 1. A root inside another root's subtree is styled twice, last with its new parent. -/
+scale 1, or of that tree before nodes were added to its arena: a node `base` has no
+style for takes the style of a node no cascade reaches (as `computeAllWith` leaves a node
+that is in no document), until a root's subtree styles it. A root inside another root's
+subtree is styled twice, last with its new parent. -/
 def restyleWith (matchesOf : Nat → List Match) (dom : Dom) (base : Array Computed) (roots : List Nat) :
     Except String (Array Computed) :=
+  if base.size > dom.size then .error "styles of another tree"
+  else
+  -- nodes made since `base` (the arena only grows)
+  let base := if base.size < dom.size then base ++ Array.replicate (dom.size - base.size) ({} : Computed) else base
   if roots.isEmpty then .ok base
-  else if base.size != dom.size then .error "styles of another tree"
   else Id.run do
     let mut pending := roots
     let mut styles := base
@@ -2161,9 +2167,24 @@ def restyleWith (matchesOf : Nat → List Match) (dom : Dom) (base : Array Compu
 are the ones given, for every tree and rule set. Does not say: that the styles of the
 subtrees styled again are those of the whole cascade (`computeAllWith`) after the change;
 that is tested on pages (`Animation.Computed`), not proved. -/
-theorem restyleWith_nil (matchesOf : Nat → List Match) (dom : Dom) (base : Array Computed) :
-    restyleWith matchesOf dom base [] = .ok base := by
-  simp [restyleWith]
+theorem restyleWith_nil (matchesOf : Nat → List Match) (dom : Dom) (base : Array Computed)
+    (h : base.size = dom.size) : restyleWith matchesOf dom base [] = .ok base := by
+  simp [restyleWith, h]
+
+/-- Kind: totality of the answer. Says: with no subtree to style again, the styles of an
+arena that grew are the styles before with one style for each new node, so the answer
+has a style for every node. Does not say: more of the new nodes' styles than that they
+are those of a node no cascade reached. -/
+theorem restyleWith_nil_size (matchesOf : Nat → List Match) (dom : Dom) (base : Array Computed)
+    (h : base.size ≤ dom.size) :
+    (restyleWith matchesOf dom base []).toOption.map (·.size) = some dom.size := by
+  have h1 : ¬ (base.size > dom.size) := by omega
+  by_cases h2 : base.size < dom.size
+  · have hs : (base ++ Array.replicate (dom.size - base.size) ({} : Computed)).size = dom.size := by
+      rw [Array.size_append, Array.size_replicate]; omega
+    simp [restyleWith, h1, h2, Except.toOption, hs]
+  · have h3 : base.size = dom.size := by omega
+    simp [restyleWith, h3, Except.toOption]
 
 /-- A selector of `sels` tests the attribute `name`, also inside `:not()`, `:is()` and
 `:nth-child(… of …)`. A work list, bounded: past the bound the answer is yes. -/
@@ -2181,6 +2202,7 @@ def selectorsReadAttr (name : String) (sels : List DOM.Selectors.Complex) : Bool
           | .nth _ _ _ (some inner) => more := inner ++ more
           | .not inner => more := inner ++ more
           | .is inner => more := inner ++ more
+          | .has inner => more := inner ++ more
           | _ => pure ()
       pending := more
   return true

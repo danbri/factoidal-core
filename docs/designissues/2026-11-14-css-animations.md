@@ -185,6 +185,30 @@ attributes (two substring searches each). No table is built, no second cascade r
 A page with animations: two cascades per style change (one without the animated values, one with),
 and the engine's work per animated element.
 
+Found by timing one case of `css/support/interpolation-testcommon.js` (transitions, transitions of
+`all`, CSS animations; 18 targets, 89 nodes) through `Host.measureNow` under the interpreter (a whole
+cascade of that document: 31 to 41 ms there), and fixed:
+
+| step | before | after |
+|---|---|---|
+| forced read after the style writes of a transition target (`transition-property: rotate`) | 34 to 50 ms | 6 to 8 ms |
+| the same with `transition-property: all` | 37 ms | 16 ms |
+| the first read after the sheet changed and 18 animations exist | 1,397 ms | 320 ms |
+| a read after a write of another element's `style` attribute | 3 to 5 ms | 2 to 3 ms |
+| the same after the page made a node in no tree (`createElement`, as the tests' URL comparison does) | a whole cascade | 1 to 3 ms |
+
+- The declarations text of an element (`Computed.declarationText`) held the animated values of the
+  style it was read from, so the style without them never compared equal to the kept style with them:
+  every element with an animation had each of its declared longhands computed twice at every style
+  change. The animated values (origins 2 and 3) are now left out of it.
+- The two styles of an element are compared only when one of its transitions is of `all`; a
+  transition of named properties looks at those properties.
+- When the rules that match an element are the same and neither its font, colour nor flow changed,
+  the longhands compared are those its two `style` attributes declare differently
+  (`Computed.styleAttributeDiff`).
+- A write that changes nothing in a document's tree (a new node, a clone, a change of a node that is in
+  no tree: `Page.detachedWrite`) keeps the kept styles; `CSS.restyleWith` takes an arena that grew.
+
 ## Proved, tested, open
 
 Proved (axioms: propext, Classical.choice, Quot.sound):
@@ -198,6 +222,10 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
 - `Easing.segment_mono`, `segment_between`, `evalPoints_two`, `evalPoints_two_mono`: one segment of
   `linear()` whose output does not fall is monotone in its input at every input, and between its two
   inputs it stays between its two outputs; a two-point `linear(a, b)` with a ≤ b does not decrease.
+- `Page.detachedWrite_connected`: a write whose node (or parent) is in a document's tree is never taken
+  as changing nothing there. `CSS.restyleWith_nil` (same arena: the styles given), `restyleWith_nil_size`
+  (an arena that grew: a style for every node). `Computed.styleAttributeDiff_same`: a longhand two
+  `style` attributes declare alike is not in their difference.
 - `Reads.wrote_other`, `Reads.wrote_version` (`Hosts/Page`): a write that is not of a `style`
   attribute forgets the noted elements, and every `wrote` leaves the note exact for the new version;
   a write path that raises the version another way leaves `styleVersion` behind, and the next measure
