@@ -202,8 +202,26 @@ Measured (branch checks against the full run of d799500c7):
 | | compression | 8 | 484 |
 | | encoding/streams | 0 | 216 |
 | | fetch/api (119 names) | 501 | 600 |
+| 43582562501 (2eb5dcae3, merged 0acb106d3; baseline 5cfcaf872) | third_party/test262 (all) | 36,348 | 38,005 |
+| | WebCryptoAPI/modern-algos | 6,340 | 6,896 |
+| | html/dom (idlharness, 10 names) | 4,322 | 4,637 |
 
 Performance: a page that names no stream class makes none (lazy globals); the prelude's parse
 is done once when the realm snapshot is made. The Array iteration methods read one element at a
 time (one object lookup per element more than the copy they took before); not timed, as no
 engine could be built locally tonight.
+
+Added after the first two merges (in 0acb106d3): Proxy defineProperty, getPrototypeOf,
+setPrototypeOf, isExtensible and preventExtensions traps (`proxyDefineOk`); await and yield in
+a switch (`switchStmts`); Promise.withResolvers and Promise.try; Array iteration, indexOf,
+lastIndexOf and includes reading their receiver through HasProperty and LengthOfArrayLike
+(`elemAt`, `arrayProbes`); Iterator.concat, zip and zipKeyed; DisposableStack, SuppressedError,
+Symbol.dispose and Symbol.asyncDispose; Error.isError; RegExp.escape (`regexpEscapeStr`);
+parameters in their temporal dead zone; the eval `var arguments` rule in parameters. More
+theorems: `proxyDefineOk_*` (3), `switchStmts_cont`, `arrayProbes_spec`,
+`regexpEscapeStr_digit`.
+
+Open as well: top-level await (a module's evaluation must wait for an async dependency); an
+async function's parameter errors must reject its promise (they throw at the call); `using`
+and `await using` declarations, AsyncDisposableStack, Array.fromAsync; `delete` on an Array
+element leaves undefined (arrays are dense), so the Array methods cannot see holes.
