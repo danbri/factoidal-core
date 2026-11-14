@@ -1,0 +1,14 @@
+{
+ "case": "B.10.a",
+ "file": "Appendix/B/B.10/b.10.a.xhtml",
+ "quote": "You must see an empty string for a person name :",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    ""
+   ],
+   "label": "Person Name"
+  }
+ ]
+}

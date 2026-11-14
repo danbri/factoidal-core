@@ -370,7 +370,12 @@ def Model.env (m : Model) (modelEl : Nat) (ns : List (String × String)) (cur : 
     (info : List (String × Value)) : Env :=
   let mine := m.insts.zipIdx.filter (fun (i, _) => i.model == modelEl)
   { docs := m.insts.map (·.doc), instIds := mine.map (fun (i, k) => (i.id, k)),
-    defaultInst := mine.head?.map (·.2), nsctx := ns, indexes := m.indexes, current := cur,
+    defaultInst := mine.head?.map (·.2), nsctx := ns,
+    -- §7.7.5: every repeat has an index; one that `setindex` has not moved is at its `startindex` (default 1)
+    indexes := (m.form.els.toList.filter (·.name == "repeat")).filterMap (fun e =>
+      (e.attr "id").map (fun id => (id, ((m.indexes.find? (·.1 == id)).map (·.2)).getD
+        (((e.attr "startindex").bind String.toNat?).getD 1)))),
+    current := cur,
     eventInfo := info, now := m.now, tz := m.tz }
 
 def Model.defaultRoot (m : Model) (modelEl : Nat) : Option Item :=
@@ -549,7 +554,8 @@ def Model.nodes (m : Model) (el : El) (cx : Cx) : Except String (Option (List It
       | .error e => .error e
 
 def Model.indexOf (m : Model) (el : El) : Nat :=
-  ((el.attr "id").bind (fun id => (m.indexes.find? (·.1 == id)).map (·.2))).getD 1
+  ((el.attr "id").bind (fun id => (m.indexes.find? (·.1 == id)).map (·.2))).getD
+    (((el.attr "startindex").bind String.toNat?).getD 1)
 
 /-- The in-scope evaluation context of element `e` (§7.2): the default
     instance of its model, narrowed by each enclosing binding element;
@@ -709,11 +715,12 @@ def Model.refresh (m : Model) (target : Nat) : Model :=
     let evs := v.flatMap (fun c =>
       match c.bound, m.snap.find? (fun o => o.el == c.el && o.iter == c.iter) with
       | some _, some o =>
-        let changed := c.value != o.value
+        -- §8.1.1: a control that becomes relevant is told its whole state
+        let changed := c.value != o.value || !o.relevant
         let w (n : String) := Work.dispatch n c.el c.iter []
         if !c.relevant then (if o.relevant then [w "xforms-disabled"] else [])
         else
-          (if changed || !o.relevant then [w "xforms-enabled"] else []) ++
+          (if changed then [w "xforms-enabled"] else []) ++
           (if changed then [w "xforms-value-changed"] else []) ++
           (if changed || c.valid != o.valid then
             [w (if c.valid then "xforms-valid" else "xforms-invalid")] else []) ++
