@@ -8827,7 +8827,8 @@
         seen.add(v);
         out.push('A' + len);
         for (let i = 0; i < len; i++) {
-          if (!Object.prototype.hasOwnProperty.call(v, i)) return false;
+          // HasOwnProperty, then Get: an accessor's getter runs, and what it throws is rethrown
+          if (!Object.prototype.hasOwnProperty.call(v, i) && Object.getOwnPropertyDescriptor(v, String(i)) === undefined) return false;
           if (!keyToks(v[i], out, seen)) return false;
         }
         return true;
@@ -9111,6 +9112,12 @@
       deliver(kind, f);
     };
     const exception = name => new DOMException(`IndexedDB: ${name}`, name);
+    // After an event of a transaction is dispatched, the transaction stays active while the
+    // promise jobs its listeners queued run (HTML runs a microtask checkpoint after each
+    // callback, before IndexedDB deactivates the transaction): a continuation of `await` on a
+    // request can make the next request. Then Lean is told the dispatch is done.
+    const pThen = Promise.prototype.then, resolved = Promise.resolve();
+    const afterJobs = f => { let k = 8; const hop = () => { if (k-- > 0) pThen.call(resolved, hop); else f(); }; hop(); };
     const finishTx = (tx, f, from) => {
       const s = kinds.get(tx);
       s.finished = true; s.names = names(f.slice(from));
@@ -9153,7 +9160,7 @@
             s.result = out;
           }
           const threw = idbDispatch(pathOf(r, tx), new Event('success'));
-          if (tx) call(['done', String(kinds.get(tx).id), threw ? '1' : '0', '']);
+          if (tx) { const id = String(kinds.get(tx).id), th = threw ? '1' : '0'; afterJobs(() => { call(['done', id, th, '']); kick(); }); }
         } else {
           const name = text(f[4]);
           s.result = undefined; s.error = exception(name);
@@ -9164,7 +9171,8 @@
             // the transaction's error: the request's, or AbortError when a listener threw; not for
             // the requests that an abort already under way fails
             if (aborts && !t.error && !t.aborting && name !== 'AbortError') { t.aborting = true; t.error = threw ? exception('AbortError') : s.error; }
-            call(['done', String(t.id), threw ? '1' : '0', aborts && !threw ? name : '']);
+            const id = String(t.id), th = threw ? '1' : '0', er = aborts && !threw ? name : '';
+            afterJobs(() => { call(['done', id, th, er]); kick(); });
           }
         }
         kick();
@@ -9208,8 +9216,8 @@
           s.result = db; s.tx = tx; s.done = true; s.error = null;
           const threw = idbDispatch([r], new IDBVersionChangeEvent('upgradeneeded', { oldVersion: num(f[5]), newVersion: num(f[6]) }));
           if (threw) kinds.get(tx).error = exception('AbortError');
-          call(['done', String(num(f[4])), threw ? '1' : '0', '']);
-          kick();
+          const id = String(num(f[4])), th = threw ? '1' : '0';
+          afterJobs(() => { call(['done', id, th, '']); kick(); });
           return;
         }
         reqs.delete(s.id);

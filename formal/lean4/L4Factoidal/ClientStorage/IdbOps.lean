@@ -127,6 +127,10 @@ structure Live where
   /-- Events that wait for `pump`. -/
   events : List (List Tok) := []
   next : Nat := 1
+  /-- Finished transactions and their databases: a store or index handle of one of them is
+  "deleted" (`InvalidStateError`) when its store or index is not in the database, else its
+  transaction is not active (`TransactionInactiveError`). -/
+  ended : List (Nat × String) := []
   deriving Inhabited
 
 /-- Everything IndexedDB keeps for one storage key: the databases (what a backend would
@@ -231,7 +235,7 @@ def Live.abort (l : Live) (dbs : List (String × Db)) (id : Nat) (err : String) 
     let names := storeNames (if t.mode == .vc then (get dbs t.db).getD {} else t.view dbs)
     let l := t.queue.foldl (fun l r => l.push [S "req", N r.id, N t.id, S "err", S "AbortError"]) l
     let l := l.push ([S "tx", N t.id, S "abort", S err] ++ names)
-    let l := { l with txns := l.txns.filter (·.id != id) }
+    let l := { l with txns := l.txns.filter (·.id != id), ended := (id, t.db) :: l.ended }
     match t.openReq with
     | some rq =>
       let l := { l with conns := l.conns.filter (·.id != t.conn), opens := l.opens.filter (·.id != rq) }
@@ -318,7 +322,16 @@ source exists (`InvalidStateError`), the transaction is active
 def reqGuard (dbs : List (String × Db)) (l : Live) (tx store : Nat) (index : Option Nat) (write : Bool) :
     Except String (Txn × Store) :=
   match l.txn? tx with
-  | none => .error "TransactionInactiveError"
+  | none =>
+    -- §4.4 and the methods' first steps: "has been deleted" precedes "not active"
+    match l.ended.find? (·.1 == tx) with
+    | some (_, name) =>
+      match get ((get dbs name).getD {}).stores store with
+      | none => .error "InvalidStateError"
+      | some s =>
+        if (match index with | some ix => !s.indexes.any (·.id == ix) | none => false) then .error "InvalidStateError"
+        else .error "TransactionInactiveError"
+    | none => .error "TransactionInactiveError"
   | some t =>
     match get (t.view dbs).stores store with
     | none => .error "InvalidStateError"
@@ -747,7 +760,7 @@ def txStep (dbs : List (String × Db)) (quota : Nat) (l : Live) : Option (Live �
       if use after > quota && use after > use dbs then
         some ((l.setTxn t).abort dbs t.id "QuotaExceededError", none, .none)
       else
-        let l := { l with txns := l.txns.filter (·.id != t.id) }
+        let l := { l with txns := l.txns.filter (·.id != t.id), ended := (t.id, t.db) :: l.ended }
         let l := (l.push ([S "tx", N t.id, S "complete"] ++ storeNames t.work)).reap t.conn
         match t.openReq with
         | some rq =>
