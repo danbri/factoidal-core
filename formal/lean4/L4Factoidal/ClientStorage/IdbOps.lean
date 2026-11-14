@@ -131,6 +131,10 @@ structure Live where
   "deleted" (`InvalidStateError`) when its store or index is not in the database, else its
   transaction is not active (`TransactionInactiveError`). -/
   ended : List (Nat × String × Bool) := []
+  /-- Upgrade transactions that were aborted and whose `abort` event the page has not had yet,
+  with their connections: until then the connection's upgrade transaction is still "running"
+  and not active (`TransactionInactiveError`), after it there is none (`InvalidStateError`). -/
+  upgradeAborting : List (Nat × Nat) := []
   deriving Inhabited
 
 /-- Everything IndexedDB keeps for one storage key: the databases (what a backend would
@@ -235,7 +239,8 @@ def Live.abort (l : Live) (dbs : List (String × Db)) (id : Nat) (err : String) 
     let names := storeNames (if t.mode == .vc then (get dbs t.db).getD {} else t.view dbs)
     let l := t.queue.foldl (fun l r => l.push [S "req", N r.id, N t.id, S "err", S "AbortError"]) l
     let l := l.push ([S "tx", N t.id, S "abort", S err] ++ names)
-    let l := { l with txns := l.txns.filter (·.id != id), ended := (id, t.db, t.mode == Mode.vc) :: l.ended }
+    let l := { l with txns := l.txns.filter (·.id != id), ended := (id, t.db, t.mode == Mode.vc) :: l.ended,
+                      upgradeAborting := if t.mode == Mode.vc then (id, t.conn) :: l.upgradeAborting else l.upgradeAborting }
     match t.openReq with
     | some rq =>
       let l := { l with conns := l.conns.filter (·.id != t.conn), opens := l.opens.filter (·.id != rq) }
@@ -490,7 +495,7 @@ def cmdCursor (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × L
 `InvalidStateError` when there is none, `TransactionInactiveError` when it is not active. -/
 def upgradeGuard (l : Live) (conn : Nat) : Except String Txn :=
   match l.upgradeOf conn with
-  | none => .error "InvalidStateError"
+  | none => if l.upgradeAborting.any (·.2 == conn) then .error "TransactionInactiveError" else .error "InvalidStateError"
   | some t => if t.state != .active || t.commitAsked then .error "TransactionInactiveError" else .ok t
 
 /-- The version-change transaction and the store that a schema method of a store needs. -/
@@ -501,7 +506,8 @@ def schemaGuard (dbs : List (String × Db)) (l : Live) (tx store : Nat) : Except
     -- upgrade that aborted): InvalidStateError; else it is not active
     match l.ended.find? (·.1 == tx) with
     | some (_, name, true) =>
-      if (get ((get dbs name).getD {}).stores store).isSome then .error "TransactionInactiveError" else .error "InvalidStateError"
+      if l.upgradeAborting.any (·.1 == tx) then .error "TransactionInactiveError"
+      else if (get ((get dbs name).getD {}).stores store).isSome then .error "TransactionInactiveError" else .error "InvalidStateError"
     | _ => .error "InvalidStateError"
   | some t =>
     if t.mode != .vc then .error "InvalidStateError" else
@@ -517,6 +523,14 @@ theorem schemaGuard_ended_upgrade (dbs : List (String × Db)) (l : Live) (tx sto
     (hs : get ((get dbs name).getD {}).stores store = some s) :
     schemaGuard dbs l tx store = .error "TransactionInactiveError" := by
   simp [schemaGuard, ht, he, hs]
+
+/-- Kind: order of exceptions (upgrade lifecycle). Says: after `abort()` of an upgrade
+transaction and before its `abort` event, the connection's schema methods answer
+`TransactionInactiveError` (the transaction still runs); once the page had the event and
+no upgrade runs, `InvalidStateError`. -/
+theorem upgradeGuard_aborting (l : Live) (conn : Nat) (hu : l.upgradeOf conn = none) :
+    upgradeGuard l conn = (if l.upgradeAborting.any (·.2 == conn) then .error "TransactionInactiveError" else .error "InvalidStateError") := by
+  simp [upgradeGuard, hu]
 
 def setStoreOf (t : Txn) (id : Nat) (s : Store) : Txn := { t with work := { t.work with stores := set t.work.stores id s } }
 
@@ -586,6 +600,8 @@ def sync (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × List T
         let id := l.next
         let t : Txn := { id, conn := c.id, db := c.db, mode := if strAt a 2 == "readwrite" then .rw else .ro, scope := ids.eraseDups }
         ({ l with next := id + 1, txns := l.txns ++ [t] }, ok [N id])
+  -- the page has dispatched a transaction's `complete` or `abort` event
+  | "txended" => ({ l with upgradeAborting := l.upgradeAborting.filter (·.1 != natAt a 1) }, ok)
   -- the store names of a database as committed (what an aborted upgrade reverts to)
   | "dbnames" => (l, ok (storeNames ((get dbs (strAt a 1)).getD {})))
   | "txinfo" =>

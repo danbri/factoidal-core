@@ -9876,6 +9876,8 @@
       }
       if (kind === 'tx') {
         const tx = txs.get(num(f[1]));
+        // Lean: the page has this transaction's last event (an aborted upgrade no longer "runs")
+        call(['txended', text(f[1])]);
         if (!tx) return;
         const s = kinds.get(tx), done = text(f[2]) === 'complete';
         finishTx(tx, f, done ? 3 : 4);

@@ -139,4 +139,12 @@ private def cmdsQuota (s : Shelf) : List String :=
 #guard cmdsQuota (answers s2 [["transaction", "2", "readwrite", "books"], ["req", "6", "1", "", "put", "1", two] ++ book "Emma",
   ["deactivate", "6"]]).1 == ["req 7 6 ok k " ++ two, "ok", "tx 6 abort QuotaExceededError books"]
 
+-- an upgrade aborted by the page: until its abort event the connection's schema methods are "not active", after it "no upgrade"
+private def upgrade2 : List (List String) :=
+  [["open", "db", ""], ["pump"], ["createStore", "2", "books", "n", "0"], ["done", "3", "0", ""], ["pump"], ["pump"], ["pump"],
+   ["close", "2"], ["open", "db", "2"], ["pump"], ["abort", "6"]]
+#guard ((answers {} (upgrade2 ++ [["createStore", "5", "books2", "n", "0"], ["deleteStore", "5", "books"]])).2.drop 11) ==
+  ["!TransactionInactiveError", "!TransactionInactiveError"]
+#guard ((answers {} (upgrade2 ++ [["txended", "6"], ["createStore", "5", "books2", "n", "0"]])).2.drop 12) == ["!InvalidStateError"]
+
 end L4Factoidal.ClientStorage.Idb.Tests
