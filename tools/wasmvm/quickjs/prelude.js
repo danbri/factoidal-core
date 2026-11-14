@@ -9831,6 +9831,7 @@
     const closeW = w => { if (!w.open) throw new TypeError('The stream is closed.'); w.open = false; call(201, ['wclose', String(w.id)], 'close'); };
     const abortW = w => { if (w.open) { w.open = false; apiCall(201, ['wabort', String(w.id)], 0, true); } };
     let sinkFor = null;
+    const wOf = (o, what) => { const w = o == null ? undefined : kinds.get(o); if (!w || w.id === undefined) throw new TypeError('Illegal invocation: FileSystemWritableFileStream.' + what); return w; };
     class FileSystemWritableFileStream extends Base {
       constructor() {
         guard();
@@ -9838,17 +9839,28 @@
         if (Base === Object) super();
         else super({ write(chunk) { writeChunk(w, chunk); }, close() { closeW(w); }, abort() { abortW(w); } });
       }
+      // A promise-returning operation: a wrong receiver or a missing argument is its rejection.
       write(data) {
-        const w = kinds.get(this);
-        if (Base !== Object) return later(() => { const writer = this.getWriter(), p = writer.write(data); writer.releaseLock(); return p; });
-        return later(() => writeChunk(w, data));
+        const n = arguments.length;
+        return later(() => {
+          const w = wOf(this, 'write');
+          need(1, n, 'FileSystemWritableFileStream.write');
+          if (Base !== Object) { const writer = this.getWriter(), p = writer.write(data); writer.releaseLock(); return p; }
+          return writeChunk(w, data);
+        });
       }
-      seek(position) { need(1, arguments.length, 'FileSystemWritableFileStream.seek'); return this.write({ type: 'seek', position }); }
-      truncate(size) { need(1, arguments.length, 'FileSystemWritableFileStream.truncate'); return this.write({ type: 'truncate', size }); }
+      seek(position) {
+        const n = arguments.length;
+        return later(() => { wOf(this, 'seek'); need(1, n, 'FileSystemWritableFileStream.seek'); return FileSystemWritableFileStream.prototype.write.call(this, { type: 'seek', position }); });
+      }
+      truncate(size) {
+        const n = arguments.length;
+        return later(() => { wOf(this, 'truncate'); need(1, n, 'FileSystemWritableFileStream.truncate'); return FileSystemWritableFileStream.prototype.write.call(this, { type: 'truncate', size }); });
+      }
     }
     if (Base === Object) {
-      FileSystemWritableFileStream.prototype.close = function close() { const w = kinds.get(this); return later(() => closeW(w)); };
-      FileSystemWritableFileStream.prototype.abort = function abort() { const w = kinds.get(this); return later(() => abortW(w)); };
+      FileSystemWritableFileStream.prototype.close = function close() { return later(() => closeW(wOf(this, 'close'))); };
+      FileSystemWritableFileStream.prototype.abort = function abort() { return later(() => abortW(wOf(this, 'abort'))); };
     }
     idl(FileSystemWritableFileStream, 'FileSystemWritableFileStream');
     const newWritable = id => { const w = { id, open: true }; sinkFor = w; try { return make(FileSystemWritableFileStream, w); } finally { sinkFor = null; } };
