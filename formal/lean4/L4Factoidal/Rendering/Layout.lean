@@ -1703,9 +1703,14 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let dx := match CSS.resolve available s.pos.left with
           | some l => l
           | none => match CSS.resolve available s.pos.right with | some r => -r | none => 0
-        let dy := match s.pos.top with
-          | .px t => t
-          | _ => match s.pos.bottom with | .px e => -e | _ => 0
+        -- a percentage `top` or `bottom` is of the containing block's height when the styles
+        -- make it definite, else it is `auto` (CSS Positioned Layout 3 §3.1)
+        let basis := match n.parent with
+          | some parent => if (dom.get parent).type == .element then definiteHeight dom styles parent else none
+          | none => none
+        let dy := match resolveOpt basis s.pos.top with
+          | some t => t
+          | none => match resolveOpt basis s.pos.bottom with | some e => -e | none => 0
         -- the floats of the context do not move with it
         return {framed.shift dx dy with floats := framed.floats}
       return framed

@@ -147,7 +147,14 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
       | none => if is.clipOverflow then 0 else
         let c := match specified with | some w => min w minContent | none => minContent
         match hi with | some h => min c h | none => c
-    cores := cores.push {base := LU.ofPx (basis.getD maxContent), lo := LU.ofPx (max 0 lo), hi := hi.map LU.ofPx,
+    -- A basis (or, with `flex-basis: auto`, a width) that is a sizing keyword takes that
+    -- width of the content (CSS Sizing 3 §3.2); with no keyword it is the max-content width (§9.2).
+    let keyword := match is.flex.basis with
+      | .length l => l
+      | .auto => is.width
+      | .content => .auto
+    let natural := (keywordWidth keyword minContent maxContent (box.width-edges)).getD maxContent
+    cores := cores.push {base := LU.ofPx (basis.getD natural), lo := LU.ofPx (max 0 lo), hi := hi.map LU.ofPx,
                          grow := flexFactor is.flex.grow, shrink := flexFactor is.flex.shrink, edges := LU.ofPx edges}
     styles := styles.push is
   let n := items.size
@@ -284,7 +291,10 @@ def flexColumn (kids : Children) (s : Computed) (items : Array Item) (box : Cont
     let widthC ← match CSS.resolve box.width is.width with
       | some w => pure w
       | none =>
-        if align == .stretch && !autoCross then pure roomW
+        if is.width.isKeyword then do
+          let (a,c) ← kids.contentIntrinsic item
+          pure ((keywordWidth is.width a c roomW).getD roomW)
+        else if align == .stretch && !autoCross then pure roomW
         else do
           -- fit-content (CSS Sizing 3 §5.1): the max-content width, no more than the room,
           -- no less than the min-content width
@@ -394,7 +404,7 @@ def flexColumnWrap (kids : Children) (s : Computed) (items : Array Item) (box : 
       | some w => pure w
       | none => do
         let (a,c) ← kids.contentIntrinsic item
-        pure (min c (max a roomW))
+        pure ((keywordWidth is.width a c roomW).getD (min c (max a roomW)))
     let widthC := max 0 (clampOpt ((CSS.resolve box.width is.minWidth).getD 0) (CSS.resolve box.width is.maxWidth) widthC)
     let width := widthC+padH
     let definite := resolveOpt box.height is.height
@@ -506,7 +516,7 @@ def flexColumnWrap (kids : Children) (s : Computed) (items : Array Item) (box : 
     let padH := is.borderEdges.left+is.borderEdges.right+is.padding.left+is.padding.right
     let align := itemAlign s is
     let autoCross := is.autoMarginLeft || is.autoMarginRight
-    let stretched := align == .stretch && (CSS.resolve box.width is.width).isNone && !autoCross
+    let stretched := align == .stretch && (CSS.resolve box.width is.width).isNone && !is.width.isKeyword && !autoCross
     let width := if stretched then
         max padH (clampOpt ((CSS.resolve box.width is.minWidth).getD 0+padH)
           ((CSS.resolve box.width is.maxWidth).map (·+padH)) (lineCross-m.left-m.right))

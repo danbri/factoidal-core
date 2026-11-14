@@ -32,6 +32,10 @@ private def page := "<div id=a>AA</div><div id=c><div id=p>PP</div><div id=q>Q</
 #guard at? page "#a{position:relative;left:10px;top:3px}" "AA" == some (10,3)
 #guard box page "#a{position:relative;right:10px;bottom:3px}" "a" == some (-10,-3,200,7)
 #guard box page "#a{position:relative;left:10%}" "a" == some (20,0,200,7)
+-- A percentage `top` is of the containing block's height when that is definite, else auto.
+#guard box page "#c{height:40px} #p{position:relative;top:50%}" "p" == some (0,27,200,7)
+#guard box page "#c{height:40px} #p{position:relative;bottom:25%}" "p" == some (0,-3,200,7)
+#guard box page "#p{position:relative;top:50%}" "p" == some (0,7,200,7)
 -- Absolute: out of flow; the next sibling takes its place.
 #guard box page "#p{position:absolute}" "q" == some (0,7,200,7)
 #guard box page "#p{position:absolute}" "c" == some (0,7,200,7)
