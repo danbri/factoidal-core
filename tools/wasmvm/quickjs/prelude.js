@@ -11018,7 +11018,8 @@
       return out;
     };
     const call = (args, what) => {
-      const r = apiCall(204, [args[0], href, String(Math.trunc(Date.now())), ...args.slice(1)], 0, true);
+      // a service worker names its script URL after 'sw:' (Lean then allows any url of its origin)
+      const r = apiCall(204, [args[0], swScope ? 'sw:' + href : href, String(Math.trunc(Date.now())), ...args.slice(1)], 0, true);
       if (typeof r === 'number') throw new DOMException(`${what}: cookies are not available.`, 'SecurityError');
       const f = unpack(r).map(text);
       if (f[0] === 'ok') return f.slice(1);
@@ -14162,6 +14163,8 @@
     'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager',
     'ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder',
     'StorageBucket', 'StorageBucketManager', 'caches', 'Cache', 'CacheStorage']);
+  // The Cookie Store is [Exposed=(ServiceWorker,Window)]: a service worker's scope keeps it.
+  const serviceStorageGlobals = new Set(['cookieStore', 'CookieStore', 'CookieChangeEvent', 'CookieStoreManager']);
   // The [SecureContext] interfaces of client-side storage: dropped from a worker that is not a secure context.
   const secureOnlyGlobals = new Set(['FileSystemHandle', 'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream',
     'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager', 'StorageBucket', 'StorageBucketManager', 'caches', 'Cache', 'CacheStorage']);
@@ -14262,7 +14265,7 @@
       pathname: u.pathname, search: u.search, hash: u.hash });
     const wnav = Object.create(WorkerNavigator.prototype);
     for (const k of Object.getOwnPropertyNames(globalThis))
-      if ((!esGlobals.has(k) && !workerGlobals.has(k)) || (!secureWorker && secureOnlyGlobals.has(k))) { try { delete globalThis[k]; } catch {} }
+      if ((!esGlobals.has(k) && !workerGlobals.has(k) && !(isService && serviceStorageGlobals.has(k))) || (!secureWorker && secureOnlyGlobals.has(k))) { try { delete globalThis[k]; } catch {} }
     // Service Workers §4.1: XMLHttpRequest is not exposed in a service worker
     if (isService) try { delete globalThis.XMLHttpRequest; delete globalThis.XMLHttpRequestEventTarget; delete globalThis.XMLHttpRequestUpload; } catch {}
     const SCOPE = isService ? ServiceWorkerGlobalScope : isShared ? SharedWorkerGlobalScope : DedicatedWorkerGlobalScope;
