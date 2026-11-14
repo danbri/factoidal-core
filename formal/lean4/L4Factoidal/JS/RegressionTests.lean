@@ -608,5 +608,8 @@ private def parses (src : String) : Bool := syn src == "ok"
 
 #guard out "var r = []; function t(f) { try { r.push(String(f())) } catch (e) { r.push(e.name) } } var b = 'outer'; t(() => (function (a = b, b) { return a })()); t(() => (function (x = x) { return x })()); t(() => (function (a, c = a) { return c })(3)); t(() => (function (a = 1, { d } = { d: a }) { return d })()); t(() => ({ m(y = y) {} }).m()); print(r.join())" == ["ReferenceError,ReferenceError,3,1,ReferenceError"]
 #guard out "var r = []; function t(f) { try { r.push(String(f())) } catch (e) { r.push(e.name) } } t(() => (function (p = eval('var arguments')) {})()); t(() => (function (p = eval('var a = 1'), q = a) { return q })()); t(() => ((p = eval('var arguments = 2')) => 'arrow')()); t(() => (function () { eval('var arguments = 3'); return arguments })()); print(r.join())" == ["SyntaxError,1,arrow,3"]
+/-! ## Iterator.zip and Iterator.zipKeyed -/
+
+#guard out "var z = Iterator.zip([[1, 2, 3], 'ab'.split('')]); print(JSON.stringify([...z])); print(JSON.stringify([...Iterator.zip([[1], [2, 3]], { mode: 'longest', padding: ['p', 'q'] })])); try { [...Iterator.zip([[1], [2, 3]], { mode: 'strict' })] } catch (e) { print(e.name) } var k = Iterator.zipKeyed({ a: [1, 2], b: [3] }); print(JSON.stringify([...k])); try { Iterator.zip([1]) } catch (e) { print(e.name) } try { Iterator.zip([], { mode: 'x' }) } catch (e) { print(e.name) }" == ["[[1,\"a\"],[2,\"b\"]]", "[[1,2],[\"p\",3]]", "TypeError", "[{\"a\":1,\"b\":3}]", "TypeError", "TypeError"]
 
 end L4Factoidal.JS.Tests

@@ -78,6 +78,8 @@ inductive NativeX where
   | iteratorDispose | adoptClosure
   /-- `Error.isError` (§20.5.2.1), `Promise.try` (§27.2.4.8), `RegExp.escape` (§22.2.5.1). -/
   | errorIsError | promiseTry | regexpEscape
+  /-- `Iterator.zip` (false) and `Iterator.zipKeyed` (true): a helper of kind 7. -/
+  | iteratorZip (keyed : Bool)
   /-- `Promise.race` (0) and `Promise.allSettled` (1) (§27.2.4.5, §27.2.4.2), and the
   function that records one settled element of `allSettled` (0 fulfilled, 1 rejected). -/
   | promiseCombinator (k : Nat) | promiseSettleElement (rejected : Nat)
