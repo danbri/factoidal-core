@@ -135,6 +135,54 @@ def qsa (sel : String) : Option (List String) :=
 #guard qsa "*|li:is(#t3)" == some ["t3"]
 #guard (["", "div,", ".5cm", "ns|div", ":example", ">*", "[*=test]", "div::example"].map Selectors.parse).all (·.isNone)
 
+/-! ## Examples: `:has()`, pseudo-elements, input states, `:dir()` (Selectors 4) -/
+
+def exDoc : Dom := parseHtmlDocument
+  ("<body><div id=a class=x><p id=p1><img id=i1></p><span id=s1></span><span id=s2 class=y></span></div>" ++
+   "<div id=b><h2 id=h>t</h2><input id=in1 required placeholder=x><input id=in2 readonly><textarea id=ta></textarea>" ++
+   "<details id=d open></details><p id=r dir=rtl><b id=rb>x</b></p><p id=au dir=auto>\u05d0</p></div></body>")
+def exIds (sel : String) : Option (List String) :=
+  (Selectors.parse sel).map fun l => (Selectors.querySelectorAll exDoc 0 l).toList.map fun k =>
+    (((exDoc.get k).attrs.find? (·.lname == "id")).map (·.value)).getD (exDoc.get k).lname
+-- :has(): descendant, child, next sibling, later sibling; lists; nesting in :not() and :is()
+#guard exIds "div:has(img)" == some ["a"]
+#guard exIds "div:has(> img)" == some []
+#guard exIds "p:has(> img)" == some ["p1"]
+#guard exIds ":has(> p > img)" == some ["a"]
+#guard exIds "p:has(+ span)" == some ["p1"]
+#guard exIds "p:has(+ .y)" == some []
+#guard exIds "p:has(~ .y)" == some ["p1"]
+#guard exIds "#a :has(~ span)" == some ["p1", "s1"]
+#guard exIds "div:has(h2, img)" == some ["a", "b"]
+#guard exIds "div:not(:has(img))" == some ["b"]
+#guard exIds "div:has(p:has(img))" == some ["a"]
+#guard exIds "div:has(.x img)" == some []
+#guard exIds "body:has(.x img) > #b" == some ["b"]
+#guard exIds "div:has(+ div h2)" == some ["a"]
+#guard exIds ":is(div, p):has(> span.y)" == some ["a"]
+-- input states from attributes, :heading, :dir()
+#guard exIds ":required" == some ["in1"]
+#guard exIds "input:optional" == some ["in2"]
+#guard exIds "#b :read-write" == some ["in1", "ta"]
+#guard exIds "input:read-only" == some ["in2"]
+#guard exIds ":placeholder-shown" == some ["in1"]
+#guard exIds ":open" == some ["d"]
+#guard exIds ":heading" == some ["h"]
+#guard exIds ":heading(2, 3)" == some ["h"]
+#guard exIds ":heading(1)" == some []
+#guard exIds "#b :dir(rtl)" == some ["r", "rb", "au"]
+#guard exIds "#b > :dir(ltr)" == some ["h", "in1", "in2", "ta", "d"]
+-- pseudo-elements are valid and match no element; what may follow one
+#guard (["::selection", "a::placeholder", "li::marker", "::backdrop", "::-webkit-scrollbar", "::part(a b)",
+  "::part(foo):hover", "::part(foo)::before", "::view-transition", "::view-transition-group(*)",
+  "::view-transition-old(name.cls):only-child", "::-webkit-scrollbar-thumb:horizontal", "a::before:hover",
+  ":is(::before)", "::slotted(p)", "::highlight(x)"].map exIds).all (· == some [])
+#guard (["::no-such", "::before.a", "::before div", "::part()", "::part(0)", "::part('a')", "::part(a):first-child",
+  "::part(a):has(b)", ":not(::before)", ":has(::before)", "::view-transition:hover", "::view-transition(x)",
+  "::view-transition-group()", "::view-transition-group(*.*)", "::view-transition-group(a. b)",
+  "::view-transition-new(default)", "::view-transition-old(a):hover", "::selection:first-child",
+  ":has()", ":heading()", ":heading(a)", ":no-such-class"].map Selectors.parse).all (·.isNone)
+
 /-! ## Form state and activation (DOM.Forms) -/
 
 def formDoc : Dom := parseHtmlDocument
