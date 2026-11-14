@@ -419,8 +419,15 @@ private def infinity : Float := 1.0 / 0.0
 /-- The value of a feature of kind `k`, as a fraction `num/den` (`den` is 1 but for a
 ratio). A length may be negative; a ratio and a resolution may not (MQ4 §2.4.3). -/
 def rangeValue (k : Kind) (nodes : List Node) : Option (Float × Float) :=
+  -- a literal may not be negative; a math function's negative result is clamped to 0
+  -- (CSS Values 4 §10.12: a calculation is clamped to the range the context allows)
   let nonNegative := fun (n : Node) => match qty [n] with
-    | some q => if q.dim == .number && q.value >= 0 then some q.value else none
+    | some q =>
+      if q.dim != .number then none
+      else if q.value >= 0 then some q.value
+      else match n with
+        | .group (some _) _ _ => some 0
+        | _ => none
     | none => none
   match k with
   | .length =>
@@ -908,6 +915,9 @@ private def allUnknown (env : Env) (es : List String) : Bool := es.all fun e => 
   "all and (max-width: 116px)", "all and (min-width: 9em)", "all and (max-width: 6em)", "(0px < width < 117px)",
   "(117px > width > 0px)", "(width > 117px)", "(116px >= width)", "(118px > width > 117px)"]
 #guard applies flat "all and (width)" && !applies flat "all and (height)" && applies {flat with deviceHeight := some 800} "all and (device-height)"
+-- a negative calc() in a ratio is clamped to 0; a degenerate ratio is valid
+#guard holds wide "(min-aspect-ratio: calc(-1)/2)" == some true && holds wide "(min-aspect-ratio: 0/2)" == some true
+#guard holds wide "(min-aspect-ratio: -1/2)" == none || holds wide "(min-aspect-ratio: -1/2)" == some false
 -- Orientation and the ratios (the frame at 236 by 320 px: 59/80).
 #guard allApply tall ["(orientation)", "not all and (orientation: landscape)", "(orientation: portrait)",
   "(aspect-ratio: 59/80)", "(aspect-ratio: 177/240)", "(aspect-ratio: 5900/8000)", "(aspect-ratio)",
