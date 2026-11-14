@@ -58,12 +58,14 @@ def hasState (command : String) : Bool :=
     command == "insertorderedlist" || command == "insertunorderedlist" || (justifyAlignment command).isSome
 
 def queryState (command : String) : M Bool := do
+  let command := lower command
   if !isSupported command || !hasState command then return false
   if command == "stylewithcss" then return (← rd (·.css))
   if (inlineActivatedValues command).isSome then return (← inlineQueryState command)
   rd fun e => hasActive e && blockState e command
 
 def queryIndeterm (command : String) : M Bool := do
+  let command := lower command
   if !isSupported command then return false
   rd fun e =>
     if !hasActive e then false
@@ -85,6 +87,7 @@ def hasValue (command : String) : Bool :=
     command == "formatblock" || (justifyAlignment command).isSome
 
 def queryValue (command : String) : M String := do
+  let command := lower command
   if !isSupported command || !hasValue command then return ""
   if command == "defaultparagraphseparator" then return (← rd (·.sep))
   if command == "formatblock" || (justifyAlignment command).isSome then

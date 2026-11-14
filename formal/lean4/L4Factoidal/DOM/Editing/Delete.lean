@@ -1009,6 +1009,20 @@ def insertLineBreak : M Unit := do
     rangeInsertNode br2
     collapseAfter br
 
+/-- Give an empty block its line: a `br`, inside shallow copies of `wrappers` (innermost
+first, without `id`). The node the `br` is in. The draft appends the `br` alone; browsers
+(and the WPT expectations) keep the inline formatting of the line that was split. -/
+def appendEmptyLine (target : NodeId) (wrappers : List NodeId) : M NodeId := do
+  let mut parent := target
+  for a in wrappers.reverse do
+    let c ← cloneNode a false
+    removeAttr c "id"
+    appendChild parent c
+    parent := c
+  let br ← createElement "br"
+  appendChild parent br
+  return parent
+
 /-- The `insertParagraph` command. -/
 def insertParagraph : M Unit := do
   deleteSelection
@@ -1094,6 +1108,11 @@ def insertParagraph : M Unit := do
       item ← setTagName item e.sep
     fixDisallowedAncestorsO (some item)
     return
+  -- the inline formatting elements around the caret and outside any link, innermost
+  -- first: an empty line the split leaves gets copies of them, so typing keeps the format
+  let wrappers := (((chain d node).toList.reverse.takeWhile (· != container)).reverse.takeWhile
+    (fun a => !isHtml d a ["a"])).reverse.filter fun a =>
+      isInlineNode e a && isHtml d a (removeFormatNames.filter (· != "span"))
   -- the new line range: from the active range's start to the end of the container
   let r := activeOf e
   let mut ls := r.start
@@ -1144,13 +1163,12 @@ def insertParagraph : M Unit := do
     | none => break
   let e ← get
   if !(kidsOf e.dom c1).any (isVisible e) then
-    let br ← createElement "br"
-    appendChild c1 br
+    let _ ← appendEmptyLine c1 (if c1 == container then wrappers else [])
   let e ← get
+  let mut caret := c2
   if !(kidsOf e.dom c2).any (isVisible e) then
-    let br ← createElement "br"
-    appendChild c2 br
-  setActive ⟨⟨c2, 0⟩, ⟨c2, 0⟩⟩
+    caret ← appendEmptyLine c2 (if c2 == newContainer then wrappers else [])
+  setActive ⟨⟨caret, 0⟩, ⟨caret, 0⟩⟩
 
 /-- Insert one character (not a newline) at the active range. -/
 def insertChar (c : Char) : M Unit := do

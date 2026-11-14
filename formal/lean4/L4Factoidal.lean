@@ -1227,6 +1227,8 @@ import L4Factoidal.DOM.Arena
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.Theorems
 import L4Factoidal.DOM.Tests
+import L4Factoidal.DOM.Editing.Commands
+import L4Factoidal.DOM.Editing.Tests
 import L4Factoidal.Rendering.Tests
 import L4Factoidal.Rendering.CascadeTests
 import L4Factoidal.Rendering.ReplacedTests
