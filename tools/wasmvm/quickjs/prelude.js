@@ -520,7 +520,7 @@
   const handlerNames = ['abort', 'blur', 'cancel', 'change', 'click', 'close', 'contextmenu', 'dblclick', 'error', 'focus',
     'input', 'keydown', 'keypress', 'keyup', 'load', 'mousedown', 'mouseenter', 'mouseleave', 'mousemove', 'mouseout',
     'mouseover', 'mouseup', 'reset', 'resize', 'scroll', 'select', 'submit', 'toggle', 'wheel', 'animationend',
-    'transitionend', 'pointerdown', 'pointerup', 'pointermove', 'message', 'unhandledrejection', 'rejectionhandled',
+    'transitionend', 'animationstart', 'animationiteration', 'animationcancel', 'transitionrun', 'transitionstart', 'transitioncancel', 'pointerdown', 'pointerup', 'pointermove', 'message', 'unhandledrejection', 'rejectionhandled',
     'beforeunload', 'unload', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'storage', 'online', 'offline',
     'afterprint', 'beforeprint', 'languagechange', 'messageerror', 'slotchange', 'beforetoggle', 'command', 'invalid',
     // the rest of GlobalEventHandlers and WindowEventHandlers (HTML §8.1.8.2)
@@ -7088,6 +7088,373 @@
     if (k !== 'NodeFilter') Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
     def(k, v);
   }
+  // ==== animations: Web Animations 1 §6 over Lean (Rendering.Animation; node_query ops 60 to 68) ====
+  // Record: docs/designissues/2026-11-14-css-animations.md. Lean holds every effect and
+  // animation (timing, keyframes, the playback procedures, the effect values in the
+  // cascade); these objects hold a number and the animation's two promises. Each call is one
+  // JSON request; an answer with `error` is thrown as that exception. What a call did to the
+  // promises and which events it queued come back as `acts`, applied here in order.
+  const aop = (id, code, payload) => {
+    const r = op(id, code, typeof payload === 'string' ? payload : JSON.stringify(payload));
+    const j = typeof r === 'string' && r !== '' ? JSON.parse(r) : {};
+    if (j !== null && typeof j === 'object' && j.error) {
+      if (j.error === 'TypeError') throw new TypeError(j.message);
+      throw new DOMException(j.message, j.error);
+    }
+    return j;
+  };
+  const inf = v => (v === 'Infinity' ? Infinity : v);
+  // §6.6.3 "process a keyframes argument", the part that reads the script's objects: the
+  // members in the order the specification reads them, as text. Lean checks and merges.
+  const one = v => (v !== null && typeof v === 'object' && typeof v[Symbol.iterator] === 'function' ? Array.from(v) : [v]);
+  // The own enumerable names of a keyframe object that are animatable properties (Lean's
+  // answer, op 69, asked once for each name), in ascending order: only those are read.
+  const animatableNames = new Map();
+  const propertyKeys = obj => {
+    const keys = Object.keys(obj).filter(k => k !== 'offset' && k !== 'easing' && k !== 'composite');
+    const unknown = keys.filter(k => !animatableNames.has(k));
+    if (unknown.length > 0) {
+      const r = op(0, 69, unknown.join('\u0000'));
+      unknown.forEach((k, i) => animatableNames.set(k, r[i] === '1'));
+    }
+    return keys.filter(k => animatableNames.get(k)).sort();
+  };
+  const kfArg = keyframes => {
+    if (keyframes === null || keyframes === undefined) return null;
+    if (typeof keyframes !== 'object' && typeof keyframes !== 'function') throw new TypeError('The keyframes are not an object or null.');
+    const it = keyframes[Symbol.iterator];
+    if (it !== undefined && it !== null) {
+      if (typeof it !== 'function') throw new TypeError('The keyframes are not iterable.');
+      const list = [];
+      for (const k of keyframes) {
+        const f = { p: [] };
+        if (k === null || k === undefined) { list.push(f); continue; }
+        if (typeof k !== 'object' && typeof k !== 'function') throw new TypeError('A keyframe is not an object.');
+        const c = k.composite, e = k.easing, o = k.offset;
+        if (c !== undefined) f.composite = String(c);
+        if (e !== undefined) f.easing = String(e);
+        f.offset = o === null || o === undefined ? null : String(Number(o));
+        for (const name of propertyKeys(k)) f.p.push([name, String(k[name])]);
+        list.push(f);
+      }
+      return { list };
+    }
+    const obj = { p: [] };
+    const c = keyframes.composite, e = keyframes.easing, o = keyframes.offset;
+    obj.composite = c === undefined ? [] : one(c).map(String);
+    obj.easing = e === undefined ? [] : one(e).map(String);
+    obj.offset = o === undefined ? null : one(o).map(x => (x === null || x === undefined ? null : String(Number(x))));
+    for (const name of propertyKeys(keyframes)) obj.p.push([name, one(keyframes[name]).map(String)]);
+    return { obj };
+  };
+  // An EffectTiming dictionary (or a duration) as text members; Lean converts and checks.
+  const timingArg = options => {
+    const out = {};
+    if (options === undefined || options === null) return out;
+    if (typeof options !== 'object' && typeof options !== 'function') { out.duration = 'n:' + String(Number(options)); return out; }
+    for (const k of ['delay', 'endDelay', 'iterationStart', 'iterations']) if (options[k] !== undefined) out[k] = String(Number(options[k]));
+    if (options.duration !== undefined) out.duration = typeof options.duration === 'string' ? 's:' + options.duration : 'n:' + String(Number(options.duration));
+    for (const k of ['fill', 'direction', 'easing', 'composite']) if (options[k] !== undefined) out[k] = String(options[k]);
+    if (options.pseudoElement !== undefined && options.pseudoElement !== null) out.pseudoElement = String(options.pseudoElement);
+    return out;
+  };
+  const timingOut = t => { for (const k of ['iterations', 'duration', 'endTime', 'activeDuration', 'currentIteration']) if (k in t) t[k] = inf(t[k]); return t; };
+  const effectIds = new WeakMap(), effectObjs = new Map();
+  const animIds = new WeakMap(), animObjs = new Map(), animState = new WeakMap();
+  const eid = e => { const id = effectIds.get(e); if (id === undefined) throw new TypeError('Illegal invocation'); return id; };
+  const aid = a => { const id = animIds.get(a); if (id === undefined) throw new TypeError('Illegal invocation'); return id; };
+  let making = false, adoptEffect = -1, adoptAnim = -1, adoptSnap = null;
+  class AnimationEffect {
+    constructor() { if (!making) throw new TypeError('Illegal constructor'); }
+    getTiming() { return timingOut(aop(eid(this), 62, 'timing')); }
+    getComputedTiming() { return timingOut(aop(eid(this), 62, 'computed')); }
+    updateTiming(timing = undefined) {
+      aop(eid(this), 61, { op: 'timing', opt: timingArg(timing === null || typeof timing !== 'object' ? undefined : timing) });
+      const a = ownerOf(this);
+      if (a) call(a, { m: 'refresh' });
+    }
+  }
+  const ownerOf = effect => { for (const a of animObjs.values()) if (animState.get(a).effect === effect) return a; return null; };
+  class KeyframeEffect extends AnimationEffect {
+    constructor(target, keyframes, options = undefined) {
+      if (adoptEffect < 0 && arguments.length < 1) throw new TypeError("Failed to construct 'KeyframeEffect': 1 argument required");
+      making = true;
+      try { super(); } finally { making = false; }
+      let id;
+      if (adoptEffect >= 0) { id = adoptEffect; adoptEffect = -1; }
+      else if (target instanceof KeyframeEffect && arguments.length === 1) {
+        // §6.6.1 the copy constructor: the source's target, keyframes, timing and composite
+        const src = target, info = aop(eid(src), 62, 'info'), t = aop(eid(src), 62, 'timing'), opt = { composite: info.composite };
+        for (const k of ['delay', 'endDelay', 'iterationStart', 'iterations']) opt[k] = String(inf(t[k]));
+        opt.duration = t.duration === 'auto' ? 's:auto' : 'n:' + String(inf(t.duration));
+        for (const k of ['fill', 'direction', 'easing']) opt[k] = t[k];
+        if (info.pseudo) opt.pseudoElement = info.pseudo;
+        const list = aop(eid(src), 62, 'keyframes').map(k => ({ offset: k.offset === null ? null : String(k.offset), easing: k.easing, composite: k.composite, p: k.p }));
+        id = aop(info.target === null ? WINDOW : info.target, 60, { kf: { list }, opt }).id;
+      } else {
+        if (target !== null && target !== undefined && !(target instanceof Element)) throw new TypeError("Failed to construct 'KeyframeEffect': parameter 1 is not of type 'Element'.");
+        id = aop(target ? nodeId(target) : WINDOW, 60, { kf: kfArg(keyframes), opt: timingArg(options) }).id;
+      }
+      effectIds.set(this, id); effectObjs.set(id, this);
+    }
+    get target() { const t = aop(eid(this), 62, 'info').target; return t === null ? null : wrap(t); }
+    set target(v) {
+      if (v !== null && !(v instanceof Element)) throw new TypeError("The provided value is not of type 'Element'.");
+      aop(eid(this), 61, { op: 'target', node: v === null ? null : String(nodeId(v)) });
+    }
+    get pseudoElement() { const p = aop(eid(this), 62, 'info').pseudo; return p === '' ? null : p; }
+    set pseudoElement(v) { aop(eid(this), 61, { op: 'pseudo', v: v === null || v === undefined ? '' : String(v) }); }
+    get composite() { return aop(eid(this), 62, 'info').composite; }
+    set composite(v) { aop(eid(this), 61, { op: 'composite', v: String(v) }); }
+    get iterationComposite() { return 'replace'; }
+    getKeyframes() {
+      return aop(eid(this), 62, 'keyframes').map(k => {
+        const o = { offset: k.offset, computedOffset: k.computedOffset, easing: k.easing, composite: k.composite };
+        for (const [name, value] of k.p) o[name] = value;
+        return o;
+      });
+    }
+    setKeyframes(keyframes) { aop(eid(this), 61, { op: 'keyframes', kf: kfArg(keyframes) }); }
+  }
+  const effectOf = id => {
+    if (id === null || id === undefined) return null;
+    const have = effectObjs.get(id);
+    if (have) return have;
+    adoptEffect = id;
+    try { return new KeyframeEffect(); } finally { adoptEffect = -1; }
+  };
+  class AnimationTimeline {
+    constructor() { if (!making) throw new TypeError('Illegal constructor'); }
+    get currentTime() { return Number(op(0, 68, '')) - (timelineOrigin.get(this) ?? 0); }
+  }
+  const timelineOrigin = new WeakMap();
+  class DocumentTimeline extends AnimationTimeline {
+    constructor(options = undefined) {
+      making = true;
+      try { super(); } finally { making = false; }
+      const o = options === undefined || options === null ? 0 : Number(options.originTime ?? 0);
+      if (!Number.isFinite(o)) throw new TypeError('originTime is not a finite number.');
+      timelineOrigin.set(this, o);
+    }
+  }
+  let documentTimeline = null;
+  const theTimeline = () => (documentTimeline ??= new DocumentTimeline());
+  Object.defineProperty(Document.prototype, 'timeline', { get() { return theTimeline(); }, configurable: true, enumerable: true });
+  class AnimationPlaybackEvent extends Event {
+    constructor(type, init = undefined) {
+      super(type, init);
+      state(this).currentTime = init?.currentTime ?? null;
+      state(this).timelineTime = init?.timelineTime ?? null;
+    }
+    get currentTime() { return state(this).currentTime; }
+    get timelineTime() { return state(this).timelineTime; }
+  }
+  // CSS Animations 1 §4.2 and CSS Transitions 1 §6: the events of style's animations.
+  const eventFloat = (v, what) => { const x = v === undefined ? 0 : Number(v); if (!Number.isFinite(x)) throw new TypeError(what + ' is not a finite number.'); return x; };
+  class AnimationEvent extends Event {
+    constructor(type, init = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'AnimationEvent': 1 argument required");
+      super(type, init);
+      const s = state(this), d = init == null ? {} : init;
+      s.animationName = d.animationName === undefined ? '' : String(d.animationName);
+      s.elapsedTime = eventFloat(d.elapsedTime, 'elapsedTime');
+      s.pseudoElement = d.pseudoElement === undefined ? '' : String(d.pseudoElement);
+    }
+    get animationName() { return state(this).animationName; }
+    get elapsedTime() { return state(this).elapsedTime; }
+    get pseudoElement() { return state(this).pseudoElement; }
+  }
+  class TransitionEvent extends Event {
+    constructor(type, init = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'TransitionEvent': 1 argument required");
+      super(type, init);
+      const s = state(this), d = init == null ? {} : init;
+      s.propertyName = d.propertyName === undefined ? '' : String(d.propertyName);
+      s.elapsedTime = eventFloat(d.elapsedTime, 'elapsedTime');
+      s.pseudoElement = d.pseudoElement === undefined ? '' : String(d.pseudoElement);
+    }
+    get propertyName() { return state(this).propertyName; }
+    get elapsedTime() { return state(this).elapsedTime; }
+    get pseudoElement() { return state(this).pseudoElement; }
+  }
+  // The animation frame's part: Lean runs the pending play and pause tasks, updates the
+  // finished states and gives the events of CSS animations and transitions (op 67); each
+  // animation a script holds that is pending or running gets its acts; the events are
+  // dispatched. Lean asks for the frame (callback ANIMATION_FRAME) while its animations
+  // need one (pending, running, or with events to look for); a script object asks through
+  // op 67 "ask" when a call left its animation pending or running.
+  const ANIMATION_FRAME = 0x7FFFFFF1;
+  let animEvents = [];
+  const askAnimFrame = () => { op(0, 67, 'ask'); };
+  const onAnimFrame = () => {
+    const r = JSON.parse(op(0, 67, ''));
+    // the animations whose promises or playback events changed in this frame: those a
+    // script holds apply the acts; the acts of the others are dropped
+    for (const id of r.acts ?? []) {
+      const a = animObjs.get(id), s = aop(id, 65, '');
+      if (a) applyActs(a, s);
+    }
+    for (const [type, target, name, elapsed] of r.events ?? []) {
+      const el = wrap(target);
+      if (!el) continue;
+      const init = { bubbles: true, elapsedTime: elapsed / 1000 };
+      const e = type.startsWith('animation') ? new AnimationEvent(type, Object.assign(init, { animationName: name }))
+        : new TransitionEvent(type, Object.assign(init, { propertyName: name }));
+      state(e).trusted = true;
+      try { dispatch(el, e); } catch (x) { report(x); }
+    }
+    const evs = animEvents; animEvents = [];
+    for (const [a, e] of evs) { try { dispatch(a, e); } catch (x) { report(x); } }
+    if (animEvents.length > 0) askAnimFrame();
+  };
+  callbacks.set(ANIMATION_FRAME, onAnimFrame);
+  const abortError = () => new DOMException('The animation was cancelled.', 'AbortError');
+  const newReady = st => { st.ready = new Promise((res, rej) => { st.readyRes = res; st.readyRej = rej; }); };
+  const newFinished = st => { st.finished = new Promise((res, rej) => { st.finRes = res; st.finRej = rej; }); st.finished.catch(() => {}); };
+  const applyActs = (a, s) => {
+    const st = animState.get(a);
+    for (const act of s.acts ?? []) {
+      switch (act[0]) {
+        case 'readyNew': newReady(st); break;
+        case 'readyResolve': if (st.readyRes) { st.readyRes(a); st.readyRes = st.readyRej = null; } break;
+        case 'readyReject':
+          if (st.readyRej) { st.ready.catch(() => {}); st.readyRej(abortError()); }
+          st.ready = Promise.resolve(a); st.readyRes = st.readyRej = null;
+          break;
+        case 'finishedNew': newFinished(st); break;
+        case 'finishedResolve': if (st.finRes) { st.finRes(a); st.finRes = st.finRej = null; } break;
+        case 'finishedReject': if (st.finRej) st.finRej(abortError()); newFinished(st); break;
+        case 'notify': Promise.resolve().then(() => { try { call(a, { m: 'notify' }); } catch (x) { report(x); } }); break;
+        case 'event': {
+          const e = new AnimationPlaybackEvent(act[1], { currentTime: act[2], timelineTime: act[3] });
+          state(e).trusted = true;
+          animEvents.push([a, e]); askAnimFrame();
+          break;
+        }
+      }
+    }
+    if (s.pending || s.playState === 'running') askAnimFrame();
+    return s;
+  };
+  const call = (a, req) => applyActs(a, aop(aid(a), 64, req));
+  const snap = a => applyActs(a, aop(aid(a), 65, ''));
+  const timeArg = v => (v === null || v === undefined ? null : String(Number(v)));
+  class Animation extends EventTarget {
+    constructor(effect = null, timeline = undefined) {
+      super();
+      let id, eff = null, tl;
+      if (adoptAnim >= 0) {
+        id = adoptAnim; adoptAnim = -1;
+        const s = adoptSnap; adoptSnap = null;
+        eff = effectOf(s.effect); tl = s.timeline ? theTimeline() : null;
+        animIds.set(this, id); animObjs.set(id, this);
+        const st = { effect: eff, timeline: tl, ready: Promise.resolve(this), readyRes: null, readyRej: null };
+        newFinished(st); animState.set(this, st);
+        // the acts of the style change that made it: its ready promise is pending
+        applyActs(this, s);
+        return;
+      }
+      if (effect !== null && effect !== undefined && !(effect instanceof AnimationEffect)) throw new TypeError("Failed to construct 'Animation': parameter 1 is not of type 'AnimationEffect'.");
+      if (timeline !== undefined && timeline !== null && !(timeline instanceof AnimationTimeline)) throw new TypeError("Failed to construct 'Animation': parameter 2 is not of type 'AnimationTimeline'.");
+      eff = effect ?? null; tl = timeline === undefined ? theTimeline() : timeline;
+      id = aop(0, 63, { effect: eff === null ? null : String(eid(eff)), timeline: tl !== null }).id;
+      // an effect another animation had leaves that one
+      if (eff !== null) for (const other of animObjs.values()) { const o = animState.get(other); if (o.effect === eff) o.effect = null; }
+      animIds.set(this, id); animObjs.set(id, this);
+      const st = { effect: eff, timeline: tl, ready: Promise.resolve(this), readyRes: null, readyRej: null };
+      newFinished(st); animState.set(this, st);
+    }
+    get id() { return snap(this).id; }
+    set id(v) { call(this, { m: 'id', v: String(v) }); }
+    get effect() { aid(this); return animState.get(this).effect; }
+    set effect(v) {
+      if (v !== null && !(v instanceof AnimationEffect)) throw new TypeError("The provided value is not of type 'AnimationEffect'.");
+      const st = animState.get(this);
+      if (st.effect === v) return;
+      if (v !== null) for (const other of animObjs.values()) { const o = animState.get(other); if (o.effect === v) o.effect = null; }
+      st.effect = v;
+      call(this, { m: 'effect', v: v === null ? null : String(eid(v)) });
+    }
+    get timeline() { aid(this); return animState.get(this).timeline; }
+    set timeline(v) {
+      if (v !== null && !(v instanceof AnimationTimeline)) throw new TypeError("The provided value is not of type 'AnimationTimeline'.");
+      const st = animState.get(this);
+      if (st.timeline === v) return;
+      st.timeline = v;
+      call(this, { m: 'timeline', v: v !== null });
+    }
+    get startTime() { return snap(this).startTime; }
+    set startTime(v) { call(this, { m: 'startTime', v: timeArg(v) }); }
+    get currentTime() { return snap(this).currentTime; }
+    set currentTime(v) { call(this, { m: 'currentTime', v: timeArg(v) }); }
+    get playbackRate() { return snap(this).playbackRate; }
+    set playbackRate(v) { call(this, { m: 'playbackRate', v: String(Number(v)) }); }
+    get playState() { return snap(this).playState; }
+    get replaceState() { aid(this); return 'active'; }
+    get pending() { return snap(this).pending; }
+    get overallProgress() { return snap(this).overallProgress; }
+    get ready() { snap(this); return animState.get(this).ready; }
+    get finished() { snap(this); return animState.get(this).finished; }
+    cancel() { call(this, { m: 'cancel' }); }
+    finish() { call(this, { m: 'finish' }); }
+    play() { call(this, { m: 'play' }); }
+    pause() { call(this, { m: 'pause' }); }
+    updatePlaybackRate(rate) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'updatePlaybackRate' on 'Animation': 1 argument required");
+      call(this, { m: 'updatePlaybackRate', v: String(Number(rate)) });
+    }
+    reverse() { call(this, { m: 'reverse' }); }
+    persist() { aid(this); }
+    // §6.4.9: the animated values of the effect's properties, as the target's computed style
+    // has them now, written to its `style` attribute.
+    commitStyles() {
+      const eff = animState.get(this).effect, target = eff instanceof KeyframeEffect ? eff.target : null;
+      if (target === null) throw new DOMException('The animation has no target.', 'InvalidStateError');
+      if (!target.isConnected) throw new DOMException('The target is not rendered.', 'InvalidStateError');
+      const cs = getComputedStyle(target), names = new Set();
+      for (const k of eff.getKeyframes()) for (const name of Object.keys(k)) if (!['offset', 'computedOffset', 'easing', 'composite'].includes(name)) names.add(name);
+      for (const name of names) { const css = cssName(name === 'cssFloat' ? 'float' : name === 'cssOffset' ? 'offset' : name); const v = cs.getPropertyValue(css); if (v !== '') target.style.setProperty(css, v); }
+    }
+  }
+  for (const name of ['finish', 'cancel', 'remove']) Object.defineProperty(Animation.prototype, 'on' + name, { get() { return handlerOf(this, name); },
+    set(f) { setHandler(this, name, f); }, configurable: true, enumerable: true });
+  class CSSAnimation extends Animation {
+    constructor() { if (adoptAnim < 0) throw new TypeError('Illegal constructor'); super(); }
+    get animationName() { return snap(this).name; }
+  }
+  class CSSTransition extends Animation {
+    constructor() { if (adoptAnim < 0) throw new TypeError('Illegal constructor'); super(); }
+    get transitionProperty() { return snap(this).name; }
+  }
+  // The object of an animation Lean made for a CSS animation or transition (the same
+  // object each time).
+  const animOf = id => {
+    const have = animObjs.get(id);
+    if (have) return have;
+    // the state with the acts of the style change that made it (given once)
+    const s = aop(id, 65, ''), kind = s.kind;
+    adoptAnim = id; adoptSnap = s;
+    try { return kind === 'animation' ? new CSSAnimation() : kind === 'transition' ? new CSSTransition() : new Animation(); } finally { adoptAnim = -1; adoptSnap = null; }
+  };
+  const animationsOf = (id, subtree) => JSON.parse(op(id, 66, subtree ? 'subtree' : '')).map(animOf);
+  define(Element.prototype, 'animate', function animate(keyframes, options = undefined) {
+    if (arguments.length < 1) throw new TypeError("Failed to execute 'animate' on 'Element': 1 argument required");
+    const effect = new KeyframeEffect(this, keyframes, options);
+    const tl = options !== null && typeof options === 'object' && options.timeline !== undefined ? options.timeline : theTimeline();
+    const a = new Animation(effect, tl);
+    if (options !== null && typeof options === 'object' && options.id !== undefined) a.id = options.id;
+    a.play();
+    return a;
+  });
+  define(Element.prototype, 'getAnimations', function getAnimations(options = undefined) {
+    return animationsOf(nodeId(this), !!(options && options.subtree));
+  });
+  define(Document.prototype, 'getAnimations', function getAnimations() { return animationsOf(0, true); });
+  for (const [k, v] of Object.entries({ Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent, CSSAnimation, CSSTransition, AnimationEvent, TransitionEvent })) {
+    Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
+    def(k, v);
+  }
+  // ==== end animations ====
   // ==== end dombreadth ====
 
   // ==== workers: Dedicated Workers (HTML §10; docs/designissues/2026-11-09-dedicated-workers.md) ====
