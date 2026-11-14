@@ -10321,7 +10321,10 @@
           const o = options ?? {}, nm = String(name);
           const d = o.durability === undefined ? '' : String(o.durability);
           const e = o.expires === undefined ? '' : stamp(o.expires, 'StorageBucketManager.open');
-          const f = call(['open', nm, d, e], 'StorageBucketManager.open');
+          // quota: the integer of the number given (Lean decides the range)
+          const qn = o.quota === undefined ? NaN : Math.trunc(Number(o.quota));
+          const q = o.quota === undefined ? '' : Number.isFinite(qn) ? (Math.abs(qn) < 1e21 ? String(qn) : 'x') : 'x';
+          const f = call(['open', nm, d, e, q], 'StorageBucketManager.open');
           return make(StorageBucket, { name: nm, gen: Number(f[0]) });
         });
       }

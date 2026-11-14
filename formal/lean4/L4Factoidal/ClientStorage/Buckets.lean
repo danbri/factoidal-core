@@ -32,6 +32,8 @@ structure Bucket where
   gen : Nat
   strict : Bool := false
   expires : String := ""
+  /-- The quota asked for at `open` (bytes), if any. -/
+  quota : Option Nat := none
   deriving Inhabited
 
 /-- The buckets of a storage key, sorted by name, each name once. -/
@@ -63,10 +65,21 @@ def live (s : Shelf) (n : String) (g : Nat) : Option Bucket := (find s n).filter
 def insert (bs : List Bucket) (b : Bucket) : List Bucket :=
   bs.filter (fun x => decide (x.name < b.name)) ++ b :: bs.filter (fun x => decide (b.name < x.name))
 
-def openB (s : Shelf) (n : String) (strict : Bool) (expires : String) : Shelf × Nat :=
+def openB (s : Shelf) (n : String) (strict : Bool) (expires : String) (quota : Option Nat := none) : Shelf × Nat :=
   match find s n with
   | some b => (s, b.gen)
-  | none => ({ buckets := insert s.buckets { name := n, gen := s.next, strict, expires }, next := s.next + 1 }, s.next)
+  | none => ({ buckets := insert s.buckets { name := n, gen := s.next, strict, expires, quota }, next := s.next + 1 }, s.next)
+
+/-- The largest quota a page may ask for: `Number.MAX_SAFE_INTEGER`. -/
+def maxQuota : Nat := 2 ^ 53 - 1
+
+/-- A requested quota (the integer the page side converted, as text; empty: none asked):
+`some none` for none, `some (some q)` for `1 ≤ q ≤ maxQuota`, `none` for a `TypeError`. -/
+def quotaArg (t : String) : Option (Option Nat) :=
+  if t.isEmpty then some none
+  else match t.toNat? with
+    | some q => if 1 ≤ q && q ≤ maxQuota then some (some q) else none
+    | none => none
 
 def deleteB (s : Shelf) (n : String) : Shelf := { s with buckets := s.buckets.filter (·.name != n) }
 
@@ -97,7 +110,9 @@ def op (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
     let d := strAt a 2
     if !validName n then (s, fail "TypeError")
     else if !(d == "" || d == "strict" || d == "relaxed") then (s, fail "TypeError")
-    else let r := openB s n (d == "strict") (strAt a 3); (r.1, ok [N r.2])
+    else match quotaArg (strAt a 4) with
+      | none => (s, fail "TypeError")
+      | some q => let r := openB s n (d == "strict") (strAt a 3) q; (r.1, ok [N r.2])
   | "keys" => (s, ok ((names s).map S))
   | "delete" =>
     let n := strAt a 1
@@ -107,7 +122,7 @@ def op (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
   | "expires" => onBucket s a fun b => (s, ok [S b.expires])
   | "setExpires" => onBucket s a fun b =>
     ({ s with buckets := s.buckets.map fun x => if x.name == b.name then { x with expires := strAt a 3 } else x }, ok)
-  | "estimate" => onBucket s a fun _ => (s, ok [N 0, N defaultQuota])
+  | "estimate" => onBucket s a fun b => (s, ok [N 0, N (b.quota.getD defaultQuota)])
   | _ => (s, fail "NotSupportedError")
 
 /-- One command for the context whose storage key is `k`, on the in-memory shed. -/
@@ -186,9 +201,12 @@ theorem op_sorted (s : Shelf) (a : Array Tok) (h : Sorted s) : Sorted (op s a).1
     · exact h
     · split
       · exact h
-      · unfold openB; split
+      · split
         · exact h
-        · exact insert_sorted _ _ h
+        · dsimp only
+          unfold openB; split
+          · exact h
+          · exact insert_sorted _ _ h
   · exact h
   · dsimp only
     split
@@ -210,10 +228,27 @@ theorem opFor_noninterference (shed : Shed Shelf) (k k' : ClientStorage.Key) (a 
     (opFor (opFor shed k a).1 k' a').2 = (opFor shed k' a').2 :=
   act_noninterference Shed.laws shed k k' _ _ _ _ h
 
+/-- Kind: validity rule. Says: an accepted quota is between 1 and `Number.MAX_SAFE_INTEGER`. -/
+theorem quotaArg_range (t : String) (q : Nat) (h : quotaArg t = some (some q)) : 1 ≤ q ∧ q ≤ maxQuota := by
+  unfold quotaArg at h
+  split at h
+  · simp at h
+  · split at h
+    · rename_i n _
+      split at h
+      · rename_i hb
+        simp only [Option.some.injEq] at h
+        subst h
+        simpa [Bool.and_eq_true, decide_eq_true_eq] using hb
+      · simp at h
+    · simp at h
+
 /-! ## Checks (WPT storage/buckets: bucket_names, buckets_basic, storage_bucket_object) -/
 
 private def T (xs : List String) : Array Tok := (xs.map String.toUTF8).toArray
 private def shown (r : List Tok) : String := " ".intercalate (r.map fun t => (String.fromUTF8? t).getD "?")
+#guard quotaArg "" == some none && quotaArg "1" == some (some 1) && quotaArg "0" == none && quotaArg "-1" == none &&
+  quotaArg "9007199254740992" == none && quotaArg "9007199254740991" == some (some 9007199254740991)
 private def answers (cmds : List (List String)) : List String :=
   (cmds.foldl (fun (acc : Shelf × List String) c => let (s, r) := op acc.1 (T c); (s, acc.2 ++ [shown r])) ({}, [])).2
 
