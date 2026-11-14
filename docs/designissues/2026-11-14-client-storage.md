@@ -108,6 +108,15 @@ bytes: tokens).
   or moved.
 - `lastModified` is a change counter, not a clock (no clock is read).
 
+### File system observers
+
+`FileSystemObserver` (tentative): `observe(handle, {recursive})` registers an observation in Lean (the entry
+must exist: `NotFoundError`), `unobserve` and `disconnect` remove them. While at least one observation exists,
+every command's change to the tree is logged as `appeared`, `disappeared`, `modified` (a file's change counter
+moved) or `moved` (a move, as one change), computed from the tree before and after the command; a later task
+drains the log into records for each observation that covers the path (relative path components, the moved-
+from path). With no observation nothing is diffed. `observed_tree`: observing never changes the files.
+
 ### StorageManager
 
 `estimate()` answers the sum of what IndexedDB and the file system hold for the caller's key and a constant
@@ -147,7 +156,8 @@ writes the one jar of `document.cookie` (`Net.Cookies`) through that module's ow
 (proved to be `document.cookie`'s storage step: `setFromScript_store`), `visibleCookies`. The host is the
 session's page origin, never an argument. The checks of "set a cookie" (names, values, prefixes, domain,
 path, sizes) and of the `url` option are Lean's. A write answers the changes the document sees (`changes`),
-fired as a `CookieChangeEvent`. Not modelled: `SameSite`, `Partitioned`, domain cookies (the jar is host-only),
+fired as a `CookieChangeEvent`. In a service worker `cookieStore` exists too, and its `url` option may name
+any URL of its origin (`urlAllowed`). Not modelled: `SameSite`, `Partitioned`, domain cookies (the jar is host-only),
 change events for writes by `document.cookie` or HTTP.
 
 ### Cache API
@@ -178,7 +188,7 @@ comment has its "Says" and "Does not say"):
   `schemaGuard_ended_upgrade`, `upgradeGuard_aborting` (an aborted upgrade "runs" until its abort event).
 - Indexes made while requests are queued: `settleIndexes_none` (no such index: the transaction is untouched).
 - Values: `toSparse_other` (only a dense array is rewritten when a key is injected into it).
-- File system: `guidOf_length` (`getUniqueId` answers 36 characters). ("has been deleted" before "not active"; "not active" before the name checks).
+- File system: `guidOf_length` (`getUniqueId` answers 36 characters); `observed_tree`, `observer_cmds_tree`. ("has been deleted" before "not active"; "not active" before the name checks).
 - Transactions: `run_effect`, `op_dbs` (every command but `pump` leaves the databases as they were: what an
   aborted transaction did was never in them), `effect_none`, `commit_visible` (a later transaction reads what
   was committed), `commit_other_store`, `effect_other_db`, `commit_last_wins` (commit order).
