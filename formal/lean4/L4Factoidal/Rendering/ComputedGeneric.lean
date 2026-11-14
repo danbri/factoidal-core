@@ -273,6 +273,46 @@ def numCtx (v : View) (id : Nat) : CssValues.Ctx :=
     lineHeight := ratOf style.lineHeight, rootLineHeight := ratOf root.lineHeight,
     viewportW := (v.viewportW : Rat), viewportH := (v.viewportH : Rat) }
 
+/-- The kind of a component value for the table of CSS Syntax 3 §9 (two tokens that would
+read as other tokens when written next to each other). -/
+def tokKind (cv : CssValues.CV) : String :=
+  match cv with
+  | .tok (.ident _) => "ident"
+  | .tok (.func _) | .fn _ _ => "function"
+  | .tok (.url _) | .tok .badUrl => "url"
+  | .tok (.atKeyword _) => "at"
+  | .tok (.hash _ _) => "hash"
+  | .tok (.num _ _) => "number"
+  | .tok (.pct _) => "percentage"
+  | .tok (.dim _ _ _) => "dimension"
+  | .tok .cdc => "cdc"
+  | .tok (.delim c) => String.singleton c
+  | .block '(' _ => "("
+  | _ => ""
+
+/-- Whether a comment must be written between `a` and `b` (CSS Syntax 3 §9). -/
+def needsComment (a b : CssValues.CV) : Bool :=
+  let x := tokKind a
+  let y := tokKind b
+  let identLike := ["ident", "function", "url", "-", "number", "percentage", "dimension", "cdc"]
+  if x == "ident" then identLike.contains y || y == "("
+  else if x == "at" || x == "hash" || x == "dimension" then identLike.contains y
+  else if x == "#" || x == "-" then ["ident", "function", "url", "-", "number", "percentage", "dimension"].contains y && !(x == "-" && y == "-")
+  else if x == "number" then ["ident", "function", "url", "number", "percentage", "dimension", "%"].contains y
+  else if x == "@" then ["ident", "function", "url", "-"].contains y
+  else if x == "." || x == "+" then ["number", "percentage", "dimension"].contains y
+  else if x == "/" then y == "*"
+  else false
+
+/-- `a` followed by `b`, with an empty comment between them where the two would otherwise
+read as other tokens. -/
+def joinTokens (a b : List CssValues.CV) : List CssValues.CV :=
+  match a.getLast?, b.head? with
+  | some x, some y => if needsComment x y then a ++ [.raw "/**/"] ++ b else a ++ b
+  | _, _ => a ++ b
+
+#guard needsComment (.tok (.ident "foo")) (.tok (.ident "bar")) && !needsComment (.tok (.ident "a")) (.tok .comma)
+
 /-- Replace each `var()` by the value of its custom property, or by its fallback (CSS
 Variables 1 §3). `none`: a variable with no value and no fallback, so the declaration is
 invalid at computed-value time. -/
@@ -291,16 +331,16 @@ def substitute (get : String → String) : Nat → List CssValues.CV → Option 
               | [.tok (.ident s)] => s
               | _ => ""
             let value := if nameText == "" then "" else get nameText
-            if value != "" then some (out ++ CssValues.CV.parse value)
+            if value != "" then some (joinTokens out (CssValues.CV.parse value))
             else
               match groups with
               | _ :: fb :: more =>
                 let fallback := more.foldl (fun acc g => acc ++ [CssValues.CV.tok .comma] ++ g) fb
-                (substitute get fuel fallback).map (out ++ ·)
+                (substitute get fuel fallback).map (joinTokens out ·)
               | _ => none
           else (substitute get fuel args).map fun args' => out ++ [.fn name args']
         | .block o body => (substitute get fuel body).map fun body' => out ++ [.block o body']
-        | cv => some (out ++ [cv])) (some [])
+        | cv => some (joinTokens out [cv])) (some [])
 
 def mentionsCurrentColor (value : String) : Bool :=
   ((CssValues.lower value).splitOn "currentcolor").length > 1
@@ -655,6 +695,9 @@ private def computedAt (html css prop : String) : String :=
 -- overflow: clip is not the profile's hidden; the legacy -webkit-box
 #guard computedAt "<div id=t></div>" "#t { overflow: clip }" "overflow" == "clip"
 #guard computedAt "<div id=t></div>" "#t { display: -webkit-box }" "display" == "-webkit-box"
+-- tokens that would read as one are written with a comment between them
+#guard computedAt "<div id=t></div>" "#t { --a: foo; --b: bar; --r: var(--a)var(--b) }" "--r" == "foo/**/bar"
+#guard computedAt "<div id=t></div>" "#t { --a: foo; --b: ,bar; --r: var(--a)var(--b) }" "--r" == "foo,bar"
 -- the styles of pseudo-elements
 private def pseudoAt (html css pe prop : String) : String :=
   let dom := DOM.parseHtmlDocument html
