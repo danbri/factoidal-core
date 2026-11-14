@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { appFiles, sync } from '../scripts/sync.mjs';
+import { appFiles, appPath, sync } from '../scripts/sync.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const source = join(root, '..', '..', 'labs', 'demos', 'foafnaut');
@@ -25,7 +25,7 @@ test('app/ holds exactly what textnaut.ts imports, plus the import map and its t
   const info = JSON.parse(execFileSync('deno', ['info', '--json', `--import-map=${join(source, 'textnaut', 'import_map.json')}`, join(source, 'textnaut', 'textnaut.ts')], { encoding: 'utf8' }));
   const imported = info.modules.map((m) => m.specifier).filter((s) => s.startsWith('file://')).map((s) => relative(source, new URL(s).pathname)).sort();
   assert(imported.length >= 10, imported.join());
-  const wanted = [...imported, 'textnaut/import_map.json', 'textnaut/start.html'].sort();
+  const wanted = [...imported.map(appPath), 'textnaut/import_map.json', 'textnaut/start.html'].sort();
   assert.deepEqual(appFiles(), wanted);
   for (const f of wanted) assert(existsSync(join(root, 'app', f)), f);
 });

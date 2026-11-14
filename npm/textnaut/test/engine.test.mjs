@@ -33,7 +33,7 @@ function fixture() {
 }
 
 test('the pin names a release, a commit and two runtime files with sha256', () => {
-  assert.match(pin.release, /^build-386f8fb43f73-foafnaut-web$/);
+  assert.match(pin.release, /^build-ff075ad5af99-foafnaut-web$/);
   assert.match(pin.tarball.sha256, /^[0-9a-f]{64}$/);
   assert.deepEqual(Object.values(pin.files).map((f) => f.name).sort(), ['web-render.mjs', 'web-render.wasm']);
   assert(pin.url.startsWith('https://github.com/danbri/factoidal-builds/releases/download/'));
@@ -76,7 +76,7 @@ test('offline with no cache: a clear error that points to the screensavers', asy
   const logged = [];
   await assert.rejects(ensureEngine({ env: { TEXTNAUT_CACHE: dir }, fetchImpl: async () => { throw new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } }); }, log: (s) => logged.push(s) }),
     (error) => /offline/.test(error.message) && /textnaut --screensaver/.test(error.message) && /ENOTFOUND/.test(error.message));
-  assert(/8\.1 MB/.test(logged.join('')), 'it said what it was fetching and its size');
+  assert(/11\.7 MB/.test(logged.join('')), 'it said what it was fetching and its size');
 });
 
 test('the engine is chosen in the stated order', () => {
@@ -100,7 +100,7 @@ test('the installed foafnaut library comes before the fetch, and FOAFNAUT_HOME m
 });
 
 test('the cache directory is keyed by the engine commit', () => {
-  assert(cacheDir({ TEXTNAUT_CACHE: '/c' }, '/h').endsWith('engine-386f8fb43f73'));
-  assert.equal(cacheDir({ XDG_CACHE_HOME: '/x' }, '/h'), '/x/textnaut/engine-386f8fb43f73');
-  assert.equal(cacheDir({}, '/h'), '/h/.cache/textnaut/engine-386f8fb43f73');
+  assert(cacheDir({ TEXTNAUT_CACHE: '/c' }, '/h').endsWith('engine-ff075ad5af99'));
+  assert.equal(cacheDir({ XDG_CACHE_HOME: '/x' }, '/h'), '/x/textnaut/engine-ff075ad5af99');
+  assert.equal(cacheDir({}, '/h'), '/h/.cache/textnaut/engine-ff075ad5af99');
 });
