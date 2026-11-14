@@ -1554,7 +1554,8 @@ theorem physicalWinners_plain (flow : CssValues.Logical.Flow) (chosen : List (St
 
 /-- The user agent style sheet of this profile: HTML §15.3.4 (phrasing content:
 hyperlink colours and underline) and §15.5.4 (the `button` element as an
-inline-block with a raised border, sunken while it is `:active`). The colours are
+inline-block with a raised border, sunken while it is `:active`), and the form controls
+(`input`, `textarea`, `select`) as inline-blocks of a fixed size. The colours are
 the ones that HTML gives (`#0000EE`, `#551A8B`, `#FF0000`); the button colours are
 this profile's choice, since HTML leaves a button's look to the platform. -/
 def userAgentSheet : String :=
@@ -1565,7 +1566,16 @@ def userAgentSheet : String :=
   ":link:active,:visited:active{color:#ff0000}" ++
   "button{display:inline-block;padding:1px 6px;border:2px outset #767676;background-color:#efefef;color:#000000}" ++
   "button:hover{background-color:#e5e5e5}" ++
-  "button:active{border-style:inset;background-color:#c8c8c8}"
+  "button:active{border-style:inset;background-color:#c8c8c8}" ++
+  -- form controls (HTML §15.5.x): inline-block widgets of a fixed size, as a text field of
+  -- `size=20`, a `textarea` of 20 columns by 2 rows, a checkbox; the sizes are this
+  -- profile's choice, near the platform's
+  "input{display:inline-block;padding:1px 2px;border:2px inset #767676;width:147px;height:15px;background-color:#ffffff}" ++
+  "input[type=hidden]{display:none}" ++
+  "input[type=checkbox],input[type=radio]{width:13px;height:13px;margin:3px 3px 3px 4px;padding:0;border-width:0}" ++
+  "textarea{display:inline-block;padding:2px;border:1px solid #767676;width:176px;height:30px;background-color:#ffffff;white-space:pre-wrap}" ++
+  "select{display:inline-block;padding:1px 0;border:1px solid #767676;width:64px;height:17px;background-color:#ffffff}" ++
+  "select>*{display:none}"
 
 def userAgentRules : List Rule := (parse userAgentSheet).toOption.getD []
 
