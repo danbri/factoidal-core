@@ -217,6 +217,11 @@ structure ElementState where
   hover : Option Nat := none
   active : Option Nat := none
   visited : List Nat := []
+  /-- The values of running animations and transitions (`Rendering.Animation`): node,
+  longhand, computed value text, and whether a transition gives it. They enter the cascade
+  as declarations of their own origins (`animatedIndex`). Empty on a page that animates
+  nothing. -/
+  animated : List (Nat × String × String × Bool) := []
   deriving Repr, BEq, Inhabited
 structure Rule where
   selectors : List Selector
@@ -2091,6 +2096,19 @@ def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
   let height := (s.lineHeightFactor.map (size*·)).getD (s.lineHeight*scale)
   {s with fontSize := size, lineHeight := height}
 
+/-- The style of node `id` under the style `parent` of its parent: an element's cascade
+(`computedFrom`); any other node, and an SVG element inside SVG, takes what is inherited.
+The step of `computeAllWith` and of `restyleWith`. -/
+def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent : Computed) : Except String Computed :=
+  let n := dom.get id
+  let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
+  if n.type == .element && !svgDescendant then computedFrom dom id (matchesOf id) parent else pure {parent with
+    display := .inline, width := .auto, height := .auto,
+    margin := {}, padding := {}, background := none, clipOverflow := false,
+    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
+    autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
+    autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}, pos := {}}
+
 /-- Visit parents before children, using a work list and bounded arena size.
 `matchesOf id` are the rules that match element `id`, in sheet order. -/
 def computeAllWith (matchesOf : Nat → List Match) (dom : Dom) (textScale : Float := 1) : Except String (Array Computed) := do
@@ -2103,28 +2121,138 @@ def computeAllWith (matchesOf : Nat → List Match) (dom : Dom) (textScale : Flo
     | id::rest =>
       let n := dom.get id
       let parent := (n.parent.bind (styles[·]?)).getD {}
-      let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
-      let style ← if n.type == .element && !svgDescendant then computedFrom dom id (matchesOf id) parent else pure {parent with
-        display := .inline, width := .auto, height := .auto,
-        margin := {}, padding := {}, background := none, clipOverflow := false,
-        borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
-        autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
-        autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}, pos := {}}
+      let style ← styleOfNode matchesOf dom id parent
       styles := styles.set! id style
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"
 
+/-! ### Styles again for part of the tree
+
+A write of an element's `style` attribute, or a new animated value of an element,
+changes the declarations of that element alone: the styles that can differ are its own
+and those of its descendants (by inheritance). `restyleWith` gives the styles of the
+whole tree from the styles before the change by styling those subtrees again, so a
+script that writes one element's style and reads a computed value pays for one subtree,
+not for the document. This holds only when no rule reads the `style` attribute
+(`readsStyleAttribute`) and the text scale is 1 (`computeAllWith` scales at its end);
+the caller (`WebDocument.measure`) checks both. -/
+
+/-- The styles `base` with the subtrees of `roots` styled again, parents before children
+(the step of `computeAllWith`). `base` must be the styles of the same tree with text
+scale 1. A root inside another root's subtree is styled twice, last with its new parent. -/
+def restyleWith (matchesOf : Nat → List Match) (dom : Dom) (base : Array Computed) (roots : List Nat) :
+    Except String (Array Computed) :=
+  if roots.isEmpty then .ok base
+  else if base.size != dom.size then .error "styles of another tree"
+  else Id.run do
+    let mut pending := roots
+    let mut styles := base
+    for _ in [:(dom.size + 1) * (roots.length + 1)] do
+      match pending with
+      | [] => return .ok styles
+      | id::rest =>
+        let n := dom.get id
+        let parent := (n.parent.bind (styles[·]?)).getD {}
+        match styleOfNode matchesOf dom id parent with
+        | .ok style =>
+          styles := styles.set! id style
+          pending := n.kids.toList ++ rest
+        | .error e => return .error e
+    return .error "DOM style traversal exceeds arena bound"
+
+/-- Kind: correctness (the empty case). Says: with no subtree to style again, the styles
+are the ones given, for every tree and rule set. Does not say: that the styles of the
+subtrees styled again are those of the whole cascade (`computeAllWith`) after the change;
+that is tested on pages (`Animation.Computed`), not proved. -/
+theorem restyleWith_nil (matchesOf : Nat → List Match) (dom : Dom) (base : Array Computed) :
+    restyleWith matchesOf dom base [] = .ok base := by
+  simp [restyleWith]
+
+/-- A selector of `sels` tests the attribute `name`, also inside `:not()`, `:is()` and
+`:nth-child(… of …)`. A work list, bounded: past the bound the answer is yes. -/
+def selectorsReadAttr (name : String) (sels : List DOM.Selectors.Complex) : Bool := Id.run do
+  let mut pending := sels
+  for _ in [:4096] do
+    match pending with
+    | [] => return false
+    | .mk parts :: rest =>
+      let mut more := rest
+      for (_, simples) in parts do
+        for s in simples do
+          match s with
+          | .attr _ n _ _ _ _ => if n.toLower == name then return true
+          | .nth _ _ _ (some inner) => more := inner ++ more
+          | .not inner => more := inner ++ more
+          | .is inner => more := inner ++ more
+          | _ => pure ()
+      pending := more
+  return true
+
+/-- A rule's selector tests the `style` attribute: a write of that attribute can then
+change which rules match, and the styles are not those of `restyleWith`. -/
+def readsStyleAttribute (rules : List Rule) : Bool :=
+  rules.any fun r => r.selectors.any fun s =>
+    match s.complex with
+    | some c => selectorsReadAttr "style" [c]
+    | none => false
+
+/-! ### Animated values in the cascade
+
+CSS Cascade 4 §6.1: animation declarations override the author's normal declarations
+(also those of the `style` attribute) and are overridden by `!important` ones;
+transition declarations override everything. The animated values of an element
+(`ElementState.animated`) are one match of origin 2 for its animations and one of origin
+3, marked important, for its transitions: the keys of `computedFrom` then order them as
+the cascade says (an animation's key is `[0, 5, …]`, above the `style` attribute's
+`[0, 3, …]` and below any `[1, …]`; a transition's is `[1, 6, …]`). -/
+
+/-- The animated values as matches, by element. -/
+def animatedIndex (animated : List (Nat × String × String × Bool)) : Std.HashMap Nat (List Match) :=
+  let any : Selector := { parts := [], specificity := (0,0,0) }
+  animated.foldl (fun m (id, property, value, transition) =>
+    let old := m.getD id []
+    let origin := if transition then 3 else 2
+    -- as the declarations of a style sheet: a shorthand of the profile is its longhands
+    -- (a custom property keeps its name as written)
+    let ds : List Declaration :=
+      if property.startsWith "--" then [⟨property, value, transition⟩]
+      else match declarations (property ++ ":" ++ value) with
+        | .ok ds => if ds.isEmpty then [⟨property, value, transition⟩] else ds.map fun d => { d with important := transition }
+        | .error _ => [⟨property, value, transition⟩]
+    let (mine, others) := old.partition (·.1 == origin)
+    let rule : Rule := match mine with
+      | (_, r, _) :: _ => { r with declarations := r.declarations ++ ds }
+      | [] => { selectors := [any], declarations := ds }
+    m.insert id (others ++ [(origin, rule, [any])])) {}
+
+/-- `matchesOf` with the animated values of `state` after the rules of each element. A
+state with none is `matchesOf` itself: no table is built. -/
+def withAnimated (state : ElementState) (matchesOf : Nat → List Match) : Nat → List Match :=
+  if state.animated.isEmpty then matchesOf else
+  -- the values by element once; an element's are read as declarations when it is styled
+  -- (a page with many animations pays that for the elements a cascade visits)
+  let groups : Std.HashMap Nat (List (Nat × String × String × Bool)) :=
+    state.animated.foldl (fun m item => m.insert item.1 (item :: m.getD item.1 [])) {}
+  fun id => match groups[id]? with
+    | some items => matchesOf id ++ (animatedIndex items.reverse).getD id []
+    | none => matchesOf id
+
+/-- With no animated value the cascade is that of the rules alone. -/
+theorem withAnimated_none (state : ElementState) (matchesOf : Nat → List Match) (h : state.animated = []) :
+    withAnimated state matchesOf = matchesOf := by
+  simp [withAnimated, h]
+
 /-- The styles of every node with every rule tried for every element: the reference. -/
 def computeAllLinear (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
-  computeAllWith (fun id => matchedRules dom id rules state) dom textScale
+  computeAllWith (withAnimated state fun id => matchedRules dom id rules state) dom textScale
 
 /-- The styles of every node: the element keys read once, the rules in buckets. -/
 def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
   let ix := RuleIndex.build rules
   let ks := ElemKeys.of dom
-  computeAllWith (fun id => ix.matched (ks.get dom) dom id state) dom textScale
+  computeAllWith (withAnimated state fun id => ix.matched (ks.get dom) dom id state) dom textScale
 
 /-- The styles on a page with shadow trees, laid out on `dom` (its flat tree): the element
 keys read once, the rules in buckets per tree. -/
@@ -2132,12 +2260,12 @@ def computeAllIn (ts : TreeScope) (dom : Dom) (rules : List Rule) (textScale : F
     (state : ElementState := {}) : Except String (Array Computed) :=
   let ix := ScopedIndex.build rules
   let ks := ElemKeys.of ts.tree
-  computeAllWith (fun id => ix.matched (ks.get ts.tree) ts id state) dom textScale
+  computeAllWith (withAnimated state fun id => ix.matched (ks.get ts.tree) ts id state) dom textScale
 
 /-- The reference for `computeAllIn`: every rule tried for every element. -/
 def computeAllInLinear (ts : TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
-  computeAllWith (fun id => matchedRulesIn ts id rules state) dom textScale
+  computeAllWith (withAnimated state fun id => matchedRulesIn ts id rules state) dom textScale
 
 /-- `computeAll` for a page with no shadow tree; `computeAllIn` for one with shadow trees. -/
 def computeFor (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
@@ -2194,5 +2322,13 @@ private def displayNone (d : DOM.Dom) (lname : String) : List (Option Bool) :=
 -- a showing popover (`Node.states` bit 1) is rendered
 #guard displayNone ({ nodes := hiddenDoc.nodes.map fun n => if n.lname == "div" then { n with states := 1 } else n } : DOM.Dom) "div" ==
   [some false, some false]
+
+/-- The computed style `s` with one more declaration applied, as the cascade applies it
+(`apply`); none when the profile does not read the declaration. For the computed value
+of a keyframe's specified value in an element's context (`Rendering.Animation`). -/
+def applyDeclaration (s : Computed) (property value : String) : Option Computed :=
+  match declarations (property ++ ":" ++ value) with
+  | .ok ds => if ds.isEmpty then none else ds.foldlM (fun acc d => (apply acc d).toOption) s
+  | .error _ => none
 
 end L4Factoidal.Rendering.CSS
