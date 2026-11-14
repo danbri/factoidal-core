@@ -220,6 +220,9 @@ def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (availa
   let horizontal := fun (l : CSS.Length) => match l with
     | .px n => some n
     | .percent p => if available <= 0 then none else some (available*p)
+    -- `stretch` (CSS Sizing 4 §6.1): the margin box fills the containing block
+    | .stretch => if available <= 0 then none else
+      some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
     | _ => none
   let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
   let minW := (horizontal s.minWidth).getD 0
@@ -256,6 +259,8 @@ def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available
     let horizontal := fun (l : CSS.Length) => match l with
       | .px n => some n
       | .percent p => if available <= 0 then none else some (available*p)
+      | .stretch => if available <= 0 then none else
+        some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
       | _ => none
     let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
     let minW := LU.ofPx (max 0 ((horizontal s.minWidth).getD 0))
