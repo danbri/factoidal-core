@@ -238,12 +238,12 @@ jobs:
           lake exe l4jose-probe 2>&1 | tee "$RUNNER_TEMP/l4jose-probe.txt"
 
       - name: C known-answer driver of ffi/hacl_webcrypto.c (tests/crypto/run-kat.sh)
-        continue-on-error: true
+        working-directory: formal/lean4
         shell: bash
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/kat"
-          bash tests/crypto/run-kat.sh "$RUNNER_TEMP/kat" 2>&1 | tee "$RUNNER_TEMP/kat.txt"
+          bash ../../tests/crypto/run-kat.sh "$RUNNER_TEMP/kat" 2>&1 | tee "$RUNNER_TEMP/kat.txt"
 
       - name: Keep the probe outputs
         if: always()
