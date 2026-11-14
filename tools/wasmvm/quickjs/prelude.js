@@ -75,6 +75,8 @@
   const info = (id, which) => n.info(id, which);
   const kids = id => n.kids(id);
   let EventTargetProto, protoOf;
+  // The interface of an SVG element by its local name (the SVG DOM section assigns it).
+  let svgProtoOf = null;
   const make = id => {
     const t = info(id, 0);
     if (t < 0) return null;
@@ -2267,7 +2269,7 @@
   protoOf = (id, t) => {
     switch (t) {
       case 1: {
-        if (!htmlEl(id)) return (str(id, 2) === 'http://www.w3.org/2000/svg' ? SVGElement : Element).prototype;
+        if (!htmlEl(id)) return str(id, 2) !== 'http://www.w3.org/2000/svg' ? Element.prototype : svgProtoOf ? svgProtoOf(str(id, 0)) : SVGElement.prototype;
         const l = str(id, 0), C = htmlClasses[l];
         return (C ?? (plainHTMLElements.has(l) || isCustomName(l) ? HTMLElement : HTMLUnknownElement)).prototype;
       }
@@ -4125,6 +4127,583 @@
     };
   });
   const st_xhr = x => xhrState.get(x);
+
+  // ==== SVG DOM (SVG 2 §4 "Basic data types and interfaces" and the element interfaces) ======
+  // One table (`svgSpec`) names each element interface, its parent, its elements and the
+  // attributes it reflects with their kinds; one implementation serves each kind of animated
+  // value. Whether an attribute's text is a length, a number, a list or a transform list, and
+  // its parts, is Lean's (DOM/SvgValues.lean, web_api ops 92 to 95): this is the WebIDL surface.
+  // Built on first use (an SVG element reached by a script, or an SVG interface named): a page
+  // with no SVG pays nothing.
+  const SVG_NS = 'http://www.w3.org/2000/svg', XLINK_NS = 'http://www.w3.org/1999/xlink';
+  // interface: [parent, element local names, reflected attributes "property:kind[:attribute[:default]]"]
+  // kinds: L length, N number, I integer, B boolean, S string, E(k1,k2,…)[default index] enumeration,
+  // R rect, P preserveAspectRatio, A angle, LL length list, NL number list, TL transform list,
+  // SL string list, PL point list.
+  const svgSpec = {
+    SVGGraphicsElement: ['SVGElement', '', 'transform:TL requiredExtensions:SL systemLanguage:SL'],
+    SVGGeometryElement: ['SVGGraphicsElement', '', 'pathLength:N'],
+    SVGSVGElement: ['SVGGraphicsElement', 'svg', 'x:L y:L width:L::100% height:L::100% viewBox:R preserveAspectRatio:P'],
+    SVGGElement: ['SVGGraphicsElement', 'g', ''],
+    SVGDefsElement: ['SVGGraphicsElement', 'defs', ''],
+    SVGDescElement: ['SVGElement', 'desc', ''],
+    SVGMetadataElement: ['SVGElement', 'metadata', ''],
+    SVGTitleElement: ['SVGElement', 'title', ''],
+    SVGSymbolElement: ['SVGGraphicsElement', 'symbol', 'viewBox:R preserveAspectRatio:P'],
+    SVGUseElement: ['SVGGraphicsElement', 'use', 'x:L y:L width:L height:L href:S'],
+    SVGSwitchElement: ['SVGGraphicsElement', 'switch', ''],
+    SVGStyleElement: ['SVGElement', 'style', ''],
+    SVGScriptElement: ['SVGElement', 'script', 'href:S'],
+    SVGAElement: ['SVGGraphicsElement', 'a', 'target:S href:S'],
+    SVGViewElement: ['SVGElement', 'view', 'viewBox:R preserveAspectRatio:P'],
+    SVGRectElement: ['SVGGeometryElement', 'rect', 'x:L y:L width:L height:L rx:L ry:L'],
+    SVGCircleElement: ['SVGGeometryElement', 'circle', 'cx:L cy:L r:L'],
+    SVGEllipseElement: ['SVGGeometryElement', 'ellipse', 'cx:L cy:L rx:L ry:L'],
+    SVGLineElement: ['SVGGeometryElement', 'line', 'x1:L y1:L x2:L y2:L'],
+    SVGPolylineElement: ['SVGGeometryElement', 'polyline', 'points:PL animatedPoints:PL:points'],
+    SVGPolygonElement: ['SVGGeometryElement', 'polygon', 'points:PL animatedPoints:PL:points'],
+    SVGPathElement: ['SVGGeometryElement', 'path', ''],
+    SVGTextContentElement: ['SVGGraphicsElement', '', 'textLength:L lengthAdjust:E(spacing,spacingAndGlyphs)1'],
+    SVGTextPositioningElement: ['SVGTextContentElement', '', 'x:LL y:LL dx:LL dy:LL rotate:NL'],
+    SVGTextElement: ['SVGTextPositioningElement', 'text', ''],
+    SVGTSpanElement: ['SVGTextPositioningElement', 'tspan', ''],
+    SVGTextPathElement: ['SVGTextContentElement', 'textPath', 'startOffset:L method:E(align,stretch)1 spacing:E(auto,exact)2 side:E(left,right)1 href:S'],
+    SVGImageElement: ['SVGGraphicsElement', 'image', 'x:L y:L width:L height:L preserveAspectRatio:P href:S'],
+    SVGForeignObjectElement: ['SVGGraphicsElement', 'foreignObject', 'x:L y:L width:L height:L'],
+    SVGMarkerElement: ['SVGElement', 'marker', 'refX:L refY:L markerUnits:E(userSpaceOnUse,strokeWidth)2 markerWidth:L::3 markerHeight:L::3 orientType:E(auto,angle,auto-start-reverse)2:orient orientAngle:A:orient viewBox:R preserveAspectRatio:P'],
+    SVGGradientElement: ['SVGElement', '', 'gradientUnits:E(userSpaceOnUse,objectBoundingBox)2 gradientTransform:TL spreadMethod:E(pad,reflect,repeat)1 href:S'],
+    SVGLinearGradientElement: ['SVGGradientElement', 'linearGradient', 'x1:L::0% y1:L::0% x2:L::100% y2:L::0%'],
+    SVGRadialGradientElement: ['SVGGradientElement', 'radialGradient', 'cx:L::50% cy:L::50% r:L::50% fx:L::50% fy:L::50% fr:L::0%'],
+    SVGStopElement: ['SVGElement', 'stop', 'offset:N'],
+    SVGPatternElement: ['SVGElement', 'pattern', 'patternUnits:E(userSpaceOnUse,objectBoundingBox)2 patternContentUnits:E(userSpaceOnUse,objectBoundingBox)1 patternTransform:TL x:L y:L width:L height:L viewBox:R preserveAspectRatio:P href:S'],
+    SVGClipPathElement: ['SVGGraphicsElement', 'clipPath', 'clipPathUnits:E(userSpaceOnUse,objectBoundingBox)1'],
+    SVGMaskElement: ['SVGElement', 'mask', 'maskUnits:E(userSpaceOnUse,objectBoundingBox)2 maskContentUnits:E(userSpaceOnUse,objectBoundingBox)1 x:L::-10% y:L::-10% width:L::120% height:L::120%'],
+    SVGFilterElement: ['SVGElement', 'filter', 'filterUnits:E(userSpaceOnUse,objectBoundingBox)2 primitiveUnits:E(userSpaceOnUse,objectBoundingBox)1 x:L::-10% y:L::-10% width:L::120% height:L::120% href:S'],
+    SVGFEBlendElement: ['SVGElement', 'feBlend', 'in1:S:in in2:S mode:E(normal,multiply,screen,darken,lighten,overlay,color-dodge,color-burn,hard-light,soft-light,difference,exclusion,hue,saturation,color,luminosity)1'],
+    SVGFEColorMatrixElement: ['SVGElement', 'feColorMatrix', 'in1:S:in type:E(matrix,saturate,hueRotate,luminanceToAlpha)1 values:NL'],
+    SVGFEComponentTransferElement: ['SVGElement', 'feComponentTransfer', 'in1:S:in'],
+    SVGComponentTransferFunctionElement: ['SVGElement', '', 'type:E(identity,table,discrete,linear,gamma)1 tableValues:NL slope:N::1 intercept:N amplitude:N::1 exponent:N::1 offset:N'],
+    SVGFEFuncRElement: ['SVGComponentTransferFunctionElement', 'feFuncR', ''],
+    SVGFEFuncGElement: ['SVGComponentTransferFunctionElement', 'feFuncG', ''],
+    SVGFEFuncBElement: ['SVGComponentTransferFunctionElement', 'feFuncB', ''],
+    SVGFEFuncAElement: ['SVGComponentTransferFunctionElement', 'feFuncA', ''],
+    SVGFECompositeElement: ['SVGElement', 'feComposite', 'in1:S:in in2:S operator:E(over,in,out,atop,xor,arithmetic)1 k1:N k2:N k3:N k4:N'],
+    SVGFEConvolveMatrixElement: ['SVGElement', 'feConvolveMatrix', 'in1:S:in orderX:I1:order:3 orderY:I2:order:3 kernelMatrix:NL divisor:N::1 bias:N targetX:I targetY:I edgeMode:E(duplicate,wrap,none)1 kernelUnitLengthX:N1:kernelUnitLength kernelUnitLengthY:N2:kernelUnitLength preserveAlpha:B'],
+    SVGFEDiffuseLightingElement: ['SVGElement', 'feDiffuseLighting', 'in1:S:in surfaceScale:N::1 diffuseConstant:N::1 kernelUnitLengthX:N1:kernelUnitLength kernelUnitLengthY:N2:kernelUnitLength'],
+    SVGFEDistantLightElement: ['SVGElement', 'feDistantLight', 'azimuth:N elevation:N'],
+    SVGFEPointLightElement: ['SVGElement', 'fePointLight', 'x:N y:N z:N'],
+    SVGFESpotLightElement: ['SVGElement', 'feSpotLight', 'x:N y:N z:N pointsAtX:N pointsAtY:N pointsAtZ:N specularExponent:N::1 limitingConeAngle:N'],
+    SVGFEDisplacementMapElement: ['SVGElement', 'feDisplacementMap', 'in1:S:in in2:S scale:N xChannelSelector:E(R,G,B,A)4 yChannelSelector:E(R,G,B,A)4'],
+    SVGFEDropShadowElement: ['SVGElement', 'feDropShadow', 'in1:S:in dx:N::2 dy:N::2 stdDeviationX:N1:stdDeviation:2 stdDeviationY:N2:stdDeviation:2'],
+    SVGFEFloodElement: ['SVGElement', 'feFlood', ''],
+    SVGFEGaussianBlurElement: ['SVGElement', 'feGaussianBlur', 'in1:S:in stdDeviationX:N1:stdDeviation stdDeviationY:N2:stdDeviation edgeMode:E(duplicate,wrap,none)3'],
+    SVGFEImageElement: ['SVGElement', 'feImage', 'preserveAspectRatio:P href:S'],
+    SVGFEMergeElement: ['SVGElement', 'feMerge', ''],
+    SVGFEMergeNodeElement: ['SVGElement', 'feMergeNode', 'in1:S:in'],
+    SVGFEMorphologyElement: ['SVGElement', 'feMorphology', 'in1:S:in operator:E(erode,dilate)1 radiusX:N1:radius radiusY:N2:radius'],
+    SVGFEOffsetElement: ['SVGElement', 'feOffset', 'in1:S:in dx:N dy:N'],
+    SVGFESpecularLightingElement: ['SVGElement', 'feSpecularLighting', 'in1:S:in surfaceScale:N::1 specularConstant:N::1 specularExponent:N::1 kernelUnitLengthX:N1:kernelUnitLength kernelUnitLengthY:N2:kernelUnitLength'],
+    SVGFETileElement: ['SVGElement', 'feTile', 'in1:S:in'],
+    SVGFETurbulenceElement: ['SVGElement', 'feTurbulence', 'baseFrequencyX:N1:baseFrequency baseFrequencyY:N2:baseFrequency numOctaves:I::1 seed:N stitchTiles:E(stitch,noStitch)2 type:E(fractalNoise,turbulence)2'],
+  };
+  // SVGFilterPrimitiveStandardAttributes (Filter Effects 1 §9.4): every filter primitive element.
+  for (const name of ['Blend', 'ColorMatrix', 'ComponentTransfer', 'Composite', 'ConvolveMatrix', 'DiffuseLighting', 'DisplacementMap',
+    'DropShadow', 'Flood', 'GaussianBlur', 'Image', 'Merge', 'Morphology', 'Offset', 'SpecularLighting', 'Tile', 'Turbulence'])
+    svgSpec['SVGFE' + name + 'Element'][2] += ' x:L::0% y:L::0% width:L::100% height:L::100% result:S';
+  // The constants of the interfaces (SVG 2 and Filter Effects IDL).
+  const svgConsts = {
+    SVGLength: 'SVG_LENGTHTYPE_UNKNOWN SVG_LENGTHTYPE_NUMBER SVG_LENGTHTYPE_PERCENTAGE SVG_LENGTHTYPE_EMS SVG_LENGTHTYPE_EXS SVG_LENGTHTYPE_PX SVG_LENGTHTYPE_CM SVG_LENGTHTYPE_MM SVG_LENGTHTYPE_IN SVG_LENGTHTYPE_PT SVG_LENGTHTYPE_PC',
+    SVGAngle: 'SVG_ANGLETYPE_UNKNOWN SVG_ANGLETYPE_UNSPECIFIED SVG_ANGLETYPE_DEG SVG_ANGLETYPE_RAD SVG_ANGLETYPE_GRAD',
+    SVGUnitTypes: 'SVG_UNIT_TYPE_UNKNOWN SVG_UNIT_TYPE_USERSPACEONUSE SVG_UNIT_TYPE_OBJECTBOUNDINGBOX',
+    SVGTransform: 'SVG_TRANSFORM_UNKNOWN SVG_TRANSFORM_MATRIX SVG_TRANSFORM_TRANSLATE SVG_TRANSFORM_SCALE SVG_TRANSFORM_ROTATE SVG_TRANSFORM_SKEWX SVG_TRANSFORM_SKEWY',
+    SVGPreserveAspectRatio: 'SVG_PRESERVEASPECTRATIO_UNKNOWN SVG_PRESERVEASPECTRATIO_NONE SVG_PRESERVEASPECTRATIO_XMINYMIN SVG_PRESERVEASPECTRATIO_XMIDYMIN SVG_PRESERVEASPECTRATIO_XMAXYMIN SVG_PRESERVEASPECTRATIO_XMINYMID SVG_PRESERVEASPECTRATIO_XMIDYMID SVG_PRESERVEASPECTRATIO_XMAXYMID SVG_PRESERVEASPECTRATIO_XMINYMAX SVG_PRESERVEASPECTRATIO_XMIDYMAX SVG_PRESERVEASPECTRATIO_XMAXYMAX|SVG_MEETORSLICE_UNKNOWN SVG_MEETORSLICE_MEET SVG_MEETORSLICE_SLICE',
+    SVGTextContentElement: 'LENGTHADJUST_UNKNOWN LENGTHADJUST_SPACING LENGTHADJUST_SPACINGANDGLYPHS',
+    SVGTextPathElement: 'TEXTPATH_METHODTYPE_UNKNOWN TEXTPATH_METHODTYPE_ALIGN TEXTPATH_METHODTYPE_STRETCH|TEXTPATH_SPACINGTYPE_UNKNOWN TEXTPATH_SPACINGTYPE_AUTO TEXTPATH_SPACINGTYPE_EXACT|TEXTPATH_SIDETYPE_UNKNOWN TEXTPATH_SIDETYPE_LEFT TEXTPATH_SIDETYPE_RIGHT',
+    SVGMarkerElement: 'SVG_MARKERUNITS_UNKNOWN SVG_MARKERUNITS_USERSPACEONUSE SVG_MARKERUNITS_STROKEWIDTH|SVG_MARKER_ORIENT_UNKNOWN SVG_MARKER_ORIENT_AUTO SVG_MARKER_ORIENT_ANGLE SVG_MARKER_ORIENT_AUTO_START_REVERSE',
+    SVGGradientElement: 'SVG_SPREADMETHOD_UNKNOWN SVG_SPREADMETHOD_PAD SVG_SPREADMETHOD_REFLECT SVG_SPREADMETHOD_REPEAT',
+    SVGFEBlendElement: 'SVG_FEBLEND_MODE_UNKNOWN SVG_FEBLEND_MODE_NORMAL SVG_FEBLEND_MODE_MULTIPLY SVG_FEBLEND_MODE_SCREEN SVG_FEBLEND_MODE_DARKEN SVG_FEBLEND_MODE_LIGHTEN SVG_FEBLEND_MODE_OVERLAY SVG_FEBLEND_MODE_COLOR_DODGE SVG_FEBLEND_MODE_COLOR_BURN SVG_FEBLEND_MODE_HARD_LIGHT SVG_FEBLEND_MODE_SOFT_LIGHT SVG_FEBLEND_MODE_DIFFERENCE SVG_FEBLEND_MODE_EXCLUSION SVG_FEBLEND_MODE_HUE SVG_FEBLEND_MODE_SATURATION SVG_FEBLEND_MODE_COLOR SVG_FEBLEND_MODE_LUMINOSITY',
+    SVGFEColorMatrixElement: 'SVG_FECOLORMATRIX_TYPE_UNKNOWN SVG_FECOLORMATRIX_TYPE_MATRIX SVG_FECOLORMATRIX_TYPE_SATURATE SVG_FECOLORMATRIX_TYPE_HUEROTATE SVG_FECOLORMATRIX_TYPE_LUMINANCETOALPHA',
+    SVGComponentTransferFunctionElement: 'SVG_FECOMPONENTTRANSFER_TYPE_UNKNOWN SVG_FECOMPONENTTRANSFER_TYPE_IDENTITY SVG_FECOMPONENTTRANSFER_TYPE_TABLE SVG_FECOMPONENTTRANSFER_TYPE_DISCRETE SVG_FECOMPONENTTRANSFER_TYPE_LINEAR SVG_FECOMPONENTTRANSFER_TYPE_GAMMA',
+    SVGFECompositeElement: 'SVG_FECOMPOSITE_OPERATOR_UNKNOWN SVG_FECOMPOSITE_OPERATOR_OVER SVG_FECOMPOSITE_OPERATOR_IN SVG_FECOMPOSITE_OPERATOR_OUT SVG_FECOMPOSITE_OPERATOR_ATOP SVG_FECOMPOSITE_OPERATOR_XOR SVG_FECOMPOSITE_OPERATOR_ARITHMETIC',
+    SVGFEConvolveMatrixElement: 'SVG_EDGEMODE_UNKNOWN SVG_EDGEMODE_DUPLICATE SVG_EDGEMODE_WRAP SVG_EDGEMODE_NONE',
+    SVGFEDisplacementMapElement: 'SVG_CHANNEL_UNKNOWN SVG_CHANNEL_R SVG_CHANNEL_G SVG_CHANNEL_B SVG_CHANNEL_A',
+    SVGFEMorphologyElement: 'SVG_MORPHOLOGY_OPERATOR_UNKNOWN SVG_MORPHOLOGY_OPERATOR_ERODE SVG_MORPHOLOGY_OPERATOR_DILATE',
+    SVGFETurbulenceElement: 'SVG_TURBULENCE_TYPE_UNKNOWN SVG_TURBULENCE_TYPE_FRACTALNOISE SVG_TURBULENCE_TYPE_TURBULENCE|SVG_STITCHTYPE_UNKNOWN SVG_STITCHTYPE_STITCH SVG_STITCHTYPE_NOSTITCH',
+    SVGFEGaussianBlurElement: 'SVG_EDGEMODE_UNKNOWN SVG_EDGEMODE_DUPLICATE SVG_EDGEMODE_WRAP SVG_EDGEMODE_NONE',
+  };
+  const svgValueNames = ['SVGNumber', 'SVGLength', 'SVGAngle', 'SVGTransform', 'SVGPreserveAspectRatio', 'SVGUnitTypes',
+    'SVGNumberList', 'SVGLengthList', 'SVGStringList', 'SVGPointList', 'SVGTransformList',
+    'SVGAnimatedBoolean', 'SVGAnimatedEnumeration', 'SVGAnimatedInteger', 'SVGAnimatedNumber', 'SVGAnimatedLength',
+    'SVGAnimatedAngle', 'SVGAnimatedString', 'SVGAnimatedRect', 'SVGAnimatedNumberList', 'SVGAnimatedLengthList',
+    'SVGAnimatedTransformList', 'SVGAnimatedPreserveAspectRatio'];
+  let svgBuilt = null;
+  const svgDom = () => svgBuilt ?? (svgBuilt = buildSvgDom());
+  svgProtoOf = tag => (svgDom().byTag[tag] ?? SVGElement).prototype;
+  const buildSvgDom = () => {
+    const classes = { SVGElement }, byTag = Object.create(null);
+    const key = {};
+    const illegal = () => { throw new TypeError('Illegal constructor'); };
+    // WebIDL `float`: finite, and within the range of a single-precision number.
+    const float = (v, what) => { const x = Number(v); if (!Number.isFinite(x) || Math.abs(x) > 3.4028234663852886e38) throw new TypeError(`${what}: the value is not a finite single-precision number`); return x; };
+    const need = (n, have, what) => { if (have < n) throw new TypeError(`${what}: ${n} argument${n > 1 ? 's' : ''} required, but only ${have} present.`); };
+    const noMod = what => { throw new DOMException(`${what}: the object is read-only`, 'NoModificationAllowedError'); };
+    const brandOf = (map, o, what) => { const s = map.get(o); if (!s) throw new TypeError('Illegal invocation: ' + what); return s; };
+    const mk = (C, map, s) => { const o = Object.create(C.prototype); map.set(o, s); return o; };
+    // What Lean reads of a value.
+    const lenOf = text => { const r = apiCall(92, [text]); if (typeof r !== 'string') return null; const p = r.split('\n'); return { n: Number(p[0]), u: p[1], t: Number(p[2]) }; };
+    const numOf = text => { const r = apiCall(93, [text]); return typeof r === 'string' ? Number(r) : null; };
+    const numsOf = text => { const r = apiCall(94, [text]); return typeof r !== 'string' ? null : r === '' ? [] : r.split('\n').map(Number); };
+    const transformsOf = text => { const r = apiCall(95, [text]); return typeof r !== 'string' ? null : r === '' ? [] : r.split('\n').map(l => { const p = l.split(' '); return { name: p[0], args: p.slice(1).map(Number) }; }); };
+    const fmt = x => String(x);
+
+    // ---- SVGNumber ---------------------------------------------------------------------------
+    const numbers = new WeakMap();
+    class SVGNumber {
+      constructor(k) { if (k !== key) illegal(); }
+      get value() { return Math.fround(brandOf(numbers, this, 'SVGNumber.value').v); }
+      set value(x) { const s = brandOf(numbers, this, 'SVGNumber.value'); if (s.readonly) noMod('SVGNumber.value'); s.v = float(x, 'SVGNumber.value'); if (s.owner) s.owner.commit(); }
+    }
+    const newNumber = (v, owner, readonly) => mk(SVGNumber, numbers, { v, owner: owner ?? null, readonly: !!readonly });
+
+    // ---- SVGLength ---------------------------------------------------------------------------
+    const UNITS = ['', '', '%', 'em', 'ex', 'px', 'cm', 'mm', 'in', 'pt', 'pc'];
+    const lengths = new WeakMap();
+    const fontPx = el => { try { const f = el ? parseFloat(getComputedStyle(el).fontSize) : NaN; return Number.isFinite(f) && f > 0 ? f : 16; } catch { return 16; } };
+    const viewportOf = el => {
+      for (let p = el && el.parentNode; p; p = p.parentNode) {
+        if (p.namespaceURI === SVG_NS && p.localName === 'svg') {
+          const vb = numsOf(p.getAttribute('viewBox') ?? '');
+          if (vb && vb.length === 4) return [vb[2], vb[3]];
+          const w = lenOf(p.getAttribute('width') ?? ''), h = lenOf(p.getAttribute('height') ?? '');
+          return [w && w.t !== 2 ? w.n : 300, h && h.t !== 2 ? h.n : 150];
+        }
+      }
+      return [globalThis.innerWidth ?? 800, globalThis.innerHeight ?? 600];
+    };
+    const horizontal = new Set(['x', 'cx', 'x1', 'x2', 'width', 'dx', 'rx', 'fx', 'refX', 'markerWidth', 'textLength', 'startOffset']);
+    const vertical = new Set(['y', 'cy', 'y1', 'y2', 'height', 'dy', 'ry', 'fy', 'refY', 'markerHeight']);
+    // User units for one unit of a length (CSS Values 4 §6 absolute lengths; font and viewport units from the page).
+    const unitPx = (s, v) => {
+      switch (v.u) {
+        case '': case 'px': return 1;
+        case 'cm': return 96 / 2.54;
+        case 'mm': return 96 / 25.4;
+        case 'q': return 96 / 101.6;
+        case 'in': return 96;
+        case 'pt': return 96 / 72;
+        case 'pc': return 16;
+        case 'em': case 'ic': return fontPx(s.el);
+        case 'ex': case 'ch': return fontPx(s.el) / 2;
+        case 'cap': return fontPx(s.el) * 0.7;
+        case 'rem': return fontPx(document.documentElement);
+        case 'rex': return fontPx(document.documentElement) / 2;
+        case 'lh': return fontPx(s.el) * 1.2;
+        case 'rlh': return fontPx(document.documentElement) * 1.2;
+        case 'vw': case 'vi': return (globalThis.innerWidth ?? 800) / 100;
+        case 'vh': case 'vb': return (globalThis.innerHeight ?? 600) / 100;
+        case 'vmin': return Math.min(globalThis.innerWidth ?? 800, globalThis.innerHeight ?? 600) / 100;
+        case 'vmax': return Math.max(globalThis.innerWidth ?? 800, globalThis.innerHeight ?? 600) / 100;
+        case '%': {
+          const [w, h] = viewportOf(s.el);
+          return (horizontal.has(s.attr) ? w : vertical.has(s.attr) ? h : Math.sqrt((w * w + h * h) / 2)) / 100;
+        }
+        default: return 1;
+      }
+    };
+    // A length's state reads and writes its value: a detached one its own, a reflecting one its attribute.
+    const detachedLength = (v, owner) => ({ el: null, attr: '', v, owner: owner ?? null, readonly: false,
+      read() { return this.v; }, write(n, unit) { this.v = { n, u: unit.u, t: unit.t }; if (this.owner) this.owner.commit(); } });
+    const boundLength = (el, attr, dflt, readonly) => ({ el, attr, readonly,
+      read() { const t = el.getAttribute(attr); return (t !== null && lenOf(t)) || lenOf(dflt) || { n: 0, u: '', t: 1 }; },
+      write(n, unit) { el.setAttribute(attr, fmt(n) + unit.u); } });
+    const unitOfType = (t, what) => { const k = Number(t) & 0xFFFF; if (k < 1 || k > 10) throw new DOMException(`${what}: the unit type ${k} is not supported`, 'NotSupportedError'); return { u: UNITS[k], t: k }; };
+    class SVGLength {
+      constructor(k) { if (k !== key) illegal(); }
+      get unitType() { return brandOf(lengths, this, 'SVGLength.unitType').read().t; }
+      get value() { const s = brandOf(lengths, this, 'SVGLength.value'), v = s.read(); return Math.fround(v.n * unitPx(s, v)); }
+      set value(x) { const s = brandOf(lengths, this, 'SVGLength.value'); if (s.readonly) noMod('SVGLength.value'); const n = float(x, 'SVGLength.value'), v = s.read(); s.write(n / unitPx(s, v), v); }
+      get valueInSpecifiedUnits() { return Math.fround(brandOf(lengths, this, 'SVGLength.valueInSpecifiedUnits').read().n); }
+      set valueInSpecifiedUnits(x) { const s = brandOf(lengths, this, 'SVGLength.valueInSpecifiedUnits'); if (s.readonly) noMod('SVGLength.valueInSpecifiedUnits'); s.write(float(x, 'SVGLength.valueInSpecifiedUnits'), s.read()); }
+      get valueAsString() { const v = brandOf(lengths, this, 'SVGLength.valueAsString').read(); return fmt(v.n) + v.u; }
+      set valueAsString(t) {
+        const s = brandOf(lengths, this, 'SVGLength.valueAsString');
+        if (s.readonly) noMod('SVGLength.valueAsString');
+        const v = lenOf(String(t));
+        if (!v) throw new DOMException(`Failed to set 'valueAsString' on 'SVGLength': '${t}' is not a length`, 'SyntaxError');
+        s.write(v.n, v);
+      }
+      newValueSpecifiedUnits(unitType, value) {
+        need(2, arguments.length, "Failed to execute 'newValueSpecifiedUnits' on 'SVGLength'");
+        const s = brandOf(lengths, this, 'SVGLength.newValueSpecifiedUnits');
+        if (s.readonly) noMod('SVGLength.newValueSpecifiedUnits');
+        const n = float(value, 'SVGLength.newValueSpecifiedUnits');
+        s.write(n, unitOfType(unitType, 'SVGLength.newValueSpecifiedUnits'));
+      }
+      convertToSpecifiedUnits(unitType) {
+        need(1, arguments.length, "Failed to execute 'convertToSpecifiedUnits' on 'SVGLength'");
+        const s = brandOf(lengths, this, 'SVGLength.convertToSpecifiedUnits');
+        if (s.readonly) noMod('SVGLength.convertToSpecifiedUnits');
+        const unit = unitOfType(unitType, 'SVGLength.convertToSpecifiedUnits'), v = s.read();
+        s.write(v.n * unitPx(s, v) / unitPx(s, unit), unit);
+      }
+    }
+    const newLength = state => mk(SVGLength, lengths, state);
+
+    // ---- SVGAngle ----------------------------------------------------------------------------
+    const ANGLES = ['', '', 'deg', 'rad', 'grad'], angles = new WeakMap();
+    const angleOf = text => {
+      const m = /^(.*?)(deg|rad|grad|turn)?$/i.exec(String(text).trim());
+      const n = m ? numOf(m[1]) : null, u = m && m[2] ? m[2].toLowerCase() : '';
+      return n === null ? null : { n, u, t: u === '' ? 1 : ANGLES.indexOf(u) < 0 ? 0 : ANGLES.indexOf(u) };
+    };
+    const degrees = v => v.u === 'rad' ? v.n * 180 / Math.PI : v.u === 'grad' ? v.n * 0.9 : v.u === 'turn' ? v.n * 360 : v.n;
+    const fromDegrees = (d, u) => u === 'rad' ? d * Math.PI / 180 : u === 'grad' ? d / 0.9 : d;
+    const angleUnit = (t, what) => { const k = Number(t) & 0xFFFF; if (k < 1 || k > 4) throw new DOMException(`${what}: the unit type ${k} is not supported`, 'NotSupportedError'); return { u: ANGLES[k], t: k }; };
+    class SVGAngle {
+      constructor(k) { if (k !== key) illegal(); }
+      get unitType() { return brandOf(angles, this, 'SVGAngle.unitType').read().t; }
+      get value() { return Math.fround(degrees(brandOf(angles, this, 'SVGAngle.value').read())); }
+      set value(x) { const s = brandOf(angles, this, 'SVGAngle.value'); if (s.readonly) noMod('SVGAngle.value'); const v = s.read(); s.write(fromDegrees(float(x, 'SVGAngle.value'), v.u), v); }
+      get valueInSpecifiedUnits() { return Math.fround(brandOf(angles, this, 'SVGAngle.valueInSpecifiedUnits').read().n); }
+      set valueInSpecifiedUnits(x) { const s = brandOf(angles, this, 'SVGAngle.valueInSpecifiedUnits'); if (s.readonly) noMod('SVGAngle.valueInSpecifiedUnits'); s.write(float(x, 'SVGAngle.valueInSpecifiedUnits'), s.read()); }
+      get valueAsString() { const v = brandOf(angles, this, 'SVGAngle.valueAsString').read(); return fmt(v.n) + v.u; }
+      set valueAsString(t) {
+        const s = brandOf(angles, this, 'SVGAngle.valueAsString');
+        if (s.readonly) noMod('SVGAngle.valueAsString');
+        const v = angleOf(t);
+        if (!v || v.t === 0) throw new DOMException(`Failed to set 'valueAsString' on 'SVGAngle': '${t}' is not an angle`, 'SyntaxError');
+        s.write(v.n, v);
+      }
+      newValueSpecifiedUnits(unitType, value) {
+        need(2, arguments.length, "Failed to execute 'newValueSpecifiedUnits' on 'SVGAngle'");
+        const s = brandOf(angles, this, 'SVGAngle.newValueSpecifiedUnits');
+        if (s.readonly) noMod('SVGAngle.newValueSpecifiedUnits');
+        const n = float(value, 'SVGAngle.newValueSpecifiedUnits');
+        s.write(n, angleUnit(unitType, 'SVGAngle.newValueSpecifiedUnits'));
+      }
+      convertToSpecifiedUnits(unitType) {
+        need(1, arguments.length, "Failed to execute 'convertToSpecifiedUnits' on 'SVGAngle'");
+        const s = brandOf(angles, this, 'SVGAngle.convertToSpecifiedUnits');
+        if (s.readonly) noMod('SVGAngle.convertToSpecifiedUnits');
+        const unit = angleUnit(unitType, 'SVGAngle.convertToSpecifiedUnits');
+        s.write(fromDegrees(degrees(s.read()), unit.u), unit);
+      }
+    }
+    const detachedAngle = () => ({ readonly: false, v: { n: 0, u: '', t: 1 }, read() { return this.v; }, write(n, unit) { this.v = { n, u: unit.u, t: unit.t }; } });
+
+    // ---- SVGTransform ------------------------------------------------------------------------
+    const transforms = new WeakMap();
+    const rad = d => d * Math.PI / 180;
+    const matrixFor = (name, a) => {
+      switch (name) {
+        case 'matrix': return [a[0], a[1], a[2], a[3], a[4], a[5]];
+        case 'translate': return [1, 0, 0, 1, a[0], a[1] ?? 0];
+        case 'scale': return [a[0], 0, 0, a[1] ?? a[0], 0, 0];
+        case 'rotate': {
+          const c = Math.cos(rad(a[0])), s = Math.sin(rad(a[0])), cx = a[1] ?? 0, cy = a[2] ?? 0;
+          return [c, s, -s, c, cx - c * cx + s * cy, cy - s * cx - c * cy];
+        }
+        case 'skewX': return [1, 0, Math.tan(rad(a[0])), 1, 0, 0];
+        case 'skewY': return [1, Math.tan(rad(a[0])), 0, 1, 0, 0];
+        default: return [1, 0, 0, 1, 0, 0];
+      }
+    };
+    const TRANSFORMS = ['', 'matrix', 'translate', 'scale', 'rotate', 'skewX', 'skewY'];
+    const mul = (p, q) => [p[0] * q[0] + p[2] * q[1], p[1] * q[0] + p[3] * q[1], p[0] * q[2] + p[2] * q[3], p[1] * q[2] + p[3] * q[3],
+      p[0] * q[4] + p[2] * q[5] + p[4], p[1] * q[4] + p[3] * q[5] + p[5]];
+    const matrix2D = (m, what) => {
+      if (m === undefined || m === null) return [1, 0, 0, 1, 0, 0];
+      if (typeof m !== 'object') throw new TypeError(`${what}: the matrix is not an object`);
+      const g = (x, y, d) => m[x] !== undefined ? Number(m[x]) : m[y] !== undefined ? Number(m[y]) : d;
+      return [g('a', 'm11', 1), g('b', 'm12', 0), g('c', 'm21', 0), g('d', 'm22', 1), g('e', 'm41', 0), g('f', 'm42', 0)];
+    };
+    const domMatrix = v => new globalThis.DOMMatrix(v);
+    class SVGTransform {
+      constructor(k) { if (k !== key) illegal(); }
+      get type() { return TRANSFORMS.indexOf(brandOf(transforms, this, 'SVGTransform.type').name); }
+      get matrix() { const s = brandOf(transforms, this, 'SVGTransform.matrix'); return s.matrix ?? (s.matrix = domMatrix(matrixFor(s.name, s.args))); }
+      get angle() { const s = brandOf(transforms, this, 'SVGTransform.angle'); return s.name === 'rotate' || s.name === 'skewX' || s.name === 'skewY' ? Math.fround(s.args[0]) : 0; }
+      setMatrix(matrix = undefined) { this._set('matrix', matrix2D(matrix, 'SVGTransform.setMatrix'), 0); }
+      setTranslate(tx, ty) { need(2, arguments.length, "Failed to execute 'setTranslate' on 'SVGTransform'"); this._set('translate', [float(tx, 'setTranslate'), float(ty, 'setTranslate')]); }
+      setScale(sx, sy) { need(2, arguments.length, "Failed to execute 'setScale' on 'SVGTransform'"); this._set('scale', [float(sx, 'setScale'), float(sy, 'setScale')]); }
+      setRotate(angle, cx, cy) { need(3, arguments.length, "Failed to execute 'setRotate' on 'SVGTransform'"); this._set('rotate', [float(angle, 'setRotate'), float(cx, 'setRotate'), float(cy, 'setRotate')]); }
+      setSkewX(angle) { need(1, arguments.length, "Failed to execute 'setSkewX' on 'SVGTransform'"); this._set('skewX', [float(angle, 'setSkewX')]); }
+      setSkewY(angle) { need(1, arguments.length, "Failed to execute 'setSkewY' on 'SVGTransform'"); this._set('skewY', [float(angle, 'setSkewY')]); }
+    }
+    Object.defineProperty(SVGTransform.prototype, '_set', { enumerable: false, value(name, args) {
+      const s = brandOf(transforms, this, 'SVGTransform');
+      if (s.readonly) noMod('SVGTransform');
+      s.name = name; s.args = args; s.matrix = undefined;
+      if (s.owner) s.owner.commit();
+    } });
+    const newTransform = (name, args, owner, readonly) => mk(SVGTransform, transforms, { name, args, matrix: undefined, owner: owner ?? null, readonly: !!readonly });
+    const transformText = s => {
+      const a = s.matrix ? [s.matrix.a, s.matrix.b, s.matrix.c, s.matrix.d, s.matrix.e, s.matrix.f] : s.args;
+      return (s.matrix ? 'matrix' : s.name) + '(' + a.map(fmt).join(' ') + ')';
+    };
+
+    // ---- the lists (SVG 2 §4.6.4 "List interfaces") --------------------------------------------
+    // A list reflects an attribute: it is read again when the attribute's text changed, and a
+    // change of the list or of one of its items writes the attribute.
+    const lists = new WeakMap();
+    const makeList = (name, kind) => {
+      // kind: { parse(text) -> items or null, text(items) -> string, accept(v, state, what) -> item }
+      class List {
+        constructor(k) { if (k !== key) illegal(); }
+        get length() { return LS(this, 'length').sync().length; }
+        get numberOfItems() { return LS(this, 'numberOfItems').sync().length; }
+        clear() { const s = LS(this, 'clear'); s.guard('clear'); const old = s.items; s.items = []; if (kind.release) old.forEach(kind.release); s.commit(); }
+        initialize(newItem) { need(1, arguments.length, `Failed to execute 'initialize' on '${name}'`); const s = LS(this, 'initialize'); s.guard('initialize'); const old = s.items, item = kind.accept(newItem, s, 'initialize'); s.items = [item]; if (kind.release) old.forEach(i => { if (i !== item) kind.release(i); }); s.commit(); return item; }
+        getItem(index) { need(1, arguments.length, `Failed to execute 'getItem' on '${name}'`); const s = LS(this, 'getItem'), items = s.sync(), i = Number(index) >>> 0; if (i >= items.length) throw new DOMException(`Failed to execute 'getItem' on '${name}': the index ${i} is not in the list`, 'IndexSizeError'); return items[i]; }
+        insertItemBefore(newItem, index) { need(2, arguments.length, `Failed to execute 'insertItemBefore' on '${name}'`); const s = LS(this, 'insertItemBefore'); s.guard('insertItemBefore'); const items = s.sync(), item = kind.accept(newItem, s, 'insertItemBefore'); items.splice(Math.min(Number(index) >>> 0, items.length), 0, item); s.commit(); return item; }
+        replaceItem(newItem, index) { need(2, arguments.length, `Failed to execute 'replaceItem' on '${name}'`); const s = LS(this, 'replaceItem'); s.guard('replaceItem'); const items = s.sync(), i = Number(index) >>> 0, item = kind.accept(newItem, s, 'replaceItem'); if (i >= items.length) throw new DOMException(`Failed to execute 'replaceItem' on '${name}': the index ${i} is not in the list`, 'IndexSizeError'); const was = items[i]; items[i] = item; if (kind.release && was !== item) kind.release(was); s.commit(); return item; }
+        removeItem(index) { need(1, arguments.length, `Failed to execute 'removeItem' on '${name}'`); const s = LS(this, 'removeItem'); s.guard('removeItem'); const items = s.sync(), i = Number(index) >>> 0; if (i >= items.length) throw new DOMException(`Failed to execute 'removeItem' on '${name}': the index ${i} is not in the list`, 'IndexSizeError'); const item = items.splice(i, 1)[0]; if (kind.release) kind.release(item); s.commit(); return item; }
+        appendItem(newItem) { need(1, arguments.length, `Failed to execute 'appendItem' on '${name}'`); const s = LS(this, 'appendItem'); s.guard('appendItem'); const items = s.sync(), item = kind.accept(newItem, s, 'appendItem'); items.push(item); s.commit(); return item; }
+      }
+      const LS = (o, what) => brandOf(lists, o, `${name}.${what}`);
+      Object.defineProperty(List, 'name', { value: name });
+      const isIndex = p => typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p);
+      const make = (el, attr, readonly) => {
+        const s = { el, attr, readonly, items: [], text: undefined,
+          // SVG 2 §4.6.4 "synchronize": the items that stay keep their objects and take the new
+          // values; the ones past the new end are no longer the list's.
+          sync() {
+            const t = el.getAttribute(attr) ?? '';
+            if (t === this.text) return this.items;
+            this.text = t;
+            const raw = kind.parse(t, this) ?? [], old = this.items;
+            this.items = raw.map((v, i) => i < old.length && kind.assign ? kind.assign(old[i], v, this) : kind.make(v, this));
+            if (kind.release) for (let i = raw.length; i < old.length; i++) kind.release(old[i]);
+            return this.items;
+          },
+          commit() { this.text = kind.text(this.items); el.setAttribute(attr, this.text); },
+          guard(what) { if (readonly) noMod(`${name}.${what}`); this.sync(); } };
+        const target = Object.create(List.prototype);
+        const proxy = new Proxy(target, {
+          get(t, p, r) { if (isIndex(p)) { const items = s.sync(); return items[Number(p)]; } return Reflect.get(t, p, r); },
+          set(t, p, v, r) { if (isIndex(p)) { proxy.replaceItem(v, Number(p)); return true; } return Reflect.set(t, p, v, r); },
+          has(t, p) { return isIndex(p) ? Number(p) < s.sync().length : Reflect.has(t, p); },
+          ownKeys(t) { return [...s.sync().keys()].map(String).concat(Reflect.ownKeys(t)); },
+          getOwnPropertyDescriptor(t, p) { if (isIndex(p)) { const items = s.sync(); return Number(p) < items.length ? { value: items[Number(p)], writable: true, enumerable: true, configurable: true } : undefined; } return Reflect.getOwnPropertyDescriptor(t, p); },
+        });
+        lists.set(proxy, s);
+        return proxy;
+      };
+      return { List, make };
+    };
+    const numberList = makeList('SVGNumberList', {
+      parse: t => numsOf(t),
+      make: (v, s) => newNumber(v, s, s.readonly),
+      assign: (item, v) => { numbers.get(item).v = v; return item; },
+      text: items => items.map(i => fmt(numbers.get(i).v)).join(' '),
+      accept(v, s, what) { const st = numbers.get(v); if (!st) throw new TypeError(`Failed to execute '${what}' on 'SVGNumberList': parameter 1 is not of type 'SVGNumber'.`); return st.owner || st.readonly ? newNumber(st.v, s) : (st.owner = s, v); },
+      release(item) { numbers.get(item).owner = null; },
+    });
+    const lengthList = makeList('SVGLengthList', {
+      parse: (t, s) => {
+        const parts = t.trim() === '' ? [] : t.trim().split(/[\t\n\f\r ]*,[\t\n\f\r ]*|[\t\n\f\r ]+/);
+        const vs = parts.map(lenOf);
+        return vs.some(v => v === null) ? null : vs;
+      },
+      make: (v, s) => { const l = newLength(detachedLength(v, s)); lengths.get(l).readonly = s.readonly; return l; },
+      assign: (item, v) => { lengths.get(item).v = v; return item; },
+      text: items => items.map(i => { const v = lengths.get(i).read(); return fmt(v.n) + v.u; }).join(' '),
+      accept(v, s, what) { const st = lengths.get(v); if (!st) throw new TypeError(`Failed to execute '${what}' on 'SVGLengthList': parameter 1 is not of type 'SVGLength'.`); if (st.el || st.owner || st.readonly) return newLength(detachedLength({ ...st.read() }, s)); st.owner = s; return v; },
+      release(item) { lengths.get(item).owner = null; },
+    });
+    const stringList = makeList('SVGStringList', {
+      parse: t => t.trim() === '' ? [] : t.trim().split(/[\t\n\f\r ,]+/),
+      make: v => v,
+      text: items => items.join(' '),
+      accept: v => String(v),
+    });
+    const pointList = makeList('SVGPointList', {
+      parse: t => { const ns = numsOf(t); if (!ns) return null; const out = []; for (let i = 0; i + 1 < ns.length; i += 2) out.push([ns[i], ns[i + 1]]); return out; },
+      make: v => new globalThis.DOMPoint(v[0], v[1]),
+      assign: (item, v) => { item.x = v[0]; item.y = v[1]; return item; },
+      text: items => items.map(p => fmt(p.x) + ',' + fmt(p.y)).join(' '),
+      accept(v, s, what) { if (v === null || typeof v !== 'object' || !(v instanceof globalThis.DOMPointReadOnly)) throw new TypeError(`Failed to execute '${what}' on 'SVGPointList': parameter 1 is not of type 'SVGPoint'.`); return new globalThis.DOMPoint(v.x, v.y); },
+    });
+    const transformList = makeList('SVGTransformList', {
+      parse: t => transformsOf(t),
+      make: (x, s) => newTransform(x.name, x.args, s, s.readonly),
+      assign: (item, x) => { const st = transforms.get(item); st.name = x.name; st.args = x.args; st.matrix = undefined; return item; },
+      text: items => items.map(i => transformText(transforms.get(i))).join(' '),
+      accept(v, s, what) { const st = transforms.get(v); if (!st) throw new TypeError(`Failed to execute '${what}' on 'SVGTransformList': parameter 1 is not of type 'SVGTransform'.`); if (st.owner || st.readonly) { const c = newTransform(st.name, st.args.slice(), s); if (st.matrix) transforms.get(c).matrix = domMatrix([st.matrix.a, st.matrix.b, st.matrix.c, st.matrix.d, st.matrix.e, st.matrix.f]); return c; } st.owner = s; return v; },
+      release(item) { transforms.get(item).owner = null; },
+    });
+    const matrixOfTransform = st => st.matrix ? [st.matrix.a, st.matrix.b, st.matrix.c, st.matrix.d, st.matrix.e, st.matrix.f] : matrixFor(st.name, st.args);
+    define(transformList.List.prototype, 'createSVGTransformFromMatrix', function createSVGTransformFromMatrix(matrix = undefined) {
+      brandOf(lists, this, 'SVGTransformList.createSVGTransformFromMatrix');
+      return newTransform('matrix', matrix2D(matrix, 'createSVGTransformFromMatrix'));
+    });
+    define(transformList.List.prototype, 'consolidate', function consolidate() {
+      const s = brandOf(lists, this, 'SVGTransformList.consolidate');
+      s.guard('consolidate');
+      const items = s.sync();
+      if (items.length === 0) return null;
+      const m = items.reduce((acc, i) => mul(acc, matrixOfTransform(transforms.get(i))), [1, 0, 0, 1, 0, 0]);
+      for (const i of items) transforms.get(i).owner = null;
+      const t = newTransform('matrix', m, s);
+      s.items = [t]; s.commit();
+      return t;
+    });
+
+    // ---- SVGPreserveAspectRatio ----------------------------------------------------------------
+    const ALIGN = ['', 'none', 'xMinYMin', 'xMidYMin', 'xMaxYMin', 'xMinYMid', 'xMidYMid', 'xMaxYMid', 'xMinYMax', 'xMidYMax', 'xMaxYMax'];
+    const ratios = new WeakMap();
+    const ratioOf = el => {
+      const p = (el.getAttribute('preserveAspectRatio') ?? '').trim().split(/[\t\n\f\r ]+/).filter(x => x !== '');
+      const align = p.length ? ALIGN.indexOf(p[0]) : 6, meet = p.length < 2 ? 1 : p[1] === 'meet' ? 1 : p[1] === 'slice' ? 2 : 0;
+      return align < 1 || meet === 0 || p.length > 2 ? { align: 6, meet: 1 } : { align, meet };
+    };
+    class SVGPreserveAspectRatio {
+      constructor(k) { if (k !== key) illegal(); }
+      get align() { return ratioOf(brandOf(ratios, this, 'SVGPreserveAspectRatio.align').el).align; }
+      set align(v) { const s = brandOf(ratios, this, 'SVGPreserveAspectRatio.align'); if (s.readonly) noMod('SVGPreserveAspectRatio.align'); const k = Number(v) & 0xFFFF; if (k < 1 || k > 10) throw new DOMException(`The alignment ${k} is not supported`, 'NotSupportedError'); const r = ratioOf(s.el); s.el.setAttribute('preserveAspectRatio', ALIGN[k] + (r.meet === 2 ? ' slice' : ' meet')); }
+      get meetOrSlice() { return ratioOf(brandOf(ratios, this, 'SVGPreserveAspectRatio.meetOrSlice').el).meet; }
+      set meetOrSlice(v) { const s = brandOf(ratios, this, 'SVGPreserveAspectRatio.meetOrSlice'); if (s.readonly) noMod('SVGPreserveAspectRatio.meetOrSlice'); const k = Number(v) & 0xFFFF; if (k < 1 || k > 2) throw new DOMException(`The meetOrSlice value ${k} is not supported`, 'NotSupportedError'); const r = ratioOf(s.el); s.el.setAttribute('preserveAspectRatio', ALIGN[r.align] + (k === 2 ? ' slice' : ' meet')); }
+    }
+
+    // ---- the animated values: each reflects one attribute of one element -----------------------
+    const anims = new WeakMap();
+    const AS = (o, what) => brandOf(anims, o, what);
+    const hrefOf = el => el.getAttribute('href') ?? el.getAttributeNS(XLINK_NS, 'href') ?? '';
+    const animated = {};
+    const scalar = (name, read, write) => {
+      const C = class { constructor(k) { if (k !== key) illegal(); }
+        get baseVal() { return read(AS(this, name + '.baseVal')); }
+        set baseVal(v) { write(AS(this, name + '.baseVal'), v); }
+        get animVal() { return read(AS(this, name + '.animVal')); } };
+      Object.defineProperty(C, 'name', { value: name });
+      return animated[name] = C;
+    };
+    const numberIn = s => {
+      const t = s.el.getAttribute(s.attr);
+      if (t === null) return s.dflt === '' ? 0 : Number(s.dflt);
+      // one number of a pair (`stdDeviation="2 3"`): the second is the first when it is absent
+      if (s.part) { const ns = numsOf(t); return ns && ns.length >= 1 && ns.length <= 2 ? ns[Math.min(s.part, ns.length) - 1] : (s.dflt === '' ? 0 : Number(s.dflt)); }
+      // `offset` of a gradient stop is a number or a percentage (SVG 2 §13.2.4)
+      const pct = s.attr === 'offset' && s.el.localName === 'stop' && /%\s*$/.test(t) ? numOf(t.trim().slice(0, -1)) : null;
+      const n = pct !== null ? pct / 100 : numOf(t);
+      return n === null ? (s.dflt === '' ? 0 : Number(s.dflt)) : n;
+    };
+    // Writing one number of a pair keeps the other.
+    const numberOut = (s, x) => {
+      if (!s.part) { s.el.setAttribute(s.attr, fmt(x)); return; }
+      const other = numberIn({ ...s, part: 3 - s.part });
+      s.el.setAttribute(s.attr, s.part === 1 ? fmt(x) + ' ' + fmt(other) : fmt(other) + ' ' + fmt(x));
+    };
+    scalar('SVGAnimatedNumber', s => Math.fround(numberIn(s)), (s, v) => numberOut(s, float(v, 'SVGAnimatedNumber.baseVal')));
+    scalar('SVGAnimatedInteger', s => Math.trunc(numberIn(s)) | 0, (s, v) => numberOut(s, Number(v) | 0));
+    scalar('SVGAnimatedBoolean', s => s.el.getAttribute(s.attr) === 'true', (s, v) => s.el.setAttribute(s.attr, v ? 'true' : 'false'));
+    scalar('SVGAnimatedString', s => s.attr === 'href' ? hrefOf(s.el) : (s.el.getAttribute(s.attr) ?? ''),
+      (s, v) => { if (s.attr === 'href' && !s.el.hasAttribute('href') && s.el.hasAttributeNS(XLINK_NS, 'href')) s.el.setAttributeNS(XLINK_NS, 'xlink:href', String(v)); else s.el.setAttribute(s.attr, String(v)); });
+    scalar('SVGAnimatedEnumeration', s => {
+      const t = s.el.getAttribute(s.attr);
+      if (s.attr === 'orient') return t === 'auto' ? 1 : t === 'auto-start-reverse' ? 3 : 2;
+      // an absent or invalid value is the initial value (SVG 2 §4.6.3 "reflecting an enumerated attribute")
+      return t === null || !s.values.includes(t) ? s.dflt : s.values.indexOf(t) + 1;
+    }, (s, v) => {
+      const k = Number(v) & 0xFFFF;
+      if (s.attr === 'orient') { if (k < 1 || k > 3) throw new TypeError(`The enumeration value ${k} is not valid`); s.el.setAttribute('orient', k === 1 ? 'auto' : k === 3 ? 'auto-start-reverse' : '0'); return; }
+      if (k < 1 || k > s.values.length) throw new TypeError(`Failed to set 'baseVal' on 'SVGAnimatedEnumeration': the value ${k} is not valid`);
+      s.el.setAttribute(s.attr, s.values[k - 1]);
+    });
+    const pair = (name, make) => {
+      const C = class { constructor(k) { if (k !== key) illegal(); }
+        get baseVal() { const s = AS(this, name + '.baseVal'); return s.base ?? (s.base = make(s, false)); }
+        get animVal() { const s = AS(this, name + '.animVal'); return s.anim ?? (s.anim = make(s, true)); } };
+      Object.defineProperty(C, 'name', { value: name });
+      return animated[name] = C;
+    };
+    pair('SVGAnimatedLength', (s, ro) => newLength(boundLength(s.el, s.attr, s.dflt === '' ? '0' : s.dflt, ro)));
+    pair('SVGAnimatedAngle', (s, ro) => mk(SVGAngle, angles, { readonly: ro,
+      read() { const t = s.el.getAttribute(s.attr); return (t !== null && angleOf(t)) || { n: 0, u: '', t: 1 }; },
+      write(n, unit) { s.el.setAttribute(s.attr, fmt(n) + unit.u); } }));
+    pair('SVGAnimatedRect', (s, ro) => {
+      // A DOMRect whose members read the attribute; the base value's also write it.
+      const r = Object.create(globalThis.DOMRect.prototype);
+      const now = () => { const v = numsOf(s.el.getAttribute(s.attr) ?? ''); return v && v.length === 4 ? v : [0, 0, 0, 0]; };
+      ['x', 'y', 'width', 'height'].forEach((k, i) => Object.defineProperty(r, k, { enumerable: true, configurable: true,
+        get() { return now()[i]; },
+        set(v) { if (ro) noMod('SVGRect.' + k); const c = now(); c[i] = float(v, 'SVGRect.' + k); s.el.setAttribute(s.attr, c.map(fmt).join(' ')); } }));
+      return r;
+    });
+    pair('SVGAnimatedNumberList', (s, ro) => numberList.make(s.el, s.attr, ro));
+    pair('SVGAnimatedLengthList', (s, ro) => lengthList.make(s.el, s.attr, ro));
+    pair('SVGAnimatedTransformList', (s, ro) => transformList.make(s.el, s.attr, ro));
+    pair('SVGAnimatedPreserveAspectRatio', (s, ro) => mk(SVGPreserveAspectRatio, ratios, { el: s.el, readonly: ro }));
+    const kinds = { L: 'SVGAnimatedLength', N: 'SVGAnimatedNumber', I: 'SVGAnimatedInteger', B: 'SVGAnimatedBoolean', S: 'SVGAnimatedString',
+      E: 'SVGAnimatedEnumeration', R: 'SVGAnimatedRect', P: 'SVGAnimatedPreserveAspectRatio', A: 'SVGAnimatedAngle',
+      LL: 'SVGAnimatedLengthList', NL: 'SVGAnimatedNumberList', TL: 'SVGAnimatedTransformList' };
+
+    // ---- the element interfaces ---------------------------------------------------------------
+    // [SameObject]: one object for each element and property.
+    const reflected = new WeakMap();
+    const cached = (el, prop, make) => { let m = reflected.get(el); if (!m) reflected.set(el, m = new Map()); let v = m.get(prop); if (!v) m.set(prop, v = make()); return v; };
+    const reflect = (C, name, entry) => {
+      const [prop, kind, attr0, dflt0] = entry.split(':');
+      const e = /^E\(([^)]*)\)([0-9]+)$/.exec(kind);
+      const attr = attr0 || prop, dflt = dflt0 ?? '';
+      const make = el => {
+        if (kind === 'SL') return stringList.make(el, attr, false);
+        if (kind === 'PL') return pointList.make(el, attr, prop === 'animatedPoints');
+        const pairPart = /^[NI][12]$/.test(kind) ? Number(kind[1]) : 0;
+        const base = e ? 'E' : pairPart ? kind[0] : kind;
+        return mk(animated[kinds[base]], anims, { el, attr, dflt: e ? Number(e[2]) : dflt, values: e ? e[1].split(',') : null, part: pairPart, base: undefined, anim: undefined });
+      };
+      Object.defineProperty(C.prototype, prop, { enumerable: true, configurable: true, get() {
+        if (!(this instanceof C)) throw new TypeError(`Illegal invocation: ${name}.${prop}`);
+        return cached(this, prop, () => make(this));
+      } });
+    };
+    for (const name in svgSpec) {
+      const [parent, tags, attrs] = svgSpec[name];
+      const P = classes[parent];
+      const C = class extends P { constructor() { illegal(); } };
+      Object.defineProperty(C, 'name', { value: name });
+      setTag(C, name);
+      for (const entry of attrs.split(' ')) if (entry !== '') reflect(C, name, entry);
+      classes[name] = C;
+      for (const tag of tags.split(' ')) if (tag !== '') byTag[tag] = C;
+    }
+    // SVGElement's own members (SVG 2 §4.5).
+    Object.defineProperty(SVGElement.prototype, 'className', { enumerable: true, configurable: true, get() {
+      return cached(this, 'className', () => mk(animated.SVGAnimatedString, anims, { el: this, attr: 'class', dflt: '' }));
+    } });
+    const outerSvg = el => { for (let p = el.parentNode; p; p = p.parentNode) if (p.namespaceURI === SVG_NS && p.localName === 'svg') return p; return null; };
+    Object.defineProperty(SVGElement.prototype, 'ownerSVGElement', { enumerable: true, configurable: true, get() { return outerSvg(this); } });
+    Object.defineProperty(SVGElement.prototype, 'viewportElement', { enumerable: true, configurable: true, get() { return outerSvg(this); } });
+    // SVGSVGElement's factories (SVG 2 §5.1.x).
+    const S = classes.SVGSVGElement.prototype;
+    define(S, 'createSVGNumber', function createSVGNumber() { return newNumber(0); });
+    define(S, 'createSVGLength', function createSVGLength() { return newLength(detachedLength({ n: 0, u: '', t: 1 })); });
+    define(S, 'createSVGAngle', function createSVGAngle() { return mk(SVGAngle, angles, detachedAngle()); });
+    define(S, 'createSVGPoint', function createSVGPoint() { return new globalThis.DOMPoint(0, 0); });
+    define(S, 'createSVGMatrix', function createSVGMatrix() { return domMatrix([1, 0, 0, 1, 0, 0]); });
+    define(S, 'createSVGRect', function createSVGRect() { return new globalThis.DOMRect(0, 0, 0, 0); });
+    define(S, 'createSVGTransform', function createSVGTransform() { return newTransform('matrix', [1, 0, 0, 1, 0, 0]); });
+    define(S, 'createSVGTransformFromMatrix', function createSVGTransformFromMatrix(matrix = undefined) { return newTransform('matrix', matrix2D(matrix, 'createSVGTransformFromMatrix')); });
+    define(S, 'getElementById', function getElementById(id) { need(1, arguments.length, "Failed to execute 'getElementById' on 'SVGSVGElement'"); const e = this.ownerDocument.getElementById(String(id)); return e && this.contains(e) && e !== this ? e : null; });
+    for (const k of ['createSVGNumber', 'createSVGLength', 'createSVGAngle', 'createSVGPoint', 'createSVGMatrix', 'createSVGRect', 'createSVGTransform', 'createSVGTransformFromMatrix', 'getElementById'])
+      Object.defineProperty(S, k, { ...Object.getOwnPropertyDescriptor(S, k), enumerable: true });
+    // The value interfaces and their constants.
+    class SVGUnitTypes { constructor() { illegal(); } }
+    Object.assign(classes, { SVGNumber, SVGLength, SVGAngle, SVGTransform, SVGPreserveAspectRatio, SVGUnitTypes,
+      SVGNumberList: numberList.List, SVGLengthList: lengthList.List, SVGStringList: stringList.List, SVGPointList: pointList.List,
+      SVGTransformList: transformList.List }, animated);
+    for (const name of svgValueNames) setTag(classes[name], name);
+    for (const name in svgConsts) {
+      const table = {};
+      for (const group of svgConsts[name].split('|')) group.split(' ').forEach((k, i) => { table[k] = i; });
+      consts(classes[name], table); consts(classes[name].prototype, table);
+    }
+    return { classes, byTag };
+  };
+  for (const name of [...Object.keys(svgSpec), ...svgValueNames]) lazy(name, () => svgDom().classes[name]);
+  lazy('SVGPoint', () => globalThis.DOMPoint); lazy('SVGRect', () => globalThis.DOMRect); lazy('SVGMatrix', () => globalThis.DOMMatrix);
+  // ==== end SVG DOM =============================================================================
 
   // ---- Web Storage (HTML §12.2): localStorage, sessionStorage, StorageEvent ----------------
   // The areas, their partition by origin and the quota are Lean's (Net/Storage.lean, web_api

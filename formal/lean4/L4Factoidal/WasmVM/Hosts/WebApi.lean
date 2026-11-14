@@ -37,6 +37,7 @@ import L4Factoidal.Crypto.WebCryptoKeys
 import L4Factoidal.Net.Xhr
 import L4Factoidal.Net.Storage
 import L4Factoidal.Net.FetchRules
+import L4Factoidal.DOM.SvgValues
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
 import Std.Data.HashMap
@@ -604,6 +605,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
           L4Factoidal.Net.BlobUrls.revoke s.net.blobs s.net.page.origin ((strArg fs 0).toOption.getD "") } }, ofStr "")
     -- The Fetch API's rules: MIME type of a body, `Headers` validation, a `Request`'s method.
     else if 86 ≤ code && code < 90 then pure' (L4Factoidal.Net.FetchRules.op code fs)
+    -- The values the SVG DOM reflects: a length, a number, a number list, a transform list.
+    else if 92 ≤ code && code < 96 then pure' (L4Factoidal.DOM.SvgValues.op code fs)
     else pure' (.error (-2))
 
 section
