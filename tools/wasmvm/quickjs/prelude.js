@@ -210,6 +210,7 @@
     get detail() { return state(this).detail ?? 0; }
     get which() { return state(this).which ?? 0; }
     initUIEvent(type, bubbles = false, cancelable = false, view = null, detail = 0) {
+      if (arguments.length < 1) throw new TypeError("initUIEvent: 1 argument required");
       if (state(this).dispatching) return;
       this.initEvent(type, bubbles, cancelable); Object.assign(state(this), { view, detail: detail | 0 });
     }
@@ -221,6 +222,7 @@
   };
   // getModifierState (UI Events §5.6.1.2): the state of a modifier key value; any other is false.
   function getModifierState(k) {
+    if (arguments.length < 1) throw new TypeError("getModifierState: 1 argument required");
     const s = state(this);
     return { Control: s.ctrlKey, Shift: s.shiftKey, Alt: s.altKey, Meta: s.metaKey, AltGraph: s.altGraph, CapsLock: s.capsLock }[String(k)] === true;
   }
@@ -236,7 +238,7 @@
       modifiers(s, d);
       s.relatedTarget = d.relatedTarget ?? null;
     }
-    getModifierState(k) { return getModifierState.call(this, k); }
+    getModifierState(k) { return getModifierState.apply(this, arguments); }
     // UI Events §7.3 (legacy): initMouseEvent does nothing while the event is dispatched.
     initMouseEvent(type, bubbles = false, cancelable = false, view = null, detail = 0, screenX = 0, screenY = 0,
       clientX = 0, clientY = 0, ctrlKey = false, altKey = false, shiftKey = false, metaKey = false, button = 0, relatedTarget = null) {
@@ -301,7 +303,7 @@
       s.key = String(d.key ?? ''); s.code = String(d.code ?? ''); s.location = (d.location ?? 0) >>> 0;
       s.repeat = !!d.repeat; s.isComposing = !!d.isComposing; s.charCode = (d.charCode ?? 0) >>> 0; s.keyCode = (d.keyCode ?? 0) >>> 0;
     }
-    getModifierState(k) { return getModifierState.call(this, k); }
+    getModifierState(k) { return getModifierState.apply(this, arguments); }
   }
   getters(KeyboardEvent, ['key', 'code', 'location', 'repeat', 'isComposing', 'charCode', 'keyCode', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey']);
   const keyLocations = { DOM_KEY_LOCATION_STANDARD: 0, DOM_KEY_LOCATION_LEFT: 1, DOM_KEY_LOCATION_RIGHT: 2, DOM_KEY_LOCATION_NUMPAD: 3 };
@@ -424,6 +426,7 @@
     constructor(type) { if (!legacyMaking) throw new TypeError('Illegal constructor'); super(type); state(this).data = ''; }
     get data() { return state(this).data; }
     initTextEvent(type, bubbles = false, cancelable = false, view = null, data = 'undefined') {
+      if (arguments.length < 1) throw new TypeError("initTextEvent: 1 argument required");
       if (state(this).dispatching) return;
       this.initUIEvent(type, bubbles, cancelable, view, 0); state(this).data = String(data);
     }
