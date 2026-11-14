@@ -13362,6 +13362,36 @@
     if (s !== '' && resolveURL(s, scriptBase()) === null) throw new DOMException(`Failed to execute 'open' on 'Window': Unable to open a window with invalid URL '${s}'.`, 'SyntaxError');
     return null;
   });
+  // HTML §7.2.2: the window's operations are enumerable own properties of the global
+  // ([Global], Web IDL §3.7.6); print() does nothing here (no printing).
+  def('print', () => {});
+  for (const k of ['postMessage', 'focus', 'blur', 'close', 'stop', 'alert', 'confirm', 'prompt', 'print', 'open', 'captureEvents', 'releaseEvents']) {
+    const d = Object.getOwnPropertyDescriptor(globalThis, k);
+    if (d && 'value' in d) Object.defineProperty(globalThis, k, { value: d.value, writable: true, configurable: true, enumerable: true });
+  }
+  // HTML §7.2.2.2 BarProp: the bars of a window that a script did not open are visible;
+  // `status` is a string the window keeps; `closed` is false for this window; `length` the
+  // number of its child navigables (the frames of its document); `originAgentCluster` false;
+  // `external` the obsolete External interface (§16.3.6), whose methods do nothing.
+  {
+    class BarProp { constructor() { throw new TypeError('Illegal constructor'); } get visible() { return true; } }
+    Object.defineProperty(BarProp.prototype, Symbol.toStringTag, { value: 'BarProp', configurable: true });
+    class External { constructor() { throw new TypeError('Illegal constructor'); } AddSearchProvider() {} IsSearchProviderInstalled() {} }
+    Object.defineProperty(External.prototype, Symbol.toStringTag, { value: 'External', configurable: true });
+    def('BarProp', BarProp); def('External', External);
+    const accessor = (k, get, set) => Object.defineProperty(globalThis, k, { get, set, configurable: true, enumerable: true });
+    for (const k of ['locationbar', 'menubar', 'personalbar', 'scrollbars', 'statusbar', 'toolbar']) {
+      const bar = Object.create(BarProp.prototype);
+      accessor(k, () => bar, v => { Object.defineProperty(globalThis, k, { value: v, writable: true, configurable: true, enumerable: true }); });
+    }
+    let status = '';
+    accessor('status', () => status, v => { status = String(v); });
+    accessor('closed', () => false, undefined);
+    accessor('length', () => document.querySelectorAll('iframe,frame').length, v => { Object.defineProperty(globalThis, 'length', { value: v, writable: true, configurable: true, enumerable: true }); });
+    accessor('originAgentCluster', () => false, undefined);
+    const external = Object.create(External.prototype);
+    accessor('external', () => external, v => { Object.defineProperty(globalThis, 'external', { value: v, writable: true, configurable: true, enumerable: true }); });
+  }
 
   // ==== frames (shadowframes) ==========================================================
   // A same-origin frame's document is in this realm's arena and its scripts run here
@@ -13544,12 +13574,12 @@
     Object.defineProperty(globalThis, 'parent', { get: () => frameSession() ? parentWindow() : scriptDocument && scriptDocument !== document ? parentOfDoc(nodeId(scriptDocument)) : window, configurable: true });
     Object.defineProperty(globalThis, 'top', { get: () => frameSession() ? parentWindow() : window, configurable: true });
   }
-  if (frameEngine()) def('postMessage', function postMessage(message, targetOrigin, transfer) {
+  if (frameEngine()) Object.defineProperty(globalThis, 'postMessage', { writable: true, configurable: true, enumerable: true, value: function postMessage(message, targetOrigin, transfer) {
     if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'Window': 1 argument required, but only 0 present.");
     // `postMessage(…)` in a frame's script is that frame's window's: it posts to the frame's
     // own window, where the frame's listeners are, not to the page's
     postTo(scriptDocument !== null && scriptDocument !== document ? nodeId(scriptDocument) : 0, message, targetOrigin, transfer);
-  });
+  } });
   // HTML §9.4 MessageChannel and MessagePort: two entangled ports in this realm; a message
   // waits in the port's queue until the port is started (start() or onmessage).
   class MessagePort extends EventTarget {
