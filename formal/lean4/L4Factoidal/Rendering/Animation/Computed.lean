@@ -15,6 +15,7 @@ over the property table (`Rendering.CssValues`) and `getComputedStyle`'s answers
   the cheap test that comes first.
 -/
 import L4Factoidal.Rendering.ComputedGeneric
+import L4Factoidal.Rendering.Generated
 import L4Factoidal.Rendering.Animation.Css
 import Std.Data.HashMap
 
@@ -257,6 +258,28 @@ private def restylePage (style : String) : String :=
 #guard (match CSS.parse "p[title] { color: red } .a > b { color: blue }" with
   | .ok rules => !CSS.readsStyleAttribute rules
   | .error _ => false)
+
+/-! ## Tests: animated values on a page whose sheet makes generated content
+
+The layout of such a page takes its styles from `Generated.styled`, not `CSS.computeFor`:
+the animated values of the element state are in them all the same, whether a `::before`
+box is made (the element's style is the same as without it) or the rule matches nothing. -/
+
+private def generatedAgrees (sheet : String) : Bool :=
+  let d := DOM.parseHtmlDocument (restylePage "width: 10px")
+  match CSS.parse sheet, firstWithId d "t" with
+  | .ok rules, some t =>
+    let state : CSS.ElementState := { animated := [(t, "width", "44px", false)] }
+    Generated.used rules &&
+    (match Generated.styled none d rules 1 state, CSS.computeAll d rules 1 state, CSS.computeAll d rules with
+      | .ok (_, made), .ok animated, .ok plain =>
+        (made[t]?).map ComputedValues.text == (animated[t]?).map ComputedValues.text &&
+        (animated[t]?).map ComputedValues.text != (plain[t]?).map ComputedValues.text
+      | _, _, _ => false)
+  | _, _ => false
+
+#guard generatedAgrees "#t::before { content: \"x\"; width: 75px } p { margin-left: 3px }"
+#guard generatedAgrees ".absent::before { content: \"x\" } p { margin-left: 3px }"
 
 /-! ## Tests: a `class` written, styles again from the parent
 
