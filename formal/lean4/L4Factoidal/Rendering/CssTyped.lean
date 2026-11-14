@@ -13,6 +13,7 @@ tokenizer: `u(3.14 "px")`, `sum(a, b)`, `product(a, b)`, `negate(a)`, `invert(a)
 `min(a, b)`, `max(a, b)`, `clamp(a, b, c)`. From here to the page, a value is JSON.
 -/
 import L4Factoidal.Rendering.CssValues.Declaration
+import L4Factoidal.Rendering.CssRegister
 
 namespace L4Factoidal.Rendering.CssTyped
 open L4Factoidal.Rendering.CssValues
@@ -177,11 +178,70 @@ def opaqueProperty (property : String) : Bool :=
   | some row => !row.longhands.isEmpty || (trimText row.grammar).endsWith "{1,2}"
   | none => false
 
-/-- The typed value of a value text of a property. -/
+/-- The value of a custom property with no registration (or the universal syntax) as a
+typed value: always an unparsed value (CSS Properties and Values API 1 §6.1). -/
+def unparsedOf (text : String) : String :=
+  let cvs := CV.parse text
+  "{\"t\":\"unparsed\",\"a\":" ++ unparsedJson (cvSize 64 cvs + 2) cvs ++ "}"
+
+/-- The typed value of a value text of a property; a custom property's is unparsed. -/
 def reifyFor (property text : String) : String :=
   let cvs := CV.parse text
-  if opaqueProperty property && !hasFn "var" 32 cvs && (wideKeyword (stripWs cvs)).isNone then styleJson text
+  if isCustom property then unparsedOf text
+  else if opaqueProperty property && !hasFn "var" 32 cvs && (wideKeyword (stripWs cvs)).isNone then styleJson text
   else reify text
+
+/-- The data types of a registered syntax whose values are numeric values (§6.2). -/
+def numericTypes : List String :=
+  ["length", "number", "percentage", "length-percentage", "integer", "angle", "time", "resolution"]
+
+/-- One value of a syntax component as a typed value (§6.2): a numeric value as `reify`
+reads it, an image or url as an image, a custom identifier or keyword as a keyword, and
+anything else (a colour, a string, a transform) as a value with no typed form. -/
+def reifyComponent (g : G) (item : List CV) : String :=
+  let text := rawText item
+  match g with
+  | .ref name _ _ =>
+    if numericTypes.contains name then reify text
+    else if name == "image" || name == "url" then "{\"t\":\"image\",\"c\":" ++ jsonString text ++ "}"
+    else if name == "custom-ident" then
+      match stripWs item with
+      | [.tok (.ident s)] => "{\"t\":\"kw\",\"v\":" ++ jsonString s ++ "}"
+      | _ => styleJson text
+    else styleJson text
+  | .kw _ =>
+    match stripWs item with
+    | [.tok (.ident s)] => "{\"t\":\"kw\",\"v\":" ++ jsonString s ++ "}"
+    | _ => styleJson text
+  | _ => styleJson text
+
+/-- The typed values of a registered custom property's value by its syntax (§6.2), as a
+JSON array: one value, or one for each item of a `+` or `#` list; an unparsed value for the
+universal syntax, a CSS-wide keyword, or a value of no alternative. -/
+def reifyBySyntax (syn text : String) : String :=
+  let cvs := CV.parse text
+  let top := stripWs cvs
+  match CssRegister.syntaxGrammar syn with
+  | some (some g) =>
+    let alts := match g with
+      | .oneOf xs => xs
+      | g => [g]
+    match (wideKeyword top), alts.find? (fun a => (matchAll (env none) a top).isSome) with
+    | none, some (.rep inner _ _ comma) =>
+      let items : List (List CV) :=
+        if comma then (splitCommas top).map stripWs else (top.filter fun cv => !cv.isWs).map fun cv => [cv]
+      "[" ++ ",".intercalate (items.map fun item => reifyComponent inner item) ++ "]"
+    | none, some a => "[" ++ reifyComponent a top ++ "]"
+    | _, _ => "[" ++ unparsedOf text ++ "]"
+  | _ => "[" ++ unparsedOf text ++ "]"
+
+#guard reifyBySyntax "<length>" "10px" == "[{\"t\":\"u\",\"v\":10,\"u\":\"px\"}]" ||
+  (reifyBySyntax "<length>" "10px").startsWith "[{\"t\":\"u\""
+#guard (reifyBySyntax "<length>+" "10px 20px").splitOn "\"t\":\"u\"" |>.length |> (· == 3)
+#guard (reifyBySyntax "<color>" "rgb(1, 2, 3)").startsWith "[{\"t\":\"style\""
+#guard (reifyBySyntax "*" "if(){}").startsWith "[{\"t\":\"unparsed\""
+#guard (reifyBySyntax "<custom-ident>" "foo").startsWith "[{\"t\":\"kw\""
+#guard (reifyFor "--x" "10px").startsWith "{\"t\":\"unparsed\""
 
 /-- The typed values of a list-valued property's text: one for each comma-separated item. -/
 def reifyAll (text : String) : String :=
@@ -406,6 +466,7 @@ def typedOp (q : String) : String :=
   | ["reify", text] => reify text
   | ["reifyall", text] => reifyAll text
   | ["reifyp", property, text] => reifyFor property text
+  | ["reifys", syn, text] => reifyBySyntax syn text
   | ["isshorthand", property] => if refusesTyped (propertyName property) then "1" else "0"
   | ["css", wire] => ((parseWire wire).map numericCss).getD ""
   | ["unit", name] => if (calcUnit name).isSome then "1" else "0"
