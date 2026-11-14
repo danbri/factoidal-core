@@ -328,6 +328,25 @@ private def namePattern11 (pattern text : String) : Option Bool :=
 #guard unreadablePatterns [["\\i\\c*"]] == []
 #guard patternMatches [["\\i\\c*"]] "é名_1"
 #guard !patternMatches [["\\i\\c*"]] "1bad"
-#guard unreadablePatterns [["\\d"]] == ["\\d"]
+-- `\d`, `\w`, `\p{..}` and class subtraction are read by the F&O 4.0
+-- parser behind `Regex.Profiles.xsd11Re` (XSD 1.1 Part 2 Appendix G):
+-- such a pattern is enforced, not vacuous.
+#guard unreadablePatterns [["\\d"]] == []
+#guard patternMatches [["\\d+"]] "2026"
+#guard !patternMatches [["\\d+"]] "20a6"
+-- G.4.2.5: `\d` is `\p{Nd}`, so ARABIC-INDIC DIGIT THREE matches
+#guard patternMatches [["\\d"]] "٣"
+#guard patternMatches [["\\p{Lu}\\w*"]] "Été"
+#guard !patternMatches [["\\p{Lu}\\w*"]] "été"
+#guard patternMatches [["[a-z-[aeiou]]+"]] "xyz"
+#guard !patternMatches [["[a-z-[aeiou]]+"]] "xyza"
+-- Appendix G: `^` and `$` are ordinary characters in an XSD pattern
+#guard patternMatches [["\\d\\^\\d"]] "1^2"
+#guard patternMatches [["^\\d$"]] "^1$"
+#guard !patternMatches [["^\\d$"]] "1"
+-- syntax that F&O 4.0 adds to XSD is not an XSD pattern
+#guard unreadablePatterns [["\\d+?"]] == ["\\d+?"]
+#guard unreadablePatterns [["(?=a)\\d"]] == ["(?=a)\\d"]
+#guard unreadablePatterns [["(\\d)\\1"]] == ["(\\d)\\1"]
 
 end L4Factoidal.XSD

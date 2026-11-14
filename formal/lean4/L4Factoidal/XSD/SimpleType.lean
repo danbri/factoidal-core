@@ -129,20 +129,22 @@ def valueLength? : Val → Option Nat
 /-! ## §4.3.4 — pattern -/
 
 /-- Does the normalized literal match every pattern group? Within a
-group the alternatives are a union; a pattern the XSD regular-
-expression parser cannot read makes the group VACUOUS rather than
-failing the value, and the count of those is reported by the runner
-rather than folded into a score. -/
+group the alternatives are a union. The reader is `Regex.Profiles.xsd11Re`
+(the restricted XSD 1.1 profile, then the F&O 4.0 parser for `\d`,
+`\w`, `\p{..}` and class subtraction). A pattern that no reader
+reads makes the group VACUOUS rather than failing the value, and the
+count of those is reported by the runner rather than folded into a
+score. -/
 def patternMatches (groups : List (List String)) (lit : String) : Bool :=
   let w := lit.toList.map Char.toNat
   groups.all (fun alts =>
-    let parsed := alts.filterMap (fun p => (Regex.Profiles.compileXsd11 p).toOption)
+    let parsed := alts.filterMap (fun p => Regex.Profiles.xsd11Re p)
     parsed.isEmpty || parsed.any (fun r => Exec.acceptsNorm r w))
 
 /-- A pattern the parser cannot read — reported, never scored. -/
 def unreadablePatterns (groups : List (List String)) : List String :=
   groups.flatMap (fun alts =>
-    alts.filter (fun p => (Regex.Profiles.compileXsd11 p).toOption.isNone))
+    alts.filter (fun p => (Regex.Profiles.xsd11Re p).isNone))
 
 /-! ## The value-space facets -/
 

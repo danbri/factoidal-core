@@ -94,9 +94,11 @@ def addParam (b : Builtin) (f : Facets) (p : String × String) : Except String F
   | "fractionDigits" => if digitsApply b then nat (fun m => { f with fractionDigits := some m })
                         else .error s!"param fractionDigits does not apply to {b.localName}"
   | "pattern" =>
-      match Regex.Profiles.compileXsd11 v with
-      | .ok _ => .ok { f with patterns := f.patterns ++ [[v]] }
-      | .error _ => .error s!"param pattern: not a regular expression: {v}"
+      -- the reader of `XSD.patternMatches` (`\d`, `\w`, `\p{..}` and class
+      -- subtraction included), so a pattern accepted here is enforced there
+      match Regex.Profiles.xsd11Re v with
+      | some _ => .ok { f with patterns := f.patterns ++ [[v]] }
+      | none => .error s!"param pattern: not a regular expression: {v}"
   | "minInclusive" => bound (fun s => { f with minInclusive := some s })
   | "maxInclusive" => bound (fun s => { f with maxInclusive := some s })
   | "minExclusive" => bound (fun s => { f with minExclusive := some s })
@@ -184,5 +186,15 @@ def checkValue (dt : Datatype) (v : String) (vcx : Context) : Except String Unit
       if !xsdAllows b {} vcx v then
         throw s!"value {v} is not a literal of {dt.name}"
     | none => pure ()
+
+/-! A `pattern` parameter is read by `Regex.Profiles.xsd11Re`, the reader of
+`XSD.patternMatches`: the multi-character escapes of XSD 1.1 Part 2
+Appendix G (G.4.2.5) are patterns, and they are enforced. -/
+#guard (facetsOf .string [("pattern", "\\d{4}")]).toOption.isSome
+#guard (facetsOf .string [("pattern", "\\p{Lu}[a-z-[aeiou]]*")]).toOption.isSome
+#guard (facetsOf .string [("pattern", "(\\d)\\1")]).toOption.isNone
+#guard match facetsOf .string [("pattern", "\\d{4}")] with
+  | .ok f => xsdAllows .string f { ns := [] } "2026" && !xsdAllows .string f { ns := [] } "20x6"
+  | .error _ => false
 
 end L4Factoidal.RelaxNG
