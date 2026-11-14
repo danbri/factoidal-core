@@ -658,6 +658,12 @@ page with none pays one pass over its styles.
 `fit-content` are the height of the content: a box with one has no definite height before its content is laid
 out.
 
+**Margins through an empty block (CSS 2.1 §8.3.1).** A block with no height, border, padding or line box was
+stacked with both its margins, so an empty paragraph between two others made twice its margin of space. Its
+two margins are now one margin, which joins the margin before it and, as the margin carried to the next box,
+the one after it (`MarginCollapse.collapse`, two at a time). At the top of a flow whose container shows the
+first margin, and for a block whose `height` is `0` rather than `auto`, it is stacked as before. Check 43599723060 (3,508 names on main b323da1b0): no test worse; `CSS2/normal-flow/margin-collapse-through-for-various-height-values` 27 -> 29 and `scrollWidthHeight-negative-margin-002` 305 -> 310.
+
 **The rendered legend (HTML §15.5.13).** `legend` is a block by default, and the first `legend` child of a
 `fieldset` that is in flow takes its width as `fit-content` (`Layout.renderedLegend`). The legend is not yet
 drawn over the fieldset's top border.
