@@ -2382,3 +2382,5 @@ L4Factoidal_Rendering_CssValues_expandF  # (c) fuel 4: a shorthand whose parts a
 L4Factoidal_Rendering_CssValues_recombineF  # (c) fuel 4: a shorthand whose parts are shorthands
 L4Factoidal_Rendering_CssValues_filterComputed  # (c) the nesting of one value, fuel 8
 L4Factoidal_Rendering_CSS_complexSpecificity  # (c) the nesting of a selector, at most DOM.Selectors.maxNesting = 32
+L4Factoidal_Rendering_MediaQuery_inParens  # (c) the nesting of parentheses in one media query, fuel 32; the operands of a level are a mapM
+L4Factoidal_Rendering_MediaQuery_Cond_eval  # (c) a condition tree: at most maxOperands = 32 operands at a level (condition) and 32 levels (inParens)
