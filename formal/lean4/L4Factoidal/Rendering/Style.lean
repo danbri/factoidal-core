@@ -1969,6 +1969,36 @@ def ScopedIndex.matched (ix : ScopedIndex) (keys : Nat → ElemKey) (ts : TreeSc
     | some e => matchEntryIn keys ts id state e
     | none => none
 
+/-- The content of a `details` element that is not open, all but its first `summary` child
+(HTML §15.5.4): not rendered. -/
+def closedDetailsContent (dom : Dom) (id : Nat) : Bool :=
+  match (dom.get id).parent with
+  | some p =>
+    let d := dom.get p
+    d.ns == some DOM.htmlNS && d.lname == "details" && !(d.attrs.any fun a => a.ns.isNone && a.lname == "open") &&
+      !((dom.get id).lname == "summary" &&
+        (d.kids.toList.find? fun k => (dom.get k).type == .element && (dom.get k).lname == "summary") == some id)
+  | none => false
+
+/-- Kind: property. Says: a node with no parent (the root) is never the content of a closed
+`details`. -/
+theorem closedDetailsContent_root (dom : Dom) (id : Nat) (h : (dom.get id).parent = none) :
+    closedDetailsContent dom id = false := by
+  simp [closedDetailsContent, h]
+
+/-- Kind: property. Says: the content of a `details` with the `open` attribute is rendered,
+whatever it is. Does not say: anything of author rules (they are applied after). -/
+theorem closedDetailsContent_open (dom : Dom) (id p : Nat) (hp : (dom.get id).parent = some p)
+    (ho : ((dom.get p).attrs.any fun a => a.ns.isNone && a.lname == "open") = true) :
+    closedDetailsContent dom id = false := by
+  simp [closedDetailsContent, hp, ho]
+
+/-- Kind: property. Says: a child of an element that is not a `details` is never hidden by
+this rule. -/
+theorem closedDetailsContent_other (dom : Dom) (id p : Nat) (hp : (dom.get id).parent = some p)
+    (hn : ((dom.get p).lname == "details") = false) : closedDetailsContent dom id = false := by
+  simp [closedDetailsContent, hp, hn]
+
 /-- Winning declarations are keyed by property, with importance, origin, specificity
 and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
 origin (`userAgentRules`) is below the author origin. Inheritance is applied first.
@@ -1995,15 +2025,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     -- cookie notice showed the paragraphs of both of its answers.
     (n.ns == some DOM.htmlNS && ((n.lname == "dialog" && !hasAttr "open") || (hasAttr "popover" && n.states % 2 == 0) ||
       hasAttr "hidden")) ||
-    -- HTML §15.5.4 (the `details` element): the content of a `details` that is not open,
-    -- all but its first `summary` child, is not rendered. It was drawn open.
-    (match n.parent with
-      | some p =>
-        let d := dom.get p
-        d.ns == some DOM.htmlNS && d.lname == "details" && !(d.attrs.any fun a => a.ns.isNone && a.lname == "open") &&
-          !(n.lname == "summary" &&
-            (d.kids.toList.find? fun k => (dom.get k).type == .element && (dom.get k).lname == "summary") == some id)
-      | none => false)
+    -- the content of a `details` that is not open (it was drawn open)
+    closedDetailsContent dom id
   let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
   let svgOverflow := attrValue n "overflow"
   let scale := headingScale n.lname
