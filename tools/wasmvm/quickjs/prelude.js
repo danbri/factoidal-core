@@ -7072,6 +7072,8 @@
       LL: 'SVGAnimatedLengthList', NL: 'SVGAnimatedNumberList', TL: 'SVGAnimatedTransformList' };
 
     // ---- the element interfaces ---------------------------------------------------------------
+    // WebIDL §3.7.6: an attribute's getter is named "get <attribute>".
+    const getterNamed = (prop, f) => { Object.defineProperty(f, 'name', { value: 'get ' + prop, configurable: true }); return f; };
     // [SameObject]: one object for each element and property.
     const reflected = new WeakMap();
     const cached = (el, prop, make) => { let m = reflected.get(el); if (!m) reflected.set(el, m = new Map()); let v = m.get(prop); if (!v) m.set(prop, v = make()); return v; };
@@ -7086,10 +7088,10 @@
         const base = e ? 'E' : pairPart ? kind[0] : kind;
         return mk(animated[kinds[base]], anims, { el, attr, dflt: e ? Number(e[2]) : dflt, values: e ? e[1].split(',') : null, part: pairPart, base: undefined, anim: undefined });
       };
-      Object.defineProperty(C.prototype, prop, { enumerable: true, configurable: true, get() {
+      Object.defineProperty(C.prototype, prop, { enumerable: true, configurable: true, get: getterNamed(prop, function () {
         if (!(this instanceof C)) throw new TypeError(`Illegal invocation: ${name}.${prop}`);
         return cached(this, prop, () => make(this));
-      } });
+      }) });
     };
     for (const name in svgSpec) {
       const [parent, tags, attrs] = svgSpec[name];
@@ -7102,12 +7104,12 @@
       for (const tag of tags.split(' ')) if (tag !== '') byTag[tag] = C;
     }
     // SVGElement's own members (SVG 2 §4.5).
-    Object.defineProperty(SVGElement.prototype, 'className', { enumerable: true, configurable: true, get() {
+    Object.defineProperty(SVGElement.prototype, 'className', { enumerable: true, configurable: true, get: getterNamed('className', function () {
       return cached(this, 'className', () => mk(animated.SVGAnimatedString, anims, { el: this, attr: 'class', dflt: '' }));
-    } });
+    }) });
     const outerSvg = el => { for (let p = el.parentNode; p; p = p.parentNode) if (p.namespaceURI === SVG_NS && p.localName === 'svg') return p; return null; };
-    Object.defineProperty(SVGElement.prototype, 'ownerSVGElement', { enumerable: true, configurable: true, get() { return outerSvg(this); } });
-    Object.defineProperty(SVGElement.prototype, 'viewportElement', { enumerable: true, configurable: true, get() { return outerSvg(this); } });
+    Object.defineProperty(SVGElement.prototype, 'ownerSVGElement', { enumerable: true, configurable: true, get: getterNamed('ownerSVGElement', function () { return outerSvg(this); }) });
+    Object.defineProperty(SVGElement.prototype, 'viewportElement', { enumerable: true, configurable: true, get: getterNamed('viewportElement', function () { return outerSvg(this); }) });
     // SVGSVGElement's factories (SVG 2 §5.1.x).
     const S = classes.SVGSVGElement.prototype;
     define(S, 'createSVGNumber', function createSVGNumber() { return newNumber(0); });
