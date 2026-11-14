@@ -106,6 +106,13 @@ structure State where
   number: what a style change looks at, so that its work does not grow with the
   animations a page has had. -/
   liveCss : List Nat := []
+  /-- The transitions that ran to their end since the last style change of their element:
+  the element, the longhand and the end value. The before-change style of that longhand
+  is the end value (CSS Transitions 1 §3: a completed transition is no longer in the
+  style), not the value the kept style had while the transition still ran; without this
+  a transition that ended between two style changes would start again from its last
+  sampled value. At most one entry a transition, so at most `maxAnimations`. -/
+  ended : List (Nat × String × String) := []
   deriving Inhabited
 
 /-- What the engine reads of the page at a style change. -/
@@ -444,7 +451,10 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
   for property in (named ++ others).eraseDups do
     if !animatable property || stillRunning.contains property || animatedBefore.contains property then continue
     let some sp := Css.transitionFor specs property | continue
-    let some before := ac.prev e property | continue
+    -- the before-change value: the end value of a transition of the longhand that ran to
+    -- its end since the element's last style change, else the kept style's value
+    let ended := (s.ended.find? fun (el, p, _) => el == e && p == property).map (·.2.2)
+    let some before := ended.orElse (fun _ => ac.prev e property) | continue
     let some after := ac.base e property | continue
     if before == after then continue
     if sp.duration + sp.delay ≤ 0 then continue
@@ -527,7 +537,8 @@ def styleChange (s : State) (ac : Access) : State := Id.run do
   for e in elements do
     s := updateAnimations s ac e
     s := updateTransitions s ac e
-  return s
+  -- every element's before-change style is now this style
+  return { s with ended := [] }
 
 /-- A style change in which only the styles of the elements that `keep` holds of can
 have changed, and the sheets are as they were: the CSS animations and the transitions of
@@ -537,7 +548,10 @@ before-change and after-change styles are the same. -/
 def styleChangeOn (s : State) (ac : Access) (keep : Nat → Bool) (elements : List Nat) : State :=
   let owners := s.liveCss.filterMap fun i =>
     (s.anims[i]?).bind fun a => if a.dead then none else a.owner.bind fun o => if keep o then some o else none
-  ((elements ++ owners).eraseDups).foldl (fun s e => updateTransitions (updateAnimations s ac e) ac e) s
+  let changed := (elements ++ owners).eraseDups
+  if changed.isEmpty then s else
+  let s := changed.foldl (fun s e => updateTransitions (updateAnimations s ac e) ac e) s
+  { s with ended := s.ended.filter fun (el, _, _) => !changed.contains el }
 
 /-- Kind: correctness (the empty case). Says: a style change that names no element and
 finds no live CSS animation or transition leaves the state as it is. Does not say: that a
@@ -636,10 +650,15 @@ def tick (s : State) (connected : Nat → Bool := fun _ => true) : State := Id.r
     let a := s.anims[i]!
     if a.origin != .script then
       let (a', evs) := phaseEvents s a
-      -- a transition past its end is over: retired, with no further event
-      let a' := if isCssTransition a'.origin && a'.phase == .after then { a' with dead := true, phase := .idle } else a'
+      -- a transition past its end is over: retired, with no further event; its end value
+      -- is its element's before-change value at the next style change (`State.ended`)
+      let over := isCssTransition a'.origin && a'.phase == .after
+      let a' := if over then { a' with dead := true, phase := .idle } else a'
       if a' != a || !evs.isEmpty then
-        s := { s with anims := s.anims.set! i a', events := s.events ++ evs.toArray,
+        let ended := match over, a'.origin, a'.owner with
+          | true, .cssTransition property, some e => (e, property, a'.toText) :: s.ended.filter (fun (el, p, _) => !(el == e && p == property))
+          | _, _, _ => s.ended
+        s := { s with anims := s.anims.set! i a', events := s.events ++ evs.toArray, ended,
                       liveCss := if a'.dead then s.liveCss.erase i else s.liveCss }
   return s
 
@@ -718,6 +737,18 @@ private def acD : Access := acOf [(7, [("width", "auto")])]
   [(7, [("transition-duration", "100s"), ("transition-delay", "-50s"), ("transition-behavior", "allow-discrete"),
         ("transition-timing-function", "steps(1, end)")])] "" [(7, [("width", "20px")])]
 #guard overrides (styleChange {} acD) acD == [{ node := 7, property := "width", value := "20px", transition := true }]
+
+-- a transition that ran to its end is not started again from its last sampled value: the
+-- before-change value of its longhand is its end value (`State.ended`)
+private def acRun (before : String) : Access := acOf [(7, [("width", "20px")])]
+  [(7, [("transition-property", "width"), ("transition-duration", "1s"), ("transition-timing-function", "linear")])]
+  "" [(7, [("width", before)])]
+private def sRun : State := tick { tick (styleChange {} (acRun "10px")) with now := Fix.ofInt 2000 }
+#guard (styleChange {} (acRun "10px")).liveCss.length == 1
+#guard sRun.liveCss == [] && sRun.ended == [(7, "width", "20px")]
+#guard (styleChange sRun (acRun "19.9px")).anims.size == 1 && (styleChange sRun (acRun "19.9px")).ended == []
+-- (with no transition ended, the same two styles start one)
+#guard (styleChange {} (acRun "19.9px")).anims.size == 1 && (styleChange {} (acRun "19.9px")).liveCss.length == 1
 
 /-! ## Tests: animated values in the cascade (`CSS.withAnimated`; CSS Cascade 4 §6.1) -/
 
