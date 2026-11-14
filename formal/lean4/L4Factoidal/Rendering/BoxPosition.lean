@@ -57,6 +57,10 @@ structure PositionStyle where
   writingMode : WritingMode := .horizontalTb
   /-- `list-style-type`; inherited, as `writingMode` is. -/
   listStyle : ListStyle := .auto
+  /-- `display: flow-root` (CSS Display 3 §2.1): a block that is the root of a block
+  formatting context: it holds its floats and its children's margins. Set by the cascade
+  with `display`. -/
+  flowRoot : Bool := false
   /-- `list-style-position: inside` (inherited): the marker is the first thing in the item's
   first line; else it is outside the item's box, beside that line. -/
   listInside : Bool := false
@@ -67,7 +71,8 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.position == b.position && a.top.same b.top && a.right.same b.right && a.bottom.same b.bottom &&
   a.left.same b.left && a.zIndex == b.zIndex && a.float == b.float && a.clear == b.clear &&
   a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto &&
-  a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside
+  a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside &&
+  a.flowRoot == b.flowRoot
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed

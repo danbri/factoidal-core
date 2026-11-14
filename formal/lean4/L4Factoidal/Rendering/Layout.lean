@@ -1082,7 +1082,7 @@ block child when no border, padding or clearance is between them and the block d
 establish a new block formatting context. A list item's marker is content before it. -/
 def collapsesTop (dom : Dom) (s : Computed) (id : Nat) : Bool :=
   let n := dom.get id
-  s.display == .block && s.borderEdges.top == 0 && s.padding.top == 0 && !s.clipOverflow &&
+  s.display == .block && s.borderEdges.top == 0 && s.padding.top == 0 && !s.clipOverflow && !s.pos.flowRoot &&
     !s.pos.isAbsolute && s.pos.float == .none && n.lname != "li" && n.ns != some DOM.svgNS &&
     (n.parent.map fun p => (dom.get p).type == .element).getD false
 
@@ -1091,7 +1091,7 @@ minimum height (CSS 2.1 §8.3.1). -/
 def collapsesBottom (dom : Dom) (s : Computed) (id : Nat) : Bool :=
   let n := dom.get id
   let auto := fun (l : CSS.Length) => match l with | .auto => true | _ => false
-  s.display == .block && s.borderEdges.bottom == 0 && s.padding.bottom == 0 && !s.clipOverflow &&
+  s.display == .block && s.borderEdges.bottom == 0 && s.padding.bottom == 0 && !s.clipOverflow && !s.pos.flowRoot &&
     !s.pos.isAbsolute && s.pos.float == .none && auto s.height && auto s.minHeight &&
     n.ns != some DOM.svgNS && (n.parent.map fun p => (dom.get p).type == .element).getD false
 
@@ -1405,7 +1405,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             -- what follows it (`Task.flowed`). A box with a formatting context of its own (a
             -- table, a flex container, a box that clips, a replaced element) is beside the floats.
             let cn := dom.get child
-            let plain := cs.display == .block && !cs.clipOverflow && (pictures child).isNone &&
+            let plain := cs.display == .block && !cs.clipOverflow && !cs.pos.flowRoot && (pictures child).isNone &&
               (blankReplaced cn).isNone && cn.ns != some DOM.svgNS && cn.lname != "hr"
             let r ← if plain then layoutTask dom styles font embedding pictures fuel (.flowed child floats) innerX top width
               else if floats.isEmpty then layoutTask dom styles font embedding pictures fuel (.box child) innerX top width

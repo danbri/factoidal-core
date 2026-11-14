@@ -886,7 +886,10 @@ private def limit (source : String) : Except String Length := do
   | other => return other
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
-  | "display" => match d.value with
+  | "display" =>
+    -- `flow-root` is a block that is the root of a block formatting context (`pos.flowRoot`)
+    let s := {s with pos := {s.pos with flowRoot := d.value == "flow-root"}}
+    match (if d.value == "flow-root" then "block" else d.value) with
     | "none" => return {s with display := .none}
     | "block" => return {s with display := .block}
     | "inline" => return {s with display := .inline}

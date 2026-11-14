@@ -262,6 +262,11 @@ private def floatCss := "#f{float:left;width:30px;height:20px} #g{float:right;wi
 -- §10.6.7: a box that is the root of a formatting context is as high as its floats.
 #guard box floated (floatCss ++ "#c{overflow:hidden}") "c" == some (0,0,200,20)
 #guard box floated (floatCss ++ "#c{overflow:hidden}") "n" == some (0,20,200,7)
+-- `display: flow-root` is such a root too, and keeps its children's margins inside.
+#guard box floated (floatCss ++ "#c{display:flow-root}") "c" == some (0,0,200,20)
+#guard box floated (floatCss ++ "#c{display:flow-root}") "n" == some (0,20,200,7)
+#guard box floated (floatCss ++ "#c{display:flow-root} #c{display:block}") "c" == some (0,0,200,7)
+#guard box "<div id=a>A</div><div id=c><div id=d>D</div></div>" "#c{display:flow-root} #d{margin-top:10px}" "c" == some (0,7,200,17)
 -- Flex items do not float (CSS Flexbox 1 §3): the column is 20 + 10 + 7 high.
 #guard box floated (floatCss ++ "#c{display:flex;flex-direction:column}") "n" == some (0,37,200,7)
 -- A float in a paragraph: the next paragraph is beside it as well.
