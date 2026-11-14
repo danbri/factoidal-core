@@ -300,6 +300,8 @@ No timing was measured: the engine was not built locally (cloud check only).
   properties at start would cost every page.
 - `idbindex-multientry`'s 1,000-item value read 1,001 times decodes a million string tokens one host call each
   and reaches the script heap limit; one decode per answer would need another answer format.
+- IndexedDB keys: a Proxy of an Array is an Array to `Array.isArray` (ECMA-262), but not an Array exotic object,
+  which key conversion needs; the page side cannot tell them apart (`key_invalid` "proxy of an array").
 - Cookie Store: domain cookies (the shared jar is host-only), `SameSite`, `Partitioned`, public suffixes,
   service worker subscriptions.
 - That `pump` commits exactly when the specification says, as one statement over the command machine.
@@ -326,16 +328,16 @@ A bucket's own storage (IndexedDB, CacheStorage, file system, locks) is not rout
 Cloud branch checks (Linux, the Chrome subtests of each directory; window and dedicated worker variants; shared
 and service worker variants are skipped by the engine):
 
-| Directory | Before (85.06% run) | Check 43574264951 (core) | Check 43581496432 (merged fee2bfe2d) | Check 43587790347 (merged 402eec368) | Check 43594726192 (merged 873955244) | Chrome |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| IndexedDB | 32 | 1,782 | 2,755 | 5,097 | 5,202 | 5,849 |
-| fs | 9 | 82 | 113 | 852 | 955 | 1,121 |
-| file-system-access | 32 | 36 | 117 | 129 | 129 | 163 |
-| storage (StorageManager) | 34 | 79 | 86 | 87 | 89 | 103 |
-| storage/buckets | 34 | 34 | 175 | 310 | 312 | 379 |
-| web-locks | 35 | 207 | 212 | 369 | 400 | 488 |
-| cookiestore | 45 | 45 | 215 | 229 | 303 | 636 |
-| service-workers/cache-storage | 0 | 0 | 216 | 556 | 556 | 615 |
+| Directory | Before (85.06% run) | Check 43574264951 (core) | Check 43581496432 (merged fee2bfe2d) | Check 43587790347 (merged 402eec368) | Check 43594726192 (merged 873955244) | Check 43598887027 (merged 83c04db95) | Chrome |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| IndexedDB | 32 | 1,782 | 2,755 | 5,097 | 5,202 | 5,198 | 5,849 |
+| fs | 9 | 82 | 113 | 852 | 955 | 955 | 1,121 |
+| file-system-access | 32 | 36 | 117 | 129 | 129 | 129 | 163 |
+| storage (StorageManager) | 34 | 79 | 86 | 87 | 89 | 89 | 103 |
+| storage/buckets | 34 | 34 | 175 | 310 | 312 | 312 | 379 |
+| web-locks | 35 | 207 | 212 | 369 | 400 | 404 | 488 |
+| cookiestore | 45 | 45 | 215 | 229 | 303 | 307 | 636 |
+| service-workers/cache-storage | 0 | 0 | 216 | 556 | 556 | 564 | 615 |
 
 The last column's main has shared and service workers (another agent's work), so their variants run too.
 
