@@ -953,6 +953,15 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
   | _ => "salmon, repeat(4, currentcolor, red)") == some "5px double salmon, repeat(4, 6px, 5px solid red)"
 #guard specified "will-change" "auto, transform" == none && specified "will-change" "transform, none" == none
 #guard specified "will-change" "transform, opacity" == some "transform, opacity" && specified "will-change" "auto" == some "auto"
+-- a math function of a non-legacy colour function stays in the specified value (CSS Color 4)
+#guard specified "color" "color(srgb calc(0.5 + 1) calc(0.5 - 1) calc(0.5) / calc(-0.5 + 1))" ==
+  some "color(srgb calc(1.5) calc(-0.5) calc(0.5) / calc(0.5))"
+#guard specified "color" "lab(calc(50 * 3) calc(0.5 - 1) calc(1.5) / calc(-0.5 + 1))" ==
+  some "lab(calc(150) calc(-0.5) calc(1.5) / calc(0.5))"
+#guard specified "color" "lab(calc(50%) 62.5 0.5)" == some "lab(calc(50%) 62.5 0.5)"
+#guard specified "color" "lab(none 20 calc(0.5))" == some "lab(none 20 calc(0.5))"
+#guard specified "color" "rgb(calc(255) 0 0)" == some "rgb(255, 0, 0)"
+#guard computed {} "color" "lab(calc(50 * 3) 0 0)" == "lab(100 0 0)"
 #guard specified "flex" "0 1 1" == none
 #guard specified "flex" "0 1" == some "0 1" && (specified "flex" "0 auto").isSome && (specified "flex" "1 0 0").isSome
 #guard specified "color" "RED" == some "red"
