@@ -203,13 +203,15 @@ def computedOf (v : View) (id : Nat) (property : String) : String :=
   -- MathML hook: the computed `math-depth` is the integer the layout profile computed
   -- (`auto-add` and `add()` are resolved against the parent there).
   if p == "math-depth" then toString (v.styles[id]?.getD {}).mathDepth else
-  match CssValues.lookup p with
-  | none => if CssValues.isCustom p then computedLonghand v depthBound id p else ""
-  | some row =>
-    if row.longhands.isEmpty then computedLonghand v depthBound id p
-    else if (CssValues.shapeOf row).isSome then
-      CssValues.recombine row fun l => computedLonghand v depthBound id l
-    else computedLonghand v depthBound id p
+  let answer := match CssValues.lookup p with
+    | none => if CssValues.isCustom p then computedLonghand v depthBound id p else ""
+    | some row =>
+      if row.longhands.isEmpty then computedLonghand v depthBound id p
+      else if (CssValues.shapeOf row).isSome then
+        CssValues.recombine row fun l => computedLonghand v depthBound id l
+      else computedLonghand v depthBound id p
+  -- MathML hook: `display: contents` computes to `none` on a MathML element (MathML Core §4.1).
+  if p == "display" && answer == "contents" && (v.dom.get id).ns == some DOM.mathmlNS then "none" else answer
 
 /-- The properties of the layout profile whose computed value is the specified value
 (keywords and colours): when the element itself declares one, the answer is the
