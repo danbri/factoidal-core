@@ -634,7 +634,7 @@ private def renderText (html : String) (fields : List (String × JSON.Json)) : S
   (WebDocument.runUncached html (json ([("op",.string "render"),("url",.string "https://e.test/p.html")] ++ fields)) 400 300).toOption.getD ""
 private def mentions (text part : String) : Nat := (text.splitOn part).length - 1
 -- (The example is a media condition that can not be read; a module script is no longer a skip.)
-private def mediaPage := "<!doctype html><title>M</title><style media='(hover: hover)'>p{color:red}</style><p>Words</p>"
+private def mediaPage := "<!doctype html><title>M</title><style media='screen or print'>p{color:red}</style><p>Words</p>"
 #guard renderText mediaPage [] == ""
 #guard mentions (renderText mediaPage [liberal,asks]) "\"diagnostics\"" == 1
 #guard mentions (renderText mediaPage [liberal]) "\"diagnostics\"" == 0
