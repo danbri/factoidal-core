@@ -84,10 +84,33 @@ def focusDelegate (d : Dom) (k : NodeId) : Option NodeId :=
   let nd := d.get k
   firstFocusableGo d (d.size + 1) ((match nd.shadow with | some s => [s] | none => []) ++ nd.kids.toList)
 
+/-- The walk of `pressTarget`: `k`, then its ancestors, a shadow root's host after the
+root; the first that `focus()` would focus something for. -/
+def pressTargetGo (d : Dom) : Nat → NodeId → Option NodeId
+  | 0, _ => none
+  | fuel + 1, k =>
+    match focusTarget d k with
+    | some t => some t
+    | none =>
+      let nd := d.get k
+      match nd.parent with
+      | some p => pressTargetGo d fuel p
+      | none =>
+        match (if d.isShadowRoot k then nd.host else none) with
+        | some h => pressTargetGo d fuel h
+        | none => none
+
+/-- The focusable area a press of a pointer on `k` focuses (HTML §6.6.4 "focusing steps"
+for a click: the nearest inclusive ancestor in the flat tree that is a focusable area, a
+shadow host that delegates focus giving its first focusable area); none: the press
+focuses nothing and the focused element loses the focus. -/
+def pressTarget (d : Dom) (k : NodeId) : Option NodeId := pressTargetGo d (2 * d.size + 2) k
+
 /-- Wire form for the page objects (`node_query` op 189): with `q` "" the node that `focus()`
-on `k` focuses, with "d" the focus delegate of `k`; "" for none. -/
+on `k` focuses, with "d" the focus delegate of `k`, with "p" the node a press of a pointer
+on `k` focuses; "" for none. -/
 def answer (d : Dom) (k : NodeId) (q : String) : String :=
-  match (if q == "d" then focusDelegate d k else focusTarget d k) with
+  match (if q == "d" then focusDelegate d k else if q == "p" then pressTarget d k else focusTarget d k) with
   | some t => toString t
   | none => ""
 
@@ -127,6 +150,28 @@ theorem focusTarget_focusable (d : Dom) (k t : NodeId) (h : focusTarget d k = so
       · simp at h
     · simp at h
 
+/-- Says: a press of a pointer only ever focuses a focusable area, wherever in the tree the
+press is. Does not say: that the area is the nearest one on an arena whose parent links
+make a cycle (the fuel then ends the walk with none). -/
+theorem pressTarget_focusable (d : Dom) (k t : NodeId) (h : pressTarget d k = some t) :
+    focusable d t = true := by
+  unfold pressTarget at h
+  generalize 2 * d.size + 2 = fuel at h
+  induction fuel generalizing k with
+  | zero => simp [pressTargetGo] at h
+  | succ n ih =>
+    simp only [pressTargetGo] at h
+    split at h
+    · rename_i t' ht
+      simp only [Option.some.injEq] at h
+      subst h
+      exact focusTarget_focusable d k t' ht
+    · split at h
+      · exact ih _ h
+      · split at h
+        · exact ih _ h
+        · simp at h
+
 /-- Says: a focus delegate is a focusable area. -/
 theorem focusDelegate_focusable (d : Dom) (k t : NodeId) (h : focusDelegate d k = some t) :
     focusable d t = true := firstFocusableGo_focusable d _ _ t h
@@ -164,6 +209,10 @@ private def tree : Dom :=
 #guard !focusable tree 14 && focusable tree 15
 #guard focusTarget tree 7 == some 10 && focusTarget tree 11 == none && focusTarget tree 2 == some 2 && focusTarget tree 1 == none
 #guard answer tree 7 "" == "10" && answer tree 1 "" == "" && answer tree 0 "d" == "2" && answer tree 11 "d" == "13" && answer tree 1 "d" == ""
+-- a press on the span inside the delegating shadow tree focuses the input there; a press on a
+-- plain div focuses nothing; a press on a button focuses it
+#guard pressTarget tree 9 == some 10 && pressTarget tree 1 == none && pressTarget tree 2 == some 2 && pressTarget tree 13 == some 13
+#guard answer tree 9 "p" == "10" && answer tree 1 "p" == ""
 #guard tabindex? " -1" == some (-1) && tabindex? "3px" == some 3 && tabindex? "x" == none && tabindex? "" == none
 
 end L4Factoidal.DOM.Focus

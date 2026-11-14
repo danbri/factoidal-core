@@ -8800,6 +8800,10 @@
     return null;
   };
   Object.defineProperty(Document.prototype, 'activeElement', { get() { return focusRetarget(nodeId(this)) ?? this.body; }, configurable: true, enumerable: true });
+  // A press of the user's pointer on node `id` (Lean asks, after a `mousedown` that no listener
+  // canceled: Hosts.PageEvents.lowPointer): the focusable area there takes the focus, else the
+  // focused element loses it. Which area is Lean's (DOM.Focus.pressTarget, node_query 189 "p").
+  const pressFocus = id => { const t = focusQuery(id, 'p'); if (t >= 0) { n.query(t, 177, 'f'); focusMove(t); } else focusMove(-1); };
   // ==== end focus ==========================================================================
 
   // ==== popover: popovers, dialogs and their invoker buttons (HTML §6.12, §4.11.4, §4.10.6) ====
@@ -9620,6 +9624,8 @@
     },
     // Lean dispatches an event of the user agent at a node, the document (0) or the window.
     dispatch(target, type, flags) {
+      // not an event: the default action of a press, which only Lean asks for
+      if (type === '@focus') { pressFocus(target); return ''; }
       // click, auxclick and contextmenu of pointer input are PointerEvents (Pointer Events 3 §4.2.12); a click with no pointer data is a MouseEvent
       const pointerClick = type === 'click' || type === 'auxclick' || type === 'contextmenu';
       let C = type.startsWith('pointer') ? PointerEvent : pointerClick || type === 'dblclick' || type.startsWith('mouse') ? MouseEvent

@@ -294,7 +294,8 @@ def firePlanned (s : σ) (init : Option Nat → String) (plan : List Input.Plann
 boundary events of the element now under the pointer; then
 - a move: `pointermove`, and `mousemove` for a mouse or pen unless its press was canceled;
 - a press: `pointerdown` when no button was held (else `pointermove`, Pointer Events 3
-  §4.1.1.2 chorded buttons); when that was not canceled, `mousedown`; `contextmenu` for the
+  §4.1.1.2 chorded buttons); when that was not canceled, `mousedown`; when that was not
+  canceled, the focus moves to the focusable area at the press; `contextmenu` for the
   secondary button;
 - a release: `pointerup` when no button stays held (else `pointermove`), `mouseup` unless
   the press was canceled, then `click` (primary button) or `auxclick` at the common
@@ -331,7 +332,12 @@ def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (po
       let s := e.setPointer s { (e.host s).pointer with pressed := some hit, canceled,
         last := some { time := now, x, y, button := b, count } }
       let s := if !mouse then s else
-        Input.afterCancelable canceled (fun s => (e.dispatchWith s hit "mousedown" (init count none)).1) s
+        Input.afterCancelable canceled (fun s =>
+          let (s, downCanceled) := e.dispatchWith s hit "mousedown" (init count none)
+          -- the default action of the press: the focusable area there takes the focus, else
+          -- the focused element loses it (`DOM.Focus.pressTarget`; "@focus" is not an event
+          -- but the prelude's focus update steps)
+          Input.afterCancelable downCanceled (fun s => (e.dispatch s hit "@focus").1) s) s
       if b == 2 then (e.dispatchWith s hit "contextmenu" (init 0 none)).1 else s
     | .up =>
       let b := button.toNat

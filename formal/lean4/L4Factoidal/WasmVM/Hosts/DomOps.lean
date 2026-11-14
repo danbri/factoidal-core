@@ -1042,12 +1042,20 @@ def keyHost (s : State) : Option Nat := L4Factoidal.DOM.Editing.affectedHost (ed
 def keyCommandOf (s : State) (k : L4Factoidal.DOM.Editing.KeyInput) : Option (String × String) :=
   L4Factoidal.DOM.Editing.keyCommandIn (editView s) k
 
-/-- The element key events are fired at: the editing host of the selection, else the
-`body`, else the document element (the page has no focus model beyond this). -/
+/-- The focused element (HTML §6.6; `Node.states` bit 8, which the page's focus update
+steps keep), if it is still in the arena. -/
+def focusedElement (d : L4Factoidal.DOM.Dom) : Option Nat :=
+  (List.range d.size).find? fun k => (d.get k).states &&& 8 != 0
+
+/-- The element key events are fired at: the focused element, else the editing host of
+the selection, else the `body`, else the document element. -/
 def keyTarget (s : State) : Nat :=
-  match keyHost s with
-  | some h => h
-  | none => (L4Factoidal.DOM.Editing.bodyOf (editView s)).getD 0
+  match focusedElement s.dom with
+  | some f => f
+  | none =>
+    match keyHost s with
+    | some h => h
+    | none => (L4Factoidal.DOM.Editing.bodyOf (editView s)).getD 0
 
 /-- `Selection.modify(alter, direction, granularity)` (op 178, `q` the three words): the
 focus moves (`Editing.modifyFocus`), inside the editing host of the selection when there
