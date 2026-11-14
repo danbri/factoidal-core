@@ -6563,6 +6563,15 @@
   // src, srcset, sizes, crossorigin or referrerpolicy); a page with no img pays nothing.
   const imgStates = new Map();   // node -> { gen, complete, w, h, waiters }
   let imgGen = 0, imgWatching = false;
+  // HTML §4.8.4.3: the images of the page's start delay its load event (the window's `load`
+  // waits until each has its load or error event)
+  const imgDelay = new Set();
+  let deferredLoad = null;
+  const imgUndelay = id => {
+    if (!imgDelay.delete(id) || imgDelay.size > 0 || deferredLoad === null) return;
+    const f = deferredLoad; deferredLoad = null;
+    chk(n.timer(register(f), 0, 0));
+  };
   const imgAttrs = new Set(['src', 'srcset', 'sizes', 'crossorigin', 'referrerpolicy']);
   const imgFire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
   const updateImage = id => {
@@ -6576,17 +6585,20 @@
       st.complete = true;
       for (const [res, rej] of st.waiters.splice(0)) ok ? res() : rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
       imgFire(el, ok ? 'load' : 'error');
+      imgUndelay(id);
     };
     if (url === '') {
       // no source: broken; an empty src attribute fires error (step 13)
       st.complete = true;
       if (typeof hasSrc === 'string') Promise.resolve().then(() => { if (imgStates.get(id)?.gen === gen) settle(false); });
+      else imgUndelay(id);
       return;
     }
     if (cspBlocksRequest('img-src', url, '', false, id)) { flushViolations(); Promise.resolve().then(() => { if (imgStates.get(id)?.gen === gen) settle(false); }); return; }
     const cors = corsSettings(el);
     elementFetch(url, { destination: 'image', ...cors, referrerPolicy: (el.getAttribute('referrerpolicy') ?? '').toLowerCase() }).then(r => {
-      if (imgStates.get(id)?.gen !== gen || r === undefined) return;
+      if (imgStates.get(id)?.gen !== gen) return;
+      if (r === undefined) { st.complete = true; imgUndelay(id); return; }
       let size = '';
       if (r !== null && r.status >= 200 && r.status < 300) { const a = apiCall(166, [r.bytes]); if (typeof a === 'string') size = a; }
       if (size === '') { settle(false); return; }
@@ -6608,7 +6620,7 @@
     const imgs = document.getElementsByTagName('img');
     if (imgs.length === 0) return;
     imgWatch();
-    for (const el of imgs) updateImage(nodeId(el));
+    for (const el of imgs) { const id = nodeId(el); imgDelay.add(id); updateImage(id); }
   };
   {
     const P = named.HTMLImageElement.prototype;
@@ -17863,6 +17875,14 @@
       if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
       state(e).trusted = true;
       if (type === 'DOMContentLoaded') readyState = 'interactive';
+      // the window's load waits for the images of the page's start (section images)
+      if (type === 'load' && target === WINDOW && imgDelay.size > 0 && deferredLoad === null) {
+        deferredLoad = () => {
+          readyState = 'complete';
+          const ev = new Event('load'); state(ev).trusted = true; dispatch(window, ev);
+        };
+        return '';
+      }
       if (type === 'load' && target === WINDOW) readyState = 'complete';
       if (type === 'load' && target !== WINDOW && target !== 0 && info(target, 29) >= 0) frameLoad(target);
       // A message from a frame's own session is for the window of the document that holds
