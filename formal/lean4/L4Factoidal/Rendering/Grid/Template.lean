@@ -108,10 +108,23 @@ function when that is definite, else its min sizing function when that is defini
 def TrackSize.fixedSize (avail : Option Nat) (t : TrackSize) : Nat :=
   let f := t.toFn avail
   match f.max, f.min with
+  -- a max below the min counts as the min (§7.2.3.1: `minmax(min, max)` with max < min)
+  | .fixed u, .fixed m => max u m
+  | .fitContent u, .fixed m => max u m
   | .fixed u, _ => u
   | .fitContent u, _ => u
   | _, .fixed u => u
   | _, _ => 0
+
+/-- Kind: conformance (§7.2.3.2). Says: a track with a fixed min sizing function counts at
+least that size when repetitions are counted. -/
+theorem TrackSize.fixedSize_ge_min (avail : Option Nat) (t : TrackSize) (m : Nat)
+    (h : (t.toFn avail).min = .fixed m) : m ≤ t.fixedSize avail := by
+  unfold fixedSize
+  simp only [h]
+  split <;> simp_all <;> omega
+
+#guard (TrackSize.minmax (.length (30 * 64) 0) (.length (13 * 64) 0)).fixedSize none == 30 * 64
 
 /-- How often a `repeat()` repeats. -/
 inductive RepeatCount where
