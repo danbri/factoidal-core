@@ -51,6 +51,7 @@ import L4Factoidal.ClientStorage.CacheStorage
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
 import L4Factoidal.Net.ServiceWorkerScope
+import L4Factoidal.Net.EventSource
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.PageGl.Api
 import L4Factoidal.WebCodecs.Api
@@ -758,6 +759,17 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       ({ s with nn }, .ok out)
     -- Service workers: `register()`'s URL checks and registration matching (pure, no state).
     else if code == 154 || code == 155 then pure' (L4Factoidal.Net.ServiceWorkerScope.op code fs)
+    -- EventSource: whether a response is an event stream, and its events (Net.EventSource);
+    -- fields: the last event ID, the reconnection time, the status, the type, the bytes.
+    else if code == 162 then
+      let str := fun (i : Nat) => (strArg fs i).toOption.getD ""
+      if !L4Factoidal.Net.EventSource.isStream ((str 2).toNat?.getD 0) (str 3) then pure' (ofStr "{\"stream\":false}") else
+      let p : L4Factoidal.Net.EventSource.Parser := { lastEventId := str 0, idBuffer := str 0, retry := (str 1).toNat? }
+      let (p, evs) := L4Factoidal.Net.EventSource.parse p (L4Factoidal.WHATWG.Encoding.utf8DecodeWithoutBOM (bytesArg fs 4))
+      let j := L4Factoidal.JSON.Json.object [("stream", .bool true), ("id", .string p.lastEventId),
+        ("retry", match p.retry with | some r => .number (toString r) | none => .null),
+        ("events", .array (evs.map fun e => .array [.string e.type, .string e.data, .string e.lastEventId]))]
+      pure' (ofStr j.toString)
     -- WebSocket (Net.WebSocket through Net.Xhr): the key and each masking key are fresh
     -- bytes of the engine's generator; only a page with the network on has connections.
     else if 156 ≤ code && code ≤ 161 then

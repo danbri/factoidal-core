@@ -5511,6 +5511,83 @@
     return ResponseC = Response;
   };
   lazy('Response', () => (apiCall(88, ['a']) !== '' ? undefined : makeResponse()));
+  // ---- EventSource (HTML §9.2): the request is a page request like any other (CORS, the
+  // address rules, credentials: Lean's, through an XMLHttpRequest class of this realm's own, so
+  // a page's XMLHttpRequest global plays no part); whether the answer is an event stream and
+  // its events are Lean's too (Net.EventSource, web_api 162). The stream is read when the
+  // response ends; then the connection is made again after the reconnection time.
+  lazy('EventSource', () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    const XHR = makeXHR();
+    if (XHR === undefined) return undefined;
+    const slots = new WeakMap();
+    const S = o => { const s = slots.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    const fire = (es, e) => { state(e).trusted = true; dispatch(es, e); };
+    const failed = (es, s) => { s.readyState = 2; s.xhr = null; fire(es, new Event('error')); };
+    const connect = es => {
+      const s = slots.get(es);
+      if (!s || s.readyState === 2) return;
+      const x = new XHR();
+      s.xhr = x;
+      try {
+        x.open('GET', s.url, true);
+        x.withCredentials = s.withCredentials;
+        x.responseType = 'arraybuffer';
+        x.setRequestHeader('Accept', 'text/event-stream');
+        if (s.lastId !== '') x.setRequestHeader('Last-Event-ID', s.lastId);
+      } catch { chk(n.timer(register(() => { if (s.xhr === x) failed(es, s); }), 0, 0)); return; }
+      x.onload = () => {
+        if (s.xhr !== x || s.readyState === 2) return;
+        s.xhr = null;
+        const body = x.response instanceof ArrayBuffer ? new Uint8Array(x.response) : new Uint8Array(0);
+        const r = apiCall(162, [s.lastId, s.retry === null ? '' : String(s.retry), String(x.status), x.getResponseHeader('Content-Type') ?? '', body]);
+        let d = null; try { d = JSON.parse(r); } catch { /* none */ }
+        if (d === null || !d.stream) { failed(es, s); return; }
+        // §9.2.5 "announce the connection", then each event, then the end of the stream
+        s.readyState = 1;
+        fire(es, new Event('open'));
+        for (const [type, data, id] of d.events) {
+          if (s.readyState !== 1) return;
+          fire(es, new MessageEvent(type, { data, origin: s.origin, lastEventId: id }));
+        }
+        s.lastId = d.id;
+        if (d.retry !== null) s.retry = d.retry;
+        if (s.readyState !== 1) return;
+        // §9.2.5 "reestablish the connection"
+        s.readyState = 0;
+        fire(es, new Event('error'));
+        chk(n.timer(register(() => connect(es)), s.retry ?? 3000, 0));
+      };
+      x.onerror = () => { if (s.xhr === x && s.readyState !== 2) failed(es, s); };
+      x.send();
+    };
+    class EventSource extends EventTarget {
+      constructor(url, init = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'EventSource': 1 argument required, but only 0 present.");
+        super();
+        const resolved = resolveURL(usv(url), scriptBase());
+        if (resolved === null) throw new DOMException(`Failed to construct 'EventSource': Cannot open an EventSource to '${url}'. The URL is invalid.`, 'SyntaxError');
+        const d = init == null ? {} : init;
+        let origin = 'null'; try { origin = new URL(resolved).origin; } catch { /* none */ }
+        slots.set(this, { url: resolved, origin, withCredentials: !!d.withCredentials, readyState: 0, lastId: '', retry: null, xhr: null });
+        connect(this);
+      }
+      get url() { return S(this).url; }
+      get withCredentials() { return S(this).withCredentials; }
+      get readyState() { return S(this).readyState; }
+      close() {
+        const s = S(this);
+        s.readyState = 2;
+        if (s.xhr) { const x = s.xhr; s.xhr = null; try { x.abort(); } catch { /* done */ } }
+      }
+    }
+    const states = { CONNECTING: 0, OPEN: 1, CLOSED: 2 };
+    consts(EventSource, states); consts(EventSource.prototype, states);
+    handlerProp(EventSource.prototype, ['open', 'message', 'error']);
+    setTag(EventSource, 'EventSource');
+    return EventSource;
+  });
+
   // ---- WebSocket (WebSockets Standard §3): every decision is Lean's (Net.WebSocket through
   // Net.Xhr, web_api 156 to 161): the URL and the subprotocols, a blocked port, the
   // address rules of the page's requests, the handshake, the frames, close(). The host moves
@@ -13371,7 +13448,7 @@
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter',
-    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL', 'WebSocket', 'CloseEvent',
+    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL', 'WebSocket', 'CloseEvent', 'EventSource',
     // WebGL's interfaces are [Exposed=(Window,Worker)].
     'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
     'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',
