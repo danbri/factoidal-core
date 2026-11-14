@@ -620,5 +620,8 @@ private def parses (src : String) : Bool := syn src == "ok"
 -- %TypedArray%.prototype.toString is Array.prototype.toString (§23.2.3.32): ToNumber and
 -- ToString of a typed array read its elements.
 #guard out "var t = new Float32Array([1.5]); print(Object.getPrototypeOf(Uint8Array.prototype).toString === Array.prototype.toString, String(t), +t, Math.abs(new Float64Array([-2])), `${new Uint8Array([1, 2])}`)" == ["true 1.5 1.5 2 1,2"]
+/-! ## An async function's parameter error rejects its promise (§15.8.4) -/
+
+#guard out "async function f(a = (() => { throw new RangeError('p') })()) {} var p; try { p = f() } catch (e) { print('threw') } p.catch(e => print('rejected', e.name)); async function g(q = eval('var arguments')) {} g().catch(e => print('g', e.name))" == ["rejected RangeError", "g SyntaxError"]
 
 end L4Factoidal.JS.Tests
