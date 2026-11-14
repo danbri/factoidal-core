@@ -535,7 +535,7 @@ theorem styleChangeOn_none (s : State) (ac : Access) (keep : Nat → Bool) (h : 
 
 /-- The callback number of the animation frame the engine asks for (the page's script
 objects answer it with op 67). -/
-def frameHandle : Nat := 0x7FFFFFF1
+def frameHandle : Nat := 0x7FFFFFF2
 
 /-- The events of one CSS animation or transition since they were last looked for (CSS
 Animations 2 §4.1, CSS Transitions 2 §6.1: the tables of "previous phase" and "current
