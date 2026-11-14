@@ -2584,9 +2584,35 @@ def computeAllInLinear (ts : TreeScope) (dom : Dom) (rules : List Rule) (textSca
     (state : ElementState := {}) : Except String (Array Computed) :=
   computeAllWith (withAnimated state fun id => matchedRulesIn ts id rules state) dom textScale
 
+/-- The `:has()` argument lists in the compounds of a complex selector (not inside other
+functional pseudo-classes). -/
+def hasLists : DOM.Selectors.Complex → List (List DOM.Selectors.Complex)
+  | .mk parts => parts.flatMap fun (_, c) => c.filterMap fun s => match s with
+    | .has l => some l
+    | _ => none
+
+/-- A selector with a `:has()` whose relative selectors no element of the document matches
+even without their anchor can match nothing: such a `:has()` is false everywhere. -/
+def hasNoMatch (dom : Dom) (l : List DOM.Selectors.Complex) : Bool :=
+  !((List.range dom.size).any fun k =>
+    (dom.get k).type == .element && l.any fun c => DOM.Selectors.matchComplex dom none DOM.Selectors.matchFuel k c)
+
+/-- The rules without the selectors that a `:has()` false everywhere keeps from matching
+(one pass over the document for each `:has()`), so that matching does not search a
+large subtree once for each element (selectors/invalidation/has-complexity.html). Rules
+with no `:has()` are as they were, and a page with none pays one test per selector. -/
+def pruneHas (dom : Dom) (rules : List Rule) : List Rule :=
+  if !(rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) then rules
+  else rules.filterMap fun r =>
+    let sels := r.selectors.filter fun sel => match sel.complex with
+      | some c => !((hasLists c).any (hasNoMatch dom))
+      | none => true
+    if sels.isEmpty then none else some { r with selectors := sels }
+
 /-- `computeAll` for a page with no shadow tree; `computeAllIn` for one with shadow trees. -/
 def computeFor (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
+  let rules := pruneHas dom rules
   match treeScope with
   | none => computeAll dom rules textScale state
   | some ts => computeAllIn ts dom rules textScale state
@@ -2609,9 +2635,16 @@ theorem computeAllIn_eq_linear (ts : TreeScope) (dom : Dom) (rules : List Rule) 
   rw [show (fun id => (ScopedIndex.build rules).matched ((ElemKeys.of ts.tree).get ts.tree) ts id state) =
     (fun id => matchedRulesIn ts id rules state) from funext h]
 
-/-- With no shadow tree, nothing about the cascade differs. -/
+/-- With no shadow tree, nothing about the cascade differs (but for the selectors whose
+`:has()` nothing satisfies, `pruneHas`). -/
 theorem computeFor_none (dom : Dom) (rules : List Rule) (textScale : Float) (state : ElementState) :
-    computeFor none dom rules textScale state = computeAll dom rules textScale state := rfl
+    computeFor none dom rules textScale state = computeAll dom (pruneHas dom rules) textScale state := rfl
+
+/-- A page whose rules have no `:has()` is matched against its rules as they are. -/
+theorem pruneHas_plain (dom : Dom) (rules : List Rule)
+    (h : (rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) = false) :
+    pruneHas dom rules = rules := by
+  simp [pruneHas, h]
 
 end L4Factoidal.Rendering.CSS
 

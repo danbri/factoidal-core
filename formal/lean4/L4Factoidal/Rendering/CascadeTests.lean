@@ -203,6 +203,9 @@ private def paddingOf (html css : String) : Option (List Float) :=
 -- white-space keeps or collapses white space
 #guard (styleAt pageT "#t { white-space: pre-wrap }").map (·.preformatted) == some true
 #guard (styleAt "<pre><span id=t>x</span></pre>" "span { white-space: normal }").map (·.preformatted) == some false
+-- a :has() that nothing in the document can satisfy drops the selector before matching
+#guard (CSS.parse "main:has(nonexistent) span { color: red } main:has(span) span { color: blue }").toOption.map
+  (fun rs => (pruneHas (DOM.parseHtmlDocument "<main><span></span></main>") rs).length) == some 1
 -- one side's border
 #guard (styleAt pageT "#t { border-bottom: 1px solid #ccc }").map (fun s => let e := s.borderEdges; (e.top, e.bottom)) == some (0, 1)
 #guard (styleAt pageT "#t { border: 2px solid red; border-bottom: none }").map (fun s => let e := s.borderEdges; (e.top, e.bottom)) == some (2, 0)
