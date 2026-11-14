@@ -32,6 +32,9 @@ inductive G where
   | ref (name : String) (lo hi : Option Rat)
   /-- `<'property'>`: the grammar of a property; its match is tagged with the name. -/
   | prop (name : String)
+  /-- A grammar whose match is tagged with a property name (for the parts of a shorthand
+  that are not written `<'property'>`). Made by code, not by the grammar text. -/
+  | tag (name : String) (g : G)
   /-- `name( ... )`. -/
   | fn (name : String) (arg : G)
   /-- A simple block: `'[' ... ']'` or `( ... )`. -/
@@ -341,6 +344,91 @@ def oneCV (f : CV → Option CV) : List CV → Res
     | none => []
   | [] => []
 
+/-! ### `<position>` (CSS Values 4 §8.3) -/
+
+/-- One component of a position: a horizontal keyword, a vertical keyword, `center`, or a
+length-percentage (in canonical form). -/
+inductive PosPart where
+  | h (kw : String)
+  | v (kw : String)
+  | center
+  | lp (cv : CV)
+  deriving Inhabited
+
+def posPart (ctx : Option Ctx) (cv : CV) : Option PosPart :=
+  match cv with
+  | .tok (.ident s) =>
+    let k := lower s
+    if k == "left" || k == "right" then some (.h k)
+    else if k == "top" || k == "bottom" then some (.v k)
+    else if k == "center" then some .center
+    else none
+  | cv => (numeric ctx { kind := .length, allowPct := true } cv).map PosPart.lp
+
+/-- An axis of a position: a keyword with an optional offset, or a length-percentage. -/
+inductive PosAxis where
+  | kw (k : String)
+  | lp (cv : CV)
+  | edge (k : String) (offset : CV)
+  deriving Inhabited
+
+/-- The values of an axis: as specified, or computed (keywords as percentages; an offset
+from the far edge as the distance from the near one, §8.3.1). -/
+def PosAxis.out (computed : Bool) : PosAxis → List CV
+  | .lp cv => [cv]
+  | .kw k =>
+    if !computed then [.tok (.ident k)]
+    else [.tok (.pct (if k == "left" || k == "top" then 0 else if k == "center" then 50 else 100))]
+  | .edge k offset =>
+    if !computed then [.tok (.ident k), offset]
+    else if k == "left" || k == "top" then [offset]
+    else match offset with
+      | .tok (.pct p) => [.tok (.pct (100 - p))]
+      | .tok (.dim v _ u) => if v == 0 then [.tok (.pct 100)] else [.raw ("calc(100% - " ++ fmtRat v ++ u ++ ")")]
+      | cv => [.raw ("calc(100% - " ++ serialize [cv] ++ ")")]
+
+/-- The two axes (horizontal, vertical) that a list of position components denotes. Three
+components are the background-position form (`allow3`). -/
+def posAxes (allow3 : Bool) : List PosPart → Option (PosAxis × PosAxis)
+  | [.h k] => some (.kw k, .kw "center")
+  | [.v k] => some (.kw "center", .kw k)
+  | [.center] => some (.kw "center", .kw "center")
+  | [.lp cv] => some (.lp cv, .kw "center")
+  | [.h a, .v b] => some (.kw a, .kw b)
+  | [.v a, .h b] => some (.kw b, .kw a)
+  | [.h a, .center] => some (.kw a, .kw "center")
+  | [.center, .h b] => some (.kw b, .kw "center")
+  | [.v a, .center] => some (.kw "center", .kw a)
+  | [.center, .v b] => some (.kw "center", .kw b)
+  | [.center, .center] => some (.kw "center", .kw "center")
+  | [.lp a, .lp b] => some (.lp a, .lp b)
+  | [.lp a, .v b] => some (.lp a, .kw b)
+  | [.lp a, .center] => some (.lp a, .kw "center")
+  | [.h a, .lp b] => some (.kw a, .lp b)
+  | [.center, .lp b] => some (.kw "center", .lp b)
+  | [.h a, .lp x, .v b, .lp y] => some (.edge a x, .edge b y)
+  | [.v a, .lp x, .h b, .lp y] => some (.edge b y, .edge a x)
+  | [.h a, .lp x, .v b] => if allow3 then some (.edge a x, .kw b) else none
+  | [.h a, .lp x, .center] => if allow3 then some (.edge a x, .kw "center") else none
+  | [.h a, .v b, .lp y] => if allow3 then some (.kw a, .edge b y) else none
+  | [.center, .v b, .lp y] => if allow3 then some (.kw "center", .edge b y) else none
+  | [.v a, .lp x, .h b] => if allow3 then some (.kw b, .edge a x) else none
+  | [.v a, .lp x, .center] => if allow3 then some (.kw "center", .edge a x) else none
+  | [.v a, .h b, .lp y] => if allow3 then some (.edge b y, .kw a) else none
+  | [.center, .h b, .lp y] => if allow3 then some (.edge b y, .kw "center") else none
+  | _ => none
+
+/-- A `<position>` at the start of the values: the longest form first. The canonical form
+has both axes, horizontal first. -/
+def positionLeaf (ctx : Option Ctx) (allow3 : Bool) (ts : List CV) : Res :=
+  [4, 3, 2, 1].filterMap fun n =>
+    if ts.length < n then none
+    else
+      match (ts.take n).mapM (posPart ctx) with
+      | none => none
+      | some parts =>
+        (posAxes allow3 parts).map fun (x, y) => (x.out ctx.isSome ++ y.out ctx.isSome, ts.drop n)
+
 /-- A basic type, or a non-terminal expanded through `m`. -/
 def leaf (env : Env) (m : G → List CV → Res) (name : String) (lo hi : Option Rat) (ts : List CV) : Res :=
   let num := fun (req : NumReq) => oneCV (numeric env.ctx { req with lo := lo, hi := hi }) ts
@@ -384,6 +472,8 @@ def leaf (env : Env) (m : G → List CV → Res) (name : String) (lo hi : Option
       | _ => none) ts
   | "color" | "hex-color" => oneCV (fun cv => (env.color cv).map CV.raw) ts
   | "declaration-value" | "any-value" => if ts.isEmpty then [] else [([.raw (rawText ts)], [])]
+  | "position" => positionLeaf env.ctx false ts
+  | "bg-position" => positionLeaf env.ctx true ts
   | _ =>
     match (env.syntaxOf name).bind vds with
     | some g => m g ts
@@ -413,6 +503,7 @@ def matchG (env : Env) : Nat → G → List CV → Res
       match (env.propSyntax name).bind vds with
       | some g' => (matchG env fuel g' ts).map fun (o, r) => ([CV.fn (tagName name) o], r)
       | none => []
+    | .tag name g' => (matchG env fuel g' ts).map fun (o, r) => ([CV.fn (tagName name) o], r)
     | .fn name arg =>
       match ts with
       | .fn n args :: rest =>
@@ -523,6 +614,19 @@ private def run (grammar value : String) (ctx : Option Ctx := none) : Option Str
 #guard run "<string>+" "'a' \"b\"" == some "\"a\" \"b\""
 #guard run "<url>" "url(a.png)" == some "url(\"a.png\")"
 #guard run "<length>" "2em" (some {}) == some "32px"
+#guard run "<position>" "left" == some "left center"
+#guard run "<position>" "top" == some "center top"
+#guard run "<position>" "10%" == some "10% center"
+#guard run "<position>" "bottom right" == some "right bottom"
+#guard run "<position>" "40px top" == some "40px top"
+#guard run "<position>" "top 40px" == none
+#guard run "<position>" "bottom 10% right 20%" == some "right 20% bottom 10%"
+#guard run "<position>" "left 10px center" == none
+#guard run "<bg-position>" "left 10px center" == some "left 10px center"
+#guard run "<position>" "right 20% bottom 10%" (some {}) == some "80% 90%"
+#guard run "<position>" "right 10% bottom 5em" (some {}) == some "90% calc(100% - 80px)"
+#guard run "<position>" "center" (some {}) == some "50% 50%"
+#guard run "circle( <length>? [ at <position> ]? )" "circle(at 10%)" == some "circle(at 10% center)"
 #guard run "f( <length> , <length>? )" "f(1px)" == some "f(1px)"
 #guard run "f( <length> , <length>? )" "f(1px,)" == none
 #guard run "f( <length> , <length>? )" "F(1px, 2px)" == some "f(1px, 2px)"

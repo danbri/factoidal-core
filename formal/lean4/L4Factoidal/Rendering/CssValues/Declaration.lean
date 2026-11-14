@@ -258,6 +258,11 @@ def styleOp (q : String) : String :=
 #guard ((Block.parse "color: red").set "width" "1px" "x").text == "color: red;"
 #guard ((Block.parse "margin: 1px").removeProperty "margin").text == ""
 #guard (Block.parse "margin: 1px").names == ["margin-top", "margin-right", "margin-bottom", "margin-left"]
+#guard (Block.parse "font: normal lighter italic ultra-condensed xx-large/1.2 monospace").get "font" ==
+  "italic lighter ultra-condensed xx-large / 1.2 monospace"
+#guard (Block.parse "font: 16px serif").text == "font: 16px serif;"
+#guard (Block.parse "font: 16px serif; font-kerning: none").get "font" == ""
+#guard (Block.parse "font: 16px serif").get "font-weight" == "normal"
 #guard styleOp "set\x00color: red\x00width\x001PX\x00" == "color: red; width: 1px;"
 #guard styleOp "get\x00color: #F00\x00color" == "rgb(255, 0, 0)"
 #guard styleOp "sup\x00display\x00grid" == "1"

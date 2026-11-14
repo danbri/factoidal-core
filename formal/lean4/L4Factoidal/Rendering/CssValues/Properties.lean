@@ -177,6 +177,9 @@ inductive Shape where
   | pair
   /-- `a || b || c`: each part sets a group of longhands; a part left out is initial. -/
   | anyOrder (groups : List (List String))
+  /-- `font` (CSS Fonts 4 §2.8): style, variant, weight and width in any order, then the
+  size, an optional `/ line-height`, and the family; every other longhand is reset. -/
+  | font
   deriving Repr, Inhabited
 
 def sidesShorthands : List String :=
@@ -205,6 +208,7 @@ def shapeOf (row : Property) : Option Shape :=
   if sidesShorthands.contains row.name && n == 4 then some .sides
   else if pairShorthands.contains row.name && n == 2 then some .pair
   else if anyOrderShorthands.contains row.name && n ≥ 2 then some (.anyOrder (row.longhands.map fun l => [l]))
+  else if row.name == "font" then some .font
   else if (row.name == "border" || row.name == "border-block" || row.name == "border-inline") && n % 3 == 0 && n ≥ 3 then
     some (.anyOrder (thirds (n / 3) row.longhands))
   else none
@@ -214,6 +218,30 @@ def tagged (out : List CV) : List (String × String) :=
   out.filterMap fun cv => match cv with
     | .fn name args => if isTag name then some ((name.drop 1).toString, serialize (untag 16 args)) else none
     | _ => none
+
+/-- The canonical specified form of the initial value of a property ("" when not known). -/
+def initialSpecified (p : String) : String :=
+  match lookup p with
+  | some row => (matchText none row.grammar (stripWs (CV.parse row.initial))).getD row.initial
+  | none => ""
+
+/-- The grammar of the `font` shorthand with its parts tagged by longhand. -/
+def fontGrammar : G :=
+  let kw := fun (ks : List String) => G.oneOf (ks.map G.kw)
+  .seq [
+    .rep (.anyOf [
+      .prop "font-style",
+      .tag "font-variant-caps" (kw ["normal", "small-caps"]),
+      .prop "font-weight",
+      .tag "font-stretch" (kw ["normal", "ultra-condensed", "extra-condensed", "condensed", "semi-condensed",
+        "semi-expanded", "expanded", "extra-expanded", "ultra-expanded"])]) 0 (some 1) false,
+    .prop "font-size",
+    .rep (.seq [.lit '/', .prop "line-height"]) 0 (some 1) false,
+    .prop "font-family"]
+
+/-- The longhands of `font` that the shorthand writes; the others it resets. -/
+def fontWritten : List String :=
+  ["font-style", "font-variant-caps", "font-weight", "font-stretch", "font-size", "line-height", "font-family"]
 
 /-- The longhand declarations that `property: value` stands for, each with its canonical
 value: one for a longhand; for a shorthand its longhands, or the shorthand itself when it
@@ -254,6 +282,13 @@ def expand (property value : String) : Option (List (String × String)) :=
                 | some [a, b] => some [(l1, a.2), (l2, b.2)]
                 | _ => none
               | _ => none
+            | some .font =>
+              match (matchAll (env none) fontGrammar top).map tagged with
+              | none =>
+                -- a system font (`caption`, `menu` ...) is kept whole
+                some [(p, canonical)]
+              | some found =>
+                some (row.longhands.map fun l => (l, (found.lookup l).getD (initialSpecified l)))
             | some (.anyOrder groups) =>
               let heads := groups.filterMap (·.head?)
               match (matchAll (env none) (.anyOf (heads.map G.prop)) top).map tagged with
@@ -290,6 +325,18 @@ def recombine (row : Property) (get : String → String) : String :=
           match vs with
           | [a, b] => if a == b then a else a ++ " " ++ b
           | _ => ""
+        | some .font =>
+          let resetOk := row.longhands.all fun l => fontWritten.contains l || get l == initialSpecified l
+          let variant := get "font-variant-caps"
+          let stretch := get "font-stretch"
+          let keywordOnly := (variant == "normal" || variant == "small-caps") &&
+            !(stretch.toList.any fun c => c.isDigit)
+          if !resetOk || !keywordOnly then ""
+          else
+            let opt := fun (l : String) => let v := get l; if v == "normal" then [] else [v]
+            let lineHeight := get "line-height"
+            " ".intercalate (opt "font-style" ++ opt "font-variant-caps" ++ opt "font-weight" ++ opt "font-stretch" ++
+              [get "font-size"] ++ (if lineHeight == "normal" then [] else ["/", lineHeight]) ++ [get "font-family"])
         | some (.anyOrder groups) =>
           let parts := groups.map fun group =>
             let head := group.headD ""
@@ -423,6 +470,11 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
     if l == "border-top-width" then "medium" else if l == "border-top-style" then "solid" else "currentcolor") == some "solid"
 #guard (lookup "border-top").map (fun row => recombine row fun l =>
     if l == "border-top-width" then "medium" else if l == "border-top-style" then "none" else "currentcolor") == some "medium"
+#guard (expand "font" "italic bold 12px/2 FB Armada, serif").map (·.filter fun d => fontWritten.contains d.1) ==
+  some [("font-style", "italic"), ("font-variant-caps", "normal"), ("font-weight", "bold"), ("font-stretch", "normal"),
+        ("font-size", "12px"), ("line-height", "2"), ("font-family", "FB Armada, serif")]
+#guard (expand "font" "12px").isNone
+#guard (expand "font" "caption") == some [("font", "caption")]
 #guard computed {} "width" "2em" == "32px"
 #guard computed {} "color" "red" == "rgb(255, 0, 0)"
 #guard computed { currentColor := some "rgb(0, 128, 0)" } "border-top-color" "currentcolor" == "rgb(0, 128, 0)"
