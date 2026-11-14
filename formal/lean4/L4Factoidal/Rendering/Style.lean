@@ -125,6 +125,10 @@ structure Computed where
   mathDepth : Int := 0
   /-- MathML: `math-style: compact` (inherited); false is `normal`, the display style. -/
   mathCompact : Bool := false
+  /-- `position: absolute` or `fixed` (not inherited). Read by MathML layout only, where
+  such a child takes no part in its parent's layout (MathML Core §3.1.1); block and inline
+  layout of this profile keep the box in flow. -/
+  outOfFlow : Bool := false
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -1465,6 +1469,18 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   -- MathML hook: `math-style`, `math-depth` and `font-size: math` (MathML Core §4.3 to
   -- §4.5; CSS Fonts 4 §2.5.1). Only an element with declarations reads these three slots.
   if !winners.isEmpty then
+    if let some (_,d) := winners.get? "position" then
+      let v := (trim d.value).toLower
+      if v == "absolute" || v == "fixed" then result := {result with outOfFlow := true}
+    -- MathML Core §4.1: `display: contents` computes to `none` on a MathML element.
+    if n.ns == some DOM.mathmlNS then
+      if let some (_,d) := winners.get? "display" then
+        if (trim d.value).toLower == "contents" then result := {result with display := .none}
+      -- the logical sizes of a MathML element (always horizontal-tb: appendix A)
+      if let some (_,d) := winners.get? "inline-size" then
+        if let .ok l := length d.value then result := {result with width := l}
+      if let some (_,d) := winners.get? "block-size" then
+        if let .ok l := length d.value then result := {result with height := l}
     if let some (_,d) := winners.get? "math-style" then
       let v := (trim d.value).toLower
       if v == "compact" then result := {result with mathCompact := true}
@@ -1512,7 +1528,7 @@ def computeAllWith (matchesOf : Nat → List Match) (dom : Dom) (textScale : Flo
         display := .inline, width := .auto, height := .auto,
         margin := {}, padding := {}, background := none, clipOverflow := false,
         borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
-        autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal}
+        autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal, outOfFlow := false}
       styles := styles.set! id style
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"

@@ -51,7 +51,8 @@ def sameShape (a b : Computed) : Bool :=
   | ⟨display,width,height,margin,padding,_color,background,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
-    minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight⟩ =>
+    minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
+    mathDepth,mathCompact,outOfFlow⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
@@ -65,7 +66,9 @@ def sameShape (a b : Computed) : Bool :=
   lengthEq minWidth b.minWidth && lengthEq maxWidth b.maxWidth &&
   lengthEq minHeight b.minHeight && lengthEq maxHeight b.maxHeight && objectFit == b.objectFit &&
   textAlign == b.textAlign && direction == b.direction && unicodeBidi == b.unicodeBidi &&
-  autoMarginLeft == b.autoMarginLeft && autoMarginRight == b.autoMarginRight
+  autoMarginLeft == b.autoMarginLeft && autoMarginRight == b.autoMarginRight &&
+  -- MathML: the depth scales the font size, the style and an out-of-flow child change the math layout
+  mathDepth == b.mathDepth && mathCompact == b.mathCompact && outOfFlow == b.outOfFlow
 
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=

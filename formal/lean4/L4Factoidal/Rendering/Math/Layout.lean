@@ -18,9 +18,9 @@ radical overbar) and the leaves.
 Limits (see docs/designissues/2026-11-14-mathml-core-layout.md): no OpenType MATH table
 is read, so every font parameter is the fallback of a font with no MATH table, taken
 from the font size (x-height: half an em; rule thickness: 1/16 em; math axis: a quarter
-em); operators are not stretched and the operator dictionary is not consulted (an `mo`
-has the default spaces of 5/18 em unless `lspace` or `rspace` says otherwise); the radical
-sign is not drawn; a table is a grid of centred cells with no row or column spans.
+em); operators are not stretched (of the operator dictionary only `lspace` and `rspace`
+are used); the radical sign is not drawn; a table is a grid of centred cells with no row
+or column spans.
 
 Only elements in the MathML namespace enter this module (`Rendering.Layout` tests the
 namespace), so a page with no MathML pays nothing for it.
@@ -28,10 +28,11 @@ namespace), so a page with no MathML pays nothing for it.
 import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.Math.Box
 import L4Factoidal.Rendering.Math.Attributes
+import L4Factoidal.Rendering.Math.OperatorDictionary
 
 namespace L4Factoidal.Rendering.Math
 open L4Factoidal.DOM
-open L4Factoidal.Rendering.CSS (Computed)
+open L4Factoidal.Rendering.CSS (Computed Length)
 
 /-- CSS pixels to layout units (1/64 px), rounded; not a number gives 0. -/
 def lu (x : Float) : Int :=
@@ -50,17 +51,30 @@ structure PBox where
   h : Int
   deriving Repr, Inhabited
 
+/-- The spaces an embellished operator asks before and after it, for each form its place
+can give it (§3.2.4.2): the group that holds it knows the place. -/
+structure OpSpaces where
+  pre : Int × Int
+  inf : Int × Int
+  post : Int × Int
+  deriving Repr, Inhabited
+
+def OpSpaces.forForm (o : OpSpaces) : Form → Int × Int
+  | .pre => o.pre | .inf => o.inf | .post => o.post
+
 /-- A laid-out subtree. `box` is its margin box; `boxes` the border boxes of its
 elements, `rules` the bars to paint in an element's colour, `leaves` the inline content
 of its token elements (a payload of the caller with the left and top of its line box),
 all relative to this subtree's left edge and baseline. `op`: the subtree is an
-embellished operator (§3.2.4.1) that asks this space before and after it. -/
+embellished operator (§3.2.4.1) that asks these spaces before and after it. `spaceLike`:
+the subtree is space-like (§3.2.5.1). -/
 structure Out (α : Type) where
   box : MBox := {}
   boxes : Array PBox := #[]
   rules : Array PBox := #[]
   leaves : Array (α × Int × Int) := #[]
-  op : Option (Int × Int) := none
+  op : Option OpSpaces := none
+  spaceLike : Bool := false
 
 instance {α : Type} : Inhabited (Out α) := ⟨{}⟩
 
@@ -93,8 +107,23 @@ def Params.of (s : Computed) : Params :=
 def lengthAttr (n : DOM.Node) (s : Computed) (key : String) (basis : Option Float := none) : Option Int :=
   ((attr? n key).bind fun v => lengthPx s.fontSize v basis).map lu
 
-/-- The element's own box around its content (CSS 2.1 §8.1): padding, border and margin
-of the style, added to the content's box; the border box is recorded for the element. -/
+/-- A size in pixels as layout units; `none` for `auto` and for the units this layout
+does not resolve (a percentage, viewport units). -/
+def pixels : Length → Option Int
+  | .px v => some (lu v)
+  | _ => none
+
+/-- A content size under the `width` or `height` property and its limits (CSS 2.1 §10.4:
+the property, then the maximum, then the minimum). -/
+def sized (content : Int) (size min max : Length) : Int :=
+  let v := (pixels size).getD content
+  let v := match pixels max with | some m => Min.min v m | none => v
+  match pixels min with | some m => Max.max v m | none => v
+
+/-- The element's own box around its content (CSS 2.1 §8.1; MathML Core §3.1.2): the
+content box takes the `width` and `height` of the style when they are lengths (the
+content stays at the start edge and keeps its baseline: a height changes the descent),
+then padding, border and margin are added; the border box is recorded for the element. -/
 def wrap {α : Type} (id : Nat) (s : Computed) (o : Out α) : Out α :=
   let b := s.borderEdges
   let p := s.padding
@@ -103,23 +132,34 @@ def wrap {α : Type} (id : Nat) (s : Computed) (o : Out α) : Out α :=
   let right := lu (p.right + b.right + m.right)
   let top := lu (b.top + p.top)
   let bottom := lu (b.bottom + p.bottom)
+  let width := sized o.box.width s.width s.minWidth s.maxWidth
+  let height := sized (o.box.ascent + o.box.descent) s.height s.minHeight s.maxHeight
+  let descent := height - o.box.ascent
   let c := o.shift left 0
   let own : PBox := ⟨id, lu m.left, -(o.box.ascent + top),
-    o.box.width + lu (b.left + p.left) + lu (p.right + b.right), o.box.ascent + top + o.box.descent + bottom⟩
-  { c with box := ⟨left + o.box.width + right, o.box.ascent + top + lu m.top, o.box.descent + bottom + lu m.bottom⟩,
+    width + lu (b.left + p.left) + lu (p.right + b.right), o.box.ascent + top + descent + bottom⟩
+  { c with box := ⟨left + width + right, o.box.ascent + top + lu m.top, descent + bottom + lu m.bottom⟩,
            boxes := #[own] ++ c.boxes }
 
 /-- §3.1.3.2: children on one baseline, each embellished operator with its spaces. A row
-whose only child is an embellished operator is itself one: the spaces are added by the
-row above it. -/
+whose children are one embellished operator and otherwise only space-like elements is
+itself an embellished operator (§3.2.4.1): the spaces are added by the row above it. A
+row of space-like children only (or of none) is space-like (§3.2.5.1). -/
 def row {α : Type} (kids : Array (Out α)) : Out α := Id.run do
-  let single := kids.size == 1
-  let items : List RowItem := kids.toList.map fun k =>
+  let operators := kids.filter (·.op.isSome)
+  let embellished := operators.size == 1 && kids.all (fun k => k.op.isSome || k.spaceLike)
+  -- the form of an operator with no `form` attribute comes from its place in this row
+  let items : List RowItem := (List.range kids.size).map fun i =>
+    let k := kids[i]!
     match k.op with
-    | some (l, r) => if single then ⟨k.box, 0, 0⟩ else ⟨k.box, l, r⟩
+    | some o =>
+      if embellished then ⟨k.box, 0, 0⟩ else
+      let (l, r) := o.forForm (formAt i kids.size)
+      ⟨k.box, l, r⟩
     | none => ⟨k.box, 0, 0⟩
   let offsets := rowOffsets items
-  let mut out : Out α := { box := rowBox items, op := if single then (kids[0]?.bind (·.op)) else none }
+  let mut out : Out α := { box := rowBox items, op := if embellished then (operators[0]?.bind (·.op)) else none,
+                           spaceLike := kids.all (·.spaceLike) }
   for i in [0:kids.size] do
     out := out.add kids[i]! ⟨offsets.getD i 0, 0⟩
   return out
@@ -132,7 +172,9 @@ def fractionOut {α : Type} (id : Nat) (n : DOM.Node) (s : Computed) (num den : 
   let rule := max 0 ((lengthAttr n s "linethickness" (some (px P.rule))).getD P.rule)
   let gap := if rule == 0 then (if display then 7 else 3) * P.rule / 2 else (if display then 3 else 1) * P.rule
   let f := fraction { axis := P.axis, rule, numGap := gap, denGap := gap } num.box den.box
-  let o : Out α := { box := f.box, rules := if rule > 0 then #[⟨id, 0, f.barTop, f.box.width, rule⟩] else #[] }
+  -- a fraction whose numerator is an embellished operator is one (§3.2.4.1)
+  let o : Out α := { box := f.box, rules := if rule > 0 then #[⟨id, 0, f.barTop, f.box.width, rule⟩] else #[],
+                     op := num.op }
   (o.add num f.num).add den f.den
 
 /-- §3.4.1: a base with scripts after it. An embellished base makes the element one. -/
@@ -184,13 +226,27 @@ def rootOut {α : Type} (id : Nat) (s : Computed) (base index : Out α) : Out α
 def paddedOut {α : Type} (n : DOM.Node) (s : Computed) (content : Out α) : Out α :=
   let (box, at_) := padded content.box (lengthAttr n s "width") (lengthAttr n s "height") (lengthAttr n s "depth")
     ((lengthAttr n s "lspace").getD 0) ((lengthAttr n s "voffset").getD 0)
-  ({ box } : Out α).add content at_
+  ({ box, op := content.op, spaceLike := content.spaceLike } : Out α).add content at_
 
-/-- The space an `mo` asks before and after it: `lspace` and `rspace`, else the default
-of an operator that is not in the dictionary (5/18 em, §3.2.4.2). -/
-def operatorSpace (n : DOM.Node) (s : Computed) : Int × Int :=
-  let default := lu s.fontSize * 5 / 18
-  ((lengthAttr n s "lspace").getD default, (lengthAttr n s "rspace").getD default)
+/-- The text of the text children of element `id`, with the white space at its ends
+removed: the content of an `mo` that the dictionary is read by. -/
+def textContent (dom : Dom) (id : Nat) : String :=
+  ((dom.get id).kids.foldl (fun acc k =>
+    let kn := dom.get k
+    if kn.type == .text then acc ++ kn.data else acc) "").trimAscii.toString
+
+/-- The spaces an `mo` asks before and after it (§3.2.4.2): the `lspace` and `rspace`
+attributes, else the dictionary's for its content and form. The form is the `form`
+attribute's, else the one its place gives: the three answers are made here. -/
+def operatorSpaces (dom : Dom) (id : Nat) (n : DOM.Node) (s : Computed) : OpSpaces :=
+  let content := textContent dom id
+  let explicit := (attr? n "form").bind formOf
+  let em := lu s.fontSize
+  let one := fun (f : Form) =>
+    let p := lookup content (explicit.getD f) explicit.isSome
+    ((lengthAttr n s "lspace").getD (em * (p.lspace : Int) / 18),
+     (lengthAttr n s "rspace").getD (em * (p.rspace : Int) / 18))
+  ⟨one .pre, one .inf, one .post⟩
 
 /-- §3.5: a table from its rows of cells: each column as wide as its widest cell, each
 row as tall as its tallest cell above and below the row's baseline; cells centred in
@@ -259,7 +315,8 @@ def cellStyle (s : Computed) : Computed :=
 /-- The box of element `id` and of everything in it. `leaf k` lays out the inline
 content of element `k` (a token element, or an element that is not MathML) and answers
 its inline size, ascent and descent in CSS pixels with the caller's payload. Children
-that are not elements, and elements with `display: none`, take no part. One level of
+that are not elements, and elements with `display: none` or with `position: absolute` or
+`fixed`, take no part (§3.1.1: such a child has no box in its parent's layout here). One level of
 `fuel` for each element: the nesting bound of the rendering (64) is shared. -/
 def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
     (leaf : Nat → Except String (Float × Float × Float × α)) : Nat → Nat → Except String (Out α)
@@ -271,17 +328,18 @@ def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
     if name == "" || tokenNames.contains name then
       let (w, a, d, payload) ← leaf id
       let o : Out α := { box := ⟨lu w, lu a, lu d⟩, leaves := #[(payload, 0, -(lu a))] }
-      return wrap id s (if name == "mo" then { o with op := some (operatorSpace n s) } else o)
+      return wrap id s (if name == "mo" then { o with op := some (operatorSpaces dom id n s) }
+        else if name == "mtext" then { o with spaceLike := true } else o)
     if name == "mspace" then
       let len := fun (key : String) => (lengthAttr n s key).getD 0
-      return wrap id s { box := space (len "width") (len "height") (len "depth") }
+      return wrap id s { box := space (len "width") (len "height") (len "depth"), spaceLike := true }
     if name == "mtable" then
       let mut rows : Array (Nat × Array (Out α)) := #[]
       for r in n.kids do
-        if (dom.get r).type == .element && (styles[r]!).display != .none then
+        if (dom.get r).type == .element && (styles[r]!).display != .none && !(styles[r]!).outOfFlow then
           let mut cells : Array (Out α) := #[]
           for c in (dom.get r).kids do
-            if (dom.get c).type == .element && (styles[c]!).display != .none then
+            if (dom.get c).type == .element && (styles[c]!).display != .none && !(styles[c]!).outOfFlow then
               cells := cells.push (← layoutNode dom styles leaf fuel c)
           rows := rows.push (r, cells)
       return wrap id s (tableOut s rows)
@@ -289,7 +347,7 @@ def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
     let mut pres : Array Bool := #[]
     for k in n.kids do
       let kn := dom.get k
-      if kn.type == .element && (styles[k]!).display != .none then
+      if kn.type == .element && (styles[k]!).display != .none && !(styles[k]!).outOfFlow then
         kids := kids.push (← layoutNode dom styles leaf fuel k)
         pres := pres.push (kn.ns == some mathmlNS && kn.lname == "mprescripts")
     let content : Out α := match name, kids.size with
