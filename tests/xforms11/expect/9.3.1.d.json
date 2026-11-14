@@ -1,0 +1,22 @@
+{
+ "case": "9.3.1.d",
+ "file": "Chapt09/9.3/9.3.1/9.3.1.d.xhtml",
+ "quote": "You must see two lists of items, Items In Cart 1 and Items In Cart 2. Both lists must contain the values \"winshield wipers\", \"tires\", \"exhaust\", and \"air freshener\".",
+ "note": "the condition spells the first value \"winshield wipers\"; the instance data has \"windshield wipers\"",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "windshield wipers",
+    "tires",
+    "exhaust",
+    "air freshener",
+    "windshield wipers",
+    "tires",
+    "exhaust",
+    "air freshener"
+   ],
+   "kind": "output"
+  }
+ ]
+}

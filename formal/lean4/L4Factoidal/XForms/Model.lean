@@ -716,6 +716,8 @@ def Model.viewLoop (m : Model) : Nat → List (Nat × List (Nat × Nat) × Cx ×
 /-- The view model: every form control instance in document order. -/
 def Model.view (m : Model) : Except String (List Ctl) :=
   let m0 := m.firstModel
+  -- after a fatal error processing has halted and the form shows nothing (§4.5)
+  if m.halted then .ok [] else
   m.viewLoop 1000000 [(0, [], { item := m.defaultRoot m0, model := m0 }, true)] []
 
 /-! ## Events and actions (§4, §10) -/

@@ -16,7 +16,9 @@ that states the pass condition (`quote`) and the scripted steps:
     `values` (the values of all such controls, in order), `no-value`
     (no such control shows a value), `absent` (no such control shows a
     value containing one of `values`), `all-shown` / `none-shown` (the
-    controls of `kind` whose label contains `contains`), `message` /
+    controls of `kind` whose label ends with `contains`), `each-value`
+    (every shown control of `kind` has a value containing `contains`,
+    but for the listed exceptions), `message` /
     `no-message` (`contains`), `exception` (`name`: a fatal error of
     that name, or a message naming it), `no-fatal`, `event` /
     `no-event` (`name`), `focus` (`id`), `load` (`contains`).
@@ -144,17 +146,30 @@ def checkExpect (m : Model) (last all : List Output) (j : Json) : Option String 
     | some c => some s!"a control shows '{c.value}'"
     | none => none
   else if kind == "all-shown" then
-    -- every control of this kind whose label contains the text is available, and there is one
-    let cs := (view.filter (fun c => (j.getString? "kind").all (· == c.kind))).filter (fun c => has c.label needle)
-    if cs.isEmpty then some s!"no control with a label containing '{needle}'"
+    -- every control of this kind whose label ends with the text is available, and there is one
+    let cs := (view.filter (fun c => (j.getString? "kind").all (· == c.kind))).filter
+      (fun c => (normLabel c.label).endsWith needle.toLower)
+    if cs.isEmpty then some s!"no control with a label ending in '{needle}'"
     else match cs.find? (fun c => !c.relevant) with
       | some c => some s!"'{c.label}' is not shown"
       | none => none
   else if kind == "none-shown" then
     match ((view.filter (fun c => (j.getString? "kind").all (· == c.kind))).filter
-        (fun c => has c.label needle)).find? (·.relevant) with
+        (fun c => (normLabel c.label).endsWith needle.toLower)).find? (·.relevant) with
     | some c => some s!"'{c.label}' is shown"
     | none => none
+  else if kind == "each-value" then
+    -- every shown control of this kind has a value containing the text; the values
+    -- that do not are empty or name one of the listed exceptions, at most one each
+    let exc := (j.getStringArray? "except").getD []
+    let cs := (findCtls view j).filter (·.relevant)
+    let others := cs.filter (fun c => !has c.value needle)
+    if cs.isEmpty then some "no such control is shown"
+    else if others.length > exc.length then
+      some s!"{others.length} values do not contain '{needle}': {(others.map (·.value)).take 4}"
+    else match others.find? (fun c => c.value != "" && !exc.any (fun w => has c.value w)) with
+      | some c => some s!"value '{c.value}' does not contain '{needle}'"
+      | none => none
   else if kind == "no-value" then
     if ((findCtls view j).filter (·.relevant)).any (fun c => normalizeSpaceStr c.value != "") then
       some "the control shows a value"

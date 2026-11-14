@@ -1,0 +1,16 @@
+{
+ "case": "8.1.2.a",
+ "file": "Chapt08/8.1/8.1.2/8.1.2.a.xhtml",
+ "quote": "You must see an xforms-value-changed message every time the value in the Street Name input field is changed.",
+ "steps": [
+  {
+   "do": "setvalue",
+   "label": "Street Name",
+   "value": "Elm Street"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-value-changed"
+  }
+ ]
+}

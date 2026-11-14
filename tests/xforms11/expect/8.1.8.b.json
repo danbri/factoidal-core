@@ -1,0 +1,19 @@
+{
+ "case": "8.1.8.b",
+ "file": "Chapt08/8.1/8.1.8/8.1.8.b.xhtml",
+ "quote": "You must see two trigger controls on this page, one labeled \"Regular Trigger\" and the other labeled \"Minimal Trigger\". They may look different.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Regular Trigger",
+   "kind": "trigger",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Minimal Trigger",
+   "kind": "trigger",
+   "relevant": true
+  }
+ ]
+}

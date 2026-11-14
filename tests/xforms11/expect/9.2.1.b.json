@@ -1,0 +1,61 @@
+{
+ "case": "9.2.1.b",
+ "file": "Chapt09/9.2/9.2.1/9.2.1.b.xhtml",
+ "quote": "When you activate the Send Name trigger, the input control and the trigger will be replaced by an output that says \"Hello\" followed by whatever value was in the input control when it was activated and an Edit trigger. When activated, the output and the Edit trigger must be replaced by the input field and the Send Name trigger.",
+ "steps": [
+  {
+   "do": "setvalue",
+   "label": "Please tell me your name",
+   "value": "Ada"
+  },
+  {
+   "do": "activate",
+   "label": "Send Name"
+  },
+  {
+   "expect": "control",
+   "label": "Hello",
+   "value": "Ada",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Edit",
+   "kind": "trigger",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Send Name",
+   "kind": "trigger",
+   "relevant": false
+  },
+  {
+   "expect": "control",
+   "label": "Please tell me your name",
+   "relevant": false
+  },
+  {
+   "do": "activate",
+   "label": "Edit"
+  },
+  {
+   "expect": "control",
+   "label": "Send Name",
+   "kind": "trigger",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Please tell me your name",
+   "value": "Ada",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Edit",
+   "kind": "trigger",
+   "relevant": false
+  }
+ ]
+}

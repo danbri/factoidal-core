@@ -1,0 +1,17 @@
+{
+ "case": "8.3.3.c",
+ "file": "Chapt08/8.3/8.3.3/8.3.3.c.xhtml",
+ "quote": "When you pick a value from the Select A Color select1 control you must see the same value as the output for the Your Color output control.",
+ "steps": [
+  {
+   "do": "setvalue",
+   "label": "Select A Color",
+   "value": "blue"
+  },
+  {
+   "expect": "control",
+   "label": "Your Color",
+   "value": "blue"
+  }
+ ]
+}
