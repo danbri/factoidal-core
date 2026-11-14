@@ -53,6 +53,11 @@ argument for `start`:
   `modifiers` (1 Shift, 2 Command, 4 Option, 8 Control). The turn's `keyDefault` says
   whether the host may scroll for the key (its `keydown` was not canceled and it went to
   no text control or editing host).
+- `webdriverStart` (`address`, `port`, `platform`, `dangerouslyEnable`): a WebDriver
+  endpoint (`WebDriver.Gate.start`: off unless `dangerouslyEnable`, which only the test
+  runner's `--dangerously-enable-webdriver-endpoint` sends; loopback only); answers its
+  `secret`. `webdriver` (`method`, `path`, `host`, `origin`, `body`): one request of its
+  listener, answered `{status, body}` (`WebDriver.Protocol.handle`: the gate first).
 - `message` (`data`: JSON text, `origin`): a message of the embedder to the page, as a
   `message` event at the window (a test host answers a page's request this way).
 - `resize` (`width`, `height`): the viewport in CSS pixels; `resize` at the window.
@@ -205,6 +210,9 @@ structure Held where
   /-- The `layout` request of the session's `start`: its layout reads (`Page.Reads.measure`)
   are made anew from it before each action, with the fonts and images held then. -/
   layoutRequest : JSON.Json := .object []
+  /-- The WebDriver endpoint, when the test runner started one (`webdriverStart`): the
+  gate's configuration (secret, port), the protocol's state and what this browser is. -/
+  webdriver : Option (WebDriver.Gate.Config × WebDriver.Protocol.Server × WebDriver.Protocol.Browser) := none
 
 instance : Inhabited Held := ⟨{}⟩
 
@@ -251,7 +259,7 @@ def frameEntropyOf (id : Nat) (parent b : ByteArray) : Nat → ByteArray :=
   fun el => if parent.isEmpty || b.isEmpty then ByteArray.empty
     else b ++ ("frame:" ++ toString id ++ ":" ++ toString el).toUTF8
 
-def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "resize", "advance", "settle", "turn", "close",
+def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "webdriverStart", "webdriver", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer"]
 
 /-- An answer object with `nextSession` first: the number of the next session. -/
@@ -1135,6 +1143,41 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     match held.turn, held.aot with
     | some t, some aot => hostCall held aot t request
     | _, _ => return (held, .error "scriptSession: no turn waits for the host")
+  | "webdriverStart" =>
+    -- A WebDriver endpoint: remote control of the browser (`WebDriver.Gate`). Only the test
+    -- runner sends `dangerouslyEnable`, and only with its `--dangerously-enable-webdriver-endpoint`;
+    -- this is the one acceptance of `Risk.webdriverEndpoint` (skills/lean-risk-flags §5).
+    -- `Gate.start` refuses without it, off loopback, or with no entropy.
+    let launch : WebDriver.Gate.Launch := {
+      enabled := if request.field? "dangerouslyEnable" == some (.bool true) then some (Risk.dangerouslyAccept .webdriverEndpoint) else none,
+      address := str request "address", entropy := ← turnBytes }
+    match WebDriver.Gate.start launch, natField request "port" with
+    | .ok secret, some port =>
+      let browser : WebDriver.Protocol.Browser := { platform := (match str request "platform" with | "" => "linux" | p => p) }
+      return ({ held with webdriver := some ({ secret, port }, {}, browser) },
+        .ok (JSON.Json.object [("secret", .string secret)]).toString)
+    | .ok _, none => return (held, .error "scriptSession: webdriverStart needs a port")
+    | .error r, _ => return (held, .error s!"scriptSession: the WebDriver endpoint is refused ({repr r})")
+  | "webdriver" =>
+    -- one request of the endpoint's listener: the gate, then the protocol (`Protocol.handle`)
+    match held.webdriver with
+    | none => return (held, .error "scriptSession: no WebDriver endpoint")
+    | some (cfg, srv, browser) =>
+      let r : WebDriver.Protocol.Request := { method := str request "method", path := str request "path",
+        host := str request "host", body := str request "body", entropy := ← turnBytes,
+        origin := match request.field? "origin" with
+          | some (.string o) => some o
+          | _ => none }
+      let (srv, out) := WebDriver.Protocol.handle cfg browser srv r
+      let reply := fun (status : Nat) (body : JSON.Json) =>
+        (JSON.Json.object [("status", .number (toString status)), ("body", .string body.toString)]).toString
+      let held := { held with webdriver := some (cfg, srv, browser) }
+      match out with
+      | .reply status body => return (held, .ok (reply status body))
+      | .page _ _ _ _ =>
+        -- the commands on a page are not served yet
+        let e : WebDriver.Error := { code := .unsupportedOperation, message := "this command is not supported yet" }
+        return (held, .ok (reply e.code.status e.body))
   | "close" => return ({ held with session := none, turn := none, leanSession := none, leanWorkers := {}, frames := #[], leanFrames := #[], frameScan := 0 }, .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then return (held, .error "scriptSession: a turn waits for the host")
