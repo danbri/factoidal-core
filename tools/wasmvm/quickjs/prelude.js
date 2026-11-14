@@ -6280,7 +6280,7 @@
       return new Promise((resolve, reject) => {
         const request = new (makeRequest())(input, init), st = requests.get(request), signal = st.signal;
         if (signal.aborted) { reject(signal.reason); return; }
-        const x = new globalThis.XMLHttpRequest(), s = st_xhr(x);
+        const x = new (xhrForFetch ?? globalThis.XMLHttpRequest)(), s = st_xhr(x);
         let settled = false;
         const fail = e => { if (!settled) { settled = true; reject(e); } };
         signal.addEventListener('abort', () => { if (settled) return; fail(signal.reason); try { x.abort(); } catch { /* done */ } });
@@ -15614,6 +15614,7 @@
   // ---- a service worker's global scope (Service Workers §4): its events come from the page's
   // registration (install, activate, message); `clients` knows the one page of this session.
   let swScope = null;   // in a service worker's realm: { scope, client, origin, ... }
+  let xhrForFetch = null;   // a service worker's fetch: the XMLHttpRequest class its scope hides
   class ExtendableEvent extends Event {
     constructor(type, init = undefined) { super(type, init); state(this).extend = []; }
     waitUntil(f) {
@@ -15842,8 +15843,9 @@
     const wnav = Object.create(WorkerNavigator.prototype);
     for (const k of Object.getOwnPropertyNames(globalThis))
       if ((!esGlobals.has(k) && !workerGlobals.has(k) && !(isService && serviceStorageGlobals.has(k))) || (!secureWorker && secureOnlyGlobals.has(k))) { try { delete globalThis[k]; } catch {} }
-    // Service Workers §4.1: XMLHttpRequest is not exposed in a service worker
-    if (isService) try { delete globalThis.XMLHttpRequest; delete globalThis.XMLHttpRequestEventTarget; delete globalThis.XMLHttpRequestUpload; } catch {}
+    // Service Workers §4.1: XMLHttpRequest is not exposed in a service worker; fetch keeps the
+    // class for its requests (made before the global goes)
+    if (isService) try { xhrForFetch = globalThis.XMLHttpRequest; delete globalThis.XMLHttpRequest; delete globalThis.XMLHttpRequestEventTarget; delete globalThis.XMLHttpRequestUpload; } catch {}
     const SCOPE = isService ? ServiceWorkerGlobalScope : isShared ? SharedWorkerGlobalScope : DedicatedWorkerGlobalScope;
     const SCOPE_NAME = isService ? 'ServiceWorkerGlobalScope' : isShared ? 'SharedWorkerGlobalScope' : 'DedicatedWorkerGlobalScope';
     Object.setPrototypeOf(globalThis, SCOPE.prototype);
