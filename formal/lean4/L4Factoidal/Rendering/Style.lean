@@ -1514,6 +1514,21 @@ def bodyMarginHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   if let some v := first ["marginwidth"] then m := {m with right := v}
   return {s with margin := m}
 
+/-- The properties that presentational hints changed from `before` to `after`: those the
+cascade takes from no UA rule. -/
+def hintedProperties (before after : Computed) : List String :=
+  (if after.width.same before.width then [] else ["width"]) ++
+  (if after.height.same before.height then [] else ["height"]) ++
+  (if after.margin.top == before.margin.top then [] else ["margin-top"]) ++
+  (if after.margin.right == before.margin.right then [] else ["margin-right"]) ++
+  (if after.margin.bottom == before.margin.bottom then [] else ["margin-bottom"]) ++
+  (if after.margin.left == before.margin.left then [] else ["margin-left"])
+
+/-- A hint that sets no width leaves the UA's `width` rules in force. -/
+theorem hintedProperties_width (before after : Computed) (h : after.width.same before.width = true) :
+    "width" ∉ hintedProperties before after := by
+  simp [hintedProperties, h]
+
 /-- The order of cascade keys: lists of numbers, lexicographically; a list is not above
 one it starts. -/
 def lexLE : List Nat → List Nat → Bool
@@ -2204,8 +2219,13 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     if n.lname == "bdo" then initial := {initial with unicodeBidi := .isolateOverride}
     else if ["rtl","ltr","auto"].contains dirAttr || n.lname == "bdi" then
       initial := {initial with unicodeBidi := .isolate}
+  let preHint := initial
   if n.ns == some DOM.htmlNS || n.ns.isNone then
     initial := bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))
+  -- HTML §15.1: presentational hints sit above the user agent's rules (below the author's):
+  -- a property a hint sets here takes no value from a rule of the UA sheet (`input` has
+  -- `width: 147px` there; `<input type=image width=40>` is 40px wide)
+  let hinted := hintedProperties preHint initial
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
   if svgViewport then
@@ -2235,7 +2255,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     if rule.usesVars then usesVars := true
     if rule.usesLogical then usesLogical := true
     for d in rule.declarations do
-      if !onlyVisited || visitedProperties.contains d.property then
+      if (!onlyVisited || visitedProperties.contains d.property) && !(origin == 0 && !d.important && hinted.contains d.property) then
         let key := ruleKey d.important origin rule.scope.isSome rule.layer specificity order
         -- a side shorthand kept whole (it mentions `var()`) stands for each of its sides
         let sides := if rule.usesVars && CssVars.mentions d.value then sidesOf d.property else []
