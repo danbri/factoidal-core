@@ -452,6 +452,21 @@ private def svgPicture := (WebRender.vectorPicture svgFile.toUTF8).bind (·.toOp
 #guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+10)*4) ((10*40+10)*4+4)).toList) == some [255,0,0,255]
 #guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+30)*4) ((10*40+30)*4+4)).toList) == some [0,0,0,0]
 #guard (WebRender.vectorPicture "not an image".toUTF8).isNone
+-- The image an `img` shows (2026-11-14; before, its `src` alone): chosen from `srcset` and the
+-- `source` elements of a `picture`, passing over formats the engine does not decode.
+private def keysOf (html : String) : List String :=
+  (WebRender.htmlImageKeys (DOM.parseHtmlDocument html) (some "https://e.test/p/")).map (·.2)
+#guard keysOf "<img src='a.png'>" == ["https://e.test/p/a.png"]
+#guard keysOf "<img srcset='b.png'>" == ["https://e.test/p/b.png"]
+#guard keysOf "<img src='a.png' srcset='b.png 2x'>" == ["https://e.test/p/a.png"]
+#guard keysOf "<img src='a.jpg' srcset='b.webp 1x, c.webp 2x'>" == ["https://e.test/p/a.jpg"]
+#guard keysOf "<img src='a.jpg' srcset='small.jpg 100w, big.jpg 2000w' sizes='50px'>" == ["https://e.test/p/small.jpg"]
+#guard keysOf "<picture><source srcset='w.webp' type='image/webp'><img src='a.jpg'></picture>" == ["https://e.test/p/a.jpg"]
+#guard keysOf "<picture><source srcset='p.png'><img src='a.jpg'></picture>" == ["https://e.test/p/p.png"]
+#guard keysOf "<img alt='none'>" == []
+#guard WebRender.undecodablePath "https://e.test/a.JPG.WEBP?x=1#f" && WebRender.undecodablePath "x.avif" && !WebRender.undecodablePath "x.webp.png"
+#guard WebRender.plainImage (DOM.parseHtmlDocument "<img id=i src='a.png'>") ((DOM.parseHtmlDocument "<img id=i src='a.png'>").getElementById 0 "i" |>.getD 0)
+
 -- `@import` (2026-11-14; before, no import was followed): `inspect` names the sheets to fetch,
 -- the host gives them in `imported`, and each is read before the sheet that imports it, under
 -- the import's conditions. A nested import is asked for once its parent is given.
