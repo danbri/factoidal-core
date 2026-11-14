@@ -4448,6 +4448,10 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | .obj id => match (← getObj id).kind with
         | .closure f .. => pure (.str s!"function {f.name.getD ""}() {"{"} [code] }")
         | .native _ | .bound .. => pure (.str "function () { [native code] }")
+        -- a callable Proxy (§20.2.3.5 step 3): a NativeFunction string
+        | .proxy .. =>
+          if ← isCallable thisV then pure (.str "function () { [native code] }")
+          else throwErr .type "Function.prototype.toString requires that 'this' be a Function"
         | _ => throwErr .type "Function.prototype.toString requires that 'this' be a Function"
       | _ => throwErr .type "Function.prototype.toString requires that 'this' be a Function"
     | .arrayCtor =>
