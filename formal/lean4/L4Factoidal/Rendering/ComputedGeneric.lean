@@ -53,6 +53,10 @@ structure View where
   host has laid the page out: the containing block of percentage insets (`insetBase`). Asked
   only for an inset that is a percentage. -/
   paddingBox : Nat → Option (Float × Float) := fun _ => none
+  /-- The custom properties (element and name) whose computed values are being worked out
+  on the way here: one asked for again is in a cycle and is guaranteed-invalid (CSS
+  Variables 1 §3.2), so a cycle through if(), attr() or a custom function ends. -/
+  visiting : List (Nat × String) := []
 
 /-- The properties registered by scripts (`CSS.registerProperty`), as the document node
 keeps them (`Hosts.Dom.Command.registerProperty`: attributes whose name starts with U+0001
@@ -622,6 +626,21 @@ def namesResource (cvs : List CssValues.CV) : Bool :=
     | _ => false) ||
   ["url", "image-set", "-webkit-image-set", "image", "src"].any fun f => CssValues.hasFn f 32 cvs
 
+/-- The cycle check of `computedLonghand`: a custom property of element `id` asked for
+again while its own value is being worked out is the guaranteed-invalid value (CSS
+Variables 1 §3.2); else `k` works it out with the property marked as being visited. -/
+def cycleGuard (v : View) (id : Nat) (p : String) (k : View → String) : String :=
+  if CssValues.isCustom p && v.visiting.contains (id, p) then ""
+  else k (if CssValues.isCustom p then { v with visiting := (id, p) :: v.visiting } else v)
+
+/-- The refusal at the bound: a cycle ends at its first repeat, with no more work. -/
+theorem cycleGuard_cycle (v : View) (id : Nat) (p : String) (k : View → String)
+    (hc : CssValues.isCustom p = true) (hv : v.visiting.contains (id, p) = true) :
+    cycleGuard v id p k = "" := by
+  unfold cycleGuard
+  rw [hc, hv]
+  rfl
+
 /-- `bolder` and `lighter` against the parent's computed weight (CSS Fonts 4 §2.2.1, the
 table of relative weights); the parent's weight as text. -/
 def relativeWeight (keyword parent : String) : String :=
@@ -644,7 +663,7 @@ def relativeWeight (keyword parent : String) : String :=
 the walk to the root and the chain of variables. -/
 def computedLonghand (v : View) : Nat → Nat → String → String
   | 0, _, _ => ""
-  | fuel + 1, id, p =>
+  | fuel + 1, id, p => cycleGuard v id p fun v =>
     -- what substitution looks up: a custom property of the element, or (U+0001 "attr " and
     -- a name) one of its attributes, U+0000 when it has none
     let lookupVar := fun (name : String) =>
@@ -1157,6 +1176,10 @@ private def resolvedAt (html css prop : String) : String :=
 #guard resolvedAt "<div id=t></div>" "#t { position: relative; bottom: 3px }" "top" == "-3px"
 #guard resolvedAt "<div id=t></div>" "#t { position: relative }" "left" == "0px"
 #guard resolvedAt "<div id=t></div>" "#t { position: static }" "left" == "auto"
+-- a cycle through if() ends (if-cycle.html)
+#guard computedAt "<div id=t></div>" "#t { --x: 3; --prop: if(style(--x: 3): var(--prop); else: value) }" "--prop" == ""
+#guard computedAt "<div id=t></div>" "#t { --prop: if(style(--prop): var(--prop); else: value) }" "--prop" == "value" ||
+  computedAt "<div id=t></div>" "#t { --prop: if(style(--prop): var(--prop); else: value) }" "--prop" == ""
 -- attr()-tainting (attr-security.html)
 #guard computedAt "<div id=t data-foo='https://x.test/a.png'></div>" "#t { background-image: image-set(attr(data-foo)) }" "background-image" == "none"
 #guard computedAt "<div id=t data-foo='x'></div>" "#t { --x: image-set(attr(data-foo)) }" "--x" == "image-set(\"x\")"
