@@ -651,9 +651,19 @@ private def deepPage := "<!doctype html><title>D</title><p>Top</p>" ++ String.jo
 #guard renderText deepPage [] == ""
 #guard mentions (renderText deepPage [liberal,asks]) "\"feature\":\"nesting depth\"" == 1
 #guard mentions (renderText deepPage [liberal]) "foafnaut:console" ≥ 1
--- Inline SVG the SVG reader refuses (here the attribute `focusable`, as on gov.uk): strict
--- refuses the page, liberal draws it without that svg.
-private def svgPage := "<!doctype html><title>S</title><p>Icon <svg width=\"16\" height=\"16\" viewBox=\"0 0 32 32\" focusable=\"false\"><path d=\"M0 0h32v32H0z\"/></svg> here</p>"
+-- Inline SVG the SVG reader refuses (here the attribute `filter`): strict refuses the page,
+-- liberal draws it without that svg.
+private def svgPage := "<!doctype html><title>S</title><p>Icon <svg width=\"16\" height=\"16\" viewBox=\"0 0 32 32\" filter=\"url(#f)\"><path d=\"M0 0h32v32H0z\"/></svg> here</p>"
+-- Metadata attributes on inline SVG (`focusable` on gov.uk, `class` and `aria-hidden` on BBC News,
+-- `role`, `tabindex`, `data-*`) say nothing about what is drawn: the svg is read, in both modes.
+private def svgMetaPage := "<!doctype html><title>S</title><p>Icon <svg width=\"16\" height=\"16\" viewBox=\"0 0 32 32\" focusable=\"false\" class=\"icon\" aria-hidden=\"true\" role=\"img\" tabindex=\"-1\" data-x=\"1\" lang=\"en\"><path class=\"p\" aria-label=\"x\" d=\"M0 0h32v32H0z\"/></svg> here</p>"
+#guard renderText svgMetaPage [] != ""
+#guard mentions (renderText svgMetaPage [liberal,asks]) "\"feature\":\"inline SVG\"" == 0
+#guard NativeSVG.inertAttribute "focusable" && NativeSVG.inertAttribute "aria-hidden" && NativeSVG.inertAttribute "data-icon"
+#guard !NativeSVG.inertAttribute "filter" && !NativeSVG.inertAttribute "transform" && !NativeSVG.inertAttribute "fill"
+-- A root sized in `em` (BBC News: width="7em"): the layout computed the box, the reader takes it.
+private def svgEmPage := "<!doctype html><title>S</title><p>Icon <svg width=\"2em\" height=\"1em\" viewBox=\"0 0 64 32\"><path d=\"M0 0h32v32H0z\"/></svg> here</p>"
+#guard renderText svgEmPage [] != ""
 #guard renderText svgPage [] == ""
 #guard mentions (renderText svgPage [liberal,asks]) "\"feature\":\"inline SVG\"" == 1
 -- An SVG box that layout can not size (a percentage height with no definite containing height):

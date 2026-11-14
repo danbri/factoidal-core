@@ -7,7 +7,9 @@ import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
 // zoomUnit: the backing pixels for each point, in percent (WebDocument.zoomUnit): Lean lays the page
 // out in points (CSS px) and draws it at the backing scale.
 export type PageView={textScalePercent?:number;zoomUnit?:number;selection?:"all"|number[];shell?:unknown;live?:boolean;find?:{query:string;current:number}};
-const MAX_RESOURCES=16, MAX_RESOURCE_BYTES=2*MAX_SOURCE_BYTES;
+// The most linked style sheets fetched for a page. It was 16 until 2026-11-14: developer.mozilla.org links 18 and
+// lean-lang.org 31, and the rest were drawn without. The engine bounds the sheets' text (WebDocument.sheetsIn, 2 MiB).
+const MAX_RESOURCES=64, MAX_RESOURCE_BYTES=2*MAX_SOURCE_BYTES;
 export function inputURL(input:string,file=false) {
   const url=file?pathToFileURL(resolve(input)):new URL(input);
   if(!["file:","http:","https:"].includes(url.protocol))throw new Error("Native HTML accepts file, HTTP and HTTPS inputs only");
@@ -248,7 +250,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   const scripted=inspection.scripts.some(script=>script.kind!=="data");
   if(scripted&&!scriptHost)
     throw new Error("Page scripts need the QuickJS guest module (--quickjs-wasm FILE) and an engine with scriptSession; this page is refused");
-  if(inspection.stylesheets.length>MAX_RESOURCES&&!accept.liberal)throw new Error("Native HTML exceeds 16 external stylesheets");
+  if(inspection.stylesheets.length>MAX_RESOURCES&&!accept.liberal)throw new Error(`Native HTML exceeds ${MAX_RESOURCES} external stylesheets`);
   // In liberal mode a stylesheet that is not read goes to Lean as a failure, with the reason;
   // Lean draws the page without it and says so (WebAccept.Skip.stylesheetMissing).
   const resourceFailures:{nodeId:number;url:string;reason:string}[]=[];
@@ -256,7 +258,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   for(const [index,descriptor] of inspection.stylesheets.entries()) {
     signal?.throwIfAborted();
     try{
-      if(index>=MAX_RESOURCES)throw new Error("Native HTML exceeds 16 external stylesheets");
+      if(index>=MAX_RESOURCES)throw new Error(`Native HTML exceeds ${MAX_RESOURCES} external stylesheets`);
       // The URL and owning node are selected and resolved by Lean.
       navigationURL(descriptor.url,inspection.baseURL,document.url);
       const resource=await readSource(descriptor.url,signal);
