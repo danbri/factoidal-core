@@ -2048,15 +2048,26 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
       -- parameters with expressions (defaults, patterns): every parameter name is in its
       -- temporal dead zone until its own parameter is bound (§10.2.11 steps 21 to 26), so a
       -- default that names itself or a later parameter is a ReferenceError
-      if fd.params.any (fun pe => match pe with | .mk (.id _) none => false | _ => true) then
+      let paramExprs := fd.params.any (fun pe => match pe with | .mk (.id _) none => false | _ => true)
+      if paramExprs then
         for pe in fd.params do
           match pe with
           | .mk p _ => for x in p.names do declare fenv x { v := .undef, init := false }
         if let some rp := fd.rest then
           for x in rp.names do declare fenv x { v := .undef, init := false }
-      bindParams n ctx fd.params args 0
-      if let some rp := fd.rest then
-        bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
+      let bindAll : M Unit := do
+        bindParams n ctx fd.params args 0
+        if let some rp := fd.rest then
+          bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
+      if paramExprs && !fd.arrow then
+        -- while the parameters' expressions run, direct eval there sees `paramEnv`
+        let outer := (← get).paramEnv
+        modify fun h => { h with paramEnv := fenv }
+        tryCatch bindAll fun e => do
+          modify fun h => { h with paramEnv := outer }
+          throw e
+        modify fun h => { h with paramEnv := outer }
+      else bindAll
       for v in fd.vars do
         if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
     if fd.kind == .ctor false then initFields n ctx fnObj thisV
@@ -3457,6 +3468,10 @@ def directEval : Nat → Ctx → Value → M Value
       match (parseScript code ctx.strict (evalCode := true)).map Resolve.script with
       | .error e => throwErr .syntax ((e.drop 13).toString)
       | .ok sc =>
+        -- EvalDeclarationInstantiation: sloppy eval code in a function's parameters may not
+        -- declare `arguments` as a var
+        if !sc.strict && ctx.env != 0 && (← get).paramEnv == ctx.env && sc.vars.contains "arguments" then
+          throwErr .syntax "eval code in parameter expressions cannot declare 'arguments'"
         let env ← newEnv ctx.env
         let ectx := { ctx with env, strict := sc.strict }
         -- var declarations of sloppy eval code go to the caller's variable scope
