@@ -17,6 +17,7 @@ do not use it.
 import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.ComputedValues
 import L4Factoidal.Rendering.CssValues.Declaration
+import L4Factoidal.Rendering.CssRegister
 import Std.Data.HashMap
 
 namespace L4Factoidal.Rendering.ComputedGeneric
@@ -31,6 +32,19 @@ structure View where
   styles : Array Computed
   viewportW : Nat := 800
   viewportH : Nat := 600
+  /-- The registered custom properties (CSS Properties and Values API 1): name and
+  registration, the one that counts first. Read only when a custom property is asked for. -/
+  registered : Thunk (List (String × CssRegister.PropertyRule)) := Thunk.pure []
+
+/-- The registrations of the `@property` rules of a document's style sheets (§3), the last
+of a name first. A sheet text with no `@property` is not read again. -/
+def registrationsOf (source : String) : List (String × CssRegister.PropertyRule) :=
+  if (source.splitOn "@property").length ≤ 1 then []
+  else
+    ((CSS.sheetLeaves source).toList.filterMap fun leaf =>
+      if leaf.kind == "property" then
+        (CssRegister.propertyRuleOf leaf.prelude leaf.body).map fun r => (leaf.prelude.trimAscii.toString, r)
+      else none).reverse
 
 /-- A non-negative float as a rational, to a thousandth. -/
 def ratOf (x : Float) : Rat :=
@@ -246,7 +260,9 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       then CssValues.Logical.logical (flow ()) p else none
     let custom := CssValues.isCustom p
     let row := CssValues.lookup p
-    let inherited := custom || (row.map (·.inherited)).getD false
+    -- a registered custom property: its syntax, inheritance and initial value
+    let reg := if custom then v.registered.get.lookup p else none
+    let inherited := if custom then (reg.map (·.inherits)).getD true else (row.map (·.inherited)).getD false
     let ctxOf : String → CssValues.ComputeCtx := fun value =>
       { num := numCtx v id
         currentColor :=
@@ -255,7 +271,10 @@ def computedLonghand (v : View) : Nat → Nat → String → String
             else some (computedLonghand v fuel id "color")
           else none }
     let initial := fun (_ : Unit) =>
-      if custom then ""
+      if custom then
+        match reg with
+        | some r => (r.initial.bind fun iv => CssRegister.computedValue (ctxOf iv) r.syn iv).getD ""
+        | none => ""
       else match row with
         | some r =>
           match CssValues.specified r.name r.initial with
@@ -306,13 +325,19 @@ def computedLonghand (v : View) : Nat → Nat → String → String
             let text := CssValues.rawText cvs'
             -- a value past the length limit is invalid (`CssVars.maxValueBytes`)
             if text.utf8ByteSize > CssVars.maxValueBytes then (if custom then "" else default ())
-            else if custom then text
+            else if custom then
+              match reg with
+              | some r => (CssRegister.computedValue (ctxOf text) r.syn text).getD (default ())
+              | none => text
             else
               match CssValues.specified p text with
               | some s =>
                 if CssValues.cssWide.contains s then default () else CssValues.computed (ctxOf s) p s
               | none => default ()
-        else if custom then value
+        else if custom then
+          match reg with
+          | some r => (CssRegister.computedValue (ctxOf value) r.syn value).getD (default ())
+          | none => value
         else CssValues.computed (ctxOf value) p value
 
 /-- The most ancestors and variable links a computed value follows (each is a stack frame). -/
@@ -387,7 +412,10 @@ def customNamesLoop (v : View) : Nat → Option Nat → List String → List Str
       let acc := (fromRules ++ fromStyle).foldl (fun acc n => if acc.contains n then acc else n :: acc) acc
       customNamesLoop v fuel (parentElement v.dom id) acc
 
-def customNames (v : View) (id : Nat) : List String := customNamesLoop v depthBound (some id) []
+def customNames (v : View) (id : Nat) : List String :=
+  let declared := customNamesLoop v depthBound (some id) []
+  -- a registered property has a value on every element (its initial value at least)
+  declared ++ ((v.registered.get.map (·.1)).eraseDups.filter fun n => !declared.contains n)
 
 /-- The answer of a page for the custom properties of a computed style: the names
 separated by U+0000. The value of the `i`-th is `valueAt` at the count of the table's
@@ -488,7 +516,7 @@ private def computedAt (html css prop : String) : String :=
     match computeAll dom rules with
     | .ok styles =>
       computedOf { dom := dom, matchesOf := fun i => matchedRules dom i rules, styles := styles,
-                   viewportW := 800, viewportH := 600 } id prop
+                   viewportW := 800, viewportH := 600, registered := Thunk.mk fun _ => registrationsOf css } id prop
     | .error _ => "error"
   | _, _ => "error"
 
@@ -501,6 +529,15 @@ private def computedAt (html css prop : String) : String :=
 #guard computedAt "<div id=t></div>" "#t { position: absolute; float: left; display: none }" "float" == "none"
 -- custom properties: a cycle and a missing reference are the guaranteed-invalid value
 #guard computedAt "<div><div id=t></div></div>" "div { --c: inherited } #t { --c: var(--zz) }" "--c" == ""
+-- registered custom properties (@property): initial value, syntax computation, inheritance
+#guard computedAt "<div id=t></div>" "@property --x { syntax: '<length>'; inherits: false; initial-value: 10px }" "--x" == "10px"
+#guard computedAt "<div><p id=t>x</p></div>"
+  "@property --x { syntax: '<length>'; inherits: false; initial-value: 0px } div { --x: 4px }" "--x" == "0px"
+#guard computedAt "<div id=t></div>" "@property --c { syntax: '<color>'; inherits: true; initial-value: red } #t { --c: green }" "--c" ==
+  "rgb(0, 128, 0)"
+#guard computedAt "<div id=t></div>" "@property --c { syntax: '<color>'; inherits: true; initial-value: red } #t { --c: 10px }" "--c" ==
+  "rgb(255, 0, 0)"
+#guard computedAt "<div id=t></div>" "@property --x { syntax: '<length>'; inherits: true } #t { --x: 2px }" "--x" == "2px"
 -- revert-layer rolls back to the layer before; with no earlier layer, to the default
 #guard computedAt "<div id=t class=r></div>"
   "@layer a { #t { color: red } } @layer b { #t { color: blue } } @layer c { #t.r { color: revert-layer } }" "color" ==

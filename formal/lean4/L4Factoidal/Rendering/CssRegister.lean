@@ -12,6 +12,7 @@ property's initial value, its typed computed value, `inherits`). The page keeps 
 it registered so that a second registration is refused.
 -/
 import L4Factoidal.Rendering.CssValues.Properties
+import L4Factoidal.Rendering.CssValues.Declaration
 
 namespace L4Factoidal.Rendering.CssRegister
 open L4Factoidal.Rendering.CssValues
@@ -113,6 +114,79 @@ def registerOp (q : String) : String :=
   | [name, syn, initial] =>
     registerCheck name syn (if initial.startsWith "1" then some (initial.drop 1).toString else none)
   | _ => "SyntaxError"
+
+/-! ### `@property` rules (§3) -/
+
+/-- A registration: the syntax string (its text, as written), whether the property is
+inherited, and its initial value when there is one. -/
+structure PropertyRule where
+  syn : String
+  inherits : Bool
+  initial : Option String
+  deriving Repr, BEq, Inhabited
+
+/-- The registration of an `@property` rule from its prelude (the custom property name) and
+its block (§3.1-§3.4): the `syntax` descriptor is a string, `inherits` is `true` or `false`,
+both required; `initial-value` is required unless the syntax is universal, and must be a
+computationally independent value of the syntax (`registerCheck`). The last declaration of a
+descriptor counts. `none`: the rule is invalid and is dropped. -/
+def propertyRuleOf (prelude body : String) : Option PropertyRule :=
+  let name := trimText prelude
+  match stripWs (CV.parse name) with
+  | [.tok (.ident n)] =>
+    if !isCustom n then none
+    else
+      let cs := preprocess body.toList
+      let decls := (splitTop ';' (cs.length + 1) cs 0 none [] []).filterMap fun piece =>
+        (declOf piece).map fun (d, v, _) => (lower d, trimText v)
+      let last := fun (d : String) => (decls.reverse.find? (·.1 == d)).map (·.2)
+      let synText := (last "syntax").bind fun v => match stripWs (CV.parse v) with
+        | [.tok (.str t)] => some t
+        | _ => none
+      let inherits := (last "inherits").bind fun v => match lower v with
+        | "true" => some true
+        | "false" => some false
+        | _ => none
+      match synText, inherits with
+      | some syn, some inh =>
+        let initial := last "initial-value"
+        if registerCheck n syn initial == "" then some { syn := syn, inherits := inh, initial := initial } else none
+      | _, _ => none
+  | _ => none
+
+/-- The descriptors of a registration as `@property` serialises them (CSSOM of CSS
+Properties and Values API 1 §4.1): `syntax` as a string, `inherits`, then `initial-value`
+when there is one. -/
+def PropertyRule.text (r : PropertyRule) : String :=
+  "syntax: " ++ serializeString r.syn ++ "; inherits: " ++ (if r.inherits then "true" else "false") ++ ";" ++
+    (match r.initial with
+     | some v => " initial-value: " ++ v ++ ";"
+     | none => "")
+
+/-- The computed value of a value of a registered property (§2.4): the value's computed
+form by the syntax's grammar (lengths absolute, colours resolved); for the universal syntax
+the value as written. `none`: not a value of the syntax (invalid at computed-value time). -/
+def computedValue (ctx : ComputeCtx) (syn : String) (value : String) : Option String :=
+  match syntaxGrammar syn with
+  | some (some g) =>
+    let top := stripWs (CV.parse value)
+    (matchAll (env (some ctx)) g top).map fun out => serialize (untag 16 out)
+  | some none => some (trimText value)
+  | none => none
+
+#guard propertyRuleOf "--valid" "syntax: \"<color> | none\"; inherits: false; initial-value: red;" ==
+  some { syn := "<color> | none", inherits := false, initial := some "red" }
+#guard (propertyRuleOf "--u" "syntax: \"*\"; inherits: true").isSome
+#guard (propertyRuleOf "--x" "syntax: \"<color>\"; inherits: false").isNone
+#guard (propertyRuleOf "--x" "inherits: false; initial-value: red").isNone
+#guard (propertyRuleOf "--x" "syntax: \"<length>\"; initial-value: 1px").isNone
+#guard (propertyRuleOf "-foo" "syntax: \"*\"; inherits: true").isNone
+#guard (propertyRuleOf "--x" "syntax: \"<length>\"; inherits: TRUE; initial-value: 1em").isNone
+#guard ((propertyRuleOf "--valid-reverse" "initial-value: 0px; inherits: true; syntax: \"<length>\";").map (·.text)) ==
+  some "syntax: \"<length>\"; inherits: true; initial-value: 0px;"
+#guard computedValue { num := { fontSize := 10 } } "<length>" "14em" == some "140px"
+#guard computedValue {} "<color>" "green" == some "rgb(0, 128, 0)"
+#guard computedValue {} "<length>" "green" == none
 
 /-! ### Tests (from css-properties-values-api/register-property-syntax-parsing.html) -/
 
