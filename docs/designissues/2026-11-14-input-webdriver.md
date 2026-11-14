@@ -167,10 +167,26 @@ endpoint of its engine it starts `wdspec-run.py` (pytest from the WPT tree's
 subtest, as wpt.fyi does. The WPT tree for a shard needs `webdriver/` whole and `tools/`
 (already there for wptserve).
 
+With `--dangerously-enable-webdriver-endpoint` (`--wptserve` mode) the runner runs the names of
+`webdriver/tests/classic/`: it asks the engine for the endpoint once (session action
+`webdriverStart`: `Gate.start` decides and makes the secret), binds a free loopback port,
+passes every request to the engine (action `webdriver`: `Protocol.handle`, then
+`WebDriver.Window` for the window's commands and `WebDriver.Page` for the page's), and starts
+`wdspec-run.py` per file with the secret in its environment. A navigation that Lean decides
+is loaded by the runner as a test page is (fetched from wptserve, started, settled) and kept as
+the session's page. A page command is a function that Lean chose, run by the page's glue
+(`webdriverCall`: the arguments' element references revived, the result JSON-cloned with
+elements as `{"@node": n}`); Lean makes the references (`Page.refString`: the document's
+prefix and the node) and the errors. A tree without `webdriver/tests/conftest.py` gets the
+fixture plugins named by `wdspec-run.py`. Not yet: asynchronous scripts and promise results,
+element click/clear/send keys, actions with element origins from WebDriver references,
+cookies, frames, screenshots, BiDi. The full run does not pass the flag yet.
+
 ## Measured
 
 | Step | Commit | Run | Result |
 |---|---|---|---|
+| WebDriver actions, trusted input, Gate, Protocol, on main | `fbde2abf1` | branch check 43574374683 | +642 on 3,946 names against the `d799500c7` full run (part is main's own later work): pointerevents 432 -> 535, uievents/mouse 50 -> 139, uievents 134 -> 150, pointerevents/compat 4 -> 23, dom/events 642 -> 659, uievents/keyboard 2 -> 15, uievents/order-of-events 1 -> 10. One test worse (module charset-01, -6, not input) |
 | Key actions (editing's work), on main | `2598f05e7` | branch check 43559453757 | +13,980 on /editing/, /input-events/, /selection/, /uievents/, sample:150 against main `19fb349c1`: editing/other 2,203 -> 12,014 of 16,742; input-events 303 -> 2,545 of 3,366; editing/plaintext-only 593 -> 1,526; editing/whitespaces 424 -> 1,161. 9 tests worse, -19 subtests |
 
 ## Proved, tested, open
@@ -197,6 +213,15 @@ Proved (Lean, no `sorry`, no axiom):
   `admit_refused_counts`.
 - Protocol: `endpoints_nodup`, `endpoints_session`, `route_error`, `handle_refused`,
   `handle_no_secret`, `handle_no_session`.
+- HostKeys: `mac_named_special`, `modifiers_are_modifiers`, `press_balanced`, `text_is_send_keys`.
+- TextKeys: `textKeyCommandIn_single`, `textKeyCommand_text`, `textKeyCommand_printable`,
+  `textKeyCommand_modified`.
+- Touch: `start_mem`, `start_unique`, `finish_removes`, `move_target`, `targetTouches_sub`.
+- Window: `handles_one`, `switch_own`, `switch_other`, `prompt_none`, `setRect_bad`, `setRect_keeps`.
+- Page: `step_navigate_bad`, `finishOne_empty`, `finish_error`, `toWire_unknown`, `Doc.navigate_count`.
+- Risk: starting an endpoint needs `Risk.Accepted .webdriverEndpoint` (a type, so code without
+  the token does not compile; `git grep dangerouslyAccept` lists the one acceptance in
+  `WebScripts` and the tests in `Gate.lean`).
 
 What the three theorems the task named say here:
 
@@ -215,11 +240,13 @@ part (event classes, `relatedTarget`, the focus update steps); the runner's driv
 
 Open:
 
-- Pointer capture (`setPointerCapture` and the capture events), touch events
-  (`TouchEvent`, `touchstart`), compatibility mouse events after a touch, pen hover.
+- Pointer capture (`setPointerCapture` and the capture events), compatibility mouse events
+  after a touch, pen hover. Touch events are fired (`WebDriver.Touch`); `radiusX`, `force` and
+  the rest are fixed values.
 - Selection by pointer (caret at the press, drag selection); scrolling by wheel (the page of
   a script session does not scroll).
-- Typing in `input` and `textarea` by keys; Tab focus navigation; activation of a button or
+- Typing in `input` (text, search, url, tel, password) and `textarea` by keys is done
+  (`Editing.TextKeys`); `email` and `number` inputs are not; Tab focus navigation; activation of a button or
   link by Enter and Space.
 - `navigator.userActivation` and APIs gated by activation (the time of the last activation
   is kept in `Session.trusted`; no page API reads it yet).
