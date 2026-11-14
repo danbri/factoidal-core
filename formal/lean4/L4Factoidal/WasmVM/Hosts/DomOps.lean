@@ -20,6 +20,8 @@ import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.DOM.Reflect
 import L4Factoidal.Rendering.CssSupports
 import L4Factoidal.HTML.FormSubmission
+import L4Factoidal.DOM.Editing.Commands
+import L4Factoidal.Rendering.Style
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -704,6 +706,127 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     | none => throw (-2)
   -- ==== end of encoding100 ====
   | _ => throw (-2)
+
+/-! ## Editing (W3C Editing APIs draft; the algorithms are `DOM.Editing`)
+
+`node_query` ops 175 to 177, served by `editOp` (`Hosts.Page` gives it the text of the
+page's style sheets, which the editing algorithms read styles from).
+
+175 `execCommand`: `q` is the command, U+0000, the value; "1" or "0". The algorithm runs on
+the arena as a pure function and logs its primitive changes (`Editing.Prim`); each one is
+then run here as a typed command (`exec`), so it is recorded, the layout replay sees it and
+the page's live ranges move. The selection's range becomes the active range the algorithm
+left.
+
+176 the queries: `q` is "e" (enabled), "i" (indeterminate), "s" (state), "u" (supported) or
+"v" (value), U+0000, the command; "1" or "0", or the value.
+
+177 on node `id`: `q` "c" the `contentEditable` state of the element; "i" `isContentEditable`
+("1" or "0"); "d" the design mode ("on" or "off"); "d1" and "d0" set it. -/
+
+/-- The ops of `editOp`. -/
+def editOps : List Nat := [175, 176, 177]
+
+/-- The declarations the page's style sheets give element `n`, lowest priority first: the
+author rules that match it (`Rendering.CSS.matchedRules`), ordered by importance,
+specificity and source order (CSS Cascade 4 §6.1). The user agent's rules are not here:
+`Editing.uaDecls` has the defaults that editing reads. -/
+def editSheet (rules : List L4Factoidal.Rendering.CSS.Rule) (d : Dom) (n : Nat) : L4Factoidal.DOM.Editing.Decls := Id.run do
+  if rules.isEmpty then return []
+  let mut out : Array (List Nat × String × String) := #[]
+  let mut order := 0
+  for (origin, rule, matched) in L4Factoidal.Rendering.CSS.matchedRules d n rules do
+    if origin == 1 then
+      let spec := matched.foldl (fun (m : Nat × Nat × Nat) sel =>
+        if m.1 < sel.specificity.1 || (m.1 == sel.specificity.1 && (m.2.1 < sel.specificity.2.1 ||
+            (m.2.1 == sel.specificity.2.1 && m.2.2 ≤ sel.specificity.2.2))) then sel.specificity else m) (0, 0, 0)
+      for dcl in rule.declarations do
+        out := out.push ([if dcl.important then 1 else 0, spec.1, spec.2.1, spec.2.2, order], dcl.property, dcl.value)
+        order := order + 1
+  let le := fun (a b : List Nat × String × String) => !(decide (b.1 < a.1))
+  return ((out.toList.mergeSort le).map fun (_, p, v) => (p, v))
+
+/-- A primitive change of the editing algorithms as a typed command. -/
+def primCommand (doc : Nat) : L4Factoidal.DOM.Editing.Prim → Command
+  | .createElement name r => .createNode (3 + 16 * doc) name r
+  | .createText data r => .createNode (16 * doc) data r
+  | .insertBefore parent node child => .insertBefore parent node child
+  | .remove parent node => .removeChild parent node
+  | .setAttr node name value => .setAttribute node name value
+  | .removeAttr node name => .removeAttribute node name
+  | .replaceData node offset count data => .replaceData node offset count data
+  | .splitText node offset r => .splitText node offset r
+  | .cloneNode node deep r => .cloneNode node deep r
+
+/-- Run an editing program on the page: the arena, the selection's range and the
+document's editing flags go in; the program's changes are run as typed commands, and its
+active range and flags are kept. -/
+def editRun {α : Type} (sheet : String) (prog : L4Factoidal.DOM.Editing.M α) : Op α := do
+  let s ← get
+  let rules := if sheet.isEmpty then [] else
+    ((L4Factoidal.Rendering.CSS.parseIn { medium := "screen" } sheet).toOption).getD []
+  let sel := s.selection.bind fun k => (s.live.ranges[k]?).join
+  let ed := L4Factoidal.DOM.Editing.Ed.start s.dom sel s.edit { sheet := editSheet rules }
+  let (a, ed) := prog.run ed
+  let log := ed.log
+  let size := ed.dom.size
+  let active := (ed.live.ranges[0]?).join
+  let flags := ed.flags
+  for p in log do
+    match p with
+    | .createElement _ r | .createText _ r | .splitText _ _ r | .cloneNode _ _ r =>
+      if r != (← dom).size then throw (-5)
+    | _ => pure ()
+    exec (primCommand 0 p)
+  if !log.isEmpty && (← dom).size != size then throw (-5)
+  match active with
+  | some r =>
+    match (← get).selection with
+    | some k => if (← getRange k) != r then setRange k r
+    | none =>
+      let rid ← newRange r
+      setSelection (some rid) 1
+  | none => if sel.isSome then setSelection none 0
+  modify fun s => { s with edit := flags }
+  return a
+
+def editOpM (sheet : String) (id op : Nat) (q : String) : Op String := do
+  let b := fun (v : Bool) => if v then "1" else "0"
+  match op with
+  | 175 =>
+    match q.splitOn "\x00" with
+    | command :: rest => return b (← editRun sheet (L4Factoidal.DOM.Editing.execCommand command ("\x00".intercalate rest)))
+    | [] => return "0"
+  | 176 =>
+    match q.splitOn "\x00" with
+    | [which, command] =>
+      let command := L4Factoidal.DOM.Editing.lower command
+      match which with
+      | "e" => return b (← editRun sheet (L4Factoidal.DOM.Editing.queryEnabled command))
+      | "i" => return b (← editRun sheet (L4Factoidal.DOM.Editing.queryIndeterm command))
+      | "s" => return b (← editRun sheet (L4Factoidal.DOM.Editing.queryState command))
+      | "u" => return b (L4Factoidal.DOM.Editing.isSupported command)
+      | "v" => editRun sheet (L4Factoidal.DOM.Editing.queryValue command)
+      | _ => throw (-2)
+    | _ => throw (-2)
+  | 177 =>
+    let s ← get
+    let d := s.dom
+    let ed := L4Factoidal.DOM.Editing.Ed.start d none s.edit {}
+    match q with
+    | "c" => if id < d.size && (d.get id).type == .element then return L4Factoidal.DOM.Editing.contentEditable d id else throw (-2)
+    | "i" => return b (id < d.size && (L4Factoidal.DOM.Editing.isEditable ed id || L4Factoidal.DOM.Editing.isEditingHost ed id))
+    | "d" => return if s.edit.design then "on" else "off"
+    | "d1" => set { s with edit := { s.edit with design := true } }; return ""
+    | "d0" => set { s with edit := { s.edit with design := false } }; return ""
+    | _ => throw (-2)
+  | _ => throw (-2)
+
+/-- Run editing op `op` with the text of the page's style sheets. -/
+def editOp (s : State) (sheet : String) (id op : Nat) (q : String) : State × Except Int String :=
+  match (editOpM sheet id op q).run s with
+  | .ok (a, s') => (s', .ok a)
+  | .error e => (s, .error e)
 
 /-- Run op `op`: the state after it (unchanged when it throws) and the answer. -/
 def domOp (s : State) (id op : Nat) (q : String) : State × Except Int String :=

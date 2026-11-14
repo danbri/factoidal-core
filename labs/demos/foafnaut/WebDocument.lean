@@ -2071,21 +2071,24 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
           fun id => ix.matched (ks.get ts.tree) ts id state)
     | .error _ => fun _ => []
   let matchedOf := fun (node : Nat) => matchesOf.get node
+  -- 40: the text of the document's style sheets, with no layout: the editing algorithms
+  -- (`Hosts.Dom.editOp`, `document.execCommand`) read the styles of nodes from it
+  let sheetText : Thunk String := Thunk.mk fun _ =>
+    match WebAccept.accept (WebAccept.mode request) fun m => sheetsIn m dom request {medium := medium request} with
+    | .ok (sheets,_) => sheetSource sheets
+    | .error _ => ""
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
   -- 23: the `@font-face` faces of the page and the state of each (`document.fonts`)
   fun node op q => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
     else if op == 23 then some (fontFacesAnswer h dom request)
+    else if op == 40 then some sheetText.get
     else if op == 24 then
       if node < dom.size && (dom.get node).type == .element then
         some (Rendering.Animation.Css.cascadedText
           (Rendering.Animation.Css.cascaded (if animationRules.get.isEmpty then [] else matchedOf node)
             (Rendering.CSS.attrValue (dom.get node) "style")))
       else some ""
-    else if op == 25 then
-      let sheets := WebAccept.accept (WebAccept.mode request) (fun m => sheetsIn m dom request {medium := medium request})
-      some (match sheets with
-        | .ok (found,_) => sheetSource found
-        | .error _ => "")
+    else if op == 25 then some sheetText.get
     else if op == 27 then
       match styled.get, q.splitOn "\x00" with
       | .ok styles, [property, value] =>

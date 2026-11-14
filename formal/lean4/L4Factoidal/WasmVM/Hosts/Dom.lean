@@ -47,6 +47,7 @@ import L4Factoidal.DOM.Shadow
 import L4Factoidal.HTML.Frames
 import L4Factoidal.DOM.Live
 import L4Factoidal.DOM.Fragment
+import L4Factoidal.DOM.Editing.Core
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.WasmVM L4Factoidal.DOM
@@ -193,6 +194,10 @@ structure State where
   loaded, as the embedder's decode named it (`document.characterSet`, `DomOps` op 172, and a
   form's document encoding). -/
   frameEncodings : Array (Nat × String) := #[]
+  /-- The editing state of the page's document between commands (`DOM.Editing`): the CSS
+  styling flag, the default paragraph separator, design mode, and the state and value
+  overrides of the active range. -/
+  edit : L4Factoidal.DOM.Editing.Flags := {}
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
