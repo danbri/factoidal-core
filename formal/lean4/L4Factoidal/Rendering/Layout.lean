@@ -1246,7 +1246,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     -- collapses with its first child; else 0); the result's `marginBottom` is the margin at
     -- the end of the flow. Adjoining margins of sibling blocks collapse: the larger stands.
     let flow (s : Computed) (container : Nat) (kids : Array Nat) (lead : Array Inline)
-        (innerX innerY width : Float) (before : Float := 0) (around : Array Floats.Box := #[]) : Except String Result := do
+        (innerX innerY width : Float) (before : Float := 0) (around : Array Floats.Box := #[])
+        (definite : Option Float := none) : Except String Result := do
       let mut content : Result := {}
       let mut previous : Float := before
       let mut inline : Array Inline := lead
@@ -1267,6 +1268,19 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           content := append content (← layoutTask dom styles font embedding pictures fuel (.table none container run) (innerX+offset) (innerY+content.height) room)
           previous := 0
         | .node child =>
+          -- CSS 2.1 §10.5: a percentage height that the styles alone left open (`percentHeights`)
+          -- is of this container's content height when layout made that definite (`definite`:
+          -- a stretched flex item, a box between two insets). The child is laid out with the
+          -- length; a flow with no such child copies nothing.
+          let styles := match definite with
+            | none => styles
+            | some h =>
+              let c := styles[child]!
+              if c.pos.isAbsolute then styles else
+              match c.height with
+              | .percent p => styles.set! child {c with height := .px (max 0 (h*p))}
+              | .calc p v => styles.set! child {c with height := .px (max 0 (h*p+v))}
+              | _ => styles
           let cs := styles[child]!
           if cs.pos.isAbsolute then
             -- Out of flow (CSS 2.1 §9.6): pending at its static position, which is where the
@@ -1677,7 +1691,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let content ← if s.display.isFlex then
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight}
-        else flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around
+        else flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
       -- CSS 2.1 §10.6.7: a box that is the root of its block formatting context (one laid
       -- out with no floats around it) is as high as its floats; one in a context with floats
       -- hands them on to the flow after it.

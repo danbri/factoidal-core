@@ -214,7 +214,7 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
       main := main.push (x,LU.toPx size+is.borderEdges.left+is.borderEdges.right+is.padding.left+is.padding.right)
     first := first+count
   -- §9.4: each item at its main size; a line is as high as its highest item.
-  let mut laid : Array (Result × Float) := #[]   -- content, natural border-box height
+  let mut laid : Array (Result × Float × Bool) := #[]   -- content or whole box, natural border-box height, whole
   for i in [0:n] do
     let item := items[i]!
     let is := styles[i]!
@@ -232,19 +232,22 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     let ahead := if stretches then
         box.height.map fun h => max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (h-m.top-m.bottom))
       else fixed
-    let r ← if kids.heightSensitive item then
+    -- An item that stretches to a known height is laid out as a whole box at that height
+    -- too: percentage heights inside it are of that height (CSS Flexbox 1 §9.4 step 11).
+    let whole := kids.heightSensitive item || (stretches && ahead.isSome)
+    let r ← if whole then
         kids.layout item x box.y {available := box.width, width := some width, height := ahead}
       else kids.content item x box.y width
-    let natural := if kids.heightSensitive item then r.height-m.top-m.bottom
+    let natural := if whole then r.height-m.top-m.bottom
       else fixed.getD (clampOpt minH maxH r.height+padV)
-    laid := laid.push (r,natural)
+    laid := laid.push (r,natural,whole)
   let mut lineSizes : Array Float := #[]
   first := 0
   for count in lines do
     let mut highest : Float := 0
     for i in [first:first+count] do
       let m := (styles[i]!).margin
-      highest := max highest ((laid[i]!).2+m.top+m.bottom)
+      highest := max highest ((laid[i]!).2.1+m.top+m.bottom)
     lineSizes := lineSizes.push highest
     first := first+count
   -- §9.4 step 8 and §9.6: the cross size of the container and the place of each line
@@ -282,7 +285,7 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     let item := items[i]!
     let is := styles[i]!
     let m := is.margin
-    let (r,natural) := laid[i]!
+    let (r,natural,whole) := laid[i]!
     let (x,width) := main.getD i (box.x,0)
     let lineCross := lineHeights.getD line 0
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
@@ -302,7 +305,7 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
         -- with `wrap-reverse` the cross-start side of a line is its bottom
         if reverseCross then lineCross-outerCross-d else d
     let dy := lineTops.getD line 0+offset
-    let done ← if kids.heightSensitive item then
+    let done ← if whole then
         if (height-natural).abs < 0.01 then pure (r.shift 0 dy)
         else kids.layout item x (box.y+dy) {available := box.width, width := some width, height := some height}
       else pure (kids.frame item x (box.y+dy) width height (r.shift 0 dy))

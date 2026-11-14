@@ -106,6 +106,14 @@ private def flexAbsCss := "#f{display:flex;position:relative;height:50px} #p{pos
 #guard box page "#c{height:40px} #p{box-sizing:border-box;height:50%;padding:2px}" "p" == some (0,7,200,20)
 #guard box "<div id=o><div id=m><div id=i>I</div></div></div>" "#o{height:80px} #m{height:50%} #i{height:25%}" "i" == some (0,0,200,10)
 
+-- A percentage height inside a box whose height layout made definite: a flex item stretched
+-- to its container's height, and an absolutely positioned box between two insets.
+private def tall := "<div id=f><div id=i><div id=k>K</div></div></div>"
+#guard box tall "#f{display:flex;height:60px} #k{height:50%}" "k" == some (0,0,6,30)
+#guard box tall "#f{display:flex;height:60px} #i{padding:5px 0} #k{height:100%}" "k" == some (0,5,6,50)
+#guard box tall "#f{display:flex;height:60px;align-items:flex-start} #k{height:50%}" "k" == some (0,0,6,7)
+#guard box tall "#f{display:flex} #k{height:50%}" "k" == some (0,0,6,7)
+#guard box tall "#f{position:relative;height:80px} #i{position:absolute;top:10px;bottom:10px} #k{height:50%}" "k" == some (0,10,6,30)
 -- aspect-ratio (CSS Sizing 4 §5.1): with `height: auto` the height is the width's by the ratio.
 #guard box page "#a{aspect-ratio:2;width:100px}" "a" == some (0,0,100,50)
 #guard box page "#a{aspect-ratio:2;width:100px}" "c" == some (0,50,200,14)
