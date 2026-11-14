@@ -79,6 +79,29 @@ def TrackSize.toFn (avail : Option Nat) : TrackSize → TrackFn
       | some a => ⟨.auto, .fitContent (resolveLength a u ppm)⟩
       | none => ⟨.auto, .maxContent⟩
 
+/-- A breadth or track size with a percentage: its sizing functions depend on the size
+of the container. -/
+def Breadth.hasPercent : Breadth → Bool
+  | .length _ ppm => ppm != 0
+  | _ => false
+
+def TrackSize.hasPercent : TrackSize → Bool
+  | .breadth b => b.hasPercent
+  | .minmax lo hi => lo.hasPercent || hi.hasPercent
+  | .fitContent _ ppm => ppm != 0
+
+/-- Kind: invariance. Says: a track size with no percentage has the same sizing functions
+whatever the container's size, definite or not; so a container need size such tracks
+only once. -/
+theorem TrackSize.toFn_of_not_hasPercent (t : TrackSize) (h : t.hasPercent = false) (a b : Option Nat) :
+    t.toFn a = t.toFn b := by
+  cases t with
+  | breadth br =>
+    cases br <;> simp_all [toFn, Breadth.toMin, Breadth.toMax, hasPercent, Breadth.hasPercent]
+  | minmax lo hi =>
+    cases lo <;> cases hi <;> simp_all [toFn, Breadth.toMin, Breadth.toMax, hasPercent, Breadth.hasPercent]
+  | fitContent u ppm => simp_all [toFn, hasPercent]
+
 /-- The size a track counts for when repetitions are counted (§7.2.3.2): its max sizing
 function when that is definite, else its min sizing function when that is definite, else
 0. -/

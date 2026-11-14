@@ -155,4 +155,10 @@ private def tracks (html extra id : String) : Option (String × String) := do
 -- with a gap the area ends where its last track does
 #guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p,#q{position:absolute;left:0;top:0;right:0;bottom:0} #c{column-gap:10px} #p{grid-column:1 / 3}" "p" == some (5,0,160,40)
 
+
+-- A percentage row of a container with no definite height counts as `auto` for that height
+-- (7 px of text), then is 60% of it (§7.2.1).
+#guard box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-rows:60%}" "c" == some (0,0,200,7)
+#guard (box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-rows:60%}" "a").map (·.2.2.2) == some 4.1875
+
 end L4Factoidal.Rendering.GridLayoutTests

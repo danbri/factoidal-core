@@ -302,7 +302,13 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
   let contentH := match box.height with
     | some h => h
     | none => clampOpt box.minHeight box.maxHeight (gridPx (gridExtent firstRows rowCollapsed rowGap))
-  let rowSizes := if box.height.isNone && gridUnits contentH != gridExtent firstRows rowCollapsed rowGap then
+  -- §7.2.1: a percentage row of a container with no definite height counts as `auto` for
+  -- that height, and is then resolved against it.
+  let percentRows := availH.isNone &&
+    (plan.rowAxis.tracks.any (·.hasPercent) || g.autoRows.any (·.hasPercent))
+  let rowFns := if percentRows then gridTrackFns plan.rowAxis g.autoRows plan.rowLead plan.rows (some (gridUnits contentH))
+    else rowFns
+  let rowSizes := if box.height.isNone && (percentRows || gridUnits contentH != gridExtent firstRows rowCollapsed rowGap) then
       gridSizes rowFns rowCollapsed rowGap rowItems (.definite (gridUnits contentH)) stretchRows
     else firstRows
   let rowFree : Int := Int.ofNat (gridUnits contentH) - Int.ofNat (gridExtent rowSizes rowCollapsed rowGap)
