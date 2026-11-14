@@ -87,15 +87,16 @@ structure PK where
 
 /-- §5.3.4 steps 3 to 7: the keyframes of `prop` whose value computes, in offset order
 (the keyframes are in offset order already), with a neutral keyframe at 0 and at 1 when
-none is there. -/
+none is there. `neutralEasing` is the easing of a neutral keyframe at 0: `linear`, or the
+element's timing function for a CSS animation (CSS Animations 2 §4.3). -/
 def propertyKeyframes (kfs : List Keyframe) (effectComposite : Composite) (prop : String)
-    (compute : String → Option Value) : List PK :=
+    (compute : String → Option Value) (neutralEasing : Easing := .linear) : List PK :=
   let own : List PK := kfs.filterMap fun k =>
     match k.props.lookup prop with
     | none => none
     | some text => (compute text).map fun v =>
         { offset := k.computedOffset, easing := k.easing, composite := k.composite.getD effectComposite, value := some v }
-  let own := if own.head?.map (·.offset) == some 0 then own else { offset := 0, composite := .add } :: own
+  let own := if own.head?.map (·.offset) == some 0 then own else { offset := 0, easing := neutralEasing, composite := .add } :: own
   if own.getLast?.map (·.offset) == some one then own else own ++ [{ offset := one, composite := .add }]
 
 /-- §5.3.4 step 9: a keyframe's value on the underlying value. -/
@@ -120,9 +121,10 @@ def interval (p : Int) : List PK → Option (PK × PK)
 /-- §5.3.4: the effect value of `prop` at iteration progress `p`; none when the effect
 gives the property no value. -/
 def value (kfs : List Keyframe) (effectComposite : Composite) (prop : String) (kind : Value.Kind)
-    (p : Int) (underlying : Value) (compute : String → Option Value) : Option Value :=
+    (p : Int) (underlying : Value) (compute : String → Option Value) (neutralEasing : Easing := .linear) :
+    Option Value :=
   if !kfs.any (fun k => (k.props.lookup prop).isSome) then none else
-  let pks := propertyKeyframes kfs effectComposite prop compute
+  let pks := propertyKeyframes kfs effectComposite prop compute neutralEasing
   let zeros := pks.filter (·.offset == 0)
   let ones := pks.filter (·.offset == one)
   if p < 0 && zeros.length > 1 then zeros.head?.map (resolved kind underlying)
