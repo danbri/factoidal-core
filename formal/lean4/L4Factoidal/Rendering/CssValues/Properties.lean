@@ -1202,6 +1202,21 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "color" "lab(none 20 calc(0.5))" == some "lab(none 20 calc(0.5))"
 #guard specified "color" "rgb(calc(255) 0 0)" == some "rgb(255, 0, 0)"
 #guard computed {} "color" "lab(calc(50 * 3) 0 0)" == "lab(100 0 0)"
+-- alpha() (alpha-color-parsing-valid.html, alpha-color-computed.html, alpha-color-parsing-invalid.html)
+#guard ["alpha(from red / 0.5)", "alpha(from currentcolor / 100%)", "alpha(from red / none)", "alpha(from currentcolor / alpha)",
+  "alpha(from red / 2)", "alpha(from rgb(from red r g b) / 0.8)", "rgb(from alpha(from currentcolor / 0.5) r g b)"].all
+  fun v => specified "color" v == some v
+#guard specified "color" "alpha(from hsl(120 50% 50%) / 0.5)" == some "alpha(from rgb(64, 191, 64) / 0.5)"
+#guard (["alpha(red / 0.5)", "alpha()", "alpha(from)", "alpha(from red)", "alpha(from red / 0.5 0.5)", "alpha(from red r g b / 0.5)",
+  "alpha(from 42 / 0.5)", "alpha(from red /)", "alpha(from red / r)", "alpha(from red / red)", "alpha(from red / calc(r * 0.5))",
+  "alpha(from alpha(from currentcolor) / 0.5)"].map (specified "color")).all (·.isNone)
+#guard ["alpha(from red / 0.5)", "alpha(from rebeccapurple / 1)", "alpha(from red / none)", "alpha(from red / 2)", "alpha(from red / -1)",
+  "alpha(from rgba(255, 0, 0, 0.8) / calc(alpha + 0.1))", "alpha(from alpha(from red / 0.5) / calc(alpha + 0.25))",
+  "alpha(from color(display-p3 1 0 0) / 0.5)", "alpha(from rgb(0 none 0) / alpha)",
+  "lab(from alpha(from lab(50% 20 -30) / 0.5) l a b / alpha)"].map (computed {} "color") ==
+  ["color(srgb 1 0 0 / 0.5)", "color(srgb 0.4 0.2 0.6)", "color(srgb 1 0 0 / none)", "color(srgb 1 0 0)", "color(srgb 1 0 0 / 0)",
+   "color(srgb 1 0 0 / 0.9)", "color(srgb 1 0 0 / 0.75)", "color(display-p3 1 0 0 / 0.5)", "color(srgb 0 none 0)",
+   "lab(50 20 -30 / 0.5)"]
 -- line-height percentages are of the font size (font-computed.html)
 #guard computed { num := { fontSize := 32 } } "line-height" "calc(120% + 1.2em)" == "76.8px"
 #guard computed { num := { fontSize := 32 } } "line-height" "150%" == "48px"

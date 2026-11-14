@@ -1109,6 +1109,23 @@ def relResolve (o : Opts) (n : String) (r : Rel) (origin : Color) : Option Color
   | .rgb => some { c with space := .srgb }
   | _ => some (polarToSrgb c)
 
+/-! ### `alpha()` (CSS Color 5 §4.6) -/
+
+/-- `alpha(from <color> / <alpha>)`: the origin and the alpha component. -/
+def alphaParts (args : List CV) : Option (CV × CV) :=
+  match stripWs args with
+  | [.tok (.ident f), origin, .tok (.delim '/'), w] => if lower f == "from" then some (origin, w) else none
+  | _ => none
+
+/-- The colour of `alpha(from c / w)` once the origin `c` is resolved: the origin with its
+alpha replaced, read as a relative colour in the origin's own space whose channels are its
+channel keywords (`alpha` is the origin's alpha), so a legacy origin gives `color(srgb ...)`
+as relative colours do. -/
+def alphaResolve (o : Opts) (w : CV) (origin : Color) : Option Color :=
+  let sp := origin.space
+  let n := if (predefined sp.name).isSome || sp == .xyzD50 || sp == .xyzD65 then "color" else sp.name
+  relResolve o n ⟨.tok (.ident "from"), sp, (channelNames sp).map (fun k => .tok (.ident k)), some w⟩ origin
+
 /-! ### The colour of a component value -/
 
 /-- The two colours of `light-dark(a, b)`. -/
@@ -1137,6 +1154,13 @@ def specF : Nat → Opts → CV → Option String
           let tb ← specF fuel o b
           some ("light-dark(" ++ ta ++ ", " ++ tb ++ ")")
         | none => none
+      else if n == "alpha" then
+        match alphaParts args with
+        | some (origin, w) => do
+          let t ← specF fuel o origin
+          let a ← relCompText o [] false w
+          some ("alpha(from " ++ t ++ " / " ++ a ++ ")")
+        | none => none
       else match relParts n args with
         | some r => relSpec (specF fuel o) o n r
         | none => (parseFn o n args).map Color.css
@@ -1161,6 +1185,10 @@ def resolveF : Nat → Opts → CV → Option Color
       else if n == "light-dark" then
         match lightDarkParts args with
         | some (a, b) => resolveF fuel o (if o.dark then b else a)
+        | none => none
+      else if n == "alpha" then
+        match alphaParts args with
+        | some (origin, w) => (resolveF fuel o origin).bind (alphaResolve o w)
         | none => none
       else match relParts n args with
         | some r => (resolveF fuel o r.origin).bind (relResolve o n r)
