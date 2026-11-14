@@ -3,6 +3,7 @@ import L4Factoidal.Rendering.FlexLayout
 import L4Factoidal.Rendering.Grid.Align
 import L4Factoidal.Rendering.Grid.Abspos
 import L4Factoidal.Rendering.Grid.Baseline
+import L4Factoidal.Rendering.LogicalAxes
 
 /-! Grid layout (CSS Grid Layout 2) of a container's items: this module reads the
 computed values (`Computed.grid`, `Computed.align`), asks the pure modules under
@@ -252,7 +253,8 @@ def gridRecordName (source : Nat) : String := s!"grid-tracks {source}"
 
 /-- The contents of a grid container in its content box `box`: the grid formatting
 context. The result's `height` is the height of the content box. -/
-def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : ContentBox) : Except String Result := do
+def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : ContentBox)
+    (flipY : Bool := false) (swapRecord : Bool := false) : Except String Result := do
   let items := orderItems kids items0
   let g := s.grid
   let n := items.size
@@ -374,8 +376,11 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
   -- §7.2.6: the used tracks, kept in the fragment for `getComputedStyle` (an empty group).
   let mut out : Result := match box.source with
     | some source => {nodes := #[.group (some (gridRecordName source ++ "\t" ++
-        gridResolvedText plan.colAxis plan.colLead colSizes ++ "\t" ++
-        gridResolvedText plan.rowAxis plan.rowLead rowSizes)) ⟨1,0,0,1,0,0⟩ []]}
+        (if swapRecord then
+          gridResolvedText plan.rowAxis plan.rowLead rowSizes ++ "\t" ++ gridResolvedText plan.colAxis plan.colLead colSizes
+        else
+          gridResolvedText plan.colAxis plan.colLead colSizes ++ "\t" ++ gridResolvedText plan.rowAxis plan.rowLead rowSizes)))
+        ⟨1,0,0,1,0,0⟩ []]}
     | none => {}
   -- §11: each item in its area.
   for i in [0:n] do
@@ -404,6 +409,8 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
       | some d => d
       | none => LU.toPx (Grid.selfOffset align (gridUnits areaH) (gridUnits outerH))
     let y := box.y+LU.toPx extent.1+dy
+    -- the inline axis of a right-to-left vertical grid runs bottom to top
+    let y := if flipY then box.y+contentH-(y-box.y)-(height+m.top+m.bottom) else y
     let done ← if kids.heightSensitive item then
         -- a container that is itself only measured keeps the measured item: its size is right
         if box.measure then pure (r.shift 0 (y-box.y))
@@ -424,7 +431,7 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
 the columns sized under a min-content and under a max-content constraint, with their
 gaps. A percentage track or gap counts as `auto` or 0 here (its container is not sized
 yet). -/
-def gridIntrinsic (kids : Children) (s : Computed) (items0 : Array Item) : Except String (Float × Float) := do
+def gridIntrinsicH (kids : Children) (s : Computed) (items0 : Array Item) : Except String (Float × Float) := do
   let items := orderItems kids items0
   let colGap := gridUnits (match s.align.columnGap with | .px v => max 0 v | _ => 0)
   let plan := gridPlan kids s items none none colGap 0
@@ -437,6 +444,84 @@ def gridIntrinsic (kids : Children) (s : Computed) (items0 : Array Item) : Excep
   let lo := gridSizes colFns collapsed colGap colItems .minContent false
   let hi := gridSizes colFns collapsed colGap colItems .maxContent false
   return (gridPx (gridExtent lo collapsed colGap),gridPx (gridExtent hi collapsed colGap))
+
+/-! ### Vertical writing modes (CSS Writing Modes 4, CSS Grid 2 §5.1)
+
+In a vertical writing mode the columns (the inline axis) run down the page and the rows
+(the block axis) across it, from the right in `vertical-rl`. The layout above is physical:
+its columns are horizontal. A vertical grid is laid out by it with the two axes of the
+grid's own values exchanged (`gridTranspose`, `alignTranspose`): its physical
+columns are then its rows; `vertical-rl` lays them out from the right (as a right-to-left
+container does) and a right-to-left direction lays the inline axis from the bottom. The
+items' own sizes, margins and contents stay physical. -/
+
+/-- A grid area list with its rows and columns exchanged. -/
+def transposeAreas (rows : List (List String)) : List (List String) :=
+  match rows with
+  | [] => []
+  | first :: _ => (List.range first.length).map fun c => rows.map (·.getD c ".")
+
+/-- The grid values with the two axes exchanged. -/
+def gridTranspose (g : GridStyle) : GridStyle :=
+  {templateColumns := g.templateRows, templateRows := g.templateColumns,
+   templateAreas := transposeAreas g.templateAreas, autoColumns := g.autoRows, autoRows := g.autoColumns,
+   flowColumn := !g.flowColumn, dense := g.dense,
+   rowStart := g.columnStart, rowEnd := g.columnEnd, columnStart := g.rowStart, columnEnd := g.rowEnd}
+
+/-- The alignment values with the two axes exchanged. -/
+def alignTranspose (a : AlignStyle) : AlignStyle :=
+  {a with justifyContent := a.alignContent, alignContent := a.justifyContent,
+          justifyItems := a.alignItems, alignItems := a.justifyItems,
+          justifySelf := a.alignSelf, alignSelf := a.justifySelf,
+          rowGap := a.columnGap, columnGap := a.rowGap}
+
+/-- Kind: shape. Says: the area list of a grid `w` columns wide, exchanged, has `w` rows. -/
+theorem transposeAreas_length (rows : List (List String)) (w : Nat) (hw : ∀ r ∈ rows, r.length = w)
+    (hne : rows ≠ []) (hw0 : w ≠ 0) :
+    (transposeAreas rows).length = w := by
+  cases rows with
+  | nil => exact absurd rfl hne
+  | cons first rest => simp [transposeAreas, hw first (List.mem_cons_self)]
+
+/-- Kind: involution. Says: exchanging the axes twice gives the lines, the tracks and the
+flow direction back. -/
+theorem gridTranspose_twice (g : GridStyle) :
+    (gridTranspose (gridTranspose g)).rowStart = g.rowStart ∧
+    (gridTranspose (gridTranspose g)).columnEnd = g.columnEnd ∧
+    (gridTranspose (gridTranspose g)).templateColumns = g.templateColumns ∧
+    (gridTranspose (gridTranspose g)).flowColumn = g.flowColumn := by
+  simp [gridTranspose]
+
+#guard transposeAreas [["a", "b"], ["c", "d"], ["e", "f"]] == [["a", "c", "e"], ["b", "d", "f"]]
+
+/-- A grid container's style and its items' styles as the physical layout reads them in a
+vertical writing mode. -/
+def gridFrame (s : Computed) : Logical.Frame :=
+  Logical.Frame.of (s.pos.writingMode == .verticalRl) (s.pos.writingMode == .verticalLr) (s.direction == .rtl)
+
+def gridVerticalView (kids : Children) (s : Computed) : Children × Computed :=
+  let t := fun (c : Computed) => {c with grid := gridTranspose c.grid, align := alignTranspose c.align}
+  -- the physical columns are the block axis: laid out from the right when it is flipped
+  ({kids with style := fun i => t (kids.style i)},
+   {t s with direction := if (gridFrame s).blockFlip then .rtl else .ltr})
+
+/-- The contents of a grid container in its content box `box`: the grid formatting
+context, in any writing mode. -/
+def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : ContentBox) : Except String Result := do
+  if !(gridFrame s).vertical then gridLayoutH kids s items0 box
+  else
+    let (kids', s') := gridVerticalView kids s
+    let r ← gridLayoutH kids' s' items0 box (flipY := (gridFrame s).inlineFlip) (swapRecord := true)
+    -- positioned boxes in grid areas are placed in horizontal grids only
+    return {r with grid := none}
+
+/-- The min-content and max-content widths of a grid container's content box, in any
+writing mode. -/
+def gridIntrinsic (kids : Children) (s : Computed) (items0 : Array Item) : Except String (Float × Float) :=
+  if !(gridFrame s).vertical then gridIntrinsicH kids s items0
+  else
+    let (kids', s') := gridVerticalView kids s
+    gridIntrinsicH kids' s' items0
 
 /-- §9.1: the containing block (x, y, width, height) that a grid container whose grid is
 `f` and whose padding box is `(cx,cy,cw,ch)` gives an absolutely positioned box with the
