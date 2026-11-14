@@ -669,11 +669,37 @@ def axisKeyword : String → Option String
 def unitIntervalProperties : List String :=
   ["opacity", "fill-opacity", "stroke-opacity", "stop-opacity", "flood-opacity", "shape-image-threshold"]
 
+/-- The computed form of a `position-area` of logical keywords (CSS Anchor Positioning 1
+§3.1.3): with the block axis first and the inline axis second the axis names are left out
+(`block-start inline-end` is `start end`), equal keywords are one, and a keyword beside
+`span-all` stands alone with its axis named. A value with a physical keyword, and a single
+keyword, stay as they are. -/
+def positionAreaComputed (v : String) : String :=
+  let physical := fun (k : String) => ["left", "right", "top", "bottom", "x-", "y-"].any fun part =>
+    (k.splitOn part).length > 1
+  let strip := fun (k : String) => (k.replace "block-" "").replace "inline-" ""
+  let named := fun (axis k : String) =>
+    if k.endsWith "start" then (k.dropEnd 5).toString ++ axis ++ "start"
+    else if k.endsWith "end" then (k.dropEnd 3).toString ++ axis ++ "end"
+    else k
+  match v.splitOn " " with
+  | [b, i] =>
+    if physical b || physical i then v
+    else
+      let b' := strip b
+      let i' := strip i
+      if b' == i' then b'
+      else if i' == "span-all" && (b'.endsWith "start" || b'.endsWith "end") then named "block-" b'
+      else if b' == "span-all" && (i'.endsWith "start" || i'.endsWith "end") then named "inline-" i'
+      else b' ++ " " ++ i'
+  | _ => v
+
 /-- The computed forms that the grammar's leaves do not give, by property. -/
 def computedForm (p v : String) : String :=
   if lineWidthProperties.contains p then (lineWidthKeyword v).getD v
   else if p == "font-weight" then (if v == "normal" then "400" else if v == "bold" then "700" else v)
   else if p == "font-stretch" || p == "font-width" then (fontWidthKeyword v).getD v
+  else if p == "position-area" then positionAreaComputed v
   else if p == "filter" || p == "backdrop-filter" then
     let cvs := stripWs (CV.parse v)
     serialize (filterComputed 8 cvs)
@@ -781,6 +807,13 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard computed {} "filter" "invert(200%) brightness(300%)" == "invert(1) brightness(3)"
 #guard computed {} "filter" "hue-rotate() drop-shadow(1px 2px red)" == "hue-rotate(0deg) drop-shadow(rgb(255, 0, 0) 1px 2px)"
 #guard computed {} "opacity" "-2" == "0"
+#guard computed {} "position-area" "block-start inline-start" == "start"
+#guard computed {} "position-area" "block-end span-inline-start" == "end span-start"
+#guard computed {} "position-area" "span-block-end center" == "span-end center"
+#guard computed {} "position-area" "center self-inline-end" == "center self-end"
+#guard computed {} "position-area" "self-start span-all" == "self-block-start"
+#guard computed {} "position-area" "left top" == "left top"
+#guard computed {} "position-area" "block-start" == "block-start"
 #guard computed {} "opacity" "50%" == "0.5"
 #guard computed {} "font-stretch" "condensed" == "75%"
 #guard computed {} "background-position-x" "center, left" == "50%, 0%"
