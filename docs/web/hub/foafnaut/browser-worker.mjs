@@ -12,7 +12,7 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
-import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch} from './page-load.mjs';
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeAnimated} from './page-load.mjs';
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
 // Liberal mode (WebAccept.lean, the Settings checkbox "Be liberal in what we accept"), the
@@ -796,6 +796,8 @@ function scriptTurn(page,turn){
   // The start turn comes before the page is shown: its commands make the objects.
   if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
   if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}
+  // The values of the page's running animations (page-load.mjs takeAnimated): a new frame when they changed.
+  if(takeAnimated(page,turn)&&page===doc)request();
   if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
 }
 // Dedicated workers (BubblePopJS; docs/designissues/2026-11-09-dedicated-workers.md): the

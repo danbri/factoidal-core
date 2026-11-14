@@ -82,6 +82,8 @@ list, given only when `changed`: a host lays the page out again only then. */
 /** What a page script setting means for a page (WebRenderScript.Plan). */
 export type ScriptPlan={engine:string;name:string;run:boolean;marker:string;notice:string};
 export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCount:number;commands?:unknown[];
+  /** The values of the page's running animations and transitions at this turn: [node, longhand, computed text, isTransition]. */
+  animated?:[number,string,string,boolean][];
   navigations?:{nodeId:number;url:string}[];frameLoads?:number;
   /** Requests the page asked for (XMLHttpRequest): the policy is the engine's; the host only makes them. */
   netRequests?:NetWire[];
