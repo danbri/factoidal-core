@@ -125,6 +125,9 @@ structure State where
   cookies : Cookies.Jar := {}
   /-- The latest time in seconds a script gave (`send`, `document.cookie`): cookie expiry. -/
   now : Nat := 0
+  /-- The address chosen for each name this session resolved (`Egress.choose`, at most
+  `maxPins`): a later request to that name starts with it pinned, with no second resolve. -/
+  pins : Array (String × String) := #[]
   xhrs : Array Xhr := #[]
   /-- The page's WebSocket connections (`Net.WebSocket`), by id (ids are `nextTransfer`'s). -/
   sockets : Array WebSocket.Sock := #[]
@@ -159,6 +162,21 @@ structure State where
 its own origin made (`BlobUrls.resolve`: another origin's URL gives nothing). -/
 def State.blobOf (s : State) (url : String) : Option (String × ByteArray) :=
   if url.startsWith "blob:" then (L4Factoidal.Net.BlobUrls.resolve s.blobs s.page.origin url).map fun e => (e.type, e.body) else none
+
+/-- The most names a session keeps an address for. -/
+def maxPins : Nat := 64
+
+/-- The pin a new request to `url` starts with: the address this session chose for its name. -/
+def State.pinFor (s : State) (url : String) : Option (String × String) :=
+  match URL.parseUrl url with
+  | some u => s.pins.find? (·.1 == lower u.hostname)
+  | none => none
+
+/-- Keep the pin a transfer chose (the first for each name). -/
+def State.notePin (s : State) (t : Transfer) : State :=
+  match t.pin with
+  | some p => if s.pins.any (·.1 == p.1) || s.pins.size ≥ maxPins then s else { s with pins := s.pins.push p }
+  | none => s
 
 /-- A page's objects (each handle is its index plus one). -/
 def maxObjects : Nat := 65536
@@ -384,6 +402,7 @@ def syncFetch (s : State) (t0 : Transfer) : State × SyncOutcome := Id.run do
     | .fail _ => return (s, .failed)
     | .deliver _ r => return (s, .done r)
     | .send t w =>
+      s := s.notePin t
       -- a redirect's target is checked against the policy as the first URL was (CSP §4.1.2)
       if t.redirects != hops then
         let (s', blocked) := cspRequest s "connect-src" t.url true
@@ -407,7 +426,7 @@ this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
 def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now, pin := s.pinFor x.url }
   let (s, blocked) := cspRequest s "connect-src" x.url
   let (s, out) := if blocked then (s, SyncOutcome.failed) else syncFetch s t
   match out with
@@ -468,7 +487,7 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if blocked then s.set h { x with deferFail := true } else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now, pin := s.pinFor x.url }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
   | .deliver _ r =>
@@ -558,6 +577,7 @@ def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
     let s1 := { s with live := s.live.filter (·.1 != id) }
     match onAnswer { t with jar } a with
     | .send t' w =>
+      let s := s.notePin t'
       -- a redirect's target is checked against the policy as the first URL was (CSP §4.1.2)
       let (s, blocked) := if t'.redirects != t.redirects then cspRequest s "connect-src" t'.url true else (s, false)
       if blocked then (requestError { s with live := s.live.filter (·.1 != id) } h { x with transfer := none } "error", some x.cb) else
@@ -1119,6 +1139,30 @@ private def tryGet (s : State) (url : String) : State :=
 #guard (run1 { stp "script-src 'self'" with enabled := false } 153 []).2 == "1"
 #guard (run1 stc 152 ["1", "1", "", "alert(1)", "9"]).2 == "0"
 #guard (cspOf "" "" "script-src 'none'; report-uri /r; sandbox").map (·.directives.map (·.name)) == [["script-src"]]
+
+/-- Kind: resource bound. Says: a session keeps at most `maxPins` addresses. -/
+theorem notePin_bounded (s : State) (t : Transfer) (h : s.pins.size ≤ maxPins) : (s.notePin t).pins.size ≤ maxPins := by
+  unfold State.notePin
+  split
+  · rename_i p _
+    by_cases h1 : (s.pins.any (·.1 == p.1) || decide (s.pins.size ≥ maxPins)) = true
+    · simp only [h1, if_true]; exact h
+    · simp only [h1, if_false, Bool.false_eq_true, Array.size_push]
+      simp only [Bool.or_eq_true, decide_eq_true_eq, not_or, Nat.not_le] at h1
+      omega
+  · exact h
+
+/-- Kind: lemma (DNS pins). Says: the pin a new request starts with is one this session chose
+for the name of the request's URL. -/
+theorem pinFor_name (s : State) (url : String) (p : String × String) (h : s.pinFor url = some p) :
+    p ∈ s.pins ∧ ∃ u, URL.parseUrl url = some u ∧ p.1 = lower u.hostname := by
+  unfold State.pinFor at h
+  split at h
+  · rename_i u hu
+    have hm := Array.mem_of_find?_eq_some h
+    have hp := Array.find?_some h
+    exact ⟨hm, u, hu, by simpa using hp⟩
+  · simp at h
 
 /-- Kind: privacy lemma. Says: a URL the page names as a referrer, or a frame document's URL
 named as the client, is kept only when it parses and is of the page's own origin, and then
