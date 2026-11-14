@@ -87,6 +87,9 @@ inductive Command where
   | setChecked (node : Nat) (value : Bool)
   /-- The reset algorithm of form `node` (`DOM.Forms.resetForm`). -/
   | resetForm (node : Nat)
+  /-- The element states of `node` (`Node.states`: a showing popover, a modal dialog, a
+  defined custom element) set to `states`. -/
+  | setStates (node : Nat) (states : Nat)
   /-- `attachShadow` of `host` (`DOM.Dom.attachShadow`, the state as `shadowFlags`) made or
   reused shadow root `result`. -/
   | attachShadow (host flags result : Nat)
@@ -1082,7 +1085,9 @@ def cloneNode (args : Array Value) (s : State) : State × HostResult :=
 `b.importNode(a, deep)` (shallow, deep; the new node); 6 set the checkedness of input `a`
 (or the selectedness of option `a`, `DOM.FormControls.selectedness`) to `b` (1 or 0); 7 the
 checkedness of `a`; 8 the other checked radio button of `a`'s
-group, or -1; 9 reset form `a` (DOM.Forms). Shadow trees: 20 `a.attachShadow(init)` with the
+group, or -1; 9 reset form `a` (DOM.Forms); 30 set the element states of `a` to the bits
+`b` (`Node.states`: 1 popover showing, 2 modal dialog, 4 custom element defined), 31
+read them. Shadow trees: 20 `a.attachShadow(init)` with the
 state bits `b` (`shadowFlags`): the shadow root, or NotSupportedError (-10); 22 empty the
 manually assigned nodes of slot `a`; 23 append node `b` to them (`slot.assign`). Ops 3, 4
 and 5 refuse a shadow root (DOM §4.5: HierarchyRequestError for `adoptNode`,
@@ -1112,6 +1117,9 @@ def treeOp (args : Array Value) (s : State) : State × HostResult :=
   | 8 => match Forms.checkedInGroup s.dom a with | some k => (s, ret k) | none => (s, ret (-1))
   | 9 => if !Forms.isHtml s.dom a ["form"] then (s, ret (-2))
     else change s (.resetForm a) fun d => changed (.resetForm a) (Forms.resetForm d a)
+  | 30 => if !isElement s.dom a || b ≥ 8 then (s, ret (-2))
+    else change s (.setStates a b) fun d => changed (.setStates a b) (d.setNode a fun x => { x with states := b })
+  | 31 => (s, ret (s.dom.get a).states)
   | 4 | 5 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a || s.dom.isShadowRoot a then (s, ret (-10)) else
     let deep := arg args 2 == 5
     change s (.importNode a b deep 0) fun d => let (d, c) := d.cloneNode a deep (some b); changed (.importNode a b deep c) d c
@@ -1485,6 +1493,10 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n
     if !Forms.isHtml d n ["input", "option"] then throw "script command: target must be an input or an option"
     return Forms.setChecked d n v
+  | .setStates n v => do
+    checkNode d n
+    if v ≥ 8 then throw "script command: states exceed bound"
+    return d.setNode n fun x => { x with states := v }
   | .resetForm n => do
     checkNode d n
     if !Forms.isHtml d n ["form"] then throw "script command: target must be a form"

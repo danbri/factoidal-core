@@ -27,6 +27,7 @@ node of the document. The parser and the matcher are total: each takes fuel (`pa
 `matchFuel`) that these bounds never exhaust.
 -/
 import L4Factoidal.DOM.Arena
+import L4Factoidal.DOM.CustomElements
 
 namespace L4Factoidal.DOM.Selectors
 open L4Factoidal.DOM
@@ -250,7 +251,7 @@ def legacyPseudoElements : List String := ["before", "after", "first-line", "fir
 def plainPseudoClasses : List String :=
   ["root", "empty", "first-child", "last-child", "only-child", "first-of-type", "last-of-type",
    "only-of-type", "scope", "link", "any-link", "checked", "disabled", "enabled", "hover", "active",
-   "focus", "focus-within", "focus-visible", "visited", "target", "defined"]
+   "focus", "focus-within", "focus-visible", "visited", "target", "defined", "popover-open", "modal"]
 
 /-- The most compound selectors in one complex selector, and the deepest nesting of
 `:not()`, `:is()` and `:nth-child(… of …)`: matching recurses once per compound and once
@@ -594,12 +595,17 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
       | "scope" => match scope with | some s => s == k | none => x.parent.any fun p => (d.get p).type == .document
       | "link" | "any-link" => isHtml d k ["a", "area"] && (attrVal? d k "href").isSome
       | "checked" =>
-        (isHtml d k ["input"] && (attrVal? d k "checked").isSome &&
+        -- the checkedness of a checkbox or radio button and the selectedness of an option:
+        -- the value a script or a click set (`Node.checkedness`), else the content attribute
+        (isHtml d k ["input"] && (x.checkedness.getD (attrVal? d k "checked").isSome) &&
           ["checkbox", "radio"].contains (lowerAscii ((attrVal? d k "type").getD ""))) ||
-        (isHtml d k ["option"] && (attrVal? d k "selected").isSome)
+        (isHtml d k ["option"] && (x.checkedness.getD (attrVal? d k "selected").isSome))
       | "disabled" => disabledEl d k
       | "enabled" => isHtml d k ["button", "input", "select", "textarea", "optgroup", "option", "fieldset"] && !disabledEl d k
-      | "defined" => true
+      -- the element states that the page's objects set (`Node.states`)
+      | "defined" => !(x.ns == some htmlNS && CustomElements.validName x.lname) || x.states / 4 % 2 == 1
+      | "popover-open" => x.states % 2 == 1
+      | "modal" => x.states / 2 % 2 == 1
       | _ => false
     | .nth kind a b of =>
       let x := d.get k
@@ -698,5 +704,28 @@ def closest (d : Dom) (k : NodeId) (l : List Complex) : Option NodeId := Id.run 
       if matchList d (some k) matchFuel p l then return some p
       cur := (d.get p).parent
   return none
+
+/-! ## Tests: the pseudo-classes of element states (`Node.states`, `Node.checkedness`) -/
+
+/-- Document 0 > `div[popover]` (1) showing, `dialog` (2) modal, `my-el` (3) not defined,
+`my-el` (4) defined, `input[type=checkbox]` (5) checked by script, `option[selected]` (6)
+unselected by script. -/
+private def stateTree : Dom :=
+  let el := fun (lname : String) (attrs : List (String × String)) (states : Nat) (checked : Option Bool) =>
+    ({ type := .element, ns := some htmlNS, lname, parent := some 0, states, checkedness := checked,
+       attrs := (attrs.map fun (k, v) => ({ lname := k, value := v } : Attr)).toArray } : Node)
+  { nodes := #[{ type := .document, kids := #[1, 2, 3, 4, 5, 6] },
+      el "div" [("popover", "")] 1 none, el "dialog" [("open", "")] 2 none, el "my-el" [] 0 none, el "my-el" [] 4 none,
+      el "input" [("type", "checkbox")] 0 (some true), el "option" [("selected", "")] 0 (some false)] }
+
+private def matchesSel (k : NodeId) (sel : String) : Bool :=
+  match parse sel with
+  | some l => elementMatches stateTree k l
+  | none => false
+
+#guard matchesSel 1 ":popover-open" && !matchesSel 2 ":popover-open" && !matchesSel 3 ":popover-open"
+#guard matchesSel 2 ":modal" && !matchesSel 1 ":modal"
+#guard matchesSel 1 ":defined" && !matchesSel 3 ":defined" && matchesSel 4 ":defined" && matchesSel 3 ":not(:defined)"
+#guard matchesSel 5 ":checked" && !matchesSel 6 ":checked"
 
 end L4Factoidal.DOM.Selectors

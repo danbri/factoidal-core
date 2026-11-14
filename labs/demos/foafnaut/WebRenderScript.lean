@@ -48,6 +48,7 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .importNode n doc deep r => .object [("op",.string "importNode"),("source",num n),("document",num doc),("deep",.bool deep),("nodeId",num r)]
   | .setChecked n v => .object [("op",.string "setChecked"),("nodeId",num n),("value",.bool v)]
   | .resetForm n => .object [("op",.string "resetForm"),("nodeId",num n)]
+  | .setStates n v => .object [("op",.string "setStates"),("nodeId",num n),("states",num v)]
   | .replaceData n o k v => .object [("op",.string "replaceData"),("nodeId",num n),("offset",num o),("count",num k),("value",.string v)]
   | .splitText n o r => .object [("op",.string "splitText"),("source",num n),("offset",num o),("nodeId",num r)]
   | .frameDocument el src xml r => .object [("op",.string "frameDocument"),("frame",num el),("source",.string src),("xml",.bool xml),("nodeId",num r)]
@@ -83,6 +84,11 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
       | _ => throw "script command: value must be a boolean"
     return .setChecked (← node "nodeId") v
   | "resetForm" => exactly ["nodeId"]; return .resetForm (← node "nodeId")
+  | "setStates" =>
+    exactly ["nodeId","states"]
+    let states ← node "states"
+    if states ≥ 8 then throw "script command: states exceed bound"
+    return .setStates (← node "nodeId") states
   | "adoptNode" => exactly ["nodeId","document"]; return .adoptNode (← node "nodeId") (← node "document")
   | "importNode" =>
     exactly ["source","document","deep","nodeId"]

@@ -154,6 +154,7 @@ def commandJson : Hosts.Dom.Command → Json
   | .importNode n doc deep r => Json.mkObj [("op", Json.str "importNode"), ("source", jn n), ("document", jn doc), ("deep", Json.bool deep), ("nodeId", jn r)]
   | .setChecked n v => Json.mkObj [("op", Json.str "setChecked"), ("nodeId", jn n), ("value", Json.bool v)]
   | .resetForm n => Json.mkObj [("op", Json.str "resetForm"), ("nodeId", jn n)]
+  | .setStates n v => Json.mkObj [("op", Json.str "setStates"), ("nodeId", jn n), ("states", jn v)]
   | .replaceData n o k v => Json.mkObj [("op", Json.str "replaceData"), ("nodeId", jn n), ("offset", jn o), ("count", jn k), ("value", Json.str v)]
   | .splitText n o r => Json.mkObj [("op", Json.str "splitText"), ("source", jn n), ("offset", jn o), ("nodeId", jn r)]
   | .frameDocument el src xml r => Json.mkObj [("op", Json.str "frameDocument"), ("frame", jn el), ("source", Json.str src), ("xml", Json.bool xml), ("nodeId", jn r)]

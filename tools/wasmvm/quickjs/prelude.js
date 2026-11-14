@@ -521,7 +521,7 @@
     'mouseover', 'mouseup', 'reset', 'resize', 'scroll', 'select', 'submit', 'toggle', 'wheel', 'animationend',
     'transitionend', 'pointerdown', 'pointerup', 'pointermove', 'message', 'unhandledrejection', 'rejectionhandled',
     'beforeunload', 'unload', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'storage', 'online', 'offline',
-    'afterprint', 'beforeprint', 'languagechange', 'messageerror', 'slotchange'];
+    'afterprint', 'beforeprint', 'languagechange', 'messageerror', 'slotchange', 'beforetoggle', 'command', 'invalid'];
   const handlers = new WeakMap();
   const handlerOf = (t, name) => handlers.get(t)?.get(name)?.value ?? null;
   const setHandler = (t, name, f) => {
@@ -1186,6 +1186,7 @@
     else if (st.prev >= 0) chk(n.treeOp(st.prev, 1, 6));
     else chk(n.treeOp(k, st.old, 6));
   };
+  let invokerActivation = () => {};
   const activation = (k, targetId) => {
     if (!htmlEl(k)) return;
     const el = wrap(k), name = str(k, 0);
@@ -1198,9 +1199,10 @@
       }
       if (chk(n.query(k, 11, '')) === '1') return;
       const form = formOf(el);
-      if (!form) return;
-      if (t === 'submit' || t === 'image') submitForm(form, el);
-      else if (t === 'reset') resetForm(form);
+      if (form && (t === 'submit' || t === 'image')) { submitForm(form, el); return; }
+      if (form && t === 'reset') { resetForm(form); return; }
+      // a button with `commandfor` or `popovertarget` (section popover)
+      invokerActivation(el, t);
     } else if (name === 'a' || name === 'area') {
       followHyperlink(el.href);
     } else if (name === 'label') {
@@ -2821,6 +2823,8 @@
       if (is !== undefined) { const e = defsByName.get(is); if (e && e.localName === l) return e; }
       return null;
     };
+    // the element's "defined" state, for `:defined` (tree_op 30 and 31: `Node.states` bit 4)
+    const markDefined = id => { const b = n.treeOp(id, 0, 31); if (typeof b === 'number' && b >= 0 && !(b & 4)) n.treeOp(id, b | 4, 30); };
     const callback = (el, name, args) => {
       const st = ceState.get(el), f = st && st.def && st.def.callbacks[name];
       if (f) try { f.apply(el, args); } catch (e) { report(e); }
@@ -2867,6 +2871,7 @@
       }
       def.stack.pop();
       st.state = 'custom';
+      markDefined(id);
       const el = wrappers.get(id);
       for (const [name, args] of pending) callback(el, name, args);
       return el;
@@ -2896,6 +2901,7 @@
         const id = chk(n0.create(3 + 16 * (scriptDocument ? nodeId(scriptDocument) : 0), def.localName));
         ids.set(self, id); wrappers.set(id, self); ceState.set(self, st0);
         if (def.localName !== def.name) isValues.set(id, def.name);
+        markDefined(id);
         return;
       }
       const entry = def.stack[def.stack.length - 1];
@@ -7490,6 +7496,187 @@
     method(F, 'reportValidity', function reportValidity() { return checkForm(this); });
   }
   // ==== end forms =========================================================================
+
+  // ==== popover: popovers, dialogs and their invoker buttons (HTML §6.12, §4.11.4, §4.10.6) ====
+  // Which popovers show and which dialog is modal is the page's state, mirrored into the
+  // arena as element states (tree_op 30 and 31, `Node.states`: bit 1 a showing popover, bit 2
+  // a modal dialog) so that Lean's selectors match `:popover-open` and `:modal`. A page with
+  // no popover and no dialog call does nothing here.
+  {
+    const prop = (C, name, get, set) => Object.defineProperty(C.prototype, name, { get, set, configurable: true, enumerable: true });
+    const method = (C, name, f) => Object.defineProperty(C.prototype, name, { value: f, writable: true, configurable: true, enumerable: true });
+    const task = f => { chk(n.timer(register(f), 0, 0)); };
+    const getStates = id => { const b = n.treeOp(id, 0, 31); return typeof b === 'number' && b >= 0 ? b : 0; };
+    const setState = (id, bit, on) => { const b = getStates(id), nb = on ? b | bit : b & ~bit; if (nb !== b) chk(n.treeOp(id, nb, 30)); };
+    const toggleInit = new WeakMap();
+    class ToggleEvent extends Event {
+      constructor(type, init = undefined) {
+        super(type, init);
+        const d = init === undefined || init === null ? {} : init;
+        toggleInit.set(this, { oldState: d.oldState === undefined ? '' : String(d.oldState), newState: d.newState === undefined ? '' : String(d.newState), source: d.source === undefined ? null : d.source });
+      }
+      get oldState() { return toggleInit.get(this).oldState; }
+      get newState() { return toggleInit.get(this).newState; }
+      get source() { return toggleInit.get(this).source; }
+    }
+    def('ToggleEvent', ToggleEvent);
+    const commandInit = new WeakMap();
+    class CommandEvent extends Event {
+      constructor(type, init = undefined) {
+        super(type, init);
+        const d = init === undefined || init === null ? {} : init;
+        commandInit.set(this, { command: d.command === undefined ? '' : String(d.command), source: d.source === undefined ? null : d.source });
+      }
+      get command() { return commandInit.get(this).command; }
+      get source() { return commandInit.get(this).source; }
+    }
+    def('CommandEvent', CommandEvent);
+    const fireToggle = (el, type, oldState, newState, cancelable, source) => {
+      const e = new ToggleEvent(type, { cancelable, oldState, newState, source });
+      state(e).trusted = true;
+      return dispatch(el, e);
+    };
+    // "Queue a popover toggle event task" (and a dialog's): a task not yet run is replaced,
+    // and the event keeps the first old state.
+    const pendingToggle = new WeakMap();
+    const queueToggle = (el, oldState, newState, source) => {
+      const p = pendingToggle.get(el);
+      if (p) { oldState = p.oldState; p.cancelled = true; }
+      const rec = { oldState, cancelled: false };
+      pendingToggle.set(el, rec);
+      task(() => { if (rec.cancelled) return; pendingToggle.delete(el); fireToggle(el, 'toggle', oldState, newState, false, source); });
+    };
+
+    // ---- popovers ----
+    const showing = new Set(), modal = new Set();
+    let watching = false;
+    const kindOf = el => (el instanceof HTMLElement ? el.popover : null);
+    // "Check popover validity" (HTML §6.12.1)
+    const valid = (el, expectShowing, throws) => {
+      if (kindOf(el) === null) { if (throws) throw new DOMException('The element is not a popover.', 'NotSupportedError'); return false; }
+      const id = nodeId(el);
+      if (expectShowing !== showing.has(id)) return false;
+      if (!el.isConnected || (modal.has(id) && el.hasAttribute('open'))) {
+        if (throws) throw new DOMException('The popover is not connected, or is a modal dialog.', 'InvalidStateError');
+        return false;
+      }
+      return true;
+    };
+    const hidePop = (el, fire, source) => {
+      const id = nodeId(el);
+      if (!showing.has(id)) return;
+      // the auto popovers shown after this one close first
+      if (kindOf(el) !== 'manual') { const order = [...showing]; for (let i = order.length - 1; i > order.indexOf(id); i--) { const o = wrap(order[i]); if (showing.has(order[i]) && kindOf(o) !== 'manual') hidePop(o, fire, null); } }
+      if (fire) { fireToggle(el, 'beforetoggle', 'open', 'closed', false, source); if (!showing.has(id)) return; }
+      showing.delete(id); setState(id, 1, false);
+      if (fire) queueToggle(el, 'open', 'closed', source);
+    };
+    // a showing popover that leaves the document or loses its attribute hides, with no events
+    const watch = () => {
+      if (watching) return;
+      watching = true;
+      const sweep = () => { for (const k of [...showing]) { const o = wrap(k); if (!o.isConnected || kindOf(o) === null) hidePop(o, false, null); } };
+      for (const k of ['remove', 'replace', 'setText', 'setAttr', 'removeAttr']) {
+        const f = n[k];
+        n[k] = (...a) => { const r = f.apply(n, a); if (showing.size) sweep(); return r; };
+      }
+    };
+    const showPop = (el, source) => {
+      if (!valid(el, false, true)) return;
+      if (!fireToggle(el, 'beforetoggle', 'closed', 'open', true, source)) return;
+      if (!valid(el, false, true)) return;
+      const id = nodeId(el);
+      if (kindOf(el) !== 'manual') {
+        // an auto popover closes the other auto popovers, except those it is inside (by the tree, or by its invoker)
+        for (const k of [...showing]) { const o = wrap(k); if (showing.has(k) && kindOf(o) !== 'manual' && !o.contains(el) && !(source && o.contains(source))) hidePop(o, true, null); }
+        if (!valid(el, false, true)) return;
+      }
+      watch();
+      showing.add(id); setState(id, 1, true);
+      queueToggle(el, 'closed', 'open', source);
+    };
+    const sourceOf = options => (options !== null && typeof options === 'object' && options.source !== undefined && options.source !== null ? options.source : null);
+    method(HTMLElement, 'showPopover', function showPopover(options = undefined) { showPop(this, sourceOf(options)); });
+    method(HTMLElement, 'hidePopover', function hidePopover() { if (valid(this, true, true)) hidePop(this, true, null); });
+    method(HTMLElement, 'togglePopover', function togglePopover(options = undefined) {
+      const force = typeof options === 'boolean' ? options : options !== null && typeof options === 'object' ? options.force : undefined;
+      const id = nodeId(this), source = sourceOf(options);
+      if (showing.has(id) && force !== true) { if (valid(this, true, true)) hidePop(this, true, source); }
+      else if (!showing.has(id) && force !== false) showPop(this, source);
+      else valid(this, showing.has(id), true);
+      return showing.has(id);
+    });
+
+    // ---- dialog ----
+    const D = named.HTMLDialogElement, returnValues = new WeakMap();
+    const closeDialog = (el, result, source) => {
+      if (!el.hasAttribute('open')) return;
+      const id = nodeId(el);
+      fireToggle(el, 'beforetoggle', 'open', 'closed', false, source);
+      if (!el.hasAttribute('open')) return;
+      queueToggle(el, 'open', 'closed', source);
+      el.removeAttribute('open');
+      if (modal.delete(id)) setState(id, 2, false);
+      if (result !== undefined && result !== null) returnValues.set(el, String(result));
+      task(() => { const e = new Event('close'); state(e).trusted = true; dispatch(el, e); });
+    };
+    const openDialog = (el, asModal, source) => {
+      const id = nodeId(el), isModal = modal.has(id) && el.hasAttribute('open');
+      if (el.hasAttribute('open') && isModal === asModal) return;
+      if (el.hasAttribute('open')) throw new DOMException('The dialog is already open in the other way.', 'InvalidStateError');
+      if (asModal && !el.isConnected) throw new DOMException('The dialog is not connected.', 'InvalidStateError');
+      if (asModal && showing.has(id)) throw new DOMException('The dialog is a showing popover.', 'InvalidStateError');
+      if (!fireToggle(el, 'beforetoggle', 'closed', 'open', true, source)) return;
+      if (el.hasAttribute('open') || (asModal && (!el.isConnected || showing.has(id)))) return;
+      queueToggle(el, 'closed', 'open', source);
+      el.setAttribute('open', '');
+      if (asModal) { modal.add(id); setState(id, 2, true); for (const k of [...showing]) if (kindOf(wrap(k)) !== 'manual') hidePop(wrap(k), true, null); }
+    };
+    method(D, 'show', function show() { openDialog(this, false, null); });
+    method(D, 'showModal', function showModal() { openDialog(this, true, null); });
+    method(D, 'close', function close(returnValue = undefined) { closeDialog(this, returnValue, null); });
+    const requestClose = (el, result, source) => {
+      if (!el.hasAttribute('open')) return;
+      const e = new Event('cancel', { cancelable: true }); state(e).trusted = true;
+      if (dispatch(el, e)) closeDialog(el, result, source);
+    };
+    method(D, 'requestClose', function requestClose_(returnValue = undefined) { requestClose(this, returnValue, null); });
+    prop(D, 'returnValue', function () { return returnValues.get(this) ?? ''; }, function (v) { returnValues.set(this, String(v)); });
+
+    // ---- invoker buttons: `commandfor` with `command`, and `popovertarget` ----
+    const commands = ['toggle-popover', 'show-popover', 'hide-popover', 'close', 'request-close', 'show-modal'];
+    const commandOf = el => { const c = el.getAttribute('command'); if (c === null) return ''; if (c.startsWith('--')) return c; const l = c.toLowerCase(); return commands.includes(l) ? l : ''; };
+    prop(named.HTMLButtonElement, 'command', function () { return commandOf(this); }, function (v) { this.setAttribute('command', String(v)); });
+    invokerActivation = (el, t) => {
+      const isButton = el instanceof named.HTMLButtonElement;
+      if (!isButton && !['button', 'submit', 'reset', 'image'].includes(t)) return;
+      const target = isButton ? el.commandForElement : null;
+      if (target) {
+        const command = commandOf(el);
+        if (command === '') return;
+        const e = new CommandEvent('command', { cancelable: true, composed: true, command, source: el });
+        state(e).trusted = true;
+        if (!dispatch(target, e) || command.startsWith('--')) return;
+        const id = nodeId(target), isPop = kindOf(target) !== null;
+        if (command === 'toggle-popover' && isPop) { if (showing.has(id)) hidePop(target, true, el); else showPop(target, el); }
+        else if (command === 'show-popover' && isPop) { if (!showing.has(id)) showPop(target, el); }
+        else if (command === 'hide-popover' && isPop) { if (showing.has(id)) hidePop(target, true, el); }
+        else if (target instanceof D) {
+          if (command === 'show-modal') { if (!target.hasAttribute('open')) openDialog(target, true, el); }
+          else if (command === 'close') closeDialog(target, el.value === '' ? undefined : el.value, el);
+          else if (command === 'request-close') requestClose(target, el.value === '' ? undefined : el.value, el);
+        }
+        return;
+      }
+      const pop = el.popoverTargetElement;
+      if (!pop || kindOf(pop) === null) return;
+      const action = el.popoverTargetAction, id = nodeId(pop);
+      if (action === 'show' && showing.has(id)) return;
+      if (action === 'hide' && !showing.has(id)) return;
+      if (showing.has(id)) hidePop(pop, true, el); else showPop(pop, el);
+    };
+  }
+  // ==== end popover =======================================================================
 
   // ==== dynscripts: scripts that a script inserts (HTML §4.12.1 "prepare the script element") ====
   // A script element made by createElement runs when it is connected and has a source: an
