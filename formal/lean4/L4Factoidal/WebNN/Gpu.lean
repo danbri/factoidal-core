@@ -116,6 +116,126 @@ theorem emitC_eval (nm : Nat → String) (env : String → Option Nat) (o : List
     have : k + two32 - x.eval o = (k - x.eval o) + two32 := by omega
     simp [hk, this, Nat.add_mod_right, Nat.mod_eq_of_lt (show k - x.eval o < two32 by omega)]
 
+/-! ## The output multi-index, and the index arithmetic within 32 bits -/
+
+/-- `size ds = size (take a ds) * (ds[a] * size (drop (a+1) ds))` for `a` inside `ds`. -/
+theorem size_split (ds : Shape) (a : Nat) (ha : a < ds.length) :
+    Shape.size ds = Shape.size (ds.take a) * (ds.getD a 0 * Shape.size (ds.drop (a + 1))) := by
+  have hg : ds.getD a 0 = ds[a] := by rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem ha]; rfl
+  have h : ds = ds.take a ++ (ds[a] :: ds.drop (a + 1)) := by
+    rw [← List.drop_eq_getElem_cons ha, List.take_append_drop]
+  conv => lhs; rw [h]
+  rw [Shape.size_append, Shape.size_cons, hg]
+
+/-- Kind: equality (generated code against its reference). Says: for a flat output number
+`k` below the shape's size, the coordinate `a` of the output multi-index that a kernel
+computes, `k / stride_a % dim_a` (`coordLets`, with `stride_a = size (drop (a+1) s)` as
+`strides` gives it), is coordinate `a` of `Shape.unravel s k`, the CPU reference's. -/
+theorem unravel_getD : ∀ (s : Shape) (k a : Nat), k < Shape.size s → a < s.length →
+    (Shape.unravel s k).getD a 0 = k / Shape.size (s.drop (a + 1)) % s.getD a 0
+  | [], _, _, _, ha => by simp at ha
+  | d :: ds, k, 0, hk, _ => by
+    simp only [Shape.size_cons] at hk
+    have hp : 0 < Shape.size ds := by
+      rcases Nat.eq_zero_or_pos (Shape.size ds) with h | h
+      · rw [h] at hk; simp at hk
+      · exact h
+    simp only [Shape.unravel, List.getD_cons_zero, List.drop_succ_cons, List.drop_zero]
+    rw [Nat.mod_eq_of_lt]
+    exact (Nat.div_lt_iff_lt_mul hp).mpr hk
+  | d :: ds, k, a + 1, hk, ha => by
+    simp only [Shape.size_cons] at hk
+    have ha' : a < ds.length := by simpa using ha
+    have hp : 0 < Shape.size ds := by
+      rcases Nat.eq_zero_or_pos (Shape.size ds) with h | h
+      · rw [h] at hk; simp at hk
+      · exact h
+    simp only [Shape.unravel, List.getD_cons_succ, List.drop_succ_cons]
+    rw [unravel_getD ds (k % Shape.size ds) a (Nat.mod_lt _ hp) ha']
+    rw [size_split ds a ha']
+    generalize Shape.size (ds.take a) = A
+    generalize Shape.size (ds.drop (a + 1)) = p
+    generalize ds.getD a 0 = q
+    rw [show A * (q * p) = p * (q * A) by ac_rfl]
+    rw [Nat.mod_mul_right_div_self, Nat.mod_mul_right_mod]
+
+/-- A valid multi-index's coordinates are below the shape's size. -/
+theorem valid_getD_lt : ∀ (s : Shape) (o : List Nat), Shape.Valid s o → ∀ a, o.getD a 0 < Shape.size s ∨ o.getD a 0 = 0
+  | [], [], _, a => .inr (by simp)
+  | d :: ds, i :: is, ⟨hi, hv⟩, a => by
+    have hd : 0 < d := by omega
+    cases a with
+    | zero =>
+      simp only [List.getD_cons_zero, Shape.size_cons]
+      rcases valid_size_pos ds is hv with hp
+      left; exact Nat.lt_of_lt_of_le hi (Nat.le_mul_of_pos_right d hp)
+    | succ a =>
+      simp only [List.getD_cons_succ, Shape.size_cons]
+      rcases valid_getD_lt ds is hv a with h | h
+      · left; exact Nat.lt_of_lt_of_le h (Nat.le_mul_of_pos_left _ hd)
+      · right; exact h
+  | [], _ :: _, h, _ => by simp [Shape.Valid] at h
+  | _ :: _, [], h, _ => by simp [Shape.Valid] at h
+where
+  valid_size_pos : ∀ (s : Shape) (o : List Nat), Shape.Valid s o → 0 < Shape.size s
+    | [], [], _ => by simp
+    | d :: ds, i :: is, ⟨hi, hv⟩ => by
+      simp only [Shape.size_cons]
+      exact Nat.mul_pos (by omega) (valid_size_pos ds is hv)
+    | [], _ :: _, h => by simp [Shape.Valid] at h
+    | _ :: _, [], h => by simp [Shape.Valid] at h
+
+/-- Every coordinate of a valid output index of a shape of at most `maxElements` elements fits
+in 32 bits (the generated kernels refuse larger outputs). -/
+theorem out_fits (s : Shape) (o : List Nat) (hv : Shape.Valid s o) (hs : Shape.size s ≤ 4194240) (a : Nat) :
+    o.getD a 0 < two32 := by
+  rcases valid_getD_lt s o hv a with h | h
+  · unfold two32; omega
+  · rw [h]; unfold two32; omega
+
+/-- Kind: bound (discharges `Fits`). Says: on a valid output index of an output of at most
+`maxElements` elements, every coordinate of transpose's and expand's maps fits in 32 bits, so
+`emitC_eval` applies: the kernel reads the element `Move.transposeIdx` / `Move.expandIdx`
+names. -/
+theorem transposeMap_fits (perm : List Nat) (s : Shape) (o : List Nat) (hv : Shape.Valid s o)
+    (hs : Shape.size s ≤ 4194240) : ∀ c ∈ transposeMap perm, c.Fits o := by
+  intro c hc
+  simp only [transposeMap, List.mem_map] at hc
+  obtain ⟨a, _, rfl⟩ := hc
+  exact out_fits s o hv hs _
+
+theorem expandMap_fits (inShape : Shape) (s : Shape) (o : List Nat) (hv : Shape.Valid s o)
+    (hs : Shape.size s ≤ 4194240) : ∀ c ∈ expandMap inShape s.length, c.Fits o := by
+  intro c hc
+  simp only [expandMap, List.mem_map] at hc
+  obtain ⟨a, _, rfl⟩ := hc
+  split
+  · simp [Coord.Fits, two32]
+  · exact out_fits s o hv hs _
+
+/-- tile's map fits when the input's dimensions do (they are below its element count). -/
+theorem tileMap_fits (inShape : Shape) (s : Shape) (o : List Nat) (hv : Shape.Valid s o)
+    (hs : Shape.size s ≤ 4194240) (hin : ∀ a, inShape.getD a 1 < two32) :
+    ∀ c ∈ tileMap inShape s.length, c.Fits o := by
+  intro c hc
+  simp only [tileMap, List.mem_map] at hc
+  obtain ⟨a, _, rfl⟩ := hc
+  exact ⟨out_fits s o hv hs a, hin a⟩
+
+/-- Kind: equality (a whole kernel's index arithmetic). Says: for every valid output index
+of an output of at most `maxElements` (4,194,240) elements, each coordinate transpose's kernel prints
+computes, in WGSL's `u32` arithmetic, the coordinate of `Move.transposeIdx perm o`, the
+CPU reference's. -/
+theorem transpose_coords (perm : List Nat) (s : Shape) (o : List Nat) (hv : Shape.Valid s o)
+    (hs : Shape.size s ≤ 4194240) (env : String → Option Nat)
+    (henv : ∀ a, env (coordName a) = some (o.getD a 0)) :
+    (transposeMap perm).map (evalU env ∘ emitC coordName) = (transposeIdx perm o).map some := by
+  rw [← transposeMap_eval]
+  simp only [Idx.eval, List.map_map]
+  apply List.map_congr_left
+  intro c hc
+  exact emitC_eval coordName env o henv c (transposeMap_fits perm s o hv hs c hc)
+
 /-! ## Scalar expressions: one row per operator name of the CPU reference -/
 
 def f (t : String) : Wgsl.Expr := .lit (.float t)
@@ -154,6 +274,9 @@ def unaryExpr (name : String) (x : Wgsl.Expr) : Option Wgsl.Expr :=
 /-- Workgroup size of every kernel; outputs up to `maxElements` (one dimension of dispatch). -/
 def wg : Nat := 64
 def maxElements : Nat := 65535 * 64
+
+/-- The bound the size lemmas above use (`out_fits`). -/
+theorem maxElements_eq : maxElements = 4194240 := rfl
 
 /-- Row-major strides of a shape: `strides [2,3,4] = [12,4,1]`. -/
 def strides (s : Shape) : List Nat := (List.range s.length).map fun a => Shape.size (s.drop (a + 1))

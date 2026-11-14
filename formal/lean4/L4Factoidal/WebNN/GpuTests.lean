@@ -50,4 +50,12 @@ def kinds (s : State) : List String := s.out.toList.map fun c => ((L4Factoidal.P
 -- the CPU reference answers readTensor with its bytes (byte 0)
 #guard ((api (graph "gpu" "tanh").1 #["read".toUTF8, "0".toUTF8, "2".toUTF8]).2.get! 0) == 0
 end Tests
+#print axioms L4Factoidal.WebNN.Gpu.emitC_eval
+#print axioms L4Factoidal.WebNN.Gpu.unravel_getD
+#print axioms L4Factoidal.WebNN.Gpu.transpose_coords
+#print axioms L4Factoidal.WebNN.Gpu.expandMap_fits
+#print axioms L4Factoidal.WebNN.Gpu.tileMap_fits
+#print axioms L4Factoidal.WebNN.transposeMap_eval
+#print axioms L4Factoidal.WebNN.expandMap_eval
+
 end L4Factoidal.WebNN.GpuRun
