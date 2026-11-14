@@ -9450,6 +9450,10 @@
     'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
     'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',
     'WebGLVertexArrayObject', 'WebGLUniformLocation', 'WebGLActiveInfo', 'WebGLShaderPrecisionFormat', 'WebGLContextEvent',
+    // Canvas 2D's worker side (HTML §4.12.5: [Exposed=(Window,Worker)]); the worker's host
+    // keeps its own canvas bitmaps in Lean (PageCanvas), as a page's does.
+    'OffscreenCanvas', 'OffscreenCanvasRenderingContext2D', 'ImageData', 'ImageBitmap', 'createImageBitmap', 'Path2D',
+    'CanvasGradient', 'CanvasPattern', 'TextMetrics', 'DOMMatrix', 'DOMMatrixReadOnly', 'DOMPoint', 'DOMPointReadOnly',
     // WebCodecs' are [Exposed=(Window,DedicatedWorker)].
     'VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioData', 'AudioDecoder', 'VideoDecoder',
     'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect',
