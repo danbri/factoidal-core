@@ -21,6 +21,7 @@ import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
 import L4Factoidal.Rendering.ComputedValues
 import L4Factoidal.Rendering.ComputedGeneric
+import L4Factoidal.Rendering.GridResolved
 import WebRepaint
 import L4Factoidal.WHATWG.Encoding.Sniff
 import WebHit
@@ -2225,6 +2226,11 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
       | .ok view =>
         if element node && dom.connected node then Rendering.Animation.Computed.valueOf nameIndex.get view node q else none
       | .error _ => none
+    -- grid: the resolved `grid-template-columns` and `grid-template-rows` of a grid container
+    -- are its used track sizes (CSS Grid 2 §7.2.6), read from its layout; any other value is
+    -- the computed value below
+    else if let some r := (if op ≥ 200 then Rendering.Layout.gridResolvedAt
+        (fun _ => match laid.get with | .ok l => l.scene.tree | .error _ => []) node (op - 200) else none) then some r
     else if op == 20 || op == 36 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
