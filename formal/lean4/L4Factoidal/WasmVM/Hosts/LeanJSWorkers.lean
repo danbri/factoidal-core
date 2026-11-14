@@ -713,9 +713,20 @@ def runWorkers (a : Agents) : Agents := Id.run do
   let (page', w') := dropRoutes page { w with list := w.list.filter (·.phase != .closed), steps := w.steps + (pumpSteps - budget) }
   return { a with page := page', w := w' }
 
-/-- After each microtask checkpoint of the page. A page with no worker pays one check. -/
+/-- The workers' rounds of one pump: another round while the last one gained scripts the
+engine answered itself (`data:` scripts, `Workers.request`), so a worker that waits on one
+goes on at once rather than at the next host answer, which may never come. At most `n + 1`
+rounds; a round that gains nothing ends it (one size comparison). -/
+def runSettled : Nat → Agents → Agents
+  | 0, a => runWorkers a
+  | n + 1, a =>
+    let b := runWorkers a
+    if b.w.scripts.size > a.w.scripts.size then runSettled n b else b
+
+/-- After each microtask checkpoint of the page. A page with no worker pays one check; a
+pump runs at most 17 worker rounds (`runSettled 16`). -/
 def pump (a : Agents) : Agents :=
-  if a.page.wkIdle && a.w.list.isEmpty then a else arm (runWorkers (pageAsks a))
+  if a.page.wkIdle && a.w.list.isEmpty then a else arm (runSettled 16 (pageAsks a))
 
 /-- The `Referrer-Policy` fields of scripts the embedder fetched, by URL (before `give`,
 which starts the workers whose scripts came). -/
