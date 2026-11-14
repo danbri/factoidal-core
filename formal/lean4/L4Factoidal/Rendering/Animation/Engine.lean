@@ -177,6 +177,8 @@ def kindOf (property : String) : Value.Kind :=
       "shape-image-threshold"].contains property then .unit
   else if property == "font-weight" then .fontWeight
   else if property == "visibility" then .visibility
+  else if property == "display" || property == "overlay" then .avoid "none"
+  else if property == "content-visibility" then .avoid "hidden"
   else .generic
 
 /-! ## The style change -/

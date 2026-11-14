@@ -285,6 +285,10 @@ inductive Kind where
   | visibility
   /-- Never component-wise: flips at 50%. -/
   | discrete
+  /-- Discrete, but between the keyword `off` and another value the other value holds
+  for the whole of (0, 1): `display` with `none` (CSS Display 4 §2.9),
+  `content-visibility` with `hidden` (CSS Containment 2 §4.2), `overlay` with `none`. -/
+  | avoid (off : String)
   deriving DecidableEq, Repr, Inhabited
 
 /-- A number of a non-negative kind. -/
@@ -315,7 +319,7 @@ CSS Transitions 2 §3.2 starts no transition between values that do not, unless
 `transition-behavior: allow-discrete`). -/
 def interpolable (k : Kind) (a b : Value) : Bool :=
   match k with
-  | .discrete => false
+  | .discrete | .avoid _ => false
   | .visibility => a == b || a == [.ident "visible"] || b == [.ident "visible"]
   | _ => (lerpList half a b).isSome
 
@@ -328,6 +332,10 @@ def interpolate (k : Kind) (a b : Value) (p : Int) : Value :=
   else if a == b then a
   else match k with
     | .discrete => if p < half then a else b
+    | .avoid off =>
+      if a == [.ident off] then (if p ≤ 0 then a else b)
+      else if b == [.ident off] then (if p ≥ one then b else a)
+      else if p < half then a else b
     | .visibility =>
       if a == [.ident "visible"] || b == [.ident "visible"] then
         if p ≤ 0 then a else if p ≥ one then b else [.ident "visible"]
@@ -377,7 +385,7 @@ values that add component-wise): the sum, or `value` when they do not add (Web
 Animations 1 §5.2: "not additive" values replace). -/
 def add (k : Kind) (underlying value : Value) : Value :=
   match k with
-  | .discrete | .visibility => value
+  | .discrete | .visibility | .avoid _ => value
   | _ => match addList underlying value with
     | some r => finish k r
     | none => value
@@ -518,6 +526,11 @@ private def at_ (k : Kind) (a b : String) (p : Int) : String := toText (interpol
 #guard at_ .visibility "visible" "hidden" (one + half) == "hidden"
 #guard at_ .visibility "visible" "hidden" (-half) == "visible"
 #guard at_ .discrete "10px" "20px" 400000000 == "10px"
+#guard at_ (.avoid "none") "none" "block" 100000000 == "block"
+#guard at_ (.avoid "none") "block" "none" 900000000 == "block"
+#guard at_ (.avoid "none") "block" "none" (one + half) == "none"
+#guard at_ (.avoid "none") "none" "block" (-half) == "none"
+#guard at_ (.avoid "none") "inline" "block" 400000000 == "inline"
 #guard at_ .generic "circle(10px at 20px 30px)" "circle(20px at 40px 50px)" half == "circle(15px at 30px 40px)"
 #guard at_ .generic "translate(10px, 20px)" "translate(30px, 40px)" half == "translate(20px, 30px)"
 #guard at_ .generic "rotate(30deg)" "rotate(330deg)" 250000000 == "rotate(105deg)"
