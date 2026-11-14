@@ -469,6 +469,20 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
       | .error e => (h, st, Hosts.Dom.codeOrTrap e)
       | .ok q =>
+        if Hosts.Dom.editOps.contains (a 1) then
+          -- editing (`Hosts.Dom.editOp`): the algorithms read styles, so they get the text of
+          -- the page's style sheets (measure op 40, no layout); 175 changes the tree
+          let (h, f) := if a 1 == 177 then (h, none) else h.measured
+          let sheet := match f with
+            | some f => (f 0 40).getD ""
+            | none => ""
+          let ds := h.dom
+          let h := { h with dom := emptyDomHost }
+          let (dom, answer) := Hosts.Dom.editOp ds sheet (a 0) (a 1) q
+          let reads := if a 1 == 175 then { h.reads with version := h.reads.version + 1 } else h.reads
+          let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
+          ({ h with dom, reads }, st, r)
+        else
         let ds := h.dom
         let h := { h with dom := emptyDomHost }
         let (dom, answer) := Hosts.Dom.domOp ds (a 0) (a 1) q

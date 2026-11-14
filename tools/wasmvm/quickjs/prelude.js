@@ -4246,6 +4246,37 @@
   })) Object.defineProperty(Selection.prototype, k, { get: f, configurable: true, enumerable: true });
   const getSelection = function () { return this === undefined || this === window || this === document ? selection : null; };
   define(Document.prototype, 'getSelection', function () { return this === document ? selection : null; });
+  // ---- Editing (W3C Editing APIs draft): execCommand and the queryCommand methods ----------
+  // The algorithms are the engine's (DOM.Editing, node_query ops 175 to 177); this is the
+  // WebIDL glue. No method throws for a command name: an unknown command answers false or ''.
+  const editQuery = (k, s) => { const r = n.query(0, k, s); return typeof r === 'string' ? r : ''; };
+  for (const [k, f] of Object.entries({
+    execCommand(commandId, showUI = false, value = '') {
+      needArgs(arguments, 1, 'execCommand');
+      if (this !== document) return false;
+      return selChanging(() => editQuery(175, String(commandId) + '\u0000' + String(value)) === '1')();
+    },
+    queryCommandEnabled(commandId) { needArgs(arguments, 1, 'queryCommandEnabled'); return this === document && editQuery(176, 'e\u0000' + String(commandId)) === '1'; },
+    queryCommandIndeterm(commandId) { needArgs(arguments, 1, 'queryCommandIndeterm'); return this === document && editQuery(176, 'i\u0000' + String(commandId)) === '1'; },
+    queryCommandState(commandId) { needArgs(arguments, 1, 'queryCommandState'); return this === document && editQuery(176, 's\u0000' + String(commandId)) === '1'; },
+    queryCommandSupported(commandId) { needArgs(arguments, 1, 'queryCommandSupported'); return editQuery(176, 'u\u0000' + String(commandId)) === '1'; },
+    queryCommandValue(commandId) { needArgs(arguments, 1, 'queryCommandValue'); return this === document ? editQuery(176, 'v\u0000' + String(commandId)) : ''; },
+  })) define(Document.prototype, k, f);
+  Object.defineProperty(Document.prototype, 'designMode', {
+    get() { return this === document ? editQuery(177, 'd') : 'off'; },
+    set(v) { v = String(v).toLowerCase(); if (this === document && (v === 'on' || v === 'off')) n.query(0, 177, v === 'on' ? 'd1' : 'd0'); },
+    configurable: true, enumerable: true });
+  if (!('contentEditable' in HTMLElement.prototype)) Object.defineProperty(HTMLElement.prototype, 'contentEditable', {
+    get() { const r = n.query(nodeId(this), 177, 'c'); return typeof r === 'string' ? r : 'inherit'; },
+    set(v) {
+      v = String(v).toLowerCase();
+      if (v === 'inherit') this.removeAttribute('contenteditable');
+      else if (v === 'true' || v === 'false' || v === 'plaintext-only') this.setAttribute('contenteditable', v);
+      else throw new DOMException("The value provided ('" + v + "') is not one of 'true', 'false', 'plaintext-only', or 'inherit'.", 'SyntaxError');
+    },
+    configurable: true, enumerable: true });
+  if (!('isContentEditable' in HTMLElement.prototype)) Object.defineProperty(HTMLElement.prototype, 'isContentEditable', {
+    get() { return n.query(nodeId(this), 177, 'i') === '1'; }, configurable: true, enumerable: true });
   // ---- NodeIterator and TreeWalker (DOM §6) -------------------------------------------------
   const NodeFilter = function NodeFilter() { throw new TypeError('Illegal constructor'); };
   consts(NodeFilter, { FILTER_ACCEPT: 1, FILTER_REJECT: 2, FILTER_SKIP: 3, SHOW_ALL: 0xFFFFFFFF, SHOW_ELEMENT: 0x1,

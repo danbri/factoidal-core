@@ -2020,10 +2020,17 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
     let (flat,rules,treeScope) := flatView kept dom {medium := medium request} rules
     Rendering.CSS.computeFor treeScope flat rules textScale state
+  -- 40: the text of the document's style sheets, with no layout: the editing algorithms
+  -- (`Hosts.Dom.editOp`, `document.execCommand`) read the styles of nodes from it
+  let sheetText : Thunk String := Thunk.mk fun _ =>
+    match WebAccept.accept (WebAccept.mode request) fun m => sheetsIn m dom request {medium := medium request} with
+    | .ok (sheets,_) => sheetSource sheets
+    | .error _ => ""
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
   -- 23: the `@font-face` faces of the page and the state of each (`document.fonts`)
   fun node op => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
     else if op == 23 then some (fontFacesAnswer h dom request)
+    else if op == 40 then some sheetText.get
     else if op == 20 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's

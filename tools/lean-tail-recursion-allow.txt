@@ -2287,3 +2287,10 @@ L4Factoidal_Foafos_GuestContract_pathOk  # (s) specification only: the path chec
 L4Factoidal_Foafos_GuestContract_naiveOk  # (s) specification only: the contract text's literal path check, for the naive_escape #guard (gap 5) only; never executed
 L4Factoidal_Foafos_GuestContract_urlDot  # (s) specification only: String.toLower of one segment, for segOk; the executed check is the path check in foafos @foafos/host-lite (to be written)
 L4Factoidal_Foafos_GuestContract_urlDotDot  # (s) specification only: String.toLower of one segment, for segOk; the executed check is the path check in foafos @foafos/host-lite (to be written)
+# --- DOM.Editing (execCommand, 2026-11-14)
+L4Factoidal_DOM_Editing_setDecl  # (c) one frame per declaration of one style attribute; parseDecls reads at most maxDecls (1024)
+L4Factoidal_DOM_Editing_removeDecl  # (c) as setDecl: at most maxDecls (1024) declarations
+L4Factoidal_DOM_Editing_isEditableF  # (b) one call per ancestor of the node (the walk up to the editing host); fuel is the arena size
+L4Factoidal_DOM_Editing_isCollapsedBlockPropF  # (b) one call per level of the subtree of an inline element ("collapsed block prop" of the editing draft); fuel is the arena size
+L4Factoidal_DOM_Editing_isEffectivelyContainedF  # (b) one call per level of the subtree of the node ("effectively contained" of the editing draft); fuel is the arena size
+L4Factoidal_DOM_Editing_forceValue  # (b) one call per level of the subtree of the node ("force the value" of the editing draft recurses on children); fuel is the arena size
