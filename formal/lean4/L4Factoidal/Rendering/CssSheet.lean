@@ -13,6 +13,7 @@ and `insertRule` refuses it with a SyntaxError): the sheet shows what the engine
 -/
 import L4Factoidal.Rendering.CssValues.Declaration
 import L4Factoidal.DOM.Selectors
+import L4Factoidal.Rendering.MediaQuery
 
 namespace L4Factoidal.Rendering.CssSheet
 open L4Factoidal.Rendering.CssValues
@@ -278,6 +279,34 @@ def preludeText (s : String) : String :=
 
 def indent (s : String) : String := "  " ++ s.replace "\n" "\n  "
 
+/-- The text of a media query list split at its top-level commas. A loop over the
+characters (a tail call). -/
+def topCommaPieces (cs : List Char) (depth : Nat) (cur : String) (acc : List String) : List String :=
+  match cs with
+  | [] => (cur :: acc).reverse
+  | c :: rest =>
+    if c == ',' && depth == 0 then topCommaPieces rest depth "" (cur :: acc)
+    else if c == '(' || c == '[' || c == '{' then topCommaPieces rest (depth + 1) (cur.push c) acc
+    else if c == ')' || c == ']' || c == '}' then topCommaPieces rest (depth - 1) (cur.push c) acc
+    else topCommaPieces rest depth (cur.push c) acc
+
+/-- The media query list of an `@media` prelude as CSSOM shows it (Media Queries 4 §3,
+CSSOM §4.2): a query with a syntax error is `not all`, the others as written in canonical
+form. -/
+def mediaListText (prelude : String) : String :=
+  let ts := MediaQuery.tokenize prelude.toList "" []
+  if ts.isEmpty then prelude else
+  let bad := (MediaQuery.groups ts).map fun (b, items) => (MediaQuery.query b items).malformed
+  let pieces := (topCommaPieces prelude.toList 0 "" []).map fun t => t.trimAscii.toString
+  if pieces.length != bad.length then prelude
+  else ", ".intercalate ((pieces.zip bad).map fun (t, m) => if m then "not all" else t)
+
+#guard mediaListText "screen, only (orientation)" == "screen, not all"
+#guard mediaListText "not and" == "not all" && mediaListText "layer" == "not all"
+#guard mediaListText "(min-width: 100px) and screen" == "not all"
+#guard mediaListText "screen and (min-width: 100px), print" == "screen and (min-width: 100px), print"
+#guard mediaListText "(orientation) and not (orientation)" == "not all"
+
 /-- The at-rules with a block of rules, and `CSSRule.type` of each (0 where CSSOM gives no
 number). -/
 def groupRules : List (String × String × Nat) :=
@@ -302,6 +331,7 @@ def ruleOf : Nat → RawRule → Option Rule
     | '@' :: rest =>
       let name := lower (String.ofList (rest.takeWhile isNameChar))
       let after := preludeText (String.ofList (rest.dropWhile isNameChar))
+      let after := if name == "media" then mediaListText after else after
       let head := "@" ++ name ++ (if after == "" then "" else " " ++ after)
       match raw.body with
       | none =>
@@ -444,7 +474,7 @@ def sheetOp (q : String) : String :=
 #guard (rulesOf "a { color: RED } b{}").map (·.cssText) == ["a { color: red; }", "b { }"]
 #guard (rulesOf "a { color: red; } /* x */ @media screen { b { top: 0 } }").map (·.kind) == ["Style", "Media"]
 #guard (rulesOf "@media (MIN-WIDTH:100px) and screen { b { top: 0 } }").map (·.cssText) ==
-  ["@media (min-width: 100px) and screen {\n  b { top: 0px; }\n}"]
+  ["@media not all {\n  b { top: 0px; }\n}"]
 #guard (rulesOf "@import url(a.css); a{}").map (·.kind) == ["Import", "Style"]
 #guard (rulesOf "a:nonsense { } b { }").map (·.prelude) == ["b"]
 #guard (rulesOf "a{b:c;} garbage; d{}").length == 2
