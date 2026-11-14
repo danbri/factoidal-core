@@ -776,6 +776,27 @@ theorem clampSpan_none (n : Nat) : clampSpan none n ≤ 10000 := by
 def leading (starts : List (Option Int)) : Nat :=
   starts.foldl (fun m s => match s with | some v => max m (-v).toNat | none => m) 0
 
+theorem leading_go_le (starts : List (Option Int)) (m b : Nat) (hm : m ≤ b)
+    (h : ∀ s ∈ starts, ∀ v, s = some v → -(b : Int) ≤ v) :
+    starts.foldl (fun m s => match s with | some v => max m (-v).toNat | none => m) m ≤ b := by
+  induction starts generalizing m with
+  | nil => exact hm
+  | cons x xs ih =>
+    simp only [List.foldl_cons]
+    apply ih
+    · cases x with
+      | none => exact hm
+      | some v =>
+        have := h (some v) List.mem_cons_self v rfl
+        simp only; omega
+    · intro s hs v hv; exact h s (List.mem_cons_of_mem _ hs) v hv
+
+/-- Kind: resource bound. Says: when every start line is at or after `-b`, the implicit
+grid has at most `b` tracks before the explicit grid; with clamped items, `b = maxLine`. -/
+theorem leading_le (starts : List (Option Int)) (b : Nat)
+    (h : ∀ s ∈ starts, ∀ v, s = some v → -(b : Int) ≤ v) : leading starts ≤ b :=
+  leading_go_le starts 0 b (Nat.zero_le _) h
+
 /-- The items in tracks of the implicit grid, and the implicit tracks added before the
 explicit rows and columns. -/
 def shift (raw : List RawItem) : List Item × Nat × Nat :=
