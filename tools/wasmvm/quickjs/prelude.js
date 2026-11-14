@@ -8590,8 +8590,9 @@
   // An interface's attributes, operations and constants are enumerable own properties of its
   // interface prototype object (of the interface object when static), and the prototype's
   // class string is the interface's name. The classes above are JavaScript classes, whose
-  // members are not enumerable: one pass sets both for every interface on the global. It
-  // runs when the prelude runs (once for the engine, not for each page).
+  // members are not enumerable: one pass sets both for every interface on the global, names
+  // the accessor functions, and puts the interface check in front of a getter that lacks it.
+  // It runs when the prelude runs (once for the engine, not for each page).
   for (const name of Object.getOwnPropertyNames(globalThis)) {
     if (esGlobals.has(name) || !/^[A-Z]/.test(name)) continue;
     const gd = Object.getOwnPropertyDescriptor(globalThis, name);
@@ -8602,10 +8603,33 @@
     if (P === null || typeof P !== 'object') continue;
     if (C.name === name && !Object.prototype.hasOwnProperty.call(P, Symbol.toStringTag))
       Object.defineProperty(P, Symbol.toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
+    // The window and the worker scopes are global objects: their attributes are read with
+    // no `this`, so they keep no check.
+    const globalInterface = name === 'Window' || name.endsWith('GlobalScope');
     for (const k of Object.getOwnPropertyNames(P)) {
       if (k === 'constructor') continue;
       const pd = Object.getOwnPropertyDescriptor(P, k);
-      if (pd.configurable && !pd.enumerable) { pd.enumerable = true; Object.defineProperty(P, k, pd); }
+      if (!pd.configurable) continue;
+      let changed = false;
+      if (!pd.enumerable) { pd.enumerable = true; changed = true; }
+      if (typeof pd.get === 'function') {
+        // An attribute getter throws a TypeError for a `this` that is not an object of the
+        // interface (Web IDL §3.7.6). Most getters do already (they read the object's state);
+        // one that answers for a plain object gets the check in front. Asked once, here.
+        if (!globalInterface) {
+          let throws = false;
+          try { pd.get.call({}); } catch (e) { throws = e instanceof TypeError; }
+          if (!throws) {
+            const g = pd.get;
+            pd.get = function () { if (!(this instanceof C)) throw new TypeError('Illegal invocation'); return g.call(this); };
+            changed = true;
+          }
+        }
+        // the names of the accessor functions: "get x" and "set x" (Web IDL §3.7.6)
+        if (pd.get.name !== 'get ' + k) Object.defineProperty(pd.get, 'name', { value: 'get ' + k, configurable: true });
+        if (typeof pd.set === 'function' && pd.set.name !== 'set ' + k) Object.defineProperty(pd.set, 'name', { value: 'set ' + k, configurable: true });
+      }
+      if (changed) Object.defineProperty(P, k, pd);
     }
     for (const k of Object.getOwnPropertyNames(C)) {
       if (k === 'prototype' || k === 'length' || k === 'name') continue;
