@@ -13323,7 +13323,7 @@
   // dispatched. Lean asks for the frame (callback ANIMATION_FRAME) while its animations
   // need one (pending, running, or with events to look for); a script object asks through
   // op 67 "ask" when a call left its animation pending or running.
-  const ANIMATION_FRAME = 0x7FFFFFF1;
+  const ANIMATION_FRAME = 0x7FFFFFF2;
   let animEvents = [];
   const askAnimFrame = () => { op(0, 67, 'ask'); };
   const onAnimFrame = () => {
