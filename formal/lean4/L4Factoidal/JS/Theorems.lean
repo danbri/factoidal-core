@@ -262,4 +262,32 @@ theorem charge_step {H : Type} (h : HeapOf H) (k : Nat) (hk : k ≠ 0) (hge : ¬
 step charge, one step for 64 elements, is within one run's budget of a page (5,000,000 steps). -/
 theorem maxDenseArray_bounds : maxDenseArray < 2 ^ 31 ∧ maxDenseArray / 64 < 5000000 := by decide
 
+/-! ## The string size limit (`checkStrLen`) -/
+
+/-- Kind: a refusal (a safety property of the host process).
+Says: asking for a string of more than `maxStringBytes` bytes always ends in a thrown value
+(the RangeError), never in the string: the continuation that would allocate it does not run.
+Does not say: that every place that makes a string asks (`+`, `+=`, templates, `join`,
+`concat`, `replace`, `repeat` and `padStart` do; that is read from the code and checked by
+`#guard`s), or anything about arrays, whose growth is bounded by the step budget only. -/
+theorem checkStrLen_refuses {H : Type} (h : HeapOf H) (bytes : Nat) (hb : bytes > maxStringBytes) :
+    ∃ v h', (checkStrLen bytes : JSM H Unit).run h = .error (.throw v) h' := by
+  unfold checkStrLen
+  simp only [hb, ↓reduceIte]
+  unfold throwErr
+  simp only [bind, EStateM.bind, EStateM.run, throw, throwThe, MonadExceptOf.throw, EStateM.throw]
+  cases hm : (mkError (H := H) ErrKind.range "Invalid string length") h with
+  | ok v h' => exact ⟨v, h', by simp [hm]⟩
+  | error e h' =>
+    -- `mkError` allocates and sets a property: it does not fail
+    simp [mkError, bind, EStateM.bind, realm, alloc, setHidden, defineOwn, modifyObj, modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet, pure, EStateM.pure, get, getThe, MonadStateOf.get, EStateM.get, modify] at hm
+
+/-- Kind: a pass. Says: within the limit, `checkStrLen` does nothing: the heap and the step
+count are unchanged, so a script that makes no large string pays one comparison. -/
+theorem checkStrLen_passes {H : Type} (h : HeapOf H) (bytes : Nat) (hb : bytes ≤ maxStringBytes) :
+    (checkStrLen bytes : JSM H Unit).run h = .ok () h := by
+  unfold checkStrLen
+  have : ¬ bytes > maxStringBytes := Nat.not_lt.mpr hb
+  simp [this, EStateM.run, pure, EStateM.pure]
+
 end L4Factoidal.JS

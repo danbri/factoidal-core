@@ -290,6 +290,24 @@ def mkError (k : ErrKind) (msg : String) : M Value := do
 def throwErr {α} (k : ErrKind) (msg : String) : M α := do
   throw (.throw (← mkError k msg))
 
+/-- `s` repeated `n` times, by doubling: about log₂ n appends and no list of `n` parts
+(`"a".repeat(2 ** 28)` as a list of parts took gigabytes before the string was made). -/
+def repeatStr (s : String) (n : Nat) : String :=
+  let rec go : Nat → Nat → String → String → String
+    | 0, _, _, acc => acc
+    | fuel + 1, k, cur, acc =>
+      if k == 0 then acc
+      else go fuel (k / 2) (if k / 2 == 0 then cur else cur ++ cur) (if k % 2 == 1 then acc ++ cur else acc)
+  go 64 n s ""
+
+/-- A string of `bytes` bytes may be made: at most `maxStringBytes`, else a RangeError
+("Invalid string length", as engines answer for a string past their limit). Every place that
+makes a string from parts asks first, so no script makes the engine allocate past it:
+`s += s` in a loop, `join`, `concat`, a template, `replace` with `$&` (Test262
+`staging/sm/String/replace-math` asks for 2^36 units and took the process with it). -/
+@[inline] def checkStrLen (bytes : Nat) : M Unit :=
+  if bytes > maxStringBytes then throwErr .range "Invalid string length" else pure ()
+
 def newObject : M Nat := do alloc { proto := .obj (← realm).objectProto }
 
 def newArray (es : Array Value) : M Value := do
@@ -1255,13 +1273,15 @@ def hostNowNs : M Float := do
 
 /-- GetSubstitution (§22.1.3.19.1): `$$`, `$&`, `` $` ``, `$'`, `$n`, `$nn`, `$<name>`. -/
 def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
-    (caps : Array (Option String)) (names : Array (String × Nat)) : String := Id.run do
+    (caps : Array (Option String)) (names : Array (String × Nat)) : Option String := Id.run do
   let r := rep.toList.toArray
   let tailAt := pos + Str.jsLength matched
   let mut out := ""
   let mut i := 0
   for _ in [0:r.size + 1] do
     if i ≥ r.size then break
+    -- `none`: the result is past `maxStringBytes` (each `$&` or `$1` adds a whole match)
+    if out.utf8ByteSize > maxStringBytes then return none
     let c := r[i]!
     if c != '$' || i + 1 ≥ r.size then out := out.push c; i := i + 1; continue
     let d := r[i+1]!
@@ -1288,7 +1308,7 @@ def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
         i := i + 3 + k
       | none => out := out.push '$'; i := i + 1
     else out := out.push '$'; i := i + 1
-  return Str.canonical out
+  return (if out.utf8ByteSize > maxStringBytes then none else some (Str.canonical out))
 
 /-- QuoteJSONString (§25.5.2.3) for surrogates: a code unit of a surrogate that is not part
 of a pair is written as `\\uXXXX`, in lower-case hexadecimal (well-formed JSON.stringify). -/
@@ -1806,12 +1826,16 @@ def binop : Nat → BinOp → Value → Value → M Value
     | .add =>
       match a, b with
       | .num x, .num y => pure (.num (x + y))
-      | .str x, .str y => pure (.str (Str.jsAppend x y))
+      | .str x, .str y => checkStrLen (x.utf8ByteSize + y.utf8ByteSize); pure (.str (Str.jsAppend x y))
       | _, _ =>
         let pa ← toPrim n a "default"
         let pb ← toPrim n b "default"
         match pa, pb with
-        | .str _, _ | _, .str _ => pure (.str (Str.jsAppend (← toStr n pa) (← toStr n pb)))
+        | .str _, _ | _, .str _ =>
+          let sa ← toStr n pa
+          let sb ← toStr n pb
+          checkStrLen (sa.utf8ByteSize + sb.utf8ByteSize)
+          pure (.str (Str.jsAppend sa sb))
         | .big x, .big y => pure (.big (x + y))
         | .big _, _ | _, .big _ => throwErr .type "Cannot mix BigInt and other types, use explicit conversions"
         | _, _ => pure (.num ((← toNum n pa) + (← toNum n pb)))
@@ -2440,6 +2464,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
         let str ← match v with
           | .sym _ => throwErr .type "Cannot convert a Symbol value to a string"
           | _ => toStr n v
+        checkStrLen (out.utf8ByteSize + str.utf8ByteSize)
         out := Str.jsAppend (Str.jsAppend out str) (cooked.getD (i + 1) "")
         i := i + 1
       pure (.str out)
@@ -2599,7 +2624,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       -- a string held by this binding alone is appended to in place: the slot lets go first
       let v ← match old, r with
         | .num p, .num q => pure (.num (p + q))
-        | .str p, .str q => dropSlotStr ctx h i p; pure (.str (Str.jsAppend p q))
+        | .str p, .str q => checkStrLen (p.utf8ByteSize + q.utf8ByteSize); dropSlotStr ctx h i p; pure (.str (Str.jsAppend p q))
         | .str p, .num q => dropSlotStr ctx h i p; pure (.str (Str.jsAppend p (numToString q)))
         | _, _ => binop n .add old r
       assignLocal n ctx x h i v
@@ -2609,7 +2634,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let r ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
       let v ← match old, r with
         | .num p, .num q => pure (.num (p + q))
-        | .str p, .str q => dropNameStr ctx x p; pure (.str (Str.jsAppend p q))
+        | .str p, .str q => checkStrLen (p.utf8ByteSize + q.utf8ByteSize); dropNameStr ctx x p; pure (.str (Str.jsAppend p q))
         | .str p, .num q => dropNameStr ctx x p; pure (.str (Str.jsAppend p (numToString q)))
         | _, _ => binop n .add old r
       assignName n ctx x v
@@ -4319,6 +4344,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let parts ← es.toList.mapM fun v => match v with
         | .undef | .null => pure ""
         | v => toStr n v
+      checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize + sep.utf8ByteSize) 0)
       pure (.str (Str.canonical (sep.intercalate parts)))
     | .arrayIndexOf | .arrayIncludes =>
       let es ← elemsOf n thisV
@@ -4981,7 +5007,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let need := len.toUInt64.toNat - cur
       if need > maxStringBytes then throwErr .range "Invalid string length"
       charge (need / 64)
-      let reps := String.join (List.replicate (need / Str.jsLength fill + 1) fill)
+      let reps := repeatStr fill (need / Str.jsLength fill + 1)
       let pad := substr reps 0 need
       pure (.str (if id_ == .stringPadStart then Str.jsAppend pad s else Str.jsAppend s pad))
     | .stringCodePointAt =>
@@ -5016,10 +5042,14 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         else match indexOfFrom s pat 0 with | some p => [p] | none => []
       let mut out := ""
       let mut last := 0
+      -- each `$&` of the replacement adds the search string: asked before it is made
+      let whole := (replStr.splitOn "$&").length - 1
+      if !fnRepl then checkStrLen (replStr.utf8ByteSize + whole * pat.utf8ByteSize)
       for p in positions do
         out := out ++ substr s last p
         let r ← if fnRepl then toStr n (← callV n a1 .undef #[.str pat, .num (Float.ofNat p), .str s])
           else pure ((replStr.replace "$&" pat).replace "$$" "$")
+        checkStrLen (out.utf8ByteSize + r.utf8ByteSize)
         out := out ++ r
         last := p + Str.jsLength pat
       pure (.str (Str.canonical (out ++ substr s last (Str.jsLength s))))
@@ -5263,6 +5293,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       -- append, so the append is in place when nothing else holds the string, and a loop of
       -- appends is linear (as `dropSlotStr` in the evaluator)
       | .str x, .str y =>
+        checkStrLen (x.utf8ByteSize + y.utf8ByteSize)
         let regs := if dst == a then regs.set! (bp + a) .undef else regs
         vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.str (Str.jsAppend x y))) fregs
       | .str x, .fl =>
@@ -6207,7 +6238,10 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
               for (nm, k) in re.names do defineOwn o nm (.data (capVals.getD (k - 1) .undef) true true true)
               pure #[Value.obj o]
             toStr n (← callV n a1 .undef (#[.str matched] ++ capVals ++ #[.num (Float.ofNat a), .str s] ++ groups))
-          else pure (substitution replStr matched a cs capStrs re.names)
+          else match substitution replStr matched a cs capStrs re.names with
+            | some t => pure t
+            | none => throwErr .range "Invalid string length"
+        checkStrLen (out.utf8ByteSize + rep.utf8ByteSize)
         out := out ++ Str.ofUnitChars (cs.extract last a) ++ rep
         last := b
       pure (.str (out ++ Str.ofUnitChars (cs.extract last cs.size)))
@@ -6666,9 +6700,10 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
           let bytes := c.toUInt64.toNat * s.utf8ByteSize
           if bytes > maxStringBytes then throwErr .range "Invalid string length"
           charge (bytes / 64)
-          pure (.str (Str.canonical (String.join (List.replicate c.toUInt64.toNat s))))
+          pure (.str (Str.canonical (repeatStr s c.toUInt64.toNat)))
         | .stringConcat =>
           let parts ← args.toList.mapM (toStr n)
+          checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize) s.utf8ByteSize)
           pure (.str (Str.canonical (s ++ String.join parts)))
         | .stringSplit =>
           match a0 with

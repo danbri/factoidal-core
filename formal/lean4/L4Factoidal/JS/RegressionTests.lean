@@ -449,4 +449,19 @@ WeakRef's target is never collected and a FinalizationRegistry never calls back.
 #guard out "var t = {}; var w = new WeakRef(t); print(w.deref() === t, Object.prototype.toString.call(w), typeof WeakRef.prototype.deref); try { new WeakRef(1) } catch (e) { print(e.name) } try { WeakRef(t) } catch (e) { print(e.name) } var fr = new FinalizationRegistry(() => {}); var tok = {}; print(fr.register(t, 'held', tok), fr.unregister(tok), fr.unregister(tok), Object.prototype.toString.call(fr)); try { fr.register(t, t) } catch (e) { print(e.name) } try { new FinalizationRegistry(1) } catch (e) { print(e.name) }" == ["true [object WeakRef] function", "TypeError", "TypeError", "undefined true false [object FinalizationRegistry]", "TypeError", "TypeError"]
 #guard out "var m = new Map([[1, 'a']]); print(m.getOrInsert(1, 'x'), m.getOrInsert(2, 'b'), m.getOrInsertComputed(3, k => 'k' + k), m.getOrInsertComputed(3, k => 'no'), m.size, [...m.keys()].join()); var wm = new WeakMap(), k = {}; print(wm.getOrInsert(k, 5), wm.getOrInsertComputed(k, () => 6)); try { wm.getOrInsert(1, 2) } catch (e) { print(e.name) } try { Map.prototype.getOrInsert.call(new Set, 1, 2) } catch (e) { print(e.name) }" == ["a b k3 k3 3 1,2,3", "5 5", "TypeError", "TypeError"]
 
+/-! ## No string past `maxStringBytes`
+
+A script could make the engine allocate without bound: `s += s` in a loop doubles a string at
+one step a turn, and `replace` with `$1` multiplies a match (Test262
+`staging/sm/String/replace-math` asks for 2^36 units; the WPT runner's process ended in the
+middle of that page on 2026-11-14). Concatenation, templates, `join`, `concat` and `replace` now
+ask `checkStrLen` first and throw a RangeError, as `repeat` and `padStart` did; `repeat` builds
+by doubling, not from a list of its parts. -/
+
+#guard out "var s = 'x'; try { while (true) s += s } catch (e) { print(e.name, s.length) } try { var t = 'ab'; for (var i = 0; i < 40; i++) t = t + t } catch (e) { print(e.name, t.length) }" == ["RangeError 268435456", "RangeError 268435456"]
+#guard out "function puff(x, n) { while (x.length < n) x += x; return x.substring(0, n); } var x = puff('1', 1 << 16); var rep = puff('$1', 1 << 14); try { var y = x.replace(/(.+)/g, rep); print(y.length) } catch (e) { print(e.name, e.message) }" == ["RangeError Invalid string length"]
+#guard out "var big = 'y'.repeat(1 << 22); var r = []; for (var f of [() => new Array(128).fill(big).join(''), () => big.concat(...new Array(100).fill(big)), () => { var a = `${big}${big}`; for (var i = 0; i < 7; i++) a = `${a}${a}`; return a }, () => big.replace(big, '$&'.repeat(100))]) { try { f(); r.push('made') } catch (e) { r.push(e.name) } } print(r.join())" == ["RangeError,RangeError,RangeError,RangeError"]
+#guard out "print('abc'.replace('b', '[$&$&]'), 'a-b'.replace(/(\\w)-(\\w)/, '$2$1$&'), 'abc'.repeat(3), 'x'.padStart(7, 'ab'), 'x'.padEnd(6, '-'), ''.repeat(5).length, [1, 2].join('-'), 'a'.concat('b', 1))" == ["a[bb]c baa-b abcabcabc abababx x----- 0 1-2 ab1"]
+#guard repeatStr "ab" 0 == "" && repeatStr "ab" 1 == "ab" && repeatStr "ab" 5 == "ababababab" && repeatStr "" 9 == ""
+
 end L4Factoidal.JS.Tests
