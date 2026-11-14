@@ -76,13 +76,15 @@ def harnessHeap (root : System.FilePath) : IO Heap := do
       | .syntaxError m => m | .threw _ m => m | .halted w => w | .ok => ""
     throw (IO.userError s!"harness failed: {why}")
 
-def runTest (root : System.FilePath) (base : Heap) (path : System.FilePath) : IO Verdict := do
+/-- `force`: `some true` runs the test as strict code, `some false` as sloppy code, `none` by its
+flags (strict only for `onlyStrict`). -/
+def runTest (root : System.FilePath) (base : Heap) (path : System.FilePath) (force : Option Bool := none) : IO Verdict := do
   let src ← IO.FS.readFile path
   let m := parseMeta src
   if m.flags.contains "module" then return .skip "module"
   let isAsync := m.flags.contains "async"
   if m.negPhase == some "resolution" then return .skip "resolution"
-  let strict := m.flags.contains "onlyStrict"
+  let strict := force.getD (m.flags.contains "onlyStrict")
   let raw := m.flags.contains "raw"
   let mut h := if raw then freshHeap else base
   if !raw then
@@ -142,6 +144,42 @@ def test262 (root : System.FilePath) (dirs : List String) (listOut : Option Stri
   IO.println s!"total: {tp} pass ({tneg} of them negative tests), {tf} fail, {ts} skip; run {tp + tf}, {if tp + tf == 0 then 0 else tp * 1000 / (tp + tf)} per mille pass; {t1 - t0} ms"
   if let some out := listOut then IO.FS.writeFile out ("\n".intercalate lines.toList ++ "\n")
 
+/-- The modes Test262 runs a file in (INTERPRETING.md, "Strict Mode"): `onlyStrict` strict,
+`noStrict` and `raw` sloppy, `module` once (as a module), any other file twice, sloppy and strict. -/
+def modesOf (flags : List String) : List Bool :=
+  if flags.contains "onlyStrict" || flags.contains "module" then [true]
+  else if flags.contains "noStrict" || flags.contains "raw" then [false]
+  else [false, true]
+
+#guard modesOf [] = [false, true]
+#guard modesOf ["onlyStrict"] = [true]
+#guard modesOf ["noStrict"] = [false]
+#guard modesOf ["raw"] = [false]
+#guard modesOf ["async"] = [false, true]
+#guard modesOf ["module"] = [true]
+
+/-- `leanjs test262-files ROOT LIST`: each test named in LIST (paths relative to ROOT, one a
+line) in every mode Test262 runs it in; one line a run on stdout as soon as it ends, flushed:
+`PASS|FAIL|SKIP <path> <strict|sloppy> [why]`. A driver that sees the process end before the
+last line knows which test it was on. -/
+def test262Files (root : System.FilePath) (list : String) : IO Unit := do
+  let base ← harnessHeap root
+  let out ← IO.getStdout
+  for rel in ((← IO.FS.readFile list).splitOn "\n").filter (· != "") do
+    let path := root / rel
+    let flags := (parseMeta (← IO.FS.readFile path)).flags
+    for strict in modesOf flags do
+      let mode := if strict then "strict" else "sloppy"
+      out.putStrLn s!"START {rel} {mode}"
+      out.flush
+      let v ← runTest root base path (some strict)
+      let line := match v with
+        | .pass _ => s!"PASS {rel} {mode}"
+        | .fail why => s!"FAIL {rel} {mode} {(why.replace "\n" " ").take 160}"
+        | .skip why => s!"SKIP {rel} {mode} {why}"
+      out.putStrLn line
+      out.flush
+
 def fibSrc : String := "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); } print(fib(24));"
 
 /-- The loop benchmark of `WasmVM/Bench/QuickJS.lean` (`speed: loop and JSON`), the same text. -/
@@ -185,6 +223,9 @@ def main (args : List String) : IO UInt32 := do
       | _ => (rest, none)
     test262 root dirs listOut
     pure 0
+  | ["test262-files", root, list] =>
+    test262Files root list
+    pure 0
   | ["compile-stats", file] =>
     match parseScript (← IO.FS.readFile file) false with
     | .error e => IO.eprintln e; pure 1
@@ -197,7 +238,7 @@ def main (args : List String) : IO UInt32 := do
     timeIt "loop" loopSrc
     pure 0
   | _ =>
-    IO.eprintln "usage: leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | bench"
+    IO.eprintln "usage: leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | test262-files ROOT LIST | bench"
     pure 64
 
 end L4Factoidal.JS.Main
