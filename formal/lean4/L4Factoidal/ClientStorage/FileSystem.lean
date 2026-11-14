@@ -28,10 +28,14 @@ reports.
   docs/designissues/2026-11-14-client-storage.md, "Backends", says what a pod backend must
   prove.
 
+The file pickers of the File System Access API are command `picker`, answered by
+`ClientStorage/Picker.lean` (always refused: no host file is ever handed to a page).
+
 Commands (`web_api` op 201; a path is its names joined by `/`, the root is the empty
 string): see `op`. Answers are tokens: `ok` and values, or `!` + the exception's name.
 -/
 import L4Factoidal.ClientStorage.Core
+import L4Factoidal.ClientStorage.Picker
 
 namespace L4Factoidal.ClientStorage.Fs
 
@@ -189,6 +193,7 @@ def other (quota : Nat) (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
   let tick (tree : Tree) : Shelf := { tree, live := { l with clock := l.clock + 1 } }
   match strAt a 0 with
   | "root" => (s, ok)
+  | "picker" => (s, [S (Picker.answer ((a.toList.drop 1).map fun b => (String.fromUTF8? b).getD ""))])
   | "usage" => (s, ok [N t.usage, N quota])
   | "same" => (s, ok [S (if strAt a 1 == strAt a 3 && strAt a 2 == strAt a 4 then "1" else "0")])
   | "resolve" =>
@@ -447,6 +452,8 @@ private def answers (s : Shelf) (cmds : List (List String)) : Shelf × List Stri
 
 private def s1 : Shelf := (answers {} [["get", "", "dir", "d", "1"], ["get", "dir", "a.txt", "f", "1"], ["get", "", "b", "f", "1"]]).1
 #guard (answers {} [["get", "", "dir", "d", "1"], ["get", "dir", "a.txt", "f", "1"], ["get", "", "b", "f", "1"]]).2 == ["ok", "ok", "ok"]
+-- the pickers: refused, and the shelf is unchanged
+#guard (answers s1 [["picker", "open", "0", "", ""], ["picker", "save", "1", "", ""], ["list", ""]]).2 == ["!SecurityError", "!TypeError", "ok dir d b f"]
 #guard (answers s1 [["list", ""], ["list", "dir"], ["list", "nope"]]).2 == ["ok dir d b f", "ok a.txt f", "!NotFoundError"]
 #guard (answers s1 [["get", "", "dir", "f", "0"], ["get", "", "b", "d", "1"], ["get", "", "zz", "f", "0"], ["get", "nope", "x", "f", "1"]]).2 ==
   ["!TypeMismatchError", "!TypeMismatchError", "!NotFoundError", "!NotFoundError"]

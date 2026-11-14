@@ -7773,7 +7773,36 @@
     if (typeof document !== 'undefined')
       StorageManager.prototype.persist = function persist() { return later(() => { if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.persist'); return text(call(202, ['persist'], 'StorageManager.persist')[0]) === '1'; }); };
     idl(StorageManager, 'StorageManager');
-    return { manager: make(StorageManager, {}), classes: { FileSystemHandle, FileSystemFileHandle, FileSystemDirectoryHandle, FileSystemWritableFileStream,
+    // The file pickers (File System Access): the options as fields for Lean (ClientStorage/Picker.lean),
+    // which checks them and refuses every call; no host file or directory is handed to a page.
+    const pickerCall = (kind, what, options) => later(() => {
+      if (options !== undefined && options !== null && typeof options !== 'object' && typeof options !== 'function')
+        throw new TypeError(`Failed to execute '${what}': the options are not a dictionary.`);
+      const o = options ?? {}, f = ['picker', kind, o.excludeAcceptAllOption ? '1' : '0'];
+      const id = o.id, startIn = o.startIn;
+      f.push(startIn === undefined ? '' : startIn instanceof FileSystemHandle ? 'h' : 'w:' + String(startIn));
+      f.push(id === undefined ? '' : 'i:' + String(id));
+      if (kind !== 'directory' && o.types !== undefined) {
+        for (const t of o.types) {
+          f.push('t');
+          const accept = t == null ? undefined : t.accept;
+          if (accept == null) continue;
+          for (const m of Object.keys(accept)) {
+            f.push('m:' + String(m));
+            const v = accept[m];
+            for (const e of (typeof v === 'string' ? [v] : Array.from(v))) f.push('e:' + String(e));
+          }
+        }
+      }
+      call(201, f, what);
+      throw new DOMException(`Failed to execute '${what}': no file was chosen.`, 'AbortError');
+    });
+    const pickers = {
+      showOpenFilePicker: function showOpenFilePicker(options = undefined) { return pickerCall('open', 'showOpenFilePicker', options); },
+      showSaveFilePicker: function showSaveFilePicker(options = undefined) { return pickerCall('save', 'showSaveFilePicker', options); },
+      showDirectoryPicker: function showDirectoryPicker(options = undefined) { return pickerCall('directory', 'showDirectoryPicker', options); },
+    };
+    return { manager: make(StorageManager, {}), pickers, classes: { FileSystemHandle, FileSystemFileHandle, FileSystemDirectoryHandle, FileSystemWritableFileStream,
       FileSystemSyncAccessHandle, StorageManager } };
   };
   let fsMade;
@@ -7783,6 +7812,8 @@
   };
   for (const name of ['FileSystemHandle', 'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle',
     'StorageManager']) lazy(name, () => fsApi()?.classes[name]);
+  // The pickers are exposed in windows only (a worker's scope drops names not in workerGlobals).
+  for (const name of ['showOpenFilePicker', 'showSaveFilePicker', 'showDirectoryPicker']) lazy(name, () => fsApi()?.pickers[name]);
   // ==== end File System API ======================================================================
 
   // ==== Web Locks API ============================================================================
