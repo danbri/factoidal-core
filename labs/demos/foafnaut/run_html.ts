@@ -293,8 +293,8 @@ async function main() {
   // §13.2.3.2's table of suggested defaults (WHATWG.Encoding.Sniff.localeEncoding).
   let encodingSetting="";const systemLocale=navigator.language??"";
   setPageDecoding({fallback:encodingSetting,locale:systemLocale});
-  // A window shows a page before its images are in and draws it again with them. Runs that
-  // compare frames or replay input (checks, sweeps, commands, printing) wait for the images.
+  // A window shows a page that runs no script before its images are in and draws it again with
+  // them. Runs that compare frames or replay input (checks, sweeps, commands, printing) wait.
   setImagesAfterFirstFrame(!check&&!checkAll&&!sweep&&!commands&&!pasted&&!printPDF);
   const sessionEngines=new Map<number,string>();
   // Lean's plan, from the engine that runs the scripts (the worker's); the plans of the
@@ -399,22 +399,23 @@ async function main() {
   let liberal=!cliStrict;
   // The start page has a script. A host that can run no page script (the Wasm engine with no
   // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
-  const firstPage=prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
+  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
     if(!startDefault)throw error;
     console.log(JSON.stringify({type:"native-html-start-fallback",url,to:indexURL,reason:String(error instanceof Error?error.message:error)}));
     return prepareHTML(lean,indexURL,undefined,undefined,{liberal});
-  });
-  // The first call of the main-thread engine costs 0.4 to 0.5 s (the engine's own start on this
-  // thread). It is made here, while the page is on its way, and not after the page is ready,
-  // where it stood between the page and its first frame.
-  try{engine.historyPush({entries:[],index:0},"about:blank");}catch{/* the first real call says why */}
-  let document=await firstPage,width=1280,height=800;
+  }),width=1280,height=800;
   // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
   // It is not shown (the window's size is not known yet), so it asks for no CPU probe, as an
   // interactive frame asks for none: the probe draws the page's SVG on the CPU, 9 s of the 14 s
   // to the first frame of a page with a dozen inline icons. Runs that check every frame keep it.
   const firstView:PageView&{checks?:boolean}=check||checkAll||(!idleChecksOnly&&(!!sweep||!!commands))?{}:{checks:false};
-  let frame:HTMLArtifact=await document.compile(width,height,firstView);
+  const firstFrame=Promise.resolve(document.compile(width,height,firstView));
+  // The first call of the main-thread engine costs 0.4 to 0.6 s (the engine's own start on this
+  // thread). It was the history entry made after this compile, between the page and its first
+  // frame; it is made here, while the worker compiles, when this thread only waits. (While
+  // the page is fetched it would hold up the loader, which works through this thread.)
+  if(worker)try{engine.historyPush({entries:[],index:0},"about:blank");}catch{/* the first real call says why */}
+  let frame:HTMLArtifact=await firstFrame;
   console.log(JSON.stringify({type:"native-html-loaded",url:document.url,primitives:frame.primitiveCount,links:frame.webRender.links.length,width,height}));
   if(check){
     // Synthetic limits exercise only the published planner ABI. Window rendering
