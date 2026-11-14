@@ -9679,7 +9679,17 @@
         });
       }
       getUniqueId() { return later(() => { const s = st(this, 'FileSystemHandle.getUniqueId'); return (s.dir ? 'd:' : 'f:') + s.path; }); }
+      // File System Access: the permission of a handle (Lean's answer: the origin private file
+      // system's handles are the page's own).
+      queryPermission(descriptor = undefined) { return permission(this, descriptor, 'FileSystemHandle.queryPermission'); }
+      requestPermission(descriptor = undefined) { return permission(this, descriptor, 'FileSystemHandle.requestPermission'); }
     }
+    const permission = (h, descriptor, what) => later(() => {
+      st(h, what);
+      const d = dict(descriptor, what), mode = d.mode === undefined ? 'read' : String(d.mode);
+      if (mode !== 'read' && mode !== 'readwrite') throw new TypeError(`Failed to execute '${what}': '${mode}' is not a valid FileSystemPermissionMode.`);
+      return text(call(201, ['perm', mode], what)[0]);
+    });
     idl(FileSystemHandle, 'FileSystemHandle');
     class FileSystemFileHandle extends FileSystemHandle {
       constructor() { super(); }

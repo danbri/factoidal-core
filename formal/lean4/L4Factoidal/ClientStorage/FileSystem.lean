@@ -193,6 +193,9 @@ def other (quota : Nat) (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
   let tick (tree : Tree) : Shelf := { tree, live := { l with clock := l.clock + 1 } }
   match strAt a 0 with
   | "root" => (s, ok)
+  -- File System Access `queryPermission`/`requestPermission`: every handle here is of the origin
+  -- private file system of the caller's own storage key, so read and readwrite are granted
+  | "perm" => (s, ok [S (if strAt a 1 == "read" || strAt a 1 == "readwrite" then "granted" else "denied")])
   | "picker" => (s, [S (Picker.answer ((a.toList.drop 1).map fun b => (String.fromUTF8? b).getD ""))])
   | "usage" => (s, ok [N t.usage, N quota])
   | "same" => (s, ok [S (if strAt a 1 == strAt a 3 && strAt a 2 == strAt a 4 then "1" else "0")])
@@ -452,6 +455,7 @@ private def answers (s : Shelf) (cmds : List (List String)) : Shelf × List Stri
 
 private def s1 : Shelf := (answers {} [["get", "", "dir", "d", "1"], ["get", "dir", "a.txt", "f", "1"], ["get", "", "b", "f", "1"]]).1
 #guard (answers {} [["get", "", "dir", "d", "1"], ["get", "dir", "a.txt", "f", "1"], ["get", "", "b", "f", "1"]]).2 == ["ok", "ok", "ok"]
+#guard (answers s1 [["perm", "read"], ["perm", "readwrite"], ["perm", "x"]]).2 == ["ok granted", "ok granted", "ok denied"]
 -- the pickers: refused, and the shelf is unchanged
 #guard (answers s1 [["picker", "open", "0", "", ""], ["picker", "save", "1", "", ""], ["list", ""]]).2 == ["!SecurityError", "!TypeError", "ok dir d b f"]
 #guard (answers s1 [["list", ""], ["list", "dir"], ["list", "nope"]]).2 == ["ok dir d b f", "ok a.txt f", "!NotFoundError"]
