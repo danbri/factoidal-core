@@ -1,0 +1,5 @@
+# Exceptions to tools/aes-gate.py: `<check> <path>  # reason`. A path ending in / is a directory.
+# Checks: tables, round-functions, entry-points. Rule: skills/aes-hardware-only/SKILL.md.
+entry-points third_party/testing/   # vendored test suites: tests and vectors for AES, not implementations
+entry-points tests/                 # test drivers and vectors; aes-diff.mjs calls the host's WebCrypto and the Vale probe
+entry-points formal/lean4/lakefile.lean   # a comment names the extern family of Crypto/AesGcmNative.lean

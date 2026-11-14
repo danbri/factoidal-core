@@ -1679,6 +1679,9 @@ session.
 - [`crypto-policy`](skills/crypto-policy/SKILL.md) — never roll our
   own crypto; HACL\* adoption order for the hash/signature
   `assume val`s (#63), and the wasm compatibility gate.
+- [`aes-hardware-only`](skills/aes-hardware-only/SKILL.md) — AES only as HACL\*'s verified assembly on the CPU's AES
+  instructions, refused elsewhere; never a table or hand-written AES; theorems in `Crypto/AesGcmNative.lean`, gate
+  `tools/aes-gate.py`.
 - [`lean-risk-flags`](skills/lean-risk-flags/SKILL.md) — code resting on
   something unproved or unverified (our own crypto, a pure hash on data of
   unknown sensitivity, a silent fallback) takes a risk token, runs only

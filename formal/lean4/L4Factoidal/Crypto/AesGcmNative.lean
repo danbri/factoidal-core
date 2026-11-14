@@ -161,4 +161,70 @@ def nativeOps : AeadOps :=
     AeadOps.unavailable "AES-GCM (HACL* Vale, x86-64)" keyLengths [ivBytes] tagBytes
       refusalMessage
 
+/-! ## Hardware only: no AES output without the CPU's AES instructions
+
+`available` is the answer of the C shim (`ffi/hacl_aesgcm.c`, `l4_hacl_aesgcm_available`): this
+is the x86-64 build with the Vale assembly linked, AND the CPU reports AES-NI, PCLMULQDQ, AVX, SSE
+and MOVBE (EverCrypt's own feature tests). The theorems below say that nothing in this module
+gives AES output unless that answer was `true`, and that every call is refused when it was `false`.
+
+What they do not say, because Lean cannot see it: that the shim's answer is right, and that the
+linked code uses those instructions. That part rests on HACL\* (the Vale assembly is verified
+against a model of the AES-NI instructions, and EverCrypt tests the CPU before it calls it), on
+the pinned hashes of `third_party/hacl/`, and on the gate `tools/aes-gate.py`, which fails the
+build when a table of the software AES (S-box, inverse S-box, T-tables) appears in any source, or
+when an AES entry point exists outside this module's three externs. Rule and reasons:
+`skills/aes-hardware-only/SKILL.md`.
+-/
+
+/-- An encryption that answers was done with `available = true`. -/
+theorem aesGcmEncrypt?_available {key iv aad plain out : ByteArray}
+    (h : aesGcmEncrypt? key iv aad plain = some out) : available = true := by
+  unfold aesGcmEncrypt? at h
+  cases hav : available with
+  | true => rfl
+  | false => simp [hav] at h
+
+/-- A decryption that answers was done with `available = true`. -/
+theorem aesGcmDecrypt?_available {key iv aad ct out : ByteArray}
+    (h : aesGcmDecrypt? key iv aad ct = some out) : available = true := by
+  unfold aesGcmDecrypt? at h
+  cases hav : available with
+  | true => rfl
+  | false => simp [hav] at h
+
+/-- Without the CPU's AES instructions every encryption is refused. -/
+theorem aesGcmEncrypt?_refused (key iv aad plain : ByteArray) (h : available = false) :
+    aesGcmEncrypt? key iv aad plain = none := by
+  simp [aesGcmEncrypt?, h]
+
+/-- Without the CPU's AES instructions every decryption is refused. -/
+theorem aesGcmDecrypt?_refused (key iv aad ct : ByteArray) (h : available = false) :
+    aesGcmDecrypt? key iv aad ct = none := by
+  simp [aesGcmDecrypt?, h]
+
+/-- The instance the callers use (XML Encryption, JWE) says it is available exactly when the
+shim does. -/
+theorem nativeOps_available : nativeOps.available = available := by
+  unfold nativeOps
+  cases hav : available with
+  | true => simp
+  | false => simp [AeadOps.unavailable]
+
+/-- An encryption through the instance that succeeds was done with `available = true`. -/
+theorem nativeOps_encrypt_ok {key iv aad plain out : ByteArray}
+    (h : nativeOps.encrypt key iv aad plain = .ok out) : available = true := by
+  unfold nativeOps at h
+  cases hav : available with
+  | true => rfl
+  | false => simp [hav, AeadOps.unavailable] at h
+
+/-- A decryption through the instance that succeeds was done with `available = true`. -/
+theorem nativeOps_decrypt_ok {key iv aad ct out : ByteArray}
+    (h : nativeOps.decrypt key iv aad ct = .ok out) : available = true := by
+  unfold nativeOps at h
+  cases hav : available with
+  | true => rfl
+  | false => simp [hav, AeadOps.unavailable] at h
+
 end L4Factoidal.Crypto.AesGcmNative

@@ -1,0 +1,27 @@
+# AES gate: no software AES in the tree, and AES has exactly the entry points named in
+# tools/aes-gate.py. Rule and reasons: skills/aes-hardware-only/SKILL.md.
+# Pure Python over `git ls-files`; about half a minute. No build, no secrets.
+
+name: Check AES (hardware only)
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+permissions:
+  contents: read
+
+jobs:
+  aes-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test of the gate
+        run: python3 tools/aes-gate.py --self-test
+      - name: No software AES; AES entry points as listed
+        run: python3 tools/aes-gate.py

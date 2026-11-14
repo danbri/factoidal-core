@@ -246,6 +246,9 @@ Options, sources and the recommended order:
 
 ### AES through WebCrypto on JavaScript hosts (owner, 2026-10-27)
 
+Why AES is never written here, the theorems that tie AES output to the CPU's AES instructions, and
+the gate that keeps a table implementation out of the tree: [`aes-hardware-only`](../aes-hardware-only/SKILL.md).
+
 Owner, 2026-10-27, verbatim: "Ok  yeah ofc sorry - assembly can’t be wasm’d.
 We discussed reverse engineering it to lean but that is perilously close to
 rolling yr own crypto. Why not just WebCrypto everywhere (browser/node or wasm
