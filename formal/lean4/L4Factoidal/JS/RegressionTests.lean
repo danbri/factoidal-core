@@ -649,4 +649,13 @@ private def parses (src : String) : Bool := syn src == "ok"
 
 #guard out "function C(n) { this.made = arguments.length ? n : 'none' } var a = Array.from.call(C, { length: 2, 0: 'x', 1: 'y' }); var b = Array.from.call(C, new Set([1, 2, 3])); var c = Array.of.call(C, 7, 8); print(a.made, a.length, a[1], b.made, b.length, c.made, c[0], c.length, Array.from([1, 2], x => x * 10).join()); var closed = 0; var it = { [Symbol.iterator]() { return { next() { return { value: 1, done: false } }, return() { closed++; return {} } } } }; try { Array.from(it, () => { throw new Error('m') }) } catch (e) { print(e.message, closed) }" == ["2 2 y none 3 2 7 2 10,20", "m 1"]
 
+/-! ## TypedArraySpeciesCreate; typed map and filter read each element in turn -/
+
+#guard out "class F extends Float64Array {} var f = new F([1, 2, 3]); print(f.map(x => x * 2) instanceof F, f.filter(x => x > 1).length, f.slice(1)[0], new Float64Array([1, 2]).map(x => x) instanceof F); var t = new Int8Array([1, 2]); print(t.map((x, i) => { if (i === 0) t[1] = 9; return x }).join()); var u = new Uint8Array(2); u.constructor = { [Symbol.species]: function () { return new BigInt64Array(2) } }; try { u.slice() } catch (e) { print(e.name) }" == ["true 2 2 false", "1,9", "TypeError"]
+#guard out "var arr = [0, , 2]; Object.defineProperty(arr, '20', { get() { return 'x' }, configurable: true }); print(arr.length, arr[20], Array.isArray(arr)); var w = [0, 1, 2]; Object.defineProperty(w, '2', { get() { throw new Error('read') } }); print(w.with(2, 6).join())" == ["21 x true", "0,1,6"]
+
+/-! ## A typed array's [[DefineOwnProperty]] -/
+
+#guard out "var t = new Float64Array([0, 0]); print(Reflect.defineProperty(t, '0', { value: 1 }), t[0], Reflect.defineProperty(t, '2', { value: 1 }), Reflect.defineProperty(t, '-0', { value: 1 }), Reflect.defineProperty(t, '1', { value: 2, writable: false }), Reflect.defineProperty(t, '1', { get() {} }), Reflect.defineProperty(t, '1.5', { value: 1 }), t.hasOwnProperty('1.5'), Reflect.defineProperty(t, 'foo', { value: 1 }), t.foo)" == ["true 1 false false false false false false true 1"]
+
 end L4Factoidal.JS.Tests
