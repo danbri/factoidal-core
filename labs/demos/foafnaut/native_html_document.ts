@@ -8,7 +8,9 @@ import {loadSubresource,newlyListed,takeAnimated,loadImports} from "../../../doc
 /** The view state of a page. Lean applies it; the host only keeps the values. */
 // zoomUnit: the backing pixels for each point, in percent (WebDocument.zoomUnit): Lean lays the page
 // out in points (CSS px) and draws it at the backing scale.
-export type PageView={textScalePercent?:number;zoomUnit?:number;selection?:"all"|number[];shell?:unknown;live?:boolean;find?:{query:string;current:number}};
+// `imagePixels:false` asks for a layout with the images' sizes only (WebDocument.sizesOnly): every image has
+// its place and no pixel is decoded. A window asks so until a page is first shown, then asks with the pixels.
+export type PageView={textScalePercent?:number;zoomUnit?:number;selection?:"all"|number[];shell?:unknown;live?:boolean;find?:{query:string;current:number};imagePixels?:boolean};
 // The most linked style sheets fetched for a page. It was 16 until 2026-11-14: developer.mozilla.org links 18 and
 // lean-lang.org 31, and the rest were drawn without. The engine bounds the sheets' text (WebDocument.sheetsIn, 2 MiB).
 const MAX_RESOURCES=64, MAX_RESOURCE_BYTES=2*MAX_SOURCE_BYTES;

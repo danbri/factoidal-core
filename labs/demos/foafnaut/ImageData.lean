@@ -264,4 +264,69 @@ def Store.addData (store : Store) (used : Nat) (href : String) (k : Nat := 1)
   | .error message => (store.insert href (.error message),used)
   | .ok bytes => store.addBytes used href bytes k vector
 
+/-! ### A store of sizes (2026-11-14)
+
+A layout places an image by its size; only painting needs its pixels. Decoding the images
+of a page before its scripts start and before its first frame cost seconds (w3.org: 8 s
+for three photographs and six SVG files), and none of that work is read by a script's
+layout reads. A store of sizes holds, for each image, its size as the file's first bytes
+give it (`naturalSize`; a vector image's from its reader) and a picture of one
+transparent pixel (`blank`): a layout with it places every image as the layout with the
+decoded store does, and paints nothing for them. No pixel is decoded. -/
+
+/-- The picture of every image in a store of sizes: one transparent pixel. -/
+def blank : Bitmap := {width := 1, height := 1, rgba := ByteArray.mk #[0,0,0,0]}
+
+/-- Kind: resource bound. Says: the picture a store of sizes holds for an image has four
+bytes, whatever the image. -/
+theorem blank_bytes : blank.rgba.size = 4 := rfl
+
+/-- A reader of the size of an image that is none of the raster formats, with nothing
+drawn: none when the bytes are not its format; else the size of the image in CSS pixels,
+then the size of the picture that the `VectorReader` would draw of it (what the image
+takes of the document's budget). -/
+abbrev VectorSizer := ByteArray → Option (Nat × Nat × Nat × Nat)
+
+/-- The size of an image and of its picture: of a raster image both are the size its
+file's first bytes give; else what `vector` reads. -/
+def sizeWith (vector : VectorSizer) (bytes : ByteArray) : Option (Nat × Nat × Nat × Nat) :=
+  match naturalSize bytes with
+  | some (w,h) => some (w,h,w,h)
+  | none => vector bytes
+
+/-- Kind: property. Says: a raster image's size in a store of sizes is the size its file's
+first bytes give, and its picture would have that size. Does not say: that the decoder
+finds the same size (it reads the same header fields; tested). -/
+theorem sizeWith_raster (vector : VectorSizer) (bytes : ByteArray) (w h : Nat)
+    (hs : naturalSize bytes = some (w,h)) : sizeWith vector bytes = some (w,h,w,h) := by
+  simp [sizeWith, hs]
+
+/-- Add one image to a store of sizes under `href`: its picture is `blank` and its size is
+kept as `Store.natural` reads it. The refusals are those of `addBytes` that the size
+decides: an image over `maxImagePixels`, and the document's budget, counted with the
+picture held at factor `k`. An image whose size can not be read is refused. A file that
+`addBytes` refuses for what its later bytes hold is not refused here (it is, when the
+pixels are asked for). -/
+def Store.addSize (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat := 1)
+    (vector : VectorSizer := fun _ => none) : Store × Nat :=
+  match sizeWith vector bytes with
+  | none => (store.insert href (.error "image size is not read: not PNG, JPEG, GIF or SVG"),used)
+  | some (w,h,pw,ph) =>
+    let held := reducedSize pw ph k
+    let size := held.1*held.2
+    if pw*ph > maxImagePixels then
+      (store.insert href (.error s!"image exceeds {maxImagePixels} pixels"),used)
+    else if used+size > maxDocumentPixels then
+      (store.insert href (.error s!"image pixels of the document exceed {maxDocumentPixels}"),used)
+    else
+      let store := store.insert href (.ok (store.size,blank))
+      (store.insert (naturalKey href) (.ok (store.size,{width := w, height := h, rgba := ByteArray.empty})),used+size)
+
+/-- Add one `data:` reference to a store of sizes. -/
+def Store.addSizeData (store : Store) (used : Nat) (href : String) (k : Nat := 1)
+    (vector : VectorSizer := fun _ => none) : Store × Nat :=
+  match dataBytes href with
+  | .error message => (store.insert href (.error message),used)
+  | .ok bytes => store.addSize used href bytes k vector
+
 end NativeImage

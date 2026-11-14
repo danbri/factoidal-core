@@ -506,6 +506,11 @@ private def sheetA := importedSheet "https://e.test/p/a.css" "@import 'sub/b.css
 #guard (WebDocument.facesFetched #[true,false] fun _ => pure #[false,true]).toOption == some #[true,true]
 #guard (WebDocument.facesFetched #[false,false] fun _ => pure #[false,true]).toOption == some #[false,true]
 #guard (WebDocument.facesFetched #[false] fun _ => throw "refused").toOption == none
+-- a request for the images' sizes only
+#guard WebDocument.sizesOnly (WebDocument.withSizes (.object [("url",.string "x")]))
+#guard WebDocument.sizesOnly (WebDocument.withSizes (.object [("imagePixels",.bool true)]))
+#guard !WebDocument.sizesOnly (.object [("url",.string "x")])
+#guard WebDocument.sizesOnly (WebDocument.layoutRequest (WebDocument.withSizes (.object [("url",.string "x")])))
 #guard (WebDocument.importedSheets (json [("imported",.string "bad")])).toOption.isNone
 
 -- The store made ahead of a page's first layout (2026-11-14: a page's scripts start before its
@@ -522,6 +527,34 @@ private def aheadMade := WebRender.storeAhead #[] aheadDom (some "https://e.test
     | .error _ => false
   | none => false
 #guard (WebRender.storeAhead #[] (DOM.parseHtmlDocument "<p>no image</p>") none []).isNone
+-- The store of sizes (2026-11-14): made ahead for a script session, found by a layout that asks
+-- for sizes, and not the store of a layout that asks for the pixels.
+private def aheadSizes := WebRender.storeAhead #[] aheadDom (some "https://e.test/") aheadImages true
+#guard aheadSizes.isSome
+#guard (WebRender.storeKeys aheadDom (some "https://e.test/") true).toOption ==
+  some [WebRender.sizesMark,"https://e.test/b.png","https://e.test/a.svg"]
+#guard match aheadSizes with
+  | some made => match WebRender.makeReplacedIn (WebRender.keepStore #[] made) {} aheadDom (some "https://e.test/") aheadImages #[] true with
+    | .ok (_,_,again,_) => again.isNone
+    | .error _ => false
+  | none => false
+#guard match aheadSizes with
+  | some made => match WebRender.makeReplacedIn (WebRender.keepStore #[] made) {} aheadDom (some "https://e.test/") aheadImages with
+    | .ok (_,_,again,_) => again.isSome
+    | .error _ => false
+  | none => false
+#guard (WebRender.storeAhead #[] (DOM.parseHtmlDocument "<p>no image</p>") none [] true).isNone
+-- in it an image is one transparent pixel with the size the decoded store gives the image
+#guard match (WebRender.pageStore (WebRender.marked true ["https://e.test/a.svg"]) aheadImages).get? "https://e.test/a.svg" with
+  | some (.ok (_,b)) => b.width == 1 && b.height == 1 && b.rgba.size == 4
+  | _ => false
+#guard (WebRender.pageStore (WebRender.marked true ["https://e.test/a.svg"]) aheadImages).natural "https://e.test/a.svg" ==
+  (WebRender.pageStore ["https://e.test/a.svg"] aheadImages).natural "https://e.test/a.svg"
+#guard ((WebRender.pageStore (WebRender.marked true ["https://e.test/a.svg"]) aheadImages).natural "https://e.test/a.svg").isSome
+-- an image with no bytes is refused in both stores
+#guard match (WebRender.pageStore (WebRender.marked true ["https://e.test/none.png"]) aheadImages).get? "https://e.test/none.png" with
+  | some (.error _) => true
+  | _ => false
 -- from a script session's start request: made once, then kept
 private def aheadStart : JSON.Json := json [("action",.string "start"),("layout",json [("url",.string "https://e.test/p/"),
   ("images",.array [json [("key",.string "https://e.test/p/a.svg"),("base64",.string svgFileBase64)]])])]
