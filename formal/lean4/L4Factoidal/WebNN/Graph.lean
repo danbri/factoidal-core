@@ -13,6 +13,7 @@ Bounds: a session holds at most `maxHeld` bytes of constants and tensors and `ma
 objects of each kind; past that a call is refused (the script sees an error), never served.
 -/
 import L4Factoidal.WebNN.Eval
+import L4Factoidal.PageGpu.Model
 
 namespace L4Factoidal.WebNN
 
@@ -30,6 +31,21 @@ structure Node where
   args : List (String × Arg)
   outs : List Nat
   outDescs : List Desc
+  deriving Inhabited
+
+/-- One step of a graph on the GPU path (`WebNN.GpuRun`): a kernel's dispatch, or a copy
+between two of the page's GPU buffers (reshape, identity). -/
+inductive GpuStep where
+  | kernel (pipeline bind groups : Nat)
+  | copy (src dst bytes : Nat)
+  deriving Inhabited
+
+/-- A built graph's plan on the page's GPU (`WebNN.GpuRun.buildGpu`): a buffer for each
+operand it uses, its steps in the graph's order, and every GPU object it made. -/
+structure GpuPlan where
+  bufs : Array (Option Nat)
+  steps : List GpuStep
+  objs : List Nat
   deriving Inhabited
 
 /-- Where an operand's value comes from. -/
@@ -56,6 +72,9 @@ structure Builder where
   needed : Array Bool := #[]
   /-- `MLGraph.[[isDestroyed]]`. -/
   destroyed : Bool := false
+  /-- The plan on the page's GPU, when the context runs on the GPU path and every operator
+  of the graph has a kernel there (`WebNN.GpuRun`); `none`: the CPU reference. -/
+  gpu : Option GpuPlan := none
   deriving Inhabited
 
 structure TensorRec where
@@ -66,6 +85,10 @@ structure TensorRec where
   constant : Bool
   data : ByteArray
   destroyed : Bool := false
+  /-- The page GPU buffer that holds the tensor's value on the GPU path. -/
+  buf : Option Nat := none
+  /-- The value is in `buf` (a GPU dispatch wrote it), not in `data`. -/
+  onGpu : Bool := false
   deriving Inhabited
 
 structure State where
@@ -75,6 +98,17 @@ structure State where
   tensors : Array TensorRec := #[]
   /-- Bytes of constants and tensors held. -/
   held : Nat := 0
+  /-- For each context: does it run on the GPU path (`deviceType: "gpu"` on an embedder that
+  replays page GPU commands). -/
+  gpuCtx : Array Bool := #[]
+  /-- The page's GPU state, lent for one call by the host (`Hosts.Page`, web_api op 140), and
+  the host commands the call made; empty between calls. -/
+  page : L4Factoidal.PageGpu.State := {}
+  out : Array L4Factoidal.PageGpu.HostCmd := #[]
+  /-- Host commands the page may still have waiting (`Hosts.Dom.maxGpuOut` less those waiting). -/
+  room : Nat := 0
+  /-- The next id of a GPU object WebNN makes (above the ids a page script uses). -/
+  nextId : Nat := 1073741824
   deriving Inhabited
 
 /-- The most bytes of constants and tensors a session holds: 256 MiB. -/
@@ -383,7 +417,7 @@ def writeTensor (s : State) (c tid : Nat) (kind : String) (data : ByteArray) : M
   if !t.writable then throw (.type "the tensor is not writable")
   checkSource t.desc kind data.size
   if ctxLost s c then throw (invalidState "the context is lost")
-  pure { s with tensors := s.tensors.setIfInBounds tid { t with data } }
+  pure { s with tensors := s.tensors.setIfInBounds tid { t with data, onGpu := false } }
 
 /-- `MLContext.readTensor(tensor)` and `readTensor(tensor, outputData)`: the tensor's bytes;
 `into` is the byte length of the buffer the page will copy them into, which must hold them. -/
@@ -434,10 +468,12 @@ def run (s : State) (b : Builder) (inputs : List (Nat × ByteArray)) : Except St
 private def namesMatch (given : List String) (wanted : List String) : Bool :=
   given.length == wanted.length && wanted.all given.contains && given.all wanted.contains
 
-/-- `MLContext.dispatch(graph, inputs, outputs)`: the tensors are checked against the graph
-(same context, not destroyed, names and descriptors equal, an output tensor used once and
-not a constant), the graph is computed, and the output tensors take the results. -/
-def dispatch (s : State) (c bid : Nat) (ins outs : List (String × Nat)) : M State := do
+/-- The checks of `MLContext.dispatch(graph, inputs, outputs)`: the tensors are checked
+against the graph (same context, not destroyed, names and descriptors equal, an output
+tensor used once and not a constant). The answer: the graph, and for each input and
+output its operand and tensor. -/
+def checkDispatch (s : State) (c bid : Nat) (ins outs : List (String × Nat)) :
+    M (Builder × List (Nat × Nat) × List (Nat × Nat)) := do
   match s.builders[bid]? with
   | none => throw (.type "not a graph")
   | some b =>
@@ -447,14 +483,15 @@ def dispatch (s : State) (c bid : Nat) (ins outs : List (String × Nat)) : M Sta
     if ctxLost s c then throw (invalidState "the context is lost")
     if !namesMatch (ins.map (·.1)) (b.inputs.map (·.1)) then throw (.type "the inputs are not the inputs of the graph")
     if !namesMatch (outs.map (·.1)) (b.outputs.map (·.1)) then throw (.type "the outputs are not the outputs of the graph")
-    let mut feed : List (Nat × ByteArray) := []
+    let mut feed : List (Nat × Nat) := []
     for (name, tid) in ins do
       let t ← liveTensor s c tid
       let i := (b.inputs.lookup name).getD 0
       if t.desc != b.descs[i]?.getD default then throw (.type s!"the tensor of input '{name}' does not have the input's data type and shape")
       if t.constant then throw (.type s!"the tensor of input '{name}' is a constant tensor")
-      feed := (i, t.data) :: feed
+      feed := (i, tid) :: feed
     let mut seen : List Nat := []
+    let mut res : List (Nat × Nat) := []
     for (name, tid) in outs do
       let t ← liveTensor s c tid
       let i := (b.outputs.lookup name).getD 0
@@ -462,16 +499,28 @@ def dispatch (s : State) (c bid : Nat) (ins outs : List (String × Nat)) : M Sta
       if t.constant then throw (.type s!"the tensor of output '{name}' is a constant tensor")
       if seen.contains tid || ins.any (·.2 == tid) then throw (.type "a tensor is used more than once")
       seen := tid :: seen
-    match run s b feed with
-    | .error m => throw (.dom "OperationError" m)
-    | .ok vals =>
-      let mut s := s
-      for (name, tid) in outs do
-        let i := (b.outputs.lookup name).getD 0
-        match vals[i]?.join, s.tensors[tid]? with
-        | some v, some t => s := { s with tensors := s.tensors.setIfInBounds tid { t with data := v.toBytes } }
-        | _, _ => throw (.dom "OperationError" "an output was not computed")
-      pure s
+      res := (i, tid) :: res
+    pure (b, feed, res)
+
+/-- `MLContext.dispatch(graph, inputs, outputs)` on the CPU reference: after the checks, the
+graph is computed and the output tensors take the results. -/
+def dispatch (s : State) (c bid : Nat) (ins outs : List (String × Nat)) : M State := do
+  let (b, feedIds, res) ← checkDispatch s c bid ins outs
+  let mut feed : List (Nat × ByteArray) := []
+  for (i, tid) in feedIds do
+    let t := s.tensors[tid]?.getD default
+    -- a value the GPU path computed is not in `data` (only a graph of a GPU context reads it)
+    if t.onGpu then throw (.dom "OperationError" "an input tensor's value is on the GPU; this graph runs on the CPU reference")
+    feed := (i, t.data) :: feed
+  match run s b feed with
+  | .error m => throw (.dom "OperationError" m)
+  | .ok vals =>
+    let mut s := s
+    for (i, tid) in res do
+      match vals[i]?.join, s.tensors[tid]? with
+      | some v, some t => s := { s with tensors := s.tensors.setIfInBounds tid { t with data := v.toBytes, onGpu := false } }
+      | _, _ => throw (.dom "OperationError" "an output was not computed")
+    pure s
 
 /-! ## `MLContext.opSupportLimits()` -/
 

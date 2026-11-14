@@ -383,6 +383,13 @@ def gemmKernel (sa sb : Shape) (sc : Option Shape) (alpha beta : Float) (aT bT :
     | none => mulE al (nm "acc")
   Wgsl.finish (foldKernel (if sc.isSome then ["a", "b", "c"] else ["a", "b"]) out kk 0 (f "0.0") step fin)
 
+/-- A data-movement operator: output element `k` copies the source element the index map
+`m` reads (`WebNN.Idx`: transpose, expand, slice, tile, reverse). -/
+def moveKernel (m : Idx) (inShape out : Shape) : Except String Wgsl.Module := do
+  if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
+  if Shape.size inShape == 0 || Shape.size out == 0 then throw "webnn gpu: an empty tensor"
+  Wgsl.finish (kernel ["x"] out (.index (.name "x") (flatIndex m inShape)))
+
 /-- Workgroups to dispatch for `n` output elements. -/
 def groups (n : Nat) : Nat := (n + wg - 1) / wg
 
@@ -418,6 +425,14 @@ def printed : Except String Wgsl.Module → String
 #guard (printed (matmulKernel [2, 70000] [70000, 2] [2, 2])).startsWith "error"
 #guard !(printed (gemmKernel [4, 3] [5, 4] (some [5]) 1.5 (-0.25) true true [3, 5])).startsWith "error"
 #guard (printed (gemmKernel [3, 4] [4, 5] none (0.0 / 0.0) 1.0 false false [3, 5])).startsWith "error"
+-- the printed text of a kernel parses and passes the subset again (the GPU path compiles
+-- kernels from their text, as a page's shader)
+#guard ((binaryKernel "add" [2, 3] [3] [2, 3]).toOption.map fun m => (Wgsl.compile m.print).toOption.isSome) == some true
+#guard ((matmulKernel [2, 3, 4] [4, 5] [2, 3, 5]).toOption.map fun m => (Wgsl.compile m.print).toOption.isSome) == some true
+#guard ((conv2dKernel [1, 4, 8, 8] [6, 2, 3, 3] [1, 6, 8, 8] [1, 1] [1, 1] [1, 1, 1, 1] 2 true).toOption.map fun m => (Wgsl.compile m.print).toOption.isSome) == some true
+#guard ((poolKernel "maxPool2d" [1, 2, 8, 8] [1, 2, 4, 4] [3, 3] [2, 2] [1, 1] [1, 1, 1, 1]).toOption.map fun m => (Wgsl.compile m.print).toOption.isSome) == some true
+#guard ((reduceKernel "reduceMean" [2, 3, 4] [0, 2]).toOption.map fun m => (Wgsl.compile m.print).toOption.isSome) == some true
+#guard ((moveKernel (sliceMap [1, 0] [2, 1] 2) [5, 4] [2, 4]).toOption.map fun m => (Wgsl.compile m.print).toOption.isSome) == some true
 -- the u32 evaluator on the printed coordinate of a slice
 #guard evalU (fun s => if s == "o0" then some 5 else none) (emitC coordName (.add (.lit 2) (.mulLit (.out 0) 3))) == some 17
 

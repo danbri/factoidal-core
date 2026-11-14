@@ -972,6 +972,17 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     ({ h with loop }, st, Hosts.Dom.ret id)
   | "cancel_frame" => ({ h with loop := h.loop.cancelFrame (a 0) }, st, Hosts.Dom.ret 0)
   | "web_api" =>
+    if a 0 == 140 then
+      -- WebNN (`WebNN.GpuRun`): the page's GPU state is lent for the call, so a graph on the GPU
+      -- path makes its objects in the page's own table, under the page's quotas; the host
+      -- commands it makes join the page's (`Hosts.Dom.maxGpuOut` bounds them as a page's own).
+      let nn := { h.web.nn with page := h.dom.gpu, out := #[], room := Hosts.Dom.maxGpuOut - h.dom.gpuOut.size }
+      let dom := { h.dom with gpu := {} }
+      let (web, st, r) := Hosts.WebApi.serve mem args { h.web with nn } st dom.dom
+      let nn := web.nn
+      ({ h with web := { web with nn := { nn with page := {}, out := #[] } },
+                dom := { dom with gpu := nn.page, gpuOut := dom.gpuOut ++ nn.out } }, st, r)
+    else
     let (web, st, r) := Hosts.WebApi.serve mem args h.web st h.dom.dom
     ({ h with web }, st, r)
   | "wasm_call" =>
