@@ -87,7 +87,7 @@ unfrozen items sum to less than 1, at most that fraction of the initial free spa
 def amount (c : Ctx) (l : List St) : Nat :=
   let free := c.room - used l
   let mag := if c.growing then free.toNat else (-free).toNat
-  let fsum := (l.map (factor c.growing)).sum
+  let fsum := total (l.map (factor c.growing))
   if fsum < one then min mag (c.initial * fsum / one) else mag
 
 /-- An item with the signed space it was handed this round. -/
@@ -120,7 +120,7 @@ def totalViolation (c : Ctx) (l : List St) : Int := ((cands c l).map violation).
 /-- A round flexed exactly: some weight was not zero, all of the free space was handed
 out, and the limits moved nothing in total. -/
 def exactRound (c : Ctx) (l : List St) : Bool :=
-  decide (0 < (l.map (weight c.growing)).sum) &&
+  decide (0 < total (l.map (weight c.growing))) &&
   decide ((if c.growing then (amount c l : Int) else -(amount c l : Int)) = c.room - used l) &&
   decide (totalViolation c l = 0)
 
@@ -424,7 +424,7 @@ frozen after it and the outer sizes sum to exactly the room. -/
 theorem round_exact (c : Ctx) (l : List St) (h : exactRound c l = true) :
     (round c l).all (·.frozen) = true ∧ used (round c l) = c.room := by
   unfold exactRound at h
-  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq, total_eq_sum] at h
   obtain ⟨⟨hw, hamt⟩, htv⟩ := h
   constructor
   · unfold round

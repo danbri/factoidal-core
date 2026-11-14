@@ -63,9 +63,22 @@ def mainJustify (c : ContentAlign) (reverse : Bool) (mainStartLeft : Option Bool
 /-- The items in order-modified document order (§5.4): by `order`, then document order.
 With no `order` in use (the usual case) the array is returned as it is. -/
 def orderItems (kids : Children) (items : Array Item) : Array Item :=
-  let keyed := items.mapIdx fun i item => ((kids.style item).align.order, i, item)
+  let keyed := items.map fun item => ((kids.style item).align.order, item)
   if keyed.all (fun k => k.1 == 0) then items
-  else (keyed.qsort fun a b => a.1 < b.1 || (a.1 == b.1 && a.2.1 < b.2.1)).map (·.2.2)
+  else ((keyed.toList.mergeSort fun a b => decide (a.1 ≤ b.1)).map (·.2)).toArray
+
+/-- Kind: structure. Says: ordering by `order` only rearranges the items: each item of
+the container is laid out exactly once. Does not say: that the order is the one of §5.4
+(a stable sort by `order`; tested). -/
+theorem orderItems_perm (kids : Children) (items : Array Item) :
+    (orderItems kids items).toList.Perm items.toList := by
+  unfold orderItems
+  simp only
+  split
+  · exact List.Perm.refl _
+  · have h := (List.mergeSort_perm (items.map fun item => ((kids.style item).align.order, item)).toList
+      (fun a b => decide (a.1 ≤ b.1))).map (·.2)
+    simpa [List.map_map, Function.comp_def] using h
 
 /-- A cross-axis offset from auto margins: `none` when the item has none on that axis. -/
 def autoCrossOffset (startAuto endAuto : Bool) (free : Float) : Option Float :=
@@ -84,7 +97,7 @@ auto margins takes. §9.5: free space goes to auto margins first, else to `justi
 def mainPositions (justify : Flex.Justify) (room gap : Int) (outers : List Int) (autos : List Nat) :
     List (Int × Int) × Int :=
   let free := room - outers.sum
-  let autoCount := autos.sum
+  let autoCount := LU.total autos
   let autoShare : Int := if 0 < free && 0 < autoCount then free / (autoCount : Int) else 0
   let (start, between) := if 0 < autoShare then (0, 0) else Flex.justify justify free outers.length
   let grown := (outers.zip autos).map fun (o, a) => o + autoShare * (a : Int)

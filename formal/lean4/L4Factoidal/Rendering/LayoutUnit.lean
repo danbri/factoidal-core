@@ -49,6 +49,19 @@ theorem clamp_idem (lo : Int) (hi : Option Int) (v : Int) :
     clamp lo hi (clamp lo hi v) = clamp lo hi v := by
   unfold clamp; cases hi <;> simp only <;> omega
 
+/-- The sum of a list of naturals, as a loop (`List.sum` is a recursion on the stack in
+compiled code). -/
+def total (l : List Nat) : Nat := l.foldl (· + ·) 0
+
+theorem foldl_add_eq (l : List Nat) : ∀ a : Nat, l.foldl (· + ·) a = a + l.sum := by
+  induction l with
+  | nil => intro a; simp
+  | cons x rest ih => intro a; simp only [List.foldl_cons, List.sum_cons, ih]; omega
+
+/-- Refinement. Says: the loop computes the sum. -/
+theorem total_eq_sum (l : List Nat) : total l = l.sum := by
+  unfold total; rw [foldl_add_eq]; omega
+
 /-- The share of `space` for weight `w` when the weights still to be served sum to `total`. -/
 def share (space w total : Nat) : Nat := if total = 0 then 0 else space * w / total
 
@@ -82,7 +95,7 @@ each weight in turn takes its proportion of what is left, so the last weight tha
 zero takes all that remains and nothing is lost to rounding. A share differs from the
 exact proportion by less than one unit per earlier item. -/
 def distribute (space : Nat) (weights : List Nat) : List Nat :=
-  (distributeLoop space weights.sum #[] weights).toList
+  (distributeLoop space (total weights) #[] weights).toList
 
 /-- `distribute` as a plain recursion: what the loop computes (`distribute_eq_spec`). Used
 in proofs only; not compiled. -/
@@ -101,7 +114,7 @@ theorem distributeLoop_eq (ws : List Nat) : ∀ (space total : Nat) (acc : Array
 /-- Refinement. Says: the loop computes the plain recursion. -/
 theorem distribute_eq_spec (space : Nat) (ws : List Nat) :
     distribute space ws = distributeSpec space ws.sum ws := by
-  simp [distribute, distributeLoop_eq]
+  simp [distribute, distributeLoop_eq, total_eq_sum]
 
 private theorem distributeSpec_zero (ws : List Nat) : ∀ (space total : Nat),
     ∀ p ∈ ws.zip (distributeSpec space total ws), p.1 = 0 → p.2 = 0 := by
@@ -165,12 +178,12 @@ no unit is lost or made by rounding. Does not say: how close each share is to it
 proportion (within one unit per earlier item, not proved here). -/
 theorem distribute_sum (space : Nat) (ws : List Nat) (h : 0 < ws.sum) :
     (distribute space ws).sum = space := by
-  simp [distribute, distributeLoop_sum ws space #[] h]
+  simp [distribute, total_eq_sum, distributeLoop_sum ws space #[] h]
 
 /-- Lemma. Says: when every weight is zero, nothing is handed out. -/
 theorem distribute_sum_zero (space : Nat) (ws : List Nat) (h : ws.sum = 0) :
     (distribute space ws).sum = 0 := by
-  unfold distribute; rw [h, distributeLoop_sum_zero]; simp
+  unfold distribute; rw [total_eq_sum, h, distributeLoop_sum_zero]; simp
 
 #guard distribute 100 [1, 1, 1] == [33, 33, 34]
 #guard distribute 100 [1, 0, 3] == [25, 0, 75]

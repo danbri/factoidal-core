@@ -1344,13 +1344,14 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     -- box stays pending until the root, whose containing block is the viewport.
     let place (content : Result) (cx cy cw ch : Float) (root : Bool) : Except String Result := do
       if content.pending.isEmpty then return content
-      let keyed := content.pending.mapIdx fun i p => (((styles[p.id]!).pos.zIndex.getD 0 : Int),i,p)
+      let keyed := content.pending.map fun p => (((styles[p.id]!).pos.zIndex.getD 0 : Int),p)
+      -- a stable sort: equal `z-index` keeps tree order
       let ordered := if keyed.all (fun k => k.1 == 0) then keyed
-        else keyed.qsort fun a b => a.1 < b.1 || (a.1 == b.1 && a.2.1 < b.2.1)
+        else (keyed.toList.mergeSort fun a b => decide (a.1 ≤ b.1)).toArray
       let mut below : Result := {}
       let mut above : Result := {}
       let mut kept : Array Pending := #[]
-      for (z,_,p) in ordered do
+      for (z,p) in ordered do
         if (styles[p.id]!).pos.position == .fixed && !root then kept := kept.push p
         else
           let r ← absolute p cx cy cw ch
