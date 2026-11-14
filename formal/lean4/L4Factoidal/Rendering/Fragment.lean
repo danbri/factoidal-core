@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.Style
+import L4Factoidal.Rendering.Floats
 
 /-! The interface between formatting contexts: constraints in, fragments out.
 
@@ -61,6 +62,9 @@ structure Result where
   /-- The part of `height` that is the bottom margin of the box (or of the last block of
   a flow): it collapses with the margin that follows it (CSS 2.1 §8.3.1). -/
   marginBottom : Float := 0
+  /-- The floats of the block formatting context after this fragment (CSS 2.1 §9.5): what
+  the flow that follows must still avoid. Empty for a box that contains its floats. -/
+  floats : Array Floats.Box := #[]
   deriving Repr
 instance : Inhabited Result := ⟨{}⟩
 
@@ -71,7 +75,8 @@ def Result.shift (dx dy : Float) (r : Result) : Result :=
   {r with nodes := if r.nodes.isEmpty then #[] else #[.group none ⟨1,0,0,1,dx,dy⟩ r.nodes.toList],
           boxes := r.boxes.map fun b => {b with x := b.x+dx, y := b.y+dy},
           runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}},
-          pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy}}
+          pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy},
+          floats := r.floats.map fun f => {f with x := f.x+LU.ofPx dx, y := f.y+LU.ofPx dy}}
 
 /-- Two fragments in one: the paint of `b` over that of `a`. The height is `a`'s. -/
 def Result.over (a b : Result) : Result :=
@@ -155,6 +160,17 @@ def collectItems (dom : Dom) (styles : Array Computed) (container : Nat) : Array
         out := out.push (.element k)
   if text.any (fun t => !blankText (dom.get t).data) then out := out.push (.anonymous container text)
   return out
+
+/-- The room beside `floats` for a line or box `h` high at `y`, in a content box from `x`,
+`width` wide: how far its left edge is from `x`, and its width. With no floats: all of it. -/
+def floatBand (floats : Array Floats.Box) (x width y h : Float) : Float × Float :=
+  if floats.isEmpty then (0,width) else
+  let (l,w) := Floats.band floats.toList (LU.ofPx x) (LU.ofPx width) (LU.ofPx y) (LU.ofPx (max h 1))
+  (LU.toPx l-x,LU.toPx w)
+
+/-- The bottom of the lowest float, as a height from `y`; 0 with no float below `y`. -/
+def floatsHeight (floats : Array Floats.Box) (y : Float) : Float :=
+  if floats.isEmpty then 0 else LU.toPx (Floats.below floats.toList (LU.ofPx y))-y
 
 /-- `box-sizing: border-box` (CSS Sizing 3 §3.3) taken out of a style: `width`, `height`
 and their limits as content-box sizes, which is what the layout reads. A percentage
