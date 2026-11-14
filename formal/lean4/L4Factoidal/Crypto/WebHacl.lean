@@ -40,6 +40,12 @@ The curves and the AEAD have no pure-Lean twin (the crypto policy forbids one: t
 touch secrets); they are checked against the standard vectors at run time (record,
 "Vectors").
 
+SHA-3 and SHAKE (`sha3Raw`, HACL*'s `Hacl_Hash_SHA3`, added 2026-11-14) have no pure-Lean
+twin either, so there is no agreement theorem for them and no fallback: where HACL*
+cannot answer, `sha3?` answers `none` and the API refuses. Trusted: HACL*'s proof of
+`Hacl_Hash_SHA3` against FIPS 202. Not checked in Lean: any value it computes (the FIPS 202
+vectors are run at the C level, `tests/crypto/run-kat.sh`, and through WPT).
+
 No `sorry`, no `axiom`, no `partial`.
 -/
 import L4Factoidal.Crypto.WebCrypto
@@ -126,6 +132,45 @@ abbrev ChaChaSealPre (key nonce aad plain : ByteArray) : Prop :=
 abbrev ChaChaOpenPre (key nonce aad sealed : ByteArray) : Prop :=
   key.size = 32 ∧ nonce.size = 12 ∧ aad.size < u32Bound ∧ 16 ≤ sealed.size ∧ sealed.size < u32Bound + 16
 
+/-- An RSA modulus at this boundary: big-endian with no leading zero octet, 1024 to 4096
+bits in whole 64-bit limbs (Hacl_Bignum64's `len` limbs). -/
+abbrev RsaModPre (n : ByteArray) : Prop := n.size % 8 = 0 ∧ 128 ≤ n.size ∧ n.size ≤ 512 ∧ n.get! 0 ≠ 0
+/-- Hacl_Bignum64.mod_exp: the operand is |n| octets, the exponent 1 to |n| octets. -/
+abbrev RsaOpPre (n ex x : ByteArray) : Prop := RsaModPre n ∧ 1 ≤ ex.size ∧ ex.size ≤ n.size ∧ x.size = n.size
+/-- Hacl_RSAPSS.rsapss_sign: SHA-256/384/512 (codes 2-4), e with no leading zero octet,
+the salt at most |n| octets, `msgLen` within the hash's bound. -/
+abbrev RsaPssSignPre (alg : UInt8) (n e d salt msg : ByteArray) : Prop :=
+  RsaModPre n ∧ 2 ≤ alg.toNat ∧ alg.toNat ≤ 4 ∧ 1 ≤ e.size ∧ e.size ≤ n.size ∧ e.get! 0 ≠ 0 ∧
+    1 ≤ d.size ∧ d.size ≤ n.size ∧ salt.size ≤ n.size ∧ msg.size + 128 < u32Bound
+abbrev RsaPssVerifyPre (alg : UInt8) (n e : ByteArray) (saltLen : USize) (sig msg : ByteArray) : Prop :=
+  RsaModPre n ∧ 2 ≤ alg.toNat ∧ alg.toNat ≤ 4 ∧ 1 ≤ e.size ∧ e.size ≤ n.size ∧ e.get! 0 ≠ 0 ∧
+    saltLen.toNat ≤ n.size ∧ sig.size = n.size ∧ msg.size + 128 < u32Bound
+
+/-! ## SHA-3 and SHAKE (FIPS 202) at the boundary -/
+
+/-- The FIPS 202 functions HACL* has at the pin (`Hacl_Hash_SHA3`). cSHAKE with a function
+name or a customization, KMAC, TurboSHAKE and KangarooTwelve are not among them. -/
+inductive Sha3Alg where
+  | sha3_256 | sha3_384 | sha3_512 | shake128 | shake256
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The code `ffi/hacl_webcrypto.c` reads (after the SHA-1 and SHA-2 codes 1-4). -/
+def Sha3Alg.code : Sha3Alg → UInt8
+  | .sha3_256 => 5 | .sha3_384 => 6 | .sha3_512 => 7 | .shake128 => 8 | .shake256 => 9
+
+/-- The digest size in octets of the fixed-length functions; `none` for the two
+extendable-output functions. -/
+def Sha3Alg.fixed : Sha3Alg → Option Nat
+  | .sha3_256 => some 32 | .sha3_384 => some 48 | .sha3_512 => some 64 | _ => none
+
+/-- The most output asked of SHAKE in one call: 16 MiB (a bound on memory, not HACL*'s). -/
+def maxXofBytes : Nat := 16777216
+
+/-- Hacl.Hash.SHA3: the input and output lengths are `uint32_t`; the shim also wants a
+known code and 1 to `maxXofBytes` octets of output. -/
+abbrev Sha3Pre (alg : UInt8) (outLen : UInt32) (msg : ByteArray) : Prop :=
+  5 ≤ alg.toNat ∧ alg.toNat ≤ 9 ∧ msg.size < u32Bound ∧ 1 ≤ outLen.toNat ∧ outLen.toNat ≤ maxXofBytes
+
 /-! ## The externs (`ffi/hacl_webcrypto.c`). Each takes its precondition's proof. -/
 
 @[extern "l4_web_hacl_hash"]
@@ -164,6 +209,18 @@ opaque chachaSealRaw (key nonce aad plain : @& ByteArray) (h : ChaChaSealPre key
 @[extern "l4_web_hacl_chachapoly_open"]
 opaque chachaOpenRaw (key nonce aad sealed : @& ByteArray) (h : ChaChaOpenPre key nonce aad sealed) : ByteArray
 
+@[extern "l4_web_hacl_sha3"]
+opaque sha3Raw (alg : UInt8) (outLen : UInt32) (msg : @& ByteArray) (h : Sha3Pre alg outLen msg) : ByteArray
+
+@[extern "l4_web_hacl_rsa_public"]
+opaque rsaPublicRaw (n e x : @& ByteArray) (h : RsaOpPre n e x) : ByteArray
+@[extern "l4_web_hacl_rsa_private"]
+opaque rsaPrivateRaw (n d x : @& ByteArray) (h : RsaOpPre n d x) : ByteArray
+@[extern "l4_web_hacl_rsapss_sign"]
+opaque rsaPssSignRaw (alg : UInt8) (n e d salt msg : @& ByteArray) (h : RsaPssSignPre alg n e d salt msg) : ByteArray
+@[extern "l4_web_hacl_rsapss_verify"]
+opaque rsaPssVerifyRaw (alg : UInt8) (n e : @& ByteArray) (saltLen : USize) (sig msg : @& ByteArray) (h : RsaPssVerifyPre alg n e saltLen sig msg) : UInt8
+
 /-! ## The wrappers: decide the precondition, call, check the answer's size -/
 
 /-- The answer of an extern when it has the size the primitive writes; `none` (a refusal
@@ -187,6 +244,41 @@ def hmac? (a : HashAlg) (key msg : ByteArray) : Option ByteArray :=
   if h : HmacPre a.code key msg then
     checkSize (hmacRaw a.code key msg h) a.size
   else none
+
+/-- SHA-3 or SHAKE by HACL*, `outLen` octets of it. `none` when HACL* cannot answer: a
+message over its bound, more output than `maxXofBytes`, or a fixed-length function asked
+for another length. There is no second implementation to answer instead
+(`skills/lean-risk-flags` §4: a verified path that cannot answer refuses). No octets of
+output is the empty string, with no call. -/
+def sha3? (a : Sha3Alg) (outLen : Nat) (msg : ByteArray) : Option ByteArray :=
+  if (a.fixed.map (· != outLen)).getD false then none
+  else if outLen = 0 then some ByteArray.empty
+  else if outLen > maxXofBytes then none
+  else if h : Sha3Pre a.code outLen.toUInt32 msg then checkSize (sha3Raw a.code outLen.toUInt32 msg h) outLen
+  else none
+
+/-- Kind: boundary guarantee (output size). Says: an answer of `sha3?` has exactly the
+length asked for. Does not say: that the bytes are the FIPS 202 digest (that is HACL*'s
+proof, trusted at the boundary). -/
+theorem sha3?_size {a : Sha3Alg} {n : Nat} {m out : ByteArray} (h : sha3? a n m = some out) : out.size = n := by
+  unfold sha3? at h
+  split at h
+  · cases h
+  · split at h
+    · rename_i hn; cases h; simp [hn]
+    · split at h
+      · cases h
+      · split at h
+        · exact checkSize_size h
+        · cases h
+
+/-- Kind: boundary guarantee (refusal). Says: a fixed-length SHA-3 function asked for any
+length but its own answers nothing, so SHA3-256 can never be answered truncated or
+extended. Does not say: anything of SHAKE, whose length is the caller's. -/
+theorem sha3?_fixed {a : Sha3Alg} {k n : Nat} {m : ByteArray} (hf : a.fixed = some k) (hn : n ≠ k) :
+    sha3? a n m = none := by
+  unfold sha3?
+  simp [hf, Ne.symm hn]
 
 /-- The hash used by the API: HACL*'s, and the specification where HACL* refuses (never,
 for an argument the API can give; see `hashFast_eq_pure`). -/
@@ -269,6 +361,42 @@ def chachaOpen? (key nonce aad sealed : ByteArray) : Option ByteArray :=
     let out := chachaOpenRaw key nonce aad sealed h
     if out.size = sealed.size - 16 + 1 && out.get! 0 == 1 then some (out.extract 1 out.size) else none
   else none
+
+/-- `x^e mod n` (RSAEP, RSAVP1); `none` unless the sizes fit and HACL* accepts (n odd,
+x < n). -/
+def rsaPublic? (n e x : ByteArray) : Option ByteArray :=
+  if h : RsaOpPre n e x then checkSize (rsaPublicRaw n e x h) n.size else none
+
+/-- `x^d mod n` (RSADP, RSASP1), constant time in d. -/
+def rsaPrivate? (n d x : ByteArray) : Option ByteArray :=
+  if h : RsaOpPre n d x then checkSize (rsaPrivateRaw n d x h) n.size else none
+
+def rsaPssSign? (a : HashAlg) (n e d salt msg : ByteArray) : Option ByteArray :=
+  if h : RsaPssSignPre a.code n e d salt msg then checkSize (rsaPssSignRaw a.code n e d salt msg h) n.size else none
+
+def rsaPssVerify (a : HashAlg) (n e : ByteArray) (saltLen : Nat) (sig msg : ByteArray) : Bool :=
+  if h : RsaPssVerifyPre a.code n e saltLen.toUSize sig msg then rsaPssVerifyRaw a.code n e saltLen.toUSize sig msg h == 1
+  else false
+
+theorem rsaPublic?_size {n e x out : ByteArray} (h : rsaPublic? n e x = some out) : out.size = n.size := by
+  unfold rsaPublic? at h; split at h
+  · exact checkSize_size h
+  · simp at h
+
+theorem rsaPrivate?_size {n d x out : ByteArray} (h : rsaPrivate? n d x = some out) : out.size = n.size := by
+  unfold rsaPrivate? at h; split at h
+  · exact checkSize_size h
+  · simp at h
+
+theorem rsaPssSign?_size {a : HashAlg} {n e d s m out : ByteArray} (h : rsaPssSign? a n e d s m = some out) :
+    out.size = n.size := by
+  unfold rsaPssSign? at h; split at h
+  · exact checkSize_size h
+  · simp at h
+
+theorem rsaPssVerify_false_of_bad_sig {a : HashAlg} {n e : ByteArray} {sl : Nat} {sig m : ByteArray}
+    (h : sig.size ≠ n.size) : rsaPssVerify a n e sl sig m = false := by
+  unfold rsaPssVerify; rw [dif_neg (fun hp => h hp.2.2.2.2.2.2.2.1)]
 
 /-! ## The ECDSA message representative (FIPS 186-4 §6.4) -/
 

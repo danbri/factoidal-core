@@ -37,12 +37,16 @@
 
 #include "Hacl_Hash_SHA1.h"
 #include "Hacl_Hash_SHA2.h"
+#include "Hacl_Hash_SHA3.h"
 #include "Hacl_HMAC.h"
 #include "Hacl_Ed25519.h"
 #include "Hacl_Curve25519_51.h"
 #include "Hacl_P256.h"
 #include "Hacl_AEAD_Chacha20Poly1305.h"
+#include "Hacl_Bignum64.h"
+#include "Hacl_RSAPSS.h"
 #include "lib_memzero0.h"
+#include <stdlib.h>
 
 /* The hash family at the boundary: 1 SHA-1, 2 SHA-256, 3 SHA-384, 4 SHA-512
  * (WebHacl.HashAlg.code). */
@@ -77,6 +81,28 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_hash(uint8_t alg, b_lean_obj_arg msg) {
     case 2: Hacl_Hash_SHA2_hash_256(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
     case 3: Hacl_Hash_SHA2_hash_384(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
     default: Hacl_Hash_SHA2_hash_512(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+  }
+  return out;
+}
+
+/* ---- SHA-3 and SHAKE (FIPS 202): Hacl_Hash_SHA3_sha3_{256,384,512}, _shake{128,256} --
+ * Codes (WebHacl.Sha3Alg.code): 5 SHA3-256, 6 SHA3-384, 7 SHA3-512, whose output is
+ * exactly the digest size (`out_len` must be 32, 48 or 64); 8 SHAKE128, 9 SHAKE256, whose
+ * output is `out_len` octets, 1 to 2^24 (WebHacl.maxXofBytes). Precondition (F*,
+ * Hacl.Hash.SHA3): the input and output lengths are uint32_t. Public input: a digest has
+ * no key. */
+LEAN_EXPORT lean_obj_res l4_web_hacl_sha3(uint8_t alg, uint32_t out_len, b_lean_obj_arg msg) {
+  size_t n = L4W_SIZE(msg);
+  size_t fixed = alg == 5 ? 32 : alg == 6 ? 48 : alg == 7 ? 64 : 0;
+  if (alg < 5 || alg > 9 || n > UINT32_MAX || out_len == 0 || out_len > 16777216U) return l4w_empty();
+  if (fixed != 0 && (size_t)out_len != fixed) return l4w_empty();
+  lean_obj_res out = l4w_fresh((size_t)out_len);
+  switch (alg) {
+    case 5: Hacl_Hash_SHA3_sha3_256(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+    case 6: Hacl_Hash_SHA3_sha3_384(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+    case 7: Hacl_Hash_SHA3_sha3_512(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+    case 8: Hacl_Hash_SHA3_shake128(L4W_PTR(out), out_len, L4W_PTR(msg), (uint32_t)n); break;
+    default: Hacl_Hash_SHA3_shake256(L4W_PTR(out), out_len, L4W_PTR(msg), (uint32_t)n); break;
   }
   return out;
 }
@@ -235,6 +261,119 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_chachapoly_open(b_lean_obj_arg key, b_lean_
   }
   o[0] = 1;
   return out;
+}
+
+/* ---- RSA (RFC 8017): Hacl_Bignum64_mod_exp_{vartime,consttime}, Hacl_RSAPSS ----------
+ * Modulus `n`: big-endian, no leading zero octet, 128 to 512 octets in whole 64-bit limbs
+ * (1024 to 4096 bits). Exponents `e`, `d`: big-endian, 1 to |n| octets. The operand of a
+ * raw operation is exactly |n| octets. HACL* checks n odd and > 1 and the operand < n
+ * (mod_exp returns false otherwise). The private exponent is used left-padded to |n|
+ * octets with dBits = 8|n|, so the bit length of d does not leave Lean. Every limb buffer
+ * holding d is zeroed (Lib_Memzero0) before it is freed. Padding (EMSA-PKCS1-v1_5,
+ * EME-OAEP) is Lean's; PSS is HACL*'s Hacl_RSAPSS (SHA-256/384/512). */
+static uint32_t l4w_bits(const uint8_t *p, size_t n) {
+  size_t i = 0;
+  while (i < n && p[i] == 0) i++;
+  if (i == n) return 0;
+  uint32_t b = (uint32_t)((n - i - 1) * 8);
+  uint8_t top = p[i];
+  while (top) { b++; top >>= 1; }
+  return b;
+}
+static int l4w_rsa_mod_ok(b_lean_obj_arg n) {
+  size_t k = L4W_SIZE(n);
+  return k % 8 == 0 && k >= 128 && k <= 512 && L4W_PTR(n)[0] != 0;
+}
+/* A big-endian number left-padded to `len` octets, as `limbs` 64-bit limbs (len = 8 limbs). */
+static uint64_t *l4w_bn(b_lean_obj_arg x, size_t len) {
+  size_t xl = L4W_SIZE(x);
+  uint8_t *buf = (uint8_t *)calloc(len, 1);
+  if (!buf) return NULL;
+  memcpy(buf + (len - xl), L4W_PTR(x), xl);
+  uint64_t *bn = Hacl_Bignum64_new_bn_from_bytes_be((uint32_t)len, buf);
+  Lib_Memzero0_memzero0(buf, (uint64_t)len);
+  free(buf);
+  return bn;
+}
+static void l4w_free_bn(uint64_t *bn, size_t limbs) {
+  if (bn) { Lib_Memzero0_memzero0(bn, (uint64_t)limbs * 8U); free(bn); }
+}
+static lean_obj_res l4w_modexp(b_lean_obj_arg n, b_lean_obj_arg ex, b_lean_obj_arg x, int secret) {
+  size_t k = L4W_SIZE(n);
+  if (!l4w_rsa_mod_ok(n) || L4W_SIZE(ex) == 0 || L4W_SIZE(ex) > k || L4W_SIZE(x) != k) return l4w_empty();
+  size_t limbs = k / 8;
+  size_t elen = secret ? k : ((L4W_SIZE(ex) + 7) / 8) * 8;
+  uint32_t ebits = secret ? (uint32_t)(8 * k) : l4w_bits(L4W_PTR(ex), L4W_SIZE(ex));
+  if (ebits == 0) return l4w_empty();
+  uint64_t *bn = l4w_bn(n, k), *ba = l4w_bn(x, k), *be = l4w_bn(ex, elen);
+  uint64_t *br = (uint64_t *)calloc(limbs, 8);
+  lean_obj_res out = l4w_empty();
+  if (bn && ba && be && br) {
+    bool ok = secret ? Hacl_Bignum64_mod_exp_consttime((uint32_t)limbs, bn, ba, ebits, be, br)
+                     : Hacl_Bignum64_mod_exp_vartime((uint32_t)limbs, bn, ba, ebits, be, br);
+    if (ok) {
+      lean_dec_ref(out);
+      out = l4w_fresh(k);
+      Hacl_Bignum64_bn_to_bytes_be((uint32_t)k, br, L4W_PTR(out));
+    }
+  }
+  l4w_free_bn(bn, limbs); l4w_free_bn(ba, limbs); l4w_free_bn(be, elen / 8); l4w_free_bn(br, limbs);
+  return out;
+}
+/* RSAEP / RSAVP1: x^e mod n (public, variable time). */
+LEAN_EXPORT lean_obj_res l4_web_hacl_rsa_public(b_lean_obj_arg n, b_lean_obj_arg e, b_lean_obj_arg x) {
+  return l4w_modexp(n, e, x, 0);
+}
+/* RSADP / RSASP1: x^d mod n (constant time in d). */
+LEAN_EXPORT lean_obj_res l4_web_hacl_rsa_private(b_lean_obj_arg n, b_lean_obj_arg d, b_lean_obj_arg x) {
+  return l4w_modexp(n, d, x, 1);
+}
+static int l4w_pss_alg(uint8_t alg) { return alg == 2 ? 1 : alg == 3 ? 2 : alg == 4 ? 3 : -1; }
+/* RSASSA-PSS sign (RFC 8017 §8.1.1) by Hacl_RSAPSS_rsapss_sign: hash code 2, 3 or 4
+ * (SHA-256, 384, 512), the salt drawn by Lean from the page's HMAC_DRBG. The secret-key
+ * limbs are made by Hacl_RSAPSS_new_rsapss_load_skey (which checks n, e and d), zeroed and
+ * freed here. */
+LEAN_EXPORT lean_obj_res l4_web_hacl_rsapss_sign(uint8_t alg, b_lean_obj_arg n, b_lean_obj_arg e, b_lean_obj_arg d,
+                                                b_lean_obj_arg salt, b_lean_obj_arg msg) {
+  int a = l4w_pss_alg(alg);
+  size_t k = L4W_SIZE(n), dl = L4W_SIZE(d);
+  if (a < 0 || !l4w_rsa_mod_ok(n) || L4W_SIZE(e) == 0 || L4W_SIZE(e) > k || dl == 0 || dl > k ||
+      L4W_SIZE(salt) > k || L4W_SIZE(msg) > (size_t)UINT32_MAX - 128U) return l4w_empty();
+  uint32_t modBits = l4w_bits(L4W_PTR(n), k), eBits = l4w_bits(L4W_PTR(e), L4W_SIZE(e));
+  if (eBits == 0 || (L4W_SIZE(e) - 1) * 8 >= eBits) return l4w_empty();
+  uint8_t *db = (uint8_t *)calloc(k, 1);
+  if (!db) return l4w_empty();
+  memcpy(db + (k - dl), L4W_PTR(d), dl);
+  uint64_t *skey = Hacl_RSAPSS_new_rsapss_load_skey(modBits, eBits, (uint32_t)(8 * k), L4W_PTR(n), L4W_PTR(e), db);
+  Lib_Memzero0_memzero0(db, (uint64_t)k);
+  free(db);
+  if (!skey) return l4w_empty();
+  size_t skeyLimbs = 2 * ((modBits - 1) / 64 + 1) + (eBits - 1) / 64 + 1 + k / 8;
+  lean_obj_res out = l4w_fresh(k);
+  bool ok = Hacl_RSAPSS_rsapss_sign((Spec_Hash_Definitions_hash_alg)a, modBits, eBits, (uint32_t)(8 * k), skey,
+                                    (uint32_t)L4W_SIZE(salt), L4W_PTR(salt), (uint32_t)L4W_SIZE(msg), L4W_PTR(msg),
+                                    L4W_PTR(out));
+  l4w_free_bn(skey, skeyLimbs);
+  if (!ok) return l4w_refuse(out);
+  return out;
+}
+/* RSASSA-PSS verify (RFC 8017 §8.1.2) by Hacl_RSAPSS_rsapss_verify. A signature that is
+ * not |n| octets verifies false. */
+LEAN_EXPORT uint8_t l4_web_hacl_rsapss_verify(uint8_t alg, b_lean_obj_arg n, b_lean_obj_arg e, size_t sl,
+                                             b_lean_obj_arg sig, b_lean_obj_arg msg) {
+  int a = l4w_pss_alg(alg);
+  size_t k = L4W_SIZE(n);
+  if (a < 0 || !l4w_rsa_mod_ok(n) || L4W_SIZE(e) == 0 || L4W_SIZE(e) > k || L4W_SIZE(sig) != k ||
+      L4W_SIZE(msg) > (size_t)UINT32_MAX - 128U) return 0;
+  if (sl > k) return 0;
+  uint32_t modBits = l4w_bits(L4W_PTR(n), k), eBits = l4w_bits(L4W_PTR(e), L4W_SIZE(e));
+  if (eBits == 0 || (L4W_SIZE(e) - 1) * 8 >= eBits) return 0;
+  uint64_t *pkey = Hacl_RSAPSS_new_rsapss_load_pkey(modBits, eBits, L4W_PTR(n), L4W_PTR(e));
+  if (!pkey) return 0;
+  bool ok = Hacl_RSAPSS_rsapss_verify((Spec_Hash_Definitions_hash_alg)a, modBits, eBits, pkey, (uint32_t)sl,
+                                      (uint32_t)k, L4W_PTR(sig), (uint32_t)L4W_SIZE(msg), L4W_PTR(msg));
+  free(pkey);
+  return ok ? 1 : 0;
 }
 
 /* ---- Erasure ----------------------------------------------------------------------

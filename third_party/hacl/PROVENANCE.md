@@ -245,6 +245,44 @@ Reproduce: clone `cryspen/hacl-packages`, check out
 (the `.S` files are under `vale/src/` upstream and here). `SHA256SUMS` in this
 directory lists them too (`sha256sum -c SHA256SUMS`).
 
+### RSA-PSS for crypto.subtle, 2026-11-09 — Hacl_RSAPSS
+
+For the web engine's RSA-PSS (design record
+`docs/designissues/2026-11-09-hacl-web-crypto.md`). From the SAME pinned commit
+`05c3d8fb321ed65e3db3a6a8b853019e86fb40a2`, unmodified. It uses the already vendored
+`Hacl_Bignum.c`, `Hacl_Hash_SHA2.c` and their headers. hacl-packages has no RSA-OAEP and
+no RSA key generation: OAEP is `formal/lean4/L4Factoidal/Crypto/RsaOaep.lean` over the
+bignum's modular exponentiation, and generateKey is refused.
+
+| Path | SHA-256 |
+|---|---|
+| `src/Hacl_RSAPSS.c` | `85206e0434c01594d4e473f4173e9768aac4e326afa165afda2353d77ad2de22` |
+| `include/Hacl_RSAPSS.h` | `55f42c53e249c28b588361697037373259360e757b66e2399f01b1ab993799a1` |
+
+Reproduce: clone `cryspen/hacl-packages`, check out the pinned commit, then
+`shasum -a 256` the two paths.
+
+### SHA-3 and SHAKE for crypto.subtle, 2026-11-14 — Hacl_Hash_SHA3
+
+For the web engine's `digest` of SHA3-256, SHA3-384, SHA3-512 and of cSHAKE128/cSHAKE256
+with an empty function name and customization, which is SHAKE128/SHAKE256 (design record
+`docs/designissues/2026-11-14-webcrypto.md`). From the SAME pinned commit
+`05c3d8fb321ed65e3db3a6a8b853019e86fb40a2`, unmodified; the portable scalar unit, not
+`Hacl_Hash_SHA3_Simd256`. It needs only the krml headers and `Hacl_Streaming_Types.h`,
+already vendored. The unit exposes the four SHA-3 digests and the two SHAKEs with their
+domain bytes fixed inside: it has no entry for the Keccak sponge with another domain
+byte, so cSHAKE with a name or customization, KMAC, TurboSHAKE and KangarooTwelve are
+not available from it and stay refused.
+
+| Path | SHA-256 |
+|---|---|
+| `src/Hacl_Hash_SHA3.c` | `c885ec333f879129eb93678f976c19a86bdf9b6a9e2629ac1f52ba0064d54918` |
+| `include/Hacl_Hash_SHA3.h` | `a1f6e148ec1aa620323427a4d79287284a6c68ddde8728ca7e5a808f447791a9` |
+| `include/internal/Hacl_Hash_SHA3.h` | `89098cd70f0103691c3efcdb776c7f04d856523edb37f8c0c1b87bc19cf01bbd` |
+
+Reproduce: clone `cryspen/hacl-packages`, check out the pinned commit, then
+`shasum -a 256` the three paths.
+
 ## How it is wired in — Lean 4 tree (`formal/lean4/`)
 
 - `ffi/hacl_ed25519.c` — Ed25519 and SHA-256 (`@[extern]` of
