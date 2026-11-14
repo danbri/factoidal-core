@@ -1177,6 +1177,32 @@ private def tableFrame (styles : Array Computed) (element : Option Nat) (contain
    hs := if s.borderCollapse then 0 else s.borderSpacingX,
    vs := if s.borderCollapse then 0 else s.borderSpacingY}
 
+/-- A content width within the box's `min-width` and `max-width` when they are lengths
+(a percentage or a keyword limit does not bound an intrinsic contribution); the minimum
+wins over the maximum (CSS 2.1 §10.4). -/
+def intrinsicLimits (s : Computed) (w : Float) : Float :=
+  let w := match s.maxWidth with
+    | .px m => min w m
+    | _ => w
+  match s.minWidth with
+  | .px m => max w m
+  | _ => w
+
+/-- With no length limit the width stands. -/
+theorem intrinsicLimits_none (s : Computed) (w : Float) (hi : ∀ m, s.maxWidth ≠ .px m) (lo : ∀ m, s.minWidth ≠ .px m) :
+    intrinsicLimits s w = w := by
+  unfold intrinsicLimits
+  cases hmax : s.maxWidth <;> cases hmin : s.minWidth <;>
+    first | rfl | exact absurd hmax (hi _) | exact absurd hmin (lo _)
+
+/-- A `min-width` that is a length is the last word: the result is the larger of it and
+the width within the maximum. -/
+theorem intrinsicLimits_min (s : Computed) (w m : Float) (lo : s.minWidth = .px m) :
+    ∃ v, intrinsicLimits s w = max v m := by
+  unfold intrinsicLimits
+  simp only [lo]
+  exact ⟨_, rfl⟩
+
 /-- Min-content and max-content widths (CSS Sizing 3 §5), margins included for a box.
 Text is measured with `inlineLayout` itself: with no room, every break opportunity is
 taken (min-content); with unbounded room, none is (max-content). A table's widths are
@@ -1270,29 +1296,39 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
         let (a,b) ← tableWidths (some id) (n.parent.getD 0) n.kids
         let margins := if outer then 0 else s.margin.left+s.margin.right
         return (a-margins,b-margins)
+      -- A replaced element whose `width` or `max-width` is a percentage is compressible
+      -- (CSS Sizing 3 §5.2.2): the percentage is of a width that depends on this one, so its
+      -- min-content contribution is what is left of it against zero, its `min-width`.
+      let compressible := fun (w : Float) => match s.width,s.maxWidth with
+        | .percent _,_ | _,.percent _ => min w (intrinsicLimits s 0)
+        | _,_ => w
       if let some picture := pictures id then
-        let w := (replacedSize s (some picture.size) 0).1+add
-        return (w,w)
+        let w := (replacedSize s (some picture.size) 0).1
+        return (compressible w+add,w+add)
       if let some size := blankReplaced n then
-        let w := (replacedSize s (some size) 0).1+add
-        return (w,w)
+        let w := (replacedSize s (some size) 0).1
+        return (compressible w+add,w+add)
       if n.ns == some DOM.svgNS then
         let w := (← svgSize n s 0).1+add
         return (w,w)
+      -- The contribution of a box is within its `min-width` and `max-width` when they are
+      -- lengths (CSS Sizing 3 §5.1): a box is never laid out outside them, so its container
+      -- must not be sized as if it were.
+      let within := fun (w : Float) => if outer then intrinsicLimits s w else w
       match outer,s.width with
-      | true,.px w => return (w+edges,w+edges)
+      | true,.px w => return (within w+edges,within w+edges)
       | _,_ =>
         if s.display.isFlex then
           let (a,b) ← flexIntrinsic children s (collectItems dom styles id)
-          return (a+add,b+add)
+          return (within a+add,within b+add)
         if s.display.isGrid then
           let (a,b) ← gridIntrinsic children s (collectItems dom styles id)
-          return (a+add,b+add)
+          return (within a+add,within b+add)
         -- an outside marker (the default) takes no room in the item's lines
         let lead := if n.lname == "li" && s.pos.listInside then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray
           else if n.lname == "img" then altItems id s n else #[]
         let (a,b) ← flowWidths id n.kids lead
-        return (a+add,b+add)
+        return (within a+add,within b+add)
     match task with
     | .contents container kids => flowWidths container kids #[]
     | .table element container kids => tableWidths element container kids

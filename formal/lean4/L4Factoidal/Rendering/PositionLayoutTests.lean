@@ -385,4 +385,26 @@ private def clearfix := "<div id=a><div id=f style='float:left;height:30px;width
   let (tree,_) ← (Generated.styled none dom (← (CSS.parse "*::before{box-sizing:border-box} #a{color:red}").toOption)).toOption
   pure (tree.size == dom.size)) == some true
 
+
+-- Intrinsic contributions are within `min-width` and `max-width` (CSS Sizing 3 §5.1):
+-- four empty items of min-width 20 and margins 10 make a 160 px inline-flex container
+-- (and nothing overflows it: its scroll width is its client width); a float around a
+-- box of max-width 30 is 30 wide.
+private def items4 := "<div id=o><div class=i></div><div class=i></div><div class=i></div><div class=i></div></div>"
+#guard box items4 "#o{display:inline-flex} .i{min-width:20px;height:5px;margin:0 10px}" "o" == some (0,2,160,5)
+#guard scroll items4 "#o{display:inline-flex} .i{min-width:20px;height:5px;margin:0 10px}" "o" == some (160,5)
+#guard box "<div id=f><div id=k>AAAAAAAAAA</div></div>" "#f{float:left} #k{max-width:30px}" "f" == some (0,0,30,7)
+#guard box "<div id=f><div id=k>AA</div></div>" "#f{float:left} #k{min-width:50px}" "f" == some (0,0,50,7)
+#guard box "<div id=f><div id=k>AA</div></div>" "#f{float:left} #k{width:20px;min-width:50px;max-width:40px}" "f" == some (0,0,50,7)
+-- A block-level replaced element with a percentage width is compressible (§5.2.2): it adds
+-- nothing to the min-content width of its container. (One on a line is still measured at
+-- its natural size.)
+#guard (box "<div id=z><div id=w><canvas style='display:block;width:50%;max-width:100px'></canvas></div></div>" "#z{width:0} #w{float:left}" "w").map (·.2.2.1) == some 0
+#guard (box "<div id=z><div id=w><canvas style='display:block;width:100px;max-width:50%'></canvas></div></div>" "#z{width:0} #w{float:left}" "w").map (·.2.2.1) == some 0
+#guard (box "<div id=z><div id=w><canvas style='display:block;width:50%;min-width:30px'></canvas></div></div>" "#z{width:0} #w{float:left}" "w").map (·.2.2.1) == some 30
+#guard (box "<div id=z><div id=w><canvas style='display:block;width:40px'></canvas></div></div>" "#z{width:0} #w{float:left}" "w").map (·.2.2.1) == some 40
+-- A box of no area is not scrollable overflow, wherever it is.
+#guard scroll "<div id=c><div id=e></div></div>" "#c{width:100px;height:50px} #e{position:relative;width:0;height:0;left:500px;top:300px}" "c" == some (100,50)
+#guard scroll "<div id=c><div id=e></div></div>" "#c{width:100px;height:50px} #e{position:relative;width:10px;height:10px;left:500px;top:300px}" "c" == some (510,310)
+
 end L4Factoidal.Rendering.PositionLayoutTests

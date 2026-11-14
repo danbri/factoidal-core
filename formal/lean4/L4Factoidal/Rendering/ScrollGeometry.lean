@@ -33,7 +33,9 @@ def scrollSize (dom : Dom) (boxes : Array Box) (border : CSS.Edges) (vw vh : Flo
     let client : Float × Float := if isRoot then (vw,vh)
       else (max 0 (b.width-border.left-border.right),max 0 (b.height-border.top-border.bottom))
     let inside := boxes.toList.filter fun k => isRoot || (k.source != node && insideOf dom node k.source)
-    let edges := inside.map fun k => (LU.ofPx (k.x+k.width-corner.1),LU.ofPx (k.y+k.height-corner.2))
+    -- a box of no area gives nothing to scroll to (`ScrollExtent.areaEdges`)
+    let edges := ScrollExtent.areaEdges (inside.map fun k =>
+      (LU.ofPx (k.x+k.width-corner.1),LU.ofPx (k.y+k.height-corner.2),LU.ofPx k.width,LU.ofPx k.height))
     let size := ScrollExtent.extent (LU.ofPx client.1) (LU.ofPx client.2) edges
     some ((LU.toPx size.1).round,(LU.toPx size.2).round)
 
