@@ -168,6 +168,14 @@ def expandIn (ctx name value : String) : Option (List (String × String)) :=
   if ctx == "" then expand name value
   else (descriptorValue ctx name value).map fun v => [(lower name, v)]
 
+/-- A style block reads properties only: no descriptor is taken in one. -/
+theorem descriptorValue_style (name value : String) : descriptorValue "" name value = none := by
+  simp [descriptorValue]
+
+/-- In a style block a declaration stands for what `expand` gives. -/
+theorem expandIn_style (name value : String) : expandIn "" name value = expand name value := by
+  simp [expandIn]
+
 /-- The block a text denotes (CSSOM §6.6.1 "parse a CSS declaration block"): invalid
 declarations are dropped, shorthands expanded, the last declaration of a property wins.
 `ctx`: the at-rule whose descriptors the block has (empty for a style block). -/
