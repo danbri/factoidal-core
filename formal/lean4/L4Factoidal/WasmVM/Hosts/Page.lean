@@ -1050,7 +1050,7 @@ layout, "x y w h left top width height" (border box in the page, then the client
 request with no layout, so it is not counted as one (dprfix);
 33 the slots whose assigned nodes changed since the last op 33 (DOM §4.2.2.5 "signal a
 slot change"), as decimal node numbers separated by spaces. -/
-def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
+def pageQuery (h : Host) (node op : Nat) (q : String := "") : Host × Except Int String :=
   match op with
   | 16 => (h, if h.event.isEmpty then .error (-1) else .ok h.event)
   | 19 => (h, .ok s!"{h.reads.width} {h.reads.height}")
@@ -1068,7 +1068,9 @@ def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
   | _ =>
     let (h, f) := h.measured
     match f with
-    | some f => (h, match f node op "" with | some r => .ok r | none => .error (-1))
+    -- `q` reaches the measure (getComputedStyle in a frame's document brings its container's
+    -- margins in it: `WebDocument.measure`)
+    | some f => (h, match f node op q with | some r => .ok r | none => .error (-1))
     | none => (h, .error (-2))
 
 /-- The rules of the page's style sheets for an editing command: the text of the sheets
@@ -1232,9 +1234,12 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
           let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) (mediaAnswer h q)
           (h, st, r))
       else
-        let (h, answer) := pageQuery h (a 0) (a 1)
-        let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
-        (h, st, r)
+        match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
+        | .error e => (h, st, Hosts.Dom.codeOrTrap e)
+        | .ok q =>
+          let (h, answer) := pageQuery h (a 0) (a 1) q
+          let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
+          (h, st, r)
   | "listen" =>
     match Hosts.Dom.readStr mem st (a 1) (a 2) Hosts.Dom.maxAttrName with
     | .error e => (h, st, Hosts.Dom.codeOrTrap e)
