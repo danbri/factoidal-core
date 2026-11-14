@@ -17,10 +17,13 @@ here for every method (`answer`, node_query 192); the markup of `setHTML`, `pars
 the methods that take a `sanitizer` option is parsed and then sanitized here (`plan`,
 node_query 193) before a script can see it.
 
-Safety does not rest on the configuration. The standard makes the safe methods safe by
-changing the configuration ("remove unsafe"); `removeUnsafe` does that, and the decisions
-`actionFor` and `keepsAttribute` also refuse the baseline when `safe` is set, whatever the
-configuration says (theorems below).
+Safety does not rest on the configuration, and it does not rest on the walk. The standard
+makes the safe methods safe by changing the configuration ("remove unsafe"); `removeUnsafe`
+does that, and the decisions `actionFor` and `keepsAttribute` also refuse the baseline when
+`safe` is set, whatever the configuration says. After the walk the tree is read again
+(`conforms`), and a root whose content does not conform is emptied: so what a safe method
+gives a page holds no baseline element, no event handler content attribute and no script
+URL (`safe_output`, proved for every arena and configuration).
 
 Limits: the standard sanitizes while parsing; this sanitizes the parsed fragment, which
 differs where the parser would have moved a node the sanitizer removes (adoption agency,
@@ -140,6 +143,15 @@ configuration is read. -/
 def actionFor (c : Config) (safe : Bool) (el : Name) : Action :=
   if safe && baselineElements.contains el then .remove else elementAction c el
 
+/-- An attribute whose value makes a click, a submission or an animation run script: a
+`javascript:` URL in an attribute of the navigating URL attributes list or in `href` of a
+MathML element, or an SVG animation of a link's target (the last three steps of "check if a
+sanitizer config allows an attribute"). -/
+def scriptURL (el attr : Name) (value : String) : Bool :=
+  (navigating el attr && javascriptURL value) ||
+  (el.ns == some mathmlNS && attr.name == "href" && (attr.ns.isNone || attr.ns == some xlinkNS) && javascriptURL value) ||
+  (animating el attr && (value == "href" || value == "xlink:href"))
+
 /-- "Check if a sanitizer config allows an attribute", with `jsURLs` for the
 configuration's `javascriptURLs`. -/
 def allowsAttribute (c : Config) (jsURLs : Bool) (el attr : Name) (value : String) : Bool :=
@@ -156,11 +168,7 @@ def allowsAttribute (c : Config) (jsURLs : Bool) (el attr : Name) (value : Strin
         match localAllow with
         | some la => la.contains attr
         | none => !(c.removeAttributes.getD []).contains attr
-  let unsafeUrl :=
-    (navigating el attr && javascriptURL value) ||
-    (el.ns == some mathmlNS && attr.name == "href" && (attr.ns.isNone || attr.ns == some xlinkNS) && javascriptURL value) ||
-    (animating el attr && (value == "href" || value == "xlink:href"))
-  byLists && (jsURLs || !unsafeUrl)
+  byLists && (jsURLs || !scriptURL el attr value)
 
 /-- Whether the walk keeps an attribute: with `safe`, an event handler content attribute
 never stays and `javascript:` URLs are refused whatever the configuration says. -/
@@ -234,6 +242,58 @@ def Step.run (d : Dom) : Step → Dom
 
 def sanitize (d : Dom) (root : NodeId) (c : Config) (safe : Bool) : Dom :=
   (plan d root c safe).foldl Step.run d
+
+/-! ## The check after the walk
+
+The walk is not trusted for safety. After it, `conforms` reads the tree again and answers
+whether every node below the root is one the configuration keeps; `sanitizeChecked` empties
+the root when it is not. So what a safe method inserts conforms by construction, whatever
+the walk and the commands that ran its steps did (`sanitizeChecked_conforms`). -/
+
+/-- The nodes directly below a node, as a page can reach them: its children, the children
+of its template contents, and the children of its shadow root. -/
+def below (d : Dom) (n : NodeId) : List NodeId :=
+  let x := d.get n
+  x.kids.toList ++ (match x.content with | some t => (d.get t).kids.toList | none => []) ++
+    (match x.shadow with | some s => (d.get s).kids.toList | none => [])
+
+/-- A node that the configuration keeps as it is: an element with the action "keep" whose
+attributes are all kept, a comment or a processing instruction that is allowed, or any
+other node. -/
+def nodeConforms (c : Config) (safe : Bool) (x : Node) : Bool :=
+  match x.type with
+  | .element =>
+    actionFor c safe (nameOfNode x) == .keep &&
+      x.attrs.toList.all fun a => keepsAttribute c safe (nameOfNode x) (nameOfAttr a) a.value
+  | .comment => c.comments == some true
+  | .pi => allowsPI c x.lname
+  | _ => true
+
+/-- Whether the nodes of `work` and everything below them conform. One node a round; when
+the fuel ends with nodes left the answer is false, so a true answer has read every node. -/
+def conformsGo (c : Config) (safe : Bool) (d : Dom) : Nat → List NodeId → Bool
+  | _, [] => true
+  | 0, _ :: _ => false
+  | fuel + 1, n :: rest =>
+    if nodeConforms c safe (d.get n) then conformsGo c safe d fuel (below d n ++ rest) else false
+
+/-- Whether everything below `root` conforms to the configuration. -/
+def conforms (d : Dom) (root : NodeId) (c : Config) (safe : Bool) : Bool :=
+  conformsGo c safe d (d.size + 1) (below d root)
+
+/-- `root` with nothing below it. -/
+def emptied (d : Dom) (root : NodeId) : Dom :=
+  d.setNode root fun x => { x with kids := #[], content := none, shadow := none }
+
+/-- Sanitize, check, and empty the root when the check fails. -/
+def sanitizeChecked (d : Dom) (root : NodeId) (c : Config) (safe : Bool) : Dom :=
+  let d' := sanitize d root c safe
+  if conforms d' root c safe then d' else emptied d' root
+
+/-- `m` is `n` or below it, through children, template contents and shadow roots. -/
+inductive Reach (d : Dom) : NodeId → NodeId → Prop where
+  | here (n : NodeId) : Reach d n n
+  | down {n k m : NodeId} : k ∈ below d n → Reach d k m → Reach d n m
 
 /-! ## Configurations (§8.6.2, §8.6.3) -/
 
@@ -618,17 +678,14 @@ processing instruction is U+0005 and its target. In a name, a namespace and a ta
 character below U+0008 is written as U+0007 and the character 64 above it, so the
 separators and U+0000 never occur inside one. -/
 
-def escChars : List Char → List Char
-  | [] => []
-  | c :: cs => if c.toNat < 8 then '\x07' :: Char.ofNat (c.toNat + 64) :: escChars cs else c :: escChars cs
+def esc (s : String) : String :=
+  String.ofList (s.toList.flatMap fun c => if c.toNat < 8 then ['\x07', Char.ofNat (c.toNat + 64)] else [c])
 
-def unescChars : List Char → List Char
-  | [] => []
-  | '\x07' :: c :: cs => Char.ofNat (c.toNat - 64) :: unescChars cs
-  | c :: cs => c :: unescChars cs
-
-def esc (s : String) : String := String.ofList (escChars s.toList)
-def unesc (s : String) : String := String.ofList (unescChars s.toList)
+def unesc (s : String) : String :=
+  let r := s.toList.foldl (fun (acc : List Char × Bool) c =>
+    if acc.2 then (Char.ofNat (c.toNat - 64) :: acc.1, false)
+    else if c == '\x07' then (acc.1, true) else (c :: acc.1, false)) ([], false)
+  String.ofList r.1.reverse
 
 def nameWire (n : Name) : String := esc n.name ++ "\x05" ++ esc (n.ns.getD "")
 
@@ -741,21 +798,27 @@ theorem safe_removes_handlers (c : Config) (el attr : Name) (value : String) (h 
     keepsAttribute c true el attr value = false := by
   simp [keepsAttribute, h]
 
-/-- Safety. Says: with `safe`, an attribute of the navigating URL attributes list whose
-value is a `javascript:` URL never stays, even under a configuration whose `javascriptURLs`
-is true. Does not say: that `javascriptURL` recognises every string a browser would
-navigate to as script (it is the URL parser's answer for the scheme). -/
-theorem safe_removes_javascript_urls (c : Config) (el attr : Name) (value : String)
-    (hn : navigating el attr = true) (hj : javascriptURL value = true) :
-    keepsAttribute c true el attr value = false := by
-  simp [keepsAttribute, allowsAttribute, hn, hj]
+/-- Safety. Says: with `safe`, an attribute whose value is a script URL (`scriptURL`: a
+`javascript:` URL in a navigating attribute or a MathML `href`, or an SVG animation of a
+link's target) never stays, even under a configuration whose `javascriptURLs` is true. Does
+not say: that `javascriptURL` recognises every string a browser would navigate to as script
+(it is the URL parser's answer for the scheme). -/
+theorem safe_removes_script_urls (c : Config) (el attr : Name) (value : String)
+    (h : scriptURL el attr value = true) : keepsAttribute c true el attr value = false := by
+  simp [keepsAttribute, allowsAttribute, h]
 
 /-- Says: the same holds in the unsafe methods for a configuration whose `javascriptURLs`
 is not true. -/
-theorem no_javascript_urls (c : Config) (el attr : Name) (value : String)
-    (hc : c.javascriptURLs ≠ some true) (hn : navigating el attr = true) (hj : javascriptURL value = true) :
+theorem no_script_urls (c : Config) (el attr : Name) (value : String)
+    (hc : c.javascriptURLs ≠ some true) (h : scriptURL el attr value = true) :
     keepsAttribute c false el attr value = false := by
-  simp [keepsAttribute, allowsAttribute, hc, hn, hj]
+  simp [keepsAttribute, allowsAttribute, hc, h]
+
+/-- Says: a `javascript:` URL in an attribute of the navigating URL attributes list is a
+script URL. -/
+theorem navigating_javascript_scriptURL (el attr : Name) (value : String)
+    (hn : navigating el attr = true) (hj : javascriptURL value = true) : scriptURL el attr value = true := by
+  simp [scriptURL, hn, hj]
 
 /-- Says: an element that the configuration replaces with its children is not kept (the
 baseline may remove it first). -/
@@ -784,6 +847,102 @@ theorem removeUnsafe_javascriptURLs (c : Config) : (removeUnsafe c).1.javascript
     · rename_i h; simpa using h
   unfold removeUnsafe
   exact key _ _
+
+/-! ### The output of the checked sanitizer -/
+
+/-- Says: when `conformsGo` answers true, every node of the work list, and every node below
+one (`Reach`), conforms. There is no assumption on the arena: a tree too deep or too large
+for the fuel answers false. -/
+theorem conformsGo_sound (c : Config) (safe : Bool) (d : Dom) :
+    ∀ (fuel : Nat) (work : List NodeId), conformsGo c safe d fuel work = true →
+      ∀ n, n ∈ work → ∀ m, Reach d n m → nodeConforms c safe (d.get m) = true := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro work h n hn
+    cases work with
+    | nil => cases hn
+    | cons w ws => simp [conformsGo] at h
+  | succ fuel ih =>
+    intro work h n hn m hr
+    cases work with
+    | nil => cases hn
+    | cons w ws =>
+      simp only [conformsGo] at h
+      split at h
+      · rename_i hw
+        cases hn with
+        | head =>
+          cases hr with
+          | here => exact hw
+          | down hk hr' => exact ih _ h _ (List.mem_append_left _ hk) m hr'
+        | tail _ hn' => exact ih _ h n (List.mem_append_right _ hn') m hr
+      · cases h
+
+/-- Says: when `conforms` answers true, every node below the root conforms. -/
+theorem conforms_sound (d : Dom) (root : NodeId) (c : Config) (safe : Bool) (h : conforms d root c safe = true)
+    (k : NodeId) (hk : k ∈ below d root) (m : NodeId) (hr : Reach d k m) :
+    nodeConforms c safe (d.get m) = true :=
+  conformsGo_sound c safe d _ _ h k hk m hr
+
+/-- Says: an emptied root has nothing below it. -/
+theorem below_emptied (d : Dom) (root : NodeId) : below (emptied d root) root = [] := by
+  have hk : ((emptied d root).get root).kids = #[] ∧ ((emptied d root).get root).content = none ∧
+      ((emptied d root).get root).shadow = none := by
+    unfold emptied Dom.get Dom.setNode
+    by_cases h : root < d.nodes.size
+    · simp [Array.getD, h, Array.getElem_modify]
+    · simp [Array.getD, h]
+      exact ⟨rfl, rfl, rfl⟩
+  unfold below
+  simp [hk.1, hk.2.1, hk.2.2]
+
+/-- Safety of the output (kind: a policy decision refuses what it must). Says: what
+`sanitizeChecked` leaves below the root conforms to the configuration, for every arena, root
+and configuration: either the walk's result passed the check, or the root is empty. Does not
+say: that the check never fails on the walk's result (then the page would get nothing; tested),
+nor that the page host's recorded commands build the same arena as `sanitize` (the host runs
+`conforms` on the arena it has, and empties the root when it fails). -/
+theorem sanitizeChecked_conforms (d : Dom) (root : NodeId) (c : Config) (safe : Bool) :
+    conforms (sanitizeChecked d root c safe) root c safe = true := by
+  unfold sanitizeChecked
+  simp only
+  split
+  · assumption
+  · simp [conforms, below_emptied, conformsGo]
+
+/-- Safety, the statement a page relies on. Says: in the output of a safe method, under any
+configuration (the default one too), no element at or below a child of the root is a
+baseline element (`script`, `iframe`, `frame`, `object`, `embed`, `base`, SVG `script`, SVG
+`use`), none has an event handler content attribute, and none has an attribute whose value
+is a script URL. -/
+theorem safe_output (d : Dom) (root : NodeId) (c : Config) (k m : NodeId)
+    (hk : k ∈ below (sanitizeChecked d root c true) root) (hr : Reach (sanitizeChecked d root c true) k m)
+    (he : ((sanitizeChecked d root c true).get m).type = .element) :
+    let x := (sanitizeChecked d root c true).get m
+    baselineElements.contains (nameOfNode x) = false ∧
+      ∀ a, a ∈ x.attrs.toList →
+        isEventHandler (nameOfAttr a) = false ∧ scriptURL (nameOfNode x) (nameOfAttr a) a.value = false := by
+  intro x
+  have h := conforms_sound _ root c true (sanitizeChecked_conforms d root c true) k hk m hr
+  have hx : nodeConforms c true x = true := h
+  have he' : x.type = .element := he
+  unfold nodeConforms at hx
+  rw [he'] at hx
+  simp only [Bool.and_eq_true, List.all_eq_true, beq_iff_eq] at hx
+  refine ⟨?_, ?_⟩
+  · cases hb : baselineElements.contains (nameOfNode x) with
+    | false => rfl
+    | true => rw [safe_removes_baseline c _ hb] at hx; exact absurd hx.1 (by decide)
+  · intro a ha
+    have hkeep := hx.2 a ha
+    refine ⟨?_, ?_⟩
+    · cases hh : isEventHandler (nameOfAttr a) with
+      | false => rfl
+      | true => rw [safe_removes_handlers c _ _ _ hh] at hkeep; cases hkeep
+    · cases hs : scriptURL (nameOfNode x) (nameOfAttr a) a.value with
+      | false => rfl
+      | true => rw [safe_removes_script_urls c _ _ _ hs] at hkeep; cases hkeep
 
 /-! ## Tests -/
 
@@ -851,7 +1010,11 @@ private def sanitized (src : String) (c : Config) (safe : Bool) : String :=
   let d : Dom := { nodes := #[{ type := .document }] }
   let (d, frag) := L4Factoidal.DOM.Fragment.parseInto d 0 htmlNS "div" src (shadow := true)
   match prepare c safe with
-  | some c => L4Factoidal.DOM.Fragment.serialize (sanitize d frag c safe) frag false
+  | some c =>
+    -- the walk's result passes the check, so the checked sanitizer gives the same tree
+    if conforms (sanitize d frag c safe) frag c safe then
+      L4Factoidal.DOM.Fragment.serialize (sanitizeChecked d frag c safe) frag false
+    else "does not conform"
   | none => "invalid"
 
 #guard sanitized "<p onclick=x>a<script>b</script><b>c</b><!--d--></p>" defaultConfig true == "<p>a<b>c</b></p>"
@@ -863,5 +1026,15 @@ private def sanitized (src : String) (c : Config) (safe : Bool) : String :=
 #guard sanitized "<b><i>x</i></b><!--c-->" { replaceWithChildren := some [html "b", html "i"] } false == "x<!--c-->"
 #guard sanitized "<script>1</script><p onclick=x>y</p>" {} false == "<script>1</script><p onclick=\"x\">y</p>"
 #guard sanitized "<p>x</p>" { elements := some [], removeElements := some [] } false == "invalid"
+
+#guard sanitized "<div><template shadowrootmode=open><script>1</script><i onclick=x>s</i></template><svg><use href='#a'/><a href='javascript:1'>t</a></svg></div>" {} true ==
+  "<div><svg><a>t</a></svg></div>"
+-- the check alone: a tree the walk has not seen does not conform, and an emptied root does
+private def parsed (src : String) : Dom × NodeId :=
+  L4Factoidal.DOM.Fragment.parseInto { nodes := #[{ type := .document }] } 0 htmlNS "div" src (shadow := true)
+#guard !conforms (parsed "<p><script>1</script></p>").1 (parsed "<p><script>1</script></p>").2 (removeUnsafe (canonicalize {} false)).1 true
+#guard !conforms (parsed "<p onclick=x></p>").1 (parsed "<p onclick=x></p>").2 (removeUnsafe (canonicalize {} false)).1 true
+#guard conforms (emptied (parsed "<p onclick=x></p>").1 (parsed "<p onclick=x></p>").2) (parsed "<p onclick=x></p>").2 defaultConfig true
+#guard conforms (parsed "<p title=t>a<b>c</b></p>").1 (parsed "<p title=t>a<b>c</b></p>").2 defaultConfig true
 
 end L4Factoidal.HTML.Sanitizer

@@ -401,7 +401,9 @@ def askText : Traversal.Ask → String
 steps that `HTML.Sanitizer.plan` decides on the parsed tree, each run as a typed command
 (`exec`), so it is recorded and the layout replay sees the same tree. A step names its
 node; the node's parent is read when the step runs, because an element that was replaced
-with its children has moved them. -/
+with its children has moved them. Then the tree is checked against the configuration and
+the root is emptied when it does not conform (`HTML.Sanitizer.sanitizeChecked` is the same
+on the arena alone, with the theorem `safe_output`). -/
 def sanitizeM (root : Nat) (safe : Bool) (c : L4Factoidal.HTML.Sanitizer.Config) : Op Unit := do
   let steps := L4Factoidal.HTML.Sanitizer.plan (← dom) root c safe
   for st in steps do
@@ -419,6 +421,12 @@ def sanitizeM (root : Nat) (safe : Bool) (c : L4Factoidal.HTML.Sanitizer.Config)
         exec (.removeChild p n)
       | none => pure ()
     | .dropAttr n ns l => exec (.removeAttributeNS n (ns.getD "") l)
+  -- the check after the walk (`HTML.Sanitizer.conforms`): a root whose content does not
+  -- conform to the configuration is emptied, so nothing the walk missed reaches the page
+  let d ← dom
+  if !L4Factoidal.HTML.Sanitizer.conforms d root c safe then
+    for k in (d.get root).kids do
+      exec (.removeChild root k)
 
 /-- Op `op` of `node_query` from 100, on the node or range number `id`, with argument `q`.
 
