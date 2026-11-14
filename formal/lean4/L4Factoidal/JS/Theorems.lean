@@ -463,6 +463,14 @@ theorem arrayProbes_spec : arrayProbes .arrayForEach = true ∧ arrayProbes .arr
     arrayProbes .arrayFind = false ∧ arrayProbes .arrayFindIndex = false := by
   refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
+/-! ## RegExp.escape (`regexpEscapeStr`, §22.2.5.1) -/
+
+/-- Kind: a specification. Says: a leading decimal digit is written as `\\xNN`, so the escaped
+text cannot continue a back reference or an escape before it. -/
+theorem regexpEscapeStr_digit (c : Char) (cs : List Char) (h : c.isDigit = true) :
+    regexpEscapeStr (c :: cs) = "\\x" ++ hexLower c.toNat 2 ++ String.join (cs.map encodeForRegExpEscape) := by
+  simp [regexpEscapeStr, h]
+
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a

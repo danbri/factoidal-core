@@ -76,6 +76,8 @@ inductive NativeX where
   the closure `adopt` keeps (bound to the value and the callback). -/
   | suppressedErrorCtor | disposableStackCtor | disposableStackMethod (k : Nat) | disposableStackDisposed
   | iteratorDispose | adoptClosure
+  /-- `Error.isError` (§20.5.2.1), `Promise.try` (§27.2.4.8), `RegExp.escape` (§22.2.5.1). -/
+  | errorIsError | promiseTry | regexpEscape
   /-- `Promise.race` (0) and `Promise.allSettled` (1) (§27.2.4.5, §27.2.4.2), and the
   function that records one settled element of `allSettled` (0 fulfilled, 1 rejected). -/
   | promiseCombinator (k : Nat) | promiseSettleElement (rejected : Nat)
@@ -744,6 +746,34 @@ def protoChangeAllowed (o : Nat) (cur v : Value) (extensible immutable : Bool) (
   if sameValue v cur then true
   else if immutable || !extensible then false
   else !chain.contains o
+
+/-- Two lowercase hexadecimal digits, and four. -/
+def hexLower (n width : Nat) : String :=
+  let ds := Nat.toDigits 16 n
+  String.ofList ((List.replicate (width - ds.length) '0') ++ ds)
+
+/-- EncodeForRegExpEscape (§22.2.5.1.1): a syntax character or `/` gets a backslash; a control
+escape is its letter; the other punctuators, white space and line terminators are `\xNN` or
+`\uNNNN`; anything else stays. -/
+def encodeForRegExpEscape (c : Char) : String :=
+  let n := c.toNat
+  if "^$\\.*+?()[]{}|/".toList.contains c then "\\" ++ String.singleton c
+  else if n == 9 then "\\t" else if n == 10 then "\\n" else if n == 11 then "\\v"
+  else if n == 12 then "\\f" else if n == 13 then "\\r"
+  else if ",-=<>#&!%:;@~'`\"".toList.contains c ||
+      [0x20, 0xA0, 0x1680, 0x202F, 0x205F, 0x3000, 0xFEFF, 0x2028, 0x2029].contains n ||
+      (0x2000 ≤ n && n ≤ 0x200A) then
+    if n ≤ 0xFF then "\\x" ++ hexLower n 2 else "\\u" ++ hexLower n 4
+  else String.singleton c
+
+/-- RegExp.escape (§22.2.5.1): a leading ASCII letter or digit becomes `\xNN` (so the result
+never continues an escape or a back reference before it), every other code point is
+`encodeForRegExpEscape`d. -/
+def regexpEscapeStr : List Char → String
+  | [] => ""
+  | c :: cs =>
+    (if c.isDigit || (c.isAlpha && c.toNat < 128) then "\\x" ++ hexLower c.toNat 2 else encodeForRegExpEscape c) ++
+      String.join (cs.map encodeForRegExpEscape)
 
 /-- SameValueZero (§7.2.11). -/
 def sameValueZero : Value → Value → Bool
