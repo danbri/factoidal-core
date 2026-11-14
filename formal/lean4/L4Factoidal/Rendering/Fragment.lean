@@ -161,6 +161,16 @@ def collectItems (dom : Dom) (styles : Array Computed) (container : Nat) : Array
   if text.any (fun t => !blankText (dom.get t).data) then out := out.push (.anonymous container text)
   return out
 
+/-- An inline-block whose contents are not all inline (CSS 2.1 §9.2.2, §10.1): it has a
+child that is a block-level box or a float, or it is positioned and has element children
+(it is then the containing block of its absolutely positioned descendants). Such a box is
+laid out as a block container; one with inline content only stays a line of its own. -/
+def blockInside (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
+  (dom.get id).kids.any fun k =>
+    (dom.get k).type == .element &&
+      ((styles[id]!).pos.isPositioned ||
+        ((styles[k]!).display != .none && ((styles[k]!).display.isBlockLevel || (styles[k]!).pos.float != .none)))
+
 /-- The room beside `floats` for a line or box `h` high at `y`, in a content box from `x`,
 `width` wide: how far its left edge is from `x`, and its width. With no floats: all of it. -/
 def floatBand (floats : Array Floats.Box) (x width y h : Float) : Float × Float :=
