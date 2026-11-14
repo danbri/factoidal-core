@@ -214,7 +214,16 @@
       this.initEvent(type, bubbles, cancelable); Object.assign(state(this), { view, detail: detail | 0 });
     }
   }
-  const modifiers = (s, d) => { for (const k of ['ctrlKey', 'shiftKey', 'altKey', 'metaKey']) s[k] = !!d[k]; };
+  // EventModifierInit (UI Events §3.6): the four modifier keys, and AltGraph and CapsLock.
+  const modifiers = (s, d) => {
+    for (const k of ['ctrlKey', 'shiftKey', 'altKey', 'metaKey']) s[k] = !!d[k];
+    s.altGraph = !!d.modifierAltGraph; s.capsLock = !!d.modifierCapsLock;
+  };
+  // getModifierState (UI Events §5.6.1.2): the state of a modifier key value; any other is false.
+  function getModifierState(k) {
+    const s = state(this);
+    return { Control: s.ctrlKey, Shift: s.shiftKey, Alt: s.altKey, Meta: s.metaKey, AltGraph: s.altGraph, CapsLock: s.capsLock }[String(k)] === true;
+  }
   class MouseEvent extends UIEvent {
     constructor(type, init = undefined) {
       super(type, init);
@@ -224,9 +233,10 @@
       const fractional = typeof PointerEvent === 'function' && this instanceof PointerEvent && !['click', 'auxclick', 'contextmenu'].includes(String(type));
       for (const k of ['screenX', 'screenY', 'clientX', 'clientY']) { const v = Number(d[k] ?? 0); s[k] = fractional ? v : Number.isFinite(v) ? Math.floor(v) : 0; }
       for (const k of ['button', 'buttons']) s[k] = Number(d[k] ?? 0);
-      for (const k of ['ctrlKey', 'shiftKey', 'altKey', 'metaKey']) s[k] = !!d[k];
+      modifiers(s, d);
       s.relatedTarget = d.relatedTarget ?? null;
     }
+    getModifierState(k) { return getModifierState.call(this, k); }
   }
   for (const k of ['screenX', 'screenY', 'clientX', 'clientY', 'button', 'buttons', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey', 'relatedTarget'])
     Object.defineProperty(MouseEvent.prototype, k, { get() { return state(this)[k]; }, configurable: true });
@@ -276,7 +286,7 @@
       s.key = String(d.key ?? ''); s.code = String(d.code ?? ''); s.location = (d.location ?? 0) >>> 0;
       s.repeat = !!d.repeat; s.isComposing = !!d.isComposing; s.charCode = (d.charCode ?? 0) >>> 0; s.keyCode = (d.keyCode ?? 0) >>> 0;
     }
-    getModifierState(k) { const s = state(this); return { Control: s.ctrlKey, Shift: s.shiftKey, Alt: s.altKey, Meta: s.metaKey }[String(k)] ?? false; }
+    getModifierState(k) { return getModifierState.call(this, k); }
   }
   getters(KeyboardEvent, ['key', 'code', 'location', 'repeat', 'isComposing', 'charCode', 'keyCode', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey']);
   const keyLocations = { DOM_KEY_LOCATION_STANDARD: 0, DOM_KEY_LOCATION_LEFT: 1, DOM_KEY_LOCATION_RIGHT: 2, DOM_KEY_LOCATION_NUMPAD: 3 };
