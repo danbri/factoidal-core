@@ -55,6 +55,7 @@ import L4Factoidal.Net.ServiceWorkerScope
 import L4Factoidal.Net.EventSource
 import L4Factoidal.Net.SecureContext
 import L4Factoidal.Net.Multipart
+import L4Factoidal.HTML.ImageSize
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.PageGl.Api
 import L4Factoidal.WebCodecs.Api
@@ -723,7 +724,7 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     | .ok h => let (s, n) := dropKey s h; (s, ofStr (toString n))
     | .error e => (s, .error e)
   | code =>
-    if (60 ≤ code && code < 80) || code == 98 || code == 99 || (150 ≤ code && code ≤ 153) then
+    if (60 ≤ code && code < 80) || code == 98 || code == 99 || code == 165 || (150 ≤ code && code ≤ 153) then
       let (net, r) := L4Factoidal.Net.Xhr.op s.net code fs
       ({ s with net }, r)
     -- Web Storage: the area is named by the session's page origin, never by an argument.
@@ -805,6 +806,11 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
         ("retry", match p.retry with | some r => .number (toString r) | none => .null),
         ("events", .array (evs.map fun e => .array [.string e.type, .string e.data, .string e.lastEventId]))]
       pure' (ofStr j.toString)
+    -- An image file's natural size (HTML.ImageSize): "width height", or "" when it is not an image.
+    else if code == 166 then
+      pure' (ofStr (match L4Factoidal.HTML.ImageSize.size? (bytesArg fs 0) with
+        | some (w, h) => toString w ++ " " ++ toString h
+        | none => ""))
     -- A multipart/form-data body's entries (`formData()`, Net.Multipart): empty is a failure.
     else if code == 164 then pure' (.ok (L4Factoidal.Net.Multipart.op fs))
     -- A close code and reason (`WebSocketError`, Net.WebSocket.closeCheck): "" or the exception.

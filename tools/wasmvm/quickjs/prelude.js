@@ -611,6 +611,7 @@
   let htmlConstructing = false, ceActive = false;
   // A script element that a script made (section dynscripts): told when it is created.
   let noteFreshScript = () => {};
+  let noteImg = () => {};   // section images: an img element made by script
   // Connected (DOM §4.2.2): the shadow-including root is a document (node_info 25).
   const connectedId = id => { if (id < 0) return false; if (shadowEngine()) return info(id, 25) === 1; for (let k = id, i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; };
   class EventTarget {
@@ -3972,6 +3973,7 @@
       name = String(name);
       const id = chk(n.create(3 + 16 * nodeId(this), name));
       if (name.length === 6 && name.toLowerCase() === 'script') noteFreshScript(id);
+      else if (name.length === 3 && name.toLowerCase() === 'img') noteImg(id);
       else if (ttMeta !== null && name.length === 4 && name.toLowerCase() === 'meta') ttMeta();
       return made(id, options);
     });
@@ -6529,6 +6531,98 @@
     return true;
   };
   const st_xhr = x => xhrState.get(x);
+  // An element's request (Fetch §2.2.5 destinations): made by the engine for the element, through
+  // the same network core as fetch (Lean decides every hop: mode, credentials, referrer policy,
+  // address rules, CSP is asked by the caller), with the answer's own status and bytes kept even
+  // when it is opaque (web_api 165: destination and raw). `null` for a network error.
+  const elementFetch = (url, d) => new Promise(resolve => {
+    // the network off (an embedder that did not turn it on): `undefined`, nothing happens
+    const XC = xhrForFetch ?? globalThis.XMLHttpRequest;
+    if (typeof XC !== 'function') { resolve(undefined); return; }
+    let x, s;
+    try { x = new XC(); s = st_xhr(x); x.open('GET', url, true); } catch { resolve(null); return; }
+    apiCall(73, [s.h, d.credentials === 'include' ? 1 : d.credentials === 'omit' ? 2 : 0]);
+    if (d.mode === 'no-cors') apiCall(77, [s.h, 2]);
+    apiCall(165, [s.h, d.destination, '1']);
+    if (d.referrerPolicy) apiCall(98, [s.h, 'about:client', d.referrerPolicy, '', '']);
+    x.responseType = 'arraybuffer';
+    x.onload = () => resolve({ status: x.status, type: x.getResponseHeader('Content-Type') ?? '',
+      bytes: x.response instanceof ArrayBuffer ? new Uint8Array(x.response) : new Uint8Array(0) });
+    x.onerror = x.onabort = x.ontimeout = () => resolve(null);
+    try { x.send(); } catch { resolve(null); }
+  });
+  // the CORS settings attribute of an element (HTML §2.5.4): its mode and credentials mode
+  const corsSettings = el => {
+    const c = el.getAttribute('crossorigin');
+    if (c === null) return { mode: 'no-cors', credentials: 'include' };
+    return c.toLowerCase() === 'use-credentials' ? { mode: 'cors', credentials: 'include' } : { mode: 'cors', credentials: 'same-origin' };
+  };
+  // ---- images (HTML §4.8.4.3 "update the image data"): an img element's request, its load and
+  // error events, its natural size (Lean's HTML.ImageSize from the file's first bytes, web_api
+  // 166). The request starts when the element gets a source (parsed with one, or a script sets
+  // src, srcset, sizes, crossorigin or referrerpolicy); a page with no img pays nothing.
+  const imgStates = new Map();   // node -> { gen, complete, w, h, waiters }
+  let imgGen = 0, imgWatching = false;
+  const imgAttrs = new Set(['src', 'srcset', 'sizes', 'crossorigin', 'referrerpolicy']);
+  const imgFire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
+  const updateImage = id => {
+    const el = wrap(id);
+    const gen = ++imgGen;
+    const hasSrc = n0.attr(id, 'src'), hasSet = n0.attr(id, 'srcset');
+    const url = typeof hasSrc === 'string' || typeof hasSet === 'string' ? el.currentSrc : '';
+    const st = { gen, complete: false, w: 0, h: 0, waiters: (imgStates.get(id)?.waiters) ?? [] };
+    imgStates.set(id, st);
+    const settle = ok => {
+      st.complete = true;
+      for (const [res, rej] of st.waiters.splice(0)) ok ? res() : rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
+      imgFire(el, ok ? 'load' : 'error');
+    };
+    if (url === '') {
+      // no source: broken; an empty src attribute fires error (step 13)
+      st.complete = true;
+      if (typeof hasSrc === 'string') Promise.resolve().then(() => { if (imgStates.get(id)?.gen === gen) settle(false); });
+      return;
+    }
+    if (cspBlocksRequest('img-src', url, '', false, id)) { flushViolations(); Promise.resolve().then(() => { if (imgStates.get(id)?.gen === gen) settle(false); }); return; }
+    const cors = corsSettings(el);
+    elementFetch(url, { destination: 'image', ...cors, referrerPolicy: (el.getAttribute('referrerpolicy') ?? '').toLowerCase() }).then(r => {
+      if (imgStates.get(id)?.gen !== gen || r === undefined) return;
+      let size = '';
+      if (r !== null && r.status >= 200 && r.status < 300) { const a = apiCall(166, [r.bytes]); if (typeof a === 'string') size = a; }
+      if (size === '') { settle(false); return; }
+      const [w, h] = size.split(' ').map(Number);
+      st.w = w; st.h = h;
+      settle(true);
+    });
+  };
+  const imgWatch = () => {
+    if (imgWatching) return;
+    imgWatching = true;
+    const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
+    const isImg = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'img';
+    n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0 && imgAttrs.has(String(name).toLowerCase()) && isImg(id)) updateImage(id); return r; };
+    n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && imgAttrs.has(String(name).toLowerCase()) && isImg(id)) updateImage(id); return r; };
+  };
+  noteImg = id => imgWatch();
+  const imgStart = () => {
+    const imgs = document.getElementsByTagName('img');
+    if (imgs.length === 0) return;
+    imgWatch();
+    for (const el of imgs) updateImage(nodeId(el));
+  };
+  {
+    const P = named.HTMLImageElement.prototype;
+    const ofImg = (el, k) => { const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };
+    Object.defineProperty(P, 'naturalWidth', { configurable: true, enumerable: true, get() { return ofImg(this, 'w'); } });
+    Object.defineProperty(P, 'naturalHeight', { configurable: true, enumerable: true, get() { return ofImg(this, 'h'); } });
+    Object.defineProperty(P, 'complete', { configurable: true, enumerable: true, get() { return ofImg(this, 'complete'); } });
+    define(P, 'decode', function decode() {
+      const st = imgStates.get(nodeId(this));
+      if (!st) return Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
+      if (st.complete) return st.w > 0 || st.h > 0 ? Promise.resolve() : Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
+      return new Promise((res, rej) => st.waiters.push([res, rej]));
+    });
+  }
 
   // ---- Origin (HTML §7.5 "Origin.from", the Origin interface) -----------------------------
   // An object for an origin: a tuple origin by its serialization, or an opaque origin that is
@@ -16992,10 +17086,14 @@
       if (url !== null && url !== undefined && cspBlocksRequest('script-src-elem', url, typeof nonce === 'string' ? nonce : '', false, id)) {
         flushViolations(); Promise.resolve().then(() => fire(el, 'error')); return;
       }
-      const fetcher = url === null || url === undefined ? undefined : globalThis.fetch;
-      if (typeof fetcher !== 'function') { Promise.resolve().then(() => fire(el, 'error')); return; }
-      fetcher(url).then(r => { if (!r.ok) throw new TypeError('script load failed'); return r.text(); })
-        .then(code => { if (!scripting(id)) return; execute(el, code); fire(el, 'load'); }, () => { if (scripting(id)) fire(el, 'error'); });
+      if (url === null || url === undefined) { Promise.resolve().then(() => fire(el, 'error')); return; }
+      // a classic script's request (HTML §8.1.4.2): destination script, its CORS settings
+      elementFetch(url, { destination: 'script', ...corsSettings(el), referrerPolicy: (el.getAttribute('referrerpolicy') ?? '').toLowerCase() })
+        .then(r => {
+          if (!scripting(id)) return;
+          if (r === undefined || r === null || r.status < 200 || r.status > 299) { fire(el, 'error'); return; }
+          execute(el, new TextDecoder().decode(r.bytes)); fire(el, 'load');
+        });
     };
     const after = r => { if (r === 0 && fresh.size) for (const id of [...fresh]) prepare(id); return r; };
     noteFreshScript = id => {
@@ -17778,7 +17876,7 @@
     report(e) { report(e); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
-    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); },
+    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); imgStart(); },
     script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; if (d > 0 && ttDoc !== null) ttDoc(d); },
     url(u) { href = String(u); },
     release(id) { callbacks.delete(id); },

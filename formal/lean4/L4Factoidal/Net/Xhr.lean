@@ -76,6 +76,12 @@ structure Xhr where
   /-- The request's integrity metadata (`fetch`'s `integrity`): a response whose bytes do not
   match is a network error (`Net.Integrity.okFor`). -/
   integrity : String := ""
+  /-- A request the engine makes for an element (op 165, never a page's script): its
+  destination (Fetch §2.2.5, `"empty"` for `fetch` and `XMLHttpRequest`), and `raw`: the
+  answer's own status and bytes are kept even when it is opaque, since the element uses them
+  (an image is decoded, a classic script runs); the response still says it is opaque. -/
+  destination : String := "empty"
+  raw : Bool := false
   /-- The request's referrer (`fetch`'s `referrer`): `none` is the client's URL, `some ""`
   no referrer, else a URL of the page's own origin (`setReferrer`). -/
   referrer : Option String := none
@@ -426,7 +432,7 @@ this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
 def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now, pin := s.pinFor x.url }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now, pin := s.pinFor x.url, destination := x.destination }
   let (s, blocked) := cspRequest s "connect-src" x.url
   let (s, out) := if blocked then (s, SyncOutcome.failed) else syncFetch s t
   match out with
@@ -487,7 +493,7 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if blocked then s.set h { x with deferFail := true } else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now, pin := s.pinFor x.url }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now, pin := s.pinFor x.url, destination := x.destination }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
   | .deliver _ r =>
@@ -557,6 +563,20 @@ def responseEvents (x : Xhr) (r : Response) : Array Ev :=
   upload ++ #[.setState 2, rsc] ++ loading ++
     #[.setState 4, rsc, .guardDone, .fire false "load" bodySize total (total > 0), .fire false "loadend" bodySize total (total > 0)]
 
+/-- What an element's request delivers (`Xhr.raw`): the answer's status, fields (no
+`Set-Cookie`) and bytes, with the tainting of the response a script would get. -/
+def rawResponse (t : Transfer) (a : Answer) (r : Response) : Response :=
+  { status := a.status, statusText := a.statusText, url := if a.url.isEmpty then t.url else a.url,
+    headers := a.headers.filter fun (n, _) => !forbiddenResponseHeader n, body := a.body, tainting := r.tainting }
+
+/-- Kind: security lemma. Says: an element's response keeps the tainting a script's would
+have (an opaque answer stays marked opaque) and never carries `Set-Cookie`. -/
+theorem rawResponse_tainting (t : Transfer) (a : Answer) (r : Response) :
+    (rawResponse t a r).tainting = r.tainting ∧ ∀ f ∈ (rawResponse t a r).headers, forbiddenResponseHeader f.1 = false := by
+  refine ⟨rfl, fun f hf => ?_⟩
+  simp only [rawResponse, List.mem_filter, Bool.not_eq_true'] at hf
+  exact hf.2
+
 /-- The host's answer to a fetch. The callback of the object, when a task is to run it. -/
 def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
   match s.sockets.findIdx? (·.id == id) with
@@ -584,6 +604,7 @@ def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
       ({ s with live := s.live.map (fun e => if e.1 == id then (id, h, t') else e), outbox := s.outbox.push w }, none)
     | .fail _ => (requestError s1 h { x with transfer := none } "error", some x.cb)
     | .deliver _ r =>
+      let r := if x.raw then rawResponse t a r else r
       -- Subresource Integrity: bytes that do not match the request's metadata never reach the page
       if !Integrity.okFor x.integrity r.tainting r.body then
         (requestError s1 h { x with transfer := none } "error", some x.cb) else
@@ -915,6 +936,11 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       (name, v)
     let body := formDataBody entries
     if body.size > maxBody then (s, .error (-5)) else (s, .ok body)
+  | 165 =>
+    -- an element's request (the prelude's own, never a page's): handle, destination, "1" raw
+    match s.get? (natAt fs 0) with
+    | none => (s, .error errType)
+    | some x => (s.set (natAt fs 0) { x with destination := strAt fs 1, raw := strAt fs 2 == "1" }, okStr "")
   | 79 =>
     -- the redirect mode (`fetch`): 1 "error" (`PageFetch.onAnswer_redirect_error`), 2 "manual"
     -- (an opaque-redirect response), else "follow"

@@ -1111,6 +1111,7 @@ import L4Factoidal.Net.Integrity
 import L4Factoidal.Net.ServiceWorkerScope
 import L4Factoidal.Net.EventSource
 import L4Factoidal.Net.Multipart
+import L4Factoidal.HTML.ImageSize
 import L4Factoidal.Net.WebSocket
 import L4Factoidal.Net.Subresource
 import L4Factoidal.HTML.ReferrerSource
