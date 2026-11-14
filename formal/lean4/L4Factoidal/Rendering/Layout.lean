@@ -1,6 +1,7 @@
 import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.Generated
 import L4Factoidal.Rendering.InlineBox
+import L4Factoidal.Rendering.MarginCollapse
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
 import L4Factoidal.Rendering.FlexLayout
@@ -1238,9 +1239,23 @@ def firstBlock (dom : Dom) (styles : Array Computed) (id : Nat) : Option Nat := 
       return if s.display.isBlockLevel then some k else none
   return none
 
-/-- The top margin that the box of `id` shows to what is before it: its own, or the
-largest of its own and those of the first blocks nested at its top that adjoin it
-(CSS 2.1 §8.3.1; margins are not negative in this profile). `fuel` bounds the nesting. -/
+/-- The margin that two adjoining margins make (CSS 2.1 §8.3.1): the larger when neither
+is negative, the more negative when both are, their sum when one is. The same text as
+`MarginCollapse.collapse`, where it is proved against the rule, on `Float`. -/
+def collapsePx (a b : Float) : Float :=
+  if a >= 0 && b >= 0 then max a b else if a < 0 && b < 0 then min a b else a+b
+
+/-- How far a box moves into the margin `before` it by its own top margin `top`
+(`MarginCollapse.overlap` on `Float`): the smaller of the two when neither is negative.
+`before` at `unbounded` is the top of a flow whose container shows the margin already:
+all of `top` is taken out. -/
+def overlapPx (before top : Float) : Float :=
+  if before >= unbounded/2 then top
+  else if before >= 0 && top >= 0 then min before top else if before < 0 && top < 0 then max before top else 0
+
+/-- The top margin that the box of `id` shows to what is before it: its own, collapsed
+with those of the first blocks nested at its top that adjoin it (CSS 2.1 §8.3.1, two at a
+time: `MarginCollapse`). `fuel` bounds the nesting. -/
 def leadMargin (dom : Dom) (styles : Array Computed) (fuel id : Nat) : Float := Id.run do
   let mut best := (styles[id]!).margin.top
   let mut cur := id
@@ -1249,7 +1264,7 @@ def leadMargin (dom : Dom) (styles : Array Computed) (fuel id : Nat) : Float := 
     if !collapsesTop dom (styles[cur]!) cur then break
     match firstBlock dom styles cur with
     | some k =>
-      best := max best (styles[k]!).margin.top
+      best := collapsePx best (styles[k]!).margin.top
       cur := k
     | none => break
   return best
@@ -1549,12 +1564,13 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
               | .right => false
               | .inlineStart => ltr
               | _ => !ltr
-            let (fx,fy) := Floats.place floats.toList left (LU.ofPx innerX) (LU.ofPx width) (LU.ofPx outer) (LU.ofPx r.height) (LU.ofPx top)
+            -- a float's margin box has no negative size here (negative margins on a float pull nothing)
+            let (fx,fy) := Floats.place floats.toList left (LU.ofPx innerX) (LU.ofPx width) (LU.ofPx (max 0 outer)) (LU.ofPx (max 0 r.height)) (LU.ofPx top)
             let r := r.shift (LU.toPx fx-innerX) (LU.toPx fy-top)
             content := {content with nodes := content.nodes ++ r.nodes, boxes := content.boxes ++ r.boxes,
                                      runs := content.runs ++ r.runs, pending := content.pending ++ r.pending,
                                      work := content.work+r.work, rough := content.rough || r.rough}
-            floats := floats.push ⟨left,fx,fy,LU.ofPx outer,LU.ofPx r.height⟩
+            floats := floats.push ⟨left,fx,fy,LU.ofPx (max 0 outer),LU.ofPx (max 0 r.height)⟩
           else if cs.display.isBlockLevel then
             if !inline.isEmpty then
               let top := innerY+content.height
@@ -1574,7 +1590,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
                 content := {content with height := content.height+(cleared-here)}
                 previous := 0
             -- CSS 2.1 §8.3.1: the margin before this box and its own top margin collapse.
-            let overlap := min previous (if cs.display == .block then leadMargin dom styles fuel child else cs.margin.top)
+            let overlap := overlapPx previous (if cs.display == .block then leadMargin dom styles fuel child else cs.margin.top)
             let top := innerY+content.height-overlap
             -- §9.5: a plain block is part of this formatting context: it is laid out under the
             -- floats with its lines beside them, and floats inside it stay in the context for
@@ -1984,7 +2000,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       if contentOnly then return content
       -- The same at the bottom: the last child's margin sticks out of a block with no height.
       let joinsBottom := imposedWidth.isNone && imposedHeight.isNone && collapsesBottom dom s id && !s.display.isFlex && !s.display.isGrid
-      let marginBottom := if joinsBottom then max margin.bottom content.marginBottom else margin.bottom
+      let marginBottom := if joinsBottom then collapsePx margin.bottom content.marginBottom else margin.bottom
       let content := if joinsBottom then {content with height := content.height-content.marginBottom} else content
       let height := definite.getD (clampOpt minHeight maxHeight content.height)
       -- The absolutely positioned children of a flex or grid container are not its items.

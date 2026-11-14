@@ -916,6 +916,14 @@ private def edgePixel (source : String) : Except String Float := do
   let value ← pixels source
   if value < 0 then throw "negative edges outside first CSS profile"
   return value
+/-- The four margins of a `margin` shorthand: a margin may be negative (CSS 2.1 §8.3). -/
+private def marginValues (s : String) : Except String Edges := do
+  match ← (words s).mapM pixels with
+  | [a] => return ⟨a,a,a,a⟩
+  | [a,b] => return ⟨a,b,a,b⟩
+  | [a,b,c] => return ⟨a,b,c,b⟩
+  | [a,b,c,d] => return ⟨a,b,c,d⟩
+  | _ => throw "CSS edge shorthand requires one to four values"
 private def borderStyle (source : String) : Except String BorderStyle :=
   match (trim source).toLower with
   | "none" | "hidden" => pure .none
@@ -959,20 +967,20 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | _ => throw "unsupported CSS display"
   | "width" => return {s with width := ← length d.value}
   | "height" => return {s with height := ← length d.value}
-  | "margin" => return {s with margin := ← edgeValues d.value}
+  | "margin" => return {s with margin := ← marginValues d.value}
   | "padding" => return {s with padding := ← edgeValues d.value}
   | "margin-top" =>
     if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with top := 0}, autoMarginTop := true}
-    return {s with margin := {s.margin with top := ← edgePixel d.value}, autoMarginTop := false}
+    return {s with margin := {s.margin with top := ← pixels d.value}, autoMarginTop := false}
   | "margin-right" =>
     if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with right := 0}, autoMarginRight := true}
-    return {s with margin := {s.margin with right := ← edgePixel d.value}, autoMarginRight := false}
+    return {s with margin := {s.margin with right := ← pixels d.value}, autoMarginRight := false}
   | "margin-bottom" =>
     if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true}
-    return {s with margin := {s.margin with bottom := ← edgePixel d.value}, autoMarginBottom := false}
+    return {s with margin := {s.margin with bottom := ← pixels d.value}, autoMarginBottom := false}
   | "margin-left" =>
     if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with left := 0}, autoMarginLeft := true}
-    return {s with margin := {s.margin with left := ← edgePixel d.value}, autoMarginLeft := false}
+    return {s with margin := {s.margin with left := ← pixels d.value}, autoMarginLeft := false}
   | "text-align" => match (trim d.value).toLower with
     | "start" => return {s with textAlign := .start}
     | "left" => return {s with textAlign := .left}
