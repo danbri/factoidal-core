@@ -99,6 +99,8 @@ structure Live where
   /-- Counts the changes: the `lastModified` of a file is the count at its last change (no
   clock is read). -/
   clock : Nat := 1
+  /-- The unique ids given out (`getUniqueId`), by kind and path: an entry keeps its id. -/
+  uids : List (String × Nat) := []
   deriving Inhabited
 
 structure Shelf where
@@ -184,6 +186,20 @@ def wclose (quota : Nat) (s : Shelf) (id : Nat) : Shelf × List Tok :=
     else if after.usage > quota && after.usage > s.tree.usage then ({ s with live }, fail "QuotaExceededError")
     else ({ tree := after, live }, ok)
 
+/-- A number as a version 4 GUID: `00000000-0000-4000-8000-` and the number in 12 lower-case
+hex digits. -/
+def guidOf (n : Nat) : String :=
+  let hex := (Nat.toDigits 16 (n % 2 ^ 48))
+  "00000000-0000-4000-8000-" ++ String.ofList (List.replicate (12 - hex.length) '0' ++ hex)
+
+/-- Kind: format law. Says: a GUID made here is 36 characters long. -/
+theorem guidOf_length (n : Nat) (h : (Nat.toDigits 16 (n % 2 ^ 48)).length ≤ 12) : (guidOf n).length = 36 := by
+  unfold guidOf
+  generalize Nat.toDigits 16 (n % 2 ^ 48) = d at h ⊢
+  simp only [String.length_append, String.length_ofList, List.length_append, List.length_replicate]
+  have : "00000000-0000-4000-8000-".length = 24 := by decide
+  omega
+
 /-! ## The other commands -/
 
 /-- A command that is neither a writable's step nor its close. -/
@@ -195,6 +211,15 @@ def other (quota : Nat) (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
   | "root" => (s, ok)
   -- File System Access `queryPermission`/`requestPermission`: every handle here is of the origin
   -- private file system of the caller's own storage key, so read and readwrite are granted
+  -- `getUniqueId`: the id of the entry of this kind and path, given the first time it is
+  -- asked, in the form of a version 4 GUID (the number in its last 12 hex digits)
+  | "uid" =>
+    let key := strAt a 2 ++ ":" ++ strAt a 1
+    match l.uids.find? (·.1 == key) with
+    | some (_, n) => (s, ok [S (guidOf n)])
+    | none =>
+      let n := l.uids.length + 1
+      ({ s with live := { l with uids := (key, n) :: l.uids } }, ok [S (guidOf n)])
   | "perm" => (s, ok [S (if strAt a 1 == "read" || strAt a 1 == "readwrite" then "granted" else "denied")])
   | "picker" => (s, [S (Picker.answer ((a.toList.drop 1).map fun b => (String.fromUTF8? b).getD ""))])
   | "usage" => (s, ok [N t.usage, N quota])
@@ -460,6 +485,8 @@ private def s1 : Shelf := (answers {} [["get", "", "dir", "d", "1"], ["get", "di
 #guard (answers s1 [["perm", "read"], ["perm", "readwrite"], ["perm", "x"]]).2 == ["ok granted", "ok granted", "ok denied"]
 -- the root's remove() empties it
 #guard (answers (answers s1 [["remove", "", "", "0"]]).1 [["list", ""]]).2 == ["ok"]
+#guard (answers s1 [["uid", "dir", "d"], ["uid", "b", "f"], ["uid", "dir", "d"]]).2 ==
+  ["ok 00000000-0000-4000-8000-000000000001", "ok 00000000-0000-4000-8000-000000000002", "ok 00000000-0000-4000-8000-000000000001"]
 -- the pickers: refused, and the shelf is unchanged
 #guard (answers s1 [["picker", "open", "0", "", ""], ["picker", "save", "1", "", ""], ["list", ""]]).2 == ["!SecurityError", "!TypeError", "ok dir d b f"]
 #guard (answers s1 [["list", ""], ["list", "dir"], ["list", "nope"]]).2 == ["ok dir d b f", "ok a.txt f", "!NotFoundError"]

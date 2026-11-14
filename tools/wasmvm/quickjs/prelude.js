@@ -11918,7 +11918,8 @@
           call(201, ['remove', s.path, '', d.recursive ? '1' : '0'], 'FileSystemHandle.remove');
         });
       }
-      getUniqueId() { return later(() => { const s = st(this, 'FileSystemHandle.getUniqueId'); return (s.dir ? 'd:' : 'f:') + s.path; }); }
+      // a GUID the file system model gives the entry (the same for every handle of it)
+      getUniqueId() { return later(() => { const s = st(this, 'FileSystemHandle.getUniqueId'); return text(call(201, ['uid', s.path, s.dir ? 'd' : 'f'], 'FileSystemHandle.getUniqueId')[0]); }); }
       // File System Access: the permission of a handle (Lean's answer: the origin private file
       // system's handles are the page's own).
       queryPermission(descriptor = undefined) { return permission(this, descriptor, 'FileSystemHandle.queryPermission'); }
@@ -11946,7 +11947,7 @@
           const mode = d.mode === undefined ? 'siloed' : String(d.mode);
           if (mode !== 'siloed' && mode !== 'exclusive') throw new TypeError(`Failed to execute 'createWritable': '${mode}' is not a valid mode.`);
           const id = Number(text(call(201, ['wopen', s.path, d.keepExistingData ? '1' : '0', mode === 'exclusive' ? '1' : '0'], 'FileSystemFileHandle.createWritable')[0]));
-          return newWritable(id);
+          return newWritable(id, mode);
         });
       }
       move(...args) {
@@ -11971,7 +11972,7 @@
             const modes = ['readwrite', 'read-only', 'readwrite-unsafe'], mode = d.mode === undefined ? 'readwrite' : String(d.mode);
             if (!modes.includes(mode)) throw new TypeError(`Failed to execute 'createSyncAccessHandle': '${mode}' is not a valid mode.`);
             const id = Number(text(call(201, ['aopen', s.path, String(modes.indexOf(mode))], 'createSyncAccessHandle')[0]));
-            return make(FileSystemSyncAccessHandle, { access: id, open: true });
+            return make(FileSystemSyncAccessHandle, { access: id, open: true, mode });
           });
         } });
     const entriesOf = (self, pick) => {
@@ -12089,6 +12090,7 @@
           return writeChunk(w, data);
         });
       }
+      get mode() { return wOf(this, 'mode').mode; }
       seek(position) {
         const n = arguments.length;
         return later(() => { wOf(this, 'seek'); need(1, n, 'FileSystemWritableFileStream.seek'); return FileSystemWritableFileStream.prototype.write.call(this, { type: 'seek', position }); });
@@ -12103,7 +12105,7 @@
       FileSystemWritableFileStream.prototype.abort = function abort() { return later(() => abortW(wOf(this, 'abort'))); };
     }
     idl(FileSystemWritableFileStream, 'FileSystemWritableFileStream');
-    const newWritable = id => { const w = { id, open: true }; sinkFor = w; try { return make(FileSystemWritableFileStream, w); } finally { sinkFor = null; } };
+    const newWritable = (id, mode) => { const w = { id, open: true, mode }; sinkFor = w; try { return make(FileSystemWritableFileStream, w); } finally { sinkFor = null; } };
 
     // ---- FileSystemSyncAccessHandle (dedicated workers): reads and writes in place --------------
     const acc = (o, what) => { const s = kinds.get(o); if (!s || s.access === undefined) throw new TypeError('Illegal invocation: FileSystemSyncAccessHandle.' + what); return s; };
@@ -12111,6 +12113,7 @@
     const view = (b, what) => { if (b instanceof ArrayBuffer) return new Uint8Array(b); if (ArrayBuffer.isView(b)) return new Uint8Array(b.buffer, b.byteOffset, b.byteLength); throw new TypeError(`Failed to execute '${what}': the buffer is not a BufferSource.`); };
     class FileSystemSyncAccessHandle {
       constructor() { guard(); }
+      get mode() { return acc(this, 'mode').mode; }
       read(buffer, options = undefined) {
         const s = acc(this, 'read');
         need(1, arguments.length, 'FileSystemSyncAccessHandle.read');
