@@ -2,6 +2,8 @@ import {pathToFileURL} from "node:url";
 import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
+import {netAnswer,type NetWire} from "./native_net.ts";
+import {loadSubresource} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
 // zoomUnit: the backing pixels for each point, in percent (WebDocument.zoomUnit): Lean lays the page
@@ -70,8 +72,11 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
 export const MAX_IMAGE_BYTES=4*1048576, MAX_PAGE_IMAGE_BYTES=6*1048576;
 /** Limit on the bytes of a tab icon (WebDocument.maxIconBytes). */
 export const MAX_ICON_BYTES=65536;
-/** An image may come from the page's own origin only: a file page reads local files, an
-HTTP page its own scheme, host and port. There is no proxy. */
+/** The rule for a host with an engine from before the op `subresource`, and for local
+files: an image may come from the page's own origin only: a file page reads local files, an
+HTTP page its own scheme, host and port. With the op, the engine decides (Net.Subresource):
+a page's images, style sheets and fonts may be of any origin, each request and redirect is
+checked there, and this function is asked only about `file:` URLs. */
 export function imageAllowed(url:string,documentURL:string) {
   const target=new URL(url),page=new URL(documentURL);
   if(page.protocol==="file:")return target.protocol==="file:";
@@ -94,6 +99,42 @@ async function readBytes(url:string,limit:number,signal?:AbortSignal):Promise<Ui
   const bytes=new Uint8Array(length);let offset=0;
   for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   return bytes;
+}
+/** An engine that decides subresource transfers (WebDocument op `subresource`). */
+export type SubresourceEngine={subresource?:(request:Record<string,unknown>)=>unknown};
+const noSubresourceOp=new WeakSet<object>();
+/** The bytes of one subresource of a page (kind "image", "style", "font"), with its final URL.
+A `file:` URL is read here, for a `file:` page only. Every other URL is the engine's to decide
+(Net.Subresource, through page-load.mjs `loadSubresource`): this host makes the requests it
+is told to (native_net.ts: redirect "manual", the address the engine chose). An engine from
+before the op gets the rule of before: the page's own origin, by a plain fetch. */
+export async function readSubresource(engine:SubresourceEngine|undefined,kind:"image"|"style"|"font",url:string,documentURL:string,
+  limit:number,signal?:AbortSignal,before?:()=>Promise<{url:string;bytes:Uint8Array;contentType:string}>):Promise<{url:string;bytes:Uint8Array;contentType:string}> {
+  const local=new URL(url).protocol==="file:";
+  if(!local&&engine&&typeof engine.subresource==="function"&&!noSubresourceOp.has(engine)) {
+    const step=async(request:Record<string,unknown>)=>{
+      try{return await engine.subresource!(request);}
+      catch(error){
+        if(/unknown document operation/.test(String(error))){noSubresourceOp.add(engine);return undefined;}
+        throw error;
+      }
+    };
+    // Is the op there? One call that sends nothing: an unknown kind is answered with `fail`.
+    if(await step({page:documentURL,kind:"",url})!==undefined) {
+      const got=await loadSubresource(step,(wire:NetWire)=>netAnswer(wire,{timeoutMs:10000}),{url:documentURL},kind,url,signal) as
+        {url:string;contentType:string;base64:string};
+      const text=atob(got.base64);
+      if(text.length>limit)throw new Error(`${kind} too large`);
+      const bytes=new Uint8Array(text.length);
+      for(let i=0;i<text.length;i++)bytes[i]=text.charCodeAt(i);
+      return {url:got.url,bytes,contentType:got.contentType};
+    }
+  }
+  // A local file, or an engine from before the op: `before` (a style sheet: as it was read
+  // then), else the page's own origin only.
+  if(before)return await before();
+  if(!imageAllowed(url,documentURL))throw new Error("not of the page's origin");
+  return {url,bytes:await readBytes(url,limit,signal),contentType:""};
 }
 /** Limits on web font bytes (CSS Fonts 4 @font-face): each face, and all faces of a page. */
 export const MAX_FONT_BYTES=8*1048576, MAX_PAGE_FONT_BYTES=16*1048576;
@@ -122,8 +163,7 @@ export async function loadWebFonts(engine:WebFontEngine,url:string,source:string
       const known=loaded.get(src);
       if(known!==undefined){if(known)break;continue;}
       try {
-        if(!imageAllowed(src,url))throw new Error("not of the page's origin");
-        const bytes=await readBytes(src,MAX_FONT_BYTES,signal);
+        const {bytes}=await readSubresource(engine as SubresourceEngine,"font",src,url,MAX_FONT_BYTES,signal);
         if(total+bytes.length>MAX_PAGE_FONT_BYTES)throw new Error("the page's fonts exceed 16 MiB");
         const sha256=await sha256Hex(bytes);
         await engine.webFontLoad(bytes,sha256);
@@ -138,22 +178,32 @@ export async function loadWebFonts(engine:WebFontEngine,url:string,source:string
   }
   return webFonts;
 }
-/** Fetch the images Lean listed, as `{key,bytes}`. `failed` hears of each image that was not read. */
+/** Fetch the images Lean listed, as `{key,bytes}`, six at a time, kept in the order listed.
+`failed` hears of each image that was not read. `engine`: the engine that decides each
+transfer (readSubresource); with none, the page's own origin only. */
 export async function fetchImageBytes(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal,
-  failed?:(url:string,reason:string)=>void) {
-  const images:{key:string;bytes:Uint8Array}[]=[];let total=0;
-  for(const {key,url} of wanted) {
-    signal?.throwIfAborted();
-    try {
-      if(!imageAllowed(url,documentURL)){failed?.(url,"not of the page's origin");continue;}
-      const bytes=await readBytes(url,MAX_IMAGE_BYTES,signal);
-      if(total+bytes.length>MAX_PAGE_IMAGE_BYTES){failed?.(url,"past the limit on the image bytes of a page");continue;}
-      total+=bytes.length;
-      images.push({key,bytes});
-    } catch(error) {
-      if(signal?.aborted)throw error;
-      failed?.(url,String(error instanceof Error?error.message:error));
+  failed?:(url:string,reason:string)=>void,engine?:SubresourceEngine) {
+  const read:({bytes:Uint8Array}|{reason:string})[]=new Array(wanted.length);
+  let next=0;
+  const worker=async()=>{
+    for(;;){
+      const index=next++;if(index>=wanted.length)return;
+      signal?.throwIfAborted();
+      try{read[index]={bytes:(await readSubresource(engine,"image",wanted[index].url,documentURL,MAX_IMAGE_BYTES,signal)).bytes};}
+      catch(error){
+        if(signal?.aborted)throw error;
+        read[index]={reason:String(error instanceof Error?error.message:error)};
+      }
     }
+  };
+  await Promise.all(Array.from({length:Math.min(6,wanted.length)},worker));
+  const images:{key:string;bytes:Uint8Array}[]=[];let total=0;
+  for(const [index,{key,url}] of wanted.entries()) {
+    const got=read[index];
+    if("reason" in got){failed?.(url,got.reason);continue;}
+    if(total+got.bytes.length>MAX_PAGE_IMAGE_BYTES){failed?.(url,"past the limit on the image bytes of a page");continue;}
+    total+=got.bytes.length;
+    images.push({key,bytes:got.bytes});
   }
   return images;
 }
@@ -166,8 +216,8 @@ export async function sha256Hex(bytes:Uint8Array) {
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes as Uint8Array<ArrayBuffer>))].map(b=>b.toString(16).padStart(2,"0")).join("");
 }
 /** Fetch the images Lean listed, as `{key,base64}` records for the compile request. */
-export async function fetchImages(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal) {
-  return (await fetchImageBytes(wanted,documentURL,signal)).map(({key,bytes})=>({key,base64:base64(bytes)}));
+export async function fetchImages(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal,engine?:SubresourceEngine) {
+  return (await fetchImageBytes(wanted,documentURL,signal,undefined,engine)).map(({key,bytes})=>({key,base64:base64(bytes)}));
 }
 /** An engine that may hold images (WebDocument, issue 1292). */
 type ImageHolder={
@@ -261,7 +311,12 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       if(index>=MAX_RESOURCES)throw new Error(`Native HTML exceeds ${MAX_RESOURCES} external stylesheets`);
       // The URL and owning node are selected and resolved by Lean.
       navigationURL(descriptor.url,inspection.baseURL,document.url);
-      const resource=await readSource(descriptor.url,signal);
+      // The engine decides the transfer of a sheet of any origin (readSubresource: each request
+      // and redirect, and that a sheet of another origin is text/css).
+      const sheet=await readSubresource(engine as SubresourceEngine,"style",descriptor.url,document.url,MAX_SOURCE_BYTES,signal,
+        async()=>{const read=await readSource(descriptor.url,signal);return {url:read.url,bytes:read.raw,contentType:read.contentType};});
+      const resource={url:sheet.url,source:new TextDecoder("utf-8").decode(sheet.bytes),bytes:sheet.bytes.length};
+      sourceBound(resource.source);
       if(resourceBytes+resource.bytes>MAX_RESOURCE_BYTES)throw new Error("Native HTML stylesheets exceed 32 MiB");
       resourceBytes+=resource.bytes;
       resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
@@ -270,16 +325,15 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       resourceFailures.push({nodeId:descriptor.nodeId,url:descriptor.url,reason:String(error instanceof Error?error.message:error)});
     }
   }
-  // Lean lists the images it wants; the host fetches each one of the page's origin, with
-  // size caps. One that fails or is refused is left out, and the page shows its alt text.
+  // Lean lists the images it wants and decides each transfer (any origin: Net.Subresource);
+  // the host makes the requests, with size caps. One that fails or is refused is left out, and the page shows its alt text.
   // An engine that holds images gets each one once, and renders name them.
   const images=await imageOptions(engine,await fetchImageBytes(inspection.images??[],document.url,signal,
-    (imageURL,reason)=>fetchFailed("image",imageURL,`image not read: ${reason}`,"alt text shown")));
-  // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images: the page's
-  // own origin only. One that fails or is refused leaves the tab with no icon.
+    (imageURL,reason)=>fetchFailed("image",imageURL,`image not read: ${reason}`,"alt text shown"),engine as SubresourceEngine));
+  // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images. One that fails or is refused leaves the tab with no icon.
   let iconBase64:string|undefined;
   if(inspection.icon)try{
-    if(imageAllowed(inspection.icon,document.url))iconBase64=base64(await readBytes(inspection.icon,MAX_ICON_BYTES,signal));
+    iconBase64=base64((await readSubresource(engine as SubresourceEngine,"image",inspection.icon,document.url,MAX_ICON_BYTES,signal)).bytes);
   }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);
     fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
   const webFonts=await loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal);

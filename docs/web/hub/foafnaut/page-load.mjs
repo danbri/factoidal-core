@@ -40,6 +40,29 @@ export async function loadStyleSheets(stylesheets,fetchText,limit=MAX_SHEETS) {
   return {resources,resourceFailures};
 }
 
+/** One subresource of a page, of any origin (an image, a style sheet, a font, a script): the
+engine decides every step (`step`: its op `subresource`, Net.Subresource: the request to make,
+the address of a name, each redirect, what is used), and the host makes each request it is
+told to (`wire`: native_net.ts `netAnswer`; on the Hub, the page's own fetch). `page` is
+`{url, address?, hostCors?}`: the document's URL, the address the host loaded it from when
+it knows it, and whether the host's own network rules apply (the Hub). Answer: `{url,
+status, contentType, base64}` (the final URL, and the body of the answer the engine
+accepted), or a throw with the engine's reason. No URL is read here. */
+export async function loadSubresource(step,wire,page,kind,url,signal) {
+  const base={page:page.url,...(page.address?{pageAddress:page.address}:{}),...(page.hostCors?{hostCors:true}:{}),kind,url};
+  let answer=await step(base),body='';
+  // 20 redirects at most, each a name to resolve and a request: under 64 steps.
+  for(let steps=0;steps<64;steps++) {
+    if(answer?.deliver)return {...answer.deliver,base64:body};
+    if(!answer?.send)throw new Error(String(answer?.fail??'subresource refused'));
+    signal?.throwIfAborted();
+    const {bodyBase64,...head}=await wire(answer.send);
+    body=bodyBase64??'';
+    answer=await step({...base,state:answer.state,answer:head});
+  }
+  throw new Error('subresource: too many steps');
+}
+
 /** The fields of a page that every request which lays the page out must carry, the same in
 each: a render, a hit test (`nodeAt`), the selection, find in page, a print layout, and the
 `layout` request of the page's script session (WebDocument.layoutFields). A request that

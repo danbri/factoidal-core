@@ -27,6 +27,7 @@ import WebAccept
 import WebConsole
 import WebPaint
 import L4Factoidal.Rendering.FontFaceRule
+import L4Factoidal.Net.Subresource
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -2385,6 +2386,12 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   -- GPU asks this once. An engine without it answers "unknown document operation", and
   -- such a host shows no page. With `cpu:true` on a bytes call, each scene of the answer
   -- also names `pixelsSection`: its RGBA bytes, row by row, drawn by `SVGRaster`.
+  -- One step of a subresource transfer (an image, style sheet, font or script of the document,
+  -- of any origin): `Net.Subresource.answer` decides the request the host makes, each redirect
+  -- and what is used. A host asks this for every subresource; an engine from before it
+  -- answers "unknown document operation" and such a host keeps to the page's own origin.
+  if str request "op" == "subresource" then
+    return ((Net.Subresource.answer request).toString,#[])
   if str request "op" == "cpuInfo" then
     return ((JSON.Json.object [("engine",.string "cpu"),("pixels",.string "rgba8"),
       ("ops",.array ([.string "render",.string "chromeLayer"]))]).toString,#[])

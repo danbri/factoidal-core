@@ -362,6 +362,10 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
       return result as {webFont:string;glyphs:number;held:number};
     },
+    // One step of a subresource transfer (WebDocument op `subresource`, Net.Subresource): the
+    // request the host makes next, or what is used, or the refusal. An engine from before it
+    // throws "unknown document operation".
+    subresource:(request:Record<string,unknown>)=>documentCall("",{...request,op:"subresource"}),
     // Held images (WebDocument, issue 1292): sent once, named by renders in `heldImages`.
     // `imageInfo` answers undefined for an engine from before them, which then gets
     // `images` with the bytes in each request, as before (issue 1274).
