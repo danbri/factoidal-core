@@ -36,6 +36,29 @@ edges, not above its ascent and not below its descent. -/
 def Inside (b c : MBox) (p : At) : Prop :=
   0 ≤ p.dx ∧ p.dx + c.width ≤ b.width ∧ c.ascent - p.dy ≤ b.ascent ∧ c.descent + p.dy ≤ b.descent
 
+/-- The place of a child in a parent whose direction is right to left: the place `p`
+read from the parent's right edge. -/
+def mirror (b c : MBox) (p : At) : At := ⟨b.width - p.dx - c.width, p.dy⟩
+
+/-- Kind: invariant (right-to-left layout).
+Says: a child that lies inside its parent's box still lies inside it when its place is
+mirrored for a right-to-left parent; so every containment theorem of this module holds
+in both directions.
+Does not say: that mirroring is all that right-to-left MathML needs (glyphs of mirrored
+operators are not chosen here). -/
+theorem mirror_inside (b c : MBox) (p : At) (h : Inside b c p) : Inside b c (mirror b c p) := by
+  simp only [Inside, mirror] at *
+  omega
+
+/-- Kind: algebraic law (involution).
+Says: mirroring a place twice gives the place back.
+Does not say: anything about the block axis, which mirroring leaves alone. -/
+theorem mirror_mirror (b c : MBox) (p : At) : mirror b c (mirror b c p) = p := by
+  cases p with
+  | mk dx dy =>
+    have h : b.width - (b.width - dx - c.width) - c.width = dx := by omega
+    simp only [mirror, h]
+
 /-! ### Rows (§3.1.3.2) -/
 
 /-- A child of a row: its box, and the space an operator asks before and after it
@@ -452,6 +475,7 @@ theorem padded_none (c : MBox) (hw : 0 ≤ c.width) (ha : 0 ≤ c.ascent) (hd : 
 -- has_operator_spacing: lspace and rspace of 20px add 40px to the row.
 #guard rowWidth [⟨⟨640, 0, 0⟩, 0, 0⟩, ⟨⟨640, 0, 0⟩, 1280, 1280⟩, ⟨⟨640, 0, 0⟩, 0, 0⟩] == 640 * 3 + 2560
 #guard rowOffsets [⟨⟨640, 0, 0⟩, 0, 0⟩, ⟨⟨640, 0, 0⟩, 1280, 1280⟩, ⟨⟨640, 0, 0⟩, 0, 0⟩] == #[0, 1920, 3840]
+#guard (mirror ⟨100, 0, 0⟩ ⟨30, 0, 0⟩ ⟨10, 5⟩).dx == 60 && (mirror ⟨100, 0, 0⟩ ⟨30, 0, 0⟩ ⟨10, 5⟩).dy == 5
 #guard stretchSize 10 50 [20, 40] false == 40 && stretchSize 10 50 [20, 40] true == 50 &&
        stretchSize 10 30 [20, 40] true == 40 && stretchSize 10 5 [20, 40] true == 10
 

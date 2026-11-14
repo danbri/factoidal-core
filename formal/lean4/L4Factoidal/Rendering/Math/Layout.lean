@@ -91,7 +91,8 @@ def Out.shift {α : Type} (o : Out α) (dx dy : Int) : Out α :=
 `rtl`: the parent's direction is right to left, so `p.dx` is measured from the parent's
 right edge to the child's right edge (the layout is mirrored on the inline axis). -/
 def Out.add {α : Type} (parent child : Out α) (p : At) (rtl : Bool := false) : Out α :=
-  let c := child.shift (if rtl then parent.box.width - p.dx - child.box.width else p.dx) p.dy
+  let q := if rtl then mirror parent.box child.box p else p
+  let c := child.shift q.dx q.dy
   { parent with boxes := parent.boxes ++ c.boxes, rules := parent.rules ++ c.rules,
                 leaves := parent.leaves ++ c.leaves }
 
@@ -123,6 +124,23 @@ def sized (content : Int) (size min max : CSS.Length) : Int :=
   let v := (pixels size).getD content
   let v := match pixels max with | some m => Min.min v m | none => v
   match pixels min with | some m => Max.max v m | none => v
+
+/-- Kind: specification conformance (CSS 2.1 §10.4).
+Says: when the style gives a minimum in pixels, the size is at least that minimum,
+whatever the property and the maximum are: a minimum wins over a maximum.
+Does not say: anything about percentages and other units (they are not resolved here). -/
+theorem sized_min (content m : Int) (size min max : CSS.Length) (h : pixels min = some m) :
+    m ≤ sized content size min max := by
+  simp only [sized, h]
+  exact Int.le_max_right _ _
+
+/-- Kind: specification conformance (CSS 2.1 §10.4).
+Says: with `auto` for the property and no pixel limits, the size is the content's.
+Does not say: what a percentage does (nothing here: it is read as `auto`). -/
+theorem sized_auto (content : Int) (size min max : CSS.Length)
+    (hs : pixels size = none) (hmin : pixels min = none) (hmax : pixels max = none) :
+    sized content size min max = content := by
+  simp [sized, hs, hmin, hmax]
 
 /-- The element's own box around its content (CSS 2.1 §8.1; MathML Core §3.1.2): the
 content box takes the `width` and `height` of the style when they are lengths (the
