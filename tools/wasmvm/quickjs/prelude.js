@@ -5193,9 +5193,12 @@
         signal.addEventListener('abort', () => { if (settled) return; fail(signal.reason); try { x.abort(); } catch { /* done */ } });
         try { x.open(st.method, st.url, true); } catch (e) { fail(new TypeError(String(e && e.message || e))); return; }
         apiCall(73, [s.h, st.credentials === 'include' ? 1 : 0]);
-        if (st.mode === 'same-origin') apiCall(77, [s.h, 1]);
-        // redirect mode "error": Lean refuses the redirect (web_api op 79); "manual" is followed
-        if (st.redirect === 'error') apiCall(79, [s.h, 1]);
+        // the mode: Lean refuses what "same-origin" forbids, sends a "no-cors" request only when
+        // it is simple, and makes its answer opaque (Net.PageFetch: plan_noCors_simple, responseOf_opaque)
+        if (st.mode === 'same-origin') apiCall(77, [s.h, 1]); else if (st.mode === 'no-cors') apiCall(77, [s.h, 2]);
+        // redirect mode: Lean refuses the redirect for "error" and answers an opaque-redirect
+        // response for "manual" (web_api op 79)
+        if (st.redirect === 'error') apiCall(79, [s.h, 1]); else if (st.redirect === 'manual') apiCall(79, [s.h, 2]);
         // the request's referrer and referrer policy: Lean takes a referrer only of the page's
         // own origin and makes the Referer of each hop (web_api 98, Net.PageFetch.referrerOf)
         apiCall(98, [s.h, st.referrer, st.referrerPolicy, '', '']);
@@ -5206,8 +5209,11 @@
           settled = true;
           const raw = x.response, list = [];
           for (const line of x.getAllResponseHeaders().split('\r\n')) { const i = line.indexOf(': '); if (i > 0) list.push([line.slice(0, i).toLowerCase(), line.slice(i + 2)]); }
-          const url = x.responseURL, p = urlFields(url);
-          resolve(responseOf({ status: x.status, statusText: x.statusText, url, type: p !== null && p[1] !== pageOrigin() && p[2] !== 'data:' && p[2] !== 'blob:' ? 'cors' : 'basic',
+          // the response's type is Lean's (web_api 67 read 9: basic, cors or opaque); an opaque
+          // response has no status, no fields, no URL and a null body
+          const url = x.responseURL, tainting = apiCall(67, [s.h, 9]), type = ['cors', 'opaque', 'opaqueredirect'].includes(tainting) ? tainting : 'basic';
+          if (type === 'opaque' || type === 'opaqueredirect') { resolve(responseOf({ status: 0, statusText: '', url: type === 'opaque' ? '' : url, type, redirected: false }, [], 'immutable', null, signal)); return; }
+          resolve(responseOf({ status: x.status, statusText: x.statusText, url, type,
             redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable', raw === null ? new Uint8Array(0) : new Uint8Array(raw), signal));
         };
         x.onerror = () => fail(new TypeError('Failed to fetch'));

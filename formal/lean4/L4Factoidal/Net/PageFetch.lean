@@ -29,6 +29,15 @@ fetch, §4.8 CORS-preflight fetch, §4.9 CORS check; §2.2.2 header name lists.
   to it); a redirect to another name resolves that name. `wireReach` is checked on every
   request just before it goes out (`emit`).
 * Mixed content: an `https` page reads `https` only.
+* Mode "no-cors" (`fetch`, and the requests elements make): a cross-origin request goes out
+  only when it is simple (a safelisted method and safelisted fields: `plan` refuses any
+  other, `plan_noCors_simple`), with no preflight and no CORS check, and its answer is
+  opaque: the page gets no status, no field, no byte and no URL of it (`responseOf_opaque`).
+* Fetch metadata: a request to a potentially trustworthy URL says where it comes from
+  (`Sec-Fetch-Site`: `same-origin` only when every URL of the request so far is of the
+  page's origin, `site_same_origin`), its mode and its destination. There is no public
+  suffix list in the engine, so `same-site` is said only of the page's own scheme and host
+  on another port; a subdomain is `cross-site`, which claims less.
 * Cross-origin: refused unless CORS allows it. A request outside the CORS-safelist has a
   preflight first (every hop); the response of a cross-origin request is withheld unless the
   CORS check passes; only the safelisted and exposed header fields reach the page.
@@ -222,6 +231,8 @@ structure Response where
   url : String
   headers : List (String × String)
   body : ByteArray
+  /-- Fetch §2.2.6 response tainting, as `Response.type` shows it: `basic`, `cors`, `opaque`. -/
+  tainting : String := "basic"
   deriving Inhabited
 
 /-! ## `data:` URLs (Fetch §4.2 scheme fetch, "data: URL processor") -/
@@ -300,6 +311,9 @@ structure Transfer where
   sameOriginOnly : Bool := false
   /-- Fetch redirect mode "error" (`fetch`): a redirect is a network error (Fetch §4.3 step 6). -/
   redirectError : Bool := false
+  /-- Fetch redirect mode "manual" (`fetch`): a redirect is not followed; the page gets an
+  opaque-redirect response (Fetch §4.3 step 6: no status, no field, no body). -/
+  redirectManual : Bool := false
   /-- The host name (lowercase) and the address chosen for it (`Egress.choose`). -/
   pin : Option (String × String) := none
   /-- For a `blob:` URL: the type and bytes of the entry that the page's own origin made
@@ -312,6 +326,13 @@ structure Transfer where
   /-- The request's referrer policy (the document's or the default when the request names
   none: resolved by `Net.Xhr.beginFetch`). -/
   referrerPolicy : ReferrerPolicy.Policy := .default
+  /-- Fetch mode "no-cors": no preflight and no CORS check; a cross-origin answer is opaque. -/
+  noCors : Bool := false
+  /-- The request's destination (Fetch §2.2.5): `empty` for `fetch` and `XMLHttpRequest`. -/
+  destination : String := "empty"
+  /-- The farthest any earlier URL of this request was from the page (`siteRank`): 0 while
+  every one was of the page's origin. -/
+  farthest : Nat := 0
   deriving Inhabited
 
 /-- The header `name` of a field list (`none` when absent). -/
@@ -424,12 +445,71 @@ def Transfer.hopReferrer (t : Transfer) (a : Answer) : Transfer :=
   { t with referrer := t.referer,
            referrerPolicy := (ReferrerPolicy.Policy.ofHeader (headerAll a.headers "referrer-policy")).getD t.referrerPolicy }
 
-/-- The wire form of the request, with `Origin` (Fetch §4.3 "append a request `Origin`
-header"): every cross-origin request and every same-origin one that is not `GET` or `HEAD`. -/
+/-! ## Fetch metadata (https://w3c.github.io/webappsec-fetch-metadata/ §2, §3) -/
+
+/-- How far a URL is from the page: 0 the same origin, 1 the same site, 2 another site. The
+engine has no public suffix list, so the same site is only the page's own scheme and host
+(another port): a subdomain counts as another site, which claims less than a browser with
+the list does. -/
+def siteRank (p : Page) (u : URL.Url) : Nat :=
+  if sameOrigin p u then 0 else
+  match URL.parseUrl p.origin with
+  | some o => if p.origin != "null" && o.scheme == u.scheme && o.hostname == u.hostname then 1 else 2
+  | none => 2
+
+/-- The farthest any URL of the request, the current one too, is from the page. -/
+def Transfer.site (t : Transfer) : Nat :=
+  max t.farthest (match URL.parseUrl t.url with
+    | some u => siteRank t.page u
+    | none => 2)
+
+/-- The `Sec-Fetch-Site` token of a rank. -/
+def siteToken : Nat → String
+  | 0 => "same-origin"
+  | 1 => "same-site"
+  | _ => "cross-site"
+
+/-- The request's mode, as Fetch names it. -/
+def Transfer.mode (t : Transfer) : String :=
+  if t.sameOriginOnly then "same-origin" else if t.noCors then "no-cors" else "cors"
+
+/-- The `Sec-Fetch-*` fields of a request in `mode` to the current URL: only to a
+potentially trustworthy URL (§3 "set the ... header": step 2), and not on the Hub. -/
+def Transfer.metadataFields (t : Transfer) (mode : String) : List (String × String) :=
+  if t.page.hostCors then [] else
+  match URL.parseUrl t.url with
+  | some u =>
+    if trustworthyUrl u then
+      [("Sec-Fetch-Dest", t.destination), ("Sec-Fetch-Mode", mode), ("Sec-Fetch-Site", siteToken t.site)]
+    else []
+  | none => []
+
+/-- The fields the engine adds after the page's own and the CORS fields: the `Referer` and
+the fetch metadata. -/
+def Transfer.engineFields (t : Transfer) (mode : String) : List (String × String) :=
+  t.refererField ++ t.metadataFields mode
+
+/-- The `Origin` field (Fetch §4.3 "append a request `Origin` header"): on every request whose
+answer goes through the CORS check; else on a request that is not `GET` or `HEAD`, where
+the referrer policy may turn it into `null` (`no-referrer`; a downgrade under the strict
+policies; another origin under `same-origin`). -/
+def Transfer.originField (t : Transfer) : List (String × String) :=
+  if !t.same && !t.noCors then [("Origin", t.originValue)]
+  else if t.method == "GET" || t.method == "HEAD" then []
+  else
+    let hidden := match t.referrerPolicy with
+      | .noReferrer => true
+      | .noReferrerWhenDowngrade | .strictOrigin | .strictOriginWhenCrossOrigin =>
+        t.page.secure && !t.url.startsWith "https:"
+      | .sameOrigin => !t.same
+      | _ => false
+    [("Origin", if hidden then "null" else t.originValue)]
+
+/-- The wire form of the request: the page's fields that are not forbidden, `Origin`, then
+the engine's (`Referer`, fetch metadata). -/
 def Transfer.mainWire (t : Transfer) : Wire :=
   let h := t.headers.filter fun (n, v) => !forbiddenRequestHeader n && !forbiddenOverride n v
-  let h := if !t.same || !(t.method == "GET" || t.method == "HEAD") then h ++ [("Origin", t.originValue)] else h
-  { id := t.id, method := t.method, url := t.url, headers := h ++ t.refererField, body := t.body }
+  { id := t.id, method := t.method, url := t.url, headers := h ++ t.originField ++ t.engineFields t.mode, body := t.body }
 
 /-- The CORS-preflight request (Fetch §4.8: `OPTIONS`, `Origin`, the method and the unsafe
 names; no body, no author headers). -/
@@ -438,7 +518,7 @@ def Transfer.preflightWire (t : Transfer) : Wire :=
   let h : List (String × String) :=
     [("Accept", "*/*"), ("Origin", t.originValue), ("Access-Control-Request-Method", t.method)] ++
       (if names.isEmpty then [] else [("Access-Control-Request-Headers", ",".intercalate names)])
-  { id := t.id, method := "OPTIONS", url := t.url, headers := h ++ t.refererField, body := none }
+  { id := t.id, method := "OPTIONS", url := t.url, headers := h ++ t.engineFields "cors", body := none }
 
 /-- The name the host must resolve before a request to the current URL: its host when that is
 a name (not an IP literal), for a page that is not local, on a native host. -/
@@ -509,6 +589,7 @@ preflight when one is needed, or send the request (each through `emit`). -/
 def planNet (t : Transfer) : Step :=
   if !t.allowed then .fail "refused by policy"
   else if t.sameOriginOnly && !t.same then .fail "refused by mode same-origin"
+  else if t.noCors && !t.same && t.needsPreflight then .fail "refused: a no-cors request that is not simple"
   else if !t.page.hostCors && !t.same && t.needsPreflight then
     let t' := { t with phase := .preflight }
     emit t' t'.preflightWire
@@ -596,15 +677,20 @@ def safeResponseHeader (name : String) : Bool :=
    "last-modified", "pragma"].contains (lower name)
 
 /-- The response the page sees: without forbidden fields, and across origins only the
-safelisted and exposed ones (Fetch §4.1 "CORS filtered response"). -/
+safelisted and exposed ones (Fetch §4.1 "CORS filtered response"). In mode "no-cors" an
+answer from another origin is opaque (Fetch §2.2.6 "opaque filtered response"): no status,
+no reason, no field, no byte, no URL. -/
 def responseOf (t : Transfer) (a : Answer) : Response :=
+  if t.noCors && !t.same && !t.page.hostCors then
+    { status := 0, statusText := "", url := "", headers := [], body := ByteArray.empty, tainting := "opaque" }
+  else
   let allowed := a.headers.filter fun (n, _) => !forbiddenResponseHeader n
   let exposed := (listValue (headerGet a.headers "access-control-expose-headers")).map lower
   let star := exposed.contains "*" && !t.credentials
   let hs := if t.same || t.page.hostCors then allowed
     else allowed.filter fun (n, _) => safeResponseHeader n || exposed.contains (lower n) || star
   { status := a.status, statusText := a.statusText, url := if a.url.isEmpty then t.url else a.url,
-    headers := hs, body := a.body }
+    headers := hs, body := a.body, tainting := if t.same || t.page.hostCors then "basic" else "cors" }
 
 /-- `301`, `302`, `303`, `307` or `308`. -/
 def isRedirect (s : Nat) : Bool := s == 301 || s == 302 || s == 303 || s == 307 || s == 308
@@ -630,7 +716,7 @@ def afterRedirect (t : Transfer) (status : Nat) (next : URL.Url) : Transfer :=
     | some cur => cur.origin != next.origin
     | none => true
   let hs := if toGet then t.headers.filter (!bodyHeader ·.1) else t.headers
-  { t with url := nextUrl.serialize true, redirects := t.redirects + 1, crossed,
+  { t with url := nextUrl.serialize true, redirects := t.redirects + 1, crossed, farthest := t.site,
            method := if toGet then "GET" else t.method,
            body := if toGet then none else t.body,
            headers := if leaves then hs.filter (lower ·.1 != "authorization") else hs }
@@ -660,12 +746,14 @@ def onAnswer (t : Transfer) (a : Answer) : Step :=
   | .main =>
     if a.status == 0 then .fail "network error" else
     if !finalAllowed t a then .fail "refused by policy" else
-    if !t.page.hostCors && !t.same && !corsOk t a then .fail "CORS refused" else
+    if !t.page.hostCors && !t.same && !t.noCors && !corsOk t a then .fail "CORS refused" else
     if isRedirect a.status && !t.page.hostCors then
       match headerGet a.headers "location" with
       | none => .deliver t (responseOf t a)
       | some loc =>
         if t.redirectError then .fail "redirect refused by redirect mode error" else
+        if t.redirectManual then
+          .deliver t { status := 0, statusText := "", url := t.url, headers := [], body := ByteArray.empty, tainting := "opaqueredirect" } else
         if t.redirects ≥ maxRedirects then .fail "too many redirects" else
         match URL.parseUrl loc (some t.url) with
         | none => .fail "bad redirect"
@@ -759,14 +847,16 @@ theorem plan_send_allowed (t t' : Transfer) (w : Wire) (h : plan t = .send t' w)
     split at h
     · simp at h
     · split at h
-      · have ⟨hr, hp⟩ := emit_reach h
-        rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, hu, -⟩
-        · exact ⟨ha, rfl, hr, hp⟩
-        · exact ⟨ha, by simp [hu, Transfer.preflightWire], hr, hp⟩
-      · have ⟨hr, hp⟩ := emit_reach h
-        rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, hu, -⟩
-        · exact ⟨ha, rfl, hr, hp⟩
-        · exact ⟨ha, by simp [hu, Transfer.mainWire], hr, hp⟩
+      · simp at h
+      · split at h
+        · have ⟨hr, hp⟩ := emit_reach h
+          rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, hu, -⟩
+          · exact ⟨ha, rfl, hr, hp⟩
+          · exact ⟨ha, by simp [hu, Transfer.preflightWire], hr, hp⟩
+        · have ⟨hr, hp⟩ := emit_reach h
+          rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, hu, -⟩
+          · exact ⟨ha, rfl, hr, hp⟩
+          · exact ⟨ha, by simp [hu, Transfer.mainWire], hr, hp⟩
   · simp [ha] at h
 
 theorem afterRedirect_page (t : Transfer) (s : Nat) (n : URL.Url) : (afterRedirect t s n).page = t.page := rfl
@@ -807,7 +897,9 @@ theorem onAnswer_reach (t t' : Transfer) (a : Answer) (w : Wire) (h : onAnswer t
                   · simp at h
                   · split at h
                     · simp at h
-                    · exact (plan_send_allowed _ _ _ h).2.2.1
+                    · split at h
+                      · simp at h
+                      · exact (plan_send_allowed _ _ _ h).2.2.1
           · simp at h
 
 /-- Kind: policy theorem (redirect mode). Says: a transfer in redirect mode "error" whose
@@ -844,23 +936,133 @@ theorem onAnswer_resolve_special (t : Transfer) (a : Answer) (host : String) (x 
     exact egress_refuses_special (p := {}) rfl hx hs addr hc
   · simp at h
 
-/-- Kind: policy theorem. Says: on a native host, `onAnswer` gives a page the response to a
-cross-origin request only when the CORS check of that exact answer passed. Does not say:
-what the Hub's browser does (`hostCors`), which enforces CORS for its own origin. -/
+/-- Kind: security theorem (CORS). Says: on a native host, an answer to a cross-origin request
+in a mode that is not "no-cors" reaches the page only after the CORS check passed. Does not
+say: that the server's `Access-Control-Allow-Origin` is wise; and of mode "no-cors" it says
+nothing (there the page gets an opaque response: `deliver_noCors_opaque`). -/
 theorem deliver_cross_origin_needs_cors (t t' : Transfer) (a : Answer) (r : Response)
-    (hn : t.page.hostCors = false) (hp : t.phase = .main) (hc : t.same = false)
+    (hn : t.page.hostCors = false) (hp : t.phase = .main) (hc : t.same = false) (hm : t.noCors = false)
     (h : onAnswer t a = .deliver t' r) : corsOk t a = true := by
   unfold onAnswer at h
   simp only [hp] at h
   by_cases hok : corsOk t a = true
   · exact hok
   · exfalso
-    have hc' : (!t.page.hostCors && !t.same && !corsOk t a) = true := by simp [hn, hc, hok]
+    have hc' : (!t.page.hostCors && !t.same && !t.noCors && !corsOk t a) = true := by simp [hn, hc, hm, hok]
     split at h
     · simp at h
     · split at h
       · simp at h
       · simp at h
+
+/-- Kind: lemma. Says: `emit` never delivers: it sends or fails. -/
+theorem emit_not_deliver (t : Transfer) (w : Wire) (t' : Transfer) (r : Response) : emit t w ≠ .deliver t' r := by
+  unfold emit
+  split
+  · split <;> simp
+  · split
+    · simp
+    · split <;> simp
+
+/-- Kind: lemma. Says: `plan` answers in the engine (a `data:` or `blob:` URL) only for the
+first URL of a request: after a redirect it sends or fails. -/
+theorem plan_deliver_first (t t' : Transfer) (r : Response) (h : plan t = .deliver t' r) : t.redirects = 0 := by
+  unfold plan at h
+  split at h
+  · unfold dataStep at h
+    split at h
+    · simp at h
+    · rename_i hr
+      simp only [Bool.or_eq_true, bne_iff_ne, ne_eq, not_or, Decidable.not_not] at hr
+      exact hr.1
+  · split at h
+    · unfold blobStep at h
+      split at h
+      · simp at h
+      · rename_i hr
+        simp only [Bool.or_eq_true, bne_iff_ne, ne_eq, not_or, Decidable.not_not] at hr
+        exact hr.1
+    · unfold planNet at h
+      split at h
+      · simp at h
+      · split at h
+        · simp at h
+        · split at h
+          · simp at h
+          · split at h
+            · exact absurd h (emit_not_deliver _ _ _ _)
+            · exact absurd h (emit_not_deliver _ _ _ _)
+
+/-- Kind: security theorem (opaque responses). Says: in mode "no-cors", on a native host, the
+response the page gets for a request that is not same-origin is opaque: status 0, no reason
+phrase, no field, no byte and no URL, whatever the server answered. Does not say: that the
+request was not sent (it was: "no-cors" requests are the simple ones, `plan_noCors_simple`). -/
+theorem responseOf_opaque (t : Transfer) (a : Answer) (hm : t.noCors = true) (hc : t.same = false)
+    (hn : t.page.hostCors = false) :
+    (responseOf t a).status = 0 ∧ (responseOf t a).statusText = "" ∧ (responseOf t a).url = "" ∧
+      (responseOf t a).headers = [] ∧ (responseOf t a).body = ByteArray.empty ∧ (responseOf t a).tainting = "opaque" := by
+  simp [responseOf, hm, hc, hn]
+
+/-- Kind: security theorem (mode "no-cors", end to end). Says: what `onAnswer` delivers to the
+page for a "no-cors" request that is not same-origin, on a native host, has status 0, no
+field and no byte, and no URL but the one the request went to (an opaque response has
+none; an opaque-redirect response, in redirect mode "manual", has the request's own):
+nothing of the answer is readable. -/
+theorem deliver_noCors_opaque (t t' : Transfer) (a : Answer) (r : Response)
+    (hn : t.page.hostCors = false) (hp : t.phase = .main) (hc : t.same = false) (hm : t.noCors = true)
+    (h : onAnswer t a = .deliver t' r) :
+    r.status = 0 ∧ r.headers = [] ∧ r.body = ByteArray.empty ∧ (r.url = "" ∨ r.url = t.url) := by
+  have ho := responseOf_opaque t a hm hc hn
+  have fromResp : r = responseOf t a →
+      r.status = 0 ∧ r.headers = [] ∧ r.body = ByteArray.empty ∧ (r.url = "" ∨ r.url = t.url) := by
+    intro key
+    rw [key]
+    exact ⟨ho.1, ho.2.2.2.1, ho.2.2.2.2.1, Or.inl ho.2.2.1⟩
+  unfold onAnswer at h
+  simp only [hp] at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · split at h
+      · simp at h
+      · split at h
+        · split at h
+          · simp only [Step.deliver.injEq] at h
+            exact fromResp h.2.symm
+          · split at h
+            · simp at h
+            · split at h
+              · simp only [Step.deliver.injEq] at h
+                rw [← h.2]
+                exact ⟨rfl, rfl, rfl, Or.inr rfl⟩
+              · split at h
+                · simp at h
+                · split at h
+                  · simp at h
+                  · split at h
+                    · simp at h
+                    · have := plan_deliver_first _ _ _ h
+                      simp [afterRedirect] at this
+        · simp only [Step.deliver.injEq] at h
+          exact fromResp h.2.symm
+
+/-- Kind: security theorem (mode "no-cors" sends only simple requests). Says: a request that
+`plan` sends in mode "no-cors" to a URL that is not same-origin has a CORS-safelisted method
+and only CORS-safelisted fields of the page's (`needsPreflight` is false): the requests a
+form or an image could make. Any other is refused, never sent without a preflight. -/
+theorem plan_noCors_simple (t t' : Transfer) (w : Wire) (hm : t.noCors = true) (hc : t.same = false)
+    (h : plan t = .send t' w) : t.needsPreflight = false := by
+  replace h := plan_send_net h
+  unfold planNet at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · split at h
+      · simp at h
+      · rename_i hx
+        simpa [hm, hc] using hx
 
 /-- Kind: policy theorem. Says: on a native host, for a cross-origin request outside the
 CORS-safelist, `plan` sends only the preflight (or first the resolve-only request of the
@@ -877,10 +1079,12 @@ theorem plan_cross_unsafe_is_preflight (t t' : Transfer) (w : Wire)
     simp only [ha, Bool.not_true, Bool.false_eq_true, if_false, hs] at h
     split at h
     · simp at h
-    · simp only [hn, hc, hu, Bool.not_false, Bool.and_self, if_true] at h
-      rcases emit_cases h with ⟨-, rfl⟩ | ⟨rfl, -, hm, -, hb, -⟩
-      · exact Or.inl ⟨rfl, rfl⟩
-      · exact Or.inr ⟨rfl, by simp [hm, Transfer.preflightWire], by simp [hb, Transfer.preflightWire]⟩
+    · split at h
+      · simp at h
+      · simp only [hn, hc, hu, Bool.not_false, Bool.and_self, if_true] at h
+        rcases emit_cases h with ⟨-, rfl⟩ | ⟨rfl, -, hm, -, hb, -⟩
+        · exact Or.inl ⟨rfl, rfl⟩
+        · exact Or.inr ⟨rfl, by simp [hm, Transfer.preflightWire], by simp [hb, Transfer.preflightWire]⟩
   · simp [ha] at h
 
 /-- Kind: policy theorem. Says: a preflight turns into the real request only after its answer
@@ -896,13 +1100,47 @@ theorem onAnswer_preflight_needs_ok (t t' : Transfer) (w : Wire) (a : Answer)
     · assumption
     · simp at h
 
+/-- Kind: lemma. Says: the `Origin` field, when there is one, is named `Origin`. -/
+theorem mem_originField (t : Transfer) (n : String × String) (h : n ∈ t.originField) : n.1 = "Origin" := by
+  unfold Transfer.originField at h
+  split at h
+  · simp at h; rw [h]
+  · split at h
+    · simp at h
+    · simp at h; rw [h]
+
+/-- Kind: lemma. Says: the fetch metadata fields have the three `Sec-Fetch-` names. -/
+theorem mem_metadataFields (t : Transfer) (m : String) (n : String × String) (h : n ∈ t.metadataFields m) :
+    n.1 = "Sec-Fetch-Dest" ∨ n.1 = "Sec-Fetch-Mode" ∨ n.1 = "Sec-Fetch-Site" := by
+  unfold Transfer.metadataFields at h
+  split at h
+  · simp at h
+  · split at h
+    · split at h
+      · simp only [List.mem_cons, List.not_mem_nil, or_false] at h
+        rcases h with h | h | h <;> rw [h] <;> simp
+      · simp at h
+    · simp at h
+
 /-- Kind: policy theorem. Says: every request `plan` tells the host to make carries no
-page-set forbidden header: only `Origin` and `Referer`, which the engine adds, can be a
-forbidden name. Does not say: what the host adds on its own (a real fetch adds `Host` and so
+page-set forbidden header: only `Origin`, `Referer` and the three `Sec-Fetch-` fields, which
+the engine adds, can be a forbidden name (on a preflight also the `Access-Control-Request-`
+fields). Does not say: what the host adds on its own (a real fetch adds `Host` and so
 on), nor what the `Referer` is (`plan_wire_referer`). -/
 theorem plan_wire_forbidden (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t = .send t' w)
     (n : String × String) (hn : n ∈ w.headers) (hf : forbiddenRequestHeader n.1 = true) :
-    n.1 = "Origin" ∨ n.1 = "Referer" ∨ w.method = "OPTIONS" := by
+    n.1 = "Origin" ∨ n.1 = "Referer" ∨ n.1 = "Sec-Fetch-Dest" ∨ n.1 = "Sec-Fetch-Mode" ∨ n.1 = "Sec-Fetch-Site" ∨
+      w.method = "OPTIONS" := by
+  have eng : ∀ (x : Transfer) (m : String), n ∈ x.engineFields m →
+      n.1 = "Referer" ∨ n.1 = "Sec-Fetch-Dest" ∨ n.1 = "Sec-Fetch-Mode" ∨ n.1 = "Sec-Fetch-Site" := by
+    intro x m hm
+    rcases List.mem_append.mp hm with hr | hr
+    · left
+      unfold Transfer.refererField at hr
+      split at hr
+      · simp at hr
+      · simp at hr; rw [hr]
+    · exact Or.inr (mem_metadataFields x m n hr)
   replace h := plan_send_net h
   unfold planNet at h
   split at h
@@ -910,27 +1148,25 @@ theorem plan_wire_forbidden (t : Transfer) (t' : Transfer) (w : Wire) (h : plan 
   · split at h
     · simp at h
     · split at h
-      · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, hm, -⟩
-        · simp [Transfer.resolveWire] at hn
-        · exact Or.inr (Or.inr (by simp [hm, Transfer.preflightWire]))
-      · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
-        · simp [Transfer.resolveWire] at hn
-        · rw [hh] at hn
-          simp only [Transfer.mainWire] at hn
-          rcases List.mem_append.mp hn with hn | hr
-          · left
-            split at hn
-            · rcases List.mem_append.mp hn with hl | hr
+      · simp at h
+      · split at h
+        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, hm, -⟩
+          · simp [Transfer.resolveWire] at hn
+          · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (by simp [hm, Transfer.preflightWire])))))
+        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+          · simp [Transfer.resolveWire] at hn
+          · rw [hh] at hn
+            simp only [Transfer.mainWire] at hn
+            rcases List.mem_append.mp hn with hn | hr
+            · rcases List.mem_append.mp hn with hl | ho
               · have := (List.mem_filter.mp hl).2
                 simp [hf] at this
-              · simp at hr; rw [hr]
-            · have := (List.mem_filter.mp hn).2
-              simp [hf] at this
-          · right; left
-            unfold Transfer.refererField at hr
-            split at hr
-            · simp at hr
-            · simp at hr; rw [hr]
+              · exact Or.inl (mem_originField _ n ho)
+            · rcases eng _ _ hr with h1 | h1 | h1 | h1
+              · exact Or.inr (Or.inl h1)
+              · exact Or.inr (Or.inr (Or.inl h1))
+              · exact Or.inr (Or.inr (Or.inr (Or.inl h1)))
+              · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl h1))))
 
 /-- Kind: lemma. Says: the referer of a transfer does not depend on its phase. -/
 theorem referer_phase (t : Transfer) (ph : Phase) : ({ t with phase := ph } : Transfer).referer = t.referer := rfl
@@ -945,15 +1181,20 @@ nor what a host adds on its own. -/
 theorem plan_wire_referer (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t = .send t' w)
     (n : String × String) (hn : n ∈ w.headers) (hf : forbiddenRequestHeader n.1 = true)
     (hr : n.1 = "Referer") : n.2 = t.referer ∧ n.2 ≠ "" := by
-  have last : n ∈ t.refererField → n.2 = t.referer ∧ n.2 ≠ "" := by
-    intro hm
-    unfold Transfer.refererField at hm
-    split at hm
-    · simp at hm
-    · rename_i he
-      simp only [List.mem_singleton] at hm
-      rw [hm]
-      exact ⟨rfl, fun h0 => he (by simpa using h0)⟩
+  have last : ∀ (ph : Phase) (m : String), n ∈ ({ t with phase := ph } : Transfer).engineFields m →
+      n.2 = t.referer ∧ n.2 ≠ "" := by
+    intro ph m hm
+    rcases List.mem_append.mp hm with hm | hm
+    · unfold Transfer.refererField at hm
+      rw [referer_phase] at hm
+      split at hm
+      · simp at hm
+      · rename_i he
+        simp only [List.mem_singleton] at hm
+        rw [hm]
+        exact ⟨rfl, fun h0 => he (by simpa using h0)⟩
+    · exfalso
+      rcases mem_metadataFields _ m n hm with h1 | h1 | h1 <;> rw [h1] at hr <;> simp at hr
   replace h := plan_send_net h
   unfold planNet at h
   split at h
@@ -961,37 +1202,73 @@ theorem plan_wire_referer (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t 
   · split at h
     · simp at h
     · split at h
-      · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
-        · simp [Transfer.resolveWire] at hn
-        · rw [hh] at hn
-          simp only [Transfer.preflightWire] at hn
-          rcases List.mem_append.mp hn with hn | hl
-          · exfalso
-            rcases List.mem_append.mp hn with hn | hn
-            · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
-              rcases hn with hn | hn | hn <;> rw [hn] at hr <;> simp at hr
-            · split at hn
-              · simp at hn
-              · simp only [List.mem_singleton] at hn
-                rw [hn] at hr
-                simp at hr
-          · exact last hl
-      · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
-        · simp [Transfer.resolveWire] at hn
-        · rw [hh] at hn
-          simp only [Transfer.mainWire] at hn
-          rcases List.mem_append.mp hn with hn | hl
-          · exfalso
-            split at hn
-            · rcases List.mem_append.mp hn with hl | hr'
+      · simp at h
+      · split at h
+        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+          · simp [Transfer.resolveWire] at hn
+          · rw [hh] at hn
+            simp only [Transfer.preflightWire] at hn
+            rcases List.mem_append.mp hn with hn | hl
+            · exfalso
+              rcases List.mem_append.mp hn with hn | hn
+              · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
+                rcases hn with hn | hn | hn <;> rw [hn] at hr <;> simp at hr
+              · split at hn
+                · simp at hn
+                · simp only [List.mem_singleton] at hn
+                  rw [hn] at hr
+                  simp at hr
+            · exact last _ _ hl
+        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+          · simp [Transfer.resolveWire] at hn
+          · rw [hh] at hn
+            simp only [Transfer.mainWire] at hn
+            rcases List.mem_append.mp hn with hn | hl
+            · exfalso
+              rcases List.mem_append.mp hn with hl | ho
               · have := (List.mem_filter.mp hl).2
                 simp [hf] at this
-              · simp only [List.mem_singleton] at hr'
-                rw [hr'] at hr
+              · have := mem_originField _ n ho
+                rw [this] at hr
                 simp at hr
-            · have := (List.mem_filter.mp hn).2
-              simp [hf] at this
-          · exact last hl
+            · exact last _ _ hl
+
+/-- Kind: security theorem (fetch metadata). Says: a request says `Sec-Fetch-Site:
+same-origin` only when no earlier URL of the request left the page's origin and the URL it
+goes to is of the page's origin: a server that trusts `same-origin` is never told so of a
+request that passed through another origin. Does not say: what `same-site` means beyond
+this engine's narrow reading (`siteRank`). -/
+theorem site_same_origin (t : Transfer) (h : siteToken t.site = "same-origin") :
+    t.farthest = 0 ∧ ∀ u, URL.parseUrl t.url = some u → sameOrigin t.page u = true := by
+  have h0 : t.site = 0 := by
+    cases hs : t.site with
+    | zero => rfl
+    | succ k =>
+      rw [hs] at h
+      cases k with
+      | zero => simp [siteToken] at h
+      | succ j => simp [siteToken] at h
+  unfold Transfer.site at h0
+  have hf : t.farthest = 0 := by omega
+  refine ⟨hf, ?_⟩
+  intro u hu
+  rw [hu] at h0
+  simp only at h0
+  have hr : siteRank t.page u = 0 := by omega
+  unfold siteRank at hr
+  split at hr
+  · assumption
+  · split at hr
+    · split at hr <;> simp at hr
+    · simp at hr
+
+/-- Kind: lemma (redirects). Says: a redirect never brings a request nearer: the farthest the
+request has been from the page only grows, so `cross-site` once is `cross-site` for the
+rest of the chain. -/
+theorem afterRedirect_farthest (t : Transfer) (s : Nat) (n : URL.Url) :
+    t.farthest ≤ (afterRedirect t s n).farthest := by
+  simp only [afterRedirect, Transfer.site]
+  exact Nat.le_max_left _ _
 
 /-- Kind: privacy theorem (the bound on a referrer). Says: whatever the policy, the source
 and the target, a referrer is nothing, the source's origin with `/` (no path, no query), or
@@ -1077,12 +1354,15 @@ theorem referer_hostCors (t : Transfer) (h : t.page.hostCors = true) : t.referer
 (no host here has one: no cookie is sent or stored). -/
 theorem responseOf_no_set_cookie (t : Transfer) (a : Answer) (n : String × String)
     (hn : n ∈ (responseOf t a).headers) : forbiddenResponseHeader n.1 = false := by
-  simp only [responseOf] at hn
+  unfold responseOf at hn
   split at hn
-  · have := (List.mem_filter.mp hn).2
-    simpa using this
-  · have := (List.mem_filter.mp (List.mem_filter.mp hn).1).2
-    simpa using this
+  · simp at hn
+  · simp only at hn
+    split at hn
+    · have := (List.mem_filter.mp hn).2
+      simpa using this
+    · have := (List.mem_filter.mp (List.mem_filter.mp hn).1).2
+      simpa using this
 
 /-- Kind: security theorem (CORS check, Fetch §4.9 steps 3 and 4). Says: for a request made
 with credentials (`withCredentials`, fetch `credentials: "include"`), an answer whose
@@ -1178,6 +1458,8 @@ theorem blobRange_within (full : Nat) (r : Option Nat × Option Nat) (first last
 #guard blobRange 10 (none, some 30) == some (0, 9) && blobRange 10 (some 10, none) == none && blobRange 0 (none, some 1) == none
 
 private def pg : Page := Page.ofUrl "https://a.example/x"
+/-- The fields of a wire without the fetch metadata (checked on their own below). -/
+private def plain (w : Wire) : List (String × String) := w.headers.filter fun (n, _) => !(lower n).startsWith "sec-fetch-"
 
 #guard pg.origin == "https://a.example" && !pg.isLocal && pg.secure
 #guard (Page.ofUrl "file:///tmp/x.html").origin == "null"
@@ -1201,7 +1483,7 @@ private def pg : Page := Page.ofUrl "https://a.example/x"
 private def overridden : Transfer :=
   { id := 1, page := pg, method := "POST", url := "https://a.example/y", body := none,
     headers := [("X-HTTP-Method-Override", "TRACE"), ("X-A", "1")] }
-#guard overridden.mainWire.headers == [("X-A", "1"), ("Origin", "https://a.example")]
+#guard plain overridden.mainWire == [("X-A", "1"), ("Origin", "https://a.example")]
 #guard safeHeader "Content-Type" "text/plain;charset=UTF-8" && !safeHeader "Content-Type" "application/json"
 #guard unsafeHeaderNames [("X-B", "1"), ("x-a", "2"), ("Accept", "*/*")] == ["x-a", "x-b"]
 
@@ -1212,7 +1494,7 @@ private def base : Transfer :=
 private def planWire (t : Transfer) : Option Wire :=
   match plan t with | .send _ w => some w | _ => none
 
-#guard (planWire base).any fun w => w.method == "GET" && w.headers == [("Origin", "https://a.example")]
+#guard (planWire base).any fun w => w.method == "GET" && plain w == [("Origin", "https://a.example")]
 #guard (planWire { base with headers := [("X-A", "1")] }).any fun w => w.method == "OPTIONS"
 #guard (planWire { base with url := "http://127.0.0.1/" }).isNone
 
@@ -1273,8 +1555,8 @@ private def named : Transfer := { base with page := { pg with secure := false },
 #guard (pg.forWorker "https://a.example/w.js").origin == "https://a.example"
 #guard (pg.forWorker "data:text/javascript,1").origin == "null" && (pg.forWorker "data:,").secure
 -- a data: worker's cross-origin request carries Origin: null, its owner's the owner's origin
-#guard (planWire { base with page := pg.forWorker "data:," }).any fun w => w.headers == [("Origin", "null")]
-#guard (planWire { base with page := pg.forWorker "https://a.example/w.js" }).any fun w => w.headers == [("Origin", "https://a.example")]
+#guard (planWire { base with page := pg.forWorker "data:," }).any fun w => plain w == [("Origin", "null")]
+#guard (planWire { base with page := pg.forWorker "https://a.example/w.js" }).any fun w => plain w == [("Origin", "https://a.example")]
 
 
 -- The referrer (WPT fetch/api/basic/referrer.any.js, fetch/api/redirect/redirect-referrer.any.js,
@@ -1309,15 +1591,15 @@ private def tgt (s : String) : URL.Url := (URL.parseUrl s).getD default
 #guard (referrerOf .unsafeUrl ("https://a.example/" ++ String.ofList (List.replicate 4078 'A')) (tgt "https://a.example/")).length == 4096
 -- on the wire: the request and its preflight carry it; a request with no referrer has none
 private def refd : Transfer := { base with referrer := "https://a.example/dir/page.html?q#f" }
-#guard (planWire refd).any fun w => w.headers == [("Origin", "https://a.example"), ("Referer", "https://a.example/")]
+#guard (planWire refd).any fun w => plain w == [("Origin", "https://a.example"), ("Referer", "https://a.example/")]
 #guard (planWire { refd with url := "https://a.example/y", pin := some ("a.example", "93.184.215.14") }).any
-  fun w => w.headers == [("Referer", "https://a.example/dir/page.html?q")]
+  fun w => plain w == [("Referer", "https://a.example/dir/page.html?q")]
 #guard (planWire { refd with headers := [("X-A", "1")], referrerPolicy := .unsafeUrl }).any
   fun w => w.method == "OPTIONS" && headerGet w.headers "referer" == some "https://a.example/dir/page.html?q"
 #guard (planWire { refd with page := { pg with hostCors := true } }).any fun w => headerGet w.headers "referer" == none
 -- a page's own Referer field never reaches the wire
 #guard (planWire { base with url := "https://a.example/y", pin := some ("a.example", "93.184.215.14"), headers := [("Referer", "https://evil.example/")] }).any
-  fun w => w.headers.isEmpty
+  fun w => (plain w).isEmpty
 -- a redirect: the policy of the redirect response is the next hop's (redirect-referrer.any.js:
 -- "Same origin redirection, empty init, origin redirect header"), and a hop back to the first
 -- origin after a cross-origin one gets the origin only (referrer.any.js, last case)
@@ -1333,5 +1615,64 @@ private def sameT : Transfer := { refd with url := "https://a.example/redirect",
 #guard (hop { refd with referrerPolicy := .originWhenCrossOrigin, page := { pg with isLocal := true } }
     { status := 302, headers := [("Location", "https://a.example/back"), ("Access-Control-Allow-Origin", "*")] }).any
   fun w => headerGet w.headers "referer" == some "https://a.example/"
+
+
+-- Fetch metadata (WPT fetch/metadata/fetch.https.sub.any.js, generated/fetch.https.sub.html):
+-- only to a trustworthy URL; site, mode and destination
+private def metaOf (t : Transfer) : List (String × String) :=
+  ((planWire t).map fun w => w.headers.filter fun (n, _) => (lower n).startsWith "sec-fetch-").getD []
+private def sameT' : Transfer := { base with url := "https://a.example/y", pin := some ("a.example", "93.184.215.14") }
+#guard metaOf sameT' == [("Sec-Fetch-Dest", "empty"), ("Sec-Fetch-Mode", "cors"), ("Sec-Fetch-Site", "same-origin")]
+#guard metaOf base == [("Sec-Fetch-Dest", "empty"), ("Sec-Fetch-Mode", "cors"), ("Sec-Fetch-Site", "cross-site")]
+#guard metaOf { sameT' with url := "https://a.example:8443/y" } == [("Sec-Fetch-Dest", "empty"), ("Sec-Fetch-Mode", "cors"), ("Sec-Fetch-Site", "same-site")]
+#guard metaOf { sameT' with sameOriginOnly := true } == [("Sec-Fetch-Dest", "empty"), ("Sec-Fetch-Mode", "same-origin"), ("Sec-Fetch-Site", "same-origin")]
+#guard metaOf { base with noCors := true } == [("Sec-Fetch-Dest", "empty"), ("Sec-Fetch-Mode", "no-cors"), ("Sec-Fetch-Site", "cross-site")]
+-- no public suffix list: a subdomain is cross-site here (a browser with the list says same-site)
+#guard metaOf { sameT' with url := "https://www.a.example/y", pin := some ("www.a.example", "93.184.215.14") }
+  == [("Sec-Fetch-Dest", "empty"), ("Sec-Fetch-Mode", "cors"), ("Sec-Fetch-Site", "cross-site")]
+-- an http target that is not loopback gets none; the Hub's requests get none
+#guard metaOf { named with pin := some ("b.example", "93.184.215.14"), headers := [] } == []
+#guard metaOf { sameT' with page := { pg with hostCors := true } } == []
+-- a preflight says mode cors
+#guard (planWire { base with headers := [("X-A", "1")] }).any fun w => headerGet w.headers "sec-fetch-mode" == some "cors"
+-- "Same-Origin -> Cross-Site -> Same-Origin redirect": cross-site at the end (the page is
+-- local here so that no name is resolved)
+private def lp : Page := { pg with isLocal := true }
+#guard (hop { sameT' with page := lp } { status := 302, headers := [("Location", "https://b.example/r"), ("Access-Control-Allow-Origin", "*")] }).any
+  fun w => headerGet w.headers "sec-fetch-site" == some "cross-site"
+private def twoHops : Option Wire :=
+  match onAnswer { sameT' with page := lp, noCors := true } { status := 302, headers := [("Location", "https://b.example/r")] } with
+  | .send t _ => hop t { status := 302, headers := [("Location", "https://a.example/z")] }
+  | _ => none
+#guard twoHops.any fun w => headerGet w.headers "sec-fetch-site" == some "cross-site" && w.url == "https://a.example/z"
+#guard (hop { sameT' with page := lp } { status := 302, headers := [("Location", "/z")] }).any
+  fun w => headerGet w.headers "sec-fetch-site" == some "same-origin"
+
+-- Mode "no-cors" (WPT fetch/api/basic/mode-no-cors.sub.any.js, fetch/api/cors/cors-no-preflight):
+-- a simple cross-origin request goes out with no Origin and no preflight; its answer is opaque
+#guard (planWire { base with noCors := true }).any fun w => w.method == "GET" && (plain w).isEmpty
+#guard (planWire { base with noCors := true, headers := [("X-A", "1")] }).isNone
+#guard (planWire { base with noCors := true, method := "PUT" }).isNone
+#guard match onAnswer { base with noCors := true } ({ status := 200, headers := [("X-S", "1")], body := "secret".toUTF8 } : Answer) with
+  | .deliver _ r => r.status == 0 && r.headers.isEmpty && r.body.size == 0 && r.url == "" && r.tainting == "opaque" | _ => false
+-- same-origin in mode no-cors: a basic response, all of it
+#guard match onAnswer { sameT' with noCors := true } ({ status := 200, headers := [("X-S", "1")], body := "x".toUTF8 } : Answer) with
+  | .deliver _ r => r.status == 200 && r.tainting == "basic" && r.body.size == 1 | _ => false
+#guard match onAnswer base (corsAns "*") with | .deliver _ r => r.tainting == "cors" | _ => false
+-- Origin on a request that is not GET or HEAD outside the CORS check (WPT fetch/origin/assorted.window.js):
+-- null under no-referrer, and for a no-cors request to another origin under same-origin
+private def originOf' (t : Transfer) : Option String := (planWire t).bind fun w => headerGet w.headers "origin"
+#guard originOf' { sameT' with method := "POST" } == some "https://a.example"
+#guard originOf' { sameT' with method := "POST", referrerPolicy := .noReferrer } == some "null"
+#guard originOf' { base with method := "POST", noCors := true } == some "https://a.example"
+#guard originOf' { base with method := "POST", noCors := true, referrerPolicy := .sameOrigin } == some "null"
+#guard originOf' { base with method := "POST", referrerPolicy := .noReferrer } == some "https://a.example"
+
+-- redirect mode "manual" (WPT fetch/api/redirect/redirect-mode.any.js): an opaque-redirect
+-- response, nothing followed
+#guard match onAnswer { sameT' with redirectManual := true } ({ status := 302, headers := [("Location", "/z"), ("X-S", "1")] } : Answer) with
+  | .deliver _ r => r.status == 0 && r.headers.isEmpty && r.tainting == "opaqueredirect" && r.url == "https://a.example/y" | _ => false
+#guard match onAnswer { sameT' with redirectManual := true } ({ status := 200, headers := [("X-S", "1")] } : Answer) with
+  | .deliver _ r => r.status == 200 && r.tainting == "basic" | _ => false
 
 end L4Factoidal.Net.PageFetch

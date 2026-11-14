@@ -63,6 +63,10 @@ structure Xhr where
   sameOnly : Bool := false
   /-- Fetch redirect mode "error" (`fetch`); XHR always follows. -/
   redirectError : Bool := false
+  /-- Fetch mode "no-cors" (`fetch`): `PageFetch.Transfer.noCors`. -/
+  noCors : Bool := false
+  /-- Fetch redirect mode "manual" (`fetch`): `PageFetch.Transfer.redirectManual`. -/
+  redirectManual : Bool := false
   /-- The request's referrer (`fetch`'s `referrer`): `none` is the client's URL, `some ""`
   no referrer, else a URL of the page's own origin (`setReferrer`). -/
   referrer : Option String := none
@@ -310,7 +314,7 @@ this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
 def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual }
   let (s, out) := syncFetch s t
   match out with
   | .need => (s.set h { x with events := #[] }, .error errNeedHost)
@@ -367,7 +371,7 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if x.state != 1 || !x.sendFlag then s else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
   | .deliver _ r => s.set h { x with deferred := some r }
@@ -597,7 +601,8 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
     | (s, .ok a) => (s, okStr a)
     | (s, .error e) => (s, .error e)
   | 67 =>
-    -- reads: 0 readyState, 1 status, 2 statusText, 3 responseURL, 4 text, 5 deferFail
+    -- reads: 0 readyState, 1 status, 2 statusText, 3 responseURL, 4 text, 5 deferFail,
+    -- 9 the response's tainting (`Response.type` of `fetch`: basic, cors, opaque)
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
     | some x =>
@@ -611,6 +616,7 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
         | 6 => x.responseType
         | 7 => docKind x
         | 8 => finalMime x
+        | 9 => (x.response.map fun r => if x.state ≥ 2 then r.tainting else "").getD ""
         | _ => ""
       (s, okStr body)
   | 68 =>
@@ -677,10 +683,11 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
     let body := formDataBody entries
     if body.size > maxBody then (s, .error (-5)) else (s, .ok body)
   | 79 =>
-    -- redirect mode "error" (`fetch`): `PageFetch.onAnswer_redirect_error`
+    -- the redirect mode (`fetch`): 1 "error" (`PageFetch.onAnswer_redirect_error`), 2 "manual"
+    -- (an opaque-redirect response), else "follow"
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
-    | some x => (s.set (natAt fs 0) { x with redirectError := natAt fs 1 != 0 }, okStr "")
+    | some x => (s.set (natAt fs 0) { x with redirectError := natAt fs 1 == 1, redirectManual := natAt fs 1 == 2 }, okStr "")
   | 98 =>
     -- the request's referrer and referrer policy (`fetch`): handle, referrer ("" none,
     -- "about:client" the client, else a URL: `setReferrer`), policy token ("" the
@@ -696,10 +703,10 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       | none => (s, .error errType)
       | some x => (s.set h { x with policy := ReferrerPolicy.Policy.ofToken (strAt fs 2) }, okStr "")
   | 77 =>
-    -- mode same-origin (`fetch`)
+    -- the mode (`fetch`): 1 "same-origin", 2 "no-cors", else "cors"
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
-    | some x => (s.set (natAt fs 0) { x with sameOnly := natAt fs 1 != 0 }, okStr "")
+    | some x => (s.set (natAt fs 0) { x with sameOnly := natAt fs 1 == 1, noCors := natAt fs 1 == 2 }, okStr "")
   | 76 =>
     -- the deferred error of a `send` that the policy refused, or the response made here (a
     -- `data:` URL), at the page's next task
@@ -837,6 +844,28 @@ private def refOf (s : State) (url : String) (opts : List String) : Option Strin
 #guard refOf stc "http://a.example/y" ["about:client", "", "about:blank", "unsafe-url"] == none
 -- an embedder that names no client: no Referer at all
 #guard refOf { stc with client := "" } "http://b.example/y" [] == none
+
+-- fetch's mode "no-cors" (op 77 with 2): the answer of another origin is opaque, with no
+-- text, no status and no fields for the page; the same answer in mode "cors" is refused
+private def modeRun (mode : String) : State :=
+  let s := (run1 stc 60 []).1
+  let s := (run1 s 61 ["1", "GET", "http://b.example/", "", "1"]).1
+  let s := (run1 s 77 ["1", mode]).1
+  let s := (run1 s 63 ["1", "9", "0", "0", "", ""]).1
+  let s := (run1 (run1 s 64 ["1"]).1 64 ["1"]).1
+  (give s 1 ({ status := 200, headers := [("X-S", "1")], body := "secret".toUTF8 } : Answer)).1
+#guard drain (modeRun "2") == ["readystatechange", "readystatechange", "load", "loadend"]
+private def drained (s : State) : State := Id.run do
+  let mut s := s
+  for _ in [0:16] do
+    let (s', a) := run1 s 64 ["1"]
+    s := s'
+    if a.isEmpty then break
+  return s
+#guard (run1 (drained (modeRun "2")) 67 ["1", "9"]).2 == "opaque"
+#guard (run1 (drained (modeRun "2")) 67 ["1", "1"]).2 == "0" && (run1 (drained (modeRun "2")) 67 ["1", "4"]).2 == ""
+#guard (run1 (drained (modeRun "2")) 69 ["1"]).2 == ""
+#guard drain (modeRun "0") == ["readystatechange", "error", "loadend"]
 
 /-- Kind: privacy lemma. Says: a URL the page names as a referrer, or a frame document's URL
 named as the client, is kept only when it parses and is of the page's own origin, and then
