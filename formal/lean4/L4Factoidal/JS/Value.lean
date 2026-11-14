@@ -103,6 +103,14 @@ inductive NativeX where
   AsyncFromSyncIteratorContinuation (§27.1.6.4): 3 and 4 make the result object (not done,
   done), 5 closes the sync iterator when its value was a rejected promise. -/
   | forAwait (k : Nat) | asyncFromSync (k : Nat)
+  /-- The resolving functions that NewPromiseResolveThenableJob makes for a promise that was
+  resolved with a thenable (§27.2.2.2, §27.2.1.3): bound to the promise and to the pair's own
+  [[AlreadyResolved]] record. `reject`: the reject function. -/
+  | promiseThenableFn (reject : Bool)
+  /-- What `import(specifier)` calls in a script (§13.3.10 ImportCall, `dynImportName`): a
+  promise, rejected with what ToString of the specifier throws, or with a TypeError: no host
+  loads a module graph for a script yet. -/
+  | dynImport
   deriving BEq, Repr, Inhabited
 
 /-- The built-in functions (§19 to §28 for the subset). -/

@@ -331,4 +331,63 @@ with U+10FFFE. -/
 -- a name of source text does not start with a reserved character
 #guard out "try { eval('var \\u{10FFFE}forAwait0 = 1') } catch (e) { print(e.name) } try { eval('var o = {}; o.\\u{10FFFE}x') } catch (e) { print(e.name) }" == ["SyntaxError", "SyntaxError"]
 
+/-! ## A promise resolved with a thenable through its resolve function
+
+§27.2.2.2 NewPromiseResolveThenableJob makes a new pair of resolving functions with its own
+[[AlreadyResolved]] record. Before 2026-11-14 the pair read the promise's own flag, which the
+first call of `resolve` had already set, so `new Promise(r => r(otherPromise))` stayed pending
+for ever (Test262's `assert.throwsAsync` is written that way). -/
+
+#guard out "var res; var p = new Promise(r => res = r); res(Promise.resolve(3)); res(9); p.then(v => print('a', v)); print('s')" == ["s", "a 3"]
+#guard out "var p = new Promise(r => { r({ then(f, g) { f(4); f(5); g(6) } }) }); p.then(v => print('d', v), e => print('e', e))" == ["d 4"]
+#guard out "var p = new Promise(r => r(Promise.reject(new Error('no')))); p.then(v => print('f', v), e => print('r', e.message))" == ["r no"]
+#guard out "var p = new Promise(function (resolve) { resolve(Promise.resolve(1).then(v => new Promise(r2 => r2(Promise.resolve(v + 1))))) }); p.then(v => print('chain', v))" == ["chain 2"]
+
+/-! ## Async generators: `yield` awaits, `return` awaits, `yield*` delegates to an async iterator
+
+§27.6.3.8 AsyncGeneratorYield awaits the operand of `yield`; §14.10.1 `return e` awaits `e`;
+§15.5.5 `yield*` uses GetIterator with the async hint and awaits each result of the inner
+iterator's `next`, `throw` and `return`; a `return(v)` request awaits `v`. Before 2026-11-14 a
+yielded promise was given to the consumer as it was, `return await x` was a ReferenceError,
+and `yield*` used the sync iterator. A `yield` whose operand holds an `await` or a `yield` is
+lifted (`liftStmt`). -/
+
+#guard out "async function* g() { yield Promise.resolve(1); try { yield Promise.reject(new Error('r')) } catch (e) { yield 'caught ' + e.message } return Promise.resolve(9) } async function f() { var it = g(), r = []; for (var i = 0; i < 4; i++) { var x = await it.next(); r.push(x.value + ':' + x.done) } return r.join() } f().then(print)" == ["1:false,caught r:false,9:true,undefined:true"]
+#guard out "async function* inner() { try { var x = yield 1; yield x * 2 } finally { print('inner done') } } async function* outer() { var r = yield* inner(); yield 'after ' + r } async function f() { var it = outer(); var a = await it.next(); var b = await it.next(21); var c = await it.return(7); return [a.value, b.value, c.value, c.done].join() } f().then(print)" == ["inner done", "1,42,7,true"]
+#guard out "async function* g() { yield* [Promise.resolve(1), 2] } async function f() { var r = []; for await (const v of g()) r.push(v); return r.join() } f().then(print)" == ["1,2"]
+#guard out "var it = { [Symbol.asyncIterator]() { return this }, next(v) { return { value: v, done: false } }, throw(e) { return Promise.resolve({ value: 'threw ' + e, done: true }) } }; async function* g() { var r = yield* it; yield r } async function f() { var o = g(); await o.next(); var a = await o.next(5); var b = await o.throw('x'); return a.value + ',' + b.value } f().then(print)" == ["5,threw x"]
+#guard out "async function* g() { var a = yield await Promise.resolve(1); var b = await (yield a + 1); return await b } async function f() { var it = g(); var x = await it.next(); var y = await it.next(10); var z = await it.next(Promise.resolve(30)); return [x.value, y.value, z.value, z.done].join() } f().then(print)" == ["1,11,30,true"]
+#guard out "async function* g() { yield 1 } async function f() { var it = g(); var a = await it.return(Promise.resolve(5)); var b = await it.return(Promise.reject(6)).catch(e => 'rej ' + e); return a.value + ',' + a.done + ',' + b } f().then(print)" == ["5,true,rej 6"]
+
+/-! ## A dense array is not grown past `maxDenseArray`
+
+Arrays hold a value for each element. `a.length = 4294967295` asked for 32 GiB and the engine's
+process was killed (Test262 `harness/propertyhelper-verifywritable-array-length`). It is a
+RangeError now, as is `new Array(n)` past the limit; growth within the limit takes steps. -/
+
+#guard out "var a = [1, 2, 3]; try { a.length = 4294967295 } catch (e) { print(e.name) } print(a.length); try { new Array(4294967295) } catch (e) { print(e.name) } a.length = 5; print(a.length, a[4]); a.length = 1; print(a.join())" == ["RangeError", "3", "RangeError", "5 undefined", "1"]
+
+/-! ## Scripts that a swallowed SyntaxError had hidden
+
+Until 2026-11-14 a page script that did not parse was not reported at the window, so a Test262
+page whose script the parser refused was counted as passing when it expected no error. With the
+report in place (`Session.eval`), 349 such pages failed; these are their causes that are now
+language features: a function declared in a block (Annex B.3.3, B.3.4), `super.x = v`
+(§13.3.7), a call as an assignment target in code that is not strict (a ReferenceError when it
+runs, §13.15.1 with the web's exception), a Hashbang comment (§12.5), and `import()` in a
+script (§13.3.10: a promise, rejected while no host loads modules for scripts). -/
+
+-- Annex B.3.3.1: the `var` binding gets the function when the declaration is evaluated
+#guard out "print(typeof f); { print(typeof f); function f() { return 1 } } print(typeof f, f()); if (true) function g() { return 2 } print(g()); (function () { var r = [typeof h]; { function h() {} } r.push(typeof h); let k = 1; { function k() {} } r.push(typeof k); print(r.join()) })()" == ["undefined", "function", "function 1", "2", "undefined,function,number"]
+#guard out "'use strict'; { function f() {} } print(typeof f)" == ["undefined"]
+#guard out "switch (1) { case 1: function s() { return 's' } } print(s()); function outer() { if (0) { function inner() {} } return typeof inner } print(outer()); for (let q of [1]) { function q() {} } print(typeof q)" == ["s", "undefined", "undefined"]
+-- a super reference as a target: the receiver of the [[Set]] is `this`
+#guard out "class A { get x() { return 1 } set x(v) { this.log = 'set ' + v } } class B extends A { f() { super.x = 5; super.y = 7; super['z'] = 8; var a = [super.x, this.y, this.z, this.log, this.hasOwnProperty('y')]; [super.w] = [9]; a.push(this.w); return a.join() } } print(new B().f())" == ["1,7,8,set 5,true,9"]
+#guard out "var o = { __proto__: { v: 1 }, f() { super.v++; return [super.v, this.v, Object.keys(this).join('+')].join() } }; print(o.f())" == ["1,2,f+v"]
+-- a call as a target: evaluated once, then a ReferenceError; an early error in strict code and in a pattern
+#guard out "var n = 0; function f() { n++ } try { f() = 1 } catch (e) { print(e.name, n) } try { f()++ } catch (e) { print(e.name, n) } try { f() += 1 } catch (e) { print(e.name, n) } try { for (f() in {a: 1}) ; } catch (e) { print(e.name, n) } try { eval('\"use strict\"; f() = 1') } catch (e) { print(e.name) } try { eval('[f()] = []') } catch (e) { print(e.name) }" == ["ReferenceError 1", "ReferenceError 2", "ReferenceError 3", "ReferenceError 4", "SyntaxError", "SyntaxError"]
+-- a Hashbang comment at the start; `import()` answers a promise and is not a name of the global object
+#guard out "#!/usr/bin/env node\nprint(1)" == ["1"]
+#guard out "var p = import('./x.js'); print(p instanceof Promise); p.catch(e => print(e.name)); import({ toString() { throw new RangeError('s') } }).catch(e => print(e.name)); print(typeof globalThis['%import'], Object.getOwnPropertyNames(globalThis).filter(k => /import/.test(k)).length)" == ["true", "undefined 0", "TypeError", "RangeError"]
+
 end L4Factoidal.JS.Tests

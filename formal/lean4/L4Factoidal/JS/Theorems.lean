@@ -15,6 +15,8 @@ import L4Factoidal.JS.Interp
   answer of `Str.unitAt?`.
 - `isPrivKey_privKey`, `forAwaitFn_private`, `forAwaitStmt_hasYield`: the helpers of
   `for await` are private-name keys, and its statements always go to the generator machine.
+- `tick_spent`, `tick_step`, `charge_spent`, `charge_step`, `maxDenseArray_bounds`: what a
+  step and a charge do to the budget, and the dense-array limit.
 - `strKey_not_priv`, `strKey_not_sym`, `keyStr_strKey`, `strKey_injective`,
   `strKey_ne_privKey`: the property key of a String value is never a private name's or a
   Symbol's key, is injective, and is undone by `keyStr`.
@@ -219,5 +221,45 @@ theorem strKey_ne_privKey (s name : String) : strKey s ≠ privKey name := by
   have h1 := strKey_not_priv s
   rw [h, isPrivKey_privKey] at h1
   cases h1
+
+/-! ## The step budget (`tick`, `charge`)
+
+Every loop iteration, call and job of a script takes a step (`tick`), and a built-in that
+loops inside the engine takes steps for the size of its work (`charge`). These four say what
+one of them does to the budget. -/
+
+/-- Kind: a refusal. Says: with no steps left, `tick` halts the run and changes nothing.
+Does not say: that every loop of the evaluator ticks (its loops are written with `tick`; that
+is read from the code, not proved). -/
+theorem tick_spent {H : Type} (h : HeapOf H) (h0 : h.steps = 0) :
+    (tick : JSM H Unit).run h = .error (.halt "step budget exhausted") h := by
+  simp [tick, h0, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
+    throw, throwThe, MonadExceptOf.throw, EStateM.throw]
+
+/-- Kind: a cost. Says: with steps left, `tick` takes exactly one and changes nothing else. -/
+theorem tick_step {H : Type} (h : HeapOf H) (h0 : h.steps ≠ 0) :
+    (tick : JSM H Unit).run h = .ok () { h with steps := h.steps - 1 } := by
+  simp [tick, h0, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
+    set, MonadStateOf.set, EStateM.set]
+
+/-- Kind: a refusal. Says: a charge of more steps than are left halts the run with the budget
+at zero, so the work it stands for (growing an array, walking a string) is not done.
+Does not say: that the charge is made before the work at every call (it is at the two places
+that make dense arrays, `new Array(n)` and an assignment to `length`). -/
+theorem charge_spent {H : Type} (h : HeapOf H) (k : Nat) (hk : k ≠ 0) (hlt : h.steps < k.toUInt64) :
+    (charge k : JSM H Unit).run h = .error (.halt "step budget exhausted") { h with steps := 0 } := by
+  simp [charge, hk, hlt, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get,
+    EStateM.get, set, MonadStateOf.set, EStateM.set, throw, throwThe, MonadExceptOf.throw,
+    EStateM.throw]
+
+/-- Kind: a cost. Says: a charge within the budget takes exactly its steps. -/
+theorem charge_step {H : Type} (h : HeapOf H) (k : Nat) (hk : k ≠ 0) (hge : ¬ h.steps < k.toUInt64) :
+    (charge k : JSM H Unit).run h = .ok () { h with steps := h.steps - k.toUInt64 } := by
+  simp [charge, hk, hge, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get,
+    EStateM.get, set, MonadStateOf.set, EStateM.set]
+
+/-- Kind: a bound. Says: the dense-array limit is below 2^31 (a scalar on 32-bit Wasm) and its
+step charge, one step for 64 elements, is within one run's budget of a page (5,000,000 steps). -/
+theorem maxDenseArray_bounds : maxDenseArray < 2 ^ 31 ∧ maxDenseArray / 64 < 5000000 := by decide
 
 end L4Factoidal.JS

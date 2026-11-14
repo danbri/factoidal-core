@@ -412,7 +412,10 @@
     const stack = e instanceof Error && typeof e.stack === 'string' ? e.stack.split('\n').slice(0, 3).join(' | ') : '';
     reporting = true;
     try {
-      const event = new ErrorEvent('error', { message, error: e, cancelable: true, filename: '', lineno: 0, colno: 0 });
+      // no source positions are kept: the document's URL (right for an inline script), line 0
+      let filename = '';
+      try { filename = String(windowOfScript().location.href); } catch (_) {}
+      const event = new ErrorEvent('error', { message, error: e, cancelable: true, filename, lineno: 0, colno: 0 });
       state(event).trusted = true;
       const notCanceled = dispatch(windowOfScript(), event);
       if (notCanceled) { if (uncaughtHook) uncaughtHook(message, e); else n.log('Uncaught ' + message + (stack ? ' at ' + stack : '')); }
@@ -7105,10 +7108,15 @@
   const contentHandler = (el, name, source) => {
     if (!handlerNames.includes(name)) return;
     const onBody = windowReflecting(el) && bodyWindowHandlers.has(name);
-    let f;
-    try { f = new Function('event', source); } catch (e) { report(e); return; }
     const t = onBody ? window : el;
-    setHandler(t, name, onBody && name === 'error' ? function (m, s, l, c, e) { return f.call(this, m); } : f);
+    // HTML "getting the current value of the event handler": the window's onerror handler has
+    // the parameters event, source, lineno, colno and error. A source that does not compile
+    // sets the handler to null (replacing an earlier one) and the error is reported.
+    const winError = onBody && name === 'error';
+    let f;
+    try { f = winError ? new Function('event', 'source', 'lineno', 'colno', 'error', source) : new Function('event', source); }
+    catch (e) { setHandler(t, name, null); report(e); return; }
+    setHandler(t, name, f);
   };
 
   // ==== forms: the script interface of form controls (HTML §4.10) ========================

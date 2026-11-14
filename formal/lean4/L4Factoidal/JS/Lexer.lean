@@ -618,7 +618,11 @@ def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → List Bool
 
 /-- The tokens of a character array, ending with one `eof` token. -/
 def lexChars (cs : Array Char) : Except String (Array Token) :=
-  lexGo cs (cs.size + 1) 0 false #[] []
+  -- a Hashbang comment (§12.5): `#!` at the very start, to the end of the line
+  let start := if charAt cs 0 == '#' && charAt cs 1 == '!' then
+      scanWhile cs (fun c => !isLineTerm c) cs.size 2
+    else 0
+  lexGo cs (cs.size + 1) start false #[] []
 
 /-- The tokens of a source text, ending with one `eof` token. -/
 def lex (src : String) : Except String (Array Token) :=

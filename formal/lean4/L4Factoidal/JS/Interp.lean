@@ -162,6 +162,13 @@ def charge (k : Nat) : M Unit := do
 /-- The longest string `repeat` and `padStart` make: 256 MiB of UTF-8. -/
 def maxStringBytes : Nat := 268435456
 
+/-- The most elements `new Array(n)` and an assignment to an array's `length` make at once:
+2^25 (256 MiB of values). Arrays are dense here (an array of `n` elements holds `n` values), so
+`a.length = 4294967295` would ask for 32 GiB: the engine's process was killed for it (Test262
+`harness/propertyhelper-verifywritable-array-length`, 2026-11-14). Past the limit the script gets
+a RangeError; ECMA-262 allows the length (a sparse array). The growth also takes steps. -/
+def maxDenseArray : Nat := 33554432
+
 /-- Strings shorter than this many bytes are not kept by `cachedChars`: decoding one costs
 less than a step. -/
 def cachedCharsMin : Nat := 256
@@ -898,7 +905,14 @@ def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
     (e', acc)
   let wrap (e : Expr) (mk : Expr → Stmt) : Option (List Stmt) :=
     match e with
-    | .yieldE _ _ => none
+    | .yieldE d (some a) =>
+      -- the statement's own `yield` stays (`genEnter` takes it); the yields in its operand
+      -- (`yield await x`, `await (yield x)`, `return` of a `yield` in an async generator) go first
+      if a.hasYield then
+        let (a', acc) := run a
+        if acc.isEmpty then none else some (acc.toList ++ [mk (.yieldE d (some a'))])
+      else none
+    | .yieldE _ none => none
     | _ =>
       let (e', acc) := run e
       if acc.isEmpty then none else some (acc.toList ++ [mk e'])
@@ -1099,6 +1113,32 @@ def helperRunning : String := privKey "%HelperRunning"
 
 /-- The hidden slot of a Date object (`[[DateValue]]` is its `.prim (.num t)`). -/
 def dateKey : String := privKey "%DateValue"
+
+/-- The record of a `yield*` in an async generator (§15.5.5 with generatorKind async), held
+where a sync `yield*` holds its iterator (`GFrame.delegate`): an object with these hidden
+slots. The phase: 0 at a `yield` (or before the first `next`), 1 the result of `next` or
+`throw` is awaited, 2 the result of `return`, 3 the result of `return` when the iterator has
+no `throw` (a TypeError follows), 4 the value of a `return` when it has no `return`. -/
+def delegIterKey : String := privKey "%DelegateIterator"
+def delegNextKey : String := privKey "%DelegateNext"
+def delegPhaseKey : String := privKey "%DelegatePhase"
+
+/-- The iterator, its `next` and the phase of an async delegate record; `none` for the
+iterator of a sync `yield*`. -/
+def asyncDelegate? (it : Value) : M (Option (Value × Value × Nat)) := do
+  match it with
+  | .obj id =>
+    let o ← getObj id
+    match o.props.get? delegIterKey, o.props.get? delegNextKey, o.props.get? delegPhaseKey with
+    | some (.data iter ..), some (.data next ..), some (.data (.num ph) ..) =>
+      pure (some (iter, next, ph.toUInt64.toNat))
+    | _, _, _ => pure none
+  | _ => pure none
+
+def setDelegatePhase (it : Value) (ph : Nat) : M Unit :=
+  match it with
+  | .obj id => setHidden id delegPhaseKey (.num (Float.ofNat ph))
+  | _ => pure ()
 
 /-- The hidden slots of an async-from-sync iterator (§27.1.6.3 `[[SyncIteratorRecord]]`): the
 sync iterator and its `next`; and the global object's hidden property that holds
@@ -1498,6 +1538,9 @@ def putV : Nat → Value → String → Value → Bool → M Unit
         let len ← toNum n val
         if len < 0 || !isIntegral len || len ≥ twoPow32F then throwErr .range "Invalid array length"
         let l := len.toUInt64.toNat
+        if l > es.size then
+          if l > maxDenseArray then throwErr .range "Invalid array length"
+          charge ((l - es.size) / 64)
         let es' := if l ≤ es.size then es.extract 0 l else es ++ Array.replicate (l - es.size) .undef
         modifyObj id fun o => { o with kind := .array es' }
         return
@@ -2244,6 +2287,8 @@ def putTarget : Nat → Ctx → Expr → Option Value → Option String → Valu
     | .ident x, _, _ => assignName n ctx x v
     | .local x h i, _, _ => assignLocal n ctx x h i v
     | _, some b, some k => putV n b k v ctx.strict
+    -- a call as a target (code that is not strict): PutValue of a value that is not a Reference
+    | .call .., _, _ => throwErr .reference "Invalid left-hand side in assignment"
     | _, _, _ => throwErr .syntax "Invalid assignment target"
 termination_by structural n _ _ _ _ _ => n
 
@@ -2253,6 +2298,19 @@ def evalRef : Nat → Ctx → Expr → M (Option Value × Option String)
   | n + 1, ctx, e => do
     match e with
     | .member o k => pure (some (← evalExpr n ctx o), some k)
+    -- a super reference as a target (§13.3.7, §6.2.5.6 PutValue): the base is `this`, the
+    -- receiver of the [[Set]]. A setter of the parent is found from `this` too, unless the
+    -- object or its class overrides it (then that one runs: a known difference).
+    | .superMember k => do
+      let _ ← homeProto ctx
+      pure (some ctx.thisV, some k)
+    | .superIndex k => do
+      let _ ← homeProto ctx
+      pure (some ctx.thisV, some (← toKey n (← evalExpr n ctx k)))
+    -- a call as a target (code that is not strict): it is evaluated; it is not a Reference
+    | .call .. => do
+      let _ ← evalExpr n ctx e
+      pure (none, none)
     | .index o k =>
       let b ← evalExpr n ctx o
       let kv ← evalExpr n ctx k
@@ -2268,7 +2326,11 @@ def getRef : Nat → Ctx → Expr → Option Value → Option String → M Value
     match e, base, key with
     | .ident x, _, _ => lookup n ctx x
     | .local x h i, _, _ => lookupLocal n ctx x h i
+    -- a super reference (§13.3.7): [[Get]] on the home object's prototype, receiver `this`
+    | .superMember _, _, some k | .superIndex _, _, some k => do getSuper n (← homeProto ctx) k ctx.thisV
     | _, some b, some k => getV n b k
+    -- a call as a target was evaluated by `evalRef`; `putTarget` throws next
+    | .call .., none, none => pure .undef
     | _, _, _ => evalExpr n ctx e
 termination_by structural n _ _ _ _ => n
 
@@ -2942,6 +3004,18 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
     | .brk l => pure (.brk l)
     | .cont l => pure (.cont l)
     | .labeled l body =>
+      if l == annexBLabel then
+        -- Annex B.3.3.1: when a block's function declaration is evaluated, the `var`
+        -- binding of its name gets the function (the value the block's binding has now).
+        -- The parser puts this statement after such a declaration; the `var` binding is the
+        -- nearest one above the block's environment, or the global object's property.
+        match body with
+        | .expr (.ident x) | .expr (.local x _ _) =>
+          let v ← evalExpr n ctx (match body with | .expr e => e | _ => .null)
+          let parent := ((← get).envs.getD ctx.env default).parent
+          assignName n { ctx with env := parent, strict := false } x v
+        | _ => pure ()
+        return .normal
       let r ← evalStmt n ctx (l :: labels) body
       match r with
       | .brk (some l') => if l' == l then pure .normal else pure r
@@ -3306,6 +3380,35 @@ def genRun : Nat → List GFrame → GInput → M GOut
         | some a => throw a
         | none => genRun n rest (.send .undef)
       | .delegate ctx it target =>
+        match ← asyncDelegate? it with
+        | some (iter, nextM, ph) =>
+          -- `yield*` in an async generator: `v` is what `next(v)` sent (phase 0) or the
+          -- awaited result of the inner iterator's method (phases 1 to 4)
+          -- the answer: 0 await this, 1 the delegation ended with this value, 2 yield this,
+          -- 3 return this
+          let r ← tryCatch (do
+              if ph == 0 then
+                let res ← callV n nextM iter #[v]
+                setDelegatePhase it 1
+                pure (Except.ok ((0 : Nat), res))
+              else
+                setDelegatePhase it 0
+                if ph == 4 then pure (Except.ok (3, v))
+                else
+                  if !v.isObj then throwErr .type "Iterator result is not an object"
+                  if ph == 3 then throwErr .type "The iterator does not provide a 'throw' method"
+                  let done := toBool (← getV n v "done")
+                  let x ← getV n v "value"
+                  pure (Except.ok (if !done then 2 else if ph == 2 then 3 else 1, x)))
+            (fun a => pure (Except.error a))
+          match r with
+          | .error (.throw e) => genUnwind n rest (.throw e)
+          | .error a => throw a
+          | .ok (0, res) => pure (.awaited res (f :: rest))
+          | .ok (1, x) => genRun n (.resume ctx target :: rest) (.send x)
+          | .ok (2, x) => pure (.yielded x (f :: rest))
+          | .ok (_, x) => genUnwind n rest (.ret x)
+        | none =>
         let r ← tryCatch (do
             let next ← getV n it "next"
             let res ← callV n next it #[v]
@@ -3405,7 +3508,23 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       if let some (.call (.ident "%await") [e]) := arg then
         return ← match ← genEval n ctx e with
           | .error x => genUnwind n rest (.throw x)
-          | .ok v => pure (.awaited v (.resume ctx target :: rest))
+          | .ok v =>
+            if delegate then do
+              -- `yield*` in an async generator: GetIterator(v, async), then the record
+              let r ← tryCatch (do
+                  let iter ← callNative n (.x (.forAwait 0)) .undef #[v] none
+                  let nextM ← getV n iter "next"
+                  let rec ← alloc { proto := .null }
+                  setHidden rec delegIterKey iter
+                  setHidden rec delegNextKey nextM
+                  setHidden rec delegPhaseKey (.num 0)
+                  pure (Except.ok (Value.obj rec)))
+                (fun a => pure (Except.error a))
+              match r with
+              | .error (.throw x) => genUnwind n rest (.throw x)
+              | .error a => throw a
+              | .ok rec => genRun n (.delegate ctx rec target :: rest) (.send .undef)
+            else pure (.awaited v (.resume ctx target :: rest))
       let v ← match arg with
         | some e => genEval n ctx e
         | none => pure (.ok .undef)
@@ -3419,6 +3538,13 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
           | .error a => throw a
           | .ok it => genRun n (.delegate ctx it target :: rest) (.send .undef)
         else pure (.yielded v (.resume ctx target :: rest))
+    -- a `yield` whose operand holds a `yield` (`yield await x`, `await (yield x)`): the inner
+    -- ones are lifted first (`liftStmt`)
+    let nested : Bool := match s with
+      | .expr (.yieldE _ (some a)) | .expr (.assign none _ (.yieldE _ (some a)))
+      | .decl _ [Decl.mk _ (some (.yieldE _ (some a)))] | .ret (some (.yieldE _ (some a))) => a.hasYield
+      | _ => false
+    if nested then return ← genLift n ctx s rest
     match s with
     | .expr (.yieldE d arg) => yieldAt arg d none
     | .expr (.assign none t (.yieldE d arg)) =>
@@ -3433,15 +3559,21 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
         | .constK => .declare ctx.env false
       yieldAt arg d (some (p, m))
     | .ret (some (.yieldE d arg)) =>
-      -- `return yield x`: the value sent back is the return value
+      -- `return yield x`: the value sent back is the return value. `return await x` in an
+      -- async generator (the `%await` form) is an await, not a yield.
       let _ := d
+      let (arg, isAwait) := match arg with
+        | some (.call (.ident "%await") [e]) => (some e, true)
+        | a => (a, false)
       let v ← match arg with
         | some e => genEval n ctx e
         | none => pure (.ok .undef)
       match v with
       | .error e => genUnwind n rest (.throw e)
-      | .ok v => pure (.yielded v (.resume ctx (some (.id "%ret", .declare ctx.env true)) ::
-          .block ctx [.ret (some (.ident "%ret"))] :: rest))
+      | .ok v =>
+        let fs := .resume ctx (some (.id "%ret", .declare ctx.env true)) ::
+          .block ctx [.ret (some (.ident "%ret"))] :: rest
+        pure (if isAwait then .awaited v fs else .yielded v fs)
     | .block ss | .blockF ss =>
       let ctx' ← enterBlock n ctx ss
       genRun n (.block ctx' ss :: rest) (.send .undef)
@@ -3585,6 +3717,33 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
       let _ ← tryCatch (iterClose n it) (fun _ => pure ())
       genUnwind n rest c
     | .delegate _ it _, .throw v =>
+      if let some (iter, _, ph) := ← asyncDelegate? it then
+        -- `yield*` in an async generator. Phase 0: `throw(v)` came to the `yield`; the inner
+        -- `throw` is called and awaited, or the iterator is closed and a TypeError follows.
+        -- Other phases: the awaited promise was rejected.
+        if ph != 0 then
+          setDelegatePhase it 0
+          return ← genUnwind n rest c
+        let r ← tryCatch (do
+            let th ← getV n iter "throw"
+            match th with
+            | .undef | .null =>
+              let rt ← getV n iter "return"
+              match rt with
+              | .undef | .null => throwErr .type "The iterator does not provide a 'throw' method"
+              | _ =>
+                let res ← callV n rt iter #[]
+                setDelegatePhase it 3
+                pure (Except.ok res)
+            | _ =>
+              let res ← callV n th iter #[v]
+              setDelegatePhase it 1
+              pure (Except.ok res))
+          (fun a => pure (Except.error a))
+        return ← match r with
+          | .error (.throw e) => genUnwind n rest (.throw e)
+          | .error a => throw a
+          | .ok res => pure (.awaited res (f :: rest))
       let th ← getV n it "throw"
       match th with
       | .undef | .null =>
@@ -3596,6 +3755,27 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
         if toBool (← getV n res "done") then genRun n rest (.send (← getV n res "value"))
         else pure (.yielded (← getV n res "value") (f :: rest))
     | .delegate _ it _, .ret v =>
+      if let some (iter, _, ph) := ← asyncDelegate? it then
+        -- `return(v)` came to the `yield` of an async `yield*`: the inner `return` is called
+        -- and awaited; with none, `v` is awaited and returned
+        if ph != 0 then
+          setDelegatePhase it 0
+          return ← genUnwind n rest c
+        let r ← tryCatch (do
+            let rt ← getV n iter "return"
+            match rt with
+            | .undef | .null =>
+              setDelegatePhase it 4
+              pure (Except.ok v)
+            | _ =>
+              let res ← callV n rt iter #[v]
+              setDelegatePhase it 2
+              pure (Except.ok res))
+          (fun a => pure (Except.error a))
+        return ← match r with
+          | .error (.throw e) => genUnwind n rest (.throw e)
+          | .error a => throw a
+          | .ok res => pure (.awaited res (f :: rest))
       let rt ← getV n it "return"
       match rt with
       | .undef | .null => genUnwind n rest c
@@ -3726,7 +3906,12 @@ def runJobs : Nat → M Unit
       set { h with jobs := #[], jobHead := 0 }
       return
     let (f, args) := h.jobs[h.jobHead]!
-    set { h with jobHead := h.jobHead + 1, jobsRun := h.jobsRun + 1 }
+    -- the jobs already run leave the queue once they are half of it: a chain of jobs that
+    -- each queue the next (a loop of awaits) does not keep every job it ever ran
+    let h := if h.jobHead ≥ 4096 && 2 * (h.jobHead + 1) ≥ h.jobs.size then
+        { h with jobs := h.jobs.extract (h.jobHead + 1) h.jobs.size, jobHead := 0, jobsRun := h.jobsRun + 1 }
+      else { h with jobHead := h.jobHead + 1, jobsRun := h.jobsRun + 1 }
+    set h
     tick
     let r ← tryCatch (do let _ ← callV n f .undef args; pure none) (fun a => pure (some a))
     match r with
@@ -3756,18 +3941,48 @@ def agenDrain : Nat → Nat → M Unit
         | k => { o with kind := k }
       let finished := st == 3 || (st == 0 && (match input with | .send _ => false | _ => true))
       if finished then
-        modifyObj gid fun o => { o with kind := .agen [] 3 ((match o.kind with | .agen _ _ q => q | _ => #[])) }
-        pop
         match input with
-        | .send _ => resolvePromise n pid (← iterResult n .undef true)
-        | .retV v => resolvePromise n pid (← iterResult n v true)
-        | .throwV e => rejectPromise n pid e
-        agenDrain n gid
+        | .retV v =>
+          -- AsyncGeneratorAwaitReturn (§27.6.3.9): the value is awaited while the request
+          -- stays at the head of the queue; then the result, or the rejection (modes 4, 5)
+          modifyObj gid fun o => { o with kind := .agen [] 2 ((match o.kind with | .agen _ _ q => q | _ => #[])) }
+          agenAwait n gid v 4 5
+        | _ =>
+          modifyObj gid fun o => { o with kind := .agen [] 3 ((match o.kind with | .agen _ _ q => q | _ => #[])) }
+          pop
+          match input with
+          | .throwV e => rejectPromise n pid e
+          | _ => resolvePromise n pid (← iterResult n .undef true)
+          agenDrain n gid
       else
         modifyObj gid fun o => { o with kind := .agen frames 2 ((match o.kind with | .agen _ _ q => q | _ => #[])) }
-        agenRun n gid frames input
+        match input with
+        | .retV v =>
+          -- a return completion at a `yield` (§27.6.3.8 AsyncGeneratorYield, step 12): the
+          -- value is awaited first; a rejection is thrown into the generator (modes 3, 1)
+          agenAwait n gid v 3 1
+        | _ => agenRun n gid frames input
     | _ => pure ()
 termination_by structural n _ => n
+
+/-- Await `v` for async generator `gid` (§27.7.5.3 Await): `agenResume` runs with mode `onF`
+and the value when it is fulfilled, with mode `onR` and the reason when it is rejected. What
+PromiseResolve throws (a poisoned `constructor`) is a rejection. -/
+def agenAwait : Nat → Nat → Value → Nat → Nat → M Unit
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, gid, v, onF, onR => do
+    let p ← tryCatch (promiseResolve n v) (fun a => match a with
+      | .throw e => do
+        let p ← newPromise
+        rejectPromise n p e
+        pure p
+      | a => throw a)
+    let rr ← realm
+    let f ← nativeFn .agenResume
+    let onF ← alloc { proto := .obj rr.functionProto, kind := .bound f .undef #[.obj gid, .num (Float.ofNat onF)] }
+    let onR ← alloc { proto := .obj rr.functionProto, kind := .bound f .undef #[.obj gid, .num (Float.ofNat onR)] }
+    performThen n p (.obj onF) (.obj onR) .undef
+termination_by structural n _ _ _ _ => n
 
 /-- Run an async generator from a resumption, for the request at the head of its queue. -/
 def agenRun : Nat → Nat → List GFrame → GInput → M Unit
@@ -3782,15 +3997,20 @@ def agenRun : Nat → Nat → List GFrame → GInput → M Unit
     | .error (.throw e) => set [] 3 (q.extract 1 q.size); rejectPromise n pid e; agenDrain n gid
     | .error a => throw a
     | .ok (.done v) => set [] 3 (q.extract 1 q.size); resolvePromise n pid (← iterResult n v true); agenDrain n gid
-    | .ok (.yielded v fs) => set fs 1 (q.extract 1 q.size); resolvePromise n pid (← iterResult n v false); agenDrain n gid
+    | .ok (.yielded v fs) =>
+      -- `yield v` awaits `v` (§27.6.3.8 AsyncGeneratorYield: `yield` is `yield await`); a
+      -- value that `yield*` passes on from its iterator is not awaited again (§15.5.5)
+      let raw ← match fs with
+        | .delegate _ it _ :: _ => do pure (← asyncDelegate? it).isSome
+        | _ => pure false
+      if raw then
+        set fs 1 (q.extract 1 q.size); resolvePromise n pid (← iterResult n v false); agenDrain n gid
+      else
+        set fs 2 q
+        agenAwait n gid v 2 1
     | .ok (.awaited v fs) =>
       set fs 2 q
-      let p ← promiseResolve n v
-      let rr ← realm
-      let f ← nativeFn .agenResume
-      let onF ← alloc { proto := .obj rr.functionProto, kind := .bound f .undef #[.obj gid, .num 0] }
-      let onR ← alloc { proto := .obj rr.functionProto, kind := .bound f .undef #[.obj gid, .num 1] }
-      performThen n p (.obj onF) (.obj onR) .undef
+      agenAwait n gid v 0 1
 termination_by structural n _ _ _ => n
 
 /-- Built-in functions. `newTarget` is set for `new`. -/
@@ -4013,6 +4233,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         match a0 with
         | .num x =>
           if x < 0 || !isIntegral x || x ≥ twoPow32F then throwErr .range "Invalid array length"
+          if x.toUInt64.toNat > maxDenseArray then throwErr .range "Invalid array length"
           charge (x.toUInt64.toNat / 64)
           newArray (Array.replicate x.toUInt64.toNat .undef)
         | v => newArray #[v]
@@ -4429,8 +4650,13 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .promiseThenableJob =>
       match a0 with
       | .obj pid =>
-        let res ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj pid] }
-        let rej ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj pid] }
+        -- CreateResolvingFunctions (§27.2.1.3): a new pair with its own [[AlreadyResolved]]
+        -- record. The promise's own flag is already set when its resolve function was called
+        -- with the thenable, so a pair that read that flag could never settle the promise
+        -- (`new Promise(r => r(otherPromise))` stayed pending for ever, before 2026-11-14).
+        let record ← alloc { proto := .null }
+        let res ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x (.promiseThenableFn false))) .undef #[.obj pid, .obj record] }
+        let rej ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x (.promiseThenableFn true))) .undef #[.obj pid, .obj record] }
         let x ← tryCatch (do let _ ← callV n (argD args 2) a1 #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
         match x with
         | some (.throw e) => let _ ← callV n (.obj rej) .undef #[e]
@@ -4524,13 +4750,26 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | _ => rejectPromise n pid (← mkError .type "not an async generator")
       pure (.obj pid)
     | .agenResume =>
+      -- bound arguments: the generator and the mode. 0, 1: an `await` in the body ended
+      -- (fulfilled, rejected). 2: the operand of a `yield`, awaited: the request at the head
+      -- gets it. 3: the value of `return(v)` at a `yield`, awaited. 4, 5: the value of a
+      -- `return(v)` to a generator that is not running its body (fulfilled, rejected).
       match a0 with
       | .obj gid =>
         match (← getObj gid).kind with
-        | .agen fs _ _ =>
-          let input := if (match a1 with | .num m => m == 1 | _ => false) then GInput.throwV (argD args 2)
-            else .send (argD args 2)
-          agenRun n gid fs input
+        | .agen fs _ q =>
+          let mode := match a1 with | .num m => m.toUInt64.toNat | _ => 0
+          let v := argD args 2
+          let pid := (q.getD 0 (GInput.send .undef, 0)).2
+          let finish (st : Nat) : M Unit :=
+            modifyObj gid fun o => { o with kind := .agen (if st == 3 then [] else fs) st (q.extract 1 q.size) }
+          match mode with
+          | 0 => agenRun n gid fs (.send v)
+          | 1 => agenRun n gid fs (.throwV v)
+          | 2 => finish 1; resolvePromise n pid (← iterResult n v false); agenDrain n gid
+          | 3 => agenRun n gid fs (.retV v)
+          | 4 => finish 3; resolvePromise n pid (← iterResult n v true); agenDrain n gid
+          | _ => finish 3; rejectPromise n pid v; agenDrain n gid
         | _ => pure ()
         pure .undef
       | _ => pure .undef
@@ -7446,6 +7685,23 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | 35 | 37 => Date.timeString t
         | 38 => Date.utcString t
         | _ => Date.toStr t))
+    | (.x .dynImport) =>
+      let pid ← newPromise
+      let x ← tryCatch (do let _ ← toStr n a0; pure none) (fun a => pure (some a))
+      match x with
+      | some (.throw e) => rejectPromise n pid e
+      | some a => throw a
+      | none => rejectPromise n pid (← mkError .type "import() is not supported in this script")
+      pure (.obj pid)
+    | (.x (.promiseThenableFn reject)) =>
+      -- bound arguments: the promise and the pair's [[AlreadyResolved]] record
+      match a0, a1 with
+      | .obj pid, .obj record =>
+        if !(← getObj record).props.contains "done" then
+          setHidden record "done" (.bool true)
+          if reject then rejectPromise n pid (argD args 2) else resolvePromise n pid (argD args 2)
+        pure .undef
+      | _, _ => pure .undef
     | (.x (.forAwait 0)) =>
       -- GetIterator(obj, async) (§7.4.3): the @@asyncIterator method's iterator, or an
       -- async-from-sync iterator over the @@iterator method's (§27.1.6.1).
@@ -7867,6 +8123,7 @@ def initRealm : M Unit := do
   setHidden g asyncFromSyncProtoKey (.obj asyncFromSyncProto)
   for k in [0:3] do
     setHidden g (forAwaitFn k) (← mkNative (.x (.forAwait k)) "" 1)
+  setHidden g dynImportName (← mkNative (.x .dynImport) "" 1)
   let asyncGenProto ← alloc { proto := .obj asyncIterProto }
   modify fun h => { h with realm := { h.realm with asyncGenProto := asyncGenProto } }
   method asyncGenProto "next" .agenNext 1

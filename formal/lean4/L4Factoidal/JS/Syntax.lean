@@ -394,6 +394,12 @@ instance : Inhabited Decl := ⟨.mk (.id "") none⟩
 instance : Inhabited ForInit := ⟨.expr .null⟩
 instance : Inhabited ClassDef := ⟨.mk none none none []⟩
 
+/-- The label of the statement the parser puts after a function declaration in a block of
+code that is not strict (Annex B.3.3.1): `%annexB: f;`. When it runs, the function's `var`
+binding gets the value the block's binding has (the evaluator's `labeled` case). Source text
+cannot write the label. -/
+def annexBLabel : String := "%annexB"
+
 /-- The left operand of `#x in o` (§13.10.1), as the parser gives it: a member of the hole
 (`Expr.ident ""`, which source text cannot write) named by the private name's key. The
 evaluator tests that key itself; a String operand of `in` goes through `strKey`. -/

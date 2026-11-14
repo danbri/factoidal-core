@@ -95,7 +95,10 @@ def outWith (steps : Nat) (src : String) : List String :=
   ["halted step budget exhausted"]
 #guard outWith 2000000 "var s = 'ab'.repeat(1000), t = 0; for (var i = 0; i < s.length; i++) t += s.charCodeAt(i); print(t)" == ["195000"]
 #guard outWith 2000000 "try { 'x'.repeat(2 ** 30) } catch (e) { print(e.name) }" == ["RangeError"]
-#guard outWith 1000000 "var a = new Array(4000000000)" == ["halted step budget exhausted"]
+-- a dense array within `maxDenseArray` takes steps for its size; past the limit it is a RangeError
+#guard outWith 100000 "var a = new Array(30000000)" == ["halted step budget exhausted"]
+#guard outWith 100000 "var a = [1]; a.length = 30000000" == ["halted step budget exhausted"]
+#guard outWith 1000000 "try { new Array(4000000000) } catch (e) { print(e.name) }" == ["RangeError"]
 /-! The String methods that index an ASCII string do not walk it (`indexesReceiver`): a
 loop of 100 000 `charCodeAt`, `at` and one-unit `slice` calls on a 100 000-character string
 ends well within a page's budget (5 M steps). -/

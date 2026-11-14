@@ -53,6 +53,16 @@ structure PState where
   module : Bool := false
   /-- The module's code names `import.meta`. -/
   usesMeta : Bool := false
+  /-- The blocks around the current statement in the current function (a function body is
+  one), and the depth at which its top-level statements are: 0 in a script, 1 in a function. -/
+  depth : Nat := 0
+  topDepth : Nat := 0
+  /-- The names declared lexically so far (`let`, `const`, `class`, parameters) in each block
+  around the current statement, innermost first (Annex B.3.3.1: a block's function declaration
+  is not also a `var` when that would clash with one of them). -/
+  lexStack : List (List String) := [[]]
+  /-- Statements to put after the statement being parsed (`annexBLabel`). -/
+  pending : Array Stmt := #[]
   deriving Inhabited
 
 abbrev P := EStateM String PState
@@ -61,8 +71,10 @@ abbrev P := EStateM String PState
 of the language, so no source text can name it. -/
 def metaName : String := "%meta"
 
-/-- The name `import(...)` calls (`JS/Modules.lean`); not an identifier of the language. -/
-def dynImportName : String := "%import"
+/-- The name `import(...)` calls: a hidden property of the global object (a private-name key,
+so no identifier or String key of a script is it). The realm's function answers a rejected
+promise: no host loads a module for a script yet (`NativeX.dynImport`). -/
+def dynImportName : String := privKey "import"
 
 /-- Equal identifier texts become one `String` object: names compare by pointer first. -/
 def internToks (toks : Array Token) : Array Token :=
@@ -147,6 +159,26 @@ def addVar (n : String) : P Unit :=
     if s.varSet.contains n then s
     else { s with vars := s.vars.push n, varSet := s.varSet.insert n }
 
+/-- Record lexically declared names in the current block (`lexStack`). -/
+def addLex (names : List String) : P Unit :=
+  modify fun s => match s.lexStack with
+    | top :: rest => { s with lexStack := (names ++ top) :: rest }
+    | [] => { s with lexStack := [names] }
+
+/-- Enter a block scope: one more level, and a new frame of `lexStack` holding `names`. -/
+def pushScope (names : List String := []) : P Unit :=
+  modify fun s => { s with depth := s.depth + 1, lexStack := names :: s.lexStack }
+
+def popScope : P Unit :=
+  modify fun s => { s with depth := s.depth - 1, lexStack := s.lexStack.drop 1 }
+
+/-- The statements queued for after the current one, taken. -/
+def takePending : P (Array Stmt) := do
+  let s ← get
+  if s.pending.isEmpty then pure #[] else
+  set { s with pending := #[] }
+  pure s.pending
+
 end P
 
 open P
@@ -206,8 +238,17 @@ def assignOp (t : Token) : Option (Option BinOp ⊕ LogOp) :=
   | _ => none
 
 def isTarget : Expr → Bool
-  | .ident _ | .member _ _ | .index _ _ => true
+  | .ident _ | .member _ _ | .index _ _ | .superMember _ | .superIndex _ => true
   | _ => false
+
+/-- May `e` stand left of an assignment operator or under `++`/`--`? A target (`isTarget`),
+or, in code that is not strict, a call (§13.15.1 with the web's exception: the call is
+evaluated, then PutValue throws a ReferenceError; the evaluator's `evalRef`, `putTarget`). -/
+def targetOk (e : Expr) : P Bool := do
+  if isTarget e then return true
+  match e with
+  | .call .. => pure !(← get).strict
+  | _ => pure false
 
 /-- The hole of an array literal `[,]` (an empty name cannot come from source). -/
 def holeExpr : Expr := .ident ""
@@ -221,7 +262,7 @@ def exprToPat : Nat → Expr → Option Pat
     match e with
     | .ident "" => none
     | .ident x => some (.id x)
-    | .member _ _ | .index _ _ => some (.target e)
+    | .member _ _ | .index _ _ | .superMember _ | .superIndex _ => some (.target e)
     | .array es => do
       let (elems, rest) ← arrElems n es []
       pure (.arr elems rest)
@@ -423,13 +464,24 @@ def parseStmt : Nat → P Stmt
       | "const" =>
         advance
         let ds ← parseDecls n .constK false []
+        addLex (ds.flatMap Decl.names)
         semi; return .decl .constK ds
       | "function" =>
         advance
         let gen ← eatP "*"
         let name ← bindingName
-        addVar name
+        -- At the top level of a function or script the name is a `var`-scoped name. In a
+        -- block it is the block's (§14.2.3); Annex B.3.3.1 makes a plain function in code
+        -- that is not strict a `var` too, set when the declaration is evaluated, unless a
+        -- `let`, `const`, `class` or parameter of an enclosing block has the name.
+        let st ← get
+        let inBlock := st.depth > st.topDepth
+        let hoist := !inBlock || (!st.strict && !gen && name != "arguments" &&
+          !(st.lexStack.drop 1).any (·.contains name))
+        if hoist then addVar name
         let f ← parseFunction n (some name) .normal (if gen then 1 else 0)
+        if inBlock && hoist then
+          modify fun s => { s with pending := s.pending.push (.labeled annexBLabel (.expr (.ident name))) }
         return .funDecl name f
       | "if" =>
         advance; expectP "("
@@ -459,7 +511,11 @@ def parseStmt : Nat → P Stmt
         let t' ← peek
         if isP t' ";" || isP t' "}" || t'.kind == .eof || t'.nl then semi; return .ret none
         let e ← parseExpr n false
-        semi; return .ret (some e)
+        semi
+        -- in an async generator `return e` awaits `e` (§14.10.1 ReturnStatement, step 3)
+        let st ← get
+        if st.inGen && st.inAsync then return .ret (some (.yieldE false (some (.call (.ident "%await") [e]))))
+        return .ret (some e)
       | "break" | "continue" =>
         advance
         let t' ← peek
@@ -487,7 +543,9 @@ def parseStmt : Nat → P Stmt
         expectP ")"; expectP "{"
         let st ← get
         set { st with breakables := st.breakables + 1 }
+        pushScope
         let cs ← parseCases n false []
+        popScope
         modify fun s => { s with breakables := st.breakables }
         let after := (← get).vars
         checkDecls (cs.flatMap fun c => match c with | .mk _ b => b) (after.extract st.vars.size after.size).toList
@@ -496,6 +554,7 @@ def parseStmt : Nat → P Stmt
       | "class" =>
         advance
         let name ← bindingName
+        addLex [name]
         return .classDecl name (← parseClass n (some name))
       | "import" =>
         -- `import(...)` and `import.meta` start an expression statement; a declaration
@@ -528,12 +587,14 @@ def parseStmt : Nat → P Stmt
           (t2.kind == .kw && (t2.text == "let" || t2.text == "yield"))) then
         advance
         let ds ← parseDecls n .letK false []
+        addLex (ds.flatMap Decl.names)
         semi; return .decl .letK ds
       if t.text == "async" && isK t2 "function" && !t2.nl then
         advance; advance
         let g ← eatP "*"
         let name ← bindingName
-        addVar name
+        -- in a block the name is the block's only (Annex B.3.3 is for plain functions)
+        if (← get).depth == (← get).topDepth then addVar name
         let f ← parseFunction n (some name) .normal (if g then 3 else 2)
         return .funDecl name f
       parseExprStmt n
@@ -553,6 +614,12 @@ def parseSubStmt : Nat → P Stmt
       return ← parseExprStmt n
     if isK t "function" && ((← get).strict || isP t2 "*") then
       fail "function declaration in a single-statement context"
+    if isK t "function" then
+      -- Annex B.3.4: a function declaration as the clause of an `if` is in a block of its own
+      pushScope
+      let s ← parseStmt n
+      popScope
+      return .block (#[s] ++ (← takePending)).toList
     let s ← parseStmt n
     match s with
     | .decl .letK _ | .decl .constK _ | .classDecl .. =>
@@ -583,14 +650,16 @@ def parseStmts : Nat → Array Stmt → P (List Stmt)
     let t ← peek
     if isP t "}" || t.kind == .eof then return acc.toList
     let s ← parseStmt n
-    parseStmts n (acc.push s)
+    parseStmts n (acc.push s ++ (← takePending))
 
 def parseBlock : Nat → P (List Stmt)
   | 0 => fail "parser fuel exhausted"
   | n + 1 => do
     expectP "{"
     let before := (← get).vars
+    pushScope
     let ss ← parseStmts n #[]
+    popScope
     let after := (← get).vars
     checkDecls ss (after.extract before.size after.size).toList
     expectP "}"
@@ -646,7 +715,9 @@ def parseFor : Nat → P Stmt
       advance
       let obj ← if isOf then parseAssign n false else parseExpr n false
       expectP ")"
+      pushScope (match init with | some (.decl .var _) => [] | some (.decl _ ds) => ds.flatMap Decl.names | _ => [])
       let body ← parseLoopBody n
+      popScope
       let (kind, pat) ← match init with
         | some (.decl k [Decl.mk p none]) => pure (some k, p)
         | some (.decl .var [Decl.mk (.id x) (some _)]) =>
@@ -656,7 +727,10 @@ def parseFor : Nat → P Stmt
         | some (.expr e) =>
           match exprToPat 64 e with
           | some p => pure (none, p)
-          | none => fail "invalid left-hand side in for-in/of"
+          | none =>
+            match e with
+            | .call .. => if (← get).strict then fail "invalid left-hand side in for-in/of" else pure (none, Pat.target e)
+            | _ => fail "invalid left-hand side in for-in/of"
         | none => fail "invalid for-in/of"
       if isAwait then return forAwaitStmt (← get).inGen t.pos kind pat obj body
       return if isOf then .forOf kind pat obj body else .forIn kind pat obj body
@@ -665,7 +739,9 @@ def parseFor : Nat → P Stmt
     expectP ";"
     let update ← if ← atP ")" then pure none else pure (some (← parseExpr n false))
     expectP ")"
+    pushScope (match init with | some (.decl .var _) => [] | some (.decl _ ds) => ds.flatMap Decl.names | _ => [])
     let body ← parseLoopBody n
+    popScope
     return .forS init test update body
 
 def parseTry : Nat → P Stmt
@@ -704,7 +780,7 @@ def parseCaseBody : Nat → Array Stmt → P (List Stmt)
     let t ← peek
     if isP t "}" || isK t "case" || isK t "default" || t.kind == .eof then return acc.toList
     let s ← parseStmt n
-    parseCaseBody n (acc.push s)
+    parseCaseBody n (acc.push s ++ (← takePending))
 
 /-- Parameters and body of a function, after its name. -/
 def parseFunction : Nat → Option String → FunKind → Nat → P FunDef
@@ -751,14 +827,17 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
       fail "duplicate parameter name not allowed in this context"
     set { outer with vars := #[], varSet := {}, usesArgs := false, strict, inFun := true, loops := 0,
                      breakables := 0, labels := [],
-                     inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3 }
+                     inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3,
+                     depth := 0, topDepth := 1, lexStack := [names], pending := #[] }
     let body ← parseBlock n
     let inner ← get
     let usesArgs := inner.usesArgs
     let arrow := kind == .arrow
     set { inner with vars := outer.vars, varSet := outer.varSet, strict := outer.strict, inFun := outer.inFun,
                      loops := outer.loops, breakables := outer.breakables, labels := outer.labels,
-                     inGen := outer.inGen, inAsync := outer.inAsync, usesArgs := outer.usesArgs || (arrow && usesArgs) }
+                     inGen := outer.inGen, inAsync := outer.inAsync, usesArgs := outer.usesArgs || (arrow && usesArgs),
+                     depth := outer.depth, topDepth := outer.topDepth, lexStack := outer.lexStack,
+                     pending := outer.pending }
     return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind
       (gen == 1 || gen == 3) (gen == 2 || gen == 3) {}
 
@@ -798,7 +877,11 @@ def parseAssign : Nat → Bool → P Expr
       advance
       if ← atP "*" then
         advance
-        return .yieldE true (some (← parseAssign n noIn))
+        let arg ← parseAssign n noIn
+        -- in an async generator `yield*` delegates to an async iterator (§15.5.5): the
+        -- evaluator reads the `%await` form of the operand as that
+        if (← get).inAsync then return .yieldE true (some (.call (.ident "%await") [arg]))
+        return .yieldE true (some arg)
       let nt ← peek
       let ends := nt.nl || nt.kind == .eof || isP nt ")" || isP nt "]" || isP nt "}" ||
         isP nt "," || isP nt ";" || isP nt ":" || isK nt "in"
@@ -828,7 +911,7 @@ def parseAssign : Nat → Bool → P Expr
     match assignOp (← peek) with
     | none => return lhs
     | some op =>
-      if !isTarget lhs then
+      if !(← targetOk lhs) then
         match op, lhs with
         | .inl none, .array _ | .inl none, .object _ =>
           match exprToPat 256 lhs with
@@ -914,7 +997,7 @@ def parseUnary : Nat → P Expr
       if isP t "++" || isP t "--" then
         advance
         let e ← parseUnary n
-        if !isTarget e then fail "invalid update target"
+        if !(← targetOk e) then fail "invalid update target"
         return .update true (t.text == "++") e
       if t.kind == .ident && t.text == "await" && !t.escaped && (← get).inAsync then
         advance
@@ -929,7 +1012,7 @@ def parsePostfix : Nat → P Expr
     let e ← parseLHS n
     let t ← peek
     if (isP t "++" || isP t "--") && !t.nl then
-      if !isTarget e then fail "invalid update target"
+      if !(← targetOk e) then fail "invalid update target"
       advance
       return .update false (t.text == "++") e
     return e
@@ -1084,7 +1167,12 @@ def parsePrimary : Nat → P Expr
             advance
             modify fun s => { s with usesMeta := true }
             return .ident metaName
-          fail "'import.meta' may only be used in module code"
+          -- `import.source(x)` and `import.defer(x)` (the source phase and deferred import
+          -- proposals): an ImportCall with a phase; read as `import(x)`
+          if mt.kind == .ident && (mt.text == "source" || mt.text == "defer") && !mt.escaped &&
+              isP (← peekAt 1) "(" then
+            advance
+          else fail "'import.meta' may only be used in module code"
         if ← atP "(" then
           -- ImportCall (§13.3.10): a specifier and, optionally, an options argument
           advance
