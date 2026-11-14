@@ -621,7 +621,12 @@ def engine : PageEvents.Engine Agents :=
 
 /-- Whether a worker waits for the embedder: `settle` stops then. -/
 def Agents.waits (a : Agents) : Bool :=
-  !a.w.loads.isEmpty || !a.w.routes.isEmpty || a.w.list.any (·.syncWait.isSome)
+  !a.w.loads.isEmpty || a.w.list.any (·.syncWait.isSome) ||
+    -- a request of a worker in flight (an open WebSocket keeps its route but does not wait)
+    a.w.routes.any fun (_, wid, l) =>
+      match a.w.list.find? (·.id == wid) with
+      | some x => (netOf x.s).live.any (·.1 == l)
+      | none => false
 
 /-- Workers that run (for a turn's answer). -/
 def Agents.running (a : Agents) : Nat := a.w.list.size

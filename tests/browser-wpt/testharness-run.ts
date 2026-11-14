@@ -731,9 +731,11 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       if(!driver){take(turn=await ss({action:"settle",session:turn.session,budgetMs}));return;}
       const stop=turn.clock+budgetMs;
       for(let i=0;i<200000;i++){
+        const before=turn.clock;
         take(turn=await ss({action:"settle",session:turn.session,budgetMs:Math.max(1,Math.min(16,stop-turn.clock))}));
         const did=await drive();
-        if(turn.clock>=stop||(!did&&(turn as {quiet?:boolean}).quiet))break;
+        // quiet, or waiting for the network (time stopped): the caller answers what it waits for
+        if(turn.clock>=stop||(!did&&((turn as {quiet?:boolean}).quiet||turn.clock===before)))break;
       }
     };
     await settleTo(70000);
