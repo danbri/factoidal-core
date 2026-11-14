@@ -5,8 +5,8 @@ import L4Factoidal.Rendering.Flex
 the computed values, asks `Rendering/Flex.lean` for sizes and positions in layout units,
 and lays the items out through the `Children` callbacks (`Rendering/Fragment.lean`).
 
-What this layer does: single-line containers in the four directions (`flex-wrap` is read
-as `nowrap`), `order`, flex base sizes from `flex-basis`, `width`/`height` or content,
+What this layer does: containers in the four directions; rows also multi-line
+(`flex-wrap`, `align-content`; a column is read as `nowrap`); `order`, flex base sizes from `flex-basis`, `width`/`height` or content,
 automatic minimum sizes (§4.5), the flexible lengths of §9.7, `gap`, auto margins,
 `justify-content`, `align-items`/`align-self` (baseline is read as start), stretch, and
 definite or content-sized containers with `min-height`/`max-height`.
@@ -89,7 +89,22 @@ def mainPositions (justify : Flex.Justify) (room gap : Int) (outers : List Int) 
   let grown := (outers.zip autos).map fun (o, a) => o + autoShare * (a : Int)
   (Flex.place start (between + gap) grown, autoShare)
 
-/-- A row or row-reverse flex container (single line). -/
+/-- `align-content` as distribution of the lines from the cross-start side; `none` for
+`stretch` (and `normal`, which is `stretch` in a flex container). `reverse`: `wrap-reverse`
+(cross-start is the writing mode's end side). -/
+def crossJustify (c : ContentAlign) (reverse : Bool) : Option Flex.Justify :=
+  match c with
+  | .normal | .stretch => none
+  | .flexStart | .baseline | .left | .right => some .start
+  | .flexEnd => some .end_
+  | .start => some (if reverse then .end_ else .start)
+  | .end_ => some (if reverse then .start else .end_)
+  | .center => some .center
+  | .spaceBetween => some .spaceBetween
+  | .spaceAround => some .spaceAround
+  | .spaceEvenly => some .spaceEvenly
+
+/-- A row or row-reverse flex container, single-line or multi-line. -/
 def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : ContentBox) : Except String Result := do
   let gap := max 0 ((CSS.resolve box.width s.align.columnGap).getD 0)
   -- §9.2: flex base sizes, minimum and maximum main sizes.
@@ -120,33 +135,38 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     cores := cores.push {base := LU.ofPx (basis.getD maxContent), lo := LU.ofPx (max 0 lo), hi := hi.map LU.ofPx,
                          grow := flexFactor is.flex.grow, shrink := flexFactor is.flex.shrink, edges := LU.ofPx edges}
     styles := styles.push is
-  -- §9.7 and §9.5: used main sizes and positions.
   let n := items.size
   let inner := LU.ofPx box.width
   let gapU := LU.ofPx gap
-  let room := inner - gapU * ((n : Int) - 1)
-  let resolved := Flex.resolve room cores.toList
-  let sizes := resolved.sizes.toArray
   let rtl := s.direction == .rtl
   let mainRight := rtl != s.flex.reverse
-  let autos := styles.toList.map fun is => (if is.autoMarginLeft then 1 else 0) + (if is.autoMarginRight then 1 else 0)
-  let (placed,autoShare) := mainPositions (mainJustify s.align.justifyContent s.flex.reverse (some !mainRight))
-    room gapU (resolved.items.map Flex.St.outer) autos
-  let placed := placed.toArray
-  -- §9.4: each item at its main size; the line is as high as its highest item.
-  let mut laid : Array (Result × Float × Float × Float) := #[]   -- content, x, natural border-box height, border-box width
-  let mut highest : Float := 0
+  let justify := mainJustify s.align.justifyContent s.flex.reverse (some !mainRight)
+  -- §9.3: the lines. A single-line container has one, whatever its items' sizes.
+  let multi := s.flex.wrap != .nowrap
+  let lines : Array Nat := if multi then (Flex.breakLines inner gapU (cores.toList.map fun c => c.hyp+c.edges)).toArray else #[n]
+  -- §9.7 and §9.5, line by line: used main sizes and positions.
+  let mut main : Array (Float × Float) := #[]   -- x of the margin box, border-box width
+  let mut first := 0
+  for count in lines do
+    let lineCores := (cores.extract first (first+count)).toList
+    let lineStyles := (styles.extract first (first+count)).toList
+    let room := inner - gapU * ((count : Int) - 1)
+    let resolved := Flex.resolve room lineCores
+    let autos := lineStyles.map fun is => (if is.autoMarginLeft then 1 else 0) + (if is.autoMarginRight then 1 else 0)
+    let (placed,autoShare) := mainPositions justify room gapU (resolved.items.map Flex.St.outer) autos
+    for ((pos,outer),(size,is)) in placed.zip (resolved.sizes.zip lineStyles) do
+      let left := if mainRight then inner-pos-outer else pos
+      let x := box.x+LU.toPx left+(if is.autoMarginLeft then LU.toPx autoShare else 0)
+      main := main.push (x,LU.toPx size+is.borderEdges.left+is.borderEdges.right+is.padding.left+is.padding.right)
+    first := first+count
+  -- §9.4: each item at its main size; a line is as high as its highest item.
+  let mut laid : Array (Result × Float) := #[]   -- content, natural border-box height
   for i in [0:n] do
     let item := items[i]!
     let is := styles[i]!
     let m := is.margin
-    let b := is.borderEdges
-    let p := is.padding
-    let (pos,outer) := placed.getD i (0,0)
-    let left := if mainRight then inner-pos-outer else pos
-    let x := box.x+LU.toPx left+(if is.autoMarginLeft then LU.toPx autoShare else 0)
-    let width := LU.toPx (sizes.getD i 0)+b.left+b.right+p.left+p.right
-    let padV := b.top+b.bottom+p.top+p.bottom
+    let (x,width) := main.getD i (box.x,0)
+    let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
     let minH := (resolveOpt box.height is.minHeight).getD 0
     let maxH := resolveOpt box.height is.maxHeight
     let fixed := (resolveOpt box.height is.height).map fun h => clampOpt minH maxH h+padV
@@ -155,18 +175,52 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
       else kids.content item x box.y width
     let natural := if kids.heightSensitive item then r.height-m.top-m.bottom
       else fixed.getD (clampOpt minH maxH r.height+padV)
-    highest := max highest (natural+m.top+m.bottom)
-    laid := laid.push (r,x,natural,width)
-  let lineCross := match box.height with
+    laid := laid.push (r,natural)
+  let mut lineSizes : Array Float := #[]
+  first := 0
+  for count in lines do
+    let mut highest : Float := 0
+    for i in [first:first+count] do
+      let m := (styles[i]!).margin
+      highest := max highest ((laid[i]!).2+m.top+m.bottom)
+    lineSizes := lineSizes.push highest
+    first := first+count
+  -- §9.4 step 8 and §9.6: the cross size of the container and the place of each line
+  -- (`align-content`); a single line fills a definite cross size.
+  let crossGap := if multi then max 0 ((resolveOpt box.height s.align.rowGap).getD 0) else 0
+  let gaps := crossGap*Float.ofNat (lines.size-1)
+  let total := lineSizes.foldl (·+·) 0+gaps
+  let innerCross := match box.height with
     | some h => h
-    | none => clampOpt box.minHeight box.maxHeight highest
-  -- §9.4 step 11 and §9.6: stretch, then align each item in the line.
+    | none => clampOpt box.minHeight box.maxHeight total
+  let reverseCross := s.flex.wrap == .wrapReverse
+  let (lineHeights,lineTops) : Array Float × Array Float :=
+    if !multi then (#[innerCross],#[0])
+    else
+      let free := innerCross-total
+      let distribution := crossJustify s.align.alignContent reverseCross
+      let extra := if distribution.isNone && free > 0 && lines.size > 0 then free/Float.ofNat lines.size else 0
+      let sizes := lineSizes.map (·+extra)
+      let (start,between) := match distribution with
+        | some j => Flex.justify j (LU.ofPx free) lines.size
+        | none => (0,0)
+      let placed := Flex.place start (between+LU.ofPx crossGap) (sizes.toList.map LU.ofPx)
+      (sizes,(placed.map fun (pos,size) =>
+        if reverseCross then innerCross-LU.toPx pos-LU.toPx size else LU.toPx pos).toArray)
+  -- §9.4 step 11 and §9.6: stretch, then align each item in its line.
   let mut out : Result := {}
+  let mut line := 0
+  first := 0
   for i in [0:n] do
+    if i >= first+lines.getD line 0 then
+      first := first+lines.getD line 0
+      line := line+1
     let item := items[i]!
     let is := styles[i]!
     let m := is.margin
-    let (r,x,natural,width) := laid[i]!
+    let (r,natural) := laid[i]!
+    let (x,width) := main.getD i (box.x,0)
+    let lineCross := lineHeights.getD line 0
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
     let align := itemAlign s is
     let autoCross := is.autoMarginTop || is.autoMarginBottom
@@ -177,15 +231,19 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
         max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (lineCross-m.top-m.bottom))
       else natural
     let outerCross := height+m.top+m.bottom
-    let dy := match autoCrossOffset is.autoMarginTop is.autoMarginBottom (lineCross-outerCross) with
+    let offset := match autoCrossOffset is.autoMarginTop is.autoMarginBottom (lineCross-outerCross) with
       | some d => d
-      | none => LU.toPx (Flex.alignOffset align (LU.ofPx lineCross) (LU.ofPx outerCross))
+      | none =>
+        let d := LU.toPx (Flex.alignOffset align (LU.ofPx lineCross) (LU.ofPx outerCross))
+        -- with `wrap-reverse` the cross-start side of a line is its bottom
+        if reverseCross then lineCross-outerCross-d else d
+    let dy := lineTops.getD line 0+offset
     let done ← if kids.heightSensitive item then
         if (height-natural).abs < 0.01 then pure (r.shift 0 dy)
         else kids.layout item x (box.y+dy) {available := box.width, width := some width, height := some height}
       else pure (kids.frame item x (box.y+dy) width height (r.shift 0 dy))
     out := out.over done
-  return {out with height := lineCross}
+  return {out with height := innerCross}
 
 /-- A column or column-reverse flex container (single line). -/
 def flexColumn (kids : Children) (s : Computed) (items : Array Item) (box : ContentBox) : Except String Result := do

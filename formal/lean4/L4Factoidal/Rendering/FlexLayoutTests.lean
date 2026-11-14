@@ -94,6 +94,35 @@ private def three := "<div id=c><div id=a>AA</div><div id=b>B</div><div id=d>DDD
 -- An inline child is blockified.
 #guard box "<div id=c><span id=a>AA</span><span id=b>B</span></div>" "#c{display:flex} #b{flex:1}" "b" == some (12,0,188,7)
 
+-- Multi-line: items wrap when the next does not fit; each line is as high as its highest item.
+private def wrapping := "<div id=c><div id=a>A</div><div id=b>B</div><div id=d>D</div><div id=e>E</div><div id=f>F</div></div>"
+private def wrapCss := "#c{display:flex;flex-wrap:wrap;width:100px} #c div{width:40px} #d{height:20px} "
+#guard box wrapping wrapCss "b" == some (40,0,40,7)
+#guard box wrapping wrapCss "d" == some (0,7,40,20)
+#guard box wrapping wrapCss "e" == some (40,7,40,20)
+#guard box wrapping wrapCss "f" == some (0,27,40,7)
+#guard box wrapping wrapCss "c" == some (0,0,100,34)
+-- Each line resolves its own flexible lengths.
+#guard box wrapping (wrapCss ++ "#c div{flex-grow:1}") "b" == some (50,0,50,7)
+#guard box wrapping (wrapCss ++ "#c div{flex-grow:1}") "f" == some (0,27,100,7)
+-- align-content in a definite height (free space 100 - 34 = 66): stretch by default.
+#guard box wrapping (wrapCss ++ "#c{height:100px}") "d" == some (0,29,40,20)
+#guard box wrapping (wrapCss ++ "#c{height:100px}") "a" == some (0,0,40,29)
+#guard box wrapping (wrapCss ++ "#c{height:100px;align-content:flex-start}") "f" == some (0,27,40,7)
+#guard box wrapping (wrapCss ++ "#c{height:100px;align-content:flex-end}") "a" == some (0,66,40,7)
+#guard box wrapping (wrapCss ++ "#c{height:100px;align-content:center}") "a" == some (0,33,40,7)
+#guard box wrapping (wrapCss ++ "#c{height:100px;align-content:space-between}") "d" == some (0,40,40,20)
+#guard box wrapping (wrapCss ++ "#c{height:100px;align-content:space-between}") "f" == some (0,93,40,7)
+#guard box wrapping (wrapCss ++ "#c{height:100px;align-content:space-around}") "a" == some (0,11,40,7)
+-- row-gap between lines, column-gap between items (two fit: 40 + 10 + 40).
+#guard box wrapping (wrapCss ++ "#c{gap:5px 10px}") "b" == some (50,0,40,7)
+#guard box wrapping (wrapCss ++ "#c{gap:5px 10px}") "d" == some (0,12,40,20)
+-- wrap-reverse stacks the lines from the bottom.
+#guard box wrapping "#c{display:flex;flex-wrap:wrap-reverse;width:100px} #c div{width:40px} #d{height:20px}" "a" == some (0,27,40,7)
+#guard box wrapping "#c{display:flex;flex-wrap:wrap-reverse;width:100px} #c div{width:40px} #d{height:20px}" "f" == some (0,0,40,7)
+-- A single-line container ignores align-content.
+#guard box three "#c{display:flex;height:50px;align-content:center;align-items:flex-start}" "a" == some (0,0,12,7)
+
 -- Column: items stack, each as wide as the container (stretch) or as its content.
 #guard box three "#c{display:flex;flex-direction:column}" "c" == some (0,0,200,21)
 #guard box three "#c{display:flex;flex-direction:column}" "b" == some (0,7,200,7)
