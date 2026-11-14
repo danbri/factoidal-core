@@ -1969,6 +1969,23 @@ def ScopedIndex.matched (ix : ScopedIndex) (keys : Nat → ElemKey) (ts : TreeSc
     | some e => matchEntryIn keys ts id state e
     | none => none
 
+/-- Most children of a `details` among which its `summary` is looked for. The bound makes the
+work for each child of a `details` constant: without it a page with one `details` of n
+children, half of them `summary` elements after the other half, cost n squared steps. -/
+def summarySearch : Nat := 64
+
+/-- The first `summary` child of a `details` with children `kids`, among the first
+`summarySearch` of them; none when there is none there. -/
+def firstSummary (dom : Dom) (kids : Array Nat) : Option Nat :=
+  (kids.extract 0 summarySearch).toList.find? fun k => (dom.get k).type == .element && (dom.get k).lname == "summary"
+
+/-- Kind: resource bound. Says: the search for a `details` element's summary reads at most
+`summarySearch` children, however many the page gives the element. Does not say: that a
+`summary` after the first `summarySearch` children is found (it is not: it is content). -/
+theorem firstSummary_work (kids : Array Nat) : (kids.extract 0 summarySearch).toList.length ≤ summarySearch := by
+  simp [summarySearch]
+  omega
+
 /-- The content of a `details` element that is not open, all but its first `summary` child
 (HTML §15.5.4): not rendered. -/
 def closedDetailsContent (dom : Dom) (id : Nat) : Bool :=
@@ -1976,8 +1993,7 @@ def closedDetailsContent (dom : Dom) (id : Nat) : Bool :=
   | some p =>
     let d := dom.get p
     d.ns == some DOM.htmlNS && d.lname == "details" && !(d.attrs.any fun a => a.ns.isNone && a.lname == "open") &&
-      !((dom.get id).lname == "summary" &&
-        (d.kids.toList.find? fun k => (dom.get k).type == .element && (dom.get k).lname == "summary") == some id)
+      !((dom.get id).lname == "summary" && firstSummary dom d.kids == some id)
   | none => false
 
 /-- Kind: property. Says: a node with no parent (the root) is never the content of a closed
