@@ -304,7 +304,7 @@ private def compoundSpecificity (n : Nat × Nat × Nat) (p : Compound) : Nat × 
   (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length + p.pseudo.length + (if p.host then 1 else 0),
     n.2.2 + (if p.tag.isSome then 1 else 0))
 /-- The specificity of a selector of `DOM.Selectors` (Selectors 4 §17): ids; classes,
-attributes and pseudo-classes; types and pseudo-elements. `:is()`, `:not()` and the `of`
+attributes and pseudo-classes; types and pseudo-elements. `:is()`, `:not()`, `:has()` and the `of`
 list of `:nth-child()` count as their most specific argument. The recursion is on the
 nesting of the selector (at most `DOM.Selectors.maxNesting`). -/
 def complexSpecificity : Nat → DOM.Selectors.Complex → Nat × Nat × Nat
@@ -326,6 +326,7 @@ def complexSpecificity : Nat → DOM.Selectors.Complex → Nat × Nat × Nat
         | .nth _ _ _ of => add (0, 1, 0) (most (of.getD []))
         | .not l => most l
         | .is l => most l
+        | .has l => most l
         | .never => (0, 0, 1))) acc) (0, 0, 0)
 
 /-- The id, classes and type that the rightmost compound of a selector of `DOM.Selectors`
