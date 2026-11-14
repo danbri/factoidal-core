@@ -847,6 +847,71 @@ theorem nullBody_cases (m : String) (st : Nat) :
   simp only [List.mem_cons, List.mem_nil_iff, or_false] at h
   rcases h with rfl | rfl | rfl | rfl | rfl <;> simp [nullBody, nullBodyStatus]
 
+/-! ## The redirect chain and credentials -/
+
+/-- The transfer after a sequence of redirects (status, next URL), as `onAnswer` makes each hop
+(`afterRedirect`). -/
+def redirectChain (t : Transfer) (hops : List (Nat × URL.Url)) : Transfer :=
+  hops.foldl (fun t h => afterRedirect t h.1 h.2) t
+
+/-- Kind: lemma. Says: a redirect keeps the request's credentials mode and its page. -/
+theorem afterRedirect_mode (t : Transfer) (st : Nat) (next : URL.Url) :
+    (afterRedirect t st next).credentials = t.credentials ∧ (afterRedirect t st next).omitCredentials = t.omitCredentials ∧
+    (afterRedirect t st next).page = t.page := by
+  simp [afterRedirect]
+
+/-- Kind: lemma. Says: a request that crossed origins stays crossed on every later redirect
+(Fetch §4.4: the tainted origin flag is never unset). -/
+theorem afterRedirect_crossed (t : Transfer) (st : Nat) (next : URL.Url) (h : t.crossed = true) :
+    (afterRedirect t st next).crossed = true := by
+  simp [afterRedirect, h]
+
+/-- Kind: privacy theorem (credentials "same-origin", Fetch §4.6). Says: a request whose
+credentials mode is not "include" sends no `Cookie` field on a hop whose URL is not of the
+page's origin or once it crossed origins. -/
+theorem cookieValue_not_same (t : Transfer) (hc : t.credentials = false) (hs : t.same = false) :
+    t.cookieValue = "" := by
+  simp [Transfer.cookieValue, Transfer.sendsCredentials, hc, hs]
+
+/-- Kind: privacy theorem (the redirect chain). Says: once a request without credentials mode
+"include" has crossed origins, no later hop of its redirect chain sends a cookie, wherever the
+chain goes, back to the page's origin included. -/
+theorem redirectChain_no_cookie (t : Transfer) (hops : List (Nat × URL.Url)) (hc : t.credentials = false)
+    (hx : t.crossed = true) : (redirectChain t hops).cookieValue = "" := by
+  induction hops generalizing t with
+  | nil =>
+    apply cookieValue_not_same t hc
+    simp [Transfer.same, hx]
+  | cons h hops ih =>
+    apply ih
+    · rw [(afterRedirect_mode t h.1 h.2).1]; exact hc
+    · exact afterRedirect_crossed t h.1 h.2 hx
+
+/-- Kind: privacy theorem (credentials "omit"). Says: a request with credentials mode "omit"
+sends no cookie on any hop of its redirect chain. -/
+theorem redirectChain_omit (t : Transfer) (hops : List (Nat × URL.Url)) (ho : t.omitCredentials = true) :
+    (redirectChain t hops).cookieValue = "" := by
+  induction hops generalizing t with
+  | nil => simp [redirectChain, Transfer.cookieValue, Transfer.sendsCredentials, ho]
+  | cons h hops ih =>
+    apply ih
+    rw [(afterRedirect_mode t h.1 h.2).2.1]; exact ho
+
+/-- Kind: security theorem (Fetch §4.4 steps 7 and 8, over a hop of the chain). Says: an answer
+that redirects to a URL with a user or password of another origin than the page's ends the
+fetch with a network error: no hop is sent there. -/
+theorem onAnswer_redirect_credentials (t : Transfer) (a : Answer) (loc : String) (next : URL.Url)
+    (hp : t.phase = .main) (hs : (a.status == 0) = false) (hf : finalAllowed t a = true)
+    (hcors : (!t.page.hostCors && !t.same && !t.noCors && !corsOk t a) = false)
+    (hr : (isRedirect a.status && !t.page.hostCors) = true) (hl : headerGet a.headers "location" = some loc)
+    (he : t.redirectError = false) (hm : t.redirectManual = false) (hn : (t.redirects ≥ maxRedirects) = False)
+    (hu : URL.parseUrl loc (some t.url) = some next) (hc : next.includesCredentials = true)
+    (ho : (next.origin != t.page.origin) = true) :
+    onAnswer t a = .fail "redirect with credentials" := by
+  have hrc := redirectCredentials_other t next hc ho
+  simp only [onAnswer, hp, hs, hf, hcors, hr, hl, he, hm, hu, hrc]
+  simp_all
+
 /-- Kind: policy lemma. Says: a page whose origin is not local cannot make a target that the
 URL names as local pass `mayConnect`. Does not say: anything about a name that resolves to a
 local address (the DNS answer is the host's). -/

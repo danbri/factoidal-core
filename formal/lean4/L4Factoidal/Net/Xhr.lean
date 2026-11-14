@@ -1193,6 +1193,36 @@ theorem pinFor_name (s : State) (url : String) (p : String × String) (h : s.pin
     exact ⟨hm, u, hu, by simpa using hp⟩
   · simp at h
 
+/-- Kind: security theorem (DNS pins). Says: a name's pin is never replaced: once the session
+holds an address for a name, keeping another transfer's pin leaves that name's first pin as
+it was, so a pinned name never resolves to a different address within the session (a later
+answer of the name server cannot move the page to another host, DNS rebinding). -/
+theorem notePin_keeps (s : State) (t : Transfer) (n : String) (p : String × String)
+    (h : s.pins.find? (·.1 == n) = some p) : (s.notePin t).pins.find? (·.1 == n) = some p := by
+  unfold State.notePin
+  split
+  · rename_i q _
+    split
+    · exact h
+    · rw [← Array.find?_toList] at h ⊢
+      simp only [Array.toList_push, List.find?_append, h, Option.some_or]
+  · exact h
+
+/-- Kind: security theorem (DNS pins). Says: over any sequence of transfers the session keeps,
+the pin a request to a pinned URL starts with stays the same. -/
+theorem pinFor_stable (s : State) (ts : List Transfer) (url : String) (p : String × String)
+    (h : s.pinFor url = some p) : (ts.foldl State.notePin s).pinFor url = some p := by
+  induction ts generalizing s with
+  | nil => exact h
+  | cons t ts ih =>
+    apply ih
+    unfold State.pinFor at h ⊢
+    cases hu : URL.parseUrl url with
+    | none => simp [hu] at h
+    | some u =>
+      simp only [hu] at h ⊢
+      exact notePin_keeps s t _ p h
+
 /-- Kind: privacy lemma. Says: a URL the page names as a referrer, or a frame document's URL
 named as the client, is kept only when it parses and is of the page's own origin, and then
 in its serialized form: `fetch(url, {referrer})` cannot make the engine send another
