@@ -62,9 +62,12 @@ def api (s : State) (fs : Array ByteArray) : State × ByteArray :=
   | "tensor" =>
     let flags := str fs 4
     let flag (c : Char) := flags.toList.contains c
+    if flag 'x' && !GpuRun.ctxGpu s (nat fs 1) then (s, "!DNotSupportedError:exportable tensors need a context on the GPU".toUTF8) else
     text ((createTensor s (nat fs 1) (str fs 2) (str fs 3) (flag 'r') (flag 'w') (flag 'c')
-      (fs[6]?.map fun b => (str fs 5, b))).map
-      fun (s, i) => (s, toString i)) s
+      (fs[6]?.map fun b => (str fs 5, b))).bind
+      fun (s, i) => if flag 'x' then (GpuRun.makeExportable s i).map ((·, toString i)) else pure (s, toString i)) s
+  | "export" => text ((GpuRun.exportTensor s (nat fs 1) (nat fs 2)).map fun (s, i) => (s, toString i)) s
+  | "import" => (GpuRun.importTensor s (nat fs 1), ByteArray.empty)
   | "write" => unit (writeTensor s (nat fs 1) (nat fs 2) (str fs 3) (fs[4]?.getD ByteArray.empty)) s
   | "read" =>
     match readTensor s (nat fs 1) (nat fs 2) (if fs.size > 3 then some (nat fs 3) else none) with
