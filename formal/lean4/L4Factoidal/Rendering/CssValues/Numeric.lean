@@ -9,10 +9,15 @@ specified value; with a context (`Ctx`: font sizes and viewport) it gives the co
 absolute and font- or viewport-relative lengths in `px`, angles in `deg`, times in `s`,
 and a `calc()` that no longer has anything to wait for as one value.
 
-Not here yet: the trigonometric and exponential functions are type-checked and kept as
-written (their values are not rational); `calc-size()`, `random()`, `sibling-index()`.
+The trigonometric and exponential functions (§10.4, §10.5) are computed as rational
+approximations (`Approx.lean`), rounded to 10 decimal places: such a value is an
+approximation, said so here, and the tests compare it at six significant digits.
+
+Not here yet: infinities and NaN as values (they are kept as written); `calc-size()`,
+`random()`, `sibling-index()`.
 -/
 import L4Factoidal.Rendering.CssValues.Token
+import L4Factoidal.Rendering.CssValues.Approx
 
 namespace L4Factoidal.Rendering.CssValues
 
@@ -374,7 +379,43 @@ def evalFn (name : String) (strategy : String) (vs : List Rat) (unit : String) :
       let q := a / b
       let t : Rat := if q < 0 then (q.ceil : Rat) else (q.floor : Rat)
       some (.val (a - b * t) unit)
+  | "sin", [a] => some (.val (approx (Color.sinCosDeg (degrees a unit)).1) "")
+  | "cos", [a] => some (.val (approx (Color.sinCosDeg (degrees a unit)).2) "")
+  | "tan", [a] =>
+    let (s, c) := Color.sinCosDeg (degrees a unit)
+    if c == 0 then none else some (.val (approx (s / c)) "")
+  | "atan", [a] => some (.val (approx (signedAngle (Color.atan2Deg a 1))) "deg")
+  | "asin", [a] =>
+    if a < -1 || 1 < a then none
+    else some (.val (approx (signedAngle (Color.atan2Deg a (Color.powApprox (1 - a * a) ((1 : Rat) / 2))))) "deg")
+  | "acos", [a] =>
+    if a < -1 || 1 < a then none
+    else some (.val (approx (Color.atan2Deg (Color.powApprox (1 - a * a) ((1 : Rat) / 2)) a)) "deg")
+  | "atan2", [y, x] => some (.val (approx (signedAngle (Color.atan2Deg y x))) "deg")
+  | "pow", [a, b] =>
+    if unit != "" then none
+    else if b.den == 1 && b.num.natAbs ≤ 64 then
+      let p := a ^ b.num.natAbs
+      if b.num ≥ 0 then some (.val p "") else if p == 0 then none else some (.val (1 / p) "")
+    else if a ≤ 0 then none
+    else some (.val (approx (Color.powApprox a b)) "")
+  | "sqrt", [a] => if a < 0 then none else some (.val (approx (Color.powApprox a ((1 : Rat) / 2))) "")
+  | "hypot", vs =>
+    let sum := vs.foldl (fun acc v => acc + v * v) 0
+    if vs.isEmpty then none else some (.val (approx (Color.powApprox sum ((1 : Rat) / 2))) unit)
+  | "log", [a] => if a ≤ 0 then none else some (.val (approx (Color.lnApprox a)) "")
+  | "log", [a, b] =>
+    if a ≤ 0 || b ≤ 0 || b == 1 then none
+    else some (.val (approx (Color.lnApprox a / Color.lnApprox b)) "")
+  | "exp", [a] => some (.val (approx (Color.expApprox a)) "")
   | _, _ => none
+where
+  /-- An approximate result, to 10 decimal places. -/
+  approx (x : Rat) : Rat := Color.roundTo 10 x
+  /-- The argument of a trigonometric function in degrees: a number is radians. -/
+  degrees (a : Rat) (unit : String) : Rat := if unit == "" then a * 180 / piRat else a
+  /-- An angle of `[0, 360)` in `(-180, 180]`. -/
+  signedAngle (d : Rat) : Rat := if 180 < d then d - 360 else d
 
 /-- The values of calculations that are all plain values of one unit. -/
 def sameUnitValues (xs : List Calc) : Option (List Rat × String) :=
@@ -393,7 +434,10 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
   | fuel + 1, c =>
     match c with
     | .val v u => canonVal ctx v u
-    | .kw k => .kw k
+    | .kw k =>
+      if k == "pi" then .val piRat ""
+      else if k == "e" then .val ((2718281828459045235360287471352 : Rat) / 1000000000000000000000000000000) ""
+      else .kw k
     | .neg x => negate (Calc.simp ctx fuel x)
     | .inv x =>
       match Calc.simp ctx fuel x with
@@ -621,8 +665,23 @@ private def lenPos : NumReq := { kind := .length, lo := some 0 }
 #guard comp { kind := .time } "500ms" == some "0.5s"
 #guard spec { kind := .number } "round(up, 1.2, 1)" == some "calc(2)"
 #guard spec { kind := .number } "mod(7, 3)" == some "calc(1)"
-#guard spec { kind := .number } "sin(30deg)" == some "sin(30deg)"
-#guard spec { kind := .number } "calc(pi)" == some "calc(pi)"
+#guard spec { kind := .number } "sin(30deg)" == some "calc(0.5)"
+#guard spec { kind := .number } "cos(0)" == some "calc(1)"
+#guard spec { kind := .number } "tan(45deg)" == some "calc(1)"
+#guard spec { kind := .number } "tan(90deg)" == some "tan(90deg)"
+#guard spec { kind := .angle } "asin(1)" == some "calc(90deg)"
+#guard spec { kind := .angle } "acos(0.5)" == some "calc(60deg)"
+#guard spec { kind := .angle } "atan(1)" == some "calc(45deg)"
+#guard spec { kind := .angle } "atan2(-1px, 1px)" == some "calc(-45deg)"
+#guard spec { kind := .number } "pow(2, 10)" == some "calc(1024)"
+#guard spec { kind := .number } "pow(2, 0.5)" == some "calc(1.41421)"
+#guard spec { kind := .number } "sqrt(16)" == some "calc(4)"
+#guard spec { kind := .length } "hypot(3px, 4px)" == some "calc(5px)"
+#guard spec { kind := .number } "log(8, 2)" == some "calc(3)"
+#guard spec { kind := .number } "exp(0)" == some "calc(1)"
+#guard spec { kind := .number } "calc(pi)" == some "calc(3.14159)"
+#guard spec { kind := .number } "calc(e)" == some "calc(2.71828)"
+#guard comp { kind := .length } "calc(1px * sin(30deg) * 2)" == some "1px"
 
 theorem ratMax_ge_left (a b : Rat) : a ≤ ratMax a b := by
   unfold ratMax
