@@ -410,4 +410,51 @@ private def items4 := "<div id=o><div class=i></div><div class=i></div><div clas
 #guard scroll "<div id=c><div id=e></div></div>" "#c{width:100px;height:0} #e{width:0;height:100px}" "c" == some (100,100)
 #guard scroll "<div id=c><div id=e></div></div>" "#c{width:0;height:100px} #e{width:100px;height:0}" "c" == some (100,100)
 
+
+-- Inline boxes (CSS 2.1 §9.2.2, §9.4.2; `InlineBox`): an inline element has a box on each
+-- line that holds part of it, from its first content to its last, and the line gives
+-- room for its margins, borders and padding. Glyphs are 6 px, lines 7 px.
+#guard box "<div>ab <span id=s>cd ef</span> gh</div>" "" "s" == some (18,0,30,7)
+#guard at? "<div>ab <span id=s>cd ef</span> gh</div>" "" "gh" == some (54,0)
+-- margin 3, border 2, padding 5 on each side: the border box starts after the margin and
+-- is 2+5+12+5+2 wide; the border is above and below the content area; the text after
+-- the box starts after its right margin and a space.
+#guard box "<div>ab <span id=s>cd</span> gh</div>" "#s{padding:0 5px;margin:0 3px;border:2px solid red}" "s" == some (21,-2,26,11)
+#guard at? "<div>ab <span id=s>cd</span> gh</div>" "#s{padding:0 5px;margin:0 3px;border:2px solid red}" "cd" == some (28,0)
+#guard at? "<div>ab <span id=s>cd</span> gh</div>" "#s{padding:0 5px;margin:0 3px;border:2px solid red}" "gh" == some (56,0)
+-- vertical padding and margins of an inline box do not move the line
+#guard box "<div id=d>ab <span id=s>cd</span></div>" "#s{padding:4px 0;margin:9px 0}" "d" == some (0,0,200,7)
+#guard box "<div id=d>ab <span id=s>cd</span></div>" "#s{padding:4px 0;margin:9px 0}" "s" == some (18,-4,12,15)
+-- a box broken over two lines: the left edge on the first, the right edge on the second
+private def broken := "<div id=d>ab <span id=s>cd ef gh</span> ij</div>"
+#guard at? broken "#d{width:60px} #s{padding:0 5px}" "cd" == some (23,0)
+#guard at? broken "#d{width:60px} #s{padding:0 5px}" "gh" == some (0,7)
+#guard at? broken "#d{width:60px} #s{padding:0 5px}" "ij" == some (23,7)
+#guard ((render broken "#d{width:60px} #s{padding:0 5px}").toOption.map fun (_,boxes) =>
+  (boxes.filter (·.source == ((DOM.parseHtmlDocument broken).getElementById 0 "s").getD 0)).toList.map fun b => (b.x,b.y,b.width,b.height)) ==
+  some [(18,0,35,7),(0,7,17,7)]
+-- the start of a box is never left at the end of a line: it goes down with its first word
+#guard box "<div id=d>abcdefg <span id=s>hij</span></div>" "#d{width:60px} #s{padding-left:5px}" "s" == some (0,7,23,7)
+-- nested boxes: the outer one covers the inner one with its padding
+#guard box "<div>a <b id=o>b <i id=n>c</i> d</b> e</div>" "#n{padding:0 2px}" "o" == some (12,0,34,7)
+#guard box "<div>a <b id=o>b <i id=n>c</i> d</b> e</div>" "#n{padding:0 2px}" "n" == some (24,0,10,7)
+-- an empty inline box has a box where it stands and makes no line; with padding it does
+#guard box "<div id=d><span id=s></span></div>" "" "d" == some (0,0,200,0)
+#guard box "<div id=d>x<span id=s></span></div>" "" "s" == some (6,0,0,7)
+#guard box "<div id=d><span id=s></span></div>" "#s{padding:0 4px}" "d" == some (0,0,200,7)
+#guard box "<div id=d><span id=s></span></div>" "#s{padding:0 4px}" "s" == some (0,0,8,7)
+-- a box that ends with a forced break has no box on the line after it
+#guard box "<div id=d><span id=s>ab<br></span></div>" "" "d" == some (0,0,200,7)
+-- shrink-to-fit counts the padding of inline boxes
+#guard box "<div id=w><span id=s>ab cd</span></div>" "#w{float:left} #s{padding:0 5px}" "w" == some (0,0,40,7)
+-- background and border are painted once for the box on a line, under its text: the six
+-- glyphs, one rectangle more for a background, four more for a border
+private def paints (html extra : String) : Option Nat :=
+  (render html extra).toOption.map fun (scene,_) => (scene.tree.flatMap (fun n => n.lower ⟨1,0,0,1,0,0⟩ [])).length
+#guard paints "<div><span>ab cd ef</span></div>" "" == some 6
+#guard paints "<div><span>ab cd ef</span></div>" "span{background:red}" == some 7
+#guard paints "<div><span>ab cd ef</span></div>" "span{background:red;border:1px solid blue}" == some 11
+-- link regions are still cut from the text of a link, one for each word and space
+#guard ((render "<div><a href=x>ab cd</a></div>" "a{padding:0 4px}").toOption.map (·.1.links.size)) == some 3
+
 end L4Factoidal.Rendering.PositionLayoutTests
