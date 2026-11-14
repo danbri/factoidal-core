@@ -8,9 +8,8 @@
    "name": "xforms-binding-exception"
   },
   {
-   "expect": "control",
-   "label": "Invalid Property",
-   "value": ""
+   "expect": "no-value",
+   "label": "Invalid Property"
   }
  ]
 }

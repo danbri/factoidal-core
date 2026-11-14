@@ -1,0 +1,13 @@
+{
+ "case": "7.7.2.a",
+ "file": "Chapt07/7.7/7.7.2/7.7.2.a.xhtml",
+ "quote": "You must see a value of \"2\" for Minimum.",
+ "note": "the control label in the test is spelled \"Minimim\"",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Minimim",
+   "value": "2"
+  }
+ ]
+}

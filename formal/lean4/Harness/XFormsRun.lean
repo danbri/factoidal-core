@@ -13,7 +13,8 @@ that states the pass condition (`quote`) and the scripted steps:
     the element `id`);
   * `expect`: `control` (`value`, `prefix`, `relevant`, `readonly`,
     `required`, `valid` of the control with this `label` or `id`),
-    `values` (the values of all such controls, in order), `message` /
+    `values` (the values of all such controls, in order), `no-value`
+    (no such control shows a value), `message` /
     `no-message` (`contains`), `exception` (`name`: a fatal error of
     that name, or a message naming it), `no-fatal`, `event` /
     `no-event` (`name`), `focus` (`id`), `load` (`contains`).
@@ -54,7 +55,12 @@ def parseDoc (src : String) : Option Document :=
 
 def normPath (p : String) : String :=
   let out := (p.splitOn "/").foldl (fun (acc : List String) s =>
-    if s == ".." then acc.drop 1 else if s == "." || s == "" then acc else s :: acc) []
+    if s == ".." then
+      (match acc with
+       | [] => [".."]
+       | ".." :: _ => ".." :: acc
+       | _ :: r => r)
+    else if s == "." || s == "" then acc else s :: acc) []
   (if p.startsWith "/" then "/" else "") ++ String.intercalate "/" out.reverse
 
 def dirOf (p : String) : String := String.intercalate "/" ((p.splitOn "/").dropLast)
@@ -130,6 +136,10 @@ def checkExpect (m : Model) (last all : List Output) (j : Json) : Option String 
     let got := ((findCtls view j).filter (·.relevant)).map (fun c => normalizeSpaceStr c.value)
     let want := ((j.getStringArray? "values").getD []).map normalizeSpaceStr
     if got == want then none else some s!"values {got}, expected {want}"
+  else if kind == "no-value" then
+    if ((findCtls view j).filter (·.relevant)).any (fun c => normalizeSpaceStr c.value != "") then
+      some "the control shows a value"
+    else none
   else if kind == "control" then
     match findCtls view j with
     | [] => some s!"no control matches {(j.getString? "label").getD ((j.getString? "id").getD "?")}"

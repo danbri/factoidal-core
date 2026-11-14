@@ -1,0 +1,12 @@
+{
+ "case": "7.7.3.a",
+ "file": "Chapt07/7.7/7.7.3/7.7.3.a.xhtml",
+ "quote": "You must see a value of \"6\" for Maximum.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Maximum",
+   "value": "6"
+  }
+ ]
+}
