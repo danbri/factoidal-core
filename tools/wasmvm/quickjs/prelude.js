@@ -9717,6 +9717,7 @@
   const attributeStyleMap = { get() { let m = styleMaps.get(this); if (!m) styleMaps.set(this, m = declaredMap(this.style)); return m; }, configurable: true, enumerable: true };
   Object.defineProperty(HTMLElement.prototype, 'attributeStyleMap', attributeStyleMap);
   Object.defineProperty(SVGElement.prototype, 'attributeStyleMap', attributeStyleMap);
+  Object.defineProperty(MathMLElement.prototype, 'attributeStyleMap', attributeStyleMap);
   Object.defineProperty(ruleClasses.StyleRule.prototype, 'styleMap', { get() { let m = styleMaps.get(this); if (!m) styleMaps.set(this, m = declaredMap(this.style)); return m; }, configurable: true, enumerable: true });
   define(Element.prototype, 'computedStyleMap', function () {
     const el = this, m = Object.create(StylePropertyMapReadOnly.prototype);
@@ -9752,7 +9753,7 @@
     return computedStyle(el);
   });
   def('getSelection', getSelection);
-  for (const C of new Set([HTMLElement, HTMLUnknownElement, ...Object.values(named)])) reflectInstall(C);
+  for (const C of new Set([HTMLElement, HTMLUnknownElement, MathMLElement, ...Object.values(named)])) reflectInstall(C);
   // ---- IDL attributes that reflect an element or elements (HTML §2.6.1) ----
   // `ariaActiveDescendantElement`, `ariaLabelledByElements` and the other ARIA element
   // attributes, `popoverTargetElement`, `commandForElement`. The page keeps the explicitly set

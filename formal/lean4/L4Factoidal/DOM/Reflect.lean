@@ -139,11 +139,11 @@ HTMLElement title . s
 HTMLElement lang . s
 HTMLElement dir . e - - ltr,rtl,auto
 HTMLElement className class s
-HTMLElement autofocus . b
+HTMLElement,MathMLElement autofocus . b
 HTMLElement hidden . b
 HTMLElement inert . b
 HTMLElement accessKey . s
-HTMLElement tabIndex . ti
+HTMLElement,MathMLElement tabIndex . ti
 HTMLElement draggable . dg
 HTMLElement enterKeyHint . e - - enter,done,go,next,previous,search,send
 HTMLElement inputMode . e - - none,text,tel,url,email,numeric,decimal,search
@@ -506,14 +506,21 @@ def meterValue (d : Dom) (el : NodeId) (which : Nat) : Float :=
   | _ => clamp mn mx ((num "optimum").getD ((mn + mx) / 2))
 
 /-- The `tabIndex` default (HTML §6.6.3): 0 for the elements that are focusable areas by
-default, else -1. -/
+default, else -1. A MathML element (MathML Core §2.1.3): 0 for `a`, else -1. -/
 def tabIndexDefault (d : Dom) (el : NodeId) : Int :=
   let x := d.get el
   let n := x.lname
-  if ["button", "input", "select", "textarea", "iframe", "frame", "object", "embed"].contains n then 0
+  if x.ns == some mathmlNS then (if n == "a" then 0 else -1)
+  else if ["button", "input", "select", "textarea", "iframe", "frame", "object", "embed"].contains n then 0
   else if (n == "a" || n == "area") && (attr d el "href").isSome then 0
   else if n == "summary" then 0
   else -1
+
+/-- Theorem (policy): the default `tabIndex` of a MathML element is 0 for `a` and -1 for
+every other MathML element, whatever its attributes. -/
+theorem tabIndexDefault_mathml (d : Dom) (el : NodeId) (h : (d.get el).ns = some mathmlNS) :
+    tabIndexDefault d el = if (d.get el).lname == "a" then 0 else -1 := by
+  simp [tabIndexDefault, h]
 
 /-- The `draggable` default (HTML §6.11.7, the auto state): true for an `img` element and
 for an `a` element with an `href` attribute. -/
