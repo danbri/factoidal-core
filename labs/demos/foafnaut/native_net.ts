@@ -67,8 +67,7 @@ function b64(bytes:Uint8Array):string{
 /** The host's answer to one wire of a turn (`netRequests` or `netSync`). */
 export async function netAnswer(w:NetWire,opts:NetOptions={}):Promise<NetAnswer>{
   const failed={id:w.id,status:0};
-  // a WebSocket connection's wires (Net.WebSocket): this host has no sockets yet, so the
-  // connection fails and nothing goes out
+  // a WebSocket connection's wires go to socketOpen / socketWrite / socketClose
   if(w.method.startsWith("WEBSOCKET"))return failed;
   if(w.resolve){
     try{
@@ -98,4 +97,63 @@ export async function netAnswer(w:NetWire,opts:NetOptions={}):Promise<NetAnswer>
     return {id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:b64(bytes)};
   }catch{return failed;}
   finally{try{client?.close();}catch{/* closed */}done();}
+}
+
+// ---- WebSocket connections (formal/lean4/L4Factoidal/Net/WebSocket.lean) ----------------
+// The engine writes the opening handshake's fields and every frame, and reads every byte that
+// comes back; this host opens one TCP connection (TLS for `wss`, the certificate checked
+// against the URL's name) to the address the engine chose (`address`, `port`; else the URL's
+// host), writes in order and reads.
+
+export type NetSocket={conn:Deno.Conn;writing:Promise<unknown>};
+
+/** Open the connection of a `WEBSOCKET` wire and make the handshake: the answer is the
+ *  response's status and fields and the bytes after them; `socket` when it is open. */
+export async function socketOpen(w:NetWire,opts:NetOptions={}):Promise<{answer:NetAnswer;socket?:NetSocket}>{
+  const failed={answer:{id:w.id,status:0}};
+  let u:URL;try{u=new URL(w.url);}catch{return failed;}
+  const secure=u.protocol==="wss:";
+  if(!secure&&u.protocol!=="ws:")return failed;
+  let conn:Deno.Conn;
+  try{
+    const tcp=await Deno.connect({hostname:w.address||u.hostname.replace(/^\[|\]$/g,""),port:w.port||Number(u.port||(secure?443:80))});
+    conn=secure?await Deno.startTls(tcp,{hostname:u.hostname,...(opts.caCerts?{caCerts:opts.caCerts}:{})}):tcp;
+  }catch{return failed;}
+  try{
+    let head=`GET ${u.pathname}${u.search} HTTP/1.1\r\n`;
+    for(const [n,v] of w.headers)head+=`${n}: ${v}\r\n`;
+    await conn.write(new TextEncoder().encode(head+"\r\n"));
+    let got=new Uint8Array(0);const buf=new Uint8Array(65536);
+    const timer=setTimeout(()=>{try{conn.close();}catch{/* closed */}},opts.timeoutMs??30000);
+    try{
+      for(;;){
+        let at=-1;for(let i=0;i+3<got.length;i++)if(got[i]===13&&got[i+1]===10&&got[i+2]===13&&got[i+3]===10){at=i;break;}
+        if(at>=0){
+          const lines=new TextDecoder().decode(got.subarray(0,at)).split("\r\n");
+          const m=/^HTTP\/1\.[01] (\d{3}) ?(.*)$/.exec(lines[0]??"");
+          if(!m){conn.close();return failed;}
+          const headers=lines.slice(1).map(l=>{const i=l.indexOf(":");return [l.slice(0,i).trim(),l.slice(i+1).trim()] as [string,string];}).filter(h=>h[0]);
+          return {answer:{id:w.id,status:Number(m[1]),statusText:m[2],headers,bodyBase64:b64(got.subarray(at+4))},socket:{conn,writing:Promise.resolve()}};
+        }
+        if(got.length>65536){conn.close();return failed;}
+        const n=await conn.read(buf);
+        if(n===null){conn.close();return failed;}
+        const next=new Uint8Array(got.length+n);next.set(got);next.set(buf.subarray(0,n),got.length);got=next;
+      }
+    }finally{clearTimeout(timer);}
+  }catch{try{conn.close();}catch{/* closed */}return failed;}
+}
+
+/** The next bytes of an open connection (status 1), or its end (status 0). */
+export async function socketRead(id:number,s:NetSocket):Promise<NetAnswer>{
+  const buf=new Uint8Array(65536);
+  try{const n=await s.conn.read(buf);return n===null?{id,status:0}:{id,status:1,bodyBase64:b64(buf.subarray(0,n))};}
+  catch{return {id,status:0};}
+}
+
+/** A `WEBSOCKET-SEND` (the frame's bytes, in order) or `WEBSOCKET-CLOSE` wire. */
+export function socketAct(s:NetSocket,w:NetWire):void{
+  if(w.method==="WEBSOCKET-CLOSE"){s.writing=s.writing.then(()=>{try{s.conn.close();}catch{/* closed */}});return;}
+  const bytes=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):new Uint8Array(0);
+  s.writing=s.writing.then(async()=>{try{let at=0;while(at<bytes.length)at+=await s.conn.write(bytes.subarray(at));}catch{/* the read sees the end */}});
 }

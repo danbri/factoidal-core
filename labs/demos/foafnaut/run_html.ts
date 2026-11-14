@@ -7,7 +7,7 @@ import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFon
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
-import {netAnswer} from "./native_net.ts";
+import {netAnswer,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -312,6 +312,27 @@ async function main() {
   // Page requests (XMLHttpRequest, fetch): the host only moves bytes (native_net.ts). The
   // engine chose them (origin, CORS, redirects, the address of a name: Net.PageFetch).
   const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number])=>netAnswer(w);
+  // WebSocket connections (Net.WebSocket): the engine writes the handshake and the frames;
+  // each read goes back as an answer of action `net` (status 1 with the bytes, 0 at the end).
+  const sockets=new Map<string,NetSocket>();
+  const netGive=(session:number,answer:unknown)=>(scriptCall("scriptSession","",{action:"net",session,results:[answer]}) as Promise<ScriptTurn>)
+    .then(turn=>{if(document.script?.session===session)scriptTurn(document,turn,"net");});
+  const netSocket=(session:number,w:NonNullable<ScriptTurn["netRequests"]>[number])=>{
+    const key=`${session}:${w.id}`;
+    if(w.method!=="WEBSOCKET"){const s=sockets.get(key);if(s){socketAct(s,w);if(w.method==="WEBSOCKET-CLOSE")sockets.delete(key);}return;}
+    (async()=>{
+      const {answer,socket}=await socketOpen(w);
+      await netGive(session,answer);
+      if(!socket)return;
+      sockets.set(key,socket);
+      for(;;){
+        const a=await socketRead(w.id,socket);
+        if(document.script?.session!==session){try{socket.conn.close();}catch{/* closed */}break;}
+        await netGive(session,a);
+        if(a.status===0){sockets.delete(key);break;}
+      }
+    })().catch(error=>console.error("Native HTML: WebSocket failed:",String(error)));
+  };
   // The guest module: --quickjs-wasm FILE, else a local build (tools/wasmvm/build-quickjs.sh),
   // else the one tools/fetch-builds.sh --set foafnaut-web installs.
   const installed=decodeURIComponent(new URL("../../../docs/web/hub/wasm-guests/qjs-wasmvm.wasm",import.meta.url).pathname);
@@ -1730,10 +1751,12 @@ async function main() {
         }
       }
       // Page requests of any turn (the start turn's too): made here, answered by action `net`.
-      for(const {session,wire} of netQueue.splice(0))
+      for(const {session,wire} of netQueue.splice(0)){
+        if(wire.method.startsWith("WEBSOCKET")){netSocket(session,wire);continue;}
         netFetch(wire).then(answer=>scriptCall("scriptSession","",{action:"net",session,results:[answer]}) as Promise<ScriptTurn>)
           .then(turn=>{if(document.script?.session===session)scriptTurn(document,turn,"net");})
           .catch(error=>console.error("Native HTML: page request failed:",String(error)));
+      }
       // Wake at least every 8 ms to pump, sooner for the page's next timer or animation frame
       // (a fixed 8 ms paced 16 ms frames at about 21 ms); wake at once when a frame ends.
       const wakeIn=scriptsOn&&script&&script.turn.nextWake!==null

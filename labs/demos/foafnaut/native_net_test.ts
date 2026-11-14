@@ -3,7 +3,7 @@
 // not followed, a name under .invalid resolves to nothing. Local servers only; the https case
 // makes a throwaway certificate with openssl and is skipped without it.
 // deno test --allow-net --allow-run --allow-read --allow-write labs/demos/foafnaut/native_net_test.ts
-import {netAnswer} from "./native_net.ts";
+import {netAnswer,socketAct,socketOpen,socketRead} from "./native_net.ts";
 
 function assert(c:unknown,m:string):asserts c{if(!c)throw new Error(m);}
 const text=(b?:string)=>b===undefined?"":new TextDecoder().decode(Uint8Array.from(atob(b),c=>c.charCodeAt(0)));
@@ -53,4 +53,34 @@ Deno.test("pinned https goes through the tunnel to the given address; TLS checks
       assert(b.status===0,`wrong name accepted: ${JSON.stringify(b)}`);
     }finally{await server.shutdown();}
   }finally{await Deno.remove(dir,{recursive:true});}
+});
+
+// A WebSocket connection (socketOpen, socketAct, socketRead) to a local echo server: the
+// handshake fields and the frame are as Net.WebSocket writes them; this host only moves bytes.
+Deno.test("socketOpen: the handshake's answer, a masked frame out and the echo back",async()=>{
+  const ac=new AbortController();
+  const server=Deno.serve({hostname:"127.0.0.1",port:0,signal:ac.signal,onListen(){}},req=>{
+    const {socket,response}=Deno.upgradeWebSocket(req);
+    socket.onmessage=e=>socket.send(e.data);
+    return response;
+  });
+  try{
+    const port=(server.addr as Deno.NetAddr).port;
+    const key="dGhlIHNhbXBsZSBub25jZQ==";
+    const {answer,socket}=await socketOpen({id:7,method:"WEBSOCKET",url:`ws://127.0.0.1:${port}/echo`,headers:[["Host",`127.0.0.1:${port}`],
+      ["Upgrade","websocket"],["Connection","Upgrade"],["Sec-WebSocket-Key",key],["Sec-WebSocket-Version","13"],["Origin","http://127.0.0.1"]]});
+    if(answer.status!==101||!socket)throw new Error(`no handshake: ${JSON.stringify(answer)}`);
+    const accept=(answer.headers??[]).find(([n])=>n.toLowerCase()==="sec-websocket-accept")?.[1];
+    if(accept!=="s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")throw new Error(`accept ${accept}`);
+    // "Hello", masked with 37 fa 21 3d (RFC 6455 §5.7)
+    const frame=new Uint8Array([0x81,0x85,0x37,0xfa,0x21,0x3d,0x7f,0x9f,0x4d,0x51,0x58]);
+    let s="";for(const b of frame)s+=String.fromCharCode(b);
+    socketAct(socket,{id:7,method:"WEBSOCKET-SEND",url:"",headers:[],bodyBase64:btoa(s)});
+    let got=atob(answer.bodyBase64??"");
+    while(got.length<7){const a=await socketRead(7,socket);if(a.status===0)break;got+=atob(a.bodyBase64??"");}
+    const bytes=[...got].map(c=>c.charCodeAt(0));
+    if(JSON.stringify(bytes.slice(0,7))!==JSON.stringify([0x81,0x05,0x48,0x65,0x6c,0x6c,0x6f]))throw new Error(`echo ${bytes}`);
+    socketAct(socket,{id:7,method:"WEBSOCKET-CLOSE",url:"",headers:[]});
+    await socket.writing;
+  }finally{ac.abort();await server.finished;}
 });
