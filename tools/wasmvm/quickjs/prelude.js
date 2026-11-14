@@ -4506,6 +4506,267 @@
   const setTag = (C, tag) => Object.defineProperty(C.prototype, Symbol.toStringTag, { value: tag, configurable: true });
 
   // ---- Encoding Standard §7: TextDecoder, TextEncoder ----------------------------------
+  // ==== observers of layout: IntersectionObserver and ResizeObserver ======================
+  // Intersection Observer and Resize Observer. The geometry and the decisions are Lean's
+  // (L4Factoidal.Rendering.Observe, n.api 170 and 171), on the boxes of the layout reads
+  // (node_query 17 and 21). This section holds the objects and delivers the entries in a
+  // frame step: resize observations, then intersection observations (HTML "update the
+  // rendering"). A page with no observer pays nothing: the first observe() wraps the natives
+  // that change the tree, so that a change asks for one check in the next frame.
+  // An engine without the operations leaves the interfaces undefined.
+  lazyGroup(['IntersectionObserver', 'IntersectionObserverEntry', 'ResizeObserver', 'ResizeObserverEntry', 'ResizeObserverSize'], () => {
+    if (typeof apiCall(171, ['0px']) !== 'string') return undefined;
+    const layoutWatch = { intersection: new Set(), resize: new Set(), wrapped: false, pending: false };
+    const layoutUnits = v => Math.round(v * 64);
+    function observersActive() { return layoutWatch.intersection.size > 0 || layoutWatch.resize.size > 0; }
+    function askObserverCheck() {
+      if (layoutWatch.pending || !observersActive()) return;
+      layoutWatch.pending = true;
+      n.frame(register(() => { layoutWatch.pending = false; runLayoutObservers(); }));
+    }
+    function watchTreeForObservers() {
+      if (layoutWatch.wrapped) return;
+      layoutWatch.wrapped = true;
+      for (const k of ['setAttr', 'removeAttr', 'setText', 'insert', 'remove', 'replace', 'treeOp']) {
+        const f = n[k];
+        if (typeof f !== 'function') continue;
+        n[k] = (...a) => { const r = f.apply(n, a); askObserverCheck(); return r; };
+      }
+    }
+    const hasLayoutBox = el => { const r = n.query(nodeId(el), 21, ''); return typeof r === 'string' && r !== ''; };
+    const frozenList = xs => Object.freeze(xs);
+
+    // ---- ResizeObserver (Resize Observer §2, §3) ----
+    const resizeState = new WeakMap();
+    const resizeBoxes = ['border-box', 'content-box', 'device-pixel-content-box'];
+    let makingResize = false;
+    const resizeParts = new WeakMap();
+    class ResizeObserverSize {
+      constructor() { if (!makingResize) throw new TypeError('Illegal constructor'); }
+      get inlineSize() { return resizeParts.get(this)[0]; }
+      get blockSize() { return resizeParts.get(this)[1]; }
+    }
+    class ResizeObserverEntry {
+      constructor() { if (!makingResize) throw new TypeError('Illegal constructor'); }
+      get target() { return resizeParts.get(this).target; }
+      get contentRect() { return resizeParts.get(this).rect; }
+      get borderBoxSize() { return resizeParts.get(this).border; }
+      get contentBoxSize() { return resizeParts.get(this).content; }
+      get devicePixelContentBoxSize() { return resizeParts.get(this).device; }
+    }
+    const madeResize = (C, parts) => { makingResize = true; let o; try { o = new C(); } finally { makingResize = false; } resizeParts.set(o, parts); return o; };
+    const resizeSize = (inline, block) => frozenList([madeResize(ResizeObserverSize, [inline, block])]);
+    // The sizes of an element's boxes, from the layout: border box, content box, and the
+    // content box in device pixels. An element with no box has sizes of 0.
+    function resizeSizes(el) {
+      if (!el.isConnected || !hasLayoutBox(el)) return { border: [0, 0], content: [0, 0], device: [0, 0], left: 0, top: 0 };
+      const b = layoutOf(el), c = query(nodeId(el), 21, 2), ratio = query(0, 22, 1)[0] || 1;
+      const style = getComputedStyle(el);
+      return { border: [b[2], b[3]], content: [c[0], c[1]], device: [Math.round(c[0] * ratio), Math.round(c[1] * ratio)],
+        left: parseFloat(style.paddingLeft) || 0, top: parseFloat(style.paddingTop) || 0 };
+    }
+    const resizeObserved = (sizes, box) => box === 'border-box' ? sizes.border : box === 'device-pixel-content-box' ? sizes.device : sizes.content;
+    function resizeDepth(el) { let d = 0; for (let p = el.parentNode; p; p = p.parentNode) d++; return d; }
+    class ResizeObserver {
+      constructor(callback) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'ResizeObserver': 1 argument required, but only 0 present.");
+        if (typeof callback !== 'function') throw new TypeError("Failed to construct 'ResizeObserver': parameter 1 is not of type 'Function'.");
+        resizeState.set(this, { callback, observations: [], active: [], skipped: [] });
+      }
+      observe(target, options = {}) {
+        if (!(target instanceof Element)) throw new TypeError("Failed to execute 'observe' on 'ResizeObserver': parameter 1 is not of type 'Element'.");
+        if (options === null || options === undefined) options = {};
+        if (typeof options !== 'object' && typeof options !== 'function') throw new TypeError("Failed to execute 'observe' on 'ResizeObserver': parameter 2 is not an object.");
+        const box = options.box === undefined ? 'content-box' : String(options.box);
+        if (!resizeBoxes.includes(box)) throw new TypeError(`Failed to execute 'observe' on 'ResizeObserver': The provided value '${box}' is not a valid enum value of type ResizeObserverBoxOptions.`);
+        const st = resizeState.get(this);
+        st.observations = st.observations.filter(o => o.target !== target);
+        st.observations.push({ target, box, last: [0, 0] });
+        layoutWatch.resize.add(this); watchTreeForObservers(); askObserverCheck();
+      }
+      unobserve(target) {
+        if (!(target instanceof Element)) throw new TypeError("Failed to execute 'unobserve' on 'ResizeObserver': parameter 1 is not of type 'Element'.");
+        const st = resizeState.get(this);
+        st.observations = st.observations.filter(o => o.target !== target);
+        if (!st.observations.length) layoutWatch.resize.delete(this);
+      }
+      disconnect() { const st = resizeState.get(this); st.observations = []; st.active = []; layoutWatch.resize.delete(this); }
+    }
+    // §3.4.2 gather active observations at depth; true when any observer has one.
+    function gatherResize(depth) {
+      let any = false;
+      for (const observer of layoutWatch.resize) {
+        const st = resizeState.get(observer);
+        st.active = []; st.skipped = [];
+        for (const o of st.observations) {
+          const now = resizeObserved(resizeSizes(o.target), o.box);
+          if (now[0] === o.last[0] && now[1] === o.last[1]) continue;
+          if (resizeDepth(o.target) > depth) { st.active.push(o); any = true; } else st.skipped.push(o);
+        }
+      }
+      return any;
+    }
+    // §3.4.5 broadcast active observations: the shallowest depth that was notified.
+    function broadcastResize() {
+      let shallowest = Infinity;
+      for (const observer of [...layoutWatch.resize]) {
+        const st = resizeState.get(observer);
+        if (!st.active.length) continue;
+        const entries = [];
+        for (const o of st.active) {
+          const s = resizeSizes(o.target);
+          entries.push(madeResize(ResizeObserverEntry, { target: o.target, rect: new DOMRectReadOnly(s.left, s.top, s.content[0], s.content[1]),
+            border: resizeSize(s.border[0], s.border[1]), content: resizeSize(s.content[0], s.content[1]), device: resizeSize(s.device[0], s.device[1]) }));
+          o.last = [...resizeObserved(s, o.box)];
+          shallowest = Math.min(shallowest, resizeDepth(o.target));
+        }
+        st.active = [];
+        try { st.callback.call(observer, entries, observer); } catch (e) { report(e); }
+      }
+      return shallowest;
+    }
+    function runResizeObservers() {
+      let depth = -1, rounds = 0;
+      while (gatherResize(depth) && rounds++ < 64) depth = broadcastResize();
+      let skipped = false;
+      for (const observer of layoutWatch.resize) if (resizeState.get(observer).skipped.length) skipped = true;
+      // §3.4.7: what is left is reported, and delivered in the next frame.
+      if (skipped) { report(new Error('ResizeObserver loop completed with undelivered notifications.')); askObserverCheck(); }
+    }
+
+    // ---- IntersectionObserver (Intersection Observer §2, §3) ----
+    const intersectionState = new WeakMap();
+    function intersectionThresholds(value) {
+      let list;
+      if (value === undefined) list = [0];
+      else if (value !== null && typeof value === 'object' && typeof value[Symbol.iterator] === 'function') list = [...value].map(Number);
+      else list = [Number(value)];
+      for (const t of list) {
+        if (!Number.isFinite(t)) throw new TypeError("Failed to construct 'IntersectionObserver': The provided double value is non-finite.");
+        if (t < 0 || t > 1) throw new RangeError("Failed to construct 'IntersectionObserver': Threshold values must be numbers between 0 and 1.");
+      }
+      if (!list.length) list = [0];
+      return list.sort((a, b) => a - b);
+    }
+    function intersectionMargin(value, what) {
+      const r = apiCall(171, [value === undefined ? '0px' : String(value)], 0, false);
+      if (typeof r !== 'string') throw new DOMException(`Failed to construct 'IntersectionObserver': ${what} must be specified in pixels or percent.`, 'SyntaxError');
+      return r;
+    }
+    class IntersectionObserverEntry {
+      #init;
+      constructor(init) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'IntersectionObserverEntry': 1 argument required, but only 0 present.");
+        if (init === null || typeof init !== 'object') throw new TypeError("Failed to construct 'IntersectionObserverEntry': parameter 1 is not an object.");
+        for (const k of ['time', 'rootBounds', 'boundingClientRect', 'intersectionRect', 'isIntersecting', 'isVisible', 'intersectionRatio', 'target'])
+          if (init[k] === undefined) throw new TypeError(`Failed to construct 'IntersectionObserverEntry': Failed to read the '${k}' property from 'IntersectionObserverEntryInit': Required member is undefined.`);
+        if (!(init.target instanceof Element)) throw new TypeError("Failed to construct 'IntersectionObserverEntry': Failed to read the 'target' property from 'IntersectionObserverEntryInit': Failed to convert value to 'Element'.");
+        const rect = r => r instanceof DOMRectReadOnly ? r : new DOMRectReadOnly(Number(r.x ?? 0), Number(r.y ?? 0), Number(r.width ?? 0), Number(r.height ?? 0));
+        this.#init = { time: Number(init.time), rootBounds: init.rootBounds === null ? null : rect(init.rootBounds), boundingClientRect: rect(init.boundingClientRect),
+          intersectionRect: rect(init.intersectionRect), isIntersecting: !!init.isIntersecting, isVisible: !!init.isVisible,
+          intersectionRatio: Number(init.intersectionRatio), target: init.target };
+      }
+      get time() { return this.#init.time; }
+      get rootBounds() { return this.#init.rootBounds; }
+      get boundingClientRect() { return this.#init.boundingClientRect; }
+      get intersectionRect() { return this.#init.intersectionRect; }
+      get isIntersecting() { return this.#init.isIntersecting; }
+      get isVisible() { return this.#init.isVisible; }
+      get intersectionRatio() { return this.#init.intersectionRatio; }
+      get target() { return this.#init.target; }
+    }
+    class IntersectionObserver {
+      constructor(callback, options = {}) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'IntersectionObserver': 1 argument required, but only 0 present.");
+        if (typeof callback !== 'function') throw new TypeError("Failed to construct 'IntersectionObserver': parameter 1 is not of type 'Function'.");
+        if (options === null || options === undefined) options = {};
+        if (typeof options !== 'object' && typeof options !== 'function') throw new TypeError("Failed to construct 'IntersectionObserver': parameter 2 is not an object.");
+        const root = options.root === undefined ? null : options.root;
+        if (root !== null && !(root instanceof Element) && !(root instanceof Document)) throw new TypeError("Failed to construct 'IntersectionObserver': Failed to read the 'root' property from 'IntersectionObserverInit': The provided value is not of type '(Document or Element)'.");
+        const rootMargin = intersectionMargin(options.rootMargin, 'rootMargin');
+        const scrollMargin = intersectionMargin(options.scrollMargin, 'scrollMargin');
+        const thresholds = frozenList(intersectionThresholds(options.threshold));
+        const delay = options.delay === undefined ? 0 : (Number(options.delay) | 0);
+        intersectionState.set(this, { callback, root, rootMargin, scrollMargin, thresholds, delay, trackVisibility: !!options.trackVisibility,
+          targets: new Map(), queue: [], scheduled: false });
+      }
+      get root() { return intersectionState.get(this).root; }
+      get rootMargin() { return intersectionState.get(this).rootMargin; }
+      get scrollMargin() { return intersectionState.get(this).scrollMargin; }
+      get thresholds() { return intersectionState.get(this).thresholds; }
+      get delay() { return intersectionState.get(this).delay; }
+      get trackVisibility() { return intersectionState.get(this).trackVisibility; }
+      observe(target) {
+        if (!(target instanceof Element)) throw new TypeError("Failed to execute 'observe' on 'IntersectionObserver': parameter 1 is not of type 'Element'.");
+        const st = intersectionState.get(this);
+        if (st.targets.has(target)) return;
+        st.targets.set(target, { index: -1, intersecting: false });
+        layoutWatch.intersection.add(this); watchTreeForObservers(); askObserverCheck();
+      }
+      unobserve(target) {
+        if (!(target instanceof Element)) throw new TypeError("Failed to execute 'unobserve' on 'IntersectionObserver': parameter 1 is not of type 'Element'.");
+        const st = intersectionState.get(this);
+        st.targets.delete(target);
+        if (!st.targets.size) layoutWatch.intersection.delete(this);
+      }
+      disconnect() { const st = intersectionState.get(this); st.targets.clear(); layoutWatch.intersection.delete(this); }
+      takeRecords() { const st = intersectionState.get(this), q = st.queue; st.queue = []; return q; }
+    }
+    // The rectangle of the root as text in layout units, or null when the root has no box:
+    // the viewport for the implicit root and a document; the padding box of an element that
+    // clips its content, else its border box (§3.2.6 "root intersection rectangle").
+    function intersectionRoot(root) {
+      if (root === null || root instanceof Document) { const v = viewport(); return [0, 0, v[0], v[1]]; }
+      if (!root.isConnected || !hasLayoutBox(root)) return null;
+      const b = layoutOf(root), style = getComputedStyle(root);
+      const clips = style.overflowX !== 'visible' || style.overflowY !== 'visible';
+      return clips ? [b[0] + b[4], b[1] + b[5], b[6], b[7]] : [b[0], b[1], b[2], b[3]];
+    }
+    const unitsText = r => r.map(layoutUnits).join(' ');
+    const rectOfUnits = (x, y, w, h) => new DOMRectReadOnly(x / 64, y / 64, w / 64, h / 64);
+    // §3.2.8 run the update intersection observations steps, for one observer.
+    function updateIntersections(observer) {
+      const st = intersectionState.get(observer), time = performance.now();
+      const root = intersectionRoot(st.root);
+      for (const [target, last] of st.targets) {
+        let box = null;
+        if (root !== null && target.isConnected && hasLayoutBox(target) &&
+            (st.root === null || st.root instanceof Document ? target.ownerDocument === document : st.root !== target && st.root.contains(target))) {
+          const b = layoutOf(target); box = [b[0], b[1], b[2], b[3]];
+        } else if (st.root !== null && !(st.root instanceof Document) && target.isConnected && !st.root.contains(target)) continue;
+        const answer = apiCall(170, [`${box ? unitsText(box) : ''};${unitsText(root ?? [0, 0, 0, 0])};${st.rootMargin};${st.thresholds.join(' ')}`], 0, false);
+        if (typeof answer !== 'string') continue;
+        const a = answer.split(' ').map(Number), intersecting = a[0] === 1, index = a[11];
+        if (index === last.index && intersecting === last.intersecting) continue;
+        last.index = index; last.intersecting = intersecting;
+        st.queue.push(new IntersectionObserverEntry({ time, rootBounds: rectOfUnits(a[5], a[6], a[7], a[8]),
+          boundingClientRect: box ? new DOMRectReadOnly(box[0], box[1], box[2], box[3]) : new DOMRectReadOnly(0, 0, 0, 0),
+          intersectionRect: rectOfUnits(a[1], a[2], a[3], a[4]), isIntersecting: intersecting, isVisible: false,
+          intersectionRatio: a[10] > 0 ? a[9] / a[10] : (intersecting ? 1 : 0), target }));
+      }
+      // §3.2.4 queue an intersection observer task: the callback runs in a task of its own.
+      if (st.queue.length && !st.scheduled) {
+        st.scheduled = true;
+        setTimeout(() => {
+          st.scheduled = false;
+          const entries = st.queue; st.queue = [];
+          if (!entries.length) return;
+          try { st.callback.call(observer, entries, observer); } catch (e) { report(e); }
+        }, 0);
+      }
+    }
+    function runLayoutObservers() {
+      if (layoutWatch.resize.size) runResizeObservers();
+      for (const observer of [...layoutWatch.intersection]) updateIntersections(observer);
+    }
+    // Web IDL: the members of an interface prototype object are enumerable, and it has a class string.
+    for (const C of [IntersectionObserver, IntersectionObserverEntry, ResizeObserver, ResizeObserverEntry, ResizeObserverSize]) {
+      for (const k of Object.getOwnPropertyNames(C.prototype)) if (k !== 'constructor') Object.defineProperty(C.prototype, k, { enumerable: true });
+      Object.defineProperty(C.prototype, Symbol.toStringTag, { value: C.name, configurable: true });
+    }
+    return { IntersectionObserver, IntersectionObserverEntry, ResizeObserver, ResizeObserverEntry, ResizeObserverSize };
+  });
+  // ==== end of observers of layout ========================================================
   lazy('TextDecoder', () => {
     const decoders = new WeakMap();
     let nextHandle = 1;

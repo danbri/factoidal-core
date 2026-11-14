@@ -33,6 +33,7 @@ gave them), the answer that waits, the random generator, and the session's Crypt
 (`WebCryptoKeys.Store`: the page holds handles, never key bytes). One call is one operation
 on a whole buffer: the boundary is crossed once per `decode`, never per byte.
 -/
+import L4Factoidal.Rendering.Observe
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.WHATWG.Encoding.Api
 import L4Factoidal.WHATWG.URL.Parser
@@ -660,6 +661,13 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     ofStr (URL.urlencodedSerialize ((List.range (xs.size / 2)).map fun k => (xs[2 * k]!, xs[2 * k + 1]!)))
   -- Base64
   | 20 => pure' do match Base64.atob (← strArg fs 0) with | some r => ofStr r | none => .error (-3)
+  -- Observers of layout (`Rendering/Observe.lean`). 170: one intersection observation from
+  -- rectangles in layout units, a root margin and thresholds; 171: a root margin as
+  -- `IntersectionObserver.rootMargin` reads it back, or an error for one that does not parse.
+  | 170 => pure' do match L4Factoidal.Rendering.Observe.entryText (← strArg fs 0) with | some r => ofStr r | none => .error (-1)
+  | 171 => pure' do match L4Factoidal.Rendering.Observe.margin? (← strArg fs 0) with
+    | some m => ofStr (L4Factoidal.Rendering.Observe.marginText m)
+    | none => .error (-3)
   | 21 => pure' (match strArg fs 0 with
     | .ok d => match Base64.btoa d with | some r => ofStr r | none => .error (-3)
     | .error _ => .error (-3))
