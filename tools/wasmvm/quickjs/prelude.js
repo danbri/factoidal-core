@@ -11282,6 +11282,11 @@
   def('postMessage', () => {});
   def('focus', () => {}); def('blur', () => {}); def('close', () => {}); def('stop', () => {}); def('scrollTo', () => {}); def('scrollBy', () => {});
   def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
+  // CSSOM View §4: a top-level window that a script did not open is not moved or resized
+  // (moveTo, moveBy, resizeTo, resizeBy do nothing); the page does not scroll here (scroll
+  // is scrollTo); HTML §7.2.2.3: captureEvents and releaseEvents do nothing.
+  def('scroll', () => {}); def('moveTo', () => {}); def('moveBy', () => {}); def('resizeTo', () => {}); def('resizeBy', () => {});
+  def('captureEvents', () => {}); def('releaseEvents', () => {});
   def('open', () => null);
 
   // ==== frames (shadowframes) ==========================================================
@@ -11877,6 +11882,9 @@
       if (r === 'NotFoundError') throw new DOMException('No active pointer with the given id is found.', 'NotFoundError');
       if (r === 'InvalidStateError') throw new DOMException('The element is not connected.', 'InvalidStateError');
     } }[name]);
+  // an element's scroll methods (CSSOM View §7): its scroll position stays 0, as scrollTop says
+  for (const k of ['scroll', 'scrollTo', 'scrollBy'])
+    if (!(k in Element.prototype)) define(Element.prototype, k, ({ [k]() {} })[k]);
   if (!('dataTransfer' in InputEvent.prototype)) Object.defineProperty(InputEvent.prototype, 'dataTransfer', { get() { return null; }, configurable: true, enumerable: true });
   // Input Events §4.1.2: the ranges the engine gave a beforeinput of an editing command
   // (node numbers and offsets), or the StaticRanges of a script's init.
