@@ -7204,6 +7204,149 @@
   }
   // ==== end dombreadth ====
 
+  // ==== xmlweb: DOM XPath (DOM §8 "XPath") ================================================
+  // The expression is parsed and evaluated by Lean: DOM.XPathDom over the XPath 1.0
+  // evaluator of the engine (XPath.Full), node_query ops 121 (the prefixes an expression
+  // uses), 122 (evaluate) and 123 (the DOM's change count). Here: the interfaces, the calls
+  // of the page's XPathNSResolver, and the result object.
+  {
+    const SEP = '\u0001', SEP2 = '\u0002';
+    const xpThrow = r => {
+      const name = r.slice(1);
+      if (name === 'TypeError') throw new TypeError('The result is not a node set, and therefore cannot be converted to the desired type.');
+      const text = { SyntaxError: 'The string is not a valid XPath expression.',
+        NamespaceError: 'The string contains an invalid namespace.',
+        NotSupportedError: 'The node provided is not a valid context node type, or the result type is not known.' }[name] ?? 'XPath error';
+      throw new DOMException(text, name);
+    };
+    const xpAns = r => (typeof r === 'string' && r.charCodeAt(0) === 33 ? xpThrow(r) : r);
+    const badNs = () => new DOMException('The string contains an invalid namespace.', 'NamespaceError');
+    // XPathNSResolver is a callback interface (Web IDL §3.11 "call a user object's
+    // operation"): a function is called, any other object's lookupNamespaceURI is read at
+    // each call; an exception of the page's code is reported, and the prefix has no namespace.
+    const lookup = (resolver, prefix) => {
+      if (resolver === null || resolver === undefined) throw badNs();
+      let r = null;
+      try {
+        let v;
+        if (typeof resolver === 'function') v = resolver.call(undefined, prefix);
+        else {
+          const m = resolver.lookupNamespaceURI;
+          if (typeof m !== 'function') throw new TypeError('XPathNSResolver.lookupNamespaceURI is not a function');
+          v = m.call(resolver, prefix);
+        }
+        r = v === null || v === undefined ? null : `${v}`;
+      } catch (e) { report(e); r = null; }
+      if (r === null) throw badNs();
+      return r;
+    };
+    const resolverArg = r => {
+      if (r === null || r === undefined) return null;
+      if (typeof r !== 'object' && typeof r !== 'function') throw new TypeError("parameter is not of type 'XPathNSResolver'");
+      return r;
+    };
+    // An expression with its prefixes resolved: what createExpression keeps.
+    const compile = (expression, resolver) => {
+      expression = `${expression}`;
+      const ps = xpAns(op(0, 121, expression));
+      const bindings = [];
+      if (typeof ps === 'string' && ps !== '') for (const p of ps.split(SEP)) bindings.push(p + SEP2 + lookup(resolver, p));
+      return { expression, bindings };
+    };
+    const contextOf = node => {
+      if (node instanceof Attr) {
+        const a = attrState.get(node);
+        if (!a.el) throw new DOMException('The node provided is not a valid context node type.', 'NotSupportedError');
+        return { id: nodeId(a.el), spec: 'a' + (a.ns ?? '') + SEP2 + a.lname };
+      }
+      return { id: nodeId(node), spec: '' };
+    };
+    const results = new WeakMap(), expressions = new WeakMap();
+    const xr = o => { const s = results.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    const run = (c, ctx, type) => {
+      type = (Number(type) >>> 0) & 0xFFFF;
+      const r = xpAns(op(ctx.id, 122, [String(type), ctx.spec, String(c.bindings.length), ...c.bindings, c.expression].join(SEP)));
+      const i = r.indexOf(SEP), kind = Number(i < 0 ? r : r.slice(0, i)), rest = i < 0 ? null : r.slice(i + 1);
+      const st = { type: kind, value: null, nodes: null, next: 0, stamp: '' };
+      if (kind === 1) st.value = Number(rest);
+      else if (kind === 2) st.value = rest ?? '';
+      else if (kind === 3) st.value = rest === '1';
+      else {
+        st.nodes = rest === null || rest === '' ? [] : rest.split(SEP).map(x => {
+          if (x.charCodeAt(0) !== 97) return wrap(Number(x));
+          const [el, ns, lname] = x.slice(1).split(SEP2);
+          return attrNode(wrap(Number(el)), ns || null, lname);
+        });
+        st.stamp = op(0, 123);
+      }
+      const o = Object.create(XPathResult.prototype);
+      results.set(o, st);
+      return o;
+    };
+    const isIter = s => s.type === 4 || s.type === 5, isSnap = s => s.type === 6 || s.type === 7;
+    class XPathResult {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get resultType() { return xr(this).type; }
+      get numberValue() { const s = xr(this); if (s.type !== 1) throw new TypeError('The result type is not a number.'); return s.value; }
+      get stringValue() { const s = xr(this); if (s.type !== 2) throw new TypeError('The result type is not a string.'); return s.value; }
+      get booleanValue() { const s = xr(this); if (s.type !== 3) throw new TypeError('The result type is not a boolean.'); return s.value; }
+      get singleNodeValue() { const s = xr(this); if (s.type !== 8 && s.type !== 9) throw new TypeError('The result type is not a single node.'); return s.nodes[0] ?? null; }
+      get invalidIteratorState() { const s = xr(this); return isIter(s) && op(0, 123) !== s.stamp; }
+      get snapshotLength() { const s = xr(this); if (!isSnap(s)) throw new TypeError('The result type is not a snapshot.'); return s.nodes.length; }
+      iterateNext() {
+        const s = xr(this);
+        if (!isIter(s)) throw new TypeError('The result type is not an iterator.');
+        if (op(0, 123) !== s.stamp) throw new DOMException('The document has mutated since the result was returned.', 'InvalidStateError');
+        return s.next < s.nodes.length ? s.nodes[s.next++] : null;
+      }
+      snapshotItem(index) {
+        const s = xr(this);
+        if (!isSnap(s)) throw new TypeError('The result type is not a snapshot.');
+        needArgs(arguments, 1, 'snapshotItem');
+        return s.nodes[Number(index) >>> 0] ?? null;
+      }
+    }
+    const types = { ANY_TYPE: 0, NUMBER_TYPE: 1, STRING_TYPE: 2, BOOLEAN_TYPE: 3, UNORDERED_NODE_ITERATOR_TYPE: 4,
+      ORDERED_NODE_ITERATOR_TYPE: 5, UNORDERED_NODE_SNAPSHOT_TYPE: 6, ORDERED_NODE_SNAPSHOT_TYPE: 7,
+      ANY_UNORDERED_NODE_TYPE: 8, FIRST_ORDERED_NODE_TYPE: 9 };
+    consts(XPathResult, types); consts(XPathResult.prototype, types);
+    class XPathExpression {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      evaluate(contextNode, type = 0, result = null) {
+        const c = expressions.get(this);
+        if (!c) throw new TypeError('Illegal invocation');
+        needArgs(arguments, 1, 'evaluate');
+        return run(c, contextOf(contextNode), type);
+      }
+    }
+    // XPathEvaluatorBase (DOM §8.3): Document and XPathEvaluator include it.
+    const evaluatorBase = {
+      createExpression(expression, resolver = null) {
+        needArgs(arguments, 1, 'createExpression');
+        const e = Object.create(XPathExpression.prototype);
+        expressions.set(e, compile(expression, resolverArg(resolver)));
+        return e;
+      },
+      createNSResolver(nodeResolver) {
+        needArgs(arguments, 1, 'createNSResolver');
+        if (!(nodeResolver instanceof Node)) throw new TypeError("parameter 1 is not of type 'Node'");
+        return nodeResolver;
+      },
+      evaluate(expression, contextNode, resolver = null, type = 0, result = null) {
+        needArgs(arguments, 2, 'evaluate');
+        const ctx = contextOf(contextNode);
+        return run(compile(expression, resolverArg(resolver)), ctx, type);
+      },
+    };
+    class XPathEvaluator {}
+    mix(XPathEvaluator, evaluatorBase); mix(Document, evaluatorBase);
+    for (const [k, v] of Object.entries({ XPathResult, XPathExpression, XPathEvaluator })) {
+      Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
+      def(k, v);
+    }
+  }
+  // ==== end xmlweb ========================================================================
+
   // ==== workers: Dedicated Workers (HTML §10; docs/designissues/2026-11-09-dedicated-workers.md) ====
   // BubblePopJS only: the structured clone (n.serialize, n.deserialize) walks the heap in
   // Lean (L4Factoidal.JS.Clone), so on an engine without it `Worker` stays undefined.
