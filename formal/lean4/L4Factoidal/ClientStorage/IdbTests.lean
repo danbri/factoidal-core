@@ -147,4 +147,12 @@ private def upgrade2 : List (List String) :=
   ["!TransactionInactiveError", "!TransactionInactiveError"]
 #guard ((answers {} (upgrade2 ++ [["txended", "6"], ["createStore", "5", "books2", "n", "0"]])).2.drop 12) == ["!InvalidStateError"]
 
+-- a unique index made after two queued adds of one value: the adds succeed, then the index is built and the transaction aborts
+#guard ((answers {} [["open", "db", ""], ["pump"], ["createStore", "2", "store", "n", "0"],
+  ["putcheck", "3", "1", "1"], ["active", "3", "0"], ["req", "3", "1", "", "add", "1", one, "o1", "kindexedProperty", "sbar"], ["active", "3", "1"],
+  ["putcheck", "3", "1", "1"], ["active", "3", "0"], ["req", "3", "1", "", "add", "1", two, "o1", "kindexedProperty", "sbar"], ["active", "3", "1"],
+  ["createIndex", "3", "1", "index", "sindexedProperty", "1", "0"], ["done", "3", "0", ""], ["pump"], ["done", "3", "0", ""], ["pump"],
+  ["done", "3", "0", ""], ["pump"], ["pump"]]).2.drop 13) ==
+  [s!"req 4 3 ok k {one}", "ok", s!"req 5 3 ok k {two}", "ok", "tx 3 abort ConstraintError", "open 1 error AbortError 2 0"]
+
 end L4Factoidal.ClientStorage.Idb.Tests

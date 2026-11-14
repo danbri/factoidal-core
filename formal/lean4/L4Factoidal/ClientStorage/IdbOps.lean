@@ -707,7 +707,12 @@ def sync (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × List T
       else if multiEntry && (match kp with | .many _ => true | _ => false) then (l, fail "InvalidAccessError")
       else
         let ix : Index := { id := s.nextIndex, name, keyPath := kp, unique := strAt a 5 == "1", multiEntry }
-        let (ix, doom) := match fillIndex s ix with | some full => (full, t.doom) | none => (ix, "ConstraintError")
+        -- requests already queued run first (§7.4 "create an index" follows them): the index
+        -- is built after the last of them
+        let lastQ := t.queue.foldl (fun m r => max m r.id) 0
+        let (ix, doom) :=
+          if lastQ != 0 then ({ ix with pendingUntil := lastQ }, t.doom)
+          else match fillIndex s ix with | some full => (full, t.doom) | none => (ix, "ConstraintError")
         let t := setStoreOf { t with doom } (natAt a 2) { s with indexes := s.indexes ++ [ix], nextIndex := s.nextIndex + 1 }
         (l.setTxn t, ok [N ix.id])
   | "deleteIndex" =>
@@ -784,6 +789,45 @@ def openStep (dbs : List (String × Db)) (l : Live) : Live × Option (List Tok) 
                 conns := l.conns ++ [{ id := conn, db := rq.name, version }], txns := l.txns ++ [t] },
         some [S "open", N rq.id, S "upgradeneeded", N conn, N tx, N old, N version], .none)
 
+/-- Build the indexes made while requests were queued once those requests have run (`next`:
+the id of the next request, `none` when the queue is empty): from the store's records; one
+whose records break its unique constraint dooms the transaction with `ConstraintError`. -/
+def readyIx (next : Option Nat) (ix : Index) : Bool :=
+  ix.pendingUntil != 0 && (match next with | some n => ix.pendingUntil < n | none => true)
+
+def settleIndexes (t : Txn) (next : Option Nat) : Txn :=
+  let ready := readyIx next
+  t.work.stores.foldl (fun t (p : Nat × Store) =>
+    let s := p.2
+    if !(s.indexes.any ready) then t else
+    let (ixs, bad) := s.indexes.foldl (fun (acc : List Index × Bool) ix =>
+      if ready ix then
+        match fillIndex s { ix with entries := [], pendingUntil := 0 } with
+        | some full => (acc.1 ++ [full], acc.2)
+        | none => (acc.1 ++ [{ ix with pendingUntil := 0 }], true)
+      else (acc.1 ++ [ix], acc.2)) ([], false)
+    let t := setStoreOf t p.1 { s with indexes := ixs }
+    if bad && t.doom == "" then { t with doom := "ConstraintError" } else t) t
+
+theorem foldl_fixed {α β : Type} (f : α → β → α) (l : List β) (u : α) (h : ∀ b ∈ l, ∀ a, f a b = a) :
+    l.foldl f u = u := by
+  induction l generalizing u with
+  | nil => rfl
+  | cons b bs ih =>
+    rw [List.foldl_cons, h b (List.mem_cons_self) u]
+    exact ih u (fun c hc => h c (List.mem_cons_of_mem _ hc))
+
+/-- Kind: functional law. Says: a transaction with no index waiting to be built is left as
+it is by `settleIndexes` (a page that makes no index while requests are queued pays nothing). -/
+theorem settleIndexes_none (t : Txn) (next : Option Nat)
+    (h : ∀ p ∈ t.work.stores, ∀ ix ∈ p.2.indexes, ix.pendingUntil = 0) : settleIndexes t next = t := by
+  unfold settleIndexes
+  apply foldl_fixed
+  intro p hp a
+  have hany : (p.2.indexes.any (readyIx next)) = false :=
+    List.any_eq_false.mpr (fun ix hix => by simp [readyIx, h p hp ix hix])
+  simp only [hany, Bool.not_false, if_true]
+
 /-- One step of the first transaction that has something to do: abort a doomed one, run
 its next request, or commit it. -/
 def txStep (dbs : List (String × Db)) (quota : Nat) (l : Live) : Option (Live × Option (List Tok) × Effect) :=
@@ -792,6 +836,7 @@ def txStep (dbs : List (String × Db)) (quota : Nat) (l : Live) : Option (Live �
   | none => none
   | some t =>
     let t := if t.started then t else { t with started := true, work := (get dbs t.db).getD {} }
+    let t := settleIndexes t (t.queue.head?.map (·.id))
     if t.doom != "" then some ((l.setTxn t).abort dbs t.id t.doom, none, .none) else
     match t.queue with
     | r :: rest =>

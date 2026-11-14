@@ -47,6 +47,9 @@ structure Index where
   multiEntry : Bool := false
   /-- (index key, primary key), sorted by `ecmp`. -/
   entries : List ((Key × Key) × Unit) := []
+  /-- Made while requests of its transaction were queued: it is built once the requests up to
+  this id have run (0: built). Until then it neither checks nor answers. -/
+  pendingUntil : Nat := 0
   deriving Inhabited
 
 /-- The keys of an array value's items that are keys, without repeats (§7.2 with the
@@ -74,7 +77,7 @@ def Index.keysOf (ix : Index) (v : Val) : List Key :=
 
 /-- A unique index already holds one of `ks` for another primary key (`ConstraintError`). -/
 def Index.conflict (ix : Index) (ks : List Key) (pk : Key) : Bool :=
-  ix.unique && ks.any fun k => ix.entries.any fun e => e.1.1.cmp k == .eq && e.1.2.cmp pk != .eq
+  ix.unique && ix.pendingUntil == 0 && ks.any fun k => ix.entries.any fun e => e.1.1.cmp k == .eq && e.1.2.cmp pk != .eq
 
 /-- The index without the entries of primary key `pk`. -/
 def Index.without (ix : Index) (pk : Key) : Index :=
