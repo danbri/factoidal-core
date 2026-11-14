@@ -22,7 +22,6 @@ Proved here (kinds and limits on each theorem):
   `foldl_step_cursor_le`);
 * every area lies inside the grid whose size the placement reports (`placeRows_inside`);
 -/
-import Std
 
 namespace L4Factoidal.Rendering.Grid
 

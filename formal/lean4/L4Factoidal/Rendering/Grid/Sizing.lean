@@ -28,7 +28,6 @@ Proved here:
 Tested only (`#guard`): the distribution of extra space across spanning items (§12.5.1)
 and the sizes of whole examples.
 -/
-import Std
 
 namespace L4Factoidal.Rendering.Grid
 

@@ -109,10 +109,16 @@ python3 - "$PROJECT" "$BUILD/core-c-files.txt" <<'PY'
 from pathlib import Path
 import re,sys
 project=Path(sys.argv[1]); seen=set(); order=[]
+STD_IN_WASM=('Std.Data.','Std.Classes.','Std.Do.','Std.Time.')
 def visit(module):
     if module in seen or not module.startswith('L4Factoidal.'): return
     seen.add(module); source=project/Path(*module.split('.')).with_suffix('.lean')
-    for imported in re.findall(r'^import\s+(\S+)',source.read_text(),re.M): visit(imported)
+    for imported in re.findall(r'^import\s+(\S+)',source.read_text(),re.M):
+        # The Wasm runtime holds Init and only these parts of Std (formal/lean4/Wasm/build-wasm.sh):
+        # any other Std module, or Std whole, is an undefined initialize_Std* at the Wasm link.
+        if (imported=='Std' or imported.startswith('Std.')) and not imported.startswith(STD_IN_WASM):
+            sys.exit(f'{source}: import {imported}: the Wasm engine links only Std.Data, Std.Classes, Std.Do and the Std.Time modules of build-wasm.sh; import the module you use')
+        visit(imported)
     order.append(str(project/'.lake/build/ir'/Path(*module.split('.')).with_suffix('.c')))
 for module in ['L4Factoidal.Codec.Inflate','L4Factoidal.DOM.OfXml','L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.SfntProfile','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve','L4Factoidal.Rendering.RdfView','L4Factoidal.Rendering.FontRequests','L4Factoidal.Unicode.BidiData','L4Factoidal.Unicode.Bidi','L4Factoidal.XSLT.Transform','L4Factoidal.XSLT4.Transform','L4Factoidal.UI.PolicyProtocol','L4Factoidal.UI.Presentation','L4Factoidal.UI.Geometry','L4Factoidal.UI.LayoutPolicy','L4Factoidal.Syntax.Turtle','L4Factoidal.JSON.Parser','L4Factoidal.JSON.Serialize','L4Factoidal.WasmVM.Api','L4Factoidal.WasmVM.Bench.Engine','L4Factoidal.WasmVM.Tests.Proposals','L4Factoidal.WasmVM.Wasi','L4Factoidal.WasmVM.Hosts.Page','L4Factoidal.WasmVM.Hosts.PageAot','L4Factoidal.WHATWG.Encoding.Sniff','L4Factoidal.WasmVM.Hosts.LeanJS','L4Factoidal.WasmVM.Hosts.LeanJSRealm','L4Factoidal.WasmVM.Hosts.LeanJSWorkers','L4Factoidal.EventLoop.Model','L4Factoidal.EventLoop.Dispatch','L4Factoidal.SPARQL.Query','L4Factoidal.SPARQL.Parser','L4Factoidal.SPARQL.StorePlan','L4Factoidal.Planner.Kinds.Memory','L4Factoidal.Planner.FromQuery','L4Factoidal.RDF.Pretty','L4Factoidal.FrameCost.Band','L4Factoidal.FrameCost.Lru','L4Factoidal.Rendering.ComputedValues','L4Factoidal.Rendering.FontFaceRule','L4Factoidal.Rendering.Smil','L4Factoidal.Rendering.ClipTheorems','L4Factoidal.Rendering.InkBound','L4Factoidal.HTML.CspSource','L4Factoidal.Net.Subresource','L4Factoidal.Rendering.GridResolved']: visit(module)
 Path(sys.argv[2]).write_text('\n'.join(order)+'\n')

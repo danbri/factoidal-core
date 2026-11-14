@@ -15,7 +15,6 @@ Proved here: the distributed space never exceeds the free space, so the tracks s
 inside the container (`contentOffsets_within`); an item no larger than its area lies inside
 the area under every alignment (`selfOffset_inside`).
 -/
-import Std
 
 namespace L4Factoidal.Rendering.Grid
 
