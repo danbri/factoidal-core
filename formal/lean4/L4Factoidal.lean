@@ -1099,6 +1099,10 @@ import L4Factoidal.WebCodecs.Gamut
 import L4Factoidal.WebCodecs.Api
 import L4Factoidal.Net.ReferrerPolicy
 import L4Factoidal.Net.Csp
+import L4Factoidal.Net.CspPolicy
+import L4Factoidal.Net.Integrity
+import L4Factoidal.HTML.ReferrerSource
+import L4Factoidal.HTML.CspSource
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.ProxyProtocol
