@@ -70,6 +70,7 @@ def callback (s : σ) (cb : Nat) (target : Int) (arg : Nat) : σ :=
 
 /-- Run what the event loop gave (as `Page.Session.runTaskP`). -/
 def runTask (s : σ) (r : L4Factoidal.EventLoop.Run) : σ :=
+  let s := e.setHost s (e.host s).tickTimeline
   match r.kind with
   | .task =>
     match r.event with
@@ -221,7 +222,7 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
             let ds := h.dom
             let h := { h with dom := emptyDomHost }
             let (dom, ok, ev) := Hosts.Dom.editKey ds ix command value
-            let s := e.setHost s { h with dom, reads := { h.reads with version := h.reads.version + 1 } }
+            let s := e.setHost s { h with dom, reads := h.reads.wrote }
             match ok, ev with
             | true, some (at_, it, d) => (e.dispatchWith s at_ "input" (inputInit it d)).1
             | _, _ => s

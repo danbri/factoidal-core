@@ -1,0 +1,1577 @@
+/-
+L4Factoidal.Rendering.Animation.Value: the computed value of a property as component
+tokens, and interpolation, addition and accumulation of two such values (CSS Values 4
+§3 "combining values"; Web Animations 1 §5.2 "animation types").
+
+The cascade gives a property's computed value as canonical CSS text (lengths in px,
+colours as `rgb()`/`rgba()`, `calc(P% + Lpx)` for a mixed length-percentage). `parse`
+reads that text into a flat list of tokens: numbers and dimensions as `Animation.Fix`
+integers, a colour as one token, a mixed length-percentage as one token, and the
+function names, parentheses, commas and slashes that give the value its shape.
+
+Two values interpolate when they have the same shape (`lerpList`): the numeric
+components move by the progress, everything else must be equal. Values of different
+shapes are not interpolable and flip at 50% (Web Animations 1 §5.2 "discrete"). A
+property's `Kind` adds what its definition says of the result: not negative, a whole
+number, in [0, 1], or `visibility`'s rule.
+
+Theorems: at progress 0 each component of a component-wise result is the start value's
+component, and at 1 the end value's, exactly, or that component written as a mixed
+length-percentage with the other part 0 (`lerpTok_zero`, `lerpTok_one`: the form CSS
+Values 4 §3.1 gives a length interpolated with a percentage); a value interpolated with
+itself is itself (`interpolate_self`); a non-negative kind gives no negative number
+(`nonNegative_range`); a number token interpolates between its ends for a progress in
+[0, 1] (`lerpTok_num`, with `Fix.lerp_between`).
+-/
+import L4Factoidal.Rendering.Animation.Fix
+
+namespace L4Factoidal.Rendering.Animation
+
+/-- One component of a computed value. -/
+inductive Tok where
+  | num (n : Int)
+  /-- A dimension or a percentage (unit "%"); the unit in lower case. -/
+  | dim (n : Int) (unit : String)
+  /-- A length-percentage with both parts: `calc(pct% + px px)`. -/
+  | lp (px pct : Int)
+  /-- An sRGB colour: channels 0 to 255, alpha 0 to 1. -/
+  | color (r g b a : Int)
+  | ident (s : String)
+  /-- A string or a `url()`, verbatim. -/
+  | str (s : String)
+  | hash (s : String)
+  /-- `name(`; the name in lower case, "" for a plain parenthesis. -/
+  | op (name : String)
+  | close | comma | slash
+  deriving DecidableEq, Repr, Inhabited
+
+abbrev Value := List Tok
+
+namespace Value
+open Fix (one half)
+
+/-! ## Reading computed text -/
+
+def isNameStart (c : Char) : Bool := c.isAlpha || c == '_' || c.toNat ≥ 0x80
+def isNameChar (c : Char) : Bool := isNameStart c || c.isDigit || c == '-'
+
+/-- The text of a number at the start of `cs` (sign, digits, fraction, exponent) and the
+rest; none when `cs` does not start with a number. -/
+def takeNumber (cs : List Char) : Option (List Char × List Char) :=
+  let (sign, r) := match cs with
+    | '-' :: r => (['-'], r)
+    | '+' :: r => (['+'], r)
+    | r => ([], r)
+  let whole := r.takeWhile Char.isDigit
+  let r1 := r.drop whole.length
+  let (frac, r2) := match r1 with
+    | '.' :: d :: r' => if d.isDigit then
+        let f := (d :: r').takeWhile Char.isDigit
+        ('.' :: f, (d :: r').drop f.length)
+      else ([], r1)
+    | _ => ([], r1)
+  if whole.isEmpty && frac.isEmpty then none else
+  let (exp, r3) := match r2 with
+    | e :: r' =>
+      if e == 'e' || e == 'E' then
+        let (es, r'') := match r' with
+          | '-' :: x => (['-'], x)
+          | '+' :: x => (['+'], x)
+          | x => ([], x)
+        let ds := r''.takeWhile Char.isDigit
+        if ds.isEmpty then ([], r2) else ('e' :: es ++ ds, r''.drop ds.length)
+      else ([], r2)
+    | [] => ([], r2)
+  some (sign ++ whole ++ frac ++ exp, r3)
+
+/-- The tokens of CSS text. Unknown characters become one-character identifiers, so every
+text has tokens; a string that does not close runs to the end. -/
+def tokenize (text : String) : List Tok := Id.run do
+  let mut rest := text.toList
+  let mut out : Array Tok := #[]
+  for _ in [0:text.length + 1] do
+    match rest with
+    | [] => break
+    | c :: r =>
+      if c.isWhitespace then rest := r
+      else if c == ',' then out := out.push .comma; rest := r
+      else if c == '/' then out := out.push .slash; rest := r
+      else if c == ')' then out := out.push .close; rest := r
+      else if c == '(' then out := out.push (.op ""); rest := r
+      else if c == '"' || c == '\'' then
+        -- a string: to the same quote not after a backslash
+        let mut body : List Char := [c]
+        let mut rr := r
+        let mut escaped := false
+        for _ in [0:r.length + 1] do
+          match rr with
+          | [] => break
+          | x :: xs =>
+            body := x :: body
+            rr := xs
+            if escaped then escaped := false
+            else if x == '\\' then escaped := true
+            else if x == c then break
+        out := out.push (.str (String.ofList body.reverse))
+        rest := rr
+      else if c == '#' then
+        let name := r.takeWhile isNameChar
+        out := out.push (.hash (String.ofList name))
+        rest := r.drop name.length
+      else match takeNumber rest with
+        | some (numText, r') =>
+          match Fix.parse (String.ofList numText) with
+          | some n =>
+            match r' with
+            | '%' :: r'' => out := out.push (.dim n "%"); rest := r''
+            | u :: _ =>
+              if isNameStart u then
+                let unit := r'.takeWhile isNameChar
+                out := out.push (.dim n (String.ofList unit).toLower)
+                rest := r'.drop unit.length
+              else out := out.push (.num n); rest := r'
+            | [] => out := out.push (.num n); rest := r'
+          | none => out := out.push (.ident (String.ofList numText)); rest := r'
+        | none =>
+          if isNameStart c || (c == '-' && (match r with | d :: _ => isNameStart d || d == '-' | [] => false)) then
+            let name := rest.takeWhile isNameChar
+            let after := rest.drop name.length
+            match after with
+            | '(' :: r'' =>
+              let lname := (String.ofList name).toLower
+              if lname == "url" then
+                -- url(...) verbatim to the closing parenthesis
+                let body := r''.takeWhile (· != ')')
+                out := out.push (.str ("url(" ++ String.ofList body ++ ")"))
+                rest := (r''.drop body.length).drop 1
+              else out := out.push (.op lname); rest := r''
+            | _ => out := out.push (.ident (String.ofList name)); rest := after
+          else out := out.push (.ident (String.singleton c)); rest := r
+  return out.toList
+
+/-- A length-percentage from its two parts. A part that is 0 stays: a length interpolated
+with a percentage is `calc(0% + 10px)` at the length's end (CSS Values 4 §3.1), which is
+what a browser serializes. -/
+def mkLp (px pct : Int) : Tok := .lp px pct
+
+/-- A colour function or a `calc(P% ± Lpx)` at the head of `ts`, as one token, with the
+number of tokens it takes: `rgb(r, g, b)`, `rgba(r, g, b, a)` (CSS Color 4 §15.2
+serialization of sRGB) and the computed form of a mixed length-percentage (CSS Values 4
+§10.12). -/
+def headGroup : List Tok → Option (Tok × Nat)
+  | .op f :: .num r :: .comma :: .num g :: .comma :: .num b :: .close :: _ =>
+    if f == "rgb" || f == "rgba" then some (.color r g b one, 7) else none
+  | .op f :: .num r :: .comma :: .num g :: .comma :: .num b :: .comma :: .num a :: .close :: _ =>
+    if f == "rgb" || f == "rgba" then some (.color r g b a, 9) else none
+  | .op f :: .dim x u :: .ident sign :: .dim y v :: .close :: _ =>
+    let y' := if sign == "-" then -y else y
+    if f != "calc" || !(sign == "+" || sign == "-") then none
+    else if u == "%" && v == "px" then some (mkLp y' x, 5)
+    else if u == "px" && v == "%" then some (mkLp x y', 5)
+    else none
+  | _ => none
+
+/-- Each group of `headGroup` as its one token; other tokens stay. One pass, no
+recursion. -/
+def collapse (ts : List Tok) : List Tok := Id.run do
+  let mut rest := ts
+  let mut out : Array Tok := #[]
+  for _ in [0:ts.length + 1] do
+    match rest with
+    | [] => break
+    | t :: r =>
+      match rest with
+      | .op "repeat" :: .num n :: r' =>
+        -- the count of `repeat()` (CSS Grid 2 §7.2.3) is part of the shape, not a quantity
+        out := (out.push (.op "repeat")).push (.ident (Fix.formatCss n))
+        rest := r'
+      | _ =>
+        match headGroup rest with
+        | some (g, k) => out := out.push g; rest := rest.drop k
+        | none => out := out.push t; rest := r
+  return out.toList
+
+/-- The tokens of a computed value. -/
+def parse (text : String) : Value := collapse (tokenize text)
+
+/-! ## Writing -/
+
+/-- A colour channel as a whole number 0 to 255. -/
+def channel (c : Int) : Int := Fix.clamp 0 255 (Fix.roundDiv c Fix.scale)
+
+def tokText : Tok → String
+  | .num n => Fix.formatCss n
+  | .dim n u => Fix.formatCss n ++ u
+  | .lp px pct =>
+    -- with no length part the value is the percentage; with a 0% part it stays a
+    -- `calc()`, which depends on the percentage basis (as browsers serialize it)
+    if px == 0 then Fix.formatCss pct ++ "%"
+    else if px < 0 then s!"calc({Fix.formatCss pct}% - {Fix.formatCss (-px)}px)"
+    else s!"calc({Fix.formatCss pct}% + {Fix.formatCss px}px)"
+  | .color r g b a =>
+    if a ≥ one then s!"rgb({channel r}, {channel g}, {channel b})"
+    else s!"rgba({channel r}, {channel g}, {channel b}, {Fix.formatCss (max 0 a)})"
+  | .ident s => s
+  | .str s => s
+  | .hash s => "#" ++ s
+  | .op name => name ++ "("
+  | .close => ")"
+  | .comma => ","
+  | .slash => "/"
+
+/-- The text of a value: one space between components, none after `(` or before `)` and
+`,`. -/
+def toTextGo : Option Tok → List Tok → String → String
+  | _, [], acc => acc
+  | prev, t :: rest, acc =>
+    let space : Bool := match prev, t with
+      | none, _ => false
+      | some (.op _), _ => false
+      | _, .close => false
+      | _, .comma => false
+      | _, _ => true
+    toTextGo (some t) rest (acc ++ (if space then " " else "") ++ tokText t)
+
+def toText (v : Value) : String := toTextGo none v ""
+
+/-! ## Interpolation -/
+
+/-- Premultiplied interpolation of two sRGB colours (CSS Color 4 §12.3; legacy colours
+interpolate in sRGB). A result with alpha 0 is transparent black. -/
+def lerpColor (p r1 g1 b1 a1 r2 g2 b2 a2 : Int) : Tok :=
+  -- the ends are the colours themselves (premultiplying and dividing again rounds)
+  if p == 0 then .color r1 g1 b1 a1 else if p == one then .color r2 g2 b2 a2 else
+  let a := Fix.clamp 0 one (Fix.lerp a1 a2 p)
+  if a == 0 then .color 0 0 0 0 else
+  let ch := fun (c1 c2 : Int) =>
+    Fix.clamp 0 (Fix.ofInt 255) ((Fix.div (Fix.lerp (Fix.mul c1 a1) (Fix.mul c2 a2) p) a).getD 0)
+  .color (ch r1 r2) (ch g1 g2) (ch b1 b2) a
+
+/-- Two components at progress `p`; none when they do not combine. A length and a
+percentage combine to a length-percentage (CSS Values 4 §3.1). -/
+def lerpTok (p : Int) : Tok → Tok → Option Tok
+  | .num a, .num b => some (.num (Fix.lerp a b p))
+  | .dim a u, .dim b v =>
+    if u == v then some (.dim (Fix.lerp a b p) u)
+    else if u == "px" && v == "%" then some (mkLp (Fix.lerp a 0 p) (Fix.lerp 0 b p))
+    else if u == "%" && v == "px" then some (mkLp (Fix.lerp 0 b p) (Fix.lerp a 0 p))
+    else none
+  | .lp x y, .lp x' y' => some (mkLp (Fix.lerp x x' p) (Fix.lerp y y' p))
+  | .lp x y, .dim b v =>
+    if v == "px" then some (mkLp (Fix.lerp x b p) (Fix.lerp y 0 p))
+    else if v == "%" then some (mkLp (Fix.lerp x 0 p) (Fix.lerp y b p))
+    else none
+  | .dim a u, .lp x y =>
+    if u == "px" then some (mkLp (Fix.lerp a x p) (Fix.lerp 0 y p))
+    else if u == "%" then some (mkLp (Fix.lerp 0 x p) (Fix.lerp a y p))
+    else none
+  | .color r1 g1 b1 a1, .color r2 g2 b2 a2 => some (lerpColor p r1 g1 b1 a1 r2 g2 b2 a2)
+  | a, b => if a == b then some a else none
+
+/-- Two values of the same shape at progress `p`, component by component; `acc` holds
+the components done, last first. A loop: each call is a tail call. -/
+def lerpGo (p : Int) : List Tok → List Tok → List Tok → Option (List Tok)
+  | [], [], acc => some acc.reverse
+  | a :: as, b :: bs, acc =>
+    match lerpTok p a b with
+    | some t => lerpGo p as bs (t :: acc)
+    | none => none
+  | _, _, _ => none
+
+/-- Two values of the same shape at progress `p`; none when the shapes differ. -/
+def lerpList (p : Int) (a b : List Tok) : Option (List Tok) := lerpGo p a b []
+
+/-- What a property's definition says of an animated value beyond its components. -/
+inductive Kind where
+  /-- By computed value: component-wise when the shapes agree, else discrete. -/
+  | generic
+  /-- As generic, and no number, length or percentage below 0 (`width`, `padding`). -/
+  | nonNegative
+  /-- Whole numbers (`z-index`, `order`). -/
+  | integer
+  /-- Whole numbers of at least 1 (`column-count`, `orphans`). -/
+  | positiveInteger
+  /-- Numbers in [0, 1] (`opacity`). -/
+  | unit
+  /-- Numbers in [1, 1000] (`font-weight`). -/
+  | fontWeight
+  /-- CSS 2.1 `visibility`: between `visible` and another value, `visible` inside (0, 1). -/
+  | visibility
+  /-- Never component-wise: flips at 50%. -/
+  | discrete
+  /-- Discrete, but between the keyword `off` and another value the other value holds
+  for the whole of (0, 1): `display` with `none` (CSS Display 4 §2.9),
+  `content-visibility` with `hidden` (CSS Containment 2 §4.2), `overlay` with `none`. -/
+  | avoid (off : String)
+  /-- A list of transform functions (CSS Transforms 1 §11): functions of one name pair up;
+  the shorter list is padded with identity functions; `none` is the empty list. -/
+  | transformList
+  /-- A list of filter functions (Filter Effects 1 §2.1): as transform lists, with each
+  function's own neutral value and range. -/
+  | filterList
+  /-- A comma list of shadows (CSS Backgrounds 3 §6.2.1) of `lengths` lengths each (4 for
+  `box-shadow`, 3 for `text-shadow`): the shorter list is padded with transparent shadows
+  of zero size; a blur radius is not negative. -/
+  | shadowList (lengths : Nat)
+  /-- `translate` (CSS Transforms 2 §5): up to three lengths; missing ones are 0. -/
+  | translate
+  /-- `scale` (CSS Transforms 2 §5): up to three numbers; missing ones are the first, then 1. -/
+  | scale
+  /-- `rotate` (CSS Transforms 2 §5): an angle, about one axis; `none` is 0 about the
+  other value's axis. -/
+  | rotate
+  /-- One to four values for the four sides, with an optional `fill` (`border-image-slice`,
+  `border-image-width`, `border-image-outset` and the `mask-border-*` ones): each side by
+  itself, none below 0. -/
+  | sides
+  /-- Grid track lists (CSS Grid 2 §7.2.4): lists of one shape; each track size by itself,
+  discrete where two sizes do not combine; none below 0. -/
+  | gridTracks
+  /-- A comma list that repeats (CSS Backgrounds 3 §3.6.1 "repeatable list"): both lists are
+  repeated to their least common multiple. -/
+  | repeatable
+  /-- A ratio (CSS Sizing 4 §5.1 `aspect-ratio`): by the logarithm of the ratio. -/
+  | ratio
+  /-- `offset-rotate` (Motion Path 1 §4.5): `auto` or not, and an angle; `reverse` is
+  `auto` with 180deg more. -/
+  | offsetRotate
+  /-- Basic shapes (CSS Shapes 1 §3.2): component-wise, but a circle or an ellipse with a
+  keyword radius does not interpolate. -/
+  | shape
+  /-- A comma list of gap rule values (CSS Gaps 1 §3): an integer `repeat()` is its items,
+  then as a repeatable list; no number below 0. -/
+  | gapList
+  /-- A corner radius (CSS Backgrounds 3 §5.1): one or two values, none below 0; two equal
+  values are written once. -/
+  | radius
+  /-- `font-style` (CSS Fonts 4 §2.4): `normal` is `oblique 0deg`; the angle stays in
+  [-90deg, 90deg]; `italic` is discrete. -/
+  | fontStyle
+  deriving DecidableEq, Repr, Inhabited
+
+/-- A number of a non-negative kind. -/
+def clampTok0 : Tok → Tok
+  | .num n => .num (max 0 n)
+  | .dim n u => .dim (max 0 n) u
+  | t => t
+
+def roundTok (lo : Option Int) : Tok → Tok
+  | .num n => .num (match lo with | some l => max l (Fix.round n) | none => Fix.round n)
+  | t => t
+
+def rangeTok (lo hi : Int) : Tok → Tok
+  | .num n => .num (Fix.clamp lo hi n)
+  | t => t
+
+/-- The result of a component-wise interpolation, as the kind requires. -/
+def finish : Kind → List Tok → List Tok
+  | .nonNegative, ts => ts.map clampTok0
+  | .integer, ts => ts.map (roundTok none)
+  | .positiveInteger, ts => ts.map (roundTok (some one))
+  | .unit, ts => ts.map (rangeTok 0 one)
+  | .fontWeight, ts => ts.map (rangeTok one (Fix.ofInt 1000))
+  | _, ts => ts
+
+/-! ### Sums of components (for `add` and `accumulate`, below) -/
+
+def addColor (r1 g1 b1 a1 r2 g2 b2 a2 : Int) : Tok :=
+  let a := Fix.clamp 0 one (a1 + a2)
+  if a == 0 then .color 0 0 0 0 else
+  let ch := fun (c1 c2 : Int) =>
+    Fix.clamp 0 (Fix.ofInt 255) ((Fix.div (Fix.mul c1 a1 + Fix.mul c2 a2) a).getD 0)
+  .color (ch r1 r2) (ch g1 g2) (ch b1 b2) a
+
+/-- The sum of two components; none when they do not add. -/
+def addTok : Tok → Tok → Option Tok
+  | .num a, .num b => some (.num (a + b))
+  | .dim a u, .dim b v =>
+    if u == v then some (.dim (a + b) u)
+    else if u == "px" && v == "%" then some (mkLp a b)
+    else if u == "%" && v == "px" then some (mkLp b a)
+    else none
+  | .lp x y, .lp x' y' => some (mkLp (x + x') (y + y'))
+  | .lp x y, .dim b v =>
+    if v == "px" then some (mkLp (x + b) y) else if v == "%" then some (mkLp x (y + b)) else none
+  | .dim a u, .lp x y =>
+    if u == "px" then some (mkLp (a + x) y) else if u == "%" then some (mkLp x (a + y)) else none
+  | .color r1 g1 b1 a1, .color r2 g2 b2 a2 => some (addColor r1 g1 b1 a1 r2 g2 b2 a2)
+  | a, b => if a == b then some a else none
+
+def addGo : List Tok → List Tok → List Tok → Option (List Tok)
+  | [], [], acc => some acc.reverse
+  | a :: as, b :: bs, acc =>
+    match addTok a b with
+    | some t => addGo as bs (t :: acc)
+    | none => none
+  | _, _, _ => none
+
+def addList (a b : List Tok) : Option (List Tok) := addGo a b []
+
+/-- As `lerpLoose`, for addition: a pair that does not add is the second value's. -/
+def addLoose (a b : List Tok) : Option (List Tok) :=
+  if a.length != b.length then none else
+  (a.zip b).mapM fun (x, y) =>
+    match x, y with
+    | .op n, .op m => if n == m then some x else none
+    | .op _, _ | _, .op _ => none
+    | .close, .close => some x
+    | .close, _ | _, .close => none
+    | _, _ => match addTok x y with
+      | some t => some t
+      | none => some y
+
+/-! ### Lists of functions and of shadows -/
+
+/-- The top-level items of a value: a function with its arguments is one item, any other
+token is one item. One pass. -/
+def items (v : List Tok) : List (List Tok) := Id.run do
+  let mut out : Array (List Tok) := #[]
+  let mut cur : Array Tok := #[]
+  let mut depth : Nat := 0
+  for t in v do
+    match t with
+    | .op _ =>
+      depth := depth + 1
+      cur := cur.push t
+    | .close =>
+      cur := cur.push t
+      depth := depth - 1
+      if depth == 0 then
+        out := out.push cur.toList
+        cur := #[]
+    | _ => if depth == 0 then out := out.push [t] else cur := cur.push t
+  if !cur.isEmpty then out := out.push cur.toList
+  return out.toList
+
+/-- The parts of a value between its top-level commas. -/
+def commaItems (v : List Tok) : List (List Tok) := Id.run do
+  let mut out : Array (List Tok) := #[]
+  let mut cur : Array Tok := #[]
+  let mut depth : Nat := 0
+  for t in v do
+    match t with
+    | .op _ =>
+      depth := depth + 1
+      cur := cur.push t
+    | .close =>
+      depth := depth - 1
+      cur := cur.push t
+    | .comma =>
+      if depth == 0 then
+        out := out.push cur.toList
+        cur := #[]
+      else cur := cur.push t
+    | _ => cur := cur.push t
+  if !cur.isEmpty then out := out.push cur.toList
+  return out.toList
+
+def isNone (v : List Tok) : Bool := v == [.ident "none"]
+
+/-- The items joined again; `none` for no item. -/
+def joinItems (xs : List (List Tok)) : List Tok := if xs.isEmpty then [.ident "none"] else xs.flatten
+
+/-- The parts joined with commas; `none` for no part. -/
+def joinCommas (xs : List (List Tok)) : List Tok :=
+  match xs with
+  | [] => [.ident "none"]
+  | first :: rest => rest.foldl (fun acc x => acc ++ [.comma] ++ x) first
+
+/-- The identity function of a transform function's name and arguments (CSS Transforms 1
+§11: "the identity transform function" that pads a shorter list): 1 for a scale, 0
+otherwise, the axis of `rotate3d` kept. None for `perspective`. -/
+def transformIdentity (item : List Tok) : Option (List Tok) :=
+  match item with
+  | .op name :: rest =>
+    if name == "matrix" then some (parse "matrix(1, 0, 0, 1, 0, 0)")
+    else if name == "matrix3d" then some (parse "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)")
+    else if name == "perspective" then none
+    else if name == "rotate3d" then
+      some (.op name :: rest.map fun t => match t with
+        | .dim _ u => .dim 0 u
+        | t => t)
+    else
+      let unit : Int := if name.startsWith "scale" then one else 0
+      some (.op name :: rest.map fun t => match t with
+        | .num _ => .num unit
+        | .dim _ u => .dim 0 u
+        | .lp _ _ => .dim 0 "px"
+        | t => t)
+  | _ => none
+
+/-- The neutral value of a filter function (Filter Effects 1 §2.1 "the initial value for
+interpolation"): 1 for `brightness`, `contrast`, `opacity` and `saturate`; 0 for the
+others; a transparent shadow of zero size for `drop-shadow`. None for a `url()`. -/
+def filterNeutral (item : List Tok) : Option (List Tok) :=
+  match item with
+  | .op name :: rest =>
+    if ["brightness", "contrast", "opacity", "saturate"].contains name then
+      some (.op name :: rest.map fun t => match t with
+        | .num _ => .num one
+        | .dim _ u => if u == "%" then .dim (100 * one) u else .dim 0 u
+        | t => t)
+    else if ["blur", "grayscale", "invert", "sepia", "hue-rotate", "drop-shadow"].contains name then
+      some (.op name :: rest.map fun t => match t with
+        | .num _ => .num 0
+        | .dim _ u => .dim 0 u
+        | .color _ _ _ _ => .color 0 0 0 0
+        | t => t)
+    else none
+  | _ => none
+
+/-- The numbers of a filter function in the range the function takes (Filter Effects 1
+§2: no negative amount or radius; `grayscale`, `invert`, `opacity` and `sepia` at most 1). -/
+def filterClamp (item : List Tok) : List Tok :=
+  match item with
+  | .op name :: rest =>
+    if name == "hue-rotate" || name == "drop-shadow" then item
+    else
+      let top : Option Int := if ["grayscale", "invert", "opacity", "sepia"].contains name then some one else none
+      .op name :: rest.map fun t => match t with
+        | .num n => .num (match top with | some hi => Fix.clamp 0 hi n | none => max 0 n)
+        | .dim n u => .dim (max 0 n) u
+        | t => t
+  | _ => item
+
+/-- A shadow with no effect, of the shape of `item`: zero lengths, a transparent colour. -/
+def shadowNeutral (item : List Tok) : Option (List Tok) :=
+  some (item.map fun t => match t with
+    | .dim _ u => .dim 0 u
+    | .lp _ _ => .dim 0 "px"
+    | .color _ _ _ _ => .color 0 0 0 0
+    | t => t)
+
+/-- A shadow with its blur radius (the third length) not below 0. -/
+def shadowClamp (item : List Tok) : List Tok := Id.run do
+  let mut seen : Nat := 0
+  let mut out : Array Tok := #[]
+  for t in item do
+    match t with
+    | .dim n u =>
+      seen := seen + 1
+      out := out.push (if seen == 3 then .dim (max 0 n) u else t)
+    | _ => out := out.push t
+  return out.toList
+
+/-- Two lists of items combined pairwise by `f`, the shorter padded with the `neutral` of
+the other's item; none when a pair does not combine or an item has no neutral. -/
+def zipItems (f : List Tok → List Tok → Option (List Tok)) (neutral : List Tok → Option (List Tok))
+    (a b : List (List Tok)) : Option (List (List Tok)) := Id.run do
+  let mut out : Array (List Tok) := #[]
+  for i in [0:max a.length b.length] do
+    let r := match a[i]?, b[i]? with
+      | some x, some y => f x y
+      | some x, none => (neutral x).bind fun z => f x z
+      | none, some y => (neutral y).bind fun z => f z y
+      | none, none => none
+    match r with
+    | some t => out := out.push t
+    | none => return none
+  return some out.toList
+
+/-- The three components of `translate` (lengths or percentages) or `scale` (numbers):
+`none` and missing components are `fill`. -/
+def three (fill : Tok) (v : List Tok) : Option (Tok × Tok × Tok) :=
+  if isNone v then some (fill, fill, fill)
+  else match v with
+    | [x] => some (x, fill, fill)
+    | [x, y] => some (x, y, fill)
+    | [x, y, z] => some (x, y, z)
+    | _ => none
+
+/-- A component of the shape of `t` with its number 0 (the missing component beside `t`). -/
+def zeroLike (t : Tok) : Tok :=
+  match t with
+  | .dim _ u => .dim 0 u
+  | _ => .dim 0 "px"
+
+/-- `translate` as its three components, a missing one 0 in the unit of the other value's
+component (so `none` beside `80%` is `0%`). -/
+def translateOf (v other : List Tok) : Option (Tok × Tok × Tok) :=
+  match three (.ident "") v, three (.ident "") other with
+  | some (x, y, z), some (x', y', z') =>
+    let fill := fun (t t' : Tok) => if t == .ident "" then zeroLike t' else t
+    some (fill x x', fill y y', fill z z')
+  | _, _ => none
+
+/-- `translate` from its components (CSS Transforms 2 §5 serialization): a z of 0px is
+left out, then a y of 0px. -/
+def translateText (x y z : Tok) : List Tok :=
+  if z == .dim 0 "px" then (if y == .dim 0 "px" then [x] else [x, y]) else [x, y, z]
+
+/-- `scale` as three numbers: one number is both x and y; z is 1. -/
+def scaleOf (v : List Tok) : Option (Int × Int × Int) :=
+  if isNone v then some (one, one, one)
+  else match v with
+    | [.num x] => some (x, x, one)
+    | [.num x, .num y] => some (x, y, one)
+    | [.num x, .num y, .num z] => some (x, y, z)
+    | _ => none
+
+/-- `scale` from its numbers: a z of 1 is left out, then a y equal to x. -/
+def scaleText (x y z : Int) : List Tok :=
+  if z == one then (if x == y then [.num x] else [.num x, .num y]) else [.num x, .num y, .num z]
+
+/-- A shadow with `n` lengths: the blur radius and the spread distance a shadow leaves out
+are 0. -/
+def shadowFull (n : Nat) (item : List Tok) : List Tok := Id.run do
+  let dims := (item.filter fun t => match t with | .dim _ _ => true | .lp _ _ => true | _ => false).length
+  if dims ≥ n || dims == 0 then return item
+  -- after the last length
+  let mut out : Array Tok := #[]
+  let mut seen := 0
+  for t in item do
+    out := out.push t
+    match t with
+    | .dim _ _ | .lp _ _ =>
+      seen := seen + 1
+      if seen == dims then
+        for _ in [0:n - dims] do out := out.push (.dim 0 "px")
+    | _ => pure ()
+  return out.toList
+
+/-- A filter function with its argument: one left out is the function's default (Filter
+Effects 1 §2: 1 for the amounts, 0px for `blur`, 0deg for `hue-rotate`). -/
+def filterFull (item : List Tok) : List Tok :=
+  match item with
+  | [.op name, .close] =>
+    if name == "blur" then [.op name, .dim 0 "px", .close]
+    else if name == "hue-rotate" then [.op name, .dim 0 "deg", .close]
+    else if ["brightness", "contrast", "opacity", "saturate", "grayscale", "invert", "sepia"].contains name then
+      [.op name, .num one, .close]
+    else item
+  | .op "drop-shadow" :: rest =>
+    -- a shadow's blur radius left out is 0px
+    .op "drop-shadow" :: shadowFull 3 rest.dropLast ++ [.close]
+  | _ => item
+
+/-- `rotate` as an axis (tokens before the angle) and an angle in degrees; `none` is no
+axis and 0. -/
+def rotateOf (v : List Tok) : Option (List Tok × Int) :=
+  if isNone v then some ([.ident "none"], 0)
+  else match v.reverse with
+    | .dim a "deg" :: axis => some (axis.reverse, a)
+    | _ => none
+
+def toFloat (n : Int) : Float := Float.ofInt n / Float.ofInt Fix.scale
+def ofFloat (x : Float) : Int := if x.isFinite then (x * Float.ofInt Fix.scale).round.toInt64.toInt else 0
+
+/-- The axis of a `rotate` value as a unit vector: three numbers, `x`, `y`, `z`, or no
+axis (the z axis). None for a zero vector or other tokens. -/
+def axisOf (axis : List Tok) : Option (Float × Float × Float) :=
+  match axis with
+  | [] | [.ident "none"] | [.ident "z"] => some (0, 0, 1)
+  | [.ident "x"] => some (1, 0, 0)
+  | [.ident "y"] => some (0, 1, 0)
+  | [.num x, .num y, .num z] =>
+    let (fx, fy, fz) := (toFloat x, toFloat y, toFloat z)
+    let len := Float.sqrt (fx * fx + fy * fy + fz * fz)
+    if len > 0 then some (fx / len, fy / len, fz / len) else none
+  | _ => none
+
+/-- `rotate` with a numeric axis, written with the axis as a unit vector. -/
+def rotateText (x y z : Float) (deg : Int) : List Tok :=
+  -- CSS Transforms 2 §5 serialization: about the z axis the value is the angle alone;
+  -- about the x or the y axis the axis is its keyword
+  let (ix, iy, iz) := (ofFloat x, ofFloat y, ofFloat z)
+  if ix == 0 && iy == 0 && iz > 0 then [.dim deg "deg"]
+  else if ix == one && iy == 0 && iz == 0 then [.ident "x", .dim deg "deg"]
+  else if ix == 0 && iy == one && iz == 0 then [.ident "y", .dim deg "deg"]
+  else [.num ix, .num iy, .num iz, .dim deg "deg"]
+
+/-- Two rotations at progress `p` (CSS Transforms 2 §5.1; CSS Transforms 1 §11 for
+`rotate3d`): about one axis, the angle moves; a rotation by 0 takes the other's axis; two
+different axes turn through the shortest arc between the two rotations (spherical
+interpolation of the quaternions). The axis of the result is as the values wrote it when
+both wrote it the same way, else a unit vector. `Float` arithmetic: tested, not proved. -/
+def lerpRotate (p : Int) (a b : List Tok) : Option (List Tok) :=
+  match rotateOf a, rotateOf b with
+  | some (ax, x), some (bx, y) =>
+      match axisOf ax, axisOf bx with
+      | some (x1, y1, z1), some (x2, y2, z2) =>
+        let dot := x1 * x2 + y1 * y2 + z1 * z2
+        if dot > 0.999999 || ax == [.ident "none"] || x == 0 then
+          -- one direction, or nothing to turn from: the end's axis
+          some (rotateText x2 y2 z2 (Fix.lerp x y p))
+        else if bx == [.ident "none"] || y == 0 then some (rotateText x1 y1 z1 (Fix.lerp x y p))
+        else
+          let rad := fun (d : Int) => toFloat d * 3.141592653589793 / 180
+          let h1 := rad x / 2
+          let h2 := rad y / 2
+          let (qx1, qy1, qz1, qw1) := (x1 * Float.sin h1, y1 * Float.sin h1, z1 * Float.sin h1, Float.cos h1)
+          let (qx2, qy2, qz2, qw2) := (x2 * Float.sin h2, y2 * Float.sin h2, z2 * Float.sin h2, Float.cos h2)
+          let d := qx1 * qx2 + qy1 * qy2 + qz1 * qz2 + qw1 * qw2
+          let d := if d > 1 then 1 else if d < -1 then -1 else d
+          let theta := Float.acos d
+          let t := toFloat p
+          let (w1, w2) := if Float.sin theta < 0.000001 && Float.sin theta > -0.000001 then (1 - t, t)
+            else (Float.sin ((1 - t) * theta) / Float.sin theta, Float.sin (t * theta) / Float.sin theta)
+          let (qx, qy, qz, qw) := (w1 * qx1 + w2 * qx2, w1 * qy1 + w2 * qy2, w1 * qz1 + w2 * qz2, w1 * qw1 + w2 * qw2)
+          let qw := if qw > 1 then 1 else if qw < -1 then -1 else qw
+          let angle := 2 * Float.acos qw
+          let sn := Float.sqrt (1 - qw * qw)
+          if sn < 0.000001 then some (rotateText 0 0 1 0)
+          else some (rotateText (qx / sn) (qy / sn) (qz / sn) (ofFloat (angle * 180 / 3.141592653589793)))
+      | _, _ => none
+  | _, _ => none
+
+/-- `font-style` as an oblique angle in degrees: `normal` is 0, `oblique` 14deg. -/
+def obliqueOf (v : List Tok) : Option Int :=
+  match v with
+  | [.ident "normal"] => some 0
+  | [.ident "oblique"] => some (Fix.ofInt 14)
+  | [.ident "oblique", .dim a "deg"] => some a
+  | _ => none
+
+/-- Up to four values for the sides as four, and whether `fill` is there (CSS Backgrounds
+3 §6.3: one value is all sides, two are top/bottom and left/right, three leave left as
+right). -/
+def sidesOf (v : List Tok) : Option (Tok × Tok × Tok × Tok × Bool) :=
+  let fill := v.contains (.ident "fill")
+  match v.filter (· != .ident "fill") with
+  | [a] => some (a, a, a, a, fill)
+  | [a, b] => some (a, b, a, b, fill)
+  | [a, b, c] => some (a, b, c, b, fill)
+  | [a, b, c, d] => some (a, b, c, d, fill)
+  | _ => none
+
+/-- Four sides in their shortest form, with `fill` after them. -/
+def sidesText (t r b l : Tok) (fill : Bool) : List Tok :=
+  let vs := if l == r then (if b == t then (if r == t then [t] else [t, r]) else [t, r, b]) else [t, r, b, l]
+  if fill then vs ++ [.ident "fill"] else vs
+
+/-- Two track lists of one shape at progress `p`: the parentheses, commas and slashes must
+agree; a pair of sizes that does not combine is the nearer one (CSS Grid 2 §7.2.4). -/
+def lerpLoose (p : Int) (a b : List Tok) : Option (List Tok) :=
+  if a.length != b.length then none else
+  (a.zip b).mapM fun (x, y) =>
+    match x, y with
+    | .op n, .op m => if n == m then some x else none
+    | .op _, _ | _, .op _ => none
+    | .close, .close => some x
+    | .close, _ | _, .close => none
+    | .comma, .comma => some x
+    | .comma, _ | _, .comma => none
+    | .slash, .slash => some x
+    | .slash, _ | _, .slash => none
+    | _, _ => match lerpTok p x y with
+      | some t => some t
+      | none => some (if p < half then x else y)
+
+/-- The greatest common divisor, by Euclid's steps (at most `fuel`). -/
+def gcdGo : Nat → Nat → Nat → Nat
+  | 0, a, _ => a
+  | fuel + 1, a, b => if b == 0 then a else gcdGo fuel b (a % b)
+
+/-- A list repeated to `n` items. -/
+def repeatTo {α : Type} (n : Nat) (xs : List α) : List α :=
+  if xs.isEmpty then [] else (List.range n).filterMap fun i => xs[i % xs.length]?
+
+/-- Two comma lists repeated to their least common multiple (at most 64 items). -/
+def repeated (a b : List (List Tok)) : Option (List (List Tok) × List (List Tok)) :=
+  if a.isEmpty || b.isEmpty then none
+  else
+    let n := a.length * b.length / gcdGo 64 a.length b.length
+    if n > 64 then none else some (repeatTo n a, repeatTo n b)
+
+/-- A ratio `w / h` (or one number, over 1) as a `Float`; none when it is not a ratio or
+is not positive. -/
+def ratioOf (v : List Tok) : Option Float :=
+  let f := fun (n : Int) => Float.ofInt n / Float.ofInt Fix.scale
+  match v with
+  | [.num a] => if a > 0 then some (f a) else none
+  | [.num a, .slash, .num b] => if a > 0 && b > 0 then some (f a / f b) else none
+  | _ => none
+
+/-! ### Path data (SVG 2 §9.3) inside `path()` -/
+
+/-- The number of arguments of a path command (upper case). -/
+def pathArgs : Char → Option Nat
+  | 'M' | 'L' | 'T' => some 2
+  | 'H' | 'V' => some 1
+  | 'C' => some 6
+  | 'S' | 'Q' => some 4
+  | 'A' => some 7
+  | 'Z' => some 0
+  | _ => none
+
+/-- Path data as commands with their numbers, each command absolute and in upper case
+(SVG 2 §9.3: a relative command is its absolute one from the current point; numbers
+after a command's own repeat it, a move then draws lines). None when the text is not path
+data. One pass, no recursion. -/
+def pathOf (text : String) : Option (List (Char × List Int)) := Id.run do
+  let mut rest := text.toList
+  let mut out : Array (Char × List Int) := #[]
+  let mut cmd : Option Char := none
+  let mut args : Array Int := #[]
+  -- the current point and the start of the subpath
+  let mut cx : Int := 0
+  let mut cy : Int := 0
+  let mut sx : Int := 0
+  let mut sy : Int := 0
+  let mut ok := true
+  for _ in [0:text.length + 2] do
+    -- a command with all its numbers is one segment
+    match cmd with
+    | some c =>
+      let up := c.toUpper
+      let rel := c.isLower
+      match pathArgs up with
+      | some n =>
+        if args.size == n then
+          let a := args.toList
+          let seg : List Int := match up, a with
+            | 'H', [x] => [if rel then x + cx else x]
+            | 'V', [y] => [if rel then y + cy else y]
+            | 'A', [rx, ry, rot, large, sweep, x, y] => [rx, ry, rot, large, sweep, if rel then x + cx else x, if rel then y + cy else y]
+            | _, xs => (xs.zip (List.range xs.length)).map fun (v, i) => if rel then (if i % 2 == 0 then v + cx else v + cy) else v
+          match up, seg.reverse with
+          | 'H', x :: _ => cx := x
+          | 'V', y :: _ => cy := y
+          | 'Z', _ => cx := sx; cy := sy
+          | _, y :: x :: _ => cx := x; cy := y
+          | _, _ => pure ()
+          if up == 'M' then sx := cx; sy := cy
+          out := out.push (up, seg)
+          args := #[]
+          -- more numbers repeat the command; after a move they are lines
+          cmd := if n == 0 then none else some (if c == 'M' then 'L' else if c == 'm' then 'l' else c)
+      | none => ok := false
+    | none => pure ()
+    match rest with
+    | [] => break
+    | c :: r =>
+      if c.isWhitespace || c == ',' then rest := r
+      else if c.isAlpha && (pathArgs c.toUpper).isSome && c != 'e' && c != 'E' then
+        if !args.isEmpty then ok := false
+        cmd := some c
+        rest := r
+      else match takeNumber rest with
+        | some (numText, r') =>
+          match Fix.parse (String.ofList numText) with
+          | some v => args := args.push v; rest := r'
+          | none => ok := false; rest := r'
+        | none => ok := false; rest := r
+  if !ok || !args.isEmpty || out.isEmpty then return none
+  return some out.toList
+
+/-- The functions `path("…")` of a value with the path data as tokens: each command an
+identifier, each number a number, so two paths of the same commands interpolate
+component-wise (CSS Shapes 2 §3.1). A string that is not path data stays. -/
+def expandPaths (v : List Tok) : List Tok := Id.run do
+  let mut out : Array Tok := #[]
+  let mut inPath := false
+  for t in v do
+    match t with
+    | .op "path" => inPath := true; out := out.push t
+    | .close => inPath := false; out := out.push t
+    | .str body =>
+      let inner := if body.length ≥ 2 then ((body.drop 1).toString.dropEnd 1).toString else body
+      match (if inPath then pathOf inner else none) with
+      | some segs =>
+        for (c, args) in segs do
+          out := out.push (.ident (String.singleton c))
+          for a in args do out := out.push (.num a)
+      | none => out := out.push t
+    | _ => out := out.push t
+  return out.toList
+
+/-- The inverse of `expandPaths`: the command and number tokens of each `path(` as one
+string, the two flags of an arc 0 or 1. -/
+def collapsePaths (v : List Tok) : List Tok := Id.run do
+  let mut out : Array Tok := #[]
+  let mut inPath := false
+  let mut text := ""
+  let mut cmd := ""
+  let mut k : Nat := 0
+  for t in v do
+    if inPath then
+      match t with
+      | .close =>
+        if !text.isEmpty then out := out.push (.str ("\"" ++ text ++ "\""))
+        out := out.push t
+        inPath := false
+        text := ""
+      | .ident c =>
+        if c.length == 1 && (c.toList.head?.bind pathArgs).isSome then
+          text := (if text.isEmpty then "" else text ++ " ") ++ c
+          cmd := c
+          k := 0
+        else out := out.push t
+      | .num n =>
+        if cmd.isEmpty then out := out.push t
+        else
+          let n := if cmd == "A" && (k == 3 || k == 4) then (if n == 0 then 0 else one) else n
+          text := text ++ " " ++ Fix.formatCss n
+          k := k + 1
+      | _ => out := out.push t
+    else
+      out := out.push t
+      if t == .op "path" then
+        inPath := true
+        text := ""
+        cmd := ""
+  return out.toList
+
+/-! ### `inset()`, `rect()` and `xywh()` as one form (CSS Shapes 1 §3.1) -/
+
+/-- 100% minus a length-percentage. -/
+def fromFull (t : Tok) : Option Tok :=
+  match t with
+  | .dim n "%" => some (.dim (100 * one - n) "%")
+  | .dim n "px" => some (if n == 0 then .dim (100 * one) "%" else .lp (-n) (100 * one))
+  | .lp px pct => some (.lp (-px) (100 * one - pct))
+  | _ => none
+
+/-- The sum of two length-percentages. -/
+def lpSum (a b : Tok) : Option Tok := addTok a b
+
+/-- `inset()`, `rect()` or `xywh()` as `inset()` with four sides and its `round` part: the
+function's tokens, canonical. `rect(top right bottom left)` gives the right and bottom
+edges from the top left corner (`auto` is the edge itself); `xywh(x y w h)` gives a corner
+and a size. None for another function or a form not read. -/
+def insetOf (item : List Tok) : Option (List Tok) :=
+  match item with
+  | .op name :: rest =>
+    let body := rest.dropLast
+    let sides := body.takeWhile (· != .ident "round")
+    let round := body.drop sides.length
+    let round := if round.isEmpty then [.ident "round", .dim 0 "px"] else round
+    let pack := fun (t r b l : Tok) => some (.op "inset" :: t :: r :: b :: l :: round ++ [.close])
+    if name == "inset" then
+      match sidesOf sides with
+      | some (t, r, b, l, _) => pack t r b l
+      | none => none
+    else if name == "rect" then
+      match sides with
+      | [t, r, b, l] =>
+        let zero := Tok.dim 0 "%"
+        let t' := if t == .ident "auto" then zero else t
+        let l' := if l == .ident "auto" then zero else l
+        match (if r == .ident "auto" then some zero else fromFull r), (if b == .ident "auto" then some zero else fromFull b) with
+        | some r', some b' => pack t' r' b' l'
+        | _, _ => none
+      | _ => none
+    else if name == "xywh" then
+      match sides with
+      | [x, y, w, h] =>
+        match (lpSum x w).bind fromFull, (lpSum y h).bind fromFull with
+        | some r', some b' => pack y r' b' x
+        | _, _ => none
+      | _ => none
+    else none
+  | _ => none
+
+/-- An `inset()` of `insetOf`'s form in its shortest form: equal sides once, a `round 0px`
+left out. -/
+def insetText (item : List Tok) : List Tok :=
+  match item with
+  | .op "inset" :: t :: r :: b :: l :: rest =>
+    let round := rest.dropLast
+    let round := if round == [.ident "round", .dim 0 "px"] then [] else round
+    .op "inset" :: sidesText t r b l false ++ round ++ [.close]
+  | _ => item
+
+/-- The shapes of a value with each `inset()`, `rect()` and `xywh()` as a canonical
+`inset()`; whether one was there. -/
+def insetForm (v : List Tok) : List Tok × Bool :=
+  let its := items v
+  let conv := its.map fun it => (insetOf it).getD it
+  (conv.flatten, its.any fun it => (insetOf it).isSome)
+
+/-- An integer `repeat(n, …)` of a comma list as its items, `n` times (at most 64 items);
+none for `repeat(auto, …)`. -/
+def expandRepeats (v : List Tok) : Option (List (List Tok)) :=
+  (commaItems v).foldlM (fun acc item =>
+    match item with
+    | .op "repeat" :: .ident n :: .comma :: rest =>
+      match n.toNat? with
+      | some k =>
+        let inner := commaItems rest.dropLast
+        if k * inner.length > 64 then none else some (acc ++ (List.replicate k inner).flatten)
+      | none => none
+    | _ => some (acc ++ [item])) []
+
+/-- `offset-rotate` as whether it follows the path and its angle in degrees. -/
+def offsetRotateOf (v : List Tok) : Option (Bool × Int) :=
+  match v with
+  | [.ident "auto"] => some (true, 0)
+  | [.ident "reverse"] => some (true, Fix.ofInt 180)
+  | [.ident "auto", .dim a "deg"] | [.dim a "deg", .ident "auto"] => some (true, a)
+  | [.ident "reverse", .dim a "deg"] | [.dim a "deg", .ident "reverse"] => some (true, a + Fix.ofInt 180)
+  | [.dim a "deg"] => some (false, a)
+  | _ => none
+
+def offsetRotateText (auto : Bool) (a : Int) : List Tok :=
+  if auto then [.ident "auto", .dim a "deg"] else [.dim a "deg"]
+
+/-- A track list without its line names (`[a b]`), and the names with the number of
+tokens before each. One pass. -/
+def stripLineNames (v : List Tok) : List Tok × List (Nat × List Tok) := Id.run do
+  let mut tracks : Array Tok := #[]
+  let mut names : Array (Nat × List Tok) := #[]
+  let mut cur : Array Tok := #[]
+  let mut inside := false
+  for t in v do
+    if inside then
+      cur := cur.push t
+      if t == .ident "]" then
+        names := names.push (tracks.size, cur.toList)
+        cur := #[]
+        inside := false
+    else if t == .ident "[" then
+      inside := true
+      cur := #[t]
+    else tracks := tracks.push t
+  return (tracks.toList, names.toList)
+
+/-- The inverse of `stripLineNames`. -/
+def withLineNames (tracks : List Tok) (names : List (Nat × List Tok)) : List Tok := Id.run do
+  let mut out : Array Tok := #[]
+  let arr := tracks.toArray
+  for i in [0:arr.size + 1] do
+    for (k, group) in names do
+      if k == i then out := out ++ group.toArray
+    match arr[i]? with
+    | some t => out := out.push t
+    | none => pure ()
+  return out.toList
+
+/-- The tokens that follow each `repeat(`: the counts of a track list. -/
+def repeatHeads (v : List Tok) : List Tok :=
+  (v.zip (v.drop 1)).filterMap fun (x, y) => if x == .op "repeat" then some y else none
+
+/-- The interpolation of a kind that is a list or has components to fill in; none when
+the values do not interpolate. -/
+def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
+  match k with
+  | .transformList =>
+    (zipItems (lerpList p) transformIdentity (if isNone a then [] else items a) (if isNone b then [] else items b)).map joinItems
+  | .filterList =>
+    (zipItems (lerpList p) filterNeutral
+      (if isNone a then [] else (items a).map filterFull) (if isNone b then [] else (items b).map filterFull)).map
+      fun r => joinItems (r.map filterClamp)
+  | .shadowList n =>
+    (zipItems (lerpList p) shadowNeutral
+      (if isNone a then [] else (commaItems a).map (shadowFull n)) (if isNone b then [] else (commaItems b).map (shadowFull n))).map
+      fun r => joinCommas (r.map shadowClamp)
+  | .translate =>
+    match translateOf a b, translateOf b a with
+    | some (x, y, z), some (x', y', z') =>
+      match lerpTok p x x', lerpTok p y y', lerpTok p z z' with
+      | some rx, some ry, some rz => some (translateText rx ry rz)
+      | _, _, _ => none
+    | _, _ => none
+  | .scale =>
+    match scaleOf a, scaleOf b with
+    | some (x, y, z), some (x', y', z') => some (scaleText (Fix.lerp x x' p) (Fix.lerp y y' p) (Fix.lerp z z' p))
+    | _, _ => none
+  | .rotate =>
+    match rotateOf a, rotateOf b with
+    | some _, some _ => lerpRotate p a b
+    | _, _ => none
+  | .fontStyle =>
+    match obliqueOf a, obliqueOf b with
+    | some x, some y =>
+      let r := Fix.clamp (Fix.ofInt (-90)) (Fix.ofInt 90) (Fix.lerp x y p)
+      some (if r == 0 then [.ident "normal"] else [.ident "oblique", .dim r "deg"])
+    | _, _ => none
+  | .sides =>
+    match sidesOf a, sidesOf b with
+    | some (t, r, bo, l, f), some (t', r', bo', l', f') =>
+      if f != f' then none else
+      match lerpTok p t t', lerpTok p r r', lerpTok p bo bo', lerpTok p l l' with
+      | some x1, some x2, some x3, some x4 => some (sidesText (clampTok0 x1) (clampTok0 x2) (clampTok0 x3) (clampTok0 x4) f)
+      | _, _, _, _ => none
+    | _, _ => none
+  | .gridTracks =>
+    -- CSS Grid 2 §7.2.4: lists with an auto-repeat, or whose repeats differ, do not interpolate
+    let heads := repeatHeads a
+    if heads != repeatHeads b || heads.any (fun t => t == .ident "auto-fill" || t == .ident "auto-fit") then none
+    else
+      -- the sizes interpolate; the line names are those of the nearer value
+      let (ta, na) := stripLineNames a
+      let (tb, nb) := stripLineNames b
+      (lerpLoose p ta tb).map fun r => withLineNames (r.map clampTok0) (if p < half then na else nb)
+  | .offsetRotate =>
+    match offsetRotateOf a, offsetRotateOf b with
+    | some (f, x), some (g, y) => if f == g then some (offsetRotateText f (Fix.lerp x y p)) else none
+    | _, _ => none
+  | .shape =>
+    -- a circle or an ellipse with a keyword radius does not interpolate
+    let round := fun (v : List Tok) => v.contains (.op "circle") || v.contains (.op "ellipse")
+    let keyword := fun (v : List Tok) => round v && v.any fun t =>
+      t == .ident "closest-side" || t == .ident "farthest-side" || t == .ident "closest-corner" || t == .ident "farthest-corner"
+    if keyword a || keyword b then none
+    else
+      -- `inset()`, `rect()` and `xywh()` meet as `inset()`
+      let (ia, ha) := insetForm a
+      let (ib, hb) := insetForm b
+      if ha && hb then (lerpList p ia ib).map fun r => ((items r).map insetText).flatten
+      else (lerpList p (expandPaths a) (expandPaths b)).map collapsePaths
+  | .gapList =>
+    match expandRepeats a, expandRepeats b with
+    | some xs, some ys =>
+      match repeated xs ys with
+      | some (xs, ys) => (zipItems (lerpList p) (fun _ => none) xs ys).map fun r => joinCommas (r.map fun it => it.map clampTok0)
+      | none => none
+    | _, _ => none
+  | .radius =>
+    let pair := fun (v : List Tok) => match v with
+      | [x] => [x, x]
+      | v => v
+    (lerpList p (pair a) (pair b)).map fun r =>
+      match r.map clampTok0 with
+      | [x, y] => if x == y then [x] else [x, y]
+      | r => r
+  | .repeatable =>
+    match repeated (commaItems a) (commaItems b) with
+    | some (xs, ys) => (zipItems (lerpList p) (fun _ => none) xs ys).map joinCommas
+    | none => none
+  | .ratio =>
+    match ratioOf a, ratioOf b with
+    | some x, some y =>
+      let t := Float.ofInt p / Float.ofInt Fix.scale
+      let r := Float.exp (Float.log x + (Float.log y - Float.log x) * t)
+      if r.isFinite && r > 0 then
+        some [.num ((r * Float.ofInt Fix.scale).round.toInt64.toInt), .slash, .num one]
+      else none
+    | _, _ => none
+  | _ => (lerpList p a b).map (finish k)
+
+/-- Whether two values interpolate component-wise for the kind (Web Animations 1 §5.2;
+CSS Transitions 2 §3.2 starts no transition between values that do not, unless
+`transition-behavior: allow-discrete`). -/
+def interpolable (k : Kind) (a b : Value) : Bool :=
+  match k with
+  | .discrete | .avoid _ => false
+  | .visibility => a == b || a == [.ident "visible"] || b == [.ident "visible"]
+  | _ => (lerpKind k half a b).isSome
+
+/-- The value at progress `p` between `a` and `b` (Web Animations 1 §5.2): equal values
+stay; shapes that agree move component-wise (also at 0 and 1, where a length that meets
+a percentage is in its `calc()` form, as CSS Values 4 §3.1 computes it); others flip at
+50%. -/
+def interpolate (k : Kind) (a b : Value) (p : Int) : Value :=
+  if a == b then a
+  else match k with
+    | .discrete => if p < half then a else b
+    | .avoid off =>
+      if a == [.ident off] then (if p ≤ 0 then a else b)
+      else if b == [.ident off] then (if p ≥ one then b else a)
+      else if p < half then a else b
+    | .visibility =>
+      if a == [.ident "visible"] || b == [.ident "visible"] then
+        if p ≤ 0 then a else if p ≥ one then b else [.ident "visible"]
+      else if p < half then a else b
+    | _ =>
+      match lerpKind k p a b with
+      | some r => r
+      | none => if p < half then a else b
+
+/-! ## Addition and accumulation (Web Animations 1 §5.2, CSS Values 4 §3.2, §3.3) -/
+
+/-- `x + y - n` of two components and the neutral component `n` between them (the sum
+of two filter amounts counts the neutral value once). -/
+def accTok (n x y : Tok) : Option Tok :=
+  match n, x, y with
+  | .num c, .num a, .num b => some (.num (a + b - c))
+  | .dim c _, .dim a u, .dim b v => if u == v then some (.dim (a + b - c) u) else none
+  | _, a, b => addTok a b
+
+/-- Two items of one shape accumulated component by component over the neutral item. -/
+def accItem (neutral : List Tok → Option (List Tok)) (x y : List Tok) : Option (List Tok) :=
+  match neutral x with
+  | some n =>
+    if n.length == x.length && x.length == y.length then
+      ((n.zip (x.zip y)).mapM fun (c, a, b) => accTok c a b)
+    else none
+  | none => none
+
+/-- `value` added to `underlying` (composite operation `add`, Web Animations 1 §5.2):
+lists of functions and of shadows are joined; `translate` adds, `scale` multiplies (the
+product of two scales); other values add component-wise, or `value` replaces when they
+do not add. -/
+def add (k : Kind) (underlying value : Value) : Value :=
+  match k with
+  | .discrete | .visibility | .avoid _ => value
+  | .transformList | .filterList =>
+    joinItems ((if isNone underlying then [] else items underlying) ++ (if isNone value then [] else items value))
+  | .shadowList _ =>
+    joinCommas ((if isNone underlying then [] else commaItems underlying) ++ (if isNone value then [] else commaItems value))
+  | .rotate =>
+    match rotateOf underlying, rotateOf value with
+    | some (ax, x), some (bx, y) =>
+      let axis := if ax == bx then some ax else if ax == [.ident "none"] then some bx else if bx == [.ident "none"] then some ax else none
+      match axis with
+      | some ax => (if ax == [.ident "none"] then [] else ax) ++ [.dim (x + y) "deg"]
+      | none => value
+    | _, _ => value
+  | .sides =>
+    match sidesOf underlying, sidesOf value with
+    | some (t, r, bo, l, f), some (t', r', bo', l', f') =>
+      match addTok t t', addTok r r', addTok bo bo', addTok l l' with
+      | some x1, some x2, some x3, some x4 => if f == f' then sidesText x1 x2 x3 x4 f else value
+      | _, _, _, _ => value
+    | _, _ => value
+  | .gridTracks =>
+    let (ta, _) := stripLineNames underlying
+    let (tb, nb) := stripLineNames value
+    ((addLoose ta tb).map fun r => withLineNames r nb).getD value
+  | .repeatable =>
+    match repeated (commaItems underlying) (commaItems value) with
+    | some (xs, ys) => ((zipItems addList (fun _ => none) xs ys).map joinCommas).getD value
+    | none => value
+  | .ratio => value
+  | .shape =>
+    let (ia, ha) := insetForm underlying
+    let (ib, hb) := insetForm value
+    if ha && hb then ((addList ia ib).map fun r => ((items r).map insetText).flatten).getD value
+    else ((addList (expandPaths underlying) (expandPaths value)).map collapsePaths).getD value
+  | .gapList =>
+    match expandRepeats underlying, expandRepeats value with
+    | some xs, some ys =>
+      match repeated xs ys with
+      | some (xs, ys) => ((zipItems addList (fun _ => none) xs ys).map joinCommas).getD value
+      | none => value
+    | _, _ => value
+  | .radius =>
+    let pair := fun (v : List Tok) => match v with
+      | [x] => [x, x]
+      | v => v
+    match addList (pair underlying) (pair value) with
+    | some [x, y] => if x == y then [x] else [x, y]
+    | some r => r
+    | none => value
+  | .offsetRotate =>
+    match offsetRotateOf underlying, offsetRotateOf value with
+    | some (f, x), some (g, y) => if f == g then offsetRotateText f (x + y) else value
+    | _, _ => value
+  | .translate =>
+    match translateOf underlying value, translateOf value underlying with
+    | some (x, y, z), some (x', y', z') =>
+      match addTok x x', addTok y y', addTok z z' with
+      | some rx, some ry, some rz => translateText rx ry rz
+      | _, _, _ => value
+    | _, _ => value
+  | .scale =>
+    match scaleOf underlying, scaleOf value with
+    | some (x, y, z), some (x', y', z') => scaleText (Fix.mul x x') (Fix.mul y y') (Fix.mul z z')
+    | _, _ => value
+  | _ => match addList underlying value with
+    | some r => finish k r
+    | none => value
+
+/-- `value` accumulated onto `underlying` (composite operation `accumulate`, Web
+Animations 1 §5.2): lists pair up as in interpolation and each pair accumulates over its
+neutral value; `scale` is x + y - 1; other values as `add`. -/
+def accumulate (k : Kind) (underlying value : Value) : Value :=
+  match k with
+  | .transformList =>
+    match zipItems (accItem transformIdentity) transformIdentity
+        (if isNone underlying then [] else items underlying) (if isNone value then [] else items value) with
+    | some r => joinItems r
+    | none => value
+  | .filterList =>
+    match zipItems (accItem filterNeutral) filterNeutral
+        (if isNone underlying then [] else items underlying) (if isNone value then [] else items value) with
+    | some r => joinItems r
+    | none => value
+  | .shadowList n =>
+    match zipItems addList shadowNeutral
+        (if isNone underlying then [] else (commaItems underlying).map (shadowFull n))
+        (if isNone value then [] else (commaItems value).map (shadowFull n)) with
+    | some r => joinCommas r
+    | none => value
+  | .scale =>
+    match scaleOf underlying, scaleOf value with
+    | some (x, y, z), some (x', y', z') => scaleText (x + x' - one) (y + y' - one) (z + z' - one)
+    | _, _ => value
+  | _ => add k underlying value
+
+/-! ## Theorems -/
+
+/-- `t` is the component `a`, or `a` written as a mixed length-percentage whose other
+part is 0 (`10px` as `calc(0% + 10px)`, `50%` as `calc(50% + 0px)`). -/
+def sameTok (t a : Tok) : Prop :=
+  t = a ∨ (∃ x, a = .dim x "px" ∧ t = .lp x 0) ∨ (∃ y, a = .dim y "%" ∧ t = .lp 0 y)
+
+/-- Kind: interpolation end point. Says: at progress 0 a component-wise interpolation
+gives the start component, exactly, or that component in its mixed length-percentage form
+with the other part 0 (when a length meets a percentage). Does not say: anything near 0;
+nor that values of different shapes interpolate (they flip at 50%, so at 0 they are the
+start value). -/
+theorem lerpTok_zero (a b t : Tok) (h : lerpTok 0 a b = some t) : sameTok t a := by
+  unfold sameTok
+  cases a <;> cases b <;> simp only [lerpTok, mkLp, lerpColor, Fix.lerp_zero] at h <;>
+    first
+    | (injection h with h; subst h; simp)
+    | (split at h <;> first
+        | (injection h with h; subst h; simp_all)
+        | (split at h <;> first
+            | (injection h with h; subst h; simp_all)
+            | (split at h <;> first
+                | (injection h with h; subst h; simp_all)
+                | simp at h)
+            | simp at h)
+        | simp at h)
+    | simp at h
+
+/-- Kind: interpolation end point. Says: at progress 1 a component-wise interpolation
+gives the end component, exactly, or that component in its mixed length-percentage form
+with the other part 0. Does not say: anything near 1. -/
+theorem lerpTok_one (a b t : Tok) (h : lerpTok one a b = some t) : sameTok t b := by
+  unfold sameTok
+  have hone : (one == (0 : Int)) = false := by decide
+  cases a <;> cases b <;> simp only [lerpTok, mkLp, lerpColor, Fix.lerp_one, hone] at h <;>
+    first
+    | (injection h with h; subst h; simp)
+    | (split at h <;> first
+        | (injection h with h; subst h; simp_all)
+        | (split at h <;> first
+            | (injection h with h; subst h; simp_all)
+            | (split at h <;> first
+                | (injection h with h; subst h; simp_all)
+                | simp at h)
+            | simp at h)
+        | simp at h)
+    | simp at h
+
+/-- Kind: interpolation end point. Says: values of a discrete kind are the start value
+at progress 0 and the end value at progress 1. Does not say: this of the other kinds
+(`lerpTok_zero` and `lerpTok_one` say what their components are). -/
+theorem discrete_ends (a b : Value) :
+    interpolate .discrete a b 0 = a ∧ interpolate .discrete a b one = b := by
+  unfold interpolate
+  by_cases h : a = b
+  · subst h; simp
+  · have h' : (a == b) = false := by simpa using h
+    simp [h', half, one, Fix.scale]
+
+/-- Kind: interpolation identity. Says: a value interpolated with itself is itself, at
+every progress and for every kind. Does not say: more. -/
+theorem interpolate_self (k : Kind) (a : Value) (p : Int) : interpolate k a a p = a := by
+  simp [interpolate]
+
+/-- Kind: arithmetic of one component. Says: two number tokens interpolate to the number
+`Fix.lerp` gives, so `Fix.lerp_zero`, `Fix.lerp_one`, `Fix.lerp_self` and
+`Fix.lerp_between` hold of it with no end point test. Does not say: this of colours
+(premultiplied) or of mixed units. -/
+theorem lerpTok_num (p a b : Int) : lerpTok p (.num a) (.num b) = some (.num (Fix.lerp a b p)) := rfl
+
+/-- Kind: arithmetic of one component. Says: two dimensions of one unit interpolate to
+that unit with the number `Fix.lerp` gives. Does not say: more. -/
+theorem lerpTok_dim (p a b : Int) (u : String) :
+    lerpTok p (.dim a u) (.dim b u) = some (.dim (Fix.lerp a b p) u) := by
+  simp [lerpTok]
+
+theorem lerpGo_length (p : Int) : ∀ (a b acc r : List Tok), lerpGo p a b acc = some r →
+    r.length = acc.length + a.length
+  | [], [], acc, r, h => by simp [lerpGo] at h; simp [← h]
+  | [], _ :: _, acc, r, h => by simp [lerpGo] at h
+  | _ :: _, [], acc, r, h => by simp [lerpGo] at h
+  | a :: as, b :: bs, acc, r, h => by
+    unfold lerpGo at h
+    split at h
+    · rename_i t _
+      have := lerpGo_length p as bs (t :: acc) r h
+      simp at this ⊢
+      omega
+    · simp at h
+
+/-- Kind: shape. Says: a component-wise interpolation has as many components as its
+start value. Does not say: what they are. -/
+theorem lerpList_length (p : Int) (a b r : List Tok) (h : lerpList p a b = some r) : r.length = a.length := by
+  have := lerpGo_length p a b [] r h
+  simpa using this
+
+/-- A token that is not a number below 0. -/
+def tokNonNeg : Tok → Prop
+  | .num n => 0 ≤ n
+  | .dim n _ => 0 ≤ n
+  | _ => True
+
+theorem clampTok0_nonNeg (t : Tok) : tokNonNeg (clampTok0 t) := by
+  cases t <;> simp [clampTok0, tokNonNeg] <;> omega
+
+/-- Kind: range (CSS Values 4 §10.12 range checking; a property whose value can not be
+negative clamps an interpolated result). Says: for the non-negative kind, when the start
+and end values hold no negative number or dimension, the value at every progress (also
+outside [0, 1], where the arithmetic goes below 0) holds none. Does not say: anything of
+a mixed length-percentage (`lp`), whose sign depends on the percentage basis. -/
+theorem nonNegative_range (a b : Value) (p : Int)
+    (ha : ∀ t ∈ a, tokNonNeg t) (hb : ∀ t ∈ b, tokNonNeg t) :
+    ∀ t ∈ interpolate .nonNegative a b p, tokNonNeg t := by
+  unfold interpolate
+  split
+  · exact ha
+  · simp only [lerpKind]
+    cases hl : lerpList p a b with
+    | some r =>
+      intro t ht
+      simp only [Option.map, finish, List.mem_map] at ht
+      obtain ⟨t', _, rfl⟩ := ht
+      exact clampTok0_nonNeg t'
+    | none =>
+      simp only [Option.map]
+      split
+      · exact ha
+      · exact hb
+
+/-- Kind: range. Says: for `opacity`'s kind, a number of a component-wise result is in
+[0, 1] after `finish`. Does not say: this of the start and end values themselves. -/
+theorem unit_range (ts : List Tok) (n : Int) (h : Tok.num n ∈ finish .unit ts) : 0 ≤ n ∧ n ≤ one := by
+  simp only [finish, List.mem_map] at h
+  obtain ⟨t, _, ht⟩ := h
+  cases t <;> simp [rangeTok] at ht
+  subst ht
+  exact Fix.clamp_between 0 one _ (by decide)
+
+/-! ## Tests: the cases of the interpolation tests (css/support/interpolation-testcommon.js) -/
+
+private def at_ (k : Kind) (a b : String) (p : Int) : String := toText (interpolate k (parse a) (parse b) p)
+
+#guard toText (parse "10px") == "10px"
+#guard toText (parse "calc(50% + 10px)") == "calc(50% + 10px)"
+#guard toText (parse "calc(50% - 10px)") == "calc(50% - 10px)"
+#guard toText (parse "rgb(10, 20, 30)") == "rgb(10, 20, 30)"
+#guard toText (parse "rgba(10, 20, 30, 0.5)") == "rgba(10, 20, 30, 0.5)"
+#guard toText (parse "matrix(1, 0, 0, 1, 10.5, -3)") == "matrix(1, 0, 0, 1, 10.5, -3)"
+#guard toText (parse "\"a b\", serif") == "\"a b\", serif"
+#guard toText (parse "url(\"x.png\") 1 2 / 3px") == "url(\"x.png\") 1 2 / 3px"
+#guard toText (parse "inset(10px 20px round 5px)") == "inset(10px 20px round 5px)"
+#guard toText (parse "polygon(nonzero, 0px 0px, 10px 0px)") == "polygon(nonzero, 0px 0px, 10px 0px)"
+#guard parse "1e3px" == [.dim (Fix.ofInt 1000) "px"]
+#guard parse "-webkit-box" == [.ident "-webkit-box"]
+#guard parse "--x" == [.ident "--x"]
+#guard at_ .generic "10px" "20px" 300000000 == "13px"
+#guard at_ .generic "10px" "20px" (-300000000) == "7px"
+#guard at_ .generic "0px" "100%" half == "50%"
+#guard at_ .generic "10px" "100%" 0 == "calc(0% + 10px)"
+#guard at_ .generic "10px" "100%" one == "100%"
+#guard at_ .generic "10px 20px 30px" "20% 30% 40px" 0 == "calc(0% + 10px) calc(0% + 20px) 30px"
+#guard at_ .generic "repeat(2, 1fr 20px)" "repeat(2, 3fr 40px)" half == "repeat(2, 2fr 30px)"
+#guard at_ .generic "repeat(2, 1fr)" "repeat(3, 1fr)" 400000000 == "repeat(2, 1fr)"
+#guard toText (parse "calc(0% + 10px)") == "calc(0% + 10px)"
+#guard at_ .generic "10px" "100%" half == "calc(50% + 5px)"
+#guard at_ .generic "calc(50% - 25px)" "calc(100% - 10px)" 250000000 == "calc(62.5% - 21.25px)"
+#guard at_ .nonNegative "10px" "20px" (-2 * one) == "0px"
+#guard at_ .generic "auto" "20px" 300000000 == "auto"
+#guard at_ .generic "auto" "20px" 600000000 == "20px"
+#guard at_ .generic "rgb(0, 0, 0)" "rgb(255, 255, 255)" half == "rgb(128, 128, 128)"
+#guard at_ .generic "rgba(0, 0, 0, 0)" "rgb(0, 128, 0)" half == "rgba(0, 128, 0, 0.5)"
+#guard at_ .integer "1" "4" half == "3"
+#guard at_ .integer "-2" "4" 300000000 == "0"
+#guard at_ .positiveInteger "2" "8" (-one) == "1"
+#guard at_ .unit "0.2" "1" (one + half) == "1"
+#guard at_ .unit "0.2" "1" (-one) == "0"
+#guard at_ .fontWeight "100" "900" half == "500"
+#guard at_ .visibility "visible" "hidden" 900000000 == "visible"
+#guard at_ .visibility "hidden" "visible" 100000000 == "visible"
+#guard at_ .visibility "hidden" "collapse" 100000000 == "hidden"
+#guard at_ .visibility "visible" "hidden" (one + half) == "hidden"
+#guard at_ .visibility "visible" "hidden" (-half) == "visible"
+#guard at_ .discrete "10px" "20px" 400000000 == "10px"
+#guard at_ (.avoid "none") "none" "block" 100000000 == "block"
+#guard at_ (.avoid "none") "block" "none" 900000000 == "block"
+#guard at_ (.avoid "none") "block" "none" (one + half) == "none"
+#guard at_ (.avoid "none") "none" "block" (-half) == "none"
+#guard at_ (.avoid "none") "inline" "block" 400000000 == "inline"
+#guard at_ .generic "circle(10px at 20px 30px)" "circle(20px at 40px 50px)" half == "circle(15px at 30px 40px)"
+#guard at_ .generic "translate(10px, 20px)" "translate(30px, 40px)" half == "translate(20px, 30px)"
+#guard at_ .generic "rotate(30deg)" "rotate(330deg)" 250000000 == "rotate(105deg)"
+#guard at_ .generic "1px 2px" "3px" half == "3px"
+#guard at_ .transformList "translate(100px)" "translate(200px) rotate(720deg)" 250000000 == "translate(125px) rotate(180deg)"
+#guard at_ .transformList "none" "rotate(90deg)" half == "rotate(45deg)"
+#guard at_ .transformList "scale(2)" "none" half == "scale(1.5)"
+#guard at_ .transformList "translate(10px)" "rotate(90deg)" 400000000 == "translate(10px)"
+#guard at_ .filterList "none" "hue-rotate(20deg)" 300000000 == "hue-rotate(6deg)"
+#guard at_ .filterList "blur(6px)" "blur(10px) hue-rotate(180deg)" half == "blur(8px) hue-rotate(90deg)"
+#guard at_ .filterList "brightness(0.5)" "none" (one + one) == "brightness(1.5)"
+#guard at_ .filterList "grayscale(0)" "grayscale(1)" (one + half) == "grayscale(1)"
+#guard at_ .filterList "none" "drop-shadow(rgb(0, 128, 0) 20px 10px)" half == "drop-shadow(rgba(0, 128, 0, 0.5) 10px 5px 0px)"
+#guard at_ (.shadowList 4) "none" "rgb(0, 0, 0) 20px 20px 20px 20px" 300000000 == "rgba(0, 0, 0, 0.3) 6px 6px 6px 6px"
+#guard at_ (.shadowList 3) "rgb(0, 0, 0) 15px 10px 5px" "rgb(255, 165, 0) -15px -10px 25px" (-300000000) == "rgb(0, 0, 0) 24px 16px 0px"
+#guard at_ (.shadowList 4) "rgba(255, 255, 0, 0.5) 10px 20px" "none" 600000000 == "rgba(255, 255, 0, 0.2) 4px 8px 0px 0px"
+#guard at_ .filterList "contrast(0)" "contrast()" (one + half) == "contrast(1.5)"
+#guard at_ .rotate "none" "30deg" 750000000 == "22.5deg"
+#guard at_ .rotate "x 10deg" "x 50deg" half == "x 30deg"
+#guard (at_ .rotate "1 -2.5 3.64 100deg" "1 -2.5 3.64 -100deg" 250000000).startsWith "0.22"
+#guard (at_ .rotate "1 -2.5 3.64 100deg" "1 -2.5 3.64 -100deg" 250000000).endsWith " 50deg"
+#guard at_ .rotate "10deg" "50deg" half == "30deg"
+#guard at_ .rotate "none" "x 50deg" half == "x 25deg"
+#guard (at_ .rotate "x 10deg" "y 50deg" half).startsWith "0."
+#guard at_ .rotate "none" "7 -8 9 360deg" 125000000 == "0.502571 -0.574367 0.646162 45deg"
+#guard at_ .rotate "1 0 0 0deg" "0 1 0 10deg" 250000000 == "y 2.5deg"
+#guard at_ .rotate "45deg" "-1 1 0 60deg" 0 == "45deg"
+#guard at_ .filterList "none" "drop-shadow(rgb(0, 128, 0) 20px 10px)" 0 == "drop-shadow(rgba(0, 0, 0, 0) 0px 0px 0px)"
+#guard at_ .rotate "1 1 0 90deg" "0 1 1 135deg" 0 == "0.707107 0.707107 0 90deg"
+#guard (at_ .rotate "45deg" "-1 1 0 60deg" 875000000).startsWith "-0.70246 0.70246 0.114452 53.199"
+#guard at_ .fontStyle "normal" "oblique 10deg" 300000000 == "oblique 3deg"
+#guard at_ .fontStyle "oblique -90deg" "oblique 90deg" half == "normal"
+#guard at_ .fontStyle "oblique -90deg" "oblique 90deg" (-one) == "oblique -90deg"
+#guard at_ .fontStyle "italic" "oblique 90deg" 400000000 == "italic"
+#guard at_ .sides "190% 180% 290% 280%" "90% 80%" 250000000 == "165% 155% 240% 230%"
+#guard at_ .sides "100 fill" "200 300 500 fill" one == "200 300 500 fill"
+#guard at_ .sides "10" "30" half == "20"
+#guard at_ .gridTracks "1fr 1fr 1fr" "2fr auto 2fr" 600000000 == "1.6fr auto 1.6fr"
+#guard at_ .gridTracks "minmax(10px, 1fr) minmax(20px, 2fr)" "minmax(20px, 2fr) minmax(30px, auto)" 400000000
+  == "minmax(14px, 1.4fr) minmax(24px, 2fr)"
+#guard at_ .gridTracks "1fr 1fr" "1fr" 400000000 == "1fr 1fr"
+#guard at_ .gridTracks "1fr [a b] 1fr [d] 1fr" "2fr [c] auto 2fr" 400000000 == "1.4fr [ a b ] 1fr [ d ] 1.4fr"
+#guard at_ .gridTracks "1fr [a b] 1fr [d] 1fr" "2fr [c] auto 2fr" 600000000 == "1.6fr [ c ] auto 1.6fr"
+#guard at_ .gridTracks "[a] 1fr" "2fr [b]" (2 * one) == "3fr [ b ]"
+#guard at_ .repeatable "0px 0px, 80px 0px" "40px 40px, 80px 80px, 0px 80px" half
+  == "20px 20px, 80px 40px, 0px 40px, 60px 20px, 40px 40px, 40px 40px"
+#guard at_ .offsetRotate "auto 10deg" "reverse -130deg" one == "auto 50deg"
+#guard at_ .offsetRotate "reverse -170deg" "reverse -130deg" 300000000 == "auto 22deg"
+#guard at_ .offsetRotate "auto" "20deg" 400000000 == "auto"
+#guard at_ .gridTracks "1fr repeat(2, 2fr 30px) 1fr" "2fr repeat(3, 3fr 40px) 2fr" 400000000 == "1fr repeat(2, 2fr 30px) 1fr"
+#guard at_ .gridTracks "repeat(auto-fill, 10px)" "repeat(auto-fill, 30px)" 400000000 == "repeat(auto-fill, 10px)"
+#guard at_ .shape "circle(farthest-side at 25px 75%)" "circle(farthest-side at 50px 50%)" 400000000 == "circle(farthest-side at 25px 75%)"
+#guard at_ .shape "circle(10px at 25px 75%)" "circle(20px at 50px 50%)" half == "circle(15px at 37.5px 62.5%)"
+#guard at_ .ratio "1 / 2" "2 / 1" half == "1 / 1"
+#guard at_ .ratio "0.5" "2" 0 == "0.5 / 1"
+#guard at_ .shape "inset(10% 20% 30% 40%) border-box" "xywh(20% 50% 60% 20%) border-box" half == "inset(30% 20% 30% 30%) border-box"
+#guard at_ .shape "rect(auto auto auto auto)" "rect(80% 20% 20% 80%)" 875000000 == "inset(70%)"
+#guard at_ .shape "xywh(0px 10% 100px 40% round 20px)" "rect(20% 50% 200px 20px)" 0 == "inset(10% calc(100% - 100px) 50% 0px round 20px)"
+#guard at_ .shape "inset(1px 2px)" "inset(101px 102px 101px 102px)" one == "inset(101px 102px)"
+#guard at_ .gapList "repeat(2, rgb(255, 0, 0))" "rgb(0, 0, 255)" 0 == "rgb(255, 0, 0), rgb(255, 0, 0)"
+#guard at_ .gapList "repeat(1, 20px)" "repeat(2, 30px, 30px)" 600000000 == "26px, 26px, 26px, 26px"
+#guard at_ .gapList "repeat(auto, 20px)" "30px" 400000000 == "repeat(auto, 20px)"
+#guard at_ .radius "60px 60px" "160px 160px" 750000000 == "135px"
+#guard at_ .radius "10px 20px" "30px 20px" half == "20px"
+#guard at_ .radius "10px" "30px" (-one) == "0px"
+#guard at_ .radius "20px" "10px 30px" 300000000 == "17px 23px"
+#guard at_ .shape "path('M 12 34 S 45 67 89 123')" "path('M 20 26 S 61 51 113 99')" (2 * one) == "path(\"M 28 18 S 77 35 137 75\")"
+#guard at_ .shape "path('m 100 400 a 10 20 30 1 0 40 50')" "path('m 300 200 a 50 60 70 0 1 80 90')" 875000000
+  == "path(\"M 275 225 A 45 55 65 1 1 350 310\")"
+#guard at_ .shape "path('m 10 20 l 40 50 z l 40 60 z m 60 70 l 90 60 z t 70 130')" "path('M 210 220 L 170 190 Z L 90 120 Z M 110 130 L 200 230 Z T 220 220')" 0
+  == "path(\"M 10 20 L 50 70 Z L 50 80 Z M 70 90 L 160 150 Z T 140 220\")"
+#guard at_ .shape "path('M 0 0 H 200')" "path('M 0 0 L 300 0')" 400000000 == "path('M 0 0 H 200')"
+#guard at_ .shape "path('M0 0H 200')" "path('M0 0H 300')" (one + half) == "path(\"M 0 0 H 350\")"
+#guard at_ .shape "ray(-10deg farthest-corner at 100% 100px)" "ray(-50deg farthest-corner at 100% 100px)" (2 * one)
+  == "ray(-90deg farthest-corner at 100% 100px)"
+#guard at_ .shape "url(\"#a\")" "path('M 0 0 H 300')" 600000000 == "path('M 0 0 H 300')"
+#guard toText (add .sides (parse "100 200 300 400 fill") (parse "100 fill")) == "200 300 400 500 fill"
+#guard at_ .translate "none" "100px" 250000000 == "25px"
+#guard at_ .translate "0px" "-100px -50px 100px" 750000000 == "-75px -37.5px 75px"
+#guard at_ .translate "none" "8px 80% 800px" 0 == "0px 0%"
+#guard at_ .scale "none" "4 3 2" 125000000 == "1.375 1.25 1.125"
+#guard at_ .scale "26 17 9" "2 1" 875000000 == "5 3 2"
+#guard toText (add .filterList (parse "brightness(0)") (parse "brightness(1.5)")) == "brightness(0) brightness(1.5)"
+#guard toText (accumulate .filterList (parse "blur(10px) saturate(0.75)") (parse "blur(90px)")) == "blur(100px) saturate(0.75)"
+#guard toText (accumulate .filterList (parse "brightness(0.25)") (parse "brightness(0.5)")) == "brightness(-0.25)"
+#guard toText (add .scale (parse "2 1") (parse "3 1")) == "6 1"
+#guard toText (add .translate (parse "none") (parse "100px")) == "100px"
+#guard toText (add (.shadowList 4) (parse "rgb(10, 20, 30) 1px 2px 3px 4px") (parse "rgb(100, 100, 100) 10px 20px 30px 40px"))
+  == "rgb(10, 20, 30) 1px 2px 3px 4px, rgb(100, 100, 100) 10px 20px 30px 40px"
+#guard interpolable .generic (parse "10px") (parse "50%")
+#guard !interpolable .generic (parse "10px") (parse "auto")
+#guard !interpolable .discrete (parse "10px") (parse "20px")
+#guard interpolable .visibility (parse "visible") (parse "hidden")
+#guard toText (add .generic (parse "10px") (parse "5px")) == "15px"
+#guard toText (add .generic (parse "auto") (parse "5px")) == "5px"
+#guard toText (add .unit (parse "0.7") (parse "0.6")) == "1"
+
+end Value
+end L4Factoidal.Rendering.Animation
