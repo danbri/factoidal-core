@@ -474,6 +474,66 @@ where
         | none => part
       go es (rem - give) (left - 1) (acc.push (e.1, give))
 
+theorem distribute_go_le (es : List (Nat × Option Nat)) (rem left : Nat) (acc : Array (Nat × Nat)) :
+    ((distribute.go es rem left acc).map (·.2)).sum ≤ (acc.toList.map (·.2)).sum + rem := by
+  induction es generalizing rem left acc with
+  | nil => simp [distribute.go]
+  | cons e es ih =>
+    simp only [distribute.go]
+    have hpart : rem / max 1 left ≤ rem := Nat.div_le_self _ _
+    have hgive : (match e.2 with | some room => min room (rem / max 1 left) | none => rem / max 1 left) ≤ rem := by
+      split
+      · exact Nat.le_trans (Nat.min_le_right _ _) hpart
+      · exact hpart
+    refine Nat.le_trans (ih _ _ _) ?_
+    simp only [Array.toList_push, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+      List.sum_cons, List.sum_nil]
+    omega
+
+/-- Kind: bound (§12.5, §12.6). Says: the shares handed out never add up to more than the
+space shared. -/
+theorem distribute_sum_le (space : Nat) (entries : List (Nat × Option Nat)) :
+    ((distribute space entries).map (·.2)).sum ≤ space := by
+  simp only [distribute]
+  exact Nat.le_trans (distribute_go_le _ _ _ #[]) (by simp)
+
+theorem distribute_go_exact (es : List (Nat × Option Nat)) (rem : Nat) (acc : Array (Nat × Nat))
+    (hnone : ∀ e ∈ es, e.2 = none) (hne : es ≠ []) :
+    ((distribute.go es rem es.length acc).map (·.2)).sum = (acc.toList.map (·.2)).sum + rem := by
+  induction es generalizing rem acc with
+  | nil => exact absurd rfl hne
+  | cons e es ih =>
+    simp only [distribute.go, List.length_cons]
+    rw [hnone e List.mem_cons_self]
+    simp only
+    cases es with
+    | nil =>
+      simp [distribute.go]
+    | cons e2 es2 =>
+      have hpart : rem / max 1 ((e2 :: es2).length + 1) ≤ rem := Nat.div_le_self _ _
+      rw [Nat.add_sub_cancel]
+      rw [ih _ _ (fun x hx => hnone x (List.mem_cons_of_mem _ hx)) (List.cons_ne_nil _ _)]
+      simp only [Array.toList_push, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+        List.sum_cons, List.sum_nil]
+      omega
+
+/-- Kind: exact sum (§12.6 with no growth limits). Says: when no entry has a limit, the
+whole space is handed out. -/
+theorem distribute_exact (space : Nat) (entries : List (Nat × Option Nat))
+    (hnone : ∀ e ∈ entries, e.2 = none) (hne : entries ≠ []) :
+    ((distribute space entries).map (·.2)).sum = space := by
+  unfold distribute
+  have hperm := List.mergeSort_perm entries (fun a b => match a.2, b.2 with
+    | some x, some y => decide (x ≤ y) | some _, none => true | none, some _ => false | none, none => true)
+  have h1 : ∀ e ∈ entries.mergeSort (fun a b => match a.2, b.2 with
+      | some x, some y => decide (x ≤ y) | some _, none => true | none, some _ => false | none, none => true),
+      e.2 = none := fun e he => hnone e (hperm.mem_iff.mp he)
+  have h2 : entries.mergeSort (fun a b => match a.2, b.2 with
+      | some x, some y => decide (x ≤ y) | some _, none => true | none, some _ => false | none, none => true) ≠ [] := by
+    intro h; apply hne; have := hperm.length_eq; rw [h] at this; simpa [eq_comm, List.length_eq_zero_iff] using this
+  have := distribute_go_exact _ space #[] h1 h2
+  simpa using this
+
 /-- The contribution phases of §12.5 step 3, in order. -/
 inductive Phase where
   | intrinsicMin | contentMin | maxContentMin | intrinsicMax | maxContentMax
