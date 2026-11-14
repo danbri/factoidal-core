@@ -399,11 +399,16 @@ async function main() {
   let liberal=!cliStrict;
   // The start page has a script. A host that can run no page script (the Wasm engine with no
   // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
-  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
+  const firstPage=prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
     if(!startDefault)throw error;
     console.log(JSON.stringify({type:"native-html-start-fallback",url,to:indexURL,reason:String(error instanceof Error?error.message:error)}));
     return prepareHTML(lean,indexURL,undefined,undefined,{liberal});
-  }),width=1280,height=800;
+  });
+  // The first call of the main-thread engine costs 0.4 to 0.5 s (the engine's own start on this
+  // thread). It is made here, while the page is on its way, and not after the page is ready,
+  // where it stood between the page and its first frame.
+  try{engine.historyPush({entries:[],index:0},"about:blank");}catch{/* the first real call says why */}
+  let document=await firstPage,width=1280,height=800;
   // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
   // It is not shown (the window's size is not known yet), so it asks for no CPU probe, as an
   // interactive frame asks for none: the probe draws the page's SVG on the CPU, 9 s of the 14 s
