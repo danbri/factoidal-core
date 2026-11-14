@@ -63,6 +63,14 @@ structure Xhr where
   sameOnly : Bool := false
   /-- Fetch redirect mode "error" (`fetch`); XHR always follows. -/
   redirectError : Bool := false
+  /-- The request's referrer (`fetch`'s `referrer`): `none` is the client's URL, `some ""`
+  no referrer, else a URL of the page's own origin (`setReferrer`). -/
+  referrer : Option String := none
+  /-- The request's own referrer policy (`fetch`'s `referrerPolicy`); `none`: the client's. -/
+  policy : Option ReferrerPolicy.Policy := none
+  /-- The document that asks, when it is not the session's own (a same-origin frame's
+  document in this realm): its URL, of the page's origin, and its policy (`setClient`). -/
+  client : Option (String × ReferrerPolicy.Policy) := none
   timeout : Nat := 0
   responseType : String := ""
   mimeOverride : Option String := none
@@ -83,6 +91,12 @@ structure State where
   /-- The embedder turned the network on (`network:true`). -/
   enabled : Bool := false
   page : Page := Page.ofUrl ""
+  /-- The URL of the client (the page's document, a worker's script), from the embedder: the
+  referrer of a request that names none (Fetch §2.2.5 "client"). `""`: none is sent. -/
+  client : String := ""
+  /-- The client's referrer policy: its `Referrer-Policy` response field, when the embedder
+  gave it (`policyOfHeader`). -/
+  policy : ReferrerPolicy.Policy := .default
   /-- The blob URLs of the session (`URL.createObjectURL`), each its origin's (`Net.BlobUrls`). -/
   blobs : L4Factoidal.Net.BlobUrls.Store := {}
   xhrs : Array Xhr := #[]
@@ -209,6 +223,59 @@ def mimeCharset (ct : String) : Option String :=
       else none
     | _ => none
 
+/-! ## The referrer of a request (Fetch §2.2.5, §5.4 `Request` constructor steps 14 and 15) -/
+
+/-- A URL of the page's own origin, serialized; `none` for any other (and for a page of an
+opaque origin, which has no such URL). -/
+def ownUrl (p : Page) (url : String) : Option String :=
+  match URL.parseUrl url with
+  | some u => if sameOrigin p u then some u.serialize else none
+  | none => none
+
+/-- `fetch`'s `referrer` for object `h`: `""` is no referrer; a URL of the page's origin is
+that URL; anything else (`about:client`, a URL of another origin, not a URL) is the client
+(Fetch §5.4 step 14.3: a page names only its own origin's URLs as the referrer). -/
+def setReferrer (s : State) (h : Nat) (referrer : String) : State :=
+  match s.get? h with
+  | none => s
+  | some x => s.set h { x with referrer := if referrer.isEmpty then some "" else ownUrl s.page referrer }
+
+/-- The document that asks for object `h`, when it is a frame's in this realm: kept only when
+its URL is of the page's origin (frames of another origin have a session of their own). An
+`about:` or `blob:` document gives no URL here, so its requests fall back to the session's
+client; the caller (`node_query` 210) names the container's URL for a `srcdoc` document. -/
+def setClient (s : State) (h : Nat) (url : String) (policy : String) : State :=
+  match s.get? h with
+  | none => s
+  | some x =>
+    let pol := (ReferrerPolicy.Policy.ofToken policy).getD s.policy
+    match ownUrl s.page url with
+    | some u => s.set h { x with client := some (u, pol) }
+    | none => s.set h { x with client := some (s.client, pol) }
+
+/-- The referrer of object `x`'s request: the one it names, else its document's URL, else the
+session's client. -/
+def referrerFor (s : State) (x : Xhr) : String :=
+  match x.referrer with
+  | some r => r
+  | none => match x.client with
+    | some (u, _) => u
+    | none => s.client
+
+/-- The referrer policy of object `x`'s request: its own, else its document's, else the
+session's client's. -/
+def policyFor (s : State) (x : Xhr) : ReferrerPolicy.Policy :=
+  match x.policy with
+  | some p => p
+  | none => match x.client with
+    | some (_, p) => p
+    | none => s.policy
+
+/-- The policy a `Referrer-Policy` response field gives a client (the default when it names
+none). -/
+def policyOfHeader (value : String) : ReferrerPolicy.Policy :=
+  (ReferrerPolicy.Policy.ofHeader value).getD .default
+
 /-- What a sync fetch came to. -/
 inductive SyncOutcome where
   | done (r : Response)
@@ -242,7 +309,7 @@ this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
 def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x }
   let (s, out) := syncFetch s t
   match out with
   | .need => (s.set h { x with events := #[] }, .error errNeedHost)
@@ -299,7 +366,7 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if x.state != 1 || !x.sendFlag then s else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
   | .deliver _ r => s.set h { x with deferred := some r }
@@ -493,7 +560,7 @@ private def natAt (fs : Array ByteArray) (i : Nat) : Nat := (strAt fs i).toNat?.
 
 private def okStr (x : String) : Except Int ByteArray := .ok x.toUTF8
 
-/-- A `web_api` op on the network objects: ops 60 to 79 (answers -2 when the embedder
+/-- A `web_api` op on the network objects: ops 60 to 79 and 98 (answers -2 when the embedder
 did not turn the network on, so `XMLHttpRequest` is then not defined). -/
 def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
   if !s.enabled then (s, .error (-2)) else
@@ -613,6 +680,20 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
     | some x => (s.set (natAt fs 0) { x with redirectError := natAt fs 1 != 0 }, okStr "")
+  | 98 =>
+    -- the request's referrer and referrer policy (`fetch`): handle, referrer ("" none,
+    -- "about:client" the client, else a URL: `setReferrer`), policy token ("" the
+    -- client's), then the document that asks when it is a frame's (URL and policy token,
+    -- both "" for the session's own)
+    let h := natAt fs 0
+    match s.get? h with
+    | none => (s, .error errType)
+    | some _ =>
+      let s := if strAt fs 3 == "" && strAt fs 4 == "" then s else setClient s h (strAt fs 3) (strAt fs 4)
+      let s := if strAt fs 1 == "about:client" then s else setReferrer s h (strAt fs 1)
+      match s.get? h with
+      | none => (s, .error errType)
+      | some x => (s.set h { x with policy := ReferrerPolicy.Policy.ofToken (strAt fs 2) }, okStr "")
   | 77 =>
     -- mode same-origin (`fetch`)
     match s.get? (natAt fs 0) with
@@ -721,6 +802,55 @@ private def localTarget : State :=
 
 -- off unless the embedder turned it on
 #guard (run1 {} 60 []).2 == "err -2"
+
+-- The referrer (Fetch §5.4 `Request` constructor steps 14 and 15; fetch/api/request/request-init-002,
+-- fetch/api/basic/referrer.any.js): the client's URL unless the page names one of its own origin
+private def stc : State := { st with client := "http://a.example/dir/page.html?q#f", page := { st.page with isLocal := true } }
+private def wireOf (s : State) (url : String) (opts : List String) : Option Wire :=
+  let s := (run1 s 60 []).1
+  let s := (run1 s 61 ["1", "GET", url, "", "1"]).1
+  let s := if opts.isEmpty then s else (run1 s 98 ("1" :: opts)).1
+  let s := (run1 s 63 ["1", "7", "0", "0", "", ""]).1
+  let s := (run1 (run1 s 64 ["1"]).1 64 ["1"]).1
+  s.outbox[0]?
+private def refOf (s : State) (url : String) (opts : List String) : Option String :=
+  (wireOf s url opts).bind fun w => headerGet w.headers "referer"
+#guard refOf stc "http://a.example/y" [] == some "http://a.example/dir/page.html?q"
+#guard refOf stc "http://b.example/y" [] == some "http://a.example/"
+#guard refOf stc "http://a.example/y" ["", "", "", ""] == none
+#guard refOf stc "http://a.example/y" ["about:client", "origin", "", ""] == some "http://a.example/"
+#guard refOf stc "http://a.example/y" ["http://a.example/other#x", "", "", ""] == some "http://a.example/other"
+-- a URL of another origin is not taken: the client's is used
+#guard refOf stc "http://a.example/y" ["http://evil.example/other", "", "", ""] == some "http://a.example/dir/page.html?q"
+#guard refOf stc "http://b.example/y" ["about:client", "unsafe-url", "", ""] == some "http://a.example/dir/page.html?q"
+#guard refOf stc "http://b.example/y" ["about:client", "no-referrer", "", ""] == none
+-- the client's policy (its Referrer-Policy field) when the request names none
+#guard refOf { stc with policy := policyOfHeader "origin" } "http://a.example/y" [] == some "http://a.example/"
+#guard refOf { stc with policy := policyOfHeader "bogus, no-referrer" } "http://a.example/y" [] == none
+#guard policyOfHeader "bogus" == .strictOriginWhenCrossOrigin
+-- a same-origin frame's document asks: its URL and its policy; a document of another
+-- origin is never named (the session's client stands in)
+#guard refOf stc "http://a.example/y" ["about:client", "", "http://a.example/frame.html", ""] == some "http://a.example/frame.html"
+#guard refOf stc "http://a.example/y" ["about:client", "", "http://a.example/frame.html", "origin"] == some "http://a.example/"
+#guard refOf stc "http://a.example/y" ["about:client", "", "http://evil.example/frame.html", ""] == some "http://a.example/dir/page.html?q"
+-- an embedder that names no client: no Referer at all
+#guard refOf { stc with client := "" } "http://b.example/y" [] == none
+
+/-- Kind: privacy lemma. Says: a URL the page names as a referrer, or a frame document's URL
+named as the client, is kept only when it parses and is of the page's own origin, and then
+in its serialized form: `fetch(url, {referrer})` cannot make the engine send another
+origin's URL as the `Referer`. Does not say: what is then sent of it (`PageFetch.referrerOf`
+and its theorems). -/
+theorem ownUrl_same (p : Page) (url r : String) (h : ownUrl p url = some r) :
+    ∃ u, URL.parseUrl url = some u ∧ sameOrigin p u = true ∧ r = u.serialize := by
+  unfold ownUrl at h
+  split at h
+  · rename_i u hu
+    split at h
+    · rename_i hs
+      exact ⟨u, hu, hs, by simpa using h.symm⟩
+    · simp at h
+  · simp at h
 
 /-- Kind: invariant of `sendX` and `next`. Says: when the object is not enabled the op
 answers -2 and changes nothing, so a page in a host that did not turn the network on has
