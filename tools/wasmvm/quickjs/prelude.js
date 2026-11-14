@@ -13031,10 +13031,70 @@
     cqw: 'cqw', cqh: 'cqh', cqi: 'cqi', cqb: 'cqb', cqmin: 'cqmin', cqmax: 'cqmax', cm: 'cm', mm: 'mm', Q: 'q', in: 'in', pt: 'pt', pc: 'pc', px: 'px',
     deg: 'deg', grad: 'grad', rad: 'rad', turn: 'turn', s: 's', ms: 'ms', Hz: 'hz', kHz: 'khz', dpi: 'dpi', dpcm: 'dpcm', dppx: 'dppx', fr: 'fr' }))
     defineNs(k, function (value) { if (arguments.length < 1) throw new TypeError(`CSS.${k}: 1 argument required`); return new CSSUnitValue(value, unit); });
+  // ---- CSSColorValue and its subclasses (CSS Typed OM 1 §5.6): channels checked by the
+  // type that Lean gives a numeric value (typedOp 'type'), as the WebIDL typedefs say
+  const colorErr = () => new DOMException('The value is not of the type the channel takes.', 'SyntaxError');
+  const kindOf = v => {
+    const t = v.type(); const ks = Object.entries(t).filter(([k, n]) => k !== 'percentHint' && n !== 0);
+    return ks.length === 0 ? 'number' : ks.length === 1 && ks[0][1] === 1 ? ks[0][0] : 'other';
+  };
+  const keywordish = (x, any) => {
+    const k = x instanceof CSSKeywordValue ? x : typeof x === 'string' ? new CSSKeywordValue(x) : null;
+    if (k === null) return null;
+    if (!any && k.value !== 'none') throw colorErr();
+    return k;
+  };
+  // channel kinds: 'rgb' (number or percentage), 'percent', 'number', 'angle' (keywords too),
+  // 'hue' (a CSSNumericValue angle only)
+  const channel = (kind, x, alphaDefault) => {
+    if (x === undefined && alphaDefault) return new CSSUnitValue(100, 'percent');
+    if (kind === 'hue') {
+      if (!(x instanceof CSSNumericValue)) throw new TypeError('The hue is not a CSSNumericValue');
+      if (kindOf(x) !== 'angle') throw colorErr();
+      return x;
+    }
+    if (typeof x === 'number') return kind === 'number' ? new CSSUnitValue(x, 'number') : kind === 'angle' ? new CSSUnitValue(x, 'deg') : new CSSUnitValue(x * 100, 'percent');
+    if (x instanceof CSSNumericValue) {
+      const k = kindOf(x);
+      const ok = kind === 'rgb' ? k === 'number' || k === 'percent' : kind === 'angle' ? k === 'angle' : k === kind;
+      if (!ok) throw colorErr();
+      return x;
+    }
+    if (kind === 'angle' && x === undefined) return new CSSKeywordValue('undefined');
+    const k = keywordish(x, kind === 'angle');
+    if (k === null) throw colorErr();
+    return k;
+  };
+  class CSSColorValue extends CSSStyleValue {
+    static parse(cssText) { if (arguments.length < 1) throw new TypeError('CSSColorValue.parse: 1 argument required'); throw new DOMException('Parsing a colour is not supported here.', 'SyntaxError'); }
+  }
+  const colorClass = (name, chans) => {
+    const C = ({ [name]: class extends CSSColorValue {
+      constructor(...args) {
+        super(typedKey);
+        if (args.length < chans.length) throw new TypeError(`${name}: ${chans.length} arguments required`);
+        const st = {};
+        chans.forEach(([c, kind], i) => { st[c] = channel(kind, args[i], false); });
+        st.alpha = channel('percent', args[chans.length], true);
+        typedState.set(this, st);
+      }
+    } })[name];
+    for (const [c, kind] of chans.concat([['alpha', 'percent']]))
+      Object.defineProperty(C.prototype, c, { get() { return tstateOf(this)[c]; }, set(v) { tstateOf(this)[c] = channel(kind, v, false); }, configurable: true, enumerable: true });
+    return C;
+  };
+  const CSSRGB = colorClass('CSSRGB', [['r', 'rgb'], ['g', 'rgb'], ['b', 'rgb']]);
+  const CSSHSL = colorClass('CSSHSL', [['h', 'angle'], ['s', 'percent'], ['l', 'percent']]);
+  const CSSHWB = colorClass('CSSHWB', [['h', 'hue'], ['w', 'percent'], ['b', 'percent']]);
+  const CSSLab = colorClass('CSSLab', [['l', 'percent'], ['a', 'number'], ['b', 'number']]);
+  const CSSLCH = colorClass('CSSLCH', [['l', 'percent'], ['c', 'number'], ['h', 'angle']]);
+  const CSSOKLab = colorClass('CSSOKLab', [['l', 'percent'], ['a', 'number'], ['b', 'number']]);
+  const CSSOKLCH = colorClass('CSSOKLCH', [['l', 'percent'], ['c', 'number'], ['h', 'angle']]);
   for (const [k, v] of Object.entries({ CSSStyleValue, CSSImageValue, CSSKeywordValue, CSSNumericValue, CSSUnitValue, CSSMathValue, CSSNumericArray,
     CSSMathSum: mathClasses.sum, CSSMathProduct: mathClasses.product, CSSMathMin: mathClasses.min, CSSMathMax: mathClasses.max,
     CSSMathNegate: mathClasses.negate, CSSMathInvert: mathClasses.invert, CSSMathClamp, CSSVariableReferenceValue, CSSUnparsedValue,
     CSSTransformComponent, CSSTranslate, CSSRotate, CSSScale, CSSSkew, CSSSkewX, CSSSkewY, CSSPerspective, CSSMatrixComponent, CSSTransformValue,
+    CSSColorValue, CSSRGB, CSSHSL, CSSHWB, CSSLab, CSSLCH, CSSOKLab, CSSOKLCH,
     StylePropertyMapReadOnly, StylePropertyMap })) {
     Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
     def(k, v);
