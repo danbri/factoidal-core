@@ -1359,7 +1359,13 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
     "h1","h2","h3","h4","h5","h6","ul","ol","li","dir","menu","dl","dt","dd","pre","listing","xmp","plaintext",
     "blockquote","address","center","hr","form","fieldset","figure","figcaption"].contains n.lname
-  let hidden := ["head","style","script","title","meta","link","template","base","area","param"].contains n.lname
+  -- HTML §15.3.1 and §6.12 (the user agent's `dialog:not([open])` and
+  -- `[popover]:not(:popover-open)` rules, `display: none`): a dialog that is not open and a
+  -- popover that is not showing (`Node.states` bit 1) start as not rendered, as the elements
+  -- of `head` do; an author rule for `display` still wins.
+  let hasAttr := fun (name : String) => n.attrs.any fun a => a.ns.isNone && a.lname == name
+  let hidden := ["head","style","script","title","meta","link","template","base","area","param"].contains n.lname ||
+    (n.ns == some DOM.htmlNS && ((n.lname == "dialog" && !hasAttr "open") || (hasAttr "popover" && n.states % 2 == 0)))
   let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
   let svgOverflow := attrValue n "overflow"
   let scale := headingScale n.lname
@@ -1534,4 +1540,21 @@ profile alone (`apply`); it now answers for the parser, as the standard says, so
 property that parses and is not yet laid out is supported here. -/
 def supportsDeclaration (property value : String) : Bool :=
   CssValues.supports (property.trimAscii.toString) value
+
+/-! ### Tests: a dialog that is not open and a popover that is not showing are not rendered -/
+
+private def hiddenDoc : DOM.Dom :=
+  DOM.parseHtmlDocument "<dialog>x</dialog><dialog open>y</dialog><div popover>z</div><div>w</div>"
+
+/-- The initial `display` of the nodes named `lname`, in tree order: `true` for `none`. -/
+private def displayNone (d : DOM.Dom) (lname : String) : List (Option Bool) :=
+  (d.nodes.toList.zipIdx.filter fun (n, _) => n.lname == lname).map fun (_, i) =>
+    (computedFrom d i [] {}).toOption.map (·.display == .none)
+
+#guard displayNone hiddenDoc "dialog" == [some true, some false]
+#guard displayNone hiddenDoc "div" == [some true, some false]
+-- a showing popover (`Node.states` bit 1) is rendered
+#guard displayNone ({ nodes := hiddenDoc.nodes.map fun n => if n.lname == "div" then { n with states := 1 } else n } : DOM.Dom) "div" ==
+  [some false, some false]
+
 end L4Factoidal.Rendering.CSS
