@@ -741,6 +741,13 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     -- CSS Typed OM: reification, serialisation, numeric types and arithmetic (`CssTyped.typedOp`)
     return L4Factoidal.Rendering.CssTyped.typedOp q
   | 155 =>
+    -- U+0002 and a name: the syntax of that registered property ("" when none), for the
+    -- typed values of `StylePropertyMap` (CSS Properties and Values API 1 §6.2)
+    if q.startsWith "\x02" then
+      let d ← dom
+      let key := L4Factoidal.WasmVM.Hosts.Dom.registeredKey (q.drop 1).toString
+      return (((d.get 0).attrs.find? (·.lname == key)).bind fun a =>
+        (L4Factoidal.Rendering.CssRegister.entryRule a.value).map (·.syn)).getD ""
     -- `CSS.registerProperty`: the checks of the name, the syntax and the initial value;
     -- an accepted registration joins the document's registered property set
     let r := L4Factoidal.Rendering.CssRegister.registerOp q

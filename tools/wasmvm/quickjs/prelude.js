@@ -11999,18 +11999,27 @@
   const listValued = name => typedOp('islist', name) === '1';
   const mapState = new WeakMap();
   const mstate = m => { const s = mapState.get(m); if (!s) throw new TypeError('Illegal invocation'); return s; };
+  // A custom property's typed values: by its registered syntax (node_query 155 with U+0002
+  // answers the syntax of a registration on the document; CssTyped 'reifys'), else unparsed.
+  const registeredSyntax = name => { const r = n.query(0, 155, '\u0002' + name); return typeof r === 'string' ? r : ''; };
+  const customTyped = (name, text) => {
+    const syn = registeredSyntax(name);
+    return syn !== '' ? JSON.parse(typedOp('reifys', syn, text)).map(reified) : [reified(JSON.parse(typedOp('reifyp', name, text)))];
+  };
   class StylePropertyMapReadOnly {
     constructor(key) { if (key !== typedKey) illegal(); }
     get(property) {
       if (arguments.length < 1) throw new TypeError('get: 1 argument required');
       const name = knownProperty(property), text = mstate(this).read(name);
       if (text === '') return undefined;
+      if (name.startsWith('--')) return customTyped(name, text)[0];
       return reified(listValued(name) ? JSON.parse(typedOp('reifyall', text))[0] : JSON.parse(typedOp('reifyp', name, text)));
     }
     getAll(property) {
       if (arguments.length < 1) throw new TypeError('getAll: 1 argument required');
       const name = knownProperty(property), text = mstate(this).read(name);
       if (text === '') return [];
+      if (name.startsWith('--')) return customTyped(name, text);
       return listValued(name) ? JSON.parse(typedOp('reifyall', text)).map(reified) : [reified(JSON.parse(typedOp('reifyp', name, text)))];
     }
     has(property) { if (arguments.length < 1) throw new TypeError('has: 1 argument required'); return mstate(this).read(knownProperty(property)) !== ''; }
