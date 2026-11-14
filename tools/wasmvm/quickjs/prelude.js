@@ -237,6 +237,15 @@
       s.relatedTarget = d.relatedTarget ?? null;
     }
     getModifierState(k) { return getModifierState.call(this, k); }
+    // UI Events §7.3 (legacy): initMouseEvent does nothing while the event is dispatched.
+    initMouseEvent(type, bubbles = false, cancelable = false, view = null, detail = 0, screenX = 0, screenY = 0,
+      clientX = 0, clientY = 0, ctrlKey = false, altKey = false, shiftKey = false, metaKey = false, button = 0, relatedTarget = null) {
+      if (arguments.length < 1) throw new TypeError("initMouseEvent: 1 argument required");
+      if (state(this).dispatching) return;
+      this.initUIEvent(type, bubbles, cancelable, view, detail);
+      Object.assign(state(this), { screenX: screenX | 0, screenY: screenY | 0, clientX: clientX | 0, clientY: clientY | 0,
+        ctrlKey: !!ctrlKey, altKey: !!altKey, shiftKey: !!shiftKey, metaKey: !!metaKey, button: (button << 16) >> 16, relatedTarget });
+    }
   }
   for (const k of ['screenX', 'screenY', 'clientX', 'clientY', 'button', 'buttons', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey', 'relatedTarget'])
     Object.defineProperty(MouseEvent.prototype, k, { get() { return state(this)[k]; }, configurable: true });
