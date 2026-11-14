@@ -235,3 +235,32 @@ Deno.test("host parity: the hosts take their page steps from page-load.mjs",asyn
     assert(!/contentType:\s*["']["']/.test(source),`${name} answers a fetch with an empty Content-Type of its own`);
   }
 });
+
+// ---- page-load.mjs itself --------------------------------------------------------------------------
+Deno.test("page-load: sheets, layout fields and script answers",async()=>{
+  const {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,MAX_SHEETS}=await import("../../../docs/web/hub/foafnaut/page-load.mjs");
+  // Every listed sheet is fetched; one that is not read is a failure with its reason, not a silent gap.
+  const listed=[{nodeId:4,url:"http://a.test/a.css"},{nodeId:7,url:"http://a.test/gone.css"},{nodeId:9,url:"http://b.test/b.css"}];
+  const got=await loadStyleSheets(listed,(url:string)=>{
+    if(url.endsWith("gone.css"))throw new Error("HTTP 404");
+    return Promise.resolve({url:url+"?final",source:`/* ${url} */`});
+  });
+  assert.deepEqual(got.resources,[{nodeId:4,url:"http://a.test/a.css?final",source:"/* http://a.test/a.css */"},
+    {nodeId:9,url:"http://b.test/b.css?final",source:"/* http://b.test/b.css */"}]);
+  assert.deepEqual(got.resourceFailures,[{nodeId:7,url:"http://a.test/gone.css",reason:"HTTP 404"}]);
+  // Past the engine's bound a sheet is a failure the engine hears of.
+  const many=Array.from({length:MAX_SHEETS+2},(_,i)=>({nodeId:i,url:`http://a.test/${i}.css`}));
+  const bounded=await loadStyleSheets(many,(url:string)=>Promise.resolve({url,source:""}));
+  assert.equal(bounded.resources.length,MAX_SHEETS);assert.equal(bounded.resourceFailures.length,2);
+  // The layout fields: the URL, the mode, and each list the host holds that is not empty.
+  assert.deepEqual(pageLayoutFields({url:"http://a.test/",liberal:true,resources:got.resources,images:[],commands:[{op:"x"}],title:"not a layout field"}),
+    {url:"http://a.test/",liberal:true,resources:got.resources,commands:[{op:"x"}]});
+  assert.deepEqual(pageLayoutFields({url:"http://a.test/"}),{url:"http://a.test/"});
+  // A script fetch: the status, type and nosniff header as sent; a throw is a network error.
+  const response=(status:number,headers:Record<string,string>)=>(url:string)=>Promise.resolve(new Response("x()",{status,headers}) as Response&{url:string}).then(r=>Object.defineProperty(r,"url",{value:url}));
+  assert.deepEqual(await fetchedAnswer({id:3,url:"http://a.test/w.js"},rawOverFetch(response(200,{"content-type":"text/plain","x-content-type-options":"nosniff"}))),
+    {id:3,status:200,url:"http://a.test/w.js",contentType:"text/plain",contentTypeOptions:"nosniff",source:"x()"});
+  assert.equal((await fetchedAnswer({id:4,url:"http://a.test/w.js"},rawOverFetch(response(404,{})))).status,404);
+  assert.deepEqual(await fetchedAnswer({id:5,url:"http://a.test/w.js"},()=>Promise.reject(new Error("refused"))),
+    {id:5,status:0,url:"http://a.test/w.js",contentType:"",contentTypeOptions:"",source:""});
+});
