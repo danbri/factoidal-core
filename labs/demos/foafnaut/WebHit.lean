@@ -23,9 +23,9 @@ The same scene answers the bounds of an SVG element for page scripts
 namespace WebHit
 open L4Factoidal
 
-/-- The root element of the document (`html`): the origin of SVG source paths. -/
-def rootElement (dom : DOM.Dom) : Option Nat :=
-  (dom.get 0).kids.find? (fun id => DOM.Dom.isHtmlElement (dom.get id) "html")
+/-- The root element of the document (`html`, or the first element of a document of another
+vocabulary: `WebRender.documentElement`): the origin of SVG source paths. -/
+def rootElement (dom : DOM.Dom) : Option Nat := WebRender.documentElement dom
 
 /-- The element at a source path from the root element. A path that goes on into a text
 node (SVG text is lowered to glyph paths below its element) or past the children ends at

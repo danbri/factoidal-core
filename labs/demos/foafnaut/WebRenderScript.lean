@@ -157,16 +157,29 @@ private def scriptKind (node : DOM.Node) : String :=
   else if ["","text/javascript","application/javascript","text/ecmascript","application/ecmascript"].contains kind then "classic"
   else "data"
 
+/-- A `script` element: HTML's, or SVG's, which is processed as HTML's is (SVG 2 §16.2). -/
+def isScriptElement (node : DOM.Node) : Bool :=
+  node.type == .element && node.lname == "script" && (node.ns == some DOM.htmlNS || node.ns == some DOM.svgNS)
+
+/-- The URL a script element names: `src` in HTML; in SVG `href`, else `xlink:href`
+(SVG 2 §16.2: `href` wins when both are there). Empty for an inline script. -/
+def scriptSrc (node : DOM.Node) : String :=
+  if node.ns == some DOM.svgNS then
+    let own := attrValue node "href"
+    if !own.isEmpty then own
+    else ((node.attrs.find? (fun attr => attr.ns == some DOM.xlinkNS && attr.lname == "href")).map (·.value)).getD ""
+  else attrValue node "src"
+
 /-- The script elements in tree order. A render needs these, not the whole snapshot. -/
 def scriptRecords (dom : DOM.Dom) : List JSON.Json := Id.run do
   let mut scripts : List JSON.Json := []
   for id in dom.treeOrder 0 do
     let node := dom.get id
-    if node.type == .element && DOM.Dom.isHtmlElement node "script" then
+    if isScriptElement node then
       scripts := .object [
         ("nodeId",.number (toString id)),
         ("source",.string ((dom.textContent id).getD "")),
-        ("src",.string (attrValue node "src")),
+        ("src",.string (scriptSrc node)),
         ("kind",.string (scriptKind node)),
         ("type",.string (attrValue node "type"))] :: scripts
   return scripts.reverse

@@ -104,7 +104,7 @@ private def validateResources (dom : DOM.Dom) (request : JSON.Json) : Except Str
     let some id := raw.toNat? | throw "resource nodeId must be natural"
     let some node := dom.nodes[id]? | throw "unknown resource nodeId"
     if ids.contains id then throw "duplicate resource nodeId"
-    if !(dom.treeOrder 0).contains id || !(stylesheet node || DOM.Dom.isHtmlElement node "script") then
+    if !(dom.treeOrder 0).contains id || !(stylesheet node || WebRenderScript.isScriptElement node) then
       throw "resource is not a connected stylesheet or script"
     let some (.string source) := resource.field? "source" | throw "resource source must be a string"
     if source.utf8ByteSize > WebRender.maxSourceBytes then throw "resource exceeds 16 MiB"
@@ -259,11 +259,11 @@ private unsafe def shapeKeptImpl (key : String) (fonts : Array Rendering.SfntPro
 def shapeKept (_key : String) (fonts : Array Rendering.SfntProfile.Font) (text : String) (px : Nat) (rtl : Option Bool) :
     Except String Rendering.FontProvider.Word := Rendering.SfntProfile.shapeFresh fonts text px rtl
 
-/-- The document tree: the XML syntax of HTML for a `.xht` or `.xhtml` URL (HTML §14,
-`DOM.parseXmlDocument`), else the HTML syntax (HTML §13). -/
+/-- The document tree: the XML syntax for a `.xht`, `.xhtml` or `.svg` URL (HTML §14,
+`DOM.parseXmlDocument`, `DOM.isXmlPath`), else the HTML syntax (HTML §13). -/
 def prepareDOMIn (kept : Kept) (html : String) (request : JSON.Json) : Except String (DOM.Dom × Made) := do
   if html.utf8ByteSize > WebRender.maxSourceBytes then throw "document HTML exceeds 16 MiB"
-  let (dom,made) := parseIn kept html (DOM.isXhtmlPath (str request "url"))
+  let (dom,made) := parseIn kept html (DOM.isXmlPath (str request "url"))
   return (← WebRenderScript.applyCommands (← dom) ((request.field? "commands").getD (.array [])),made)
 
 /-- `prepareDOMIn` with nothing kept. -/

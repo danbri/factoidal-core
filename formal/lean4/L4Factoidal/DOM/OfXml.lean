@@ -144,6 +144,16 @@ def isXhtmlPath (url : String) : Bool :=
   let lower := path.toLower
   lower.endsWith ".xht" || lower.endsWith ".xhtml"
 
+/-- A URL whose document is read in the XML syntax: `isXhtmlPath`, or a path that ends in
+`.svg` (any case), the file name extension of the `image/svg+xml` registration (SVG 2
+Appendix P), so an SVG document is an XML document whose root is `svg`. -/
+def isXmlPath (url : String) : Bool :=
+  isXhtmlPath url ||
+    ((((url.splitOn "#").headD "").splitOn "?" |>.headD "").toLower.endsWith ".svg")
+
+#guard isXmlPath "http://a.example/x.svg" && isXmlPath "http://a.example/x.SVG?q=.html#f" && isXmlPath "a.xht"
+#guard !isXmlPath "http://a.example/x.svg.html" && !isXmlPath "http://a.example/svg" && !isXhtmlPath "a.svg"
+
 /-- The text of the first Text node of a parsed document, for the checks below. -/
 private def firstText (src : String) : Option String :=
   (parseXmlDocument src).toOption.bind fun d => (d.nodes.find? (·.type == .text)).map (·.data)

@@ -353,7 +353,7 @@ def setReads (held : Held) (env : PageCanvas.Env) (measure : Option Page.Measure
 with a render's replay of the commands. -/
 def parse (html url : String) : Except String DOM.Dom :=
   if html.utf8ByteSize > 1048576 then .error "document HTML exceeds 1MiB"
-  else if DOM.isXhtmlPath url then DOM.parseXmlDocument html
+  else if DOM.isXmlPath url then DOM.parseXmlDocument html
   else .ok (DOM.parseHtmlDocument html)
 
 /-- The classic scripts in document order, with the sources a host supplied for `src`
@@ -633,7 +633,7 @@ def frameFields (h : Page.Host) (loads : Nat) : List (String × JSON.Json) :=
 with `contentType` (decoded by Lean: HTML §13.2.3 sniffing with the transport charset, then
 the Encoding Standard's decoder, `WHATWG.Encoding.Sniff.decodeDocumentFast`), or `source`
 as text; empty, or `failed:true`, for a load that failed (the frame keeps `about:blank`).
-Parsed as XML for an `.xht` or `.xhtml` URL. With its classic scripts and the sources of
+Parsed as XML for an `.xht`, `.xhtml` or `.svg` URL. With its classic scripts and the sources of
 the `resources` the embedder read (node numbers of the document parsed on its own). -/
 def frameDocument (request : JSON.Json) : Except String (String × Bool × Array (Nat × String) × String) := do
   let url := str request "url"
@@ -655,7 +655,7 @@ def frameDocument (request : JSON.Json) : Except String (String × Bool × Array
   if src.isEmpty then return ("", false, #[], enc)
   let dom ← parse src url
   let (scripts, _) ← scriptSources dom request
-  return (src, DOM.isXhtmlPath url, scripts, enc)
+  return (src, DOM.isXmlPath url, scripts, enc)
 
 
 /-! ### Sandboxed frames: script sessions of their own (`HTML.FrameSessions`)

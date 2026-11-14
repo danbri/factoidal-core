@@ -82,11 +82,22 @@ def namespaceTree (dom : DOM.Dom) : Nat → Nat → Except String XML.NamespaceN
     else if n.type == .comment then return .other (.comment n.data)
     else throw "unsupported node in embedded SVG DOM"
 
+/-- The document element as the source paths of SVG count from it: the `html` element, or,
+in a document of another vocabulary (an SVG document read as XML), its first element. -/
+def documentElement (dom : DOM.Dom) : Option Nat :=
+  match dom.nodes[0]? with
+  | none => none
+  | some document =>
+    (document.kids.find? (fun id => DOM.Dom.isHtmlElement (dom.get id) "html")).orElse fun _ =>
+      document.kids.find? (fun id => (dom.get id).type == .element)
+
 /-- Convert the original HTML element subtree bottom-up. Every original child
-index survives, including text/comments; no host extraction or XML reparse. -/
+index survives, including text/comments; no host extraction or XML reparse. A `script`
+element (HTML's or SVG's) draws nothing: it stays in its place as an empty comment, so the
+SVG reader does not meet it and the indices after it are unchanged. -/
 def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceNode) := do
-  let some document := dom.nodes[0]? | throw "HTML document root missing"
-  let some root := document.kids.find? (fun id => DOM.Dom.isHtmlElement (dom.get id) "html")
+  if dom.nodes.size == 0 then throw "HTML document root missing"
+  let some root := documentElement dom
     | throw "HTML element root missing"
   let mut values : Std.TreeMap Nat XML.NamespaceNode := {}
   let mut pending := [(false,root)]
@@ -98,7 +109,10 @@ def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceN
     | (finished,id)::rest =>
       let some node := dom.nodes[id]? | throw "invalid node in HTML namespace tree"
       pending := rest
-      if node.type == .element then
+      if node.type == .element && node.lname == "script" && id != root &&
+          (node.ns == some DOM.htmlNS || node.ns == some DOM.svgNS) then
+        values := values.insert id (.other (.comment ""))
+      else if node.type == .element then
         if !finished then pending := node.kids.toList.map (fun child => (false,child)) ++ ((true,id)::rest)
         else
           let children ← node.kids.toList.mapM (fun child =>
