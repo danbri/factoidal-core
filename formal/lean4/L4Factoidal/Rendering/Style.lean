@@ -522,11 +522,12 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
       -- a CSS-wide keyword on the shorthand is that keyword on each longhand the profile has
       ["font-size","font-family","line-height","font-weight","font-style"].map (fun name => (⟨name,d.value,d.important⟩ : Declaration)) ++ acc
     else if key == "font" && !CssVars.mentions d.value then
-      -- the `font` shorthand (CSS Fonts 4 §2.8) as the longhands this profile has; a system
-      -- font (`caption` ...) is kept whole and not read
+      -- the `font` shorthand (CSS Fonts 4 §2.8) as the longhands this profile has, and
+      -- whole for getComputedStyle's other longhands (`font-weight` ...); a system font
+      -- (`caption` ...) is kept whole and not read
       match fontLonghands d.value d.important with
       | [] => whole :: acc
-      | ls => ls ++ acc
+      | ls => whole :: ls ++ acc
     else match layoutShorthand key d.value with
       | some longhands => longhands.map (fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ acc
       | none =>

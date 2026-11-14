@@ -614,6 +614,24 @@ theorem ifCondition_zero (get : String → String) (subst : List CssValues.CV �
 def mentionsCurrentColor (value : String) : Bool :=
   ((CssValues.lower value).splitOn "currentcolor").length > 1
 
+/-- `bolder` and `lighter` against the parent's computed weight (CSS Fonts 4 §2.2.1, the
+table of relative weights); the parent's weight as text. -/
+def relativeWeight (keyword parent : String) : String :=
+  let w : Rat := match CssValues.stripWs (CssValues.CV.parse parent) with
+    | [.tok (.num x _)] => x
+    | _ => 400
+  let r : Rat :=
+    if keyword == "bolder" then
+      if w < 350 then 400 else if w < 550 then 700 else if w < 900 then 900 else w
+    else
+      if w < 100 then w else if w < 550 then 100 else if w < 750 then 400 else 700
+  CssValues.fmtRat r
+
+#guard ["1", "349", "350", "549", "550", "899", "900", "950"].map (relativeWeight "bolder") ==
+  ["400", "400", "700", "700", "900", "900", "900", "950"]
+#guard ["50", "100", "549", "550", "749", "750", "1000"].map (relativeWeight "lighter") ==
+  ["50", "100", "100", "400", "400", "700", "700"]
+
 /-- The computed value of longhand or custom property `p` on element `id`. `fuel` bounds
 the walk to the root and the chain of variables. -/
 def computedLonghand (v : View) : Nat → Nat → String → String
@@ -683,6 +701,11 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       | some pid => computedLonghand v fuel pid p
       | none => initial ()
     let default := fun (_ : Unit) => if inherited then fromParent () else initial ()
+    -- the computed value of a specified value `s`; a relative font weight is the parent's
+    -- made bolder or lighter
+    let compute := fun (s : String) =>
+      if p == "font-weight" && (s == "bolder" || s == "lighter") then relativeWeight s (fromParent ())
+      else CssValues.computed (ctxOf s) p s
     -- an absolutely positioned box does not float (CSS 2 §9.7)
     if p == "float" && ["absolute", "fixed"].contains (computedLonghand v fuel id "position") then "none" else
     match (if p == "font-size" then v.styles[id]? else none) with
@@ -705,7 +728,7 @@ def computedLonghand (v : View) : Nat → Nat → String → String
             if s == "inherit" then fromParent ()
             else if s == "initial" then initial ()
             else if CssValues.cssWide.contains s then default ()
-            else CssValues.computed (ctxOf s) p s
+            else compute s
           | none => default ()
       | none =>
       if value == "inherit" then fromParent ()
@@ -730,13 +753,13 @@ def computedLonghand (v : View) : Nat → Nat → String → String
             else
               match CssValues.specified p text with
               | some s =>
-                if CssValues.cssWide.contains s then default () else CssValues.computed (ctxOf s) p s
+                if CssValues.cssWide.contains s then default () else compute s
               | none => default ()
         else if custom then
           match reg with
           | some r => (CssRegister.computedValue (ctxOf value) r.syn value).getD (default ())
           | none => value
-        else CssValues.computed (ctxOf value) p value
+        else compute value
 
 /-- The most ancestors and variable links a computed value follows (each is a stack frame). -/
 def depthBound : Nat := 256
@@ -1123,6 +1146,10 @@ private def resolvedAt (html css prop : String) : String :=
 #guard resolvedAt "<div id=t></div>" "#t { position: relative; bottom: 3px }" "top" == "-3px"
 #guard resolvedAt "<div id=t></div>" "#t { position: relative }" "left" == "0px"
 #guard resolvedAt "<div id=t></div>" "#t { position: static }" "left" == "auto"
+-- relative font weights (font-weight-computed.html)
+#guard resolvedAt "<div style='font-weight: 550'><p id=t></p></div>" "#t { font-weight: lighter }" "font-weight" == "400"
+#guard resolvedAt "<div style='font-weight: 800'><p id=t></p></div>" "#t { font: bolder 10px serif }" "font-weight" == "900"
+#guard resolvedAt "<div><p id=t></p></div>" "#t { font-weight: bolder }" "font-weight" == "700"
 -- the resolved line height is a length or normal (font-computed.html)
 #guard resolvedAt "<div id=t></div>" "#t { font-size: 32px; line-height: 1.2 }" "line-height" == "38.4px"
 #guard resolvedAt "<div id=t></div>" "#t { font-size: 32px; line-height: calc(120% + 1.2em) }" "line-height" == "76.8px"
