@@ -727,7 +727,8 @@ def domOpM (id op : Nat) (q : String) : Op String := do
         set { st with navigations := (st.navigations.filter fun (nv : Nat × String) => nv.1 != el).push (el, u) }
         return "1"
   | 190 =>
-    -- HTML §4.6.4 "follow the hyperlink" of the `a` or `area` element `id`, as far as frames
+    -- HTML §4.6.4 "follow the hyperlink" of the `a` or `area` element `id` (or an SVG `a`
+    -- that is a link: SVG 2 §16.2), as far as frames
     -- go: `q` is its target ("" for none), U+0000, the URL (resolved by the caller). The
     -- navigable is chosen as for a form (op 170): "" and `_self` the element's own frame; a
     -- name, the first frame of that name. A navigation of that frame is queued for the
@@ -738,7 +739,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       | [a, b] => (a, b)
       | _ => ("", q)
     let link ← nodeArg d id
-    if !L4Factoidal.DOM.Forms.isHtml d link ["a", "area"] then throw (-2)
+    if !(L4Factoidal.DOM.Forms.isHtml d link ["a", "area"] || L4Factoidal.DOM.Forms.isSvgLink d link) then throw (-2)
     let st ← get
     let doc := (d.get link).doc
     let docEl := (st.frames.find? (·.2 == doc)).map (·.1)

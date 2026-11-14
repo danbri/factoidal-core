@@ -1202,7 +1202,17 @@
   };
   let invokerActivation = () => {};
   const activation = (k, targetId) => {
-    if (!htmlEl(k)) return;
+    if (!htmlEl(k)) {
+      // An SVG a element that is a link (SVG 2 §16.2; Lean names it the activation target):
+      // its link navigates a frame as an HTML a's does (node_query 190).
+      if (str(k, 0) === 'a' && str(k, 2) === 'http://www.w3.org/2000/svg') {
+        const raw = n.attr(k, 'href') ?? wrap(k).getAttributeNS('http://www.w3.org/1999/xlink', 'href'), target = n.attr(k, 'target');
+        const url = typeof raw === 'string' ? resolveURL(raw, wrap(k).baseURI || href) : null;
+        if (url !== null && /^(https?|data|blob|about):/i.test(url) && (typeof target === 'string' && target !== '' || info(k, 7) > 0))
+          n.query(k, 190, (typeof target === 'string' ? target : '') + '\u0000' + url);
+      }
+      return;
+    }
     const el = wrap(k), name = str(k, 0);
     if (name === 'input' || name === 'button') {
       const t = chk(n.query(k, 14, ''));

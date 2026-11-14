@@ -97,9 +97,16 @@ def isDetailsSummary (d : Dom) (k : NodeId) : Bool :=
     | some p => isHtml d p ["details"] && ((d.get p).kids.find? fun c => isHtml d c ["summary"]) == some k
     | none => false
 
+/-- An SVG `a` element that is a hyperlink (SVG 2 §16.2): it has an `href` attribute, in no
+namespace or in the XLink namespace. -/
+def isSvgLink (d : Dom) (k : NodeId) : Bool :=
+  let x := d.get k
+  x.type == .element && x.ns == some svgNS && x.lname == "a" &&
+    x.attrs.any fun a => a.lname == "href" && (a.ns.isNone || a.ns == some "http://www.w3.org/1999/xlink")
+
 /-- Elements with activation behaviour. -/
 def hasActivationBehavior (d : Dom) (k : NodeId) : Bool :=
-  (isHtml d k ["a", "area"] && (attr? d k "href").isSome) ||
+  (isHtml d k ["a", "area"] && (attr? d k "href").isSome) || isSvgLink d k ||
   isHtml d k ["button", "input", "label"] || isDetailsSummary d k
 
 /-- The activation target of a `click` MouseEvent dispatched to `target` (DOM §2.9
