@@ -8402,9 +8402,9 @@
     const id = nodeId(el);
     if (namesFor(el).length === 0) return '';
     if (name.startsWith('--')) {
-      // a custom property: its place among the element's custom properties (measure op 35),
+      // a custom property: its place among the element's custom properties (measure op 36),
       // then its value past the table's names
-      const r = n.query(id, 35, '');
+      const r = n.query(id, 36, '');
       if (typeof r !== 'string' || r === '') return '';
       const i = r.split('\u0000').indexOf(name);
       if (i < 0) return '';
