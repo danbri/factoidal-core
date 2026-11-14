@@ -190,6 +190,8 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       | some pid => computedLonghand v fuel pid p
       | none => initial ()
     let default := fun (_ : Unit) => if inherited then fromParent () else initial ()
+    -- an absolutely positioned box does not float (CSS 2 §9.7)
+    if p == "float" && ["absolute", "fixed"].contains (computedLonghand v fuel id "position") then "none" else
     match (if p == "font-size" then v.styles[id]? else none) with
     -- the computed font size is the layout profile's: an absolute length for every form
     -- (keywords, `larger`, `em`, percentages, the `font` shorthand)
