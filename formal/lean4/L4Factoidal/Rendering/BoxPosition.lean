@@ -84,6 +84,9 @@ structure PositionStyle where
   /-- `transform-origin`: `(x, ofWidth, y, ofHeight)`, lengths and fractions of the border
   box; its centre by default. -/
   transformOrigin : Float × Float × Float × Float := (0,0.5,0,0.5)
+  /-- `display: contents` (CSS Display 3 §2.5): the element makes no box, and its children
+  are laid out as children of its parent. Set by the cascade with `display`. -/
+  contents : Bool := false
   /-- `overflow: auto` or `scroll` in an axis: a scroll container. Nothing scrolls yet, so
   nothing is clipped away; the box is still the root of a block formatting context (CSS 2.1
   §9.4.1): it holds its floats and its children's margins. -/
@@ -104,7 +107,8 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside &&
   a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform &&
   sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin &&
-  a.marginOf == b.marginOf && a.paddingOf == b.paddingOf && a.scrolls == b.scrolls
+  a.marginOf == b.marginOf && a.paddingOf == b.paddingOf && a.scrolls == b.scrolls &&
+  a.contents == b.contents
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed

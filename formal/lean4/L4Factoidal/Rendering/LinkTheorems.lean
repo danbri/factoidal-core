@@ -146,7 +146,7 @@ theorem render_links {dom : Dom} {rules : List CSS.Rule} {font : FontProfile} {e
   obtain ⟨drawn, drew, ok⟩ := bind_ok ok
   obtain ⟨styles, result, laid, same, links⟩ := renderStyled_links (scene := drawn.1) (boxes := drawn.2) drew
   cases ok
-  refine ⟨made.1, styles, result, laid, ?_, same ▸ links⟩
+  refine ⟨Generated.flattenContents made.1 made.2, styles, result, laid, ?_, same ▸ links⟩
   intro box mem
   rw [← same]
   exact (Array.mem_filter.mp mem).1

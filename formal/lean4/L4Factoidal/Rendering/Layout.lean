@@ -2362,7 +2362,7 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
     (width height : Nat) (textScale : Float := 1) (state : CSS.ElementState := {})
     (pictures : Pictures := noPictures) (treeScope : Option CSS.TreeScope := none) : Except String (Scene × Array Box) := do
   let made ← Generated.styled treeScope dom rules textScale state
-  let drawn ← renderStyled made.1 made.2 font embedding width height pictures
+  let drawn ← renderStyled (Generated.flattenContents made.1 made.2) made.2 font embedding width height pictures
   return (drawn.1,drawn.2.filter (·.source < dom.size))
 
 end L4Factoidal.Rendering.Layout

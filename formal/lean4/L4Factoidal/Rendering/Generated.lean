@@ -255,4 +255,80 @@ theorem styled_unused (treeScope : Option TreeScope) (dom : Dom) (rules : List R
   simp only [h, Bool.not_false, ↓reduceIte]
   cases computeFor treeScope dom rules textScale state <;> rfl
 
+/-! ### `display: contents` (CSS Display 3 §2.5)
+
+An element with `display: contents` makes no box: its children are laid out as children of
+its parent. In the tree that is laid out, the child list of each node has such a child
+replaced by that child's own children; the element stays in the node array (its number,
+its parent link and its own child list stand: selectors, inheritance and the links of an
+anchor follow them), out of reach of the layout. -/
+
+/-- One level: each child that is a `contents` element replaced by its children. -/
+def contentsPass (dom : Dom) (contents : Nat → Bool) : Dom :=
+  {nodes := dom.nodes.map fun n =>
+    if n.kids.any contents then {n with kids := n.kids.flatMap fun k => if contents k then (dom.get k).kids else #[k]}
+    else n}
+
+/-- Levels until no child list holds a `contents` element; `fuel` bounds the nesting. -/
+def contentsLoop (contents : Nat → Bool) : Nat → Dom → Dom
+  | 0, dom => dom
+  | fuel+1, dom =>
+    if dom.nodes.any (fun n => n.kids.any contents) then contentsLoop contents fuel (contentsPass dom contents) else dom
+
+/-- The tree to lay out with no `display: contents` element in a child list. A page with
+none pays one pass over its styles. Nesting deeper than 64 is left as it is (the layout
+refuses that depth anyway). -/
+def flattenContents (dom : Dom) (styles : Array Computed) : Dom :=
+  if !(styles.any fun s => s.pos.contents) then dom
+  else contentsLoop (fun k => ((styles[k]?).map (·.pos.contents)).getD false && (dom.get k).type == .element) 64 dom
+
+theorem contentsPass_size (dom : Dom) (contents : Nat → Bool) : (contentsPass dom contents).size = dom.size := by
+  simp [contentsPass, Dom.size]
+
+theorem contentsPass_keeps (dom : Dom) (contents : Nat → Bool) (id : Nat) :
+    sameNode ((contentsPass dom contents).get id) (dom.get id) := by
+  unfold contentsPass Dom.get
+  simp only [Array.getD_eq_getD_getElem?, Array.getElem?_map]
+  cases dom.nodes[id]? with
+  | none => exact sameNode_refl _
+  | some n =>
+    simp only [Option.map_some, Option.getD_some]
+    split
+    · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · exact sameNode_refl _
+
+theorem contentsLoop_size (contents : Nat → Bool) (fuel : Nat) (dom : Dom) :
+    (contentsLoop contents fuel dom).size = dom.size := by
+  induction fuel generalizing dom with
+  | zero => rfl
+  | succ fuel ih =>
+    unfold contentsLoop
+    split
+    · rw [ih, contentsPass_size]
+    · rfl
+
+theorem contentsLoop_keeps (contents : Nat → Bool) (fuel : Nat) (dom : Dom) (id : Nat) :
+    sameNode ((contentsLoop contents fuel dom).get id) (dom.get id) := by
+  induction fuel generalizing dom with
+  | zero => exact sameNode_refl _
+  | succ fuel ih =>
+    unfold contentsLoop
+    split
+    · exact sameNode_trans (ih _) (contentsPass_keeps dom contents id)
+    · exact sameNode_refl _
+
+/-- **The nodes keep their numbers and all but their child lists**, and the tree has as
+many nodes as before. -/
+theorem flattenContents_keeps (dom : Dom) (styles : Array Computed) (id : Nat) :
+    (flattenContents dom styles).size = dom.size ∧ sameNode ((flattenContents dom styles).get id) (dom.get id) := by
+  unfold flattenContents
+  split
+  · exact ⟨rfl, sameNode_refl _⟩
+  · exact ⟨contentsLoop_size .., contentsLoop_keeps ..⟩
+
+/-- **A page with no `display: contents` is laid out on its own tree.** -/
+theorem flattenContents_unused (dom : Dom) (styles : Array Computed)
+    (h : (styles.any fun s => s.pos.contents) = false) : flattenContents dom styles = dom := by
+  simp [flattenContents, h]
+
 end L4Factoidal.Rendering.Generated
