@@ -1,0 +1,15 @@
+{
+ "case": "B.12.a",
+ "file": "Appendix/B/B.12/b.12.a.xhtml",
+ "quote": "You must not see item product (\"SKU-0815\") or item product (\"SKU-4711\") :",
+ "steps": [
+  {
+   "expect": "absent",
+   "values": [
+    "SKU-0815",
+    "SKU-4711"
+   ],
+   "label": "Product"
+  }
+ ]
+}

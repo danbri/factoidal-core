@@ -1,0 +1,15 @@
+{
+ "case": "10.4.g",
+ "file": "Chapt10/10.4/10.4.g.xhtml",
+ "quote": "You must have seen an xforms-delete message and you must not see the numbers 1, 2 and 3 below.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-delete"
+  },
+  {
+   "expect": "no-value",
+   "kind": "output"
+  }
+ ]
+}

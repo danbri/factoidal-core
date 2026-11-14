@@ -1,0 +1,16 @@
+{
+ "case": "3.2.3.b",
+ "file": "Chapt03/3.2/3.2.3/3.2.3.b.xhtml",
+ "quote": "You must see the value \"Mercedes\": [...] You must see the value \"Acura\": [...] For this output, a bind is overriding the model. You must see the value \"Acura\":",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "Mercedes",
+    "Acura",
+    "Acura"
+   ],
+   "kind": "output"
+  }
+ ]
+}

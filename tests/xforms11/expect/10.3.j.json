@@ -1,0 +1,16 @@
+{
+ "case": "10.3.j",
+ "file": "Chapt10/10.3/10.3.j.xhtml",
+ "quote": "You must not see the value \"4.00\" : You must not see the value \"5.00\" : You must not see the value \"6.00\" :",
+ "steps": [
+  {
+   "expect": "absent",
+   "values": [
+    "4.00",
+    "5.00",
+    "6.00"
+   ],
+   "kind": "output"
+  }
+ ]
+}

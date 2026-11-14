@@ -1,0 +1,17 @@
+{
+ "case": "10.4.a",
+ "file": "Chapt10/10.4/10.4.a.xhtml",
+ "quote": "You must see only the number 10: You must see only the number 4: You must see only the numbers 1 and 2:",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "10",
+    "4",
+    "1",
+    "2"
+   ],
+   "kind": "output"
+  }
+ ]
+}
