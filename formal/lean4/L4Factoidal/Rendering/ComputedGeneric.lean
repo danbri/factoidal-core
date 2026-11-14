@@ -211,7 +211,10 @@ def computedOf (v : View) (id : Nat) (property : String) : String :=
         CssValues.recombine row fun l => computedLonghand v depthBound id l
       else computedLonghand v depthBound id p
   -- MathML hook: `display: contents` computes to `none` on a MathML element (MathML Core §4.1).
-  if p == "display" && answer == "contents" && (v.dom.get id).ns == some DOM.mathmlNS then "none" else answer
+  if p == "display" && answer == "contents" && (v.dom.get id).ns == some DOM.mathmlNS then "none"
+  -- An inner display of `math` computes to `flow` on an element that is not a MathML element.
+  else if p == "display" && (v.dom.get id).ns != some DOM.mathmlNS then Math.nonMathDisplay answer
+  else answer
 
 /-- The properties of the layout profile whose computed value is the specified value
 (keywords and colours): when the element itself declares one, the answer is the

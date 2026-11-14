@@ -315,6 +315,29 @@ def tableOut {α : Type} (s : Computed) (rows : Array (Nat × Array (Out α))) :
     top := top + a + d
   return out
 
+/-- §3.4.3.1: whether the children of an `mmultiscripts` (each marked by whether it is an
+`mprescripts`) are valid: a base that is not `mprescripts`, an even number of postscripts,
+then at most one `mprescripts` followed by an even number of prescripts. An invalid
+`mmultiscripts` is laid out as an `mrow` (§3.4.3.1, "the layout algorithm of mrow"). -/
+def multiscriptsValid (pres : List Bool) : Bool :=
+  match pres with
+  | [] => false
+  | true :: _ => false
+  | false :: rest =>
+    let post := rest.takeWhile (· == false)
+    match rest.drop post.length with
+    | [] => post.length % 2 == 0
+    | _ :: pre => post.length % 2 == 0 && !pre.contains true && pre.length % 2 == 0
+
+/-- Theorem (policy): with no children, or with `mprescripts` first, the element is invalid. -/
+theorem multiscriptsValid_nil : multiscriptsValid [] = false := rfl
+theorem multiscriptsValid_pre_base (r : List Bool) : multiscriptsValid (true :: r) = false := rfl
+
+#guard multiscriptsValid [false] && multiscriptsValid [false, false, false] &&
+  !multiscriptsValid [false, false] && multiscriptsValid [false, false, false, true, false, false] &&
+  multiscriptsValid [false, true] && !multiscriptsValid [false, true, false] &&
+  !multiscriptsValid [false, true, false, false, true] && !multiscriptsValid [true, false, false]
+
 /-- §3.4.3: `mmultiscripts`: the base, then pairs of a subscript and a superscript, then
 after an `mprescripts` the pairs that go before the base. `kids`: the laid-out children
 with whether each is an `mprescripts`. Each pair is a column of scripts on the row. -/
@@ -406,7 +429,8 @@ def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
       | "mroot", 2 => rootOut id s kids[0]! kids[1]!
       | "msqrt", _ => radicalOut id s (row kids rtl)
       | "mpadded", _ => paddedOut n s (row kids rtl)
-      | "mmultiscripts", _ => multiscriptsOut s (kids.zip pres)
+      | "mmultiscripts", _ =>
+        if multiscriptsValid pres.toList then multiscriptsOut s (kids.zip pres) else row kids rtl
       | _, _ => row kids rtl
     return wrap id (if name == "mtd" then cellStyle s else s) content
 
@@ -414,5 +438,6 @@ def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
 
 #print axioms sized_min
 #print axioms sized_auto
+#print axioms multiscriptsValid_pre_base
 
 end L4Factoidal.Rendering.Math

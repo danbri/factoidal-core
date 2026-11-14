@@ -325,6 +325,26 @@ def profileValue (name property value : String) (parentFontSize : Float) : Optio
   else if property == "padding" || property == "padding-inline" then none
   else some value
 
+/-- The computed `display` of an element that is not a MathML element: an inner display
+type `math` computes to `flow` there (CSS Display 4 §2.2, MathML Core §3.1.1), so `math`
+and `inline math` are `inline`, `block math` is `block`. -/
+def nonMathDisplay (s : String) : String :=
+  if s == "math" then "inline" else if s == "block math" then "block" else s
+
+/-- Theorem (idempotence): mapping a computed display twice is mapping it once. -/
+theorem nonMathDisplay_idem (s : String) : nonMathDisplay (nonMathDisplay s) = nonMathDisplay s := by
+  unfold nonMathDisplay
+  by_cases h1 : s = "math" <;> by_cases h2 : s = "block math" <;> simp_all
+
+/-- Theorem (policy): a non-MathML element never answers an inner display of `math`. -/
+theorem nonMathDisplay_no_math (s : String) :
+    nonMathDisplay s ≠ "math" ∧ nonMathDisplay s ≠ "block math" := by
+  unfold nonMathDisplay
+  by_cases h1 : s = "math" <;> by_cases h2 : s = "block math" <;> simp_all
+
+#guard nonMathDisplay "math" == "inline" && nonMathDisplay "block math" == "block" &&
+  nonMathDisplay "flex" == "flex" && nonMathDisplay "inline" == "inline"
+
 /-- 0.71 to the power `n` (the script scale of a font with no MATH table), `n` at most 64. -/
 def scalePower (n : Nat) : Float := (List.range (min n 64)).foldl (fun f _ => f * 0.71) 1
 
