@@ -4,6 +4,7 @@ import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
 import L4Factoidal.Rendering.FlexStyle
+import L4Factoidal.DOM.Selectors
 import Std.Data.TreeMap
 import Std.Data.HashMap
 
@@ -189,7 +190,15 @@ structure Selector where
   /-- `::slotted(compound)` after the rightmost compound (CSS Scoping 1 §3.2.2): the
   selector matches an element assigned to a slot that `parts` matches. -/
   slotted : Option Compound := none
-  deriving Repr
+  /-- A selector beyond compounds and descendant combinators (child and sibling
+  combinators, attribute selectors, `:not()`, `:nth-child()` and the rest of Selectors 4
+  that `DOM.Selectors` reads): the whole selector, matched by `DOM.Selectors.matchComplex`.
+  `parts` then holds one compound with the id, classes and type of the selector's rightmost
+  compound: a necessary condition, which puts the rule in a bucket. -/
+  complex : Option DOM.Selectors.Complex := none
+instance : Repr Selector := ⟨fun s _ =>
+  "{ parts := " ++ repr s.parts ++ ", specificity := " ++ repr s.specificity ++ ", slotted := " ++ repr s.slotted ++
+    (if s.complex.isSome then ", complex" else "") ++ " }"⟩
 /-- A selector that names `:visited` anywhere. Such a rule sets only colours. -/
 def Selector.visitedDependent (sel : Selector) : Bool :=
   sel.parts.any (·.pseudo.contains .visited) || (sel.slotted.any (·.pseudo.contains .visited))
@@ -306,7 +315,58 @@ private def compound (s : String) : Except String Compound := do
 private def compoundSpecificity (n : Nat × Nat × Nat) (p : Compound) : Nat × Nat × Nat :=
   (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length + p.pseudo.length + (if p.host then 1 else 0),
     n.2.2 + (if p.tag.isSome then 1 else 0))
-private def selector (s : String) : Except String Selector := do
+/-- The specificity of a selector of `DOM.Selectors` (Selectors 4 §17): ids; classes,
+attributes and pseudo-classes; types and pseudo-elements. `:is()`, `:not()` and the `of`
+list of `:nth-child()` count as their most specific argument. The recursion is on the
+nesting of the selector (at most `DOM.Selectors.maxNesting`). -/
+def complexSpecificity : Nat → DOM.Selectors.Complex → Nat × Nat × Nat
+  | 0, _ => (0, 0, 0)
+  | fuel + 1, .mk parts =>
+    let add := fun (a b : Nat × Nat × Nat) => (a.1 + b.1, a.2.1 + b.2.1, a.2.2 + b.2.2)
+    let most := fun (l : List DOM.Selectors.Complex) =>
+      (l.map (complexSpecificity fuel)).foldl (fun m x =>
+        if m.1 < x.1 || (m.1 == x.1 && (m.2.1 < x.2.1 || (m.2.1 == x.2.1 && m.2.2 < x.2.2))) then x else m) (0, 0, 0)
+    parts.foldl (fun acc (_, simples) =>
+      simples.foldl (fun acc simple => add acc (match simple with
+        | .type _ (some _) => (0, 0, 1)
+        | .type _ none => (0, 0, 0)
+        | .id _ => (1, 0, 0)
+        | .cls _ => (0, 1, 0)
+        | .attr _ _ _ _ _ _ => (0, 1, 0)
+        | .pseudo _ => (0, 1, 0)
+        | .lang _ => (0, 1, 0)
+        | .nth _ _ _ of => add (0, 1, 0) (most (of.getD []))
+        | .not l => most l
+        | .is l => most l
+        | .never => (0, 0, 1))) acc) (0, 0, 0)
+
+/-- The id, classes and type that the rightmost compound of a selector of `DOM.Selectors`
+names: an element the selector matches has them (`DOM.Selectors.matchSimple`: the same
+attribute, the same white space split, and a lower-case type name is the local name of an
+HTML or other element alike). -/
+def complexPrefilter : DOM.Selectors.Complex → Compound
+  | .mk parts =>
+    match parts.getLast? with
+    | none => {}
+    | some (_, simples) =>
+      { id := simples.findSome? fun simple => match simple with
+          | .id v => some v
+          | _ => none
+        classes := simples.filterMap fun simple => match simple with
+          | .cls v => some v
+          | _ => none
+        tag := simples.findSome? fun simple => match simple with
+          | .type .default (some n) => if n == n.toLower then some n else none
+          | _ => none }
+
+/-- A selector that the compound grammar below does not read, through `DOM.Selectors`. -/
+private def complexSelector (s : String) : Except String Selector :=
+  match DOM.Selectors.parse s with
+  | some [c] =>
+    .ok { parts := [complexPrefilter c], specificity := complexSpecificity DOM.Selectors.maxNesting c, complex := some c }
+  | _ => .error s!"unsupported CSS selector: {s}"
+
+private def compoundSelector (s : String) : Except String Selector := do
   let ws := words (trim s)
   -- `::slotted(compound)` ends the last compound (CSS Scoping 1 §3.2.2).
   let (ws, slotted) ← match ws.getLast? with
@@ -324,6 +384,13 @@ private def selector (s : String) : Except String Selector := do
   -- `::slotted` is a pseudo-element: one more in the last count.
   let specificity := if slotted.isSome then (specificity.1, specificity.2.1, specificity.2.2 + 1) else specificity
   return {parts := parts.reverse, specificity, slotted}
+
+/-- One selector of a rule: the compound grammar of this profile (which has the dynamic
+pseudo-classes and the shadow tree selectors), else all of what `DOM.Selectors` reads. -/
+private def selector (s : String) : Except String Selector :=
+  match compoundSelector s with
+  | .ok sel => .ok sel
+  | .error _ => complexSelector s
 
 private def expandEdges (key value : String) (important : Bool) : Except String (List Declaration) := do
   let values ← match words value with
@@ -431,7 +498,7 @@ def parseInBlocks (env : MediaQuery.Env) (source : String) : Except String (List
       else []
     for (inner,content) in blocks do
       if !(trim inner).startsWith "@" then
-        if let .ok selectors := (inner.splitOn ",").mapM selector then
+        if let .ok selectors := (splitTopCommas inner).mapM selector then
           out := {selectors, declarations := ← declarations content} :: out
   return out.reverse
 
@@ -448,7 +515,7 @@ def parseRaw (source : String) : Except String (List (Option String × Rule)) :=
       else []
     for (query,inner,content) in blocks do
       if !(trim inner).startsWith "@" then
-        if let .ok selectors := (inner.splitOn ",").mapM selector then
+        if let .ok selectors := (splitTopCommas inner).mapM selector then
           out := (query,{selectors, declarations := ← declarations content}) :: out
   return out.reverse
 
@@ -536,11 +603,22 @@ private def partsMatchK (keys : Nat → ElemKey) (dom : Dom) (state : ElementSta
     | none => false
     | some id => partsMatchK keys dom state rest (dom.get id).parent
 
-/-- `selectorMatches` with the element keys `keys` (`readKeys dom` or a table of them). -/
-def selectorMatchesK (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
+/-- The compounds of a selector on element `id` (keys from `keys`): the whole selector of
+the compound grammar, the necessary condition of a selector with `complex`. -/
+def selectorPartsMatchK (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
   match sel.parts with
   | [] => false
   | head::rest => sel.slotted.isNone && compoundMatchesK keys dom state id head && partsMatchK keys dom state rest (dom.get id).parent
+
+/-- The rest of a selector with `complex`: `DOM.Selectors` matches it on the tree. -/
+def complexMatches (dom : Dom) (id : Nat) (sel : Selector) : Bool :=
+  match sel.complex with
+  | none => true
+  | some c => DOM.Selectors.matchComplex dom none DOM.Selectors.matchFuel id c
+
+/-- `selectorMatches` with the element keys `keys` (`readKeys dom` or a table of them). -/
+def selectorMatchesK (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
+  selectorPartsMatchK keys dom id sel state && complexMatches dom id sel
 
 def selectorMatches (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
   selectorMatchesK (readKeys dom) dom id sel state
@@ -621,8 +699,8 @@ private def partsInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementS
     | none => false
     | some id => partsInK keys ts state scope rest (upIn ts scope id)
 
-/-- `sel`, of a rule of tree `scope`, matches element `id` (keys from `keys`). -/
-def selectorMatchesInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (sel : Selector) : Bool :=
+/-- The compounds of `sel`, of a rule of tree `scope`, on element `id` (keys from `keys`). -/
+def selectorPartsMatchInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (sel : Selector) : Bool :=
   match sel.parts with
   | [] => false
   | head::rest =>
@@ -636,6 +714,10 @@ def selectorMatchesInK (keys : Nat → ElemKey) (ts : TreeScope) (state : Elemen
       | some sl => ts.scopeOf sl == scope && compoundInK keys ts state scope sl head &&
           partsInK keys ts state scope rest (upIn ts scope sl)
       | none => false
+
+/-- `sel`, of a rule of tree `scope`, matches element `id` (keys from `keys`). -/
+def selectorMatchesInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (sel : Selector) : Bool :=
+  selectorPartsMatchInK keys ts state scope id sel && complexMatches ts.tree id sel
 
 /-- `selectorMatchesInK` with the arena's keys: the reference. -/
 def selectorMatchesIn (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (sel : Selector) : Bool :=
@@ -1116,11 +1198,11 @@ private theorem compoundFieldsK_admits (keys : Nat → ElemKey) (dom : Dom) (id 
         simpa [Compound.fieldBucket, hi, hk, ht, Bucket.admits] using htag
       | none => simp [Compound.fieldBucket, hi, hk, ht, Bucket.admits]
 
-/-- A selector that matches an element has the element in its bucket. -/
-theorem selectorMatchesK_admits (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector)
-    (state : ElementState) (h : selectorMatchesK keys dom id sel state = true) :
+/-- A selector whose compounds match an element has the element in its bucket. -/
+theorem selectorPartsMatchK_admits (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector)
+    (state : ElementState) (h : selectorPartsMatchK keys dom id sel state = true) :
     sel.bucket.admits (keys id) (dom.get id).lname = true := by
-  unfold selectorMatchesK at h
+  unfold selectorPartsMatchK at h
   cases hp : sel.parts with
   | nil => simp [hp] at h
   | cons c rest =>
@@ -1140,9 +1222,9 @@ theorem selectorMatchesK_admits (keys : Nat → ElemKey) (dom : Dom) (id : Nat) 
 (`ScopedIndex`) looks: under `::slotted(c)`, in the bucket of `c` with a slot of that tree
 assigned; under a `:host` compound, as that tree's host; otherwise, in the bucket of the
 rightmost compound and in that tree. -/
-theorem selectorMatchesInK_admits (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState)
+theorem selectorPartsMatchInK_admits (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState)
     (scope : Option Nat) (id : Nat) (sel : Selector)
-    (h : selectorMatchesInK keys ts state scope id sel = true) :
+    (h : selectorPartsMatchInK keys ts state scope id sel = true) :
     match sel.slotted, sel.parts with
     | some c, _ => c.fieldBucket.admits (keys id) (ts.tree.get id).lname = true ∧
         ∃ sl, ts.tree.findSlot id = some sl ∧ ts.scopeOf sl = scope
@@ -1150,7 +1232,7 @@ theorem selectorMatchesInK_admits (keys : Nat → ElemKey) (ts : TreeScope) (sta
       if c.host then hostOfScope ts scope = some id
       else c.fieldBucket.admits (keys id) (ts.tree.get id).lname = true ∧ ts.scopeOf id = scope
     | none, [] => False := by
-  unfold selectorMatchesInK at h
+  unfold selectorPartsMatchInK at h
   cases hp : sel.parts with
   | nil => simp [hp] at h
   | cons c rest =>
@@ -1185,6 +1267,30 @@ theorem selectorMatchesInK_admits (keys : Nat → ElemKey) (ts : TreeScope) (sta
         rw [hfs] at hslot
         simp only [Bool.and_eq_true, beq_iff_eq] at hslot
         exact ⟨sl, rfl, hslot.1.1⟩
+
+/-- A selector that matches an element has the element in its bucket: a selector with
+`complex` matches only where its compounds do. -/
+theorem selectorMatchesK_admits (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector)
+    (state : ElementState) (h : selectorMatchesK keys dom id sel state = true) :
+    sel.bucket.admits (keys id) (dom.get id).lname = true := by
+  unfold selectorMatchesK at h
+  simp only [Bool.and_eq_true] at h
+  exact selectorPartsMatchK_admits keys dom id sel state h.1
+
+/-- The scoped form of `selectorMatchesK_admits`. -/
+theorem selectorMatchesInK_admits (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState)
+    (scope : Option Nat) (id : Nat) (sel : Selector)
+    (h : selectorMatchesInK keys ts state scope id sel = true) :
+    match sel.slotted, sel.parts with
+    | some c, _ => c.fieldBucket.admits (keys id) (ts.tree.get id).lname = true ∧
+        ∃ sl, ts.tree.findSlot id = some sl ∧ ts.scopeOf sl = scope
+    | none, c :: _ =>
+      if c.host then hostOfScope ts scope = some id
+      else c.fieldBucket.admits (keys id) (ts.tree.get id).lname = true ∧ ts.scopeOf id = scope
+    | none, [] => False := by
+  unfold selectorMatchesInK at h
+  simp only [Bool.and_eq_true] at h
+  exact selectorPartsMatchInK_admits keys ts state scope id sel h.1
 
 /-- The rules in buckets: `entries` is `ruleEntries`, and each bucket lists the entries
 (by index, ascending, each once) with a selector in that bucket. -/
