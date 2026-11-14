@@ -128,6 +128,17 @@ def attrText (body : List CV) : String :=
 
 def selectorFunctions : List String := ["is", "not", "where", "has", "matches", "-webkit-any", "host", "host-context", "slotted"]
 
+/-- The name of an `@keyframes` rule (CSS Animations 1 §3): one `<custom-ident>` (not `none`,
+`default` or a CSS-wide keyword) or a string that is not empty. -/
+def keyframesName (prelude : String) : Bool :=
+  match stripWs (CV.parse prelude) with
+  | [.tok (.ident n)] => !["none", "default", "initial", "inherit", "unset", "revert", "revert-layer"].contains (lower n)
+  | [.tok (.str t)] => t != ""
+  | _ => false
+
+#guard ["foo", "--foo", "\"a b\"", "None2"].all keyframesName
+#guard !(["none", "DEFAULT", "inherit", "revert-layer", "12", "-12", "12foo", "foo.bar", "one two", "one, two", "\"\""].any keyframesName)
+
 /-- The tokens of a selector without a universal selector that is the whole compound before
 a pseudo-element (`*::before` is written `::before`, CSSOM §6.7.2: a lone universal selector
 with no namespace is left out when the compound has more). `boundary`: the previous token
@@ -269,7 +280,7 @@ def ruleOf : Nat → RawRule → Option Rule
             let text := if decls.isEmpty then head ++ " { }" else head ++ " { " ++ " ".intercalate decls ++ " }"
             some ⟨kind, type, after, body, text⟩
           | none =>
-            if name == "keyframes" || name == "-webkit-keyframes" then
+            if (name == "keyframes" || name == "-webkit-keyframes") && keyframesName after then
               let frames := (rawRules body).map fun r => preludeText r.prelude ++ " { " ++ (Block.parse (r.body.getD "")).text ++ " }"
               let text := "@keyframes " ++ after ++ " { " ++ (if frames.isEmpty then "" else "\n  " ++ "\n  ".intercalate frames ++ "\n") ++ "}"
               some ⟨"Keyframes", 7, after, body, text⟩
