@@ -50,6 +50,28 @@ structure Pending where
   fy : Float := 0
   deriving Repr
 
+/-- The grid of a grid container, kept in its fragment until the container places its
+absolutely positioned descendants (CSS Grid 2 §9.1: their containing block is a grid
+area). `x`, `y`, `width`, `height`: the content box (px); the starts and sizes of the
+tracks of the implicit grid in layout units from the content box's start edge (for a
+right-to-left container, the right edge); the line names of the explicit grid and the
+implicit tracks before it. -/
+structure GridFrame where
+  x : Float
+  y : Float
+  width : Float
+  height : Float
+  rtl : Bool := false
+  colNames : Array (List String) := #[]
+  rowNames : Array (List String) := #[]
+  colLead : Nat := 0
+  rowLead : Nat := 0
+  colStarts : Array Int := #[]
+  rowStarts : Array Int := #[]
+  colSizes : Array Nat := #[]
+  rowSizes : Array Nat := #[]
+  deriving Repr
+
 /-- A laid-out fragment. For a box, `boxes[0]` is its own border box and `height` is the
 height of its margin box. `pending` are the absolutely positioned descendants that the
 nearest positioned ancestor (or the root) still has to lay out. -/
@@ -65,6 +87,9 @@ structure Result where
   /-- The floats of the block formatting context after this fragment (CSS 2.1 §9.5): what
   the flow that follows must still avoid. Empty for a box that contains its floats. -/
   floats : Array Floats.Box := #[]
+  /-- The grid of the grid container whose contents this is (`GridFrame`); none
+  elsewhere. -/
+  grid : Option GridFrame := none
   deriving Repr
 instance : Inhabited Result := ⟨{}⟩
 
@@ -76,7 +101,8 @@ def Result.shift (dx dy : Float) (r : Result) : Result :=
           boxes := r.boxes.map fun b => {b with x := b.x+dx, y := b.y+dy},
           runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}},
           pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy},
-          floats := r.floats.map fun f => {f with x := f.x+LU.ofPx dx, y := f.y+LU.ofPx dy}}
+          floats := r.floats.map fun f => {f with x := f.x+LU.ofPx dx, y := f.y+LU.ofPx dy},
+          grid := r.grid.map fun g => {g with x := g.x+dx, y := g.y+dy}}
 
 /-- Two fragments in one: the paint of `b` over that of `a`. The height is `a`'s. -/
 def Result.over (a b : Result) : Result :=

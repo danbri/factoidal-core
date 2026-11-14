@@ -139,4 +139,20 @@ private def tracks (html extra id : String) : Option (String × String) := do
 #guard box "<div id=c><div id=p>PP</div><div id=a>AA</div><div id=b>B</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px} #p{position:absolute;top:3px;left:4px}" "b" == some (50,0,100,7)
 #guard box "<div id=c><div id=p>PP</div><div id=a>AA</div><div id=b>B</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px} #p{position:absolute;top:3px;left:4px}" "p" == some (4,3,12,7)
 
+
+-- The containing block of an absolutely positioned box whose containing block is a grid
+-- container is the area between the lines it names (§9.1); an `auto` line is the padding
+-- edge. The same for a child (`p`) and for a box inside an item (`q`).
+#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p,#q{position:absolute;left:0;top:0;right:0;bottom:0} #p{grid-column:2 / 3;grid-row:2 / 3}" "p" == some (55,15,100,20)
+#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p,#q{position:absolute;left:0;top:0;right:0;bottom:0} #p{grid-area:1 / 1 / 3 / 3}" "p" == some (5,5,150,30)
+#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p,#q{position:absolute;left:0;top:0;right:0;bottom:0} #p{grid-column:auto / 2;grid-row:2 / auto}" "p" == some (0,15,55,25)
+#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p,#q{position:absolute;left:0;top:0;right:0;bottom:0}" "p" == some (0,0,200,40)
+#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p,#q{position:absolute;left:0;top:0;right:0;bottom:0} #q{grid-column:2 / 3;grid-row:1 / 2}" "q" == some (55,5,100,10)
+-- one line given: the other side is `auto`, the padding edge (not a span of one track)
+#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p,#q{position:absolute;left:0;top:0;right:0;bottom:0} #p{grid-column:2;grid-row:2}" "p" == some (55,15,145,25)
+-- a line the grid does not have is `auto`
+#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p,#q{position:absolute;left:0;top:0;right:0;bottom:0} #q{grid-column:7 / 9}" "q" == some (0,0,200,40)
+-- with a gap the area ends where its last track does
+#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p,#q{position:absolute;left:0;top:0;right:0;bottom:0} #c{column-gap:10px} #p{grid-column:1 / 3}" "p" == some (5,0,160,40)
+
 end L4Factoidal.Rendering.GridLayoutTests

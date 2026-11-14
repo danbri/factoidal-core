@@ -1,6 +1,7 @@
 import L4Factoidal.Rendering.Fragment
 import L4Factoidal.Rendering.FlexLayout
 import L4Factoidal.Rendering.Grid.Align
+import L4Factoidal.Rendering.Grid.Abspos
 
 /-! Grid layout (CSS Grid Layout 2) of a container's items: this module reads the
 computed values (`Computed.grid`, `Computed.align`), asks the pure modules under
@@ -78,6 +79,9 @@ structure GridPlan where
   colLead : Nat
   colAxis : Grid.Axis
   rowAxis : Grid.Axis
+  /-- The names of the lines of the explicit grid, those of the areas included. -/
+  colNames : Array (List String) := #[]
+  rowNames : Array (List String) := #[]
 
 /-- §7 and §8: the explicit grid of `s` for a content box of `availW` by `availH` units
 (`none`: indefinite), and the areas of `items` (already in order-modified document
@@ -103,7 +107,7 @@ def gridPlan (kids : Children) (s : Computed) (items : Array Item) (availW avail
   let shifted := Grid.shift raw
   let p := Grid.place g.flowColumn g.dense (shifted.2.1 + explicitRows) (shifted.2.2 + explicitCols) shifted.1
   {areas := p.areas, rows := p.rows, cols := p.cols, rowLead := shifted.2.1, colLead := shifted.2.2,
-   colAxis, rowAxis}
+   colAxis, rowAxis, colNames, rowNames}
 
 /-- The sizing function of each of the `count` tracks of an axis of the implicit grid, in
 a container of `avail` units in that axis. -/
@@ -329,7 +333,11 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
         else kids.layout item x y {available := areaW, width := some width, height := some height}
       else pure (kids.frame item x y width height (r.shift 0 (y-box.y)))
     out := out.over done
-  return {out with height := contentH}
+  return {out with height := contentH,
+                   grid := some {x := box.x, y := box.y, width := box.width, height := contentH, rtl,
+                                 colNames := plan.colNames, rowNames := plan.rowNames,
+                                 colLead := plan.colLead, rowLead := plan.rowLead,
+                                 colStarts, rowStarts, colSizes, rowSizes}}
 
 /-- The min-content and max-content widths of a grid container's content box (§12.1):
 the columns sized under a min-content and under a max-content constraint, with their
@@ -348,6 +356,23 @@ def gridIntrinsic (kids : Children) (s : Computed) (items0 : Array Item) : Excep
   let lo := gridSizes colFns collapsed colGap colItems .minContent false
   let hi := gridSizes colFns collapsed colGap colItems .maxContent false
   return (gridPx (gridExtent lo collapsed colGap),gridPx (gridExtent hi collapsed colGap))
+
+/-- §9.1: the containing block (x, y, width, height) that a grid container whose grid is
+`f` and whose padding box is `(cx,cy,cw,ch)` gives an absolutely positioned box with the
+grid values `g`: the area between the lines its grid-placement properties name, a padding
+edge for each `auto` line. -/
+def gridAbsBlock (f : GridFrame) (cx cy cw ch : Float) (g : GridStyle) : Float × Float × Float × Float :=
+  let cols := Grid.absLines f.colNames f.colLead f.colSizes.size g.columnStart g.columnEnd
+  let rows := Grid.absLines f.rowNames f.rowLead f.rowSizes.size g.rowStart g.rowEnd
+  -- the padding edges from the content box's start edges, in units
+  let padLeft := LU.ofPx (f.x-cx)
+  let padRight := LU.ofPx (cx+cw-(f.x+f.width))
+  let (padStart, padEnd) := if f.rtl then (padRight, padLeft) else (padLeft, padRight)
+  let w := LU.ofPx f.width
+  let (s, e) := Grid.absSpan f.colStarts f.colSizes (-padStart) (w+padEnd) cols
+  let (t, b) := Grid.absSpan f.rowStarts f.rowSizes (-(LU.ofPx (f.y-cy))) (LU.ofPx (cy+ch-f.y)) rows
+  let x := if f.rtl then f.x+f.width-LU.toPx e else f.x+LU.toPx s
+  (x, f.y+LU.toPx t, max 0 (LU.toPx (e-s)), max 0 (LU.toPx (b-t)))
 
 /-- The absolutely positioned children of a grid container are not grid items (CSS Grid 2
 §9.2). Their static position is that of a box which is the only item of an area whose edges

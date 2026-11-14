@@ -1589,7 +1589,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     -- `(cx,cy,cw,ch)`: those with a negative `z-index` under the content, the others over it,
     -- each group in `z-index` order, then tree order (CSS 2.1 Appendix E, in part). A `fixed`
     -- box stays pending until the root, whose containing block is the viewport.
-    let place (content : Result) (cx cy cw ch : Float) (root : Bool) : Except String Result := do
+    -- `area`: a containing block of its own for a pending box (a grid area, CSS Grid 2 §9.1).
+    let place (content : Result) (cx cy cw ch : Float) (root : Bool)
+        (area : Pending → Option (Float × Float × Float × Float)) : Except String Result := do
       if content.pending.isEmpty then return content
       let keyed := content.pending.map fun p => (((styles[p.id]!).pos.zIndex.getD 0 : Int),p)
       -- a stable sort: equal `z-index` keeps tree order
@@ -1601,7 +1603,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       for (z,p) in ordered do
         if (styles[p.id]!).pos.position == .fixed && !root then kept := kept.push p
         else
-          let r ← absolute p cx cy cw ch
+          let r ← match area p with
+            | some (ax,ay,aw,ah) => absolute p ax ay aw ah
+            | none => absolute p cx cy cw ch
           if z < 0 then below := below.over r else above := above.over r
       return {content with nodes := below.nodes ++ content.nodes ++ above.nodes,
                            boxes := content.boxes ++ below.boxes ++ above.boxes,
@@ -1747,9 +1751,11 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- A positioned box is the containing block of its absolutely positioned descendants:
       -- its padding box (CSS 2.1 §10.1).
       let content ← if s.pos.isPositioned then
-          place content (outerX+border.left) (outerY+border.top) (width+padding.left+padding.right)
-            (height+padding.top+padding.bottom) false
+          let (cx,cy,cw,ch) := (outerX+border.left,outerY+border.top,width+padding.left+padding.right,
+            height+padding.top+padding.bottom)
+          place content cx cy cw ch false fun p => content.grid.map fun f => gridAbsBlock f cx cy cw ch (styles[p.id]!).grid
         else pure content
+      let content := {content with grid := none}
       let framed := frameBox id s outerX outerY (width+edgesX) (height+edgesY) content
       let framed := {framed with height := marginTop+height+edgesY+marginBottom, marginBottom}
       -- CSS 2.1 §9.4.3: a relatively positioned box is moved from where it was laid out; the
@@ -1778,7 +1784,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     | .box id => box id none none false
     | .sized id width height => box id (some width) height false
     | .inner id width => box id (some width) none true
-    | .positioned pending cx cy cw ch => place {pending} cx cy cw ch true
+    | .positioned pending cx cy cw ch => place {pending} cx cy cw ch true fun _ => none
 
 /-- An element's block box: `layoutTask` of `.box id`. -/
 def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
