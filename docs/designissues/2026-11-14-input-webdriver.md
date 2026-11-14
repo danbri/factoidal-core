@@ -186,6 +186,7 @@ cookies, frames, screenshots, BiDi. The full run does not pass the flag yet.
 
 | Step | Commit | Run | Result |
 |---|---|---|---|
+| Host keys, text controls, touch events, pointer capture, endpoint actions, on main | `a7c2ad45d` | branch check 43578325009 | +2,285 on 3,778 names against the `d799500c7` full run: pointerevents 432 -> 1,438 of 2,662; touch-events 48 -> 720 of 992; uievents/mouse 50 -> 152; uievents 134 -> 157; pointerevents/compat 4 -> 28; uievents/constructors 10 -> 21; uievents/order-of-events 1 -> 12. Five tests worse (legend-display -16, module charset-01 -6, css-sizing stretch -2, two -1), none on the input path |
 | WebDriver actions, trusted input, Gate, Protocol, on main | `fbde2abf1` | branch check 43574374683 | +642 on 3,946 names against the `d799500c7` full run (part is main's own later work): pointerevents 432 -> 535, uievents/mouse 50 -> 139, uievents 134 -> 150, pointerevents/compat 4 -> 23, dom/events 642 -> 659, uievents/keyboard 2 -> 15, uievents/order-of-events 1 -> 10. One test worse (module charset-01, -6, not input) |
 | Key actions (editing's work), on main | `2598f05e7` | branch check 43559453757 | +13,980 on /editing/, /input-events/, /selection/, /uievents/, sample:150 against main `19fb349c1`: editing/other 2,203 -> 12,014 of 16,742; input-events 303 -> 2,545 of 3,366; editing/plaintext-only 593 -> 1,526; editing/whitespaces 424 -> 1,161. 9 tests worse, -19 subtests |
 
@@ -217,6 +218,8 @@ Proved (Lean, no `sorry`, no axiom):
 - TextKeys: `textKeyCommandIn_single`, `textKeyCommand_text`, `textKeyCommand_printable`,
   `textKeyCommand_modified`.
 - Touch: `start_mem`, `start_unique`, `finish_removes`, `move_target`, `targetTouches_sub`.
+- Capture: `lookup_put_same`, `set_has`, `release_has`, `process_current`, `process_same`,
+  `process_pending`, `process_again`, `implicit_none`, `target_free`, `target_captured`.
 - Window: `handles_one`, `switch_own`, `switch_other`, `prompt_none`, `setRect_bad`, `setRect_keeps`.
 - Page: `step_navigate_bad`, `finishOne_empty`, `finish_error`, `toWire_unknown`, `Doc.navigate_count`.
 - Risk: starting an endpoint needs `Risk.Accepted .webdriverEndpoint` (a type, so code without
