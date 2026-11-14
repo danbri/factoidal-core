@@ -24,6 +24,7 @@ converts the value as WebIDL says, then `set` decides the content attribute's ne
 import L4Factoidal.DOM.Arena
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.Rendering.FloatFormat
+import L4Factoidal.HTML.Autofill
 
 namespace L4Factoidal.DOM.Reflect
 open L4Factoidal.DOM
@@ -70,6 +71,9 @@ inductive Kind where
   /-- `draggable` (HTML §6.11.7): a boolean whose content attribute is the keyword "true"
   or "false", and whose default depends on the element. -/
   | draggable
+  /-- `autocomplete` of `input`, `select` and `textarea` (HTML §4.10.18.7.1): the
+  IDL-exposed autofill value of the autofill detail tokens (`HTML.Autofill.idlValue`). -/
+  | autofill
   deriving Repr, Inhabited
 
 structure Row where
@@ -84,7 +88,7 @@ for the IDL name in ASCII lower case), type and its arguments:
 `s` string, `sn` string with [LegacyNullToEmptyString], `s?` nullable string, `u` URL, `ud` URL defaulting to the
 document's URL, `b` boolean, `l D` long, `ll` limited long, `ul D` unsigned long,
 `pl D` limited to positive, `pf D` limited to positive with fallback, `cl D MIN MAX`
-clamped, `d D` double, `dl D` limited double, `ti` tabIndex, `dg` draggable, `t` DOMTokenList,
+clamped, `d D` double, `dl D` limited double, `ti` tabIndex, `dg` draggable, `af` autofill, `t` DOMTokenList,
 `e MISSING INVALID KEYWORDS [?]` enumerated (`-` no default; keywords comma-separated, `k=c`
 for a keyword whose canonical keyword is `c`, an empty keyword as nothing between commas;
 `?` nullable). -/
@@ -197,7 +201,7 @@ HTMLCanvasElement width . ul 300
 HTMLCanvasElement height . ul 150
 HTMLInputElement colorSpace . e limited-srgb limited-srgb limited-srgb,display-p3
 HTMLInputElement alpha . b
-HTMLInputElement,HTMLSelectElement,HTMLTextAreaElement autocomplete . s
+HTMLInputElement,HTMLSelectElement,HTMLTextAreaElement autocomplete . af
 HTMLOptionElement value . ot
 HTMLOptionElement label . ot
 HTMLMeterElement value . m 0
@@ -378,7 +382,7 @@ def parseKind : List String → Option Kind
   | ["s"] => some (.str false) | ["sn"] => some (.str true) | ["s?"] => some .nstr
   | ["u"] => some (.url false) | ["ud"] => some (.url true)
   | ["b"] => some .bool | ["ti"] => some .tabIndex | ["t"] => some .tokens
-  | ["ot"] => some .optionText | ["nc"] => some .nonce | ["dg"] => some .draggable
+  | ["ot"] => some .optionText | ["nc"] => some .nonce | ["dg"] => some .draggable | ["af"] => some .autofill
   | ["m", w] => w.toNat?.map .meter
   | ["ll"] => some (.limitedLong (-1))
   | ["l", d] => d.toInt?.map .long
@@ -579,6 +583,8 @@ def get (d : Dom) (el : NodeId) (r : Row) (base : String) : String :=
       | none => s
   | .bool => if v.isSome then "1" else "0"
   | .draggable => if draggableOf (dragState v) (draggableDefault d el) then "1" else "0"
+  -- an `input` in the Hidden state wears the autofill anchor mantle
+  | .autofill => HTML.Autofill.idlValue v ((d.get el).lname == "input" && (attr d el "type").map asciiLower == some "hidden")
   | .long dflt => toString (match v.bind parseInteger with
       | some k => if k ≥ -2147483648 && k ≤ 2147483647 then k else dflt
       | none => dflt)
@@ -614,7 +620,7 @@ null): "s" and the content attribute's new value, "r" to remove it, "" to leave 
 error (-14 IndexSizeError). -/
 def set (r : Row) (value : String) : Except Int String :=
   match r.kind with
-  | .str _ | .url _ | .tokens | .double _ false | .optionText | .meter _ | .nonce => .ok ("s" ++ value)
+  | .str _ | .url _ | .tokens | .double _ false | .optionText | .meter _ | .nonce | .autofill => .ok ("s" ++ value)
   | .bool => .ok (if value == "1" then "s" else "r")
   | .draggable => .ok (if value == "1" then "strue" else "sfalse")
   | .enum _ _ _ nullable => .ok (if nullable && value == "\x01" then "r" else "s" ++ value)
@@ -654,7 +660,7 @@ def rowsOf (iface : String) : String := Id.run do
       | .limitedLong _ => "I" | .unsigned _ => "U" | .positive _ false => "P" | .positive _ true => "F"
       | .clamped .. => "C" | .double _ false => "d" | .double _ true => "D"
       | .enum _ _ _ false => "e" | .enum _ _ _ true => "E" | .nstr => "E" | .tokens => "t"
-      | .optionText => "s" | .meter _ => "d" | .nonce => "N" | .draggable => "b"
+      | .optionText => "s" | .meter _ => "d" | .nonce => "N" | .draggable => "b" | .autofill => "s"
     out := out ++ s!"{i} {r.idl} {k} {r.content}\x00"
   return out
 
