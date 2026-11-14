@@ -17105,9 +17105,35 @@
     // a showing popover that leaves the document hides with no events (the popover removing
     // steps); one whose `popover` attribute changes state, or goes, hides with events (the
     // attribute change steps, HTML §6.12)
+    // "light dismiss open popovers" (HTML §6.12.6): a trusted pointerdown and pointerup whose
+    // topmost clicked auto popover is the same (none: outside every one) hide the auto
+    // popovers shown after it, with events.
+    let downPopover;
+    const topmostClicked = node => {
+      for (let x = node; x; x = x.parentNode ?? x.host ?? null)
+        if (x.nodeType === 1 && showing.has(nodeId(x)) && kindOf(x) !== 'manual') return x;
+      return null;
+    };
+    const lightDismiss = () => {
+      document.addEventListener('pointerdown', e => { if (e.isTrusted && showing.size) downPopover = topmostClicked(e.target); }, true);
+      document.addEventListener('pointerup', e => {
+        if (!e.isTrusted || !showing.size) return;
+        const up = topmostClicked(e.target), same = up === downPopover;
+        downPopover = undefined;
+        if (!same) return;
+        for (const k of [...showing].reverse()) {
+          if (!showing.has(k)) continue;
+          const o = wrap(k);
+          if (kindOf(o) === 'manual') continue;
+          if (up && (o === up || o.contains(up))) break;
+          hidePop(o, true, null);
+        }
+      }, true);
+    };
     const watch = () => {
       if (watching) return;
       watching = true;
+      lightDismiss();
       const sweep = () => { for (const k of [...showing]) { if (!showing.has(k)) continue; const o = wrap(k); if (!o.isConnected) hidePop(o, false, null); else if (kindOf(o) !== shownKind.get(k)) hidePop(o, true, null); } };
       for (const k of ['remove', 'replace', 'setText', 'setAttr', 'removeAttr']) {
         const f = n[k];
