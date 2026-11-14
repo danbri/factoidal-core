@@ -457,4 +457,26 @@ private def paints (html extra : String) : Option Nat :=
 -- link regions are still cut from the text of a link, one for each word and space
 #guard ((render "<div><a href=x>ab cd</a></div>" "a{padding:0 4px}").toOption.map (·.1.links.size)) == some 3
 
+
+-- Negative margins (CSS 2.1 §8.3; `MarginCollapse`). A negative top margin pulls a block
+-- up; beside a positive margin it takes its size off it; two negative margins give the
+-- more negative one.
+private def two := "<div id=a>AA</div><div id=b>BB</div>"
+#guard box two "#b{margin-top:-3px}" "b" == some (0,4,200,7)
+#guard box two "#a{margin-bottom:10px} #b{margin-top:-4px}" "b" == some (0,13,200,7)
+#guard box two "#a{margin-bottom:-2px} #b{margin-top:-5px}" "b" == some (0,2,200,7)
+#guard box two "#a{margin-bottom:-4px}" "b" == some (0,3,200,7)
+#guard box two "#a{margin-bottom:10px} #b{margin-top:4px}" "b" == some (0,17,200,7)
+-- sideways a block with negative margins is wider than its container (a grid row's gutters)
+#guard box "<div id=c><div id=k>K</div></div>" "#c{width:100px;margin-left:30px} #k{margin-left:-10px;margin-right:-20px}" "k" == some (20,0,130,7)
+#guard box "<div id=c><div id=k>K</div></div>" "#c{width:100px;margin-left:30px} #k{margin:0 -5px}" "k" == some (25,0,110,7)
+-- the first child's negative top margin adjoins its parent's: both move up
+#guard box "<div id=p>P</div><div id=o><div id=k>K</div></div>" "#k{margin-top:-4px}" "o" == some (0,3,200,7)
+#guard box "<div id=p>P</div><div id=o><div id=k>K</div></div>" "#k{margin-top:-4px}" "k" == some (0,3,200,7)
+-- on a line: text pulled back over what is before it, and the line does not wrap for it
+#guard box "<div id=d>123 <span id=s>1234 </span></div>" "#d{width:24px} #s{margin-left:-24px}" "d" == some (0,0,24,7)
+#guard at? "<div id=d>123 <span id=s>1234 </span></div>" "#d{width:24px} #s{margin-left:-24px}" "1234" == some (0,0)
+-- padding is never negative: the declaration is dropped
+#guard box "<div id=c><div id=k>K</div></div>" "#c{width:100px} #k{padding-left:-10px}" "k" == some (0,0,100,7)
+
 end L4Factoidal.Rendering.PositionLayoutTests
