@@ -321,5 +321,18 @@ WPT cases named in the commits.
 
 Open: the layout profile still has one border style and colour for the four sides, no
 alpha, no font weight; `random()`, `calc-size()`, infinity and NaN serialisation in
-`calc()`; container queries; `::highlight(name)` styles; the percentage insets of
-positioned boxes (they need the containing block's size from the layout).
+`calc()`; container query evaluation; `::highlight(name)` styles; the insets of an absolutely
+positioned box with both sides `auto` (its static position); prefixed namespaces in
+selectors (`@namespace x ...; [x|a]`).
+
+Later: the insets of positioned boxes in `getComputedStyle` read the layout. The view of
+computed styles gets the laid-out padding box of an element (`View.paddingBox`), asked only
+when an inset is a percentage or an `auto` opposite a length, so other reads do not lay the
+page out. `insetBase` finds the containing block (parent content box for relative and
+sticky; the nearest positioned or transformed ancestor's padding box for absolute, the
+nearest transformed one for fixed; else the viewport), walking up at most the document's
+size. `CSSContainerRule` has `conditions`, `containerName` and `containerQuery`, split in
+the engine (`CssSheet.containerConditions`), and `@container` rules whose prelude is no
+condition list are dropped. Bound theorems in this part: `substitute_zero`,
+`ifCondition_zero`, `pruneHas_plain` (the two stalls fixed), `containerConditions_length`,
+`insetPx_auto`.
