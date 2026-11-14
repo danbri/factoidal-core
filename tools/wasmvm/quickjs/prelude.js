@@ -1216,7 +1216,13 @@
   const customNames = new Map();
   const isCustomName = l => { if (l.indexOf('-') < 0) return false; let v = customNames.get(l); if (v === undefined) customNames.set(l, v = n.query(0, 181, l) === '1'); return v; };
   const htmlClasses = {};
-  const htmlClass = (name, tags) => { const c = ({ [name]: class extends HTMLElement {} })[name]; for (const t of tags) htmlClasses[t] = c; return c; };
+  // HTML §4.8.11: audio and video elements are media elements.
+  class HTMLMediaElement extends HTMLElement {}
+  const mediaGlobals = {};
+  const htmlClass = (name, tags) => {
+    const B = name === 'HTMLVideoElement' || name === 'HTMLAudioElement' ? HTMLMediaElement : HTMLElement;
+    const c = ({ [name]: class extends B {} })[name]; for (const t of tags) htmlClasses[t] = c; return c;
+  };
   const elementClasses = [
     ['HTMLHtmlElement', ['html']], ['HTMLHeadElement', ['head']], ['HTMLBodyElement', ['body']], ['HTMLTitleElement', ['title']],
     ['HTMLMetaElement', ['meta']], ['HTMLLinkElement', ['link']], ['HTMLStyleElement', ['style']], ['HTMLScriptElement', ['script']],
@@ -1242,6 +1248,116 @@
   const named = {};
   for (const [name, tags] of elementClasses) named[name] = htmlClass(name, tags);
   Object.defineProperty(named.HTMLTemplateElement.prototype, 'content', { get() { return wrap(info(nodeId(this), 9)); }, configurable: true });
+  // ---- Media elements (HTML §4.8.11) in a browser with no media decoders: no type can be
+  // played (canPlayType answers ""), so a resource is never fetched; the load algorithm ends
+  // in the "dedicated media source failure steps" (a MediaError with code
+  // MEDIA_ERR_SRC_NOT_SUPPORTED, an `error` event), and play() rejects with a
+  // NotSupportedError. The attributes keep their values as the spec's state does.
+  {
+    class MediaError {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get code() { return mediaErrors.get(this).code; }
+      get message() { return mediaErrors.get(this).message; }
+    }
+    class TimeRanges {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get length() { if (!timeRanges.has(this)) throw new TypeError('Illegal invocation'); return 0; }
+      start(i) { if (!timeRanges.has(this)) throw new TypeError('Illegal invocation'); throw new DOMException(`Failed to execute 'start' on 'TimeRanges': The index provided (${i >>> 0}) is greater than or equal to the maximum bound (0).`, 'IndexSizeError'); }
+      end(i) { if (!timeRanges.has(this)) throw new TypeError('Illegal invocation'); throw new DOMException(`Failed to execute 'end' on 'TimeRanges': The index provided (${i >>> 0}) is greater than or equal to the maximum bound (0).`, 'IndexSizeError'); }
+    }
+    const mediaErrors = new WeakMap(), timeRanges = new WeakSet(), media = new WeakMap();
+    const codes = { MEDIA_ERR_ABORTED: 1, MEDIA_ERR_NETWORK: 2, MEDIA_ERR_DECODE: 3, MEDIA_ERR_SRC_NOT_SUPPORTED: 4 };
+    for (const [k, v] of Object.entries(codes)) for (const o of [MediaError, MediaError.prototype]) Object.defineProperty(o, k, { value: v, enumerable: true });
+    const emptyRanges = () => { const r = Object.create(TimeRanges.prototype); timeRanges.add(r); return r; };
+    const M = el => {
+      if (!(el instanceof HTMLMediaElement) || !ids.has(el)) throw new TypeError('Illegal invocation');
+      let m = media.get(el);
+      if (!m) media.set(el, m = { error: null, networkState: 0, currentTime: 0, defaultRate: 1, rate: 1, volume: 1,
+        muted: el.hasAttribute('muted'), preservesPitch: true, srcObject: null, generation: 0 });
+      return m;
+    };
+    const constants = { NETWORK_EMPTY: 0, NETWORK_IDLE: 1, NETWORK_LOADING: 2, NETWORK_NO_SOURCE: 3,
+      HAVE_NOTHING: 0, HAVE_METADATA: 1, HAVE_CURRENT_DATA: 2, HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4 };
+    for (const [k, v] of Object.entries(constants)) for (const o of [HTMLMediaElement, HTMLMediaElement.prototype]) Object.defineProperty(o, k, { value: v, enumerable: true });
+    const finite = (v, what) => { const x = Number(v); if (!Number.isFinite(x)) throw new TypeError(`Failed to set the '${what}' property on 'HTMLMediaElement': The provided double value is non-finite.`); return x; };
+    Object.defineProperties(HTMLMediaElement.prototype, {
+      error: { get() { return M(this).error; }, configurable: true, enumerable: true },
+      currentSrc: { get() { M(this); return ''; }, configurable: true, enumerable: true },
+      networkState: { get() { return M(this).networkState; }, configurable: true, enumerable: true },
+      readyState: { get() { M(this); return 0; }, configurable: true, enumerable: true },
+      seeking: { get() { M(this); return false; }, configurable: true, enumerable: true },
+      currentTime: { get() { return M(this).currentTime; }, set(v) { M(this).currentTime = finite(v, 'currentTime'); }, configurable: true, enumerable: true },
+      duration: { get() { M(this); return NaN; }, configurable: true, enumerable: true },
+      paused: { get() { M(this); return true; }, configurable: true, enumerable: true },
+      ended: { get() { M(this); return false; }, configurable: true, enumerable: true },
+      defaultPlaybackRate: { get() { return M(this).defaultRate; }, set(v) { M(this).defaultRate = finite(v, 'defaultPlaybackRate'); }, configurable: true, enumerable: true },
+      playbackRate: { get() { return M(this).rate; }, set(v) { M(this).rate = finite(v, 'playbackRate'); }, configurable: true, enumerable: true },
+      preservesPitch: { get() { return M(this).preservesPitch; }, set(v) { M(this).preservesPitch = !!v; }, configurable: true, enumerable: true },
+      buffered: { get() { M(this); return emptyRanges(); }, configurable: true, enumerable: true },
+      played: { get() { M(this); return emptyRanges(); }, configurable: true, enumerable: true },
+      seekable: { get() { M(this); return emptyRanges(); }, configurable: true, enumerable: true },
+      volume: { get() { return M(this).volume; }, set(v) {
+        const m = M(this), x = finite(v, 'volume');
+        if (x < 0 || x > 1) throw new DOMException(`Failed to set the 'volume' property on 'HTMLMediaElement': The volume provided (${x}) is outside the range [0, 1].`, 'IndexSizeError');
+        if (x !== m.volume) { m.volume = x; fire(this, 'volumechange', {}); }
+      }, configurable: true, enumerable: true },
+      muted: { get() { return M(this).muted; }, set(v) { const m = M(this); if (m.muted !== !!v) { m.muted = !!v; fire(this, 'volumechange', {}); } }, configurable: true, enumerable: true },
+      srcObject: { get() { return M(this).srcObject; }, set(v) { M(this).srcObject = v ?? null; this.load(); }, configurable: true, enumerable: true },
+    });
+    const methods = {
+      // HTML §4.8.11.5 "media element load algorithm", then "resource selection": with no
+      // decoder every candidate fails, so the element ends with no source and an error.
+      load() {
+        const m = M(this), gen = ++m.generation;
+        m.error = null; m.currentTime = 0;
+        if (m.networkState === 2 || m.networkState === 1) fire(this, 'abort', {});
+        if (m.networkState !== 0) { m.networkState = 0; fire(this, 'emptied', {}); }
+        const src = this.getAttribute('src');
+        const sources = () => [...this.children].filter(c => c.localName === 'source' && c.namespaceURI === 'http://www.w3.org/1999/xhtml');
+        if (m.srcObject === null && src === null && sources().length === 0) return;
+        m.networkState = 2;
+        setTimeout(() => {
+          if (m.generation !== gen) return;
+          fire(this, 'loadstart', {});
+          if (m.srcObject !== null || src !== null) {
+            const e = Object.create(MediaError.prototype);
+            mediaErrors.set(e, { code: 4, message: 'MEDIA_ELEMENT_ERROR: Format error' });
+            m.error = e; m.networkState = 3;
+            fire(this, 'error', {});
+          } else {
+            m.networkState = 3;
+            for (const s of sources()) fire(s, 'error', {});
+          }
+        }, 0);
+      },
+      canPlayType(type) { M(this); if (arguments.length < 1) throw new TypeError("Failed to execute 'canPlayType' on 'HTMLMediaElement': 1 argument required, but only 0 present."); return ''; },
+      play() {
+        let m;
+        try { m = M(this); } catch (e) { return Promise.reject(e); }
+        return Promise.reject(new DOMException('The element has no supported sources.', 'NotSupportedError'));
+      },
+      pause() { M(this); },
+      fastSeek(t) { M(this).currentTime = finite(t, 'fastSeek'); },
+      getStartDate() { M(this); return new Date(NaN); },
+    };
+    for (const [k, f] of Object.entries(methods)) Object.defineProperty(HTMLMediaElement.prototype, k, { value: f, writable: true, configurable: true, enumerable: true });
+    Object.defineProperties(named.HTMLVideoElement.prototype, {
+      videoWidth: { get() { M(this); return 0; }, configurable: true, enumerable: true },
+      videoHeight: { get() { M(this); return 0; }, configurable: true, enumerable: true },
+    });
+    // HTML §4.8.10: the legacy factory function Audio(src)
+    const Audio = function Audio(src = undefined) {
+      if (new.target === undefined) throw new TypeError("Failed to construct 'Audio': Please use the 'new' operator, this DOM object constructor cannot be called as a function.");
+      const el = document.createElement('audio');
+      el.setAttribute('preload', 'auto');
+      if (src !== undefined) el.setAttribute('src', String(src));
+      return el;
+    };
+    Object.defineProperty(Audio, 'prototype', { value: named.HTMLAudioElement.prototype, writable: false, enumerable: false, configurable: false });
+    // defined on the global with the element interfaces (`...named` below)
+    named.HTMLMediaElement = HTMLMediaElement;
+    Object.assign(mediaGlobals, { Audio, MediaError, TimeRanges });
+  }
   // An iframe's document is Lean's (Hosts.Page.start `frames`, node_info 11). The frames share
   // this realm: a frame's window is a view of this window with its own document.
   // Reflected content attributes (HTML §2.6.1): strings, and URLs resolved against the
@@ -11379,7 +11495,7 @@
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, MathMLElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
-    DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
+    DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named, ...mediaGlobals })) def(k, v);
   if (shadowEngine()) def('ShadowRoot', ShadowRoot);
 
   // ==== dombreadth: markup setters, Range, StaticRange, Selection, NodeIterator, TreeWalker ====

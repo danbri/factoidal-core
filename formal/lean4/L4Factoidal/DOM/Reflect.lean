@@ -223,13 +223,13 @@ HTMLScriptElement src . u
 HTMLScriptElement noModule . b
 HTMLScriptElement charset . s
 HTMLScriptElement defer . b
-HTMLScriptElement,HTMLImageElement,HTMLAudioElement,HTMLVideoElement crossOrigin . e - anonymous anonymous,use-credentials,=anonymous ?
+HTMLScriptElement,HTMLImageElement,HTMLMediaElement crossOrigin . e - anonymous anonymous,use-credentials,=anonymous ?
 HTMLScriptElement event . s
 HTMLScriptElement htmlFor for s
 HTMLSlotElement,HTMLMapElement,HTMLParamElement,HTMLFrameElement,HTMLEmbedElement,HTMLObjectElement,HTMLImageElement,HTMLIFrameElement name . s
 HTMLDetailsElement,HTMLDialogElement open . b
 HTMLImageElement alt . s
-HTMLImageElement,HTMLIFrameElement,HTMLEmbedElement,HTMLAudioElement,HTMLVideoElement,HTMLSourceElement,HTMLTrackElement,HTMLFrameElement src . u
+HTMLImageElement,HTMLIFrameElement,HTMLEmbedElement,HTMLMediaElement,HTMLSourceElement,HTMLTrackElement,HTMLFrameElement src . u
 HTMLImageElement,HTMLSourceElement srcset . s
 HTMLSourceElement sizes . s
 HTMLImageElement,HTMLObjectElement useMap . s
@@ -261,11 +261,11 @@ HTMLObjectElement codeType . s
 HTMLParamElement value . s
 HTMLParamElement type . s
 HTMLParamElement valueType . s
-HTMLAudioElement,HTMLVideoElement preload . e metadata metadata none,metadata,auto,=auto
-HTMLAudioElement,HTMLVideoElement autoplay . b
-HTMLAudioElement,HTMLVideoElement loop . b
-HTMLAudioElement,HTMLVideoElement controls . b
-HTMLAudioElement,HTMLVideoElement defaultMuted muted b
+HTMLMediaElement preload . e metadata metadata none,metadata,auto,=auto
+HTMLMediaElement autoplay . b
+HTMLMediaElement loop . b
+HTMLMediaElement controls . b
+HTMLMediaElement defaultMuted muted b
 HTMLAudioElement,HTMLVideoElement loading . e eager eager lazy,eager
 HTMLVideoElement width . ul 0
 HTMLVideoElement height . ul 0
