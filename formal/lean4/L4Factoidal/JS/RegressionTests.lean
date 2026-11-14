@@ -539,4 +539,14 @@ a new property on an object that is not extensible is a TypeError. Test262
 #guard out "var r = []; function t(f) { try { r.push(String(f())) } catch (e) { r.push(e.name) } } var a = {}, b = Object.create(a); t(() => Object.setPrototypeOf(a, b) === a); t(() => Reflect.setPrototypeOf(a, b)); t(() => Reflect.setPrototypeOf(Object.freeze({}), {})); t(() => Reflect.setPrototypeOf(Object.prototype, {})); t(() => Reflect.setPrototypeOf(Object.prototype, null)); t(() => Object.setPrototypeOf(1, null)); t(() => Object.setPrototypeOf(undefined, null)); t(() => Object.setPrototypeOf({}, 1)); var f = Object.preventExtensions({}); t(() => Object.setPrototypeOf(f, Object.prototype) === f); print(r.join())" == ["TypeError,false,false,false,true,1,TypeError,TypeError,true"]
 #guard out "var d = Object.getOwnPropertyDescriptor(Object.prototype, '__proto__'); var o = {}, p = { x: 1 }; o.__proto__ = p; var q = Object.create(null); q.__proto__ = p; print(typeof d.get, typeof d.set, d.enumerable, d.configurable, o.x, Object.getPrototypeOf(o) === p, o.__proto__ === p, Object.keys(o).length, Object.keys(q).join(), (1).__proto__ === Number.prototype, d.set.name)" == ["function function false true 1 true true 0 __proto__ true set __proto__"]
 
+/-! ## Redeclarations in a block and in a switch (§14.2.1, §14.12.1, B.3.2.4) -/
+
+private def parses (src : String) : Bool := syn src == "ok"
+
+#guard !parses "{ async function f() {} var f; }" && !parses "{ var f; function* f() {} }" && !parses "{ function f() {} async function f() {} }"
+#guard !parses "switch (0) { case 1: function f() {} default: var f; }" && !parses "{ { var f; } function f() {} }"
+#guard !parses "'use strict'; { function f() {} function f() {} }"
+#guard parses "{ function f() {} function f() {} }" && parses "function g() { function f() {} var f; }" && parses "var f; function f() {}"
+#guard parses "{ function f() {} } var f;" && parses "{ { function f() {} } let f; }" && parses "{ function f() { var f; } }"
+
 end L4Factoidal.JS.Tests
