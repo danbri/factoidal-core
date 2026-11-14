@@ -150,7 +150,9 @@ Deno.test("SVG CSS stylesheet and inline declarations affect Lean geometry paint
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
  for(const element of ['text','foreignObject','filter','clipPath','mask','script'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
- for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="pointed"','stroke-linejoin="arcs"','stroke-miterlimit=".5"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
+ for(const attrs of ['style="filter:blur(2px)"','transform="perspective(1)"','stroke-linecap="pointed"','stroke-linejoin="arcs"','stroke-miterlimit=".5"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
+ // Attributes that say nothing about what is drawn are read past (NativeSVG.inertAttribute: class, role, aria-*, ...).
+ e.compile(wrap('<rect width="20" height="20" class="red" role="img" aria-hidden="true" focusable="false" data-x="1"/>'));
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");
