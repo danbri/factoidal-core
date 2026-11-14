@@ -35,11 +35,11 @@ private def s1 : Shelf := (answers {} setup).1
 -- a read-write transaction: put with an out-of-line key, the commit, then a read
 private def book (t : String) : List String := ["o1", "ktitle", "s" ++ t]
 private def write1 : List (List String) :=
-  [["transaction", "2", "readwrite", "books"], ["objectStore", "4", "books"], ["putcheck", "4", "1", "1"],
+  [["transaction", "2", "readwrite", "books"], ["objectStore", "4", "books"], ["putcheck", "4", "1", "1"], ["active", "4", "0"],
    ["req", "4", "1", "", "put", "1", one] ++ book "Dune", ["deactivate", "4"],
    ["pump"], ["done", "4", "0", ""], ["pump"], ["pump"]]
 private def s2 : Shelf := (answers s1 write1).1
-#guard (answers s1 write1).2 == ["ok 4", "ok 1", "ok", "ok 5", "ok", s!"req 5 4 ok k {one}", "ok", "tx 4 complete books", "idle"]
+#guard (answers s1 write1).2 == ["ok 4", "ok 1", "ok", "ok", "ok 5", "ok", s!"req 5 4 ok k {one}", "ok", "tx 4 complete books", "idle"]
 private def read (tx : String) (k : String) : List (List String) :=
   [["transaction", "2", "readonly", "books"], ["req", tx, "1", "", "get"] ++ only k, ["deactivate", tx], ["pump"], ["done", tx, "0", ""], ["pump"]]
 #guard (answers s2 (read "6" one)).2 == ["ok 6", "ok 7", "ok", "req 7 6 ok v o1 ktitle sDune", "ok", "tx 6 complete books"]
@@ -113,6 +113,14 @@ private def upgrade : List (List String) :=
 #guard (answers (answers s3 upgrade).1 [["open", "db", "1"], ["pump"]]).2.getLast? == some "open 13 error VersionError"
 #guard (answers s3 [["deleteDatabase", "db"], ["pump"], ["pump"], ["close", "2"], ["pump"], ["databases"]]).2 ==
   ["ok 9", "versionchange 2 1 null", "open 9 blocked 1 null", "ok", "open 9 deleted 1", "ok 0"]
+-- key ranges and the listener order of an error event that bubbles from a request (30) to its transaction (20) and connection (10)
+#guard (answers {} [["range", "0", "1", two, "1", one], ["range", "1", "1", one, "1", one], ["range", "0", "1", one, "1", two],
+  ["includes", "2", "1", one, "1", two, "1", two], ["includes", "0", "1", one, "1", two, "1", two], ["includes", "0", "0", "0", "1", "x"]]).2 ==
+  ["!DataError", "!DataError", "ok", "ok 0", "ok 1", "!DataError"]
+#guard (answers {} [["plan", "1", "3", "10", "20", "30", "30", "0", "1", "20", "0", "2", "10", "1", "3", "20", "1", "4"]]).2 ==
+  ["ok 3 10 9 0 4 20 9 1 1 30 2 2 2 20 3 1"]
+#guard (answers {} [["plan", "0", "3", "10", "20", "30", "30", "0", "1", "20", "0", "2", "10", "1", "3"]]).2 == ["ok 3 10 9 0 1 30 2 2"]
+#guard (answers s2 [["transaction", "2", "versionchange", "books"]]).2.getLast? == some "!TypeError"
 -- cmp, and the quota: a commit above the quota is an abort
 #guard (answers {} [["cmp", "1", one, "1", two], ["cmp", "1", "sa", "1", one], ["cmp", "1", "x", "1", one]]).2 == ["ok -1", "ok 1", "!DataError"]
 #guard (shown (op 10 s2 (T ["pump"])).2) == "idle"

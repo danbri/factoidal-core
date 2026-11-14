@@ -38,6 +38,7 @@ import L4Factoidal.Crypto.WebCrypto
 import L4Factoidal.Crypto.WebCryptoKeys
 import L4Factoidal.Net.Xhr
 import L4Factoidal.Net.Storage
+import L4Factoidal.ClientStorage.IdbOps
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
 import L4Factoidal.DOM.SvgValues
@@ -72,6 +73,9 @@ structure State where
   net : L4Factoidal.Net.Xhr.State := {}
   /-- The page's Web Storage areas (`Net.Storage`, ops 80 to 85): in memory, by origin. -/
   storage : L4Factoidal.Net.Storage.Store := {}
+  /-- IndexedDB (`ClientStorage.Idb`, op 200): the databases and live state of each storage
+  key, in memory. -/
+  idb : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Idb.Shelf := {}
   /-- The cookies scripts set and read (`Net.Cookies`, ops 96 and 97): in memory, each its
   host's; none is sent or received on the network. -/
   cookies : L4Factoidal.Net.Cookies.Jar := {}
@@ -668,6 +672,11 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if 80 ≤ code && code < 86 then
       let (storage, r) := L4Factoidal.Net.Storage.op s.storage s.net.page.origin code fs
       ({ s with storage }, r)
+    -- IndexedDB: one command (its name is the first argument) on the shelf of the session's
+    -- storage key, which is the page's origin, never an argument. The answer is its tokens.
+    else if code == 200 then
+      let (idb, out) := L4Factoidal.ClientStorage.Idb.opFor s.idb { origin := s.net.page.origin } fs
+      ({ s with idb }, .ok (pack out))
     -- Blob URLs (File API §8.3): 90 `createObjectURL(type, bytes)`, 91 `revokeObjectURL(url)`.
     -- The store is the network state's and names each URL's origin (the session's page
     -- origin, never an argument); the UUID is drawn here.

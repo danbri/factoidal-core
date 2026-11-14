@@ -25,6 +25,7 @@ database, and the commands of the `web_api` op that the page side calls.
 Answers are tokens: `ok` and values, or `!` + the name of the exception.
 -/
 import L4Factoidal.ClientStorage.IdbStore
+import L4Factoidal.EventLoop.Dispatch
 
 namespace L4Factoidal.ClientStorage.Idb
 
@@ -431,7 +432,7 @@ def cmdCursor (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × L
                             queue := t.queue ++ [({ id := rid, op := .step c.id tkey tpk n } : Req)] }
           (l.setTxn t, ok [N rid])
         match what with
-        | "updatecheck" => (l.setTxn { t with state := .inactive, cloning := true }, ok)
+        | "updatecheck" => (l, ok)
         | "advance" => go none none (natAt a 5)
         | "continue" =>
           match (keyAt a 5).1 with
@@ -496,6 +497,26 @@ def sync (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × List T
     match x, (keyAt a j).1 with
     | some (some x), some (some y) => (l, ok [S (match x.cmp y with | .lt => "-1" | .eq => "0" | .gt => "1")])
     | _, _ => (l, fail "DataError")
+  | "range" => (l, if (rangeAt a 1).isSome then ok else fail "DataError")
+  | "includes" =>
+    -- a range, then a key: is the key in the range (`IDBKeyRange.includes`)
+    let j := (keyAt a ((keyAt a 2).2)).2
+    match rangeAt a 1, (keyAt a j).1 with
+    | some r, some (some k) => (l, ok [S (if r.includes k then "1" else "0")])
+    | _, _ => (l, fail "DataError")
+  | "plan" =>
+    -- the order of the listener calls of an event on a path of IndexedDB objects (request,
+    -- transaction, connection): DOM §2.9 through `EventLoop.Dispatch.plan`. Arguments: 1
+    -- when the event bubbles, the length of the path, the path (root first), then each
+    -- listener as node, capture, callback.
+    let k := natAt a 2
+    let path := (List.range k).map fun i => natAt a (3 + i)
+    let ls := (List.range ((a.size - 3 - k) / 3)).map fun i =>
+      ({ node := natAt a (3 + k + 3 * i), capture := strAt a (4 + k + 3 * i) == "1", callback := natAt a (5 + k + 3 * i) } :
+        L4Factoidal.EventLoop.Dispatch.Listener)
+    let visits := L4Factoidal.EventLoop.Dispatch.plan path ls (strAt a 1 == "1")
+    (l, ok (visits.flatMap fun v =>
+      [N v.callback, N v.node, N ((match v.phase with | .capturing => 1 | .atTarget => 2 | .bubbling => 3) + (if v.capture then 8 else 0)), N v.depth]))
   | "dbinfo" =>
     match l.conn? (natAt a 1) with
     | none => (l, fail "InvalidStateError")
@@ -515,6 +536,7 @@ def sync (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × List T
       let ids := names.filterMap fun n => (d.storeNamed n).map (·.1)
       if ids.length != names.length then (l, fail "NotFoundError")
       else if names.isEmpty then (l, fail "InvalidAccessError")
+      else if strAt a 2 != "readwrite" && strAt a 2 != "readonly" then (l, fail "TypeError")
       else
         let id := l.next
         let t : Txn := { id, conn := c.id, db := c.db, mode := if strAt a 2 == "readwrite" then .rw else .ro, scope := ids.eraseDups }
@@ -549,15 +571,17 @@ def sync (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × List T
   | "active" =>
     -- the clone of a value runs with the transaction inactive (§6.2 "add or put" step 10)
     match l.txn? (natAt a 1) with
-    | some t => (l.setTxn { t with state := if strAt a 2 == "1" then .active else .inactive, cloning := false }, ok)
+    | some t =>
+      if strAt a 2 == "1" then (l.setTxn { t with state := .active, cloning := false }, ok)
+      else (l.setTxn { t with state := .inactive, cloning := true }, ok)
     | none => (l, ok)
   | "putcheck" =>
     match reqGuard dbs l (natAt a 1) (natAt a 2) none true with
     | .error e => (l, fail e)
-    | .ok (t, s) =>
+    | .ok (_, s) =>
       let hasKey := strAt a 3 == "1"
       if (s.keyPath != .none && hasKey) || (s.keyPath == .none && !s.autoInc && !hasKey) then (l, fail "DataError")
-      else (l.setTxn { t with state := .inactive, cloning := true }, ok)
+      else (l, ok)
   | "done" =>
     -- after an event of a transaction was dispatched: `threw` a listener threw; `error` the
     -- name of a request's error whose default was not prevented ("" otherwise)
