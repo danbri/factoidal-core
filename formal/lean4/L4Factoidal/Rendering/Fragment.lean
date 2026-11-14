@@ -80,6 +80,10 @@ structure Children where
   style : Item → Computed
   /-- The min-content and max-content widths of the item's margin box. -/
   intrinsic : Item → Except String (Float × Float)
+  /-- The min-content and max-content widths of the item's contents (its content box),
+  whatever its `width` says: the content size suggestion of the automatic minimum size
+  (CSS Flexbox 1 §4.5), and the base size of an item with no definite size. -/
+  contentIntrinsic : Item → Except String (Float × Float)
   /-- The item's box laid out whole with its margin box at `(x,y)`. -/
   layout : Item → (x y : Float) → Constraints → Except String Result
   /-- The contents only of the item's box, for a border box `width` wide whose margin box

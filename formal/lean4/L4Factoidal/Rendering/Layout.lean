@@ -1,6 +1,7 @@
 import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
+import L4Factoidal.Rendering.FlexLayout
 import L4Factoidal.Unicode.ScriptDirection
 import L4Factoidal.Unicode.LineBreak
 
@@ -102,19 +103,8 @@ clipped content carries the padding box (`ClipTheorems.clipContent_clips`). -/
 def clipContent (clip : Bool) (decorations content : Array Node) (paddingBox : ClipRect) : Array Node :=
   if clip then decorations.push (.clipped none identity paddingBox content.toList) else decorations ++ content
 
-structure Box where
-  source : Nat
-  x : Float
-  y : Float
-  width : Float
-  height : Float
-  deriving Repr
-structure Result where
-  nodes : Array Node := #[]
-  boxes : Array Box := #[]
-  runs : Array GlyphRun := #[]
-  height : Float := 0
-  deriving Repr
+-- `Box` and `Result` are in `Rendering/Fragment.lean`, with the interface between
+-- formatting contexts (`Constraints`, `Item`, `Children`, `ContentBox`).
 abbrev Embedding := Nat → CSS.Computed → Float → Float → Except String (List Node)
 
 private def checkSVGBox (s : Computed) : Except String Unit := do
@@ -905,6 +895,13 @@ inductive Task where
   /-- A table: `element` is the table element, or `none` for an anonymous table of the
   children `kids` of `container`. -/
   | table (element : Option Nat) (container : Nat) (kids : Array Nat)
+  /-- An element's box with the border-box `width` (and `height`) that its parent
+  formatting context imposes (`Constraints`): its own `width`, `min-width` and `max-width`
+  (and `height`) are not read. -/
+  | sized (id : Nat) (width : Float) (height : Option Float)
+  /-- The contents only of the box of `id` for a border box `width` wide: no decorations
+  and no box of its own; the result's `height` is the content height (`Children.content`). -/
+  | inner (id : Nat) (width : Float)
   deriving Repr
 
 /-- The right edge of what a line layout placed, from its left edge `0`. -/
@@ -922,6 +919,31 @@ its parent's, with no box edges (an anonymous box has none). -/
 private def anonymousBox (base : Computed) : Computed :=
   {base with padding := {}, margin := {}, background := none, width := .auto, height := .auto,
              verticalAlign := .baseline, autoMarginLeft := false, autoMarginRight := false}
+/-- The style of an anonymous flex or grid item (a run of text): its container's
+inherited values, with no box edges, limits, or flex and alignment values of its own. -/
+private def anonymousItem (base : Computed) : Computed :=
+  {anonymousBox base with display := .block, borderStyle := .none, clipOverflow := false,
+                          minWidth := .auto, maxWidth := .auto, minHeight := .auto, maxHeight := .auto,
+                          autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}}
+
+/-- The box of element `id` around its laid-out contents: its decorations (under the
+contents, which are clipped to the padding box when the box clips), its border box at
+`(outerX,outerY)` of `borderWidth` by `borderHeight`, and the height of its margin box. -/
+def frameBox (id : Nat) (s : Computed) (outerX outerY borderWidth borderHeight : Float) (content : Result) : Result :=
+  let border := s.borderEdges
+  let nodes := clipContent s.clipOverflow (decorations id s outerX outerY borderWidth borderHeight) content.nodes
+    ⟨outerX+border.left,outerY+border.top,borderWidth-border.left-border.right,borderHeight-border.top-border.bottom,identity⟩
+  {content with nodes, boxes := #[⟨id,outerX,outerY,borderWidth,borderHeight⟩] ++ content.boxes,
+                height := s.margin.top+borderHeight+s.margin.bottom}
+
+/-- A replaced element, a table or a flex or grid container: a box whose contents depend
+on its height, or that sizes itself (`Children.heightSensitive`). -/
+private def sizesItself (dom : Dom) (styles : Array Computed) (pictures : Pictures) (id : Nat) : Bool :=
+  let s := styles[id]!
+  let n := dom.get id
+  s.display.isFlex || s.display.isGrid || s.display.isTable || (pictures id).isSome ||
+    n.ns == some DOM.svgNS || n.lname == "hr"
+
 private def cellStyle (styles : Array Computed) : Table.Source → Computed
   | .element id => styles[id]!
   | .anonymous parent _ => anonymousBox styles[parent]!
@@ -985,7 +1007,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
           let (c,d) ← intrinsic dom styles font embedding pictures fuel (.table none container run)
           widths := (max widths.1 (max a c),max widths.2 (max b d))
         | .node k =>
-          if (styles[k]!).display.isBlockLevel then
+          if (styles[k]!).display.isBlockLevel || (styles[k]!).display.isInlineContainer then
             let (a,b) ← inlineWidths inline
             inline := #[]
             let (c,d) ← intrinsic dom styles font embedding pictures fuel (.box k)
@@ -1010,28 +1032,56 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       match frame.style.width with
       | .px w => return (max w low+margins,max w low+margins)
       | _ => return (low+margins,high+margins)
-    match task with
-    | .contents container kids => flowWidths container kids #[]
-    | .table element container kids => tableWidths element container kids
-    | .box id =>
+    -- What a flex or grid container may ask of its items while widths are measured.
+    let children : Children := {
+      style := fun item => match item with
+        | .element id => styles[id]!
+        | .anonymous container _ => anonymousItem styles[container]!
+      intrinsic := fun item => match item with
+        | .element id => intrinsic dom styles font embedding pictures fuel (.box id)
+        | .anonymous container kids => intrinsic dom styles font embedding pictures fuel (.contents container kids)
+      contentIntrinsic := fun item => match item with
+        | .element id => intrinsic dom styles font embedding pictures fuel (.inner id 0)
+        | .anonymous container kids => intrinsic dom styles font embedding pictures fuel (.contents container kids)
+      layout := fun _ _ _ _ => throw "layout asked of an item while widths are measured"
+      content := fun _ _ _ _ => throw "layout asked of an item while widths are measured"
+      frame := fun _ _ _ _ _ r => r
+      heightSensitive := fun _ => true}
+    -- The widths of an element's box. `outer`: of its margin box, as its `width` has it;
+    -- else of its contents alone, whatever its `width` says (`Children.contentIntrinsic`).
+    let boxWidths (id : Nat) (outer : Bool) : Except String (Float × Float) := do
       let n := dom.get id
       let s := styles[id]!
       if s.display == .none then return (0,0)
-      if s.display.isTable then return (← tableWidths (some id) (n.parent.getD 0) n.kids)
+      let edges := horizontalEdges s
+      -- What the box adds to its contents' widths.
+      let add := if outer then edges else 0
+      if s.display.isTable then
+        -- A table's widths are those of its border box with its margins (`tableWidths`).
+        let (a,b) ← tableWidths (some id) (n.parent.getD 0) n.kids
+        let margins := if outer then 0 else s.margin.left+s.margin.right
+        return (a-margins,b-margins)
       if let some picture := pictures id then
-        let w := (replacedSize s (some picture.size) 0).1+horizontalEdges s
+        let w := (replacedSize s (some picture.size) 0).1+add
         return (w,w)
       if n.ns == some DOM.svgNS then
-        let w := (← svgSize n s 0).1+horizontalEdges s
+        let w := (← svgSize n s 0).1+add
         return (w,w)
-      let edges := s.margin.left+s.margin.right+s.padding.left+s.padding.right
-      match s.width with
-      | .px w => return (w+edges,w+edges)
-      | _ =>
+      match outer,s.width with
+      | true,.px w => return (w+edges,w+edges)
+      | _,_ =>
+        if s.display.isFlex then
+          let (a,b) ← flexIntrinsic children s (collectItems dom styles id)
+          return (a+add,b+add)
         let lead := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray
           else if n.lname == "img" then altItems id s n else #[]
         let (a,b) ← flowWidths id n.kids lead
-        return (a+edges,b+edges)
+        return (a+add,b+add)
+    match task with
+    | .contents container kids => flowWidths container kids #[]
+    | .table element container kids => tableWidths element container kids
+    | .sized id _ _ | .box id => boxWidths id true
+    | .inner id _ => boxWidths id false
 
 /-- Block children stack vertically, and adjacent inline children share an
 anonymous inline formatting context. Width/height use the CSS content box.
@@ -1065,6 +1115,17 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
               content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
               inline := #[]
             content := append content (← layoutTask dom styles font embedding pictures fuel (.box child) innerX (innerY+content.height) width)
+          else if cs.display.isInlineContainer then
+            -- An inline-level flex or grid container: one atomic box, as wide as its content
+            -- (shrink-to-fit, CSS 2.1 §10.3.9) unless its width is given.
+            let edges := cs.margin.left+cs.margin.right
+            let outer ← match CSS.resolve width cs.width with
+              | some w => pure (w+horizontalEdges cs)
+              | none => do
+                let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
+                pure (min hi (max lo width))
+            let r ← layoutTask dom styles font embedding pictures fuel (.sized child (max 0 (outer-edges)) none) 0 0 width
+            inline := inline.push (.atomic child outer r.height r)
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
       if !inline.isEmpty then content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
@@ -1166,28 +1227,65 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           out := append out r
           top := top+r.height
       return {out with height := top-y+frame.margin.bottom}
-    match task with
-    | .contents container kids => flow (styles[container]!) container kids #[] x y available
-    | .table element container kids => table element container kids
-    | .box id =>
+    -- What a flex or grid container may ask of its items (`Rendering/Fragment.lean`): every
+    -- callback descends with the smaller fuel.
+    let children : Children := {
+      style := fun item => match item with
+        | .element id => styles[id]!
+        | .anonymous container _ => anonymousItem styles[container]!
+      intrinsic := fun item => match item with
+        | .element id => intrinsic dom styles font embedding pictures fuel (.box id)
+        | .anonymous container kids => intrinsic dom styles font embedding pictures fuel (.contents container kids)
+      contentIntrinsic := fun item => match item with
+        | .element id => intrinsic dom styles font embedding pictures fuel (.inner id 0)
+        | .anonymous container kids => intrinsic dom styles font embedding pictures fuel (.contents container kids)
+      layout := fun item ix iy c => match item with
+        | .element id => match c.width with
+          | some w => layoutTask dom styles font embedding pictures fuel (.sized id w c.height) ix iy c.available
+          | none => layoutTask dom styles font embedding pictures fuel (.box id) ix iy c.available
+        | .anonymous container kids =>
+          layoutTask dom styles font embedding pictures fuel (.contents container kids) ix iy (c.width.getD c.available)
+      content := fun item ix iy w => match item with
+        | .element id => layoutTask dom styles font embedding pictures fuel (.inner id w) ix iy w
+        | .anonymous container kids => layoutTask dom styles font embedding pictures fuel (.contents container kids) ix iy w
+      frame := fun item ix iy w h content => match item with
+        | .element id => let s := styles[id]!; frameBox id s (ix+s.margin.left) (iy+s.margin.top) w h content
+        | .anonymous _ _ => {content with height := h}
+      heightSensitive := fun item => match item with
+        | .element id => sizesItself dom styles pictures id
+        | .anonymous _ _ => false}
+    -- An element's box. `imposedWidth` and `imposedHeight` are the border-box sizes that the
+    -- parent formatting context decided (`Task.sized`); with `contentOnly` the contents alone
+    -- (`Task.inner`).
+    let box (id : Nat) (imposedWidth imposedHeight : Option Float) (contentOnly : Bool) : Except String Result := do
       let n := dom.get id
       let s := styles[id]!
       if s.display == .none then return {}
-      if s.display.isTable then return (← table (some id) (n.parent.getD 0) n.kids)
-      if n.lname == "hr" then
-        return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) available 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}
+      if s.display.isTable then
+        match imposedWidth with
+        | none => return (← table (some id) (n.parent.getD 0) n.kids)
+        | some w =>
+          -- A table sizes itself (CSS 2.1 §17.5.2) in the width it is given.
+          return (← layoutTask dom styles font embedding pictures fuel (.table (some id) (n.parent.getD 0) n.kids) x y w)
       let margin := s.margin
       let padding := s.padding
       let border := s.borderEdges
       let edgesX := border.left+border.right+padding.left+padding.right
+      let edgesY := border.top+border.bottom+padding.top+padding.bottom
+      if n.lname == "hr" then
+        let w := imposedWidth.getD available
+        return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) w 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}
       -- CSS 2.1 §10.4: the width, then `max-width`, then `min-width` (a minimum wins).
-      let width := (CSS.resolve available s.width).getD (available-margin.left-margin.right-edgesX)
-      let width := match CSS.resolve available s.maxWidth with
-        | some m => min width m
-        | none => width
-      let width := max 0 (max ((CSS.resolve available s.minWidth).getD 0) width)
-      -- §10.3.3: auto margins share the room the box leaves.
-      let shift := autoMarginShift s available (margin.left+width+edgesX+margin.right)
+      let width := match imposedWidth with
+        | some w => max 0 (w-edgesX)
+        | none =>
+          let width := (CSS.resolve available s.width).getD (available-margin.left-margin.right-edgesX)
+          let width := match CSS.resolve available s.maxWidth with
+            | some m => min width m
+            | none => width
+          max 0 (max ((CSS.resolve available s.minWidth).getD 0) width)
+      -- §10.3.3: auto margins share the room the box leaves; an imposed box is placed by its parent.
+      let shift := if imposedWidth.isSome then 0 else autoMarginShift s available (margin.left+width+edgesX+margin.right)
       let outerX := x+shift+margin.left
       let outerY := y+margin.top
       let innerX := outerX+border.left+padding.left
@@ -1196,28 +1294,45 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- its auto margins put it.
       let replaced := fun (w h : Float) (content : Float → Float → List Node) (s : Computed) =>
         let (ow,oh,nodes) := replacedBox id s w h content
-        let dx := autoMarginShift s available ow
+        let dx := if imposedWidth.isSome then 0 else autoMarginShift s available ow
         ({nodes := #[.group none (translate (x+dx) y) nodes],
           boxes := #[⟨id,x+dx+margin.left,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh} : Result)
+      -- The style a replaced element is sized with: its own, or the imposed content box.
+      let sized : Computed := match imposedWidth with
+        | none => s
+        | some _ => {s with width := .px width, minWidth := .auto, maxWidth := .auto,
+                            height := match imposedHeight with | some h => .px (max 0 (h-edgesY)) | none => s.height}
       if let some picture := pictures id then
-        let (w,h) := replacedSize s (some picture.size) available
+        let (w,h) := replacedSize sized (some picture.size) available
         return replaced w h (fun cx cy => pictureNodes id s picture cx cy w h) s
       if n.ns == some DOM.svgNS then
-        let (sw,sh) ← svgSize n s available
+        let (sw,sh) ← svgSize n sized available
         let nodes ← embedding id s sw sh
         return replaced sw sh (fun cx cy => [.group none (translate cx cy) nodes]) {s with background := none}
       let lead := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray
         else if n.lname == "img" then altItems id s n else #[]
-      let content ← flow s id n.kids lead innerX innerY width
-      let height := match s.height with
-        | .percent _ => content.height
-        | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
-      let borderWidth := width+padding.left+padding.right+border.left+border.right
-      let borderHeight := height+padding.top+padding.bottom+border.top+border.bottom
-      let nodes := clipContent s.clipOverflow (decorations id s outerX outerY borderWidth borderHeight) content.nodes
-        ⟨outerX+border.left,outerY+border.top,width+padding.left+padding.right,height+padding.top+padding.bottom,identity⟩
-      let box : Box := ⟨id,outerX,outerY,borderWidth,borderHeight⟩
-      return {content with nodes, boxes := #[box] ++ content.boxes, height := margin.top+borderHeight+margin.bottom}
+      -- CSS 2.1 §10.7: the height within `min-height` and `max-height` (px; a percentage has
+      -- no definite basis here). An imposed height is the parent's and is not clamped again.
+      let minHeight := match s.minHeight with | .px h => h | _ => 0
+      let maxHeight := match s.maxHeight with | .px h => some h | _ => none
+      let definite : Option Float := match imposedHeight with
+        | some h => some (max 0 (h-edgesY))
+        | none => match s.height with
+          | .px h => some (clampOpt minHeight maxHeight (max 0 h))
+          | _ => none
+      let content ← if s.display.isFlex then
+          flexLayout children s (collectItems dom styles id)
+            {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight}
+        else flow s id n.kids lead innerX innerY width
+      if contentOnly then return content
+      let height := definite.getD (clampOpt minHeight maxHeight content.height)
+      return frameBox id s outerX outerY (width+edgesX) (height+edgesY) content
+    match task with
+    | .contents container kids => flow (styles[container]!) container kids #[] x y available
+    | .table element container kids => table element container kids
+    | .box id => box id none none false
+    | .sized id width height => box id (some width) height false
+    | .inner id width => box id (some width) none true
 
 /-- An element's block box: `layoutTask` of `.box id`. -/
 def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
@@ -1324,7 +1439,8 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
   let styles := (← CSS.computeFor treeScope dom rules textScale state).map fun s =>
     {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
-            minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh}
+            minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
+            align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex}
   let canvas := canvasBackground dom styles
   let styles := match canvas with
     | some (id,_) => styles.modify id fun s => {s with background := none}

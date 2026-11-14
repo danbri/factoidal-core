@@ -110,10 +110,7 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     let minSpecified := CSS.resolve box.width is.minWidth
     let hi := CSS.resolve box.width is.maxWidth
     let needContent := basis.isNone || (minSpecified.isNone && !is.clipOverflow)
-    let (minContent,maxContent) ← if needContent then do
-        let (a,c) ← kids.intrinsic item
-        pure (max 0 (a-edges),max 0 (c-edges))
-      else pure (0,0)
+    let (minContent,maxContent) ← if needContent then kids.contentIntrinsic item else pure (0,0)
     -- §4.5: the automatic minimum is the content size, no more than a specified size or the maximum.
     let lo := match minSpecified with
       | some v => v
@@ -218,9 +215,8 @@ def flexColumn (kids : Children) (s : Computed) (items : Array Item) (box : Cont
         else do
           -- fit-content (CSS Sizing 3 §5.1): the max-content width, no more than the room,
           -- no less than the min-content width
-          let (a,c) ← kids.intrinsic item
-          let e := m.left+m.right+padH
-          pure (min (c-e) (max (a-e) roomW))
+          let (a,c) ← kids.contentIntrinsic item
+          pure (min c (max a roomW))
     let widthC := max 0 (clampOpt ((CSS.resolve box.width is.minWidth).getD 0) (CSS.resolve box.width is.maxWidth) widthC)
     let width := widthC+padH
     let outerW := width+m.left+m.right

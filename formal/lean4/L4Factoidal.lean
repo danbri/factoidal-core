@@ -1255,6 +1255,7 @@ import L4Factoidal.Rendering.Tests
 import L4Factoidal.Rendering.CascadeTests
 import L4Factoidal.Rendering.ReplacedTests
 import L4Factoidal.Rendering.TableLayoutTests
+import L4Factoidal.Rendering.FlexLayoutTests
 import L4Factoidal.Rendering.Links
 import L4Factoidal.Rendering.FontDataTests
 import L4Factoidal.Rendering.FontProviderTests

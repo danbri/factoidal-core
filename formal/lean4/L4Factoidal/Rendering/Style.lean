@@ -50,6 +50,15 @@ def Display.isBlockLevel (d : Display) : Bool := d == .block || d.isTable || d =
 def Display.isFlex (d : Display) : Bool := d == .flex || d == .inlineFlex
 /-- A grid container (CSS Grid 2 §5.1). -/
 def Display.isGrid (d : Display) : Bool := d == .grid || d == .inlineGrid
+/-- CSS Display 3 §2.7: the display of a flex or grid item is blockified. -/
+def Display.blockified : Display → Display
+  | .inline | .inlineBlock => .block
+  | .inlineTable => .table
+  | .inlineFlex => .flex
+  | .inlineGrid => .grid
+  | .tableRowGroup | .tableHeaderGroup | .tableFooterGroup | .tableRow | .tableCell
+  | .tableCaption | .tableColumn | .tableColumnGroup => .block
+  | d => d
 /-- An inline-level flex or grid container: one atomic box on a line. -/
 def Display.isInlineContainer (d : Display) : Bool := d == .inlineFlex || d == .inlineGrid
 /-- Boxes whose contents are one block formatting context (the strut of their lines). -/
@@ -1466,6 +1475,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       else result := applyOrKeep result d
   -- A root or body never clips here: the window scrolls instead.
   if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
+  -- The children of a flex or grid container are its items: blockified.
+  if parent.display.isFlex || parent.display.isGrid then result := {result with display := result.display.blockified}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
   return {result with underline := decoration.isSome, decorationColor := decoration}
 
