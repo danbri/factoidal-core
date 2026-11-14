@@ -1,6 +1,7 @@
 # MathML: what "finish" means, model and rendering
 
-Date: 2026-10-28. Status: design, no code. Tracking:
+Date: 2026-10-28. Status (2026-11-14): parts C2 and C3 and theorems 1 and 2 have code and
+proofs, with the limits stated in section 9; P2, P3, I1, R1 and theorems 4 and 5 are open. Tracking:
 https://github.com/danbri/factoidal/issues/1165 (section "Front end: design
 first", MathML). Earlier plan: `docs/designissues/2026-07-10-mathml-arbitrary-expression-rendering.md`
 (F\*, waves 0 to 3).
@@ -127,3 +128,126 @@ OpenMath objects map to the same `Expr`.
   hub rule already says (no third-party code from a CDN).
 - Presentation MathML has no evaluation semantics in Factoidal. A meaning
   comes from Content markup or from `intent`.
+
+## 9. State on 2026-11-14
+
+Stages 3 and 5 of the plan have code; stage 2 is written and not yet compiled. Stage 1 is done for the versions (below), not for vendoring.
+Stages 4, 6 and 7 are not started.
+
+### Versions read
+
+| Name | Version read |
+|---|---|
+| `MathML3` | MathML 3.0 Second Edition, W3C Recommendation 2014-04-10, chapter 4 (https://www.w3.org/TR/MathML3/chapter4.html) |
+| `MathML4` | MathML 4.0, W3C Working Draft 2026-11-12 (https://www.w3.org/TR/2026/WD-mathml4-20261112/), appendix F "The Strict Content MathML Transformation" |
+| `MathMLCore` | MathML Core, W3C Candidate Recommendation Snapshot 2025-06-24 (https://www.w3.org/TR/2025/CR-mathml-core-20250624/), section 2.1 |
+| `OpenMath2` | The OpenMath Standard 2.0 revision 3, 2019-07-01 (https://openmath.org/standard/om20-2019-07-01/omstd20.html), sections 2.1 and 3.1 |
+
+MathML 4 moves the transformation from section 4.6 to appendix F. For the constructs below its rules
+are the same as MathML 3's (F.2.5 roots, F.4.2 vectors and matrices, F.5.1 n-ary/unary operators,
+F.6.2 predicate on list, F.7.1 numbers, F.8.1 minus), so one `toStrict` serves both and the theorems
+are not stated twice. Both specifications print `cd="reln1"` in the n-ary relation example; the code
+uses `relation1`, the dictionary the operator's syntax table and OpenMath name.
+
+### Decision: `toStrict : Expr → Expr`
+
+`Expr` carries both forms, so the transformation is a function on `Expr` and its theorems are
+structural inductions with no XML parser in them. An application `app key args` has a key: the MathML
+element name of an operator (`plus`, `rem`), or `cd:name` for an OpenMath symbol that has no MathML
+element with the same application shape (`arith1:unary_minus`, `arith1:root`, `nums1:rational`,
+`set1:set`, `list1:list`, `fns2:predicate_on_list`, `linalg2:matrix`, `linalg2:matrixrow`,
+`linalg2:vector`, `linalg1:matrix_selector`, `linalg1:vector_selector`). Whether `plus` is written
+`<plus/>` or `<csymbol cd="arith1">plus</csymbol>` is concrete syntax, decided by the writer, from the
+table of 45 keys in `MathML/Symbols.lean`. A key outside the table is an identifier head
+(`<apply><ci>f</ci>...`, OpenMath `OMV`).
+
+`Expr` has no constructor for a symbol that is not applied. The one rule that needs one (the relation
+handed to `fns2:predicate_on_list`) writes it `app "csymbol" [sym key]`. A constructor would change
+every match over `Expr` in `Math/`, `Wasm/Ops` and the labs, which this branch did not build.
+
+### What `toStrict` does (`MathML/Strict.lean`)
+
+| Construct | Rule | Strict form |
+|---|---|---|
+| `minus` with one argument | MathML 3 §4.4.2.6, MathML 4 F.8.1 | `arith1:unary_minus` |
+| `root` | §4.4.2.11, F.2.5 | `arith1:root(x, degree)`, degree 2 when absent |
+| relation with other than two arguments | §4.3.4.3.2 "Rewrite: n-ary relations", F.6.2 | `fns2:predicate_on_list(relation, list1:list(...))` |
+| `max`, `min` with no argument or two or more | §4.3.4.4.2 "Rewrite: n-ary unary set", F.5.1 | applied to `set1:set(...)` |
+| `max`, `min` with one argument | §4.3.4.4.2 "Rewrite: n-ary unary single" | unchanged |
+| `rat` (`cn type="rational"`) | §4.2.1.3 "Rewrite: cn sep", F.7.1 | `nums1:rational(n, d)` |
+| `vec`, `mat` | §4.4.9.1 to §4.4.9.3, F.4.2 | `linalg2:vector`, `linalg2:matrix` of `linalg2:matrixrow` |
+| `selector` | §4.4.9.6 and §4.6 step 8 | `linalg1:matrix_selector(i, j, M)` for three arguments, `linalg1:vector_selector(i, V)` for two |
+| every other operator | "Rewrite: element" | unchanged key; the strict writer gives the `csymbol` |
+
+Not covered, because the reader does not read them: qualifiers (`bvar`, `condition`,
+`domainofapplication`, `lowlimit`, `uplimit`, `logbase`, `momentabout`), `bind`, `lambda`, `piecewise`,
+`interval`, `set` and `list` as containers, `cn` of type `e-notation`, `complex-cartesian`,
+`complex-polar` and `constant`, `type` and `definitionURL` attributes, `semantics` annotations (the
+reader keeps the first child). A decimal `cn` is read as an exact rational, so it becomes
+`nums1:rational`, not a strict `cn type="real"`. With two arguments `selector` always becomes
+`vector_selector`: §4.6 says the symbol depends on the type of the argument, and `Expr` has no types.
+
+### Evaluation and theorem 1
+
+`Core.eval` is a `partial def`, so no theorem can unfold it. Strict content is evaluated by translating
+it back: `unstrict : Expr → Expr` rewrites the strict forms into the forms `eval` reads, and
+`evalStrict env e = eval env (unstrict e)`.
+
+### Proved
+
+`#print axioms` gave `propext`, `Classical.choice`, `Quot.sound` for the six `Strict` theorems. The
+`#print axioms` lines for the `Symbols` and `OpenMath` theorems are in `MathML/OpenMathTests.lean`, which
+had not compiled when this was recorded (the theorems themselves compiled).
+
+| Theorem | Module | Says |
+|---|---|---|
+| `toStrict_isStrict` | `Strict` | `isStrict (toStrict e)` for every `e` |
+| `toStrict_of_isStrict` | `Strict` | a strict expression is a fixed point of `toStrict` |
+| `toStrict_idempotent` | `Strict` | `toStrict (toStrict e) = toStrict e` |
+| `unstrict_toStrict` | `Strict` | `unstrict (toStrict e) = unstrict e` for every `e` |
+| `evalStrict_toStrict` (theorem 1) | `Strict` | `evalStrict env (toStrict e) = evalStrict env e` for every `e` and `env`, defined or not |
+| `evalStrict_of_native` (theorem 1) | `Strict` | if `unstrict e = e` then `evalStrict env (toStrict e) = eval env e` |
+| `keyOf_of_symbolOf`, `symbolOf_of_keyOf` | `Symbols` | the key and symbol columns of the table are inverse |
+| `ofOM_toOM` (theorem 2) | `OpenMath` | `ofOM (toOM s) = some s` for strict `s` |
+| `ofOpenMath_toOpenMath` (theorem 2) | `OpenMath` | `ofOpenMath (toOpenMath e) = some (toStrict e)` for every `e` |
+| `toOM_ofOM_image` (theorem 2, converse on the image) | `OpenMath` | what the object of a strict `s` reads back as writes to the same object |
+
+`isStrict` is a `Bool` function, so it is decidable. Each theorem's doc comment has its "Says" and
+"Does not say" lines.
+
+### Tested only
+
+- `lake exe l4mathml` on this tree (2026-11-14): content-mathml evaluation 81 pass, 0 fail, 0 markup-not-read
+  (out of 81), the same as before this work; evaluation cases through their strict form 81 pass, 0 fail
+  (out of 81); strict content transformation 20 pass, 0 fail (out of 20); OpenMath 17 pass, 0 fail
+  (out of 17). The last three lines are new: `third_party/testing/mathml/strict-manifest.json` and
+  `openmath-manifest.json`, authored from the examples of the specifications.
+- `#guard` checks: the specification examples in `MathML/StrictTests.lean` and
+  `MathML/OpenMathTests.lean`; parse of the written OpenMath XML on seven objects.
+- That `evalStrict` and `eval` agree on an expression with `unstrict e ≠ e`: only the corpus run above.
+
+### Open
+
+- Theorem 1 over `Core.eval` itself: needs `eval` as a total function (structural over `Expr`, with the
+  operator dispatch split out), which would also remove a `partial def`. Until then `evalStrict` and
+  `eval` are proved equal only where `unstrict e = e`.
+- `ofOM o = some e → isStrict e`, and `toOM e = o` for every `o` that `ofOM` reads: not proved (needs
+  an induction principle for `OMObj`; one counterexample to the second is named at `toOM_ofOM_image`).
+- XML round trip `parseOpenMath (writeOpenMath o) = some o`: tested on the corpus objects, not proved.
+  It goes through the XML parser, and through `toString` and `String.toInt?` for `OMI`.
+- OpenMath: `OMB`, `OME`, `OMFOREIGN`, `OMR`, `cdbase` other than the default, `id` and sharing are not
+  modelled. `OMF`, `OMSTR`, `OMBIND`, `OMATTR` are read and written but have no `Expr` counterpart.
+  Symbols outside the 45-entry table are not read as application heads. No `.ocd` file is vendored.
+- Theorem 3: `MathML/CoreVocabulary.lean` (the output as a tree, theorem `presTree_core`) and
+  `MathML/OpenMathTests.lean`, `MathML/Intent.lean` are written but had not compiled when this was
+  recorded; they are not counted above. Theorem 3 on the string: `serialize (presTree e) = pres e` is a `#guard` per branch of `pres`, not a
+  theorem. Found while writing it: a vector renders `mtd` directly under `mtable`, with no `mtr`.
+- Theorem 4 (reading `toContentMathML e` gives back `e`): not proved. What blocks it: the reader
+  `FromXml.exprOf` is a `partial def`, which no proof can unfold, and the statement goes through the
+  XML parser (`parseNamespaceView`), for which there is no parse-of-serialise theorem to use. The
+  statement also needs hypotheses: `rat n 0` is written and not read back, and a `sym` or key with
+  outer white space is trimmed by the reader. With `exprOf` made fuel-bounded or structural, a
+  tree-level version (reader of the writer's tree, no parser) is the reachable first step. It stays a
+  test (`#guard` in `FromJson.lean`, `OpenMathTests.lean`).
+- `intent` (I1, theorem 5), Presentation input (P2), the Content to Presentation audit (P3) and the
+  browser sweep (R1): not started.
