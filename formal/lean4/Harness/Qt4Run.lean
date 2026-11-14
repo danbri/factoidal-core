@@ -476,9 +476,9 @@ def isXqEnv (env : Env) : Bool := env.vars.any (fun (q, _) => q == xqMode)
 def evalIn (env : Env) (src : String) : M Seq := do
   -- XQuery mode: an assertion that is an XPath expression over the EXPath
   -- file system takes the file path below (its writing calls)
-  let xp := if isXqEnv env && env.fileSys.isSome then (parseXPath4 src env.ns env.schema.declared env.features).toOption else none
+  let xp := if isXqEnv env && env.fileSys.isSome then (parseXPath4 src env.ns env.schema.declared env.features env.schema.isSimpleType).toOption else none
   if isXqEnv env && xp.isNone then (·.1) <$> L4Factoidal.XQueryUpdate.evalUpdQuery src env 20000 else
-  let e ← match xp with | some e => pure e | none => parseXPath4 src env.ns env.schema.declared env.features
+  let e ← match xp with | some e => pure e | none => parseXPath4 src env.ns env.schema.declared env.features env.schema.isSimpleType
   match env.fileSys with
   -- EXPath File 4.0: an assertion may also call a writing `file:` function
   | some fs => (·.1) <$> L4Factoidal.EXPath.File.evalMem env fs e
@@ -551,7 +551,7 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
     declarations of its prolog (`XPath4.declParams`); none in XPath. -/
 def queryParams (env : Env) (src : String) : M SerParams :=
   if isXqEnv env && env.features.serialization then do
-    let m ← L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.xml11 env.features
+    let m ← L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.xml11 env.features env.schema.isSimpleType
     -- `output:parameter-document`: the document first, then the other
     -- output declarations over it
     let init ← match m.outputDecls.lookup "parameter-document" with
@@ -1198,8 +1198,8 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         | none, some sp =>
           -- XQuery mode: a main module with an empty prolog is its body
           -- (`XQuery4.evalModule_emptyProlog`), given to the file evaluator
-          let xqBody : Option Expr := if !isXqEnv env || (parseXPath4 src env.ns env.schema.declared).isOk then none else
-            match L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.xml11 with
+          let xqBody : Option Expr := if !isXqEnv env || (parseXPath4 src env.ns env.schema.declared {} env.schema.isSimpleType).isOk then none else
+            match L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.xml11 {} env.schema.isSimpleType with
             | .ok m => if m.decls.isEmpty && m.imports.isEmpty && m.schemaImports.isEmpty && m.libNs.isNone then m.body else none
             | .error _ => none
           match xqBody with

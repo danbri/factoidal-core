@@ -85,6 +85,10 @@ structure PCtx where
       the static context (`XPath4.SchemaHook.declared`): whether the name has
       a global declaration. None by default (no schema in scope). -/
   schemaDecl : Bool → QN → Bool := fun _ _ => false
+  /-- The in-scope schema types that are simple types and not built in
+      (`XPath4.SchemaHook.isSimpleType`): such a name is a type name of
+      the static context. None by default (no schema in scope). -/
+  schemaSimple : QN → Bool := fun _ => false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -489,6 +493,8 @@ def atomicTypeOf (q : QN) : P IType := do
   match c.types.find? (fun (n, _) => n == q) with
   | some (_, t) => return t
   | none => pure ()
+  -- a simple type of the in-scope schema
+  if q.uri != nsXS && c.schemaSimple q then return .schemaType q
   if c.lenientTypes && q.uri != nsXS then return .item
   if q.uri == nsXS then
     if q.loc == "numeric" then
@@ -1762,7 +1768,7 @@ end
     declarations prolog. -/
 def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none)
     (schemaDecl : Bool → QN → Bool := fun _ _ => false)
-    (features : FeatureSettings := {}) : M Expr :=
+    (features : FeatureSettings := {}) (schemaSimple : QN → Bool := fun _ => false) : M Expr :=
   let p : P Expr := do
     -- prolog (XPath 4.0 §2.1): DefaultElementNamespaceDecl? NamespaceDecl*
     let mut extra : List (String × String) := []
@@ -1810,7 +1816,7 @@ def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option
     if i < c.s.size then synErr ("unexpected text at offset " ++ toString i ++ ": '" ++
        String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
     pure e
-  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl, features }).run 0 with
+  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl, features, schemaSimple }).run 0 with
   | .ok (e, _) => .ok e
   | .error e => .error e
 

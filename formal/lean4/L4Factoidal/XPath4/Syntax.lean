@@ -147,6 +147,11 @@ inductive IType where
   | schemaElem (n : QN)
   /-- `schema-attribute(N)` (XPath 4.0 §3.2.8.5). -/
   | schemaAttr (n : QN)
+  /-- A simple type of the in-scope schema that is not built in, by name
+      (XPath 4.0 §3.2.7 for a generalized atomic type; any simple type as
+      the target of `cast` and `castable`, §4.19.2 and §4.19.3). Its
+      definition is `SchemaHook.typeInfo` (`XPath4.SchemaSimple`). -/
+  | schemaType (q : QN)
   | text | comment | nsNode
   | pi (target : Option String)
   | doc (inner : Option IType)

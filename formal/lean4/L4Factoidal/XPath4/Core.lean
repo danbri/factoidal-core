@@ -10,6 +10,7 @@ import L4Factoidal.XPath4.ExprEq
 import L4Factoidal.XPath4.Doc
 import L4Factoidal.XPath4.Catalog
 import L4Factoidal.XPath4.JNode
+import L4Factoidal.XPath4.SchemaSimple
 import L4Factoidal.EXPath.File.FS
 import Std.Data.HashMap
 
@@ -57,6 +58,11 @@ structure SchemaTypeInfo where
   /-- The typed value of a lexical form validated against the type;
       `none` when the form is not valid. Absent for a complex type. -/
   cast : Option (String → Option (List Atomic)) := none
+  /-- The XSD 1.1 Part 2 body of a simple type (base, variety, members or
+      item type, facets): what `cast as`, `castable as`, the constructor
+      function and `instance of` use (`XPath4.SchemaSimple`). Absent for a
+      complex type. -/
+  body : Option L4Factoidal.XSD.SimpleType := none
 deriving Inhabited
 
 /-- Schema component facts needed by F&O 4.0 §14.6.6. These describe the
@@ -114,6 +120,15 @@ structure SchemaHook where
   /-- Content model facts for schema-based element-to-map conversion. -/
   contentInfo : QN → Option SchemaContentInfo := fun _ => none
 deriving Inhabited
+
+/-- The Part 2 body of a simple type of the in-scope schema that is not
+    built in; `none` for another name. -/
+def SchemaHook.simpleBody (h : SchemaHook) (q : QN) : Option L4Factoidal.XSD.SimpleType :=
+  (h.typeInfo q).bind (·.body)
+
+/-- Is the name a simple type of the in-scope schema (not built in)? For
+    the parser (`PCtx.schemaSimple`). -/
+def SchemaHook.isSimpleType (h : SchemaHook) (q : QN) : Bool := (h.simpleBody q).isSome
 
 /-- The in-scope element (`true`) or attribute (`false`) declaration test
     for the parser (`PCtx.schemaDecl`, XPST0008 of `schema-element()` and
@@ -752,6 +767,10 @@ def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
          | none => true)
       | _ => false
   | .atomic t => match i with | .atom a => a.ty.derives t | _ => false
+  -- a simple type of the in-scope schema: by value (`XPath4.SchemaSimple`)
+  | .schemaType q => match i, e.schema.simpleBody q with
+      | .atom a, some body => atomInBody body a
+      | _, _ => false
   | .anyFn => i.isFn
   | .fnT ps r => i.fnArity == some ps.length &&
       (match i with
