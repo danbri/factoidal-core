@@ -305,6 +305,69 @@ def start (base page : Session) (w : Worker) (src : String) (scripts : Array (St
     let s := w.waiting.foldl (fun s d => deliver s { worker := 0, kind := "message", data := d }) s
     ({ w with s, phase := .running, waiting := #[], steps := w.steps + s.steps, syncCache := #[] }, none, none)
 
+/-! ## Module workers (HTML §10.2.4 "run a worker", type "module") -/
+
+/-- The mark the prelude puts in a module worker's name (its `MODULE`). -/
+def moduleMark : String := "\u0001module\u0001"
+
+/-- A worker made with `{type: "module"}`. -/
+def isModuleWorker (name : String) : Bool := (name.splitOn moduleMark).length > 1
+
+/-- The module graph of a module worker (HTML "fetch a module worker script graph"), from its
+script and the scripts fetched so far: `.inr (graph, root)` when every module is there,
+`.inl url` for the next module to fetch, or why it fails (a fetch that failed, a parse error,
+a specifier that does not resolve: `LeanJSModules.resolveSpecifier`, no import maps). A
+module is fetched once; a cycle ends at a module already in the graph. -/
+def moduleGraph (url src : String) (fetched : Array (String × Option String)) :
+    Except String (String ⊕ (JS.ModGraph × Nat)) := Id.run do
+  let some root := (JS.parseModule src).toOption | return .error s!"SyntaxError in the module script {url}"
+  let mut g : JS.ModGraph := #[JS.ModNode.ofSyntax url root]
+  let mut index : Array (String × Nat) := #[(url, 0)]
+  let mut pending : List Nat := [0]
+  for _ in [0:4096] do
+    match pending with
+    | [] => break
+    | i :: rest =>
+      pending := rest
+      let node := g[i]!
+      for spec in node.syn.requests do
+        match LeanJSModules.resolveSpecifier spec node.url with
+        | none => return .error s!"Failed to resolve module specifier \"{spec}\""
+        | some u =>
+          match index.find? (·.1 == u) with
+          | some (_, j) => g := g.modify i fun m => { m with deps := m.deps.push (spec, j) }
+          | none =>
+            match fetched.find? (·.1 == u) with
+            | none => return .ok (.inl u)
+            | some (_, none) => return .error s!"Failed to fetch the module {u}"
+            | some (_, some text) =>
+              let some syn := (JS.parseModule text).toOption | return .error s!"SyntaxError in the module {u}"
+              let j := g.size
+              g := g.push (JS.ModNode.ofSyntax u syn)
+              index := index.push (u, j)
+              g := g.modify i fun m => { m with deps := m.deps.push (spec, j) }
+              pending := pending ++ [j]
+  return .ok (.inr (g, 0))
+
+/-- Start a module worker: as `start`, with its module graph linked and evaluated in place of
+a classic script. -/
+def startModule (base page : Session) (w : Worker) (g : JS.ModGraph) (root : Nat)
+    (entropy : ByteArray) (policy : Option String := none) : Worker × Option Net.PageFetch.Wire :=
+  let limits := { page.limits with entropy := ByteArray.empty, commands := 0, logs := maxLogs }
+  let s : Session := { base with limits, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
+  let s := match Hosts.WebApi.mathRandomSeed entropy with
+    | some x => { s with heap := { s.heap with rng := x } }
+    | none => s
+  let s := (s.setHost (workerHost page entropy w.url w.syncCache policy)).setBudget workerBudget
+  let s := (s.api? "worker" #[.str (JS.Str.ofHost w.url), .str (JS.Str.ofHost w.name)]).1
+  let (s, _) := s.runModule g #[] 0 (.run root false)
+  let s := wEngine.checkpoint s
+  match syncWanted s with
+  | some wire => ({ w with steps := w.steps + s.steps }, some wire)
+  | none =>
+    let s := w.waiting.foldl (fun s d => deliver s { worker := 0, kind := "message", data := d }) s
+    ({ w with s, phase := .running, waiting := #[], steps := w.steps + s.steps, syncCache := #[] }, none)
+
 def closesIn (ops : Array WorkerOp) : Bool := ops.any fun | .close => true | _ => false
 
 /-- Run a worker's tasks that are due at `clock`, at most `workerTasks` and about `budget`
@@ -548,7 +611,18 @@ def runWorkers (a : Agents) : Agents := Id.run do
       match w.script? x.url with
       | some (some src) =>
         let hints := (importHints src x.url).filter fun u => (w.script? u).isNone
-        if !hints.isEmpty then
+        if isModuleWorker x.name then
+          match moduleGraph x.url src w.scripts with
+          | .ok (.inl u) => w := w.request u
+          | .error m =>
+            page := deliver page { worker := x.id, kind := "error", header := errorHeader m x.url 0 0 }
+            x := x.stop
+          | .ok (.inr (g, root)) =>
+            let (x', wire) := startModule base page x g root (a.entropy x.id)
+              ((w.policies.find? fun (e : String × String) => e.1 == x.url).map (·.2))
+            x := x'
+            sync := wire
+        else if !hints.isEmpty then
           w := hints.foldl Workers.request w
         else
           let (x', need, wire) := start base page x src w.scripts (a.entropy x.id)

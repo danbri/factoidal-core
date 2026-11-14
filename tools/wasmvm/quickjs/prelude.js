@@ -15543,7 +15543,6 @@
       const name = o.name === undefined ? '' : String(o.name);
       const url = resolveURL(String(scriptURL), scriptBase());
       if (url === null) throw new DOMException(`Failed to construct 'Worker': The URL '${scriptURL}' is invalid.`, 'SyntaxError');
-      if (type === 'module') throw new DOMException("Failed to construct 'Worker': module workers are not supported here.", 'NotSupportedError');
       const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(url)?.[0] ?? '';
       if (scheme !== 'data:' && scheme !== 'blob:' && originOf(url) !== originOf(href))
         throw new DOMException(`Failed to construct 'Worker': Script at '${url}' cannot be accessed from origin '${originOf(href)}'.`, 'SecurityError');
@@ -15556,7 +15555,8 @@
         chk(n.timer(register(() => { const e = new Event('error'); state(e).trusted = true; dispatch(self, e); }), 0, 0));
         return;
       }
-      const id = n.worker(0, url, name);
+      // a module worker: Lean fetches its module graph and evaluates it (LeanJSWorkers.moduleGraph)
+      const id = n.worker(0, url, (type === 'module' ? MODULE : '') + name);
       workerSlots.set(this, { id, terminated: false });
       workerObjects.set(id, this);
     }
@@ -15583,6 +15583,7 @@
   // pair of MessagePorts, one here and one in the worker's scope; every message on the
   // worker's one channel names its connection ({ port, data }), and { port, connect } opens it.
   const SHARED = '\u0001shared\u0001';
+  const MODULE = '\u0001module\u0001';   // a module worker (LeanJSWorkers.moduleMark)
   const sharedByKey = new Map(), sharedById = new Map(), sharedSlots = new WeakMap();
   let sharedScope = null;   // in a shared worker's realm: { ports: [MessagePort] }
   const remotePort = send => { portMaking = true; const p = new MessagePort(); portMaking = false; p._remote = send; return p; };
@@ -15620,7 +15621,6 @@
       const name = o.name === undefined ? '' : String(o.name);
       const url = resolveURL(String(scriptURL), scriptBase());
       if (url === null) throw new DOMException(`Failed to construct 'SharedWorker': The URL '${scriptURL}' is invalid.`, 'SyntaxError');
-      if (type === 'module') throw new DOMException("Failed to construct 'SharedWorker': module workers are not supported here.", 'NotSupportedError');
       const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(url)?.[0] ?? '';
       if (scheme !== 'data:' && scheme !== 'blob:' && originOf(url) !== originOf(href))
         throw new DOMException(`Failed to construct 'SharedWorker': Script at '${url}' cannot be accessed from origin '${originOf(href)}'.`, 'SecurityError');
@@ -15631,10 +15631,10 @@
         chk(n.timer(register(() => { const e = new Event('error'); state(e).trusted = true; dispatch(self, e); }), 0, 0));
         return;
       }
-      const key = url + '\u0000' + name;
+      const key = url + '\u0000' + name + '\u0000' + type;
       let shared = sharedByKey.get(key);
       if (!shared) {
-        shared = { id: n.worker(0, url, SHARED + name), ports: [], objects: [] };
+        shared = { id: n.worker(0, url, SHARED + (type === 'module' ? MODULE : '') + name), ports: [], objects: [] };
         sharedByKey.set(key, shared); sharedById.set(shared.id, shared);
       }
       const k = shared.ports.length, id = shared.id;
@@ -16017,6 +16017,9 @@
     // a shared worker's scope (the SharedWorker constructor names it so): its connections
     const isShared = name.startsWith(SHARED);
     if (isShared) { name = name.slice(SHARED.length); sharedScope = { ports: [] }; }
+    // a module worker's scope: its script is a module graph; importScripts throws (HTML §10.2.1.4)
+    const isModuleScope = name.startsWith(MODULE);
+    if (isModuleScope) name = name.slice(MODULE.length);
     // a service worker's scope (a registration names it so): its scope URL and its one client
     const isService = name.startsWith(SERVICE);
     if (isService) {
@@ -16074,6 +16077,7 @@
       if (cd && cd.get) { delete globalThis.crypto; Object.defineProperty(WP, 'crypto', { get: cd.get, configurable: true, enumerable: true }); } }
     getter(WP, 'crossOriginIsolated', () => false);
     define(WP, 'importScripts', function importScripts(...urls) {
+      if (isModuleScope) throw new TypeError("Failed to execute 'importScripts' on 'WorkerGlobalScope': Module scripts don't support importScripts().");
       const abs = urls.map(x => {
         const r = resolveURL(String(x), href);
         if (r === null) throw new DOMException(`Failed to execute 'importScripts' on 'WorkerGlobalScope': The URL '${x}' is invalid.`, 'SyntaxError');
