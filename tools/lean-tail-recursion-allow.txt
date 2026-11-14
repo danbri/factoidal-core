@@ -2341,6 +2341,7 @@ L4Factoidal_Rendering_CssValues_Color_substF  # (c) the nesting of the channel e
 L4Factoidal_Rendering_CssSheet_preludeText_go  # (c) the nesting of an at-rule prelude, at most cvSize 64 + 2
 L4Factoidal_Rendering_CssRegister_hasFontRelative  # (c) the nesting of one value, at most maxNesting + 2 = 66
 L4Factoidal_Rendering_CssValues_propsOf  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_loose  # (c) the nesting of a grammar of the property table, fuel 24
 L4Factoidal_Rendering_CssValues_simpleRefs  # (c) the nesting of a grammar of the property table, fuel 24
 L4Factoidal_Rendering_CssValues_unparse  # (c) the nesting of a grammar of the property table, fuel 24
 L4Factoidal_Rendering_CssValues_expandF  # (c) fuel 4: a shorthand whose parts are shorthands
