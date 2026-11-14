@@ -52,7 +52,12 @@ def indexed : String := "
 #guard ((Wgsl.compile indexed).toOption.map (·.print)).any (fun t => (t.splitOn "pts[min(u32(i), 2u)]").length == 2)
 -- Outside the subset: loops, storage, user calls, unbounded for, assigning the counter.
 #guard !ok (Wgsl.compile "@vertex fn vs() -> @builtin(position) vec4f { loop { } }")
-#guard !ok (Wgsl.compile "@group(0) @binding(0) var<storage, read_write> b: array<f32>;")
+-- A storage variable is in the subset only with a compute entry point's model (below);
+-- a bad access mode, a second group, or a binding out of range are refused.
+#guard !ok (Wgsl.compile "@group(0) @binding(0) var<storage, write> b: array<f32>;")
+#guard !ok (Wgsl.compile "@group(1) @binding(0) var<storage, read_write> b: array<f32>;")
+#guard !ok (Wgsl.compile "@group(0) @binding(4) var<storage, read_write> b: array<f32>;")
+#guard !ok (Wgsl.compile "@group(0) @binding(0) var<storage> a: array<f32>; @group(0) @binding(0) var<storage> b: array<f32>;")
 #guard !ok (Wgsl.compile "fn f() -> f32 { return 1.0; }")
 #guard !ok (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { var x = 0.0; for (var j = 0; j < 100000; j++) { x += 1.0; } return vec4f(x); }")
 #guard !ok (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { for (var j = 0; j < 4; j++) { j = 0; } return vec4f(0.0); }")
@@ -80,7 +85,10 @@ def page : List Command := [
 -- a draw on a canvas that is not there: each is refused.
 #guard !ok (step (run (State.empty 1) page).1 (.pass 1 (0,0,0,0) [{ pipeline := 5, bind := some 6, vbufs := [2], count := 4, instances := 1, first := 0, firstInstance := 0 }]))
 #guard !ok (step (run (State.empty 1) page).1 (.writeBuffer 2 56 (bytes 8)))
-#guard !ok (step (State.empty 1) (.createBuffer 9 64 (usageMapRead ||| usageCopyDst)))
+#guard ok (step (State.empty 1) (.createBuffer 9 64 (usageMapRead ||| usageCopyDst)))
+#guard !ok (step (State.empty 1) (.createBuffer 9 64 (usageMapRead ||| usageStorage)))
+#guard !ok (step (State.empty 1) (.createBuffer 9 64 (usageMapWrite ||| usageCopySrc)))
+#guard !ok (step (State.empty 1) (.createBuffer 9 64 (usageIndex ||| usageCopyDst)))
 #guard !ok (step (run (State.empty 1) page).1 (.pass 9 (0,0,0,0) []))
 -- The wire form of the same commands.
 #guard ok (Wire.decode 2 "2 60 40\n".toUTF8)
@@ -135,11 +143,11 @@ def vsQuad0 : String := "#version 300 es\nin vec2 pos;\nvoid main() { gl_Positio
 #guard errOf (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { return wave(1.0) * vec4f(1.0); }") ==
   "shader: wave(...) is neither a builtin function of the subset nor a struct; functions of your own are not in the subset"
 #guard errOf (Wgsl.compile "fn wave(x: f32) -> f32 { return x; }") ==
-  "shader: only @vertex and @fragment functions: functions of your own are not in the subset (write their bodies inline)"
+  "shader: only @vertex, @fragment and @compute functions: functions of your own are not in the subset (write their bodies inline)"
 #guard errOf (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { var i = 0; while (i < 4) { i += 1; } return vec4f(0.0); }") ==
   "shader: 'while' is not in the subset: loops are for loops with integer literal bounds, at most 256 steps"
 #guard errOf (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { var x = 0.0; for (var i = 0; i < 200; i++) { for (var j = 0; j < 200; j++) { for (var k = 0; k < 30; k++) { x += 1.0; } } } return vec4f(x); }") ==
-  "shader: fs costs 6160807 operations for each pixel or vertex; the bound is 1000000"
+  "shader: fs costs 6160807 operations for each invocation; the bound is 1000000"
 #guard errOf (Glsl.compileProgram "attribute vec2 p; void main() { while (true) { } }" fs100) ==
   "shader: 'while' is not in the subset: loops are for loops with integer literal bounds, at most 256 steps"
 #guard errOf (Glsl.compileProgram vs100 "float wave(float x) { return x; }\nvoid main() { gl_FragColor = vec4(1.0); }") ==
@@ -182,6 +190,133 @@ def passNums : List Nat := [1, 0, 0, 0, 255, 1, 5, 6, 1, 2, 3, 1, 0, 0]
 #guard !ok (Wire.decode (Wire.binaryOp + 7) (Wire.binaryHeader passNums |>.extract 0 20))
 #guard !ok (Wire.decode (Wire.binaryOp + 8) (ByteArray.mk #[255, 255, 255, 255, 10]))
 
+/-! ## Compute (record section 6a): the force-directed graph of
+`labs/demos/foafnaut/pages/webgpu-force-graph.html` (the same shader texts). -/
+
+def forceShader : String := "
+struct Params { n: u32, e: u32, dt: f32, k: f32 }
+@group(0) @binding(0) var<uniform> p: Params;
+@group(0) @binding(1) var<storage, read> src: array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> dst: array<vec4f>;
+@group(0) @binding(3) var<storage, read> edges: array<vec2u>;
+@compute @workgroup_size(64)
+fn tick(@builtin(global_invocation_id) id: vec3u) {
+  let i = id.x;
+  if (i < p.n) {
+    let me = src[i];
+    var f = vec2f(0.0, 0.0);
+    for (var j = 0u; j < min(p.n, 1024u); j++) {
+      let d = me.xy - src[j].xy;
+      let r2 = dot(d, d) + 0.0001;
+      f += d * (p.k * p.k / r2);
+    }
+    for (var q = 0u; q < min(p.e, 4096u); q++) {
+      let ed = edges[q];
+      if (ed.x == i) { let d = src[ed.y].xy - me.xy; f += d * (length(d) / p.k); }
+      if (ed.y == i) { let d = src[ed.x].xy - me.xy; f += d * (length(d) / p.k); }
+    }
+    f -= me.xy * 0.02;
+    var v = (me.zw + f * p.dt) * 0.85;
+    let s = length(v);
+    if (s > 0.02) { v = v * (0.02 / s); }
+    dst[i] = vec4f(me.xy + v, v);
+  }
+}
+"
+
+#guard ok (Wgsl.compile forceShader)
+-- Every index of a runtime-sized array is clamped by arrayLength; the capped loops print with min.
+#guard ((Wgsl.compile forceShader).toOption.map (·.print)).any fun t =>
+  (t.splitOn "src[min(u32(i), (arrayLength(&src) - 1u))]").length == 2 &&
+  (t.splitOn "dst[min(u32(i), (arrayLength(&dst) - 1u))] = ").length == 2 &&
+  (t.splitOn "for (var j: u32 = 0u; j < min(u32(p.n), 1024u); j++)").length == 2 &&
+  (t.splitOn "@compute @workgroup_size(64, 1, 1) fn tick(").length == 2 &&
+  (t.splitOn "@group(0) @binding(2) var<storage, read_write> dst: array<vec4<f32>>;").length == 2
+#guard ((Wgsl.compile forceShader).toOption.bind (·.bindingNeeds)).map (·.map (fun n => (n.binding, n.minSize))) ==
+  some [(0, 16), (1, 16), (2, 16), (3, 8)]
+-- Outside the compute subset: a workgroup over 256 invocations, a cap over 65536, a loop
+-- that assigns its counter, no @workgroup_size, `arrayLength` of something that is not a name.
+#guard errOf (Wgsl.compile "@compute @workgroup_size(32, 16) fn c() { }") ==
+  "shader: the workgroup of c has more than 256 invocations or a dimension out of range"
+#guard !ok (Wgsl.compile "@group(0) @binding(0) var<uniform> n: u32; @compute @workgroup_size(1) fn c() { var x = 0u; for (var j = 0u; j < min(n, 100000u); j++) { x += 1u; } }")
+#guard !ok (Wgsl.compile "@group(0) @binding(0) var<uniform> n: u32; @compute @workgroup_size(1) fn c() { for (var j = 0u; j < min(n, 8u); j++) { j = 0u; } }")
+#guard !ok (Wgsl.compile "@compute fn c() { }")
+#guard !ok (Wgsl.compile "@group(0) @binding(0) var<storage> a: array<f32>; @compute @workgroup_size(1) fn c() { let n = arrayLength(a); }")
+-- A runtime-sized array only as a storage variable.
+#guard !ok (Wgsl.compile "@compute @workgroup_size(1) fn c() { var a: array<f32>; }")
+
+def kStorage : Nat := usageStorage ||| usageCopyDst ||| usageCopySrc ||| usageVertex
+def graphN : Nat := 64
+def graph : List Command := [
+  .createBuffer 1 16 (usageUniform ||| usageCopyDst),
+  .createBuffer 2 (16 * graphN) kStorage,
+  .createBuffer 3 (16 * graphN) kStorage,
+  .createBuffer 4 (8 * graphN) (usageStorage ||| usageCopyDst),
+  .createShader 5 forceShader,
+  .createComputePipeline 6 5 "tick",
+  .createComputeBindGroup 7 6 [(0, 1), (1, 2), (2, 3), (3, 4)],
+  .writeBuffer 2 0 (bytes (16 * graphN)),
+  .computePass [{ pipeline := 6, bind := some 7, x := 1, y := 1, z := 1 }],
+  .createBuffer 8 (16 * graphN) (usageMapRead ||| usageCopyDst),
+  .copyBuffer 3 0 8 0 (16 * graphN),
+  .mapRead 8 99]
+
+def graphRun : State × List HostCmd := run (State.empty 1) graph
+#guard graphRun.1.objs.length == 8
+-- buffer+clear ×5, shader, pipeline, bind group, write, pass, copy, read
+#guard graphRun.2.length == 17
+#guard graphRun.1.pending == [(99, 8, 16 * graphN)]
+-- the pass's work: 1 workgroup × 64 invocations × the entry point's cost
+#guard graphRun.1.work == workOf graphRun.2 && 0 < graphRun.1.work && graphRun.1.work ≤ maxFrameWork
+-- The host's answer: only for the waiting ticket, at the buffer's size.
+#guard (((deliver graphRun.1 99 (bytes (16 * graphN))).bind (mappedOf · 8)).map (·.size)) == some (16 * graphN)
+#guard (deliver graphRun.1 98 (bytes (16 * graphN))).isNone
+#guard (deliver graphRun.1 99 (bytes 8)).isNone
+-- While mapped (or being mapped): no second map, no copy into it; unmap frees it.
+#guard !ok (step graphRun.1 (.mapRead 8 100))
+#guard !ok (step graphRun.1 (.copyBuffer 3 0 8 0 16))
+#guard ((deliver graphRun.1 99 (bytes (16 * graphN))).map fun s => ok (step ((step s (.unmap 8)).toOption.get!.1) (.copyBuffer 3 0 8 0 16))) == some true
+-- Refused: a binding smaller than one element, a uniform buffer bound as storage, a bind
+-- group missing a binding, too many workgroups, another pipeline's bind group, a frame's
+-- work over the budget, a copy past the end, mapping a buffer without MAP_READ.
+#guard !ok (step (run (State.empty 1) (graph.take 6 ++ [.createBuffer 10 4 usageStorage])).1 (.createComputeBindGroup 7 6 [(0, 1), (1, 2), (2, 3), (3, 10)]))
+#guard !ok (step (run (State.empty 1) (graph.take 6)).1 (.createComputeBindGroup 7 6 [(0, 1), (1, 1), (2, 3), (3, 4)]))
+#guard !ok (step (run (State.empty 1) (graph.take 6)).1 (.createComputeBindGroup 7 6 [(0, 1), (1, 2), (2, 3)]))
+#guard !ok (step graphRun.1 (.computePass [{ pipeline := 6, bind := some 7, x := 65536, y := 1, z := 1 }]))
+#guard !ok (step graphRun.1 (.computePass [{ pipeline := 6, bind := none, x := 1, y := 1, z := 1 }]))
+#guard !ok (step graphRun.1 (.computePass [{ pipeline := 6, bind := some 7, x := 65535, y := 65535, z := 1 }]))
+#guard !ok (step graphRun.1 (.copyBuffer 2 16 3 0 (16 * graphN)))
+#guard !ok (step graphRun.1 (.mapRead 2 7))
+-- A destroyed buffer of a bind group: its dispatches are refused.
+#guard !ok (step (step graphRun.1 (.destroy 3)).toOption.get!.1 (.computePass [{ pipeline := 6, bind := some 7, x := 1, y := 1, z := 1 }]))
+-- A new frame starts a new budget.
+#guard graphRun.1.newFrame.work == 0
+-- A render pipeline on a module with storage is refused (render binds one uniform at 0).
+#guard !ok (step graphRun.1 (.createPipeline 20 5 "" "" [] .triangleList))
+-- The wire form of the compute commands.
+#guard match Wire.decode 11 "7 6 2 0 1 1 2".toUTF8 with
+  | .ok (.createComputeBindGroup 7 6 [(0, 1), (1, 2)]) => true
+  | _ => false
+#guard match Wire.decode 12 "1 6 7 4 1 1".toUTF8 with
+  | .ok (.computePass [d]) => d == { pipeline := 6, bind := some 7, x := 4, y := 1, z := 1 }
+  | _ => false
+#guard match Wire.decode 10 "6 5\ntick".toUTF8 with
+  | .ok (.createComputePipeline 6 5 "tick") => true
+  | _ => false
+#guard ok (Wire.decode 13 "3 0 8 0 1024".toUTF8) && ok (Wire.decode 14 "8 99".toUTF8) && ok (Wire.decode 15 "8".toUTF8)
+#guard (graphRun.2.map Wire.HostCmd.json).any (· == "{\"k\":\"read\",\"g\":[1,8],\"size\":1024,\"ticket\":99}")
+#guard (graphRun.2.map Wire.HostCmd.json).any (· == "{\"k\":\"cpipeline\",\"g\":[1,6],\"shader\":[1,5],\"entry\":\"tick\",\"layout\":[[0,\"uniform\"],[1,\"read-only-storage\"],[2,\"storage\"],[3,\"read-only-storage\"]]}")
+
+#print axioms compile_capLoops
+#print axioms compile_workgroup
+#print axioms dispatch_bounds
+#print axioms computePass_owned
+#print axioms computeBind_owned
+#print axioms copy_in_bounds
+#print axioms readBuffer_owned
+#print axioms run_frameWork
+#print axioms deliver_spec
+#print axioms run_mapInv
 #print axioms program_inSubset
 #print axioms compile_inSubset
 #print axioms compile_cost

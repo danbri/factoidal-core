@@ -8,9 +8,18 @@ A page's shader text is tokenized and parsed into the AST below, checked by `val
 Only the printed text of a hardened, validated AST goes to the host's WebGPU device.
 
 The AST has no constructor for what the subset leaves out: no `loop`, `while`, `break`,
-`continue`, `switch`, `discard`, pointers, storage or workgroup variables, textures,
-samplers, atomics, compute entry points, user function calls. Lean does not type-check
-WGSL; the host's WGSL compiler does.
+`continue`, `switch`, `discard`, pointers, workgroup or private variables, textures,
+samplers, atomics, barriers, user function calls. Lean does not type-check WGSL; the
+host's WGSL compiler does.
+
+Compute (record section 6a, `docs/designissues/2026-11-14-gpu-compute-and-webnn.md`):
+`@compute @workgroup_size(x, y, z)` entry points with x·y·z ≤ `maxInvocations`;
+`var<storage, read>` and `var<storage, read_write>` of fixed types or of runtime-sized
+arrays `array<T>` (the AST's `array T 0`); `arrayLength(&a)`, kept as the call
+`arrayLength(a)` with a single name and printed with the `&`; and `for` loops bounded by
+`min(e, C)` with `C` a literal (`Stmt.forCap`). Every index of a runtime-sized array is
+hardened to `a[min(u32(i), arrayLength(&a) - 1u)]` (`clampRt`); the model checks at
+bind time and again at each dispatch that the bound buffer holds at least one element.
 
 No recursion depends on the input's length: lists are read with bounded `for` loops, and
 nesting (parentheses, blocks) is bounded by the parser's fuel (`maxDepth`).
@@ -30,7 +39,8 @@ inductive Ty where
   | vec (n : Nat) (s : Scalar)
   /-- `matCxR<f32>`, C and R in 2..4. -/
   | mat (c r : Nat)
-  /-- `array<t, n>`, 1 ≤ n ≤ 1024. -/
+  /-- `array<t, n>`, 1 ≤ n ≤ 1024; `n = 0` is the runtime-sized `array<t>`, allowed only
+  as the type of a storage variable (`storageTyOk`). -/
   | array (t : Ty) (n : Nat)
   /-- A struct declared in the module. -/
   | named (name : String)
@@ -79,6 +89,9 @@ inductive Stmt where
   | ifS (c : Expr) (t f : Stmts)
   /-- `for (var v: ty = lo; v < hi; v++)`, or `<=` when `incl`; lo and hi literals. -/
   | forS (v : String) (ty : Scalar) (lo hi : Nat) (incl : Bool) (body : Stmts)
+  /-- `for (var v: ty = lo; v < min(bound, cap); v++)`: a loop over a count the shader
+  reads (a uniform), capped by the literal `cap`, so it runs at most `cap - lo` times. -/
+  | forCap (v : String) (ty : Scalar) (lo : Nat) (bound : Expr) (cap : Nat) (body : Stmts)
   | block (b : Stmts)
   deriving Repr, Inhabited
 
@@ -93,6 +106,10 @@ inductive Attr where
   | builtin (name : String)
   /-- `@interpolate(flat)` -/
   | flat
+  /-- `@workgroup_size(x, y, z)` of a compute entry point (only on functions). -/
+  | workgroupSize (x y z : Nat)
+  /-- `@binding(n)` of a module variable (only on variables). -/
+  | binding (n : Nat)
   deriving DecidableEq, Repr, Inhabited
 
 structure Member where
@@ -107,7 +124,7 @@ structure StructDecl where
   deriving Repr, Inhabited
 
 inductive Stage where
-  | vertex | fragment
+  | vertex | fragment | compute
   deriving DecidableEq, Repr, Inhabited
 
 structure Fn where
@@ -116,14 +133,35 @@ structure Fn where
   params : List Member
   ret : Option (Ty × List Attr)
   body : Stmts
+  /-- `@workgroup_size(x, y, z)` of a compute entry point; `(1, 1, 1)` for the others. -/
+  workgroup : Nat × Nat × Nat := (1, 1, 1)
+  deriving Repr, Inhabited
+
+/-- The address space of a module variable, as a binding of group 0. -/
+inductive Space where
+  | uniform
+  /-- `var<storage, read>` -/
+  | read
+  /-- `var<storage, read_write>` -/
+  | readWrite
+  deriving DecidableEq, Repr, Inhabited
+
+/-- `@group(0) @binding(binding) var<storage, read | read_write> name: ty;` -/
+structure StorageVar where
+  binding : Nat
+  name : String
+  write : Bool
+  ty : Ty
   deriving Repr, Inhabited
 
 structure Module where
   structs : List StructDecl := []
-  /-- `@group(0) @binding(0) var<uniform> name: ty;` -/
+  /-- `@group(0) @binding(uniformBinding) var<uniform> name: ty;` -/
   uniform : Option (String × Ty) := none
   consts : List (String × Option Ty × Expr) := []
   fns : List Fn := []
+  uniformBinding : Nat := 0
+  storage : List StorageVar := []
   deriving Repr, Inhabited
 
 /-! ## Limits -/
@@ -148,6 +186,14 @@ def maxLoop : Nat := 256
 def maxCost : Nat := 1000000
 def maxFns : Nat := 16
 def maxStructs : Nat := 16
+/-- Invocations of one workgroup (x·y·z), and each dimension's bound (WebGPU's default
+`maxComputeInvocationsPerWorkgroup` and `maxComputeWorkgroupSizeX/Y/Z`). -/
+def maxInvocations : Nat := 256
+def maxWorkgroupZ : Nat := 64
+/-- Bindings of group 0 in one module (uniform and storage together). -/
+def maxBindings : Nat := 4
+/-- Iterations of a `for` loop capped by `min(e, C)`: `C - lo` at most this. -/
+def maxCapLoop : Nat := 65536
 
 /-- The builtin functions of the subset. All are pure and run in constant time. -/
 def builtins : List String :=
@@ -162,7 +208,8 @@ def binaryOps : List String :=
   ["+","-","*","/","%","==","!=","<","<=",">",">=","&&","||"]
 def assignOps : List String := ["", "+", "-", "*", "/"]
 def builtinNames : List String :=
-  ["position","vertex_index","instance_index","front_facing"]
+  ["position","vertex_index","instance_index","front_facing",
+   "global_invocation_id","local_invocation_id","local_invocation_index","workgroup_id","num_workgroups"]
 
 /-! ## Tokens -/
 
@@ -178,7 +225,7 @@ def isIdChar (c : Char) : Bool := c.isAlphanum || c == '_'
 def syms2 : List String :=
   ["->","==","!=","<=",">=","&&","||","++","--","+=","-=","*=","/="]
 def syms1 : List Char :=
-  ['(',')','{','}','[',']','<','>',',',';',':','.','@','=','+','-','*','/','%','!']
+  ['(',')','{','}','[',']','<','>',',',';',':','.','@','=','+','-','*','/','%','!','&']
 
 /-- The tokens of `src`, or an error. Comments (`//`, `/* */`, not nested) and white
 space are dropped. One pass of at most `src.length` steps; no recursion. -/
@@ -324,8 +371,11 @@ def ty : Nat → P Ty
       expect "<"
       if name == "array" then
         let t ← ty fuel
+        -- `array<T>`: runtime-sized (only a storage variable may have it, `storageTyOk`)
+        if (← eat ">") then return .array t 0
         expect ","
         let n ← natLit
+        if n == 0 then throw "shader: an array of length 0"
         expect ">"
         return .array t n
       let inner ← ty fuel
@@ -439,6 +489,12 @@ def primary (fuel : Nat) : P Expr :=
       return e
     | some (.ident "true") => advance; return .lit (.bool true)
     | some (.ident "false") => advance; return .lit (.bool false)
+    | some (.ident "arrayLength") =>
+      -- `arrayLength(&a)`: kept as the call `arrayLength(a)` (printed with the `&`).
+      advance; expect "("; expect "&"
+      let a ← ident
+      expect ")"
+      return .call (.fn "arrayLength") (.cons (.name a) .nil)
     | some (.ident name) =>
       if (← get).glsl then
         if let some t := glslTy? name then
@@ -495,10 +551,21 @@ def attrs : P (List Attr × List String) := do
       expect "("; let k ← ident; expect ")"
       if k != "flat" then throw "shader: only @interpolate(flat)"
       out := out.push .flat
-    | "group" | "binding" => expect "("; let n ← natLit; expect ")"
-                             if n != 0 then throw "shader: only @group(0) @binding(0)"
-                             flags := flags.push a
-    | "vertex" | "fragment" => flags := flags.push a
+    | "group" => expect "("; let n ← natLit; expect ")"
+                 if n != 0 then throw "shader: only @group(0)"
+                 flags := flags.push a
+    | "binding" => expect "("; let n ← natLit; expect ")"
+                   if n ≥ maxBindings then throw s!"shader: only bindings 0 to {maxBindings - 1} of group 0"
+                   out := out.push (.binding n); flags := flags.push a
+    | "workgroup_size" =>
+      expect "("
+      let x ← natLit
+      let y ← if (← eat ",") then (if (← isSym ")") then pure 1 else natLit) else pure 1
+      let z ← if (← eat ",") then (if (← isSym ")") then pure 1 else natLit) else pure 1
+      let _ ← eat ","
+      expect ")"
+      out := out.push (.workgroupSize x y z)
+    | "vertex" | "fragment" | "compute" => flags := flags.push a
     | _ => throw s!"shader: attribute @{a} is not in the subset"
   return (out.toList, flags.toList)
 
@@ -554,16 +621,26 @@ def stmt (fuel : Nat) : P Stmt :=
       expect ";"
       if (← ident) != v then throw "shader: for condition must test the counter"
       let incl ← if (← eat "<=") then pure true else do expect "<"; pure false
+      let sc := match declared, sfx with
+        | some (.scalar .u32), _ => Scalar.u32 | _, "u" => .u32 | _, _ => .i32
+      -- `v < min(e, C)`: a count the shader reads, capped by the literal C (`forCap`)
+      if !incl && (← isIdent "min") then
+        advance; expect "("
+        let bound ← expr exprFuel
+        expect ","
+        let cap ← natLit
+        expect ")"; expect ";"
+        if (← ident) != v then throw "shader: for must increment the counter"
+        expect "++"; expect ")"
+        return .forCap v sc lo bound cap (← block fuel)
       let hi ← match ← peek with
         | some (.num s) => match litOf s with
           | some (.int n _) => advance; pure n
-          | _ => throw "shader: for bounds must be integer literals"
-        | _ => throw "shader: for bounds must be integer literals"
+          | _ => throw "shader: for bounds must be integer literals, or min(count, literal)"
+        | _ => throw "shader: for bounds must be integer literals, or min(count, literal)"
       expect ";"
       if (← ident) != v then throw "shader: for must increment the counter"
       expect "++"; expect ")"
-      let sc := match declared, sfx with
-        | some (.scalar .u32), _ => Scalar.u32 | _, "u" => .u32 | _, _ => .i32
       return .forS v sc lo hi incl (← block fuel)
     -- assignment
     if let some (.ident w) := (← peek) then
@@ -629,20 +706,41 @@ def moduleP : P Module := do
     if (← isIdent "var") then
       advance
       expect "<"
-      if !(← isIdent "uniform") then throw "shader: only var<uniform> at module scope"
-      advance; expect ">"
       if !(flags.contains "group" && flags.contains "binding") then
-        throw "shader: the uniform needs @group(0) @binding(0)"
-      let n ← ident; expect ":"; let t ← ty maxDepth; expect ";"
-      if m.uniform.isSome then throw "shader: at most one uniform"
-      m := { m with uniform := some (n, t) }
-      continue
+        throw "shader: a module variable needs @group(0) @binding(n)"
+      let binding := (as.findSome? fun a => match a with | .binding k => some k | _ => none).getD 0
+      if as.any (fun a => match a with | .binding _ => false | _ => true) then
+        throw "shader: module variable attributes"
+      if (← isIdent "uniform") then
+        advance; expect ">"
+        let n ← ident; expect ":"; let t ← ty maxDepth; expect ";"
+        if m.uniform.isSome then throw "shader: at most one uniform"
+        m := { m with uniform := some (n, t), uniformBinding := binding }
+        continue
+      if (← isIdent "storage") then
+        advance
+        let write ← if (← eat ",") then do
+            let acc ← ident
+            if acc == "read" then pure false
+            else if acc == "read_write" then pure true
+            else throw "shader: storage access is read or read_write"
+          else pure false
+        expect ">"
+        let n ← ident; expect ":"; let t ← ty maxDepth; expect ";"
+        m := { m with storage := m.storage ++ [{ binding, name := n, write, ty := t }] }
+        continue
+      throw "shader: only var<uniform> and var<storage> at module scope"
     if (← isIdent "fn") then
       advance
       let stage ← if flags.contains "vertex" then pure Stage.vertex
         else if flags.contains "fragment" then pure Stage.fragment
-        else throw "shader: only @vertex and @fragment functions: functions of your own are not in the subset (write their bodies inline)"
-      if !as.isEmpty then throw "shader: function attributes"
+        else if flags.contains "compute" then pure Stage.compute
+        else throw "shader: only @vertex, @fragment and @compute functions: functions of your own are not in the subset (write their bodies inline)"
+      let workgroup ← match stage, as with
+        | .compute, [.workgroupSize x y z] => pure (x, y, z)
+        | .compute, _ => throw "shader: a compute entry point needs @workgroup_size"
+        | _, [] => pure (1, 1, 1)
+        | _, _ => throw "shader: function attributes"
       let n ← ident; expect "("
       let ps ← members ")"
       let r ← if (← eat "->") then do
@@ -650,7 +748,7 @@ def moduleP : P Module := do
           pure (some (← ty maxDepth, ra))
         else pure none
       let b ← block maxDepth
-      m := { m with fns := m.fns ++ [{ stage, name := n, params := ps, ret := r, body := b }] }
+      m := { m with fns := m.fns ++ [{ stage, name := n, params := ps, ret := r, body := b, workgroup }] }
       continue
     throw s!"shader: module item not in the subset at token {(← get).pos}"
   throw "shader: too many module items"
@@ -685,6 +783,7 @@ mutual
 def Stmt.nodes : Stmt → List Stmt
   | s@(.ifS _ t f) => s :: (t.nodes ++ f.nodes)
   | s@(.forS _ _ _ _ _ b) => s :: b.nodes
+  | s@(.forCap _ _ _ _ _ b) => s :: b.nodes
   | s@(.block b) => s :: b.nodes
   | s => [s]
 
@@ -700,6 +799,7 @@ def Stmt.exprs : Stmt → List Expr
   | .assign l _ e => [l, e]
   | .ret e => e.toList
   | .ifS c _ _ => [c]
+  | .forCap _ _ _ e _ _ => [e]
   | _ => []
 
 /-- The types a statement names directly. -/
@@ -753,6 +853,7 @@ def Stmt.cost : Stmt → Nat
   | .ret e => 1 + optCost e
   | .ifS c t f => 1 + c.cost + t.cost + f.cost
   | .forS _ _ lo hi incl b => 2 + trips lo hi incl * (2 + b.cost)
+  | .forCap _ _ lo e cap b => 2 + trips lo cap false * (4 + e.cost + b.cost)
   | .block b => 1 + b.cost
 
 def Stmts.cost : Stmts → Nat
@@ -802,13 +903,18 @@ def Lit.ok : Lit → Bool
   | .int n sfx => (sfx == "" || sfx == "i" || sfx == "u") && n < 2^32
   | .bool _ => true
 
+/-- The arguments of `arrayLength(&a)`: one name. -/
+def oneName : Args → Bool
+  | .cons (.name _) .nil => true
+  | _ => false
+
 /-- One expression node of the subset (its children are checked as nodes too). -/
 def exprNodeOk (structs : List String) : Expr → Bool
   | .lit l => l.ok
   | .name n => identOk n
   | .unary op _ => unaryOps.contains op
   | .binary op _ _ => binaryOps.contains op
-  | .call (.fn f) _ => builtins.contains f
+  | .call (.fn f) as => builtins.contains f || (f == "arrayLength" && oneName as)
   | .call (.ty t) _ => t.ok structs
   | .member _ f => identOk f
   | .index _ _ => true
@@ -826,22 +932,55 @@ def stmtNodeOk (structs : List String) : Stmt → Bool
       b.nodes.all fun s => match s with
         | .assign l _ _ => l.root != some v
         | _ => true
+  | .forCap v _ lo _ cap b =>
+      identOk v && trips lo cap false ≤ maxCapLoop && cap < 2^31 &&
+      b.nodes.all fun s => match s with
+        | .assign l _ _ => l.root != some v
+        | _ => true
   | .block _ => true
 
+/-- An attribute of a struct member or a parameter (not `@workgroup_size` or `@binding`). -/
 def attrOk : Attr → Bool
   | .location n => n < 16
   | .builtin b => builtinNames.contains b
   | .flat => true
+  | .workgroupSize .. => false
+  | .binding _ => false
 
 def memberOk (structs : List String) (m : Member) : Bool :=
   identOk m.name && m.ty.ok structs && m.attrs.all attrOk
 
+/-- A compute entry point's workgroup has 1 to `maxInvocations` invocations, each
+dimension within WebGPU's default limits; other entry points have none. -/
+def wgOk (f : Fn) : Bool :=
+  match f.stage with
+  | .compute =>
+    let (x, y, z) := f.workgroup
+    0 < x && 0 < y && 0 < z && x * y * z ≤ maxInvocations && z ≤ maxWorkgroupZ
+  | _ => f.workgroup == (1, 1, 1)
+
 def fnOk (structs : List String) (f : Fn) : Bool :=
-  identOk f.name && f.params.all (memberOk structs) &&
+  identOk f.name && wgOk f && f.params.all (memberOk structs) &&
   (match f.ret with
    | some (t, as) => t.ok structs && as.all attrOk
    | none => true) &&
   f.body.cost ≤ maxCost
+
+/-- The type of a storage variable: a type of the subset, or a runtime-sized array of one. -/
+def storageTyOk (structs : List String) : Ty → Bool
+  | .array t 0 => t.ok structs
+  | t => t.ok structs
+
+/-- The bindings of group 0 a module declares: the uniform's, then the storage variables'. -/
+def Module.bindingNums (m : Module) : List Nat :=
+  (if m.uniform.isSome then [m.uniformBinding] else []) ++ m.storage.map (·.binding)
+
+/-- Module variables: storage names and types of the subset, at most `maxBindings`
+bindings, each below `maxBindings` and used once. -/
+def bindingsOk (structs : List String) (m : Module) : Bool :=
+  m.storage.all (fun v => identOk v.name && storageTyOk structs v.ty) &&
+  m.bindingNums.length ≤ maxBindings && m.bindingNums.all (· < maxBindings) &&
+  m.bindingNums.Nodup
 
 /-- The subset check. -/
 def validate (m : Module) : Bool :=
@@ -850,7 +989,7 @@ def validate (m : Module) : Bool :=
   m.structs.all (fun s => identOk s.name && !s.members.isEmpty && s.members.all (memberOk structs)) &&
   (match m.uniform with
    | some (n, t) => identOk n && t.ok structs
-   | none => true) &&
+   | none => true) && bindingsOk structs m &&
   m.consts.all (fun c => identOk c.1 && c.2.1.all (·.ok structs)) &&
   m.fns.all (fnOk structs) &&
   m.stmts.all (stmtNodeOk structs) &&
@@ -904,6 +1043,24 @@ def tyOf (structs : List StructDecl) (env : Env) : Expr → Option Ty
 def clampIdx (i : Expr) (n : Nat) : Expr :=
   .call (.fn "min") (.cons (.call (.ty (.scalar .u32)) (.cons i .nil)) (.cons (.lit (.int (n - 1) "u")) .nil))
 
+/-- `arrayLength(&a) - 1u`: the last index of the runtime-sized array `a`. -/
+def lastRt (a : String) : Expr :=
+  .binary "-" (.call (.fn "arrayLength") (.cons (.name a) .nil)) (.lit (.int 1 "u"))
+
+/-- `min(u32(i), arrayLength(&a) - 1u)`: an index clamped into the runtime-sized array `a`
+(in bounds when the binding holds at least one element, which the model checks). -/
+def clampRt (i : Expr) (a : String) : Expr :=
+  .call (.fn "min") (.cons (.call (.ty (.scalar .u32)) (.cons i .nil)) (.cons (lastRt a) .nil))
+
+/-- The hardened index of `a'[i']` where `a'`'s type has length `n` (`0`: runtime-sized,
+only through the variable's own name). -/
+def clampAt (a' i' : Expr) (n : Nat) : Option Expr :=
+  if n = 0 then
+    match a' with
+    | .name v => some (.index (.name v) (clampRt i' v))
+    | _ => none
+  else some (.index a' (clampIdx i' n))
+
 mutual
 /-- Every index clamped to the length of its base; `none` when a length is unknown. -/
 def hardenE (structs : List StructDecl) (env : Env) : Expr → Option Expr
@@ -915,7 +1072,7 @@ def hardenE (structs : List StructDecl) (env : Env) : Expr → Option Expr
   | .member a f => (hardenE structs env a).map (.member · f)
   | .index a i =>
     match (tyOf structs env a).bind Ty.len, hardenE structs env a, hardenE structs env i with
-    | some n, some a', some i' => if n = 0 then none else some (.index a' (clampIdx i' n))
+    | some n, some a', some i' => clampAt a' i' n
     | _, _, _ => none
 
 def hardenA (structs : List StructDecl) (env : Env) : Args → Option Args
@@ -945,6 +1102,8 @@ def hardenS (structs : List StructDecl) (env : Env) : Stmt → Option Stmt
   | .ret e => (hardenO structs env e).map .ret
   | .ifS c t f => do return .ifS (← hardenE structs env c) (← hardenSs structs env t) (← hardenSs structs env f)
   | .forS v ty lo hi incl b => (hardenSs structs ((v, .scalar ty) :: env) b).map (.forS v ty lo hi incl)
+  | .forCap v ty lo e cap b => do
+    return .forCap v ty lo (← hardenE structs ((v, .scalar ty) :: env) e) cap (← hardenSs structs ((v, .scalar ty) :: env) b)
   | .block b => (hardenSs structs env b).map .block
 
 def hardenSs (structs : List StructDecl) (env : Env) : Stmts → Option Stmts
@@ -953,10 +1112,10 @@ def hardenSs (structs : List StructDecl) (env : Env) : Stmts → Option Stmts
     return .cons (← hardenS structs env s) (← hardenSs structs (bindOf structs env s) rest)
 end
 
-/-- The scope at module level: constants and the uniform. -/
+/-- The scope at module level: the uniform, the storage variables and the constants. -/
 def moduleEnv (m : Module) : Env :=
   let cs := m.consts.filterMap fun (n, t, e) => (t <|> tyOf m.structs [] e).map (n, ·)
-  (match m.uniform with | some u => [u] | none => []) ++ cs
+  (match m.uniform with | some u => [u] | none => []) ++ m.storage.map (fun v => (v.name, v.ty)) ++ cs
 
 def fnEnv (m : Module) (f : Fn) : Env := f.params.map (fun p => (p.name, p.ty)) ++ moduleEnv m
 
@@ -986,7 +1145,7 @@ def Ty.print : Ty → String
   | .scalar s => s.print
   | .vec n s => s!"vec{n}<{s.print}>"
   | .mat c r => s!"mat{c}x{r}<f32>"
-  | .array t n => s!"array<{t.print},{n}>"
+  | .array t n => if n == 0 then s!"array<{t.print}>" else s!"array<{t.print},{n}>"
   | .named s => s
 
 def Lit.print : Lit → String
@@ -1001,7 +1160,7 @@ def Expr.print : Expr → String
   | .unary op a => s!"({op}{a.print})"
   | .binary op a b => s!"({a.print} {op} {b.print})"
   | .call (.ty t) as => s!"{t.print}({as.print})"
-  | .call (.fn f) as => s!"{f}({as.print})"
+  | .call (.fn f) as => if f == "arrayLength" then s!"arrayLength(&{as.print})" else s!"{f}({as.print})"
   | .member a f => s!"{a.print}.{f}"
   | .index a i => s!"{a.print}[{i.print}]"
 
@@ -1027,6 +1186,9 @@ def Stmt.print : Stmt → String
   | .forS v ty lo hi incl b =>
     let sfx := if ty == .u32 then "u" else "i"
     s!"for (var {v}: {ty.print} = {lo}{sfx}; {v} {if incl then "<=" else "<"} {hi}{sfx}; {v}++) \{{b.print}}"
+  | .forCap v ty lo e cap b =>
+    let sfx := if ty == .u32 then "u" else "i"
+    s!"for (var {v}: {ty.print} = {lo}{sfx}; {v} < min({ty.print}({e.print}), {cap}{sfx}); {v}++) \{{b.print}}"
   | .block b => "{" ++ b.print ++ "}"
 
 def Stmts.print : Stmts → String
@@ -1038,13 +1200,17 @@ def Attr.print : Attr → String
   | .location n => s!"@location({n})"
   | .builtin b => s!"@builtin({b})"
   | .flat => "@interpolate(flat)"
+  | .workgroupSize x y z => s!"@workgroup_size({x}, {y}, {z})"
+  | .binding n => s!"@binding({n})"
 
 def attrsPrint (as : List Attr) : String := String.join (as.map (·.print ++ " "))
 
 def Member.print (m : Member) : String := s!"{attrsPrint m.attrs}{m.name}: {m.ty.print}"
 
 def Fn.print (f : Fn) : String :=
-  let stage := match f.stage with | .vertex => "@vertex" | .fragment => "@fragment"
+  let stage := match f.stage with
+    | .vertex => "@vertex" | .fragment => "@fragment"
+    | .compute => let (x, y, z) := f.workgroup; s!"@compute @workgroup_size({x}, {y}, {z})"
   let ret := match f.ret with
     | some (t, as) => s!" -> {attrsPrint as}{t.print}"
     | none => ""
@@ -1053,8 +1219,10 @@ def Fn.print (f : Fn) : String :=
 def Module.print (m : Module) : String :=
   String.join (m.structs.map fun s => s!"struct {s.name} \{{", ".intercalate (s.members.map Member.print)}}\n") ++
   (match m.uniform with
-   | some (n, t) => s!"@group(0) @binding(0) var<uniform> {n}: {t.print};\n"
+   | some (n, t) => s!"@group(0) @binding({m.uniformBinding}) var<uniform> {n}: {t.print};\n"
    | none => "") ++
+  String.join (m.storage.map fun v =>
+    s!"@group(0) @binding({v.binding}) var<storage, {if v.write then "read_write" else "read"}> {v.name}: {v.ty.print};\n") ++
   String.join (m.consts.map fun (n, t, e) => s!"const {n}{optTyPrint t} = {e.print};\n") ++
   String.join (m.fns.map Fn.print)
 
@@ -1084,6 +1252,11 @@ def whyNot (m : Module) : String :=
         s!"shader: the for loop over {v} runs {trips lo hi incl} times; the bound is {maxLoop}"
       else if hi ≥ 2^31 then "shader: a for loop bound out of range"
       else s!"shader: the body of the for loop over {v} assigns its counter"
+    | some (.forCap v _ lo _ cap _) =>
+      if trips lo cap false > maxCapLoop then
+        s!"shader: the for loop over {v} may run {trips lo cap false} times; the cap is {maxCapLoop}"
+      else if cap ≥ 2^31 then "shader: a for loop bound out of range"
+      else s!"shader: the body of the for loop over {v} assigns its counter"
     | some (.assign _ _ _) => "shader: an assignment to something other than a variable"
     | some (.letS n _ _) | some (.varS n _ _) =>
       if wgslReserved.contains n then s!"shader: {n} is a reserved word of WGSL; give the variable another name"
@@ -1092,9 +1265,14 @@ def whyNot (m : Module) : String :=
     | none => match m.fns.find? (fun f => !fnOk structs f) with
       | some f =>
         if f.body.cost > maxCost then
-          s!"shader: {f.name} costs {f.body.cost} operations for each pixel or vertex; the bound is {maxCost}"
+          s!"shader: {f.name} costs {f.body.cost} operations for each invocation; the bound is {maxCost}"
+        else if !wgOk f then
+          s!"shader: the workgroup of {f.name} has more than {maxInvocations} invocations or a dimension out of range"
         else s!"shader: a parameter, result or attribute of {f.name} is not in the subset"
-      | none => "shader: a struct, the uniform or a constant is not in the subset"
+      | none =>
+        if !bindingsOk structs m then
+          s!"shader: storage variables: a name or type not in the subset, or bindings not distinct and below {maxBindings}"
+        else "shader: a struct, the uniform or a constant is not in the subset"
 
 /-- What every page shader becomes, WGSL or translated GLSL: validated, hardened, and the
 hardened module validated again (clamping adds nodes and cost). The host gets
@@ -1160,5 +1338,55 @@ def layoutOf (structs : List StructDecl) : Nat → Ty → Option (Nat × Nat)
 
 def Module.uniformSize (m : Module) : Option Nat :=
   m.uniform.bind fun (_, t) => (layoutOf m.structs 8 t).map (·.2)
+
+/-! ## Storage layout (WGSL host-shareable layout, storage address space) -/
+
+/-- (alignment, size) of a type in the storage address space (WGSL §14.4: arrays and
+structs are not rounded to 16 as in the uniform space); a runtime-sized array's size is
+one element's stride. `fuel` bounds struct nesting. -/
+def storageLayoutOf (structs : List StructDecl) : Nat → Ty → Option (Nat × Nat)
+  | 0, _ => none
+  | _ + 1, .scalar .bool => none
+  | _ + 1, .scalar _ => some (4, 4)
+  | _ + 1, .vec 2 _ => some (8, 8)
+  | _ + 1, .vec 3 _ => some (16, 12)
+  | _ + 1, .vec 4 _ => some (16, 16)
+  | _ + 1, .vec _ _ => none
+  | _ + 1, .mat c r =>
+    let a := if r == 2 then 8 else 16
+    some (a, c * a)
+  | fuel + 1, .array t n => do
+    let (a, s) ← storageLayoutOf structs fuel t
+    return (a, max n 1 * roundUp a s)
+  | fuel + 1, .named nm => do
+    let d ← structs.find? (·.name == nm)
+    let mut off := 0
+    let mut al := 1
+    for m in d.members do
+      let (a, s) ← storageLayoutOf structs fuel m.ty
+      off := roundUp a off + s
+      al := max al a
+    return (al, roundUp al off)
+
+/-- One binding of group 0 an entry point needs: the space and the least size the bound
+buffer must have (the whole type, or one element of a runtime-sized array, so that
+`arrayLength` is at least 1). -/
+structure BindingNeed where
+  binding : Nat
+  space : Space
+  minSize : Nat
+  deriving DecidableEq, Repr, Inhabited
+
+/-- Every binding of the module with its least size; `none` when a layout is unknown or
+a size is 0. -/
+def Module.bindingNeeds (m : Module) : Option (List BindingNeed) := do
+  let u ← match m.uniform with
+    | some _ => do let z ← m.uniformSize; pure [{ binding := m.uniformBinding, space := .uniform, minSize := z : BindingNeed }]
+    | none => pure []
+  let ss ← optMap (fun (v : StorageVar) => do
+      let (_, z) ← storageLayoutOf m.structs 8 v.ty
+      pure { binding := v.binding, space := if v.write then .readWrite else .read, minSize := z : BindingNeed }) m.storage
+  let all := u ++ ss
+  if all.any (·.minSize == 0) then none else pure all
 
 end L4Factoidal.PageGpu.Wgsl

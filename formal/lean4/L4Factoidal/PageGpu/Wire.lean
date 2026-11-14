@@ -16,6 +16,13 @@ a header line of decimal numbers separated by spaces, then `\n`, then a payload:
 | 7 | pass | canvas r g b a nDraws (pipeline bind nVb vb* count instances first firstInstance)* | |
 | 8 | destroy | id | |
 | 9 | createProgram | id | the GLSL vertex shader, U+0000, the fragment shader |
+| 10 | createComputePipeline | id shader | the entry point's name |
+| 11 | createComputeBindGroup | id pipeline n (binding buffer)* | |
+| 12 | computePass | n (pipeline bind x y z)* | |
+| 13 | copyBuffer | src srcOffset dst dstOffset size | |
+| 14 | mapRead | id ticket | |
+| 15 | unmap | id | |
+| 16 | mapped bytes (a query: the answer is the bytes, `Hosts.Dom.gpuCommand`) | id | |
 
 `bind` 0 is none (page ids start at 1). Formats 1..4 are `float32`..`float32x4`;
 topologies 0..3 are triangle-list, triangle-strip, line-list, point-list.
@@ -114,6 +121,25 @@ def draws (n : Nat) : R (List Draw) := do
                       count, instances, first, firstInstance }
   return out.toList
 
+def entries (n : Nat) : R (List (Nat × Nat)) := do
+  if n > Wgsl.maxBindings then throw "gpu: too many bind group entries"
+  let mut out : Array (Nat × Nat) := #[]
+  for _ in [0:n] do
+    let b ← next
+    let buf ← next
+    out := out.push (b, buf)
+  return out.toList
+
+def dispatches (n : Nat) : R (List Dispatch) := do
+  if n > maxDispatches then throw "gpu: too many dispatches"
+  let mut out : Array Dispatch := #[]
+  for _ in [0:n] do
+    let pipeline ← next
+    let b ← next
+    let x ← next; let y ← next; let z ← next
+    out := out.push { pipeline, bind := if b == 0 then none else some b, x, y, z }
+  return out.toList
+
 def text (b : ByteArray) : Except String String :=
   match String.fromUTF8? b with | some s => .ok s | none => .error "gpu: text is not UTF-8"
 
@@ -148,6 +174,17 @@ def decodeWith (op : Nat) (ns : List Nat) (payload : ByteArray) : Except String 
     let vs ← text (payload.extract 0 k)
     let fs ← text (payload.extract (k + 1) payload.size)
     read do return Command.createProgram (← next) vs fs
+  | 10 => do
+    let entry ← text payload
+    read do return Command.createComputePipeline (← next) (← next) entry
+  | 11 => read do
+    let id ← next
+    let p ← next
+    return Command.createComputeBindGroup id p (← entries (← next))
+  | 12 => read do return Command.computePass (← dispatches (← next))
+  | 13 => read do return Command.copyBuffer (← next) (← next) (← next) (← next) (← next)
+  | 14 => read do return Command.mapRead (← next) (← next)
+  | 15 => read do return Command.unmap (← next)
   | _ => throw "gpu: unknown command"
 
 /-- The command of one import call: a text header (ops below `binaryOp`) or a binary one. -/
@@ -203,6 +240,14 @@ def drawJson (d : HostDraw) : String :=
   s!"\"vbufs\":[{",".intercalate (d.vbufs.map gid)}],\"count\":{d.count},\"instances\":{d.instances}," ++
   s!"\"first\":{d.first},\"firstInstance\":{d.firstInstance}}"
 
+/-- The WebGPU buffer binding type of a space. -/
+def spaceName : Wgsl.Space → String
+  | .uniform => "uniform" | .read => "read-only-storage" | .readWrite => "storage"
+
+def dispatchJson (d : HostDispatch) : String :=
+  s!"\{\"pipeline\":{gid d.pipeline},\"bind\":{match d.bind with | some b => gid b | none => "null"}," ++
+  s!"\"x\":{d.x},\"y\":{d.y},\"z\":{d.z}}"
+
 def HostCmd.json : HostCmd → String
   | .createCanvas g node w h usage =>
     s!"\{\"k\":\"canvas\",\"g\":{gid g},\"node\":{node},\"w\":{w},\"h\":{h},\"usage\":{usage}}"
@@ -219,5 +264,15 @@ def HostCmd.json : HostCmd → String
   | .pass c (r, g, b, a) ds =>
     s!"\{\"k\":\"pass\",\"canvas\":{gid c},\"clear\":[{r},{g},{b},{a}],\"draws\":[{",".intercalate (ds.map drawJson)}]}"
   | .destroy g => s!"\{\"k\":\"destroy\",\"g\":{gid g}}"
+  | .createComputePipeline g sh entry layout =>
+    s!"\{\"k\":\"cpipeline\",\"g\":{gid g},\"shader\":{gid sh},\"entry\":{jsonString entry},\"layout\":[" ++
+    ",".intercalate (layout.map fun (b, sp) => s!"[{b},\"{spaceName sp}\"]") ++ "]}"
+  | .createComputeBind g p es =>
+    s!"\{\"k\":\"cbind\",\"g\":{gid g},\"pipeline\":{gid p},\"entries\":[" ++
+    ",".intercalate (es.map fun (b, buf, size) => s!"[{b},{gid buf},{size}]") ++ "]}"
+  | .computePass ds => "{\"k\":\"cpass\",\"dispatches\":[" ++ ",".intercalate (ds.map dispatchJson) ++ "]}"
+  | .copyBuffer src so dst do_ size =>
+    s!"\{\"k\":\"copy\",\"src\":{gid src},\"srcOffset\":{so},\"dst\":{gid dst},\"dstOffset\":{do_},\"size\":{size}}"
+  | .readBuffer g size ticket => s!"\{\"k\":\"read\",\"g\":{gid g},\"size\":{size},\"ticket\":{ticket}}"
 
 end L4Factoidal.PageGpu.Wire
