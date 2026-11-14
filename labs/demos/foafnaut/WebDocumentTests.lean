@@ -452,6 +452,41 @@ private def svgPicture := (WebRender.vectorPicture svgFile.toUTF8).bind (·.toOp
 #guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+10)*4) ((10*40+10)*4+4)).toList) == some [255,0,0,255]
 #guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+30)*4) ((10*40+30)*4+4)).toList) == some [0,0,0,0]
 #guard (WebRender.vectorPicture "not an image".toUTF8).isNone
+-- `@import` (2026-11-14; before, no import was followed): `inspect` names the sheets to fetch,
+-- the host gives them in `imported`, and each is read before the sheet that imports it, under
+-- the import's conditions. A nested import is asked for once its parent is given.
+private def importPage := "<style>@import url(a.css); p{color:red}</style><p id=target>A</p>"
+private def importDOM := DOM.parseHtmlDocument importPage
+private def importRequest (fields : List (String × JSON.Json)) : JSON.Json :=
+  json ([("url",.string "https://e.test/p/"),("liberal",.bool true)] ++ fields)
+private def importsOf (fields : List (String × JSON.Json)) : Option JSON.Json :=
+  (WebDocument.inspect importDOM "https://e.test/p/" (importRequest fields)).toOption.bind (·.field? "imports")
+private def importSize (fields : List (String × JSON.Json)) : Option Float := do
+  let rules ← (WebDocument.rules importDOM (importRequest fields)).toOption
+  let styles ← (Rendering.CSS.computeAll importDOM rules).toOption
+  let id ← importDOM.getElementById 0 "target"
+  return (← styles[id]?).fontSize
+private def importedSheet (url source : String) : JSON.Json := json [("url",.string url),("source",.string source)]
+private def sheetA := importedSheet "https://e.test/p/a.css" "@import 'sub/b.css' screen; p{font-size:30px}"
+#guard importsOf [] == some (.array [json [("url",.string "https://e.test/p/a.css")]])
+#guard importsOf [("imported",.array [sheetA])] == some (.array [json [("url",.string "https://e.test/p/sub/b.css")]])
+#guard importsOf [("imported",.array [sheetA,importedSheet "https://e.test/p/sub/b.css" "p{font-size:40px}"])] == none
+#guard ((WebDocument.inspect (DOM.parseHtmlDocument "<style>p{color:red}</style><p>A</p>") "https://e.test/p/" (importRequest [])).toOption.bind (·.field? "imports")) == none
+#guard importSize [] == some 16
+#guard importSize [("imported",.array [sheetA])] == some 30
+-- the nested sheet comes before the sheet that imports it: a.css's 30px is the later rule
+#guard importSize [("imported",.array [sheetA,importedSheet "https://e.test/p/sub/b.css" "p{font-size:40px}"])] == some 30
+-- an import under a media query that does not hold is not applied; one that holds is
+#guard importSize [("imported",.array [importedSheet "https://e.test/p/a.css" "@import 'b.css' print;",
+  importedSheet "https://e.test/p/b.css" "p{font-size:40px}"])] == some 16
+#guard importSize [("imported",.array [importedSheet "https://e.test/p/a.css" "@import 'b.css' screen;",
+  importedSheet "https://e.test/p/b.css" "p{font-size:40px}"])] == some 40
+#guard WebDocument.wrapImport {url := "b.css", media := "print"} "p{}" == "@media print {\np{}\n}"
+#guard WebDocument.wrapImport {url := "b.css", layer := some "base", supports := some "display: grid"} "p{}" ==
+  "@supports (display: grid) {\n@layer base {\np{}\n}\n}"
+#guard WebDocument.wrapImport {url := "b.css"} "p{}" == "p{}"
+#guard (WebDocument.importedSheets (json [("imported",.string "bad")])).toOption.isNone
+
 -- The store made ahead of a page's first layout (2026-11-14: a page's scripts start before its
 -- first frame, and each layout their reads asked for decoded every image again) is the one
 -- the layout's own lookup finds: no second store is made. With SVG content and text beside it.

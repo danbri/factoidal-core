@@ -483,7 +483,19 @@ async function main() {
     if(page.applyTurn(turn)){
       if(page===document)dirty=true;
       // What elements made or changed by the turn ask for (a sheet, an image): fetched, then drawn.
-      if(turn.changed)page.fetchAdded?.(()=>{if(page===document)dirty=true;});
+      if(turn.changed)page.fetchAdded?.(()=>{
+        if(page===document)dirty=true;
+        // The session lays the page out for its scripts with the request of its start: tell it
+        // what arrived since (WebScripts.takeLayout), with the view as at start.
+        const fields=page.takeLayoutChange?.();
+        if(fields&&page.script){
+          const session=page.script.session;
+          (scriptCall("scriptSession","",{action:"turn",session,layout:{url:page.url,textScalePercent:view.textScalePercent??100,
+            zoomUnit:view.zoomUnit??100,...fields}}) as Promise<ScriptTurn>)
+            .then(next=>{if(page.script?.session===session)scriptTurn(page,next,"layout");})
+            .catch(error=>console.error("Native HTML: page script layout update failed:",String(error)));
+        }
+      });
     }
     if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
   };

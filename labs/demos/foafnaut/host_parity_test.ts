@@ -348,3 +348,32 @@ Deno.test("page-load: the animated values of a turn",async()=>{
   const doc=await Deno.readTextFile(`${lab}native_html_document.ts`),hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
   assert(doc.includes("takeAnimated(options,turn)")&&hub.includes("takeAnimated(page,turn)"),"a host does not carry a turn's animated values to its requests");
 });
+
+// @import: the engine names what it lacks, the host fetches, until nothing is lacking.
+Deno.test("page-load: imported style sheets",async()=>{
+  const {loadImports,pageLayoutFields}=await import("../../../docs/web/hub/foafnaut/page-load.mjs");
+  // A stand-in for inspect: a.css is imported by the page, b.css by a.css, gone.css by b.css.
+  const needs:Record<string,string[]>={"":["http://a.test/a.css"],"http://a.test/a.css":["http://a.test/b.css"],"http://a.test/b.css":["http://a.test/gone.css"]};
+  const asked:string[][]=[];
+  const inspect=(list:{url:string}[])=>{
+    asked.push(list.map(s=>s.url));
+    const have=new Set(list.map(s=>s.url));
+    const lacking=["",...have].flatMap(u=>needs[u]??[]).filter(u=>!have.has(u));
+    return lacking.length?{imports:lacking.map(url=>({url}))}:{};
+  };
+  const fetched:string[]=[],failed:string[]=[];
+  const got=await loadImports(inspect,(url:string)=>{fetched.push(url);if(url.endsWith("gone.css"))throw new Error("HTTP 404");return Promise.resolve({url,source:`/* ${url} */`});},
+    [],(url:string,reason:string)=>failed.push(`${url} ${reason}`));
+  assert.deepEqual(got,[{url:"http://a.test/a.css",source:"/* http://a.test/a.css */"},{url:"http://a.test/b.css",source:"/* http://a.test/b.css */"}]);
+  // each sheet is fetched once; the one that is not read is asked for once and reported
+  assert.deepEqual(fetched,["http://a.test/a.css","http://a.test/b.css","http://a.test/gone.css"]);
+  assert.deepEqual(failed,["http://a.test/gone.css HTTP 404"]);
+  assert.deepEqual(asked,[[],["http://a.test/a.css"],["http://a.test/a.css","http://a.test/b.css"],["http://a.test/a.css","http://a.test/b.css"]]);
+  // a page with no import: one question, nothing fetched
+  let questions=0;
+  assert.deepEqual(await loadImports(()=>{questions++;return {};},()=>{throw new Error("no fetch expected");}),[]);
+  assert.equal(questions,1);
+  assert.deepEqual(pageLayoutFields({url:"http://a.test/",imported:got}).imported,got);
+  const doc=await Deno.readTextFile(`${lab}native_html_document.ts`),hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
+  assert(doc.includes("loadImports(")&&hub.includes("loadImports("),"a host does not fetch imported style sheets through loadImports");
+});
