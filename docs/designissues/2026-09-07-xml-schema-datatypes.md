@@ -306,3 +306,53 @@ same day measured ten duplicate lexical/value implementations in the Lean tree
 and eight in the F\* tree, the F\*-versus-Lean agreement on the datatypes both
 implement, and the F\* coverage gap:
 [2026-09-07 XML Schema datatypes across the two trees](2026-09-07-xsd-datatypes-audit.md).
+
+## Status — 2026-11-14, one pattern reader for Part 2 and Part 1
+
+**XSD datatype instance tests: 19060 pass, 0 fail (out of 19060
+scored).** Not scored: structures 7052, mixed 0, schema-invalid 1,
+version-1.0 8, unreadable 139, not-simple 8, assertion 33,
+unreadable-pattern 0, nilled 3, value-constraint 53. Measured on
+`wip/xml-specs` (origin/main 19fb349c1 plus this change), xsdtests
+7bc3365c, `lake build l4xsd-datatypes`, run from the repository root.
+
+What was wrong. On origin/main 19fb349c1 the same command gave 16135
+pass, 0 fail (out of 16135 scored) with **unreadable-pattern 2925**; the
+status of 2026-10-10 above had 105 there. Commit 62d7be16e (2026-10-22)
+made `XSD.patternMatches` read patterns with the restricted profile
+`Regex.Profiles.compileXsd11`, which refuses `\d`, `\D`, `\w`, `\W`,
+`\p{..}` and class subtraction. A pattern that is not read makes its
+group vacuous, so 2820 pattern tests left the score with no failure
+shown, and `XSD.validate` accepted a value that broke such a pattern.
+The Part 1 engine (`XSD11/Pattern.lean`) already fell back to the F&O 4.0
+parser for that syntax.
+
+What changed. The two-stage reader is now one function in the regex
+layer, `Regex.Profiles.xsd11Re` (`Regex/Xsd11.lean`): the restricted
+profile first, then the F&O 4.0 parser with the syntax that F&O 4.0 adds
+to XSD refused and `^` and `$` outside a class escaped. `XSD.patternMatches`,
+`XSD.unreadablePatterns`, `XSD11.xsdPatternRe` and the `pattern` parameter
+of the RELAX NG XSD datatype library all call it.
+
+Proved (axioms: propext, Classical.choice, Quot.sound):
+
+- `XSD11.patternOk11_eq`: the Part 1 pattern test equals
+  `XSD.patternMatches` for every list of pattern groups and every
+  literal (before: only when the restricted profile read every pattern,
+  `patternOk11_shared`, which is kept and follows).
+- `Regex.Profiles.xsd11Re_of_compileXsd11`: a pattern the restricted
+  profile reads gets the same regex as before.
+- `Regex.Profiles.xsd11Re_none_of_refused`: a pattern both stages refuse
+  has no regex.
+
+Tested only: `#guard`s in `XSD/DatatypesTests.lean` (digits of other
+scripts under `\d`, `\p{Lu}`, subtraction, `^` and `$` as characters,
+refusal of reluctant quantifiers, lookahead and back-references) and in
+`RelaxNG/Datatypes.lean`; `l4xsd11` 41090 pass, 484 fail, 94 unsupported
+(out of 41668) after, 41089 / 485 / 94 before; `l4relaxng` 965 of 965 and
+87 of 87, unchanged.
+
+Open: no theorem says that `xsd11Re` accepts exactly the Appendix G
+language; the 139 unreadable and 33 assertion tests stay unscored here
+(`l4xsd11` decides them).
+
