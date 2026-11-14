@@ -811,6 +811,33 @@ def toBool : Value → Bool
   | .big i => i != 0
   | .hole | .fl => false
 
+/-- An Array element that is absent (`Value.hole`; `Obj.getOwn`). -/
+def Value.isHole : Value → Bool
+  | .hole => true
+  | _ => false
+
+/-- An Array's elements with each absent one read as `undefined`, for a built-in that takes the
+elements as values; the array itself when it has no absent element. -/
+def holesAsUndef (es : Array Value) : Array Value :=
+  if es.any Value.isHole then es.map fun v => if v.isHole then .undef else v else es
+
+theorem holesAsUndef_size (es : Array Value) : (holesAsUndef es).size = es.size := by
+  unfold holesAsUndef; split <;> simp
+
+/-- No absent element survives `holesAsUndef`: a built-in that reads its elements this way never
+hands a script `Value.hole` (which in a binding means "not initialised"). -/
+theorem holesAsUndef_noHole (es : Array Value) : ∀ v ∈ holesAsUndef es, v.isHole = false := by
+  intro v hv
+  unfold holesAsUndef at hv
+  split at hv
+  · simp only [Array.mem_map] at hv
+    obtain ⟨w, _, rfl⟩ := hv
+    cases w <;> simp_all [Value.isHole]
+  · rename_i h
+    simp only [Array.any_eq_true, not_exists, Bool.not_eq_true] at h
+    obtain ⟨i, hi, rfl⟩ := Array.getElem_of_mem hv
+    exact h i hi
+
 def HeapOf.obj (h : HeapOf H) (id : Nat) : Obj := h.objs.getD id default
 
 /-- The private key that marks an Array exotic object whose elements left the fast form
@@ -853,7 +880,13 @@ def Obj.getOwn (o : Obj) (key : String) : Option PropV :=
   | .array es =>
     if key == "length" then some (.data (.num (Float.ofNat es.size)) true false false)
     else match arrayIndex? key with
-      | some i => if h : i < es.size then some (.data es[i] true true true) else o.props.get? key
+      | some i =>
+        if h : i < es.size then
+          -- `Value.hole`: an absent element (a deleted index, or a gap a write past the end left)
+          match es[i] with
+          | .hole => none
+          | v => some (.data v true true true)
+        else o.props.get? key
       | none => o.props.get? key
   | .prim (.str s) =>
     if key == "length" then some (.data (.num (Float.ofNat (Str.jsLength s))) false false false)
@@ -879,7 +912,7 @@ def Obj.liveKeys (o : Obj) : Array String :=
 /-- The own keys in order (§10.1.11): array indices, then the rest by insertion. -/
 def Obj.ownKeys (o : Obj) : Array String :=
   let idx := match o.kind with
-    | .array es => (List.range es.size).toArray.map toString
+    | .array es => ((List.range es.size).filter fun i => !(es[i]!).isHole).toArray.map toString
     | .prim (.str s) => (List.range (Str.jsLength s)).toArray.map toString
     | _ => #[]
   let ks := o.liveKeys.filter fun k => !isPrivKey k
@@ -894,6 +927,14 @@ def Obj.ownKeys (o : Obj) : Array String :=
 
 -- The Array mark is never an own key a script sees.
 #guard ({ kind := .ordinary } : Obj).markArray.ownKeys.size == 0
+/-- An absent element is not an own property: `delete`, a gap and an elision read through the
+prototype (§10.4.2, §13.2.4.1). -/
+theorem getOwn_hole (o : Obj) (es : Array Value) (k : String) (i : Nat) (hk : o.kind = .array es)
+    (hl : k ≠ "length") (hi : arrayIndex? k = some i) (h : i < es.size) (hh : es[i] = .hole) :
+    o.getOwn k = none := by
+  unfold Obj.getOwn
+  rw [hk]
+  simp [hl, hi, h, hh]
 
 /-- The own string keys (no Symbols), in order. -/
 def Obj.ownStrKeys (o : Obj) : Array String := o.ownKeys.filter (!isSymKey ·)
