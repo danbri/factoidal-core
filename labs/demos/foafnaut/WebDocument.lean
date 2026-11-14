@@ -1525,6 +1525,10 @@ def canvasEnv (h : Holds) : L4Factoidal.PageCanvas.Env :=
     image := fun key => (h.images.find? (·.key == key)).bind fun img =>
       match NativeImage.decode img.bytes with
       | .ok b => some (L4Factoidal.PageCanvas.Bitmap.ofStraight b.width b.height b.rgba)
+      | .error _ => none,
+    decode := fun bytes =>
+      match NativeImage.decode bytes with
+      | .ok b => some (L4Factoidal.PageCanvas.Bitmap.ofStraight b.width b.height b.rgba)
       | .error _ => none }
 
 /-- The request fields that a render reads before its layout ends. `shell` gives only

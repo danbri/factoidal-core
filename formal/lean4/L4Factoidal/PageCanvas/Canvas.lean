@@ -22,11 +22,13 @@ namespace L4Factoidal.PageCanvas
 open L4Factoidal.Rendering
 
 /-- What the engine gives the canvases of a page: the fonts it holds, the SVG path
-parser (for `new Path2D(d)`), and the decoded images of the page by URL key. -/
+parser (for `new Path2D(d)`), the decoded images of the page by URL key, and its image
+decoders (encoded bytes to a bitmap: `ImageDecoder`, a bitmap of kind 5). -/
 structure Env where
   fonts : Array SfntProfile.Font := #[]
   svgPath : String → Option (List Rendering.Contour) := fun _ => none
   image : String → Option Bitmap := fun _ => none
+  decode : ByteArray → Option Bitmap := fun _ => none
 
 instance : Inhabited Env := ⟨{}⟩
 
@@ -784,9 +786,10 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
         let w := sw.toUInt64.toNat
         let h := sh.toUInt64.toNat
         if data.size == w * h * 4 then some (Bitmap.ofStraight w h data) else none
+      else if kind == 5 then r.env.decode data
       else r.source kind src key
     let b := b.map fun b =>
-      if sw.isNaN || kind == 4 then b else
+      if sw.isNaN || kind == 4 || kind == 5 then b else
       let x0 := clampNat sx b.width
       let y0 := clampNat sy b.height
       let x1 := clampNat (sx + sw) b.width

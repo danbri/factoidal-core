@@ -30,6 +30,8 @@ record: docs/designissues/2026-11-14-webgl-webcodecs.md, section 4).
     a chunk that is not whole frames, or a codec that is not PCM.
   * 132 `convertColors(from, to, bgr, bytes)`: `Gamut.convert`: RGBA pixels (BGRA when `bgr` is
     "1") from one predefined colour space to another (bytes); -20 for a name that is not one.
+  * 133 `imageType(type)`: `Image.typeVerdict`: "invalid", "unsupported" or "supported".
+  * 134 `imageOrientation(bytes)`: `Image.exifOrientation` as the frame's "rotation flip".
 
 Arguments are fields of text: numbers in decimal, lists of numbers separated by spaces, "" for a
 member the page did not give. The rotation is the 8 bytes of the page's double, little-endian.
@@ -41,6 +43,7 @@ import L4Factoidal.WebCodecs.Config
 import L4Factoidal.WebCodecs.Orient
 import L4Factoidal.WebCodecs.Audio
 import L4Factoidal.WebCodecs.Gamut
+import L4Factoidal.WebCodecs.Image
 
 namespace L4Factoidal.WebCodecs.Api
 
@@ -239,6 +242,10 @@ def op (code : Nat) (fs : Array ByteArray) : Except Int ByteArray :=
   | 132 => match convertColorsOp fs with
     | some b => .ok b
     | none => .error (-20)
+  | 133 => .ok (Image.typeVerdict (strArg fs 0)).name.toUTF8
+  | 134 =>
+    let (r, f) := Image.orientationOf (Image.exifOrientation (fs[0]?.getD ByteArray.empty))
+    .ok s!"{r} {if f then 1 else 0}".toUTF8
   | _ => .error (-2)
 
 /-! ## Tests -/
@@ -296,6 +303,9 @@ private def run (code : Nat) (xs : List String) (bin : List (Nat × ByteArray) :
 #guard run 131 ["opus", "1", ""] == "error -20"
 #guard (op 132 #["srgb".toUTF8, "display-p3".toUTF8, "".toUTF8, ⟨#[255, 0, 0, 9]⟩]).toOption.map (·.toList) == some [234, 51, 35, 9]
 #guard run 132 ["srgb", "rec2020", "", ""] == "error -20"
-#guard run 133 [] == "error -2"
+#guard run 133 ["image/gif"] == "supported"
+#guard run 133 ["image/webp"] == "unsupported"
+#guard run 134 ["abc"] == "0 0"
+#guard run 135 [] == "error -2"
 
 end L4Factoidal.WebCodecs.Api

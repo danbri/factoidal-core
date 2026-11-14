@@ -256,6 +256,10 @@ def decode (p : Parts) : Except String (Array Cmd) := do
           let w := nat (g 7)
           let h := nat (g 8)
           .bitmapNew (nat (g 0)) 4 0 "" (p.tail.extract off (off + w * h * 4)) 0 0 (g 7) (g 8)
+        else if kind == 5 then
+          -- encoded image bytes (`ImageDecoder`): tail offset and length; decoded by the engine's `Env.decode`
+          let off := nat (g 2)
+          .bitmapNew (nat (g 0)) 5 0 "" (p.tail.extract off (off + nat (g 7))) 0 0 0 0
         else .bitmapNew (nat (g 0)) kind (nat (g 2)) (str (g 2)) ByteArray.empty (g 3) (g 4) (g 5) (g 6)
       | 94 => .release (nat (g 0)) (nat (g 1))
       | _ => .beginPath

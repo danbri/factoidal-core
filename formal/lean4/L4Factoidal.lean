@@ -1096,6 +1096,7 @@ import L4Factoidal.WebCodecs.Config
 import L4Factoidal.WebCodecs.Orient
 import L4Factoidal.WebCodecs.Audio
 import L4Factoidal.WebCodecs.Gamut
+import L4Factoidal.WebCodecs.Image
 import L4Factoidal.WebCodecs.Api
 import L4Factoidal.Net.ReferrerPolicy
 import L4Factoidal.Net.Csp
