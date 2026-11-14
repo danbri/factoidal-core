@@ -1008,10 +1008,12 @@
   const styleOp = (...parts) => { const r = n.query(0, 151, parts.join('\u0000')); return typeof r === 'string' ? r : ''; };
   const cssPropName = p => p === 'cssFloat' ? 'float' : (p.startsWith('--') || p.includes('-')) ? p
     : p.replace(/[A-Z]/g, c => '-' + c.toLowerCase()).replace(/^webkit-/, '-webkit-');
-  const styleOf = el => {
-    const block = () => el.getAttribute('style') ?? '';
+  const styleOf = el => blockStyle(() => el.getAttribute('style') ?? '', nb => el.setAttribute('style', nb));
+  // A CSSStyleDeclaration over a declaration block kept as text: `block()` reads it,
+  // `store(text)` keeps a changed one.
+  const blockStyle = (block, store) => {
     // U+0001: the operation left the block as it was (an invalid value, a property not set)
-    const write = nb => { if (nb !== '\u0001' && nb !== block()) el.setAttribute('style', nb); };
+    const write = nb => { if (nb !== '\u0001' && nb !== block()) store(nb); };
     const names = () => { const r = styleOp('names', block()); return r === '' ? [] : r.split('\u0000'); };
     const methods = {
       getPropertyValue(name) { if (arguments.length < 1) throw new TypeError('getPropertyValue: 1 argument required'); return styleOp('get', block(), String(name)); },
@@ -1040,7 +1042,7 @@
       },
       set(t, p, v) {
         if (typeof p !== 'string') return Reflect.set(t, p, v);
-        if (p === 'cssText') { el.setAttribute('style', styleOp('txt', String(v))); return true; }
+        if (p === 'cssText') { store(styleOp('txt', String(v))); return true; }
         if (p === 'length' || p === 'parentRule' || isIndex(p)) return true;
         write(styleOp('set', block(), cssPropName(p), v === null ? '' : String(v), ''));
         return true;
@@ -6244,6 +6246,222 @@
   const fontSet = new FontFaceSet(fontKey), fontsReady = Promise.resolve(fontSet);
   Object.defineProperty(Document.prototype, 'fonts', { get() { return fontSet; }, configurable: true, enumerable: true });
   def('FontFaceSet', FontFaceSet);
+  // ---- CSSOM style sheets (CSSOM §6): document.styleSheets, a style element's sheet, the
+  // rules and their text. The state of a sheet is its text: the text content of a style
+  // element, or a string for a constructed sheet. Lean (CssSheet.sheetOp, node_query op 153)
+  // reads the rules of a text and gives the text of a changed sheet; which rules are valid
+  // and how they are written is decided there. An insertRule on a style element's sheet
+  // writes the sheet's canonical text back as the element's text, so the cascade sees it.
+  const sheetOp = (...parts) => { const r = n.query(0, 153, parts.join('\u0000')); return typeof r === 'string' ? r : ''; };
+  const sheetState = new WeakMap(), ruleState = new WeakMap(), ruleLists = new WeakMap(), mediaLists = new WeakMap();
+  const illegal = () => { throw new TypeError('Illegal constructor'); };
+  class CSSRule { constructor() { illegal(); } }
+  consts(CSSRule, { STYLE_RULE: 1, CHARSET_RULE: 2, IMPORT_RULE: 3, MEDIA_RULE: 4, FONT_FACE_RULE: 5, PAGE_RULE: 6, KEYFRAMES_RULE: 7,
+    KEYFRAME_RULE: 8, MARGIN_RULE: 9, NAMESPACE_RULE: 10, COUNTER_STYLE_RULE: 11, SUPPORTS_RULE: 12, FONT_FEATURE_VALUES_RULE: 14 });
+  class CSSGroupingRule extends CSSRule {}
+  class CSSConditionRule extends CSSGroupingRule {}
+  const ruleClasses = { Rule: CSSRule, GroupingRule: CSSGroupingRule, ConditionRule: CSSConditionRule };
+  for (const [name, base] of [['Style', CSSGroupingRule], ['Media', CSSConditionRule], ['Supports', CSSConditionRule], ['Container', CSSConditionRule],
+    ['LayerBlock', CSSGroupingRule], ['LayerStatement', CSSRule], ['Scope', CSSGroupingRule], ['StartingStyle', CSSGroupingRule],
+    ['Import', CSSRule], ['Namespace', CSSRule], ['FontFace', CSSRule], ['Page', CSSGroupingRule], ['Property', CSSRule],
+    ['CounterStyle', CSSRule], ['PositionTry', CSSRule], ['FontPaletteValues', CSSRule], ['ViewTransition', CSSRule],
+    ['Keyframes', CSSRule], ['FontFeatureValues', CSSRule], ['Document', CSSConditionRule]])
+    ruleClasses[name + 'Rule'] = ({ ['CSS' + name + 'Rule']: class extends base {} })['CSS' + name + 'Rule'];
+  class CSSRuleList { constructor() { illegal(); } }
+  class StyleSheet { constructor() { illegal(); } }
+  class MediaList { constructor() { illegal(); } }
+  class StyleSheetList { constructor() { illegal(); } }
+  const sheetErr = name => new DOMException('The style sheet operation failed: ' + name, name);
+  // A holder of rules (a sheet, or a group rule): `text()` and `write(t)` its rules' text.
+  const rulesOf = holder => {
+    const st = holder.st, text = st.text();
+    if (st.rules && st.seen === text) return st.rules;
+    const r = sheetOp('rules', text), old = st.rules || [];
+    st.rules = r === '' ? [] : r.split('\u0001').map((row, i) => {
+      const [kind, type, prelude, body, cssText] = row.split('\u0002');
+      // the object of a rule that is as it was stays the same object
+      const prev = old[i] && ruleState.get(old[i]);
+      if (prev && prev.cssText === cssText) { prev.index = i; return old[i]; }
+      const rule = Object.create((ruleClasses[kind + 'Rule'] || CSSRule).prototype);
+      ruleState.set(rule, { kind, type: Number(type), prelude, body, cssText, index: i, holder });
+      return rule;
+    });
+    st.seen = text;
+    return st.rules;
+  };
+  const changed = (holder, answer) => {
+    if (answer.charAt(0) === '\u0001') throw sheetErr(answer.slice(1));
+    holder.st.write(answer.slice(1));
+  };
+  const ruleNow = rule => { const rs = ruleState.get(rule); if (!rs) throw new TypeError('Illegal invocation'); const xs = rulesOf(rs.holder); if (xs[rs.index] !== rule) rs.detached = true; return rs; };
+  const insertInto = (holder, rule, index) => {
+    const xs = rulesOf(holder), i = index >>> 0;
+    if (i > xs.length) throw sheetErr('IndexSizeError');
+    changed(holder, sheetOp('insert', holder.st.text(), String(rule), String(i)));
+    return i;
+  };
+  const deleteFrom = (holder, index) => {
+    const xs = rulesOf(holder), i = index >>> 0;
+    if (i >= xs.length) throw sheetErr('IndexSizeError');
+    changed(holder, sheetOp('delete', holder.st.text(), String(i)));
+  };
+  const ruleListOf = holder => {
+    let l = ruleLists.get(holder);
+    if (!l) {
+      l = new Proxy(Object.create(CSSRuleList.prototype), {
+        get(t, p) {
+          if (p === 'length') return rulesOf(holder).length;
+          if (p === 'item') return i => rulesOf(holder)[i >>> 0] ?? null;
+          if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return rulesOf(holder)[Number(p)];
+          return Reflect.get(t, p);
+        },
+        has(t, p) { return (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) ? Number(p) < rulesOf(holder).length : p === 'length' || p === 'item' || Reflect.has(t, p); },
+        ownKeys(t) { return rulesOf(holder).map((x, i) => String(i)).concat(Reflect.ownKeys(t)); },
+        getOwnPropertyDescriptor(t, p) {
+          if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p) && Number(p) < rulesOf(holder).length)
+            return { value: rulesOf(holder)[Number(p)], enumerable: true, configurable: true, writable: false };
+          return Reflect.getOwnPropertyDescriptor(t, p);
+        },
+      });
+      ruleLists.set(holder, l);
+    }
+    return l;
+  };
+  define(CSSRuleList.prototype, Symbol.iterator, function* () { for (let i = 0; i < this.length; i++) yield this[i]; });
+  // A rule as a holder of the rules of its block, and of its declaration block.
+  const groupHolder = rule => {
+    const rs = ruleState.get(rule);
+    if (!rs.group) rs.group = { st: {
+      text: () => ruleNow(rule).body,
+      // the group's new block replaces the rule in its parent: the rule's text with the new block
+      write: t => { const r = ruleNow(rule), head = r.cssText.slice(0, r.cssText.indexOf('{')); const parent = r.holder;
+        const all = rulesOf(parent).map((x, i) => i === r.index ? head + '{\n' + t + '\n}' : ruleState.get(x).cssText).join('\n');
+        parent.st.write(all); const fresh = ruleState.get(rulesOf(parent)[r.index]); if (fresh) { ruleState.set(rule, Object.assign(rs, { body: fresh.body, cssText: fresh.cssText })); rulesOf(parent)[r.index] = rule; } },
+    } };
+    return rs.group;
+  };
+  const ruleStyle = rule => {
+    const rs = ruleState.get(rule);
+    if (!rs.style) rs.style = blockStyle(() => ruleNow(rule).body, nb => {
+      const r = ruleNow(rule); if (r.detached) { r.body = nb; return; }
+      const a = sheetOp('setbody', r.holder.st.text(), String(r.index), nb);
+      if (a.charAt(0) === '\u0000') { r.holder.st.write(a.slice(1)); const fresh = ruleState.get(rulesOf(r.holder)[r.index]); Object.assign(rs, { body: fresh.body, cssText: fresh.cssText }); rulesOf(r.holder)[r.index] = rule; }
+    });
+    return rs.style;
+  };
+  for (const [k, f] of Object.entries({
+    type() { return ruleNow(this).type; },
+    cssText() { return ruleNow(this).cssText; },
+    parentStyleSheet() { let h = ruleNow(this).holder; while (h.rule) h = ruleState.get(h.rule).holder; return h.sheet ?? null; },
+    parentRule() { return ruleNow(this).holder.rule ?? null; },
+  })) Object.defineProperty(CSSRule.prototype, k, { get: f, configurable: true, enumerable: true });
+  Object.defineProperty(CSSRule.prototype, 'cssText', { get() { return ruleNow(this).cssText; }, set() {}, configurable: true, enumerable: true });
+  Object.defineProperty(CSSGroupingRule.prototype, 'cssRules', { get() { const g = groupHolder(this); g.rule = this; return ruleListOf(g); }, configurable: true, enumerable: true });
+  define(CSSGroupingRule.prototype, 'insertRule', function (rule, index = 0) { if (arguments.length < 1) throw new TypeError('insertRule: 1 argument required'); const g = groupHolder(this); g.rule = this; return insertInto(g, rule, index); });
+  define(CSSGroupingRule.prototype, 'deleteRule', function (index) { if (arguments.length < 1) throw new TypeError('deleteRule: 1 argument required'); const g = groupHolder(this); g.rule = this; deleteFrom(g, index); });
+  Object.defineProperty(CSSConditionRule.prototype, 'conditionText', { get() { return ruleNow(this).prelude; }, configurable: true, enumerable: true });
+  Object.defineProperty(ruleClasses.StyleRule.prototype, 'selectorText', { get() { return ruleNow(this).prelude; },
+    set(v) { const r = ruleNow(this); const a = sheetOp('setsel', r.holder.st.text(), String(r.index), String(v));
+      if (a.charAt(0) === '\u0000') { r.holder.st.write(a.slice(1)); const fresh = ruleState.get(rulesOf(r.holder)[r.index]); Object.assign(r, { prelude: fresh.prelude, cssText: fresh.cssText }); rulesOf(r.holder)[r.index] = this; } },
+    configurable: true, enumerable: true });
+  for (const k of ['StyleRule', 'FontFaceRule', 'PageRule', 'PositionTryRule'])
+    Object.defineProperty(ruleClasses[k].prototype, 'style', { get() { return ruleStyle(this); }, set(v) { ruleStyle(this).cssText = v; }, configurable: true, enumerable: true });
+  const mediaListOf = (owner, get, set) => {
+    let m = mediaLists.get(owner);
+    if (!m) {
+      m = Object.create(MediaList.prototype);
+      const items = () => { const t = get(); return t === '' ? [] : t.split(',').map(x => x.trim()); };
+      Object.defineProperties(m, {
+        mediaText: { get, set: v => set(v === null ? '' : String(v)), enumerable: true, configurable: true },
+        length: { get: () => items().length, enumerable: true, configurable: true },
+        item: { value: i => items()[i >>> 0] ?? null, configurable: true, writable: true },
+        appendMedium: { value: x => { const xs = items(); if (!xs.includes(String(x))) set(xs.concat(String(x)).join(', ')); }, configurable: true, writable: true },
+        deleteMedium: { value: x => { const xs = items(); if (!xs.includes(String(x))) throw sheetErr('NotFoundError'); set(xs.filter(y => y !== String(x)).join(', ')); }, configurable: true, writable: true },
+        toString: { value: () => get(), configurable: true, writable: true },
+      });
+      mediaLists.set(owner, m);
+    }
+    return m;
+  };
+  Object.defineProperty(ruleClasses.MediaRule.prototype, 'media', { get() { return mediaListOf(this, () => ruleNow(this).prelude, () => {}); }, configurable: true, enumerable: true });
+  Object.defineProperty(ruleClasses.KeyframesRule.prototype, 'name', { get() { return ruleNow(this).prelude; }, configurable: true, enumerable: true });
+  Object.defineProperty(ruleClasses.LayerBlockRule.prototype, 'name', { get() { return ruleNow(this).prelude; }, configurable: true, enumerable: true });
+  Object.defineProperty(ruleClasses.ImportRule.prototype, 'href', { get() { const m = /^url\(\s*["']?([^"')]*)["']?\s*\)|^["']([^"']*)["']/.exec(ruleNow(this).prelude); return m ? (m[1] ?? m[2]) : ''; }, configurable: true, enumerable: true });
+  // A sheet: of a style element (its text is the element's text), or constructed.
+  const sheetOfText = (text, write, owner) => {
+    const sheet = Object.create(CSSStyleSheet.prototype);
+    const st = { text, write, owner, disabled: false, media: '' };
+    sheetState.set(sheet, { st, sheet });
+    return sheet;
+  };
+  const holderOf = sheet => { const h = sheetState.get(sheet); if (!h) throw new TypeError('Illegal invocation'); return h; };
+  class CSSStyleSheet extends StyleSheet {
+    constructor(options = {}) {
+      let text = '';
+      const sheet = sheetOfText(() => text, t => { text = t; }, null);
+      const st = holderOf(sheet).st;
+      st.constructed = true;
+      if (options && options.media !== undefined) st.media = typeof options.media === 'string' ? options.media : String(options.media.mediaText ?? options.media);
+      if (options && options.disabled) st.disabled = true;
+      if (options && options.title !== undefined) st.title = String(options.title);
+      return sheet;
+    }
+    get cssRules() { return ruleListOf(holderOf(this)); }
+    get rules() { return ruleListOf(holderOf(this)); }
+    get ownerRule() { return null; }
+    insertRule(rule, index = 0) { if (arguments.length < 1) throw new TypeError('insertRule: 1 argument required'); return insertInto(holderOf(this), rule, index); }
+    deleteRule(index) { if (arguments.length < 1) throw new TypeError('deleteRule: 1 argument required'); deleteFrom(holderOf(this), index); }
+    addRule(selector = 'undefined', block = 'undefined', index = undefined) { const h = holderOf(this); insertInto(h, `${selector} { ${block} }`, index === undefined ? rulesOf(h).length : index); return -1; }
+    removeRule(index = 0) { deleteFrom(holderOf(this), index); }
+    replaceSync(text) { const h = holderOf(this); if (!h.st.constructed) throw sheetErr('NotAllowedError'); h.st.write(sheetOp('canon', String(text))); }
+    replace(text) { try { this.replaceSync(text); return Promise.resolve(this); } catch (e) { return Promise.reject(e); } }
+  }
+  for (const [k, f] of Object.entries({
+    type() { return 'text/css'; },
+    href() { const o = holderOf(this).st.owner; return o && o.localName === 'link' ? o.href : null; },
+    ownerNode() { return holderOf(this).st.owner; },
+    parentStyleSheet() { return null; },
+    title() { const st = holderOf(this).st; return st.owner ? (st.owner.getAttribute('title') || null) : (st.title ?? null); },
+    media() { const st = holderOf(this).st; return mediaListOf(this, () => st.owner ? (st.owner.getAttribute('media') ?? '') : st.media,
+      v => { if (st.owner) st.owner.setAttribute('media', v); else st.media = v; }); },
+  })) Object.defineProperty(StyleSheet.prototype, k, { get: f, configurable: true, enumerable: true });
+  Object.defineProperty(StyleSheet.prototype, 'disabled', { get() { return holderOf(this).st.disabled; }, set(v) { holderOf(this).st.disabled = !!v; }, configurable: true, enumerable: true });
+  const elementSheets = new WeakMap();
+  const sheetOfElement = el => {
+    let sh = elementSheets.get(el);
+    if (!sh) {
+      sh = el.localName === 'style' ? sheetOfText(() => el.textContent, t => { el.textContent = t; }, el) : sheetOfText(() => '', () => {}, el);
+      elementSheets.set(el, sh);
+    }
+    return sh;
+  };
+  const isSheetLink = el => el.localName === 'link' && /(^|\s)stylesheet(\s|$)/i.test(el.getAttribute('rel') ?? '');
+  Object.defineProperty(named.HTMLStyleElement.prototype, 'sheet', { get() { return this.isConnected || elementSheets.has(this) ? sheetOfElement(this) : null; }, configurable: true, enumerable: true });
+  Object.defineProperty(named.HTMLLinkElement.prototype, 'sheet', { get() { return this.isConnected && isSheetLink(this) ? sheetOfElement(this) : null; }, configurable: true, enumerable: true });
+  const sheetsOfDocument = doc => Array.from(doc.querySelectorAll('style, link')).filter(el => el.localName === 'style' || isSheetLink(el)).map(sheetOfElement);
+  const sheetLists = new WeakMap();
+  Object.defineProperty(Document.prototype, 'styleSheets', { get() {
+    let l = sheetLists.get(this);
+    if (!l) {
+      const doc = this;
+      l = new Proxy(Object.create(StyleSheetList.prototype), {
+        get(t, p) {
+          if (p === 'length') return sheetsOfDocument(doc).length;
+          if (p === 'item') return i => sheetsOfDocument(doc)[i >>> 0] ?? null;
+          if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return sheetsOfDocument(doc)[Number(p)];
+          return Reflect.get(t, p);
+        },
+        has(t, p) { return (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) ? Number(p) < sheetsOfDocument(doc).length : p === 'length' || p === 'item' || Reflect.has(t, p); },
+      });
+      sheetLists.set(this, l);
+    }
+    return l;
+  }, configurable: true, enumerable: true });
+  define(StyleSheetList.prototype, Symbol.iterator, function* () { for (let i = 0; i < this.length; i++) yield this[i]; });
+  for (const [k, v] of Object.entries(Object.assign({ CSSRuleList, StyleSheet, CSSStyleSheet, MediaList, StyleSheetList }, Object.fromEntries(Object.entries(ruleClasses).map(([k, v]) => ['CSS' + k, v]))))) {
+    Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
+    def(k, v);
+  }
   def('getComputedStyle', (el, pseudo) => {
     if (!(el instanceof Element)) throw new TypeError("Failed to execute 'getComputedStyle': parameter 1 is not of type 'Element'.");
     return computedStyle(el);

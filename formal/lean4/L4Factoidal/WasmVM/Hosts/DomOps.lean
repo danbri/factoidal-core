@@ -21,6 +21,7 @@ import L4Factoidal.DOM.Reflect
 import L4Factoidal.Rendering.CssSupports
 import L4Factoidal.Rendering.CssValues.Declaration
 import L4Factoidal.Rendering.ComputedGeneric
+import L4Factoidal.Rendering.CssSheet
 import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.DOM.Editing.Commands
 import L4Factoidal.Rendering.Style
@@ -650,6 +651,9 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     -- the property names of a computed style (`ComputedGeneric.namesText`): the page
     -- reads the value of the k-th name with measure op 200 + k
     return L4Factoidal.Rendering.ComputedGeneric.namesText
+  | 153 =>
+    -- the rules of a style sheet text and its changes (CSSOM §6.4, `CssSheet.sheetOp`)
+    return L4Factoidal.Rendering.CssSheet.sheetOp q
   | 167 =>
     -- a reflected attribute's setter, applied: the decision of 161, then the content
     -- attribute set or removed as a command (the page has no MutationObserver and the row
