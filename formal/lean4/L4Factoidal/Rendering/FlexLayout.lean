@@ -541,22 +541,21 @@ def flexLayout (kids : Children) (s : Computed) (items : Array Item) (box : Cont
   else flexRow kids s items box
 
 /-- The min-content and max-content widths of a flex container's content box (§9.9.1,
-simplified): a row is the sum of its items' contributions and gaps, a column the largest. -/
+simplified): a row is the sum of its items' contributions and gaps, a column the largest;
+a multi-line row can break after every item, so its min-content width is that of its
+widest item. -/
 def flexIntrinsic (kids : Children) (s : Computed) (items : Array Item) : Except String (Float × Float) := do
   let mut lo : Float := 0
   let mut hi : Float := 0
+  let breaks := !s.flex.column && s.flex.wrap != .nowrap
   for item in items do
     let (a,b) ← kids.intrinsic item
-    if s.flex.column then
-      lo := max lo a
-      hi := max hi b
-    else
-      lo := lo+a
-      hi := hi+b
+    if s.flex.column || breaks then lo := max lo a else lo := lo+a
+    if s.flex.column then hi := max hi b else hi := hi+b
   if !s.flex.column && items.size > 1 then
     let gap := match s.align.columnGap with | .px v => max 0 v | _ => 0
     let gaps := gap*Float.ofNat (items.size-1)
-    lo := lo+gaps
+    if !breaks then lo := lo+gaps
     hi := hi+gaps
   return (lo,hi)
 
