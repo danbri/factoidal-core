@@ -1209,6 +1209,8 @@ import L4Factoidal.WHATWG.URL.Idna
 import L4Factoidal.WHATWG.URL.Host
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.WHATWG.URL.Theorems
+import L4Factoidal.WHATWG.URLPattern
+import L4Factoidal.WHATWG.URLPatternTests
 import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.HTML.FormSubmissionTests
 import L4Factoidal.Unicode.RangeTable

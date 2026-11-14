@@ -5013,6 +5013,32 @@
     setTag(URL, 'URL');
     return URL;
   });
+  // ---- URL Pattern Standard: URLPattern ---------------------------------------------------
+  // The engine compiles and matches (n.urlPattern: L4Factoidal.WHATWG.URLPattern, in Lean); this
+  // class holds the record it answers. An engine without the native has no URLPattern.
+  lazy('URLPattern', () => {
+    if (typeof n.urlPattern !== 'function') return undefined;
+    const patterns = new WeakMap();
+    const st = o => brand(patterns, o, 'URLPattern');
+    class URLPattern {
+      // WebIDL overloads: (input, baseURL, options) and (input, options)
+      constructor(input = {}, baseURL = undefined, options = undefined) {
+        let base, opts;
+        if (arguments.length >= 3) { base = usv(baseURL); opts = options; }
+        else if (arguments.length === 2 && baseURL !== undefined && baseURL !== null && typeof baseURL !== 'object' && typeof baseURL !== 'function') base = usv(baseURL);
+        else opts = baseURL;
+        const o = dict(opts, "Failed to construct 'URLPattern'");
+        patterns.set(this, n.urlPattern(0, input, base, !!o.ignoreCase));
+      }
+      test(input = {}, baseURL = undefined) { return n.urlPattern(1, st(this), input, baseURL === undefined ? undefined : usv(baseURL)) !== null; }
+      exec(input = {}, baseURL = undefined) { return n.urlPattern(1, st(this), input, baseURL === undefined ? undefined : usv(baseURL)); }
+      get hasRegExpGroups() { return st(this).hasRegExpGroups; }
+    }
+    for (const k of ['protocol', 'username', 'password', 'hostname', 'port', 'pathname', 'search', 'hash'])
+      Object.defineProperty(URLPattern.prototype, k, { get() { return st(this)[k]; }, enumerable: true, configurable: true });
+    setTag(URLPattern, 'URLPattern');
+    return URLPattern;
+  });
   // The webkitURL alias (URL §6.1).
   lazy('webkitURL', () => globalThis.URL);
 
@@ -7030,7 +7056,7 @@
   const workerGlobals = new Set(['self', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
     'queueMicrotask', 'reportError', 'structuredClone', 'atob', 'btoa', 'WebAssembly', 'DOMException', 'EventTarget', 'Event',
     'CustomEvent', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent', 'ProgressEvent', 'AbortController', 'AbortSignal',
-    'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'crypto', 'Crypto',
+    'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'URLPattern', 'crypto', 'Crypto',
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'WritableStream',

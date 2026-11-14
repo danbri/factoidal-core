@@ -63,6 +63,18 @@ structure PState where
   lexStack : List (List String) := [[]]
   /-- Statements to put after the statement being parsed (`annexBLabel`). -/
   pending : Array Stmt := #[]
+  /-- In the initialiser of a class field or in a static block (arrow functions keep it):
+  `arguments` and `super()` are early errors there (§15.7.1). `staticNext`: the body that
+  `parseBody` reads next is a static block. -/
+  fieldInit : Bool := false
+  staticNext : Bool := false
+  /-- The classes around the current position, and the private names used in the class
+  being read that it has not been seen to declare yet (§15.7.1: AllPrivateIdentifiersValid).
+  `privAny`: code of a direct `eval`, which may use the private names of the classes around
+  the call. -/
+  classDepth : Nat := 0
+  privRefs : List String := []
+  privAny : Bool := false
   deriving Inhabited
 
 abbrev P := EStateM String PState
@@ -147,6 +159,7 @@ def bindingName : P String := do
         "static", "yield", "let"].contains t.text then
       fail s!"'{t.text}' is a reserved word in strict mode code"
     if s.inGen && t.text == "yield" then fail "'yield' cannot be a binding name in a generator"
+    if s.inAsync && t.text == "await" then fail "'await' cannot be a binding name in an async function"
     advance; pure t.text
   else if t.kind == .kw && (t.text == "let" || t.text == "yield") then advance; pure t.text
   else fail "expected an identifier"
@@ -171,6 +184,10 @@ def pushScope (names : List String := []) : P Unit :=
 
 def popScope : P Unit :=
   modify fun s => { s with depth := s.depth - 1, lexStack := s.lexStack.drop 1 }
+
+/-- A use of the private name with key `k` (`o.#x`, `#x in o`): checked when its class ends. -/
+def usePriv (k : String) : P Unit :=
+  modify fun s => if s.privRefs.contains k then s else { s with privRefs := k :: s.privRefs }
 
 /-- The statements queued for after the current one, taken. -/
 def takePending : P (Array Stmt) := do
@@ -576,6 +593,8 @@ def parseStmt : Nat → P Stmt
         advance; advance
         let st ← get
         if st.labels.any (·.1 == t.text) then fail s!"label '{t.text}' has already been declared"
+        if (st.inAsync && t.text == "await") || ((st.inGen || st.strict) && t.text == "yield") then
+          fail s!"'{t.text}' cannot be a label here"
         -- the statement after this label and the labels that follow it (`a: b: for ...`)
         let isLoop := labelsLoop st.toks st.pos st.toks.size
         if (← atK "function") then fail "labelled function declarations are not supported"
@@ -823,12 +842,16 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
     if strict && names.any (fun p => p == "eval" || p == "arguments") then
       fail "'eval' or 'arguments' cannot be a parameter in strict mode code"
     let simple := rest.isNone && params.all (fun p => match p with | .mk (.id _) none => true | _ => false)
+    if !simple && hasUseStrict outer.toks (outer.pos + 1) then
+      fail "a function with a 'use strict' directive needs a simple parameter list"
     if (strict || kind == .arrow || kind == .method || !simple) && names.eraseDups.length != names.length then
       fail "duplicate parameter name not allowed in this context"
     set { outer with vars := #[], varSet := {}, usesArgs := false, strict, inFun := true, loops := 0,
                      breakables := 0, labels := [],
                      inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3,
-                     depth := 0, topDepth := 1, lexStack := [names], pending := #[] }
+                     depth := 0, topDepth := 1, lexStack := [names], pending := #[],
+                     fieldInit := outer.staticNext || (kind == FunKind.arrow && outer.fieldInit),
+                     staticNext := false }
     let body ← parseBlock n
     let inner ← get
     let usesArgs := inner.usesArgs
@@ -837,7 +860,7 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
                      loops := outer.loops, breakables := outer.breakables, labels := outer.labels,
                      inGen := outer.inGen, inAsync := outer.inAsync, usesArgs := outer.usesArgs || (arrow && usesArgs),
                      depth := outer.depth, topDepth := outer.topDepth, lexStack := outer.lexStack,
-                     pending := outer.pending }
+                     pending := outer.pending, fieldInit := outer.fieldInit, staticNext := false }
     return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind
       (gen == 1 || gen == 3) (gen == 2 || gen == 3) {}
 
@@ -990,6 +1013,12 @@ def parseUnary : Nat → P Expr
         match e with
         | .ident _ => fail "delete of an unqualified identifier in strict mode"
         | _ => pure ()
+      if op == .delete then
+        -- §13.5.1.1: `delete o.#x` (with or without parentheses, also after `?.`)
+        match e with
+        | .member _ k | .chain (.member _ k) =>
+          if isPrivKey k then fail "private fields can not be deleted"
+        | _ => pure ()
       if op != .delete && op != .typeof && op != .void && (← atP "**") then
         fail "unary operator before '**' needs parentheses"
       return .unary op e
@@ -1055,7 +1084,7 @@ def parseTail : Nat → Expr → Bool → P Expr
         advance
         let pt ← peek
         if !(pt.kind == .ident || pt.kind == .kw) then fail "expected a private name"
-        advance; parseTail n (.member e (privKey pt.text)) allowCall
+        advance; usePriv (privKey pt.text); parseTail n (.member e (privKey pt.text)) allowCall
       else fail "expected a property name"
     else if isP t "[" then
       advance
@@ -1087,7 +1116,7 @@ def parseTail : Nat → Expr → Bool → P Expr
           advance
           let pt ← peek
           if !(pt.kind == .ident || pt.kind == .kw) then fail "expected a private name"
-          advance; pure (Expr.member (.optBase e) (privKey pt.text))
+          advance; usePriv (privKey pt.text); pure (Expr.member (.optBase e) (privKey pt.text))
         else fail "expected a property name after ?."
       if (← peek).kind == .tmpl then fail "Invalid tagged template on optional chain"
       return .chain (← parseTail n first allowCall)
@@ -1125,8 +1154,13 @@ def parsePrimary : Nat → P Expr
           ((← get).strict && ["implements", "interface", "package", "private", "protected",
             "public", "static", "yield", "let"].contains t.text)) then
         fail s!"keyword '{t.text}' must not contain escapes"
+      if t.text == "await" && (← get).inAsync then fail "'await' is not an identifier in an async function"
+      if (t.text == "yield" && ((← get).inGen || (← get).strict)) || (t.text == "let" && (← get).strict) then
+        fail s!"'{t.text}' is not an identifier here"
       advance
-      if t.text == "arguments" then modify fun s => { s with usesArgs := true }
+      if t.text == "arguments" then
+        if (← get).fieldInit then fail "'arguments' is not allowed in a class field initializer or static block"
+        modify fun s => { s with usesArgs := true }
       return .ident t.text
     | .kw =>
       match t.text with
@@ -1139,14 +1173,21 @@ def parsePrimary : Nat → P Expr
         let gen ← eatP "*"
         let name ← if (← peek).kind == .ident then pure (some (← bindingName)) else pure none
         return .func (← parseFunction n name .normal (if gen then 1 else 0))
-      | "let" | "yield" => advance; return .ident t.text
+      | "let" | "yield" =>
+        -- an identifier in code that is not strict; `yield` is never one in a generator
+        -- (a YieldExpression is read by `parseAssign`, not as an operand)
+        let st ← get
+        if st.strict || (t.text == "yield" && st.inGen) then fail s!"'{t.text}' is not an identifier here"
+        advance; return .ident t.text
       | "class" =>
         advance
         let name ← if (← peek).kind == .ident then pure (some (← bindingName)) else pure none
         return .classE (← parseClass n name)
       | "super" =>
         advance
-        if ← atP "(" then advance; return .superCall (← parseArgs n [])
+        if ← atP "(" then
+          if (← get).fieldInit then fail "'super()' is not allowed in a class field initializer or static block"
+          advance; return .superCall (← parseArgs n [])
         if ← atP "." then
           advance
           let nt ← peek
@@ -1206,7 +1247,7 @@ def parsePrimary : Nat → P Expr
         advance
         let pt ← peek
         if !(pt.kind == .ident || pt.kind == .kw) || !isK (← peekAt 1) "in" then fail "unexpected private name"
-        advance; return privIn (privKey pt.text)
+        advance; usePriv (privKey pt.text); return privIn (privKey pt.text)
       | _ => fail "unexpected token"
     | .eof => fail "unexpected end of input"
 
@@ -1373,8 +1414,24 @@ def parseClass : Nat → Option String → P ClassDef
     modify fun s => { s with strict := true }
     let heritage ← if ← atK "extends" then advance; pure (some (← parseLHS n)) else pure none
     expectP "{"
+    let outer ← get
+    set { outer with classDepth := outer.classDepth + 1, privRefs := [] }
     let (ctor, members) ← parseMembers n heritage.isSome none []
-    modify fun s => { s with strict := outerStrict }
+    -- §15.7.1: a private name is declared once (a getter and a setter may share one, both
+    -- static or both not), and every private name used is declared by this class or one around it
+    let declared := members.filterMap fun m => match m with
+      | .mk st kind (.lit k) _ => if isPrivKey k then some (k, st, kind) else none
+      | _ => none
+    let clash := declared.zipIdx.any fun ((k, st, kind), i) =>
+      declared.zipIdx.any fun ((k2, st2, kind2), j) =>
+        i < j && k == k2 && !(st == st2 && ((kind == .getter && kind2 == .setter) || (kind == .setter && kind2 == .getter)))
+    if clash then fail "a private name is declared twice"
+    let unresolved := (← get).privRefs.filter fun k => !declared.any (·.1 == k)
+    if outer.classDepth == 0 && !outer.privAny then
+      if let some k := unresolved.head? then
+        fail s!"private name #{(k.drop 1).toString} is not declared in an enclosing class"
+    modify fun s => { s with strict := outerStrict, classDepth := outer.classDepth,
+                             privRefs := unresolved.foldl (fun acc k => if acc.contains k then acc else k :: acc) outer.privRefs }
     return .mk name heritage ctor members
 
 def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option FunDef × List Member)
@@ -1388,6 +1445,7 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
       !(isP t1 "(" || isP t1 "=" || isP t1 ";" || isP t1 "}")
     if static then advance
     if static && (← atP "{") then
+      modify fun s => { s with staticNext := true }
       let f ← parseBody n none [] none .method 0
       return ← parseMembers n derived ctor (.mk true .staticBlock (.lit "") f :: acc)
     let t ← peek
@@ -1421,9 +1479,9 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
       if accessor then fail "expected '('"
       -- a field: its initialiser is the body of a method that returns it
       let outer ← get
-      set { outer with vars := #[], varSet := {}, inFun := true }
+      set { outer with vars := #[], varSet := {}, inFun := true, fieldInit := true }
       let init ← if ← atP "=" then advance; pure (some (← parseAssign n false)) else pure none
-      set { (← get) with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun }
+      set { (← get) with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun, fieldInit := outer.fieldInit }
       semi
       let f := FunDef.mk none [] none [.ret init] [] false true .method false false {}
       parseMembers n derived ctor (.mk static .field k f :: acc)
@@ -1436,18 +1494,21 @@ of the source has more tokens than (`P.relexAt` can change the count). -/
 def parseFuel (tokens : Nat) : Nat := 64 * tokens + 1024
 
 /-- Parse a script (§16.1). `strict` forces strict mode code. -/
-def parseScript (src : String) (strict : Bool := false) : Except String Script :=
+def parseScript (src : String) (strict : Bool := false) (evalCode : Bool := false) :
+    Except String Script :=
   let cs := src.toList.toArray
   match lexChars cs with
   | .error e => .error e
   | .ok toks =>
     let toks := internToks toks
     let strict := strict || hasUseStrict toks 0
-    let st : PState := { toks, strict, src := cs }
+    let st : PState := { toks, strict, src := cs, privAny := evalCode }
     match (parseStmts (parseFuel (cs.size + 1)) #[]).run st with
     | .ok body st' =>
       if (st'.toks.getD st'.pos default).kind != .eof then
         .error s!"SyntaxError: unexpected '{(st'.toks.getD st'.pos default).text}'"
+      else if !evalCode && !st'.privRefs.isEmpty then
+        .error "SyntaxError: a private name is used outside a class"
       else
         let lex := lexNames body
         let funs := body.flatMap fun s => match s with | .funDecl x _ => [x] | _ => []

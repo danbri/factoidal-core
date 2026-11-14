@@ -57,6 +57,51 @@ All in Lean unless said; each has `#guard`s in `JS/RegressionTests.lean`.
 are hidden properties of the global object (private-name keys). So the resolver, the snapshot
 and the generator machine did not change for it, and a page with no `for await` pays nothing.
 
+### Early errors (second batch)
+
+With parse errors reported, the largest group left was negative tests that the parser accepted
+(1,721 pages). These are now SyntaxErrors, each a check at the place the parser reads the
+construct (`JS/Parser.lean`):
+
+- `await` as a binding name, label or identifier in an async function; `yield` as a label or an
+  identifier in a generator or strict code; `let` as an identifier in strict code;
+- `arguments` and `super()` in a class field initialiser or a static block (arrow functions keep
+  the rule; other functions reset it);
+- `delete o.#x` in every form the cover grammar gives;
+- a `"use strict"` directive in a function whose parameters are not simple;
+- a private name used where no enclosing class declares it, and a private name declared twice
+  (a getter and a setter may share one). The code of a direct `eval` may use the private names
+  of the classes around the call (`parseScript`'s `evalCode`).
+
+Not done: a regular expression literal is still compiled when it is evaluated, not when it is
+parsed (361 pages). Checking it at parse time would turn one pattern this engine cannot yet
+compile, in a branch that never runs, into a script that does not load: wrong for real sites
+until `JS.Re` reads every valid pattern.
+
+## 2b. URLPattern (URL Pattern Standard)
+
+`formal/lean4/L4Factoidal/WHATWG/URLPattern.lean` is the Standard as pure functions of strings:
+the pattern tokenizer and parser, the regular expression and pattern string of a part list, the
+constructor string parser, canonicalization through the URL parser's state overrides
+(`WHATWG.URL.basicParse`), `create` (the constructor) and `exec`. Regular expressions are
+compiled and run by `JS.Re`. The page object is glue: `NativeX.urlPattern` converts the WebIDL
+arguments and builds the result object, and the class in `prelude.js` holds the record
+(component pattern strings, and hidden: the compiled expressions and group names, so `exec`
+does not compile again). Names above ASCII use General_Category (L, Nl; Mn, Mc, Nd, Pc) from
+`Regex.UnicodeProps` with the Other_ID_Start and Other_ID_Continue characters.
+
+Measured locally: the WPT driver `urlpattern/resources/urlpatterntests.js`, run on the engine
+with the class as written in the prelude, passes 367 of the 369 entries of
+`urlpatterntestdata.json` (331 directly; 36 more need `new URL` for an expectation, which the
+local harness lacks and the pure comparison confirms). The two that fail use the `v` flag's set
+operations (`[[a-z]--a]`, `[\d&&[0-1]]`).
+
+Theorems (`WHATWG/URLPatternTests.lean`): `tokenizeGo_lenient` (the lenient tokenizer is total),
+`create_init_with_base` and `exec_init_with_base` (an object input with a base URL is always
+refused), `Component.exec_size` (one group entry per name). Open: `compareComponent` and
+`generate` (tentative), the `v` flag; that a compiled pattern's regular expression accepts
+exactly what its part list describes is not proved.
+
 ## 3. Proved, tested, open
 
 Proved (`JS/Theorems.lean`, no `sorry`, axioms `propext`, `Classical.choice`, `Quot.sound` only):
