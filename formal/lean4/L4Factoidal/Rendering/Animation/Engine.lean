@@ -204,6 +204,9 @@ def kindOf (property : String) : Value.Kind :=
   else if ["border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius",
       "border-bottom-right-radius"].contains property then .radius
   else if property.startsWith "corner-" && property.endsWith "-shape" then .cornerShape
+  else if property == "letter-spacing" then .zeroWord "normal" true
+  else if property == "word-spacing" then .zeroWord "normal" false
+  else if property == "vertical-align" then .zeroWord "baseline" false
   else if property == "offset-rotate" then .offsetRotate
   else if property == "clip-path" || property == "shape-outside" || property == "offset-path" then .shape
   -- images, counters and the clip margin do not interpolate (CSS Images 3 §6, CSS Lists 3 §4)
@@ -220,6 +223,23 @@ def kindOf (property : String) : Value.Kind :=
 def lineWidth (property : String) : Bool :=
   ["border-top-width", "border-right-width", "border-bottom-width", "border-left-width", "outline-width",
    "column-rule-width", "row-rule-width"].contains property
+
+/-- A value with each `currentcolor` as the element's colour: `currentcolor` computes to
+itself (CSS Color 4 §4.5) and is the used colour of `color`, so a value with it
+interpolates with a colour as that colour does. `color` itself has no `currentcolor`. -/
+def withCurrentColor (ac : Access) (e : Nat) (property : String) (v : Value) : Value :=
+  if property == "color" || !v.contains (.ident "currentcolor") then v
+  else match (ac.base e "color").map Value.parse with
+    | some [c] => v.map fun t => if t == .ident "currentcolor" then c else t
+    | _ => v
+
+/-- Kind: zero cost and identity. Says: a value with no `currentcolor` is itself, whatever
+the element's colour (it is not read). -/
+theorem withCurrentColor_plain (ac : Access) (e : Nat) (property : String) (v : Value)
+    (h : v.contains (.ident "currentcolor") = false) : withCurrentColor ac e property v = v := by
+  unfold withCurrentColor
+  rw [h]
+  simp
 
 /-! ## The style change -/
 
@@ -354,7 +374,8 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
         let current := (ac.prev e property).getD a.toText
         s := kill s i
         let kind := kindOf property
-        if current != after && (Value.interpolable kind (Value.parse current) (Value.parse after) || sp.allowDiscrete)
+        if current != after && (Value.interpolable kind (withCurrentColor ac e property (Value.parse current))
+              (withCurrentColor ac e property (Value.parse after)) || sp.allowDiscrete)
             && sp.duration + sp.delay > 0 then
           s := startTransition s e property current after sp
     | _, _ => s := kill s i
@@ -380,7 +401,8 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
     if before == after then continue
     if sp.duration + sp.delay ≤ 0 then continue
     let kind := kindOf property
-    if Value.interpolable kind (Value.parse before) (Value.parse after) || sp.allowDiscrete then
+    if Value.interpolable kind (withCurrentColor ac e property (Value.parse before))
+        (withCurrentColor ac e property (Value.parse after)) || sp.allowDiscrete then
       s := startTransition s e property before after sp
   return s
 
@@ -423,8 +445,9 @@ def overridesWhere (s : State) (ac : Access) (keep : Nat → Bool) : List Overri
         | none =>
           -- a property the engine does not compute is not animated
           let some baseText := ac.base e property | continue
-          pure (Value.parse baseText)
-      let compute := fun (text : String) => (ac.compute e property text).map Value.parse
+          pure (withCurrentColor ac e property (Value.parse baseText))
+      let compute := fun (text : String) =>
+        (ac.compute e property text).map fun t => withCurrentColor ac e property (Value.parse t)
       match Effect.value eff.keyframes eff.composite property (kindOf property) p underlying compute eff.neutralEasing with
       | some v =>
         if !stack.contains (e, property) then keys := keys.push (e, property)
