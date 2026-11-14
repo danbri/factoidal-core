@@ -65,6 +65,7 @@ def exported : State × List String := run gpuPage [["context", "gpu"], ["tensor
 #guard ((api (graph "gpu" "tanh").1 #["read".toUTF8, "0".toUTF8, "2".toUTF8]).2.get! 0) == 0
 end Tests
 #print axioms L4Factoidal.WebNN.Gpu.emitC_eval
+#print axioms L4Factoidal.WebNN.GpuRun.emit_inv
 #print axioms L4Factoidal.WebNN.Gpu.unravel_getD
 #print axioms L4Factoidal.WebNN.Gpu.transpose_coords
 #print axioms L4Factoidal.WebNN.Gpu.expandMap_fits

@@ -21,6 +21,7 @@ WebNN tolerances on a GPU (section 2.6 of the record), though their kernels exis
 import L4Factoidal.WebNN.Graph
 import L4Factoidal.WebNN.Gpu
 import L4Factoidal.PageGpu.Model
+import L4Factoidal.PageGpu.Theorems
 
 namespace L4Factoidal.WebNN.GpuRun
 open L4Factoidal.WebNN
@@ -34,6 +35,24 @@ def emit (s : State) (c : Command) : Except String State := do
   if s.out.size ≥ min s.room maxOut then throw "webnn gpu: too many commands waiting for the host"
   let (g, out) ← L4Factoidal.PageGpu.step s.page c
   pure { s with page := g, out := s.out ++ out.toArray }
+
+/-- Kind: invariant (quota). Says: a WebNN command on the page's GPU state keeps the page's
+GPU byte and object quotas (`PageGpu.Inv`) and its readback bound (`PageGpu.MapInv`): WebNN
+on the GPU path is held to the page's own limits, as the page's WebGPU calls are. -/
+theorem emit_inv {s s' : State} {c : Command} (h : emit s c = .ok s')
+    (hi : L4Factoidal.PageGpu.Inv s.page) (hm : L4Factoidal.PageGpu.MapInv s.page) :
+    L4Factoidal.PageGpu.Inv s'.page ∧ L4Factoidal.PageGpu.MapInv s'.page := by
+  unfold emit at h
+  simp only [bind, Except.bind] at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · rename_i p hp
+      obtain ⟨g, out⟩ := p
+      simp only [pure, Except.pure, Except.ok.injEq] at h
+      subst h
+      exact ⟨L4Factoidal.PageGpu.step_inv hi hp, L4Factoidal.PageGpu.step_mapInv hm hp⟩
 
 /-- A fresh id for a GPU object. -/
 def fresh (s : State) : State × Nat := ({ s with nextId := s.nextId + 1 }, s.nextId)
