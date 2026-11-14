@@ -147,6 +147,16 @@ def idlName (css : String) : String :=
         up := false
     return out
 
+/-- §6.6.3 "process a keyframe-like object" step 5: which of the names (the own enumerable
+names of a keyframe object, separated by U+0000) are animatable properties of this
+engine or custom properties: "1" or "0" for each, in order. Only those are read from the
+object. -/
+def animatableNames (supports : String → String → Bool) (q : String) : String :=
+  String.ofList ((q.splitOn "\x00").map fun idl =>
+    match cssName idl with
+    | some css => if css.startsWith "--" || (animatable css && supports css "initial") then '1' else '0'
+    | none => '0')
+
 /-- A keyframe's offset member: null, or a number in [0, 1]. -/
 def offsetOf (j : Option Json) : Except String (Option Int) :=
   match j with
@@ -505,6 +515,7 @@ private def yes : String → String → Bool := fun _ _ => true
 private def frames (q : String) : Option (List (Option Int × Int × List (String × String))) :=
   ((keyframesOf yes (JSON.parseJson? q)).map fun (ks, _) => ks.map fun k => (k.offset, k.computedOffset, k.props)).toOption
 
+#guard animatableNames (fun p _ => p == "margin-left" || p == "transition-duration") "marginLeft\x00margin-left\x00--x\x00transitionDuration\x00top" == "10100"
 #guard cssName "marginLeft" == some "margin-left"
 #guard cssName "cssFloat" == some "float"
 #guard cssName "--my-angle" == some "--my-angle"

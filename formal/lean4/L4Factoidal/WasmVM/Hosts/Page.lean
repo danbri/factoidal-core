@@ -429,7 +429,8 @@ element: no target); 61 a change of effect `node`; 62 a read of effect `node`; 6
 new animation; 64 a method or setter of animation `node`; 65 the state of animation
 `node` with its acts; 66 the animations of element `node` (`q` "subtree": and of its
 descendants; node 0 with "subtree": of the document), after a style change; 67 the
-frame's part ("update animations"); 68 the timeline time in ms. A change of an
+frame's part ("update animations"); 68 the timeline time in ms; 69 which names of a
+keyframe object are animatable properties. A change of an
 animation is a change of what a layout reads. -/
 def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :=
   let supports := L4Factoidal.Rendering.CSS.supportsDeclaration
@@ -478,6 +479,7 @@ def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :
       (anim.anims[i]?).map (·.player) == (h.anim.anims[i]?).map (·.player)
     ((if same then { h with anim } else bump h anim), .ok (L4Factoidal.Rendering.Animation.Fix.format anim.now))
   | 68 => (h, .ok (L4Factoidal.Rendering.Animation.Fix.format h.anim.now))
+  | 69 => (h, .ok (L4Factoidal.Rendering.Animation.Api.animatableNames supports q))
   | _ => (h, .error (-2))
 
 /-- The `node_query` ops that `Hosts.Dom.serve` answers: below 16, and 30 to 32 (slots, the

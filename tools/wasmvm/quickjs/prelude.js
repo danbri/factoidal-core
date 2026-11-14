@@ -4508,6 +4508,18 @@
   // §6.6.3 "process a keyframes argument", the part that reads the script's objects: the
   // members in the order the specification reads them, as text. Lean checks and merges.
   const one = v => (v !== null && typeof v === 'object' && typeof v[Symbol.iterator] === 'function' ? Array.from(v) : [v]);
+  // The own enumerable names of a keyframe object that are animatable properties (Lean's
+  // answer, op 69, asked once for each name), in ascending order: only those are read.
+  const animatableNames = new Map();
+  const propertyKeys = obj => {
+    const keys = Object.keys(obj).filter(k => k !== 'offset' && k !== 'easing' && k !== 'composite');
+    const unknown = keys.filter(k => !animatableNames.has(k));
+    if (unknown.length > 0) {
+      const r = op(0, 69, unknown.join('\u0000'));
+      unknown.forEach((k, i) => animatableNames.set(k, r[i] === '1'));
+    }
+    return keys.filter(k => animatableNames.get(k)).sort();
+  };
   const kfArg = keyframes => {
     if (keyframes === null || keyframes === undefined) return null;
     if (typeof keyframes !== 'object' && typeof keyframes !== 'function') throw new TypeError('The keyframes are not an object or null.');
@@ -4523,10 +4535,7 @@
         if (c !== undefined) f.composite = String(c);
         if (e !== undefined) f.easing = String(e);
         f.offset = o === null || o === undefined ? null : String(Number(o));
-        for (const name of Object.keys(k).sort()) {
-          if (name === 'offset' || name === 'easing' || name === 'composite') continue;
-          f.p.push([name, String(k[name])]);
-        }
+        for (const name of propertyKeys(k)) f.p.push([name, String(k[name])]);
         list.push(f);
       }
       return { list };
@@ -4536,10 +4545,7 @@
     obj.composite = c === undefined ? [] : one(c).map(String);
     obj.easing = e === undefined ? [] : one(e).map(String);
     obj.offset = o === undefined ? null : one(o).map(x => (x === null || x === undefined ? null : String(Number(x))));
-    for (const name of Object.keys(keyframes).sort()) {
-      if (name === 'offset' || name === 'easing' || name === 'composite') continue;
-      obj.p.push([name, one(keyframes[name]).map(String)]);
-    }
+    for (const name of propertyKeys(keyframes)) obj.p.push([name, one(keyframes[name]).map(String)]);
     return { obj };
   };
   // An EffectTiming dictionary (or a duration) as text members; Lean converts and checks.
