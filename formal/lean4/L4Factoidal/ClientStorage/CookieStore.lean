@@ -137,14 +137,20 @@ def pathOfUrl (u : String) : String :=
   let p := (rest.toList.dropWhile (· != '/')).takeWhile (· != '?')
   if p.isEmpty then "/" else String.ofList p
 
-/-- `getAll` (and `get`, its first item): the cookies the document reads at the path of
-`url`, of name `name` when one is given; `none` for a `TypeError` (a `url` other than the
-document's). -/
-def read (jar : Jar) (site : Site) (now : Nat) (docUrl : String) (name : Option String) (url : Option String) :
-    Option (List Cookie) :=
+/-- The `url` option a context may name: a document its own URL (a fragment aside); a service
+worker (`sw` the origin of its scope) any URL of its origin. -/
+def urlAllowed (docUrl : String) (sw : Option String) (u : String) : Bool :=
+  match sw with
+  | some o => noFragment u == o || (noFragment u).startsWith (o ++ "/")
+  | none => noFragment u == noFragment docUrl
+
+/-- `getAll` (and `get`, its first item): the cookies the context reads at the path of
+`url`, of name `name` when one is given; `none` for a `TypeError` (a `url` it may not name). -/
+def read (jar : Jar) (site : Site) (now : Nat) (docUrl : String) (name : Option String) (url : Option String)
+    (sw : Option String := none) : Option (List Cookie) :=
   match url with
   | some u =>
-    if noFragment u != noFragment docUrl then none
+    if !urlAllowed docUrl sw u then none
     else some ((visibleCookies jar { site with path := pathOfUrl u } now).filter fun c => name.all (c.name == normalize ·))
   | none => some ((visibleCookies jar site now).filter fun c => name.all (c.name == normalize ·))
 
@@ -176,7 +182,9 @@ def typeError : List Tok := [S "!TypeError"]
 /-- One command (`web_api` op 204) for the page of `origin` (`secure`: whether it is a secure
 context); the jar after it and the answer. -/
 def op (jar : Jar) (origin : String) (secure : Bool) (a : Array Tok) : Jar × List Tok :=
-  let docUrl := strAt a 1
+  -- a service worker's calls name its script URL after `sw:`
+  let sw : Option String := if (strAt a 1).startsWith "sw:" then some origin else none
+  let docUrl := if sw.isSome then String.ofList ((strAt a 1).toList.drop 3) else strAt a 1
   let now := secondsOf (strAt a 2)
   match siteOf origin secure (pathOfUrl docUrl) with
   | none => (jar, typeError)
@@ -184,7 +192,7 @@ def op (jar : Jar) (origin : String) (secure : Bool) (a : Array Tok) : Jar × Li
     match strAt a 0 with
     | "get" | "getAll" =>
       let url := if strAt a 5 == "" then none else some (strAt a 5)
-      match read jar site now docUrl (opt a 3 4) url with
+      match read jar site now docUrl (opt a 3 4) url sw with
       | none => (jar, typeError)
       | some cs => (jar, S "ok" :: cs.flatMap fun c => [S c.name, S c.value])
     | "set" =>
@@ -244,8 +252,8 @@ theorem set_keeps_host (jar j : Jar) (site : Site) (now : Nat) (name value : Str
 
 /-- Kind: privacy invariant (read side). Says: every cookie that `get` or `getAll` answers is
 for the host of the page's own origin and is not `HttpOnly`. -/
-theorem read_host (jar : Jar) (site : Site) (now : Nat) (docUrl : String) (name url : Option String)
-    (cs : List Cookie) (h : read jar site now docUrl name url = some cs) (c : Cookie) (hc : c ∈ cs) :
+theorem read_host (jar : Jar) (site : Site) (now : Nat) (docUrl : String) (name url sw : Option String)
+    (cs : List Cookie) (h : read jar site now docUrl name url sw = some cs) (c : Cookie) (hc : c ∈ cs) :
     c.host = site.host ∧ c.httpOnly = false := by
   unfold read at h
   split at h
@@ -270,9 +278,10 @@ theorem changes_sub (before after : List Cookie) :
 /-- Kind: refinement. Says: `docset` writes the jar exactly as `document.cookie = text`
 (`Net.Cookies.op` 97) does; it only adds the answer of what changed. -/
 theorem docset_jar (jar : Jar) (origin : String) (secure : Bool) (a : Array Tok) (site : Site)
+    (hsw : (strAt a 1).startsWith "sw:" = false)
     (hs : siteOf origin secure (pathOfUrl (strAt a 1)) = some site) (hc : strAt a 0 = "docset") :
     (op jar origin secure a).1 = setFromScript jar site (secondsOf (strAt a 2)) (strAt a 3) := by
-  simp [op, hs, hc]
+  simp only [op, hsw, Option.isSome_none, Bool.false_eq_true, if_false, hs, hc]
 
 /-- Kind: validity rule. Says: a name holding `=` is never set. -/
 theorem set_refuses_eq (jar : Jar) (site : Site) (now : Nat) (name value : String) (domain path : Option String)
@@ -328,6 +337,10 @@ private def getC (n : String) (url : String := "") : List String := ["get", U, "
 -- document.cookie through docset: the jar of op 97 and the change it makes
 #guard run [["docset", U, "1700000000000", "dc=1; path=/"], getC "dc", ["docset", U, "1700000000000", "dc=1"], ["docset", U, "1700000000000", "dc=; max-age=0"]] ==
   ["ok + dc 1", "ok dc 1", "ok + dc 1", "ok - dc"]
+-- a service worker: any URL of its origin
+#guard (let (j, _) := op {} "https://web-platform.test:8443" true (T (setC "n" "v"));
+        [(op j "https://web-platform.test:8443" true (T ["get", "sw:https://web-platform.test:8443/sw.js", "1700000000000", "1", "n", "https://web-platform.test:8443/cookiestore/x"])).2.length,
+         (op j "https://web-platform.test:8443" true (T ["get", "sw:https://web-platform.test:8443/sw.js", "1700000000000", "1", "n", "https://example.com/"])).2.length]) == [3, 1]
 -- url option: the document's URL (a fragment aside), else TypeError
 #guard run [setC "n" "v", getC "n" (U ++ "#foo"), getC "n" "https://web-platform.test:8443/different/path",
   getC "n" "https://www.example.com/cookiestore/t.html"] ==
