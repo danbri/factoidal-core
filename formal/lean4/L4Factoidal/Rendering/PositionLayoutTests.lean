@@ -578,4 +578,19 @@ private def inside := "<div id=c><div id=k>K</div></div>"
 #guard box inside "#c{width:100px} #k{margin-left:10%} #k{margin-left:4px}" "k" == some (4,0,96,7)
 #guard box inside "#c{width:100px} #k{margin-left:10%} #k{margin-left:auto;width:20px}" "k" == some (80,0,20,7)
 
+
+-- `overflow: auto` and `scroll`: a scroll container is the root of a block formatting
+-- context (CSS 2.1 §9.4.1): it holds its floats and its children's margins. Nothing is
+-- clipped away while nothing scrolls.
+private def holds := "<div id=c><div id=f>F</div>T</div><div id=n>N</div>"
+#guard box holds "#f{float:left;height:30px}" "c" == some (0,0,200,7)
+#guard box holds "#f{float:left;height:30px} #c{overflow:auto}" "c" == some (0,0,200,30)
+#guard box holds "#f{float:left;height:30px} #c{overflow:scroll}" "n" == some (0,30,200,7)
+#guard box holds "#f{float:left;height:30px} #c{overflow-x:auto}" "c" == some (0,0,200,30)
+#guard box holds "#f{float:left;height:30px} #c{overflow:auto} #c{overflow:visible}" "c" == some (0,0,200,7)
+#guard box "<div id=c><div id=k>K</div></div>" "#k{margin-top:10px} #c{overflow:auto}" "c" == some (0,0,200,17)
+#guard box "<div id=c><div id=k>K</div></div>" "#k{margin-top:10px}" "c" == some (0,10,200,7)
+-- its content is not clipped: what overflows is still there
+#guard at? "<div id=c><div id=k>KK</div></div>" "#c{overflow:auto;height:5px;width:6px} #k{margin-top:20px}" "KK" == some (0,20)
+
 end L4Factoidal.Rendering.PositionLayoutTests

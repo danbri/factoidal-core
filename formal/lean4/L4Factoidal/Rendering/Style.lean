@@ -1038,8 +1038,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "hidden" | "collapse" => return {s with visible := false}
     | _ => throw "unsupported CSS visibility"
   | "overflow" =>
-    if d.value == "visible" then return {s with clipOverflow := false}
-    if d.value == "hidden" || d.value == "clip" then return {s with clipOverflow := true}
+    if d.value == "visible" then return {s with clipOverflow := false, pos := {s.pos with scrolls := false}}
+    if d.value == "hidden" || d.value == "clip" then return {s with clipOverflow := true, pos := {s.pos with scrolls := false}}
+    -- A scroll container (`pos.scrolls`): nothing scrolls yet, so nothing is clipped away,
+    -- but the box holds its floats and its children's margins.
+    if d.value == "auto" || d.value == "scroll" || d.value == "overlay" then
+      return {s with clipOverflow := false, pos := {s.pos with scrolls := true}}
     throw "unsupported CSS overflow mode"
   | "text-decoration" | "text-decoration-line" =>
     if d.value == "underline" then return {s with underline := true}
