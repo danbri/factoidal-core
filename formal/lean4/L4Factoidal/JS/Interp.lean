@@ -4671,15 +4671,29 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | _ => pure .undef
       | _ => pure .undef
     | .arraySlice =>
-      let es ← elemsOf n thisV
-      let s := relIndex (← toNum n a0) es.size
-      let e := match a1 with | .undef => es.size | _ => 0
-      let e ← if e == 0 && !(match a1 with | .undef => true | _ => false) then
-          do pure (relIndex (← toNum n a1) es.size) else pure es.size
-      let part := if s < e then es.extract s e else #[]
-      match ← speciesFrom n thisV part.size with
+      -- §23.1.3.28: the length, the bounds, then ArraySpeciesCreate(O, count); only the indices
+      -- from start to end are read (an array-like's length can be 2^53 - 1)
+      let oid ← toObj n thisV
+      let len ← arrayLikeLength n (.obj oid)
+      let k := relIndex (← toNum n a0) len
+      let fin ← match a1 with
+        | .undef => pure len
+        | v => do pure (relIndex (← toNum n v) len)
+      let count := if fin > k then fin - k else 0
+      let sp ← speciesFrom n (.obj oid) count
+      if sp.isNone && count > 4294967295 then throwErr .range "Invalid array length"
+      let part ← match (← getObj oid).kind with
+        | .array es => pure (if k < fin then es.extract k fin else #[])
+        | _ => do
+          let m := min count 10000000
+          charge (m / 64)
+          (List.range m).toArray.mapM fun j => do
+            match ← elemAt n oid (k + j) true with
+            | some v => pure v
+            | none => pure Value.hole
+      match sp with
       | none => newArray part
-      | some a => speciesFill n a part (some part.size)
+      | some a => speciesFill n a part (some count)
     | .arraySplice =>
       match thisV with
       | .obj id => match (← getObj id).kind with
