@@ -1,0 +1,21 @@
+{
+ "case": "10.4.b",
+ "file": "Chapt10/10.4/10.4.b.xhtml",
+ "quote": "You must see only the numbers 4 and 5 : You must see only the numbers 7, 8, and 9 : You must see only the numbers 11, 12, and 13 :",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "4",
+    "5",
+    "7",
+    "8",
+    "9",
+    "11",
+    "12",
+    "13"
+   ],
+   "kind": "output"
+  }
+ ]
+}

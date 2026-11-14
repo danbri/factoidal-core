@@ -21,7 +21,8 @@ that states the pass condition (`quote`) and the scripted steps:
     but for the listed exceptions), `message` /
     `no-message` (`contains`), `exception` (`name`: a fatal error of
     that name, or a message naming it), `no-fatal`, `event` /
-    `no-event` (`name`), `focus` (`id`), `load` (`contains`).
+    `no-event` (`name`), `focus` (the control with this `label` or `id`
+    has the focus), `load` (`contains`); `control` also takes `alert`.
     Message and event checks look at the outputs since the last `do`.
     Values are compared after whitespace normalisation (the conditions
     are prose; instance data carries its indentation).
@@ -130,8 +131,8 @@ def checkExpect (m : Model) (last all : List Output) (j : Json) : Option String 
       | .event n _ => n == name
       | _ => false) then some s!"event {name} was dispatched" else none
   else if kind == "focus" then
-    if last.any (fun o => o == Output.focus ((j.getString? "id").getD "")) then none
-    else some "focus did not move there"
+    if (findCtls view j).any (fun c => m.focus == some c.el) then none
+    else some "the focus is not in that control"
   else if kind == "load" then
     if last.any (fun o => match o with
       | .load u _ => has u needle
@@ -189,7 +190,11 @@ def checkExpect (m : Model) (last all : List Output) (j : Json) : Option String 
       let p := match j.getString? "prefix" with
         | some w => if c.value.startsWith w then none else some s!"value '{c.value}' does not start with '{w}'"
         | none => none
-      [v, p, chk "relevant" c.relevant, chk "readonly" c.readonly, chk "required" c.required,
+      let al := match j.getString? "alert" with
+        | some w => if normalizeSpaceStr c.alert == normalizeSpaceStr w then none
+                    else some s!"alert '{c.alert}', expected '{w}'"
+        | none => none
+      [v, p, al, chk "relevant" c.relevant, chk "readonly" c.readonly, chk "required" c.required,
        chk "valid" c.valid].findSome? id
   else some s!"unknown expectation '{kind}'"
 

@@ -306,6 +306,11 @@ structure Ctl where
   readonly : Bool := false
   required : Bool := false
   valid : Bool := true
+  /-- The text of the control's `alert` (§8.2.4), shown when it is not valid. -/
+  alert : String := ""
+  /-- Whether the control can express the value (§4.4.16): for `range`, the
+      value lies between `start` and `end`. -/
+  inRange : Bool := true
 deriving Inhabited
 
 inductive Output where
@@ -628,6 +633,15 @@ def Model.single (m : Model) (el : El) (iter : List (Nat × Nat)) :
 def controlKinds : List String :=
   ["input", "secret", "textarea", "output", "upload", "range", "trigger", "submit", "select", "select1"]
 
+/-- The first form control among the given elements and their
+    descendants, in document order (a work list; tail recursive). -/
+def Form.firstControlGo (fm : Form) : Nat → List Nat → Option Nat
+  | 0, _ => none
+  | _ + 1, [] => none
+  | f + 1, i :: rest =>
+    let el := fm.el i
+    if controlKinds.contains el.name then some i else fm.firstControlGo f (el.kids ++ rest)
+
 def Model.selectedCase (m : Model) (sw : El) : Option Nat :=
   match m.cases.find? (·.1 == sw.idx) with
   | some (_, c) => some c
@@ -664,7 +678,22 @@ def Model.ctlOf (m : Model) (el : El) (iter : List (Nat × Nat)) (cx : Cx)
     | none => true
     | some [] => false
     | some (x :: _) => m.relevantAt x.loc)
-  pure { el := el.idx, iter := iter, kind := el.name, id := (el.attr "id").getD "", label := label,
+  let alert ← match (m.form.kidsNamed el "alert").head? with
+    | none => pure ""
+    | some a =>
+      match ← m.nodes a cxB with
+      | some ns => pure ((ns.head?.map (·.stringValue)).getD "")
+      | none => pure (normalizeSpaceStr a.text)
+  let inRange :=
+    if el.name == "range" then
+      let v := Num.ofString value
+      let ok (a : String) (lowerBound : Bool) : Bool :=
+        match el.attr a with
+        | some s => if lowerBound then Num.le (Num.ofString s) v else Num.le v (Num.ofString s)
+        | none => true
+      !numIsNaN v && ok "start" true && ok "end" false
+    else true
+  pure { alert := alert, inRange := inRange, el := el.idx, iter := iter, kind := el.name, id := (el.attr "id").getD "", label := label,
          bound := bound.map (·.loc), value := value, relevant := relevant,
          readonly := (bound.map (fun x => m.readonlyAt x.loc)).getD false,
          required := (bound.map (fun x => (m.own x.loc).required)).getD false,
@@ -773,7 +802,9 @@ def Model.refresh (m : Model) (target : Nat) : Model :=
           (if changed || c.readonly != o.readonly then
             [w (if c.readonly then "xforms-readonly" else "xforms-readwrite")] else []) ++
           (if changed || c.required != o.required then
-            [w (if c.required then "xforms-required" else "xforms-optional")] else [])
+            [w (if c.required then "xforms-required" else "xforms-optional")] else []) ++
+          (if c.inRange != o.inRange then
+            [w (if c.inRange then "xforms-in-range" else "xforms-out-of-range")] else [])
       | _, _ => [])
     ({ m with snap := v }).push evs
 
@@ -1047,10 +1078,13 @@ def Model.default (m : Model) (name : String) (target : Nat) (iter : List (Nat �
     { (m.emit (.fatal name detail)) with halted := true, work := [] }
   else if name == "xforms-focus" then
     -- §4.3.7: focus moves; the control that had it gets DOMFocusOut, the new one DOMFocusIn
-    let m' := { (m.emit (.focus ((tel.attr "id").getD tel.tag))) with focus := some target }
-    if m.focus == some target then m'
+    -- focus given to a group goes to its first form control (§10.7)
+    let ctl := if controlKinds.contains tel.name then target
+      else (m.form.firstControlGo m.form.els.size tel.kids).getD target
+    let m' := { (m.emit (.focus ((tel.attr "id").getD tel.tag))) with focus := some ctl }
+    if m.focus == some ctl then m'
     else m'.push ((m.focus.map (fun o => Work.dispatch "DOMFocusOut" o [] [])).toList ++
-                  [Work.dispatch "DOMFocusIn" target iter []])
+                  [Work.dispatch "DOMFocusIn" ctl iter []])
   else if name == "xforms-help" || name == "xforms-hint" then
     let child := if name == "xforms-help" then "help" else "hint"
     (match (m.form.kidsNamed tel child).head? with

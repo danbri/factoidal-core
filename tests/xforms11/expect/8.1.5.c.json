@@ -8,8 +8,10 @@
    "label": "Enter An Invalid Value"
   },
   {
-   "expect": "message",
-   "contains": "That is an invalid name"
+   "expect": "control",
+   "kind": "output",
+   "valid": false,
+   "alert": "That is an invalid name"
   },
   {
    "do": "activate",

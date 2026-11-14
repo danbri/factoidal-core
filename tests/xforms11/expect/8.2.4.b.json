@@ -1,0 +1,18 @@
+{
+ "case": "8.2.4.b",
+ "file": "Chapt08/8.2/8.2.4/8.2.4.b.xhtml",
+ "quote": "When you enter an alphanumeric value in the input field you must see a message that says \"Inline Alert Message\". Enter 'abc', tab out, and see the alert message",
+ "steps": [
+  {
+   "do": "setvalue",
+   "label": "Enter 'abc', tab out, and see the alert message",
+   "value": "abc"
+  },
+  {
+   "expect": "control",
+   "label": "Enter 'abc', tab out, and see the alert message",
+   "valid": false,
+   "alert": "Inline Alert Message"
+  }
+ ]
+}
