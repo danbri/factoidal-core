@@ -304,4 +304,29 @@ Open:
 
 ## Measured
 
-To be filled from the cloud checks (subtests before and after per directory, timings).
+Branch checks (`branch-wpt.yml`, Linux; development checks of the selected names, not scores). Names:
+`/web-animations/`, `/css/css-transitions/`, `/css/css-animations/`, `/css/css-easing/`, the 68 path
+prefixes of the files that use `css/support/interpolation-testcommon.js`, and every 40th name of the
+full list. Baseline: the full run of main d799500c7 (before any of this was on main).
+
+| check | ref | interpolation files (56,185) | web-animations (4,252) | css-transitions (3,439) | css-animations (1,431) | css-easing (167) |
+|---|---|---|---|---|---|---|
+| baseline | main d799500c7 | 14,823 | 117 | 467 | 685 | 95 |
+| 43574527916 | 4 commits on the cascade branch | 48,829 | 3,668 | 1,228 | 983 | 116 |
+| 43575885979 | + `linear()`, Oklab, line widths | 48,623 (3 pages STALL) | 3,675 | 1,229 | 1,007 | 121 |
+| 43582584406 | + the cost fixes, corner shapes, arc flags, rounding slack: merged as cee52ef58 | 50,161 | 3,675 | 1,405 | 1,007 | 121 |
+
+Merged: main 335ab3b69..cee52ef58, +40,182 subtests on these names in the check.
+
+Timings of the 774 pages of those names (wall time of the test processes, Linux runners): 3,138 s in
+the first check, 1,740 s in the merged one; pages of 30 s or more: 20, then 8; the three pages of
+URL-valued properties that took 264 s or stalled past 300 s (`mask-image-`, `border-image-source-`,
+`mask-border-source-interpolation`) take 7.9 s, 4.0 s and 4.8 s. Others, first check then merged, with
+the time before the engine existed (when most of their subtests failed) in brackets:
+`rotate-interpolation` 16.4 s, 7.7 s (5.8 s); `border-image-width-interpolation` 112 s, 7.1 s (28 s);
+`line-height-interpolation` 54.8 s, 8.5 s (24.5 s); `row-rule-inset-interpolation` 72 s, 15.8 s (48 s). The slowest is
+`css-transitions/properties-value-inherit-001.html` (219 s: a hundred transitions read every frame).
+
+A page with no animation and no `animation`/`transition` declaration: the every-40th sample (2,347
+names) took 1,320 s before the engine and 1,366 s with it on a later main (other merges are in that
+difference; no page of the sample became a STALL or a TIMEOUT by this work).
