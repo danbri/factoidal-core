@@ -9124,7 +9124,10 @@
   //   n.api 43 secureContext(url) -> "1" | "0" (Net.SecureContext): without it, the
   //     [SecureContext] members (crypto.subtle, SubtleCrypto, CryptoKey, randomUUID) do not exist.
   let CryptoKeyC, cryptoKeys, cloneCryptoKey;
-  lazy('crypto', () => {
+  // `crypto` is an attribute of WindowOrWorkerGlobalScope: an accessor that answers the same
+  // object every time ([SameObject]), made on first use.
+  let cryptoMade;
+  const makeCrypto = () => {
     const random = typeof apiCall(30, ['0'], 0, true) !== 'number';
     const secure = apiCall(43, [href], 0, false) === '1';
     const subtleOn = secure && typeof apiCall(40, ['digest', 'SHA-256'], 0, false) === 'string';
@@ -9446,7 +9449,13 @@
     const cryptoObject = Object.create(Crypto.prototype);
     cryptoObjects.add(cryptoObject);
     return cryptoObject;
-  });
+  };
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, enumerable: true,
+    get() {
+      if (cryptoMade === undefined) cryptoMade = (apiOn() ? makeCrypto() : undefined) ?? null;
+      if (cryptoMade === null) { delete globalThis.crypto; return undefined; }
+      return cryptoMade;
+    } });
   // ==== end haclweb ====
   for (const k of ['Crypto', 'SubtleCrypto', 'CryptoKey'])
     Object.defineProperty(globalThis, k, { configurable: true, enumerable: false, get() { void globalThis.crypto; const d = Object.getOwnPropertyDescriptor(globalThis, k); return d && 'value' in d ? d.value : undefined; } });
@@ -14230,6 +14239,9 @@
     getter(WP, 'navigator', () => wnav);
     getter(WP, 'origin', () => u.origin);
     getter(WP, 'isSecureContext', () => apiCall(43, [href], 0, false) === '1');
+    // WindowOrWorkerGlobalScope's `crypto` is a member of WorkerGlobalScope.prototype here.
+    { const cd = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+      if (cd && cd.get) { delete globalThis.crypto; Object.defineProperty(WP, 'crypto', { get: cd.get, configurable: true, enumerable: true }); } }
     getter(WP, 'crossOriginIsolated', () => false);
     define(WP, 'importScripts', function importScripts(...urls) {
       const abs = urls.map(x => {
