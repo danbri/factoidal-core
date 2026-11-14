@@ -67,11 +67,30 @@ def countOrInfinity (name text : String) : Except String Ext :=
     | some v => if v < 0 then .error s!"{name} must not be negative" else .ok (.fin v)
     | none => .error s!"{name} must be a number that is not negative"
 
+/-- The font-relative length units (CSS Values 4 §5.1.1). -/
+def fontRelativeUnits : List String :=
+  ["em", "rem", "ex", "rex", "cap", "rcap", "ch", "rch", "ic", "ric", "lh", "rlh"]
+
+/-- Whether a `rangeStart` or `rangeEnd` of an animation's options can be taken: one with
+a font-relative length can not (no element gives the font). Any other text is taken here
+(the range itself is read by the timeline, which this engine does not have yet). -/
+def rangeOk (text : String) : Bool :=
+  !(Value.tokenize text.toLower).any fun t => match t with
+    | .dim _ u => fontRelativeUnits.contains u
+    | _ => false
+
+#guard !rangeOk "contain 10em" && !rangeOk "contain calc(sign(100em - 1px) * 20px)" && !rangeOk "20REM" && !rangeOk "calc(0% + 20em)"
+#guard rangeOk "cover 20%" && rangeOk "normal" && rangeOk "50px" && rangeOk "entry calc(10% + 5px)"
+
 /-- Web Animations 1 §6.5.3 "update the timing properties of an animation effect": the
 members present in `opt` replace those of `base`; a value out of range is a TypeError
 (the message). A duration is `n:` and a number, or `s:` and a string (only `auto`). -/
 def timingOf (base : Timing) (opt : Json) : Except String Timing := do
   let mut t := base
+  -- an animation a script makes has no font for its range offsets (Scroll-driven Animations 1 §4.1)
+  for k in ["rangeStart", "rangeEnd"] do
+    if let some v := member opt k then
+      if !rangeOk v then throw s!"{k} can not be a font-relative length"
   if let some v := member opt "delay" then t := { t with delay := ← finite "delay" v }
   if let some v := member opt "endDelay" then t := { t with endDelay := ← finite "endDelay" v }
   if let some v := member opt "fill" then
