@@ -49,8 +49,15 @@ in CSS px, `width` by `rows` device pixels at the text scale `percent` (a text s
 on a 1600 px wide window is an 800 px wide viewport, as a page zoom of 200% is). Pages are
 drawn in light colours: `prefers-color-scheme: dark` does not hold. -/
 def mediaEnv (medium : String) (width rows percent : Nat) : Rendering.MediaQuery.Env :=
-  let css := fun (n : Nat) => n.toFloat * 100 / (max 1 percent).toFloat
-  {medium, width := some (css width), height := some (css rows), dark := some false}
+  WasmVM.Hosts.Page.mediaEnvOf medium width rows percent
+
+/-- Kind: seam theorem (media queries). Says: the media environment the layout reads its
+sheets in is the one `matchMedia` evaluates a query in (`Hosts.Page.mediaAnswer`): one maker
+for both. Does not say: that the two are given the same viewport and zoom (the session's
+`layout` request and viewport are the host's; `host_parity_test.ts` checks a page where
+`matchMedia` and an `@media` block must agree). -/
+theorem mediaEnv_eq (medium : String) (width rows percent : Nat) :
+    mediaEnv medium width rows percent = WasmVM.Hosts.Page.mediaEnvOf medium width rows percent := rfl
 
 private def sheetTyped (n : DOM.Node) : Bool :=
   !Rendering.CSS.hasAttribute n "disabled" && ["","text/css"].contains (attr n "type")
@@ -2042,6 +2049,13 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   fun node op => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
     else if op == 23 then some (fontFacesAnswer h dom request)
     else if op == 40 then some sheetText.get
+    -- 41: the inputs of the layout's media environment (`mediaEnv`): the media type, the
+    -- viewport in CSS pixels and the zoom, with no layout. `matchMedia` evaluates its query
+    -- in the environment they make (`Hosts.Page.mediaAnswer`).
+    else if op == 41 then
+      match scalePercent request with
+      | .ok percent => some s!"{medium request} {width} {height} {percent*100/zoomUnit request}"
+      | .error _ => none
     else if op == 20 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
