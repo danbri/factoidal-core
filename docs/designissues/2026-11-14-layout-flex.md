@@ -134,6 +134,19 @@ Proved (Lean theorems; axioms `propext`, `Classical.choice`, `Quot.sound` only):
 | `Generated.styled_unused` | a sheet with no pseudo-element rule that has `content` gives the page's own tree and the styles of `CSS.computeFor` |
 | `Content.chars_le`, `chars_prefix`, `read_parts_le` | the text of a pseudo-element is at most 65,536 characters whatever the attributes hold; parts only add after what is there; a `content` value has at most 64 parts |
 | `Layout.intrinsicLimits_none`, `intrinsicLimits_min` | with no length limit an intrinsic width stands; a `min-width` that is a length has the last word |
+| `InlineBox.Frame.opened_ok`, `cover_ok`, `close_ok` | the box of an inline element on a line never has a negative width |
+| `InlineBox.Frame.cover_holds`, `cover_keeps`, `close_reaches` | what is placed in an inline box is inside its box, what was inside stays inside, and a box that ends on the line reaches its right border edge |
+| `Flex.baseline_shared`, `baseline_within`, `baselineExtent_ge` | the baseline-aligned items of a flex line have their baselines at one place; each lies inside the cross size the line gets for them; that size is not negative and not less than the largest ascent |
+| `SelfPlace.Place.physical_same`, `physical_twice`, `physical_middle`, `startsAtEnd_horizontal`, `startsAtEnd_vertical` | a writing mode that starts an axis at the left or top changes no placement; turning a placement round twice gives it back; `stretch` and `center` do not depend on the writing mode; which physical side each axis of a horizontal and of a vertical writing mode starts on |
+| `Generated.flattenContents_keeps`, `flattenContents_unused` | flattening `display: contents` keeps the number of nodes and everything of a node but its child list; a page with none is laid out on its own tree |
+| `InlineBox.place_length`, `place_tail`, `merge_covers` | placing an item touches only the innermost open box; a box that is done is covered by its parent when its margins are not negative |
+| `MarginCollapse.collapse_spec`, `overlap_spec` | two adjoining margins make the largest positive one plus the most negative one (CSS 2.1 §8.3.1), and stacking the two and taking the overlap out leaves exactly that |
+| `MarginCollapse.collapse_comm`, `collapse_nonneg`, `overlap_nonneg`, `collapse_zero`, `collapse_le_max`, `collapse_mixed`, `collapse_assoc_nonneg` | the order does not matter; with no negative margin the larger stands and the overlap is what it was before negative margins were read; collapsing never adds space; margins of one sign collapse the same in either grouping |
+| `Layout.percentHeight_rest` (restated), `limitLength_px`, `limitLength_auto`, `resolvedLimit_absolute` | the pass over heights changes `height`, `min-height` and `max-height` only; a limit that is a length or `auto` is left as it is; an absolutely positioned box is left as it is |
+| `TextCase.upperPoint_idem`, `lowerPoint_idem`, `upper_lower`, `upperPoint_other`, `upperPoint_valid`, `lowerPoint_valid` | raising or lowering twice is raising or lowering once; the lower-case form of a letter has the letter's upper-case form; other code points are unchanged; a transformed code point is a character |
+| `Layout.percentEdges_unused`, `percentEdges_size`, `withEdges_rest`, `withEdges_none` | a page with no percentage margin or padding is left as it is; the pass keeps one style a node and changes only margin, padding and the position record |
+| `BoxTransform.aboutInt_origin`, `aboutInt_translation` | on whole numbers, for the function the layout uses on `Float`: the origin of a transform about a point moves only by the transform's own translation; a translation does not depend on the origin |
+| `BoxTransform.matrixOf_nil`, `steps_length_le`, `Result.transformed_flow`, `transformed_sources` | no function is no transform; a `transform` value has at most 64 functions; a transform keeps the work, the height, the floats and the boxes' nodes of a fragment |
 | `LinkTheorems.renderStyled_links`, `render_links`, `render_link_complete` (restated) | the boxes `render` answers are boxes of the layout of the tree it laid out, and its links are the link regions of all the boxes of that layout, generated content included |
 
 Tested only (`#guard` through `Layout.render`, original fixtures): `FlexLayoutTests.lean` (90 cases),
@@ -531,4 +544,151 @@ or fail with the intrinsic widths of boxes they do not size; `css-box/parsing/pa
 `css-box/inheritance` (-2 each, not traced); three single subtests outside layout. Against the older full run the
 list also has the vertical writing mode tests of `css-inline/baseline-source` (-40: passes by coincidence of
 offsets while inline-blocks ignored `vertical-align`) and the losses recorded in sections 5 to 7.
+
+## 9. Fifth round: inline boxes, negative and percentage margins, transforms, text-transform, nowrap
+
+**Inline boxes (CSS 2.1 §9.2.2, §9.4.2).** An inline element had no box of its own: its text had boxes, its
+`getBoundingClientRect` answered zeros, and its margins, borders and padding took no room. `inlineItems` now
+puts an inline element between `Inline.openInline` and `Inline.closeInline`. `inlineLayout` gives the line room
+for the left margin, border and padding where the box starts and for the right ones where it ends; a start
+waits for the item it begins with, so a start and its edge are never left at the end of a line, and a new line
+continues the boxes that are still open, with no edge. `lineLayout` keeps the open boxes as a stack of frames
+(`Rendering/InlineBox.lean`, on layout units) and gives each a `Box` on the line: horizontally from its left
+border edge or its first content to its right border edge or its last content, vertically the content area of
+its font with its padding and borders (§10.6.1), which do not move the line. The frames are generic in the
+number: the layout uses them on the `Float`s of the line's text, so a box ends exactly where its last word
+does and a container that shrinks to fit is as wide as before; the theorems are on whole numbers. Its background and border are
+painted once for that box, under the text of the line (one rectangle, where each word and space had one); on a
+line reordered by bidi the words still paint the background, because the box may be in pieces there.
+
+A line with only empty inline boxes that have no margin, border or padding has no height, as before (§9.4.2);
+an empty inline box still has a box where it stands. Link regions are cut from the same boxes as before
+(`Layout.linkSources` leaves the boxes of inline boxes out): the text and the replaced content of a link, not
+its padding. Cost, interpreted, a page of 1,804 nodes of which 600 are inline elements: 156 -> 173 ms.
+
+Not done: `box-decoration-break`, vertical margins and `line-height` of the inline box itself in the line's
+height, a right-to-left inline box's edges on the right sides, the box of an inline box on a reordered line as
+several pieces.
+
+**Negative margins (CSS 2.1 §8.3).** The cascade dropped a negative margin. `margin` and its longhands now
+take one (padding does not). Vertically, adjoining margins collapse by §8.3.1 (`Rendering/MarginCollapse.lean`:
+`collapse`, `overlap`, with the rule proved on whole numbers; `Layout.collapsePx` and `overlapPx` are the same
+text on `Float`, tested). The layout applies it two margins at a time, which is the rule for two margins and
+for any number of one sign; three or more adjoining margins of mixed signs can differ from the rule (10, -5, 8
+gives 8, the rule 5). Sideways a block with negative margins is wider than its container; an inline box with
+a negative margin pulls its text back, and the line does not break for it. A float's margin box is kept at no
+less than zero in both axes.
+
+**Height limits.** `min-height` and `max-height` as a percentage or `stretch` resolve in the pass that
+resolves percentage heights (`Layout.percentHeights`), against a containing block whose height the styles make
+definite; else they do not apply (CSS 2.1 §10.7). `stretch` in `min-width` and `max-width` of a replaced
+element is its fill width.
+
+**Text.** `text-transform` (`uppercase`, `lowercase`, `capitalize`) and `white-space: nowrap` are read into
+`Computed.pos` and inherited. `Rendering/TextCase.lean` maps one code point to one (basic Latin, Latin-1, Greek,
+Cyrillic), so a transformed run has the length and the clusters of its source; a mapping that changes the
+length (`ß`) and other scripts are left as they are. A line does not break before an item when the space before
+it is text that does not wrap; the first item of such a run takes the width of the whole run into account, so
+the run goes to the next line together, and each run is measured once (no quadratic cost in a long run).
+
+**Percentage margins and padding (CSS 2.1 §8.3, §8.4).** A percentage margin or padding was dropped. The
+cascade keeps its percentage part (`Computed.pos.marginOf`, `paddingOf`, fractions of the containing block's
+width for all four sides), and `Layout.percentEdges` resolves it before layout, in one pass down the tree with
+the content width of each box where the styles alone make it definite (`definiteWidth`: the viewport, blocks in
+the flow, boxes whose `width` is a length or a percentage of a definite width; an inline box passes its block's
+width on). Where the containing block's width depends on content (a float, an inline-block, a table cell, an
+absolutely positioned box) the percentage part stays out. One step a node; a page with no percentage edge
+pays one pass over its styles (`percentEdges_unused`).
+
+**Scroll containers.** `overflow: auto`, `scroll` and `overlay` (and `overflow-x`/`overflow-y` of `auto` or
+`scroll`) were dropped as unsupported. They mark the box as a scroll container (`Computed.pos.scrolls`), which is
+the root of a block formatting context (`PositionStyle.formattingRoot`, CSS 2.1 §9.4.1): it holds its floats
+and its children's margins, as a container cleared by `overflow: auto` expects. Nothing scrolls yet, so its
+content is not clipped away, and `scrollTop` stays 0.
+
+**Transforms (CSS Transforms 1 §6, §8, §12).** `transform` and `transform-origin` are read into `Computed.pos`
+(`Rendering/BoxTransform.lean`): `translate`, `scale`, `rotate`, `skew`, `matrix` and their axis forms; the 3D
+functions as what they do in the plane (`translateZ` and `perspective` nothing, `rotateX`/`rotateY` a squeeze
+by the cosine, `matrix3d` its 2D part). A translation keeps its percentages, which are of the box's own size,
+so `left: 50%; transform: translateX(-50%)` centres. The box is laid out as if it had no transform; then what
+is drawn of it is put in a group with the transform about its origin, and its boxes become the bounding boxes
+of where they are drawn (`Result.transformed`), so a point on the picture is a point in the box and
+`getBoundingClientRect` follows the transform. A transformed box holds its absolutely positioned descendants.
+A page with no transform pays one test a box.
+
+Not done: `offsetLeft` and `offsetTop` should not follow the transform (they read the same boxes and do);
+hit testing of a rotated box uses its bounding box; inline boxes and tables are not transformed; the
+`translate`, `rotate` and `scale` properties; `transform-box`; a stacking context for the transformed box.
+
+Measured with the sixth round, in section 10.
+
+## 10. Sixth round: baselines, positioned boxes in vertical containing blocks, the rendered legend
+
+**Baseline alignment in flex rows (CSS Flexbox 1 §8.3, §9.4 step 8).** The items of a line whose `align-self`
+is `baseline` share one baseline. An item's ascent is from its top margin edge to the first baseline of its
+fragment (`Result.baseline`), or to the bottom of its border box when it has no line box. The line is as high
+as the largest ascent plus the largest descent, and each item is offset by the line's ascent less its own
+(`Flex.baselineExtent`, `baselineOffset`, proved on layout units: the baselines coincide and each item is
+inside the line). Rows in horizontal writing modes without `wrap-reverse`; in columns, vertical writing modes
+and reversed cross axes `baseline` is still `start`.
+
+**The baseline of an inline-block (CSS 2.1 §10.8.1).** An atomic inline box sat on its line by its bottom
+margin edge, so the text of an inline-block (a button, a badge) stood above the text around it by its padding,
+border and margin. `Result.lastBaseline` is the baseline of the last line box of a fragment, kept through
+shifts and combinations as `Result.baseline` is for the first. An inline-block that has a line box and does not
+clip sits on that baseline; an inline flex or grid container on its first baseline; else on the bottom margin
+edge as before (`Layout.atomicBaseline`).
+
+**Self-alignment of positioned boxes by writing mode (CSS Box Alignment 3 §4, §6.1.2).** `justify-self` of an
+absolutely positioned box is for the inline axis of its containing block and `align-self` for the block axis:
+in a vertical containing block `justify-self` moves the box down and `align-self` across. `start`, `end` and
+the baselines are sides of the containing block's writing mode (right to left starts an inline axis at its far
+end, `vertical-rl` starts the block axis at the right), `self-start` and `self-end` of the box's own, `left`
+and `right` of the page (`SelfPlace.startsAtEnd`, `Place.physical`). `Layout.absoluteContainer` finds the
+containing block's style by a walk up the ancestors, only for a box that has a self-alignment.
+
+**`display: contents` (CSS Display 3 §2.5).** Read into `Computed.pos.contents`. After the cascade, the tree
+that is laid out has in each child list such a child replaced by its own children
+(`Generated.flattenContents`, level by level, at most 64 levels): they are items of the flex container around
+it, lines of the block around it. The element keeps its number, its parent link and its own child list
+(`flattenContents_keeps`), so selectors, inheritance and the links of an anchor follow them; it has no box. A
+page with none pays one pass over its styles.
+
+**Content keywords as height limits.** `min-height` and `max-height` of `min-content`, `max-content` and
+`fit-content` are the height of the content: a box with one has no definite height before its content is laid
+out.
+
+**The rendered legend (HTML §15.5.13).** `legend` is a block by default, and the first `legend` child of a
+`fieldset` that is in flow takes its width as `fit-content` (`Layout.renderedLegend`). The legend is not yet
+drawn over the fieldset's top border.
+
+**Inline boxes, negative and percentage margins, transforms, text, baselines, positioned alignment by writing mode** (run 43593221293, core 540d5601a on main 538dd1f33: the fifth and sixth rounds together; before: the check of the fourth round, 43586684433, on the tests both ran):
+
+| Directory | Chrome subtests | Fourth round | This check | Difference |
+|---|---:|---:|---:|---:|
+| css/css-flexbox | 4775 | 3645 | 3665 | +20 |
+| css/css-sizing | 6239 | 4754 | 4829 | +75 |
+| css/css-align | 5005 | 3688 | 4169 | +481 |
+| css/css-position | 1507 | 1310 | 1322 | +12 |
+| css/CSS2 | 2551 | 2403 | 2415 | +12 |
+| css/css-display | 488 | 369 | 370 | +1 |
+| css/cssom-view | 2253 | 731 | 1057 | +326 |
+| css/css-inline | 697 | 513 | 532 | +19 |
+| css/css-text | 231 | 22 | 10 | -12 |
+| html/rendering | 11165 | 6981 | 7075 | +94 |
+
+On the 3,907 tests that both checks ran: +1,132 in 138 tests, -47 in 25 tests. Against the full run of main
+2b464c0a8 the 4,279 names of the check go from 74,993 to 83,381 of 101,147. The larger gains:
+`cssom-view/scrollWidthHeight-negative-margin-002` 0 -> 305 (negative margins), the 24 vertical writing mode
+tests of `css-align/abspos` (+384: `justify-self` and `align-self` by the containing block's axes),
+`svg-inline-sizing/svg-inline` +62, `css-sizing/stretch` and `keyword-sizes-*` (+70: height limits), grid
+baseline tests that read the baseline of an inline-block.
+
+Worse (-47): `css-text/i18n/*/css-text-line-break-*-iteration-*` (-12: the test compares the width of a span
+with a reference; both were 0 while inline elements had no box; the iteration marks need the `loose` and
+`strict` rules of line breaking); `CSS2/normal-flow/margin-collapse-through-for-various-height-values` (-4,
+not traced); `contain-intrinsic-size-032` (-3); `cssom-view/offsetTopLeft-empty-inline-offset` and
+`-trailing-space-inline` (-5: the vertical writing mode cases, which passed as 0 = 0);
+`stretch-min-inline-size-001` and its alias (-2 each); `flex-align-baseline-table-001` (-2: a table as a
+baseline-aligned flex item has no baseline of its own yet); 14 tests that lose one subtest.
 
