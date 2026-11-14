@@ -308,6 +308,46 @@ def mediaListText (prelude : String) : String :=
 #guard mediaListText "screen and (min-width: 100px), print" == "screen and (min-width: 100px), print"
 #guard mediaListText "(orientation) and not (orientation)" == "not all"
 
+/-- A selector list of an `@scope` prelude, when it is one: no pseudo-element; a scope
+limit (`to (...)`) may start with a combinator and use `&` (read as `:scope`). -/
+def scopeSelectors (limit : Bool) (body : List CV) : Option String :=
+  let text := rawText body
+  let probe := if limit then
+      let t := text.replace "&" ":scope"
+      String.intercalate ", " ((t.splitOn ",").map fun part =>
+        let p := part.trimAscii.toString
+        if p.startsWith ">" || p.startsWith "+" || p.startsWith "~" then ":scope " ++ p else p)
+    else text.replace "&" ":scope"
+  match L4Factoidal.DOM.Selectors.parse probe with
+  | some l =>
+    if l.isEmpty || l.any (·.hasPseudoElement) then none
+    else some (selectorTokensText (cvSize 64 body + 2) body).trimAscii.toString
+  | none => none
+
+/-- The canonical prelude of `@scope` (CSS Cascade 6 §2.1): `(<scope-start>)`, `to
+(<scope-end>)`, both, or nothing; `none` when the prelude is not one of these. -/
+def scopePrelude (prelude : String) : Option String :=
+  let isTo := fun (cv : CV) => match cv with
+    | .tok (.ident k) => lower k == "to"
+    | _ => false
+  match stripWs (CV.parse prelude) with
+  | [] => some ""
+  | [.block '(' a] => (scopeSelectors false a).map fun x => "(" ++ x ++ ")"
+  | [to, .block '(' b] => if isTo to then (scopeSelectors true b).map fun y => "to (" ++ y ++ ")" else none
+  | [.block '(' a, to, .block '(' b] =>
+    if !isTo to then none
+    else match scopeSelectors false a, scopeSelectors true b with
+      | some x, some y => some ("(" ++ x ++ ") to (" ++ y ++ ")")
+      | _, _ => none
+  | _ => none
+
+#guard scopePrelude " (.a)to (.b)" == some "(.a) to (.b)"
+#guard scopePrelude "(.a:hover, #b, div)" == some "(.a:hover, #b, div)"
+#guard scopePrelude "(.a) to (> .b)" == some "(.a) to (> .b)"
+#guard scopePrelude "(.a) to (& > &)" == some "(.a) to (& > &)"
+#guard scopePrelude "" == some ""
+#guard (["()", "to ()", "(div::before)", "div", "(.a) unknown (.c)", "1px", "(.a) from (.c)", "(.c <> .d)"].map scopePrelude).all (·.isNone)
+
 /-- The at-rules with a block of rules, and `CSSRule.type` of each (0 where CSSOM gives no
 number). -/
 def groupRules : List (String × String × Nat) :=
@@ -333,7 +373,12 @@ def ruleOf : Nat → RawRule → Option Rule
       let name := lower (String.ofList (rest.takeWhile isNameChar))
       let after := preludeText (String.ofList (rest.dropWhile isNameChar))
       let after := if name == "media" then mediaListText after else after
+      -- an @scope prelude (CSS Cascade 6 §2.1): its selectors written as selectors; a
+      -- prelude that is not one drops the rule
+      let scope := if name == "scope" then scopePrelude (String.ofList (rest.dropWhile isNameChar)) else some after
+      let after := scope.getD after
       let head := "@" ++ name ++ (if after == "" then "" else " " ++ after)
+      if scope.isNone then none else
       match raw.body with
       | none =>
         if name == "import" then some ⟨"Import", 3, after, "", head ++ ";"⟩
