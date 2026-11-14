@@ -2,6 +2,7 @@ import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.Generated
 import L4Factoidal.Rendering.InlineBox
 import L4Factoidal.Rendering.MarginCollapse
+import L4Factoidal.Rendering.TextCase
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
 import L4Factoidal.Rendering.FlexLayout
@@ -447,7 +448,13 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
       spaced := true
     else
       if word.isEmpty then start := index
-      word := word.push c
+      -- `text-transform`: one character for one, so positions in the text stand
+      let shown := match style.pos.textTransform with
+        | .none => c
+        | .uppercase => TextCase.upper c
+        | .lowercase => TextCase.lower c
+        | .capitalize => if word.isEmpty then TextCase.upper c else c
+      word := word.push shown
       spaced := false
       column := column+1
     index := index+1
@@ -799,6 +806,16 @@ private def preformatted : Inline → Bool
   | .word _ s _ _ => s.preformatted
   | _ => false
 
+/-- No line break before `item` (CSS Text 3 §3 `white-space: nowrap`): the space before
+it is text that does not wrap, or with no space there the item itself is. -/
+private def heldByNowrap (space : Option (Nat × Computed)) : Inline → Bool
+  | .word _ s _ _ => match space with
+    | some (_,spaceStyle) => spaceStyle.pos.nowrap
+    | none => s.pos.nowrap
+  | _ => match space with
+    | some (_,spaceStyle) => spaceStyle.pos.nowrap
+    | none => false
+
 /-- The characters an item stands for in its paragraph, for UAX #9: a forced line
 break is a paragraph separator, a replaced or atomic box an object replacement
 character (CSS Writing Modes 3 §2.4.1). -/
@@ -1039,7 +1056,27 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
         | some (_,s) => spaceWidth font s
         | none => pure 0
         else pure 0
-      if cursorX > 0 && cursorX+gap+whole > (band out.height).2 && !preformatted item && !glued k then
+      -- A line may break before this item: then what follows it with no break between
+      -- (`white-space: nowrap`) must fit on the line with it. Only the first item of such a
+      -- run looks ahead, so a run is measured once.
+      let held := heldByNowrap pendingSpace item
+      if !bidi && !held && cursorX > 0 then
+        let mut between : Option Computed := none
+        for j in [k+1:items.size] do
+          match items[j]! with
+          | .space _ ss => if ss.preformatted then break else between := some ss
+          | .openInline _ ws _ => whole := whole+inlineLead ws
+          | .closeInline _ ws => whole := whole+inlineTrail ws
+          | .word source ws text start =>
+            match between with
+            | some ss =>
+              if ss.pos.nowrap then
+                whole := whole+(← spaceWidth font ss)+(← itemWidth font none (.word source ws text start))
+                between := none
+              else break
+            | none => break
+          | _ => break
+      if cursorX > 0 && cursorX+gap+whole > (band out.height).2 && !preformatted item && !glued k && !held then
         let (row,dirs) := place line lineIdx cursorX
         out := appendResult out (← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs)
         (line,lineIdx) := continuedStarts openBoxes
