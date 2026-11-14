@@ -1,0 +1,12 @@
+body{margin:24px;font:14px/1.4 system-ui,sans-serif}
+table.data{border-collapse:collapse;width:100%;table-layout:auto}
+caption{caption-side:top;text-align:left;font-weight:600;padding:8px 0}
+th,td{border:1px solid #d6d6d6;padding:4px 8px}
+thead th{position:sticky;top:0;background:#f3f4f6;text-align:left}
+tbody tr:nth-child(2n){background:#fafafa}
+tbody tr:hover{background:#eef4ff}
+tbody tr.flag{background:#fff6e5}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.neg{color:#b00020}
+tbody th{font-weight:500;text-align:left;white-space:nowrap}
+@media (max-width:800px){th,td{padding:2px 4px;font-size:12px}}
