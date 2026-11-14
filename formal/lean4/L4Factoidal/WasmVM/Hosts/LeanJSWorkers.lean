@@ -132,7 +132,22 @@ def deliver (s : Session) (ev : WorkerEvent) : Session :=
 
 def Workers.request (w : Workers) (url : String) : Workers :=
   if w.loads.contains url || w.scripts.any (·.1 == url) then w else
+  -- a `data:` script is answered here (Fetch "scheme fetch", `PageFetch.dataResponse`): no
+  -- request leaves the engine, and a URL that does not decode, or bytes that are not UTF-8
+  -- (worker scripts are UTF-8), is a network error
+  if url.startsWith "data:" then
+    { w with scripts := w.scripts.push (url, (Net.PageFetch.dataResponse url).bind fun r => String.fromUTF8? r.2) }
+  else
   { w with loads := w.loads.push url, asked := if w.asked.contains url then w.asked else w.asked.push url }
+
+/-- Kind: privacy theorem. Says: a worker's `data:` script is never asked of the embedder
+(no fetch leaves the engine for it): it is answered in the engine. -/
+theorem request_data (w : Workers) (url : String) (h : url.startsWith "data:" = true) :
+    (w.request url).loads = w.loads := by
+  unfold Workers.request
+  split
+  · rfl
+  · simp [h]
 
 /-- The fetches a turn asks of the embedder: `{id, url, kind}`. -/
 def Workers.fetches (w : Workers) : List JSON.Json :=
