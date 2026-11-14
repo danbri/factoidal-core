@@ -1,5 +1,5 @@
 {
- "note": "scratch: engine 25c3a4510",
+ "note": "What each fixture gives today, read by labs/demos/foafnaut/host_parity_test.ts. 'known': subtests that fail in every host, each with the reason and the owner. 'hosts': subtests that fail or are missing in one host only, a known difference between hosts. 'painted': the blocks the window must draw (colour, box in CSS pixels from the top strip), with 'known' where it does not yet. Measured on the engine of main 19fb349c1 (release build-19fb349c134d-foafnaut-engine-darwin-arm64), 2026-11-14. A listed failure that passes is reported by the check: remove it here.",
  "fixtures": {
   "classic.html": {
    "subtests": [
@@ -25,27 +25,34 @@
     "selector in querySelectorAll: the same selectors match",
     "storage: localStorage keeps and removes a value",
     "storage: document.cookie keeps a cookie",
-    "DOM: items a script appends take room in the layout"
+    "DOM: items a script appends take room in the layout",
+    "form: a click on the button submits the values the user set",
+    "event loop: script, then microtask, then timer",
+    "event loop: an animation frame callback runs",
+    "image: an img takes the size of its file",
+    "transition: opacity runs to its end and transitionend fires"
    ],
    "known": {
-    "external sheet: the header colour comes through a custom property": "runner: FAIL: assert_equals: expected \"rgb(0, 102, 204)\" but got \"rgba(0, 0, 0, 0)\"",
-    "custom property: a script reads --gap": "runner: FAIL: assert_equals: expected \"10px\" but got \"\"",
-    "selector: a child combinator rule sets a height": "runner: FAIL: assert_equals: expected 26 but got 20",
-    "flex: three equal items in a row with a gap": "runner: FAIL: assert_approx_equals: n1 x of [40, 58, 560, 20] expected 0 +/- 0.5 but got 40",
-    "grid: three columns, two rows": "runner: FAIL: assert_approx_equals: c1 width of [0, 80, 600, 50] expected 193.33 +/- 0.5 but got 600",
-    "media query: a block that holds applies": "runner: FAIL: assert_equals: expected \"block\" but got \"none\"",
-    "media query: matchMedia agrees with the sheet": "runner: FAIL: assert_true: min-width: 300px expected true got false",
-    "position: absolute in a relative box": "runner: FAIL: assert_approx_equals: abs x of [0, 340, 50, 20] expected 550 +/- 0.5 but got 0",
-    "box-sizing: border-box": "runner: FAIL: assert_approx_equals: bb width of [0, 380, 110, 40] expected 100 +/- 0.5 but got 110",
-    "values: calc(), rem and em lengths": "runner: FAIL: assert_approx_equals: units x of [0, 410, 600, 0] expected 32 +/- 0.5 but got 0",
-    "selector in the cascade: child combinator": "runner: FAIL: assert_equals: expected 4 but got 0",
-    "selector in the cascade: next-sibling combinator": "runner: FAIL: assert_equals: expected 4 but got 0",
-    "selector in the cascade: attribute selector": "runner: FAIL: assert_equals: expected 4 but got 0",
-    "selector in the cascade: :not()": "runner: FAIL: assert_equals: expected 4 but got 0",
-    "selector in the cascade: :first-child": "runner: FAIL: assert_equals: expected 4 but got 0",
-    "selector in the cascade: :nth-child()": "runner: FAIL: assert_equals: expected 4 but got 0",
-    "selector in the cascade: :is()": "runner: FAIL: assert_equals: expected 4 but got 0",
-    "storage: localStorage keeps and removes a value": "runner: FAIL: localStorage is not defined"
+    "external sheet: the header colour comes through a custom property": "var() is not substituted in the cascade that draws the page (Rendering/Style.lean). Owner: css-values.",
+    "custom property: a script reads --gap": "custom properties are not kept by the cascade. Owner: css-values.",
+    "selector: a child combinator rule sets a height": "the render cascade's selector reader (Style.lean) knows the descendant combinator only; DOM/Selectors.lean is not used. Owner: pages.",
+    "flex: three equal items in a row with a gap": "no flex layout on main (and the rule's child combinator is not read). Owner: layout.",
+    "grid: three columns, two rows": "no grid layout on main. Owner: layout.",
+    "media query: a block that holds applies": "getComputedStyle reads the sheets with no viewport (WebDocument.measure), so a min-width block does not hold for it though the layout applies it. Owner: integration.",
+    "media query: matchMedia agrees with the sheet": "matchMedia is a stub in prelude.js that answers false. Owner: css-values.",
+    "position: absolute in a relative box": "no positioning in the layout on main. Owner: layout.",
+    "box-sizing: border-box": "box-sizing is not in the layout profile. Owner: css-values, layout.",
+    "values: calc(), rem and em lengths": "calc(), rem and em are not read by Style.length. Owner: css-values.",
+    "selector in the cascade: child combinator": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: next-sibling combinator": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: attribute selector": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: :not()": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: :first-child": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: :nth-child()": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: :is()": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "form: a click on the button submits the values the user set": "new FormData(form) is refused (\"forms are not supported in this build\"): the Fetch objects are not joined to the form entry list of DOM/Forms. Owner: dom-html, net.",
+    "image: an img takes the size of its file": "an img has no complete, naturalWidth or load event: the images the engine holds are not visible to scripts (and the runner fetches none). Owner: pages.",
+    "transition: opacity runs to its end and transitionend fires": "CSS transitions are not on main (the animation engine is on wip/css-anim-values). Owner: css-anim."
    },
    "hosts": {},
    "painted": [
@@ -75,7 +82,8 @@
       10,
       600,
       40
-     ]
+     ],
+     "known": "var() in the render cascade"
     },
     {
      "name": "flex items",
@@ -90,7 +98,8 @@
       600,
       26
      ],
-     "area": 15080
+     "area": 15080,
+     "known": "child combinator in the render cascade, then flex layout"
     },
     {
      "name": "grid cards",
@@ -105,7 +114,8 @@
       600,
       110
      ],
-     "area": 48333
+     "area": 48333,
+     "known": "var() in the render cascade, then grid layout"
     },
     {
      "name": "media query block",
@@ -147,7 +157,8 @@
       230,
       100,
       20
-     ]
+     ],
+     "known": "CSS transitions and opacity"
     },
     {
      "name": "absolutely positioned block",
@@ -161,7 +172,8 @@
       350,
       50,
       20
-     ]
+     ],
+     "known": "positioning"
     },
     {
      "name": "block sized with calc(), rem and em",
@@ -175,7 +187,212 @@
       410,
       280,
       20
+     ],
+     "known": "calc(), rem and em in the render cascade"
+    }
+   ]
+  },
+  "integrated.html": {
+   "subtests": [
+    "external sheet: the header colour comes through a custom property",
+    "custom property: a script reads --gap",
+    "block: the header box",
+    "selector: a child combinator rule sets a height",
+    "flex: three equal items in a row with a gap",
+    "grid: three columns, two rows",
+    "media query: a block that holds applies",
+    "media query: a block that does not hold does not apply",
+    "media query: matchMedia agrees with the sheet",
+    "position: absolute in a relative box",
+    "box-sizing: border-box",
+    "values: calc(), rem and em lengths",
+    "selector in the cascade: child combinator",
+    "selector in the cascade: next-sibling combinator",
+    "selector in the cascade: attribute selector",
+    "selector in the cascade: :not()",
+    "selector in the cascade: :first-child",
+    "selector in the cascade: :nth-child()",
+    "selector in the cascade: :is()",
+    "selector in querySelectorAll: the same selectors match",
+    "storage: localStorage keeps and removes a value",
+    "storage: document.cookie keeps a cookie",
+    "form: a click on the button submits the values the user set",
+    "event loop: script, then microtask, then timer",
+    "event loop: an animation frame callback runs",
+    "module script: imports a module, fetches JSON and fills the list",
+    "image: an img takes the size of its file",
+    "transition: opacity runs to its end and transitionend fires",
+    "module script: top-level await"
+   ],
+   "known": {
+    "external sheet: the header colour comes through a custom property": "var() is not substituted in the cascade that draws the page (Rendering/Style.lean). Owner: css-values.",
+    "custom property: a script reads --gap": "custom properties are not kept by the cascade. Owner: css-values.",
+    "selector: a child combinator rule sets a height": "the render cascade's selector reader (Style.lean) knows the descendant combinator only; DOM/Selectors.lean is not used. Owner: pages.",
+    "flex: three equal items in a row with a gap": "no flex layout on main (and the rule's child combinator is not read). Owner: layout.",
+    "grid: three columns, two rows": "no grid layout on main. Owner: layout.",
+    "media query: a block that holds applies": "getComputedStyle reads the sheets with no viewport (WebDocument.measure), so a min-width block does not hold for it though the layout applies it. Owner: integration.",
+    "media query: matchMedia agrees with the sheet": "matchMedia is a stub in prelude.js that answers false. Owner: css-values.",
+    "position: absolute in a relative box": "no positioning in the layout on main. Owner: layout.",
+    "box-sizing: border-box": "box-sizing is not in the layout profile. Owner: css-values, layout.",
+    "values: calc(), rem and em lengths": "calc(), rem and em are not read by Style.length. Owner: css-values.",
+    "selector in the cascade: child combinator": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: next-sibling combinator": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: attribute selector": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: :not()": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: :first-child": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: :nth-child()": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "selector in the cascade: :is()": "the render cascade's selector reader (Style.lean) does not read this selector; the rule is dropped. Owner: pages.",
+    "form: a click on the button submits the values the user set": "new FormData(form) is refused (\"forms are not supported in this build\"): the Fetch objects are not joined to the form entry list of DOM/Forms. Owner: dom-html, net.",
+    "image: an img takes the size of its file": "an img has no complete, naturalWidth or load event: the images the engine holds are not visible to scripts (and the runner fetches none). Owner: pages.",
+    "transition: opacity runs to its end and transitionend fires": "CSS transitions are not on main (the animation engine is on wip/css-anim-values). Owner: css-anim.",
+    "module script: top-level await": "top-level await is a SyntaxError in a BubblePopJS module. Owner: js-core."
+   },
+   "hosts": {
+    "textnaut": {
+     "block: the header box": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
+     "media query: a block that does not hold does not apply": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
+     "selector in querySelectorAll: the same selectors match": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
+     "storage: localStorage keeps and removes a value": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
+     "storage: document.cookie keeps a cookie": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
+     "event loop: script, then microtask, then timer": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
+     "event loop: an animation frame callback runs": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
+     "module script: imports a module, fetches JSON and fills the list": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration."
+    }
+   },
+   "painted": [
+    {
+     "name": "top strip",
+     "rgb": [
+      17,
+      34,
+      51
+     ],
+     "box": [
+      0,
+      0,
+      600,
+      10
      ]
+    },
+    {
+     "name": "header, coloured through a custom property",
+     "rgb": [
+      0,
+      102,
+      204
+     ],
+     "box": [
+      0,
+      10,
+      600,
+      40
+     ],
+     "known": "var() in the render cascade"
+    },
+    {
+     "name": "flex items",
+     "rgb": [
+      0,
+      153,
+      51
+     ],
+     "box": [
+      0,
+      50,
+      600,
+      26
+     ],
+     "area": 15080,
+     "known": "child combinator in the render cascade, then flex layout"
+    },
+    {
+     "name": "grid cards",
+     "rgb": [
+      204,
+      51,
+      0
+     ],
+     "box": [
+      0,
+      80,
+      600,
+      110
+     ],
+     "area": 48333,
+     "known": "var() in the render cascade, then grid layout"
+    },
+    {
+     "name": "media query block",
+     "rgb": [
+      102,
+      0,
+      153
+     ],
+     "box": [
+      0,
+      200,
+      600,
+      10
+     ]
+    },
+    {
+     "name": "image",
+     "rgb": [
+      0,
+      170,
+      170
+     ],
+     "box": [
+      0,
+      210,
+      40,
+      20
+     ]
+    },
+    {
+     "name": "block after its opacity transition",
+     "rgb": [
+      255,
+      242,
+      191
+     ],
+     "box": [
+      0,
+      230,
+      100,
+      20
+     ],
+     "known": "CSS transitions and opacity"
+    },
+    {
+     "name": "absolutely positioned block",
+     "rgb": [
+      255,
+      119,
+      0
+     ],
+     "box": [
+      550,
+      350,
+      50,
+      20
+     ],
+     "known": "positioning"
+    },
+    {
+     "name": "block sized with calc(), rem and em",
+     "rgb": [
+      255,
+      102,
+      153
+     ],
+     "box": [
+      32,
+      410,
+      280,
+      20
+     ],
+     "known": "calc(), rem and em in the render cascade"
     }
    ]
   }
