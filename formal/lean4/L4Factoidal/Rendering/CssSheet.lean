@@ -226,13 +226,43 @@ def selectorTokensText : Nat → List CV → String
       | cv => (out ++ (if pendingSpace then " " else "") ++ piece cv, false, false)
     ((dropStar #[] true (trimWs cvs)).toList.foldl step ("", false, false)).1
 
+/-- The tokens of a selector without the namespace prefix `*|` of a type or universal
+selector, when the sheet declares no default namespace (CSSOM §6.7.2: `*|e` is `e` and
+`*|*` is `*` then). `boundary`: the previous token ends a compound. A loop over the tokens
+(a tail call). -/
+def dropAnyNs (acc : Array CV) (boundary : Bool) : List CV → Array CV
+  | [] => acc
+  | .tok (.delim '*') :: .tok (.delim '|') :: rest =>
+    if boundary then
+      match rest with
+      | .tok (.ident _) :: _ | .tok (.delim '*') :: _ => dropAnyNs acc false rest
+      | _ => dropAnyNs ((acc.push (.tok (.delim '*'))).push (.tok (.delim '|'))) false rest
+    else dropAnyNs ((acc.push (.tok (.delim '*'))).push (.tok (.delim '|'))) false rest
+  | cv :: rest =>
+    let ends := match cv with
+      | .tok .ws | .tok .comma => true
+      | .tok (.delim c) => c == '>' || c == '+' || c == '~'
+      | _ => false
+    dropAnyNs (acc.push cv) ends rest
+
 /-- The canonical text of a selector text, when `DOM.Selectors` reads it; `none` is a
-SyntaxError. -/
-def selectorText (s : String) : Option String :=
+SyntaxError. `defaultNs`: the sheet declares a default namespace (`@namespace url(...)`). -/
+def selectorText (s : String) (defaultNs : Bool := false) : Option String :=
   if (L4Factoidal.DOM.Selectors.parse s).isSome then
     let cvs := CV.parse s
+    let cvs := if defaultNs then cvs else (dropAnyNs #[] true (trimWs cvs)).toList
     some (selectorTokensText (cvSize 64 cvs + 2) cvs)
   else none
+
+/-- A sheet declares a default namespace: an `@namespace` rule with no prefix (CSS
+Namespaces 3 §2). -/
+def declaresDefaultNs (preludes : List String) : Bool :=
+  preludes.any fun p =>
+    let t := p.trimAscii.toString
+    lower (t.take 10).toString == "@namespace" &&
+      (match stripWs (CV.parse (t.drop 10).toString) with
+       | [.tok (.str _)] | [.tok (.url _)] | [.fn _ _] => true
+       | _ => false)
 
 #guard selectorText ":nth-child(odd)" == some ":nth-child(2n+1)"
 #guard selectorText ":nth-child( +n )" == some ":nth-child(n)"
@@ -364,7 +394,7 @@ def declRules : List (String × String × Nat) :=
 /-- A rule as written as a CSSOM rule; `none` when it is not a rule this engine has. The
 recursion is on the nesting of group rules (`depth` levels are read); the rules of one
 block are a `filterMap`. -/
-def ruleOf : Nat → RawRule → Option Rule
+def ruleOf (defaultNs : Bool := false) : Nat → RawRule → Option Rule
   | 0, _ => none
   | fuel + 1, raw =>
     let cs := raw.prelude.toList
@@ -388,7 +418,7 @@ def ruleOf : Nat → RawRule → Option Rule
       | some body =>
         match groupRules.find? (·.1 == name) with
         | some (_, kind, type) =>
-          let inner := ((rawRules body).filterMap (ruleOf fuel)).map (·.cssText)
+          let inner := ((rawRules body).filterMap (ruleOf defaultNs fuel)).map (·.cssText)
           let text := if inner.isEmpty then head ++ " {\n}" else head ++ " {\n" ++ "\n".intercalate (inner.map indent) ++ "\n}"
           some ⟨kind, type, after, body, text⟩
         | none =>
@@ -412,7 +442,7 @@ def ruleOf : Nat → RawRule → Option Rule
             else if name == "font-feature-values" then some ⟨"FontFeatureValues", 14, after, body, head ++ " { " ++ trimText body ++ " }"⟩
             else none
     | _ =>
-      match raw.body, selectorText raw.prelude with
+      match raw.body, selectorText raw.prelude defaultNs with
       | some body, some sel =>
         let block := (Block.parse body).text
         some ⟨"Style", 1, sel, body, sel ++ " { " ++ block ++ (if block == "" then "" else " ") ++ "}"⟩
@@ -422,7 +452,9 @@ def ruleOf : Nat → RawRule → Option Rule
 def nesting : Nat := 64
 
 /-- The rules of a sheet text. -/
-def rulesOf (text : String) : List Rule := (rawRules text).filterMap (ruleOf nesting)
+def rulesOf (text : String) : List Rule :=
+  let raws := rawRules text
+  raws.filterMap (ruleOf (declaresDefaultNs (raws.filterMap fun r => if r.body.isNone then some r.prelude else none)) nesting)
 
 /-- The text of a sheet with these rules. -/
 def textOf (rules : List Rule) : String := "\n".intercalate (rules.map (·.cssText))
@@ -430,7 +462,7 @@ def textOf (rules : List Rule) : String := "\n".intercalate (rules.map (·.cssTe
 /-- The one rule a rule text is (CSSOM §6.4.2 "parse a CSS rule"); `none`: a SyntaxError. -/
 def parseRule (text : String) : Option Rule :=
   match rawRules text with
-  | [raw] => ruleOf nesting raw
+  | [raw] => ruleOf false nesting raw
   | _ => none
 
 /-- An error of a sheet operation, as the name of the DOMException. -/
@@ -541,6 +573,11 @@ def sheetOp (q : String) : String :=
 #guard (rulesOf "a{b:c;} garbage; d{}").length == 2
 #guard (rulesOf ".x { font: 16px simple; }").map (·.cssText) == [".x { font: 16px simple; }"]
 #guard (rulesOf ".x { font: 16px 0simple; }").map (·.cssText) == [".x { }"]
+#guard selectorText "*|e" == some "e" && selectorText "*|*" == some "*" && selectorText "*|e" true == some "*|e"
+#guard selectorText "|e" == some "|e" && selectorText "a > *|e" == some "a > e"
+#guard (rulesOf "@namespace ns url(ns); *|e {}").map (·.prelude) == ["ns url(\"ns\")", "e"] ||
+  ((rulesOf "@namespace ns url(ns); *|e {}").map (·.prelude)).getLast? == some "e"
+#guard ((rulesOf "@namespace url(d); *|e {}").map (·.prelude)).getLast? == some "*|e"
 #guard selectorText "a>b  ~ c ,d   e" == some "a > b ~ c, d e"
 #guard selectorText "  DIV#Id.cls[ foo = bar ]:hover " == some "DIV#Id.cls[foo=\"bar\"]:hover"
 #guard selectorText "a[b='c' I]" == some "a[b=\"c\" i]"
