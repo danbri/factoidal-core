@@ -78,6 +78,9 @@ inductive NativeX where
   | iteratorDispose | adoptClosure
   /-- `Error.isError` (§20.5.2.1), `Promise.try` (§27.2.4.8), `RegExp.escape` (§22.2.5.1). -/
   | errorIsError | promiseTry | regexpEscape
+  /-- RegExp.prototype's `[Symbol.match]` (0), `[Symbol.replace]` (1), `[Symbol.search]` (2) and
+  `[Symbol.split]` (3), `[Symbol.matchAll]` (4) (§22.2.6.8, .11, .12, .14, .9). -/
+  | regexpSym (k : Nat)
   /-- `Array.fromAsync` (ES2026 §23.1.2.2) and the steps of its loop, each a bound native
   function that a promise reaction calls (`fromAsyncStep`: 0 an iterator result, 1 a mapped
   value of the iterator loop, 2 a value of the array-like loop, 3 a mapped value of it,

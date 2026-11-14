@@ -635,4 +635,9 @@ private def parses (src : String) : Bool := syn src == "ok"
 
 #guard out "var s = Object.seal([1, , 3]); print(Array.isArray(s), Object.isSealed(s), Object.getOwnPropertyDescriptor(s, '0').configurable, s.length, 1 in s); print(Array.isArray(new Proxy([], {})), Array.isArray(new Proxy({}, {}))); var r = Proxy.revocable([], {}); r.revoke(); try { Array.isArray(r.proxy) } catch (e) { print(e.name) }" == ["true true false 3 false", "true false", "TypeError"]
 
+/-! ## The RegExp protocol: String methods ask the search value's Symbol methods -/
+
+#guard out "var o = { [Symbol.replace](s, r) { return 'R:' + s + r }, [Symbol.split]() { return 'S' } }; print('abc'.replace(o, 1), 'x'.split(o)); var re = /b/g; re.exec = function (s) { return this.n++ ? null : { 0: 'b', index: 1, length: 1 } }; re.n = 0; print('abc'.replace(re, '[$&$`]'), RegExp.prototype[Symbol.split].call(/-/, 'a-b-c', 2).join())" == ["R:abc1 S", "a[ba]c a,b"]
+#guard out "var it = 'a1b22'.matchAll(/\\d+/g); print(Object.prototype.toString.call(it), [...it].map(m => m[0] + '@' + m.index).join()); print('aaa'.replaceAll('a', '$$'), ''.replaceAll('', 'x'), 'ab'.replaceAll('', '_'), /x/dgimsuy.flags)" == ["[object RegExp String Iterator] 1@1,22@3", "$$$ x _a_b_ dgimsuy"]
+
 end L4Factoidal.JS.Tests
