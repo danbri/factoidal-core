@@ -735,10 +735,10 @@ def parseModule (src : String) (ns : List (String × String) := [])
     (schemaSimple : QN → Option SchemaSimpleUse := fun _ => none) : M Module :=
   let s := (normalizeLineEnds xml11 src.toList).toArray
   -- first pass: the named types, with forward references read as item()
-  let types0 := match ((pModule [] true loader).run { s, ns, schemaDecl, xml11, features, schemaSimple }).run 0 with
+  let types0 := match ((pModule [] true loader).run { s, ns, schemaDecl, xml11, features, schemaSimple, xquery := true }).run 0 with
     | .ok (m, _) => m.types
     | .error _ => []
-  match ((pModule types0 false loader).run { s, ns, schemaDecl, xml11, features, schemaSimple }).run 0 with
+  match ((pModule types0 false loader).run { s, ns, schemaDecl, xml11, features, schemaSimple, xquery := true }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 

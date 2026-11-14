@@ -43,6 +43,20 @@ open L4Factoidal.XSD
 /-- A string or an untyped value: its cast goes by the lexical form. -/
 def Atomic.isLexical (a : Atomic) : Bool := a.is .string || a.ty == .untyped
 
+/-- The XSD canonical lexical form of a value (XSD 1.1 Part 2, the
+canonical mapping of its built-in type): what a `pattern` or
+`enumeration` facet is tested on when the value did not come from a
+string (F&O 4.0 §23.3.1: "the pattern is tested against the canonical
+representation of the value"). An `xs:double` 93.7 has the canonical form
+`9.37E1`, not its XPath string value `93.7`. -/
+def xsdCanon (v : Atomic) : String :=
+  match v.ty with
+  | .b b =>
+    match lexicalMap b v.str with
+    | some x => let c := canonicalMap b x; if c == "" then v.str else c
+    | none => v.str
+  | .untyped => v.str
+
 /-- `instance of` a simple type of the schema, by value: the value's type
 derives from the built-in base and its lexical form is valid for the type
 (facets included); a union takes what a member takes, when the union's
@@ -51,9 +65,9 @@ def atomInBodyF : Nat → SimpleType → Atomic → Bool
   | 0, _, _ => false
   | n + 1, t, a =>
     match t with
-    | .atomic b _ => b != .anySimpleType && a.ty.derives (.b b) && (valueOf t a.str).isSome
+    | .atomic b _ => b != .anySimpleType && a.ty.derives (.b b) && (valueOf t (xsdCanon a)).isSome
     | .list _ _ => false
-    | .union ms _ => ms.any (fun m => atomInBodyF n m a) && (valueOf t a.str).isSome
+    | .union ms _ => ms.any (fun m => atomInBodyF n m a) && (valueOf t (xsdCanon a)).isSome
 
 def atomInBody (t : SimpleType) (a : Atomic) : Bool := atomInBodyF 16 t a
 
@@ -103,8 +117,8 @@ def firstCast (f : SimpleType → M (List Atomic)) : List SimpleType → Option 
 def lexAfter (a : Atomic) (r : List Atomic) : String :=
   if a.isLexical then a.str
   else match r with
-    | [v] => v.str
-    | _ => a.str
+    | [v] => xsdCanon v
+    | _ => xsdCanon a
 
 /-- `cast as T` for a simple type `T` of the schema with Part 2 body `t`. -/
 def castToBodyF (ns : String → Option String) : Nat → SimpleType → Atomic → M (List Atomic)
@@ -130,7 +144,7 @@ def castToBodyF (ns : String → Option String) : Nat → SimpleType → Atomic 
           | .error e => .error e
           | .ok rs => .ok rs.flatten
     | .union ms _ =>
-      if !a.isLexical && ms.any (fun m => atomInBodyF n m a) && (valueOf t a.str).isSome then .ok [a]
+      if !a.isLexical && ms.any (fun m => atomInBodyF n m a) && (valueOf t (xsdCanon a)).isSome then .ok [a]
       else
         match firstCast (fun m => castToBodyF ns n m a) ms with
         | none => err "FORG0001" ("the value " ++ a.str ++ " cannot be cast to any member of the union type")
@@ -152,7 +166,7 @@ tree is), or the converse for a value whose type annotation is a derived
 user type. -/
 theorem atomInBody_atomic_sound (n : Nat) (b : Builtin) (f : Facets) (a : Atomic)
     (h : atomInBodyF (n + 1) (.atomic b f) a = true) :
-    a.ty.derives (.b b) = true ∧ (valueOf (.atomic b f) a.str).isSome = true := by
+    a.ty.derives (.b b) = true ∧ (valueOf (.atomic b f) (xsdCanon a)).isSome = true := by
   simp only [atomInBodyF, Bool.and_eq_true] at h
   exact ⟨h.1.2, h.2⟩
 
@@ -170,7 +184,7 @@ facets hold).
 Does not say: which member, or that the members are tried in order. -/
 theorem atomInBody_union_sound (n : Nat) (ms : List SimpleType) (f : Facets) (a : Atomic)
     (h : atomInBodyF (n + 1) (.union ms f) a = true) :
-    (∃ m ∈ ms, atomInBodyF n m a = true) ∧ (valueOf (.union ms f) a.str).isSome = true := by
+    (∃ m ∈ ms, atomInBodyF n m a = true) ∧ (valueOf (.union ms f) (xsdCanon a)).isSome = true := by
   simp only [atomInBodyF, Bool.and_eq_true, List.any_eq_true] at h
   exact ⟨h.1, h.2⟩
 
@@ -215,7 +229,7 @@ Does not say: what a string or untyped value is cast to. -/
 theorem castToBody_union_keeps (ns : String → Option String) (n : Nat) (ms : List SimpleType)
     (f : Facets) (a : Atomic) (hl : a.isLexical = false)
     (hm : ms.any (fun m => atomInBodyF n m a) = true)
-    (hv : (valueOf (.union ms f) a.str).isSome = true) :
+    (hv : (valueOf (.union ms f) (xsdCanon a)).isSome = true) :
     castToBodyF ns (n + 1) (.union ms f) a = .ok [a] := by
   simp [castToBodyF, hl, hm, hv]
 
@@ -273,6 +287,13 @@ private def errCode (r : M (List Atomic)) : String :=
   some [("integer", "1"), ("integer", "2"), ("integer", "3")]
 #guard errCode (castToBody (fun _ => none) tIntList (Atomic.ofStr "1 two")) == "FORG0001"
 #guard errCode (castToBody (fun _ => none) tIntList (Atomic.ofInt 1)) == "XPTY0004"
+-- facets are tested on the XSD canonical form of a value that is not a string
+#guard xsdCanon ⟨.b .double, .dbl 93.7⟩ == "9.37E1"
+#guard xsdCanon (Atomic.ofInt 3) == "3"
+#guard okStrs (castToBody (fun _ => none) (.atomic .double { patterns := [["-?[1-9]\\.[0-9]+E-?[0-9]+"]] })
+  ⟨.b .double, .dbl 93.7⟩) == some [("double", "93.7")]
+#guard errCode (castToBody (fun _ => none) (.atomic .double { patterns := [["-?[1-9]\\.[0-9]+E-?[0-9]+"]] })
+  (Atomic.ofStr "93.7")) == "FORG0001"
 -- generalized atomic types and pure unions of built-in types
 #guard generalized tHat && generalized tIntOrDate && !generalized tIntList
 #guard !generalized (.union [.atomic .integer {}] { minInclusive := some "1" })
