@@ -336,3 +336,16 @@ the engine (`CssSheet.containerConditions`), and `@container` rules whose prelud
 condition list are dropped. Bound theorems in this part: `substitute_zero`,
 `ifCondition_zero`, `pruneHas_plain` (the two stalls fixed), `containerConditions_length`,
 `insetPx_auto`.
+
+Further: `line-height` percentages compute to lengths and the resolved line height is a
+length (the profile keeps a number as a factor it shows as `normal`, so the property table
+answers); `bolder`/`lighter` against the parent's weight; the `font` shorthand reaches the
+generic cascade whole beside the profile's three longhands. `@font-face` rules have their
+descriptors (`descriptorValue`, `unicode-range` as canonical ranges) through a context on the
+declaration-block operations (`font-face:set`); `@font-feature-values` is written in
+canonical form; `CSSImportRule` reads its URL, layer, supports condition and media from the
+engine. `selectorText` leaves out a universal selector that starts a longer compound.
+Colours: `alpha(from c / a)` and the specified form of `color-layers()`. Interface shapes:
+CSSStyleDeclaration members on its prototype with CSSStyleProperties, CSSRuleList and
+StyleSheetList members on their prototypes, enumerable CSS namespace operations. Theorems:
+`descriptorValue_style`, `expandIn_style`, `insetPx_auto`, `containerConditions_length`.
