@@ -28,11 +28,22 @@ def nameIndex (_ : Unit) : Std.HashMap String Nat :=
   let names := ComputedGeneric.longhandNames ++ ComputedGeneric.otherNames
   (names.zip (List.range names.length)).foldl (fun m (n, k) => if m.contains n then m else m.insert n k) {}
 
+/-- The longhands whose resolved value (CSSOM §9.1, what `getComputedStyle` answers and
+`ComputedGeneric.valueAt` gives) is not their computed value even with no layout:
+`line-height` (a number is answered as a length) and the insets (`auto` and a percentage
+are answered as lengths). An animation is of computed values (a line height of `4` and one
+of `14px` do not interpolate; `auto` and `20px` do not either), so the engine reads these
+from the property table. -/
+def resolvedApart : List String :=
+  ["line-height", "top", "right", "bottom", "left",
+   "inset-block-start", "inset-block-end", "inset-inline-start", "inset-inline-end"]
+
 /-- The computed value of the property named on element `id`; none for a name the table
 does not have. -/
 def valueOf (index : Std.HashMap String Nat) (v : ComputedGeneric.View) (id : Nat) (name : String) : Option String :=
   if CssValues.isCustom name then some (ComputedGeneric.computedOf v id name)
-  else (index[name]?).map fun k => ComputedGeneric.valueAt v id k
+  else (index[name]?).map fun k =>
+    if resolvedApart.contains name then ComputedGeneric.computedOf v id name else ComputedGeneric.valueAt v id k
 
 /-- The border box of element `id` from its computed style, when its width and height
 are lengths: the reference box of its transforms (CSS Transforms 1 §6), with no layout.
@@ -258,6 +269,26 @@ private def restylePage (style : String) : String :=
 #guard (match CSS.parse "p[title] { color: red } .a > b { color: blue }" with
   | .ok rules => !CSS.readsStyleAttribute rules
   | .error _ => false)
+
+/-! ## Tests: the engine reads computed values, not resolved ones -/
+
+private def valueOn (sheet property : String) : Option String :=
+  let d := DOM.parseHtmlDocument "<div><p id=\"t\">a</p></div>"
+  match CSS.parse sheet, firstWithId d "t" with
+  | .ok rules, some t =>
+    (match CSS.computeAll d rules with
+      | .ok styles =>
+        valueOf (nameIndex ()) { dom := d, matchesOf := fun i => CSS.matchedRules d i rules, styles := styles } t property
+      | .error _ => none)
+  | _, _ => none
+
+-- (CSS2/linebox/animations/line-height-interpolation.html: from [4] to [14px] is discrete)
+#guard valueOn "p { font-size: 20px; line-height: 4 }" "line-height" == some "4"
+#guard valueOn "p { font-size: 20px; line-height: 14px }" "line-height" == some "14px"
+-- (css-position/animations/top-interpolation.html: from [initial] to [20px] is discrete)
+#guard valueOn "p { position: relative }" "top" == some "auto"
+#guard valueOn "p { position: relative; left: 20px }" "left" == some "20px"
+#guard valueOn "p { position: relative; left: 20px }" "right" == some "auto"
 
 /-! ## Tests: animated values on a page whose sheet makes generated content
 
