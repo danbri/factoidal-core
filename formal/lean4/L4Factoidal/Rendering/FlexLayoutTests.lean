@@ -177,6 +177,17 @@ private def columns := "#c{display:flex;flex-direction:column;flex-wrap:wrap;wid
 #guard box three "#c{display:flex;flex-wrap:wrap;float:left}" "c" (width := 20) == some (0,0,20,14)
 #guard box three "#c{display:flex;float:left}" "c" (width := 20) == some (0,0,36,7)
 
+-- Sizing keywords on items (CSS Sizing 3 §3.2): "AA BBB" is 18 wide at its narrowest, 36 on one line.
+private def keyed := "<div id=c><div id=a>AA BBB</div><div id=b>B</div></div>"
+#guard box keyed "#c{display:flex} #a{width:min-content}" "a" == some (0,0,18,14)
+#guard box keyed "#c{display:flex} #a{width:min-content}" "b" == some (18,0,6,14)
+#guard box keyed "#c{display:flex} #a{flex-basis:min-content}" "a" == some (0,0,18,14)
+#guard box keyed "#c{display:flex} #a{width:max-content}" "a" == some (0,0,36,7)
+#guard box keyed "#c{display:flex} #a{flex-basis:max-content;width:10px}" "a" == some (0,0,36,7)
+#guard box keyed "#c{display:flex;flex-direction:column} #a{width:min-content}" "a" == some (0,0,18,14)
+#guard box keyed "#c{display:flex;flex-direction:column} #a{width:max-content}" "a" == some (0,0,36,7)
+#guard box keyed "#c{display:flex;flex-direction:column} #a{width:stretch;margin:0 4px}" "a" == some (4,0,192,7)
+
 -- Nesting: a row in a column in a row; a flex container in block flow and a block in a flex item.
 private def nested := "<div id=o><div id=l>LL</div><div id=m><div id=h>H</div><div id=r><div id=x>X</div><div id=y>Y</div></div></div></div><div id=p>P</div>"
 private def nestedCss := "#o{display:flex} #m{flex:1;display:flex;flex-direction:column} #r{display:flex} #y{flex:1}"

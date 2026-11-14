@@ -79,8 +79,10 @@ def FlexStyle.set (fontSize : Float) (f : FlexStyle) (property value : String) :
       else match tableLength fontSize p value with
         | some l => some {f with basis := .length l}
         | none =>
-          -- `content`, `min-content`, `max-content`, `fit-content` and the like
-          some {f with basis := .content}
+          -- a sizing keyword (CSS Sizing 3 §3.2) is kept; `content` and the like are the content
+          match sizeKeyword? v with
+          | some keyword => some {f with basis := .length keyword}
+          | none => some {f with basis := .content}
     | _ => none
 
 /-- The longhands of the `flex` shorthand (§7.2): `none` is `0 0 auto`; a number alone
