@@ -594,4 +594,9 @@ private def parses (src : String) : Bool := syn src == "ok"
 
 #guard out "var it = Iterator.concat([1, 2], new Set([3]), 'ab'.split('')); print([...it].join(), typeof it.next, Object.getPrototypeOf(it) === Object.getPrototypeOf(Iterator.from([]).map(x => x))); try { Iterator.concat(1) } catch (e) { print(e.name) } var c = 0; var r = { [Symbol.iterator]() { c++; return [9][Symbol.iterator]() } }; var j = Iterator.concat(r, r); print(c, j.next().value, c, [...j].join(), c)" == ["1,2,3,a,b function true", "TypeError", "0 9 1 9 2"]
 
+/-! ## DisposableStack, SuppressedError, Symbol.dispose, Iterator.prototype[@@dispose] -/
+
+#guard out "var log = []; var s = new DisposableStack(); s.use({ [Symbol.dispose]() { log.push('a') } }); s.defer(() => log.push('b')); s.adopt(7, v => log.push('c' + v)); print(s.disposed, typeof Symbol.dispose); s.dispose(); print(log.join(), s.disposed, String(s.dispose())); try { s.use(null) } catch (e) { print(e.name) } var t = new DisposableStack(); t.defer(() => { throw 1 }); t.defer(() => { throw 2 }); try { t.dispose() } catch (e) { print(e.name, e.error, e.suppressed) } var m = new DisposableStack(); m.defer(() => log.push('m')); var m2 = m.move(); print(m.disposed, m2.disposed); m2[Symbol.dispose](); print(log.join(), Object.prototype.toString.call(m2))" == ["false symbol", "c7,b,a true undefined", "ReferenceError", "SuppressedError 1 2", "true false", "c7,b,a,m [object DisposableStack]"]
+#guard out "var f = []; var g = (function* () { try { yield 1 } finally { f.push('closed') } })(); g.next(); g[Symbol.dispose](); var e = new SuppressedError(1, 2, 'm'); print(f.join(), e.error, e.suppressed, e.message, e instanceof Error, SuppressedError.prototype.name)" == ["closed 1 2 m true SuppressedError"]
+
 end L4Factoidal.JS.Tests
