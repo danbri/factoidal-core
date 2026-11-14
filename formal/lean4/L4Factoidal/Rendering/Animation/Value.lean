@@ -373,6 +373,20 @@ def finish : Kind → List Tok → List Tok
   | .fontWeight, ts => ts.map (rangeTok one (Fix.ofInt 1000))
   | _, ts => ts
 
+/-- A line width snapped (CSS Values 4 §5.4 "snap a length as a border width", with one
+device pixel taken as one CSS pixel): a whole number of pixels stays; a width above 0 and
+below 1px is 1px; any other is rounded down. A negative number is left as it is (the
+kinds of these properties clamp at 0 first). -/
+def snapWidth (n : Int) : Int :=
+  if n ≤ 0 then n else if n < one then one else Fix.floor n
+
+/-- The px lengths of a value snapped as line widths: the computed value of a border,
+outline or gap rule width. -/
+def snapWidths (v : List Tok) : List Tok :=
+  v.map fun t => match t with
+    | .dim n u => if u == "px" then .dim (snapWidth n) u else t
+    | t => t
+
 /-! ### Sums of components (for `add` and `accumulate`, below) -/
 
 def addColor (r1 g1 b1 a1 r2 g2 b2 a2 : Int) : Tok :=
@@ -1461,6 +1475,83 @@ def resolvedOriginText (text : String) (box : Option (Float × Float)) : String 
 #guard resolvedOriginText "calc(-25% + 30px) 10px 5px" (some (50, 80)) == "17.5px 10px 5px"
 #guard resolvedOriginText "50% 50%" none == "50% 50%" && resolvedOriginText "left top" (some (50, 80)) == "left top"
 
+/-! ### Colours outside legacy sRGB (CSS Color 4 §12.1)
+
+Two colours interpolate in sRGB when both are legacy sRGB colours (`rgb()`, names, hex:
+the `color` token), and in Oklab when one of them is not. The colour function read here is
+`color(srgb r g b [/ a])`; the result is written `oklab(L a b)`. `Float` arithmetic
+(the transfer function and a cube root): tested, not proved. Colours are not
+premultiplied on this path (exact when the two alphas are equal). -/
+
+/-- A value has a colour that is not a legacy sRGB one. -/
+def modernColor (v : List Tok) : Bool := v.contains (.op "color") || v.contains (.op "oklab")
+
+/-- sRGB components in [0, 1] as Oklab (CSS Color 4 §10.5 with §10.2: gamma decoded, then
+the matrices from linear sRGB to LMS and from the cube roots to Lab). -/
+def oklabOfSrgb (r g b : Float) : Float × Float × Float :=
+  let lin := fun (c : Float) =>
+    let a := c.abs
+    let v := if a ≤ 0.04045 then a / 12.92 else Float.pow ((a + 0.055) / 1.055) 2.4
+    if c < 0 then -v else v
+  let (r, g, b) := (lin r, lin g, lin b)
+  let l := Float.cbrt (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  let m := Float.cbrt (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  let s := Float.cbrt (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+   1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+   0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+
+/-- `oklab(L a b / alpha)` as tokens, always with its alpha (so two colours have one shape). -/
+def oklabTokens (l a b alpha : Int) : List Tok :=
+  [.op "oklab", .num l, .num a, .num b, .slash, .num alpha, .close]
+
+/-- Every colour of a value as `oklab(L a b / alpha)`: legacy colours, `color(srgb …)`,
+and `oklab()` itself with its alpha written. Other tokens stay. One pass. -/
+def toOklab (v : List Tok) : List Tok := Id.run do
+  let srgb := fun (r g b : Float) (alpha : Int) =>
+    let (l, a, b') := oklabOfSrgb r g b
+    oklabTokens (ofFloat l) (ofFloat a) (ofFloat b') alpha
+  let mut rest := v
+  let mut out : Array Tok := #[]
+  for _ in [0:v.length + 1] do
+    match rest with
+    | [] => break
+    | .color r g b a :: more =>
+      out := out ++ (srgb (toFloat r / 255) (toFloat g / 255) (toFloat b / 255) a).toArray
+      rest := more
+    | .op "color" :: .ident "srgb" :: .num r :: .num g :: .num b :: .close :: more =>
+      out := out ++ (srgb (toFloat r) (toFloat g) (toFloat b) one).toArray
+      rest := more
+    | .op "color" :: .ident "srgb" :: .num r :: .num g :: .num b :: .slash :: .num a :: .close :: more =>
+      out := out ++ (srgb (toFloat r) (toFloat g) (toFloat b) a).toArray
+      rest := more
+    | .op "oklab" :: .num l :: .num a :: .num b :: .close :: more =>
+      out := out ++ (oklabTokens l a b one).toArray
+      rest := more
+    | t :: more =>
+      out := out.push t
+      rest := more
+  return out.toList
+
+/-- The `oklab()` colours of a result in range and in their shortest form: the lightness
+in [0, 1], the alpha in [0, 1] and left out when it is 1. One pass. -/
+def fromOklab (v : List Tok) : List Tok := Id.run do
+  let mut rest := v
+  let mut out : Array Tok := #[]
+  for _ in [0:v.length + 1] do
+    match rest with
+    | [] => break
+    | .op "oklab" :: .num l :: .num a :: .num b :: .slash :: .num alpha :: .close :: more =>
+      let l := Fix.clamp 0 one l
+      let alpha := Fix.clamp 0 one alpha
+      out := out ++ (if alpha == one then #[Tok.op "oklab", .num l, .num a, .num b, .close]
+        else #[Tok.op "oklab", .num l, .num a, .num b, .slash, .num alpha, .close])
+      rest := more
+    | t :: more =>
+      out := out.push t
+      rest := more
+  return out.toList
+
 /-- The interpolation of a kind that is a list or has components to fill in; none when
 the values do not interpolate. -/
 def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
@@ -1471,9 +1562,12 @@ def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
       (if isNone a then [] else (items a).map filterFull) (if isNone b then [] else (items b).map filterFull)).map
       fun r => joinItems (r.map filterClamp)
   | .shadowList n =>
+    -- a shadow colour outside legacy sRGB: every colour in Oklab
+    let modern := modernColor a || modernColor b
+    let (a, b) := if modern then (toOklab a, toOklab b) else (a, b)
     (zipItems (lerpList p) shadowNeutral
       (if isNone a then [] else (commaItems a).map (shadowFull n)) (if isNone b then [] else (commaItems b).map (shadowFull n))).map
-      fun r => joinCommas (r.map shadowClamp)
+      fun r => let v := joinCommas (r.map shadowClamp); if modern then fromOklab v else v
   | .translate =>
     match translateOf a b, translateOf b a with
     | some (x, y, z), some (x', y', z') =>
@@ -1556,6 +1650,10 @@ def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
         some [.num ((r * Float.ofInt Fix.scale).round.toInt64.toInt), .slash, .num one]
       else none
     | _, _ => none
+  | .generic =>
+    -- a colour outside legacy sRGB: every colour of the two values in Oklab
+    if modernColor a || modernColor b then (lerpList p (toOklab a) (toOklab b)).map fromOklab
+    else lerpList p a b
   | _ => (lerpList p a b).map (finish k)
 
 /-- Whether two values interpolate component-wise for the kind (Web Animations 1 §5.2;
@@ -1868,6 +1966,59 @@ theorem unit_range (ts : List Tok) (n : Int) (h : Tok.num n ∈ finish .unit ts)
   subst ht
   exact Fix.clamp_between 0 one _ (by decide)
 
+/-- Kind: visibility. Says: a line of positive width keeps a positive width when
+snapped: it is never rounded away. -/
+theorem snapWidth_pos (n : Int) (h : 0 < n) : 0 < snapWidth n := by
+  unfold snapWidth Fix.floor
+  have s : (0 : Int) < Fix.scale := by decide
+  have o : one = Fix.scale := rfl
+  split
+  · omega
+  · split
+    · omega
+    · rename_i h1 h2
+      have h3 : Fix.scale ≤ n := by omega
+      have : 1 ≤ n / Fix.scale := Int.le_ediv_of_mul_le s (by omega)
+      have := Int.mul_le_mul_of_nonneg_right this (Int.le_of_lt s)
+      omega
+
+/-- Kind: bound. Says: snapping never widens a line of 1px or more. -/
+theorem snapWidth_le (n : Int) (h : one ≤ n) : snapWidth n ≤ n := by
+  unfold snapWidth Fix.floor
+  have s : (0 : Int) < Fix.scale := by decide
+  have o : one = Fix.scale := rfl
+  have := Int.ediv_mul_le n (Int.ne_of_gt s)
+  split
+  · omega
+  · split <;> omega
+
+/-- Kind: idempotence. Says: a snapped width is its own snap. -/
+theorem snapWidth_idem (n : Int) : snapWidth (snapWidth n) = snapWidth n := by
+  have s : (0 : Int) < Fix.scale := by decide
+  have o : one = Fix.scale := rfl
+  -- a width that is not positive, or a whole number of px of at least 1, is its own snap
+  have key : ∀ m : Int, (m ≤ 0 ∨ (∃ k : Int, 1 ≤ k ∧ m = k * Fix.scale)) → snapWidth m = m := by
+    intro m hm
+    rcases hm with h | ⟨k, hk, rfl⟩
+    · simp [snapWidth, h]
+    · have big := Int.mul_le_mul_of_nonneg_right hk (Int.le_of_lt s)
+      have z : ¬ (k * Fix.scale ≤ 0) := by omega
+      have y : ¬ (k * Fix.scale < one) := by omega
+      simp only [snapWidth, Fix.floor, if_neg z, if_neg y]
+      rw [Int.mul_ediv_cancel _ (Int.ne_of_gt s)]
+  apply key
+  by_cases h0 : n ≤ 0
+  · left
+    simp [snapWidth, h0]
+  · by_cases h1 : n < one
+    · right
+      refine ⟨1, by omega, ?_⟩
+      rw [show snapWidth n = one by simp [snapWidth, h0, h1]]
+      omega
+    · right
+      have q : 1 ≤ n / Fix.scale := Int.le_ediv_of_mul_le s (by omega)
+      exact ⟨n / Fix.scale, q, by simp [snapWidth, h0, h1, Fix.floor]⟩
+
 /-! ### Transform functions -/
 
 theorem zeroLike_idem (t : Tok) : zeroLike (zeroLike t) = zeroLike t := by
@@ -2011,6 +2162,20 @@ private def at_ (k : Kind) (a b : String) (p : Int) : String := toText (interpol
 #guard at_ .transformList "translate(100px)" "translate(200px) rotate(720deg)" 250000000 == "translate(125px) rotate(180deg)"
 #guard at_ .transformList "none" "rotate(90deg)" half == "rotate(45deg)"
 #guard at_ .transformList "scale(2)" "none" half == "scale(1.5)"
+-- colours outside legacy sRGB meet in Oklab (css/css-color/animation/color-interpolation.html,
+-- css/css-backgrounds/animations/box-shadow-interpolation.html)
+#guard at_ .generic "rgb(0, 0, 0)" "color(srgb 1 1 1)" 300000000 == "oklab(0.3 0 0)"
+#guard at_ .generic "color(srgb 0 0 0)" "color(srgb 1 1 1)" 600000000 == "oklab(0.6 0 0)"
+#guard at_ .generic "color(srgb 0 0 0)" "rgb(255, 255, 255)" (-300000000) == "oklab(0 0 0)"
+#guard at_ .generic "color(srgb 0 0 0)" "rgb(255, 255, 255)" 1500000000 == "oklab(1 0 0)"
+#guard at_ (.shadowList 4) "rgb(0, 0, 0) 10px 10px 10px 10px" "color(srgb 1 1 1) 10px 10px 10px 10px" 300000000 ==
+  "oklab(0.3 0 0) 10px 10px 10px 10px"
+-- two legacy colours stay in sRGB
+#guard at_ .generic "rgb(0, 0, 0)" "rgb(255, 255, 255)" 600000000 == "rgb(153, 153, 153)"
+-- line widths (css/css-gaps/animation/row-rule-width-interpolation.html: 3px to 40px)
+#guard toText (snapWidths (interpolate .nonNegative (parse "3px") (parse "40px") 300000000)) == "14px"
+#guard toText (snapWidths (interpolate .nonNegative (parse "3px") (parse "40px") 1500000000)) == "58px"
+#guard toText (snapWidths (parse "0.4px 0px 7.5px 12px 50%")) == "1px 0px 7px 12px 50%"
 -- two primitives: the lists as matrices (css/css-transforms/animation/list-interpolation.html)
 #guard at_ .transformList "rotate(0deg) translate(100px)" "rotate(720deg) scale(2) translate(200px)" 250000000 ==
   "rotate(180deg) matrix(1.25, 0, 0, 1.25, 175, 0)"

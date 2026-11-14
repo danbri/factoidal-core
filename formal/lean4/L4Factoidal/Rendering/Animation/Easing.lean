@@ -26,6 +26,9 @@ inductive Easing where
   | cubic (x1 y1 x2 y2 : Int)
   /-- `steps(n, position)`, n ≥ 1 (n ≥ 2 for `jump-none`). -/
   | steps (n : Nat) (pos : StepPos)
+  /-- `linear(...)` (CSS Easing 2 §2.2): the points as (input, output), at least two, every
+  input present and none below the one before it (`linearPoints`). -/
+  | points (pts : List (Int × Int))
   deriving DecidableEq, Repr, Inhabited
 
 namespace Easing
@@ -100,6 +103,77 @@ def evalSteps (n : Nat) (pos : StepPos) (p : Int) (before : Bool) : Int :=
   let j := jumps n pos
   if j ≤ 0 then p else roundDiv (stepOf n pos p before * scale) j
 
+/-- CSS Easing 2 §2.2.1 "calculate linear easing output progress": the segment from the
+last point whose input is not above `x` (the first segment before all of them, the last
+past all of them) to the next point, continued as a straight line; two points of one
+input give the second's output. `prev` is the point before `rest`. A loop over the
+points: each call is a tail call. -/
+def evalPointsGo (x : Int) : (Int × Int) → List (Int × Int) → Int
+  | _, [] => x
+  | a, b :: rest =>
+    -- the segment a to b is the one when it is the last, or the next point is past x
+    let here := match rest with
+      | [] => true
+      | _ => x < b.1
+    if here then
+      if a.1 == b.1 then b.2 else a.2 + roundDiv ((x - a.1) * (b.2 - a.2)) (b.1 - a.1)
+    else evalPointsGo x b rest
+
+def evalPoints (pts : List (Int × Int)) (x : Int) : Int :=
+  match pts with
+  | [] => x
+  | [a] => a.2
+  | a :: rest => evalPointsGo x a rest
+
+/-- CSS Easing 2 §2.2 "create a linear easing function" from the stops as written (an
+output and up to two inputs each): a first stop with no input is at 0, a last one at 1 or
+at the largest input before it; an input is never below the largest before it; a stop
+with two inputs is two points; the stops with no input between two that have one are
+spread evenly. None for fewer than two stops. -/
+def linearPoints (stops : List (Int × List Int)) : Option (List (Int × Int)) := Id.run do
+  if stops.length < 2 then return none
+  let n := stops.length
+  let mut largest : Option Int := none
+  let mut pts : Array (Option Int × Int) := #[]
+  let mut i := 0
+  for (out, inputs) in stops do
+    let up := fun (v : Int) (l : Option Int) => match l with
+      | some m => max v m
+      | none => v
+    match inputs with
+    | [] =>
+      if i == 0 then
+        pts := pts.push (some 0, out)
+        largest := some 0
+      else if i + 1 == n then pts := pts.push (some (up one largest), out)
+      else pts := pts.push (none, out)
+    | a :: more =>
+      let v := up a largest
+      pts := pts.push (some v, out)
+      largest := some v
+      match more with
+      | b :: _ =>
+        let w := up b largest
+        pts := pts.push (some w, out)
+        largest := some w
+      | [] => pure ()
+    i := i + 1
+  -- the inputs left out: evenly between the inputs on either side
+  let mut out : Array (Int × Int) := #[]
+  for k in [0:pts.size] do
+    match pts[k]! with
+    | (some v, o) => out := out.push (v, o)
+    | (none, o) =>
+      -- the point before has its input by now; the next point with one is ahead
+      let lo := (out.back?.map (·.1)).getD 0
+      let ahead := (List.range (pts.size - k)).find? fun d => ((pts[k + d]?).bind (·.1)).isSome
+      match ahead with
+      | some d =>
+        let hi := (((pts[k + d]?).bind (·.1))).getD one
+        out := out.push (lo + (hi - lo) / ((d : Int) + 1), o)
+      | none => out := out.push (lo, o)
+  return some out.toList
+
 /-- The output progress of an easing function for an input progress (CSS Easing 1 §2 to
 §4). `before` is the before flag of Web Animations §4.10.1 (only step functions read it). -/
 def eval (e : Easing) (p : Int) (before : Bool := false) : Int :=
@@ -111,6 +185,7 @@ def eval (e : Easing) (p : Int) (before : Bool := false) : Int :=
   | .easeInOut => evalCubic 420000000 0 580000000 one p
   | .cubic x1 y1 x2 y2 => evalCubic x1 y1 x2 y2 p
   | .steps n pos => evalSteps n pos p before
+  | .points pts => evalPoints pts p
 
 /-! ## Text -/
 
@@ -132,6 +207,9 @@ def toText : Easing → String
     | .jumpStart => s!"steps({n}, jump-start)"
     | .jumpNone => s!"steps({n}, jump-none)"
     | .jumpBoth => s!"steps({n}, jump-both)"
+  -- CSS Easing 2 §2.2.2: every point with its output and its input as a percentage
+  | .points pts =>
+    "linear(" ++ ", ".intercalate (pts.map fun (i, o) => s!"{Fix.formatCss o} {Fix.formatCss (i * 100)}%") ++ ")"
 
 /-- The arguments of `name(...)` when `s` is that function call, split at commas. -/
 def callArgs (name s : String) : Option (List String) :=
@@ -179,7 +257,20 @@ def parse (text : String) : Option Easing :=
         | some k, some p =>
           if k ≥ 1 && n.all Char.isDigit && (p != .jumpNone || k ≥ 2) then some (.steps k p) else none
         | _, _ => none
-      | _ => none
+      | _ =>
+        -- `linear(<number> && <percentage>{0,2} #)`
+        match callArgs "linear" s with
+        | some args =>
+          let stops := args.mapM fun (arg : String) =>
+            let words := (arg.splitOn " ").filter (· != "")
+            let numbers := words.filterMap fun w => if w.endsWith "%" then none else Fix.parse w
+            let inputs := words.filterMap fun w =>
+              if w.endsWith "%" then (Fix.parse (w.dropEnd 1).toString).map (roundDiv · 100) else none
+            if numbers.length == 1 && inputs.length ≤ 2 && numbers.length + inputs.length == words.length then
+              some (numbers.headD 0, inputs)
+            else none
+          (stops.bind linearPoints).map .points
+        | none => none
 
 /-! ## Theorems -/
 
@@ -281,7 +372,7 @@ theorem evalCubic_one (x1 y1 x2 y2 : Int) : evalCubic x1 y1 x2 y2 one = one := b
 
 /-- Kind: end points. Says: the keyword and `cubic-bezier()` easings map 0 to 0 and 1 to
 1. Does not say: this of step functions (a jump at the start maps 0 above 0). -/
-theorem eval_ends (e : Easing) (h : ∀ n pos, e ≠ .steps n pos) (before : Bool) :
+theorem eval_ends (e : Easing) (h : ∀ n pos, e ≠ .steps n pos) (h' : ∀ pts, e ≠ .points pts) (before : Bool) :
     eval e 0 before = 0 ∧ eval e one before = one := by
   cases e with
   | linear => exact ⟨rfl, rfl⟩
@@ -291,6 +382,29 @@ theorem eval_ends (e : Easing) (h : ∀ n pos, e ≠ .steps n pos) (before : Boo
   | easeInOut => exact ⟨evalCubic_zero .., evalCubic_one ..⟩
   | cubic x1 y1 x2 y2 => exact ⟨evalCubic_zero .., evalCubic_one ..⟩
   | steps n pos => exact absurd rfl (h n pos)
+  | points pts => exact absurd rfl (h' pts)
+
+/-- Kind: identity. Says: `linear(0, 1)` is the identity, as the keyword `linear`, at
+every input, in range or not. Does not say: anything of other point lists. -/
+theorem evalPoints_identity (p : Int) : evalPoints [(0, 0), (one, one)] p = p := by
+  have ne : ((0 : Int) == one) = false := by decide
+  have h := Fix.roundDiv_mul p one (by decide)
+  simp [evalPoints, evalPointsGo, ne, h]
+
+/-- Kind: end points. Says: a `linear()` function of two points at inputs 0 and 1 gives
+the first output at 0 and the second at 1, exactly. Does not say: this of lists whose
+first input is not 0 or whose last is not 1 (their ends are on a continued segment). -/
+theorem evalPoints_ends (a b : Int) :
+    evalPoints [(0, a), (one, b)] 0 = a ∧ evalPoints [(0, a), (one, b)] one = b := by
+  have ne : ((0 : Int) == one) = false := by decide
+  have z : roundDiv 0 one = 0 := by decide
+  have h : roundDiv (one * (b - a)) one = b - a := by
+    rw [Int.mul_comm]
+    exact Fix.roundDiv_mul (b - a) one (by decide)
+  constructor
+  · simp [evalPoints, evalPointsGo, ne, z]
+  · simp [evalPoints, evalPointsGo, ne, h]
+    omega
 
 /-- Kind: monotonicity. Says: the step before clamping does not decrease as the input
 grows, for one before flag and at least one step. Does not say: more. -/
@@ -385,6 +499,23 @@ theorem stepOf_range (n : Nat) (pos : StepPos) (before : Bool) (p : Int) (h0 : 0
 #guard parse "cubic-bezier(0.1, 5, 0.23, 0)" == some (.cubic 100000000 (5 * one) 230000000 0)
 #guard parse "step-start" == some (.steps 1 .start)
 #guard parse "bounce" == none
+-- linear() (css/css-easing/linear-timing-functions-output.html, -syntax.html)
+#guard (parse "linear(0, 1.5, 1)").map (fun e => [0, 250000000, Fix.half, 750000000, one].map (eval e ·)) ==
+  some [0, 750000000, 1500000000, 1250000000, one]
+#guard (parse "linear(1, -0.5, 0)").map (fun e => [0, 250000000, Fix.half, 750000000, one].map (eval e ·)) ==
+  some [one, 250000000, -500000000, -250000000, 0]
+#guard (parse "linear(0, 1)").map (eval · 330000000) == some 330000000
+-- past the ends the first and the last segment continue
+#guard (parse "linear(0, 0.5 25%, 1)").map (fun e => [-one, 2 * one].map (eval e ·)) == some [-2 * one, 1666666667]
+#guard (parse "linear(0, 1)").map toText == some "linear(0 0%, 1 100%)"
+#guard (parse "linear(0, 0.5 25%, 1)").map toText == some "linear(0 0%, 0.5 25%, 1 100%)"
+#guard (parse "linear(0, 0.25, 0.5 50%, 1)").map toText == some "linear(0 0%, 0.25 25%, 0.5 50%, 1 100%)"
+-- a stop with two inputs is two points; an input never goes back
+#guard (parse "linear(0, 0.5 25% 75%, 1)").map toText == some "linear(0 0%, 0.5 25%, 0.5 75%, 1 100%)"
+#guard (parse "linear(0 50%, 0.5 25%, 1)").map toText == some "linear(0 50%, 0.5 50%, 1 100%)"
+#guard (parse "linear(25% 0, 1)").map toText == some "linear(0 25%, 1 100%)"
+#guard parse "linear(1)" == none && parse "linear()" == none && parse "linear(0 1, 1)" == none && parse "linear(0 1% 2% 3%, 1)" == none
+#guard ((parse "linear(0, 0.5 25%, 1)").map toText).bind parse == parse "linear(0, 0.5 25%, 1)"
 #guard toText (.steps 1 .start) == "steps(1, start)"
 #guard toText (.steps 2 .end_) == "steps(2)"
 #guard toText (.cubic 100000000 (5 * one) 230000000 0) == "cubic-bezier(0.1, 5, 0.23, 0)"
