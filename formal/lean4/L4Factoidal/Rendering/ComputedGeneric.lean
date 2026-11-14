@@ -49,6 +49,10 @@ structure View where
   rules : List CSS.Rule := []
   /-- The page's custom functions (`@function`), read when a value calls one. -/
   functions : Thunk (List (String × FnDef)) := Thunk.pure []
+  /-- The padding box of an element's laid-out box, width and height in CSS pixels, when the
+  host has laid the page out: the containing block of percentage insets (`insetBase`). Asked
+  only for an inset that is a percentage. -/
+  paddingBox : Nat → Option (Float × Float) := fun _ => none
 
 /-- The properties registered by scripts (`CSS.registerProperty`), as the document node
 keeps them (`Hosts.Dom.Command.registerProperty`: attributes whose name starts with U+0001
@@ -878,6 +882,62 @@ theorem physicalNameOf_plain (v : View) (id : Nat) (name : String) (h : CssValue
     physicalNameOf v id name = name := by
   simp [physicalNameOf, h]
 
+/-- The nearest of `p` and its ancestor elements that satisfies `ok`, looking at most `fuel`
+elements up. A loop up the tree (a tail call). -/
+def ancestorWhere (v : View) (ok : Nat → Bool) : Nat → Option Nat → Option Nat
+  | 0, _ => none
+  | _, none => none
+  | fuel + 1, some p => if ok p then some p else ancestorWhere v ok fuel (parentElement v.dom p)
+
+/-- The number of CSS pixels of a computed length text such as `2px`, else 0. -/
+def pxNumber (t : String) : Float :=
+  match CssValues.stripWs (CssValues.CV.parse t) with
+  | [.tok (.dim x _ u)] => if CssValues.lower u == "px" then Float.ofInt x.num / Float.ofNat x.den else 0
+  | _ => 0
+
+/-- The size of the containing block that the percentage insets of element `id` refer to
+(CSS Position 3 §2.1, CSS 2 §10.1), width and height: for a relatively positioned or sticky
+box the content box of its parent; for an absolutely positioned box the padding box of the
+nearest ancestor that is positioned or has a transform, for a fixed one of the nearest with a
+transform; with no such ancestor, the viewport. `none` for a box that is not positioned, or
+when the host gave no boxes. The walk up looks at most at as many elements as the document
+has. -/
+def insetBase (v : View) (id : Nat) : Option (Float × Float) :=
+  let pos := computedLonghand v depthBound id "position"
+  let viewport := (Float.ofNat v.viewportW, Float.ofNat v.viewportH)
+  let side := fun (p : Nat) (n : String) => pxNumber (computedLonghand v depthBound p n)
+  if pos == "relative" || pos == "sticky" then
+    match parentElement v.dom id with
+    | some p => (v.paddingBox p).map fun (w, h) =>
+        (max 0 (w - side p "padding-left" - side p "padding-right"), max 0 (h - side p "padding-top" - side p "padding-bottom"))
+    | none => some viewport
+  else if pos == "absolute" || pos == "fixed" then
+    let fixed := pos == "fixed"
+    let holds := fun (p : Nat) =>
+      computedLonghand v depthBound p "transform" != "none" ||
+        (!fixed && computedLonghand v depthBound p "position" != "static")
+    match ancestorWhere v holds (v.dom.nodes.size + 1) (parentElement v.dom id) with
+    | some p => v.paddingBox p
+    | none => some viewport
+  else none
+
+/-- An inset (`top`, `right`, `bottom`, `left`) of a positioned box that is a percentage, in
+pixels of its containing block (CSSOM §9: the resolved value of an inset is the used value
+when the box is positioned); any other value as it is. -/
+def insetPx (v : View) (id : Nat) (name value : String) : String :=
+  match CssValues.stripWs (CssValues.CV.parse value) with
+  | [.tok (.pct x)] =>
+    match insetBase v id with
+    | some (w, h) =>
+      let base := if name == "top" || name == "bottom" then h else w
+      ComputedValues.px (Float.ofInt x.num / Float.ofNat x.den / 100 * base)
+    | none => value
+  | _ => value
+
+/-- A value that is no percentage is left as it is. -/
+theorem insetPx_auto (v : View) (id : Nat) (name : String) : insetPx v id name "auto" = "auto" := by
+  rfl
+
 /-- The resolved value of a longhand (CSSOM §9.1): for a property of the layout profile, the
 profile's answer, or the declaration's computed value where that is the answer
 (`declaredWins`, `absoluteWins`); for any other, the computed value by the property table. -/
@@ -911,10 +971,11 @@ def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
     let value := computedLonghand v depthBound id name
     match opposite name with
     | some opp =>
+      let value := insetPx v id name value
       -- a relatively positioned box (CSS Position 3 §3.4): an `auto` inset is the opposite
       -- one negated, or 0px when both are `auto` (CSSOM §9 resolved value)
       if value == "auto" && computedLonghand v depthBound id "position" == "relative" then
-        let o := computedLonghand v depthBound id opp
+        let o := insetPx v id opp (computedLonghand v depthBound id opp)
         if o == "auto" then "0px"
         else match CssValues.stripWs (CssValues.CV.parse o) with
           | [.tok (.dim x _ u)] => if CssValues.lower u == "px" then CssValues.fmtRat (-x) ++ "px" else value
@@ -927,10 +988,11 @@ where
     | "top" => some "bottom" | "bottom" => some "top" | "left" => some "right" | "right" => some "left"
     | _ => none
 
-/-- The computed value of the `k`-th name (`longhandNames` then `otherNames`) on element
-`id`, with `profileValue` the layout profile's answer for a profile property. -/
+/-- The step between the operation numbers of pseudo-elements in `valueAt`. -/
 def pseudoBase : Nat := 1000000
 
+/-- The computed value of the `k`-th name (`longhandNames` then `otherNames`) on element
+`id`, with `profileValue` the layout profile's answer for a profile property. -/
 def valueAt (v : View) (id : Nat) (k : Nat) : String :=
   if k ≥ pseudoBase then
     -- a property of a pseudo-element: `pseudoBase` × (its place in `pseudoNames` + 1) + k
@@ -1032,6 +1094,24 @@ private def resolvedAt (html css prop : String) : String :=
 #guard resolvedAt "<div id=t></div>" "#t { position: relative; bottom: 3px }" "top" == "-3px"
 #guard resolvedAt "<div id=t></div>" "#t { position: relative }" "left" == "0px"
 #guard resolvedAt "<div id=t></div>" "#t { position: static }" "left" == "auto"
+-- percentage insets in pixels of the containing block, with every box 200 × 100 pixels
+private def resolvedBoxed (html css prop : String) : String :=
+  let dom := DOM.parseHtmlDocument html
+  match CSS.parse css, dom.getElementById 0 "t" with
+  | .ok rules, some id =>
+    match computeAll dom rules with
+    | .ok styles =>
+      let v : View := { dom := dom, matchesOf := fun i => matchedRules dom i rules, styles := styles }
+      resolvedLonghand { v with paddingBox := fun _ => some (200, 100) } id prop
+    | .error _ => "error"
+  | _, _ => "error"
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: relative; top: 10% }" "top" == "10px"
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: relative; top: 10% }" "bottom" == "-10px"
+#guard resolvedBoxed "<div style='padding: 1px 2px'><div id=t></div></div>" "#t { position: relative; left: 50% }" "left" == "98px"
+#guard resolvedBoxed "<div style='position: relative'><div><div id=t></div></div></div>" "#t { position: absolute; top: 100% }" "top" == "100px"
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: fixed; left: 10% }" "left" == "80px"
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { top: 10% }" "top" == "10%"
+#guard resolvedAt "<div><div id=t></div></div>" "#t { position: relative; top: 10% }" "top" == "10%"
 -- the background shorthand by its longhands
 #guard computedAt "<div id=t></div>" "#t { background: url(a.png) no-repeat red }" "background-repeat" == "no-repeat"
 #guard computedAt "<div id=t></div>" "#t { background: red }" "background-color" == "rgb(255, 0, 0)"

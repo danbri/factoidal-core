@@ -1955,6 +1955,20 @@ from this engine's layout of its arena as it stands (`WasmVM.Hosts.Page.Reads`):
 when a read first asks, once until the DOM or the viewport changes, as a browser forces
 a layout. The layout is that of a render with the session's `layout` request. -/
 
+/-- The padding box of node `node`'s laid-out boxes, width and height in CSS pixels (its
+border box less its borders, as op 17's client size): the containing block that percentage
+insets refer to (`Rendering.ComputedGeneric.insetBase`). `none` when the node has no box. -/
+def paddingBoxOf (l : Laid) (node : Nat) : Option (Float × Float) :=
+  let box := l.boxes.foldl (init := (none : Option WebHit.Bounds)) fun acc b =>
+    if b.source != node then acc else
+    let r : WebHit.Bounds := (b.x,b.y,b.x+b.width,b.y+b.height)
+    some ((acc.map (·.union r)).getD r)
+  box.map fun (x0,y0,x1,y1) =>
+    let e : Rendering.CSS.Edges := match l.styles.get with
+      | .ok styles => (styles[node]?.map (·.borderEdges)).getD {}
+      | .error _ => {}
+    (max 0 (x1-x0-e.left-e.right), max 0 (y1-y0-e.top-e.bottom))
+
 /-- The answer of a layout read (op 35, the hit test, is below): op 17 "x y w h left top width height parent ox oy" (the border box
 in the page, then the client box: inside the borders, then the offset parent's node
 (-1: none) and the box's corner from that parent's padding edge; eight zeros for an SVG
@@ -2191,6 +2205,10 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
              -- the rules of the page, for the styles of pseudo-elements
              rules := rules,
              functions := Thunk.mk fun _ => Rendering.ComputedGeneric.functionsOf sheetText.get,
+             -- the containing block of a percentage inset: asked only for one, it lays the page out
+             paddingBox := fun p => match laid.get with
+               | .ok l => paddingBoxOf l p
+               | .error _ => none,
              -- the `@property` registrations of the page's sheets, read when a custom property is asked
              registered := Thunk.mk fun _ =>
                Rendering.ComputedGeneric.registrationsOfDocument dom ++ Rendering.ComputedGeneric.registrationsOf sheetText.get }
