@@ -639,6 +639,187 @@ theorem place_snd (start between : Int) (outers : List Int) :
     (place start between outers).map Prod.snd = outers := by
   simp [place, placeLoop_snd]
 
+/-! ### Distribution without lost remainders (§9.5, CSS Box Alignment 3 §4.5) -/
+
+/-- CSS Box Alignment 3 §4.5: the space before item `k` (from 0) of `n` on a line with
+`free` space left: the offset of the first item and the spaces between the items before
+`k`, together. Each is a share of the whole free space, so no remainder of a division
+adds up along the line: with `space-between` the last item ends exactly at the line's
+end. The `space-*` values with no free space (or, for `space-between`, one item) fall
+back as `justify` does. -/
+def lead (j : Justify) (free : Int) (n k : Nat) : Int :=
+  if n = 0 then 0 else
+  match j with
+  | .start => 0
+  | .end_ => free
+  | .center => free / 2
+  | .spaceBetween => if free ≤ 0 ∨ n = 1 then 0 else free * (k : Int) / ((n : Int) - 1)
+  | .spaceAround => if free ≤ 0 then 0 else free * (2 * (k : Int) + 1) / (2 * (n : Int))
+  | .spaceEvenly => if free ≤ 0 then 0 else free * ((k : Int) + 1) / ((n : Int) + 1)
+
+/-- Lemma. Says: with free space that is not negative, no item is pulled before the
+line's start. -/
+theorem lead_nonneg (j : Justify) (free : Int) (n k : Nat) (h : 0 ≤ free) : 0 ≤ lead j free n k := by
+  unfold lead
+  split
+  · omega
+  · rename_i hn
+    cases j <;> simp only
+    · omega
+    · omega
+    · exact Int.ediv_nonneg h (by omega)
+    · split
+      · omega
+      · exact Int.ediv_nonneg (Int.mul_nonneg h (by omega)) (by omega)
+    · split
+      · omega
+      · exact Int.ediv_nonneg (Int.mul_nonneg h (by omega)) (by omega)
+    · split
+      · omega
+      · exact Int.ediv_nonneg (Int.mul_nonneg h (by omega)) (by omega)
+
+/-- Order. Says: with free space that is not negative, the space before an item is no
+less than the space before the item before it: distribution never moves adjacent items
+towards each other. -/
+theorem lead_mono (j : Justify) (free : Int) (n k : Nat) (h : 0 ≤ free) :
+    lead j free n k ≤ lead j free n (k + 1) := by
+  unfold lead
+  split
+  · omega
+  · rename_i hn
+    cases j <;> simp only
+    · omega
+    · omega
+    · omega
+    · split
+      · omega
+      · rename_i hc
+        apply Int.ediv_le_ediv (by omega)
+        have : free * (k : Int) ≤ free * (((k + 1 : Nat) : Int)) := Int.mul_le_mul_of_nonneg_left (by omega) h
+        exact this
+    · split
+      · omega
+      · apply Int.ediv_le_ediv (by omega)
+        exact Int.mul_le_mul_of_nonneg_left (by omega) h
+    · split
+      · omega
+      · apply Int.ediv_le_ediv (by omega)
+        exact Int.mul_le_mul_of_nonneg_left (by omega) h
+
+/-- Containment. Says: with free space that is not negative, the space before any of the
+`n` items is no more than the free space: the last item ends inside the line. -/
+theorem lead_le (j : Justify) (free : Int) (n k : Nat) (h : 0 ≤ free) (hk : k < n) :
+    lead j free n k ≤ free := by
+  unfold lead
+  split
+  · omega
+  · rename_i hn
+    cases j <;> simp only
+    · omega
+    · omega
+    · have := Int.ediv_le_self 2 h; omega
+    · split
+      · omega
+      · rename_i hc
+        have hd : (0 : Int) < (n : Int) - 1 := by omega
+        have hle : free * (k : Int) ≤ free * ((n : Int) - 1) := Int.mul_le_mul_of_nonneg_left (by omega) h
+        calc free * (k : Int) / ((n : Int) - 1) ≤ free * ((n : Int) - 1) / ((n : Int) - 1) := Int.ediv_le_ediv hd hle
+          _ = free := Int.mul_ediv_cancel free (by omega)
+    · split
+      · omega
+      · have hd : (0 : Int) < 2 * (n : Int) := by omega
+        have hle : free * (2 * (k : Int) + 1) ≤ free * (2 * (n : Int)) := Int.mul_le_mul_of_nonneg_left (by omega) h
+        calc free * (2 * (k : Int) + 1) / (2 * (n : Int)) ≤ free * (2 * (n : Int)) / (2 * (n : Int)) := Int.ediv_le_ediv hd hle
+          _ = free := Int.mul_ediv_cancel free (by omega)
+    · split
+      · omega
+      · have hd : (0 : Int) < (n : Int) + 1 := by omega
+        have hle : free * ((k : Int) + 1) ≤ free * ((n : Int) + 1) := Int.mul_le_mul_of_nonneg_left (by omega) h
+        calc free * ((k : Int) + 1) / ((n : Int) + 1) ≤ free * ((n : Int) + 1) / ((n : Int) + 1) := Int.ediv_le_ediv hd hle
+          _ = free := Int.mul_ediv_cancel free (by omega)
+
+/-- Exactness. Says: with `space-between`, free space and at least two items, the space
+before the last item is all the free space: the last item ends exactly at the line's end,
+whatever the remainder of dividing the space between the items. -/
+theorem lead_between_last (free : Int) (n : Nat) (h : 0 < free) (hn : 2 ≤ n) :
+    lead .spaceBetween free n (n - 1) = free := by
+  unfold lead
+  have h1 : ¬ n = 0 := by omega
+  have h2 : ¬ (free ≤ 0 ∨ n = 1) := by omega
+  simp only [h1, h2, if_false]
+  have hc : ((n - 1 : Nat) : Int) = (n : Int) - 1 := by omega
+  rw [hc]
+  exact Int.mul_ediv_cancel free (by omega)
+
+/-- The loop of `spread`: item `k` is next, `used` is the size of the items and gaps before it. -/
+def spreadLoop (j : Justify) (free gap : Int) (n : Nat) (k : Nat) (used : Int) (acc : Array (Int × Int)) :
+    List Int → Array (Int × Int)
+  | [] => acc
+  | w :: rest => spreadLoop j free gap n (k + 1) (used + w + gap) (acc.push (lead j free n k + used, w)) rest
+
+/-- Boxes of the sizes `outers` along a line with `free` space left, `gap` apart, with the
+free space distributed by `j` (`lead`): each as `(position, size)`. -/
+def spread (j : Justify) (free gap : Int) (outers : List Int) : List (Int × Int) :=
+  (spreadLoop j free gap outers.length 0 0 #[] outers).toList
+
+theorem spreadLoop_pairwise (j : Justify) (free gap : Int) (n : Nat) (hf : 0 ≤ free) (hg : 0 ≤ gap)
+    (outers : List Int) :
+    ∀ (k : Nat) (used : Int) (acc : Array (Int × Int)), (∀ w ∈ outers, 0 ≤ w) →
+      acc.toList.Pairwise (fun a b => a.1 + a.2 ≤ b.1) → (∀ a ∈ acc.toList, a.1 + a.2 ≤ lead j free n k + used) →
+      (spreadLoop j free gap n k used acc outers).toList.Pairwise (fun a b => a.1 + a.2 ≤ b.1) := by
+  induction outers with
+  | nil => intro k used acc _ hp _; simpa [spreadLoop] using hp
+  | cons w rest ih =>
+    intro k used acc hw hp hle
+    have hw0 : 0 ≤ w := hw w List.mem_cons_self
+    have hm := lead_mono j free n k hf
+    unfold spreadLoop
+    apply ih
+    · intro x hx; exact hw x (List.mem_cons_of_mem w hx)
+    · rw [Array.toList_push, List.pairwise_append]
+      refine ⟨hp, by simp, ?_⟩
+      intro a ha b hb'
+      simp only [List.mem_singleton] at hb'
+      subst hb'
+      exact hle a ha
+    · intro a ha
+      rw [Array.toList_push, List.mem_append] at ha
+      rcases ha with ha | ha
+      · have := hle a ha; omega
+      · simp only [List.mem_singleton] at ha; subst ha; simp only; omega
+
+/-- No overlap. Says: boxes with sizes that are not negative, on a line with free space
+and a gap that are not negative, do not overlap whatever the distribution: each ends at
+or before the start of every later one. Does not say: anything for negative free space
+(the items overflow the line; `end_` and `center` then start before it). -/
+theorem spread_pairwise (j : Justify) (free gap : Int) (outers : List Int) (hf : 0 ≤ free) (hg : 0 ≤ gap)
+    (hw : ∀ w ∈ outers, 0 ≤ w) :
+    (spread j free gap outers).Pairwise (fun a b => a.1 + a.2 ≤ b.1) := by
+  unfold spread
+  exact spreadLoop_pairwise j free gap outers.length hf hg outers 0 0 #[] hw (by simp) (by simp)
+
+theorem spreadLoop_snd (j : Justify) (free gap : Int) (n : Nat) (outers : List Int) :
+    ∀ (k : Nat) (used : Int) (acc : Array (Int × Int)),
+      (spreadLoop j free gap n k used acc outers).toList.map Prod.snd = acc.toList.map Prod.snd ++ outers := by
+  induction outers with
+  | nil => intro k used acc; simp [spreadLoop]
+  | cons w rest ih => intro k used acc; simp [spreadLoop, ih]
+
+/-- Lemma. Says: `spread` keeps the sizes, in order: one position per box. -/
+theorem spread_snd (j : Justify) (free gap : Int) (outers : List Int) :
+    (spread j free gap outers).map Prod.snd = outers := by
+  simp [spread, spreadLoop_snd]
+
+-- Eight boxes of 5 px in 40.09375 px (2566 units, 6 left): the last ends at the end.
+#guard (spread .spaceBetween 6 0 (List.replicate 8 320)).getLast? == some (2246, 320)
+#guard spread .spaceBetween 164 0 [12, 6, 18] == [(0, 12), (94, 6), (182, 18)]
+#guard spread .center 100 10 [20, 30] == [(50, 20), (80, 30)]
+#guard spread .end_ 100 0 [20, 30] == [(100, 20), (120, 30)]
+#guard spread .spaceAround 60 0 [10, 10, 10] == [(10, 10), (40, 10), (70, 10)]
+#guard spread .spaceEvenly 40 0 [10, 10, 10] == [(10, 10), (30, 10), (50, 10)]
+#guard spread .spaceBetween (-5) 0 [10, 10] == [(0, 10), (10, 10)]
+#guard spread .start 7 3 [] == []
+
 /-! ### Lines (§9.3 step 5) -/
 
 /-- The loop of `breakLines`: `count` items of total size `width` are on the open line. -/
