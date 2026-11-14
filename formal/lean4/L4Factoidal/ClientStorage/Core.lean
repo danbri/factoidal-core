@@ -200,14 +200,28 @@ theorem actQuota_partition {σ β ρ : Type} [Usage β] {B : Backend σ β} (L :
   act_partition L _ _ _ _ _ h
 
 /-- The sum of the sizes of the items of a list: what "the sum of stored sizes" means in the
-accounting theorems. -/
-def sizeSum {α : Type} (size : α → Nat) (l : List α) : Nat := (l.map size).sum
+accounting theorems. A loop (a left fold). -/
+def sizeSum {α : Type} (size : α → Nat) (l : List α) : Nat := l.foldl (fun n a => n + size a) 0
+
+theorem sizeSum_foldl {α : Type} (size : α → Nat) (l : List α) :
+    ∀ k : Nat, l.foldl (fun n a => n + size a) k = k + l.foldl (fun n a => n + size a) 0 := by
+  induction l with
+  | nil => intro k; simp
+  | cons x xs ih =>
+    intro k
+    rw [List.foldl_cons, List.foldl_cons, ih (k + size x), ih (0 + size x)]
+    omega
 
 theorem sizeSum_nil {α : Type} (size : α → Nat) : sizeSum size [] = 0 := rfl
 theorem sizeSum_cons {α : Type} (size : α → Nat) (a : α) (l : List α) :
-    sizeSum size (a :: l) = size a + sizeSum size l := by simp [sizeSum]
+    sizeSum size (a :: l) = size a + sizeSum size l := by
+  unfold sizeSum
+  rw [List.foldl_cons, sizeSum_foldl size l (0 + size a)]
+  omega
 theorem sizeSum_append {α : Type} (size : α → Nat) (l m : List α) :
-    sizeSum size (l ++ m) = sizeSum size l + sizeSum size m := by simp [sizeSum]
+    sizeSum size (l ++ m) = sizeSum size l + sizeSum size m := by
+  unfold sizeSum
+  rw [List.foldl_append, sizeSum_foldl size m]
 
 /-! ## Checks -/
 

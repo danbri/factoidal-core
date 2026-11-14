@@ -162,7 +162,7 @@ inductive Key where
   | binary (bytes : List Nat)
   | nil
   | cons (head : Key) (tail : Key)
-  deriving DecidableEq, Repr, Inhabited
+  deriving Repr, Inhabited
 
 /-- The rank of a key's type in §2.4's order: Number < Date < String < Binary < Array. -/
 def Key.rank : Key → Nat
@@ -308,6 +308,12 @@ of a lower-ranked type is less than every key of a higher-ranked type, whatever 
 Does not say: anything about two keys of one type (the value rules of `Key.cmp`). -/
 theorem Key.cmp_rank (a b : Key) (h : a.rank < b.rank) : a.cmp b = .lt := by
   cases a <;> cases b <;> simp [Key.rank] at h <;> simp [Key.cmp, Key.rank, cmpNat]
+
+/-- Equality of keys is decided by the comparison (`eq_of_cmp`, `cmp_refl`), so it has the
+comparison's bounded recursion and no derived one. -/
+instance : DecidableEq Key := fun a b =>
+  if h : a.cmp b = .eq then isTrue (Key.eq_of_cmp a b h)
+  else isFalse fun e => h (e ▸ Key.cmp_refl a)
 
 theorem Key.cmp_gt {a b : Key} : a.cmp b = .gt ↔ b.cmp a = .lt := by
   rw [Key.cmp_swap a b]; cases a.cmp b <;> simp
