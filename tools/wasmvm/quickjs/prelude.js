@@ -2516,6 +2516,18 @@
         s.kind = kind; s.ctx = contextFor(OffscreenCanvasRenderingContext2D, this, s.id, s.w, s.h, false, options);
         return s.ctx;
       }
+      // HTML §4.12.5.3.1: the bitmap encoded (Lean's encoder: PNG, the type it falls back to) as a Blob.
+      convertToBlob(options = undefined) {
+        try {
+          const s = this[K];
+          if (s === undefined) throw new TypeError('Illegal invocation');
+          if (s.w === 0 || s.h === 0) throw new DOMException('The canvas has no pixels.', 'IndexSizeError');
+          const o = options === undefined || options === null ? {} : options;
+          const type = o.type === undefined ? 'image/png' : String(o.type).toLowerCase();
+          if (!s.ctx) blankOffscreen(this);
+          return Promise.resolve(blobOfURL(ask([7, s.id, 0], [type])));
+        } catch (e) { return Promise.reject(e); }
+      }
       transferToImageBitmap() {
         const s = this[K];
         if (!s.ctx) blankOffscreen(this);
@@ -2524,6 +2536,12 @@
         return b;
       }
     }
+    // A data: URL of Lean's encoder as a Blob of its bytes and type.
+    const blobOfURL = url => {
+      const i = url.indexOf(','), bin = atob(url.slice(i + 1)), u8 = new Uint8Array(bin.length);
+      for (let j = 0; j < bin.length; j++) u8[j] = bin.charCodeAt(j);
+      return new Blob([u8], { type: url.slice(5, i).split(';')[0] });
+    };
     const bitmapOf = (kind, src, sx, sy, sw, sh, w, h) => {
       const id = nextObj++;
       q.push(93, id, kind, src, sx, sy, sw, sh, w, h); later();
@@ -2626,7 +2644,12 @@
       ImageBitmap, CanvasGradient, CanvasPattern, TextMetrics, DOMMatrix, DOMMatrixReadOnly, DOMPoint, DOMPointReadOnly, createImageBitmap,
       context: (canvas, options) => contextFor(CanvasRenderingContext2D, canvas, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), true, options),
       resized: canvas => { const id = nodeId(canvas); q.push(2, id, canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), 1); selected = id; later(); },
-      dataURL: (canvas, type) => { const id = nodeId(canvas); ensure(canvas, id); return ask([7, id, 0], [type === undefined ? 'image/png' : String(type)]); } };
+      dataURL: (canvas, type) => { const id = nodeId(canvas); ensure(canvas, id); return ask([7, id, 0], [type === undefined ? 'image/png' : String(type)]); },
+      blob: (canvas, type) => {
+        if (canvasSize(canvas, 'width', 300) === 0 || canvasSize(canvas, 'height', 150) === 0) return null;
+        const id = nodeId(canvas); ensure(canvas, id);
+        return blobOfURL(ask([7, id, 0], [type === undefined ? 'image/png' : String(type).toLowerCase()]));
+      } };
 `;
   // ==== end canvas2d section ====
   // A 2D canvas whose width or height is set starts again (HTML §4.12.5: the bitmap and the context's state are reset).
@@ -2635,6 +2658,13 @@
     width: { get() { return canvasSize(this, 'width', 300); }, set(v) { sized(this, 'width', v); }, configurable: true },
     height: { get() { return canvasSize(this, 'height', 150); }, set(v) { sized(this, 'height', v); }, configurable: true },
     toDataURL: { value(type) { return c2d().dataURL(this, type); }, writable: true, configurable: true },
+    // HTML §4.12.5: the callback gets the encoded Blob (null for a canvas with no pixels) in a task.
+    toBlob: { value(callback, type = undefined, quality = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'toBlob' on 'HTMLCanvasElement': 1 argument required, but only 0 present.");
+      if (typeof callback !== 'function') throw new TypeError("Failed to execute 'toBlob' on 'HTMLCanvasElement': parameter 1 is not of type 'BlobCallback'.");
+      const blob = c2d().blob(this, type);
+      setTimeout(() => callback.call(undefined, blob), 0);
+    }, writable: true, configurable: true },
     getContext: { value(kind) {
       // One context kind per canvas, as in HTML.
       const id = nodeId(this), held = gpuContexts.get(id);
