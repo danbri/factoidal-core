@@ -113,6 +113,14 @@ bytes: tokens).
 `estimate()` answers the sum of what IndexedDB and the file system hold for the caller's key and a constant
 quota (512 MiB for each API). Neither number comes from the host. `persisted()` and `persist()` answer false.
 
+### Web Locks
+
+One lock manager for each storage key (`ClientStorage/Locks.lean`, `web_api` op 203): the held locks and the
+queue of requests, in request order. A request is granted when it is compatible with every held lock and no
+earlier queued request for the same name waits (no overtaking); `ifAvailable` is granted or answered null at
+once and never queued; `steal` drops the held locks of its name and is granted alone. `query()` answers the
+held and pending lists of the caller's key only.
+
 ## Proved, tested only, open
 
 Proved (Lean 4.33.1, no `sorry`, axioms only `propext`, `Classical.choice`, `Quot.sound`; each theorem's doc
@@ -135,6 +143,9 @@ comment has its "Says" and "Does not say"):
 - File system: `writable_tree` (writes are invisible until close), `close_atomic`, `lookup_put_same`,
   `lookup_put_other`, `resolve_iff`, `removeAll_lookup_other`, `removeAll_lookup_under`, `get_invalid_name`,
   `same_iff`.
+- Web Locks: `op_excl` (every command keeps mutual exclusion: any two held locks are of different names or
+  both shared), `settle_excl`, `settleStep_no_overtake`, `ifAvailable_no_wait`, `steal_alone`,
+  `Locks.opFor_noninterference`.
 
 Tested only (`#guard`):
 
@@ -189,8 +200,7 @@ No timing was measured: the engine was not built locally (cloud check only).
 
 ## Not done in this change
 
-Web Locks (`web_api` op 203) and the Cookie Store API (op 204) are not started. Storage buckets are not
-started.
+The Cookie Store API (op 204) and storage buckets are not started.
 
 ## Questions for the owner
 
