@@ -194,4 +194,14 @@ private def tracks (html extra id : String) : Option (String × String) := do
 #guard box "<div id=c><div id=s><div id=i>I</div></div></div>" "#c{display:grid;grid-template-rows:30px} #s{display:grid}" "i" == some (0,0,200,30)
 #guard box "<div id=c><div id=s><div id=i>I</div></div></div>" "#c{display:grid;grid-template-rows:30px} #s{display:grid;margin-top:4px;padding:1px}" "i" == some (1,5,198,24)
 
+
+-- Vertical writing modes: the columns run down the page, the rows across it (from the right
+-- in vertical-rl); a right-to-left direction runs the columns from the bottom.
+#guard box four "#c{display:grid;grid:100px 100px / 50px 50px;width:300px;height:200px;align-content:start;writing-mode:vertical-lr}" "a" == some (0,0,100,50)
+#guard box four "#c{display:grid;grid:100px 100px / 50px 50px;width:300px;height:200px;align-content:start;writing-mode:vertical-lr}" "b" == some (0,50,100,50)
+#guard box four "#c{display:grid;grid:100px 100px / 50px 50px;width:300px;height:200px;align-content:start;writing-mode:vertical-lr}" "d" == some (100,0,100,50)
+#guard box four "#c{display:grid;grid:100px 100px / 50px 50px;width:300px;height:200px;align-content:start;writing-mode:vertical-rl}" "a" == some (200,0,100,50)
+#guard box four "#c{display:grid;grid:100px 100px / 50px 50px;width:300px;height:200px;align-content:start;writing-mode:vertical-rl}" "d" == some (100,0,100,50)
+#guard box four "#c{display:grid;grid:100px 100px / 50px 50px;width:300px;height:200px;align-content:start;writing-mode:vertical-lr;direction:rtl}" "a" == some (0,150,100,50)
+
 end L4Factoidal.Rendering.GridLayoutTests
