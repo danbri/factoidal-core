@@ -2386,3 +2386,5 @@ L4Factoidal_Rendering_MediaQuery_inParens  # (c) the nesting of parentheses in o
 L4Factoidal_Rendering_MediaQuery_Cond_eval  # (c) a condition tree: at most maxOperands = 32 operands at a level (condition) and 32 levels (inParens)
 L4Factoidal_Rendering_CssValues_dropZeroLengths  # (c) the nesting of one value, fuel 8
 L4Factoidal_Rendering_MediaQuery_calcValue  # (c) the nesting of parentheses in one calc() of a media query, fuel 8
+L4Factoidal_DOM_Selectors_relativeList  # (c) DOM.Selectors parser: the argument of :has(); recursion only into the arguments of :not()/:is()/:has()/:nth-child(of), at most maxNesting (32) levels
+L4Factoidal_Rendering_CssVars_substitute  # (c) the nesting of var() fallbacks, at most maxFallbacks = 32; the loop over the value is a for loop

@@ -28,6 +28,7 @@ node of the document. The parser and the matcher are total: each takes fuel (`pa
 -/
 import L4Factoidal.DOM.Arena
 import L4Factoidal.DOM.CustomElements
+import L4Factoidal.Unicode.Bidi
 
 namespace L4Factoidal.DOM.Selectors
 open L4Factoidal.DOM
@@ -64,6 +65,10 @@ inductive Simple where
   | nth (kind : NthKind) (a b : Int) (of : Option (List Complex))
   | not (sels : List Complex)
   | is (sels : List Complex)
+  /-- `:has(<relative-selector-list>)`: each relative selector is a complex selector
+  whose first compound carries the relative combinator (' ' when none is written),
+  matched against the elements after the anchor in that relation -/
+  | has (sels : List Complex)
   | lang (ranges : List String)
   /-- a pseudo-element: never the subject -/
   | never
@@ -248,10 +253,58 @@ def argText : PM String := do
   fail
 
 def legacyPseudoElements : List String := ["before", "after", "first-line", "first-letter"]
+/-- Pseudo-elements with no argument (CSS Pseudo-Elements 4, CSS Lists, HTML, CSS View
+Transitions, CSS Forms): valid, and never the subject of a match on the DOM. A name that
+starts with `-webkit-` is valid too (Selectors 4 §3.6.2, for web compatibility). -/
+def pseudoElements : List String :=
+  legacyPseudoElements ++ ["selection", "placeholder", "marker", "backdrop", "file-selector-button",
+    "target-text", "spelling-error", "grammar-error", "search-text", "cue", "details-content",
+    "view-transition", "checkmark", "picker-icon", "scroll-marker", "scroll-marker-group", "column"]
+/-- The view transition pseudo-elements that take a name (CSS View Transitions 2 §4). -/
+def viewTransitionPseudoElements : List String :=
+  ["view-transition-group", "view-transition-image-pair", "view-transition-old", "view-transition-new",
+   "view-transition-group-children"]
+/-- The structural pseudo-classes: what an element is by its place in the tree. -/
+def structuralPseudoClasses : List String :=
+  ["root", "empty", "first-child", "last-child", "only-child", "first-of-type", "last-of-type", "only-of-type"]
+/-- The pseudo-classes of user action, the ones that may follow any pseudo-element
+(Selectors 4 §3.6.4). -/
+def userActionPseudoClasses : List String := ["hover", "active", "focus", "focus-visible", "focus-within"]
+/-- The pseudo-classes of the scrollbar pseudo-elements (`::-webkit-scrollbar` and its
+parts): valid after them only. -/
+def scrollbarPseudoClasses : List String :=
+  ["horizontal", "vertical", "decrement", "increment", "start", "end", "double-button", "single-button",
+   "no-button", "corner-present", "window-inactive"]
 def plainPseudoClasses : List String :=
-  ["root", "empty", "first-child", "last-child", "only-child", "first-of-type", "last-of-type",
-   "only-of-type", "scope", "link", "any-link", "checked", "disabled", "enabled", "hover", "active",
-   "focus", "focus-within", "focus-visible", "visited", "target", "defined", "popover-open", "modal"]
+  structuralPseudoClasses ++
+  ["scope", "link", "any-link", "checked", "disabled", "enabled", "hover", "active",
+   "focus", "focus-within", "focus-visible", "visited", "target", "defined",
+   -- input states read from the element's attributes (HTML §4.16.3)
+   "required", "optional", "read-only", "read-write", "placeholder-shown", "default", "indeterminate",
+   "open", "heading",
+   -- states this engine does not hold for a match on the tree: valid, never true
+   "valid", "invalid", "in-range", "out-of-range", "user-valid", "user-invalid", "autofill",
+   "-webkit-autofill", "popover-open", "modal", "fullscreen", "picture-in-picture", "playing", "paused",
+   "seeking", "buffering", "stalled", "muted", "volume-locked", "host", "has-slotted",
+   "active-view-transition"]
+
+/-- A compound has a pseudo-element. -/
+def hasPseudoElement (c : List Simple) : Bool :=
+  c.any fun s => match s with
+    | .never => true
+    | _ => false
+
+/-- A complex selector has a pseudo-element in one of its compounds. -/
+def Complex.hasPseudoElement : Complex → Bool
+  | .mk parts => parts.any fun p => Selectors.hasPseudoElement p.2
+
+/-- The names of `::part()`: one or more identifiers separated by white space. -/
+def partNames (t : String) : Bool :=
+  let ws := (t.split (fun c => isWs c)).toList.map (·.toString) |>.filter (· != "")
+  !ws.isEmpty && ws.all fun w =>
+    match w.toList with
+    | c :: rest => (nameStart c || c == '-' || c == '\\') && rest.all fun x => nameChar x || x == '\\'
+    | [] => false
 
 /-- The most compound selectors in one complex selector, and the deepest nesting of
 `:not()`, `:is()` and `:nth-child(… of …)`: matching recurses once per compound and once
@@ -331,6 +384,30 @@ def selectorList : Nat → PM (List Complex)
       | _ => break
     return out.toList
 
+/-- A relative selector list (Selectors 4 §4.5, the argument of `:has()`): complex
+selectors, each after an optional combinator, which is kept on its first compound. -/
+def relativeList : Nat → PM (List Complex)
+  | 0 => fail
+  | fuel + 1 => do
+    let mut out := #[]
+    for _ in [0:(← get).cs.size + 1] do
+      let _ ← skipWs
+      let mut comb := ' '
+      if let some c := ← peek then
+        if c == '>' || c == '+' || c == '~' then
+          bump
+          comb := c
+          let _ ← skipWs
+      let c ← complex fuel
+      match c with
+      | .mk ((_, first) :: rest) => out := out.push (Complex.mk ((comb, first) :: rest))
+      | .mk [] => fail
+      let _ ← skipWs
+      match ← peek with
+      | some ',' => bump
+      | _ => break
+    return out.toList
+
 def complex : Nat → PM Complex
   | 0 => fail
   | fuel + 1 => do
@@ -344,10 +421,12 @@ def complex : Nat → PM Complex
       let ws ← skipWs
       match ← peek with
       | some ',' | some ')' | none => break
-      | some c =>
-        if c == '>' || c == '+' || c == '~' then
+      | some c' =>
+        -- a pseudo-element ends its complex selector (Selectors 4 §3.6)
+        if hasPseudoElement c then fail
+        if c' == '>' || c' == '+' || c' == '~' then
           bump
-          comb := c
+          comb := c'
           let _ ← skipWs
         else if ws then comb := ' '
         else fail
@@ -380,9 +459,13 @@ def compound : Nat → PM (List Simple)
         let name ← ident
         if (← peek) == some '|' && (← peek 1) != some '=' then fail -- an undeclared prefix
         out := out.push (.type .default (some name))
+    -- the pseudo-element met in this compound ("" none): after one, only pseudo-classes
+    -- that the pseudo-element allows, and pseudo-elements
+    let mut pe := ""
     for _ in [0:(← get).cs.size + 1] do
       match ← peek with
       | some '#' =>
+        if !pe.isEmpty then fail
         bump
         if !(← startsIdent) then
           -- a hash token may start with a digit or "-" + digit in CSS, but an ID selector
@@ -390,9 +473,11 @@ def compound : Nat → PM (List Simple)
           fail
         out := out.push (.id (← ident))
       | some '.' =>
+        if !pe.isEmpty then fail
         bump
         out := out.push (.cls (← ident))
       | some '[' =>
+        if !pe.isEmpty then fail
         bump
         out := out.push (← attrSel)
       | some ':' =>
@@ -400,9 +485,61 @@ def compound : Nat → PM (List Simple)
         if (← peek) == some ':' then
           bump
           let n := lowerAscii (← ident)
-          if legacyPseudoElements.contains n then out := out.push .never else fail
+          if pe == "view-transition" || viewTransitionPseudoElements.contains pe then fail
+          if (← peek) == some '(' then
+            bump
+            if n == "part" then
+              let t ← argText
+              if !partNames t then fail
+              bump
+            else if n == "slotted" then
+              let _ ← skipWs
+              let c ← compound fuel
+              if hasPseudoElement c then fail
+              let _ ← skipWs
+              expectClose
+            else if n == "highlight" || n == "picker" then
+              let _ ← skipWs
+              let _ ← ident
+              let _ ← skipWs
+              expectClose
+            else if viewTransitionPseudoElements.contains n then
+              -- `*` or a name, then classes, with no white space between them
+              let _ ← skipWs
+              if (← peek) == some '*' then bump
+              else
+                let name := lowerAscii (← ident)
+                if ["default", "unset", "initial", "inherit", "revert", "revert-layer", "none"].contains name then fail
+              for _ in [0:(← get).cs.size + 1] do
+                if (← peek) == some '.' then
+                  bump
+                  let _ ← ident
+                else break
+              let _ ← skipWs
+              expectClose
+            else fail
+            pe := n
+            out := out.push .never
+          else if pseudoElements.contains n || n.startsWith "-webkit-" then
+            pe := n
+            out := out.push .never
+          else fail
         else
           let n := lowerAscii (← ident)
+          -- after a pseudo-element: `::part()` takes every pseudo-class but the structural
+          -- ones and `:has()`; a named view transition pseudo-element takes `:only-child`;
+          -- `::view-transition` takes none; the others take the user action pseudo-classes
+          if !pe.isEmpty then
+            if (← peek) == some '(' then
+              if pe != "part" || n == "has" || n.startsWith "nth-" then fail
+            else if legacyPseudoElements.contains n then pure ()
+            else if pe == "part" then
+              if structuralPseudoClasses.contains n then fail
+            else if viewTransitionPseudoElements.contains pe then
+              if n != "only-child" then fail
+            else if pe == "view-transition" then fail
+            else if !(userActionPseudoClasses.contains n ||
+                (pe.startsWith "-webkit-scrollbar" || pe == "-webkit-resizer") && scrollbarPseudoClasses.contains n) then fail
           if (← peek) == some '(' then
             bump
             let _ ← skipWs
@@ -411,12 +548,36 @@ def compound : Nat → PM (List Simple)
               let l ← selectorList fuel
               let _ ← skipWs
               expectClose
+              if l.any (·.hasPseudoElement) then fail
               out := out.push (.not l)
             | "is" | "where" | "matches" | "-webkit-any" =>
               let l ← selectorList fuel
               let _ ← skipWs
               expectClose
               out := out.push (.is l)
+            | "has" =>
+              let l ← relativeList fuel
+              let _ ← skipWs
+              expectClose
+              if l.any (·.hasPseudoElement) then fail
+              out := out.push (.has l)
+            | "dir" =>
+              let t := lowerAscii (← ident)
+              let _ ← skipWs
+              expectClose
+              out := out.push (.pseudo ("dir(" ++ t ++ ")"))
+            | "heading" =>
+              -- `:heading(<integer>#)`: the heading levels
+              let t ← argText
+              bump
+              let levels := (t.splitOn ",").map fun x => x.trimAscii.toString
+              if levels.isEmpty || !levels.all (fun x => !x.isEmpty && x.all Char.isDigit) then fail
+              out := out.push (.pseudo ("heading(" ++ ",".intercalate levels ++ ")"))
+            | "state" =>
+              let _ ← ident
+              let _ ← skipWs
+              expectClose
+              out := out.push (.pseudo "state()")
             | "lang" =>
               let t ← argText
               bump
@@ -445,8 +606,11 @@ def compound : Nat → PM (List Simple)
                 bump
                 out := out.push (.nth kind a b none)
             | _ => fail
-          else if legacyPseudoElements.contains n then out := out.push .never
-          else if plainPseudoClasses.contains n then out := out.push (.pseudo n)
+          else if legacyPseudoElements.contains n then
+            pe := n
+            out := out.push .never
+          else if plainPseudoClasses.contains n || (!pe.isEmpty && scrollbarPseudoClasses.contains n) then
+            out := out.push (.pseudo n)
           else fail
       | _ => break
     if (← get).i == start then fail
@@ -551,10 +715,111 @@ def langOf (d : Dom) (k : NodeId) : Option String := Id.run do
       cur := x.parent
   return none
 
+/-- HTML §4.16.3 `:read-write`: an `input` that takes text and a `textarea`, neither
+`readonly` nor disabled, and an editing host or an element in one (`contenteditable`). -/
+def readWrite (d : Dom) (k : NodeId) : Bool :=
+  let ro := (attrVal? d k "readonly").isSome || disabledEl d k
+  if isHtml d k ["input"] then
+    !ro && !["hidden", "checkbox", "radio", "file", "submit", "image", "reset", "button", "range", "color"].contains
+      (lowerAscii ((attrVal? d k "type").getD ""))
+  else if isHtml d k ["textarea"] then !ro
+  else Id.run do
+    let mut cur := some k
+    for _ in [0:d.size + 1] do
+      match cur with
+      | none => return false
+      | some n =>
+        match (attrVal? d n "contenteditable").map lowerAscii with
+        | some "false" => return false
+        | some _ => return true
+        | none => cur := (d.get n).parent
+    return false
+
 /-- The matcher's fuel: a step per compound of a complex selector and a few per nesting
 level of `:not()`/`:is()`/`:nth-child(… of …)`; with the parser's bounds it is never
 exhausted. -/
 def matchFuel : Nat := (maxNesting + 1) * (maxCompounds + 8)
+
+/-- The parent of a node when it is an element. -/
+def parentElement (d : Dom) (n : NodeId) : Option NodeId :=
+  (d.get n).parent.bind fun p => if (d.get p).type == .element then some p else none
+
+/-- The element sibling before a node. -/
+def prevElement (d : Dom) (n : NodeId) : Option NodeId :=
+  let sibs := elementSiblings d n
+  match sibs.toList.findIdx? (· == n) with
+  | some i => if i == 0 then none else sibs[i - 1]?
+  | none => none
+
+/-- The element siblings after a node, nearest first. -/
+def followingElements (d : Dom) (n : NodeId) : Array NodeId :=
+  let sibs := elementSiblings d n
+  match sibs.toList.findIdx? (· == n) with
+  | some i => sibs.extract (i + 1) sibs.size
+  | none => #[]
+
+/-- Element `x` stands to the anchor `a` as the combinator `comb` of a relative selector
+says (Selectors 4 §4.5): a descendant (' '), a child, the next sibling, a later sibling. -/
+def related (d : Dom) (a : NodeId) (comb : Char) (x : NodeId) : Bool :=
+  match comb with
+  | '>' => parentElement d x == some a
+  | '+' => prevElement d x == some a
+  | '~' => (d.get x).parent == (d.get a).parent && (followingElements d a).contains x
+  | _ => Id.run do
+    let mut cur := (d.get x).parent
+    for _ in [0:d.size + 1] do
+      match cur with
+      | none => return false
+      | some p => if p == a then return true else cur := (d.get p).parent
+    return false
+
+/-- The elements a relative selector with combinator `comb` can have as its subject, for
+the anchor `k`: with one compound, exactly the elements in that relation; with more, the
+descendants of `k` (' ', '>') or its later siblings and their descendants ('+', '~'). -/
+def hasCandidates (d : Dom) (k : NodeId) (comb : Char) (single : Bool) : Array NodeId :=
+  let els := fun (a : Array NodeId) => a.filter fun c => (d.get c).type == .element
+  if comb == ' ' || (comb == '>' && !single) then els (d.treeOrder k false)
+  else if comb == '>' then els (d.get k).kids
+  else
+    let after := followingElements d k
+    let after := if comb == '+' then after.extract 0 1 else after
+    if single then after else after.foldl (fun acc s => acc ++ els (d.treeOrder s true)) #[]
+
+/-- The directionality of an element (HTML §3.2.6.4): its `dir` attribute (`ltr`, `rtl`;
+`auto`, and `bdi` with none, by the first strong character of its text, skipping `bdi`,
+`script`, `style`, `textarea` and elements with a `dir`), else its parent's; left to right
+at the root. True: right to left. The walk up is bounded by the arena size. -/
+def isRtl (d : Dom) (k : NodeId) : Bool := Id.run do
+  let mut cur := some k
+  for _ in [0:d.size + 1] do
+    match cur with
+    | none => return false
+    | some n =>
+      let x := d.get n
+      if x.type != .element then return false
+      let dir := (attrVal? d n "dir").map lowerAscii
+      if dir == some "rtl" then return true
+      if dir == some "ltr" then return false
+      if dir == some "auto" || (dir.isNone && isHtml d n ["bdi"]) then
+        let mut pending : List NodeId := x.kids.toList
+        for _ in [0:d.size + 1] do
+          match pending with
+          | [] => return false
+          | c :: rest =>
+            let y := d.get c
+            pending := rest
+            if y.type == .text then
+              for ch in y.data.toList do
+                match Unicode.bidiClassOf ch with
+                | .L => return false
+                | .R | .AL => return true
+                | _ => pure ()
+            else if y.type == .element && !["bdi", "script", "style", "textarea"].contains y.lname &&
+                (attrVal? d c "dir").isNone then
+              pending := y.kids.toList ++ pending
+        return false
+      cur := x.parent
+  return false
 
 mutual
 def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple → Bool
@@ -615,7 +880,26 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
            | some s => (CustomElements.reach d s).any fun j => (d.get j).states / 8 % 2 == 1
            | none => false)
       | "focus-within" => (CustomElements.reach d k).any fun j => (d.get j).states / 8 % 2 == 1
-      | _ => false
+      | "required" => isHtml d k ["input", "select", "textarea"] && (attrVal? d k "required").isSome
+      | "optional" => isHtml d k ["input", "select", "textarea"] && (attrVal? d k "required").isNone
+      | "read-write" => readWrite d k
+      | "read-only" => !readWrite d k
+      | "placeholder-shown" =>
+        isHtml d k ["input", "textarea"] && (attrVal? d k "placeholder").isSome &&
+          ((attrVal? d k "value").getD "").isEmpty && x.kids.isEmpty
+      | "default" =>
+        (isHtml d k ["input"] && (attrVal? d k "checked").isSome &&
+          ["checkbox", "radio"].contains (lowerAscii ((attrVal? d k "type").getD ""))) ||
+        (isHtml d k ["option"] && (attrVal? d k "selected").isSome)
+      | "indeterminate" => isHtml d k ["progress"] && (attrVal? d k "value").isNone
+      | "open" => isHtml d k ["details", "dialog"] && (attrVal? d k "open").isSome
+      | "heading" => isHtml d k ["h1", "h2", "h3", "h4", "h5", "h6"]
+      | "dir(ltr)" => !isRtl d k
+      | "dir(rtl)" => isRtl d k
+      | _ =>
+        if n.startsWith "heading(" then
+          isHtml d k ((((n.drop 8).dropEnd 1).toString.splitOn ",").map fun l => "h" ++ toString l.toNat!)
+        else false
     | .nth kind a b of =>
       let x := d.get k
       if x.parent.isNone then false else
@@ -631,6 +915,10 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
         nthOk a b pos
     | .not l => !matchList d scope fuel k l
     | .is l => matchList d scope fuel k l
+    | .has rels => rels.any fun rel => match rel with
+      | .mk parts =>
+        let comb := (parts.head?.map (·.1)).getD ' '
+        (hasCandidates d k comb (parts.length == 1)).any fun e => matchFrom d scope (some k) fuel e parts.reverse
     | .lang ranges => match langOf d k with
       | some v => ranges.any fun r =>
           let r := lowerAscii r
@@ -645,42 +933,43 @@ def matchCompound (d : Dom) (scope : Option NodeId) : Nat → NodeId → List Si
 
 /-- The parts are reversed: the subject first, each with the combinator between it and the
 part to its left. -/
-def matchFrom (d : Dom) (scope : Option NodeId) : Nat → NodeId → List (Char × List Simple) → Bool
+def matchFrom (d : Dom) (scope : Option NodeId) (anchor : Option NodeId) : Nat → NodeId → List (Char × List Simple) → Bool
   | 0, _, _ => false
   | _ + 1, _, [] => true
   | fuel + 1, k, (comb, c) :: rest =>
     if !matchCompound d scope fuel k c then false else
     match rest with
-    | [] => true
+    | [] =>
+      -- the leftmost compound: in a relative selector (`:has()`), its combinator is the
+      -- relation to the anchor
+      match anchor with
+      | none => true
+      | some a => related d a comb k
     | _ =>
-      let up := fun (n : NodeId) => (d.get n).parent.bind fun p => if (d.get p).type == .element then some p else none
-      let prevEl := fun (n : NodeId) =>
-        let sibs := elementSiblings d n
-        match sibs.toList.findIdx? (· == n) with
-        | some i => if i == 0 then none else sibs[i - 1]?
-        | none => none
+      let up := parentElement d
+      let prevEl := prevElement d
       match comb with
-      | '>' => match up k with | some p => matchFrom d scope fuel p rest | none => false
-      | '+' => match prevEl k with | some p => matchFrom d scope fuel p rest | none => false
+      | '>' => match up k with | some p => matchFrom d scope anchor fuel p rest | none => false
+      | '+' => match prevEl k with | some p => matchFrom d scope anchor fuel p rest | none => false
       | '~' => Id.run do
         let mut cur := prevEl k
         for _ in [0:d.size + 1] do
           match cur with
           | none => return false
-          | some p => if matchFrom d scope fuel p rest then return true else cur := prevEl p
+          | some p => if matchFrom d scope anchor fuel p rest then return true else cur := prevEl p
         return false
       | _ => Id.run do
         let mut cur := up k
         for _ in [0:d.size + 1] do
           match cur with
           | none => return false
-          | some p => if matchFrom d scope fuel p rest then return true else cur := up p
+          | some p => if matchFrom d scope anchor fuel p rest then return true else cur := up p
         return false
 
 /-- A complex selector, matched from its subject (the last compound) leftwards. -/
 def matchComplex (d : Dom) (scope : Option NodeId) : Nat → NodeId → Complex → Bool
   | 0, _, _ => false
-  | fuel + 1, k, .mk parts => matchFrom d scope fuel k parts.reverse
+  | fuel + 1, k, .mk parts => matchFrom d scope none fuel k parts.reverse
 
 def matchList (d : Dom) (scope : Option NodeId) : Nat → NodeId → List Complex → Bool
   | 0, _, _ => false
