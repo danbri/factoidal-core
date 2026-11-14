@@ -294,12 +294,85 @@ tolerances of the WebNN conformance tests.
 Mixed-sign inputs make a sum cancel, and the ULP measure of a result near 0 is then large while its absolute error is that of any other output; the WPT vectors, not these inputs, decide which operators the GPU path takes. One GPU, one input set: a different GPU can differ, so the table is per device and the plan is
 to run the same test on the Hub's GPU before an operator is enabled there.
 
+### 2.7 Built: the backend choice and graphs on the GPU (third phase)
+
+- **Host fact.** The session's `start` request carries `gpuReplay: true` when the embedder replays
+  page GPU commands (the native window once its GPU session exists; the Hub worker unless it
+  draws on the CPU). It sets `PageGpu.State.replay`; `gpu_command` op 17 answers it;
+  `navigator.gpu.requestAdapter()` resolves `null` without it. The Linux WPT runners pass no
+  such fact: there WebGPU has no adapter and WebNN runs on the CPU reference.
+- **Choice.** `WebNN.GpuRun.createContext`: a context is on the GPU path when `deviceType` is
+  `"gpu"` (or a `GPUDevice` is given) and the page's GPU is replayed. At `build`, `buildGpu`
+  plans the graph on the page's own GPU state (lent by the host for web_api op 140: the
+  graph's objects are the page's, under its quotas and theorems); if any needed operator has
+  no kernel in `GpuRun.gpuOps`, any operand is not float32, or a quota refuses, the graph runs
+  on the CPU reference, decided once and kept on the graph. Nothing switches path mid-graph.
+- **Dispatch.** Inputs are written (or copied when already on the GPU), the kernels run in
+  compute passes of at most 64 dispatches with copies between them (reshape, identity), and
+  the outputs are copied into the tensors' own GPU buffers. A refusal (the frame's work
+  budget, the quota) is an `OperationError`; the outputs keep their values.
+- **readTensor.** For a value on the GPU, op 140 `read` answers byte 2 and `readGpu` makes a
+  staging buffer, a copy and a readback whose ticket is the page's callback; the host's
+  answer goes through `PageGpu.deliver`, and the callback takes the bytes and drops the
+  staging buffer.
+- **Interop.** `createExportableTensor` on a context on the GPU path makes the tensor's GPU
+  buffer at once; `exportToGPU` gives it to the page's WebGPU as a `GPUBuffer` (`STORAGE |
+  COPY_SRC | COPY_DST`, the tensor's byte size, the same object when exported twice). While
+  exported, WebNN refuses to read, write or dispatch with the tensor (TypeError); destroying
+  the `GPUBuffer` gives it back with the value WebGPU left. Other contexts answer
+  `NotSupportedError`, and tensor.https's interop tests skip there, as on the WPT runners.
+- **Per operator, which path runs** (float32 on a context on the GPU path; everything else
+  on the CPU reference):
+
+| On the GPU path | On the CPU reference (kernel exists, measured over tolerance) | CPU reference only (no kernel yet) |
+|---|---|---|
+| add, sub, mul, div, max, min, pow, prelu; abs, ceil, cos, exp, floor, neg, reciprocal, relu, sigmoid, sin, softsign, tan, sign, roundEven, leakyRelu, linear, hardSigmoid, hardSwish, clamp; transpose, expand, slice, tile, reverse, reshape, identity, concat (≤ 7 inputs); matmul; reduceSum, reduceMean, reduceL1, reduceSumSquare, reduceProduct, reduceMax, reduceMin; softmax; conv2d (NCHW, OIHW); maxPool2d (NCHW) | log, tanh, sqrt, elu, gemm, averagePool2d, batchNormalization | the rest of the operator table (gelu, erf, softplus, layer and instance normalisation, gather and scatter, resample2d, convTranspose2d, the recurrent operators, quantisation, comparisons and logical operators, argMin/argMax, cumulativeSum, where, pad, triangular, cast, l2Pool2d, other layouts) |
+
+- **Second differential group** (same machine and method as 2.6):
+
+| Operator | Largest difference | WPT tolerance | |
+|---|---|---|---|
+| leakyRelu, linear, hardSigmoid, sign, roundEven, clamp, prelu, concat | 0 ULP | 0–2 ULP | within |
+| hardSwish | 2 ULP | 4 ULP | within |
+| softmax over 16 | 11 ULP | 51 ULP (3·16 + 3) | within |
+| elu | 27 ULP (`exp(x) − 1`); 93 ULP (`2·exp(x/2)·sinh(x/2)`) | 18 ULP | over: CPU reference |
+| batchNormalization | 169 ULP at an output of 0.0032 (absolute 1.9e-6) | 6 ULP | over: CPU reference |
+
+- **`f32` literals.** Operator parameters (alpha, beta, epsilon, clamp bounds) reach the
+  kernels as nine significant digits of their `f32` value (`Gpu.floatLit`), which read back
+  as the same `f32`.
+- **Proved for the index arithmetic.** `unravel_getD`: the output coordinate a kernel
+  computes, `k / stride % dim`, is `Shape.unravel`'s for every `k` below the size.
+  `out_fits`, `transposeMap_fits`, `expandMap_fits`, `tileMap_fits`: on a valid output index
+  of an output of at most 4,194,240 elements (the kernels refuse larger), the maps'
+  coordinates fit in 32 bits, which discharges `Fits` for `emitC_eval`; `transpose_coords`
+  puts them together for transpose. Not yet: the same for slice and reverse (they need the
+  builder's bounds as hypotheses) and the flat-index sum (`flatIndex`) as one `Coord`.
+
+### 2.8 Wall time
+
+What Lean bounds: operations per invocation (`compile_cost`), per dispatch
+(`dispatch_bounds`) and per frame (`run_frameWork`, 2^30), dispatches per pass (64),
+readbacks waiting (16) and their bytes (`run_mapInv`), commands waiting for the host
+(65,536). What it cannot bound: time. The host's watchdog (`page-gpu.mjs`, `WATCHDOG_MS`,
+3 s): each replay that submits passes, compute passes or copies starts a timer that the
+queue's completion clears; if it fires, that page's GPU objects are dropped, nothing more
+of the page is replayed, and the host tells Lean once (`gpuRead` with `{lost: true}`).
+`PageGpu.State.lose` then refuses every later command of the page (`step_lost`), ends its
+waiting readbacks (their promises reject) and resolves its `GPUDevice.lost`. The engine's
+drawing and other pages go on. Measured on this Mac with a forced 0 ms limit: the page was
+lost once and told once; with 3 s, 40 frames of the force graph were never lost.
+Flagged (lean-risk-flags): work already submitted is not cancelled (WebGPU has no way to);
+the page and the engine share one GPU device, so a driver that hangs the whole device hangs
+the engine's drawing too; the time limit is a host constant, not decided in Lean.
+
 ## Proved / tested only / open
 
-- Proved: section 1.2; `WebNN.Idx` map equalities; `emitC_eval`.
+- Proved: section 1.2 (and `step_lost`, `lose_mapInv`); `WebNN.Idx` map equalities; `emitC_eval`, `unravel_getD`, `out_fits`, `transposeMap_fits`, `expandMap_fits`, `tileMap_fits`, `transpose_coords`.
 - Tested only: the WGSL printer; the replay and readback on a real GPU (section 1.5); the
   prelude's compute API (by the cloud check's WPT, `page_gpu_test.ts` and the demo page, not by
   a theorem); WebNN kernels' floating-point results (section 2.6, one GPU).
-- Open: the engine end to end in the native window and on the Hub with the demo; error scopes
-  from the host's compiler for compute; `requestAdapter` on hosts without GPU replay; the rest
-  of part 2 (section 2.6, "not yet").
+- Open: the engine end to end in the native window and on the Hub with the demo and a WebNN
+  graph on the GPU; error scopes from the host's compiler for compute; the operators of
+  section 2.7's last column; slice/reverse `Fits` and the flat index as one `Coord`;
+  cancellation of submitted GPU work (section 2.8).

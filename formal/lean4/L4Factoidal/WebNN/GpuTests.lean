@@ -40,6 +40,12 @@ def kinds (s : State) : List String := s.out.toList.map fun c => ((L4Factoidal.P
 #guard (api (graph "gpu" "relu").1 #["read".toUTF8, "0".toUTF8, "2".toUTF8]).2 == ByteArray.mk #[2]
 #guard let (s, _) := call (graph "gpu" "relu").1 ["readGpu", "0", "2", "77"]
   (kinds s).getLast? == some "read" && (s.page.pending.map (·.1)) == [77]
+-- softmax and leakyRelu have kernels; elu is outside the tolerance (CPU reference)
+#guard ((run gpuPage [["context", "gpu"], ["builder", "0"], ["input", "0", "a", "float32", "2,3"],
+  ["op", "0", "softmax", "", "input", "0.0", "axis", "1"], ["op", "0", "leakyRelu", "", "input", "0.1"],
+  ["build", "0", "out", "0.2"]]).1.builders[0]?.bind (·.gpu)).isSome
+#guard ((run gpuPage [["context", "gpu"], ["builder", "0"], ["input", "0", "a", "float32", "2,3"],
+  ["op", "0", "elu", "", "input", "0.0"], ["build", "0", "out", "0.1"]]).1.builders[0]?.bind (·.gpu)).isNone
 -- tanh is outside the tolerance on the GPU: the graph runs on the CPU reference
 #guard ((graph "gpu" "tanh").1.builders[0]?.bind (·.gpu)).isNone
 #guard ((graph "gpu" "tanh").1.tensors[2]?.map (·.onGpu)) == some false

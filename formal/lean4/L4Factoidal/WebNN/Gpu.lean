@@ -245,6 +245,8 @@ def call2 (fn : String) (x y : Wgsl.Expr) : Wgsl.Expr := .call (.fn fn) (.cons x
 /-- The element-wise binary operators (`Compute.binaryF`'s names) with a WGSL form. -/
 def binaryExpr (name : String) (a b : Wgsl.Expr) : Option Wgsl.Expr :=
   match name with
+  -- prelu: `a` where it is at least 0, else `slope · a`
+  | "prelu" => some (.call (.fn "select") (.cons (.binary "*" b a) (.cons a (.cons (.binary ">=" a (f "0.0")) .nil))))
   | "add" => some (.binary "+" a b)
   | "sub" => some (.binary "-" a b)
   | "mul" => some (.binary "*" a b)
@@ -267,6 +269,26 @@ def unaryExpr (name : String) (x : Wgsl.Expr) : Option Wgsl.Expr :=
   | "relu" => some (call2 "max" x (f "0.0"))
   | "sigmoid" => some (.binary "/" (f "1.0") (.binary "+" (f "1.0") (call1 "exp" (.unary "-" x))))
   | "softsign" => some (.binary "/" x (.binary "+" (f "1.0") (call1 "abs" x)))
+  -- `roundEven`: WGSL's `round` rounds half to even, as `Compute.roundEvenF`
+  | "roundEven" => some (call1 "round" x)
+  -- `sign`: x itself for 0 and NaN, as `Compute.signF`
+  | "sign" => some (.call (.fn "select") (.cons (.call (.fn "select") (.cons x (.cons (.unary "-" (f "1.0")) (.cons (.binary "<" x (f "0.0")) .nil))))
+      (.cons (f "1.0") (.cons (.binary ">" x (f "0.0")) .nil))))
+  | _ => none
+
+/-- `select(a, b, c)`. -/
+def sel (a b c : Wgsl.Expr) : Wgsl.Expr := .call (.fn "select") (.cons a (.cons b (.cons c .nil)))
+
+/-- The unary operators with `alpha` and `beta` (`Compute.unaryF`): their WGSL with the two
+values as `f32` literals (`floatLit`). -/
+def unaryExprAB (name : String) (alpha beta : Wgsl.Expr) (x : Wgsl.Expr) : Option Wgsl.Expr :=
+  let ge0 := Wgsl.Expr.binary ">=" x (f "0.0")
+  match name with
+  | "leakyRelu" => some (sel (.binary "*" alpha x) x ge0)
+  | "linear" => some (.binary "+" (.binary "*" alpha x) beta)
+  | "hardSigmoid" => some (.call (.fn "clamp") (.cons (.binary "+" (.binary "*" alpha x) beta) (.cons (f "0.0") (.cons (f "1.0") .nil))))
+  | "hardSwish" => some (.binary "/" (.binary "*" x (.call (.fn "clamp") (.cons (.binary "+" x (f "3.0")) (.cons (f "0.0") (.cons (f "6.0") .nil))))) (f "6.0"))
+  | "elu" => some (sel (.binary "*" alpha (.binary "-" (call1 "exp" x) (f "1.0"))) x ge0)
   | _ => none
 
 /-! ## Kernels -/
@@ -331,23 +353,29 @@ def transposeKernel (perm : List Nat) (inShape : Shape) : Except String Wgsl.Mod
   if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
   Wgsl.finish (kernel ["x"] out (.index (.name "x") (flatIndex (transposeMap perm) inShape)))
 
-/-- A kernel whose output element `k` comes from variables `decls` updated by `steps` over
-`count` iterations of a loop counter `t` (a `forCap` loop, cost bound `count`). -/
-def loopKernel (ins : List String) (outShape : Shape) (count lo : Nat) (decls : List Wgsl.Stmt)
-    (steps : Wgsl.Stmts) (fin : Wgsl.Expr) : Wgsl.Module :=
-  let loop := Wgsl.Stmt.forCap "t" .u32 lo (u count) count steps
+/-- A kernel whose output element `k` comes from variables `decls` updated by loops run one
+after another (each a `forCap` loop over `t` from `lo` below `count`). -/
+def loopsKernel (ins : List String) (outShape : Shape) (decls : List Wgsl.Stmt)
+    (loops : List (Nat × Nat × Wgsl.Stmts)) (fin : Wgsl.Expr) : Wgsl.Module :=
+  let loopsS := loops.map fun (lo, count, steps) => Wgsl.Stmt.forCap "t" .u32 lo (u count) count steps
   let m := kernel ins outShape fin
   let body := match m.fns with
     | [f] => match f.body with
       | .cons k (.cons (.ifS c inner e) .nil) =>
         let rec splice : Wgsl.Stmts → Wgsl.Stmts
-          | .cons (.assign l op v) .nil => stmts (decls ++ [loop, .assign l op v])
+          | .cons (.assign l op v) .nil => stmts (decls ++ loopsS ++ [.assign l op v])
           | .cons st rest => .cons st (splice rest)
           | .nil => .nil
         Wgsl.Stmts.cons k (.cons (.ifS c (splice inner) e) .nil)
       | b => b
     | _ => .nil
   { m with fns := m.fns.map fun f => { f with body := body } }
+
+/-- A kernel whose output element `k` comes from variables `decls` updated by `steps` over
+`count` iterations of a loop counter `t` (a `forCap` loop, cost bound `count`). -/
+def loopKernel (ins : List String) (outShape : Shape) (count lo : Nat) (decls : List Wgsl.Stmt)
+    (steps : Wgsl.Stmts) (fin : Wgsl.Expr) : Wgsl.Module :=
+  loopsKernel ins outShape decls [(lo, count, steps)] fin
 
 /-- A kernel whose output element `k` is accumulated over `count` steps of a loop counter
 `t` (`for (var t = lo; t < min(count, count); t++)`, a `forCap` loop: its cost bound is
@@ -479,11 +507,28 @@ def poolKernel (name : String) (inShape out : Shape) (window strides dilations p
   Wgsl.finish (loopKernel ["x"] out count 0 [.varS "acc" none (some (f "0.0")), .varS "cnt" none (some (u 0))]
     (stmts (windowLets kh kw (g strides 0) (g strides 1) (g dilations 0) (g dilations 1) ++ [step])) fin)
 
-/-- A finite `Float` as a WGSL `f32` literal (its decimal text; a minus sign as negation);
-`none` for NaN, an infinity or a text the subset does not take. -/
+/-- Nine significant decimal digits of a positive finite `Float`, as `d.dddddddde±X`: enough
+for the `f32` nearest to it to read back as that `f32` (binary32 needs at most 9 digits). -/
+def sci9 (x : Float) : String := Id.run do
+  let e0 := (Float.floor (Float.log10 x)).toInt64.toInt
+  let scaled := fun (e : Int) => x * Float.pow 10.0 (Float.ofInt (8 - e))
+  let mut e := e0
+  let mut m := (scaled e).round
+  if m ≥ 1000000000.0 then e := e + 1; m := (scaled e).round
+  if m < 100000000.0 then e := e - 1; m := (scaled e).round
+  let digits := toString m.toUInt64.toNat
+  let d := digits.toList
+  let mant := String.ofList (d.take 1) ++ "." ++ String.ofList (d.drop 1)
+  return mant ++ "e" ++ (if e < 0 then "-" ++ toString (-e) else toString e)
+
+/-- A finite `Float`, rounded to `f32`, as a WGSL `f32` literal (nine significant digits; a
+minus sign as negation); `none` for NaN, an infinity, or a value whose text the subset does
+not take (beyond the 2-digit exponent of `Wgsl.litOf`). -/
 def floatLit (x : Float) : Option Wgsl.Expr :=
+  let x := x.toFloat32.toFloat
   if x.isNaN || x.isInf then none else
-  let t := (if x < 0.0 then -x else x).toString
+  if x == 0.0 then some (f "0.0") else
+  let t := sci9 (if x < 0.0 then -x else x)
   if Wgsl.Lit.ok (.float t) then some (if x < 0.0 then .unary "-" (f t) else f t) else none
 
 /-- gemm (`Compute.gemm`): `alpha · A · B + beta · C` on matrices, `A` `[M, K]` (`[K, M]` when
@@ -512,6 +557,82 @@ def moveKernel (m : Idx) (inShape out : Shape) : Except String Wgsl.Module := do
   if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
   if Shape.size inShape == 0 || Shape.size out == 0 then throw "webnn gpu: an empty tensor"
   Wgsl.finish (kernel ["x"] out (.index (.name "x") (flatIndex m inShape)))
+
+/-- An element-wise unary operator with `alpha` and `beta` (leakyRelu, linear, hardSigmoid,
+hardSwish, elu), or clamp with optional bounds. -/
+def unaryABKernel (name : String) (s : Shape) (alpha beta : Float) : Except String Wgsl.Module := do
+  if Shape.size s > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let some a := floatLit alpha | throw "webnn gpu: alpha"
+  let some b := floatLit beta | throw "webnn gpu: beta"
+  let some v := unaryExprAB name a b (.index (.name "x") (.name "k")) | throw s!"webnn gpu: no kernel for {name}"
+  Wgsl.finish (kernel ["x"] s v)
+
+def clampKernel (s : Shape) (lo hi : Option Float) : Except String Wgsl.Module := do
+  if Shape.size s > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let x := Wgsl.Expr.index (.name "x") (.name "k")
+  let bound := fun (v : Option Float) => v.map floatLit
+  let x ← match bound lo with
+    | some (some le) => pure (call2 "max" x le)
+    | some none => throw "webnn gpu: clamp bound"
+    | none => pure x
+  let x ← match bound hi with
+    | some (some he) => pure (call2 "min" x he)
+    | some none => throw "webnn gpu: clamp bound"
+    | none => pure x
+  Wgsl.finish (kernel ["x"] s x)
+
+/-- softmax along `axis` (`Compute.softmax`): the largest element of the row, then the sum of
+`exp(x - max)`, then this element's share. -/
+def softmaxKernel (s : Shape) (axis : Nat) : Except String Wgsl.Module := do
+  if axis ≥ s.length then throw "webnn gpu: softmax axis"
+  if Shape.size s > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let dim := s.getD axis 1
+  if dim == 0 || dim > Wgsl.maxCapLoop then throw "webnn gpu: softmax axis size"
+  let st := (strides s).getD axis 1
+  let base := Wgsl.Expr.binary "-" (nm "k") (mulE (nm (coordName axis)) (u st))
+  let xt := Wgsl.Expr.index (nm "x") (add base (mulE (nm "t") (u st)))
+  Wgsl.finish (loopsKernel ["x"] s [.varS "mx" none (some (.index (nm "x") base)), .varS "sum" none (some (f "0.0"))]
+    [(1, dim, stmts [.assign (nm "mx") "" (call2 "max" (nm "mx") xt)]),
+     (0, dim, stmts [.assign (nm "sum") "" (add (nm "sum") (call1 "exp" (.binary "-" xt (nm "mx"))))])]
+    (.binary "/" (call1 "exp" (.binary "-" (.index (nm "x") (nm "k")) (nm "mx"))) (nm "sum")))
+
+/-- concat along `axis` (`Move.concat`): output element `k` reads the input whose part of the
+axis holds its coordinate there; up to 7 inputs (bindings 0..6, the output 7). -/
+def concatKernel (shapes : List Shape) (axis : Nat) (out : Shape) : Except String Wgsl.Module := do
+  if shapes.isEmpty || shapes.length + 1 > Wgsl.maxBindings then throw "webnn gpu: concat inputs"
+  if axis ≥ out.length then throw "webnn gpu: concat axis"
+  if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let names := (List.range shapes.length).map fun i => s!"x{i}"
+  -- input i covers axis coordinates [off_i, off_i + d_i)
+  let offs := (shapes.foldl (fun (acc : List Nat × Nat) sh => (acc.1 ++ [acc.2], acc.2 + sh.getD axis 0)) ([], 0)).1
+  let read := fun (i : Nat) (sh : Shape) =>
+    let m : Idx := (List.range out.length).map fun a => if a == axis then .subFrom 0 (.lit 0) else .out a
+    -- the source index: the output's with the axis coordinate less the offset
+    let st := strides sh
+    let terms := (List.range out.length).map fun a =>
+      if a == axis then mulE (.binary "-" (nm (coordName a)) (u (offs.getD i 0))) (u (st.getD a 0))
+      else mulE (nm (coordName a)) (u (st.getD a 0))
+    let _ := m
+    Wgsl.Expr.index (nm s!"x{i}") (terms.foldl add (u 0))
+  let pairs := (shapes.zip (List.range shapes.length)).reverse
+  let v := match pairs with
+    | [] => f "0.0"
+    | (sh0, i0) :: rest => rest.foldl (fun acc (sh, i) =>
+        sel acc (read i sh) (.binary "<" (nm (coordName axis)) (u ((offs.getD i 0) + sh.getD axis 0)))) (read i0 sh0)
+  Wgsl.finish (kernel names out v)
+
+/-- batchNormalization along `axis` (`Compute.batchNorm`): `(x - mean) / sqrt(variance + eps)`,
+times scale, plus bias; bindings x, mean, variance, then scale and bias when given. -/
+def batchNormKernel (s : Shape) (axis : Nat) (eps : Float) (scale bias : Bool) : Except String Wgsl.Module := do
+  if axis ≥ s.length then throw "webnn gpu: batchNormalization axis"
+  if Shape.size s > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let some e := floatLit eps | throw "webnn gpu: epsilon"
+  let c := nm (coordName axis)
+  let y := Wgsl.Expr.binary "/" (.binary "-" (.index (nm "x") (nm "k")) (.index (nm "mean") c))
+    (call1 "sqrt" (add (.index (nm "variance") c) e))
+  let y := if scale then mulE y (.index (nm "scale") c) else y
+  let y := if bias then add y (.index (nm "bias") c) else y
+  Wgsl.finish (kernel (["x", "mean", "variance"] ++ (if scale then ["scale"] else []) ++ (if bias then ["bias"] else [])) s y)
 
 /-- Workgroups to dispatch for `n` output elements. -/
 def groups (n : Nat) : Nat := (n + wg - 1) / wg
@@ -556,6 +677,9 @@ def printed : Except String Wgsl.Module → String
 #guard ((poolKernel "maxPool2d" [1, 2, 8, 8] [1, 2, 4, 4] [3, 3] [2, 2] [1, 1] [1, 1, 1, 1]).toOption.map fun m => (Wgsl.compile m.print).toOption.isSome) == some true
 #guard ((reduceKernel "reduceMean" [2, 3, 4] [0, 2]).toOption.map fun m => (Wgsl.compile m.print).toOption.isSome) == some true
 #guard ((moveKernel (sliceMap [1, 0] [2, 1] 2) [5, 4] [2, 4]).toOption.map fun m => (Wgsl.compile m.print).toOption.isSome) == some true
+#guard (floatLit 0.01).map Wgsl.Expr.print == some "9.99999978e-3"
+#guard ((floatLit (-1.5e-7)).map Wgsl.Expr.print).any (·.startsWith "(-1.5")
+#guard (floatLit 3.0e38).map Wgsl.Expr.print == some "3.00000001e38"
 -- the u32 evaluator on the printed coordinate of a slice
 #guard evalU (fun s => if s == "o0" then some 5 else none) (emitC coordName (.add (.lit 2) (.mulLit (.out 0) 3))) == some 17
 
