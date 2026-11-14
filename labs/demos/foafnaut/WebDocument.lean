@@ -2037,15 +2037,18 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   fun node op => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
     else if op == 23 then some (fontFacesAnswer h dom request)
     else if op == 40 then some sheetText.get
-    else if op == 20 || op ≥ 200 then
+    else if op == 20 || op == 35 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
       -- document has no computed style (the declaration is empty)
       | .ok (styles, flat, matchesOf) => if node < dom.size && (dom.get node).type == .element && dom.connected node then
           let c := styles[node]?.getD {}
+          let view : Rendering.ComputedGeneric.View :=
+            { dom := flat, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height }
+          -- 35: the custom properties that apply to the element; 200 + k: the k-th property's value
           some (if op == 20 then Rendering.ComputedValues.text c
-            else Rendering.ComputedGeneric.valueAt
-              { dom := flat, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height } node (op - 200))
+            else if op == 35 then Rendering.ComputedGeneric.customNamesText view node
+            else Rendering.ComputedGeneric.valueAt view node (op - 200))
         else some ""
       | .error _ => none
     else match laid.get with

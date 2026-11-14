@@ -62,12 +62,17 @@ def coveringNames (p : String) : List String := p :: (coverIndex.get[p]?).getD [
 element `id`: the canonical specified value of the winning declaration. -/
 def cascaded (v : View) (id : Nat) (p : String) : Option String := Id.run do
   let n := v.dom.get id
-  let names := coveringNames p
+  -- `all` sets every property but `direction`, `unicode-bidi` and the custom properties
+  -- (CSS Cascade 4 §3.2), to a CSS-wide keyword
+  let allApplies := !CssValues.isCustom p && p != "direction" && p != "unicode-bidi"
+  let names := if allApplies then "all" :: coveringNames p else coveringNames p
   let mut best : Option (List Nat × String) := none
   let mut order : Nat := 0
   let consider := fun (best : Option (List Nat × String)) (key : List Nat) (d : Declaration) =>
     if names.contains d.property && (best.map (fun b => keyLE b.1 key)).getD true then
-      match (CssValues.expand d.property d.value).bind (·.lookup p) with
+      let value := if d.property == "all" then CssValues.specified "all" d.value
+        else (CssValues.expand d.property d.value).bind (·.lookup p)
+      match value with
       | some value => some (key, value)
       | none => best
     else best
@@ -83,7 +88,7 @@ def cascaded (v : View) (id : Nat) (p : String) : Option String := Id.run do
       order := order + 1
   for d in CssValues.Block.parseOnly names (attrValue n "style") do
     let key := [if d.important then 1 else 0, 2 + (if d.important then 0 else 1), 1, 0, 0, 0, order]
-    if d.name == p && (best.map (fun b => keyLE b.1 key)).getD true then best := some (key, d.value)
+    if (d.name == p || d.name == "all") && (best.map (fun b => keyLE b.1 key)).getD true then best := some (key, d.value)
     order := order + 1
   return best.map (·.2)
 
@@ -241,6 +246,28 @@ def namesText : String :=
 /-- The number of properties of the layout profile: the first names of `nameLists`. -/
 def profileCount : Nat := (ComputedValues.values {}).length
 
+/-- The custom properties declared for element `id` or one of its ancestors (they are
+inherited), in the order found: by a matching rule or by a `style` attribute. A computed
+style answers for these too. A loop up the ancestors (a tail call). -/
+def customNamesLoop (v : View) : Nat → Option Nat → List String → List String
+  | 0, _, acc => acc.reverse
+  | fuel + 1, node, acc =>
+    match node with
+    | none => acc.reverse
+    | some id =>
+      let fromRules := (v.matchesOf id).flatMap fun (_, rule, _) =>
+        rule.declarations.filterMap fun d => if CssValues.isCustom d.property then some d.property else none
+      let fromStyle := (CssValues.declNames (attrValue (v.dom.get id) "style")).filter CssValues.isCustom
+      let acc := (fromRules ++ fromStyle).foldl (fun acc n => if acc.contains n then acc else n :: acc) acc
+      customNamesLoop v fuel (parentElement v.dom id) acc
+
+def customNames (v : View) (id : Nat) : List String := customNamesLoop v depthBound (some id) []
+
+/-- The answer of a page for the custom properties of a computed style: the names
+separated by U+0000. The value of the `i`-th is `valueAt` at the count of the table's
+names plus `i`. -/
+def customNamesText (v : View) (id : Nat) : String := "\x00".intercalate (customNames v id)
+
 /-- The computed value of the `k`-th name (`longhandNames` then `otherNames`) on element
 `id`, with `profileValue` the layout profile's answer for a profile property. -/
 def valueAt (v : View) (id : Nat) (k : Nat) : String :=
@@ -269,6 +296,10 @@ def valueAt (v : View) (id : Nat) (k : Nat) : String :=
     let name := if k < longhands.size then longhands[k]? else others[k - longhands.size]?
     match name with
     | some name => computedOf v id name
-    | none => ""
+    | none =>
+      -- past the table's names: the custom properties of the element, in `customNames` order
+      match (customNames v id)[k - longhands.size - others.size]? with
+      | some name => computedLonghand v depthBound id name
+      | none => ""
 
 end L4Factoidal.Rendering.ComputedGeneric
