@@ -210,3 +210,12 @@ The failures of this run, by cause:
 
 6.2.1.a uses a type defined by an inline schema; the engine reports it as
 unsupported.
+
+## Final measured run (as merged to main, 4c41cd013)
+
+`l4xforms` built from the merged tree: (a) model 212 pass, 6 fail, 31 unsupported (out of 249); (b) view model 42 pass,
+5 fail, 36 unsupported (out of 83); (c) submission 0 pass, 0 fail, 100 unsupported (out of 100); (d) 29 need a human
+reader (not scored). The last changes: the text of a control's `alert` and its in-range state (`xforms-in-range` /
+`xforms-out-of-range` on `range`), focus given to a group moves to its first form control (`Form.firstControlGo`, a
+fuel-bounded work list). The modules are imported by the library root, so the full Lean build checks the
+recalculation theorems.
