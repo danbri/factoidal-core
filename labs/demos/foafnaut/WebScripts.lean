@@ -67,6 +67,12 @@ argument for `start`:
   answer (undo and redo; on a run with several, one more each time). Not on the AOT path.
   Status 0 is a network failure. Every decision is `L4Factoidal.Net.PageFetch`.
 
+Every action but `start` may carry `view` (`{textScalePercent, zoomUnit, media}`, each
+optional): the window's view now. The session's layout request takes those fields
+(`takeView`), so the layout its scripts read stays the one the page is drawn with when the
+text size changes, the window moves to a screen of another scale, or a first page's window
+becomes known after its scripts started. A host sends it with `resize`.
+
 `start` also takes `width` and `height` (the viewport in CSS pixels: `innerWidth`,
 `innerHeight`), `layout` (the render request whose `layoutFields` lay the page out for
 the layout reads of its scripts, `WebDocument.measure`) and `instructionsPerMs` (the
@@ -348,6 +354,37 @@ def setReads (held : Held) (env : PageCanvas.Env) (measure : Option Page.Measure
   { held with
     session := held.session.map fun (id, s, m) => (id, { s with host := page s.host }, m),
     leanSession := held.leanSession.map fun (id, s, m) => (id, s.setHost (page s.host), m) }
+
+/-- The fields of a layout request that a window changes with no new page: the text size, the
+device pixels of a CSS pixel, and the media type. -/
+def viewFields : List String := ["textScalePercent","zoomUnit","media"]
+
+/-- The layout request `layout` with the view fields that `view` has, in place of its own. -/
+def withView (layout view : JSON.Json) : JSON.Json :=
+  match layout with
+  | .object fields =>
+    .object (fields.filter (fun f => !(viewFields.contains f.1 && (view.field? f.1).isSome)) ++
+      viewFields.filterMap fun k => (view.field? k).map (k,·))
+  | other => other
+
+/-- Drop the layout kept for the layout reads (`Page.Reads.kept`): the next read lays the
+page out again. -/
+def dropKept (held : Held) : Held :=
+  let page := fun (h : Page.Host) => { h with reads := { h.reads with kept := none } }
+  { held with
+    session := held.session.map fun (id, s, m) => (id, { s with host := page s.host }, m),
+    leanSession := held.leanSession.map fun (id, s, m) => (id, s.setHost (page s.host), m) }
+
+/-- The held layout request after a turn's `view` (the window's text size and zoom unit now):
+the session's layout reads are then of the view the page is drawn in. `start` sets the whole
+request itself. A view that changes nothing keeps the kept layout. -/
+def takeView (held : Held) (action : String) (request : JSON.Json) : Held :=
+  if action == "start" then held else
+  match request.field? "view" with
+  | some view =>
+    let next := withView held.layoutRequest view
+    if next == held.layoutRequest then held else dropKept { held with layoutRequest := next }
+  | none => held
 
 /-- The page's arena, parsed as `WebDocument.prepareDOM` parses it, so node numbers agree
 with a render's replay of the commands. -/
@@ -987,6 +1024,9 @@ of its scripts (`WebDocument.measure`), with the `layout` request of `start`. -/
 def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action html : String) (request : JSON.Json)
     (measure : JSON.Json → Option Page.Measure := fun _ => none) (canvas : PageCanvas.Env := {}) :
     M (Held × Except String String) := do
+  -- The window's view now (`view`), before the reads are set: a new text size or zoom unit
+  -- reaches the layout that the page's scripts read (`takeView`).
+  let held := takeView held action request
   let held := setReads held canvas (measure held.layoutRequest)
   let full := request.field? "full" == some (.bool true)
   match action with
