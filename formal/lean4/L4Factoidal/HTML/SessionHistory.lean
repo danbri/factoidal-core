@@ -76,6 +76,8 @@ its URL) parsed against the document's URL, when the document may take it. -/
 def newURL (docURL : String) (url : Option String) : Option String :=
   match url with
   | none => some docURL
+  -- the empty string is the document's URL itself, fragment included (whatwg/html#9343)
+  | some "" => some docURL
   | some u =>
     match parseUrl docURL none, parseUrl u (some docURL) with
     | some d, some t => if canRewrite d t then some t.serialize else none
@@ -251,6 +253,7 @@ private def url (s : String) : Url := (parseUrl s none).getD {}
 #guard newURL "https://example.com/dir/page.html" (some "https://evil.example/") == none
 #guard newURL "https://example.com/dir/page.html" none == some "https://example.com/dir/page.html"
 #guard newURL "https://example.com/dir/page.html" (some "") == some "https://example.com/dir/page.html"
+#guard newURL "https://example.com/p#test" (some "") == some "https://example.com/p#test"
 #guard newURL "https://example.com/" (some "http://[") == none
 #guard isFragmentNavigation "https://example.com/a?b" "https://example.com/a?b#c" && !isFragmentNavigation "https://example.com/a" "https://example.com/b#c"
 #guard !isFragmentNavigation "https://example.com/a#x" "https://example.com/a"

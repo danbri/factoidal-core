@@ -891,6 +891,7 @@
   // with no such check (DOM §4.9 toggleAttribute; Trusted Types hooks only the set methods).
   const setAttrPlain = (el, k, v) => {
     chk(n.setAttr(nodeId(el), k, v));
+    if ((k === 'src' || k === 'SRC') && el instanceof HTMLElement) mediaSrcSet(el);
     // An event handler content attribute: a name that starts with "on", in any case.
     if (k.length >= 2 && (k.charCodeAt(0) | 32) === 111 && (k.charCodeAt(1) | 32) === 110)
       contentHandler(el, k.toLowerCase().slice(2), v);
@@ -1220,6 +1221,7 @@
   // HTML §4.8.11: audio and video elements are media elements.
   class HTMLMediaElement extends HTMLElement {}
   const mediaGlobals = {};
+  let mediaSrcSet = () => {};
   const htmlClass = (name, tags) => {
     const B = name === 'HTMLVideoElement' || name === 'HTMLAudioElement' ? HTMLMediaElement : HTMLElement;
     const c = ({ [name]: class extends B {} })[name]; for (const t of tags) htmlClasses[t] = c; return c;
@@ -1320,13 +1322,16 @@
         m.error = null; m.currentTime = 0;
         if (m.networkState === 2 || m.networkState === 1) fire(this, 'abort', {});
         if (m.networkState !== 0) { m.networkState = 0; fire(this, 'emptied', {}); }
-        const src = this.getAttribute('src');
+        // "resource selection": no source yet; it goes on at the next stable state
+        m.networkState = 3;
         const sources = () => [...this.children].filter(c => c.localName === 'source' && c.namespaceURI === 'http://www.w3.org/1999/xhtml');
-        if (m.srcObject === null && src === null && sources().length === 0) return;
-        m.networkState = 2;
-        setTimeout(() => {
+        Promise.resolve().then(() => {
           if (m.generation !== gen) return;
+          const src = this.getAttribute('src');
+          if (m.srcObject === null && src === null && sources().length === 0) { m.networkState = 0; return; }
+          m.networkState = 2;
           fire(this, 'loadstart', {});
+          // no decoder: the candidate fails
           if (m.srcObject !== null || src !== null) {
             const e = Object.create(MediaError.prototype);
             mediaErrors.set(e, { code: 4, message: 'MEDIA_ELEMENT_ERROR: Format error' });
@@ -1336,7 +1341,7 @@
             m.networkState = 3;
             for (const s of sources()) fire(s, 'error', {});
           }
-        }, 0);
+        });
       },
       canPlayType(type) { M(this); if (arguments.length < 1) throw new TypeError("Failed to execute 'canPlayType' on 'HTMLMediaElement': 1 argument required, but only 0 present."); return ''; },
       play() {
@@ -1364,6 +1369,8 @@
     Object.defineProperty(Audio, 'prototype', { value: named.HTMLAudioElement.prototype, writable: false, enumerable: false, configurable: false });
     // defined on the global with the element interfaces (`...named` below)
     named.HTMLMediaElement = HTMLMediaElement;
+    // HTML §4.8.11.3: setting or changing a media element's src attribute runs the load algorithm
+    mediaSrcSet = el => { if (el instanceof HTMLMediaElement) el.load(); };
     Object.assign(mediaGlobals, { Audio, MediaError, TimeRanges });
   }
   // An iframe's document is Lean's (Hosts.Page.start `frames`, node_info 11). The frames share
@@ -3913,7 +3920,7 @@
   def('PopStateEvent', PopStateEvent); def('PageTransitionEvent', PageTransitionEvent);
   const sessionHistory = (() => {
     let wire = null, length = 1, current = 0, restoration = 'auto';
-    const states = [null];
+    const states = [null], recentCalls = [];
     const ensure = () => { if (wire === null) wire = String(n.query(0, 197, 'init\u0000' + href)); return wire; };
     // "K" url U+0003 state key U+0003 fragment changed U+0003 length U+0003 history
     const take = r => {
@@ -3959,6 +3966,12 @@
       if (args.length < 2) throw new TypeError(`Failed to execute '${what}' on 'History': 2 arguments required, but only ${args.length} present.`);
       const serialized = globalThis.structuredClone(data);
       if (inFrame()) return;
+      // "optionally return" (HTML §7.4.4 step 2): more than 200 calls in 10 seconds are
+      // ignored, as browsers throttle them
+      const now = globalThis.performance ? globalThis.performance.now() : 0;
+      while (recentCalls.length && now - recentCalls[0] > 10000) recentCalls.shift();
+      if (recentCalls.length >= 200) return;
+      recentCalls.push(now);
       const given = url !== undefined && url !== null;
       const key = states.push(serialized) - 1;
       const r = n.query(0, 197, op + '\u0000' + ensure() + '\u0000' + (given ? String(url) : '') + '\u0000' + (given ? '1' : '0') + '\u0000' + key);
@@ -13989,6 +14002,58 @@
   // The [SecureContext] interfaces of client-side storage: dropped from a worker that is not a secure context.
   const secureOnlyGlobals = new Set(['FileSystemHandle', 'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream',
     'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager', 'StorageBucket', 'StorageBucketManager', 'caches', 'Cache', 'CacheStorage']);
+  // ---- Navigator (HTML §8.9.1): an interface with a prototype, as Web IDL has it. The members
+  // of the navigator made above (and those other sections add to it) become accessors of
+  // Navigator.prototype that read it; NavigatorID's legacy values are Gecko's (this browser
+  // is neither Chrome nor WebKit), plugins and MIME types are empty (HTML §8.9.1.6).
+  {
+    // HTML §8.9.1.3: registerProtocolHandler and unregisterProtocolHandler. Whether the call
+    // may go on is Lean's (HTML.ProtocolHandler, node_query 198); no handler is kept.
+    const protocolHandlerCheck = (what, args) => {
+      if (args.length < 2) throw new TypeError(`Failed to execute '${what}' on 'Navigator': 2 arguments required, but only ${args.length} present.`);
+      const scheme = String(args[0]), url = String(args[1]);
+      const r = n.query(0, 198, href + '\u0000' + scheme + '\u0000' + url);
+      if (r === 'S') throw new DOMException(`Failed to execute '${what}' on 'Navigator': The scheme '${scheme}' or the URL '${url}' is not allowed for this document.`, 'SecurityError');
+      if (r === 'Y') throw new DOMException(`Failed to execute '${what}' on 'Navigator': The URL '${url}' is invalid.`, 'SyntaxError');
+    };
+    const protocolHandlers = {
+      registerProtocolHandler(scheme, url) { protocolHandlerCheck('registerProtocolHandler', arguments); },
+      unregisterProtocolHandler(scheme, url) { protocolHandlerCheck('unregisterProtocolHandler', arguments); },
+    };
+    const plain = globalThis.navigator;
+    class Navigator { constructor() { throw new TypeError('Illegal constructor'); } }
+    // [SecureContext] members (HTML §8.9.1.3): absent from the navigator of a page that is not
+    // a secure context (https, or a loopback host)
+    const secureOnly = new Set(['registerProtocolHandler', 'unregisterProtocolHandler']);
+    const pageSecure = () => { const m = /^([a-z][a-z0-9+.-]*):\/\/([^/:?#]*|\[[^\]]*\])/i.exec(href); return !!m && (m[1].toLowerCase() === 'https' || ['localhost', '127.0.0.1', '[::1]'].includes(m[2].toLowerCase())); };
+    const hidden = p => typeof p === 'string' && secureOnly.has(p) && !pageSecure();
+    const nav = new Proxy(Object.create(Navigator.prototype), {
+      get(t, p, r) { return hidden(p) ? undefined : Reflect.get(t, p, r); },
+      has(t, p) { return hidden(p) ? false : Reflect.has(t, p); },
+    });
+    const own = o => { if (o !== nav) throw new TypeError("Illegal invocation: 'Navigator'"); };
+    class PluginArray { constructor() { throw new TypeError('Illegal constructor'); } }
+    class MimeTypeArray { constructor() { throw new TypeError('Illegal constructor'); } }
+    for (const C of [PluginArray, MimeTypeArray]) {
+      Object.defineProperty(C.prototype, 'length', { get() { return 0; }, configurable: true, enumerable: true });
+      for (const k of ['item', 'namedItem']) Object.defineProperty(C.prototype, k, { value: function () { return null; }, writable: true, configurable: true, enumerable: true });
+    }
+    Object.defineProperty(PluginArray.prototype, 'refresh', { value: function refresh() {}, writable: true, configurable: true, enumerable: true });
+    const plugins = Object.create(PluginArray.prototype), mimeTypes = Object.create(MimeTypeArray.prototype);
+    const extra = { appCodeName: 'Mozilla', appName: 'Netscape', product: 'Gecko', productSub: '20100101', vendor: '', vendorSub: '',
+      pdfViewerEnabled: false, plugins, mimeTypes };
+    const getter = (k, get) => Object.defineProperty(Navigator.prototype, k, { get() { own(this); return get(); }, configurable: true, enumerable: true });
+    for (const k of Object.getOwnPropertyNames(plain)) {
+      const d = Object.getOwnPropertyDescriptor(plain, k);
+      getter(k, d.get ? () => d.get.call(plain) : () => d.value);
+    }
+    getter('appVersion', () => String(plain.userAgent).replace(/^Mozilla\//, ''));
+    for (const [k, v] of Object.entries(extra)) if (!(k in Navigator.prototype)) getter(k, () => v);
+    for (const [k, f] of Object.entries({ ...protocolHandlers, javaEnabled() { own(this); return false; } }))
+      Object.defineProperty(Navigator.prototype, k, { value: f, writable: true, configurable: true, enumerable: true });
+    def('Navigator', Navigator); def('PluginArray', PluginArray); def('MimeTypeArray', MimeTypeArray);
+    def('navigator', nav); def('clientInformation', nav);
+  }
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
@@ -14940,7 +15005,8 @@
       const doc = info(id, 7);
       if (doc === 0) return true;
       const frame = info(doc, 12);
-      return frame >= 0 && connectedId(frame);
+      // and its sandbox lets scripts run (frame bit 2: allow-scripts or no sandbox)
+      return frame >= 0 && connectedId(frame) && (info(frame, 29) & 2) !== 0;
     };
     const prepare = id => {
       if (info(id, 0) !== 1 || str(id, 0) !== 'script') { fresh.delete(id); return; }

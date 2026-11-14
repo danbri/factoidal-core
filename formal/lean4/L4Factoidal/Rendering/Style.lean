@@ -1481,18 +1481,17 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
       s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyle := .solid}
   return s
 
-/-- HTML §15.3.3: the margins of `body` from its `marginheight`, `topmargin`,
-`bottommargin`, `marginwidth`, `leftmargin` and `rightmargin` attributes (pixel lengths;
-`marginheight` before `topmargin` and `bottommargin`, `marginwidth` before `leftmargin` and
-`rightmargin`). -/
+/-- HTML §15.3.3: the margins of `body` from its `marginheight`, `topmargin`, `marginwidth`
+and `leftmargin` attributes (pixel lengths; `marginheight` before `topmargin`, `marginwidth`
+before `leftmargin`); `rightmargin` and `bottommargin` are not read in standards mode. -/
 def bodyMarginHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   if n.lname != "body" then return s
   let first := fun (names : List String) => names.findSome? fun a => pixelLengthAttribute (attrValue n a)
   let mut m := s.margin
   if let some v := first ["marginheight", "topmargin"] then m := {m with top := v}
-  if let some v := first ["marginheight", "bottommargin"] then m := {m with bottom := v}
+  if let some v := first ["marginheight"] then m := {m with bottom := v}
   if let some v := first ["marginwidth", "leftmargin"] then m := {m with left := v}
-  if let some v := first ["marginwidth", "rightmargin"] then m := {m with right := v}
+  if let some v := first ["marginwidth"] then m := {m with right := v}
   return {s with margin := m}
 
 /-- The order of cascade keys: lists of numbers, lexicographically; a list is not above

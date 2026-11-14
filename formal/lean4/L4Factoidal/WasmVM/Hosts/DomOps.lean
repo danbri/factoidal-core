@@ -960,7 +960,14 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 196 => let n ← nodeArg d id; return L4Factoidal.HTML.FormEntries.answer d n q
   -- 197: the session history of the page's document (`HTML.SessionHistory.answer`): `q` is an
   -- operation (init, push, replace, fragment, go), U+0000, the history and its arguments
-  | 197 => return L4Factoidal.HTML.SessionHistory.answer q
+  -- (the page's URL follows the current entry: a document made later, as by DOMParser, and
+  -- the document's own URL answers read it)
+  | 197 =>
+    let r := L4Factoidal.HTML.SessionHistory.answer q
+    if r.startsWith "K" then
+      let u := ((r.drop 1).toString.splitOn "\x03").headD ""
+      if !u.isEmpty then modify fun st => { st with url := u }
+    return r
   -- 198: whether `navigator.registerProtocolHandler` or `unregisterProtocolHandler` may go on
   -- (`HTML.ProtocolHandler.answer`): `q` is the document's URL, U+0000, scheme, U+0000, URL
   | 198 => return L4Factoidal.HTML.ProtocolHandler.answer q
