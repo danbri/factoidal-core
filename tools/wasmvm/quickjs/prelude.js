@@ -3987,6 +3987,7 @@
   def('location', location);
   // navigator.serviceWorker: the ServiceWorkerContainer of section workers, made on first use
   let serviceWorkerOf = () => undefined;
+  let sendBeaconOf = null;
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
     cookieEnabled: false, hardwareConcurrency: 1, gpu,
     // StorageManager (section File System API); undefined on an engine without the ops.
@@ -3997,6 +3998,8 @@
     get ml() { return webnnOn() ? webnn().ml : undefined; },
     // StorageBucketManager (section Storage Buckets API).
     get storageBuckets() { return bucketsApi()?.manager; },
+    // Beacon (section fetch): sendBeacon
+    sendBeacon(url, data = null) { if (sendBeaconOf === null) throw new TypeError("Failed to execute 'sendBeacon' on 'Navigator': the network is off"); return sendBeaconOf.apply(this, arguments); },
     // ServiceWorkerContainer (section workers).
     get serviceWorker() { return serviceWorkerOf(); } }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
@@ -6447,9 +6450,11 @@
     return WebSocketStream;
   });
 
-  lazy('fetch', () => {
+  let fetchC;
+  const makeFetch = () => {
+    if (fetchC !== undefined) return fetchC;
     if (apiCall(75, []) !== '1') return undefined;
-    return function fetch(input, init = undefined) {
+    return fetchC = function fetch(input, init = undefined) {
       return new Promise((resolve, reject) => {
         const request = new (makeRequest())(input, init), st = requests.get(request), signal = st.signal;
         if (signal.aborted) { reject(signal.reason); return; }
@@ -6498,7 +6503,29 @@
         x.send(b.bytes);
       });
     };
-  });
+  };
+  lazy('fetch', makeFetch);
+  // navigator.sendBeacon (Beacon §3.2): a POST with credentials through the same fetch (every
+  // decision Lean's); "no-cors" when the body's type is CORS-safelisted, else "cors". A URL that
+  // does not parse, or that is not http(s), is a TypeError; a body over 64 KiB is refused (false).
+  sendBeaconOf = function sendBeacon(url, data = null) {
+    const what = "Failed to execute 'sendBeacon' on 'Navigator'";
+    if (arguments.length < 1) throw new TypeError(`${what}: 1 argument required, but only 0 present.`);
+    const u = resolveURL(usv(url), scriptBase());
+    if (u === null || !/^https?:/i.test(u)) throw new TypeError(`${what}: The URL argument is ill-formed or unsupported.`);
+    const f = makeFetch();
+    if (f === undefined) return false;
+    let mode = 'no-cors', size = 0;
+    if (data !== null && data !== undefined) {
+      const [raw, ct] = extractBody(data, what);
+      size = typeof raw === 'string' ? utf8(raw).length : (raw.byteLength ?? raw.length ?? 0);
+      const essence = String(ct).split(';')[0].trim().toLowerCase();
+      if (ct !== '' && !['application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain'].includes(essence)) mode = 'cors';
+    }
+    if (size > 65536) return false;
+    f(u, { method: 'POST', body: data, credentials: 'include', mode, keepalive: true }).catch(() => {});
+    return true;
+  };
   const st_xhr = x => xhrState.get(x);
 
   // ---- Origin (HTML §7.5 "Origin.from", the Origin interface) -----------------------------
