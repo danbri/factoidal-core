@@ -11484,8 +11484,10 @@
   const sheetState = new WeakMap(), ruleState = new WeakMap(), ruleLists = new WeakMap(), mediaLists = new WeakMap();
   const illegal = () => { throw new TypeError('Illegal constructor'); };
   class CSSRule { constructor() { illegal(); } }
-  consts(CSSRule, { STYLE_RULE: 1, CHARSET_RULE: 2, IMPORT_RULE: 3, MEDIA_RULE: 4, FONT_FACE_RULE: 5, PAGE_RULE: 6, KEYFRAMES_RULE: 7,
-    KEYFRAME_RULE: 8, MARGIN_RULE: 9, NAMESPACE_RULE: 10, COUNTER_STYLE_RULE: 11, SUPPORTS_RULE: 12, FONT_FEATURE_VALUES_RULE: 14 });
+  // WebIDL constants are on the interface object and on its prototype (WebIDL §3.7.5)
+  for (const o of [CSSRule, CSSRule.prototype])
+    consts(o, { STYLE_RULE: 1, CHARSET_RULE: 2, IMPORT_RULE: 3, MEDIA_RULE: 4, FONT_FACE_RULE: 5, PAGE_RULE: 6, KEYFRAMES_RULE: 7,
+      KEYFRAME_RULE: 8, MARGIN_RULE: 9, NAMESPACE_RULE: 10, COUNTER_STYLE_RULE: 11, SUPPORTS_RULE: 12, FONT_FEATURE_VALUES_RULE: 14 });
   class CSSGroupingRule extends CSSRule {}
   class CSSConditionRule extends CSSGroupingRule {}
   const ruleClasses = { Rule: CSSRule, GroupingRule: CSSGroupingRule, ConditionRule: CSSConditionRule };
@@ -11594,19 +11596,25 @@
     configurable: true, enumerable: true });
   for (const k of ['StyleRule', 'FontFaceRule', 'PageRule', 'PositionTryRule'])
     Object.defineProperty(ruleClasses[k].prototype, 'style', { get() { return ruleStyle(this); }, set(v) { ruleStyle(this).cssText = v; }, configurable: true, enumerable: true });
+  // A MediaList keeps how to read and write its text; its members are on MediaList.prototype
+  // (CSSOM §4.1), reading that state.
+  const mediaState = new WeakMap();
+  const mediaOf = m => { const st = mediaState.get(m); if (!st) throw new TypeError('Illegal invocation'); return st; };
+  const mediaNeed = (args, what) => { if (args.length < 1) throw new TypeError(`${what}: 1 argument required`); };
+  const mediaItems = st => { const t = st.get(); return t === '' ? [] : t.split(',').map(x => x.trim()); };
+  Object.defineProperties(MediaList.prototype, {
+    mediaText: { get() { return mediaOf(this).get(); }, set(v) { mediaOf(this).set(v === null ? '' : String(v)); }, enumerable: true, configurable: true },
+    length: { get() { return mediaItems(mediaOf(this)).length; }, enumerable: true, configurable: true },
+    item: { value: function item(i) { const st = mediaOf(this); mediaNeed(arguments, 'MediaList.item'); return mediaItems(st)[i >>> 0] ?? null; }, enumerable: true, configurable: true, writable: true },
+    appendMedium: { value: function appendMedium(x) { const st = mediaOf(this); mediaNeed(arguments, 'MediaList.appendMedium'); const xs = mediaItems(st); if (!xs.includes(String(x))) st.set(xs.concat(String(x)).join(', ')); }, enumerable: true, configurable: true, writable: true },
+    deleteMedium: { value: function deleteMedium(x) { const st = mediaOf(this); mediaNeed(arguments, 'MediaList.deleteMedium'); const xs = mediaItems(st); if (!xs.includes(String(x))) throw sheetErr('NotFoundError'); st.set(xs.filter(y => y !== String(x)).join(', ')); }, enumerable: true, configurable: true, writable: true },
+    toString: { value: function toString() { return mediaOf(this).get(); }, enumerable: true, configurable: true, writable: true },
+  });
   const mediaListOf = (owner, get, set) => {
     let m = mediaLists.get(owner);
     if (!m) {
       m = Object.create(MediaList.prototype);
-      const items = () => { const t = get(); return t === '' ? [] : t.split(',').map(x => x.trim()); };
-      Object.defineProperties(m, {
-        mediaText: { get, set: v => set(v === null ? '' : String(v)), enumerable: true, configurable: true },
-        length: { get: () => items().length, enumerable: true, configurable: true },
-        item: { value: i => items()[i >>> 0] ?? null, configurable: true, writable: true },
-        appendMedium: { value: x => { const xs = items(); if (!xs.includes(String(x))) set(xs.concat(String(x)).join(', ')); }, configurable: true, writable: true },
-        deleteMedium: { value: x => { const xs = items(); if (!xs.includes(String(x))) throw sheetErr('NotFoundError'); set(xs.filter(y => y !== String(x)).join(', ')); }, configurable: true, writable: true },
-        toString: { value: () => get(), configurable: true, writable: true },
-      });
+      mediaState.set(m, { get, set });
       mediaLists.set(owner, m);
     }
     return m;
