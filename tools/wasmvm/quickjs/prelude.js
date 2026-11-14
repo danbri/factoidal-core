@@ -2783,7 +2783,9 @@
         return undefined;
       } finally { asking = false; }
     };
-    Object.defineProperty(globalThis, '\u{10FFFE}WindowNamedProperties', { value: namedProperty, writable: false, enumerable: false, configurable: false });
+    // BubblePopJS: the engine's slot for named properties, which no property key of a script
+    // names (n.setNamedGetter). Another engine has no such slot.
+    if (typeof n.setNamedGetter === 'function') n.setNamedGetter(namedProperty);
   }
   // ==== customelements: Custom elements (HTML §4.13) ====================================
   // The registry, the definitions and the callbacks are these JavaScript objects. Lean decides

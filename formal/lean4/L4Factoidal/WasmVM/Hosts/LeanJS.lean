@@ -615,7 +615,9 @@ def prepareSource (lim : Page.Limits := {}) : Except String Session := do
   -- the structured clone and classic scripts for dedicated workers (`JS.Clone`): built-ins
   -- of the engine, not of the host, since they walk the heap
   let heap := JS.addNatives heap nobj #[("serialize", .x .cloneSerialize, 2), ("deserialize", .x .cloneDeserialize, 1),
-    ("runScript", .x .classicScript, 1)]
+    ("runScript", .x .classicScript, 1),
+    -- the global object's slot for the page's named properties (`JS.namedGetterKey`)
+    ("setNamedGetter", .x .namedGetterSet, 1)]
   let ((o, f), heap) := JS.evalValue heap prelude
   if let some m := failure o then throw s!"prelude: {m}"
   let ((o, api), heap) := JS.callFunction heap f .undef #[nobj]

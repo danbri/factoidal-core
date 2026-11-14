@@ -280,10 +280,25 @@ a private-name key that no reflection lists). A page's function answers with the
 properties of the Window object (HTML §7.3.3). Here a script plays the host. With no such
 function nothing changes: the last script. -/
 
-#guard out "Object.defineProperty(globalThis, '\\u{10FFFE}WindowNamedProperties', { value: function (name) { return name === 'foo' ? 42 : undefined; } }); print(typeof foo, foo, globalThis.foo, typeof bar, globalThis.bar); try { bar } catch (e) { print(e.name) } print(Object.getOwnPropertyNames(globalThis).some(function (k) { return k.indexOf('WindowNamed') >= 0; }))" == ["number 42 42 undefined undefined", "ReferenceError", "false"]
+/-- `out` on a realm whose global `host` has the engine's `setNamedGetter`, as a page host's
+natives object has (the slot's key is a private-name key: no String key of a script is it). -/
+private def outHost (src : String) : List String :=
+  let (nobj, h) := hostObject freshHeap #[]
+  let h := addNatives h nobj #[("setNamedGetter", .x .namedGetterSet, 1)]
+  let ((_, f), h) := evalValue h "(function (n) { globalThis.host = n })"
+  let (_, h) := callFunction h f .undef #[nobj]
+  match runScript h src with
+  | (.ok, h) => h.out.toList
+  | (.threw _ m, h) => h.out.toList ++ ["Uncaught " ++ m]
+  | (.syntaxError m, _) => [m]
+  | (.halted w, _) => ["halted " ++ w]
+
+#guard outHost "host.setNamedGetter(function (name) { return name === 'foo' ? 42 : undefined; }); print(typeof foo, foo, globalThis.foo, typeof bar, globalThis.bar); try { bar } catch (e) { print(e.name) } print(Object.getOwnPropertyNames(globalThis).some(function (k) { return k.indexOf('WindowNamed') >= 0; }))" == ["number 42 42 undefined undefined", "ReferenceError", "false"]
 -- a declared name shadows a named property
-#guard out "Object.defineProperty(globalThis, '\\u{10FFFE}WindowNamedProperties', { value: function (name) { return 42; } }); var foo; print(typeof foo, foo); foo = 5; print(foo, globalThis.foo)" == ["undefined undefined", "5 5"]
+#guard outHost "host.setNamedGetter(function (name) { return 42; }); var foo; print(typeof foo, foo); foo = 5; print(foo, globalThis.foo)" == ["undefined undefined", "5 5"]
 #guard out "print(typeof nothing, globalThis.nothing); try { nothing } catch (e) { print(e.name) }" == ["undefined undefined", "ReferenceError"]
+-- a script cannot set the slot: its String key is not the slot's key (`strKey_not_priv`)
+#guard out "Object.defineProperty(globalThis, '\\u{10FFFE}WindowNamedProperties', { value: function (name) { return 42; } }); print(typeof foo, globalThis.foo)" == ["undefined undefined"]
 /-! ## `for await` (§14.7.5)
 
 The parser reads `for await (x of e) body` as statements the evaluator already runs

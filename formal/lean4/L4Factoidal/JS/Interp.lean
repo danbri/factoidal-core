@@ -7685,6 +7685,10 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | 35 | 37 => Date.timeString t
         | 38 => Date.utcString t
         | _ => Date.toStr t))
+    | (.x .namedGetterSet) =>
+      -- the host's function for the named properties of the global object (`namedGlobal`)
+      defineOwn r.globalObj namedGetterKey (.data a0 false false false)
+      pure .undef
     | (.x .dynImport) =>
       let pid ← newPromise
       let x ← tryCatch (do let _ ← toStr n a0; pure none) (fun a => pure (some a))

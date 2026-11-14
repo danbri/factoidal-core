@@ -111,6 +111,10 @@ inductive NativeX where
   promise, rejected with what ToString of the specifier throws, or with a TypeError: no host
   loads a module graph for a script yet. -/
   | dynImport
+  /-- A host's `n.setNamedGetter(f)`: `f` becomes the global object's internal slot for the
+  host's named properties (`namedGetterKey`, `namedGlobal`). A String key cannot name that
+  slot (`strKey`), so the page host sets it through this built-in. -/
+  | namedGetterSet
   deriving BEq, Repr, Inhabited
 
 /-- The built-in functions (§19 to §28 for the subset). -/
