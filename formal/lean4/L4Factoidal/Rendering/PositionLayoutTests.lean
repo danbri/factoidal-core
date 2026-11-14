@@ -593,4 +593,26 @@ private def holds := "<div id=c><div id=f>F</div>T</div><div id=n>N</div>"
 -- its content is not clipped: what overflows is still there
 #guard at? "<div id=c><div id=k>KK</div></div>" "#c{overflow:auto;height:5px;width:6px} #k{margin-top:20px}" "KK" == some (0,20)
 
+
+-- The baseline of an inline-block (CSS 2.1 §10.8.1): that of its last line box, so its
+-- text is on the line's baseline with the text around it; its bottom margin edge when it
+-- has no line box or clips. Glyphs are 7 px high with no descent.
+private def onLine := "<div id=d>ab <span id=s>cd</span> ef</div>"
+-- 5 px of padding: the box's text is 5 px down in it, and the text around is level with it
+#guard at? onLine "#s{display:inline-block;padding:5px}" "cd" == some (23,5)
+#guard at? onLine "#s{display:inline-block;padding:5px}" "ab" == some (0,5)
+#guard box onLine "#s{display:inline-block;padding:5px}" "s" == some (18,0,22,17)
+#guard box onLine "#s{display:inline-block;padding:5px}" "d" == some (0,0,200,17)
+-- a box that clips sits on its bottom margin edge
+#guard at? onLine "#s{display:inline-block;padding:5px;overflow:hidden}" "ab" == some (0,10)
+-- two lines in the box: the last one's baseline
+#guard at? "<div id=d>ab <span id=s>cd<br>ef</span></div>" "#s{display:inline-block}" "ab" == some (0,7)
+-- no line box: the bottom margin edge
+#guard at? "<div id=d>ab <span id=s></span></div>" "#s{display:inline-block;width:5px;height:20px}" "ab" == some (0,13)
+-- an inline flex container: its first baseline
+#guard at? "<div id=d>ab <span id=s><span>cd</span></span></div>" "#s{display:inline-flex;padding:5px}" "ab" == some (0,5)
+-- other values of vertical-align place the margin box as before
+#guard at? onLine "#s{display:inline-block;padding:5px;vertical-align:top}" "ab" == some (0,0)
+#guard box onLine "#s{display:inline-block;padding:5px;vertical-align:top}" "d" == some (0,0,200,17)
+
 end L4Factoidal.Rendering.PositionLayoutTests

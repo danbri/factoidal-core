@@ -641,7 +641,17 @@ private def shiftResult (dx dy : Float) (r : Result) : Result :=
   let runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
   {r with nodes := #[.group none (translate dx dy) r.nodes.toList], boxes, runs,
           pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy},
-          baseline := r.baseline.map (·+dy)}
+          baseline := r.baseline.map (·+dy), lastBaseline := r.lastBaseline.map (·+dy)}
+
+/-- CSS 2.1 §10.8.1: where the baseline of an atomic inline box is, from the top of its
+margin box `height` high: for an inline-block, the baseline of its last line box when it
+has one and does not clip; for an inline flex or grid container, its first baseline; else
+its bottom margin edge. -/
+private def atomicBaseline (s : Computed) (height : Float) (inner : Result) : Float :=
+  let own := if s.display == .inlineBlock then (if s.clipOverflow then none else inner.lastBaseline) else inner.baseline
+  match own with
+  | some b => if b >= 0 && b <= height then b else height
+  | none => height
 
 /-- CSS 2.1 §10.6.1: the background of inline text covers its content area, the
 font's ascent and descent, from `top`. -/
@@ -670,9 +680,21 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let leading := lineLeading font s
       ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
       descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
-    -- A replaced element and an atomic box (an inline-block, an inline flex or grid
-    -- container) sit on the line by `vertical-align`, with the bottom margin edge as baseline.
-    | .replaced _ s _ h _ | .atomic _ s _ h _ => match s.verticalAlign with
+    -- An atomic box (an inline-block, an inline flex or grid container) sits on the line by
+    -- `vertical-align`: on its own baseline (`atomicBaseline`), or by its margin box.
+    | .atomic _ s _ h inner => match s.verticalAlign with
+      | .baseline =>
+        let b := atomicBaseline s h inner
+        ascent := max ascent b
+        descent := max descent (h-b)
+      | .middle =>
+        ascent := max ascent (h/2+s.fontSize/4)
+        descent := max descent (h/2-s.fontSize/4)
+      | .top => tallTop := max tallTop h
+      | .bottom => tallBottom := max tallBottom h
+    -- A replaced element sits on the line by `vertical-align`, with the bottom margin edge
+    -- as its baseline.
+    | .replaced _ s _ h _ => match s.verticalAlign with
       | .baseline => ascent := max ascent h
       -- CSS 2.1 §10.8.1: the middle on the baseline plus half the x-height, here half an em.
       | .middle =>
@@ -684,7 +706,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   -- A box aligned to the top or bottom of the line makes the line tall enough for it.
   if tallBottom > ascent+descent then ascent := tallBottom-descent
   if tallTop > ascent+descent then descent := tallTop-ascent
-  let mut out : Result := {height := ascent+descent, baseline := some (y+ascent)}
+  let mut out : Result := {height := ascent+descent, baseline := some (y+ascent), lastBaseline := some (y+ascent)}
   -- The inline boxes open at this point of the line, innermost first, each with its
   -- extent so far (`InlineBox`), and their backgrounds and borders, which go under the text.
   let mut frames : List (InlineBox.Frame × Computed) := []
@@ -761,7 +783,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       extent := some (x+offset,x+offset+width)
     | .atomic _ s width height inner =>
       let top := match s.verticalAlign with
-        | .baseline => y+ascent-height
+        | .baseline => y+ascent-atomicBaseline s height inner
         | .middle => y+ascent-s.fontSize/4-height/2
         | .top => y
         | .bottom => y+ascent+descent-height
@@ -799,7 +821,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
 private def appendResult (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height,
    pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
-   work := a.work+b.work, rough := a.rough || b.rough}
+   lastBaseline := b.lastBaseline <|> a.lastBaseline, work := a.work+b.work, rough := a.rough || b.rough}
 
 /-- A word of preformatted text: it never wraps. -/
 private def preformatted : Inline → Bool
@@ -1107,7 +1129,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
 private def append (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height,
    pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
-   work := a.work+b.work, rough := a.rough || b.rough}
+   lastBaseline := b.lastBaseline <|> a.lastBaseline, work := a.work+b.work, rough := a.rough || b.rough}
 /-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
 widest line (at most the room); its content is laid out at the origin inside its
 border and padding. Its bottom margin edge sits on the line's baseline, as a
@@ -1225,7 +1247,7 @@ private def Result.shiftY (r : Result) (dy : Float) : Result :=
           boxes := r.boxes.map fun b => {b with y := b.y+dy},
           runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with y := g.y+dy}},
           pending := r.pending.map fun p => {p with y := p.y+dy},
-          baseline := r.baseline.map (·+dy)}
+          baseline := r.baseline.map (·+dy), lastBaseline := r.lastBaseline.map (·+dy)}
 
 /-- The style of the contents of a cell: the cell's own, or for an anonymous cell
 its parent's, with no box edges (an anonymous box has none). -/

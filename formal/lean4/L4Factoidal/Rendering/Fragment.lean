@@ -94,6 +94,9 @@ structure Result where
   first line box; none when it has no line box (the consumer then synthesizes one from
   the border box). Combining fragments keeps the first one. -/
   baseline : Option Float := none
+  /-- The last baseline of the fragment, page y: that of its last line box. Combining
+  fragments keeps the last one. An inline-block sits on its line by it (CSS 2.1 §10.8.1). -/
+  lastBaseline : Option Float := none
   /-- The number of box layouts that this fragment took, with those of a measuring pass
   whose result was laid out again: the counter that `workLimit` bounds. -/
   work : Nat := 0
@@ -134,7 +137,7 @@ def Result.shift (dx dy : Float) (r : Result) : Result :=
           pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy},
           floats := r.floats.map fun f => {f with x := f.x+LU.ofPx dx, y := f.y+LU.ofPx dy},
           grid := r.grid.map fun g => {g with x := g.x+dx, y := g.y+dy},
-          baseline := r.baseline.map (·+dy)}
+          baseline := r.baseline.map (·+dy), lastBaseline := r.lastBaseline.map (·+dy)}
 
 /-- A fragment under the transform `t` (CSS Transforms 1 §6): its paint in a group with
 the transform; its boxes as the bounding boxes of where they are drawn, so that a point
@@ -167,6 +170,7 @@ theorem Result.transformed_sources (t : Transform) (r : Result) :
 def Result.over (a b : Result) : Result :=
   {a with nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs,
           pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
+          lastBaseline := b.lastBaseline <|> a.lastBaseline,
           work := a.work + b.work, rough := a.rough || b.rough}
 
 /-- Says: putting fragments together adds their work: no layout goes uncounted. -/
