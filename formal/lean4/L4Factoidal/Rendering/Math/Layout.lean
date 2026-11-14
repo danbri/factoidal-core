@@ -87,9 +87,11 @@ def Out.shift {α : Type} (o : Out α) (dx dy : Int) : Out α :=
            rules := o.rules.map fun b => { b with x := b.x + dx, y := b.y + dy },
            leaves := o.leaves.map fun (a, x, y) => (a, x + dx, y + dy) }
 
-/-- `parent` with the content of `child` placed at `p`. The parent's box is not changed. -/
-def Out.add {α : Type} (parent child : Out α) (p : At) : Out α :=
-  let c := child.shift p.dx p.dy
+/-- `parent` with the content of `child` placed at `p`. The parent's box is not changed.
+`rtl`: the parent's direction is right to left, so `p.dx` is measured from the parent's
+right edge to the child's right edge (the layout is mirrored on the inline axis). -/
+def Out.add {α : Type} (parent child : Out α) (p : At) (rtl : Bool := false) : Out α :=
+  let c := child.shift (if rtl then parent.box.width - p.dx - child.box.width else p.dx) p.dy
   { parent with boxes := parent.boxes ++ c.boxes, rules := parent.rules ++ c.rules,
                 leaves := parent.leaves ++ c.leaves }
 
@@ -147,7 +149,7 @@ def wrap {α : Type} (id : Nat) (s : Computed) (o : Out α) : Out α :=
 whose children are one embellished operator and otherwise only space-like elements is
 itself an embellished operator (§3.2.4.1): the spaces are added by the row above it. A
 row of space-like children only (or of none) is space-like (§3.2.5.1). -/
-def row {α : Type} (kids : Array (Out α)) : Out α := Id.run do
+def row {α : Type} (kids : Array (Out α)) (rtl : Bool := false) : Out α := Id.run do
   let operators := kids.filter (·.op.isSome)
   let embellished := operators.size == 1 && kids.all (fun k => k.op.isSome || k.spaceLike)
   -- the form of an operator with no `form` attribute comes from its place in this row
@@ -164,7 +166,7 @@ def row {α : Type} (kids : Array (Out α)) : Out α := Id.run do
                            spaceLike := kids.all (·.spaceLike),
                            movable := embellished && ((operators[0]?.map (·.movable)).getD false) }
   for i in [0:kids.size] do
-    out := out.add kids[i]! ⟨offsets.getD i 0, 0⟩
+    out := out.add kids[i]! ⟨offsets.getD i 0, 0⟩ rtl
   return out
 
 /-- §3.3.2: a fraction. `linethickness` is a length, a percentage of the default
@@ -185,10 +187,11 @@ def scriptsOut {α : Type} (s : Computed) (base : Out α) (sub sup : Option (Out
   let P := Params.of s
   let r := scripts { subShift := P.xHeight / 3, supShift := P.xHeight, gap := 4 * P.rule }
     base.box (sub.map (·.box)) (sup.map (·.box))
+  let rtl := s.direction == .rtl
   let o : Out α := { box := r.box, op := base.op, movable := base.movable }
-  let o := o.add base r.base
-  let o := match sub with | some c => o.add c r.sub | none => o
-  match sup with | some c => o.add c r.sup | none => o
+  let o := o.add base r.base rtl
+  let o := match sub with | some c => o.add c r.sub rtl | none => o
+  match sup with | some c => o.add c r.sup rtl | none => o
 
 /-- §3.4.2: a base with a script under it and a script over it. -/
 def underOverOut {α : Type} (base : Out α) (under over : Option (Out α)) : Out α :=
@@ -208,8 +211,10 @@ def radicalParams (s : Computed) : RadicalParams :=
 def radicalOut {α : Type} (id : Nat) (s : Computed) (content : Out α) : Out α :=
   let p := radicalParams s
   let (box, at_) := radical p content.box
-  let o : Out α := { box, rules := #[⟨id, p.signWidth, -(content.box.ascent + p.gap + p.rule), content.box.width, p.rule⟩] }
-  o.add content at_
+  let rtl := s.direction == .rtl
+  let o : Out α := { box, rules := #[⟨id, if rtl then 0 else p.signWidth, -(content.box.ascent + p.gap + p.rule),
+                                      content.box.width, p.rule⟩] }
+  o.add content at_ rtl
 
 /-- §3.3.3 `mroot`: the radical, and the index before it, raised to 60% of the radical's
 height, with the kerns 5/18 em before and -10/18 em after. -/
@@ -223,13 +228,15 @@ def rootOut {α : Type} (id : Nat) (s : Computed) (base index : Out α) : Out α
   let indexY := r.box.descent - 6 * height / 10 - index.box.descent
   let o : Out α := { box := ⟨lead + r.box.width, max r.box.ascent (index.box.ascent - indexY),
                              max r.box.descent (index.box.descent + indexY)⟩ }
-  (o.add r ⟨lead, 0⟩).add index ⟨indexX, indexY⟩
+  let rtl := s.direction == .rtl
+  (o.add r ⟨lead, 0⟩ rtl).add index ⟨indexX, indexY⟩ rtl
 
 /-- §3.3.6: `mpadded`. -/
 def paddedOut {α : Type} (n : DOM.Node) (s : Computed) (content : Out α) : Out α :=
   let (box, at_) := padded content.box (lengthAttr n s "width") (lengthAttr n s "height") (lengthAttr n s "depth")
     ((lengthAttr n s "lspace").getD 0) ((lengthAttr n s "voffset").getD 0)
   ({ box, op := content.op, spaceLike := content.spaceLike, movable := content.movable } : Out α).add content at_
+    (s.direction == .rtl)
 
 /-- The text of the text children of element `id`, with the white space at its ends
 removed: the content of an `mo` that the dictionary is read by. -/
@@ -285,7 +292,7 @@ def tableOut {α : Type} (s : Computed) (rows : Array (Nat × Array (Out α))) :
     let mut x : Int := 0
     for i in [0:cells.size] do
       let w := widths.getD i 0
-      out := out.add cells[i]! ⟨x + (w - cells[i]!.box.width) / 2, top + a⟩
+      out := out.add cells[i]! ⟨x + (w - cells[i]!.box.width) / 2, top + a⟩ (s.direction == .rtl)
       x := x + w
     top := top + a + d
   return out
@@ -311,7 +318,7 @@ def multiscriptsOut {α : Type} (s : Computed) (kids : Array (Out α × Bool)) :
         let column := scriptsOut s ({} : Out α) (some sub) (some k)
         if seenPre then pre := pre.push column else post := post.push column
         pending := none
-  return row ((pre.push base) ++ post)
+  return row ((pre.push base) ++ post) (s.direction == .rtl)
 
 def tokenNames : List String := ["mi", "mn", "mo", "mtext", "ms"]
 
@@ -366,6 +373,7 @@ def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
     -- §3.4.2: under and over scripts of an operator with movable limits are laid out as
     -- subscripts and superscripts when the math style is compact
     let limits := s.mathCompact && ((kids[0]?.map (·.movable)).getD false)
+    let rtl := s.direction == .rtl
     let content : Out α := match name, kids.size with
       | "mfrac", 2 => fractionOut id n s kids[0]! kids[1]!
       | "msub", 2 => scriptsOut s kids[0]! (some kids[1]!) none
@@ -378,10 +386,10 @@ def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
       | "munderover", 3 => if limits then scriptsOut s kids[0]! (some kids[1]!) (some kids[2]!)
                            else underOverOut kids[0]! (some kids[1]!) (some kids[2]!)
       | "mroot", 2 => rootOut id s kids[0]! kids[1]!
-      | "msqrt", _ => radicalOut id s (row kids)
-      | "mpadded", _ => paddedOut n s (row kids)
+      | "msqrt", _ => radicalOut id s (row kids rtl)
+      | "mpadded", _ => paddedOut n s (row kids rtl)
       | "mmultiscripts", _ => multiscriptsOut s (kids.zip pres)
-      | _, _ => row kids
+      | _, _ => row kids rtl
     return wrap id (if name == "mtd" then cellStyle s else s) content
 
 end L4Factoidal.Rendering.Math
