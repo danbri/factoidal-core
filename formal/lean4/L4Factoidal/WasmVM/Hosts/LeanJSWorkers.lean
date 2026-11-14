@@ -222,13 +222,21 @@ def workerNet (owner : Net.Xhr.State) (url : String) (syncCache : Array Net.Page
 
 /-- The host of a new worker: an empty arena, the page's clock and clock rate, its own
 fresh entropy (`Agents.entropy`), so a worker's random values and keys owe nothing to the
-page's seed, and its network state (`workerNet`). -/
+page's seed, its network state (`workerNet`), and what the page's canvases draw with (fonts,
+the SVG path parser; `OffscreenCanvas` is exposed in workers), as the page had it then. -/
 def workerHost (page : Session) (entropy : ByteArray) (url : String := "") (syncCache : Array Net.PageFetch.Answer := #[]) : Page.Host :=
   let ph := page.host
   { dom := { dom := Page.emptyDocument, commandLimit := 0, logLimit := maxLogs },
     loop := { clock := ph.loop.clock },
     time := { instructionsPerMs := ph.time.instructionsPerMs },
+    reads := { canvasEnv := ph.reads.canvasEnv },
     web := { entropy, docEncoding := "UTF-8", net := workerNet ph.web.net url syncCache } }
+
+/-- Kind: definitional lemma (worker canvases). Says: a worker's canvases draw with the fonts
+and path parser the page's had when the worker started; nothing else of the page's reads (no
+layout, no viewport) reaches the worker. -/
+theorem workerHost_reads (page : Session) (e : ByteArray) (url : String) (c : Array Net.PageFetch.Answer) :
+    (workerHost page e url c).reads = { canvasEnv := page.host.reads.canvasEnv } := rfl
 
 /-- Kind: definitional lemma (workers' requests). Says: a worker's requests are decided
 under its owner's policy for the worker's URL (`PageFetch.Page.forWorker`): with
