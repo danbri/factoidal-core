@@ -943,8 +943,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   match d.property with
   | "display" =>
     -- `flow-root` is a block that is the root of a block formatting context (`pos.flowRoot`)
-    let s := {s with pos := {s.pos with flowRoot := d.value == "flow-root"}}
-    match (if d.value == "flow-root" then "block" else d.value) with
+    -- `contents`: no box of its own (`pos.contents`; `Generated.flattenContents`); what is
+    -- left of it is an inline box that is never laid out
+    let s := {s with pos := {s.pos with flowRoot := d.value == "flow-root", contents := d.value == "contents"}}
+    match (if d.value == "flow-root" then "block" else if d.value == "contents" then "inline" else d.value) with
     | "none" => return {s with display := .none}
     | "block" => return {s with display := .block}
     | "inline" => return {s with display := .inline}

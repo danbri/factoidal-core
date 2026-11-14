@@ -665,4 +665,23 @@ private def twoLines := "<div id=k>AA<br>BB</div>"
 #guard (box twoLines "#k{min-height:min-content}" "k").map (·.2.2.2) == some 14
 #guard (box twoLines "#k{height:5px}" "k").map (·.2.2.2) == some 5
 
+
+-- `display: contents` (CSS Display 3 §2.5): the element makes no box; its children are
+-- laid out as children of its parent, and inherit from it.
+private def wrapped := "<div id=o><div id=w><div id=a>A</div><div id=b>B</div></div><div id=c>C</div></div>"
+-- as items of the flex container around it
+#guard box wrapped "#o{display:flex} #w{display:contents}" "a" == some (0,0,6,7)
+#guard box wrapped "#o{display:flex} #w{display:contents}" "b" == some (6,0,6,7)
+#guard box wrapped "#o{display:flex} #w{display:contents}" "c" == some (12,0,6,7)
+#guard box wrapped "#o{display:flex}" "c" == some (6,0,6,14)
+-- its own box properties do nothing, what it gives by inheritance stays
+#guard box wrapped "#w{display:contents;margin:30px;padding:9px;border:5px solid}" "a" == some (0,0,200,7)
+#guard box wrapped "#w{display:contents;font-size:14px;line-height:14px}" "a" == some (0,0,200,14)
+#guard (box wrapped "#w{display:contents}" "w").isNone
+-- text in it is text of the parent; nested ones go level by level
+#guard at? "<div id=o>ab <span id=w>cd</span> ef</div>" "#w{display:contents;padding:0 9px}" "cd" == some (18,0)
+#guard box "<div id=o><div id=w><div id=v><div id=a>A</div></div></div><div id=c>C</div></div>" "#o{display:flex} #w,#v{display:contents}" "c" == some (6,0,6,7)
+-- a later `display` takes it back
+#guard box wrapped "#w{display:contents} #w{display:block;padding-left:9px}" "a" == some (9,0,191,7)
+
 end L4Factoidal.Rendering.PositionLayoutTests
