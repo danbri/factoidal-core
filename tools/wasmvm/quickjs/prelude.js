@@ -219,7 +219,11 @@
     constructor(type, init = undefined) {
       super(type, init);
       const s = state(this), d = initOf(init);
-      for (const k of ['screenX', 'screenY', 'clientX', 'clientY', 'button', 'buttons']) s[k] = Number(d[k] ?? 0);
+      // Coordinates: double for a PointerEvent other than click, auxclick and contextmenu
+      // (Pointer Events 3 §4.1.1); otherwise whole pixels, rounded down as browsers do.
+      const fractional = typeof PointerEvent === 'function' && this instanceof PointerEvent && !['click', 'auxclick', 'contextmenu'].includes(String(type));
+      for (const k of ['screenX', 'screenY', 'clientX', 'clientY']) { const v = Number(d[k] ?? 0); s[k] = fractional ? v : Number.isFinite(v) ? Math.floor(v) : 0; }
+      for (const k of ['button', 'buttons']) s[k] = Number(d[k] ?? 0);
       for (const k of ['ctrlKey', 'shiftKey', 'altKey', 'metaKey']) s[k] = !!d[k];
       s.relatedTarget = d.relatedTarget ?? null;
     }
