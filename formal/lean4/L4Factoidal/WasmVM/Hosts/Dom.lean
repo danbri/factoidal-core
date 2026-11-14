@@ -891,11 +891,21 @@ def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
   | .error e => (s, codeOrTrap e)
   | .ok data =>
     let kind := arg args 0
-    change s (.createNode kind data 0) fun d => match createKind d kind data with
+    let made := change s (.createNode kind data 0) fun d => match createKind d kind data with
       | (d, .error e) => (d, .error e)
       | (d, .ok n) =>
         -- `createElement` of the page's own document keeps its first command form.
         changed (if kind == 3 then Command.createElement data n else Command.createNode kind data n) d n
+    -- (xmlweb) HTML §8.5.1 "DOM parsing": the document that `DOMParser` makes has the URL
+    -- of the document of the parser's global object, here the page's (`State.url`).
+    if kind % 16 == 11 || kind % 16 == 12 then
+      (match made.2 with
+       | .values #[.i32 v] =>
+         if v.toNat < 2147483648 then
+           ({ made.1 with docURLs := made.1.docURLs.push (v.toNat, made.1.url) }, made.2)
+         else made
+       | _ => made)
+    else made
 
 /-- The document of an `iframe` with no `src` (HTML §7.3.1 "about:blank"): an HTML
 document with `html`, `head` and `body` and no doctype. -/
