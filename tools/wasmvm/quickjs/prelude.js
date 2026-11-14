@@ -11691,7 +11691,17 @@
       if (a) call(a, { m: 'refresh' });
     }
   }
-  const ownerOf = effect => { for (const a of animObjs.values()) if (animState.get(a).effect === effect) return a; return null; };
+  // the animation that has an effect (an effect has at most one): kept by effect, so that
+  // making an animation does not look through every animation of the page
+  const effectOwner = new WeakMap();
+  const ownerOf = effect => effectOwner.get(effect) ?? null;
+  // `anim` takes `eff`: the animation that had it has none now
+  const takeEffect = (anim, eff) => {
+    if (eff === null) return;
+    const other = effectOwner.get(eff);
+    if (other && other !== anim) { const o = animState.get(other); if (o && o.effect === eff) o.effect = null; }
+    effectOwner.set(eff, anim);
+  };
   class KeyframeEffect extends AnimationEffect {
     constructor(target, keyframes, options = undefined) {
       if (adoptEffect < 0 && arguments.length < 1) throw new TypeError("Failed to construct 'KeyframeEffect': 1 argument required");
@@ -11865,6 +11875,7 @@
         const s = adoptSnap; adoptSnap = null;
         eff = effectOf(s.effect); tl = s.timeline ? theTimeline() : null;
         animIds.set(this, id); animObjs.set(id, this);
+        if (eff !== null) effectOwner.set(eff, this);
         const st = { effect: eff, timeline: tl, ready: Promise.resolve(this), readyRes: null, readyRej: null };
         newFinished(st); animState.set(this, st);
         // the acts of the style change that made it: its ready promise is pending
@@ -11876,7 +11887,7 @@
       eff = effect ?? null; tl = timeline === undefined ? theTimeline() : timeline;
       id = aop(0, 63, { effect: eff === null ? null : String(eid(eff)), timeline: tl !== null }).id;
       // an effect another animation had leaves that one
-      if (eff !== null) for (const other of animObjs.values()) { const o = animState.get(other); if (o.effect === eff) o.effect = null; }
+      takeEffect(this, eff);
       animIds.set(this, id); animObjs.set(id, this);
       const st = { effect: eff, timeline: tl, ready: Promise.resolve(this), readyRes: null, readyRej: null };
       newFinished(st); animState.set(this, st);
@@ -11888,7 +11899,8 @@
       if (v !== null && !(v instanceof AnimationEffect)) throw new TypeError("The provided value is not of type 'AnimationEffect'.");
       const st = animState.get(this);
       if (st.effect === v) return;
-      if (v !== null) for (const other of animObjs.values()) { const o = animState.get(other); if (o.effect === v) o.effect = null; }
+      if (st.effect !== null && effectOwner.get(st.effect) === this) effectOwner.delete(st.effect);
+      takeEffect(this, v);
       st.effect = v;
       call(this, { m: 'effect', v: v === null ? null : String(eid(v)) });
     }
