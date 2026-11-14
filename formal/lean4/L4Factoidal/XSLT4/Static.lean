@@ -49,6 +49,11 @@ structure SCx where
       stylesheet's imported schema (`xsl:import-schema`) is checked when
       the test runs. -/
   schemaDecl : Bool → QN → Bool := fun _ _ => true
+  /-- The simple types of the stylesheet's in-scope schema that are not
+      built in (`XPath4.PCtx.schemaSimple`, from `SchemaHook.simpleUse` of
+      the schema of `xsl:import-schema`): such a name is a type name in
+      `as` attributes and in expressions. None with no imported schema. -/
+  schemaSimple : QN → Option SchemaSimpleUse := fun _ => none
 deriving Inhabited
 
 /-- The value of a `version` attribute, in thousandths (a decimal,
@@ -210,7 +215,7 @@ def expandTypes (types : List (QN × String)) (ns : List (String × String)) : N
 /-- Parse an XPath expression in the static context `c`. -/
 def SCx.parse (c : SCx) (src : String) : M Expr := do
   let src := expandTypes c.types c.ns 10 src
-  let e ← match parseXPath src c.xpNs none c.schemaDecl with
+  let e ← match parseXPath src c.xpNs none c.schemaDecl {} c.schemaSimple with
     | .ok e => pure e
     | .error er => throw { er with msg := er.msg ++ " in '" ++ src ++ "'" }
   pure (if c.xpathNs == "" then e else exprDefault c.xpathNs 100000 e)
@@ -219,7 +224,8 @@ def SCx.parse (c : SCx) (src : String) : M Expr := do
 def SCx.parseType (c : SCx) (src : String) : M IType := do
   let src := expandTypes c.types c.ns 10 src
   let p : P IType := do let t ← pSeqType 1000; ws; pure t
-  match (p.run { s := src.toList.toArray, ns := c.xpNs, schemaDecl := c.schemaDecl }).run 0 with
+  match (p.run { s := src.toList.toArray, ns := c.xpNs, schemaDecl := c.schemaDecl,
+                 schemaSimple := c.schemaSimple }).run 0 with
   | .ok (t, i) =>
       if i < src.length then err "XTSE0020" ("invalid sequence type '" ++ src ++ "'")
       else pure (if c.xpathNs == "" then t else itDefault c.xpathNs 50 t)
