@@ -23,7 +23,7 @@ probes with op 1), -3 InvalidCharacterError, -5 over a budget, -6 no entropy,
 SyntaxError, -25 InvalidAccessError, -26 DataError, -27 QuotaExceededError
 (`WebCryptoKeys.Err.code`).
 
-Ops 100 to 119 are WebGL's (`PageGl.Api`).
+Ops 100 to 119 are WebGL's (`PageGl.Api`), 120 to 139 WebCodecs' (`WebCodecs.Api`).
 
 State: the decoders of `TextDecoder`s in the middle of a stream (by the number the page
 gave them), the answer that waits, the random generator, and the session's CryptoKeys
@@ -42,6 +42,7 @@ import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.PageGl.Api
+import L4Factoidal.WebCodecs.Api
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
 import Std.Data.HashMap
@@ -624,6 +625,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if 100 ≤ code && code < 120 then
       let (gl, r) := L4Factoidal.PageGl.Api.op s.gl code fs
       ({ s with gl }, r)
+    -- WebCodecs: frame layouts and copy plans, configuration checks (pure functions of the arguments).
+    else if 120 ≤ code && code < 140 then pure' (L4Factoidal.WebCodecs.Api.op code fs)
     else pure' (.error (-2))
 
 section
