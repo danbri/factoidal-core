@@ -2150,6 +2150,8 @@ L4Factoidal_PageGpu_State_used  # (c) List.sum (foldr) over a page's GPU objects
 L4Factoidal_PageGpu_State_mappedBytes  # (c) List.sum over a page's readbacks: at most maxPending 16 waiting and one answered per buffer (maxObjects 1024); theorem run_mapInv
 L4Factoidal_PageGpu_workOf  # (c) List.sum over the host commands one page command emits (at most two)
 L4Factoidal_PageGpu_HostCmd_work  # (c) List.sum over one compute pass's dispatches, at most maxDispatches 64
+L4Factoidal_WebNN_Coord_*  # (c) WebNN.Idx coordinate expressions: built by the index-map constructors of Idx.lean, a constant depth (at most three levels) per source axis
+L4Factoidal_WebNN_Gpu_*  # (c) WebNN.Gpu kernel generation: emitC and evalU over the coordinate expressions above (constant depth), stmts and the body splice over one kernel's statements (rank + 3 at most), folds over a tensor's axes (its rank)
 L4Factoidal_DOM_Selectors_selectorList  # (c) DOM.Selectors parser: recursion only into :not()/:is()/:nth-child(of) arguments, at most maxNesting (32) levels
 L4Factoidal_DOM_Selectors_complex  # (c) DOM.Selectors parser: recursion only into :not()/:is()/:nth-child(of) arguments, at most maxNesting (32) levels
 L4Factoidal_DOM_Selectors_compound  # (c) DOM.Selectors parser: recursion only into :not()/:is()/:nth-child(of) arguments, at most maxNesting (32) levels

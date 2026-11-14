@@ -208,6 +208,81 @@ def transposeKernel (perm : List Nat) (inShape : Shape) : Except String Wgsl.Mod
   if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
   Wgsl.finish (kernel ["x"] out (.index (.name "x") (flatIndex (transposeMap perm) inShape)))
 
+/-- A kernel whose output element `k` is accumulated over `count` steps of a loop counter
+`t` (`for (var t = lo; t < min(count, count); t++)`, a `forCap` loop: its cost bound is
+`count`): `acc` starts at `init`, each step does `acc = step`, the output is `fin`. -/
+def foldKernel (ins : List String) (outShape : Shape) (count lo : Nat) (init : Wgsl.Expr)
+    (step : Wgsl.Expr) (fin : Wgsl.Expr) : Wgsl.Module :=
+  let loop := Wgsl.Stmt.forCap "t" .u32 lo (u count) count (stmts [.assign (.name "acc") "" step])
+  let m := kernel ins outShape fin
+  -- the accumulation goes before the store of `kernel`'s body
+  let body := match m.fns with
+    | [f] => match f.body with
+      | .cons k (.cons (.ifS c inner e) .nil) =>
+        let rec splice : Wgsl.Stmts → Wgsl.Stmts
+          | .cons (.assign l op v) .nil => .cons (.varS "acc" none (some init)) (.cons loop (.cons (.assign l op v) .nil))
+          | .cons st rest => .cons st (splice rest)
+          | .nil => .nil
+        Wgsl.Stmts.cons k (.cons (.ifS c (splice inner) e) .nil)
+      | b => b
+    | _ => .nil
+  { m with fns := m.fns.map fun f => { f with body := body } }
+
+/-- matmul (`Compute.matmul`): `a` of shape `[..., M, K]`, `b` of `[..., K, N]`, output
+`[..., M, N]`, the batch dimensions broadcast by `expandMap` (as the CPU's `broadcastMap`);
+the sum over K accumulates in `f32`. -/
+def matmulKernel (sa sb out : Shape) : Except String Wgsl.Module := do
+  let ra := sa.length; let rb := sb.length; let ro := out.length
+  if ra < 2 || rb < 2 || ro < 2 then throw "webnn gpu: matmul needs matrices"
+  if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let m := sa.getD (ra - 2) 1; let kk := sa.getD (ra - 1) 1; let n := sb.getD (rb - 1) 1
+  if kk == 0 || kk > Wgsl.maxCapLoop then throw "webnn gpu: matmul inner dimension out of range"
+  let nb := ro - 2
+  let aBatch := sa.take (ra - 2); let bBatch := sb.take (rb - 2)
+  let ab := flatIndex (expandMap aBatch nb) aBatch
+  let bb := flatIndex (expandMap bBatch nb) bBatch
+  let i := Wgsl.Expr.name (coordName nb); let j := Wgsl.Expr.name (coordName (nb + 1)); let t := Wgsl.Expr.name "t"
+  let ai := Wgsl.Expr.binary "+" (.binary "+" (.binary "*" ab (u (m * kk))) (.binary "*" i (u kk))) t
+  let bi := Wgsl.Expr.binary "+" (.binary "+" (.binary "*" bb (u (kk * n))) (.binary "*" t (u n))) j
+  let step := Wgsl.Expr.binary "+" (.name "acc") (.binary "*" (.index (.name "a") ai) (.index (.name "b") bi))
+  Wgsl.finish (foldKernel ["a", "b"] out kk 0 (f "0.0") step (.name "acc"))
+
+/-- The reductions of `Compute.reduce` with a WGSL form: (start from the first element?,
+step from `acc` and `x`, final value from `acc` and the count). -/
+def reduceForm (name : String) (count : Nat) : Option (Bool × (Wgsl.Expr → Wgsl.Expr → Wgsl.Expr) × (Wgsl.Expr → Wgsl.Expr)) :=
+  let id := fun (a : Wgsl.Expr) => a
+  match name with
+  | "reduceSum" => some (false, fun a x => .binary "+" a x, id)
+  | "reduceMean" => some (false, fun a x => .binary "+" a x, fun a => .binary "/" a (f s!"{count}.0"))
+  | "reduceL1" => some (false, fun a x => .binary "+" a (call1 "abs" x), id)
+  | "reduceSumSquare" => some (false, fun a x => .binary "+" a (.binary "*" x x), id)
+  | "reduceProduct" => some (true, fun a x => .binary "*" a x, id)
+  | "reduceMax" => some (true, fun a x => call2 "max" a x, id)
+  | "reduceMin" => some (true, fun a x => call2 "min" a x, id)
+  | _ => none
+
+/-- A reduction of `x` (shape `s`) over `axes`; the output's elements are the kept axes in
+order (with or without `keepDimensions`, the same elements). -/
+def reduceKernel (name : String) (s : Shape) (axes : List Nat) : Except String Wgsl.Module := do
+  if axes.any (· ≥ s.length) then throw "webnn gpu: reduction axis out of range"
+  let kept := (List.range s.length).filter (!axes.contains ·)
+  let red := (List.range s.length).filter (axes.contains ·)
+  let keptShape := kept.map (s.getD · 1)
+  let redShape := red.map (s.getD · 1)
+  let count := Shape.size redShape
+  if count == 0 || count > Wgsl.maxCapLoop then throw "webnn gpu: reduction size out of range"
+  if Shape.size keptShape > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let some (fromFirst, stepF, finF) := reduceForm name count | throw s!"webnn gpu: no kernel for {name}"
+  let st := strides s
+  let base := (kept.zip (List.range kept.length)).foldl (fun acc (ax, j) =>
+    Wgsl.Expr.binary "+" acc (.binary "*" (.name (coordName j)) (u (st.getD ax 0)))) (u 0)
+  let rst := strides redShape
+  let off := fun (t : Wgsl.Expr) => (red.zip (List.range red.length)).foldl (fun acc (ax, i) =>
+    Wgsl.Expr.binary "+" acc (.binary "*" (.binary "%" (.binary "/" t (u (rst.getD i 1))) (u (redShape.getD i 1))) (u (st.getD ax 0)))) (u 0)
+  let x := fun (t : Wgsl.Expr) => Wgsl.Expr.index (.name "x") (.binary "+" base (off t))
+  let init := if fromFirst then x (u 0) else f (if name == "reduceProduct" then "1.0" else "0.0")
+  Wgsl.finish (foldKernel ["x"] keptShape count (if fromFirst then 1 else 0) init (stepF (.name "acc") (x (.name "t"))) (finF (.name "acc")))
+
 /-- Workgroups to dispatch for `n` output elements. -/
 def groups (n : Nat) : Nat := (n + wg - 1) / wg
 
@@ -231,6 +306,13 @@ def printed : Except String Wgsl.Module → String
 -- transpose [2,3,4] by [2,0,1]: the output [4,2,3]; source index from transposeMap
 #guard !(printed (transposeKernel [2, 0, 1] [2, 3, 4])).startsWith "error"
 #guard (transposeMap [2, 0, 1]).eval [3, 1, 2] == transposeIdx [2, 0, 1] [3, 1, 2]
+-- matmul with batch broadcasting, reductions over chosen axes
+#guard !(printed (matmulKernel [2, 3, 4] [4, 5] [2, 3, 5])).startsWith "error"
+#guard ((printed (matmulKernel [3, 4] [4, 5] [3, 5])).splitOn "for (var t: u32 = 0u; t < min(u32(4u), 4u); t++)").length == 2
+#guard (["reduceSum", "reduceMean", "reduceL1", "reduceSumSquare", "reduceProduct", "reduceMax", "reduceMin"].all
+  fun n => !(printed (reduceKernel n [2, 3, 4] [1])).startsWith "error")
+#guard (printed (reduceKernel "reduceLogSum" [2, 3] [1])).startsWith "error"
+#guard (printed (matmulKernel [2, 70000] [70000, 2] [2, 2])).startsWith "error"
 -- the u32 evaluator on the printed coordinate of a slice
 #guard evalU (fun s => if s == "o0" then some 5 else none) (emitC coordName (.add (.lit 2) (.mulLit (.out 0) 3))) == some 17
 
