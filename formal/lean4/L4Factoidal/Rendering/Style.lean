@@ -2324,7 +2324,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     -- the `hidden` attribute (HTML §15.3.1, the user agent's `[hidden] { display: none }`; an
     -- author rule for `display` wins, as over any user agent rule). It was not read: gov.uk's
     -- cookie notice showed the paragraphs of both of its answers.
-    (n.ns == some DOM.htmlNS && ((n.lname == "dialog" && !hasAttr "open") || (hasAttr "popover" && n.states % 2 == 0) ||
+    -- (`dialog:popover-open { display: block }`: a dialog showing as a popover is rendered)
+    (n.ns == some DOM.htmlNS && ((n.lname == "dialog" && !hasAttr "open" && !(hasAttr "popover" && n.states % 2 == 1)) || (hasAttr "popover" && n.states % 2 == 0) ||
       hasAttr "hidden")) ||
     -- the content of a `details` that is not open (it was drawn open)
     closedDetailsContent dom id
