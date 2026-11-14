@@ -741,8 +741,9 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     await settleTo(70000);
     // Answer every script fetch asked for so far (a worker made after a page request was
     // answered asks in a later turn), until none is left.
-    // the page's bound on script fetches answered (workers' scripts, imports): 4096
-    let fetchesLeft=4096;
+    // the page's bound on script fetches answered (workers' scripts, imports): 1024 (at the ~57 ms a fetch
+    // of the Linux checks, about a minute; a page that asks for ever ends with what it reported)
+    let fetchesLeft=1024;
     const serveFetches=async()=>{
       let did=false;
       for(let round=0;round<1000;round++){
@@ -815,7 +816,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     sockets.clear();
     // keep: the page stays the session's page (a WebDriver navigation)
     if(!opts?.keep)engine.scriptSession("",{action:"close"});
-    const bound=framesLeft<=0?"256 rounds of frame answers":fetchesLeft<=0?"4096 script fetches":undefined;
+    const bound=framesLeft<=0?"256 rounds of frame answers":fetchesLeft<=0?"1024 script fetches":undefined;
     const res=resultOf(file,logs);
     // a page stopped at the runner's bound did not complete in its time: TIMEOUT, saying which bound
     if(bound&&(res.harness==="CRASH"||res.harness==="NO_RESULT"))Object.assign(res,{harness:"TIMEOUT",message:`the page reached the runner's bound of ${bound}`});
