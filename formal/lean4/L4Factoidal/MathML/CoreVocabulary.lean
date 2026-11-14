@@ -250,13 +250,106 @@ theorem presTree_core : ∀ e, namesOkList (presTree e) = true := by
   | app fn args =>
       simp only [children] at ih
       have hfb := namesOk_presApplyT fn args ih
-      simp only [presTree]
-      repeat' split
-      all_goals first
-        | exact hfb
-        | (try simp only [List.mem_cons, forall_eq_or_imp, List.not_mem_nil] at ih
-           simp_all [namesOk, namesOkList, namesOkList_append, coreElements, namesOk_fencedT,
-             namesOk_presJoinT])
+      -- The facts each branch needs, stated over `args` so that they follow the case split.
+      have hall : ∀ c ∈ args, namesOkList (presTree c) = true := ih
+      have hfen : ∀ (m : Int), ∀ c ∈ args, namesOkList (fencedT m (prec c) (presTree c)) = true :=
+        fun m c hc => namesOk_fencedT m _ _ (ih c hc)
+      have hjoin : ∀ (tok : PNode) (m : Int), namesOk tok = true →
+          namesOkList (presJoinT tok m args.tail) = true :=
+        fun tok m ht => namesOk_presJoinT tok m ht args.tail
+          (fun c hc => ih c (List.mem_of_mem_tail hc))
+      unfold presTree
+      -- Remove the `let`, and write each test `fn == "name"` as `fn = "name"`.
+      simp only [beq_iff_eq]
+      by_cases h0 : fn = "plus"
+      · rw [if_pos h0]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h0]
+      by_cases h1 : fn = "minus"
+      · rw [if_pos h1]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h1]
+      by_cases h2 : fn = "times"
+      · rw [if_pos h2]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h2]
+      by_cases h3 : fn = "divide"
+      · rw [if_pos h3]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h3]
+      by_cases h4 : fn = "power"
+      · rw [if_pos h4]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h4]
+      by_cases h5 : fn = "root"
+      · rw [if_pos h5]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h5]
+      by_cases h6 : isRelation fn = true
+      · rw [if_pos h6]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h6]
+      by_cases h7 : fn = "abs"
+      · rw [if_pos h7]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h7]
+      by_cases h8 : fn = "factorial"
+      · rw [if_pos h8]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h8]
+      by_cases h9 : fn = "exp"
+      · rw [if_pos h9]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h9]
+      by_cases h10 : fn = "diff_unsupported"
+      · rw [if_pos h10]
+        (rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨c, t⟩⟩⟩ <;>
+          (try simp only [List.tail_cons, List.tail_nil] at hjoin) <;>
+          first
+            | exact hfb
+            | (simp [namesOk, namesOkList, namesOkList_append, coreElements, hall, hfen, hjoin, hfb]; done))
+      rw [if_neg h10]
+      exact hfb
 
 /-- Theorem 3, on the document. Says: every element name in the tree of the whole `math` document
     is a MathML Core element.
@@ -303,5 +396,8 @@ private def sameAsPres (e : Expr) : Bool := serializeList (presTree e) "" == pre
      serializeList (presTree (.app "plus" [.int 1, .sym "x"])) "" ++ "</math>"
 #guard namesOk (presentationTree (.app "root" [.int 3, .mat [[.int 1]]]))
 #guard !namesOk (.elem "mfenced" [])
+
+#print axioms presTree_core
+#print axioms presentationTree_core
 
 end L4Factoidal.MathML
