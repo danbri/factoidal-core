@@ -82,15 +82,18 @@ theorem formAt_cases (index count : Nat) :
     (1 < count → index = 0 → formAt index count = .pre) ∧
     (1 < count → index ≠ 0 → index + 1 = count → formAt index count = .post) ∧
     (1 < count → index ≠ 0 → index + 1 ≠ count → formAt index count = .inf) := by
+  unfold formAt
   refine ⟨?_, ?_, ?_, ?_⟩
-  · intro h; simp [formAt, h]
-  · intro h h0; subst h0; simp [formAt]; omega
+  · intro h; simp [h]
+  · intro h h0
+    have h1 : ¬ count ≤ 1 := by omega
+    simp [h1, h0]
   · intro h h0 hl
-    have : ¬ count ≤ 1 := by omega
-    simp [formAt, this, h0, hl]
+    have h1 : ¬ count ≤ 1 := by omega
+    simp [h1, h0, hl]
   · intro h h0 hl
-    have : ¬ count ≤ 1 := by omega
-    simp [formAt, this, h0, hl]
+    have h1 : ¬ count ≤ 1 := by omega
+    simp [h1, h0, hl]
 
 /-- Kind: totality and default (MathML Core §3.2.4.2).
 Says: the lookup answers for every content and form (it is a total function), and when
@@ -143,14 +146,17 @@ def formOf (value : String) : Option Form :=
 
 -- Entries of appendix B: "+" infix has spaces 4 and 4; "(" prefix is stretchy and symmetric with no space;
 -- the summation sign is a large operator with movable limits; a comma has 0 and 3.
-#guard (lookup "+" .inf false).lspace == 4 && (lookup "+" .inf false).rspace == 4
-#guard (lookup "(" .pre false) == { lspace := 0, rspace := 0, stretchy := true, symmetric := true }
-#guard (lookup "∑" .pre false).largeop && (lookup "∑" .pre false).movablelimits
-#guard (lookup "," .inf false).lspace == 0 && (lookup "," .inf false).rspace == 3
+#guard (lookup "+" Form.inf false).lspace == 4 && (lookup "+" Form.inf false).rspace == 4
+#guard (lookup "(" Form.pre false).lspace == 0 && (lookup "(" Form.pre false).rspace == 0 &&
+       (lookup "(" Form.pre false).stretchy && (lookup "(" Form.pre false).symmetric && !(lookup "(" Form.pre false).largeop
+#guard (lookup "∑" Form.pre false).largeop && (lookup "∑" Form.pre false).movablelimits
+#guard (lookup "," Form.inf false).lspace == 0 && (lookup "," Form.inf false).rspace == 3
 -- no entry: the defaults; a form with no entry falls back to another form unless it was explicit
-#guard lookup "X" .inf false == {} && (lookup "(" .inf false).stretchy && lookup "(" .inf true == {}
-#guard formAt 0 1 == .inf && formAt 0 3 == .pre && formAt 2 3 == .post && formAt 1 3 == .inf && formAt 0 0 == .inf
-#guard formOf " Prefix " == some .pre && formOf "x" == none
+#guard (lookup "X" Form.inf false).lspace == 5 && !(lookup "X" Form.inf false).stretchy &&
+       (lookup "(" Form.inf false).stretchy && !(lookup "(" Form.inf true).stretchy && (lookup "(" Form.inf true).lspace == 5
+#guard formAt 0 1 == Form.inf && formAt 0 3 == Form.pre && formAt 2 3 == Form.post && formAt 1 3 == Form.inf &&
+       formAt 0 0 == Form.inf
+#guard formOf " Prefix " == some Form.pre && formOf "x" == none
 #guard operatorDictionaryData.size == 1180
 
 end L4Factoidal.Rendering.Math

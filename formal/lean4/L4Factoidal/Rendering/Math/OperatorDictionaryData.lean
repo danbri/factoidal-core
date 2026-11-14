@@ -6,8 +6,7 @@ Each entry: the key "<content> <form>" and the packed properties (see the script
 -/
 namespace L4Factoidal.Rendering.Math
 
-/-- 1180 entries, sorted by key. -/
-def operatorDictionaryData : Array (String × Nat) := #[
+private def part0 : Array (String × Nat) := #[
   ("! postfix", 0),
   ("! prefix", 0),
   ("!! postfix", 0),
@@ -307,7 +306,9 @@ def operatorDictionaryData : Array (String × Nat) := #[
   ("≃ infix", 45),
   ("≄ infix", 45),
   ("≅ infix", 45),
-  ("≆ infix", 45),
+  ("≆ infix", 45)]
+
+private def part1 : Array (String × Nat) := #[
   ("≇ infix", 45),
   ("≈ infix", 45),
   ("≉ infix", 45),
@@ -607,7 +608,9 @@ def operatorDictionaryData : Array (String × Nat) := #[
   ("⤕ infix", 1133),
   ("⤖ infix", 1133),
   ("⤗ infix", 1133),
-  ("⤘ infix", 1133),
+  ("⤘ infix", 1133)]
+
+private def part2 : Array (String × Nat) := #[
   ("⤙ infix", 1133),
   ("⤚ infix", 1133),
   ("⤛ infix", 1133),
@@ -907,7 +910,9 @@ def operatorDictionaryData : Array (String × Nat) := #[
   ("⩣ infix", 36),
   ("⩤ infix", 27),
   ("⩥ infix", 27),
-  ("⩦ infix", 45),
+  ("⩦ infix", 45)]
+
+private def part3 : Array (String × Nat) := #[
   ("⩧ infix", 45),
   ("⩨ infix", 45),
   ("⩩ infix", 45),
@@ -1188,5 +1193,9 @@ def operatorDictionaryData : Array (String × Nat) := #[
   ("⯑ infix", 45),
   ("𞻰 postfix", 1088),
   ("𞻱 postfix", 1088)]
+
+/-- 1180 entries, sorted by key. -/
+def operatorDictionaryData : Array (String × Nat) :=
+  part0 ++ part1 ++ part2 ++ part3
 
 end L4Factoidal.Rendering.Math
