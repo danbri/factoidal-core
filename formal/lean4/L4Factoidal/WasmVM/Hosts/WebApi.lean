@@ -323,6 +323,14 @@ def keyFields (handle : Nat) (k : Key) : List ByteArray :=
     ",".intercalate (k.usages.map (·.name)), algo.alg.name, toString pairs.length].map (·.toUTF8) ++
     pairs.flatMap fun (a, b) => [a.toUTF8, b.toUTF8]
 
+/-- Kind: security invariant (key material). Says: the fields the page receives for a key
+(what its `CryptoKey` object is made from: handle, type, extractable, usages, algorithm) are
+the same whatever the key's bytes: generateKey, importKey, deriveKey, unwrapKey, cloneKey and
+getPublicKey answer with these fields and nothing else of the key, so none of them hands key
+bytes to script. Does not say: anything of exportKey and wrapKey (`exportOp_blind`,
+`wrapPlain_blind`) or of the outputs of primitives keyed by the bytes. -/
+theorem keyFields_blind (handle : Nat) (k : Key) : keyFields handle k.blind = keyFields handle k := rfl
+
 def jwkFields (ms : List (String × JwkVal)) : List ByteArray :=
   ["jwk".toUTF8, (toString ms.length).toUTF8] ++ ms.flatMap fun (n, v) =>
     match v with
@@ -487,8 +495,8 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
       let wk ← keyOf s.keys a "wrappingKey"
       if wk.algo.alg.name != algName || !wk.usages.contains .wrapKey then throw .invalidAccess
       let k ← keyOf s.keys a "key"
-      let e ← exportKey k ((a.str? "format").getD "")
-      let bytes := match e with | .bytes b => b | .jwk ms => (jwkJson ms).toUTF8
+      -- The key's bytes come from exportKey alone (`wrapPlain_extractable`, `wrapPlain_blind`).
+      let bytes ← wrapPlain (fun ms => (jwkJson ms).toUTF8) k ((a.str? "format").getD "")
       let wk' := { wk with usages := wk.usages ++ [.encrypt] }
       let c ← crypt true algName p wk' bytes
       pure (pack ["bytes".toUTF8, c])))
@@ -506,6 +514,19 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
         addKey s.keys nk) with
     | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
     | .error e => fail e
+  -- getPublicKey (modern algorithms draft): a new handle for the public key of a private key.
+  | "getPublicKey" =>
+    match errInt (do
+        let us ← usagesOf a
+        let k ← keyOf s.keys a "key"
+        let pk ← getPublicKey k us
+        addKey s.keys pk) with
+    | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
+    | .error e => fail e
+  -- SubtleCrypto.supports: a question of the registry, no key made or used.
+  | "supports" =>
+    let yes := supports ((a.str? "op").getD "") algName p (sub a "t:") (sub a "g:") (lengthArg a) s.keys
+    (s, .ok (pack ["bool".toUTF8, (if yes then "1" else "0").toUTF8]))
   | _ => fail (-2)
 
 /-- Forget a key (prelude.js calls this when the page's CryptoKey is collected): its bytes

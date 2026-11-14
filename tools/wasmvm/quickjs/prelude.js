@@ -6071,8 +6071,43 @@
         });
       },
     };
+    // getPublicKey (modern algorithms draft): Lean builds the public key from the public parts
+    // the private key carries.
+    subtleMethods.getPublicKey = function getPublicKey(key, keyUsages) {
+      return start(() => {
+        if (arguments.length < 2) throw new TypeError('getPublicKey: 2 arguments required');
+        const k = keyOf(key), us = usagesOf(keyUsages);
+        return later(() => keyAnswer(call(['getPublicKey', 'key', String(k.handle), ...usagePairs(us)], 'getPublicKey')), [key]);
+      });
+    };
+    // SubtleCrypto.supports (modern algorithms draft): the WebIDL conversions and the
+    // normalization here, the answer Lean's (WebCryptoKeys.supports). An algorithm that does
+    // not normalize for the operation is not supported.
+    const supportOps = ['encrypt', 'decrypt', 'sign', 'verify', 'digest', 'generateKey', 'deriveKey', 'deriveBits', 'importKey',
+      'exportKey', 'wrapKey', 'unwrapKey', 'encapsulateKey', 'encapsulateBits', 'decapsulateKey', 'decapsulateBits', 'getPublicKey'];
+    const supports = function supports(operation, algorithm, lengthOrAdditionalAlgorithm = null) {
+      if (arguments.length < 2) throw new TypeError('supports: 2 arguments required');
+      const op = domString(operation), extra = lengthOrAdditionalAlgorithm;
+      if (!supportOps.includes(op)) return false;
+      try {
+        const args = ['supports', 'op', op];
+        if (op === 'deriveKey' || op === 'unwrapKey') {
+          if (extra === null || extra === undefined || typeof extra === 'number') return false;
+          args.push(...normalize('importKey', extra, 't:').pairs, ...normalize('get key length', extra, 'g:').pairs);
+        } else if (op === 'deriveBits') {
+          args.push('length', extra === null || extra === undefined ? 'null' : String(enforceRange(extra, 4294967295, 'length')));
+        }
+        const a = op === 'deriveKey' ? normalize('deriveBits', algorithm)
+          : op === 'wrapKey' ? normalizeEither('wrapKey', 'encrypt', algorithm)
+          : op === 'unwrapKey' ? normalizeEither('unwrapKey', 'decrypt', algorithm)
+          : normalize(op, algorithm);
+        args.push(...a.pairs);
+        return ascii(call(args, 'supports')[1]) === '1';
+      } catch (e) { return false; }
+    };
     class SubtleCrypto { constructor() { throw new TypeError('Illegal constructor'); } }
     if (subtleOn) for (const [k, f] of Object.entries(subtleMethods)) define(SubtleCrypto.prototype, k, f);
+    if (subtleOn) define(SubtleCrypto, 'supports', supports);
     setTag(SubtleCrypto, 'SubtleCrypto');
     const subtle = Object.create(SubtleCrypto.prototype);
     class Crypto { constructor() { throw new TypeError('Illegal constructor'); } get subtle() { return subtleOn ? subtle : undefined; } }
