@@ -789,6 +789,28 @@ def leanFrameOps (base : LeanJS.Session) (lim : Page.Limits) (fEnt : Nat → Byt
     start := fun el dom scripts o => some (LeanJS.start base dom "about:srcdoc" scripts (frameLimits lim fEnt el) {} {} (some o)),
     load := fun s el src scripts => LeanJS.loadFrame s el src scripts }
 
+/-- The frames' sessions after frame `el` took the document `src` of `url` (the embedder's
+answer to a navigation): a document of another origin whose scripts may run gets a session
+of its own, as a sandboxed `srcdoc` frame does, with the frame's origin and the page's
+(`LeanJS.start` with `origins`). Its scripts never run in the page's realm
+(`Hosts.Dom.realmScripts`, `realmScripts_needs_access`), and the two sessions share only the
+messages of `HTML.FrameSessions.exchange`. The session of a former document of the frame is
+dropped. A page whose frames are all of its own origin pays one comparison here. -/
+def crossFrameSessions (base : Option LeanJS.Session) (page : LeanJS.Session) (fEnt : Nat → ByteArray)
+    (frames : Array (Nat × LeanJS.Session)) (el : Nat) (src url : String) (scripts : Array (Nat × String)) :
+    Array (Nat × LeanJS.Session) :=
+  let rest := frames.filter fun (p : Nat × LeanJS.Session) => p.1 != el
+  let d := page.host.dom
+  let f := Dom.elementFrame d el
+  match base, parse src url with
+  | some base, .ok dom =>
+    if src.isEmpty || Dom.frameAccessible d el || !f.scriptsMayRun || rest.size ≥ maxFrameSessions then rest
+    else
+      -- no requests and no frames of its own: nothing would answer them from this session
+      let lim := { frameLimits page.limits fEnt el with network := false, hostLoads := false }
+      rest.push (el, LeanJS.start base dom url scripts lim {} {} (some (f.origin, Dom.pageOrigin d)))
+  | _, _ => rest
+
 /-- A page whose scripts name `XMLHttpRequest`: a later action may make a sync request, so
 each action keeps the session before it (`Net.Xhr.State.mayBlock`). Other pages pay nothing. -/
 def mentionsXhr (scripts : Array (Nat × String)) : Bool :=
@@ -976,9 +998,21 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
   | "frame" =>
     match natField request "node", frameDocument request with
     | some node, .ok (src, xml, scripts, enc) =>
-      -- a frame's scripts run in the page's realm; workers they make are asked for at once
-      run fun a => let s := a.page
-        LeanJSWorkers.pump { a with page := LeanJS.loadFrame (s.setHost { s.host with dom := s.host.dom.noteFrameEncoding node enc }) node src scripts xml }
+      -- the URL the document came from, when the embedder followed redirects (`responseUrl`):
+      -- the frame's origin is that URL's
+      let named := str request "responseUrl"
+      let responseUrl := if named.isEmpty then none else some named
+      -- a same-origin frame's scripts run in the page's realm; workers they make are asked
+      -- for at once
+      let (a', ns) ← WebWasm.timed fun _ => let s := a.page
+        LeanJSWorkers.pump { a with page := LeanJS.loadFrame (s.setHost { s.host with dom := s.host.dom.noteFrameEncoding node enc }) node src scripts xml responseUrl }
+      match a'.page.host.web.net.syncWanted, snap with
+      | some w, some old => return ({ held with leanSession := some (id, old, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
+      | _, _ =>
+        -- a document of another origin: a session of its own (`crossFrameSessions`)
+        let frames := crossFrameSessions held.leanBase a'.page fEnt held.leanFrames node src
+          (if named.isEmpty then str request "url" else named) scripts
+        return leanTurn { held with syncCache := #[], pendingSync := none, leanFrames := frames } id before a' marks full ns fEnt
     | _, .error e => keep s!"scriptSession: frame: {e}"
     | none, _ => keep "scriptSession: frame needs node"
   | "fetched" =>
@@ -1139,6 +1173,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         match natField request "node", frameDocument request with
         | some node, .ok (src, xml, scripts, enc) =>
           run fun s => ({ s with host := { s.host with dom := s.host.dom.noteFrameEncoding node enc } } : Page.Session).loadFrameP node src scripts xml
+            (if (str request "responseUrl").isEmpty then none else some (str request "responseUrl"))
         | _, .error e => return ({ held with session := some (id, s, marks) }, .error s!"scriptSession: frame: {e}")
         | none, _ => return ({ held with session := some (id, s, marks) }, .error "scriptSession: frame needs node")
       | "net" => run fun s => do

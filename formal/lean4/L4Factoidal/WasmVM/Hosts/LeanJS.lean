@@ -710,13 +710,16 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
 joins the arena, its classic scripts run in the page's realm with the current script set
 (none for a frame of another origin or a sandbox without scripts), its `load` event at the
 `iframe` is a task, and the window's when it was waiting for this frame. -/
-def loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String)) (xml : Bool := false) :
-    Session := Id.run do
-  let run := Hosts.Dom.frameScriptsInRealm s.host.dom el
-  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml
+def loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String)) (xml : Bool := false)
+    (responseUrl : Option String := none) : Session := Id.run do
+  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml responseUrl
+  -- Which scripts run here is asked of the frame as it is after this navigation
+  -- (`Hosts.Dom.realmScripts`, `realmScripts_needs_access`, `navigatedTo_frame`): asked
+  -- before, a frame that was `about:blank` or same-origin and went to another origin had
+  -- that document's scripts run in the page's realm.
+  let scripts := Hosts.Dom.realmScripts dom el scripts
   let mut s := s.setHost { s.host with dom }
   if let some root := root then
-    let scripts := if run then scripts else #[]
     for (node, src) in scripts do
       s := (s.api? "script" #[.num (Float.ofNat (node + root))]).1
       s := s.eval src

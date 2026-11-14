@@ -2671,6 +2671,9 @@
   const frameWindows = new Map(), frameCells = new Map(), frameOfWindow = new WeakMap();
   // `postMessage` to the window of a frame's document (assigned where the frames' targets are).
   let postFrame = () => {};
+  // The parent window of a frame's document in this realm: the window of the document that
+  // holds its iframe (the page's, or another frame's).
+  const parentOfDoc = doc => { const el = info(doc, 12), pd = el >= 0 ? info(el, 7) : 0; return pd > 0 ? frameWindow(pd) : window; };
   const frameWindow = doc0 => {
     let w = frameWindows.get(doc0);
     if (w) return w;
@@ -2684,7 +2687,7 @@
       postFrame(cell.doc, message, targetOrigin, transfer);
     };
     const own = { document: () => wrap(cell.doc), window: () => w, self: () => w, frames: () => w, globalThis: () => w,
-      parent: () => window, top: () => window, frameElement: () => wrap(info(cell.doc, 12)), length: () => 0,
+      parent: () => parentOfDoc(cell.doc), top: () => window, frameElement: () => wrap(info(cell.doc, 12)), length: () => 0,
       location: () => frameLocation(cell.doc), postMessage: () => post };
     // Frames share this realm. A function reached through a frame's window runs with that
     // frame's document as `document` for the length of the call (as the frame's own scripts
@@ -5675,7 +5678,7 @@
     const origin = r.slice(2);
     // HTML §9.3.3 step 8.3: the source is the window of the script that posts. A frame's
     // script (running with its document as `document`) posts as its frame's window.
-    const from = scriptDocument !== null && scriptDocument !== document && doc <= 0 ? frameWindow(nodeId(scriptDocument)) : window;
+    const from = scriptDocument !== null && scriptDocument !== document ? frameWindow(nodeId(scriptDocument)) : window;
     setTimeout(() => {
       const e = new MessageEvent('message', { data, origin, source: from, ports });
       state(e).trusted = true;
@@ -5708,7 +5711,7 @@
     get parent() { return parentProxy; }, get top() { return parentProxy; }, get length() { return 1; },
     close() {}, focus() {}, blur() {} }));
   if (frameEngine()) {
-    Object.defineProperty(globalThis, 'parent', { get: () => frameSession() ? parentWindow() : window, configurable: true });
+    Object.defineProperty(globalThis, 'parent', { get: () => frameSession() ? parentWindow() : scriptDocument && scriptDocument !== document ? parentOfDoc(nodeId(scriptDocument)) : window, configurable: true });
     Object.defineProperty(globalThis, 'top', { get: () => frameSession() ? parentWindow() : window, configurable: true });
   }
   if (frameEngine()) def('postMessage', function postMessage(message, targetOrigin, transfer) {
@@ -8011,7 +8014,8 @@
       else if (keyOrInput && typeof data.inputType === 'string') C = InputEvent;
       // shadowframes: a message from another session (HTML.FrameSessions): its data is
       // serialized; its source is the frame it came through, or the parent.
-      if (C === MessageEvent) { try { data.data = JSON.parse(data.data); } catch { data.data = null; } data.source = data.frame >= 0 ? opaqueWindow(data.frame) : parentWindow(); delete data.frame; }
+      let via = -1;
+      if (C === MessageEvent) { try { data.data = JSON.parse(data.data); } catch { data.data = null; } via = data.frame; data.source = data.frame >= 0 ? opaqueWindow(data.frame) : parentWindow(); delete data.frame; }
       const e = new C(type, Object.assign({}, data, init));
       for (const k of ['pageX', 'pageY', 'offsetX', 'offsetY', 'movementX', 'movementY']) if (typeof data[k] === 'number') state(e)[k] = data[k];
       if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
@@ -8019,6 +8023,12 @@
       if (type === 'DOMContentLoaded') readyState = 'interactive';
       if (type === 'load' && target === WINDOW) readyState = 'complete';
       if (type === 'load' && target !== WINDOW && target !== 0 && info(target, 29) >= 0) frameLoad(target);
+      // A message from a frame's own session is for the window of the document that holds
+      // its iframe: a same-origin frame's window when the iframe is in that frame's document.
+      if (via >= 0 && target === WINDOW) {
+        const d = info(via, 7);
+        if (d > 0) { const before = scriptDocument; scriptDocument = wrap(d); try { return dispatch(frameTarget(d), e) ? '' : 'prevented'; } finally { scriptDocument = before; } }
+      }
       return dispatch(wrapTarget(target), e) ? '' : 'prevented';
     },
     report(e) { report(e); },

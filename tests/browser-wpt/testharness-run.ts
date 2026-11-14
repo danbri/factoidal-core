@@ -457,10 +457,12 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
   // .any/.window wrapper, or a file of the copy decoded as a page is); undefined when absent.
   // The encoding name of the frame document frameSource last decoded (the `frame` action's `encoding`).
   let frameEncoding:string|undefined;
+  // the URL the last frame document came from (after redirects), when wptserve served it
+  let frameFinal:string|undefined;
   const frameSource=async(url:string):Promise<string|undefined>=>{
-    frameEncoding=undefined;
+    frameEncoding=undefined;frameFinal=undefined;
     let u:URL;try{u=new URL(url);}catch{return undefined;}
-    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}const d=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"");frameEncoding=d.encoding;return d.html;}catch{return undefined;}}
+    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}frameFinal=(r as Response&{finalURL?:string}).finalURL;const d=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"");frameEncoding=d.encoding;return d.html;}catch{return undefined;}}
     if(!isWptHost(url))return undefined;
     const path=decodeURIComponent(u.pathname).replace(/^\//,"");
     const m=/^(.*)\.test262-test(\.strict)?\.html$/.exec(path);
@@ -658,8 +660,12 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
         const session=turn.session;
         for(const nav of turn.navigations??[]){
           const source=await frameSource(nav.url);
+          // responseUrl: where the document came from after redirects; the engine takes the
+          // frame's origin from it (a redirect to another origin is a document of that origin).
+          const from=frameFinal&&frameFinal!==nav.url?frameFinal:undefined;
           take(turn=await ss({action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",...(frameEncoding?{encoding:frameEncoding}:{}),
-            ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})}));
+            ...(from?{responseUrl:from}:{}),
+            ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,from??nav.url)})}));
         }
         await settleTo(Math.max(1,70000-turn.clock));
       }

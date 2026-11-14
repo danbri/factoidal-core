@@ -1219,14 +1219,15 @@ each with the current script set (so `document` is the frame's document while it
 a microtask checkpoint after it; then the `load` event at the `iframe` is a task, and the
 window's when it was waiting for this frame. `scripts` are the script elements of `source`
 parsed on its own, with their sources. A frame of another origin, or one whose sandbox
-forbids scripts, runs none here (`Hosts.Dom.frameScriptsInRealm`). -/
+forbids scripts, runs none here (`Hosts.Dom.realmScripts`, asked after the document is
+attached: the origin is the one of the URL it came from). -/
 def Session.loadFrameP (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String))
-    (xml : Bool := false) : Prog Session := do
-  let run := Hosts.Dom.frameScriptsInRealm s.host.dom el
-  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml
+    (xml : Bool := false) (responseUrl : Option String := none) : Prog Session := do
+  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml responseUrl
+  -- asked of the frame as it is after this navigation (`Hosts.Dom.realmScripts`)
+  let scripts := Hosts.Dom.realmScripts dom el scripts
   let mut s := { s with host := { s.host with dom } }
   if let some root := root then
-    let scripts := if run then scripts else #[]
     for (node, src) in scripts do
       s ← s.setScriptP (node + root : Nat)
       let (s', status, text) ← s.evalP src
