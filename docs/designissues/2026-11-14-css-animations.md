@@ -177,6 +177,11 @@ events". A frame after no such write (the time alone, timers, listeners, a scrip
 animation: `Reads.styleWriteAt`) measures nothing. A page with no such listener is as before
 (`Host.afterWrite_quiet`, `Host.frameStyles_quiet`).
 
+The mark is set where page scripts add listeners, the `listen` import of the page host (the first
+check of this step, 43594382371, changed nothing: the mark was set in `add_event_listener`, an
+import of the first build that page scripts do not use; the scenario of the step called
+`Host.afterWrite` itself and so did not see it).
+
 Found on `css/css-transitions/events-001.html` to `-008`, `css/css-animations/animation-iteration-event-001.html`
 and some thirty more files, all TIMEOUT with no subtest: they set a style, add a listener and wait.
 Not covered: a script that neither reads nor listens and later reads a time (`getAnimations()` makes
@@ -201,6 +206,17 @@ started again from its last value, and an element following an ancestor's runnin
 A frame is also needed while an animation holds acts that no script object took (a promise to
 resolve or reject): an animation made and cancelled by style in one task has never been ticked, and
 its `finished` promise was left pending (`Engine.needsFrame_out`).
+
+### Animated values in the layout of a page with generated content
+
+The layout of a page whose sheet has a `::before` or `::after` rule with `content` takes its styles
+from `Generated.styled`, which cascades for the page's elements and the generated boxes itself. It
+did not put the animated values after the rules (`CSS.withAnimated`), so on such a page the layout,
+and the used `width` and `height` a script reads, ignored every animation and transition
+(`css-sizing/animation/width-composition.html` and `height-composition.html`, whose sheets have a
+`.target::before` rule, lost 54 and 50 subtests with the generated content merge). Both cascades of
+`Generated.styled` take them now; tested in `Animation/Computed` against the whole cascade, with a
+rule that makes a box and with one that matches nothing.
 
 ### Script interfaces
 
