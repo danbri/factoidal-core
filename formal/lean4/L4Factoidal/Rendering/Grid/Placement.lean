@@ -562,6 +562,35 @@ theorem placeAll_honoured (dense : Bool) (explicitCols : Nat) (items : List Item
   · intro p hp; cases hp
   · intro x hx; exact (placementOrder_perm items).mem_iff.mp hx
 
+/-- A placed item as an item with that area as its definite position. -/
+def Placed.asItem (p : Placed) : Item := ⟨some p.area.row, p.area.rowSpan, some p.area.col, p.area.colSpan⟩
+
+theorem fst_mem_of_mem_zipIdx {α : Type} (l : List α) (n : Nat) (x : α × Nat) (h : x ∈ l.zipIdx n) :
+    x.1 ∈ l := by
+  induction l generalizing n with
+  | nil => simp [List.zipIdx] at h
+  | cons a as ih =>
+    simp only [List.zipIdx, List.mem_cons] at h
+    rcases h with h | h
+    · subst h; exact List.mem_cons_self
+    · exact List.mem_cons_of_mem _ (ih (n + 1) h)
+
+/-- Kind: idempotence. Says: placing again, as definite positions, the areas a placement
+gave puts every item back in the same area: each placed item of the second placement is
+the item it was made from. -/
+theorem placeAll_idem (dense : Bool) (explicitCols : Nat) (ps : List Placed) :
+    ∀ p ∈ (placeAll dense explicitCols (ps.map Placed.asItem)).placed,
+      ∃ x ∈ (ps.map Placed.asItem).zipIdx, p.index = x.2 ∧ p.asItem = x.1 := by
+  intro p hp
+  obtain ⟨x, hx, hi, hrs, hcs, hr, hc, _⟩ := placeAll_honoured dense explicitCols _ p hp
+  refine ⟨x, hx, hi, ?_⟩
+  obtain ⟨q, _, hq⟩ := List.mem_map.mp (fst_mem_of_mem_zipIdx _ 0 x hx)
+  rw [← hq] at hrs hcs hr hc ⊢
+  have e1 := hr q.area.row rfl
+  have e2 := hc q.area.col rfl
+  simp only [Placed.asItem] at hrs hcs ⊢
+  rw [hrs, hcs, e1, e2]
+
 /-- Newer placed items (first in the list) against older ones: when either of two items
 had an automatic position, their areas share no cell. -/
 def Disjoint (placed : List Placed) : Prop :=
