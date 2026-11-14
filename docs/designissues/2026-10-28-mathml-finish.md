@@ -189,6 +189,36 @@ reader keeps the first child). A decimal `cn` is read as an exact rational, so i
 `nums1:rational`, not a strict `cn type="real"`. With two arguments `selector` always becomes
 `vector_selector`: §4.6 says the symbol depends on the type of the argument, and `Expr` has no types.
 
+### C1 audit: the keys `Core.eval` evaluates
+
+Counted on 2026-11-14 in the inputs of `manifest.json` and `matrix-manifest.json` (81 cases). "Symbol" is
+the entry of `MathML/Symbols.lean`; "Presentation" is the branch of `Present.pres`.
+
+| Key | Evaluation cases | Presentation | Symbol |
+|---|---|---|---|
+| `plus`, `times` | 10, 11 | infix | `arith1:plus`, `arith1:times` |
+| `minus` | 4 | prefix (one argument), infix (two) | `arith1:unary_minus`, `arith1:minus` |
+| `divide` | 4 | `mfrac` | `arith1:divide` |
+| `power` | 6 | `msup` | `arith1:power` |
+| `root` | 4 | `msqrt`, `mroot` | `arith1:root` |
+| `abs` | 2 | bars | `arith1:abs` |
+| `quotient`, `rem` | 2, 1 | function form | `integer1:quotient`, `integer1:remainder` |
+| `factorial` | 2 | postfix `!` | `integer1:factorial` |
+| `gcd` | 2 | function form | `arith1:gcd` |
+| `max`, `min` | 2, 1 | function form | `minmax1:max`, `minmax1:min` |
+| `eq`, `neq`, `lt`, `gt`, `leq`, `geq` | 3, 1, 2, 1, 1, 1 | infix | `relation1` |
+| `determinant`, `transpose` | 5, 2 | function form | `linalg1` |
+| `scalarproduct`, `vectorproduct`, `outerproduct` | 2, 2, 1 | function form | `linalg1` |
+| `selector` | 3 | function form | `linalg1:matrix_selector`, `linalg1:vector_selector` |
+| `matrix`, `vector` literals | 25, 12 | fenced `mtable` | `linalg2:matrix`, `linalg2:matrixrow`, `linalg2:vector` |
+| `true`, `false` | 0 (one strict case) | `mi` | `logic1:true`, `logic1:false` |
+
+So every operator `eval` gives a value to has an evaluation case, and the truth values have none.
+In the table and read, but refused by `eval` (no exact rational value, or no logic in the evaluator):
+`exp`, `ln`, `sin`, `cos`, `tan`, `lcm`, `and`, `or`, `xor`, `not`, `implies`. Any other element name is
+read as a key, refused by `eval`, written in function form, and is an identifier head in strict form
+and OpenMath. P3 (a Presentation form for each of these beyond function form) is open.
+
 ### Evaluation and theorem 1
 
 `Core.eval` is a `partial def`, so no theorem can unfold it. Strict content is evaluated by translating
@@ -205,6 +235,7 @@ the two table theorems of `Symbols`, which rest on `propext` and `Quot.sound` on
 | `toStrict_isStrict` | `Strict` | `isStrict (toStrict e)` for every `e` |
 | `toStrict_of_isStrict` | `Strict` | a strict expression is a fixed point of `toStrict` |
 | `toStrict_idempotent` | `Strict` | `toStrict (toStrict e) = toStrict e` |
+| `isStrict_iff_toStrict_eq` | `Strict` | `isStrict e = true` exactly when `toStrict e = e` |
 | `unstrict_toStrict` | `Strict` | `unstrict (toStrict e) = unstrict e` for every `e` |
 | `evalStrict_toStrict` (theorem 1) | `Strict` | `evalStrict env (toStrict e) = evalStrict env e` for every `e` and `env`, defined or not |
 | `evalStrict_of_native` (theorem 1) | `Strict` | if `unstrict e = e` then `evalStrict env (toStrict e) = eval env e` |
@@ -245,8 +276,8 @@ the two table theorems of `Symbols`, which rest on `propext` and `Quot.sound` on
 - OpenMath: `OMB`, `OME`, `OMFOREIGN`, `OMR`, `cdbase` other than the default, `id` and sharing are not
   modelled. `OMF`, `OMSTR`, `OMBIND`, `OMATTR` are read and written but have no `Expr` counterpart.
   Symbols outside the 45-entry table are not read as application heads. No `.ocd` file is vendored.
-- Theorem 3 on the string: `serialize (presTree e) = pres e` is a `#guard` per branch of `pres`, not a
-  theorem. Found while writing it: a vector renders `mtd` directly under `mtable`, with no `mtr`.
+- Theorem 3 on the string: `serializeList (presTree e) "" = pres e` is a `#guard` per branch of `pres`,
+  not a theorem. Found while writing it: a vector renders `mtd` directly under `mtable`, with no `mtr`.
 - Theorem 4 (reading `toContentMathML e` gives back `e`): not proved. What blocks it: the reader
   `FromXml.exprOf` is a `partial def`, which no proof can unfold, and the statement goes through the
   XML parser (`parseNamespaceView`), for which there is no parse-of-serialise theorem to use. The
@@ -257,12 +288,12 @@ the two table theorems of `Symbols`, which rest on `propext` and `Quot.sound` on
 - `intent` (I1): `MathML/Intent.lean` reads and writes the grammar of MathML 4 section 5.1
   (`parseIntent`, fuel-bounded). Nothing emits `intent` on the Presentation output yet, so theorem 5 is
   not stated, and there is no theorem about the reader (a write-then-read theorem is the next step).
-- Six list helpers take one stack frame per operand of one application (`bottomUpList`,
-  `bottomUpRows`, `rowsOf`, `toOMList`, `toOMRows`, `ofOMList`): listed `(a) PENDING` in
-  `tools/lean-tail-recursion-allow.txt`, to become accumulator loops with their equations re-proved.
-  The other new recursive declarations are bounded by the nesting of the expression or are
-  specification only; each has its line there. The audit was run on a partial build (the modules of
-  `l4mathml`, `l4toan` and the XML runners), where it names no MathML declaration.
+- Recursion: the new recursive declarations are bounded by the nesting of the expression (operand
+  lists are loops with an accumulator) or are specification only; each has its line in
+  `tools/lean-tail-recursion-allow.txt`. `tools/lean-tail-recursion-audit.py --gate` was run on a
+  partial build (the modules of `l4mathml`, `l4toan` and the XML runners): it names no MathML
+  declaration (the one it names, `Harness_Xslt4Run_filesBelow`, is not touched by this work). The
+  full-build gate is CI's.
 - Presentation input (P2), the Content to Presentation audit (P3) and the browser sweep (R1): not
   started.
 - Built here: the import closures of `l4mathml` and `l4toan` and the new modules. `Wasm/Ops` and the
