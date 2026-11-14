@@ -9195,9 +9195,14 @@
     const reqs = new Map(), txs = new Map(), conns = new Map(), cursors = new Map();
     // An event handler IDL attribute of an IndexedDB interface: on another object (the
     // prototype itself) its getter and setter throw TypeError (WebIDL "brand check").
-    const handlerAttr = (C, name) => Object.defineProperty(C.prototype, 'on' + name, { configurable: true, enumerable: true,
-      get() { if (!kinds.has(this)) throw new TypeError(`Illegal invocation: ${C.name}.on${name}`); return handlerOf(this, name); },
-      set(f) { if (!kinds.has(this)) throw new TypeError(`Illegal invocation: ${C.name}.on${name}`); setHandler(this, name, f); } });
+    const handlerAttr = (C, name) => {
+      const k = 'on' + name;
+      // the accessor functions are named "get onX" and "set onX" (WebIDL)
+      const d = Object.getOwnPropertyDescriptor({
+        get [k]() { if (!kinds.has(this)) throw new TypeError(`Illegal invocation: ${C.name}.${k}`); return handlerOf(this, name); },
+        set [k](f) { if (!kinds.has(this)) throw new TypeError(`Illegal invocation: ${C.name}.${k}`); setHandler(this, name, f); } }, k);
+      Object.defineProperty(C.prototype, k, { configurable: true, enumerable: true, get: d.get, set: d.set });
+    };
     const idl = (C, tag) => {
       setTag(C, tag);
       for (const k of Object.getOwnPropertyNames(C.prototype)) {
@@ -10455,8 +10460,10 @@
         });
       }
     }
-    Object.defineProperty(CookieStore.prototype, 'onchange', { configurable: true, enumerable: true,
-      get() { return handlerOf(this, 'change'); }, set(f) { setHandler(this, 'change', f); } });
+    const onchange = Object.getOwnPropertyDescriptor({
+      get onchange() { if (!brand.has(this)) throw new TypeError('Illegal invocation: CookieStore.onchange'); return handlerOf(this, 'change'); },
+      set onchange(f) { if (!brand.has(this)) throw new TypeError('Illegal invocation: CookieStore.onchange'); setHandler(this, 'change', f); } }, 'onchange');
+    Object.defineProperty(CookieStore.prototype, 'onchange', { configurable: true, enumerable: true, get: onchange.get, set: onchange.set });
     setTag(CookieStore, 'CookieStore');
     for (const k of ['get', 'getAll', 'set', 'delete'])
       Object.defineProperty(CookieStore.prototype, k, { ...Object.getOwnPropertyDescriptor(CookieStore.prototype, k), enumerable: true });
