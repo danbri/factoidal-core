@@ -588,7 +588,7 @@ private def parses (src : String) : Bool := syn src == "ok"
 
 /-! ## Array iteration over array-likes and holes (§23.1.3: HasProperty, LengthOfArrayLike) -/
 
-#guard out "var seen = []; Array.prototype.forEach.call({ 0: 'a', 2: 'c', length: 4 }, (v, i) => seen.push(i + v)); var m = [1, , 3].map(x => x * 2); var f = [1, , 3].findIndex(x => x === undefined); var o = { 1: 11, 2: 9, length: { valueOf() { return {} }, toString() { return '2' } } }; var fl = Array.prototype.filter.call(o, () => true); var r = Array.prototype.reduce.call({ 1: 'x', 3: 'y', length: 4 }, (a, b) => a + b); var e; try { [].reduce((a, b) => a) } catch (x) { e = x.name } var g = []; var a = [1, 2, 3]; a.forEach((v, i) => { if (i === 0) a.pop(); g.push(v) }); print(seen.join(), m.length, 1 in m, f, fl.join(), r, e, g.join())" == ["0a,2c 3 true 1 11 xy TypeError 1,2"]
+#guard out "var seen = []; Array.prototype.forEach.call({ 0: 'a', 2: 'c', length: 4 }, (v, i) => seen.push(i + v)); var m = [1, , 3].map(x => x * 2); var f = [1, , 3].findIndex(x => x === undefined); var o = { 1: 11, 2: 9, length: { valueOf() { return {} }, toString() { return '2' } } }; var fl = Array.prototype.filter.call(o, () => true); var r = Array.prototype.reduce.call({ 1: 'x', 3: 'y', length: 4 }, (a, b) => a + b); var e; try { [].reduce((a, b) => a) } catch (x) { e = x.name } var g = []; var a = [1, 2, 3]; a.forEach((v, i) => { if (i === 0) a.pop(); g.push(v) }); print(seen.join(), m.length, 1 in m, f, fl.join(), r, e, g.join())" == ["0a,2c 3 false 1 11 xy TypeError 1,2"]
 
 /-! ## Iterator.concat (§27.1.3.2.2) -/
 
@@ -623,5 +623,12 @@ private def parses (src : String) : Bool := syn src == "ok"
 /-! ## An async function's parameter error rejects its promise (§15.8.4) -/
 
 #guard out "async function f(a = (() => { throw new RangeError('p') })()) {} var p; try { p = f() } catch (e) { print('threw') } p.catch(e => print('rejected', e.name)); async function g(q = eval('var arguments')) {} g().catch(e => print('g', e.name))" == ["rejected RangeError", "g SyntaxError"]
+
+/-! ## Absent Array elements (holes): delete keeps the length; gaps read through the prototype -/
+
+#guard out "var a = [1, 2, 3]; delete a[2]; print(a.length, 2 in a, a[2], Object.keys(a).join())" == ["3 false undefined 0,1"]
+#guard out "var b = []; b[3] = 'x'; print(b.length, 0 in b, b.join('-')); var c = new Array(3); print(0 in c, c.length); Array.prototype[1] = 'p'; print(c[1], [5, , 7].length); delete Array.prototype[1]"  == ["4 false ---x", "false 3", "p 3"]
+#guard out "Array.prototype[2] = 3; var arr = [1, 2, 3, 4, 5]; print(arr.every(function (v) { delete arr[2]; return v != 3 })); delete Array.prototype[2]" == ["false"]
+#guard out "var d = [3, 1, 2]; delete d[1]; d.sort(); print(d.length, d[0], d[1], 2 in d); var n = 0; [1, , 3].forEach(() => n++); print(n, [[1], , [2]].flat().length)" == ["3 2 3 false", "2 2"]
 
 end L4Factoidal.JS.Tests

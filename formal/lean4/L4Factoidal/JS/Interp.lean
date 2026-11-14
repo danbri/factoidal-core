@@ -80,9 +80,12 @@ def setElem (id i : Nat) (v : Value) : M Bool :=
   updateObj id fun o =>
     match o.kind with
     | .array es =>
+      -- an absent element of a non-extensible array cannot be added back here
       if h : i < es.size then
+        -- an absent element of a non-extensible array cannot be added back here
+        if !o.extensible && es[i].isHole then (false, o) else
         let o := { o with kind := .ordinary }
-        (true, { o with kind := .array (es.set i v) })
+        (true, { o with kind := .array (es.set i v h) })
       else (false, o)
     | _ => (false, o)
 
@@ -272,7 +275,7 @@ def Obj.putOwn (o : Obj) (key : String) (p : PropV) : Obj :=
     if i < es.size then { o with kind := .array (es.set! i v) }
     else if i == es.size then { o with kind := .array (es.push v) }
     else if i < es.size + 100000 then
-      { o with kind := .array ((es ++ Array.replicate (i - es.size) Value.undef).push v) }
+      { o with kind := .array ((es ++ Array.replicate (i - es.size) Value.hole).push v) }
     else
       let known := o.props.contains key
       { o with kind := .array es, props := o.props.insert key p,
@@ -291,8 +294,8 @@ def deleteOwn (id : Nat) (key : String) : M Unit :=
   modifyObj id fun o =>
     match o.kind, arrayIndex? key with
     | .array es, some i =>
-      if i + 1 == es.size then { o with kind := .array es.pop }
-      else if i < es.size then { o with kind := .array (es.set! i .undef) }
+      -- the index becomes absent; the length stays (§10.4.2: deleting never changes it)
+      if i < es.size then { o with kind := .array (es.set! i .hole) }
       else o
     | _, _ =>
       -- the key stays in `keys` for now (`Obj.liveKeys`); `keys` is rebuilt when mostly stale
@@ -784,6 +787,7 @@ def flattenArr (d : Nat) (vs : Array Value) : Nat → M (Array Value)
     let mut out := #[]
     for v in vs do
       match v with
+      | .hole => pure ()
       | .obj vid =>
         match (← getObj vid).kind with
         | .array inner => if d > 0 then out := out ++ (← flattenArr (d - 1) inner f) else out := out.push v
@@ -1674,7 +1678,7 @@ def putV : Nat → Value → String → Value → Bool → M Unit
         if l > es.size then
           if l > maxDenseArray then throwErr .range "Invalid array length"
           charge ((l - es.size) / 64)
-        let es' := if l ≤ es.size then es.extract 0 l else es ++ Array.replicate (l - es.size) .undef
+        let es' := if l ≤ es.size then es.extract 0 l else es ++ Array.replicate (l - es.size) .hole
         modifyObj id fun o => { o with kind := .array es' }
         return
       | _, _ => pure ()
@@ -2521,7 +2525,8 @@ def evalArg : Nat → Ctx → Expr → List Expr → Array Value → M (Array Va
       let it ← getIterator n (← evalExpr n ctx e)
       let vs ← iterToArray n it #[]
       evalArgs n ctx as (acc ++ vs)
-    | .ident "" => evalArgs n ctx as (acc.push .undef)
+    -- an elision in an array literal leaves the index absent (§13.2.4.1); no call has one
+    | .ident "" => evalArgs n ctx as (acc.push .hole)
     | _ =>
       let v ← evalExpr n ctx a
       evalArgs n ctx as (acc.push v)
@@ -2908,7 +2913,10 @@ def evalExpr : Nat → Ctx → Expr → M Value
       | .obj id, .num x =>
         match (← getObj id).kind with
         | .array es =>
-          if x ≥ 0 && x < Float.ofNat es.size && x.floor == x then pure (es.getD x.toUInt64.toNat .undef)
+          if x ≥ 0 && x < Float.ofNat es.size && x.floor == x then
+            match es.getD x.toUInt64.toNat .undef with
+            | .hole => getV n b (← toKey n kv)
+            | v => pure v
           else getV n b (← toKey n kv)
         | _ => getV n b (← toKey n kv)
       | .undef, _ => throwErr .type "Cannot read properties of undefined"
@@ -4320,7 +4328,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           | .array es =>
             -- the elements become ordinary properties; the object stays an Array (`markArray`)
             let o := ({ o with kind := .ordinary } : Obj).markArray
-            let o := (List.range es.size).foldl (fun (o : Obj) i => o.putOwn (toString i) (.data es[i]! true true true)) o
+            let o := (List.range es.size).foldl (fun (o : Obj) i =>
+              if Value.isHole es[i]! then o else o.putOwn (toString i) (PropV.data es[i]! true true true)) o
             o.putOwn "length" (.data (.num (Float.ofNat es.size)) false false false)
           | _ => o
         let props := o.props.mapValues (fun p => (match p with
@@ -4492,7 +4501,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           if x < 0 || !isIntegral x || x ≥ twoPow32F then throwErr .range "Invalid array length"
           if x.toUInt64.toNat > maxDenseArray then throwErr .range "Invalid array length"
           charge (x.toUInt64.toNat / 64)
-          newArray (Array.replicate x.toUInt64.toNat .undef)
+          newArray (Array.replicate x.toUInt64.toNat .hole)
         | v => newArray #[v]
       else newArray args
     | .arrayIsArray =>
@@ -4515,7 +4524,9 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | .obj id =>
         updateObj id fun o =>
           match o.takeArray with
-          | (some es, o) => (es.back?.getD .undef, { o with kind := .array es.pop })
+          | (some es, o) =>
+            let v := match es.back?.getD .undef with | .hole => .undef | v => v
+            (v, { o with kind := .array es.pop })
           | (none, o) => (.undef, o)
       | _ => pure .undef
     | .arrayShift =>
@@ -4525,7 +4536,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           match o.takeArray with
           | (some es, o) =>
             match es[0]? with
-            | some v => (v, { o with kind := .array (es.eraseIdxIfInBounds 0) })
+            | some v => (if v.isHole then .undef else v, { o with kind := .array (es.eraseIdxIfInBounds 0) })
             | none => (.undef, { o with kind := .array es })
           | (none, o) => (.undef, o)
       | _ => pure .undef
@@ -4662,8 +4673,10 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       match thisV with
       | .obj id => match (← getObj id).kind with
         | .array es =>
-          let sorted ← mergeSort n a0 es.toList
-          modifyObj id fun o => { o with kind := .array sorted.toArray }
+          let present := es.filter fun v => !v.isHole
+          let sorted ← mergeSort n a0 present.toList
+          let holes := es.size - present.size
+          modifyObj id fun o => { o with kind := .array (sorted.toArray ++ Array.replicate holes .hole) }
           pure thisV
         | _ => pure thisV
       | _ => pure thisV
@@ -5318,7 +5331,13 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         defineOwn res k (.data (← getV n item "1") true true true)
       pure (.obj res)
     | .arrayFlat | .arrayFlatMap =>
-      let es ← elemsOf n thisV
+      -- flat skips absent elements (`flattenArr`); flatMap's callback sees them as undefined
+      let raw ← match thisV with
+        | .obj tid => match (← getObj tid).kind with
+          | .array es => pure (if id_ == .arrayFlat then some es else none)
+          | _ => pure none
+        | _ => pure none
+      let es ← match raw with | some es => pure es | none => elemsOf n thisV
       let es ← if id_ == .arrayFlatMap then do
           if !(← isCallable a0) then throwErr .type "flatMap mapper is not callable"
           (List.range es.size).toArray.mapM fun i => callV n a0 a1 #[es[i]!, .num (Float.ofNat i), thisV]
@@ -5614,7 +5633,10 @@ def vmGetIndex : Nat → Value → Value → M Value
     | .obj id, .num x =>
       match (← getObj id).kind with
       | .array es =>
-        if x ≥ 0 && x < Float.ofNat es.size && x.floor == x then pure (es.getD x.toUInt64.toNat .undef)
+        if x ≥ 0 && x < Float.ofNat es.size && x.floor == x then
+          match es.getD x.toUInt64.toNat .undef with
+          | .hole => getV n b (← toKey n kv)
+          | v => pure v
         else getV n b (← toKey n kv)
       | _ => getV n b (← toKey n kv)
     | _, _ =>
@@ -6070,7 +6092,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let x := fregs.get! (bp + i)
         match (← get).obj id |>.kind with
         | .array es =>
-          if x ≥ 0 && x < Float.ofNat es.size && x.floor == x then
+          if x ≥ 0 && x < Float.ofNat es.size && x.floor == x && !(es.getD x.toUInt64.toNat .undef).isHole then
             match ((es.getD x.toUInt64.toNat .undef)) with
           | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
           | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
@@ -6246,7 +6268,7 @@ def elemsOf : Nat → Value → M (Array Value)
   | n + 1, v => do
     match v with
     | .obj id => match (← getObj id).kind with
-      | .array es => pure es
+      | .array es => pure (holesAsUndef es)
       | _ =>
         let len ← toNum n (← getV n v "length")
         let k := (toIntegerOrInf len).toUInt64.toNat
@@ -6282,8 +6304,8 @@ def iterArray : Nat → Native → Value → Value → Value → Nat → Nat →
       let oid := match arr with | .obj o => o | _ => 0
       -- find and findIndex read every index; the others skip what HasProperty says is absent
       match ← elemAt n oid i (arrayProbes id) with
-      -- map's result keeps the index (as undefined: an Array here has no holes)
-      | none => iterArray n id f thisArg arr len (i + 1) (if id == .arrayMap then acc.push .undef else acc)
+      -- map's result leaves the index absent too
+      | none => iterArray n id f thisArg arr len (i + 1) (if id == .arrayMap then acc.push .hole else acc)
       | some x =>
         let r ← callV n f thisArg #[x, .num (Float.ofNat i), arr]
         match id with
@@ -6445,7 +6467,7 @@ def defineOwnProp : Nat → Nat → String → Desc → M Bool
           else
             -- leave the fast form: keep the elements, and the length, as ordinary properties;
             -- the object stays an Array (`markArray`)
-            let o' := (List.range es.size).foldl (fun o j => { o with
+            let o' := (List.range es.size).foldl (fun o j => if Value.isHole es[j]! then o else { o with
                 props := o.props.insert (toString j) (.data es[j]! true true true),
                 keys := o.keys.push (toString j) }) ({ o with kind := .ordinary } : Obj).markArray
             modifyObj id fun _ => o'.putOwn "length" (.data (.num (Float.ofNat es.size)) true false false)
