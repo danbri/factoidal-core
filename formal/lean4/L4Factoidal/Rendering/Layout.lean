@@ -1317,7 +1317,7 @@ private def sizesItself (dom : Dom) (styles : Array Computed) (pictures : Pictur
   let s := styles[id]!
   let n := dom.get id
   s.display.isFlex || s.display.isGrid || s.display.isTable || (pictures id).isSome ||
-    (blankReplaced n).isSome || n.ns == some DOM.svgNS || n.lname == "hr" || s.pos.isPositioned
+    (blankReplaced n).isSome || n.ns == some DOM.svgNS || n.lname == "hr" || s.pos.containsAbsolutes
 
 private def cellStyle (styles : Array Computed) : Table.Source → Computed
   | .element id => styles[id]!
@@ -2053,7 +2053,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         else content
       -- A positioned box is the containing block of its absolutely positioned descendants:
       -- its padding box (CSS 2.1 §10.1).
-      let content ← if s.pos.isPositioned then
+      let content ← if s.pos.containsAbsolutes then
           let (cx,cy,cw,ch) := (outerX+border.left,outerY+border.top,width+padding.left+padding.right,
             height+padding.top+padding.bottom)
           -- an absolutely positioned child of a grid starts at its grid area (CSS Grid 2 §9.1)
@@ -2067,6 +2067,14 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let content := {content with grid := none}
       let framed := frameBox id s outerX outerY (width+edgesX) (height+edgesY) content
       let framed := {framed with height := marginTop+height+edgesY+marginBottom, marginBottom}
+      -- CSS Transforms 1 §6: the box is laid out as if it had no transform; what is drawn
+      -- of it is transformed about its `transform-origin`, a point of its border box.
+      let framed := if s.pos.transform.isEmpty then framed else
+        let bw := width+edgesX
+        let bh := height+edgesY
+        let (ox,ofWidth,oy,ofHeight) := s.pos.transformOrigin
+        framed.transformed (CSS.BoxTransform.about .float (CSS.BoxTransform.matrixOf s.pos.transform bw bh)
+          (outerX+ox+ofWidth*bw) (outerY+oy+ofHeight*bh))
       -- CSS 2.1 §9.4.3: a relatively positioned box is moved from where it was laid out; the
       -- flow after it is as if it had not moved. `left` wins over `right`, `top` over `bottom`.
       if s.pos.position == .relative then
