@@ -175,6 +175,11 @@ structure ElementState where
   hover : Option Nat := none
   active : Option Nat := none
   visited : List Nat := []
+  /-- The values of running animations and transitions (`Rendering.Animation`): node,
+  longhand, computed value text, and whether a transition gives it. They enter the cascade
+  as declarations of their own origins (`animatedIndex`). Empty on a page that animates
+  nothing. -/
+  animated : List (Nat × String × String × Bool) := []
   deriving Repr, BEq, Inhabited
 structure Rule where
   selectors : List Selector
@@ -1469,17 +1474,54 @@ def computeAllWith (matchesOf : Nat → List Match) (dom : Dom) (textScale : Flo
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"
 
+/-! ### Animated values in the cascade
+
+CSS Cascade 4 §6.1: animation declarations override the author's normal declarations
+(also those of the `style` attribute) and are overridden by `!important` ones;
+transition declarations override everything. The animated values of an element
+(`ElementState.animated`) are one match of origin 2 for its animations and one of origin
+3, marked important, for its transitions: the keys of `computedFrom` then order them as
+the cascade says (an animation's key is `[0, 5, …]`, above the `style` attribute's
+`[0, 3, …]` and below any `[1, …]`; a transition's is `[1, 6, …]`). -/
+
+/-- The animated values as matches, by element. -/
+def animatedIndex (animated : List (Nat × String × String × Bool)) : Std.HashMap Nat (List Match) :=
+  let any : Selector := { parts := [], specificity := (0,0,0) }
+  animated.foldl (fun m (id, property, value, transition) =>
+    let old := m.getD id []
+    let origin := if transition then 3 else 2
+    let d : Declaration := ⟨property, value, transition⟩
+    let (mine, others) := old.partition (·.1 == origin)
+    let rule : Rule := match mine with
+      | (_, r, _) :: _ => { r with declarations := r.declarations ++ [d] }
+      | [] => { selectors := [any], declarations := [d] }
+    m.insert id (others ++ [(origin, rule, [any])])) {}
+
+/-- `matchesOf` with the animated values of `state` after the rules of each element. A
+state with none is `matchesOf` itself: no table is built. -/
+def withAnimated (state : ElementState) (matchesOf : Nat → List Match) : Nat → List Match :=
+  if state.animated.isEmpty then matchesOf else
+  let ix := animatedIndex state.animated
+  fun id => match ix[id]? with
+    | some ms => matchesOf id ++ ms
+    | none => matchesOf id
+
+/-- With no animated value the cascade is that of the rules alone. -/
+theorem withAnimated_none (state : ElementState) (matchesOf : Nat → List Match) (h : state.animated = []) :
+    withAnimated state matchesOf = matchesOf := by
+  simp [withAnimated, h]
+
 /-- The styles of every node with every rule tried for every element: the reference. -/
 def computeAllLinear (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
-  computeAllWith (fun id => matchedRules dom id rules state) dom textScale
+  computeAllWith (withAnimated state fun id => matchedRules dom id rules state) dom textScale
 
 /-- The styles of every node: the element keys read once, the rules in buckets. -/
 def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
   let ix := RuleIndex.build rules
   let ks := ElemKeys.of dom
-  computeAllWith (fun id => ix.matched (ks.get dom) dom id state) dom textScale
+  computeAllWith (withAnimated state fun id => ix.matched (ks.get dom) dom id state) dom textScale
 
 /-- The styles on a page with shadow trees, laid out on `dom` (its flat tree): the element
 keys read once, the rules in buckets per tree. -/
@@ -1487,12 +1529,12 @@ def computeAllIn (ts : TreeScope) (dom : Dom) (rules : List Rule) (textScale : F
     (state : ElementState := {}) : Except String (Array Computed) :=
   let ix := ScopedIndex.build rules
   let ks := ElemKeys.of ts.tree
-  computeAllWith (fun id => ix.matched (ks.get ts.tree) ts id state) dom textScale
+  computeAllWith (withAnimated state fun id => ix.matched (ks.get ts.tree) ts id state) dom textScale
 
 /-- The reference for `computeAllIn`: every rule tried for every element. -/
 def computeAllInLinear (ts : TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
-  computeAllWith (fun id => matchedRulesIn ts id rules state) dom textScale
+  computeAllWith (withAnimated state fun id => matchedRulesIn ts id rules state) dom textScale
 
 /-- `computeAll` for a page with no shadow tree; `computeAllIn` for one with shadow trees. -/
 def computeFor (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
@@ -1539,4 +1581,12 @@ def supportsDeclaration (property value : String) : Bool :=
   else match declarations (p ++ ":" ++ v) with
     | .ok ds => !ds.isEmpty && ds.all fun d => (apply {} d).toOption.isSome
     | .error _ => false
+
+/-- The computed style `s` with one more declaration applied, as the cascade applies it
+(`apply`); none when the profile does not read the declaration. For the computed value
+of a keyframe's specified value in an element's context (`Rendering.Animation`). -/
+def applyDeclaration (s : Computed) (property value : String) : Option Computed :=
+  match declarations (property ++ ":" ++ value) with
+  | .ok ds => if ds.isEmpty then none else ds.foldlM (fun acc d => (apply acc d).toOption) s
+  | .error _ => none
 end L4Factoidal.Rendering.CSS

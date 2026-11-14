@@ -429,4 +429,38 @@ private def acD : Access := acOf [(7, [("width", "auto")])]
         ("transition-timing-function", "steps(1, end)")])] "" [(7, [("width", "20px")])]
 #guard overrides (styleChange {} acD) acD == [{ node := 7, property := "width", value := "20px", transition := true }]
 
+/-! ## Tests: animated values in the cascade (`CSS.withAnimated`; CSS Cascade 4 §6.1) -/
+
+/-- The computed width and colour of the first `div` of a page, with animated values on
+it, as `(width, colour of its first child)`. -/
+private def cascadeOf (html css : String) (animated : List (String × String × Bool)) : Option (String × String) := do
+  let dom := DOM.parseHtmlDocument html
+  let rules ← (CSS.parse css).toOption
+  let div ← (List.range dom.size).find? fun i => (dom.get i).lname == "div"
+  let span ← (List.range dom.size).find? fun i => (dom.get i).lname == "span"
+  let state : CSS.ElementState := { animated := animated.map fun (p, v, t) => (div, p, v, t) }
+  let styles ← (CSS.computeAll dom rules 1 state).toOption
+  let w := match (styles[div]?).map (·.width) with
+    | some (.px x) => toString x.toUInt64
+    | _ => "?"
+  let c := match (styles[span]?).map (·.color) with
+    | some c => toString (c.r * 255).toUInt64
+    | none => "?"
+  return (w, c)
+
+private def pageHtml := "<div style=\"width: 10px\"><span>x</span></div>"
+-- no animation: the style attribute
+#guard cascadeOf pageHtml "div { width: 5px }" [] == some ("10", "0")
+-- an animation is above the style attribute and the rules
+#guard cascadeOf pageHtml "div { width: 5px }" [("width", "20px", false)] == some ("20", "0")
+-- and below an important declaration
+#guard cascadeOf pageHtml "div { width: 5px !important }" [("width", "20px", false)] == some ("5", "0")
+-- a transition is above an important declaration
+#guard cascadeOf pageHtml "div { width: 5px !important }" [("width", "20px", true)] == some ("20", "0")
+-- an animated inherited property reaches the descendants
+#guard cascadeOf pageHtml "" [("color", "rgb(255, 0, 0)", false)] == some ("10", "255")
+-- the animated values of another element do not apply
+#guard ((CSS.withAnimated { animated := [(3, "width", "1px", false)] } (fun _ => [])) 4).isEmpty
+#guard ((CSS.withAnimated { animated := [(3, "width", "1px", false)] } (fun _ => [])) 3).length == 1
+
 end L4Factoidal.Rendering.Animation
