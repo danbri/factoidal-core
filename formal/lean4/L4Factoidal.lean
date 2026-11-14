@@ -1083,6 +1083,7 @@ import L4Factoidal.ClientStorage.IdbTests
 import L4Factoidal.ClientStorage.FileSystem
 import L4Factoidal.ClientStorage.Manager
 import L4Factoidal.ClientStorage.Locks
+import L4Factoidal.ClientStorage.Budget
 import L4Factoidal.ClientStorage.Picker
 import L4Factoidal.ClientStorage.Buckets
 import L4Factoidal.ClientStorage.CookieStore

@@ -117,6 +117,18 @@ moved) or `moved` (a move, as one change), computed from the tree before and aft
 drains the log into records for each observation that covers the path (relative path components, the moved-
 from path). With no observation nothing is diffed. `observed_tree`: observing never changes the files.
 
+### Budget: what a page's storage may take
+
+Everything is in memory, so the bounds are the machine's protection (`ClientStorage/Budget.lean`). A storage
+key may hold `keyQuota` (32 MiB), its IndexedDB, file system and Cache API together: each API's writes are
+checked against the room the others leave (`Manager.roomOf`, `Budget.roomFor`), and a write past it is refused
+with `QuotaExceededError` and changes nothing (IndexedDB at commit, the file system at close or write, the Cache
+API through `Backend.actQuota`: `Caches.opForQ_bound`). At most `maxKeys` (8) keys of a session hold data; a
+ninth gets no room until one is emptied, so a session's storage is at most 256 MiB (`session_bound`). A key
+that holds data keeps its whole share whatever other keys do (`roomFor_own`). Counts are bounded too: a
+transaction's queued requests and a lock manager's waiting requests, at most `maxPending` (100,000) each
+(`enqueue_full`, `request_full`). `estimate()` reports the key's usage over its three APIs and `keyQuota`.
+
 ### StorageManager
 
 `estimate()` answers the sum of what IndexedDB and the file system hold for the caller's key and a constant
@@ -206,6 +218,8 @@ comment has its "Says" and "Does not say"):
 
 - File pickers: `answer_refuses`, `answer_never_ok`, `valid_security`, `invalid_type`, `validSuffix_spec`,
   `validId_length`.
+- Budget: `total_le`, `roomFor_own`, `session_bound`, `roomFor_full`, `Caches.opForQ_bound`,
+  `Idb.enqueue_full`, `Locks.request_full`.
 - Storage buckets: `route_origin`, `quotaArg_range`, `validName_spec`, `open_mem`, `delete_not_mem`, `delete_unknown`, `insert_sorted`,
   `op_sorted`, `Buckets.opFor_noninterference`.
 - Cookie Store: `setFromScript_store`, `store_keeps`, `set_keeps_host` (a set never adds a cookie for another

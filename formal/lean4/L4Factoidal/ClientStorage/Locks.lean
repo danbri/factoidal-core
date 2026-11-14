@@ -20,6 +20,7 @@ storage key: held locks, the queue of requests, `ifAvailable`, `steal`, abort, `
 Commands (`web_api` op 203): see `op`. In memory; a session's locks end with it.
 -/
 import L4Factoidal.ClientStorage.Core
+import L4Factoidal.ClientStorage.Budget
 
 namespace L4Factoidal.ClientStorage.Locks
 
@@ -124,6 +125,8 @@ def request (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
   else if steal && ifAvailable then (s, fail "NotSupportedError")
   else if steal && !exclusive then (s, fail "NotSupportedError")
   else if signal && (steal || ifAvailable) then (s, fail "NotSupportedError")
+  -- at most `Budget.maxPending` requests wait
+  else if s.queue.length ≥ Budget.maxPending then (s, fail "QuotaExceededError")
   else
     let r : Req := { id := s.next, name, exclusive, client := strAt a 4 }
     if steal then
@@ -222,6 +225,13 @@ origin by `query` nor makes its request wait. -/
 theorem opFor_noninterference (shed : Shed Shelf) (k k' : ClientStorage.Key) (a a' : Array Tok) (h : k ≠ k') :
     (opFor (opFor shed k a).1 k' a').2 = (opFor shed k' a').2 :=
   act_noninterference Shed.laws shed k k' _ _ _ _ h
+
+/-- Kind: resource bound. Says: a request made while `Budget.maxPending` requests wait is
+refused and the lock manager is unchanged. -/
+theorem request_full (s : Shelf) (a : Array Tok) (h : s.queue.length ≥ Budget.maxPending) :
+    (request s a).1 = s := by
+  unfold request
+  repeat (first | split | simp_all)
 
 /-! ## Checks (WPT web-locks: acquire, held, ifAvailable, steal, mode-exclusive, mode-shared, query) -/
 

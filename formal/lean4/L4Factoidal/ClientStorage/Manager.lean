@@ -19,6 +19,7 @@ import L4Factoidal.ClientStorage.IdbOps
 import L4Factoidal.ClientStorage.FileSystem
 import L4Factoidal.ClientStorage.CacheStorage
 import L4Factoidal.ClientStorage.Buckets
+import L4Factoidal.ClientStorage.Budget
 
 namespace L4Factoidal.ClientStorage.Manager
 
@@ -27,8 +28,23 @@ here. -/
 def usageOf (idb : Shed Idb.Shelf) (fs : Shed Fs.Shelf) (cs : Shed Caches.Shelf) (k : Key) : Nat :=
   Usage.usage (idb.shelf k) + Usage.usage (fs.shelf k) + Usage.usage (cs.shelf k)
 
-/-- The quota of a storage key: the sum of the APIs' quotas. -/
-def quota : Nat := 2 * defaultQuota
+/-- The quota of a storage key, its APIs together (`Budget.keyQuota`). -/
+def quota : Nat := Budget.keyQuota
+
+/-- The other storage keys of the session that hold data. -/
+def heldOthers (idb : Shed Idb.Shelf) (fs : Shed Fs.Shelf) (cs : Shed Caches.Shelf) (k : Key) : Nat :=
+  let total (k' : Key) := Usage.usage (idb.shelf k') + Usage.usage (fs.shelf k') + Usage.usage (cs.shelf k')
+  ((idb.shelves.map (·.1) ++ fs.shelves.map (·.1) ++ cs.shelves.map (·.1)).eraseDups.filter
+    fun k' => k' != k && total k' > 0).length
+
+/-- The room of one API of key `k` (0 IndexedDB, 1 file system, 2 caches): `Budget.roomFor`
+of what this API holds, what the key's other APIs hold, and how many other keys hold data. -/
+def roomOf (idb : Shed Idb.Shelf) (fs : Shed Fs.Shelf) (cs : Shed Caches.Shelf) (k : Key) (api : Nat) : Nat :=
+  let u0 := Usage.usage (idb.shelf k)
+  let u1 := Usage.usage (fs.shelf k)
+  let u2 := Usage.usage (cs.shelf k)
+  let own := if api == 0 then u0 else if api == 1 then u1 else u2
+  Budget.roomFor own (u0 + u1 + u2 - own) (heldOthers idb fs cs k)
 
 /-- One command of `StorageManager` (`web_api` op 202) for the context whose key is `k`. -/
 def op (idb : Shed Idb.Shelf) (fs : Shed Fs.Shelf) (cs : Shed Caches.Shelf) (k : Key) (a : Array ByteArray) : List ByteArray :=
@@ -69,7 +85,7 @@ theorem op_local (idb idb' : Shed Idb.Shelf) (fs fs' : Shed Fs.Shelf) (cs cs' : 
   simp [op, usageOf, h1, h2, h3]
 
 #guard (op {} {} {} { origin := "https://a.example" } #["estimate".toUTF8]).map (fun t => (String.fromUTF8? t).getD "") ==
-  ["ok", "0", "1073741824", "0", "0", "0"]
+  ["ok", "0", "33554432", "0", "0", "0"]
 #guard (op {} {} {} { origin := "null" } #["estimate".toUTF8]).map (fun t => (String.fromUTF8? t).getD "") == ["!TypeError"]
 #guard (op {} {} {} { origin := "https://a.example" } #["persist".toUTF8]).map (fun t => (String.fromUTF8? t).getD "") == ["ok", "0"]
 
@@ -78,5 +94,17 @@ theorem op_local (idb idb' : Shed Idb.Shelf) (fs fs' : Shed Fs.Shelf) (cs cs' : 
   [(bucketEstimate bs {} "https://a.example" #["estimate".toUTF8, "b".toUTF8, "1".toUTF8]).map (fun t => (String.fromUTF8? t).getD ""),
    (bucketEstimate bs {} "https://a.example" #["estimate".toUTF8, "b".toUTF8, "2".toUTF8]).map (fun t => (String.fromUTF8? t).getD "")]) ==
   [["ok", "0", "500"], ["!UnknownError"]]
+
+-- the room of the caches of a key: the whole key quota on an empty session; a cache entry of
+-- 100 bytes elsewhere in the key leaves the file system the rest
+#guard roomOf {} {} {} { origin := "https://a.example" } 2 == Budget.keyQuota
+#guard (let cs := (Caches.opFor (Caches.opFor {} { origin := "https://a.example" } #["open".toUTF8, "c".toUTF8]).1 { origin := "https://a.example" }
+          #["put".toUTF8, "1".toUTF8, "https://a.example/x".toUTF8, "GET".toUTF8, "".toUTF8, "200".toUTF8, "".toUTF8, ByteArray.mk (Array.replicate 100 65)]).1;
+        (roomOf {} {} cs { origin := "https://a.example" } 1, heldOthers {} {} cs { origin := "https://b.example" })) == (Budget.keyQuota - 100, 1)
+-- a put past the room is refused and changes nothing
+#guard (let k : Key := { origin := "https://a.example" };
+        let cs := (Caches.opFor {} k #["open".toUTF8, "c".toUTF8]).1;
+        let r := Caches.opForQ cs k #["put".toUTF8, "1".toUTF8, "https://a.example/x".toUTF8, "GET".toUTF8, "".toUTF8, "200".toUTF8, "".toUTF8, ByteArray.mk (Array.replicate 100 65)] 50;
+        ((r.2.map fun t => (String.fromUTF8? t).getD ""), Usage.usage (r.1.shelf k))) == (["!QuotaExceededError"], 0)
 
 end L4Factoidal.ClientStorage.Manager

@@ -209,6 +209,18 @@ def op (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
 def opFor (shed : Shed Shelf) (k : ClientStorage.Key) (a : Array Tok) : Shed Shelf × List Tok :=
   shed.act k (fun s => op s a) (fail "SecurityError")
 
+/-- `opFor` under a quota (`ClientStorage.Budget`): a command after which the key's caches
+would hold more than `quota` bytes (and more than before) changes nothing and answers
+`QuotaExceededError` (`Backend.actQuota`, `actQuota_bound`). -/
+def opForQ (shed : Shed Shelf) (k : ClientStorage.Key) (a : Array Tok) (quota : Nat) : Shed Shelf × List Tok :=
+  Shed.backend.actQuota quota shed k (fun s => op s a) (fail "SecurityError") (fail "QuotaExceededError")
+
+/-- Kind: resource bound. Says: after a command under a quota the key's caches hold at most
+the quota, or at most what they held before. -/
+theorem opForQ_bound (shed : Shed Shelf) (k : ClientStorage.Key) (a : Array Tok) (quota : Nat) :
+    Usage.usage (Shed.backend.load (opForQ shed k a quota).1 k) ≤ max quota (Usage.usage (Shed.backend.load shed k)) :=
+  actQuota_bound Shed.laws quota shed k _ _ _
+
 /-! ## Theorems -/
 
 /-- Kind: functional law. Says: a `GET` request hits an entry stored with that request,

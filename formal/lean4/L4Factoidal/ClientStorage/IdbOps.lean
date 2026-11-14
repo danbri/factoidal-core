@@ -25,6 +25,7 @@ database, and the commands of the `web_api` op that the page side calls.
 Answers are tokens: `ok` and values, or `!` + the name of the exception.
 -/
 import L4Factoidal.ClientStorage.IdbStore
+import L4Factoidal.ClientStorage.Budget
 import L4Factoidal.EventLoop.Dispatch
 
 namespace L4Factoidal.ClientStorage.Idb
@@ -371,8 +372,16 @@ def Live.uncloning (l : Live) (tx : Nat) (isPut : Bool) : Live :=
 
 /-- Queue a request on a transaction: the answer is its id. -/
 def enqueue (l : Live) (t : Txn) (op : Op) : Live × List Tok :=
+  -- a transaction holds at most `Budget.maxPending` requests not yet run
+  if t.queue.length ≥ Budget.maxPending then (l, fail "QuotaExceededError") else
   let id := l.next
   (({ l with next := id + 1 }).setTxn { t with queue := t.queue ++ [({ id, op } : Req)] }, ok [N id])
+
+/-- Kind: resource bound. Says: a request is queued only while its transaction holds fewer
+than `Budget.maxPending`; past that it is refused and nothing changes. -/
+theorem enqueue_full (l : Live) (t : Txn) (op : Op) (h : t.queue.length ≥ Budget.maxPending) :
+    enqueue l t op = (l, fail "QuotaExceededError") := by
+  simp [enqueue, h]
 
 def dirOf (a : Array Tok) (i : Nat) : Dir := natAt a i
 
@@ -915,6 +924,11 @@ theorem op_dbs (quota : Nat) (s : Shelf) (a : Array Tok) (h : strAt a 0 ≠ "pum
 /-- One command for the context whose storage key is `k`, on the in-memory shed. -/
 def opFor (shed : Shed Shelf) (k : ClientStorage.Key) (a : Array Tok) : Shed Shelf × List Tok :=
   shed.act k (fun s => op defaultQuota s a) (fail "SecurityError")
+
+/-- `opFor` with the room the storage budget leaves this API (`ClientStorage.Budget.roomFor`):
+a write past it is refused with `QuotaExceededError` by the API's own check. -/
+def opForQ (shed : Shed Shelf) (k : ClientStorage.Key) (a : Array Tok) (quota : Nat) : Shed Shelf × List Tok :=
+  shed.act k (fun s => op quota s a) (fail "SecurityError")
 
 /-- Kind: security theorem (IndexedDB is partitioned by storage key). Says: whatever a
 context with one storage key does with IndexedDB, the answer another key then gets for any

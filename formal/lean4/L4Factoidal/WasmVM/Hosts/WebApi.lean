@@ -734,11 +734,15 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     -- IndexedDB: one command (its name is the first argument) on the shelf of the session's
     -- storage key, which is the page's origin, never an argument. The answer is its tokens.
     else if code == 200 then
-      let (idb, out) := L4Factoidal.ClientStorage.Idb.opFor s.idb { origin := s.net.page.origin } fs
+      let k : L4Factoidal.ClientStorage.Key := { origin := s.net.page.origin }
+      let (idb, out) := L4Factoidal.ClientStorage.Idb.opForQ s.idb k fs
+        (L4Factoidal.ClientStorage.Manager.roomOf s.idb s.opfs s.caches k 0)
       ({ s with idb }, .ok (pack out))
     -- The File System API (201) and StorageManager (202), for the same storage key.
     else if code == 201 then
-      let (opfs, out) := L4Factoidal.ClientStorage.Fs.opFor s.opfs { origin := s.net.page.origin } fs
+      let k : L4Factoidal.ClientStorage.Key := { origin := s.net.page.origin }
+      let (opfs, out) := L4Factoidal.ClientStorage.Fs.opForQ s.opfs k fs
+        (L4Factoidal.ClientStorage.Manager.roomOf s.idb s.opfs s.caches k 1)
       ({ s with opfs }, .ok (pack out))
     else if code == 202 then
       (s, .ok (pack (L4Factoidal.ClientStorage.Manager.op s.idb s.opfs s.caches { origin := s.net.page.origin } fs)))
@@ -760,7 +764,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       match L4Factoidal.ClientStorage.Buckets.route s.buckets s.net.page.origin fs with
       | none => (s, .ok (pack (L4Factoidal.ClientStorage.Buckets.fail "InvalidStateError")))
       | some (k, fs) =>
-        let (caches, out) := L4Factoidal.ClientStorage.Caches.opFor s.caches k fs
+        let (caches, out) := L4Factoidal.ClientStorage.Caches.opForQ s.caches k fs
+          (L4Factoidal.ClientStorage.Manager.roomOf s.idb s.opfs s.caches k 2)
         ({ s with caches }, .ok (pack out))
     -- Storage Buckets (205): the buckets of the same storage key.
     else if code == 205 then
