@@ -377,6 +377,33 @@ def flexIntrinsic (kids : Children) (s : Computed) (items : Array Item) : Except
     hi := hi+gaps
   return (lo,hi)
 
+/-- The absolutely positioned children of a flex container, pending at their static
+positions (§4.1): each as if it were the only item, aligned in the content box
+`(x,y,width,height)` by `justify-content` on the main axis and its `align-self` on the
+cross axis. `space-between` is `start` and the other distributions are centred, as for
+one item. -/
+def flexAbsolutes (dom : Dom) (styles : Array Computed) (container : Nat) (x y width height : Float) : Array Pending :=
+  let s := styles[container]!
+  let rtl := s.direction == .rtl
+  (dom.get container).kids.filterMap fun k =>
+    let cs := styles[k]!
+    if (dom.get k).type == .element && cs.display != .none && cs.pos.isAbsolute then
+      let mainEnd := if s.flex.column then s.flex.reverse else rtl != s.flex.reverse
+      let main : Float := match mainJustify s.align.justifyContent s.flex.reverse (if s.flex.column then none else some !mainEnd) with
+        | .start | .spaceBetween => 0
+        | .end_ => 1
+        | .center | .spaceAround | .spaceEvenly => 0.5
+      let main := if mainEnd then 1-main else main
+      let crossEnd := if s.flex.column then rtl else s.flex.wrap == .wrapReverse
+      let cross : Float := match itemAlign s cs with
+        | .start | .stretch | .baseline => 0
+        | .end_ => 1
+        | .center => 0.5
+      let cross := if crossEnd then 1-cross else cross
+      some {id := k, x, y, width, height,
+            fx := if s.flex.column then cross else main, fy := if s.flex.column then main else cross}
+    else none
+
 /-- Viewport lengths of the flex, alignment and inset values, once the viewport is known. -/
 def flexAtViewport (width height : Float) (s : Computed) : Computed :=
   {s with align := {s.align with rowGap := s.align.rowGap.atViewport width height,

@@ -68,6 +68,17 @@ private def rel := "#c{position:relative;margin-left:20px;padding:5px;border:2px
 -- A flex container: an absolute child is not an item.
 #guard box "<div id=f><div id=a>AA</div><div id=p>P</div><div id=b>B</div></div>" "#f{display:flex;position:relative} #p{position:absolute;right:0;top:0}" "b" == some (12,0,6,7)
 #guard box "<div id=f><div id=a>AA</div><div id=p>P</div><div id=b>B</div></div>" "#f{display:flex;position:relative} #p{position:absolute;right:0;top:0}" "p" == some (194,0,6,7)
+-- The static position of an absolute child of a flex container: as the only item (free 194 by 43).
+private def flexAbs := "<div id=f><div id=p>P</div></div>"
+private def flexAbsCss := "#f{display:flex;position:relative;height:50px} #p{position:absolute} "
+#guard box flexAbs flexAbsCss "p" == some (0,0,6,7)
+#guard box flexAbs (flexAbsCss ++ "#f{justify-content:center}") "p" == some (97,0,6,7)
+#guard box flexAbs (flexAbsCss ++ "#f{justify-content:flex-end;align-items:center}") "p" == some (194,21.5,6,7)
+#guard box flexAbs (flexAbsCss ++ "#f{justify-content:space-around} #p{align-self:flex-end}") "p" == some (97,43,6,7)
+#guard box flexAbs (flexAbsCss ++ "#f{flex-direction:column;justify-content:flex-end;align-items:center}") "p" == some (97,43,6,7)
+#guard box flexAbs (flexAbsCss ++ "#f{flex-direction:row-reverse}") "p" == some (194,0,6,7)
+-- An inset wins over the static position on its axis.
+#guard box flexAbs (flexAbsCss ++ "#f{justify-content:center;align-items:center} #p{left:3px}") "p" == some (3,21.5,6,7)
 -- inset.
 #guard box page (rel ++ "#p{position:absolute;inset:1px 2px 3px 4px}") "p" == some (26,10,104,46)
 

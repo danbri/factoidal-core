@@ -39,6 +39,14 @@ structure Pending where
   id : Nat
   x : Float
   y : Float
+  /-- For a child of a flex or grid container, the static position is that of the box
+  aligned in the container's content box (CSS Flexbox 1 §4.1): `(x,y)` is that box's
+  corner, `width` by `height` its size, and `fx`, `fy` the share of the free space before
+  the box on each axis (0 start, 0.5 centre, 1 end). In flow these are zero. -/
+  width : Float := 0
+  height : Float := 0
+  fx : Float := 0
+  fy : Float := 0
   deriving Repr
 
 /-- A laid-out fragment. For a box, `boxes[0]` is its own border box and `height` is the
@@ -144,14 +152,6 @@ def collectItems (dom : Dom) (styles : Array Computed) (container : Nat) : Array
         out := out.push (.element k)
   if text.any (fun t => !blankText (dom.get t).data) then out := out.push (.anonymous container text)
   return out
-
-/-- The absolutely positioned element children of a container that lays out items: each
-is pending at the content box's start corner (its static position, CSS Flexbox 1 §4.1,
-without the alignment that section adds). -/
-def absoluteChildren (dom : Dom) (styles : Array Computed) (container : Nat) (x y : Float) : Array Pending :=
-  (dom.get container).kids.filterMap fun k =>
-    if (dom.get k).type == .element && (styles[k]!).display != .none && (styles[k]!).pos.isAbsolute
-    then some ⟨k,x,y⟩ else none
 
 /-- `box-sizing: border-box` (CSS Sizing 3 §3.3) taken out of a style: `width`, `height`
 and their limits as content-box sizes, which is what the layout reads. A percentage

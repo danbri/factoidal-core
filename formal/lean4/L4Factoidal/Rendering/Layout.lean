@@ -617,7 +617,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let _ := width
       out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes,
                        pending := out.pending ++ moved.pending}
-    | .outOfFlow source => out := {out with pending := out.pending.push ⟨source,x+offset,y⟩}
+    | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := x+offset, y}}
     | _ => pure ()
   return out
 
@@ -1129,7 +1129,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           if cs.pos.isAbsolute then
             -- Out of flow (CSS 2.1 §9.6): pending at its static position, which is where the
             -- flow has got to, or its place in the open line.
-            if inline.isEmpty then content := {content with pending := content.pending.push ⟨child,innerX,innerY+content.height⟩}
+            if inline.isEmpty then content := {content with pending := content.pending.push {id := child, x := innerX, y := innerY+content.height}}
             else inline := inline.push (.outOfFlow child)
           else if cs.display.isBlockLevel then
             if !inline.isEmpty then
@@ -1279,8 +1279,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .element id => sizesItself dom styles pictures id
         | .anonymous _ _ => false}
     -- An absolutely positioned box (CSS 2.1 §10.3.7 and §10.6.4) in the containing block
-    -- `(cx,cy,cw,ch)`; `(sx,sy)` is its static position.
-    let absolute (id : Nat) (sx sy cx cy cw ch : Float) : Except String Result := do
+    -- `(cx,cy,cw,ch)`; `at'` has its static position.
+    let absolute (at' : Pending) (cx cy cw ch : Float) : Except String Result := do
+      let id := at'.id
       let s := styles[id]!
       if s.display == .none then return {}
       let m := s.margin
@@ -1314,7 +1315,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
                 else 0)
         | some l,none => cx+l
         | none,some r => cx+cw-r-outerW
-        | none,none => sx
+        | none,none => at'.x+at'.fx*(at'.width-outerW)
       -- §10.6.4: the height likewise; with none of these, the height of the content.
       let minH := (CSS.resolve ch s.minHeight).getD 0
       let maxH := CSS.resolve ch s.maxHeight
@@ -1326,9 +1327,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           | _,_ => none
       let by' := match top with
         | some t => cy+t
-        | none => if bottom.isSome then cy else sy
+        | none => if bottom.isSome then cy else at'.y
       let r ← layoutTask dom styles font embedding pictures fuel (.sized id borderW imposed) bx by' cw
       match top,bottom with
+      | none,none => return r.shift 0 (at'.fy*(at'.height-r.height))
       | none,some e => return r.shift 0 (cy+ch-e-r.height-by')
       | some t,some e =>
         let free := ch-t-e-r.height
@@ -1351,7 +1353,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       for (z,_,p) in ordered do
         if (styles[p.id]!).pos.position == .fixed && !root then kept := kept.push p
         else
-          let r ← absolute p.id p.x p.y cx cy cw ch
+          let r ← absolute p cx cy cw ch
           if z < 0 then below := below.over r else above := above.over r
       return {content with nodes := below.nodes ++ content.nodes ++ above.nodes,
                            boxes := content.boxes ++ below.boxes ++ above.boxes,
@@ -1427,12 +1429,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight}
         else flow s id n.kids lead innerX innerY width
-      -- The absolutely positioned children of a flex container are not its items.
-      let content := if s.display.isFlex then
-          {content with pending := content.pending ++ absoluteChildren dom styles id innerX innerY}
-        else content
       if contentOnly then return content
       let height := definite.getD (clampOpt minHeight maxHeight content.height)
+      -- The absolutely positioned children of a flex container are not its items.
+      let content := if s.display.isFlex then
+          {content with pending := content.pending ++ flexAbsolutes dom styles id innerX innerY width height}
+        else content
       -- A positioned box is the containing block of its absolutely positioned descendants:
       -- its padding box (CSS 2.1 §10.1).
       let content ← if s.pos.isPositioned then
