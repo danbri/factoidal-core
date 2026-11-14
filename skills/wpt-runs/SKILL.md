@@ -47,9 +47,19 @@ reports only part of WPT (Ladybird on wpt.fyi: 35,966 of 94,406 names) is left o
   complete, and may wait up to about an hour for one that is finishing. It pushes a snapshot branch
   `wpt-snap/<YYYYMMDD-HHMM>-<sha12>` in factoidal-core first, so the source and tool used stay fixed. A
   run on an unchanged commit is a repeat (`repeat_of`): repeats measure flakiness.
-- **Platforms**: scored runs on Linux, sharded wide (many parallel runners). macOS arm64, the shipping
-  platform, runs once a day and on each release as a cross-check. Differences between the two on one
-  commit are bugs to find (fonts, timing, platform code).
+- **Platforms**: scored runs on Linux, sharded wide (16 runners, about 20 minutes). macOS arm64, the
+  shipping platform, runs once a day (13:41 UTC) and on each `build.yml` release as a cross-check (4
+  runners, about 45 minutes). Differences between the two on one commit are bugs to find (fonts, timing,
+  platform code). On 6dde36491 they agree to 0.01 points (Linux 71.2202%, macOS 71.2245%).
+- **A valid Linux row is the score of a commit while that commit has no valid macOS row.** Report the
+  platform with the number.
+- **Main on Linux, automatically**: every 20 minutes `foafnaut-linux.yml` builds the Linux engine of the
+  newest main commit when that commit changes engine code (`formal/lean4/`, `labs/demos/foafnaut/`,
+  `tools/wasmvm/`, the WPT runner) and has no Linux engine yet. Docs-only commits are skipped: they have
+  the engine of the commit before. One build at a time, and the newest commit wins. The finished engine
+  starts the Linux full run. So a main commit that changes the engine has a full-run row about an hour
+  after the push, with no macOS runner. The same step starts `build.yml` for main when the hourly poll
+  missed the commit.
 - The other Factoidal conformance suites that have runners run on the same triggers, in parallel.
 - No scheduled sampled job. The old daily sample (`wpt-score.yml`) was disabled and its schedule removed
   on 2026-11-13. Sampling remains only as a manual smoke check, never recorded as a score.
@@ -145,7 +155,9 @@ What comes back:
   build job and the first errors are in the job summary.
 
 Limits: the build is `build-web-render.sh --native` (the summary gives the minutes of each part; the
-Lake build directory comes from `build.yml`'s newest Linux cache, so unchanged `formal/lean4` modules
-are not compiled again). One run per `core_ref` waits at a time: a newer dispatch of the same ref
+Lake build directory comes from `build.yml`'s newest Linux cache and the C objects of unchanged modules
+from an object cache, so only what the branch changes is compiled again). The lab's `#guard` tests
+(`WebDocumentTests.lean` and the others the build script runs) are part of the build: a failing one
+fails the build, and the summary shows it. One run per `core_ref` waits at a time: a newer dispatch of the same ref
 replaces a waiting one. A test process that grows past the memory limit is killed and its test is
 recorded as CRASH.
