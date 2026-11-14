@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Images</title>
+<style>
+body{margin:16px;font-family:sans-serif;font-size:16px}
+h1{font-size:20px;margin:0 0 8px 0}
+p{margin:0 0 8px 0}
+img,svg{display:block;margin:0 0 8px 0}
+.icon{width:2em;height:2em}
+</style></head><body>
+<h1>Images: each line is followed by a green picture, never by its alternative text</h1>
+<p>An SVG file as img, at its own size (120 by 60)</p>
+<img src="logo.svg" alt="RED: the SVG file was not drawn">
+<p>The same file with width and height attributes (240 by 120)</p>
+<img src="logo.svg" width="240" height="120" alt="RED: the sized SVG file was not drawn">
+<p>The same file sized by a style sheet (60 by 30)</p>
+<img src="logo.svg" style="width:60px;height:30px" alt="RED: the styled SVG file was not drawn">
+<p>An SVG file in a data: URL</p>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc4MCcgaGVpZ2h0PSc0MCc+PHJlY3Qgd2lkdGg9JzgwJyBoZWlnaHQ9JzQwJyBmaWxsPScjMmU3ZDMyJy8+PC9zdmc+" alt="RED: the SVG data URL was not drawn">
+<p>Inline SVG with attributes that say nothing about the drawing (focusable, aria-hidden, class, role, data-*)</p>
+<svg xmlns="http://www.w3.org/2000/svg" class="icon" focusable="false" aria-hidden="true" role="img" data-name="tick" width="32" height="32" viewBox="0 0 32 32">
+  <rect width="32" height="32" fill="#2e7d32"/><path d="M6 17 L13 24 L26 9" stroke="#ffffff" stroke-width="4" fill="none"/>
+</svg>
+<p>Inline SVG whose root is sized in em (4em by 2em)</p>
+<svg xmlns="http://www.w3.org/2000/svg" width="4em" height="2em" viewBox="0 0 40 20"><rect width="40" height="20" fill="#2e7d32"/></svg>
+</body></html>

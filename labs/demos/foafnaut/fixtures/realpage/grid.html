@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Grid layout</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:sans-serif;font-size:16px}
+.frame{display:grid;grid-template-columns:200px 1fr 160px;grid-template-areas:"head head head" "side main aside" "foot foot foot";gap:8px;padding:8px}
+.frame > *{padding:12px}
+header{grid-area:head;background-color:#1d4f91;color:#ffffff}
+nav{grid-area:side;background-color:#e8eef7}
+main{grid-area:main;background-color:#f5f5f5;min-height:200px}
+aside{grid-area:aside;background-color:#fff3cd}
+footer{grid-area:foot;background-color:#bdbdbd}
+.tiles{display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-top:12px}
+.tiles div{background-color:#6fcf97;padding:8px}
+.tiles .two{grid-column:span 2;background-color:#2e7d32;color:#ffffff}
+.auto{display:grid;grid-template-columns:repeat(auto-fill, minmax(120px, 1fr));gap:8px;margin-top:12px}
+.auto div{background-color:#f2c94c;padding:8px}
+</style></head><body>
+<div class="frame">
+<header>Header across three columns</header>
+<nav>Side, 200 px</nav>
+<main>Main, the rest of the width
+<div class="tiles"><div>1</div><div class="two">2, two columns</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div></div>
+<div class="auto"><div>a</div><div>b</div><div>c</div><div>d</div><div>e</div></div>
+</main>
+<aside>Aside, 160 px</aside>
+<footer>Footer across three columns</footer>
+</div></body></html>

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Values of the cascade</title>
+<style>
+:root{--good:#2e7d32;--w:160px}
+body{margin:16px;font-family:sans-serif;font-size:16px}
+h1{font-size:20px;margin:0 0 8px 0}
+p{margin:0 0 4px 0;padding:4px 8px;background-color:#c62828;color:#ffffff}
+.var{background-color:var(--good)}
+.varfall{background-color:var(--missing, #2e7d32)}
+.rgba{background-color:rgba(46, 125, 50, 1)}
+.hsl{background-color:hsl(123, 46%, 34%)}
+.hex8{background-color:#2e7d32ff}
+.named{background-color:forestgreen}
+.inherit{background-color:#2e7d32}
+.inherit span{color:#c62828}
+.inherit span{color:inherit}
+.bar{background-color:#2e7d32;height:20px;padding:0}
+.rem{width:20rem}
+.em{width:20em}
+.pt{width:240pt}
+.calc{width:calc(10rem + 160px)}
+.varw{width:calc(var(--w) * 2)}
+.px{width:320px}
+.size{background-color:#2e7d32}
+.size.rem2{font-size:1.5rem}
+.size.pt2{font-size:18pt}
+.size.pct{font-size:150%}
+.size.px2{font-size:24px}
+</style></head><body>
+<h1>Values: every line is green; the six bars are 320 px wide; the four sizes are 24 px</h1>
+<p class="var">var(--good)</p>
+<p class="varfall">var(--missing, fallback)</p>
+<p class="rgba">rgba()</p>
+<p class="hsl">hsl()</p>
+<p class="hex8">#rrggbbaa</p>
+<p class="named">a named colour outside the basic sixteen</p>
+<p class="inherit"><span>color: inherit after a red rule (white text)</span></p>
+<p class="bar px"></p><p class="bar rem"></p><p class="bar em"></p><p class="bar pt"></p><p class="bar calc"></p><p class="bar varw"></p>
+<p class="size px2">24px</p><p class="size rem2">1.5rem</p><p class="size pt2">18pt</p><p class="size pct">150%</p>
+</body></html>

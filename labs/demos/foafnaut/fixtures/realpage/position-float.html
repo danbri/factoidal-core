@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Positioning and floats</title>
+<style>
+body{margin:16px;font-family:sans-serif;font-size:16px}
+h1{font-size:20px;margin:0 0 12px 0}
+.skip{position:absolute;left:-9999px}
+.box{position:relative;width:300px;height:100px;background-color:#e8eef7;margin-bottom:16px}
+.badge{position:absolute;top:8px;right:8px;background-color:#2e7d32;color:#ffffff;padding:2px 8px}
+.corner{position:absolute;bottom:0;left:0;width:40px;height:40px;background-color:#1d4f91}
+.nudge{position:relative;top:10px;left:20px;background-color:#f2c94c;display:inline-block;padding:4px}
+.info{float:right;width:200px;margin:0 0 8px 16px;padding:8px;background-color:#fff3cd;border:1px solid #bdbdbd}
+.thumb{float:left;width:80px;height:80px;margin:0 12px 8px 0;background-color:#6fcf97}
+.clear{clear:both;background-color:#bdbdbd;padding:4px}
+.sized{box-sizing:border-box;width:300px;padding:20px;border:10px solid #1d4f91;background-color:#e8eef7;margin-top:16px}
+.plain{width:300px;height:10px;background-color:#2e7d32}
+.hidden{display:none}
+.menu{display:none}
+.menu.open{display:block;background-color:#2e7d32;color:#ffffff;padding:4px 8px;margin-top:8px}
+.top{position:fixed;top:0;right:0;background-color:#eb5757;color:#ffffff;padding:4px 8px}
+</style></head><body>
+<a class="skip" href="#main">Skip link, placed off the page</a>
+<div class="top">fixed, top right</div>
+<h1 id="main">Positioning and floats</h1>
+<div class="box">a box 300 by 100<span class="badge">top right</span><span class="corner"></span></div>
+<p>Text with <span class="nudge">a nudged span</span> in the line.</p>
+<div class="info">A box floated right, 200 px wide. The paragraph runs beside it.</div>
+<div class="thumb"></div>
+<p>A paragraph beside two floats: a green square at the left and a yellow box at the right. Its lines are shorter while the floats are beside it, and take the whole width below them. Lorem ipsum is not used here: the words only have to fill a few lines so that the wrapping can be seen in a capture of the page.</p>
+<p class="clear">clear: both, below the floats</p>
+<div class="sized">box-sizing: border-box, 300 px wide with its padding and border</div>
+<div class="plain"></div>
+<p class="hidden">display: none (not shown)</p>
+<p class="menu open">a class that opens a menu wins over display: none</p>
+</body></html>
