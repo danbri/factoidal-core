@@ -230,7 +230,11 @@ Deno.test("host parity: the hosts take their page steps from page-load.mjs",asyn
   assert(/const layout=\{\.\.\.pageLayoutFields\(/.test(hub),"the Hub's script session layout is built without pageLayoutFields");
   assert(/return \{\.\.\.pageLayoutFields\(doc\),textScalePercent:printPercent\(\)/.test(hub),"the Hub's print request is built without pageLayoutFields");
   // A script fetch is answered with the server's type and X-Content-Type-Options, never with a made-up type.
-  for(const [name,source] of [["the Hub",hub],["the window",win]] as const){
+  const text=await Deno.readTextFile(`${lab}textnaut/textnaut.ts`);
+  // Textnaut gives a page its requests (module scripts, fetch), as the window does.
+  assert(/network \? \{ network: true \}/.test(text)&&text.includes('action: "syncAnswer"')&&text.includes('action: "net"'),
+    "Textnaut starts a session without page requests, or does not answer them");
+  for(const [name,source] of [["the Hub",hub],["the window",win],["Textnaut",text]] as const){
     assert(source.includes("fetchedAnswer("),`${name} does not answer script fetches through fetchedAnswer`);
     assert(!/contentType:\s*["']["']/.test(source),`${name} answers a fetch with an empty Content-Type of its own`);
   }
