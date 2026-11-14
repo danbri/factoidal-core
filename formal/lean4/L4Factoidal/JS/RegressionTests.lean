@@ -645,4 +645,8 @@ private def parses (src : String) : Bool := syn src == "ok"
 #guard out "class MyA extends Array {} var m = new MyA(); m.push(1, 2, 3); print(m.map(x => x) instanceof MyA, m.filter(x => x > 1).length, m.slice(1) instanceof MyA, [1].map(x => x) instanceof MyA); var a = [1, 2]; a.constructor = { [Symbol.species]: function (n) { this.args = n } }; var r = a.map(x => x * 2); print(r.args, r[1], Array[Symbol.species] === Array, Object.getOwnPropertyDescriptor(Map, Symbol.species).get.name); a.constructor = 1; try { a.concat() } catch (e) { print(e.name) }" == ["true 2 true false", "2 4 true get [Symbol.species]", "TypeError"]
 #guard out "var arr = [, 1, 2]; var got = 'unset'; Object.defineProperty(arr, '0', { get() { return 'g' }, configurable: true }); arr.reduce((p, c, i) => { if (i === 1) got = p }); print(got, Array.isArray(arr), arr.length, arr[0])" == ["g true 3 g"]
 
+/-! ## Array.from and Array.of with a constructor `this` -/
+
+#guard out "function C(n) { this.made = arguments.length ? n : 'none' } var a = Array.from.call(C, { length: 2, 0: 'x', 1: 'y' }); var b = Array.from.call(C, new Set([1, 2, 3])); var c = Array.of.call(C, 7, 8); print(a.made, a.length, a[1], b.made, b.length, c.made, c[0], c.length, Array.from([1, 2], x => x * 10).join()); var closed = 0; var it = { [Symbol.iterator]() { return { next() { return { value: 1, done: false } }, return() { closed++; return {} } } } }; try { Array.from(it, () => { throw new Error('m') }) } catch (e) { print(e.message, closed) }" == ["2 2 y none 3 2 7 2 10,20", "m 1"]
+
 end L4Factoidal.JS.Tests
