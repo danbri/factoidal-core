@@ -195,6 +195,9 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
   `eval_linear`, `eval_ends` (keyword and cubic easings map 0 to 0 and 1 to 1).
 - `Easing.evalPoints_identity` (`linear(0, 1)` is the identity at every input), `evalPoints_ends`
   (two points at 0 and 1 give their outputs there).
+- `Easing.segment_mono`, `segment_between`, `evalPoints_two`, `evalPoints_two_mono`: one segment of
+  `linear()` whose output does not fall is monotone in its input at every input, and between its two
+  inputs it stays between its two outputs; a two-point `linear(a, b)` with a ≤ b does not decrease.
 - `Reads.wrote_other`, `Reads.wrote_version` (`Hosts/Page`): a write that is not of a `style`
   attribute forgets the noted elements, and every `wrote` leaves the note exact for the new version;
   a write path that raises the version another way leaves `styleVersion` behind, and the next measure
