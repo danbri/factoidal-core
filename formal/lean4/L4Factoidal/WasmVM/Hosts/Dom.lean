@@ -54,6 +54,10 @@ import L4Factoidal.DOM.Editing.Core
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.WasmVM L4Factoidal.DOM
 
+/-- An element that has a child navigable when connected (HTML §4.8.5 `iframe`, §16.2
+`frame`). -/
+def frameOwner (x : DOM.Node) : Bool := Dom.isHtmlElement x "iframe" || Dom.isHtmlElement x "frame"
+
 def moduleName : String := "foafnaut_dom"
 
 /-- A typed DOM command: what the page did to the arena. Each one is a DOM algorithm of
@@ -946,10 +950,6 @@ def aboutBlank : Dom := Id.run do
   return d.linkChild html body none
 
 /-- The `src` URL of an `iframe` element, when it has a non-empty one. -/
-/-- An element that has a child navigable when connected (HTML §4.8.5 `iframe`, §16.2
-`frame`). -/
-def frameOwner (x : DOM.Node) : Bool := Dom.isHtmlElement x "iframe" || Dom.isHtmlElement x "frame"
-
 def frameSrc (d : Dom) (el : Nat) : Option String :=
   match attrValue? d el "src" with
   | some v => if v.trimAscii.toString.isEmpty then none else some v
