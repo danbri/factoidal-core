@@ -42,6 +42,7 @@ import Std.Data.HashMap
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.OfXml
 import L4Factoidal.DOM.OfXmlFull
+import L4Factoidal.DOM.XmlSerialize
 import L4Factoidal.DOM.Forms
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.DOM.Shadow
@@ -1299,6 +1300,11 @@ def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
       match (q.drop 1).toString.splitOn " " with
       | flag :: ids => .ok (L4Factoidal.DOM.Fragment.getHTML d n (flag == "1") (ids.filterMap String.toNat?))
       | [] => .ok (L4Factoidal.DOM.Fragment.getHTML d n false [])
+    -- (xmlweb) HTML §8.4.3 "fragment serializing algorithm steps": a node of an XML
+    -- document is read by the XML serialization (`DOM.XmlSerialize`), not the HTML one
+    else if (d.get n).type == .element && !(d.get (d.get n).doc).htmlDoc then
+      .ok (if q == "1" then L4Factoidal.DOM.XmlSerialize.serialize d n
+           else L4Factoidal.DOM.XmlSerialize.serializeChildren d n)
     else .ok (L4Factoidal.DOM.Fragment.serialize d n (q == "1"))
   | 30 => if !d.isSlot n then .error (-2) else
     .ok (" ".intercalate ((if q == "1" then d.findFlattenedSlottables n else d.findSlottables n).toList.map toString))
