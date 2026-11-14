@@ -6481,6 +6481,23 @@
     if (arguments.length < 1) throw new TypeError('CSS.escape: 1 argument required');
     return op(0, 166, String(ident));
   });
+  // CSS.registerProperty (CSS Properties and Values API 1 §5.1): Lean checks the name, the
+  // syntax string and the initial value (CssRegister.registerOp, node_query op 155). The
+  // names registered are kept here so that a second registration is refused; the
+  // registration does not yet change computed values.
+  const registeredProperties = new Set();
+  define(CSSns, 'registerProperty', function (definition) {
+    if (arguments.length < 1) throw new TypeError('CSS.registerProperty: 1 argument required');
+    if (definition === null || (typeof definition !== 'object' && typeof definition !== 'function')) throw new TypeError('CSS.registerProperty: the definition is not an object');
+    if (definition.name === undefined) throw new TypeError("CSS.registerProperty: 'name' is required");
+    if (definition.inherits === undefined) throw new TypeError("CSS.registerProperty: 'inherits' is required");
+    const name = String(definition.name), syntax = definition.syntax === undefined ? '*' : String(definition.syntax);
+    const initial = definition.initialValue === undefined ? '0' : '1' + String(definition.initialValue);
+    if (registeredProperties.has(name)) throw new DOMException(`The property '${name}' is already registered`, 'InvalidModificationError');
+    const r = n.query(0, 155, [name, syntax, initial].join('\u0000'));
+    if (r !== '') throw new DOMException(`CSS.registerProperty: the definition of '${name}' is not valid`, typeof r === 'string' ? r : 'SyntaxError');
+    registeredProperties.add(name);
+  });
   Object.defineProperty(CSSns, Symbol.toStringTag, { value: 'CSS', configurable: true });
   def('CSS', CSSns);
   // ---- document.fonts (CSS Font Loading 3 §2): the fonts a page uses are held before its

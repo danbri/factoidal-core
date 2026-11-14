@@ -2339,3 +2339,11 @@ L4Factoidal_Rendering_CssValues_hasFn  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_hasBadToken  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_Color_substF  # (c) the nesting of the channel expressions of a relative colour, fuel 16
 L4Factoidal_Rendering_CssSheet_preludeText_go  # (c) the nesting of an at-rule prelude, at most cvSize 64 + 2
+L4Factoidal_Rendering_CssRegister_hasFontRelative  # (c) the nesting of one value, at most maxNesting + 2 = 66
+L4Factoidal_Rendering_CssValues_propsOf  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_simpleRefs  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_unparse  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_expandF  # (c) fuel 4: a shorthand whose parts are shorthands
+L4Factoidal_Rendering_CssValues_recombineF  # (c) fuel 4: a shorthand whose parts are shorthands
+L4Factoidal_Rendering_CssValues_filterComputed  # (c) the nesting of one value, fuel 8
+L4Factoidal_Rendering_CSS_complexSpecificity  # (c) the nesting of a selector, at most DOM.Selectors.maxNesting = 32
