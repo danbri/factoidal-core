@@ -251,13 +251,14 @@ coordination log first.
   with broadcasting (add, sub, mul, div, max, min, pow), unary (abs, ceil, cos, exp, floor,
   neg, reciprocal, relu, sigmoid, sin, softsign, tan), transpose, matmul (batch broadcast by
   `expandMap`, a `forCap` loop over K), reductions over chosen axes (sum, mean, L1, sum of
-  squares, product, max, min). `emitC_eval`: the printed
+  squares, product, max, min), conv2d (NCHW, OIHW, groups, bias, padding, strides, dilations)
+  and average and max pooling, both with the CPU reference's window tests. `emitC_eval`: the printed
   `u32` index arithmetic computes `Coord.eval` whenever its values fit in 32 bits (with
   `evalU`, a Lean reading of WGSL's `u32` `+ - * / %`). `#guard`s: every kernel passes the
   subset check, the printed broadcast index, refusals (`gelu`, `tanh`, outputs over one dispatch).
 - Not yet: the `Fits` side condition discharged from the tensor quota for whole kernels; the
-  output unravel (`k / stride % dim`) proved equal to `Shape.unravel`; gemm, conv2d and
-  pooling (a `forCap` loop each, as matmul); the backend choice in `Graph`/`Eval` (to be
+  output unravel (`k / stride % dim`) proved equal to `Shape.unravel`; gemm, l2Pool2d,
+  convTranspose2d and the other layouts; the backend choice in `Graph`/`Eval` (to be
   agreed with the webnn agent); running graphs through `PageGpu` commands.
 
 Differential test, 2026-11-14, this Mac (Apple M-series, Metal through Deno's WebGPU): Lean
@@ -281,6 +282,10 @@ tolerances of the WebNN conformance tests.
 | reduceSum, reduceMean, reduceL1, reduceSumSquare over 16 | 2 ULP | 16, 18, 16, 32 ULP | within |
 | reduceProduct over 16 | 4 ULP | 16 ULP | within |
 | reduceMax, reduceMin | 0 ULP | 0 ULP | within |
+| conv2d [1,4,8,8] × [6,2,3,3], groups 2, bias, padding 1 | 34 ULP | 36 ULP (2·kh·kw·cin/groups) | within |
+| maxPool2d 3×3, stride 2, padding 1 | 0 ULP | 0 ULP | within |
+| averagePool2d 3×3, stride 2, padding 1, inputs in [0, 4) | 2 ULP | 11 ULP (kh·kw + 2) | within |
+| averagePool2d, same, inputs in [−4, 4) | 43 ULP | 11 ULP | over: the `f32` sum loses digits where values cancel; the CPU sums in binary64 |
 | sqrt | 2 ULP | 1 ULP | over: CPU reference |
 | tanh | 44 ULP | 16 ULP | over: CPU reference |
 | log | 75 ULP | 8 ULP | over: CPU reference |
