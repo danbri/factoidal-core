@@ -111,7 +111,8 @@ Every answer but `info` and `close` is a turn: `session`, `clock`, `changed`,
 `commandCount`, `commands` (the whole list, compacted: one write per attribute and per
 character data, so bounded by the DOM, in the JSON form of `WebRenderScript.commandJson`,
 only when `changed` or `full:true`), `changes` (all changes since the start), the new `logs` and
-`errors`, `timers`, `nextTimer`, `frames`, `nextWake`, `quiet`, `instructions`, `jobs`,
+`errors`, `timers`, `nextTimer`, `frames`, `nextWake`, `quiet`, `instructions`, `jobs`, `animated`
+(the animated values of the session's last layout, when it is of the page and the time now: `animatedOf`),
 `tasks`, `layouts` (layouts made for the layout reads of scripts in the turn) and `ns`.
 
 **AOT** (docs/designissues/2026-11-08-wasmvm-aot.md). A host with a WebAssembly engine of
@@ -328,6 +329,40 @@ def View.ofLean (s : LeanJS.Session) : View :=
   { host := s.host, steps := s.steps, jobs := s.jobs, tasks := s.tasks, errors := s.errors,
     nextFrame := e.nextFrame s, moveWake := e.moveWake s, quiet := e.quiet s && !s.host.web.net.waiting }
 
+/-- The animated values a turn's answer gives (`animated`): those of the session's last
+layout, when that layout is of the page as it is now (no write since, `Reads.version`) and
+of the timeline's time now (`Reads.keptNow`): then they are the values the page's scripts
+read, and a host passes them to its render requests (`WebDocument.withAnimated`'s field),
+so that the frame on screen shows what the scripts see. A page with no animation gives
+the empty list then. When the last layout is older than the page or the time, nothing is
+answered (a host keeps the list it has): an old value is never given as the present one.
+The cost is none: no cascade and no layout is made for the answer. -/
+def animatedOf (reads : Page.Reads) (now : Int) : Option (List L4Factoidal.Rendering.Animation.Override) :=
+  if reads.kept.map (·.1) == some reads.version && reads.keptNow == now then
+    some ((reads.styleKept.map (·.overrides)).getD [])
+  else none
+
+/-- Kind: property. Says: with a layout of the page as it is and of the time now, the
+answer is the animated values that layout was made with (none for a page without
+animations). -/
+theorem animatedOf_fresh (reads : Page.Reads) (now : Int)
+    (hv : reads.kept.map (·.1) = some reads.version) (hn : reads.keptNow = now) :
+    animatedOf reads now = some ((reads.styleKept.map (·.overrides)).getD []) := by
+  simp [animatedOf, hv, hn]
+
+/-- Kind: property. Says: when the page was written since its last layout (or was never
+laid out), no animated value is answered: a turn never gives values of an older page. -/
+theorem animatedOf_written (reads : Page.Reads) (now : Int)
+    (hv : (reads.kept.map (·.1) == some reads.version) = false) :
+    animatedOf reads now = none := by
+  simp [animatedOf, hv]
+
+/-- Kind: property. Says: when the timeline moved since the last layout, no animated
+value is answered: a turn never gives values of an earlier time. -/
+theorem animatedOf_earlier (reads : Page.Reads) (now : Int) (hn : reads.keptNow ≠ now) :
+    animatedOf reads now = none := by
+  simp [animatedOf, hn]
+
 /-- The answer of a turn. -/
 def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full : Bool) (ns : Nat)
     (extra : List (String × JSON.Json) := []) : String × Marks :=
@@ -349,7 +384,11 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
       | t :: ts => num (ts.foldl min t)),
     ("quiet",.bool s.quiet),
     ("instructions",num (s.steps - before.steps)),("jobs",num (s.jobs - before.jobs)),
-    ("tasks",num (s.tasks - before.tasks)),("layouts",num (s.host.reads.layouts - before.layouts)),("ns",num ns)] ++ extra
+    ("tasks",num (s.tasks - before.tasks)),("layouts",num (s.host.reads.layouts - before.layouts)),("ns",num ns)] ++
+    (match animatedOf s.host.reads s.host.anim.now with
+      | some values => [("animated",.array (values.map fun o =>
+          .array [.number (toString o.node),.string o.property,.string o.value,.bool o.transition]))]
+      | none => []) ++ extra
   let text := (JSON.Json.object fields).toString
   -- The page's GPU commands, validated by Lean (L4Factoidal.PageGpu): the host replays them
   -- on its WebGPU device. They need no layout; the canvas rectangles come with a render.
