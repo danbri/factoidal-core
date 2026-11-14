@@ -414,6 +414,32 @@ def containerPreludeOk (prelude : String) : Bool :=
 #guard !(["", "(width),", ",(width)", "name screen", "name foo (width: 100px)", "foo foo not (width)", "1px not (width)",
   "none not (width)", "and not (width)", "\"foo\" not (width)", "name not not (width)"].any containerPreludeOk)
 
+/-- The container conditions of an `@container` prelude in canonical form (CSSOM view of
+CSS Conditional 5 §3.1): for each comma-separated condition, its container name (`""` when
+there is none) and its query (`""` when there is none). A condition starts with a name when
+its first word is an identifier other than `not`. -/
+def containerConditions (prelude : String) : List (String × String) :=
+  (topCommaPieces prelude.toList 0 "" []).map fun piece =>
+    let t := piece.trimAscii.toString
+    match t.splitOn " " with
+    | head :: rest =>
+      if head.isEmpty || head.contains '(' || lower head == "not" then ("", t)
+      else (head, (" ".intercalate rest).trimAscii.toString)
+    | [] => ("", t)
+
+#guard containerConditions "Name" == [("Name", "")]
+#guard containerConditions "(width > 300px)" == [("", "(width > 300px)")]
+#guard containerConditions "Name (width > 300px)" == [("Name", "(width > 300px)")]
+#guard containerConditions "style(--x > 0)" == [("", "style(--x > 0)")]
+#guard containerConditions "not (width > 1px)" == [("", "not (width > 1px)")]
+#guard containerConditions "(width > 300px), Name (width < 1000px)" ==
+  [("", "(width > 300px)"), ("Name", "(width < 1000px)")]
+
+/-- There is one condition for each top-level comma-separated piece of the prelude. -/
+theorem containerConditions_length (p : String) :
+    (containerConditions p).length = (topCommaPieces p.toList 0 "" []).length := by
+  simp [containerConditions]
+
 /-- The at-rules with a block of rules, and `CSSRule.type` of each (0 where CSSOM gives no
 number). -/
 def groupRules : List (String × String × Nat) :=
@@ -569,7 +595,9 @@ text; an error as U+0001 and the name of the DOMException.
 - `insert` text rule index, `delete` text index
 - `setsel` text index selector, `setbody` text index block
 - `selector` text → "1" and the canonical selector, or "0"
-- `canon` text → the sheet text in canonical form -/
+- `canon` text → the sheet text in canonical form
+- `container` prelude → the conditions of an `@container` rule, each name U+0002 query,
+  separated by U+0001 -/
 def sheetOp (q : String) : String :=
   let answer := fun (r : Except SheetError (List Rule)) => match r with
     | .ok rules => "\x00" ++ textOf rules
@@ -588,6 +616,9 @@ def sheetOp (q : String) : String :=
     | some s => "1" ++ s
     | none => "0"
   | ["canon", text] => textOf (rulesOf text)
+  | ["container", prelude] =>
+    -- CSSContainerRule.conditions: name and query separated by U+0002, conditions by U+0001
+    "\x01".intercalate ((containerConditions prelude).map fun (n, q) => n ++ "\x02" ++ q)
   | ["property", prelude, body] =>
     -- CSSPropertyRule: syntax, inherits ("1"/"0"), initial value ("1" and the value, or "0")
     match CssRegister.propertyRuleOf prelude body with

@@ -12450,6 +12450,13 @@
   define(CSSGroupingRule.prototype, 'insertRule', function (rule, index = 0) { if (arguments.length < 1) throw new TypeError('insertRule: 1 argument required'); const g = groupHolder(this); g.rule = this; return insertInto(g, rule, index); });
   define(CSSGroupingRule.prototype, 'deleteRule', function (index) { if (arguments.length < 1) throw new TypeError('deleteRule: 1 argument required'); const g = groupHolder(this); g.rule = this; deleteFrom(g, index); });
   Object.defineProperty(CSSConditionRule.prototype, 'conditionText', { get() { return ruleNow(this).prelude; }, configurable: true, enumerable: true });
+  // CSSContainerRule (CSS Conditional 5 §7.3): the conditions as the engine splits the prelude
+  const containerConds = rule => { const t = sheetOp('container', ruleNow(rule).prelude); return t === '' ? [] : t.split('\u0001').map(c => { const [name, query] = c.split('\u0002'); return Object.freeze({ name, query }); }); };
+  Object.defineProperties(ruleClasses.ContainerRule.prototype, {
+    conditions: { get() { return Object.freeze(containerConds(this)); }, configurable: true, enumerable: true },
+    containerName: { get() { const c = containerConds(this); return c.length === 1 ? c[0].name : ''; }, configurable: true, enumerable: true },
+    containerQuery: { get() { const c = containerConds(this); return c.length === 1 ? c[0].query : ''; }, configurable: true, enumerable: true },
+  });
   Object.defineProperty(ruleClasses.StyleRule.prototype, 'selectorText', { get() { return ruleNow(this).prelude; },
     set(v) { const r = ruleNow(this); const a = sheetOp('setsel', r.holder.st.text(), String(r.index), String(v));
       if (a.charAt(0) === '\u0000') { r.holder.st.write(a.slice(1)); const fresh = ruleState.get(rulesOf(r.holder)[r.index]); Object.assign(r, { prelude: fresh.prelude, cssText: fresh.cssText }); rulesOf(r.holder)[r.index] = this; } },
