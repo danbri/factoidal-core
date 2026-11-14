@@ -2010,10 +2010,15 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   -- with the styles: the flat tree and the rules that match an element, for the computed
   -- value of a property outside the layout profile (`ComputedGeneric`, made when asked for)
   let styled : Thunk (Except String (Array Rendering.CSS.Computed × DOM.Dom × (Nat → List Rendering.CSS.Match))) := Thunk.mk fun _ => do
-    let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
-    let (rules,_) ← rulesWith kept dom request
+    let percent ← scalePercent request
+    let textScale := cssTextScale percent (zoomUnit request)
+    -- The media environment of the layout (`layOutDOMIn`), so that the computed values a script
+    -- reads are of the rules the page is laid out with: a `@media (min-width: …)` block that
+    -- the layout applies holds here too. (It was the media type alone, with no viewport.)
+    let env := mediaEnv (medium request) width height (percent*100/zoomUnit request)
+    let (rules,_) ← rulesWith kept dom request env
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
-    let (flat,rules,treeScope) := flatView kept dom {medium := medium request} rules
+    let (flat,rules,treeScope) := flatView kept dom env rules
     let styles ← Rendering.CSS.computeFor treeScope flat rules textScale state
     -- the rule buckets of `computeFor`, built again only if such a value is asked for
     let matchesOf : Nat → List Rendering.CSS.Match := match treeScope with
@@ -2113,6 +2118,19 @@ theorem layoutRequest_congr (a b : JSON.Json) (agree : ∀ k ∈ layoutFields, a
       simp only [List.filterMap_cons,h k (List.mem_cons_self ..),ih (fun x m => h x (List.mem_cons_of_mem _ m))]
   unfold layoutRequest
   rw [same _ agree]
+
+/-- Kind: determinism theorem (hosts). Says: two render requests that agree on every layout
+field give the same layout of the same source, window, held fonts, held images and pointer
+state: nothing else a host puts in a request (its shell and scroll, the operation, the answer
+format, checks) reaches the layout. Does not say: that two hosts send requests that agree on
+the layout fields (`labs/demos/foafnaut/host_parity_test.ts` checks the hosts), nor that the
+bytes a host fetched for a field are the same in both. -/
+theorem layOut_agree (h : Holds) (kept : Kept) (html : String) (a b : JSON.Json) (width height top : Nat)
+    (fonts held : List (String × String)) (pointer : Option Nat × Option Nat)
+    (agree : ∀ k ∈ layoutFields, a.field? k = b.field? k) :
+    layOut h ⟨html,layoutRequest a,width,height,top,fonts,held,pointer⟩ kept =
+      layOut h ⟨html,layoutRequest b,width,height,top,fonts,held,pointer⟩ kept := by
+  rw [layoutRequest_congr a b agree]
 
 /-- The chrome height that the layout key holds: the full chrome, whatever its fold. -/
 def layoutTop (shell : Option WebShell.Shell) (width : Nat) : Nat :=

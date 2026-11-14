@@ -11,7 +11,7 @@ turns it into a typed command on the Lean DOM arena (`DOM.Arena`, the arena that
 
 - The commands are those of `labs/demos/foafnaut/WebRenderScript.lean`
   (`setTextContent`, `setAttribute`), with the same bounds (a string of at most 64 KiB,
-  an attribute name of at most 256 bytes, at most 4096 commands, at most 1048576 nodes),
+  an attribute name of at most 256 bytes, at most `maxCommands` commands, at most 1048576 nodes),
   plus `createElement` and `appendChild`. `Command` records each one, so a host can
   send the same list to another arena.
 - Timers and event listeners only record a `Request`. The host's event loop decides
@@ -117,6 +117,12 @@ inductive Request where
   | clearTimer (id : Nat)
   deriving BEq, Repr, Inhabited
 
+/-- The most commands a page keeps: the bound of a script session (`State.commandLimit`) and of
+the replay of a render (`WebRenderScript.applyCommands`), one number for both, so that a page
+whose scripts stay within their budget can always be drawn. It was 4096 in four places, and a
+test runner set 200,000 for itself. -/
+def maxCommands : Nat := 65536
+
 /-- What recording a command reads of the arena before the change (`change`, `commit`): the
 key of the write (`Command.writeKey`), the earlier command it takes the place of, and the
 live ranges after it. -/
@@ -146,7 +152,7 @@ structure State where
   /-- The most commands a page may make. A page that the engine lays out keeps
   `maxCommands`, the bound of `WebRenderScript`; a test runner that lays nothing out
   may allow more. -/
-  commandLimit : Nat := 4096
+  commandLimit : Nat := maxCommands
   /-- The most console lines a page may write (`maxLogs` by default). -/
   logLimit : Nat := 1024
   /-- The nested browsing contexts: an `iframe` element and its content document. -/
@@ -206,7 +212,6 @@ structure State where
 /-- Bounds, as in `WebRenderScript`. -/
 def maxString : Nat := 65536
 def maxAttrName : Nat := 256
-def maxCommands : Nat := 4096
 def maxNodes : Nat := 1048576
 def maxRequests : Nat := 4096
 def maxLogs : Nat := 1024
@@ -405,7 +410,7 @@ character data whose last write since the last reading command (`Command.reads`)
 of the same kind (`Command.sameWrite`) takes that write's place in the list: no
 command between them reads what they write, so the replay gives the same arena, with
 attributes in the order of their first write. So a page that animates attributes keeps
-a list bounded by its DOM, and the 4096-command bound counts distinct writes. -/
+a list bounded by its DOM, and the command bound (`maxCommands`) counts distinct writes. -/
 def addCommand (s : State) (c : Command) (d : Dom) : State × HostResult :=
   if d.size > maxNodes then (s, ret (-5)) else
   -- a page with no live range and no NodeIterator runs no live step

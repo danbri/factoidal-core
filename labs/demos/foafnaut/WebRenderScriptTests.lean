@@ -49,16 +49,17 @@ private def made := dom.size
     .object [("op",.string "removeChild"),("parent",.number "1"),("nodeId",.number "2"),("extra",.bool true)]]) with
   | .error _ => true | _ => false
 
--- The page script setting: BubblePopJS by default in a native host, QuickJS-NG on the Hub.
-#guard WebRenderScript.defaultEngine "native" == "bubblepop" && WebRenderScript.defaultEngine "hub" == "quickjs"
+-- The page script setting: BubblePopJS by default in every host (`defaultEngine_eq`).
+#guard WebRenderScript.defaultEngine "native" == "bubblepop" && WebRenderScript.defaultEngine "hub" == "bubblepop"
 #guard WebRenderScript.setting? "QuickJS-NG" == some "quickjs" && WebRenderScript.setting? "BubblePopJS" == some "bubblepop"
 #guard WebRenderScript.setting? "lean" == none && WebRenderScript.setting? "verifiedjs" == none && WebRenderScript.setting? "x" == none
-#guard (WebRenderScript.plan "" 1).marker == "JS BUBBLEPOP" && (WebRenderScript.plan "" 1 "hub").marker == "JS QUICKJS-NG"
+#guard (WebRenderScript.plan "" 1).marker == "JS BUBBLEPOP" && (WebRenderScript.plan "" 1 "hub").marker == "JS BUBBLEPOP"
 #guard (WebRenderScript.plan "none" 1).marker == "JS OFF" && !(WebRenderScript.plan "none" 1).run
 #guard (WebRenderScript.plan "bubblepop" 0).marker == "" && !(WebRenderScript.plan "bubblepop" 0).run
 #guard (WebRenderScript.plan "quickjs" 1 "native" "no guest module").marker == "JS REFUSED"
 #guard ((WebRenderScript.choicesHTML "quickjs").splitOn "class=\"box boxon\"").length == 2
--- BubblePopJS runs on the Hub and in the Foafnaut Wasm build when chosen; QuickJS-NG stays their default.
+-- BubblePopJS is the default on the Hub and in the Foafnaut Wasm build too; QuickJS-NG runs there when the setting names it.
 #guard (WebRenderScript.plan "bubblepop" 1 "hub").marker == "JS BUBBLEPOP" && (WebRenderScript.plan "bubblepop" 1 "hub").run
-#guard (WebRenderScript.plan "bubblepop" 1 "wasm").run && (WebRenderScript.plan "" 1 "wasm").engine == "quickjs"
+#guard (WebRenderScript.plan "bubblepop" 1 "wasm").run && (WebRenderScript.plan "" 1 "wasm").engine == "bubblepop"
+#guard (WebRenderScript.plan "quickjs" 1 "hub").engine == "quickjs" && (WebRenderScript.plan "quickjs" 1 "hub").marker == "JS QUICKJS-NG"
 #guard ((WebRenderScript.choicesHTML "" "hub").splitOn "(default here)").length == 2
