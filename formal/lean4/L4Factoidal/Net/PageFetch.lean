@@ -447,15 +447,59 @@ def dataStep (t : Transfer) : Step :=
     .deliver t { status := 200, statusText := "OK", url := t.url, headers := [("Content-Type", mime)], body := b }
   | none => .fail "bad data: URL"
 
+/-- Fetch §2.2.3 "parse a single range header value", with whitespace allowed: the first and
+last byte positions of `bytes=first-last`, either of which may be absent (not both). -/
+def singleRange (v : String) : Option (Option Nat × Option Nat) :=
+  if !v.startsWith "bytes" then none else
+  let space := fun (c : Char) => c == '\t' || c == ' '
+  match ((v.drop 5).toString.toList).dropWhile space with
+  | '=' :: cs =>
+    let cs := cs.dropWhile space
+    let first := cs.takeWhile Char.isDigit
+    match (cs.dropWhile Char.isDigit).dropWhile space with
+    | '-' :: cs =>
+      let cs := cs.dropWhile space
+      let last := cs.takeWhile Char.isDigit
+      if !(cs.dropWhile Char.isDigit).isEmpty then none else
+      match (if first.isEmpty then none else (String.ofList first).toNat?),
+            (if last.isEmpty then none else (String.ofList last).toNat?) with
+      | none, none => none
+      | some a, some b => if a > b then none else some (some a, some b)
+      | a, b => some (a, b)
+    | _ => none
+  | _ => none
+
+/-- The bytes of a blob of `full` bytes that a range names (Fetch §4.2, the `blob` scheme with
+a `Range` field): the first and the last position, both inside the blob; `none` is a network
+error. A suffix range `-n` names the last `n` bytes. -/
+def blobRange (full : Nat) (r : Option Nat × Option Nat) : Option (Nat × Nat) :=
+  match r with
+  | (some a, b) =>
+    if a ≥ full || min (b.getD (full - 1)) (full - 1) < a then none
+    else some (a, min (b.getD (full - 1)) (full - 1))
+  | (none, some n) => if n == 0 || full == 0 then none else some (full - min n full, full - 1)
+  | (none, none) => none
+
 /-- A `blob:` URL (File API §8.3; Fetch §4.2 "scheme fetch"), answered here from the entry
 that the page's own origin made (`Transfer.blob`): only `GET`, and only as the first URL of a
-request (a redirect to it is a network error). -/
+request (a redirect to it is a network error). With a `Range` field the answer is `206` with
+the bytes the range names (`blobRange`). -/
 def blobStep (t : Transfer) : Step :=
   if t.redirects != 0 || t.method != "GET" then .fail "blob: URL refused" else
   match t.blob with
   | some (type, b) =>
-    .deliver t { status := 200, statusText := "OK", url := t.url,
-                 headers := [("Content-Type", type), ("Content-Length", toString b.size)], body := b }
+    match headerGet t.headers "range" with
+    | none =>
+      .deliver t { status := 200, statusText := "OK", url := t.url,
+                   headers := [("Content-Type", type), ("Content-Length", toString b.size)], body := b }
+    | some v =>
+      match (singleRange v).bind (blobRange b.size) with
+      | some (first, last) =>
+        .deliver t { status := 206, statusText := "Partial Content", url := t.url,
+                     headers := [("Content-Type", type), ("Content-Length", toString (last + 1 - first)),
+                                 ("Content-Range", s!"bytes {first}-{last}/{b.size}")],
+                     body := b.extract first (last + 1) }
+      | none => .fail "blob: range not satisfiable"
   | none => .fail "blob: URL not found"
 
 /-- Plan the current URL: a `data:` or `blob:` URL is answered here, every other goes to
@@ -618,7 +662,11 @@ theorem plan_send_net {t t' : Transfer} {w : Wire} (h : plan t = .send t' w) : p
     · unfold blobStep at h
       split at h
       · simp at h
-      · split at h <;> simp at h
+      · split at h
+        · split at h
+          · simp at h
+          · split at h <;> simp at h
+        · simp at h
     · exact h
 
 /-- Kind: policy theorem. Says: `plan` tells the host to make a request only when the current
@@ -852,6 +900,36 @@ theorem forWorker_not_data (owner : Page) (url : String) (h : url.startsWith "da
   simp [Page.forWorker, h]
 
 /-! ## Checks (`#guard` is a test) -/
+
+/-- Kind: memory safety of a range read. Says: the positions that `blobRange` names are inside
+the blob, first before last: a `Range` request for a blob URL never reads past the blob's
+bytes. Does not say: that the header parsed (`singleRange`). -/
+theorem blobRange_within (full : Nat) (r : Option Nat × Option Nat) (first last : Nat)
+    (h : blobRange full r = some (first, last)) : first ≤ last ∧ last < full := by
+  unfold blobRange at h
+  split at h
+  · split at h
+    · simp at h
+    · rename_i hz
+      simp only [Bool.or_eq_true, decide_eq_true_eq, not_or, Nat.not_le, Nat.not_lt] at hz
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      omega
+  · split at h
+    · simp at h
+    · rename_i hz
+      simp only [Bool.or_eq_true, beq_iff_eq, not_or] at hz
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      omega
+  · simp at h
+
+#guard singleRange "bytes=0-9" == some (some 0, some 9)
+#guard singleRange "bytes = 5 - " == some (some 5, none)
+#guard singleRange "bytes=-4" == some (none, some 4)
+#guard singleRange "bytes=9-0" == none && singleRange "bytes=-" == none && singleRange "bytes=1-2,3-4" == none
+#guard singleRange "items=0-9" == none && singleRange "bytes0-9" == none
+#guard blobRange 10 (some 2, some 5) == some (2, 5) && blobRange 10 (some 2, some 50) == some (2, 9)
+#guard blobRange 10 (some 2, none) == some (2, 9) && blobRange 10 (none, some 3) == some (7, 9)
+#guard blobRange 10 (none, some 30) == some (0, 9) && blobRange 10 (some 10, none) == none && blobRange 0 (none, some 1) == none
 
 private def pg : Page := Page.ofUrl "https://a.example/x"
 
