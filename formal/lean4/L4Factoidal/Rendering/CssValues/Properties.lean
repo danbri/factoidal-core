@@ -351,6 +351,13 @@ def initialValues : Thunk (Std.HashMap String (Thunk String)) := Thunk.mk fun _ 
 /-- The canonical specified form of the initial value of a property ("" when not known). -/
 def initialSpecified (p : String) : String := ((initialValues.get[p]?).map (·.get)).getD ""
 
+/-- The percentage of a `font-width` keyword (CSS Fonts 4 §2.5). -/
+def fontWidthName : String → String
+  | "ultra-condensed" => "50%" | "extra-condensed" => "62.5%" | "condensed" => "75%"
+  | "semi-condensed" => "87.5%" | "normal" => "100%" | "semi-expanded" => "112.5%"
+  | "expanded" => "125%" | "extra-expanded" => "150%" | "ultra-expanded" => "200%"
+  | k => k
+
 /-- The grammar of the `font` shorthand with its parts tagged by longhand. -/
 def fontGrammar : G :=
   let kw := fun (ks : List String) => G.oneOf (ks.map G.kw)
@@ -554,6 +561,15 @@ def recombineF : Nat → Property → (String → String) → String
           | some .font =>
             let resetOk := row.longhands.all fun l => fontWritten.contains l || get l == initialSpecified l
             let variant := get "font-variant-caps"
+            -- computed forms: a width keyword is a percentage, and a weight of 400 is `normal`
+            let widthKeyword := fun (v : String) =>
+              (["ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "normal", "semi-expanded",
+                "expanded", "extra-expanded", "ultra-expanded"].find? fun k => fontWidthName k == v).getD v
+            let get := fun (l : String) =>
+              let v := get l
+              if l == "font-stretch" then widthKeyword v
+              else if l == "font-weight" && v == "400" then "normal"
+              else v
             let stretch := get "font-stretch"
             let keywordOnly := (variant == "normal" || variant == "small-caps") &&
               !(stretch.toList.any fun c => c.isDigit)
