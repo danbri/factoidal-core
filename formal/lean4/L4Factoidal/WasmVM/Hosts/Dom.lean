@@ -41,6 +41,7 @@ import L4Factoidal.DOM.Selectors
 import Std.Data.HashMap
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.OfXml
+import L4Factoidal.DOM.OfXmlFull
 import L4Factoidal.DOM.Forms
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.DOM.Shadow
@@ -819,8 +820,11 @@ namespace-well-formed, a document whose element is a `parsererror` element (in t
 namespace browsers use for it) with the parser's message. -/
 def parsererrorNS : String := "http://www.mozilla.org/newlayout/xml/parsererror.xml"
 
-def xmlDocument (contentType source : String) : Dom :=
-  let d := match parseXmlDocument source with
+def xmlDocument (contentType source : String) (forScript : Bool := false) : Dom :=
+  -- (xmlweb) `forScript`: the document of `DOMParser`, which a script reads and nothing
+  -- lays out: it keeps prefixes, namespace declarations as attributes, CDATA sections and
+  -- the comments around the document element (`DOM.parseXmlDocumentFull`).
+  let d := match (if forScript then parseXmlDocumentFull source true else parseXmlDocument source) with
     | .ok d => d
     | .error msg => Id.run do
       let d : Dom := { nodes := #[{ type := .document, doc := 0, htmlDoc := false }] }
@@ -866,7 +870,7 @@ def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
     ok (d.setNode doc fun n => { n with contentType := ct }, doc)
   | 9, [name, pub, sys] => d.createDocumentType doc name pub sys
   | 11, _ => ok (d.graft (parseHtmlDocument data (shadow := false)))
-  | 12, ct :: rest => ok (d.graft (xmlDocument ct ("\x00".intercalate rest)))
+  | 12, ct :: rest => ok (d.graft (xmlDocument ct ("\x00".intercalate rest) (forScript := true)))
   | 13, ns :: name :: rest => ok (L4Factoidal.DOM.Fragment.parseInto d doc ns name ("\x00".intercalate rest))
   -- 14: the same with declarative shadow roots (`setHTMLUnsafe`).
   | 14, ns :: name :: rest => ok (L4Factoidal.DOM.Fragment.parseInto d doc ns name ("\x00".intercalate rest) (shadow := true))

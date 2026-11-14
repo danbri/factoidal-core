@@ -7340,7 +7340,65 @@
     };
     class XPathEvaluator {}
     mix(XPathEvaluator, evaluatorBase); mix(Document, evaluatorBase);
-    for (const [k, v] of Object.entries({ XPathResult, XPathExpression, XPathEvaluator })) {
+    // XSLTProcessor (HTML §4.12.1.4 names it; the transform is XSLT 1.0). The engine's XSLT
+    // processor runs on the two DOM trees (node_query op 127, DOM.XsltDom) and answers the
+    // serialised result and the output method; the engine's HTML or XML parser reads it.
+    const xslt = new WeakMap();
+    const xs = o => { const s = xslt.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    const transformed = (p, source) => {
+      const s = xs(p), src = nodeId(source);
+      if (s.style === null) return null;
+      const r = op(nodeId(s.style), 127, String(src));
+      if (typeof r !== 'string' || r.charCodeAt(0) !== 49) return null;
+      const i = r.indexOf(SEP);
+      return { method: r.slice(1, i), text: r.slice(i + 1) };
+    };
+    const xmlNodesOf = text => {
+      const d = new DOMParser().parseFromString('<r>' + text + '</r>', 'application/xml'), root = d.documentElement;
+      return root && root.localName === 'r' && root.namespaceURI === null ? root : null;
+    };
+    class XSLTProcessor {
+      constructor() { xslt.set(this, { style: null, params: new Map() }); }
+      importStylesheet(style) { needArgs(arguments, 1, 'importStylesheet'); nodeId(style); xs(this).style = style; }
+      transformToFragment(source, output) {
+        needArgs(arguments, 2, 'transformToFragment');
+        if (!(output instanceof Document)) throw new TypeError("parameter 2 is not of type 'Document'");
+        const r = transformed(this, source);
+        if (r === null) return null;
+        const f = output.createDocumentFragment();
+        if (r.method === 'html' || r.method === 'text') {
+          const t = document.createElement('template');
+          t.innerHTML = r.text;
+          if (r.method === 'text') f.appendChild(output.createTextNode(t.content.textContent));
+          else while (t.content.firstChild) f.appendChild(output.adoptNode(t.content.firstChild));
+        } else {
+          const root = xmlNodesOf(r.text);
+          if (root === null) return null;
+          while (root.firstChild) f.appendChild(output.adoptNode(root.firstChild));
+        }
+        return f;
+      }
+      transformToDocument(source) {
+        needArgs(arguments, 1, 'transformToDocument');
+        const r = transformed(this, source);
+        if (r === null) return null;
+        if (r.method === 'html') return new DOMParser().parseFromString(r.text, 'text/html');
+        if (r.method === 'text') {
+          const d = new DOMParser().parseFromString('<html xmlns="http://www.w3.org/1999/xhtml"><head><title/></head><body><pre/></body></html>', 'application/xml');
+          const t = document.createElement('template'); t.innerHTML = r.text;
+          const pre = d.getElementsByTagName('pre')[0]; if (pre) pre.textContent = t.content.textContent;
+          return d;
+        }
+        const d = new DOMParser().parseFromString(r.text, 'application/xml');
+        return d;
+      }
+      setParameter(namespaceURI, localName, value) { needArgs(arguments, 3, 'setParameter'); xs(this).params.set(String(namespaceURI ?? '') + SEP + String(localName), value); }
+      getParameter(namespaceURI, localName) { needArgs(arguments, 2, 'getParameter'); const v = xs(this).params.get(String(namespaceURI ?? '') + SEP + String(localName)); return v === undefined ? null : v; }
+      removeParameter(namespaceURI, localName) { needArgs(arguments, 2, 'removeParameter'); xs(this).params.delete(String(namespaceURI ?? '') + SEP + String(localName)); }
+      clearParameters() { xs(this).params.clear(); }
+      reset() { const s = xs(this); s.style = null; s.params.clear(); }
+    }
+    for (const [k, v] of Object.entries({ XPathResult, XPathExpression, XPathEvaluator, XSLTProcessor })) {
       Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
       def(k, v);
     }

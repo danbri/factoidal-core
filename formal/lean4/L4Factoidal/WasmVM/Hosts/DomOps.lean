@@ -19,6 +19,7 @@ InvalidNodeTypeError, -14 IndexSizeError, -15 WrongDocumentError, -16 InvalidSta
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.DOM.Reflect
 import L4Factoidal.DOM.XPath.Evaluate
+import L4Factoidal.DOM.XPath.Xslt
 import L4Factoidal.Rendering.CssSupports
 import L4Factoidal.Rendering.CssValues.Declaration
 import L4Factoidal.Rendering.ComputedGeneric
@@ -582,6 +583,13 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   -- 123: the number of changes of the arena so far (`State.changes`): an XPathResult
   -- iterator is invalid once it differs from the number at its evaluation
   | 123 => return toString (← get).changes
+  -- 127: `XSLTProcessor` (`DOM.XsltDom.transformAnswer`): transform the tree under node `q`
+  -- with the stylesheet under node `id` by the engine's XSLT 1.0 processor; "1", the output
+  -- method, U+0001 and the serialised result, or "0" and the reason it refused
+  | 127 =>
+    let style ← nodeArg d id
+    let source ← nodeArg d (num xs 0)
+    return L4Factoidal.DOM.XsltDom.transformAnswer d style source
   -- ==== end of xmlweb ====
   | 130 =>
     let n ← nodeArg d id
