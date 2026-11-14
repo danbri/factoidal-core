@@ -519,6 +519,28 @@ def substitute (get : String → String) (fns : List (String × FnDef)) : Nat �
             | none => none
             | some none => some out
             | some (some v) => (substitute get fns fuel v).map (joinTokens out ·)
+          else if CssValues.lower name == "env" then
+            -- `env(<name>, <fallback>?)` (CSS Environment Variables 1 §3): the safe area,
+            -- title bar and keyboard insets of a window with none are 0px; another name
+            -- takes the fallback, else the declaration is invalid at computed-value time
+            let groups := CssValues.splitCommas args
+            let known := match CssValues.stripWs (groups.headD []) with
+              | [.tok (.ident e)] =>
+                let e := CssValues.lower e
+                if ["safe-area-inset-top", "safe-area-inset-right", "safe-area-inset-bottom", "safe-area-inset-left",
+                    "safe-area-max-inset-top", "safe-area-max-inset-right", "safe-area-max-inset-bottom",
+                    "safe-area-max-inset-left", "titlebar-area-x", "titlebar-area-y", "titlebar-area-width",
+                    "titlebar-area-height", "keyboard-inset-top", "keyboard-inset-right", "keyboard-inset-bottom",
+                    "keyboard-inset-left", "keyboard-inset-width", "keyboard-inset-height"].contains e then some "0px" else none
+              | _ => none
+            match known with
+            | some val => some (joinTokens out (CssValues.CV.parse val))
+            | none =>
+              match groups with
+              | _ :: fb :: more =>
+                let fallback := more.foldl (fun acc g => acc ++ [CssValues.CV.tok .comma] ++ g) fb
+                (substitute get fns fuel (fallback.dropWhile (·.isWs))).map (joinTokens out ·)
+              | _ => none
           else if CssValues.lower name == "attr" then
             -- `attr(<name> <type>?, <fallback>?)` (CSS Values 5 §7.7): the element's attribute,
             -- asked through `get` as U+0001 "attr " and the name (U+0000 when it has none)
@@ -661,7 +683,7 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       else if value == "unset" || value == "revert" || value == "revert-layer" then default ()
       else
         let cvs := CssValues.CV.parse value
-        if CssValues.hasFn "var" 32 cvs || CssValues.hasFn "if" 32 cvs || CssValues.hasFn "attr" 32 cvs ||
+        if CssValues.hasFn "var" 32 cvs || CssValues.hasFn "if" 32 cvs || CssValues.hasFn "attr" 32 cvs || CssValues.hasFn "env" 32 cvs ||
             (!v.functions.get.isEmpty && hasDashedFn 32 cvs) then
           match substitute lookupVar v.functions.get 16 cvs with
           -- a custom property invalid at computed-value time has the guaranteed-invalid
@@ -954,6 +976,10 @@ private def computedAt (html css prop : String) : String :=
 #guard computedAt "<div id=t></div>" "@function --f(--x: 10px) { --y: var(--x); result: var(--y); } #t { --actual: --f(); }" "--actual" == "10px"
 #guard computedAt "<div id=t></div>" "@function --f() returns <length> { result: calc(1px + 1px); } #t { --actual: --f(); }" "--actual" == "2px"
 #guard computedAt "<div id=t></div>" "@function --f() returns <length> { result: red; } #t { --actual: --f(); }" "--actual" == ""
+-- env()
+#guard computedAt "<div id=t></div>" "#t { --a: env(unknown-env-name, 10px); }" "--a" == "10px"
+#guard computedAt "<div id=t></div>" "#t { --a: env(safe-area-inset-top); }" "--a" == "0px"
+#guard computedAt "<div id=t></div>" "#t { --a: env(nonexistent); }" "--a" == ""
 -- attr() (CSS Values 5 §7.7)
 #guard computedAt "<div id=t data-foo=abc></div>" "#t { --a: attr(data-foo); }" "--a" == "\"abc\""
 #guard computedAt "<div id=t data-foo=3></div>" "#t { width: attr(data-foo px); }" "width" == "3px"
