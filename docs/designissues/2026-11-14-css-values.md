@@ -291,3 +291,35 @@ Open:
 - `ch` and `ex` use the 0.5em fallback, not the font's glyphs.
 - Infinity and NaN in `calc()` are kept as written.
 - A colour with alpha is opaque in the layout profile (the paint model has no alpha).
+
+### Later in the third part
+
+Computed values: the styles of pseudo-elements (`getComputedStyle(el, '::marker')`: the
+rules that name the pseudo-element, the properties that apply to it, inheritance from the
+element, the user agent's `::marker` styles); `if()`, `attr()`, `env()` and custom
+functions (`@function`) in substitution, with comments written between tokens that would
+read as one; registered custom properties from `@property` and from `CSS.registerProperty`
+(kept on the document node by a command, `Hosts.Dom.Command.registerProperty`, as the
+document's registered property set) with typed values in the Typed OM; the `auto` insets of
+a relatively positioned box.
+
+The property table: `background`, `background-position` and `mask` by their longhands,
+gap rule lists, `list-style: none`, the default gradient interpolation method left out,
+`calc()` kept in specified non-legacy colours, infinite colour channels, the types of
+relative colour components, `will-change` identifiers, `-webkit-box`, `progress()`.
+
+Selectors: forgiving lists in `:is()`/`:where()`, comments, `:host()`, `::scroll-button()`,
+An+B serialisation, namespaces in `selectorText`, `@scope` preludes.
+
+The layout cascade (what pages draw): `font:`, `background` with no colour resets it,
+one side's border (`border-bottom: 1px solid`), `white-space`, `list-style: none` (no
+marker).
+
+Proved in this part: `keywordLonghands_whiteSpace`, `tightAlternatives_oneOf`,
+`winningF_not_revert`. Everything else listed here is tested by `#guard`s taken from the
+WPT cases named in the commits.
+
+Open: the layout profile still has one border style and colour for the four sides, no
+alpha, no font weight; `random()`, `calc-size()`, infinity and NaN serialisation in
+`calc()`; container queries; `::highlight(name)` styles; the percentage insets of
+positioned boxes (they need the containing block's size from the layout).
