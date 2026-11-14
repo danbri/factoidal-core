@@ -1,0 +1,10 @@
+{
+ "case": "3.2.1.a",
+ "file": "Chapt03/3.2/3.2.1/3.2.1.a.xhtml",
+ "quote": "Every XForms element has an id attribute. You must not see any errors.",
+ "steps": [
+  {
+   "expect": "no-fatal"
+  }
+ ]
+}

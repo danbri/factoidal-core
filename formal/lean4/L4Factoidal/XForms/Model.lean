@@ -796,10 +796,11 @@ def Model.mixedText (m : Model) (el : El) (iter : List (Nat × Nat))
     | _ => pure acc) ("", 0)
   pure (normalizeSpaceStr r.1)
 
-def Model.afterEdit (m : Model) (ev : String) (docNo : Nat) : Model :=
+def Model.afterEdit (m : Model) (ev : String) (docNo : Nat)
+    (info : List (String × Value) := []) : Model :=
   match m.insts[docNo - 2]? with
   | none => m
-  | some i => (m.flag i.model true true true true).push [.dispatch ev i.el [] []]
+  | some i => (m.flag i.model true true true true).push [.dispatch ev i.el [] info]
 
 /-- `insert` (§10.3), for element nodes. -/
 def Model.doInsert (m : Model) (el : El) (iter : List (Nat × Nat))
@@ -832,8 +833,13 @@ def Model.doInsert (m : Model) (el : El) (iter : List (Nat × Nat))
       if size == 0 then
         -- no node-set: the clone becomes the first child of the context node
         if (el.attr "context").isNone then pure m
-        else pure ((m.editDoc ctxNode.loc.doc
-          (modKids ctxNode.loc.path (fun kids => clones ++ kids))).afterEdit "xforms-insert" ctxNode.loc.doc)
+        else
+          let m' := m.editDoc ctxNode.loc.doc (modKids ctxNode.loc.path (fun kids => clones ++ kids))
+          let inserted := (List.range clones.length).filterMap (fun i =>
+            m'.item? { path := ctxNode.loc.path ++ [i], doc := ctxNode.loc.doc })
+          pure (m'.afterEdit "xforms-insert" ctxNode.loc.doc
+            [("inserted-nodes", .nodes inserted), ("origin-nodes", .nodes origin),
+             ("insert-location-node", .nodes [ctxNode]), ("position", .str "after")])
       else
         let atIdx ← match el.attr "at" with
           | none => pure size
@@ -848,8 +854,19 @@ def Model.doInsert (m : Model) (el : El) (iter : List (Nat × Nat))
           let p := tgt.loc.path
           let ci := p.getLast?.getD 0
           let j := if before then ci else ci + 1
-          pure ((m.editDoc tgt.loc.doc (modKids p.dropLast
-            (fun kids => kids.take j ++ clones ++ kids.drop j))).afterEdit "xforms-insert" tgt.loc.doc)
+          -- §10.3: when the insert location is the root element of an instance, the
+          -- first cloned node replaces it
+          let isRoot := p.length ≤ 1
+          let m' := if isRoot then
+              m.editDoc tgt.loc.doc (fun kids => kids.take ci ++ clones.take 1 ++ kids.drop (ci + 1))
+            else m.editDoc tgt.loc.doc (modKids p.dropLast
+              (fun kids => kids.take j ++ clones ++ kids.drop j))
+          let inserted := (List.range (if isRoot then 1 else clones.length)).filterMap (fun i =>
+            m'.item? { path := p.dropLast ++ [(if isRoot then ci else j) + i], doc := tgt.loc.doc })
+          pure (m'.afterEdit "xforms-insert" tgt.loc.doc
+            [("inserted-nodes", .nodes inserted), ("origin-nodes", .nodes origin),
+             ("insert-location-node", .nodes [tgt]),
+             ("position", .str (if before then "before" else "after"))])
         | none => pure m
     | [] => pure m
 
@@ -875,7 +892,8 @@ def Model.doDelete (m : Model) (el : El) (iter : List (Nat × Nat))
       | some k =>
         let k' := if k < 1 then 1 else if k > Int.ofNat size then size else k.toNat
         pure (ns[k' - 1]?).toList
-      | none => pure []
+      -- §10.4: a NaN location is the last node
+      | none => pure (ns[size - 1]?).toList
   let dels := targets.filter (fun t => match t with
     | .tree l _ => l.path.length > 1
     | _ => false)
@@ -885,7 +903,7 @@ def Model.doDelete (m : Model) (el : El) (iter : List (Nat × Nat))
     let m' := dels.reverse.foldl (fun (m : Model) t =>
       m.editDoc t.loc.doc (modKids t.loc.path.dropLast
         (fun kids => kids.eraseIdx (t.loc.path.getLast?.getD 0)))) m
-    pure (m'.afterEdit "xforms-delete" first.loc.doc)
+    pure (m'.afterEdit "xforms-delete" first.loc.doc [("deleted-nodes", .nodes dels)])
 
 /-- Run one action element (§10). -/
 def Model.runBody (m : Model) (el : El) (iter : List (Nat × Nat))

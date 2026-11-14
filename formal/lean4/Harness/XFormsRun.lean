@@ -14,7 +14,8 @@ that states the pass condition (`quote`) and the scripted steps:
   * `expect`: `control` (`value`, `prefix`, `relevant`, `readonly`,
     `required`, `valid` of the control with this `label` or `id`),
     `values` (the values of all such controls, in order), `no-value`
-    (no such control shows a value), `message` /
+    (no such control shows a value), `absent` (no such control shows a
+    value containing one of `values`), `message` /
     `no-message` (`contains`), `exception` (`name`: a fatal error of
     that name, or a message naming it), `no-fatal`, `event` /
     `no-event` (`name`), `focus` (`id`), `load` (`contains`).
@@ -136,6 +137,11 @@ def checkExpect (m : Model) (last all : List Output) (j : Json) : Option String 
     let got := ((findCtls view j).filter (·.relevant)).map (fun c => normalizeSpaceStr c.value)
     let want := ((j.getStringArray? "values").getD []).map normalizeSpaceStr
     if got == want then none else some s!"values {got}, expected {want}"
+  else if kind == "absent" then
+    let bad := (j.getStringArray? "values").getD []
+    match ((findCtls view j).filter (·.relevant)).find? (fun c => bad.any (fun w => has c.value w)) with
+    | some c => some s!"a control shows '{c.value}'"
+    | none => none
   else if kind == "no-value" then
     if ((findCtls view j).filter (·.relevant)).any (fun c => normalizeSpaceStr c.value != "") then
       some "the control shows a value"

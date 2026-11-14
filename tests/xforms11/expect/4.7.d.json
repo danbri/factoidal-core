@@ -1,0 +1,11 @@
+{
+ "case": "4.7.d",
+ "file": "Chapt04/4.7/4.7.d.xhtml",
+ "quote": "You must see no values below:",
+ "steps": [
+  {
+   "expect": "no-value",
+   "kind": "output"
+  }
+ ]
+}

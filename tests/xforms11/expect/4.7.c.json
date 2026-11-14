@@ -1,0 +1,14 @@
+{
+ "case": "4.7.c",
+ "file": "Chapt04/4.7/4.7.c.xhtml",
+ "quote": "You must see a value of \"NaN\" :",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "NaN"
+   ],
+   "kind": "output"
+  }
+ ]
+}

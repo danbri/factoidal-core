@@ -1,0 +1,14 @@
+{
+ "case": "4.2.2.b",
+ "file": "Chapt04/4.2/4.2.2/4.2.2.b.xhtml",
+ "quote": "You must not see the value \"Mitsubishi\":",
+ "steps": [
+  {
+   "expect": "absent",
+   "values": [
+    "Mitsubishi"
+   ],
+   "kind": "output"
+  }
+ ]
+}

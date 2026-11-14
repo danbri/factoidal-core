@@ -1,0 +1,18 @@
+{
+ "case": "10.3.c",
+ "file": "Chapt10/10.3/10.3.c.xhtml",
+ "quote": "You must see the correct values for each output control below. You must not see a value : You must see the numbers 1, 2, 3, 0, and 3 :",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "1",
+    "2",
+    "3",
+    "0",
+    "3"
+   ],
+   "kind": "output"
+  }
+ ]
+}

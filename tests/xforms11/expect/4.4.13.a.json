@@ -1,0 +1,11 @@
+{
+ "case": "4.4.13.a",
+ "file": "Chapt04/4.4/4.4.13/4.4.13.a.xhtml",
+ "quote": "You must have seen a DOMFocusIn message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "DOMFocusIn"
+  }
+ ]
+}

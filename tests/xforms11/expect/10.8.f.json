@@ -1,0 +1,18 @@
+{
+ "case": "10.8.f",
+ "file": "Chapt10/10.8/10.8.f.xhtml",
+ "quote": "When you activate the Reset trigger the value in the input control must NOT change to \"Audi\".",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Reset"
+  },
+  {
+   "expect": "absent",
+   "values": [
+    "Audi"
+   ],
+   "kind": "input"
+  }
+ ]
+}
