@@ -11792,6 +11792,52 @@
       try { if (target === -2) f(arg); else f(); } catch (e) { report(e); }
       return '';
     },
+    // WebDriver (the engine's endpoint, L4Factoidal.WebDriver.Page): run a function body with
+    // arguments and answer its result as JSON, as WebDriver's "execute a function body" and
+    // "JSON clone" do (§13.2). Lean chose the function and makes the element references:
+    // here an element is {"@node": n}, the document {"@document": true}.
+    webdriverCall(body, argsText) {
+      const fail = (error, message) => JSON.stringify({ error, message: String(message) });
+      const revive = v => {
+        if (Array.isArray(v)) return v.map(revive);
+        if (v === null || typeof v !== 'object') return v;
+        if ('@document' in v) return document;
+        if ('@node' in v) {
+          const el = wrap(Number(v['@node']));
+          if (!el || !el.isConnected) throw { stale: true };
+          return el;
+        }
+        const o = {}; for (const k of Object.keys(v)) o[k] = revive(v[k]); return o;
+      };
+      let args;
+      try { args = revive(JSON.parse(argsText)); }
+      catch (e) { return e && e.stale ? fail('stale element reference', 'the element is not in the document') : fail('invalid argument', e); }
+      let r;
+      try { r = Function(body).apply(window, args); }
+      catch (e) {
+        const m = String(e && e.message !== undefined ? e.message : e);
+        return m.startsWith('no such ') || m.startsWith('invalid selector') ? fail(m.split(':')[0], m) : fail('javascript error', m);
+      }
+      const seen = new Set();
+      const clone = v => {
+        if (v === undefined || v === null) return null;
+        if (typeof v === 'boolean' || typeof v === 'string') return v;
+        if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+        if (v === window) return { '@window': true };
+        if (typeof ShadowRoot === 'function' && v instanceof ShadowRoot) return { '@shadow': nodeId(v) };
+        if (v instanceof Element) { if (!v.isConnected) throw { stale: true }; return { '@node': nodeId(v) }; }
+        if (typeof v !== 'object' && typeof v !== 'function') return null;
+        if (seen.has(v)) throw new TypeError('cyclic object value');
+        seen.add(v);
+        try {
+          if (Array.isArray(v) || v instanceof NodeList || v instanceof HTMLCollection) return Array.from(v, clone);
+          if (typeof v.toJSON === 'function') return v.toJSON();
+          const o = {}; for (const k in v) o[k] = clone(v[k]); return o;
+        } finally { seen.delete(v); }
+      };
+      try { return JSON.stringify({ value: clone(r) }); }
+      catch (e) { return e && e.stale ? fail('stale element reference', 'the element is not in the document') : fail('javascript error', e && e.message); }
+    },
     // Lean dispatches an event of the user agent at a node, the document (0) or the window.
     dispatch(target, type, flags) {
       // not an event: the default action of a press, which only Lean asks for

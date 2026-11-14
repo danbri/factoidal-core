@@ -82,6 +82,22 @@ def fromWire (p window : String) : Nat → Json → Json
     | .object fs => .object (fs.map fun (k, v) => (k, fromWire p window fuel v))
     | j => j
 
+/-- The session's document as WebDriver sees it: its URL and the prefix of its element
+references, new at each navigation. -/
+structure Doc where
+  url : String := "about:blank"
+  count : Nat := 0
+  deriving DecidableEq, Repr, Inhabited
+
+def Doc.refPrefix (d : Doc) : String := "d" ++ toString d.count
+
+/-- A navigation: the new document's URL and a prefix no earlier document had. -/
+def Doc.navigate (d : Doc) (url : String) : Doc := { url, count := d.count + 1 }
+
+/-- New references. Says: after a navigation the document is counted anew, so its
+references never take an earlier document's prefix (the counts differ). -/
+theorem Doc.navigate_count (d : Doc) (url : String) : (d.navigate url).count = d.count + 1 := rfl
+
 /-! ## Commands -/
 
 /-- What to do with the glue's result. -/
@@ -226,6 +242,7 @@ theorem toWire_unknown (p r : String) (fuel : Nat) (h : refNode p r = none) :
 /-! ## Tests -/
 
 #guard refNode "a1b2" (refString "a1b2" 42) == some 42
+#guard ({} : Doc).refPrefix != (({} : Doc).navigate "x").refPrefix
 #guard refNode "a1b2" (refString "ffff" 42) == none
 #guard refNode "a1b2" "a1b2.x" == none
 #guard match toWire "p" 8 (.array [.object [(elementKey, .string "p.7")], .number "1"]) with

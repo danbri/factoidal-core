@@ -379,7 +379,7 @@ export function named(name:string):Named {
 }
 
 // ---- the engine backend -------------------------------------------------------------
-type Run=(file:string,page?:{html?:string;url:string})=>Promise<Case>;
+type Run=(file:string,page?:{html?:string;url:string},opts?:{keep?:boolean})=>Promise<Case>;
 /** A script turn, with the worker script fetches it waits for (an engine with Workers). */
 type ScriptTurnWithFetches={session:number;logs:string[];errors:string[];instructions:number;fetches?:{id:number;url:string;kind?:string}[]};
 /** `fetcher`: where the host reads pages from, in place of the local wptserve: the host parity check
@@ -487,7 +487,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       return path.includes(".sub.")?substitute(text,u.search):text;
     }catch{return undefined;}
   };
-  return {info,engine,run:async(file,page)=>{
+  return {info,engine,run:async(file,page,opts)=>{
     // A page's bytes become text in Lean (decodeDocument: the BOM, the charset of its .headers
     // file as wptserve sends it, the meta prescan); an engine without the op reads UTF-8.
     let html:string,encoding:string|undefined,url:string;
@@ -701,7 +701,8 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       await settleTo(Math.max(1,70000-turn.clock));
       await answerFrames();
     }
-    engine.scriptSession("",{action:"close"});
+    // keep: the page stays the session's page (a WebDriver navigation)
+    if(!opts?.keep)engine.scriptSession("",{action:"close"});
     return {...resultOf(file,logs),ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};
   }};
 }
@@ -741,6 +742,8 @@ async function benchBackend():Promise<{run:Run;info:Record<string,unknown>}> {
 /** --list: run wpt.fyi-named tests from any checkout, one JSON line a case to --jsonl. */
 // ---- wdspec: the engine's WebDriver endpoint and pytest ------------------------------
 type Engine={scriptSession:(source:string,request:Record<string,unknown>)=>unknown};
+// The page loader of the engine backend: a WebDriver navigation loads its URL as a test page is loaded, and keeps it.
+let loadPage:((url:string)=>Promise<unknown>)|undefined;
 let webdriver:{secret:string;server:Deno.HttpServer}|undefined;
 /** Start the endpoint once: the engine decides (Gate.start) and makes the secret; the listener binds the
  * address the engine allowed and passes every request through (Protocol.handle decides all). */
@@ -753,7 +756,9 @@ function webdriverEndpoint(engine:Engine){
     const url=new URL(request.url);
     const body=request.method==="POST"?await request.text():"";
     const answer=engine.scriptSession("",{action:"webdriver",method:request.method,path:url.pathname+url.search,
-      host:request.headers.get("host")??"",...(request.headers.has("origin")?{origin:request.headers.get("origin")}:{}),body}) as {status:number;body:string};
+      host:request.headers.get("host")??"",...(request.headers.has("origin")?{origin:request.headers.get("origin")}:{}),body}) as {status:number;body:string;navigate?:string};
+    // Lean decided a navigation: the page is loaded (fetched from wptserve, started, settled), then answered.
+    if(answer.navigate!==undefined&&loadPage)try{await loadPage(answer.navigate);}catch(e){console.error(`webdriver: navigation failed: ${e}`);}
     return new Response(answer.body,{status:answer.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-cache"}});
   });
   webdriver={secret,server};
@@ -795,7 +800,10 @@ async function runList(listFile:string) {
       const t=named(id);
       if(t.skip)c={file:id,harness:"SKIP",message:t.skip,kind:t.kind,subtests:[]};
       else if(excluded.some(x=>id.includes(x)))c={file:id,harness:"SKIP",message:"excluded",kind:t.kind,subtests:[]};
-      else if(t.kind==="wdspec"&&backend.engine)c={...await runWdspec(backend.engine as Engine,id),kind:t.kind};
+      else if(t.kind==="wdspec"&&backend.engine){
+        loadPage=url=>backend.run("webdriver-page",{url},{keep:true});
+        c={...await runWdspec(backend.engine as Engine,id),kind:t.kind};
+      }
       else {c={...await backend.run(id,{html:t.html,url:t.url!}),kind:t.kind};}
     }catch(e){c={file:id,harness:"ERROR",message:String((e as Error).message??e).slice(0,300),subtests:[]};}
     cases.push(c);done.add(id);
