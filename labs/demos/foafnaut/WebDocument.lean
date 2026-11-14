@@ -1608,7 +1608,13 @@ def elementState (dom : DOM.Dom) (base : String) (request : JSON.Json) : Except 
   let visited := if urls.isEmpty then [] else (dom.treeOrder 0).toList.filter fun id =>
     let n := dom.get id
     Rendering.CSS.isHyperlink n && urls.contains (Syntax.resolveIri base (attr n "href"))
-  return {hover := node "hover", active := node "active", visited}
+  -- the values of running animations (`Rendering.Animation`; `measure` adds the field)
+  let animated := match request.field? "animated" with
+    | some (.array items) => items.filterMap fun
+      | .array [.number n, .string p, .string v, .bool t] => n.toNat?.map fun id => (id, p, v, t)
+      | _ => none
+    | _ => []
+  return {hover := node "hover", active := node "active", visited, animated}
 
 /-- The hover and active nodes a request names. -/
 def requestPointer (request : JSON.Json) : Option Nat × Option Nat :=
@@ -2023,27 +2029,75 @@ def fontFacesAnswer (h : Holds) (dom : DOM.Dom) (request : JSON.Json) : String :
       ("status",.string (if (fonts[i]?.bind id).isSome then "loaded" else "unloaded"))]
   (JSON.Json.array entries).toString
 
+/-- The request with the animated values of the page's animations, as the field
+`animated` that `elementState` reads: each a node, a longhand, its computed text, and
+whether a transition gives it. With none, the request as it is. -/
+def withAnimated (request : JSON.Json) (overrides : List Rendering.Animation.Override) : JSON.Json :=
+  if overrides.isEmpty then request else
+  let field : JSON.Json := .array (overrides.map fun o =>
+    .array [.number (toString o.node), .string o.property, .string o.value, .bool o.transition])
+  match request with
+  | .object fields => .object (fields.filter (·.1 != "animated") ++ [("animated", field)])
+  | j => j
+
 /-- The layout reads of a script session (`Page.Measure`) with the render request
-`request` (its `layoutFields`): the arena laid out `width` by `height` (`layOutDOM`)
-when a read first asks, then the answers from that one layout. -/
-def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom width height =>
-  let request := layoutRequest request
+`request` (its `layoutFields`): the arena laid out `width` by `rows` (`layOutDOM`)
+when a read first asks, then the answers from that one layout. `overrides` are the
+values of the page's running animations: the cascade and the layout take them
+(`CSS.withAnimated`).
+
+`carry` is what an earlier measure of the page left, with the nodes to style again
+(`Page.Measure`): the rules, their buckets and the element state are taken from it, and
+the styles are its styles with those subtrees styled again (`CSS.restyleWith`); with
+none, the cascade of the document. The second answer is what this measure leaves.
+
+For the animation engine (`Page.animationAccess`), with no layout: 24 the cascaded
+animation and transition longhands of a node; 25 the text of the document's sheets; 27
+the computed text of "property U+0000 value" in the node's style; 28 the elements whose
+rules or `style` attribute declare an animation or a transition, as node numbers; 29 the
+computed text of the property named; 26 the declarations of the node's rules and `style`
+attribute as one text, or with "names" the longhands they declare. -/
+def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom width height overrides carry =>
+  let request := withAnimated (layoutRequest request) overrides
   let held := heldNamed h ((namedImages request).toOption.getD [])
   let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM h request none dom width height held (none,none) kept
+  -- what the cascade reads: the flat tree, the rules, the tree scopes, the element state
+  let inputs : Thunk (Except String (DOM.Dom × List Rendering.CSS.Rule × Option Rendering.CSS.TreeScope × Rendering.CSS.ElementState × Float)) :=
+    Thunk.mk fun _ =>
+      match carry with
+      | some (c,_) =>
+        -- as the measure before read them (`Page.Carry`: nothing they read was written since),
+        -- with the animated values of now
+        .ok (dom,c.rules,none,{c.state with animated := overrides.map fun o => (o.node,o.property,o.value,o.transition)},1)
+      | none => do
+        let percent ← scalePercent request
+        let textScale := cssTextScale percent (zoomUnit request)
+        -- The media environment of the layout (`layOutDOMIn`), so that the computed values a script
+        -- reads are of the rules the page is laid out with: a `@media (min-width: …)` block that
+        -- the layout applies holds here too. (It was the media type alone, with no viewport.)
+        let env := mediaEnv (medium request) width height (percent*100/zoomUnit request)
+        let (rules,_) ← rulesWith kept dom request env
+        let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
+        let (flat,rules,treeScope) := flatView kept dom env rules
+        return (flat,rules,treeScope,state,textScale)
+  -- 40: the text of the document's style sheets, with no layout: the editing algorithms
+  -- (`Hosts.Dom.editOp`, `document.execCommand`) read the styles of nodes from it
+  let sheetText : Thunk String := Thunk.mk fun _ =>
+    match WebAccept.accept (WebAccept.mode request) fun m => sheetsIn m dom request {medium := medium request} with
+    | .ok (sheets,_) => sheetSource sheets
+    | .error _ => ""
+  -- the rules in their buckets: those of the measure before, or made when first asked for
+  let index : Thunk Rendering.CSS.RuleIndex := Thunk.mk fun _ =>
+    match carry, inputs.get with
+    | some (c,_), _ => c.index
+    | none, .ok (_,rules,_,_,_) => Rendering.CSS.RuleIndex.build rules
+    | none, .error _ => Rendering.CSS.RuleIndex.build []
   -- `getComputedStyle` (op 20) reads the cascade alone: no layout for it
-  -- with the styles: the flat tree and the rules that match an element, for the computed
-  -- value of a property outside the layout profile (`ComputedGeneric`, made when asked for)
-  let styled : Thunk (Except String (Array Rendering.CSS.Computed × DOM.Dom × (Nat → List Rendering.CSS.Match))) := Thunk.mk fun _ => do
-    let percent ← scalePercent request
-    let textScale := cssTextScale percent (zoomUnit request)
-    -- The media environment of the layout (`layOutDOMIn`), so that the computed values a script
-    -- reads are of the rules the page is laid out with: a `@media (min-width: …)` block that
-    -- the layout applies holds here too. (It was the media type alone, with no viewport.)
-    let env := mediaEnv (medium request) width height (percent*100/zoomUnit request)
-    let (rules,_) ← rulesWith kept dom request env
-    let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
-    let (flat,rules,treeScope) := flatView kept dom env rules
-    let styles ← Rendering.CSS.computeFor treeScope flat rules textScale state
+  -- with the styles: the view of `ComputedGeneric`, for the computed value of a property
+  -- outside the layout profile (made when asked for): the flat tree and the rules that match
+  -- an element, with the animated values after them (`CSS.withAnimated`), as in `computeFor`
+  let styled : Thunk (Except String Rendering.ComputedGeneric.View) := Thunk.mk fun _ => do
+    let (flat,rules,treeScope,state,textScale) ← inputs.get
     -- the rule buckets of `computeFor`, built again only if such a value is asked for
     let matchesOf : Nat → List Rendering.CSS.Match := match treeScope with
       | some ts =>
@@ -2051,19 +2105,60 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
         let ks : Thunk Rendering.CSS.ElemKeys := Thunk.mk fun _ => Rendering.CSS.ElemKeys.of ts.tree
         fun id => ix.get.matched (ks.get.get ts.tree) ts id state
       | none =>
-        let ix : Thunk Rendering.CSS.RuleIndex := Thunk.mk fun _ => Rendering.CSS.RuleIndex.build rules
-        let ks : Thunk Rendering.CSS.ElemKeys := Thunk.mk fun _ => Rendering.CSS.ElemKeys.of flat
-        fun id => ix.get.matched (ks.get.get flat) flat id state
-    return (styles, flat, matchesOf)
-  -- 40: the text of the document's style sheets, with no layout: the editing algorithms
-  -- (`Hosts.Dom.editOp`, `document.execCommand`) read the styles of nodes from it
-  let sheetText : Thunk String := Thunk.mk fun _ =>
-    match WebAccept.accept (WebAccept.mode request) fun m => sheetsIn m dom request {medium := medium request} with
-    | .ok (sheets,_) => sheetSource sheets
-    | .error _ => ""
+        match carry with
+        -- a few elements are asked for: their keys are read when a rule tests them
+        | some _ => fun id => index.get.matched (Rendering.CSS.readKeys flat) flat id state
+        | none =>
+          let ks : Thunk Rendering.CSS.ElemKeys := Thunk.mk fun _ => Rendering.CSS.ElemKeys.of flat
+          fun id => index.get.matched (ks.get.get flat) flat id state
+    let matchesOf := Rendering.CSS.withAnimated state matchesOf
+    -- the styles: those of the measure before with the named subtrees styled again
+    -- (`CSS.restyleWith`), or the cascade of the document
+    let whole := fun (_ : Unit) => Rendering.CSS.computeFor treeScope flat rules textScale state
+    let styles ← match carry with
+      | some (c,roots) =>
+        (match Rendering.CSS.restyleWith matchesOf flat c.styles roots with
+          | .ok styles => pure styles
+          | .error _ => whole ())
+      | none => whole ()
+    return { dom := flat, matchesOf := matchesOf, styles := styles,
+             viewportW := width, viewportH := height }
+  -- what this measure leaves for the next (`Page.Carry`): for a page with no shadow tree, at
+  -- text scale 1, whose rules do not read the `style` attribute
+  let left : Thunk (Option WasmVM.Hosts.Page.Carry) := Thunk.mk fun _ =>
+    match styled.get, inputs.get with
+    | .ok view, .ok (_,rules,none,state,textScale) =>
+      if textScale == 1 && (carry.isSome || !Rendering.CSS.readsStyleAttribute rules) then
+        some { index := index.get, rules := rules, state := {state with animated := []}, styles := view.styles }
+      else none
+    | _, _ => none
+  -- the position of each computed style name, for the reads by name of the animation engine
+  let nameIndex : Thunk (Std.HashMap String Nat) := Thunk.mk fun _ => Rendering.Animation.Computed.nameIndex ()
+  -- the rules that declare an animation or a transition (none on most pages)
+  let animationRules : Thunk (List Rendering.CSS.Rule) := Thunk.mk fun _ =>
+    match inputs.get with
+    | .ok (_,rules,_,_,_) => Rendering.Animation.Css.animationRules rules
+    | .error _ => []
+  -- their matches of an element, from rule buckets made once when first asked for (as
+  -- `CSS.computeFor` matches: an element tries only the rules of its buckets)
+  let matchesOf : Thunk (Nat → List Rendering.CSS.Match) := Thunk.mk fun _ =>
+    match inputs.get with
+    | .ok (flat,_,treeScope,state,_) =>
+      (match treeScope with
+        | none =>
+          let ix := Rendering.CSS.RuleIndex.build animationRules.get
+          let ks := Rendering.CSS.ElemKeys.of flat
+          fun id => ix.matched (ks.get flat) flat id state
+        | some ts =>
+          let ix := Rendering.CSS.ScopedIndex.build animationRules.get
+          let ks := Rendering.CSS.ElemKeys.of ts.tree
+          fun id => ix.matched (ks.get ts.tree) ts id state)
+    | .error _ => fun _ => []
+  let matchedOf := fun (node : Nat) => matchesOf.get node
+  let element := fun (node : Nat) => node < dom.size && (dom.get node).type == .element
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
   -- 23: the `@font-face` faces of the page and the state of each (`document.fonts`)
-  fun node op => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
+  let answers : WasmVM.Hosts.Page.Answers := fun node op q => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
     else if op == 23 then some (fontFacesAnswer h dom request)
     else if op == 40 then some sheetText.get
     -- 41: the inputs of the layout's media environment (`mediaEnv`): the media type, the
@@ -2073,14 +2168,47 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
       match scalePercent request with
       | .ok percent => some s!"{medium request} {width} {height} {percent*100/zoomUnit request}"
       | .error _ => none
+    else if op == 24 then
+      if element node then
+        some (Rendering.Animation.Css.cascadedText
+          (Rendering.Animation.Css.cascaded (if animationRules.get.isEmpty then [] else matchedOf node)
+            (Rendering.CSS.attrValue (dom.get node) "style")))
+      else some ""
+    else if op == 25 then some sheetText.get
+    else if op == 26 then
+      match styled.get with
+      | .ok view =>
+        if element node && dom.connected node then
+          -- with "names": the declared longhands; else the declarations as one text
+          some (if q == "names" then "\x00".intercalate (Rendering.Animation.Computed.declaredNames view node)
+            else Rendering.Animation.Computed.declarationText view node)
+        else some ""
+      | .error _ => some ""
+    else if op == 27 then
+      match styled.get, q.splitOn "\x00" with
+      | .ok view, [property, value] =>
+        if element node then Rendering.Animation.Computed.computeIn nameIndex.get view node property value else none
+      | _, _ => none
+    else if op == 28 then
+      let rules := animationRules.get
+      -- the elements of the document's tree only: what left the document animates nothing
+      let ids := (dom.treeOrder 0).toList.filter fun id =>
+        let n := dom.get id
+        n.type == .element &&
+          (Rendering.Animation.Css.mentions (Rendering.CSS.attrValue n "style") ||
+            (!rules.isEmpty && !(Rendering.Animation.Css.cascaded (matchedOf id) "").isEmpty))
+      some (" ".intercalate (ids.map toString))
+    else if op == 29 then
+      match styled.get with
+      | .ok view =>
+        if element node && dom.connected node then Rendering.Animation.Computed.valueOf nameIndex.get view node q else none
+      | .error _ => none
     else if op == 20 || op == 36 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
       -- document has no computed style (the declaration is empty)
-      | .ok (styles, flat, matchesOf) => if node < dom.size && (dom.get node).type == .element && dom.connected node then
-          let c := styles[node]?.getD {}
-          let view : Rendering.ComputedGeneric.View :=
-            { dom := flat, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height }
+      | .ok view => if element node && dom.connected node then
+          let c := view.styles[node]?.getD {}
           -- 36: the custom properties that apply to the element (35 is the hit test); 200 + k: the k-th property's value
           some (if op == 20 then Rendering.ComputedValues.text c
             else if op == 36 then Rendering.ComputedGeneric.customNamesText view node
@@ -2090,6 +2218,7 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     else match laid.get with
     | .ok l => readAnswer l node op
     | .error _ => none
+  (answers,left)
 
 /-! ### The layouts of the last keys, kept
 

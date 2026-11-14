@@ -85,6 +85,7 @@ def callback (s : σ) (cb : Nat) (target : Int) (arg : Nat) : σ :=
 
 /-- Run what the event loop gave (as `Page.Session.runTaskP`). -/
 def runTask (s : σ) (r : L4Factoidal.EventLoop.Run) : σ :=
+  let s := e.setHost s (e.host s).tickTimeline
   match r.kind with
   | .task =>
     match r.event with
@@ -218,7 +219,7 @@ def rendered (s : σ) (n : Nat) : σ × Bool :=
   let s := e.setHost s (e.host s).measured.1
   match (e.host s).reads.kept with
   | some (_, f) =>
-    match (f n 17).bind Input.boxOf with
+    match (f n 17 "").bind Input.boxOf with
     | some (_, _, w, h) => (s, w > 0 || h > 0)
     | none => (s, false)
   | none => (s, true)
@@ -261,7 +262,7 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
             let ds := h.dom
             let h := { h with dom := emptyDomHost }
             let (dom, ok, ev) := Hosts.Dom.editKey ds ix command value
-            let s := e.setHost s { h with dom, reads := { h.reads with version := h.reads.version + 1 } }
+            let s := e.setHost s { h with dom, reads := h.reads.wrote }
             match ok, ev with
             | true, some (at_, it, d) => (e.dispatchWith s at_ "input" (inputInit it d)).1
             | _, _ => s) s
@@ -318,7 +319,7 @@ def hitAt (s : σ) (x y : Int) : σ × Nat :=
   let hit : Option Nat :=
     if x < 0 || y < 0 || x ≥ 65536 || y ≥ 65536 then none
     else match h.reads.kept with
-      | some (_, f) => (f (x.toNat * 65536 + y.toNat) 35).bind Input.hitOf
+      | some (_, f) => (f (x.toNat * 65536 + y.toNat) 35 "").bind Input.hitOf
       | none => none
   (s, match Input.pointerTarget none hit with
     | some n => elementOf d n
@@ -491,7 +492,7 @@ def inputEnv (resolve : Arena → String → Option Nat) (s : σ) (layout : Bool
   let h := e.host s
   let width := h.reads.width
   let height := h.reads.height
-  let boxes : Option (Nat → Nat → Option String) := if layout then h.reads.kept.map (·.2) else none
+  let boxes : Option (Nat → Nat → Option String) := if layout then h.reads.kept.map (fun k => fun n op => k.2 n op "") else none
   let d := h.dom.dom
   let centre : String → Option (Int × Int) := fun ref =>
     match boxes, resolve d ref with
