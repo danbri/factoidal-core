@@ -20,7 +20,8 @@ Specification: MathML 4.0, W3C Working Draft 2026-11-12
 and then repeats: properties, then an argument list if a `(` follows. The recursion is on a fuel
 taken from the length of the input; an input that would need more is refused.
 
-This module is a reader and a writer with tests. Nothing emits `intent` yet, so theorem 5 of
+This module is a reader and a writer with tests, and one theorem at the leaves
+(`intentNCName_valid`). Nothing emits `intent` yet, so theorem 5 of
 `docs/designissues/2026-10-28-mathml-finish.md` is not stated here.
 -/
 import L4Factoidal.XML.Wellformedness
@@ -61,6 +62,25 @@ def intentNCName : List Char → Option (String × List Char)
         some (String.ofList (c :: rest.takeWhile isNCNameChar), rest.dropWhile isNCNameChar)
       else none
   | [] => none
+
+/-- Theorem (invariant, at the leaves). Says: a name the reader takes from the input is an `NCName`
+    (`XML.Wellformedness.isValidNCName`), so every concept, literal, reference and property name in
+    a parsed intent is one.
+    Does not say: that the whole value matches the grammar when `parseIntent` answers (that is the
+    reader's code, tested by `#guard`), or that the name is a known concept. -/
+theorem intentNCName_valid {cs : List Char} {name : String} {rest : List Char}
+    (h : intentNCName cs = some (name, rest)) : isValidNCName name = true := by
+  cases cs with
+  | nil => simp [intentNCName] at h
+  | cons c r =>
+      simp only [intentNCName] at h
+      by_cases hc : isNCNameStartChar c = true
+      · rw [if_pos hc] at h
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, -⟩ := h
+        simp [isValidNCName, String.toList_ofList, hc]
+      · rw [if_neg hc] at h
+        cases h
 
 /-- `number := '-'? \d+ ( '.' \d+ )?` at the front of the input, and the rest. -/
 def intentNumber (cs : List Char) : Option (String × List Char) :=
@@ -226,5 +246,7 @@ private def readsAs (s : String) (shape : Intent → Bool) : Bool :=
 #guard (parseIntent "f: postfix").isNone
 #guard (parseIntent "a:b:").isNone
 #guard (parseIntent "1.").isNone
+
+#print axioms intentNCName_valid
 
 end L4Factoidal.MathML
