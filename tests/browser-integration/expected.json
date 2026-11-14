@@ -1,0 +1,183 @@
+{
+ "note": "scratch: engine 25c3a4510",
+ "fixtures": {
+  "classic.html": {
+   "subtests": [
+    "external sheet: the header colour comes through a custom property",
+    "custom property: a script reads --gap",
+    "block: the header box",
+    "selector: a child combinator rule sets a height",
+    "flex: three equal items in a row with a gap",
+    "grid: three columns, two rows",
+    "media query: a block that holds applies",
+    "media query: a block that does not hold does not apply",
+    "media query: matchMedia agrees with the sheet",
+    "position: absolute in a relative box",
+    "box-sizing: border-box",
+    "values: calc(), rem and em lengths",
+    "selector in the cascade: child combinator",
+    "selector in the cascade: next-sibling combinator",
+    "selector in the cascade: attribute selector",
+    "selector in the cascade: :not()",
+    "selector in the cascade: :first-child",
+    "selector in the cascade: :nth-child()",
+    "selector in the cascade: :is()",
+    "selector in querySelectorAll: the same selectors match",
+    "storage: localStorage keeps and removes a value",
+    "storage: document.cookie keeps a cookie",
+    "DOM: items a script appends take room in the layout"
+   ],
+   "known": {
+    "external sheet: the header colour comes through a custom property": "runner: FAIL: assert_equals: expected \"rgb(0, 102, 204)\" but got \"rgba(0, 0, 0, 0)\"",
+    "custom property: a script reads --gap": "runner: FAIL: assert_equals: expected \"10px\" but got \"\"",
+    "selector: a child combinator rule sets a height": "runner: FAIL: assert_equals: expected 26 but got 20",
+    "flex: three equal items in a row with a gap": "runner: FAIL: assert_approx_equals: n1 x of [40, 58, 560, 20] expected 0 +/- 0.5 but got 40",
+    "grid: three columns, two rows": "runner: FAIL: assert_approx_equals: c1 width of [0, 80, 600, 50] expected 193.33 +/- 0.5 but got 600",
+    "media query: a block that holds applies": "runner: FAIL: assert_equals: expected \"block\" but got \"none\"",
+    "media query: matchMedia agrees with the sheet": "runner: FAIL: assert_true: min-width: 300px expected true got false",
+    "position: absolute in a relative box": "runner: FAIL: assert_approx_equals: abs x of [0, 340, 50, 20] expected 550 +/- 0.5 but got 0",
+    "box-sizing: border-box": "runner: FAIL: assert_approx_equals: bb width of [0, 380, 110, 40] expected 100 +/- 0.5 but got 110",
+    "values: calc(), rem and em lengths": "runner: FAIL: assert_approx_equals: units x of [0, 410, 600, 0] expected 32 +/- 0.5 but got 0",
+    "selector in the cascade: child combinator": "runner: FAIL: assert_equals: expected 4 but got 0",
+    "selector in the cascade: next-sibling combinator": "runner: FAIL: assert_equals: expected 4 but got 0",
+    "selector in the cascade: attribute selector": "runner: FAIL: assert_equals: expected 4 but got 0",
+    "selector in the cascade: :not()": "runner: FAIL: assert_equals: expected 4 but got 0",
+    "selector in the cascade: :first-child": "runner: FAIL: assert_equals: expected 4 but got 0",
+    "selector in the cascade: :nth-child()": "runner: FAIL: assert_equals: expected 4 but got 0",
+    "selector in the cascade: :is()": "runner: FAIL: assert_equals: expected 4 but got 0",
+    "storage: localStorage keeps and removes a value": "runner: FAIL: localStorage is not defined"
+   },
+   "hosts": {},
+   "painted": [
+    {
+     "name": "top strip",
+     "rgb": [
+      17,
+      34,
+      51
+     ],
+     "box": [
+      0,
+      0,
+      600,
+      10
+     ]
+    },
+    {
+     "name": "header, coloured through a custom property",
+     "rgb": [
+      0,
+      102,
+      204
+     ],
+     "box": [
+      0,
+      10,
+      600,
+      40
+     ]
+    },
+    {
+     "name": "flex items",
+     "rgb": [
+      0,
+      153,
+      51
+     ],
+     "box": [
+      0,
+      50,
+      600,
+      26
+     ],
+     "area": 15080
+    },
+    {
+     "name": "grid cards",
+     "rgb": [
+      204,
+      51,
+      0
+     ],
+     "box": [
+      0,
+      80,
+      600,
+      110
+     ],
+     "area": 48333
+    },
+    {
+     "name": "media query block",
+     "rgb": [
+      102,
+      0,
+      153
+     ],
+     "box": [
+      0,
+      200,
+      600,
+      10
+     ]
+    },
+    {
+     "name": "image",
+     "rgb": [
+      0,
+      170,
+      170
+     ],
+     "box": [
+      0,
+      210,
+      40,
+      20
+     ]
+    },
+    {
+     "name": "block after its opacity transition",
+     "rgb": [
+      255,
+      242,
+      191
+     ],
+     "box": [
+      0,
+      230,
+      100,
+      20
+     ]
+    },
+    {
+     "name": "absolutely positioned block",
+     "rgb": [
+      255,
+      119,
+      0
+     ],
+     "box": [
+      550,
+      350,
+      50,
+      20
+     ]
+    },
+    {
+     "name": "block sized with calc(), rem and em",
+     "rgb": [
+      255,
+      102,
+      153
+     ],
+     "box": [
+      32,
+      410,
+      280,
+      20
+     ]
+    }
+   ]
+  }
+ }
+}

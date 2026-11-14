@@ -10,6 +10,9 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 // Where a link or an address goes: Lean's route (WebRoute.lean), done as it says; with an
 // engine from before the op, the same rules in JavaScript (link-route.mjs, issue 1274).
 import {createRouter} from './link-route.mjs';
+// The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
+// the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch} from './page-load.mjs';
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
 // Liberal mode (WebAccept.lean, the Settings checkbox "Be liberal in what we accept"), the
@@ -385,6 +388,8 @@ function settingsSource(source){
   if(ei>=0&&ej>ei)try{source=source.slice(0,ei+eOpen.length)+call('',{op:'encodingChoices',setting:encodingSetting,locale:systemLocale}).html+source.slice(ej);}catch{/* the static links */}
   return source;
 }
+// A text resource of this site (a linked style sheet): another origin is not read.
+const siteText=url=>{if(new URL(url).origin!==siteOrigin)throw Error('not of this site');return fetchText(url);};
 async function prepare(url){
   const page=await fetchText(url,true);
   if(url===settingsURL)page.source=settingsSource(page.source);
@@ -399,8 +404,14 @@ async function prepare(url){
   await loadFallbackFonts(page.source,fallbackWait);
   const facts=call(page.source,{op:'inspect',url:page.url,...(liberal?{liberal:true}:{})});
   const images=await pageImages(facts.images);
-  const webFonts=await pageWebFonts(page);
-  const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{})};
+  // The linked style sheets Lean listed, as the window fetches them (page-load.mjs): from this
+  // site only, as the page's images and fonts are. One that is not read goes to Lean as a
+  // failure with its reason; Lean draws the page without it and says so in the console.
+  const sheets=await loadStyleSheets(facts.stylesheets,siteText);
+  for(const r of sheets.resources)sources.push({kind:'Style sheet',url:r.url,source:r.source});
+  const webFonts=await pageWebFonts(page,sheets.resources);
+  const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
+    ...(sheets.resources.length?{resources:sheets.resources}:{}),...(sheets.resourceFailures.length?{resourceFailures:sheets.resourceFailures}:{})};
   if(Array.isArray(facts.diagnostics))addEntries(next,facts.diagnostics);
   if(facts.icon){const icon=await tabIcon(facts.icon);if(icon)next.icon=icon;}
   // The page is drawn first and its scripts start after that frame, as deferred scripts do:
@@ -414,11 +425,11 @@ async function prepare(url){
 // font policy and holds it by SHA-256. A face that fails or is refused is left out: its text
 // falls back to the next family. A page with no @font-face makes no call.
 const maxFontBytes=8388608,maxPageFontBytes=16777216;
-async function pageWebFonts(page){
+async function pageWebFonts(page,resources=[]){
   const webFonts=[];
-  if(!/@font-face/i.test(page.source))return webFonts;
+  if(!/@font-face/i.test(page.source)&&!resources.some(r=>/@font-face/i.test(r.source)))return webFonts;
   let faces;
-  try{faces=call(page.source,{op:'fontFaces',url:page.url}).faces??[];}catch{return webFonts;}
+  try{faces=call(page.source,{op:'fontFaces',url:page.url,...(resources.length?{resources}:{})}).faces??[];}catch{return webFonts;}
   const loaded=new Map();let total=0;
   for(const face of faces)for(const src of face.sources){
     const known=loaded.get(src);
@@ -750,7 +761,9 @@ async function startScripts(page,scripts){
   }
   // The viewport and the render request that lays the page out for its scripts' layout
   // reads (clientWidth, getBoundingClientRect); an engine without them ignores the fields.
-  const layout={url:page.url,...(page.liberal?{liberal:true}:{}),...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),...(page.webFonts?{webFonts:page.webFonts}:{}),textScalePercent:percent,zoomUnit:zoomUnit()};
+  // The layout fields of the page's renders (pageLayoutFields), so that the layout its scripts
+  // read is the one the page is drawn with: the same sheets, images and fonts.
+  const layout={...pageLayoutFields({...page,commands:undefined}),textScalePercent:percent,zoomUnit:zoomUnit()};
   // The setting: Lean's plan says which engine runs the page, or why none does.
   let plan=planFor(scriptSetting,1);
   if(plan.run&&plan.engine==='quickjs')await loadGuest();
@@ -784,8 +797,9 @@ function scriptTurn(page,turn){
 // worker's URL is of the page's origin), then the turn goes on.
 async function workerFetches(page,fetches){
   const session=page.script.session;
-  const results=await Promise.all(fetches.map(f=>fetchText(f.url).then(r=>({id:f.id,status:200,url:r.url,contentType:'',source:r.source}),
-    ()=>({id:f.id,status:0,url:f.url,contentType:'',source:''}))));
+  // The status, the type and X-Content-Type-Options go to Lean as the server sent them: Lean
+  // decides whether the answer is a script (nosniff, LeanJSWorkers.scriptAccepted).
+  const results=await Promise.all(fetches.map(f=>fetchedAnswer(f,rawOverFetch(fetch))));
   if(page.script?.session!==session)return;
   try{scriptTurn(page,scriptCall('',{op:'scriptSession',action:'fetched',session,results}));}
   catch(error){console.warn('foafnaut: worker scripts:',String(error.message??error));}
@@ -864,7 +878,7 @@ scriptTick();
 function scriptClick(x,y){
   const script=doc?.script;if(!script)return;
   try{
-    const node=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,zoomUnit:zoomUnit(),shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height).node;
+    const node=call(doc.source,{op:'nodeAt',...pageLayoutFields(doc),textScalePercent:percent,zoomUnit:zoomUnit(),shell:shell(),x,y},width,height).node;
     if(typeof node==='number')scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'click',session:script.session,node}));
   }catch(error){scriptFailed(doc,error,'click');}
 }
@@ -875,7 +889,7 @@ const scriptPointers=()=>scriptOps.includes('pointer');
 function scriptPointer(kind,x,y,pointerType){
   const script=doc?.script;if(!script)return;
   try{
-    const at=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,zoomUnit:zoomUnit(),shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height);
+    const at=call(doc.source,{op:'nodeAt',...pageLayoutFields(doc),textScalePercent:percent,zoomUnit:zoomUnit(),shell:shell(),x,y},width,height);
     if(typeof at.node!=='number')return;
     const down=kind==='down'||kind==='move';
     scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'pointer',session:script.session,kind,...at,button:0,buttons:down?1:0,
@@ -1118,7 +1132,7 @@ function scrollLimit(){
 // a band made at one scroll is known to be for the same state at another.
 // zoomUnit: Lean lays the page out in CSS pixels (the window over the pixel ratio) and draws
 // it at the ratio, so a 2x screen shows the layout of a 1x one, sharper (WebDocument, Device pixels).
-const renderOptions=at=>({op:'render',...(checkMode?{}:{checks:false}),url:doc.url,...(doc.liberal?{liberal:true,...(doc.diagnosticsSeen?{}:{diagnostics:true})}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),...(doc.webFonts?{webFonts:doc.webFonts}:{}),...animationOptions(doc),textScalePercent:percent,zoomUnit:zoomUnit(),shell:{...shell(),scroll:at},live:doc===checked,binary:true});
+const renderOptions=at=>({op:'render',...(checkMode?{}:{checks:false}),...pageLayoutFields(doc),...(doc.liberal&&!doc.diagnosticsSeen?{diagnostics:true}:{}),...animationOptions(doc),textScalePercent:percent,zoomUnit:zoomUnit(),shell:{...shell(),scroll:at},live:doc===checked,binary:true});
 const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0,collapse:undefined}});
 // The graph page keeps its document and changes its source: the band must be of this source.
 const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source===doc.source&&current.width===width&&current.height===height&&current.sig===signature(renderOptions(scroll)));
@@ -1537,8 +1551,7 @@ const printPercent=()=>Math.max(50,Math.min(1000,Math.round(percent*3/4/scale/5)
 // theme. While Command/Control+P waits, script changes do not start them again.
 const printFits=job=>!!job&&job.doc===doc&&job.source===doc.source&&(printWanted||job.commands===doc.commands)&&job.percent===percent&&job.scale===scale&&job.theme===theme;
 function printOptions(){
-  return {url:doc.url,...(doc.liberal?{liberal:true}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),
-    textScalePercent:printPercent(),media:'print'};
+  return {...pageLayoutFields(doc),textScalePercent:printPercent(),media:'print'};
 }
 async function printPNG(frame){
   const rgba=frame.pixels??await renderOffscreen(frame,'svg-offscreen');

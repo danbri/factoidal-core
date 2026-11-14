@@ -1,0 +1,45 @@
+/* The style sheet of the integration fixtures (original; tests/browser-integration).
+   Every box has a size in px, so no answer depends on a font or on the viewport. */
+:root { --brand: rgb(0, 102, 204); --gap: 10px; --card: rgb(204, 51, 0); }
+html, body { margin: 0; padding: 0; }
+body { font-size: 16px; line-height: 20px; }
+#page { width: 600px; }
+/* A strip in a plain colour, first on the page: the check of what a host drew measures from it. */
+#top { height: 10px; background: rgb(17, 34, 51); }
+#header { height: 40px; background: var(--brand); }
+#navbox { height: 30px; }
+nav > ul { display: flex; gap: var(--gap); list-style: none; margin: 0; padding: 0; }
+nav > ul > li { flex: 1; height: 26px; background: rgb(0, 153, 51); }
+#cardbox { height: 120px; }
+#cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.card { height: 50px; background: var(--card); }
+#mediabox { height: 10px; }
+#wide { display: none; height: 10px; background: rgb(102, 0, 153); }
+#never { display: none; height: 10px; }
+@media (min-width: 300px) { #wide { display: block; } }
+@media (min-width: 100000px) { #never { display: block; } }
+#picbox { height: 20px; }
+#pic { display: block; }
+#fadebox { height: 20px; }
+#fade { width: 100px; height: 20px; background: rgb(255, 204, 0); opacity: 1; transition: opacity 100ms linear; }
+#fade.off { opacity: 0.25; }
+#formbox { height: 30px; }
+#f { margin: 0; }
+#listbox { height: 60px; }
+#list { list-style: none; margin: 0; padding: 0; }
+#list li { height: 20px; }
+#posbox { height: 40px; position: relative; }
+#abs { position: absolute; right: 0; top: 10px; width: 50px; height: 20px; background: rgb(255, 119, 0); }
+#sizebox { height: 30px; }
+#bb { box-sizing: border-box; width: 100px; height: 30px; padding: 5px; border: 2px solid rgb(0, 0, 0); }
+#unitbox { height: 20px; }
+#units { width: calc(50% - 20px); height: 1.25rem; margin-left: 2em; background: rgb(255, 102, 153); }
+#selbox { height: 40px; }
+#selbox i { display: block; height: 0; }
+#selbox > .child { height: 4px; }
+#selbox .first + .next { height: 4px; }
+#selbox [data-k="v"] { height: 4px; }
+#selbox .plain:not(.other) { height: 4px; }
+#selbox i:first-child { height: 4px; }
+#selbox i:nth-child(2) { height: 4px; }
+#selbox :is(.one, .two) { height: 4px; }
