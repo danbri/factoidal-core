@@ -203,6 +203,20 @@ every element against the kept styles of an earlier time: a transition a script 
 started again from its last value, and an element following an ancestor's running transition
 (an `em` length under a font-size transition) started one of its own at each such step.
 
+Three things the frame's style change brought out (it makes style changes that no test had made
+before):
+
+- A declared value that changes under a running script animation starts no transition: the
+  animation's value is above the author's declarations in both the before-change and the after-change
+  style (`Engine.scriptAnimated`, one pass over the animations a style change; before, only the
+  values an animation had given at the last style change were left out).
+- A style change that left no animation alive and no element declaring one dropped the state it had
+  made: the cancelled animation went on (`Host.measureNow` now keeps the cancelled state and asks for
+  the frame of its acts and events).
+- The engine reads computed values: `ComputedGeneric.valueAt` answers the resolved value, which for
+  `line-height` and the insets is not the computed one (a number as a length, `auto` as `0px`), and
+  those pairs then interpolated where they must flip (`Computed.resolvedApart`).
+
 A frame is also needed while an animation holds acts that no script object took (a promise to
 resolve or reject): an animation made and cancelled by style in one task has never been ticked, and
 its `finished` promise was left pending (`Engine.needsFrame_out`).
@@ -320,6 +334,10 @@ layout (`renderWithStyles_unused`: with no generated content they are `CSS.compu
 engine's own cascade is still separate: its document is the script's (the layout's has the paint
 slots of script transforms taken out), so the two are not the same styles.
 
+In the script session's view (`WebDocument.measure`), the matches of an element are made once a
+measure (one thunk a node): the property table asks for them several times for one value, and the
+engine reads several values of an element.
+
 Also: two computed style texts that are equal are no longer parsed to be compared
 (`animationAccess.changed`, an element with `transition: all`).
 
@@ -373,6 +391,7 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
 - `Engine.needsFrame_out` (an animation with untaken acts keeps the page asking for a frame);
   `Value.add_shape_replace` (two shapes that do not interpolate do not add or accumulate: the
   keyframe's value replaces); `Value.originWords_dims` (an origin of lengths is not rewritten).
+- `Engine.scriptAnimated_none` (with no animation no element has a script-animated longhand).
 - `Engine.removeReplaced_size` (removing replaced animations makes no animation and loses none),
   `Engine.replaced_active` (only an animation in the active replace state is removed: not one
   removed already, not a persisted one).

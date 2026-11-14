@@ -407,13 +407,40 @@ theorem startTransition_full (s : State) (e : Nat) (property before after : Stri
     (h : s.full = true) : startTransition s e property before after spec = s := by
   simp [startTransition, h]
 
+/-- The longhands that the keyframes of an effect give a value (a shorthand counts as its
+longhands). -/
+def targetLonghands (e : EffectRec) : List String :=
+  ((Effect.properties e.keyframes).flatMap fun p =>
+    let ls := Css.longhandsOf p
+    if ls.isEmpty then [p] else ls).eraseDups
+
+/-- The longhands that the animations of scripts (not CSS animations, not transitions)
+give a value now, by target element: one pass over the animations. Both the before-change
+and the after-change style of an element hold those values (Web Animations 1 §5.4.5: an
+animation's value is above the author's declarations), so a declared value that changes
+under one starts no transition (web-animations `style-change-events.html`). -/
+def scriptAnimated (s : State) : Std.HashMap Nat (List String) :=
+  s.anims.foldl (fun m a =>
+    if a.dead || a.replace == 1 || a.origin != .script then m else
+    match s.effectOf a with
+    | some e =>
+      (match e.target, s.progressOf a with
+        | some t, some _ => m.insert t (targetLonghands e ++ m.getD t [])
+        | _, _ => m)
+    | none => m) {}
+
+/-- Kind: cost (a page that does not use the feature pays nothing). Says: with no
+animation at all, no element has a script-animated longhand. -/
+theorem scriptAnimated_none (s : State) (h : s.anims = #[]) : (scriptAnimated s).isEmpty = true := by
+  simp [scriptAnimated, h]
+
 /-- CSS Transitions 1 §3 "starting of transitions" for element `e`: for each property
 with a matching transition whose computed value changed since the last style change, a
 transition from the old value to the new one, when they interpolate (or the transition
 allows discrete values) and the duration and delay give it time; a running transition
 whose end value is no longer the property's value is cancelled, and replaced from the
 current value when the new value interpolates with it. -/
-def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
+def updateTransitions (s : State) (ac : Access) (e : Nat) (scripted : List String := []) : State := Id.run do
   let connected := ac.connected e
   -- a transition of a shorthand is one of each of its longhands (CSS Transitions 1 §2.1)
   let specs := (if connected then Css.transitions (ac.decls e) else []).flatMap fun t =>
@@ -458,7 +485,8 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
   let named := specs.filterMap fun t => if t.property == "all" || t.property == "none" then none else some t.property
   let others := if specs.any (·.property == "all") then ac.changed e else []
   for property in (named ++ others).eraseDups do
-    if !animatable property || stillRunning.contains property || animatedBefore.contains property then continue
+    if !animatable property || stillRunning.contains property || animatedBefore.contains property
+        || scripted.contains property then continue
     let some sp := Css.transitionFor specs property | continue
     -- the before-change value: the end value of a transition of the longhand that ran to
     -- its end since the element's last style change, else the kept style's value
@@ -545,13 +573,6 @@ def replaceable (s : State) (a : AnimRec) : Bool :=
   (match s.effectOf a with
     | some e => e.target.isSome && (s.progressOf a).isSome
     | none => false)
-
-/-- The longhands that the keyframes of an effect give a value (a shorthand counts as its
-longhands). -/
-def targetLonghands (e : EffectRec) : List String :=
-  ((Effect.properties e.keyframes).flatMap fun p =>
-    let ls := Css.longhandsOf p
-    if ls.isEmpty then [p] else ls).eraseDups
 
 /-- The animations to remove now: each replaceable animation in the active replace state
 whose target is in the document and for each of whose properties a replaceable animation
@@ -655,9 +676,11 @@ def styleChange (s : State) (ac : Access) : State := Id.run do
   let elements := (ac.candidates ++ owners).eraseDups
   if elements.isEmpty then return s
   let mut s := withSheet s (ac.sheet ())
+  -- (the longhands script animations give a value now: they start no transition)
+  let scripted := scriptAnimated s
   for e in elements do
     s := updateAnimations s ac e
-    s := updateTransitions s ac e
+    s := updateTransitions s ac e (scripted.getD e [])
   -- every element's before-change style is now this style
   return { s with ended := {} }
 
@@ -671,7 +694,8 @@ def styleChangeOn (s : State) (ac : Access) (keep : Nat → Bool) (elements : Li
     (s.anims[i]?).bind fun a => if a.dead then none else a.owner.bind fun o => if keep o then some o else none
   let changed := (elements ++ owners).eraseDups
   if changed.isEmpty then s else
-  let s := changed.foldl (fun s e => updateTransitions (updateAnimations s ac e) ac e) s
+  let scripted := scriptAnimated s
+  let s := changed.foldl (fun s e => updateTransitions (updateAnimations s ac e) ac e (scripted.getD e [])) s
   { s with ended := changed.foldl (fun m e => m.erase e) s.ended }
 
 /-- Kind: correctness (the empty case). Says: a style change that names no element and
