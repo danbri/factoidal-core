@@ -546,6 +546,63 @@ def Case.anyYield : Nat → List Case → Bool
       Case.anyYield n cs
 end
 
+mutual
+/-- Does a statement hold an unlabelled `continue` that is not inside a loop of its own (one
+that would leave a `switch` around it for the enclosing loop)? -/
+def Stmt.contOutF : Nat → Stmt → Bool
+  | 0, _ => true
+  | n + 1, s =>
+    match s with
+    | .cont none => true
+    | .ifS _ t e => Stmt.contOutF n t || (match e with | some e => Stmt.contOutF n e | none => false)
+    | .block ss | .blockF ss => Stmt.anyContOut n ss
+    | .tryS b _ h f => Stmt.anyContOut n b ||
+        (match h with | some h => Stmt.anyContOut n h | none => false) ||
+        (match f with | some f => Stmt.anyContOut n f | none => false)
+    | .labeled _ b | .withS _ b => Stmt.contOutF n b
+    | .switchS _ cs => Case.anyContOut n cs
+    | _ => false
+
+def Stmt.anyContOut : Nat → List Stmt → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, s :: ss => Stmt.contOutF n s || Stmt.anyContOut n ss
+
+def Case.anyContOut : Nat → List Case → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, (.mk _ b) :: cs => Stmt.anyContOut n b || Case.anyContOut n cs
+end
+
+/-- A `switch` whose clauses hold a `yield` or `await`, as statements the generator machine
+runs (CaseBlockEvaluation, §14.12.4): the discriminant, then the clause to start at (the tests
+in source order, with `===`; else `default`; else none), then the clauses' bodies from there
+inside `do { … } while (false)`, which an unlabelled `break` leaves. `k` names the two hidden
+bindings (`%` names, which source text cannot write). None when a clause declares a lexical
+name or a function (the clauses would no longer share one scope) or holds an unlabelled
+`continue` that would stop at the `do`-`while` instead of the enclosing loop. -/
+def switchStmts (k : Nat) (labels : List String) (d : Expr) (cs : List Case) : Option Stmt :=
+  let sv := s!"%sv{k}"
+  let st := s!"%st{k}"
+  let declares := cs.any fun c => match c with
+    | .mk _ b => b.any fun s => match s with
+      | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
+      | _ => false
+  if declares || Case.anyContOut 100000 cs then none else
+  let idx := cs.zipIdx
+  let dflt : Int := match idx.find? (fun (c, _) => match c with | .mk none _ => true | _ => false) with
+    | some (_, i) => i
+    | none => -1
+  let setSt (i : Int) : Stmt := .expr (.assign none (.ident st) (.num (Float.ofInt i)))
+  let chain := idx.foldr (fun (c, i) acc => match c with
+      | .mk (some t) _ => .ifS (.binary .seq (.ident sv) t) (setSt i) (some acc)
+      | .mk none _ => acc) (setSt dflt)
+  let runs := idx.map fun (c, i) => match c with
+    | .mk _ b => Stmt.ifS (.logical .and (.binary .ge (.ident st) (.num 0))
+        (.binary .le (.ident st) (.num (Float.ofNat i)))) (.block b) none
+  some (.block [.decl .letK [Decl.mk (.id sv) (some d), Decl.mk (.id st) (some (.num (-1)))], chain,
+    labels.foldr .labeled (.doWhile (.block runs) (.bool false))])
+
 def Expr.hasYield (e : Expr) : Bool := Expr.hasYieldF 100000 e
 def Stmt.hasYield (s : Stmt) : Bool := Stmt.hasYieldF 100000 s
 def Decl.hasYield (d : Decl) : Bool := Decl.anyYield 100000 [d]

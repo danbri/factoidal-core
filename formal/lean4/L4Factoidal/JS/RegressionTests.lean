@@ -581,4 +581,9 @@ private def parses (src : String) : Bool := syn src == "ok"
 #guard out "var r = []; function t(f) { try { r.push(String(f())) } catch (e) { r.push(e.name) } } var pr = {}; var p = new Proxy({}, { getPrototypeOf() { return pr }, isExtensible() { return true }, preventExtensions(t) { Object.preventExtensions(t); return true }, setPrototypeOf(t, v) { return false } }); t(() => Object.getPrototypeOf(p) === pr); t(() => Object.isExtensible(p)); t(() => Reflect.setPrototypeOf(p, null)); t(() => Object.setPrototypeOf(p, null)); t(() => Reflect.preventExtensions(p)); t(() => Object.isExtensible(p)); t(() => Reflect.isExtensible(new Proxy({}, {}))); t(() => Object.getPrototypeOf(new Proxy({}, { getPrototypeOf() { return 1 } }))); print(r.join())" == ["true,true,false,TypeError,true,TypeError,true,TypeError"]
 #guard out "var a = [1, 2]; Object.defineProperty(a, '0', { writable: false }); Object.freeze(a); Object.defineProperty(a, 'length', { value: 2 }); print(a.length, Object.getOwnPropertyDescriptor(a, 'length').writable)" == ["2 false"]
 
+/-! ## `await` in a `switch` (the generator machine), Promise.withResolvers (§27.2.4.8) -/
+
+#guard out "async function f(x) { var r = []; switch (x) { case 1: r.push(await 'a'); case 2: r.push('b'); break; default: r.push(await 'd'); case 3: r.push('c') } return r.join() } async function g(c) { var a; switch ('k') { case 'k': a = c ? await 1 : 2; break } return a } Promise.all([f(1), f(2), f(3), f(9), g(true), g(false)]).then(v => print(v.join('|')))" == ["a,b|b|c|d,c|1|2"]
+#guard out "var w = Promise.withResolvers(); w.promise.then(v => print('got', v)); print(Object.keys(w).join(), typeof w.resolve); w.resolve(5); try { Promise.withResolvers.call(1) } catch (e) { print(e.name) }" == ["promise,resolve,reject function", "TypeError", "got 5"]
+
 end L4Factoidal.JS.Tests

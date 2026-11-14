@@ -3770,6 +3770,11 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       let ctx' ← enterBlock n ctx body
       genRun n (.block ctx' body :: .tryF ctx param handler fin 0 :: rest) (.send .undef)
     | .labeled l body => genEnter n ctx (l :: labels) body rest
+    | .switchS d cs =>
+      -- a `switch` with a `yield` or `await` in it: the same statements without `switch`
+      match switchStmts (← get).envs.size labels d cs with
+      | some s' => genEnter n ctx [] s' rest
+      | none => genUnsupported n rest
     | _ => genLift n ctx s rest
 termination_by structural n _ _ _ _ => n
 
@@ -8195,6 +8200,39 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           else throwErr .type "Object.prototype.__proto__: the prototype of this object cannot be changed"
         | _ => pure .undef
       | _ => pure .undef
+    | (.x .promiseWithResolvers) =>
+      -- §27.2.4.8 Promise.withResolvers: NewPromiseCapability(this) (§27.2.1.5)
+      if !(← isConstructor thisV) then throwErr .type "Promise.withResolvers: this is not a constructor"
+      let cap ← alloc { proto := .null }
+      let exec ← alloc { proto := .obj r.functionProto,
+        kind := .bound (← nativeFn (.x .capabilityExecutor)) .undef #[.obj cap] }
+      let p ← construct n thisV #[.obj exec] thisV
+      let field (k : String) : M Value := do
+        match (← getObj cap).getOwn k with
+        | some (.data v ..) => pure v
+        | _ => pure .undef
+      let res ← field "resolve"
+      let rej ← field "reject"
+      if !(← isCallable res) || !(← isCallable rej) then
+        throwErr .type "Promise.withResolvers: the constructor did not give callable resolving functions"
+      let o ← newObject
+      defineOwn o "promise" (.data p true true true)
+      defineOwn o "resolve" (.data res true true true)
+      defineOwn o "reject" (.data rej true true true)
+      pure (.obj o)
+    | (.x .capabilityExecutor) =>
+      -- GetCapabilitiesExecutor (§27.2.1.5 step 4): the record, then resolve and reject
+      match a0 with
+      | .obj cap =>
+        let o ← getObj cap
+        let isSet (k : String) : Bool := match o.getOwn k with
+          | some (.data .undef ..) | none => false
+          | _ => true
+        if isSet "resolve" || isSet "reject" then throwErr .type "Promise executor has already been invoked"
+        defineOwn cap "resolve" (.data a1 true true true)
+        defineOwn cap "reject" (.data (argD args 2) true true true)
+        pure .undef
+      | _ => pure .undef
     | (.x (.dynFunction k)) =>
       -- CreateDynamicFunction (§20.2.1.1.1) for the generator, async and async generator kinds
       let strs ← args.toList.mapM (toStr n)
@@ -8798,6 +8836,7 @@ def initRealm : M Unit := do
     method pc "race" ((.x (.promiseCombinator 0))) 1
     method pc "allSettled" ((.x (.promiseCombinator 1))) 1
     method pc "any" (.x .promiseAny) 1
+    method pc "withResolvers" (.x .promiseWithResolvers) 0
   method promiseProto "then" .promiseThen 2
   method promiseProto "catch" .promiseCatch 1
   method promiseProto "finally" .promiseFinally 1

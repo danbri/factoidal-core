@@ -446,6 +446,14 @@ theorem proxyDefineOk_configurable_target (e : Bool) (d : Desc) (p : PropV) (h :
     (hp : p.configurable = true) : proxyDefineOk e d (some p) = false := by
   simp [proxyDefineOk, h, hp]
 
+/-! ## A `switch` in the generator machine (`switchStmts`) -/
+
+/-- Kind: a refusal. Says: a `switch` with an unlabelled `continue` for an enclosing loop is
+not rewritten (the `do`-`while` would catch it); the generator machine reports it unsupported. -/
+theorem switchStmts_cont (k : Nat) (l : List String) (d : Expr) (cs : List Case)
+    (h : Case.anyContOut 100000 cs = true) : switchStmts k l d cs = none := by
+  simp [switchStmts, h]
+
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a
