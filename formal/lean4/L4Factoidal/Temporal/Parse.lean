@@ -304,6 +304,41 @@ def formatTime (h mi s ns : Nat) (precision : Option Int) : String :=
   | some p => pad h 2 ++ ":" ++ pad mi 2 ++ ":" ++ pad s 2 ++ formatFraction ns (some p.toNat)
   | none => pad h 2 ++ ":" ++ pad mi 2 ++ ":" ++ pad s 2 ++ formatFraction ns none
 
+/-! ## Time zones (UTC and fixed offsets) -/
+
+/-- The identifiers that name UTC (case-insensitive), canonicalized to "UTC". -/
+def utcAliases : List String :=
+  ["utc", "etc/utc", "etc/gmt", "gmt", "etc/universal", "universal", "etc/zulu", "zulu", "etc/uct", "uct",
+   "etc/greenwich", "greenwich", "etc/gmt0", "gmt0", "etc/gmt+0", "etc/gmt-0", "gmt+0", "gmt-0"]
+
+/-- A time zone identifier: UTC (kind 0) or a fixed offset of whole minutes (kind 1, in
+nanoseconds), or none for anything else (named zones are not supported). -/
+def parseTimeZoneId (s : String) : Option (Nat × Int) :=
+  if utcAliases.contains s.toLower then some (0, 0) else
+  let cs := s.toList.toArray
+  match cs[0]? with
+  | some '+' | some '-' =>
+    match scanOffset cs 0 with
+    | some (2, ns, e) => if e == cs.size && ns % 60000000000 == 0 then some (1, ns) else none
+    | _ => none
+  | _ => none
+
+/-- An offset as `±HH:MM`, with `:SS` and a fraction when they are not zero (`full`), else
+rounded to minutes (halfExpand). -/
+def formatOffset (ns : Int) (full : Bool) : String :=
+  let sign := if ns < 0 then "-" else "+"
+  let a := ns.natAbs
+  if full then
+    let h := a / 3600000000000; let mi := a / 60000000000 % 60; let sec := a / 1000000000 % 60; let f := a % 1000000000
+    sign ++ pad h 2 ++ ":" ++ pad mi 2 ++ (if sec == 0 && f == 0 then "" else ":" ++ pad sec 2 ++ formatFraction f none)
+  else
+    let mins := (a + 30000000000) / 60000000000
+    sign ++ pad (mins / 60) 2 ++ ":" ++ pad (mins % 60) 2
+
+#guard parseTimeZoneId "UTC" == some (0, 0) && parseTimeZoneId "etc/gmt" == some (0, 0) && parseTimeZoneId "+01:00" == some (1, 3600000000000)
+#guard parseTimeZoneId "-0530" == some (1, -19800000000000) && parseTimeZoneId "+01:00:01" == none && parseTimeZoneId "Europe/Paris" == none
+#guard formatOffset 3600000000000 false == "+01:00" && formatOffset (-19800000000000) true == "-05:30" && formatOffset 1 true == "+00:00:00.000000001"
+
 /-! ## Checks -/
 
 #guard (parseDateTime "1976-11-18").map (fun p => (p.year, p.month, p.day, p.hasTime)) == some (1976, 11, 18, false)
