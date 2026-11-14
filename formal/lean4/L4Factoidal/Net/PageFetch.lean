@@ -49,9 +49,13 @@ fetch, §4.8 CORS-preflight fetch, §4.9 CORS check; §2.2.2 header name lists.
   19), and the source of each later hop is the referrer the hop before carried, so a chain
   never regains what one hop removed (`ReferrerPolicy.determine_chain`). Not on the Hub
   (`hostCors`): the browser that runs the Hub makes that field itself.
-* No credentials: no cookies, no HTTP authentication, no client certificates are ever sent
-  (`Cookie`, `Authorization` set by the host never exist here). `withCredentials` changes
-  only the CORS check, not what is sent. A URL's user and password are removed. An
+* Credentials: cookies only, from the page session's own jar (`Net.Cookies`: in memory, each
+  cookie its host's). A request carries the cookies of its URL's host when it is made with
+  credentials (`Transfer.sendsCredentials`: to the page's own origin unless the page said
+  "omit"; to another origin only with `credentials: "include"` or `withCredentials`), and
+  then only those `SameSite` lets a request of its site carry (`plan_wire_cookie`). A
+  preflight never carries any (`preflight_no_cookie`). No HTTP authentication and no client
+  certificate is ever sent (`Authorization` set by the host never exists here). A URL's user and password are removed. An
   `Authorization` field the page set is removed on a redirect to another origin (Fetch
   §4.4 step 13), and a cross-origin redirect to a URL with credentials is a network error
   (step 11).
@@ -67,6 +71,7 @@ import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.Net.Egress
 import L4Factoidal.WHATWG.Base64
 import L4Factoidal.Net.ReferrerPolicy
+import L4Factoidal.Net.Cookies
 
 namespace L4Factoidal.Net.PageFetch
 open L4Factoidal.WHATWG
@@ -333,6 +338,12 @@ structure Transfer where
   /-- The farthest any earlier URL of this request was from the page (`siteRank`): 0 while
   every one was of the page's origin. -/
   farthest : Nat := 0
+  /-- Fetch credentials mode "omit" (`fetch`): no cookie is sent and none is stored. -/
+  omitCredentials : Bool := false
+  /-- The page session's cookies as they are when this hop is planned (`Net.Xhr` gives the
+  jar before each plan and after each answer), and the time in seconds. -/
+  jar : Cookies.Jar := {}
+  now : Nat := 0
   deriving Inhabited
 
 /-- The header `name` of a field list (`none` when absent). -/
@@ -505,11 +516,34 @@ def Transfer.originField (t : Transfer) : List (String × String) :=
       | _ => false
     [("Origin", if hidden then "null" else t.originValue)]
 
-/-- The wire form of the request: the page's fields that are not forbidden, `Origin`, then
-the engine's (`Referer`, fetch metadata). -/
+/-- Is this hop made with credentials (Fetch §4.5 step 8.5): the page did not say "omit", and
+the mode is "include" or the request has stayed in the page's origin. Never on the Hub
+from here (its browser has its own jar). -/
+def Transfer.sendsCredentials (t : Transfer) : Bool :=
+  !t.omitCredentials && !t.page.hostCors && (t.credentials || t.same)
+
+/-- The cookies' site of a URL: its host, path and whether it is secure. -/
+def cookieSite (u : URL.Url) : Option Cookies.Site :=
+  Cookies.siteOf u.origin (u.scheme == "https") u.pathname
+
+/-- The value of the `Cookie` field of the request to the current URL ("" for none): the
+jar's cookies for that host, path and scheme; only `SameSite=None` ones when the request is
+not same-site with the page (`Transfer.site`). -/
+def Transfer.cookieValue (t : Transfer) : String :=
+  if !t.sendsCredentials then "" else
+  match (URL.parseUrl t.url).bind cookieSite with
+  | some site => Cookies.forRequest t.jar site t.now (t.site ≤ 1)
+  | none => ""
+
+/-- The `Cookie` field of the main request, when there is one. -/
+def Transfer.cookieField (t : Transfer) : List (String × String) :=
+  if t.cookieValue.isEmpty then [] else [("Cookie", t.cookieValue)]
+
+/-- The wire form of the request: the page's fields that are not forbidden, `Origin`,
+`Cookie`, then the engine's other fields (`Referer`, fetch metadata). -/
 def Transfer.mainWire (t : Transfer) : Wire :=
   let h := t.headers.filter fun (n, v) => !forbiddenRequestHeader n && !forbiddenOverride n v
-  { id := t.id, method := t.method, url := t.url, headers := h ++ t.originField ++ t.engineFields t.mode, body := t.body }
+  { id := t.id, method := t.method, url := t.url, headers := h ++ t.originField ++ t.cookieField ++ t.engineFields t.mode, body := t.body }
 
 /-- The CORS-preflight request (Fetch §4.8: `OPTIONS`, `Origin`, the method and the unsafe
 names; no body, no author headers). -/
@@ -1109,6 +1143,18 @@ theorem mem_originField (t : Transfer) (n : String × String) (h : n ∈ t.origi
     · simp at h
     · simp at h; rw [h]
 
+/-- Kind: lemma. Says: the `Cookie` field, when there is one, is named `Cookie` and has the
+value `Transfer.cookieValue`, which is then not empty. -/
+theorem mem_cookieField (t : Transfer) (n : String × String) (h : n ∈ t.cookieField) :
+    n.1 = "Cookie" ∧ n.2 = t.cookieValue ∧ t.cookieValue ≠ "" := by
+  unfold Transfer.cookieField at h
+  split at h
+  · simp at h
+  · rename_i he
+    simp only [List.mem_singleton] at h
+    rw [h]
+    exact ⟨rfl, rfl, fun h0 => he (by simp [h0])⟩
+
 /-- Kind: lemma. Says: the fetch metadata fields have the three `Sec-Fetch-` names. -/
 theorem mem_metadataFields (t : Transfer) (m : String) (n : String × String) (h : n ∈ t.metadataFields m) :
     n.1 = "Sec-Fetch-Dest" ∨ n.1 = "Sec-Fetch-Mode" ∨ n.1 = "Sec-Fetch-Site" := by
@@ -1123,14 +1169,14 @@ theorem mem_metadataFields (t : Transfer) (m : String) (n : String × String) (h
     · simp at h
 
 /-- Kind: policy theorem. Says: every request `plan` tells the host to make carries no
-page-set forbidden header: only `Origin`, `Referer` and the three `Sec-Fetch-` fields, which
-the engine adds, can be a forbidden name (on a preflight also the `Access-Control-Request-`
-fields). Does not say: what the host adds on its own (a real fetch adds `Host` and so
+page-set forbidden header: only `Origin`, `Cookie`, `Referer` and the three `Sec-Fetch-`
+fields, which the engine adds, can be a forbidden name (on a preflight also the
+`Access-Control-Request-` fields). Does not say: what the host adds on its own (a real fetch adds `Host` and so
 on), nor what the `Referer` is (`plan_wire_referer`). -/
 theorem plan_wire_forbidden (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t = .send t' w)
     (n : String × String) (hn : n ∈ w.headers) (hf : forbiddenRequestHeader n.1 = true) :
-    n.1 = "Origin" ∨ n.1 = "Referer" ∨ n.1 = "Sec-Fetch-Dest" ∨ n.1 = "Sec-Fetch-Mode" ∨ n.1 = "Sec-Fetch-Site" ∨
-      w.method = "OPTIONS" := by
+    n.1 = "Origin" ∨ n.1 = "Cookie" ∨ n.1 = "Referer" ∨ n.1 = "Sec-Fetch-Dest" ∨ n.1 = "Sec-Fetch-Mode" ∨
+      n.1 = "Sec-Fetch-Site" ∨ w.method = "OPTIONS" := by
   have eng : ∀ (x : Transfer) (m : String), n ∈ x.engineFields m →
       n.1 = "Referer" ∨ n.1 = "Sec-Fetch-Dest" ∨ n.1 = "Sec-Fetch-Mode" ∨ n.1 = "Sec-Fetch-Site" := by
     intro x m hm
@@ -1152,21 +1198,23 @@ theorem plan_wire_forbidden (t : Transfer) (t' : Transfer) (w : Wire) (h : plan 
       · split at h
         · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, hm, -⟩
           · simp [Transfer.resolveWire] at hn
-          · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (by simp [hm, Transfer.preflightWire])))))
+          · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (by simp [hm, Transfer.preflightWire]))))))
         · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
           · simp [Transfer.resolveWire] at hn
           · rw [hh] at hn
             simp only [Transfer.mainWire] at hn
             rcases List.mem_append.mp hn with hn | hr
-            · rcases List.mem_append.mp hn with hl | ho
-              · have := (List.mem_filter.mp hl).2
-                simp [hf] at this
-              · exact Or.inl (mem_originField _ n ho)
+            · rcases List.mem_append.mp hn with hn | hc
+              · rcases List.mem_append.mp hn with hl | ho
+                · have := (List.mem_filter.mp hl).2
+                  simp [hf] at this
+                · exact Or.inl (mem_originField _ n ho)
+              · exact Or.inr (Or.inl (mem_cookieField _ n hc).1)
             · rcases eng _ _ hr with h1 | h1 | h1 | h1
-              · exact Or.inr (Or.inl h1)
               · exact Or.inr (Or.inr (Or.inl h1))
               · exact Or.inr (Or.inr (Or.inr (Or.inl h1)))
               · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl h1))))
+              · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl h1)))))
 
 /-- Kind: lemma. Says: the referer of a transfer does not depend on its phase. -/
 theorem referer_phase (t : Transfer) (ph : Phase) : ({ t with phase := ph } : Transfer).referer = t.referer := rfl
@@ -1225,13 +1273,113 @@ theorem plan_wire_referer (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t 
             simp only [Transfer.mainWire] at hn
             rcases List.mem_append.mp hn with hn | hl
             · exfalso
-              rcases List.mem_append.mp hn with hl | ho
-              · have := (List.mem_filter.mp hl).2
-                simp [hf] at this
-              · have := mem_originField _ n ho
+              rcases List.mem_append.mp hn with hn | hc
+              · rcases List.mem_append.mp hn with hl | ho
+                · have := (List.mem_filter.mp hl).2
+                  simp [hf] at this
+                · have := mem_originField _ n ho
+                  rw [this] at hr
+                  simp at hr
+              · have := (mem_cookieField _ n hc).1
                 rw [this] at hr
                 simp at hr
             · exact last _ _ hl
+
+/-- Kind: privacy theorem (credentials). Says: a hop that is not made with credentials has no
+cookie value: a request to another origin without `credentials: "include"` (or
+`withCredentials`), any request in mode "omit", and every request on the Hub carry none. -/
+theorem cookieValue_needs_credentials (t : Transfer) (h : t.sendsCredentials = false) : t.cookieValue = "" := by
+  simp [Transfer.cookieValue, h]
+
+/-- Kind: privacy theorem (credentials across origins). Says: a hop to a URL that is not of
+the page's origin (or after the request left it) is made with credentials only when the
+page asked for them (`credentials`), and never in mode "omit". -/
+theorem sendsCredentials_cross (t : Transfer) (hc : t.same = false) (h : t.sendsCredentials = true) :
+    t.credentials = true ∧ t.omitCredentials = false := by
+  simp only [Transfer.sendsCredentials, hc, Bool.or_false, Bool.and_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true] at h
+  exact ⟨h.2, h.1.1⟩
+
+/-- Kind: privacy theorem (preflights). Says: a CORS preflight carries no `Cookie` field,
+whatever the jar holds and whatever the credentials mode (Fetch §4.8: a preflight is made
+without credentials). -/
+theorem preflight_no_cookie (t : Transfer) (n : String × String) (hn : n ∈ t.preflightWire.headers) :
+    n.1 ≠ "Cookie" := by
+  intro hc
+  simp only [Transfer.preflightWire] at hn
+  rcases List.mem_append.mp hn with hn | hn
+  · rcases List.mem_append.mp hn with hn | hn
+    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
+      rcases hn with hn | hn | hn <;> rw [hn] at hc <;> simp at hc
+    · split at hn
+      · simp at hn
+      · simp only [List.mem_singleton] at hn
+        rw [hn] at hc
+        simp at hc
+  · rcases List.mem_append.mp hn with hn | hn
+    · unfold Transfer.refererField at hn
+      split at hn
+      · simp at hn
+      · simp only [List.mem_singleton] at hn
+        rw [hn] at hc
+        simp at hc
+    · rcases mem_metadataFields _ _ n hn with h1 | h1 | h1 <;> rw [h1] at hc <;> simp at hc
+
+/-- Kind: privacy theorem (the `Cookie` on the wire). Says: a field named `Cookie` of a request
+`plan` tells the host to make is not the page's (`hf`: the name is forbidden to it) and is
+never on a preflight; its value is `Transfer.cookieValue`: the cookies the jar holds for
+exactly the host the request goes to (`Cookies.sent_host`), and only when the hop is made
+with credentials. Does not say: that the host sends nothing else (a host must not add its
+own cookies). -/
+theorem plan_wire_cookie (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t = .send t' w)
+    (n : String × String) (hn : n ∈ w.headers) (hf : forbiddenRequestHeader n.1 = true)
+    (hc : n.1 = "Cookie") : t'.phase = .main ∧ n.2 = t.cookieValue ∧ t.sendsCredentials = true := by
+  have val : ∀ (ph : Phase), n ∈ ({ t with phase := ph } : Transfer).cookieField →
+      n.2 = t.cookieValue ∧ t.sendsCredentials = true := by
+    intro ph hm
+    have hv := mem_cookieField _ n hm
+    have e : ({ t with phase := ph } : Transfer).cookieValue = t.cookieValue := rfl
+    rw [e] at hv
+    refine ⟨hv.2.1, ?_⟩
+    cases hs : t.sendsCredentials
+    · exact absurd (cookieValue_needs_credentials t hs) hv.2.2
+    · rfl
+  replace h := plan_send_net h
+  unfold planNet at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · split at h
+      · simp at h
+      · split at h
+        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+          · simp [Transfer.resolveWire] at hn
+          · rw [hh] at hn
+            exact absurd hc (preflight_no_cookie _ n hn)
+        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨ht, -, -, hh, -⟩
+          · simp [Transfer.resolveWire] at hn
+          · rw [hh] at hn
+            simp only [Transfer.mainWire] at hn
+            rcases List.mem_append.mp hn with hn | hl
+            · rcases List.mem_append.mp hn with hn | hck
+              · exfalso
+                rcases List.mem_append.mp hn with hl | ho
+                · have := (List.mem_filter.mp hl).2
+                  simp [hf] at this
+                · have := mem_originField _ n ho
+                  rw [this] at hc
+                  simp at hc
+              · rw [ht]
+                exact ⟨rfl, val _ hck⟩
+            · exfalso
+              rcases List.mem_append.mp hl with hr | hm
+              · unfold Transfer.refererField at hr
+                split at hr
+                · simp at hr
+                · simp only [List.mem_singleton] at hr
+                  rw [hr] at hc
+                  simp at hc
+              · rcases mem_metadataFields _ _ n hm with h1 | h1 | h1 <;> rw [h1] at hc <;> simp at hc
 
 /-- Kind: security theorem (fetch metadata). Says: a request says `Sec-Fetch-Site:
 same-origin` only when no earlier URL of the request left the page's origin and the URL it
