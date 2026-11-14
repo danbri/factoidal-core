@@ -2080,10 +2080,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let minHeight := match ratioHeight with
         | some h => if ratioFixed then minHeight else max minHeight h
         | none => minHeight
+      -- `min-height` or `max-height` of `min-content`, `max-content` or `fit-content` (CSS
+      -- Sizing 3 §3.2): the limit is the height of the content, known after it is laid out.
+      let contentKeyword := fun (l : CSS.Length) => match l with
+        | .minContent | .maxContent | .fitContent => true
+        | _ => false
+      let contentLimits := contentKeyword s.minHeight || contentKeyword s.maxHeight
       let definite : Option Float := match imposedHeight with
         | some h => some (max 0 (h-edgesY))
         | none => match s.height with
-          | .px h => some (clampOpt minHeight maxHeight (max 0 h))
+          | .px h => if contentLimits then none else some (clampOpt minHeight maxHeight (max 0 h))
           | _ => if ratioFixed then ratioHeight.map (clampOpt minHeight maxHeight) else none
       let content ← if s.display.isFlex then
           flexLayout children s (collectItems dom styles id)
@@ -2119,7 +2125,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let joinsBottom := imposedWidth.isNone && imposedHeight.isNone && collapsesBottom dom s id && !s.display.isFlex && !s.display.isGrid
       let marginBottom := if joinsBottom then collapsePx margin.bottom content.marginBottom else margin.bottom
       let content := if joinsBottom then {content with height := content.height-content.marginBottom} else content
-      let height := definite.getD (clampOpt minHeight maxHeight content.height)
+      let height := match definite with
+        | some h => h
+        | none =>
+          if contentLimits && imposedHeight.isNone then
+            let own := match s.height with
+              | .px h => max 0 h
+              | _ => content.height
+            clampOpt (if contentKeyword s.minHeight then content.height else minHeight)
+              (if contentKeyword s.maxHeight then some content.height else maxHeight) own
+          else clampOpt minHeight maxHeight content.height
       -- The absolutely positioned children of a flex or grid container are not its items.
       let content := if s.display.isFlex then
           {content with pending := content.pending ++ flexAbsolutes dom styles id innerX innerY width height}
