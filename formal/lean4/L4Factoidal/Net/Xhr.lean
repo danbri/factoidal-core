@@ -192,8 +192,20 @@ def maxBody : Nat := 1 <<< 26
 /-- The response bytes one page holds: 256 MiB. -/
 def maxHeld : Nat := 1 <<< 28
 
-/-- Requests are waiting: settling stops here. -/
-def State.waiting (s : State) : Bool := !s.live.isEmpty
+/-- Requests are waiting: settling stops here. A WebSocket in its opening handshake
+(`readyState` 0, CONNECTING) waits for the host's answer as a request does: otherwise the page's
+time ran on to its timeouts before the handshake was answered. An open socket does not count
+(a silent connection may stay open for ever; the host moves the page's time on for it). -/
+def State.waiting (s : State) : Bool := !s.live.isEmpty || s.sockets.any (·.readyState == 0)
+
+/-- Kind: liveness lemma. Says: a page with a WebSocket in its opening handshake is waiting
+for the network, so settling stops there and the handshake's answer comes before any later
+timer. -/
+theorem waiting_connecting (s : State) (k : WebSocket.Sock) (hk : k ∈ s.sockets) (h0 : k.readyState = 0) :
+    s.waiting = true := by
+  unfold State.waiting
+  have : s.sockets.any (·.readyState == 0) = true := Array.any_eq_true'.mpr ⟨k, hk, by simp [h0]⟩
+  simp [this]
 
 def State.get? (s : State) (h : Nat) : Option Xhr :=
   if h == 0 then none else s.xhrs[h - 1]?
