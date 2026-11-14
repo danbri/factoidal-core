@@ -32,6 +32,14 @@ fetch, §4.8 CORS-preflight fetch, §4.9 CORS check; §2.2.2 header name lists.
 * Cross-origin: refused unless CORS allows it. A request outside the CORS-safelist has a
   preflight first (every hop); the response of a cross-origin request is withheld unless the
   CORS check passes; only the safelisted and exposed header fields reach the page.
+* Referrer: a request carries a `Referer` only as `referrerOf` allows: the request's
+  referrer (its document's or worker's URL unless the page named a same-origin one, or
+  none) cut down by its referrer policy for the URL of each hop (`Net.ReferrerPolicy.decide`;
+  Fetch §4.1 main fetch step 8). Only an `http` or `https` URL is ever a referrer; a
+  redirect's `Referrer-Policy` replaces the policy for the hops after it (Fetch §4.4 step
+  19), and the source of each later hop is the referrer the hop before carried, so a chain
+  never regains what one hop removed (`ReferrerPolicy.determine_chain`). Not on the Hub
+  (`hostCors`): the browser that runs the Hub makes that field itself.
 * No credentials: no cookies, no HTTP authentication, no client certificates are ever sent
   (`Cookie`, `Authorization` set by the host never exist here). `withCredentials` changes
   only the CORS check, not what is sent. A URL's user and password are removed. An
@@ -49,6 +57,7 @@ fetch, §4.8 CORS-preflight fetch, §4.9 CORS check; §2.2.2 header name lists.
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.Net.Egress
 import L4Factoidal.WHATWG.Base64
+import L4Factoidal.Net.ReferrerPolicy
 
 namespace L4Factoidal.Net.PageFetch
 open L4Factoidal.WHATWG
@@ -296,6 +305,13 @@ structure Transfer where
   /-- For a `blob:` URL: the type and bytes of the entry that the page's own origin made
   for it (`Net.BlobUrls.resolve`, given by `Net.Xhr`); `none` when there is none. -/
   blob : Option (String × ByteArray) := none
+  /-- The request's referrer (Fetch §2.2.5), a URL serialized, or `""` for none: the source
+  that `referrerOf` cuts down for each hop. After a redirect it is the referrer the hop
+  before carried. -/
+  referrer : String := ""
+  /-- The request's referrer policy (the document's or the default when the request names
+  none: resolved by `Net.Xhr.beginFetch`). -/
+  referrerPolicy : ReferrerPolicy.Policy := .default
   deriving Inhabited
 
 /-- The header `name` of a field list (`none` when absent). -/
@@ -349,12 +365,71 @@ def preflightOk (t : Transfer) (a : Answer) : Bool :=
     let unsafeNames := unsafeHeaderNames t.headers
     methodOk && unsafeNames.all fun n => names.contains n || (star && n != "authorization")
 
+/-! ## The referrer (Fetch §4.1 main fetch step 8; Referrer Policy §8.3, §8.4) -/
+
+/-- A loopback host: `localhost`, a `.localhost` name, `127.0.0.0/8` or `[::1]`. -/
+def loopbackHost (h : String) : Bool :=
+  localhostName h || h == "[::1]" ||
+    match ipv4? h with
+    | some (127 :: _) => true
+    | _ => false
+
+/-- A potentially trustworthy URL, as far as its scheme and host say (Secure Contexts §3.1):
+`https`, `wss`, or a loopback host. -/
+def trustworthyUrl (u : URL.Url) : Bool :=
+  u.scheme == "https" || u.scheme == "wss" || loopbackHost (lower u.hostname)
+
+/-- A URL for use as a referrer: without credentials and without fragment (§8.4). -/
+def referrerFull (u : URL.Url) : String :=
+  ({ u with username := "", password := "" } : URL.Url).serialize true
+
+/-- The origin-only form of a referrer (§8.4 with the origin-only flag): no path, no query. -/
+def referrerOrigin (u : URL.Url) : String := u.origin ++ "/"
+
+/-- The referrer a request from `source` (a URL, serialized; `""` for none) to `target`
+carries under `policy`; `""` is no referrer. Only an `http` or `https` source is ever a
+referrer (§8.4 names the local schemes; a `file:` path is not sent either). A stripped
+source longer than 4096 characters is cut to its origin (§8.3 step 6). -/
+def referrerOf (policy : ReferrerPolicy.Policy) (source : String) (target : URL.Url) : String :=
+  match URL.parseUrl source with
+  | none => ""
+  | some s =>
+    if !(s.scheme == "http" || s.scheme == "https") then "" else
+    match ReferrerPolicy.decide policy (s.origin == target.origin) (trustworthyUrl s && !trustworthyUrl target) with
+    | .nothing => ""
+    | .origin => referrerOrigin s
+    | .full => if (referrerFull s).length > 4096 then referrerOrigin s else referrerFull s
+
+/-- The `Referer` of a request to the transfer's current URL (`""`: none is sent). The Hub's
+browser makes its own. -/
+def Transfer.referer (t : Transfer) : String :=
+  if t.page.hostCors then "" else
+  match URL.parseUrl t.url with
+  | some u => referrerOf t.referrerPolicy t.referrer u
+  | none => ""
+
+/-- The `Referer` field of a wire, when there is one. -/
+def Transfer.refererField (t : Transfer) : List (String × String) :=
+  if t.referer.isEmpty then [] else [("Referer", t.referer)]
+
+/-- All values of the header `name` of a field list, joined with commas (HTTP: several
+fields of one name are one list). -/
+def headerAll (hs : List (String × String)) (name : String) : String :=
+  ",".intercalate ((hs.filter fun (n, _) => lower n == name).map (·.2))
+
+/-- A redirect was answered (Fetch §4.4): the next hop's source is the referrer this hop
+carried, and a `Referrer-Policy` of the redirect response that names a policy replaces the
+request's (step 19, "set request's referrer policy on redirect"). -/
+def Transfer.hopReferrer (t : Transfer) (a : Answer) : Transfer :=
+  { t with referrer := t.referer,
+           referrerPolicy := (ReferrerPolicy.Policy.ofHeader (headerAll a.headers "referrer-policy")).getD t.referrerPolicy }
+
 /-- The wire form of the request, with `Origin` (Fetch §4.3 "append a request `Origin`
 header"): every cross-origin request and every same-origin one that is not `GET` or `HEAD`. -/
 def Transfer.mainWire (t : Transfer) : Wire :=
   let h := t.headers.filter fun (n, v) => !forbiddenRequestHeader n && !forbiddenOverride n v
   let h := if !t.same || !(t.method == "GET" || t.method == "HEAD") then h ++ [("Origin", t.originValue)] else h
-  { id := t.id, method := t.method, url := t.url, headers := h, body := t.body }
+  { id := t.id, method := t.method, url := t.url, headers := h ++ t.refererField, body := t.body }
 
 /-- The CORS-preflight request (Fetch §4.8: `OPTIONS`, `Origin`, the method and the unsafe
 names; no body, no author headers). -/
@@ -363,7 +438,7 @@ def Transfer.preflightWire (t : Transfer) : Wire :=
   let h : List (String × String) :=
     [("Accept", "*/*"), ("Origin", t.originValue), ("Access-Control-Request-Method", t.method)] ++
       (if names.isEmpty then [] else [("Access-Control-Request-Headers", ",".intercalate names)])
-  { id := t.id, method := "OPTIONS", url := t.url, headers := h, body := none }
+  { id := t.id, method := "OPTIONS", url := t.url, headers := h ++ t.refererField, body := none }
 
 /-- The name the host must resolve before a request to the current URL: its host when that is
 a name (not an IP literal), for a page that is not local, on a native host. -/
@@ -596,7 +671,7 @@ def onAnswer (t : Transfer) (a : Answer) : Step :=
         | none => .fail "bad redirect"
         | some next =>
           if next.includesCredentials && next.origin != t.page.origin then .fail "redirect with credentials" else
-          plan (afterRedirect t a.status next)
+          plan (afterRedirect (t.hopReferrer a) a.status next)
     else .deliver t (responseOf t a)
 
 /-! ## Theorems -/
@@ -822,11 +897,12 @@ theorem onAnswer_preflight_needs_ok (t t' : Transfer) (w : Wire) (a : Answer)
     · simp at h
 
 /-- Kind: policy theorem. Says: every request `plan` tells the host to make carries no
-page-set forbidden header: only `Origin`, which the engine adds, can be a forbidden name.
-Does not say: what the host adds on its own (a real fetch adds `Host` and so on). -/
+page-set forbidden header: only `Origin` and `Referer`, which the engine adds, can be a
+forbidden name. Does not say: what the host adds on its own (a real fetch adds `Host` and so
+on), nor what the `Referer` is (`plan_wire_referer`). -/
 theorem plan_wire_forbidden (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t = .send t' w)
     (n : String × String) (hn : n ∈ w.headers) (hf : forbiddenRequestHeader n.1 = true) :
-    n.1 = "Origin" ∨ w.method = "OPTIONS" := by
+    n.1 = "Origin" ∨ n.1 = "Referer" ∨ w.method = "OPTIONS" := by
   replace h := plan_send_net h
   unfold planNet at h
   split at h
@@ -836,19 +912,165 @@ theorem plan_wire_forbidden (t : Transfer) (t' : Transfer) (w : Wire) (h : plan 
     · split at h
       · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, hm, -⟩
         · simp [Transfer.resolveWire] at hn
-        · exact Or.inr (by simp [hm, Transfer.preflightWire])
+        · exact Or.inr (Or.inr (by simp [hm, Transfer.preflightWire]))
       · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
         · simp [Transfer.resolveWire] at hn
-        · left
-          rw [hh] at hn
+        · rw [hh] at hn
           simp only [Transfer.mainWire] at hn
-          split at hn
-          · rcases List.mem_append.mp hn with hl | hr
-            · have := (List.mem_filter.mp hl).2
+          rcases List.mem_append.mp hn with hn | hr
+          · left
+            split at hn
+            · rcases List.mem_append.mp hn with hl | hr
+              · have := (List.mem_filter.mp hl).2
+                simp [hf] at this
+              · simp at hr; rw [hr]
+            · have := (List.mem_filter.mp hn).2
               simp [hf] at this
+          · right; left
+            unfold Transfer.refererField at hr
+            split at hr
+            · simp at hr
             · simp at hr; rw [hr]
-          · have := (List.mem_filter.mp hn).2
-            simp [hf] at this
+
+/-- Kind: lemma. Says: the referer of a transfer does not depend on its phase. -/
+theorem referer_phase (t : Transfer) (ph : Phase) : ({ t with phase := ph } : Transfer).referer = t.referer := rfl
+
+/-- Kind: privacy theorem (the `Referer` on the wire). Says: a field named `Referer` of any
+request `plan` tells the host to make, the preflight too, has the value `Transfer.referer`:
+the request's referrer cut down by its policy for the URL the request goes to
+(`referrerOf`), and never the empty string. `hf` holds for that name (a `#guard` below):
+it is why no field of the page's can be the one. Does not say: that the request's referrer
+and policy are the document's (that is `Net.Xhr.beginFetch` and the embedder's `client`),
+nor what a host adds on its own. -/
+theorem plan_wire_referer (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t = .send t' w)
+    (n : String × String) (hn : n ∈ w.headers) (hf : forbiddenRequestHeader n.1 = true)
+    (hr : n.1 = "Referer") : n.2 = t.referer ∧ n.2 ≠ "" := by
+  have last : n ∈ t.refererField → n.2 = t.referer ∧ n.2 ≠ "" := by
+    intro hm
+    unfold Transfer.refererField at hm
+    split at hm
+    · simp at hm
+    · rename_i he
+      simp only [List.mem_singleton] at hm
+      rw [hm]
+      exact ⟨rfl, fun h0 => he (by simpa using h0)⟩
+  replace h := plan_send_net h
+  unfold planNet at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · split at h
+      · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+        · simp [Transfer.resolveWire] at hn
+        · rw [hh] at hn
+          simp only [Transfer.preflightWire] at hn
+          rcases List.mem_append.mp hn with hn | hl
+          · exfalso
+            rcases List.mem_append.mp hn with hn | hn
+            · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
+              rcases hn with hn | hn | hn <;> rw [hn] at hr <;> simp at hr
+            · split at hn
+              · simp at hn
+              · simp only [List.mem_singleton] at hn
+                rw [hn] at hr
+                simp at hr
+          · exact last hl
+      · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+        · simp [Transfer.resolveWire] at hn
+        · rw [hh] at hn
+          simp only [Transfer.mainWire] at hn
+          rcases List.mem_append.mp hn with hn | hl
+          · exfalso
+            split at hn
+            · rcases List.mem_append.mp hn with hl | hr'
+              · have := (List.mem_filter.mp hl).2
+                simp [hf] at this
+              · simp only [List.mem_singleton] at hr'
+                rw [hr'] at hr
+                simp at hr
+            · have := (List.mem_filter.mp hn).2
+              simp [hf] at this
+          · exact last hl
+
+/-- Kind: privacy theorem (the bound on a referrer). Says: whatever the policy, the source
+and the target, a referrer is nothing, the source's origin with `/` (no path, no query), or
+the source without credentials and fragment. Nothing else is ever sent. -/
+theorem referrerOf_cases (p : ReferrerPolicy.Policy) (source : String) (target : URL.Url) :
+    referrerOf p source target = "" ∨
+      ∃ s, URL.parseUrl source = some s ∧
+        (referrerOf p source target = referrerOrigin s ∨ referrerOf p source target = referrerFull s) := by
+  cases hp : URL.parseUrl source with
+  | none => exact Or.inl (by simp [referrerOf, hp])
+  | some s =>
+    unfold referrerOf
+    rw [hp]
+    simp only
+    split
+    · exact Or.inl rfl
+    · split
+      · exact Or.inl rfl
+      · exact Or.inr ⟨s, rfl, Or.inl rfl⟩
+      · split
+        · exact Or.inr ⟨s, rfl, Or.inl rfl⟩
+        · exact Or.inr ⟨s, rfl, Or.inr rfl⟩
+
+/-- Kind: privacy theorem (the default policy, cross-origin). Says: under
+`strict-origin-when-cross-origin` a request to another origin carries at most the source's
+origin: nothing, or the origin with `/`. No path and no query of the page that asks reach
+another origin. -/
+theorem referrerOf_default_cross (source : String) (s target : URL.Url)
+    (hs : URL.parseUrl source = some s) (hc : s.origin ≠ target.origin) :
+    referrerOf .strictOriginWhenCrossOrigin source target = "" ∨
+      referrerOf .strictOriginWhenCrossOrigin source target = referrerOrigin s := by
+  have hne : (s.origin == target.origin) = false := by simpa using hc
+  unfold referrerOf
+  rw [hs]
+  simp only [hne, ReferrerPolicy.decide]
+  split
+  · exact Or.inl rfl
+  · cases (trustworthyUrl s && !trustworthyUrl target) <;> simp
+
+/-- Kind: privacy theorem (downgrade). Says: under the default policy, `strict-origin` and
+`no-referrer-when-downgrade`, a request from a trustworthy source to a target that is not
+(`https` to `http`) carries no referrer at all. -/
+theorem referrerOf_downgrade (p : ReferrerPolicy.Policy) (source : String) (s target : URL.Url)
+    (hs : URL.parseUrl source = some s) (ht : trustworthyUrl s = true) (hu : trustworthyUrl target = false)
+    (ho : s.origin ≠ target.origin)
+    (hp : p = .strictOrigin ∨ p = .strictOriginWhenCrossOrigin ∨ p = .noReferrerWhenDowngrade) :
+    referrerOf p source target = "" := by
+  have hne : (s.origin == target.origin) = false := by simpa using ho
+  unfold referrerOf
+  rw [hs]
+  rcases hp with hp | hp | hp <;> subst hp <;> simp [ReferrerPolicy.decide, ht, hu, hne]
+
+/-- Kind: privacy theorem. Says: `no-referrer` sends nothing, and `same-origin` sends nothing
+to another origin. -/
+theorem referrerOf_none (source : String) (target : URL.Url) :
+    referrerOf .noReferrer source target = "" ∧
+      (∀ s, URL.parseUrl source = some s → s.origin ≠ target.origin →
+        referrerOf .sameOrigin source target = "") := by
+  constructor
+  · unfold referrerOf
+    split
+    · rfl
+    · split <;> simp [ReferrerPolicy.decide]
+  · intro s hs ho
+    have hne : (s.origin == target.origin) = false := by simpa using ho
+    unfold referrerOf
+    rw [hs]
+    simp [ReferrerPolicy.decide, hne]
+
+/-- Kind: privacy theorem. Says: a request with no referrer (`""`: the page asked for none,
+or the client has no URL to give) never gets one, under any policy. -/
+theorem referrerOf_empty (p : ReferrerPolicy.Policy) (target : URL.Url)
+    (h : URL.parseUrl "" = none) : referrerOf p "" target = "" := by
+  unfold referrerOf
+  rw [h]
+
+/-- Kind: lemma. Says: the Hub's requests get no `Referer` from here. -/
+theorem referer_hostCors (t : Transfer) (h : t.page.hostCors = true) : t.referer = "" := by
+  simp [Transfer.referer, h]
 
 /-- Kind: invariant of the response filter. Says: no response the page reads has a
 `Set-Cookie` or `Set-Cookie2` field. Does not say: anything of the host's own cookie jar
@@ -1053,5 +1275,63 @@ private def named : Transfer := { base with page := { pg with secure := false },
 -- a data: worker's cross-origin request carries Origin: null, its owner's the owner's origin
 #guard (planWire { base with page := pg.forWorker "data:," }).any fun w => w.headers == [("Origin", "null")]
 #guard (planWire { base with page := pg.forWorker "https://a.example/w.js" }).any fun w => w.headers == [("Origin", "https://a.example")]
+
+
+-- The referrer (WPT fetch/api/basic/referrer.any.js, fetch/api/redirect/redirect-referrer.any.js,
+-- fetch/api/cors/cors-preflight-referrer.any.js, referrer-policy/generic/test-case.sub.js)
+#guard forbiddenRequestHeader "Referer"
+private def src : String := "http://web-platform.test:8000/fetch/api/basic/referrer.any.html?q=1#f"
+private def tgt (s : String) : URL.Url := (URL.parseUrl s).getD default
+#guard referrerOf .default src (tgt "http://web-platform.test:8000/x") == "http://web-platform.test:8000/fetch/api/basic/referrer.any.html?q=1"
+#guard referrerOf .default src (tgt "http://www1.web-platform.test:8000/x") == "http://web-platform.test:8000/"
+#guard referrerOf .originWhenCrossOrigin src (tgt "http://web-platform.test:8000/x") == "http://web-platform.test:8000/fetch/api/basic/referrer.any.html?q=1"
+#guard referrerOf .originWhenCrossOrigin src (tgt "http://www1.web-platform.test:8000/x") == "http://web-platform.test:8000/"
+#guard referrerOf .noReferrer src (tgt "http://web-platform.test:8000/x") == ""
+#guard referrerOf .sameOrigin src (tgt "http://www1.web-platform.test:8000/x") == ""
+#guard referrerOf .unsafeUrl src (tgt "http://www1.web-platform.test:8000/x") == "http://web-platform.test:8000/fetch/api/basic/referrer.any.html?q=1"
+-- "Referrer with credentials should be stripped", "Referrer with fragment ID should be stripped"
+#guard referrerOf .default "http://username:password@web-platform.test:8000" (tgt "http://web-platform.test:8000/x") == "http://web-platform.test:8000/"
+#guard referrerOf .default "http://web-platform.test:8000#fragmentIdentifier" (tgt "http://web-platform.test:8000/x") == "http://web-platform.test:8000/"
+-- a downgrade: nothing under the default, the origin under `origin`, all under `unsafe-url`
+#guard referrerOf .default "https://a.example/p?q" (tgt "http://b.example/") == ""
+#guard referrerOf .strictOrigin "https://a.example/p?q" (tgt "http://b.example/") == ""
+#guard referrerOf .noReferrerWhenDowngrade "https://a.example/p?q" (tgt "http://b.example/") == ""
+#guard referrerOf .origin "https://a.example/p?q" (tgt "http://b.example/") == "https://a.example/"
+#guard referrerOf .noReferrerWhenDowngrade "https://a.example/p?q" (tgt "https://b.example/") == "https://a.example/p?q"
+-- a loopback target is trustworthy: no downgrade (a name that only starts like one is not)
+#guard referrerOf .strictOrigin "https://a.example/p" (tgt "http://127.0.0.1:8000/") == "https://a.example/"
+#guard referrerOf .strictOrigin "https://a.example/p" (tgt "http://127.example.com/") == ""
+-- only http and https sources: no about:, blob:, data: or file: referrer, and none from ""
+#guard ["about:blank", "about:srcdoc", "data:text/html,x", "blob:https://a.example/0a", "file:///home/u/secret.html", ""].all
+  fun s => referrerOf .unsafeUrl s (tgt "https://b.example/") == ""
+-- a referrer over 4096 characters is cut to its origin (referrer-policy/4K+1)
+#guard referrerOf .unsafeUrl ("https://a.example/" ++ String.ofList (List.replicate 4096 'A')) (tgt "https://a.example/") == "https://a.example/"
+#guard (referrerOf .unsafeUrl ("https://a.example/" ++ String.ofList (List.replicate 4078 'A')) (tgt "https://a.example/")).length == 4096
+-- on the wire: the request and its preflight carry it; a request with no referrer has none
+private def refd : Transfer := { base with referrer := "https://a.example/dir/page.html?q#f" }
+#guard (planWire refd).any fun w => w.headers == [("Origin", "https://a.example"), ("Referer", "https://a.example/")]
+#guard (planWire { refd with url := "https://a.example/y", pin := some ("a.example", "93.184.215.14") }).any
+  fun w => w.headers == [("Referer", "https://a.example/dir/page.html?q")]
+#guard (planWire { refd with headers := [("X-A", "1")], referrerPolicy := .unsafeUrl }).any
+  fun w => w.method == "OPTIONS" && headerGet w.headers "referer" == some "https://a.example/dir/page.html?q"
+#guard (planWire { refd with page := { pg with hostCors := true } }).any fun w => headerGet w.headers "referer" == none
+-- a page's own Referer field never reaches the wire
+#guard (planWire { base with url := "https://a.example/y", pin := some ("a.example", "93.184.215.14"), headers := [("Referer", "https://evil.example/")] }).any
+  fun w => w.headers.isEmpty
+-- a redirect: the policy of the redirect response is the next hop's (redirect-referrer.any.js:
+-- "Same origin redirection, empty init, origin redirect header"), and a hop back to the first
+-- origin after a cross-origin one gets the origin only (referrer.any.js, last case)
+private def hop (t : Transfer) (a : Answer) : Option Wire :=
+  match onAnswer t a with | .send _ w => some w | _ => none
+private def sameT : Transfer := { refd with url := "https://a.example/redirect", pin := some ("a.example", "93.184.215.14") }
+#guard (hop sameT { status := 302, headers := [("Location", "/next"), ("Referrer-Policy", "origin")] }).any
+  fun w => headerGet w.headers "referer" == some "https://a.example/"
+#guard (hop sameT { status := 302, headers := [("Location", "/next"), ("Referrer-Policy", "no-referrer")] }).any
+  fun w => headerGet w.headers "referer" == none
+#guard (hop sameT { status := 302, headers := [("Location", "/next")] }).any
+  fun w => headerGet w.headers "referer" == some "https://a.example/dir/page.html?q"
+#guard (hop { refd with referrerPolicy := .originWhenCrossOrigin, page := { pg with isLocal := true } }
+    { status := 302, headers := [("Location", "https://a.example/back"), ("Access-Control-Allow-Origin", "*")] }).any
+  fun w => headerGet w.headers "referer" == some "https://a.example/"
 
 end L4Factoidal.Net.PageFetch
