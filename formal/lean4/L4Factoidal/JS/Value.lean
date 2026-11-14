@@ -69,6 +69,8 @@ inductive NativeX where
   (0 `reduce`, 1 `toArray`, 2 `forEach`, 3 `some`, 4 `every`, 5 `find`), and `next` and
   `return` of a helper (and of the wrapper of `Iterator.from`). -/
   | iteratorCtor | iteratorFrom | iterLazy (k : Nat) | iterEager (k : Nat) | helperNext | helperReturn
+  /-- `Iterator.concat` (§27.1.3.2.2): a helper of kind 6. -/
+  | iteratorConcat
   /-- `Promise.race` (0) and `Promise.allSettled` (1) (§27.2.4.5, §27.2.4.2), and the
   function that records one settled element of `allSettled` (0 fulfilled, 1 rejected). -/
   | promiseCombinator (k : Nat) | promiseSettleElement (rejected : Nat)

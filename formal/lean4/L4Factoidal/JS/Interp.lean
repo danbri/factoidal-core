@@ -7426,6 +7426,24 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       if strictEq nt (← getV n (.obj r.globalObj) "Iterator") then throwErr .type "Abstract class Iterator not directly constructable"
       let p ← getV n nt "prototype"
       pure (.obj (← alloc { proto := if p.isObj then p else .obj r.iterProto }))
+    | (.x .iteratorConcat) =>
+      -- §27.1.3.2.2 Iterator.concat: every argument an object with a callable @@iterator, checked
+      -- first; the iterators are made one at a time as the result is read
+      let mut items : Array Value := #[]
+      for a in args do
+        if !a.isObj then throwErr .type "Iterator.concat: an argument is not an object"
+        let m ← getV n a (symKey symIterator)
+        if !(← isCallable m) then throwErr .type "Iterator.concat: an argument is not iterable"
+        items := (items.push a).push m
+      let arr ← newArray items
+      let h ← alloc { proto := .obj r.iterHelperProto }
+      defineOwn h helperIt (.data arr true false false)
+      defineOwn h helperNextKey (.data .undef true false false)
+      defineOwn h helperKind (.data (.num 6) true false false)
+      defineOwn h helperFn (.data .undef true false false)
+      defineOwn h helperCount (.data (.num 0) true false false)
+      defineOwn h helperInner (.data .undef true false false)
+      pure (.obj h)
     | (.x .iteratorFrom) =>
       -- §27.1.3.2.1 Iterator.from: GetIteratorFlattenable, then wrap unless it inherits Iterator.prototype
       let it ← match a0 with
@@ -7553,6 +7571,43 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           iterClose n it
         return ← result .undef true
       if hiddenFlag o helperDone then return ← result .undef true
+      if kind == 6 then
+        -- Iterator.concat's closure (§27.1.3.2.2): each iterable's iterator in turn, its
+        -- values yielded again; `helperCount` the next iterable, `helperFn` the inner `next`
+        let items ← elemsOf n it
+        setF helperRunning (.bool true)
+        let out ← tryCatch (do
+          let mut answer : Option Value := none
+          for _ in [0:1000000000] do
+            let o ← getObj hid
+            let inner := match o.props.get? helperInner with | some (.data v ..) => v | _ => .undef
+            if inner.isObj then
+              let nx := match o.props.get? helperFn with | some (.data v ..) => v | _ => .undef
+              let r ← callV n nx inner #[]
+              if !r.isObj then throwErr .type "Iterator result is not an object"
+              if !toBool (← getV n r "done") then
+                answer := some (← result (← getV n r "value") false)
+                break
+              setF helperInner .undef
+            else
+              let count := match o.props.get? helperCount with | some (.data (.num x) ..) => x.toUInt64.toNat | _ => 0
+              if 2 * count + 1 ≥ items.size then
+                setF helperDone (.bool true)
+                answer := some (← result .undef true)
+                break
+              let iter ← callV n items[2 * count + 1]! items[2 * count]! #[]
+              if !iter.isObj then throwErr .type "Iterator.concat: the iterator is not an object"
+              setF helperCount (.num (Float.ofNat (count + 1)))
+              setF helperFn (← getV n iter "next")
+              setF helperInner iter
+          pure answer) fun e => do
+            setF helperRunning (.bool false)
+            setF helperDone (.bool true)
+            throw e
+        setF helperRunning (.bool false)
+        return ← match out with
+          | some v => pure v
+          | none => result .undef true
       let next := field helperNextKey
       let fn := field helperFn
       let stepOuter : M (Option Value) := do
@@ -9031,6 +9086,7 @@ def initRealm : M Unit := do
   if let .obj ic := iterC then
     defineOwn ic "prototype" (.data (.obj ip) false false false)
     method ic "from" (.x .iteratorFrom) 1
+    method ic "concat" (.x .iteratorConcat) 0
   setHidden g "Iterator" iterC
   setHidden ip "constructor" iterC
   for (nm, k) in [("map", 0), ("filter", 1), ("take", 2), ("drop", 3), ("flatMap", 4)] do
