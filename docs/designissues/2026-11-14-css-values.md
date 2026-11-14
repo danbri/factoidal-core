@@ -349,3 +349,17 @@ Colours: `alpha(from c / a)` and the specified form of `color-layers()`. Interfa
 CSSStyleDeclaration members on its prototype with CSSStyleProperties, CSSRuleList and
 StyleSheetList members on their prototypes, enumerable CSS namespace operations. Theorems:
 `descriptorValue_style`, `expandIn_style`, `insetPx_auto`, `containerConditions_length`.
+
+Bounds (the safety rule): two pages ran past the time limit in the check of the older batch.
+`if-cycle.html`: a cycle of custom properties through `if()` was walked to the fuel bound
+on every branch; `ComputedGeneric.cycleGuard` keeps the custom properties being worked out
+(`View.visiting`) and answers the guaranteed-invalid value at a repeat (theorem
+`cycleGuard_cycle`; that the work between repeats is bounded is tested only).
+`has-complexity.html`: a `:has()` that holds was searched again for each element;
+`Style.resolveHas` matches each compound with a `:has()` once per document and matching
+looks the element up (`Simple.anchors`, binary search), theorems `resolveHas_plain` and
+`computeFor_none`; the equality of the matches is tested by a guard only. Also: the `all`
+shorthand in declaration blocks (`find_put_all`), CSS-wide shorthand values, a shorthand's
+`var()` form replacing its longhands, far-edge `background-position` offsets,
+attr()-tainted resource values, strict `selector()` in `CSS.supports`, malformed
+substitution functions.
