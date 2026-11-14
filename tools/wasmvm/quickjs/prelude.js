@@ -2481,8 +2481,8 @@
     for (const k of Reflect.ownKeys(P)) if (k !== 'constructor') Object.defineProperty(OffscreenCanvasRenderingContext2D.prototype, k, Object.getOwnPropertyDescriptor(P, k));
     // CanvasRenderingContext2DSettings (HTML §4.12.5.1), as getContextAttributes() answers them.
     const settingsOf = o => {
-      if (o === undefined || o === null) o = {};
-      else if (typeof o !== 'object' && typeof o !== 'function') throw new TypeError("Failed to execute 'getContext': The provided value is not of type 'CanvasRenderingContext2DSettings'.");
+      // getContext's options are of type any: a value that is not an object gives the defaults.
+      if (o === undefined || o === null || (typeof o !== 'object' && typeof o !== 'function')) o = {};
       const colorType = o.colorType === undefined ? 'unorm8' : String(o.colorType);
       if (colorType !== 'unorm8' && colorType !== 'float16') throw new TypeError("Failed to execute 'getContext': The provided value '" + colorType + "' is not a valid enum value of type CanvasColorType.");
       const tm = o.toneMapping === undefined || o.toneMapping === null ? {} : o.toneMapping;
