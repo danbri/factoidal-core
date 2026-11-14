@@ -2231,7 +2231,9 @@
     get charset() { return this.characterSet; }
     get inputEncoding() { return this.characterSet; }
     get contentType() { return str(nodeId(this), 9); }
-    get readyState() { return readyState; }
+    // xmlweb: a document that no navigation made (DOMParser, createDocument, XSLTProcessor)
+    // has the readiness "complete" (HTML §3.1.3 "current document readiness")
+    get readyState() { return this === document || info(nodeId(this), 12) >= 0 ? readyState : 'complete'; }
     get defaultView() { return this === document ? window : (info(nodeId(this), 12) >= 0 ? frameWindow(nodeId(this)) : null); }
     get location() { return this === document ? location : null; }
     get doctype() { return wrap(kids(nodeId(this)).find(k => info(k, 0) === 10) ?? -1); }

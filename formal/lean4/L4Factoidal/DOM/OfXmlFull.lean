@@ -17,8 +17,9 @@ node. A script reads more of the document than layout does, so this builder keep
 
 The source is read by the same XML parser, with the same resolver for the entity
 declarations of the XHTML document types, and is refused unless it is namespace
-well-formed, as `parseXmlDocument` refuses it. The document type declaration is not kept
-(as before). The tree is built with a work list, one loop step per node.
+well-formed, as `parseXmlDocument` refuses it. The document type declaration becomes a
+DocumentType node (name, public and system identifier; the internal subset has no DOM
+form). The tree is built with a work list, one loop step per node.
 -/
 import L4Factoidal.DOM.OfXml
 
@@ -65,6 +66,16 @@ def parseXmlDocumentFull (src : String) (cdata : Bool) : Except String Dom := do
   if !doc.namespaceWellFormed then throw "XML namespace well-formedness violation"
   let version := (doc.decl.map (·.version)).getD "1.0"
   let mut d : Dom := { nodes := #[{ type := .document, htmlDoc := false }] }
+  -- The document type declaration is a DocumentType node (DOM §4.6): its name, and the
+  -- public and system identifiers as written (`doctypePublicSystem`). It is put first;
+  -- the parser does not record whether a comment came before it.
+  match doc.doctype with
+  | some dt =>
+    let ids := (doctypePublicSystem src).getD ("", dt.systemId.getD "")
+    let (d1, id) := d.push
+      { type := .doctype, lname := dt.rootName, pubId := ids.1, sysId := ids.2, parent := some 0 }
+    d := d1.setNode 0 fun p => { p with kids := p.kids.push id }
+  | none => pure ()
   let mut work : List (NodeId × XML.NsScope × XML.Node) :=
     (doc.prolog ++ (doc.root :: doc.epilog)).map fun n => (0, XML.initialScope, n)
   for _ in [0:src.length + 2] do
