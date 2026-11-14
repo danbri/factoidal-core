@@ -403,8 +403,11 @@ private def items4 := "<div id=o><div class=i></div><div class=i></div><div clas
 #guard (box "<div id=z><div id=w><canvas style='display:block;width:100px;max-width:50%'></canvas></div></div>" "#z{width:0} #w{float:left}" "w").map (·.2.2.1) == some 0
 #guard (box "<div id=z><div id=w><canvas style='display:block;width:50%;min-width:30px'></canvas></div></div>" "#z{width:0} #w{float:left}" "w").map (·.2.2.1) == some 30
 #guard (box "<div id=z><div id=w><canvas style='display:block;width:40px'></canvas></div></div>" "#z{width:0} #w{float:left}" "w").map (·.2.2.1) == some 40
--- A box of no area is not scrollable overflow, wherever it is.
+-- A box of no width and no height is not scrollable overflow, wherever it is; one with an
+-- extent in one axis is.
 #guard scroll "<div id=c><div id=e></div></div>" "#c{width:100px;height:50px} #e{position:relative;width:0;height:0;left:500px;top:300px}" "c" == some (100,50)
 #guard scroll "<div id=c><div id=e></div></div>" "#c{width:100px;height:50px} #e{position:relative;width:10px;height:10px;left:500px;top:300px}" "c" == some (510,310)
+#guard scroll "<div id=c><div id=e></div></div>" "#c{width:100px;height:0} #e{width:0;height:100px}" "c" == some (100,100)
+#guard scroll "<div id=c><div id=e></div></div>" "#c{width:0;height:100px} #e{width:100px;height:0}" "c" == some (100,100)
 
 end L4Factoidal.Rendering.PositionLayoutTests

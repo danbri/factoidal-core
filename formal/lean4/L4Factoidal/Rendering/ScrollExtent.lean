@@ -65,17 +65,18 @@ theorem extent_inside (width height : Int) (kids : List (Int × Int))
     rw [h1, h2]
     exact ih (fun j hj => h j (List.mem_cons_of_mem k hj))
 
-/-- The right and bottom edges of the boxes that have area. A box of no area (no width or
-no height) is not part of the scrollable overflow, as browsers apply CSS Overflow 3 §2.2:
-an empty box moved away by `position: relative` gives nothing to scroll to. Each box is
-its right edge, bottom edge, width and height. -/
+/-- The right and bottom edges of the boxes that have an extent. A box of no width and no
+height is not part of the scrollable overflow, as browsers apply CSS Overflow 3 §2.2: an
+empty box moved away by `position: relative` gives nothing to scroll to. A box with an
+extent in one axis only still counts (a child 100 px high and 0 px wide is scrolled to).
+Each box is its right edge, bottom edge, width and height. -/
 def areaEdges (boxes : List (Int × Int × Int × Int)) : List (Int × Int) :=
-  boxes.filterMap fun b => if 0 < b.2.2.1 ∧ 0 < b.2.2.2 then some (b.1,b.2.1) else none
+  boxes.filterMap fun b => if 0 < b.2.2.1 ∨ 0 < b.2.2.2 then some (b.1,b.2.1) else none
 
-/-- Says: when no box inside has area, the scroll size is the client size, wherever those
-boxes are. -/
+/-- Says: when no box inside has an extent, the scroll size is the client size, wherever
+those boxes are. -/
 theorem extent_no_area (width height : Int) (boxes : List (Int × Int × Int × Int))
-    (h : ∀ b ∈ boxes, b.2.2.1 ≤ 0 ∨ b.2.2.2 ≤ 0) : extent width height (areaEdges boxes) = (width, height) := by
+    (h : ∀ b ∈ boxes, b.2.2.1 ≤ 0 ∧ b.2.2.2 ≤ 0) : extent width height (areaEdges boxes) = (width, height) := by
   have none : areaEdges boxes = [] := by
     unfold areaEdges
     rw [List.filterMap_eq_nil_iff]
@@ -86,18 +87,18 @@ theorem extent_no_area (width height : Int) (boxes : List (Int × Int × Int × 
   rw [none]
   rfl
 
-/-- Says: an edge that `areaEdges` keeps is the edge of one of the boxes, one with area. -/
+/-- Says: an edge that `areaEdges` keeps is the edge of one of the boxes, one with an extent. -/
 theorem areaEdges_mem (boxes : List (Int × Int × Int × Int)) (e : Int × Int) (h : e ∈ areaEdges boxes) :
-    ∃ b ∈ boxes, e = (b.1,b.2.1) ∧ 0 < b.2.2.1 ∧ 0 < b.2.2.2 := by
+    ∃ b ∈ boxes, e = (b.1,b.2.1) ∧ (0 < b.2.2.1 ∨ 0 < b.2.2.2) := by
   unfold areaEdges at h
   obtain ⟨b, hb, eq⟩ := List.mem_filterMap.mp h
   refine ⟨b, hb, ?_⟩
   split at eq
   · rename_i area
-    exact ⟨(Option.some.inj eq).symm, area.1, area.2⟩
+    exact ⟨(Option.some.inj eq).symm, area⟩
   · cases eq
 
-#guard areaEdges [(500, 300, 0, 0), (120, 20, 40, 20), (700, 10, 600, 0)] == [(120, 20)]
+#guard areaEdges [(500, 300, 0, 0), (120, 20, 40, 20), (700, 10, 600, 0)] == [(120, 20), (700, 10)]
 #guard extent 200 100 (areaEdges [(500, 300, 0, 0)]) == (200, 100)
 #guard extent 100 50 [] == (100, 50)
 #guard extent 100 50 [(80, 300), (120, 20)] == (120, 300)
