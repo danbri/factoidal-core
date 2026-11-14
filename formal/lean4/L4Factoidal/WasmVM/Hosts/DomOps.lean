@@ -22,6 +22,7 @@ import L4Factoidal.Rendering.CssSupports
 import L4Factoidal.Rendering.CssValues.Declaration
 import L4Factoidal.Rendering.ComputedGeneric
 import L4Factoidal.Rendering.CssSheet
+import L4Factoidal.Rendering.CssTyped
 import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.DOM.Editing.Commands
 import L4Factoidal.Rendering.Style
@@ -654,6 +655,9 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 153 =>
     -- the rules of a style sheet text and its changes (CSSOM §6.4, `CssSheet.sheetOp`)
     return L4Factoidal.Rendering.CssSheet.sheetOp q
+  | 154 =>
+    -- CSS Typed OM: reification, serialisation, numeric types and arithmetic (`CssTyped.typedOp`)
+    return L4Factoidal.Rendering.CssTyped.typedOp q
   | 167 =>
     -- a reflected attribute's setter, applied: the decision of 161, then the content
     -- attribute set or removed as a command (the page has no MutationObserver and the row

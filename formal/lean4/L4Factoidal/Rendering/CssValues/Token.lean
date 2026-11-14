@@ -403,19 +403,22 @@ def fmtPlaces (a : Rat) (places : Nat) : String :=
   let fp := ((ds.drop (ds.length - places)).reverse.dropWhile (· == '0')).reverse
   String.ofList (if fp.isEmpty then ip else ip ++ '.' :: fp)
 
-/-- A CSS number as text (CSSOM §6.7.2): an integer in full; otherwise six significant
-digits, with no exponent. -/
-def fmtRat (v : Rat) : String :=
+/-- A number as text: an integer in full; otherwise `sig` significant digits, with no
+exponent. -/
+def fmtRatSig (sig : Nat) (v : Rat) : String :=
   if v.den == 1 then toString v.num
   else
     let neg := v < 0
     let a := if neg then -v else v
     let ip := a.floor.toNat
     let places :=
-      if ip == 0 then 6 + leadingZeros 30 a 0
-      else 6 - (toString ip).length
+      if ip == 0 then sig + leadingZeros 30 a 0
+      else sig - (toString ip).length
     let s := fmtPlaces a places
     if neg && s != "0" then "-" ++ s else s
+
+/-- A CSS number as text (CSSOM §6.7.2): six significant digits. -/
+def fmtRat (v : Rat) : String := fmtRatSig 6 v
 
 def Tok.css : Tok → String
   | .ident s => serializeIdent s

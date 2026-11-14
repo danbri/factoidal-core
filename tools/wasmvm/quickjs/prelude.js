@@ -6462,6 +6462,384 @@
     Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
     def(k, v);
   }
+  // ---- CSS Typed OM 1. The classes hold their fields. Lean (CssTyped.typedOp, node_query
+  // op 154) decides what a CSS value is as a typed object (reify), what a typed object is as
+  // CSS text, the types of numeric values and their arithmetic; whether a value is one a
+  // property takes is the property table's answer (op 151). A numeric value goes to Lean as
+  // text: u(3.14 "px"), sum(a, b), product(a, b), negate(a), invert(a), min, max, clamp.
+  const typedOp = (...parts) => { const r = n.query(0, 154, parts.join('\u0000')); return typeof r === 'string' ? r : ''; };
+  const typedKey = {}, typedState = new WeakMap();
+  const tstateOf = v => { const s = typedState.get(v); if (!s) throw new TypeError('Illegal invocation'); return s; };
+  class CSSStyleValue {
+    constructor(key) { if (key !== typedKey) illegal(); }
+    toString() { return tstateOf(this).text ?? ''; }
+    static parse(property, cssText) {
+      if (arguments.length < 2) throw new TypeError('CSSStyleValue.parse: 2 arguments required');
+      const name = knownProperty(property), text = String(cssText);
+      if (styleOp('val', name, text).charAt(0) !== '1') throw new TypeError(`CSSStyleValue.parse: '${text}' is not a value of '${name}'`);
+      return reified(listValued(name) ? JSON.parse(typedOp('reifyall', text))[0] : JSON.parse(typedOp('reify', text)));
+    }
+    static parseAll(property, cssText) {
+      if (arguments.length < 2) throw new TypeError('CSSStyleValue.parseAll: 2 arguments required');
+      const name = knownProperty(property), text = String(cssText);
+      if (styleOp('val', name, text).charAt(0) !== '1') throw new TypeError(`CSSStyleValue.parseAll: '${text}' is not a value of '${name}'`);
+      return listValued(name) ? JSON.parse(typedOp('reifyall', text)).map(reified) : [reified(JSON.parse(typedOp('reify', text)))];
+    }
+  }
+  const opaque = (C, text) => { const v = Object.create(C.prototype); typedState.set(v, { text }); return v; };
+  class CSSImageValue extends CSSStyleValue {}
+  class CSSKeywordValue extends CSSStyleValue {
+    constructor(value) {
+      super(typedKey);
+      if (arguments.length < 1) throw new TypeError('CSSKeywordValue: 1 argument required');
+      value = String(value);
+      if (value === '') throw new TypeError('CSSKeywordValue: the keyword is empty');
+      typedState.set(this, { value });
+    }
+    get value() { return tstateOf(this).value; }
+    set value(v) { v = String(v); if (v === '') throw new TypeError('CSSKeywordValue: the keyword is empty'); tstateOf(this).value = v; }
+    toString() { return op(0, 166, tstateOf(this).value); }
+  }
+  const numText = x => Number.isNaN(x) ? 'nan' : x === Infinity ? 'infinity' : x === -Infinity ? '-infinity' : String(x);
+  const wireOf = v => {
+    const s = tstateOf(v);
+    if (s.op === undefined) return `u(${numText(s.value)} ${JSON.stringify(s.unit)})`;
+    if (s.op === 'negate' || s.op === 'invert') return `${s.op}(${wireOf(s.value)})`;
+    if (s.op === 'clamp') return `clamp(${wireOf(s.lower)}, ${wireOf(s.value)}, ${wireOf(s.upper)})`;
+    return `${s.op}(${Array.from(s.values).map(wireOf).join(', ')})`;
+  };
+  const numberish = x => {
+    if (typeof x === 'number') return new CSSUnitValue(x, 'number');
+    if (x instanceof CSSNumericValue) return x;
+    throw new TypeError('The value is not a number or a CSSNumericValue');
+  };
+  const mathClasses = {};
+  const numericArray = xs => {
+    const a = Object.create(CSSNumericArray.prototype);
+    xs.forEach((x, i) => Object.defineProperty(a, i, { value: x, enumerable: true, configurable: true }));
+    Object.defineProperty(a, 'length', { value: xs.length, configurable: true });
+    return a;
+  };
+  // A typed value from Lean's JSON.
+  const reified = j => {
+    switch (j.t) {
+      case 'u': { const v = Object.create(CSSUnitValue.prototype); typedState.set(v, { value: Number(j.v), unit: j.u }); return v; }
+      case 'kw': return new CSSKeywordValue(j.v);
+      case 'image': return opaque(CSSImageValue, j.c);
+      case 'style': return opaque(CSSStyleValue, j.c);
+      case 'unparsed': return new CSSUnparsedValue(j.a.map(m => typeof m === 'string' ? m : new CSSVariableReferenceValue(m.v, m.f === null ? null : reified(m.f))));
+      case 'negate': case 'invert': { const v = Object.create(mathClasses[j.t].prototype); typedState.set(v, { op: j.t, value: reified(j.a[0]) }); return v; }
+      case 'clamp': { const v = Object.create(mathClasses.clamp.prototype); typedState.set(v, { op: 'clamp', lower: reified(j.a[0]), value: reified(j.a[1]), upper: reified(j.a[2]) }); return v; }
+      default: {
+        const C = mathClasses[j.t];
+        if (!C) return opaque(CSSStyleValue, '');
+        const v = Object.create(C.prototype); typedState.set(v, { op: j.t, values: numericArray(j.a.map(reified)) }); return v;
+      }
+    }
+  };
+  const arith = (verb, a, vs) => {
+    const r = typedOp(verb, wireOf(a), ...vs.map(v => wireOf(numberish(v))));
+    if (r === '') throw new TypeError(`${verb}: the values do not have compatible types`);
+    return reified(JSON.parse(r));
+  };
+  class CSSNumericValue extends CSSStyleValue {
+    add(...vs) { return arith('add', this, vs); }
+    sub(...vs) { return arith('sub', this, vs); }
+    mul(...vs) { return arith('mul', this, vs); }
+    div(...vs) { return arith('div', this, vs); }
+    min(...vs) { return arith('min', this, vs); }
+    max(...vs) { return arith('max', this, vs); }
+    equals(...vs) { return typedOp('equals', wireOf(this), ...vs.map(v => wireOf(numberish(v)))) === '1'; }
+    to(unit) {
+      if (arguments.length < 1) throw new TypeError('to: 1 argument required');
+      if (typedOp('unit', String(unit)) !== '1') throw new DOMException(`'${unit}' is not a unit`, 'SyntaxError');
+      const r = typedOp('to', wireOf(this), String(unit));
+      if (r === '') throw new TypeError(`The value can not be converted to '${unit}'`);
+      return reified(JSON.parse(r));
+    }
+    type() { const r = typedOp('type', wireOf(this)); if (r === '') throw new TypeError('The value has no type'); return JSON.parse(r); }
+    toString() { return typedOp('css', wireOf(this)); }
+    static parse(cssText) {
+      if (arguments.length < 1) throw new TypeError('CSSNumericValue.parse: 1 argument required');
+      const r = typedOp('parse', String(cssText));
+      if (r === '') throw new DOMException(`'${cssText}' is not a numeric value`, 'SyntaxError');
+      return reified(JSON.parse(r));
+    }
+  }
+  class CSSUnitValue extends CSSNumericValue {
+    constructor(value, unit) {
+      super(typedKey);
+      if (arguments.length < 2) throw new TypeError('CSSUnitValue: 2 arguments required');
+      value = Number(value);
+      if (!Number.isFinite(value)) throw new TypeError('CSSUnitValue: the value is not a finite number');
+      unit = String(unit);
+      if (typedOp('unit', unit) !== '1') throw new TypeError(`CSSUnitValue: '${unit}' is not a unit`);
+      typedState.set(this, { value, unit: unit.toLowerCase() });
+    }
+    get value() { return tstateOf(this).value; }
+    set value(v) { v = Number(v); if (!Number.isFinite(v)) throw new TypeError('CSSUnitValue: the value is not a finite number'); tstateOf(this).value = v; }
+    get unit() { return tstateOf(this).unit; }
+  }
+  class CSSMathValue extends CSSNumericValue { get operator() { return tstateOf(this).op; } }
+  class CSSNumericArray { constructor() { illegal(); } }
+  for (const [k, f] of Object.entries({
+    forEach(f, self) { for (let i = 0; i < this.length; i++) f.call(self, this[i], i, this); },
+    *entries() { for (let i = 0; i < this.length; i++) yield [i, this[i]]; },
+    *keys() { for (let i = 0; i < this.length; i++) yield i; },
+    *values() { for (let i = 0; i < this.length; i++) yield this[i]; },
+  })) define(CSSNumericArray.prototype, k, f);
+  define(CSSNumericArray.prototype, Symbol.iterator, CSSNumericArray.prototype.values);
+  // A math value is made only if its values have compatible types (Lean's answer).
+  const mathOf = (self, state) => {
+    typedState.set(self, state);
+    if (typedOp('type', wireOf(self)) === '') { typedState.delete(self); throw new TypeError('The values do not have compatible types'); }
+  };
+  for (const [name, opName] of [['Sum', 'sum'], ['Product', 'product'], ['Min', 'min'], ['Max', 'max']]) {
+    const C = ({ ['CSSMath' + name]: class extends CSSMathValue {
+      constructor(...args) {
+        super(typedKey);
+        if (args.length === 0) throw new DOMException('A math value needs at least one value', 'SyntaxError');
+        mathOf(this, { op: opName, values: numericArray(args.map(numberish)) });
+      }
+      get values() { return tstateOf(this).values; }
+    } })['CSSMath' + name];
+    mathClasses[opName] = C;
+  }
+  for (const [name, opName] of [['Negate', 'negate'], ['Invert', 'invert']]) {
+    const C = ({ ['CSSMath' + name]: class extends CSSMathValue {
+      constructor(arg) {
+        super(typedKey);
+        if (arguments.length < 1) throw new TypeError('1 argument required');
+        mathOf(this, { op: opName, value: numberish(arg) });
+      }
+      get value() { return tstateOf(this).value; }
+    } })['CSSMath' + name];
+    mathClasses[opName] = C;
+  }
+  class CSSMathClamp extends CSSMathValue {
+    constructor(lower, value, upper) {
+      super(typedKey);
+      if (arguments.length < 3) throw new TypeError('CSSMathClamp: 3 arguments required');
+      mathOf(this, { op: 'clamp', lower: numberish(lower), value: numberish(value), upper: numberish(upper) });
+    }
+    get lower() { return tstateOf(this).lower; }
+    get value() { return tstateOf(this).value; }
+    get upper() { return tstateOf(this).upper; }
+  }
+  mathClasses.clamp = CSSMathClamp;
+  class CSSVariableReferenceValue {
+    constructor(variable, fallback = null) {
+      if (arguments.length < 1) throw new TypeError('CSSVariableReferenceValue: 1 argument required');
+      variable = String(variable).trim();
+      if (!variable.startsWith('--') || variable.length < 3) throw new TypeError('CSSVariableReferenceValue: not a custom property name');
+      if (fallback !== null && fallback !== undefined && !(fallback instanceof CSSUnparsedValue)) throw new TypeError('CSSVariableReferenceValue: the fallback is not a CSSUnparsedValue');
+      typedState.set(this, { variable, fallback: fallback ?? null });
+    }
+    get variable() { return tstateOf(this).variable; }
+    set variable(v) { v = String(v).trim(); if (!v.startsWith('--') || v.length < 3) throw new TypeError('CSSVariableReferenceValue: not a custom property name'); tstateOf(this).variable = v; }
+    get fallback() { return tstateOf(this).fallback; }
+  }
+  class CSSUnparsedValue extends CSSStyleValue {
+    constructor(members) {
+      super(typedKey);
+      if (arguments.length < 1) throw new TypeError('CSSUnparsedValue: 1 argument required');
+      const xs = Array.from(members);
+      for (const m of xs) if (typeof m !== 'string' && !(m instanceof CSSVariableReferenceValue)) throw new TypeError('CSSUnparsedValue: a member is not a string or a CSSVariableReferenceValue');
+      typedState.set(this, { members: xs });
+      xs.forEach((x, i) => Object.defineProperty(this, i, { get: () => tstateOf(this).members[i],
+        set: v => { if (typeof v !== 'string' && !(v instanceof CSSVariableReferenceValue)) throw new TypeError('not a string or a CSSVariableReferenceValue'); tstateOf(this).members[i] = v; },
+        enumerable: true, configurable: true }));
+    }
+    get length() { return tstateOf(this).members.length; }
+    forEach(f, self) { tstateOf(this).members.forEach((x, i) => f.call(self, x, i, this)); }
+    *entries() { yield* tstateOf(this).members.entries(); }
+    *keys() { yield* tstateOf(this).members.keys(); }
+    *values() { yield* tstateOf(this).members.values(); }
+    toString() { return tstateOf(this).members.map(m => typeof m === 'string' ? m : `var(${m.variable}${m.fallback ? ',' + m.fallback.toString() : ''})`).join(''); }
+  }
+  define(CSSUnparsedValue.prototype, Symbol.iterator, CSSUnparsedValue.prototype.values);
+  // Transform values: the components as objects; their text is the transform function's.
+  class CSSTransformComponent {
+    constructor(key) { if (key !== typedKey) illegal(); }
+    get is2D() { return tstateOf(this).is2D; }
+    set is2D(v) { tstateOf(this).is2D = !!v; }
+  }
+  const lengthArg = x => { const v = numberish(x); return v; };
+  class CSSTranslate extends CSSTransformComponent {
+    constructor(x, y, z) { super(typedKey); if (arguments.length < 2) throw new TypeError('CSSTranslate: 2 arguments required');
+      typedState.set(this, { x: lengthArg(x), y: lengthArg(y), z: z === undefined ? new CSSUnitValue(0, 'px') : lengthArg(z), is2D: z === undefined }); }
+    get x() { return tstateOf(this).x; } get y() { return tstateOf(this).y; } get z() { return tstateOf(this).z; }
+    set x(v) { tstateOf(this).x = lengthArg(v); } set y(v) { tstateOf(this).y = lengthArg(v); } set z(v) { tstateOf(this).z = lengthArg(v); }
+    toString() { const s = tstateOf(this); return s.is2D ? `translate(${s.x}, ${s.y})` : `translate3d(${s.x}, ${s.y}, ${s.z})`; }
+  }
+  class CSSRotate extends CSSTransformComponent {
+    constructor(a, b, c, d) { super(typedKey);
+      if (arguments.length === 1) typedState.set(this, { x: new CSSUnitValue(0, 'number'), y: new CSSUnitValue(0, 'number'), z: new CSSUnitValue(1, 'number'), angle: numberish(a), is2D: true });
+      else if (arguments.length >= 4) typedState.set(this, { x: numberish(a), y: numberish(b), z: numberish(c), angle: numberish(d), is2D: false });
+      else throw new TypeError('CSSRotate: 1 or 4 arguments required'); }
+    get x() { return tstateOf(this).x; } get y() { return tstateOf(this).y; } get z() { return tstateOf(this).z; } get angle() { return tstateOf(this).angle; }
+    set x(v) { tstateOf(this).x = numberish(v); } set y(v) { tstateOf(this).y = numberish(v); } set z(v) { tstateOf(this).z = numberish(v); } set angle(v) { tstateOf(this).angle = numberish(v); }
+    toString() { const s = tstateOf(this); return s.is2D ? `rotate(${s.angle})` : `rotate3d(${s.x}, ${s.y}, ${s.z}, ${s.angle})`; }
+  }
+  class CSSScale extends CSSTransformComponent {
+    constructor(x, y, z) { super(typedKey); if (arguments.length < 2) throw new TypeError('CSSScale: 2 arguments required');
+      typedState.set(this, { x: numberish(x), y: numberish(y), z: z === undefined ? new CSSUnitValue(1, 'number') : numberish(z), is2D: z === undefined }); }
+    get x() { return tstateOf(this).x; } get y() { return tstateOf(this).y; } get z() { return tstateOf(this).z; }
+    set x(v) { tstateOf(this).x = numberish(v); } set y(v) { tstateOf(this).y = numberish(v); } set z(v) { tstateOf(this).z = numberish(v); }
+    toString() { const s = tstateOf(this); return s.is2D ? `scale(${s.x}, ${s.y})` : `scale3d(${s.x}, ${s.y}, ${s.z})`; }
+  }
+  class CSSSkew extends CSSTransformComponent {
+    constructor(ax, ay) { super(typedKey); if (arguments.length < 2) throw new TypeError('CSSSkew: 2 arguments required'); typedState.set(this, { ax: numberish(ax), ay: numberish(ay), is2D: true }); }
+    get ax() { return tstateOf(this).ax; } get ay() { return tstateOf(this).ay; }
+    set ax(v) { tstateOf(this).ax = numberish(v); } set ay(v) { tstateOf(this).ay = numberish(v); }
+    get is2D() { return true; } set is2D(v) {}
+    toString() { const s = tstateOf(this); return `skew(${s.ax}, ${s.ay})`; }
+  }
+  class CSSSkewX extends CSSTransformComponent {
+    constructor(ax) { super(typedKey); if (arguments.length < 1) throw new TypeError('CSSSkewX: 1 argument required'); typedState.set(this, { ax: numberish(ax), is2D: true }); }
+    get ax() { return tstateOf(this).ax; } set ax(v) { tstateOf(this).ax = numberish(v); }
+    get is2D() { return true; } set is2D(v) {}
+    toString() { return `skewX(${tstateOf(this).ax})`; }
+  }
+  class CSSSkewY extends CSSTransformComponent {
+    constructor(ay) { super(typedKey); if (arguments.length < 1) throw new TypeError('CSSSkewY: 1 argument required'); typedState.set(this, { ay: numberish(ay), is2D: true }); }
+    get ay() { return tstateOf(this).ay; } set ay(v) { tstateOf(this).ay = numberish(v); }
+    get is2D() { return true; } set is2D(v) {}
+    toString() { return `skewY(${tstateOf(this).ay})`; }
+  }
+  class CSSPerspective extends CSSTransformComponent {
+    constructor(length) { super(typedKey); if (arguments.length < 1) throw new TypeError('CSSPerspective: 1 argument required');
+      typedState.set(this, { length: length instanceof CSSKeywordValue || typeof length === 'string' ? (typeof length === 'string' ? new CSSKeywordValue(length) : length) : numberish(length), is2D: false }); }
+    get length() { return tstateOf(this).length; } set length(v) { tstateOf(this).length = v instanceof CSSKeywordValue ? v : numberish(v); }
+    get is2D() { return false; } set is2D(v) {}
+    toString() { return `perspective(${tstateOf(this).length})`; }
+  }
+  class CSSMatrixComponent extends CSSTransformComponent {
+    constructor(matrix, options = undefined) { super(typedKey); if (arguments.length < 1) throw new TypeError('CSSMatrixComponent: 1 argument required');
+      const is2D = options && options.is2D !== undefined ? !!options.is2D : !!matrix.is2D;
+      typedState.set(this, { matrix, is2D }); }
+    get matrix() { return tstateOf(this).matrix; } set matrix(m) { tstateOf(this).matrix = m; }
+    toString() { const s = tstateOf(this), m = s.matrix;
+      return s.is2D ? `matrix(${[m.a, m.b, m.c, m.d, m.e, m.f].join(', ')})`
+        : `matrix3d(${[m.m11, m.m12, m.m13, m.m14, m.m21, m.m22, m.m23, m.m24, m.m31, m.m32, m.m33, m.m34, m.m41, m.m42, m.m43, m.m44].join(', ')})`; }
+  }
+  class CSSTransformValue extends CSSStyleValue {
+    constructor(transforms) {
+      super(typedKey);
+      if (arguments.length < 1) throw new TypeError('CSSTransformValue: 1 argument required');
+      const xs = Array.from(transforms);
+      if (xs.length === 0) throw new TypeError('CSSTransformValue: no transform');
+      for (const x of xs) if (!(x instanceof CSSTransformComponent)) throw new TypeError('CSSTransformValue: a member is not a CSSTransformComponent');
+      typedState.set(this, { members: xs });
+      xs.forEach((x, i) => Object.defineProperty(this, i, { get: () => tstateOf(this).members[i], set: v => { tstateOf(this).members[i] = v; }, enumerable: true, configurable: true }));
+    }
+    get length() { return tstateOf(this).members.length; }
+    get is2D() { return tstateOf(this).members.every(x => x.is2D); }
+    forEach(f, self) { tstateOf(this).members.forEach((x, i) => f.call(self, x, i, this)); }
+    *entries() { yield* tstateOf(this).members.entries(); }
+    *keys() { yield* tstateOf(this).members.keys(); }
+    *values() { yield* tstateOf(this).members.values(); }
+    toString() { return tstateOf(this).members.map(String).join(' '); }
+  }
+  define(CSSTransformValue.prototype, Symbol.iterator, CSSTransformValue.prototype.values);
+  // Style property maps: the declared values of a block (element.attributeStyleMap, a rule's
+  // styleMap) and the computed values (element.computedStyleMap()).
+  const knownProperty = property => {
+    const name = String(property);
+    if (name.startsWith('--')) return name;
+    if (styleOp('sup', name, 'initial') !== '1') throw new TypeError(`'${name}' is not a CSS property`);
+    return name.toLowerCase();
+  };
+  const listValued = name => typedOp('islist', name) === '1';
+  const mapState = new WeakMap();
+  const mstate = m => { const s = mapState.get(m); if (!s) throw new TypeError('Illegal invocation'); return s; };
+  class StylePropertyMapReadOnly {
+    constructor(key) { if (key !== typedKey) illegal(); }
+    get(property) {
+      if (arguments.length < 1) throw new TypeError('get: 1 argument required');
+      const name = knownProperty(property), text = mstate(this).read(name);
+      if (text === '') return undefined;
+      return reified(listValued(name) ? JSON.parse(typedOp('reifyall', text))[0] : JSON.parse(typedOp('reify', text)));
+    }
+    getAll(property) {
+      if (arguments.length < 1) throw new TypeError('getAll: 1 argument required');
+      const name = knownProperty(property), text = mstate(this).read(name);
+      if (text === '') return [];
+      return listValued(name) ? JSON.parse(typedOp('reifyall', text)).map(reified) : [reified(JSON.parse(typedOp('reify', text)))];
+    }
+    has(property) { if (arguments.length < 1) throw new TypeError('has: 1 argument required'); return mstate(this).read(knownProperty(property)) !== ''; }
+    get size() { return mstate(this).names().length; }
+    *entries() { for (const name of mstate(this).names().slice().sort()) yield [name, this.getAll(name)]; }
+    *keys() { for (const [k] of this.entries()) yield k; }
+    *values() { for (const [, v] of this.entries()) yield v; }
+    forEach(f, self) { for (const [k, v] of this.entries()) f.call(self, v, k, this); }
+  }
+  define(StylePropertyMapReadOnly.prototype, Symbol.iterator, StylePropertyMapReadOnly.prototype.entries);
+  // The CSS text of the values given to set() or append(), and the text to check them by: a
+  // number is checked as calc(n), so a unitless zero is not taken for a length.
+  const valueTexts = (name, values) => values.map(v => {
+    if (typeof v === 'string') return { text: v, check: v };
+    if (!(v instanceof CSSStyleValue)) throw new TypeError(`The value given for '${name}' is not a string or a CSSStyleValue`);
+    const text = v.toString();
+    if (v instanceof CSSUnitValue) return { text, check: tstateOf(v).unit === 'number' ? `calc(${text})` : text, unit: true };
+    return { text, check: text };
+  });
+  class StylePropertyMap extends StylePropertyMapReadOnly {
+    set(property, ...values) {
+      if (arguments.length < 2) throw new TypeError('set: 2 arguments required');
+      const name = knownProperty(property), st = mstate(this), xs = valueTexts(name, values);
+      if (xs.length > 1 && !listValued(name)) throw new TypeError(`'${name}' takes one value`);
+      const ok = t => styleOp('val', name, t).charAt(0) === '1';
+      let text = xs.map(x => x.text).join(', ');
+      if (!ok(xs.map(x => x.check).join(', '))) {
+        // a unit value outside the range of the property is kept as a calc() (Typed OM §4.1.2)
+        const wrapped = xs.map(x => x.unit ? `calc(${x.text})` : x.text).join(', ');
+        if (!xs.some(x => x.unit) || !ok(wrapped)) throw new TypeError(`The value is not one '${name}' takes`);
+        text = wrapped;
+      }
+      st.set(name, text);
+    }
+    append(property, ...values) {
+      if (arguments.length < 2) throw new TypeError('append: 2 arguments required');
+      const name = knownProperty(property), st = mstate(this), xs = valueTexts(name, values);
+      if (!listValued(name)) throw new TypeError(`'${name}' is not a list-valued property`);
+      const old = st.read(name), text = (old === '' ? [] : [old]).concat(xs.map(x => x.text)).join(', ');
+      if (styleOp('val', name, text).charAt(0) !== '1') throw new TypeError(`The value is not one '${name}' takes`);
+      st.set(name, text);
+    }
+    delete(property) { if (arguments.length < 1) throw new TypeError('delete: 1 argument required'); mstate(this).remove(knownProperty(property)); }
+    clear() { mstate(this).clear(); }
+  }
+  const declaredMap = style => {
+    const m = Object.create(StylePropertyMap.prototype);
+    mapState.set(m, { read: name => style.getPropertyValue(name), names: () => Array.from(style),
+      set: (name, text) => style.setProperty(name, text), remove: name => { style.removeProperty(name); }, clear: () => { style.cssText = ''; } });
+    return m;
+  };
+  const styleMaps = new WeakMap();
+  const attributeStyleMap = { get() { let m = styleMaps.get(this); if (!m) styleMaps.set(this, m = declaredMap(this.style)); return m; }, configurable: true, enumerable: true };
+  Object.defineProperty(HTMLElement.prototype, 'attributeStyleMap', attributeStyleMap);
+  Object.defineProperty(SVGElement.prototype, 'attributeStyleMap', attributeStyleMap);
+  Object.defineProperty(ruleClasses.StyleRule.prototype, 'styleMap', { get() { let m = styleMaps.get(this); if (!m) styleMaps.set(this, m = declaredMap(this.style)); return m; }, configurable: true, enumerable: true });
+  define(Element.prototype, 'computedStyleMap', function () {
+    const el = this, m = Object.create(StylePropertyMapReadOnly.prototype);
+    mapState.set(m, { read: name => computedValue(el, name), names: () => namesFor(el) });
+    return m;
+  });
+  for (const [k, unit] of Object.entries({ number: 'number', percent: 'percent', em: 'em', rem: 'rem', ex: 'ex', rex: 'rex', cap: 'cap', rcap: 'rcap', ch: 'ch', rch: 'rch', ic: 'ic', ric: 'ric',
+    lh: 'lh', rlh: 'rlh', vw: 'vw', vh: 'vh', vi: 'vi', vb: 'vb', vmin: 'vmin', vmax: 'vmax', svw: 'svw', svh: 'svh', svi: 'svi', svb: 'svb', svmin: 'svmin', svmax: 'svmax',
+    lvw: 'lvw', lvh: 'lvh', lvi: 'lvi', lvb: 'lvb', lvmin: 'lvmin', lvmax: 'lvmax', dvw: 'dvw', dvh: 'dvh', dvi: 'dvi', dvb: 'dvb', dvmin: 'dvmin', dvmax: 'dvmax',
+    cqw: 'cqw', cqh: 'cqh', cqi: 'cqi', cqb: 'cqb', cqmin: 'cqmin', cqmax: 'cqmax', cm: 'cm', mm: 'mm', Q: 'q', in: 'in', pt: 'pt', pc: 'pc', px: 'px',
+    deg: 'deg', grad: 'grad', rad: 'rad', turn: 'turn', s: 's', ms: 'ms', Hz: 'hz', kHz: 'khz', dpi: 'dpi', dpcm: 'dpcm', dppx: 'dppx', fr: 'fr' }))
+    define(CSSns, k, function (value) { if (arguments.length < 1) throw new TypeError(`CSS.${k}: 1 argument required`); return new CSSUnitValue(value, unit); });
+  for (const [k, v] of Object.entries({ CSSStyleValue, CSSImageValue, CSSKeywordValue, CSSNumericValue, CSSUnitValue, CSSMathValue, CSSNumericArray,
+    CSSMathSum: mathClasses.sum, CSSMathProduct: mathClasses.product, CSSMathMin: mathClasses.min, CSSMathMax: mathClasses.max,
+    CSSMathNegate: mathClasses.negate, CSSMathInvert: mathClasses.invert, CSSMathClamp, CSSVariableReferenceValue, CSSUnparsedValue,
+    CSSTransformComponent, CSSTranslate, CSSRotate, CSSScale, CSSSkew, CSSSkewX, CSSSkewY, CSSPerspective, CSSMatrixComponent, CSSTransformValue,
+    StylePropertyMapReadOnly, StylePropertyMap })) {
+    Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
+    def(k, v);
+  }
   def('getComputedStyle', (el, pseudo) => {
     if (!(el instanceof Element)) throw new TypeError("Failed to execute 'getComputedStyle': parameter 1 is not of type 'Element'.");
     return computedStyle(el);
