@@ -3980,7 +3980,7 @@
   for (const name of ['CanvasRenderingContext2D', 'OffscreenCanvasRenderingContext2D', 'OffscreenCanvas', 'Path2D', 'ImageData',
     'ImageBitmap', 'CanvasGradient', 'CanvasPattern', 'TextMetrics', 'DOMMatrix', 'DOMMatrixReadOnly', 'DOMPoint', 'DOMPointReadOnly',
     'createImageBitmap'])
-    if (!(name in globalThis)) Object.defineProperty(globalThis, name, { get: () => c2d()[name], configurable: true,
+    if (!(name in globalThis)) Object.defineProperty(globalThis, name, { get: () => { const o = c2d(); const v = o[name]; idlShape(name, v); return v; }, configurable: true,
       set(v) { Object.defineProperty(globalThis, name, { value: v, writable: true, configurable: true }); } });
   for (const C of [...glClasses, WebGLActiveInfo, WebGLShaderPrecisionFormat, WebGLContextEvent]) def(C.name, C);
   // pagewasm: a data property once read (WebIDL); before that an accessor that compiles the glue.
@@ -15767,21 +15767,14 @@
   }
   // ==== end sanitizer =====================================================================
 
-  // ---- Interface objects as Web IDL defines them (§3.7.1 to §3.7.3) ----
-  // An interface's attributes, operations and constants are enumerable own properties of its
-  // interface prototype object (of the interface object when static), and the prototype's
-  // class string is the interface's name. The classes above are JavaScript classes, whose
-  // members are not enumerable: one pass sets both for every interface on the global, names
-  // the accessor functions, and puts the interface check in front of a getter that lacks it.
-  // It runs when the prelude runs (once for the engine, not for each page).
-  for (const name of Object.getOwnPropertyNames(globalThis)) {
-    if (esGlobals.has(name) || !/^[A-Z]/.test(name)) continue;
-    const gd = Object.getOwnPropertyDescriptor(globalThis, name);
-    const C = gd && gd.value;
-    if (typeof C !== 'function') continue;
+  const idlShaped = new WeakSet();
+  // The shape of one interface object (the pass below; also for interfaces made on first use).
+  function idlShape(name, C) {
+    if (typeof C !== 'function' || idlShaped.has(C)) return;
+    idlShaped.add(C);
     const cd = Object.getOwnPropertyDescriptor(C, 'prototype');
     const P = cd && cd.value;
-    if (P === null || typeof P !== 'object') continue;
+    if (P === null || typeof P !== 'object') return;
     if (C.name === name && !Object.prototype.hasOwnProperty.call(P, Symbol.toStringTag))
       Object.defineProperty(P, Symbol.toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
     // The window and the worker scopes are global objects: their attributes are read with
@@ -15827,6 +15820,18 @@
       const sd = Object.getOwnPropertyDescriptor(C, k);
       if (sd.configurable && !sd.enumerable) { sd.enumerable = true; Object.defineProperty(C, k, sd); }
     }
+  }
+  // ---- Interface objects as Web IDL defines them (§3.7.1 to §3.7.3) ----
+  // An interface's attributes, operations and constants are enumerable own properties of its
+  // interface prototype object (of the interface object when static), and the prototype's
+  // class string is the interface's name. The classes above are JavaScript classes, whose
+  // members are not enumerable: one pass sets both for every interface on the global, names
+  // the accessor functions, and puts the interface check in front of a getter that lacks it.
+  // It runs when the prelude runs (once for the engine, not for each page).
+  for (const name of Object.getOwnPropertyNames(globalThis)) {
+    if (esGlobals.has(name) || !/^[A-Z]/.test(name)) continue;
+    const gd = Object.getOwnPropertyDescriptor(globalThis, name);
+    idlShape(name, gd && gd.value);
   }
 
   return {
