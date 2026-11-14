@@ -210,9 +210,9 @@ the rest is paid for each pseudo-element made. -/
 def styled (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Dom × Array Computed) := do
   if !used rules then return (dom, ← computeFor treeScope dom rules textScale state)
-  -- as `computeFor` does: a `:has()` nothing satisfies, and each `:has()` compound matched
-  -- once against the document (`CSS.pruneHas`, `CSS.resolveHas`)
-  let rules := if treeScope.isNone then resolveHas dom (pruneHas dom rules) else rules
+  -- as `computeFor` does (`CSS.forDocument`): `:has()` and the structural pseudo-classes
+  -- worked out once for the document
+  let rules := if treeScope.isNone then forDocument dom rules else rules
   let tree := match treeScope with
     | some ts => ts.tree
     | none => dom

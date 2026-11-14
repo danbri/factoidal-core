@@ -2423,3 +2423,5 @@ L4Factoidal_WebNN_instDecidableEqCoord_decEq  # (b) derived DecidableEq: nesting
 L4Factoidal_WebNN_GpuRun_Tests_run  # (c) #guard helper (WebNN/GpuTests.lean): one call per element of a literal list of API calls in a test, about a dozen
 L4Factoidal_Rendering_CSS_resolveHasIn  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
 L4Factoidal_Rendering_CSS_mentionsHas  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
+L4Factoidal_Rendering_CSS_resolveStructuralIn  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
+L4Factoidal_Rendering_CSS_mentionsStructural  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
