@@ -726,8 +726,8 @@ def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :
 
 /-- The `node_query` ops that `Hosts.Dom.serve` answers: below 16, and 30 to 32 (slots, the
 composed path, the postMessage origin check). Ops 100 to 199 are `Hosts.Dom.domOp`'s; the
-others (16 to 29, 33, 34, 41, 200 and up) are this module's (`pageQuery`, `postToFrame`,
-`mediaAnswer`). -/
+others (16 to 29, 33, 34, 41, 42, 200 and up) are this module's (`pageQuery`, `postToFrame`,
+`mediaAnswer`, `captureOp`). -/
 def domQueryOps (op : Nat) : Bool := op < 16 || (op ≥ 30 && op ≤ 32)
 
 /-- The `node_query` ops that `Hosts.Dom.domOp` answers: 100 to 199. -/
@@ -747,6 +747,36 @@ is not a `getComputedStyle` op. -/
 theorem referrerSourceOp_route : domOpRange referrerSourceOp = true ∧ ∀ k, referrerSourceOp ≠ 200 + k := by
   refine ⟨by decide, fun k => ?_⟩
   simp only [referrerSourceOp]; omega
+
+/-- The `node_query` op of pointer capture (`captureOp`). It was 220, the number of the
+twentieth computed property (`border-right-width`): `getComputedStyle(el).borderRightWidth`
+answered `NotFoundError` on every page. -/
+def pointerCaptureOp : Nat := 42
+
+/-- The `node_query` ops of `getComputedStyle` and of the resolved grid values: 200 and up
+(200 + k, the k-th computed property; 100200 + k, the computed value; 200 + 1000000 × (i + 1)
++ k, a pseudo-element's). No other op may take a number here. -/
+def computedRange (op : Nat) : Bool := op ≥ 200
+
+/-- Kind: correctness theorem. Says: the pointer capture op is not a `getComputedStyle` op (no
+200 + k), and is none of the ops that `Hosts.Dom.serve`, `animOp` (60 to 69) or
+`Hosts.Dom.domOp` answer, so `serveExtra` routes it to `captureOp` alone. -/
+theorem pointerCaptureOp_route :
+    computedRange pointerCaptureOp = false ∧ (∀ k, pointerCaptureOp ≠ 200 + k) ∧
+    domQueryOps pointerCaptureOp = false ∧ domOpRange pointerCaptureOp = false ∧
+    ¬ (pointerCaptureOp ≥ 60 ∧ pointerCaptureOp < 70) := by
+  refine ⟨by decide, fun k => ?_, by decide, by decide, by decide⟩
+  simp only [pointerCaptureOp]; omega
+
+/-- Kind: correctness theorem. Says: every op that `Hosts.Dom.serve` or `Hosts.Dom.domOp`
+answers, and the referrer source and pointer capture ops, are below the computed range: an
+op of `getComputedStyle` reaches the layout reads and nothing else. -/
+theorem computedRange_others (op : Nat)
+    (h : domQueryOps op = true ∨ domOpRange op = true ∨ op = referrerSourceOp ∨ op = pointerCaptureOp) :
+    computedRange op = false := by
+  simp only [domQueryOps, domOpRange, referrerSourceOp, pointerCaptureOp, computedRange,
+    Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, decide_eq_false_iff_not] at *
+  omega
 
 /-- The most messages a session may have waiting for the host. -/
 def maxOutbox : Nat := 4096
@@ -855,7 +885,8 @@ def mediaAnswer (h : Host) (q : String) : Except Int String :=
 /-- A placeholder for the DOM state while an import holds it. -/
 def emptyDomHost : DomHost := { dom := {} }
 
-/-- `setPointerCapture`, `releasePointerCapture` and `hasPointerCapture` (node_query op 220)
+/-- `setPointerCapture`, `releasePointerCapture` and `hasPointerCapture` (node_query op 42,
+`pointerCaptureOp`)
 on element `node`: "" when done, "NotFoundError" for a pointer that is not active,
 "InvalidStateError" for an element that is not connected; `hasPointerCapture` answers "1" or
 "0". A pointer that is not in the active buttons state is not captured (§10.1). -/
@@ -943,7 +974,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
         ({ h with dom, reads }, st, r)
     else
-      if a 1 == 220 then
+      if a 1 == pointerCaptureOp then
         -- pointer capture (Pointer Events 3 §10.1): `q` is "s ID", "r ID" or "h ID"
         (match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
         | .error e => (h, st, Hosts.Dom.codeOrTrap e)

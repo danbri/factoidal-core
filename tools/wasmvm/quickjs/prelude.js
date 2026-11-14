@@ -14015,12 +14015,12 @@
     configurable: true, enumerable: true });
   // The page of a script session does not scroll (as window.scrollTo): nothing to bring into view.
   if (!('scrollIntoView' in Element.prototype)) define(Element.prototype, 'scrollIntoView', function scrollIntoView() {});
-  // Pointer capture (Pointer Events 3 §10.1): Lean keeps the capture and decides (node_query 220).
+  // Pointer capture (Pointer Events 3 §10.1): Lean keeps the capture and decides (node_query 42).
   for (const [name, verb] of [['setPointerCapture', 's'], ['releasePointerCapture', 'r'], ['hasPointerCapture', 'h']])
     define(Element.prototype, name, { [name](pointerId) {
       if (arguments.length < 1) throw new TypeError(`${name}: 1 argument required`);
       if (!(this instanceof Element)) throw new TypeError('Illegal invocation');
-      const r = n.query(nodeId(this), 220, verb + ' ' + (pointerId | 0));
+      const r = n.query(nodeId(this), 42, verb + ' ' + (pointerId | 0));
       if (verb === 'h') return r === '1';
       if (r === 'NotFoundError') throw new DOMException('No active pointer with the given id is found.', 'NotFoundError');
       if (r === 'InvalidStateError') throw new DOMException('The element is not connected.', 'InvalidStateError');
