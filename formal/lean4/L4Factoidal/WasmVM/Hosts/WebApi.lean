@@ -344,7 +344,9 @@ def keyFields (handle : Nat) (k : Key) : List ByteArray :=
   let pairs : List (String × String) :=
     (match algo.hash with | some h => [("hash", h.name)] | none => []) ++
     (if algo.alg == .hmac then [("length", toString algo.length)] else []) ++
-    (if algo.curve != "" then [("namedCurve", algo.curve)] else [])
+    (if algo.curve != "" then [("namedCurve", algo.curve)] else []) ++
+    (if algo.alg.isRsa then [("modulusLength", toString algo.modulusLength),
+      ("publicExponent", Crypto.bytesToHex algo.publicExponent)] else [])
   ["key", toString handle, k.type.name, if k.extractable then "1" else "0",
     ",".intercalate (k.usages.map (·.name)), algo.alg.name, toString pairs.length].map (·.toUTF8) ++
     pairs.flatMap fun (a, b) => [a.toUTF8, b.toUTF8]
@@ -353,8 +355,9 @@ def keyFields (handle : Nat) (k : Key) : List ByteArray :=
 (what its `CryptoKey` object is made from: handle, type, extractable, usages, algorithm) are
 the same whatever the key's bytes: generateKey, importKey, deriveKey, unwrapKey, cloneKey and
 getPublicKey answer with these fields and nothing else of the key, so none of them hands key
-bytes to script. Does not say: anything of exportKey and wrapKey (`exportOp_blind`,
-`wrapPlain_blind`) or of the outputs of primitives keyed by the bytes. -/
+bytes to script. For RSA the public exponent and modulus length are in the algorithm, as the
+API requires; they are public. Does not say: anything of exportKey and wrapKey
+(`exportOp_blind`, `wrapPlain_blind`) or of the outputs of primitives keyed by the bytes. -/
 theorem keyFields_blind (handle : Nat) (k : Key) : keyFields handle k.blind = keyFields handle k := rfl
 
 def jwkFields (ms : List (String × JwkVal)) : List ByteArray :=
@@ -386,7 +389,8 @@ def jwkOfJson (b : ByteArray) : Res Args := do
         | .string s => .ok (acc.push ("key_ops[]", s.toUTF8))
         | _ => .error .data) (acc.push ("key_ops", ByteArray.empty))
     | "ext", .bool b => .ok (acc.push ("ext", (if b then "true" else "false").toUTF8))
-    | "oth", _ => .ok acc
+    -- Presence only: a multi-prime RSA key is refused by the import (`importRsa`).
+    | "oth", _ => .ok (acc.push ("oth", ByteArray.empty))
     | n, .string s => if n == "key_ops" || n == "ext" then .error .data else .ok (acc.push (n, s.toUTF8))
     | _, _ => .error .data) #[]
 
@@ -480,7 +484,7 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
     match errInt (keyOf s.keys a "key") with
     | .error e => fail e
     | .ok k =>
-      match drawFor s (if k.algo.alg == .ecdsa then 256 else 0) with
+      match drawFor s (if k.algo.alg == .ecdsa then 256 else if k.algo.alg == .rsaPss then min ((p.nat? "saltLength").getD 0) 512 else 0) with
       | .error e => fail e
       | .ok (rand, s) => (s, errInt ((sign algName p k ((a.get? "data").getD .empty) rand).map fun b => pack ["bytes".toUTF8, b]))
   | "verify" => (s, errInt (do
@@ -513,18 +517,25 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
         addKey s.keys nk) with
     | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
     | .error e => fail e
-  | "encrypt" | "decrypt" => (s, errInt (do
-      let k ← keyOf s.keys a "key"
-      let b ← crypt (method == "encrypt") algName p k ((a.get? "data").getD .empty)
-      pure (pack ["bytes".toUTF8, b])))
-  | "wrapKey" => (s, errInt (do
+  | "encrypt" | "decrypt" =>
+    match errInt (keyOf s.keys a "key") with
+    | .error e => fail e
+    | .ok k =>
+      match drawFor s (if method == "encrypt" && k.algo.alg == .rsaOaep then 64 else 0) with
+      | .error e => fail e
+      | .ok (rand, s) => (s, errInt ((crypt (method == "encrypt") algName p k ((a.get? "data").getD .empty) rand).map
+          fun b => pack ["bytes".toUTF8, b]))
+  | "wrapKey" =>
+    match drawFor s 64 with
+    | .error e => fail e
+    | .ok (rand, s) => (s, errInt (do
       let wk ← keyOf s.keys a "wrappingKey"
       if wk.algo.alg.name != algName || !wk.usages.contains .wrapKey then throw .invalidAccess
       let k ← keyOf s.keys a "key"
       -- The key's bytes come from exportKey alone (`wrapPlain_extractable`, `wrapPlain_blind`).
       let bytes ← wrapPlain (fun ms => (jwkJson ms).toUTF8) k ((a.str? "format").getD "")
       let wk' := { wk with usages := wk.usages ++ [.encrypt] }
-      let c ← crypt true algName p wk' bytes
+      let c ← crypt true algName p wk' bytes rand
       pure (pack ["bytes".toUTF8, c])))
   | "unwrapKey" =>
     let t := sub a "t:"
@@ -603,6 +614,12 @@ theorem subtle_sign_no_usage (s : State) (fs : Array ByteArray) (h : subtleMetho
     rw [sign_no_usage hu]
     rfl
 
+/-- The private parts of an RSA key, handed to `WebHacl.wipe`. -/
+def wipeRsa : Option Crypto.WebCryptoKeys.RsaParts → Nat
+  | some r => Crypto.WebHacl.wipe r.d + Crypto.WebHacl.wipe r.p + Crypto.WebHacl.wipe r.q +
+      Crypto.WebHacl.wipe r.dp + Crypto.WebHacl.wipe r.dq + Crypto.WebHacl.wipe r.qi
+  | none => 0
+
 /-- Forget a key (prelude.js calls this when the page's CryptoKey is collected): its bytes
 are zeroed in place when the store held the only reference (`WebHacl.wipe`). -/
 def dropKey (s : State) (h : Nat) : State × Nat :=
@@ -610,7 +627,7 @@ def dropKey (s : State) (h : Nat) : State × Nat :=
   | none => (s, 0)
   | some k =>
     let keys := s.keys.keys.erase h
-    let n := Crypto.WebHacl.wipe k.material + Crypto.WebHacl.wipe k.pub
+    let n := Crypto.WebHacl.wipe k.material + Crypto.WebHacl.wipe k.pub + wipeRsa k.rsa
     ({ s with keys := { s.keys with keys } }, n)
 
 end Subtle
@@ -680,10 +697,15 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       match randomBytes s n with
       | .error e => (s, .error e)
       | .ok (out, s) => (s, if op == 30 then .ok out else ofStr (Crypto.WebCrypto.uuidOf out))
+  -- digest: the name as registered, the data, then the normalized algorithm's members
+  -- (`a:` pairs, read by SHA-3 and cSHAKE only).
   | 32 => pure' do
-    match Crypto.WebHacl.HashAlg.ofName? (← strArg fs 0) with
+    let name ← strArg fs 0
+    match Crypto.WebHacl.HashAlg.ofName? name with
     | some h => .ok (Crypto.WebHacl.hashFast h (bytesArg fs 1))
-    | none => .error (-23)
+    | none =>
+      let p := Crypto.WebCryptoKeys.sub (Crypto.WebCryptoKeys.pairsOf (fs.extract 1 fs.size)) "a:"
+      (Crypto.WebCryptoKeys.digestExt name p (bytesArg fs 1)).mapError (·.code)
   -- The registry: the registered name and the dictionary members to convert.
   | 40 => pure' do
     match Crypto.WebCryptoKeys.normalizeSpec (← strArg fs 0) (← strArg fs 1) with

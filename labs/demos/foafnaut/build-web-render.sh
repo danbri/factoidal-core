@@ -125,8 +125,8 @@ while IFS= read -r file; do SOURCES+=("$file"); done < "$BUILD/core-c-files.txt"
 # Portable C only: no Vale assembly, no vector units, so native and Wasm are the same code.
 HACL="$ROOT/third_party/hacl"
 HACL_SOURCES=("$PROJECT/ffi/hacl_webcrypto.c")
-for unit in Hacl_Hash_SHA1 Hacl_Hash_SHA2 Hacl_HMAC Hacl_Hash_Blake2s Hacl_Hash_Blake2b Hacl_Ed25519 \
-  Hacl_Curve25519_51 Hacl_P256 Hacl_AEAD_Chacha20Poly1305 Hacl_Chacha20 Hacl_MAC_Poly1305 Lib_Memzero0; do
+for unit in Hacl_Hash_SHA1 Hacl_Hash_SHA2 Hacl_Hash_SHA3 Hacl_HMAC Hacl_Hash_Blake2s Hacl_Hash_Blake2b Hacl_Ed25519 \
+  Hacl_Curve25519_51 Hacl_P256 Hacl_AEAD_Chacha20Poly1305 Hacl_Chacha20 Hacl_MAC_Poly1305 Hacl_Bignum Hacl_Bignum64 Hacl_RSAPSS Lib_Memzero0; do
   HACL_SOURCES+=("$HACL/src/$unit.c")
 done
 for module in "${LAB_MODULES[@]}"; do SOURCES+=("$BUILD/ir/$module.c"); done
@@ -159,7 +159,10 @@ if [ "$MODE" = --native ]; then
   for source in "${HACL_SOURCES[@]}"; do
     object="$BUILD/obj-native/hacl_$(basename "$source" .c).o"
     printf 'NATIVE %s %s\n' "$(basename "$source" .c)" "$(date -u)"
-    "${CC:-cc}" -O3 -DNDEBUG -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
+    # -fPIC: these objects also go into the Linux shared library, and Hacl_RSAPSS.c and
+    # Hacl_Hash_SHA3.c name `stderr` (KaRaMeL's error print), which a shared object must reach
+    # through the GOT ("relocation R_X86_64_PC32 cannot be used against symbol 'stderr'").
+    "${CC:-cc}" -O3 -DNDEBUG -fPIC -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
   LEANLIB="$TOOLCHAIN/lib/lean"

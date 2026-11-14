@@ -7,7 +7,11 @@
  * Vectors: FIPS 180-2 Appendix B ("abc") for SHA-1/256/384/512; RFC 2202 §3 case 2
  * (HMAC-SHA-1) and RFC 4231 §4.3 case 2 (HMAC-SHA-256/384/512); RFC 8032 §7.1 tests 1
  * and 2 (Ed25519); RFC 7748 §6.1 (X25519); RFC 6979 Appendix A.2.5 (P-256 key and the
- * SHA-256 "sample" signature); RFC 8439 §2.8.2 (ChaCha20-Poly1305).
+ * SHA-256 "sample" signature); RFC 8439 §2.8.2 (ChaCha20-Poly1305); FIPS 202 ("abc" and
+ * the empty message) for SHA3-256/384/512 and SHAKE128/256, the values also given by
+ * Python's hashlib. RSA: a 2048-bit key made for this test with OpenSSL (not used anywhere
+ * else), with OpenSSL's RSASSA-PKCS1-v1_5 and RSASSA-PSS signatures of "abc" under SHA-256
+ * as the known answers (RFC 8017 §8.2 is deterministic: the signature must be equal).
  *
  *   tests/crypto/run-kat.sh   (compiles this file, the shim and HACL*, and runs it)
  */
@@ -35,6 +39,11 @@ lean_obj_res l4_web_hacl_p256_ecdh(b_lean_obj_arg, b_lean_obj_arg);
 lean_obj_res l4_web_hacl_chachapoly_seal(b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
 lean_obj_res l4_web_hacl_chachapoly_open(b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
 lean_obj_res l4_web_hacl_wipe(lean_obj_arg);
+lean_obj_res l4_web_hacl_sha3(uint8_t, uint32_t, b_lean_obj_arg);
+lean_obj_res l4_web_hacl_rsa_public(b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
+lean_obj_res l4_web_hacl_rsa_private(b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
+lean_obj_res l4_web_hacl_rsapss_sign(uint8_t, b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
+uint8_t l4_web_hacl_rsapss_verify(uint8_t, b_lean_obj_arg, b_lean_obj_arg, size_t, b_lean_obj_arg, b_lean_obj_arg);
 
 static int fails = 0, passes = 0;
 static lean_object *hx(const char *h) {
@@ -131,6 +140,40 @@ int main(void) {
   lean_object *bad = l4_web_hacl_chachapoly_open(k, n, aad, ct);
   check("ChaCha20-Poly1305 forged: one byte 0, nothing else", lean_sarray_size(bad) == 1 && lean_sarray_cptr(bad)[0] == 0);
   check("ChaCha20-Poly1305 short nonce refused", EMPTY(l4_web_hacl_chachapoly_seal(k, hx("00"), aad, pt)));
+  /* FIPS 202. */
+  lean_object *nothing = hx("");
+  check("SHA3-256 abc", eq(l4_web_hacl_sha3(5, 32, abc), "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"));
+  check("SHA3-256 empty", eq(l4_web_hacl_sha3(5, 32, nothing), "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"));
+  check("SHA3-384 abc", eq(l4_web_hacl_sha3(6, 48, abc), "ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25"));
+  check("SHA3-512 abc", eq(l4_web_hacl_sha3(7, 64, abc), "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0"));
+  check("SHAKE128 empty, 32 octets", eq(l4_web_hacl_sha3(8, 32, nothing), "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26"));
+  check("SHAKE256 abc, 64 octets", eq(l4_web_hacl_sha3(9, 64, abc), "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739d5a15bef186a5386c75744c0527e1faa9f8726e462a12a4feb06bd8801e751e4"));
+  check("SHA3-256 asked for 31 octets refused", EMPTY(l4_web_hacl_sha3(5, 31, abc)));
+  check("SHA-3: unknown code refused", EMPTY(l4_web_hacl_sha3(4, 32, abc)));
+  check("SHAKE128: no output refused", EMPTY(l4_web_hacl_sha3(8, 0, abc)));
+  check("SHAKE128: over the output bound refused", EMPTY(l4_web_hacl_sha3(8, 16777217U, abc)));
+  /* RSA, RFC 8017: the test key, and OpenSSL's signatures of "abc" under SHA-256. */
+  lean_object *rn = hx("d22790084d5ed30476dc8eb306c6c5f18876eb861d7029849e97cac2aa544e2b005170c498a8a52e0564bbb89afc016c4877d9221479501ddcae298d8287d85d3c124117e9b6421fa7d065f80a296ed30421cb468b691767334ee406d78a6ecda552ec50faad6daee01399fe08d3bf8558583df68eaa2fe62fc02108af3dd0ec4b8a07f83006a600c7a8c4bdb446767d7b5a608e6f0fe2d6b9d17dda49d171f49680031590ef0bfcf14aec5e518a46978cdecd258ed4ac796da1126017b9c715fa8f392914071983ae8dbacff3278b2f50f8caac6060aa36442d58a27a4f33b318d5f4c5c5c62885a16266ce0f7c30a0abd7c1e788164defea66ccb23e64448d");
+  lean_object *re = hx("010001");
+  lean_object *rd = hx("07144818cf7fbde7579859c23ec73161cfdc0456673acbb093a5bf5c76b5125106836278c23fb96e11c67140686576d2cea4cd8eb00134d4075c0d3af41bb40bd2a5e17021c7a9a0915c46cdbd373a16d251251cd793645e189a096510465c872c3b87df0e780b2029f2346cc74aad6d462aeace19c387e0ded8ea594ae09a8a063cd91564097679f6af1125a43a4e5993fe1bb9f03b337cea4dd66b6c60e8c041084d07e99c99aba2d4734159a189c46b02d1b686525111aa2c8f364aba843a3a631cd18335f3a88ddef7185f121830e8c94cee1186e8d64499cdf148d7870f868c5e3fb1c00a5c31c0a9b244d792a9e248c69be551269031e4d80eef198b21");
+  lean_object *em = hx("0001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff003031300d060960864801650304020105000420ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  const char *rsasig = "91d344d7e66389f6bf0cbeb809fbc4c005ceeac622d84d468a0820e1594f31eebc8fdd371d8b13bb7d94c9c3ecadc8783b304a7923b1a21ec42d479737425af4c57ccce422773797855dc306884021fc46945f94dfb7f36c02cbb1717a0e5287a73be59abff540695476a5cf9d271de976e18147de84c399ccfb333cb55882175939f0e6a46ca86173c712ea0ba8dfc984304321313dc6070c1eb43336f428232b905ffd12455c53ef1be3781720356ede565772a747aa4be866ce17de64c3e7833241b10995f1423a09a862fd178dfef1b883c4c8af06aa11820bf6d581e0826321e17ba65d4dae42221922d08f75690f6bf4c80c1ffdf74b36455e6358c4e2";
+  lean_object *sigpss = hx("bd1a73c2d1bdfac59194bcde456c0977974dc6d6a344ab0378768e1c7b33dea92858493fc45a216dc0e4e2ecedf673851991a40ac9dc8fe838ff634b1e05d51b5ee8bd4df2b62d84968a410adeed1927957bf17d63a51c23455c9a1c389c5656d8a7715a53642889d61d229cf6f3def84654016f2562c0bc5cbfb1a85f3c5af69f0b6597fa57e41085a8e190dd36a45837c7b1bafa2d8e9580125a9b5e675387180be3b4411bfb42bc92db5d4442a21518886334e6157f8d07f684f12f504cd147e3610b632f9bf19534a48041e66b347389fee1db817d710994903c3d95c1cd71fe22260282849474a075704bbad37ac805545a6e9490ac4f050d4b3e394956");
+  check("RSASP1 (EMSA-PKCS1-v1_5 of abc) is OpenSSL's signature", eq(l4_web_hacl_rsa_private(rn, rd, em), rsasig));
+  check("RSAVP1 of OpenSSL's signature is the encoded message", lean_sarray_size(em) == 256 && memcmp(lean_sarray_cptr(l4_web_hacl_rsa_public(rn, re, hx(rsasig))), lean_sarray_cptr(em), 256) == 0);
+  check("RSA: operand not below n refused", EMPTY(l4_web_hacl_rsa_public(rn, re, rn)));
+  check("RSA: short operand refused", EMPTY(l4_web_hacl_rsa_public(rn, re, hx("02"))));
+  check("RSA: modulus not in whole limbs refused", EMPTY(l4_web_hacl_rsa_public(hx("c1c2c3c4c5"), re, hx("0000000002"))));
+  check("RSA-PSS verify of OpenSSL's signature", l4_web_hacl_rsapss_verify(2, rn, re, 32, sigpss, abc) == 1);
+  check("RSA-PSS wrong message", l4_web_hacl_rsapss_verify(2, rn, re, 32, sigpss, str("abd")) == 0);
+  check("RSA-PSS wrong salt length", l4_web_hacl_rsapss_verify(2, rn, re, 20, sigpss, abc) == 0);
+  check("RSA-PSS short signature", l4_web_hacl_rsapss_verify(2, rn, re, 32, hx("00"), abc) == 0);
+  check("RSA-PSS SHA-1 refused", l4_web_hacl_rsapss_verify(1, rn, re, 20, sigpss, abc) == 0);
+  lean_object *salt = hx("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+  lean_object *made = l4_web_hacl_rsapss_sign(2, rn, re, rd, salt, abc);
+  check("RSA-PSS sign answers |n| octets", lean_sarray_size(made) == 256);
+  check("RSA-PSS sign then verify", l4_web_hacl_rsapss_verify(2, rn, re, 32, made, abc) == 1);
+  check("RSA-PSS sign: SHA-1 refused", EMPTY(l4_web_hacl_rsapss_sign(1, rn, re, rd, salt, abc)));
   /* Erasure: an exclusive array is zeroed before it is freed (its size is answered). */
   lean_object *w = hx("0102030405");
   lean_object *wn = l4_web_hacl_wipe(w);
