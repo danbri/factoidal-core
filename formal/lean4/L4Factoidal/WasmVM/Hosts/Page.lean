@@ -174,6 +174,9 @@ structure Carry where
   rules : List L4Factoidal.Rendering.CSS.Rule
   state : L4Factoidal.Rendering.CSS.ElementState
   styles : Array L4Factoidal.Rendering.CSS.Computed
+  /-- No rule has `:has()` (`CSS.attributesReachParentOnly`): a write of an element's
+  `class` then changes styles in the subtree of its parent alone. -/
+  parentOnly : Bool := false
 
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
 pixels) with the values of the page's animations, as answers. The engine gives the
@@ -181,8 +184,9 @@ function; it lays out when a read first asks.
 
 The last argument is what an earlier measure left with the nodes to style again: the
 caller says by it that the arena, the viewport and the animated values are those of that
-measure except for the `style` attribute and the animated values of those nodes (their
-subtrees are styled again, the rest is taken as it was). With none the cascade is of the
+measure except for the `style` attribute and the animated values of those nodes, and
+for the `class` of their children when the measure's rules have no `:has()`
+(`Carry.parentOnly`); their subtrees are styled again, the rest is taken as it was. With none the cascade is of the
 whole document. The second answer is what this measure leaves (none when the page is not
 one a `Carry` is for); asking for it makes the cascade. -/
 abbrev Measure := Arena → Nat → Nat → List L4Factoidal.Rendering.Animation.Override → Option (Carry × List Nat) →
@@ -217,9 +221,13 @@ structure Reads where
   layouts : Nat := 0
   /-- Of a page with animations: its last measure (`Host.measureNow`). -/
   styleKept : Option StyleKept := none
-  /-- The elements whose `style` attribute was written since the last measure, when
-  nothing else of the document was written since; none after any other write. -/
+  /-- The elements to style again: those whose `style` attribute was written since the
+  last measure and the parents of those whose `class` was, when nothing else of the
+  document was written since; none after any other write. -/
   styleWrites : Option (List Nat) := none
+  /-- One of `styleWrites` is there for a `class` written under it: the rules that match
+  in its subtree may differ, not only the declarations of the element itself. -/
+  styleSubtrees : Bool := false
   /-- The version `styleWrites` is exact for: `Reads.wrote` keeps it at `version`. A write
   that raises `version` by any other way leaves it behind, and the next measure is then
   of the whole document (`Host.measureNow`): a new write path that does not go through
@@ -232,10 +240,11 @@ structure Reads where
   deriving Inhabited
 
 /-- The reads after a write of the document: a new version. `style` is the element
-whose `style` attribute alone the write set; `neutral` a write that changes nothing a
-style reads (a timer, a listener). Any other write forgets the noted elements, and so
-does a long list of them. -/
-def Reads.wrote (r : Reads) (style : Option Nat := none) (neutral : Bool := false) : Reads :=
+whose `style` attribute alone the write set, or, with `subtree`, the parent of the
+element whose `class` alone it set; `neutral` a write that changes nothing a style reads
+(a timer, a listener). Any other write forgets the noted elements, and so does a long
+list of them. -/
+def Reads.wrote (r : Reads) (style : Option Nat := none) (neutral : Bool := false) (subtree : Bool := false) : Reads :=
   -- the noted elements, when they are exact for the version before this write
   let noted := if r.styleVersion == r.version then r.styleWrites else none
   { r with
@@ -245,20 +254,33 @@ def Reads.wrote (r : Reads) (style : Option Nat := none) (neutral : Bool := fals
       if neutral then noted
       else match style, noted with
         | some n, some ns => if ns.contains n then some ns else if ns.length ≥ 32 then none else some (n :: ns)
-        | _, _ => none }
+        | _, _ => none
+    styleSubtrees := if neutral then r.styleSubtrees else r.styleSubtrees || subtree }
 
 /-- Kind: safety of the partial restyle. Says: after a write that is neither of a `style`
 attribute nor neutral, no element is noted: the next measure styles the whole document.
 Does not say: that every write of the engine calls `wrote` (a write that only raises
 `version` leaves `styleVersion` behind, which `Host.measureNow` reads the same way). -/
-theorem Reads.wrote_other (r : Reads) : (r.wrote none false).styleWrites = none := by
+theorem Reads.wrote_other (r : Reads) (subtree : Bool) : (r.wrote none false subtree).styleWrites = none := by
   simp [Reads.wrote]
+
+/-- Kind: safety of the partial restyle. Says: a write noted for a subtree (a `class`
+write) leaves the mark that a subtree is to be read again, and no later write takes the
+mark away: only a measure does (`Host.measureNow`). Does not say: that the mark is exact
+(it may stay after the noted elements are forgotten, which costs nothing). -/
+theorem Reads.wrote_subtree (r : Reads) (n : Nat) :
+    (r.wrote (some n) false true).styleSubtrees = true := by
+  simp [Reads.wrote]
+
+theorem Reads.wrote_keeps_subtree (r : Reads) (style : Option Nat) (neutral subtree : Bool)
+    (h : r.styleSubtrees = true) : (r.wrote style neutral subtree).styleSubtrees = true := by
+  cases neutral <;> simp [Reads.wrote, h]
 
 /-- Kind: bookkeeping. Says: every `wrote` leaves the noted elements exact for the new
 version, and the version one higher. -/
-theorem Reads.wrote_version (r : Reads) (style : Option Nat) (neutral : Bool) :
-    (r.wrote style neutral).styleVersion = (r.wrote style neutral).version ∧
-    (r.wrote style neutral).version = r.version + 1 := by
+theorem Reads.wrote_version (r : Reads) (style : Option Nat) (neutral subtree : Bool) :
+    (r.wrote style neutral subtree).styleVersion = (r.wrote style neutral subtree).version ∧
+    (r.wrote style neutral subtree).version = r.version + 1 := by
   simp [Reads.wrote]
 
 /-- Everything the imports change, except the store. -/
@@ -562,6 +584,47 @@ def Host.askAnimationFrame (h : Host) : Host :=
   let loop := { loop with frames := loop.frames.filter (·.id == id) ++ loop.frames.filter (·.id != id) }
   { h with loop, anim := { h.anim with frameAsked := true } }
 
+/-- The nodes of the subtrees on `stack`, at most `fuel` of them: none when there are
+more. -/
+def subtreesGo (dom : Arena) : Nat → List Nat → List Nat → Option (List Nat)
+  | _, [], out => some out
+  | 0, _ :: _, _ => none
+  | fuel + 1, n :: rest, out => subtreesGo dom fuel ((dom.children n).toList ++ rest) (n :: out)
+
+/-- The most nodes that a write of a `class` styles again on its own: with more under
+the parent, the styles are made whole (`Host.measureNow`). -/
+def subtreeLimit : Nat := 512
+
+/-- The nodes of the subtrees of `roots`, when they are at most `subtreeLimit`. -/
+def subtreesWithin (dom : Arena) (roots : List Nat) : Option (List Nat) :=
+  subtreesGo dom subtreeLimit roots []
+
+theorem subtreesGo_length (dom : Arena) (fuel : Nat) (stack out ns : List Nat)
+    (h : subtreesGo dom fuel stack out = some ns) : ns.length ≤ out.length + fuel := by
+  induction fuel generalizing stack out with
+  | zero =>
+    cases stack with
+    | nil => simp [subtreesGo] at h; subst h; simp
+    | cons a t => simp [subtreesGo] at h
+  | succ k ih =>
+    cases stack with
+    | nil => simp [subtreesGo] at h; subst h; omega
+    | cons a t =>
+      simp only [subtreesGo] at h
+      have := ih _ _ h
+      simp at this
+      omega
+
+/-- Kind: resource bound. Says: the nodes that the partial path reads for `class` writes
+are at most `subtreeLimit`, whatever the document (with more, there is no such list and
+the measure is of the whole document). Does not say: a bound for `style` attribute
+writes, whose elements' subtrees are styled again whatever their size, or for the whole
+cascade. -/
+theorem subtreesWithin_length (dom : Arena) (roots ns : List Nat)
+    (h : subtreesWithin dom roots = some ns) : ns.length ≤ subtreeLimit := by
+  have := subtreesGo_length dom subtreeLimit roots [] ns h
+  simpa using this
+
 /-- Node `n` is one of `roots` or has one as an ancestor. -/
 def underAny (dom : Arena) (roots : List Nat) (n : Nat) : Bool := Id.run do
   if roots.isEmpty then return false
@@ -577,9 +640,11 @@ animation, or with an animation or transition declaration (measure op 28), has a
 change first (`Animation.styleChange`), and its layout takes the animated values
 (`Animation.overrides`); any other page takes neither step.
 
-Such a page keeps its styles (`StyleKept`). When only `style` attributes were written
-since its last measure (`Reads.styleWrites`), the cascade is of the subtrees of those
-elements (`Measure`'s last argument), and, when no time passed and no script changed an
+Such a page keeps its styles (`StyleKept`). When only `style` attributes and `class`
+attributes were written since its last measure (`Reads.styleWrites`), the cascade is of
+the subtrees of those elements, and of the parents of the elements whose `class` was
+written when no rule has `:has()` and those subtrees are small (`subtreesWithin`;
+`Measure`'s last argument), and, when no time passed and no script changed an
 animation, so are the style change (`Animation.styleChangeOn`) and the effect stacks
 (`Animation.overridesWhere`): the animated values of the other elements are those of the
 last measure. When only the time moved (a frame of a page whose animations run), there is
@@ -593,17 +658,23 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
     let w := h.reads.width
     let ht := h.reads.height
     -- the last measure, when it is one to go on from: with the elements written since
-    let last : Option (StyleKept × List Nat) :=
+    -- (with a `class` written: the nodes under the noted elements, when the rules and their
+    -- count allow the partial path)
+    let last : Option (StyleKept × List Nat × List Nat) :=
       match h.reads.styleKept, h.reads.styleWrites with
       | some k, some nodes =>
-        if k.width == w && k.height == ht && k.base.isSome && h.reads.styleVersion == h.reads.version then some (k, nodes)
+        if k.width == w && k.height == ht && k.base.isSome && h.reads.styleVersion == h.reads.version then
+          if !h.reads.styleSubtrees then some (k, nodes, nodes)
+          else if (k.base.map (·.parentOnly)) == some true then (subtreesWithin dom nodes).map fun under => (k, nodes, under)
+          else none
         else none
       | _, _ => none
-    let (base, baseLeft) := m dom w ht [] (last.bind fun (k, nodes) => k.base.map fun c => (c, nodes))
+    let (base, baseLeft) := m dom w ht [] (last.bind fun (k, nodes, _) => k.base.map fun c => (c, nodes))
     let keep := fun (h : Host) (f : Answers) (kept : Option StyleKept) =>
       ({ h with reads := { h.reads with
           kept := some (h.reads.version, f), keptNow := h.anim.now, layouts := h.reads.layouts + 1,
-          styleKept := kept, styleWrites := kept.map fun _ => [], styleVersion := h.reads.version } }, some f)
+          styleKept := kept, styleWrites := kept.map fun _ => [], styleSubtrees := false,
+          styleVersion := h.reads.version } }, some f)
     -- with the style change made and the animated values known: the layout with them
     let finish := fun (h : Host) (anim : L4Factoidal.Rendering.Animation.State)
         (ovs : List L4Factoidal.Rendering.Animation.Override) (candidates : List Nat) (fromFinal : Option (Carry × List Nat)) =>
@@ -627,11 +698,12 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
         let ac := animationAccess dom base (h.reads.kept.map (·.2)) (some candidates)
         let anim := L4Factoidal.Rendering.Animation.styleChange h.anim ac
         finish h anim (L4Factoidal.Rendering.Animation.overrides anim ac) candidates none
-    | some (k, nodes) =>
+    | some (k, nodes, under) =>
       let ac := animationAccess dom base (h.reads.kept.map (·.2)) (some k.candidates)
-      -- of the written elements, those that declare an animation or a transition now
-      let declare := nodes.filter fun n => n < dom.size && dom.connected n && !(ac.decls n).isEmpty
-      let candidates := k.candidates.filter (fun c => !nodes.contains c) ++ declare
+      -- of the elements whose declarations may differ (the written ones; with a `class`
+      -- written, all under the noted ones), those that declare an animation or a transition now
+      let declare := (under.filter fun n => n < dom.size && dom.connected n && !(ac.decls n).isEmpty).eraseDups
+      let candidates := k.candidates.filter (fun c => !under.contains c) ++ declare
       let ac := { ac with candidates }
       if k.now == h.anim.now && k.epoch == h.reads.animEpoch then
         let dirty := underAny dom nodes
@@ -1003,16 +1075,21 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     let (w, st, r) := Hosts.PageWasm.serve mem args w st
     ({ h with wasm := w }, st, r)
   | _ =>
-    -- a write of an element's `style` attribute is noted as that (`Reads.styleWrites`); a
-    -- write that changes nothing in a document's tree (`detachedWrite`) changes no style
-    let styleOf : Option Nat :=
+    -- a write of an element's `style` attribute is noted as that (`Reads.styleWrites`), and
+    -- a write of its `class` as one under its parent; a write that changes nothing in a
+    -- document's tree (`detachedWrite`) changes no style
+    let styleOf : Option (Nat × Bool) :=
       if nm == "set_attribute" || nm == "remove_attribute" then
         match Hosts.Dom.readStr mem st (a 1) (a 2) 8 with
-        | .ok name => if name == "style" then some (a 0) else none
+        | .ok name =>
+          if name == "style" then some (a 0, false)
+          else if name == "class" then (h.dom.dom.get (a 0)).parent.map fun p => (p, true)
+          else none
         | .error _ => none
       else none
     let reads := if readOnlyImports.contains nm then h.reads
-      else h.reads.wrote styleOf (styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a)
+      else h.reads.wrote (styleOf.map (·.1)) (styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a)
+        (styleOf.any (·.2))
     -- the DOM state leaves the host for the call, so that a change of the arena is in place
     -- (`Hosts.Dom.change`)
     let ds := h.dom
