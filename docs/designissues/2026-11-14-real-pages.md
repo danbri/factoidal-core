@@ -202,15 +202,43 @@ engine makes from its one regular face: bold is the outline filled and stroked (
 1/24 to 1/32 of the font size), oblique a shear of 1/4 about the baseline. The cascade
 fields and the paint are a separate change on top of the cascade work.
 
+### What is not rendered
+
+Three things were laid out that a browser does not render: the content of `noscript`
+(scripts run here; lean-lang.org began with its noscript notice), an element with the
+`hidden` attribute (gov.uk's cookie notice showed the paragraphs of both of its answers,
+and any panel a page keeps hidden was drawn open), and the content of a `details` that is
+not open. They are part of the start style of an element in `CSS.computedFrom`, so an
+author rule for `display` wins, as over a user agent rule. `details`, `summary`, `hgroup`
+and `search` start as blocks.
+
+The search for a `details` element's `summary` reads at most 64 children
+(`CSS.firstSummary`): the first version looked through all children once for each
+`summary` child, a quadratic cost of a page's choosing.
+
+### Bounds (work driven by a page)
+
+| Work | Bound | State |
+|---|---|---|
+| picture of an SVG image | 65,536 pixels (`imageRaster_fits`, for sizes up to 4,096 a side, which `imageSize` gives); the document read is at most 1,048,576 characters; 64 repairs | proved for the pixels; the time for a pixel grows with the drawing's paths and is measured, not bounded |
+| images of a document | 64 images, 1,048,576 decoded pixels in all (`factorFor_bounds`, `factorFor_fits`), each image at most 1,048,576 pixels before it is decoded | proved |
+| summary of a `details` | 64 children read (`firstSummary_work`) | proved |
+| replay of script commands in a render | 65,536 commands (`Hosts.Dom.maxCommands`), refused past it | tested by a guard; the cost is linear: 3.7 s a layout at 26,319 commands |
+| a subresource transfer in a host | 64 steps (`loadSubresource`), 20 redirects in the engine | host code, tested |
+| sheets and images asked for again after script turns | one check at a time, the wait doubling to 4 s; 64 sheets, 64 images | host code, tested |
+| `font-weight` number | 4 digits read | by construction (`digits?`) |
+
 ### Proved, tested, open (this part)
 
-Proved: `staleResourceLeftOut_no_commands`; `WebRender.storeAhead_made` (the store made
+Proved: `closedDetailsContent_root`, `closedDetailsContent_open`, `closedDetailsContent_other`,
+`firstSummary_work`; `staleResourceLeftOut_no_commands`; `WebRender.storeAhead_made` (the store made
 ahead is `pageStore` of the document's own keys and the images given);
 `WebDocument.keepStoreAhead_rest` (nothing else the engine keeps changes);
 `FontSynthesis`: `bolder_bounds`, `lighter_bounds`, `bolder_isBold`, `relative_examples`,
 `weight?_bounds`, `embolden_le`, `shear_baseline`, `shear_height`, `shear_leans`.
 
-Tested only: that a layout finds the store made ahead (`==` on byte arrays has no
+Tested only: the `hidden` attribute and `noscript` in the start style (guards and the
+fixture `hidden.html`); that a layout finds the store made ahead (`==` on byte arrays has no
 lawfulness instance, so the lookup is not proved to hit); the host loops
 (`host_parity_test.ts`: a stand-in for the op, `newlyListed`); the fixtures by capture.
 
