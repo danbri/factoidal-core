@@ -12,7 +12,7 @@
 //
 // Done: click, send_keys, action_sequence (key, pointer, wheel and none sources),
 // delete_all_cookies (scriptSession action `cookies`: WebDriver's Delete All Cookies),
-// get_computed_role (scriptSession action `computed`).
+// get_computed_role and get_computed_label (scriptSession action `computed`).
 // Not done (each rejects with "not implemented"): the other hooks of test_driver_internal.
 (function () {
   'use strict';
@@ -66,6 +66,10 @@
   // "Get Computed Role" (WebDriver §12.4.9): the engine's computed role of the element.
   window.test_driver_internal.get_computed_role = function (element) {
     return attempt(() => request({ computed: 'role', element: refOf(element)[ELEMENT] }));
+  };
+  // "Get Computed Label" (WebDriver §12.4.10): the engine's accessible name of the element.
+  window.test_driver_internal.get_computed_label = function (element) {
+    return attempt(() => request({ computed: 'label', element: refOf(element)[ELEMENT] }));
   };
   // "Perform Actions" (WebDriver §15.7): an element origin is named by its path.
   window.test_driver_internal.action_sequence = function (actions) {

@@ -22,7 +22,7 @@ author may give. -/
 def ariaRoles : List String :=
   ["alert", "alertdialog", "application", "article", "banner", "blockquote", "button", "caption",
    "cell", "checkbox", "code", "columnheader", "combobox", "comment", "complementary",
-   "contentinfo", "definition", "deletion", "dialog", "document", "emphasis", "feed", "figure",
+   "contentinfo", "definition", "deletion", "dialog", "directory", "document", "emphasis", "feed", "figure",
    "form", "generic", "grid", "gridcell", "group", "heading", "image", "img", "insertion", "link",
    "list", "listbox", "listitem", "log", "main", "mark", "marquee", "math", "menu", "menubar",
    "menuitem", "menuitemcheckbox", "menuitemradio", "meter", "navigation", "none", "note",
@@ -47,6 +47,10 @@ def tokens (v : String) : List String :=
     else (st.1, c :: st.2)
   let (acc, cur) := v.toList.foldl step ([], [])
   if cur.isEmpty then acc else acc ++ [asciiLower (String.ofList cur.reverse)]
+
+/-- The tokens of an ID reference list, split on ASCII whitespace (case kept). -/
+def tokens' (v : String) : List String :=
+  ((v.split isAsciiWs).toList.map (·.toString)).filter (· != "")
 
 /-- One name for synonyms: `img` is `image`, `presentation` is `none`. -/
 def normalize (t : String) : String :=
@@ -198,6 +202,159 @@ def implicitRole (d : Dom) (k : NodeId) : String :=
 def computedRole (d : Dom) (k : NodeId) : String :=
   (explicitRole d k).getD (implicitRole d k)
 
+/-! ## The accessible name (Accessible Name and Description Computation 1.2 §4.3, simplified)
+
+The steps taken: hidden nodes that are not referenced give nothing (`hidden`,
+`aria-hidden="true"`); `aria-labelledby` (one level: not followed while computing a
+referenced node); an embedded control's value while computing a name from content;
+`aria-label`; the host language's label (HTML-AAM: button values, `alt`, the `label`
+elements of a labelable control, `legend`, `figcaption`, `caption`, an SVG `title`); the
+name from content for the roles that allow it and inside a name being computed from
+content; the `title` and then the `placeholder`. Block elements are separated by spaces;
+white space is collapsed. Not taken: CSS generated content and `display`. -/
+
+/-- Roles whose name may come from their content (WAI-ARIA 1.2 §5.2.8.6). -/
+def nameFromContentRoles : List String :=
+  ["button", "cell", "checkbox", "columnheader", "gridcell", "heading", "link", "menuitem",
+   "menuitemcheckbox", "menuitemradio", "option", "radio", "row", "rowheader", "sectionhead",
+   "switch", "tab", "tooltip", "treeitem", "caption", "code", "deletion", "emphasis",
+   "insertion", "paragraph", "strong", "subscript", "superscript", "term", "definition", "time", "mark"]
+
+def blockTags : List String :=
+  ["address", "article", "aside", "blockquote", "br", "dd", "details", "dialog", "div", "dl", "dt",
+   "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
+   "header", "hgroup", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "td", "th",
+   "tr", "ul", "caption", "summary", "legend", "option", "optgroup"]
+
+def hiddenEl (d : Dom) (k : NodeId) : Bool :=
+  let x := d.get k
+  x.type == .element && ((attr? d k "hidden").isSome || (attr? d k "aria-hidden").map asciiLower == some "true" ||
+    (x.ns == some htmlNS && ["script", "style", "template", "noscript", "head", "title"].contains x.lname))
+
+def collapse (s : String) : String :=
+  " ".intercalate (((s.split isAsciiWs).toList.map (·.toString)).filter (· != ""))
+
+def byIdIn (d : Dom) (k : NodeId) (id : String) : Option NodeId :=
+  let root := d.root k
+  (d.treeOrder root).find? fun j => (d.get j).type == .element && attr? d j "id" == some id
+
+/-- The `label` elements of a labelable control: those whose `for` names its ID, and the
+nearest ancestor `label` without `for`. -/
+def labelsOf (d : Dom) (k : NodeId) : List NodeId :=
+  let byFor := match attr? d k "id" with
+    | some id => if id.isEmpty then [] else
+        ((d.treeOrder (d.root k)).filter fun j => isHtml d j ["label"] && attr? d j "for" == some id).toList
+    | none => []
+  let ancestor := Id.run do
+    let mut cur := (d.get k).parent
+    for _ in [0:d.size + 1] do
+      match cur with
+      | none => return none
+      | some p =>
+        if isHtml d p ["label"] then return (if (attr? d p "for").isNone then some p else none)
+        cur := (d.get p).parent
+    return none
+  byFor ++ (match ancestor with | some a => if byFor.contains a then [] else [a] | none => [])
+
+def firstChildTag (d : Dom) (k : NodeId) (tags : List String) : Option NodeId :=
+  (d.get k).kids.toList.find? (isHtml d · tags)
+
+/-- The value an embedded control gives a name computed from content (§4.3.2 step 2C). -/
+def embeddedValue (d : Dom) (k : NodeId) : Option String :=
+  if isHtml d k ["input"] then
+    let t := asciiLower ((attr? d k "type").getD "text")
+    if ["text", "search", "email", "tel", "url", "number", "range", ""].contains t then some ((attr? d k "value").getD "")
+    else none
+  else if isHtml d k ["select"] then
+    let opts := (d.treeOrder k).filter (isHtml d · ["option"])
+    let sel := (opts.toList.find? fun o => (attr? d o "selected").isSome) <|> opts.toList.head?
+    some ((sel.bind fun o => d.textContent o).getD "")
+  else if isHtml d k ["textarea"] then some ((d.textContent k).getD "")
+  else none
+
+mutual
+/-- The text alternative of node `k` (§4.3.2): `labelled` while computing a node that an
+`aria-labelledby` names, `content` while computing a name from the content of an ancestor.
+`fuel` bounds the depth (the tree's nesting). -/
+def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool) : String :=
+  match fuel with
+  | 0 => ""
+  | fuel + 1 =>
+    let x := d.get k
+    if x.type == .text then x.data
+    else if x.type != .element then ""
+    else if hiddenEl d k && !labelled then ""
+    else
+      let byLabelledBy := if labelled then "" else match attr? d k "aria-labelledby" with
+        | some ids => collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
+            (byIdIn d k id).map fun j => textAlternative d fuel j true true))
+        | none => ""
+      if !byLabelledBy.isEmpty then byLabelledBy else
+      let embedded := if content then embeddedValue d k else none
+      match embedded with
+      | some v => v
+      | none =>
+      let label := (attr? d k "aria-label").map (·.trimAscii.toString) |>.getD ""
+      if !label.isEmpty then label else
+      let native := hostLabel d fuel k
+      if !native.isEmpty then native else
+      let role := computedRole d k
+      let fromContent := if content || labelled || nameFromContentRoles.contains role then
+          childrenText d fuel x.kids.toList else ""
+      if !fromContent.isEmpty then fromContent else
+      let title := (attr? d k "title").getD ""
+      if !title.trimAscii.toString.isEmpty then title else
+      (attr? d k "placeholder").getD ""
+
+/-- The names of children in order, block elements set apart by spaces. -/
+def childrenText (d : Dom) (fuel : Nat) (kids : List NodeId) : String :=
+  match kids with
+  | [] => ""
+  | c :: rest =>
+    let t := textAlternative d fuel c false true
+    let t := if isHtml d c blockTags then " " ++ t ++ " " else t
+    t ++ childrenText d fuel rest
+
+/-- The host language's label (HTML-AAM §5, accessible name computations by element). -/
+def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
+  let x := d.get k
+  if x.ns != some htmlNS && !(x.ns == some svgNS) then "" else
+  let labels := fun (ls : List NodeId) => collapse (" ".intercalate (ls.map fun l => childrenText d fuel (d.get l).kids.toList))
+  match x.lname with
+  | "input" =>
+    let t := asciiLower ((attr? d k "type").getD "text")
+    if ["button", "submit", "reset"].contains t then
+      match attr? d k "value" with
+      | some v => v
+      | none => if t == "submit" then "Submit" else if t == "reset" then "Reset" else labels (labelsOf d k)
+    else if t == "image" then
+      match attr? d k "alt" with
+      | some v => if v.isEmpty then (attr? d k "value").getD "" else v
+      | none => (attr? d k "value").getD ((attr? d k "title").getD "Submit")
+    else labels (labelsOf d k)
+  | "textarea" | "select" | "meter" | "progress" | "output" | "button" => labels (labelsOf d k)
+  | "img" | "area" => (attr? d k "alt").getD ""
+  | "fieldset" => match firstChildTag d k ["legend"] with
+    | some l => collapse (childrenText d fuel (d.get l).kids.toList)
+    | none => ""
+  | "figure" => match firstChildTag d k ["figcaption"] with
+    | some l => collapse (childrenText d fuel (d.get l).kids.toList)
+    | none => ""
+  | "table" => match firstChildTag d k ["caption"] with
+    | some l => collapse (childrenText d fuel (d.get l).kids.toList)
+    | none => ""
+  | "optgroup" => (attr? d k "label").getD ""
+  | "svg" =>
+    match x.kids.toList.find? (fun c => (d.get c).ns == some svgNS && (d.get c).lname == "title") with
+    | some t => (d.textContent t).getD ""
+    | none => ""
+  | _ => ""
+end
+
+/-- The accessible name of element `k`, white space collapsed. -/
+def accessibleName (d : Dom) (k : NodeId) : String :=
+  collapse (textAlternative d (d.size + 1) k false false)
+
 /-! ## What is proved -/
 
 theorem normalize_mem (t : String) (h : t ∈ ariaRoles) : normalize t ∈ answerRoles := by
@@ -269,5 +426,21 @@ private def roleOf (html tag : String) : String :=
 #guard roleOf "<article><footer>x</footer></article>" "footer" == "generic" && roleOf "<footer>x</footer>" "footer" == "contentinfo"
 #guard roleOf "<section>x</section>" "section" == "generic" && roleOf "<section title=t>x</section>" "section" == "region"
 #guard roleOf "<abbr>x</abbr>" "abbr" == "" && roleOf "<h3>x</h3>" "h3" == "heading" && roleOf "<menu></menu>" "menu" == "list"
+
+private def nameOf (html tag : String) : String :=
+  let d := DOM.parseHtmlDocument html
+  match (List.range d.size).find? (fun i => (d.get i).lname == tag) with
+  | some i => accessibleName d i
+  | none => "?"
+
+#guard nameOf "<div role=button aria-label=' label '>x</div>" "div" == "label"
+#guard nameOf "<button>Save <b>all</b></button>" "button" == "Save all"
+#guard nameOf "<span id=a>first</span><span id=b>second</span><div role=link aria-labelledby='a b'>x</div>" "div" == "first second"
+#guard nameOf "<label for=i>Name</label><input id=i>" "input" == "Name" && nameOf "<label>Mail <input></label>" "input" == "Mail"
+#guard nameOf "<img alt='a cat'>" "img" == "a cat" && nameOf "<input type=submit>" "input" == "Submit"
+#guard nameOf "<div title=tip>x</div>" "div" == "tip" && nameOf "<input placeholder=search>" "input" == "search"
+#guard nameOf "<a href=#><div>one</div><div>two</div></a>" "a" == "one two"
+#guard nameOf "<a href=#>x<span hidden>y</span></a>" "a" == "x"
+#guard nameOf "<fieldset><legend>Group</legend></fieldset>" "fieldset" == "Group"
 
 end L4Factoidal.HTML.AccessibleRole

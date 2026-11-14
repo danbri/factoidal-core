@@ -2399,3 +2399,7 @@ L4Factoidal_WebDriver_Protocol_matchPath  # (c) one template of the fixed endpoi
 L4Factoidal_WebDriver_Gate_mismatches  # (c) sameText calls it only when both texts have the length of the secret (2 * secretBytes = 32 characters)
 L4Factoidal_WebDriver_Page_toWire  # (c) the nesting of one script argument, fuel (the arrays and objects of a level are a mapM)
 L4Factoidal_WebDriver_Page_fromWire  # (c) the nesting of one script result, fuel 64 (the arrays and objects of a level are a map)
+# --- Added 2026-11-14, the accessible name (HTML/AccessibleRole.lean) ---
+L4Factoidal_HTML_AccessibleRole_textAlternative*  # (b) the text alternative walks the element nesting of one document; fuel is the arena size and decreases at each element
+L4Factoidal_HTML_AccessibleRole_childrenText*  # (b) one call per child of one element, each into textAlternative with less fuel; depth is the element nesting of the document
+L4Factoidal_HTML_AccessibleRole_hostLabel*  # (b) a label's content through childrenText with less fuel; depth is the element nesting of the document

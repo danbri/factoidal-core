@@ -1094,12 +1094,13 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     | .error er => run fun a => { a with page := a.page.setTrusted { a.page.trusted with error := some er } }
     | .ok sources => run (performInput sources (boolField request "release"))
   | "computed" =>
-    -- WebDriver "Get Computed Role" for test_driver: the role of the element the page names
-    -- (`refNode`; `HTML.AccessibleRole.computedRole`), answered to the page as the reply to its
+    -- WebDriver "Get Computed Role" and "Get Computed Label" for test_driver: the role or the
+    -- accessible name of the element the page names (`refNode`; `HTML.AccessibleRole`), answered to the page as the reply to its
     -- request `id`, in the message that the `actions` replies use
     let d := a.page.host.dom.dom
     let value := match refNode d (str request "element"), str request "what" with
       | some k, "role" => L4Factoidal.HTML.AccessibleRole.computedRole d k
+      | some k, "label" => L4Factoidal.HTML.AccessibleRole.accessibleName d k
       | _, _ => ""
     let found := (refNode d (str request "element")).isSome
     let reply := (JSON.Json.object [("type", .string "testdriver-complete"),
