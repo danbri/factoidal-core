@@ -3737,6 +3737,19 @@
   def('location', location);
   // navigator.serviceWorker: the ServiceWorkerContainer of section workers, made on first use
   let serviceWorkerOf = () => undefined;
+  // HTML §8.9.1.3: registerProtocolHandler and unregisterProtocolHandler. Whether the call
+  // may go on is Lean's (HTML.ProtocolHandler, node_query 198); no handler is kept.
+  const protocolHandlerCheck = (what, args) => {
+    if (args.length < 2) throw new TypeError(`Failed to execute '${what}' on 'Navigator': 2 arguments required, but only ${args.length} present.`);
+    const scheme = String(args[0]), url = String(args[1]);
+    const r = n.query(0, 198, href + '\u0000' + scheme + '\u0000' + url);
+    if (r === 'S') throw new DOMException(`Failed to execute '${what}' on 'Navigator': The scheme '${scheme}' or the URL '${url}' is not allowed for this document.`, 'SecurityError');
+    if (r === 'Y') throw new DOMException(`Failed to execute '${what}' on 'Navigator': The URL '${url}' is invalid.`, 'SyntaxError');
+  };
+  const protocolHandlers = {
+    registerProtocolHandler(scheme, url) { protocolHandlerCheck('registerProtocolHandler', arguments); },
+    unregisterProtocolHandler(scheme, url) { protocolHandlerCheck('unregisterProtocolHandler', arguments); },
+  };
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
     cookieEnabled: false, hardwareConcurrency: 1, gpu,
     // StorageManager (section File System API); undefined on an engine without the ops.

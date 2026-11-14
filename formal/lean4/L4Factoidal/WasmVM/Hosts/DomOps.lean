@@ -46,6 +46,7 @@ import L4Factoidal.HTML.TrustedTypes
 import L4Factoidal.HTML.ImageSource
 import L4Factoidal.HTML.FormEntries
 import L4Factoidal.HTML.ReferrerSource
+import L4Factoidal.HTML.ProtocolHandler
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -495,7 +496,8 @@ and selectedness (`DOM.FormControls.answer`); 187 the range and selection of `se
 the text of `innerText` for collected items (`HTML.InnerText.answer`); 192 the methods of a
 Sanitizer (`HTML.Sanitizer.answer`); 194 the decisions of Trusted Types
 (`HTML.TrustedTypes.answer`); 195 the image source an `img` selects
-(`HTML.ImageSource.answer`); 196 the entry list of a form (`HTML.FormEntries.answer`). One op changes the tree: 193 sanitizes the children of
+(`HTML.ImageSource.answer`); 196 the entry list of a form (`HTML.FormEntries.answer`); 198
+whether a protocol handler call may go on (`HTML.ProtocolHandler.answer`). One op changes the tree: 193 sanitizes the children of
 node `id` (`sanitizeM`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
@@ -951,6 +953,9 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 195 => let n ← nodeArg d id; return L4Factoidal.HTML.ImageSource.answer d n q
   -- 196: the entry list of form `id` for `new FormData(form, submitter)` (`HTML.FormEntries.answer`)
   | 196 => let n ← nodeArg d id; return L4Factoidal.HTML.FormEntries.answer d n q
+  -- 198: whether `navigator.registerProtocolHandler` or `unregisterProtocolHandler` may go on
+  -- (`HTML.ProtocolHandler.answer`): `q` is the document's URL, U+0000, scheme, U+0000, URL
+  | 198 => return L4Factoidal.HTML.ProtocolHandler.answer q
   -- ==== end of domhtml ====
   | _ => throw (-2)
 
