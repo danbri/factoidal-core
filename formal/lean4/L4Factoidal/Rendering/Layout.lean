@@ -730,7 +730,8 @@ positioned glyph runs are consumed to paint the actual word geometry. With bidi
 (`needsBidi`), words are cut by level first, a word's pieces stay on one line, and
 each line is reordered (`bidiLine`). -/
 def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : Float)
-    (strut : Option Computed := none) : Except String Result := do
+    (strut : Option Computed := none)
+    (band : Float → Float × Float := fun _ => (0,available)) : Except String Result := do
   let rtlBlock := strut.any (·.direction == .rtl)
   let plain := strut.any (·.unicodeBidi == .plaintext)
   let bidi := needsBidi rtlBlock plain items0
@@ -743,12 +744,16 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   -- this far in; `start` and `end` follow the direction. A line wider than the room
   -- starts at the left edge.
   let rtlAlign := if plain then (bi.paraLevels[0]?.getD 0) % 2 == 1 else rtlBlock
-  let indent := fun (w : Float) => match (strut.map (·.textAlign)).getD .start with
-    | .start => if rtlAlign then max 0 (available-w) else 0
-    | .end_ => if rtlAlign then 0 else max 0 (available-w)
+  -- `band dy` is the room of a line that starts `dy` below `y`: its offset from `x` and its
+  -- width, less than `available` beside floats (CSS 2.1 §9.5).
+  let indent := fun (w dy : Float) =>
+    let (offset,room) := band dy
+    offset+match (strut.map (·.textAlign)).getD .start with
+    | .start => if rtlAlign then max 0 (room-w) else 0
+    | .end_ => if rtlAlign then 0 else max 0 (room-w)
     | .left => 0
-    | .right => max 0 (available-w)
-    | .center => max 0 ((available-w)/2)
+    | .right => max 0 (room-w)
+    | .center => max 0 ((room-w)/2)
   -- A finished line: reordered when there is bidi.
   let place := fun (line : Array (Float × Inline)) (idx : Array Nat) (lineEnd : Float) =>
     if bidi then bidiLine line (idx.map fun k => bi.levels[k]?.getD 0) (idx.map fun k => bi.paraLevels[k]?.getD 0) lineEnd
@@ -777,6 +782,10 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       else
         pendingSpace := some (source,s)
         pendingK := k
+    | .outOfFlow _ =>
+      -- No width and no break, and white space collapses across it.
+      line := line.push (cursorX,item)
+      lineIdx := lineIdx.push k
     | .bidiMark _ =>
       -- No width and no break: a space before it is placed first, to keep logical order.
       if let some (source,s) := pendingSpace then
@@ -789,7 +798,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       lineIdx := lineIdx.push k
     | .lineBreak _ =>
       let (row,dirs) := place (line.push (cursorX,item)) (lineIdx.push k) cursorX
-      let row ← lineLayout font row (x+indent cursorX) (y+out.height) strut dirs
+      let row ← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs
       out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
       line := #[]
       lineIdx := #[]
@@ -810,9 +819,9 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
         | some (_,s) => spaceWidth font s
         | none => pure 0
         else pure 0
-      if cursorX > 0 && cursorX+gap+whole > available && !preformatted item && !glued k then
+      if cursorX > 0 && cursorX+gap+whole > (band out.height).2 && !preformatted item && !glued k then
         let (row,dirs) := place line lineIdx cursorX
-        out := appendResult out (← lineLayout font row (x+indent cursorX) (y+out.height) strut dirs)
+        out := appendResult out (← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs)
         line := #[]
         lineIdx := #[]
         cursorX := 0
@@ -828,7 +837,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       pendingSpace := none
   if !line.isEmpty then
     let (row,dirs) := place line lineIdx cursorX
-    out := appendResult out (← lineLayout font row (x+indent cursorX) (y+out.height) strut dirs)
+    out := appendResult out (← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs)
   return out
 
 private def append (a b : Result) : Result :=
@@ -915,6 +924,9 @@ inductive Task where
   /-- Absolutely positioned boxes laid out in the containing block `(cx,cy,cw,ch)`: for
   the root, whose containing block is the viewport (`render`). -/
   | positioned (pending : Array Pending) (cx cy cw ch : Float)
+  /-- `box id` in a block formatting context that has `floats` already (CSS 2.1 §9.5): the
+  lines of the box and of its descendants are beside them. -/
+  | flowed (id : Nat) (floats : Array Floats.Box)
   deriving Repr
 
 /-- The right edge of what a line layout placed, from its left edge `0`. -/
@@ -1140,7 +1152,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     match task with
     | .contents container kids => flowWidths container kids #[]
     | .table element container kids => tableWidths element container kids
-    | .sized id _ _ | .box id => boxWidths id true
+    | .sized id _ _ | .box id | .flowed id _ => boxWidths id true
     | .inner id _ => boxWidths id false
     | .positioned _ _ _ _ _ => return (0,0)
 
@@ -1162,18 +1174,25 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     -- collapses with its first child; else 0); the result's `marginBottom` is the margin at
     -- the end of the flow. Adjoining margins of sibling blocks collapse: the larger stands.
     let flow (s : Computed) (container : Nat) (kids : Array Nat) (lead : Array Inline)
-        (innerX innerY width : Float) (before : Float := 0) : Except String Result := do
+        (innerX innerY width : Float) (before : Float := 0) (around : Array Floats.Box := #[]) : Except String Result := do
       let mut content : Result := {}
       let mut previous : Float := before
       let mut inline : Array Inline := lead
+      -- The floats of this block formatting context so far (CSS 2.1 §9.5): those it began
+      -- with (`around`) and those of this flow. Lines, and boxes that establish a formatting
+      -- context of their own, take the room beside them.
+      let mut floats : Array Floats.Box := around
       for seg in Table.segments dom styles kids do
         match seg with
         | .run run =>
           if !inline.isEmpty then
-            let lines ← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s)
+            let top := innerY+content.height
+            let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
+              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
             content := append content lines
             inline := #[]
-          content := append content (← layoutTask dom styles font embedding pictures fuel (.table none container run) innerX (innerY+content.height) width)
+          let (offset,room) := floatBand floats innerX width (innerY+content.height) 1
+          content := append content (← layoutTask dom styles font embedding pictures fuel (.table none container run) (innerX+offset) (innerY+content.height) room)
           previous := 0
         | .node child =>
           let cs := styles[child]!
@@ -1182,16 +1201,62 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             -- flow has got to, or its place in the open line.
             if inline.isEmpty then content := {content with pending := content.pending.push {id := child, x := innerX, y := innerY+content.height}}
             else inline := inline.push (.outOfFlow child)
+          else if cs.pos.float != .none then
+            -- A float (CSS 2.1 §9.5.1): out of flow, as wide as its `width` or its content
+            -- (§10.3.5), at the first place beside the earlier floats where it fits, not
+            -- above them. Text of the same block that comes before it goes round it too.
+            let outer ← match CSS.resolve width cs.width with
+              | some w => pure (clampOpt ((CSS.resolve width cs.minWidth).getD 0) (CSS.resolve width cs.maxWidth) w+horizontalEdges cs)
+              | none => do
+                let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
+                pure (min hi (max lo width))
+            let top := floats.foldl (fun t f => max t (LU.toPx f.y)) (innerY+content.height)
+            let top := match cs.pos.clear with
+              | .none => top
+              | c => LU.toPx (Floats.clearY floats.toList (c != .right && c != .inlineEnd) (c != .left && c != .inlineStart) (LU.ofPx top))
+            let r ← layoutTask dom styles font embedding pictures fuel
+              (.sized child (max 0 (outer-cs.margin.left-cs.margin.right)) none) innerX top width
+            let ltr := s.direction == .ltr
+            let left := match cs.pos.float with
+              | .left => true
+              | .right => false
+              | .inlineStart => ltr
+              | _ => !ltr
+            let (fx,fy) := Floats.place floats.toList left (LU.ofPx innerX) (LU.ofPx width) (LU.ofPx outer) (LU.ofPx r.height) (LU.ofPx top)
+            let r := r.shift (LU.toPx fx-innerX) (LU.toPx fy-top)
+            content := {content with nodes := content.nodes ++ r.nodes, boxes := content.boxes ++ r.boxes,
+                                     runs := content.runs ++ r.runs, pending := content.pending ++ r.pending}
+            floats := floats.push ⟨left,fx,fy,LU.ofPx outer,LU.ofPx r.height⟩
           else if cs.display.isBlockLevel then
             if !inline.isEmpty then
-              let lines ← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s)
+              let top := innerY+content.height
+              let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
+                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
               content := append content lines
               inline := #[]
               -- white space between blocks makes no line: the margins still adjoin
               if lines.height > 0 then previous := 0
+            -- CSS 2.1 §9.5.2: `clear` moves the box below the floats of those sides; the
+            -- clearance keeps its margin apart from the one before.
+            if cs.pos.clear != .none then
+              let c := cs.pos.clear
+              let here := innerY+content.height
+              let cleared := LU.toPx (Floats.clearY floats.toList (c != .right && c != .inlineEnd) (c != .left && c != .inlineStart) (LU.ofPx here))
+              if cleared > here then
+                content := {content with height := content.height+(cleared-here)}
+                previous := 0
             -- CSS 2.1 §8.3.1: the margin before this box and its own top margin collapse.
             let overlap := min previous (if cs.display == .block then leadMargin dom styles fuel child else cs.margin.top)
-            let r ← layoutTask dom styles font embedding pictures fuel (.box child) innerX (innerY+content.height-overlap) width
+            let top := innerY+content.height-overlap
+            -- §9.5: a box with a formatting context of its own (a table, a flex container, a
+            -- box that clips) is beside the floats; a plain block is under them and its lines
+            -- are beside them.
+            let r ← if floats.isEmpty then layoutTask dom styles font embedding pictures fuel (.box child) innerX top width
+              else if cs.display != .block || cs.clipOverflow then do
+                let (offset,room) := floatBand floats innerX width top 1
+                layoutTask dom styles font embedding pictures fuel (.box child) (innerX+offset) top room
+              else layoutTask dom styles font embedding pictures fuel (.flowed child floats) innerX top width
+            if !floats.isEmpty && cs.display == .block && !cs.clipOverflow then floats := r.floats
             content := {append content r with height := content.height-overlap+r.height}
             previous := r.marginBottom
           else if cs.display.isInlineContainer then
@@ -1208,9 +1273,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
       if !inline.isEmpty then
-        let lines ← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s)
+        let top := innerY+content.height
+        let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
+          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
         content := append content lines
         if lines.height > 0 then previous := 0
+      content := {content with floats}
       -- no block was laid out: `previous` is still `before`, which is not a margin of this flow
       return {content with marginBottom := if content.height <= 0 || previous >= unbounded/2 then 0 else previous}
     -- A table box (CSS 2.1 §17): captions, then the grid, then bottom captions.
@@ -1425,7 +1493,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     -- An element's box. `imposedWidth` and `imposedHeight` are the border-box sizes that the
     -- parent formatting context decided (`Task.sized`); with `contentOnly` the contents alone
     -- (`Task.inner`).
-    let box (id : Nat) (imposedWidth imposedHeight : Option Float) (contentOnly : Bool) : Except String Result := do
+    let box (id : Nat) (imposedWidth imposedHeight : Option Float) (contentOnly : Bool)
+        (around : Array Floats.Box := #[]) : Except String Result := do
       let n := dom.get id
       let s := styles[id]!
       if s.display == .none then return {}
@@ -1496,7 +1565,14 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let content ← if s.display.isFlex then
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight}
-        else flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0)
+        else flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around
+      -- CSS 2.1 §10.6.7: a box that is the root of its block formatting context (one laid
+      -- out with no floats around it) is as high as its floats; one in a context with floats
+      -- hands them on to the flow after it.
+      let content := if around.isEmpty then
+          {content with height := max content.height (floatsHeight content.floats innerY), floats := #[],
+                        marginBottom := if floatsHeight content.floats innerY > content.height then 0 else content.marginBottom}
+        else content
       if contentOnly then return content
       -- The same at the bottom: the last child's margin sticks out of a block with no height.
       let joinsBottom := imposedWidth.isNone && imposedHeight.isNone && collapsesBottom dom s id && !s.display.isFlex
@@ -1527,8 +1603,11 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         return framed.shift dx dy
       return framed
     match task with
-    | .contents container kids => flow (styles[container]!) container kids #[] x y available
+    | .contents container kids =>
+      let content ← flow (styles[container]!) container kids #[] x y available
+      return {content with height := max content.height (floatsHeight content.floats y), floats := #[]}
     | .table element container kids => table element container kids
+    | .flowed id floats => box id none none false floats
     | .box id => box id none none false
     | .sized id width height => box id (some width) height false
     | .inner id width => box id (some width) none true
