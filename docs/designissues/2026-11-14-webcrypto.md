@@ -135,10 +135,32 @@ Open:
   API" draft as the WPT pages exercise it; the draft's text was not at hand, so the checks are
   from the tests.
 
-## 6. Measurements
+## 6. Found and left
 
-(filled in from the cloud checks; see section 7)
+- **Secure contexts.** `historical.any.html` (6 subtests) expects `crypto.subtle`, `SubtleCrypto`
+  and `CryptoKey` to be absent from a page that is not a secure context. The engine has no
+  secure-context decision for windows: the prelude has a getter for workers only, and it
+  calls `file:` insecure. The decision belongs in Lean (`Net.ReferrerPolicy.trustworthy` is the
+  start: https, wss and loopback hosts), with `file:` and the creator's context for `about:`
+  and `blob:` documents settled first, or local pages lose `crypto.subtle`.
+- **RSA-PSS with SHA-1** (about 250 subtests on the branch with RSA): HACL\*'s `Hacl_RSAPSS` is
+  SHA-2 only, so the key is refused at import. An EMSA-PSS encoding in Lean over HACL\*'s hash
+  and private operation would serve it, as EMSA-PKCS1-v1_5 does; it is not written, because
+  HACL\* has a verified PSS and left SHA-1 out of it.
+- **AES key objects** (6,120 subtests): generateKey, importKey, exportKey and deriveKey of an
+  AES key need no primitive, but would make keys that cannot encrypt. Not done; a product
+  decision.
+- `ecdh_bits` and `ecdh_keys` (142): their setup imports P-256, P-384 and P-521 keys together,
+  so the P-256 cases cannot run while the other curves are refused.
+- `algorithm-discards-context` (12): a script error in the page ("Identifier 'testId' has
+  already been declared"), not in the crypto code. `sharedarraybuffer` (16): needs a shared
+  `WebAssembly.Memory`. `getRandomValues` with `Float16Array` (2): the script engine has no
+  `Float16Array`. Two idlharness cases on each page come from the lazily made globals.
 
-## 7. Cloud checks
+## 7. Measurements
+
+(filled in from the cloud checks; see section 8)
+
+## 8. Cloud checks
 
 (run ids and numbers)
