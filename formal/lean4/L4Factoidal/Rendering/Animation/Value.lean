@@ -363,6 +363,11 @@ inductive Kind where
   /-- A corner shape (CSS Borders 4 §4.2): by the half corner of its superellipse
   parameter; never added. -/
   | cornerShape
+  /-- A length whose keyword `word` is the length 0 (`letter-spacing: normal`,
+  `vertical-align: baseline`): the keyword interpolates and adds as 0px. With `keep`, a
+  result of 0 at an end whose value was the keyword is the keyword (the computed value of
+  `letter-spacing` keeps `normal`). -/
+  | zeroWord (word : String) (keep : Bool)
   deriving DecidableEq, Repr, Inhabited
 
 /-- A number of a non-negative kind. -/
@@ -1624,6 +1629,21 @@ def lerpCorner (p : Int) (a b : List Tok) : Option (List Tok) :=
     some (cornerTokens (cornerOfHalf (hx + (hy - hx) * toFloat p)))
   | _, _ => none
 
+/-- The radii of basic shapes not below 0 (CSS Shapes 1 §3.1: a negative radius is
+invalid): the radius of `circle()`, the two of `ellipse()` (up to `at`), and the corner
+radii after `round` of `inset()` and `polygon()` (up to the comma or the end). One pass. -/
+def clampShapeRadii (v : List Tok) : List Tok := Id.run do
+  let mut out : Array Tok := #[]
+  let mut radii := false
+  for t in v do
+    if t == .op "circle" || t == .op "ellipse" || t == .ident "round" then radii := true
+    else if t == .ident "at" || t == .close || t == .comma then radii := false
+    out := out.push (if radii then clampTok0 t else t)
+  return out.toList
+
+/-- The keyword of a `zeroWord` kind as the length 0. -/
+def zeroOf (word : String) (v : List Tok) : List Tok := if v == [.ident word] then [.dim 0 "px"] else v
+
 /-- The interpolation of a kind that is a list or has components to fill in; none when
 the values do not interpolate. -/
 def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
@@ -1692,8 +1712,9 @@ def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
       -- `inset()`, `rect()` and `xywh()` meet as `inset()`
       let (ia, ha) := insetForm a
       let (ib, hb) := insetForm b
-      if ha && hb then (lerpList p ia ib).map fun r => ((items r).map insetText).flatten
-      else (lerpList p (expandPaths a) (expandPaths b)).map collapsePaths
+      if ha && hb then (lerpList p (clampShapeRadii ia) (clampShapeRadii ib)).map fun r =>
+        ((items (clampShapeRadii r)).map insetText).flatten
+      else (lerpList p (expandPaths a) (expandPaths b)).map fun r => collapsePaths (clampShapeRadii r)
   | .gapList =>
     match expandRepeats a, expandRepeats b with
     | some xs, some ys =>
@@ -1723,6 +1744,11 @@ def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
       else none
     | _, _ => none
   | .cornerShape => lerpCorner p a b
+  | .zeroWord word keep =>
+    (lerpList p (zeroOf word a) (zeroOf word b)).map fun r =>
+      if keep && r == [.dim 0 "px"] && ((p == 0 && a == [.ident word]) || (p == one && b == [.ident word])) then
+        [.ident word]
+      else r
   | .generic =>
     -- a colour outside legacy sRGB: every colour of the two values in Oklab
     if modernColor a || modernColor b then (lerpList p (toOklab a) (toOklab b)).map fromOklab
@@ -1864,6 +1890,7 @@ def add (k : Kind) (underlying value : Value) : Value :=
     | some (x, y, z), some (x', y', z') => scaleText (Fix.mul x x') (Fix.mul y y') (Fix.mul z z')
     | _, _ => value
   | .cornerShape => value
+  | .zeroWord word _ => (addList (zeroOf word underlying) (zeroOf word value)).getD value
   | _ => match addList underlying value with
     | some r => finish k r
     | none => value
@@ -2258,6 +2285,17 @@ private def corner2 (a b : String) (p : Int) : String :=
 #guard [-300000000, half, 800000000, 1100000000].map (corner2 "superellipse(3)" "superellipse(-2)") ==
   ["square", "superellipse(0.16)", "superellipse(-0.9)", "superellipse(-2.99)"]
 #guard corner2 "round" "round" half == "round" && corner2 "superellipse(infinity)" "superellipse(-infinity)" half == "bevel"
+-- a radius is not below 0 (css/css-masking/animations/clip-path-interpolation-002.html)
+#guard at_ .shape "circle(10px at 25px 75%)" "circle(50px at 50px 50%)" (-300000000) == "circle(0px at 17.5px 82.5%)"
+#guard at_ .shape "ellipse(10px 20px at 25px 75px)" "ellipse(50px 100px at 50px 50px)" (-300000000) == "ellipse(0px 0px at 17.5px 82.5px)"
+#guard at_ .shape "circle(10px at 25px 75%)" "circle(50px at 50px 50%)" half == "circle(30px at 37.5px 62.5%)"
+-- a keyword that is the length 0 (css/css-text/animations/letter-spacing-interpolation.html,
+-- word-spacing-interpolation.html, css/css-transitions/animations/vertical-align-interpolation.html)
+#guard [-300000000, 0, 300000000, one].map (at_ (.zeroWord "normal" true) "normal" "20px") == ["-6px", "normal", "6px", "20px"]
+#guard [-300000000, 0, 300000000].map (at_ (.zeroWord "normal" false) "normal" "20px") == ["-6px", "0px", "6px"]
+#guard [-half, 0, 600000000].map (at_ (.zeroWord "baseline" false) "baseline" "100px") == ["-50px", "0px", "60px"]
+#guard at_ (.zeroWord "baseline" false) "super" "100px" 300000000 == "super" && at_ (.zeroWord "baseline" false) "super" "100px" 600000000 == "100px"
+#guard toText (add (.zeroWord "normal" true) (parse "normal") (parse "10px")) == "10px"
 -- the flags of an arc are set above 0 (css/motion/animation/offset-path-interpolation-002.html)
 #guard at_ .shape "path(\"M 100 400 A 10 20 30 1 0 140 450\")" "path(\"M 300 200 A 50 60 70 0 1 380 290\")" (-one) ==
   "path(\"M -100 600 A -30 -20 -10 1 0 -100 610\")"
