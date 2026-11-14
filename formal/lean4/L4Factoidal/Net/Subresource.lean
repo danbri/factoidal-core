@@ -101,6 +101,84 @@ def typeOk (kind : String) (same nosniff : Bool) (type : String) : Bool :=
 def nosniffOf (hs : List (String × String)) : Bool :=
   (headerGet hs "x-content-type-options").any fun v => lower (trimWs ((v.splitOn ",").headD "")) == "nosniff"
 
+/-- The JSON parser breakers: prefixes a server puts before data so that a `<script>` of
+another site cannot run it (CORB; under ORB a body that does not parse as a script is
+blocked, and none of these does). -/
+def jsonParserBreakers : List String := [")]}'", "{}&&", "{} &&"]
+
+/-- `body` begins with the bytes of `p`. Reads at most `p`'s length of `body`. -/
+def bytesStartWith (body : ByteArray) (p : String) : Bool :=
+  let b := p.toUTF8
+  b.size ≤ body.size && (body.extract 0 b.size).toList == b.toList
+
+/-- ORB's "opaque-blocklisted-never-sniffed MIME type": an opaque answer of one of these types
+is never a script, an image or media. -/
+def orbNeverSniffed (e : String) : Bool :=
+  ["application/gzip", "application/msexcel", "application/mspowerpoint", "application/msword",
+   "application/msword-template", "application/pdf", "application/vnd.ces-quickpoint",
+   "application/vnd.ces-quicksheet", "application/vnd.ces-quickword", "application/vnd.ms-excel",
+   "application/vnd.ms-excel.sheet.macroenabled.12", "application/vnd.ms-powerpoint",
+   "application/vnd.ms-powerpoint.presentation.macroenabled.12", "application/vnd.ms-word",
+   "application/vnd.ms-word.document.12", "application/vnd.ms-word.document.macroenabled.12",
+   "application/vnd.msword", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+   "application/vnd.openxmlformats-officedocument.presentationml.template",
+   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+   "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+   "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+   "application/vnd.presentation-openxml", "application/vnd.presentation-openxmlm",
+   "application/vnd.spreadsheet-openxml", "application/vnd.wordprocessing-openxml",
+   "application/x-gzip", "application/x-protobuf", "application/x-protobuffer", "application/zip",
+   "audio/mpegurl", "multipart/byteranges", "multipart/signed", "text/event-stream", "text/csv",
+   "text/vtt"].contains e
+
+/-- The first at most 1024 bytes of `body`, as ORB reads to sniff. -/
+def sniffBytes (body : ByteArray) : ByteArray := body.extract 0 (min body.size 1024)
+
+/-- An answer labelled HTML whose first bytes, after white space, open an HTML document (a
+doctype, or an `html`, `head` or `body` tag, in any case): CORB's HTML sniff, which no
+script passes. A comment start is not counted (HTML and JavaScript polyglots begin with one).
+Reads at most 1024 bytes. -/
+def sniffsHtml (body : ByteArray) : Bool :=
+  let s := (String.fromUTF8? (sniffBytes body)).getD ""
+  let s := lower s.trimAscii.toString
+  ["<!doctype html", "<html", "<head", "<body"].any fun p => s.startsWith p
+
+/-- A classic script's answer that the element may not run (Fetch §4.1 "should response to
+request be blocked due to its MIME type" and "due to nosniff"), and for an opaque answer (a
+"no-cors" answer of another origin) the opaque-response blocking: a type ORB never sniffs, a
+body that begins with a JSON parser breaker, or an answer labelled HTML that sniffs as HTML.
+The work reads at most 1024 bytes of the body, whatever its size. -/
+def scriptBlocked (isOpaque : Bool) (headers : List (String × String)) (body : ByteArray) : Bool :=
+  let ty := essence ((headerGet headers "content-type").getD "")
+  !typeOk "script" (!isOpaque) (nosniffOf headers) ty ||
+    (isOpaque && (orbNeverSniffed ty || jsonParserBreakers.any (bytesStartWith body) ||
+      (ty == "text/html" && sniffsHtml body)))
+
+/-- Kind: security theorem (opaque-response blocking). Says: an opaque answer that begins with
+a JSON parser breaker never runs as a script, whatever its type. -/
+theorem scriptBlocked_breaker (hs : List (String × String)) (body : ByteArray) (p : String)
+    (hp : p ∈ jsonParserBreakers) (hb : bytesStartWith body p = true) : scriptBlocked true hs body = true := by
+  have hb' : jsonParserBreakers.any (bytesStartWith body) = true := List.any_eq_true.mpr ⟨p, hp, hb⟩
+  simp [scriptBlocked, hb']
+
+/-- Kind: security theorem (Fetch §4.1). Says: an answer sent as an image never runs as a
+script. -/
+theorem scriptBlocked_image (o : Bool) (hs : List (String × String)) (body : ByteArray)
+    (h : (essence ((headerGet hs "content-type").getD "")).startsWith "image/" = true) :
+    scriptBlocked o hs body = true := by
+  simp [scriptBlocked, typeOk, h]
+
+#guard scriptBlocked true [("content-type", "text/plain")] ")]}'\n{}".toUTF8
+#guard scriptBlocked true [("content-type", "application/javascript")] "{} &&{}".toUTF8
+#guard !scriptBlocked true [("content-type", "application/javascript")] "var x = 1".toUTF8
+#guard !scriptBlocked false [("content-type", "text/plain")] ")]}'".toUTF8
+#guard scriptBlocked false [("content-type", "text/plain"), ("x-content-type-options", "nosniff")] "x".toUTF8
+#guard scriptBlocked true [("content-type", "text/html")] "\n <!DOCTYPE html>\n<html>".toUTF8
+#guard !scriptBlocked true [("content-type", "text/html")] "<!--/*--><html><body><script>".toUTF8
+#guard scriptBlocked true [("content-type", "application/pdf")] "var x".toUTF8
+#guard !scriptBlocked false [("content-type", "application/pdf")] "var x".toUTF8
+
 /-- An ok status (Fetch §2.2.6). -/
 def okStatus (s : Nat) : Bool := 200 ≤ s && s ≤ 299
 

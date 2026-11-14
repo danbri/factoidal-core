@@ -19,6 +19,7 @@ sequence sees the state of that point. `Ev.setState`, `.guardDone` and `.startFe
 the steps that are not events, in the place the standard has them.
 -/
 import L4Factoidal.Net.PageFetch
+import L4Factoidal.Net.Subresource
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.Integrity
 import L4Factoidal.Net.CspPolicy
@@ -605,6 +606,10 @@ def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
     | .fail _ => (requestError s1 h { x with transfer := none } "error", some x.cb)
     | .deliver _ r =>
       let r := if x.raw then rawResponse t a r else r
+      -- a classic script element's answer of a type it may not run, or an opaque one that
+      -- begins with a JSON parser breaker, is a network error (`Subresource.scriptBlocked`)
+      if x.raw && x.destination == "script" && Subresource.scriptBlocked (r.tainting == "opaque") r.headers r.body then
+        (requestError s1 h { x with transfer := none } "error", some x.cb) else
       -- Subresource Integrity: bytes that do not match the request's metadata never reach the page
       if !Integrity.okFor x.integrity r.tainting r.body then
         (requestError s1 h { x with transfer := none } "error", some x.cb) else
