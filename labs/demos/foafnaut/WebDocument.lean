@@ -1528,6 +1528,31 @@ def webFaceFonts (h : Holds) (faces : Array Rendering.FontFaceRule.Face) (reques
     let ranges := if face.ranges == [(0,0x10FFFF)] then [] else face.ranges
     some {font with family := face.family, ranges}
 
+/-- The fonts a layout shapes text with: the page font a host holds, and with none held
+the page's own web fonts that the engine holds (`own`, in the order of its `@font-face`
+rules), each still drawing first the text whose `font-family` names it.
+
+Before, web fonts were used only inside the profile of a held page font: a host that holds
+none (the WPT runner) laid every page out in the bitmap face, and a page's own font, though
+fetched, checked and held, measured nothing (nine letters of `font: 10px/1 Ahem` were
+77.14px wide, not 90px). With its own fonts as its fonts, text that names no web font is
+drawn in the first of them that has its letters, where a host with a page font draws it in
+that font; the bitmap face and a font file do not mix in one layout. A page with no web
+font, and any page in a host that holds a font, is laid out as before. -/
+def pageFonts (held : Option HeldFont) (own : Array Rendering.SfntProfile.Font) : Option HeldFont :=
+  match held with
+  | some h => some h
+  | none => if own.isEmpty then none else some ⟨own,{}⟩
+
+/-- Kind: property. Says: a host's page font is the layout's font whatever web fonts the
+page has: nothing changes for a host that holds one. -/
+theorem pageFonts_held (h : HeldFont) (own : Array Rendering.SfntProfile.Font) : pageFonts (some h) own = some h := rfl
+
+/-- Kind: property. Says: with no page font and no web font held, there is no font: the
+layout is in the bitmap face, as before. -/
+theorem pageFonts_none (own : Array Rendering.SfntProfile.Font) (h : own.isEmpty = true) : pageFonts none own = none := by
+  simp [pageFonts, h]
+
 /-- The web fonts for a `font-family` value (CSS Fonts 4 §5.2): for each family in
 order, its selected faces that are held, until a generic or held family. -/
 def familyFonts (faces : Array Rendering.FontFaceRule.Face) (fonts : Array (Option Rendering.SfntProfile.Font))
@@ -1854,12 +1879,13 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let face ← if fontData.isEmpty then pure none else
     some <$> Rendering.FontProvider.Face.decode fontData
   -- A font loaded by the fontLoad op: Lean shapes the words and takes the outlines.
-  let loaded := h.font
-  let memo := loaded.map fun held => Rendering.SfntProfile.remember held.fonts held.memo (Rendering.SfntProfile.wordsOf dom)
   -- Web fonts (`@font-face`): those the request names and the engine holds.
   let faces := facesOf env sheets
   let faceFonts := webFaceFonts h faces request
-  let heldFamilies := ((loaded.map (·.fonts)).getD #[]).toList.map (·.family.toLower)
+  -- With no page font held, the page's own fonts are the fonts of its text (`pageFonts`).
+  let loaded := pageFonts h.font (faceFonts.filterMap id)
+  let memo := loaded.map fun held => Rendering.SfntProfile.remember held.fonts held.memo (Rendering.SfntProfile.wordsOf dom)
+  let heldFamilies := ((h.font.map (·.fonts)).getD #[]).toList.map (·.family.toLower)
   let font ← match loaded,memo with
     | some held,some words =>
       Rendering.SfntProfile.profile held.fonts words
@@ -1868,7 +1894,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.
-  let svgFonts := (loaded.map (·.fonts)).getD #[] ++ faceFonts.filterMap id
+  let svgFonts := (h.font.map (·.fonts)).getD #[] ++ faceFonts.filterMap id
   let images := (← suppliedImages request) ++ heldBytes h held
   -- The SVG of the page is read here. In liberal mode a refusal of it (the SVG reader reads all
   -- inline `svg` roots of the document together) lays the page out with no inline `svg`.

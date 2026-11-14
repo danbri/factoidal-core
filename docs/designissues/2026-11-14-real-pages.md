@@ -391,16 +391,32 @@ a layout; lean-lang.org and BBC News do not end their start turn in 200 s (BBC's
 module scripts are fetched inside the turn, one host round trip each); Wikipedia is its
 layout, 1.7 s.
 
-### The WPT runner held no page font
+### A page's web fonts with no page font held
 
-The engine lays text out with the font a host holds, and draws with a page's web fonts
-only inside that font's profile; with none held every page is laid out in the bitmap
-face and no web font is used. The hosts hold Noto Sans. The WPT runner held nothing, so
-a page's own font (Ahem in most layout tests) was fetched, checked and held, and its text
-was still measured in the bitmap face: nine letters of `font: 10px/1 Ahem` were 77.14px
-wide, not 90px. The runner now holds the font the hosts hold; the canvas text tests keep
-their own font in its place. On ten pages that link `/fonts/ahem.css`: 87 to 174 of 300
-subtests.
+The engine lays text out with the font a host holds, and drew with a page's web fonts
+only inside that font's profile; with none held every page was laid out in the bitmap
+face and no web font was used. The hosts hold Noto Sans. The WPT runner holds nothing,
+so a page's own font (Ahem in most layout tests) was fetched, checked and held, and its
+text was still measured in the bitmap face: nine letters of `font: 10px/1 Ahem` were
+77.14px wide, not 90px.
+
+`WebDocument.pageFonts`: with no page font held, the page's own web fonts that the engine
+holds are the fonts of its text. Text that names no web font is then drawn in the first
+of them that has its letters (a host with a page font draws it in that font); the bitmap
+face and a font file do not mix in one layout. A page with no web font, and any page in
+a host that holds a font, is laid out as before.
+
+The other way was tried first and dropped: the runner holding Noto Sans, as the hosts
+do. On 274 pages of the layout directories (macOS engine of main d8b9b0f8c) it gave 3,393
+to 3,426 subtests and cost time on every page: 1.4 times at the median, 2.8 times on the
+interpolation pages (`css-sizing/animation/height-interpolation.html` 32 s to 91 s),
+which make hundreds of layouts and would pass the runner's time limit. Two causes were
+seen in a sample of such a page: line breaking with a font's widths, and the word memo:
+a script session's layouts start from the memo the engine held when the turn began, so
+every layout read shapes again each word the page's scripts wrote (`SfntProfile.remember`,
+an eighth of the time). That second cost is paid in the hosts too (open, below). And the
+branch check's test jobs check the repository out without `third_party/fonts`, so a
+branch check and a full run would have laid pages out in different fonts.
 
 ### Bounds (work driven by a page), this part
 
@@ -416,14 +432,15 @@ subtests.
 ### Proved, tested, open (this part)
 
 Proved: `ImportTree.sheetsOf_length`, `lackingOf_length`, `walk_no_imports`, `walk_zero`;
-`WebDocument.wrapImport_plain`, `animated_imported_layout_fields`, `facesFetched_declared`;
+`WebDocument.wrapImport_plain`, `animated_imported_layout_fields`, `facesFetched_declared`,
+`pageFonts_held`, `pageFonts_none`;
 `WebScripts.takeLayout_start`, `takeLayout_absent`, `animatedOf_fresh`, `animatedOf_written`,
 `animatedOf_earlier`; `WebRender.imageSource_plain`.
 
 Tested only: the import walk's order, cycles and limits (guards in `ImportTree.lean`); the
 host side (`host_parity_test.ts`: `takeAnimated`, `loadImports`, images after the first
-frame with a stand-in engine, `inOrder`); the runner's page font (ten WPT pages, and a
-cloud check of the layout directories).
+frame with a stand-in engine, `inOrder`); a page's own fonts with no page font held (the
+cloud check of the layout directories; no guard holds a font file).
 
 Open:
 
@@ -440,4 +457,5 @@ Open:
   first frame: nothing moves when they arrive, and the scripts read the same layout as
   now. Or the session starts without the images and fires `load` when the host says they
   are in.
-- The engine could use a page's web fonts with no page font held (the runner's case).
+- The word memo of a script session: a layout read shapes again every word the page's
+  scripts wrote since the turn began (the memo a layout grows is not kept for the next).
