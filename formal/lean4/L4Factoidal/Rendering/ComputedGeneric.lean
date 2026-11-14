@@ -63,6 +63,22 @@ def usesLogical (v : View) (id : Nat) : Bool :=
   ((v.matchesOf id).any fun (_, rule, _) => rule.usesLogical) ||
     (CssValues.declNames (attrValue (v.dom.get id) "style")).any CssValues.Logical.mentions
 
+/-- A cascaded value that is a shorthand declaration kept whole because it holds `var()`
+(CSS Variables 1 §3: "pending-substitution"): the shorthand's name and its value, marked
+so that no value text is taken for it. -/
+def pendingShorthand (shorthand raw : String) : String := "\x02" ++ shorthand ++ "\x00" ++ raw
+
+/-- The shorthand and value of a `pendingShorthand` text. -/
+def pendingOf (value : String) : Option (String × String) :=
+  if value.startsWith "\x02" then
+    match ((value.drop 1).toString).splitOn "\x00" with
+    | sh :: rest => some (sh, "\x00".intercalate rest)
+    | [] => none
+  else none
+
+#guard pendingOf (pendingShorthand "margin" "var(--a) 1px") == some ("margin", "var(--a) 1px")
+#guard pendingOf "1px" == none
+
 /-- The cascaded value of property `p` (a name of the table, or a custom property) on
 element `id`: the canonical specified value of the winning declaration. `also` is the
 flow-relative name of `p` in the element's flow, when it has one (CSS Logical 1 §4.1): its
@@ -81,7 +97,10 @@ def cascaded (v : View) (id : Nat) (p : String) (also : Option String := none) :
   let consider := fun (best : Option (List Nat × String)) (key : List Nat) (d : Declaration) =>
     if names.contains d.property && (best.map (fun b => keyLE b.1 key)).getD true then
       let value := if d.property == "all" then CssValues.specified "all" d.value
-        else (CssValues.expand d.property d.value).bind fun ls => (ls.lookup p).orElse fun _ => also.bind fun q => ls.lookup q
+        else (CssValues.expand d.property d.value).bind fun ls =>
+          ((ls.lookup p).orElse fun _ => also.bind fun q => ls.lookup q).orElse fun _ =>
+            -- a shorthand kept whole for its `var()`: its longhands are known after substitution
+            (ls.lookup d.property).bind fun raw => if d.property != p then some (pendingShorthand d.property raw) else none
       match value with
       | some value => some (key, value)
       | none => best
@@ -96,7 +115,11 @@ def cascaded (v : View) (id : Nat) (p : String) (also : Option String := none) :
       order := order + 1
   for d in CssValues.Block.parseOnly names (attrValue n "style") do
     let key := inlineKey d.important order
-    if (d.name == p || d.name == "all" || some d.name == also) && (best.map (fun b => keyLE b.1 key)).getD true then best := some (key, d.value)
+    if (best.map (fun b => keyLE b.1 key)).getD true then
+      if d.name == p || d.name == "all" || some d.name == also then best := some (key, d.value)
+      else if CssValues.hasSubstitution (CssValues.CV.parse d.value) then
+        -- a covering shorthand kept whole for its `var()`
+        best := some (key, pendingShorthand d.name d.value)
     order := order + 1
   return best.map (·.2)
 
@@ -200,6 +223,21 @@ def computedLonghand (v : View) : Nat → Nat → String → String
     match cascaded v id p also with
     | none => default ()
     | some value =>
+      match pendingOf value with
+      | some (shorthand, raw) =>
+        -- substitute, then read the shorthand's longhand `p`; invalid at computed-value
+        -- time is as if not declared
+        match substitute (fun name => computedLonghand v fuel id name) 16 (CssValues.CV.parse raw) with
+        | none => default ()
+        | some cvs' =>
+          match (CssValues.expand shorthand (CssValues.rawText cvs')).bind (·.lookup p) with
+          | some s =>
+            if s == "inherit" then fromParent ()
+            else if s == "initial" then initial ()
+            else if CssValues.cssWide.contains s then default ()
+            else CssValues.computed (ctxOf s) p s
+          | none => default ()
+      | none =>
       if value == "inherit" then fromParent ()
       else if value == "initial" then initial ()
       else if value == "unset" || value == "revert" || value == "revert-layer" then default ()
@@ -386,5 +424,28 @@ def valueAt (v : View) (id : Nat) (k : Nat) : String :=
     match (customNames v id)[k - longhands.size - others.size]? with
     | some name => computedLonghand v depthBound id name
     | none => ""
+
+/-! ### Tests: the computed value of element `t` of a page with one sheet -/
+
+private def computedAt (html css prop : String) : String :=
+  let dom := DOM.parseHtmlDocument html
+  match CSS.parse css, dom.getElementById 0 "t" with
+  | .ok rules, some id =>
+    match computeAll dom rules with
+    | .ok styles =>
+      computedOf { dom := dom, matchesOf := fun i => matchedRules dom i rules, styles := styles,
+                   viewportW := 800, viewportH := 600 } id prop
+    | .error _ => "error"
+  | _, _ => "error"
+
+-- a shorthand with var() gives its longhands after substitution
+#guard computedAt "<div id=t></div>" "#t { --x: pre; white-space: var(--x) }" "white-space" == "pre"
+#guard computedAt "<div id=t></div>" "#t { --c: red; background: var(--c) }" "background-color" == "rgb(255, 0, 0)"
+#guard computedAt "<div id=t></div>" "#t { --m: 3px; margin: var(--m) 5px }" "margin-left" == "5px"
+-- the font shorthand and keyword sizes; float of an absolutely positioned box
+#guard computedAt "<div id=t></div>" "#t { font: xx-small serif }" "font" == "9px serif"
+#guard computedAt "<div id=t></div>" "#t { position: absolute; float: left; display: none }" "float" == "none"
+-- custom properties: a cycle and a missing reference are the guaranteed-invalid value
+#guard computedAt "<div><div id=t></div></div>" "div { --c: inherited } #t { --c: var(--zz) }" "--c" == ""
 
 end L4Factoidal.Rendering.ComputedGeneric
