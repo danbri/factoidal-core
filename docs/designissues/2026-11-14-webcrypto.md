@@ -48,7 +48,7 @@ argument checks the specification puts first. Nothing here adds a primitive of o
 - wrapKey takes the bytes it encrypts through `wrapPlain`, which is `exportKey` and nothing
   else, so the extractability theorems cover it by name.
 
-### 2.2 With new HACL\* bindings (branch `wip/webcrypto-hacl`, not on main)
+### 2.2 With new HACL\* bindings (branch `wip/webcrypto-hacl`)
 
 - **RSA for imported keys** (RSASSA-PKCS1-v1_5, RSA-PSS, RSA-OAEP): import and export as SPKI,
   PKCS #8 and JWK, sign, verify, encrypt, decrypt, wrapKey and unwrapKey with an imported
@@ -68,8 +68,10 @@ argument checks the specification puts first. Nothing here adds a primitive of o
 - **The hygiene ratchet.** A new verified primitive is a new `@[extern]`. `LabHygiene`'s
   `lab_ratchet` caps the engine's closure at 22 externs and says raising it needs the owner.
   These two features need 27 (five entry points: `rsaPublicRaw`, `rsaPrivateRaw`,
-  `rsaPssSignRaw`, `rsaPssVerifyRaw`, `sha3Raw`). The raise is a separate, marked commit on the
-  branch. It is not merged without that decision.
+  `rsaPssSignRaw`, `rsaPssVerifyRaw`, `sha3Raw`). The raise is a separate, marked commit. The owner
+  approved it on 2026-11-14: the formal extern baseline is 27, for exactly these five entry
+  points. The approval does not extend to AES key objects without an AES operation, RSA-PSS with
+  SHA-1, or any source of primitives other than HACL\*; those stay refused (section 6).
 
 ## 3. The C boundary (branch `wip/webcrypto-hacl`)
 
