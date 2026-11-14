@@ -65,6 +65,14 @@ structure AnimRec where
   phase : Phase := .idle
   iteration : Int := 0
   activeTime : Int := 0
+  /-- The replace state (Web Animations 1 §5.5): 0 active, 1 removed (other animations
+  cover every property of its effect: it is out of the effect stack and of the lists of
+  animations), 2 persisted (a script asked to keep it: never removed). -/
+  replace : Nat := 0
+  /-- The `remove` event of a removed animation waits for its finish notification: the
+  finish event comes first (§5.5: the remove event is scheduled at the timeline's time,
+  the finish event at the earlier time the animation finished). -/
+  removeDue : Bool := false
   deriving DecidableEq, Repr, Inhabited
 
 /-- An animation or transition event for the page (CSS Animations 1 §4.2, CSS Transitions
@@ -477,7 +485,8 @@ def ordered (s : State) (keep : Nat → Bool := fun _ => true) : List (Nat × An
   let live := (List.range s.anims.size).filterMap fun i =>
     match s.anims[i]? with
     | some a =>
-      if a.dead then none
+      -- (a removed animation is in no effect stack: Web Animations 1 §5.5)
+      if a.dead || a.replace == 1 then none
       else match (s.effectOf a).bind (·.target) with
         | some t => if keep t then some (i, a) else none
         | none => none
@@ -519,6 +528,117 @@ def overridesWhere (s : State) (ac : Access) (keep : Nat → Bool) : List Overri
         value := if kindOf k.2 == .transformList then Value.toTextPrecise v
           else if lineWidth k.2 then Value.toText (Value.snapWidths v)
           else if nonNegativeList k.2 then Value.toText (v.map Value.clampTok0) else Value.toText v }
+
+/-! ## Replaced animations (Web Animations 1 §5.5)
+
+A script that starts a filling animation each time something happens (a pointer move, a
+tick) would keep every one of them for ever: each still has a value in the effect stack.
+The specification removes an animation once it is finished and other finished animations
+above it give a value to every property of its effect: it leaves the effect stack and the
+lists of animations, and a `remove` event tells its script. -/
+
+/-- Replaceable (§5.5): made by a script (not prescribed by markup), finished, not removed,
+on the document timeline, with an effect that is in effect and has a target. -/
+def replaceable (s : State) (a : AnimRec) : Bool :=
+  !a.dead && a.origin == .script && a.replace != 1 && a.timeline &&
+  a.player.playState (s.tl a) (s.effEnd a) == .finished &&
+  (match s.effectOf a with
+    | some e => e.target.isSome && (s.progressOf a).isSome
+    | none => false)
+
+/-- The longhands that the keyframes of an effect give a value (a shorthand counts as its
+longhands). -/
+def targetLonghands (e : EffectRec) : List String :=
+  ((Effect.properties e.keyframes).flatMap fun p =>
+    let ls := Css.longhandsOf p
+    if ls.isEmpty then [p] else ls).eraseDups
+
+/-- The animations to remove now: each replaceable animation in the active replace state
+whose target is in the document and for each of whose properties a replaceable animation
+of the same target, higher in composite order, has a value. -/
+def replaced (s : State) (connected : Nat → Bool := fun _ => true) : List Nat :=
+  let cands := (List.range s.anims.size).filterMap fun i =>
+    match s.anims[i]? with
+    | some a =>
+      if replaceable s a then
+        match s.effectOf a with
+        | some e =>
+          (match e.target with
+            | some t => if connected t then some (i, t, e.pseudo, orderKey a, targetLonghands e) else none
+            | none => none)
+        | none => none
+      else none
+    | none => none
+  -- by target: an animation is compared with those of its own target only (a page with a
+  -- finished animation on each of many elements does not compare them all with each other)
+  let byTarget : Std.HashMap Nat (List (String × (Nat × Nat) × List String)) :=
+    cands.foldl (fun m (_, t, pseudo, key, props) => m.insert t ((pseudo, key, props) :: m.getD t [])) {}
+  (cands.filterMap fun (i, t, pseudo, key, props) =>
+    let others := byTarget.getD t []
+    if props.all fun p => others.any fun (pseudo', key', props') =>
+        pseudo' == pseudo && !orderLE key' key && props'.contains p
+    then some i else none).filter fun i => (s.anims[i]?).any (·.replace == 0)
+
+/-- The `remove` event of an animation, with its current time and the timeline time. -/
+def removeEvent (s : State) (a : AnimRec) : Act :=
+  .event "remove" (a.player.currentTime (s.tl a)) (s.tl a)
+
+/-- §5.5 "remove replaced animations": each one's replace state is removed, and a `remove`
+event is queued for its script object: now when its finish event was sent already, else
+after that one (`removeDue`: the finish notification steps send both, `Api.callAnim`). -/
+def removeReplaced (s : State) (connected : Nat → Bool := fun _ => true) : State :=
+  (replaced s connected).foldl (fun s i =>
+    match s.anims[i]? with
+    | some a =>
+      let removed : AnimRec :=
+        if a.player.finishedResolved then { a with replace := 1, player := a.player.emit (removeEvent s a) }
+        else { a with replace := 1, removeDue := true }
+      { s with anims := s.anims.set! i removed }
+    | none => s) s
+
+/-- Kind: bookkeeping (nothing else changes). Says: removing replaced animations makes no
+animation and loses none. -/
+theorem removeReplaced_size (s : State) (connected : Nat → Bool) :
+    (removeReplaced s connected).anims.size = s.anims.size := by
+  unfold removeReplaced
+  generalize replaced s connected = l
+  induction l generalizing s with
+  | nil => rfl
+  | cons i rest ih =>
+    simp only [List.foldl_cons]
+    rw [ih]
+    cases h : s.anims[i]? <;> simp [h]
+
+/-- Kind: safety (a script's request holds). Says: only an animation in the active
+replace state is among those to remove: one that is removed already is not removed
+again (no second `remove` event), and one its script persisted is never removed. -/
+theorem replaced_active (s : State) (connected : Nat → Bool) (i : Nat)
+    (h : i ∈ replaced s connected) : (s.anims[i]?).any (·.replace == 0) = true :=
+  (List.mem_filter.mp h).2
+
+/-- The values to write for `commitStyles()` of animation `i` (§6.4.9): the result of its
+target's effect stack with the animations above it left out and with the animation in it
+(also when it was removed), for the longhands of its own effect. -/
+def commitValues (s : State) (ac : Access) (i : Nat) : List (String × String) :=
+  match s.anims[i]? with
+  | none => []
+  | some a =>
+    match s.effectOf a with
+    | none => []
+    | some e =>
+      match e.target with
+      | none => []
+      | some t =>
+        let key := orderKey a
+        let anims := (List.range s.anims.size).foldl (fun (arr : Array AnimRec) j =>
+          arr.modify j fun b =>
+            if j == i then { b with replace := 0 }
+            else if !orderLE (orderKey b) key then { b with dead := true }
+            else b) s.anims
+        let props := targetLonghands e
+        (overridesWhere { s with anims } ac (· == t)).filterMap fun o =>
+          if props.contains o.property || (Effect.properties e.keyframes).contains o.property
+          then some (o.property, o.value) else none
 
 /-- The effect stack of every element (`overridesWhere`). -/
 def overrides (s : State) (ac : Access) : List Override := overridesWhere s ac fun _ => true
@@ -662,7 +782,8 @@ def tick (s : State) (connected : Nat → Bool := fun _ => true) : State := Id.r
           | _, _, _ => s.ended
         s := { s with anims := s.anims.set! i a', events := s.events ++ evs.toArray, ended,
                       liveCss := if a'.dead then s.liveCss.erase i else s.liveCss }
-  return s
+  -- §5.5: after the timelines are updated and before the events are sent
+  return removeReplaced s connected
 
 /-- Whether the page needs another animation frame for its animations: an event waits, an
 animation is pending or running, a CSS animation or transition has events not yet

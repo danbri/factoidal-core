@@ -283,6 +283,29 @@ cascade of that document: 31 to 41 ms there), and fixed:
   ends in the same class (`#test-N .transition`), so each element tries all of them (the rule buckets
   are by the last compound); the whole path paid that for every element.
 
+### Replaced animations and `commitStyles()` (Web Animations 1 §5.5, §6.4.9)
+
+A script that starts a filling animation at each pointer move or tick keeps every one of them: each
+still has a value in the effect stack. §5.5 removes an animation once it is finished and other
+finished script animations above it in composite order give a value to every longhand of its
+effect. `Engine.replaced` finds them at the end of each frame's tick (`removeReplaced`): the replace
+state becomes removed, a `remove` playback event is queued for the script object, and the animation
+is in no effect stack and no `getAnimations()` list (`ordered`). `persist()` sets the persisted
+state, which is never removed (`replaced_active`). Candidates are grouped by target, so a page with a
+finished animation on each of many elements compares each with those of its own element only. A
+script call that leaves an animation to remove asks for the frame that removes it.
+
+`commitStyles()` asks Lean (measure op 65 with "commit"): the errors of §6.4.9 in their order (a
+target with no `style` attribute, that is a pseudo-element or an element that is neither HTML, SVG
+nor MathML; then, with the styles up to date, a target that is not rendered), else the values of
+the target's effect stack with the animations above this one left out and this one in it, also when
+it was removed (`Engine.commitValues`). Before, the script side wrote the element's whole computed
+values, which hold the animations above too.
+
+Not done: logical properties in the covering test (a `margin-inline-start` animation and a
+`margin-left` one do not cover each other), a CSS animation or transition that a script keeps
+playing after style cancelled it (it is not in the effect stack at all).
+
 ### Cascades per layout read (found on real pages)
 
 A script that reads a layout after a write (`offsetWidth`, `getBoundingClientRect`) made, counted
@@ -350,6 +373,9 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
 - `Engine.needsFrame_out` (an animation with untaken acts keeps the page asking for a frame);
   `Value.add_shape_replace` (two shapes that do not interpolate do not add or accumulate: the
   keyframe's value replaces); `Value.originWords_dims` (an origin of lengths is not rewritten).
+- `Engine.removeReplaced_size` (removing replaced animations makes no animation and loses none),
+  `Engine.replaced_active` (only an animation in the active replace state is removed: not one
+  removed already, not a persisted one).
 - `Layout.renderWithStyles_unused` (the styles a layout answers are those of `CSS.computeFor` on a
   page with no generated content, and the layout is the layout of those styles).
 - `Host.afterWrite_quiet`, `Host.frameStyles_quiet` (a page with no listener for an animation or
