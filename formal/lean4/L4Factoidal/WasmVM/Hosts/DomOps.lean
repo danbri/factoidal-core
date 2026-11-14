@@ -23,6 +23,7 @@ import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.DOM.Editing.Commands
 import L4Factoidal.Rendering.Style
 import L4Factoidal.DOM.Named
+import L4Factoidal.DOM.CustomElements
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -422,7 +423,9 @@ Selection: 140 "range direction", or -1 when empty; 141 `addRange` (range `id`);
 ("node"); 149 `deleteFromDocument`; 150 `containsNode` ("node partial", "1" or "0").
 
 DOM and HTML decisions (read-only): 180 the value of the Window's named property `q` for
-document `id` (`DOM.Named.answer`: "", "w" container, "e" element, or "c" elements). -/
+document `id` (`DOM.Named.answer`: "", "w" container, "e" element, or "c" elements); 181
+whether `q` is a valid custom element name ("1" or "0"); 182 the elements a tree change at
+node `id` reaches, in shadow-including tree order (`DOM.CustomElements`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
   let d ← dom
@@ -713,6 +716,13 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   -- 180: named access on the Window object (HTML §7.3.3, `DOM.Named.answer`): the value of
   -- the named property `q` of the Window of document `id`
   | 180 => return L4Factoidal.DOM.Named.answer d id q
+  -- 181: whether `q` is a valid custom element name (HTML §4.13.3, `DOM.CustomElements.validName`)
+  | 181 => return if L4Factoidal.DOM.CustomElements.validName q then "1" else "0"
+  -- 182: the elements a tree change at node `id` reaches, in shadow-including tree order
+  -- (`DOM.CustomElements.reach`)
+  | 182 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.CustomElements.reachWire d n
   -- ==== end of domhtml ====
   | _ => throw (-2)
 

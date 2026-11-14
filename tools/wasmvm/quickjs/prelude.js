@@ -480,8 +480,11 @@
   const targets = new Map();
   let globalEvent = undefined;
 
+  // `ceActive`: a custom element is defined (section customelements), so attribute and tree
+  // changes go through the natives that tell custom elements.
+  let htmlConstructing = false, ceActive = false;
   class EventTarget {
-    constructor() { const id = nextTarget++; ids.set(this, id); targets.set(id, this); }
+    constructor() { if (htmlConstructing) return; const id = nextTarget++; ids.set(this, id); targets.set(id, this); }
     addEventListener(type, callback, options = {}) {
       if (arguments.length < 2) throw new TypeError("addEventListener: 2 arguments required");
       addListener(this === undefined || this === null ? window : this, type, callback, options);
@@ -606,7 +609,7 @@
     return f;
   };
   class Node extends EventTarget {
-    constructor() { throw new TypeError('Illegal constructor'); }
+    constructor() { if (!htmlConstructing) throw new TypeError('Illegal constructor'); super(); }
     get nodeType() { return info(nodeId(this), 0); }
     get nodeName() { return str(nodeId(this), 1); }
     // A node of a frame's document loaded from a URL has that URL as base (node_query 171
@@ -946,7 +949,18 @@
       default: throw new DOMException('bad position', 'SyntaxError');
     }
   };
+  // [HTMLConstructor] (HTML §3.2.3): `new` on a custom element's constructor; set by section
+  // customelements. Until a custom element is defined no constructor of an element is legal.
+  // While `htmlConstructing`, the constructors of Node and EventTarget let the object through:
+  // the HTMLElement constructor then gives it its node.
+  let htmlDefinition = () => { throw new TypeError('Illegal constructor'); }, htmlConstructed = () => {};
   class HTMLElement extends Element {
+    constructor() {
+      const d = htmlDefinition(new.target);
+      htmlConstructing = true;
+      try { super(); } finally { htmlConstructing = false; }
+      htmlConstructed(this, d);
+    }
     // title, lang, dir, hidden and the other reflected attributes: DOM.Reflect (dombreadth section).
     get dataset() {
       const el = this;
@@ -994,6 +1008,15 @@
   const decls = el => { const m = new Map(); for (const part of (el.getAttribute('style') ?? '').split(';')) { const i = part.indexOf(':'); if (i > 0) m.set(part.slice(0, i).trim().toLowerCase(), part.slice(i + 1).trim()); } return m; };
   const write = (el, d) => el.setAttribute('style', [...d].map(([k, v]) => `${k}: ${v}`).join('; '));
   class HTMLUnknownElement extends HTMLElement {}
+  // The HTML element names whose interface is HTMLElement itself (HTML §3.2.2), and the valid
+  // custom element names (node_query 181, DOM.CustomElements.validName; asked once a name):
+  // an element of either kind is an HTMLElement, any other unknown name an HTMLUnknownElement.
+  const plainHTMLElements = new Set(['abbr', 'address', 'article', 'aside', 'b', 'bdi', 'bdo', 'cite', 'code', 'dd', 'dfn', 'dt', 'em',
+    'figcaption', 'figure', 'footer', 'header', 'hgroup', 'i', 'kbd', 'main', 'mark', 'nav', 'noscript', 'rp', 'rt', 'ruby', 's',
+    'samp', 'search', 'section', 'small', 'strong', 'sub', 'summary', 'sup', 'u', 'var', 'wbr', 'acronym', 'basefont', 'big',
+    'center', 'nobr', 'noembed', 'noframes', 'plaintext', 'rb', 'rtc', 'strike', 'tt']);
+  const customNames = new Map();
+  const isCustomName = l => { if (l.indexOf('-') < 0) return false; let v = customNames.get(l); if (v === undefined) customNames.set(l, v = n.query(0, 181, l) === '1'); return v; };
   const htmlClasses = {};
   const htmlClass = (name, tags) => { const c = ({ [name]: class extends HTMLElement {} })[name]; for (const t of tags) htmlClasses[t] = c; return c; };
   const elementClasses = [
@@ -2235,7 +2258,8 @@
     switch (t) {
       case 1: {
         if (info(id, 8) !== 1) return (str(id, 2) === 'http://www.w3.org/2000/svg' ? SVGElement : Element).prototype;
-        return (htmlClasses[str(id, 0)] ?? HTMLUnknownElement).prototype;
+        const l = str(id, 0), C = htmlClasses[l];
+        return (C ?? (plainHTMLElements.has(l) || isCustomName(l) ? HTMLElement : HTMLUnknownElement)).prototype;
       }
       case 3: return Text.prototype;
       case 4: return CDATASection.prototype;
@@ -2702,6 +2726,320 @@
     };
     Object.defineProperty(globalThis, '\u{10FFFE}WindowNamedProperties', { value: namedProperty, writable: false, enumerable: false, configurable: false });
   }
+  // ==== customelements: Custom elements (HTML §4.13) ====================================
+  // The registry, the definitions and the callbacks are these JavaScript objects. Lean decides
+  // what is a function of a name or of the tree (DOM.CustomElements): node_query 181, whether
+  // a name is a valid custom element name; 182, the elements a tree change at a node reaches,
+  // in shadow-including tree order. Until the first `define` the natives are not wrapped
+  // (`ceActive`), so a page without custom elements does no work here.
+  //
+  // An element's object is the `this` of its constructor: `new C()` makes the object, and the
+  // HTMLElement constructor gives it the element's node (a new node, or the node being
+  // upgraded). When a script already holds an object for an element that is upgraded later,
+  // that object stays the element's object: the constructor runs on a second object for the
+  // same node, and its own properties and prototype are then given to the first.
+  {
+    const validName = name => isCustomName(name);
+    const reach = id => { const r = n.query(id, 182, ''); return typeof r === 'string' && r !== '' ? r.split(' ').map(Number) : []; };
+    const defsByName = new Map(), defsByCtor = new Map(), waiting = new Map(), ceState = new WeakMap(), isValues = new Map();
+    let defining = false;
+    // IsConstructor: a function, or a Proxy of one
+    const isCtor = f => { if (f === null || (typeof f !== 'function' && typeof f !== 'object')) return false; try { Reflect.construct(String, [], f); return true; } catch { return false; } };
+    const customOf = id => { const el = wrappers.get(id), st = el && ceState.get(el); return st && st.state === 'custom' ? el : undefined; };
+    const connectedId = id => { if (id < 0) return false; if (shadowEngine()) return info(id, 25) === 1; for (let k = id, i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; };
+    // "Look up a custom element definition" (HTML §4.13.3) for the element numbered `id`.
+    const lookup = id => {
+      if (info(id, 0) !== 1 || info(id, 8) !== 1) return null;
+      const l = str(id, 0), d = defsByName.get(l);
+      if (d && d.localName === l) return d;
+      let is = isValues.get(id);
+      if (is === undefined) { const a = n0.attr(id, 'is'); is = typeof a === 'string' ? a : undefined; }
+      if (is !== undefined) { const e = defsByName.get(is); if (e && e.localName === l) return e; }
+      return null;
+    };
+    const callback = (el, name, args) => {
+      const st = ceState.get(el), f = st && st.def && st.def.callbacks[name];
+      if (f) try { f.apply(el, args); } catch (e) { report(e); }
+    };
+    // "Upgrade an element" (HTML §4.13.5), for the element numbered `id`.
+    // `sync`: "create an element" with the synchronous custom elements flag (step 6.1): the
+    // constructor's result is checked and is the element made, which the answer is.
+    const upgrade = (id, def, sync = false) => {
+      const held = wrappers.get(id);
+      let st = held && ceState.get(held);
+      if (st && st.state !== 'undefined' && st.state !== 'uncustomized') return;
+      if (!st) st = { state: 'undefined', def: null };
+      if (held) ceState.set(held, st);
+      st.def = def; st.state = 'failed';
+      const pending = [];
+      if (def.callbacks.attributeChangedCallback) {
+        const xs = (n.query(id, 2, '') || '').split('\u0000');
+        for (let i = 0; i + 3 < xs.length; i += 4) if (def.observed.has(xs[i + 2])) pending.push(['attributeChangedCallback', [xs[i + 2], null, xs[i + 3], xs[i] === '' ? null : xs[i]]]);
+      }
+      if (connectedId(id)) pending.push(['connectedCallback', []]);
+      const entry = { id, held, made: undefined, done: false, st };
+      def.stack.push(entry);
+      try {
+        if (def.disableShadow && info(id, 26) >= 0) throw new DOMException('The element already has a shadow root.', 'NotSupportedError');
+        st.state = 'precustomized';
+        const r = new def.constructor();
+        if (sync) {
+          if (!(r instanceof HTMLElement)) throw new TypeError('The result of constructing a custom element is not an HTMLElement.');
+          const k = nodeId(r);
+          if (n.query(k, 2, '') !== '' || info(k, 6) > 0 || info(k, 1) >= 0 || info(k, 7) !== info(id, 7) || str(k, 0) !== def.localName)
+            throw new DOMException('The result of constructing a custom element must have no attributes, children or parent, and be in the document with the local name asked for.', 'NotSupportedError');
+          if (r !== entry.made) { def.stack.pop(); if (entry.done) { st.def = null; st.state = 'failed'; } return r; }
+        } else if (!entry.done || r !== entry.made) throw new TypeError('The custom element constructor did not produce the element being upgraded.');
+        if (held) {
+          Object.setPrototypeOf(held, Object.getPrototypeOf(r));
+          for (const k of Reflect.ownKeys(r)) { try { Object.defineProperty(held, k, Object.getOwnPropertyDescriptor(r, k)); } catch {} }
+        }
+      } catch (e) {
+        def.stack.pop(); st.def = null; st.state = 'failed';
+        // the object the constructor was given keeps the element's own interface
+        const w = wrappers.get(id);
+        if (w && !held) { Object.setPrototypeOf(w, def.localName === def.name ? HTMLElement.prototype : protoOf(id, 1)); ceState.set(w, st); }
+        throw e;
+      }
+      def.stack.pop();
+      st.state = 'custom';
+      const el = wrappers.get(id);
+      for (const [name, args] of pending) callback(el, name, args);
+      return el;
+    };
+    // "Try to upgrade an element": when a definition matches, as a reaction that reports.
+    const tryUpgrade = id => {
+      const el = wrappers.get(id), st = el && ceState.get(el);
+      if (st && st.state !== 'undefined' && st.state !== 'uncustomized') return;
+      const def = lookup(id);
+      if (def) try { upgrade(id, def); } catch (e) { report(e); }
+    };
+    const platformClasses = new Set([HTMLUnknownElement, ...Object.values(htmlClasses)]);
+    const platformOf = NT => { let C = NT; for (let i = 0; i < 1000 && C !== null && C !== undefined && C !== HTMLElement && !platformClasses.has(C); i++) C = Object.getPrototypeOf(C); return C; };
+    // [HTMLConstructor] steps 1 to 5: the definition of NewTarget, or a TypeError.
+    htmlDefinition = NT => {
+      const def = NT === undefined ? undefined : defsByCtor.get(NT);
+      if (!def) throw new TypeError('Illegal constructor');
+      const active = platformOf(NT);
+      if (def.localName === def.name ? active !== HTMLElement : htmlClasses[def.localName] !== active) throw new TypeError('Illegal constructor: the definition does not extend this interface');
+      return def;
+    };
+    // Steps 6 to 12, with `self` the object that `new` made: it becomes the object of a new
+    // element, or of the element being upgraded.
+    htmlConstructed = (self, def) => {
+      const st0 = { state: 'custom', def };
+      if (def.stack.length === 0) {
+        const id = chk(n0.create(3 + 16 * (scriptDocument ? nodeId(scriptDocument) : 0), def.localName));
+        ids.set(self, id); wrappers.set(id, self); ceState.set(self, st0);
+        if (def.localName !== def.name) isValues.set(id, def.name);
+        return;
+      }
+      const entry = def.stack[def.stack.length - 1];
+      if (entry.done) throw new TypeError('This custom element constructor was already called for this element.');
+      entry.done = true; entry.made = self;
+      ids.set(self, entry.id); ceState.set(self, entry.st);
+      if (!entry.held) wrappers.set(entry.id, self);
+    };
+    // The reactions of a tree change (HTML §4.13.6), run when the native returns.
+    const connectAll = idsIn => { for (const k of idsIn) { const el = customOf(k); if (el) callback(el, 'connectedCallback', []); else tryUpgrade(k); } };
+    const customIn = id => reach(id).map(customOf).filter(el => el !== undefined);
+    const wrapNatives = () => {
+      const insert0 = n.insert, remove0 = n.remove, replace0 = n.replace, setText0 = n.setText, setAttr0 = n.setAttr, removeAttr0 = n.removeAttr, clone0 = n.clone, treeOp0 = n.treeOp;
+      const moved = (p, node, native) => {
+        const fragment = info(node, 0) === 11, roots = fragment ? kids(node) : [node];
+        const gone = !fragment && connectedId(node) ? customIn(node) : [], doc0 = roots.length ? info(roots[0], 7) : -1;
+        const r = native();
+        if (r !== 0) return r;
+        for (const el of gone) callback(el, 'disconnectedCallback', []);
+        const into = connectedId(p);
+        for (const k of roots) {
+          const doc1 = info(k, 7);
+          if (doc0 >= 0 && doc1 !== doc0) for (const el of customIn(k)) callback(el, 'adoptedCallback', [wrap(doc0), wrap(doc1)]);
+          if (into) connectAll(reach(k));
+        }
+        return r;
+      };
+      n.insert = (p, node, child) => moved(p, node, () => insert0(p, node, child));
+      n.replace = (p, node, child) => {
+        const gone = child !== node && connectedId(child) ? customIn(child) : [];
+        const r = moved(p, node, () => replace0(p, node, child));
+        if (r === 0) for (const el of gone) callback(el, 'disconnectedCallback', []);
+        return r;
+      };
+      n.remove = (p, child) => {
+        const gone = connectedId(child) ? customIn(child) : [];
+        const r = remove0(p, child);
+        if (r === 0) for (const el of gone) callback(el, 'disconnectedCallback', []);
+        return r;
+      };
+      n.setText = (id, value) => {
+        const t = info(id, 0);
+        const gone = (t === 1 || t === 11) && connectedId(id) ? kids(id).flatMap(customIn) : [];
+        const r = setText0(id, value);
+        if (r === 0) for (const el of gone) callback(el, 'disconnectedCallback', []);
+        return r;
+      };
+      const attrChange = (id, name, native) => {
+        const el = customOf(id), st = el && ceState.get(el);
+        if (!st || !st.def.callbacks.attributeChangedCallback) return native();
+        const rn = recordName(id, name);
+        if (!st.def.observed.has(rn.attributeName)) return native();
+        const old = n0.attr(id, rn.key), r = native();
+        if (r === 0) { const now = n0.attr(id, rn.key); callback(el, 'attributeChangedCallback', [rn.attributeName, typeof old === 'string' ? old : null, typeof now === 'string' ? now : null, rn.attributeNamespace]); }
+        return r;
+      };
+      n.setAttr = (id, name, value) => attrChange(id, name, () => setAttr0(id, name, value));
+      n.removeAttr = (id, name) => attrChange(id, name, () => removeAttr0(id, name));
+      n.clone = (id, deep) => { const c = clone0(id, deep); if (typeof c === 'number' && c >= 0) for (const k of reach(c)) tryUpgrade(k); return c; };
+      // tree_op 3 adopts a node; 4 and 5 import one (a clone in another document)
+      n.treeOp = (id, arg, op) => {
+        if (op === 3) {
+          const doc0 = info(id, 7), gone = connectedId(id) ? customIn(id) : [];
+          const r = treeOp0(id, arg, op);
+          if (typeof r === 'number' && r < 0) return r;
+          for (const el of gone) callback(el, 'disconnectedCallback', []);
+          const doc1 = info(id, 7);
+          if (doc1 !== doc0) for (const el of customIn(id)) callback(el, 'adoptedCallback', [wrap(doc0), wrap(doc1)]);
+          return r;
+        }
+        const r = treeOp0(id, arg, op);
+        if ((op === 4 || op === 5) && typeof r === 'number' && r >= 0) for (const k of reach(r)) tryUpgrade(k);
+        return r;
+      };
+    };
+    class CustomElementRegistry {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      define(name, constructor, options = undefined) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'define' on 'CustomElementRegistry': 2 arguments required.");
+        name = String(name);
+        if (!isCtor(constructor)) throw new TypeError("Failed to execute 'define' on 'CustomElementRegistry': parameter 2 is not a constructor.");
+        if (options !== undefined && options !== null && typeof options !== 'object' && typeof options !== 'function') throw new TypeError("Failed to execute 'define' on 'CustomElementRegistry': parameter 3 is not an object.");
+        const ext = options === undefined || options === null ? undefined : options.extends;
+        if (!validName(name)) throw new DOMException(`"${name}" is not a valid custom element name`, 'SyntaxError');
+        if (defsByName.has(name)) throw new DOMException(`the name "${name}" has already been used with this registry`, 'NotSupportedError');
+        if (defsByCtor.has(constructor)) throw new DOMException('this constructor has already been used with this registry', 'NotSupportedError');
+        let localName = name;
+        if (ext !== undefined) {
+          const e = String(ext);
+          if (validName(e)) throw new DOMException(`"${e}" is a valid custom element name`, 'NotSupportedError');
+          if (!Object.prototype.hasOwnProperty.call(htmlClasses, e) && !plainHTMLElements.has(e)) throw new DOMException(`"${e}" is not the name of an HTML element`, 'NotSupportedError');
+          localName = e;
+        }
+        if (defining) throw new DOMException('a custom element definition is running', 'NotSupportedError');
+        defining = true;
+        let made;
+        try {
+          const prototype = constructor.prototype;
+          if (prototype === null || (typeof prototype !== 'object' && typeof prototype !== 'function')) throw new TypeError('The "prototype" of the constructor is not an object.');
+          const callbacks = {};
+          const read = k => { const v = prototype[k]; if (v !== undefined) { if (typeof v !== 'function') throw new TypeError(`"${k}" is not a function.`); callbacks[k] = v; } };
+          for (const k of ['connectedCallback', 'disconnectedCallback', 'adoptedCallback', 'attributeChangedCallback']) read(k);
+          let observed = [];
+          if (callbacks.attributeChangedCallback) { const oa = constructor.observedAttributes; if (oa !== undefined) observed = [...oa].map(String); }
+          const df = constructor.disabledFeatures, disabled = df === undefined ? [] : [...df].map(String);
+          const formAssociated = !!constructor.formAssociated;
+          if (formAssociated) for (const k of ['formAssociatedCallback', 'formResetCallback', 'formDisabledCallback', 'formStateRestoreCallback']) read(k);
+          made = { name, localName, constructor, observed: new Set(observed), callbacks, stack: [], formAssociated,
+            disableInternals: disabled.includes('internals'), disableShadow: disabled.includes('shadow') };
+        } finally { defining = false; }
+        defsByName.set(name, made); defsByCtor.set(constructor, made);
+        if (!ceActive) { ceActive = true; wrapNatives(); }
+        // the elements of the document that the definition matches, in shadow-including tree order
+        for (const k of reach(0)) if (lookup(k) === made) tryUpgrade(k);
+        const w = waiting.get(name);
+        if (w) { waiting.delete(name); w.resolve(constructor); }
+      }
+      get(name) { if (arguments.length < 1) throw new TypeError("Failed to execute 'get' on 'CustomElementRegistry': 1 argument required."); const d = defsByName.get(String(name)); return d ? d.constructor : undefined; }
+      getName(constructor) {
+        if (arguments.length < 1 || (typeof constructor !== 'function' && !isCtor(constructor))) throw new TypeError("Failed to execute 'getName' on 'CustomElementRegistry': parameter 1 is not a function.");
+        const d = defsByCtor.get(constructor); return d ? d.name : null;
+      }
+      whenDefined(name) {
+        if (arguments.length < 1) return Promise.reject(new TypeError("Failed to execute 'whenDefined' on 'CustomElementRegistry': 1 argument required."));
+        name = String(name);
+        if (!validName(name)) return Promise.reject(new DOMException(`"${name}" is not a valid custom element name`, 'SyntaxError'));
+        const d = defsByName.get(name);
+        if (d) return Promise.resolve(d.constructor);
+        let w = waiting.get(name);
+        if (!w) { w = {}; w.promise = new Promise(resolve => { w.resolve = resolve; }); waiting.set(name, w); }
+        return w.promise;
+      }
+      upgrade(root) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'upgrade' on 'CustomElementRegistry': 1 argument required.");
+        for (const k of reach(nodeId(root))) tryUpgrade(k);
+      }
+    }
+    def('CustomElementRegistry', CustomElementRegistry);
+    def('customElements', Object.create(CustomElementRegistry.prototype));
+    // ElementInternals (HTML §4.13.7): the shadow root, the custom states, the form value of
+    // a form-associated element, and the default ARIA semantics (ARIAMixin as plain values).
+    const internalsOf = new Map(), internalsState = new WeakMap();   // internalsOf: by node number
+    const inState = x => { const st = internalsState.get(x); if (!st) throw new TypeError('not an ElementInternals'); return st; };
+    const formAssociated = (x, what) => { const st = inState(x); if (!st.def.formAssociated) throw new DOMException(`'${what}' needs a form-associated custom element.`, 'NotSupportedError'); return st; };
+    class CustomStateSet {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get size() { return stateSets.get(this).size; }
+      add(v) { stateSets.get(this).add(String(v)); return this; }
+      delete(v) { return stateSets.get(this).delete(String(v)); }
+      has(v) { return stateSets.get(this).has(String(v)); }
+      clear() { stateSets.get(this).clear(); }
+      forEach(f, thisArg) { for (const v of [...stateSets.get(this)]) f.call(thisArg, v, v, this); }
+      keys() { return stateSets.get(this).values(); }
+      values() { return stateSets.get(this).values(); }
+      entries() { return stateSets.get(this).entries(); }
+      [Symbol.iterator]() { return stateSets.get(this).values(); }
+    }
+    const stateSets = new WeakMap();
+    class ElementInternals {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get shadowRoot() { const st = inState(this), k = info(nodeId(st.el), 26); return k >= 0 && !st.hideShadow ? wrap(k) : null; }
+      get states() { const st = inState(this); if (!st.states) { st.states = Object.create(CustomStateSet.prototype); stateSets.set(st.states, new Set()); } return st.states; }
+      setFormValue(value, state) { const st = formAssociated(this, 'setFormValue'); st.value = value; st.restore = arguments.length < 2 ? value : state; }
+      get form() { const st = formAssociated(this, 'form'); return formOf(st.el); }
+      get willValidate() { const st = formAssociated(this, 'willValidate'); return !st.el.hasAttribute('disabled') && !st.el.hasAttribute('readonly'); }
+      get labels() { const st = formAssociated(this, 'labels'), el = st.el; return staticList([...(el.getRootNode()).querySelectorAll('label')].filter(l => l.control === el)); }
+    }
+    def('ElementInternals', ElementInternals); def('CustomStateSet', CustomStateSet);
+    const ariaRows = n.query(0, 162, 'Element');
+    for (const line of (typeof ariaRows === 'string' ? ariaRows : '').split('\u0000')) {
+      const [, idl, k] = line.split(' ');
+      if (k !== 'E') continue;
+      Object.defineProperty(ElementInternals.prototype, idl, { get() { return inState(this).aria.get(idl) ?? null; },
+        set(v) { const m = inState(this).aria; if (v === null || v === undefined) m.delete(idl); else m.set(idl, String(v)); }, configurable: true, enumerable: true });
+    }
+    define(HTMLElement.prototype, 'attachInternals', function attachInternals() {
+      const id = nodeId(this), st = ceState.get(this), d = st && st.def;
+      if (!d || d.localName !== d.name) throw new DOMException('attachInternals needs an autonomous custom element.', 'NotSupportedError');
+      if (d.disableInternals) throw new DOMException('ElementInternals is disabled for this custom element.', 'NotSupportedError');
+      if (internalsOf.has(id)) throw new DOMException('ElementInternals was already attached.', 'NotSupportedError');
+      if (st.state !== 'precustomized' && st.state !== 'custom') throw new DOMException('The element is not a custom element yet.', 'NotSupportedError');
+      const x = Object.create(ElementInternals.prototype);
+      internalsState.set(x, { el: this, def: d, aria: new Map(), states: null, value: null, restore: null, hideShadow: false });
+      internalsOf.set(id, x);
+      return x;
+    });
+    // createElement and createElementNS make a custom element with its constructor
+    // (HTML §4.13.3 "create an element", synchronously), and keep the `is` value.
+    const made = (id, options) => {
+      const is = options !== null && typeof options === 'object' && options.is !== undefined && options.is !== null ? String(options.is) : undefined;
+      if (is !== undefined) isValues.set(id, is);
+      // a constructor that throws leaves an element in the "failed" state: HTMLUnknownElement
+      // for an autonomous custom element (HTML §4.13.3 "create an element" step 6.1.4)
+      if (ceActive) {
+        const d = lookup(id);
+        if (d) try { return upgrade(id, d, d.localName === d.name) ?? wrap(id); } catch (e) { report(e); if (d.localName === d.name) Object.setPrototypeOf(wrap(id), HTMLUnknownElement.prototype); }
+      }
+      return wrap(id);
+    };
+    define(Document.prototype, 'createElement', function createElement(name, options = undefined) {
+      return made(chk(n.create(3 + 16 * nodeId(this), String(name))), options);
+    });
+    define(Document.prototype, 'createElementNS', function createElementNS(ns, qname, options = undefined) {
+      if (arguments.length < 2) throw new TypeError('createElementNS: 2 arguments required');
+      return made(chk(n.create(4 + 16 * nodeId(this), nsArg(ns) + '\u0000' + String(qname))), options);
+    });
+  }
+  // ==== end customelements ================================================================
   def('location', location);
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
     cookieEnabled: false, hardwareConcurrency: 1, gpu }));
@@ -4693,7 +5031,8 @@
     d: finite, D: finite, e: String, E: v => (v === null || v === undefined ? '\u0001' : String(v)) };
   const reflectTokens = new WeakMap(), nonces = new WeakMap();
   const reflectInstall = C => {
-    for (let P = C; P && P !== Element && !reflected.has(P); P = Object.getPrototypeOf(P)) {
+    // up to Element, whose rows are the ARIA attributes (ARIAMixin) and `slot`
+    for (let P = C; P && P !== Node && !reflected.has(P); P = Object.getPrototypeOf(P)) {
       reflected.add(P);
       const rows = op(0, 162, P.name);
       for (const line of (rows ?? '').split('\u0000')) {
@@ -4728,9 +5067,10 @@
             }
           },
           set(v) {
-            // one host call: Lean decides and sets the content attribute (with no observer to tell
-            // and no URL, whose iframe src navigates); else the decision, then setAttribute
-            if (!observed.size && k !== 'u') { op(nodeId(this), 167, row + '\u0000' + reflectConv[k](v)); return; }
+            // one host call: Lean decides and sets the content attribute (with no observer or
+            // custom element to tell, and no URL, whose iframe src navigates); else the decision,
+            // then setAttribute
+            if (!observed.size && !ceActive && k !== 'u') { op(nodeId(this), 167, row + '\u0000' + reflectConv[k](v)); return; }
             const a = op(nodeId(this), 161, row + '\u0000' + reflectConv[k](v));
             if (a === 'r') this.removeAttribute(content);
             else if (a !== '') this.setAttribute(content, a.slice(1));

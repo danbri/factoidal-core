@@ -32,6 +32,9 @@ open L4Factoidal.DOM
 inductive Kind where
   /-- DOMString; `nullEmpty`: [LegacyNullToEmptyString]. -/
   | str (nullEmpty : Bool)
+  /-- DOMString? (a nullable string, as the ARIA attributes of ARIAMixin): null when the
+  content attribute is absent, and setting null removes it. -/
+  | nstr
   /-- USVString holding a URL; `docDefault`: the document's URL when absent or empty
   (`form.action`, `formAction`). -/
   | url (docDefault : Bool)
@@ -75,7 +78,7 @@ structure Row where
 
 /-- The table. A row: interfaces (comma-separated), IDL name, content attribute name ("."
 for the IDL name in ASCII lower case), type and its arguments:
-`s` string, `sn` string with [LegacyNullToEmptyString], `u` URL, `ud` URL defaulting to the
+`s` string, `sn` string with [LegacyNullToEmptyString], `s?` nullable string, `u` URL, `ud` URL defaulting to the
 document's URL, `b` boolean, `l D` long, `ll` limited long, `ul D` unsigned long,
 `pl D` limited to positive, `pf D` limited to positive with fallback, `cl D MIN MAX`
 clamped, `d D` double, `dl D` limited double, `ti` tabIndex, `t` DOMTokenList,
@@ -83,6 +86,51 @@ clamped, `d D` double, `dl D` limited double, `ti` tabIndex, `t` DOMTokenList,
 for a keyword whose canonical keyword is `c`, an empty keyword as nothing between commas;
 `?` nullable). -/
 def tableText : String := "
+Element role role s?
+Element ariaAtomic aria-atomic s?
+Element ariaAutoComplete aria-autocomplete s?
+Element ariaBrailleLabel aria-braillelabel s?
+Element ariaBrailleRoleDescription aria-brailleroledescription s?
+Element ariaBusy aria-busy s?
+Element ariaChecked aria-checked s?
+Element ariaColCount aria-colcount s?
+Element ariaColIndex aria-colindex s?
+Element ariaColIndexText aria-colindextext s?
+Element ariaColSpan aria-colspan s?
+Element ariaCurrent aria-current s?
+Element ariaDescription aria-description s?
+Element ariaDisabled aria-disabled s?
+Element ariaExpanded aria-expanded s?
+Element ariaHasPopup aria-haspopup s?
+Element ariaHidden aria-hidden s?
+Element ariaInvalid aria-invalid s?
+Element ariaKeyShortcuts aria-keyshortcuts s?
+Element ariaLabel aria-label s?
+Element ariaLevel aria-level s?
+Element ariaLive aria-live s?
+Element ariaModal aria-modal s?
+Element ariaMultiLine aria-multiline s?
+Element ariaMultiSelectable aria-multiselectable s?
+Element ariaOrientation aria-orientation s?
+Element ariaPlaceholder aria-placeholder s?
+Element ariaPosInSet aria-posinset s?
+Element ariaPressed aria-pressed s?
+Element ariaReadOnly aria-readonly s?
+Element ariaRelevant aria-relevant s?
+Element ariaRequired aria-required s?
+Element ariaRoleDescription aria-roledescription s?
+Element ariaRowCount aria-rowcount s?
+Element ariaRowIndex aria-rowindex s?
+Element ariaRowIndexText aria-rowindextext s?
+Element ariaRowSpan aria-rowspan s?
+Element ariaSelected aria-selected s?
+Element ariaSetSize aria-setsize s?
+Element ariaSort aria-sort s?
+Element ariaValueMax aria-valuemax s?
+Element ariaValueMin aria-valuemin s?
+Element ariaValueNow aria-valuenow s?
+Element ariaValueText aria-valuetext s?
+HTMLElement popover . e - manual auto,hint,manual,=auto ?
 HTMLElement title . s
 HTMLElement lang . s
 HTMLElement dir . e - - ltr,rtl,auto
@@ -316,7 +364,7 @@ def parseKeywords (s : String) : List (String × String) :=
 def optDefault (s : String) : Option String := if s == "-" then none else some s
 
 def parseKind : List String → Option Kind
-  | ["s"] => some (.str false) | ["sn"] => some (.str true)
+  | ["s"] => some (.str false) | ["sn"] => some (.str true) | ["s?"] => some .nstr
   | ["u"] => some (.url false) | ["ud"] => some (.url true)
   | ["b"] => some .bool | ["ti"] => some .tabIndex | ["t"] => some .tokens
   | ["ot"] => some .optionText | ["nc"] => some .nonce
@@ -481,6 +529,7 @@ def get (d : Dom) (el : NodeId) (r : Row) (base : String) : String :=
   let v := attr d el r.content
   match r.kind with
   | .str _ | .tokens | .nonce => v.getD ""
+  | .nstr => v.getD "\x01"
   | .optionText => v.getD (optionTextOf d el)
   | .meter w => Rendering.FloatFormat.format (meterValue d el w) ++ "\x00" ++ "0"
   | .url docDefault =>
@@ -530,6 +579,7 @@ def set (r : Row) (value : String) : Except Int String :=
   | .str _ | .url _ | .tokens | .double _ false | .optionText | .meter _ | .nonce => .ok ("s" ++ value)
   | .bool => .ok (if value == "1" then "s" else "r")
   | .enum _ _ _ nullable => .ok (if nullable && value == "\x01" then "r" else "s" ++ value)
+  | .nstr => .ok (if value == "\x01" then "r" else "s" ++ value)
   | .long _ | .tabIndex => .ok ("s" ++ value)
   | .limitedLong _ =>
     match value.toInt? with
@@ -553,7 +603,8 @@ def set (r : Row) (value : String) : Except Int String :=
 kind's letter for the page's conversion (s string, n string with null as "", u URL,
 b boolean, i long, I limited long, U unsigned long, P limited unsigned long, F with
 fallback, C clamped, d double, D limited double, e enumerated, E nullable enumerated,
-t DOMTokenList) and the content attribute name. -/
+t DOMTokenList; a nullable string is E too: the page converts null the same way) and the
+content attribute name. -/
 def rowsOf (iface : String) : String := Id.run do
   let mut out := ""
   for i in [0:table.size] do
@@ -563,10 +614,113 @@ def rowsOf (iface : String) : String := Id.run do
       | .str false => "s" | .str true => "n" | .url _ => "u" | .bool => "b" | .long _ | .tabIndex => "i"
       | .limitedLong _ => "I" | .unsigned _ => "U" | .positive _ false => "P" | .positive _ true => "F"
       | .clamped .. => "C" | .double _ false => "d" | .double _ true => "D"
-      | .enum _ _ _ false => "e" | .enum _ _ _ true => "E" | .tokens => "t"
+      | .enum _ _ _ false => "e" | .enum _ _ _ true => "E" | .nstr => "E" | .tokens => "t"
       | .optionText => "s" | .meter _ => "d" | .nonce => "N"
     out := out ++ s!"{i} {r.idl} {k} {r.content}\x00"
   return out
+
+/-! ## What is proved
+
+The getter and the setter of a row meet at the content attribute. `applied` is the
+attribute's value after the setter's decision; the theorems below say what the getter then
+answers, for the kinds whose answer is a function of that value alone. The page's part
+(WebIDL conversion of the value, and the command that sets or removes the attribute) is
+outside them. -/
+
+/-- The content attribute's value after the setter's decision `a` (`set`): "s" and the new
+value, "r" to remove, "" to leave it. -/
+def applied (old : Option String) (a : String) : Option String :=
+  if a == "r" then none else if a.startsWith "s" then some (a.drop 1).toString else old
+
+/-- Round trip (kind: get after set). Says: a boolean IDL attribute set to true reads true,
+and set to false reads false, whatever the attribute was: the setter's decision is "s"
+(present) or "r" (absent), and the getter answers "1" exactly when the attribute is present.
+Does not say: that the command applied to the arena changes only this attribute (that is
+`Dom.setAttribute`'s, in `Arena`). -/
+theorem bool_roundtrip (r : Row) (h : r.kind = .bool) (d : Dom) (el : NodeId) (base : String) :
+    set r "1" = .ok "s" ∧ set r "0" = .ok "r" ∧
+    (attr d el r.content = none → get d el r base = "0") ∧
+    (∀ v, attr d el r.content = some v → get d el r base = "1") := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · simp [set, h]
+  · simp [set, h]
+  · intro hv; simp [get, h, hv]
+  · intro v hv; simp [get, h, hv]
+
+/-- Round trip for a nullable string (the ARIA attributes). Says: setting null decides to
+remove the attribute, an absent attribute reads null (U+0001 on the wire), setting a
+string other than the null mark decides to set exactly that string, and a present attribute
+reads its value. Does not say: anything about the string U+0001 itself as a value (the
+page never sends it for a string: it is the null mark). -/
+theorem nstr_roundtrip (r : Row) (h : r.kind = .nstr) (d : Dom) (el : NodeId) (base : String) :
+    set r "\x01" = .ok "r" ∧
+    (∀ s, s ≠ "\x01" → set r s = .ok ("s" ++ s)) ∧
+    (attr d el r.content = none → get d el r base = "\x01") ∧
+    (∀ v, attr d el r.content = some v → get d el r base = v) := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · simp [set, h]
+  · intro s hs; simp [set, h, hs]
+  · intro hv; simp [get, h, hv]
+  · intro v hv; simp [get, h, hv]
+
+/-- Missing value default. Says: an enumerated attribute that is absent is in its missing
+value default state (or has no state: `none`). -/
+theorem enumGet_missing (ks : List (String × String)) (m i : Option String) :
+    enumGet ks m i none = m := rfl
+
+/-- Known values only (kind: every answer is justified). Says: the state of a present
+enumerated attribute is the canonical keyword of one of the table's keywords, or the
+invalid value default: the getter never answers a string the row does not name. Does not
+say: which keyword matches (ASCII case-insensitively, the first in the row). -/
+theorem enumGet_known (ks : List (String × String)) (m i : Option String) (v s : String)
+    (h : enumGet ks m i (some v) = some s) : (∃ k, (k, s) ∈ ks) ∨ i = some s := by
+  unfold enumGet at h
+  simp only at h
+  split at h
+  · rename_i k c hf
+    have hm := List.mem_of_find?_eq_some hf
+    simp only [Option.some.injEq] at h
+    subst h
+    exact Or.inl ⟨k, hm⟩
+  · exact Or.inr h
+
+/-- The clamp of a clamped unsigned long (`cl`). -/
+def clampTo (lo hi k : Nat) : Nat := if k < lo then lo else if k > hi then hi else k
+
+/-- Bounds (kind: range). Says: with `lo ≤ hi`, the clamped value lies in `lo … hi`. This
+is the expression the getter of a `clamped` row computes on the parsed attribute.
+Does not say: that the attribute parses (an unparsable attribute reads the default). -/
+theorem clampTo_bounds (lo hi k : Nat) (h : lo ≤ hi) : lo ≤ clampTo lo hi k ∧ clampTo lo hi k ≤ hi := by
+  unfold clampTo
+  split
+  · exact ⟨Nat.le_refl _, h⟩
+  · split
+    · exact ⟨h, Nat.le_refl _⟩
+    · constructor <;> omega
+
+/-- Idempotence. Says: clamping a clamped value changes nothing, so reading back a value
+that was read gives the same value. -/
+theorem clampTo_idem (lo hi k : Nat) (h : lo ≤ hi) : clampTo lo hi (clampTo lo hi k) = clampTo lo hi k := by
+  unfold clampTo
+  repeat' split
+  all_goals omega
+
+-- the getter of a clamped row is `clampTo` on the parsed number (a test: the row of `colSpan`)
+#guard (table.filter fun r => match r.kind with | .clamped .. => true | _ => false).all fun r =>
+  match r.kind with
+  | .clamped _ lo hi => lo ≤ hi && [0, lo, hi, hi + 7].all fun k =>
+      get ({ nodes := #[{ type := .element, attrs := #[{ lname := r.content, value := toString k }] }] } : Dom) 0 r "" ==
+        toString (clampTo lo hi k)
+  | _ => true
+-- every canonical keyword of an enumerated row is a keyword that names itself, so the value
+-- the getter answers, set again, reads the same
+#guard table.all fun r => match r.kind with
+  | .enum ks _ _ _ => ks.all fun (_, c) => enumGet ks none none (some c) == some c
+  | _ => true
+-- the ARIA attributes are nullable strings; `popover` is nullable with "" naming auto
+#guard (table.filter fun r => r.iface == "Element" && r.kind matches .nstr).size == 44
+#guard (table.find? fun r => r.idl == "ariaLabel").map (·.content) == some "aria-label"
+#guard (table.find? fun r => r.idl == "popover").map (fun r => enumGet (match r.kind with | .enum ks .. => ks | _ => []) none (some "manual") (some "")) == some (some "auto")
 
 -- the integer rules of §2.3.4
 #guard parseInteger "  -12x" == some (-12)
