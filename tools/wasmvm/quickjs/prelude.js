@@ -1370,7 +1370,8 @@
     // defined on the global with the element interfaces (`...named` below)
     named.HTMLMediaElement = HTMLMediaElement;
     // HTML §4.8.11.3: setting or changing a media element's src attribute runs the load algorithm
-    mediaSrcSet = el => { if (el instanceof HTMLMediaElement) el.load(); };
+    // (a media element with loading=lazy waits until it is needed: not on a src change)
+    mediaSrcSet = el => { if (el instanceof HTMLMediaElement && String(el.getAttribute('loading') ?? '').toLowerCase() !== 'lazy') el.load(); };
     Object.assign(mediaGlobals, { Audio, MediaError, TimeRanges });
   }
   // An iframe's document is Lean's (Hosts.Page.start `frames`, node_info 11). The frames share
