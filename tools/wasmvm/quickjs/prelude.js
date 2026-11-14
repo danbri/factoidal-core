@@ -10135,7 +10135,8 @@
   // ClientStorage/CookieStore.lean (web_api op 204): the checks of a name, value, domain and
   // path, the url option, what is read, and the storage step. The host is the engine's (the
   // session's page origin), never an argument; this passes the document's URL and the time.
-  // Change events are not fired yet.
+  // A write answers the changes the document sees (Lean's `changes`); they are fired as one
+  // CookieChangeEvent in a later task. Changes made by document.cookie or HTTP are not fired yet.
   const makeCookieStore = () => {
     const td = new TextDecoder(), text = b => td.decode(b);
     const unpack = ab => {
@@ -10184,6 +10185,15 @@
       if (!Number.isFinite(x)) throw new TypeError(`Failed to execute '${what}': expires is not a time.`);
       return String(Math.trunc(x));
     };
+    const fireChanges = f => {
+      const changed = [], deleted = [];
+      for (let i = 0; i < f.length;) {
+        if (f[i] === '+') { changed.push({ name: f[i + 1], value: f[i + 2] }); i += 3; }
+        else if (f[i] === '-') { deleted.push({ name: f[i + 1] }); i += 2; }
+        else i++;
+      }
+      if (changed.length || deleted.length) timer(0, () => { store.dispatchEvent(new CookieChangeEvent('change', { changed, deleted })); }, 0, []);
+    };
     class CookieStore extends EventTarget {
       constructor() { if (!making) throw new TypeError('Illegal constructor'); super(); }
       get(...args) { return query(this, 'CookieStore.get', args, true); }
@@ -10205,8 +10215,8 @@
           if (o.sameSite !== undefined && !['strict', 'lax', 'none'].includes(String(o.sameSite)))
             throw new TypeError("Failed to execute 'CookieStore.set': sameSite is not a CookieSameSite.");
           const has = v => v !== undefined && v !== null;
-          call(['set', o.name, o.value, has(o.domain) ? '1' : '0', has(o.domain) ? String(o.domain) : '',
-            has(o.path) ? '1' : '0', has(o.path) ? String(o.path) : '', cookieTime(o.expires, 'CookieStore.set')], 'CookieStore.set');
+          fireChanges(call(['set', o.name, o.value, has(o.domain) ? '1' : '0', has(o.domain) ? String(o.domain) : '',
+            has(o.path) ? '1' : '0', has(o.path) ? String(o.path) : '', cookieTime(o.expires, 'CookieStore.set')], 'CookieStore.set'));
         });
       }
       delete(name) {
@@ -10217,8 +10227,8 @@
           const o = typeof name === 'object' && name !== null ? dictOf(name, 'CookieStore.delete') : { name: String(name) };
           if (o.name === undefined) throw new TypeError("Failed to execute 'CookieStore.delete': name is required.");
           const has = v => v !== undefined && v !== null;
-          call(['delete', String(o.name), has(o.domain) ? '1' : '0', has(o.domain) ? String(o.domain) : '',
-            has(o.path) ? '1' : '0', has(o.path) ? String(o.path) : ''], 'CookieStore.delete');
+          fireChanges(call(['delete', String(o.name), has(o.domain) ? '1' : '0', has(o.domain) ? String(o.domain) : '',
+            has(o.path) ? '1' : '0', has(o.path) ? String(o.path) : ''], 'CookieStore.delete'));
         });
       }
     }

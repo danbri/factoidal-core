@@ -144,6 +144,23 @@ def read (jar : Jar) (site : Site) (now : Nat) (docUrl : String) (name : Option 
     else some ((visibleCookies jar { site with path := pathOfUrl u } now).filter fun c => name.all (c.name == normalize ·))
   | none => some ((visibleCookies jar site now).filter fun c => name.all (c.name == normalize ·))
 
+/-! ## Change events -/
+
+/-- What a change of the jar from `before` to `after` shows a document (cookie-store §6,
+"process cookie changes"): the cookies it reads after that it did not read before with that
+value (`changed`), and those it read before of a name, host and path it no longer reads
+(`deleted`). Rewriting a cookie with its own value is no change. -/
+def changes (before after : List Cookie) : List Cookie × List Cookie :=
+  (after.filter fun c => !before.any fun b => sameKey b c && b.value == c.value,
+   before.filter fun b => !after.any (sameKey b ·))
+
+/-- The answer of a write: `ok`, then `+ name value` for each changed cookie and `- name` for
+each deleted one, as the document at `site` sees them. -/
+def written (old new : Jar) (site : Site) (now : Nat) : List ByteArray :=
+  let (ch, de) := changes (visibleCookies old site now) (visibleCookies new site now)
+  "ok".toUTF8 :: (ch.flatMap fun c => ["+".toUTF8, c.name.toUTF8, c.value.toUTF8]) ++
+    (de.flatMap fun c => ["-".toUTF8, c.name.toUTF8])
+
 /-! ## The command -/
 
 abbrev Tok := ByteArray
@@ -170,11 +187,11 @@ def op (jar : Jar) (origin : String) (secure : Bool) (a : Array Tok) : Jar × Li
       let expires := if strAt a 9 == "" then none else some (secondsOf (strAt a 9))
       match set jar site now (strAt a 3) (strAt a 4) (opt a 5 6) (opt a 7 8) expires with
       | none => (jar, typeError)
-      | some j => (j, [S "ok"])
+      | some j => (j, written jar j site now)
     | "delete" =>
       match delete jar site now (strAt a 3) (opt a 4 5) (opt a 6 7) with
       | none => (jar, typeError)
-      | some j => (j, [S "ok"])
+      | some j => (j, written jar j site now)
     | _ => (jar, [S "!NotSupportedError"])
 
 /-! ## Theorems -/
@@ -235,6 +252,12 @@ theorem read_host (jar : Jar) (site : Site) (now : Nat) (docUrl : String) (name 
     have hv := (List.mem_filter.mp hc).1
     exact ⟨visible_host _ _ _ _ hv, visible_not_httpOnly _ _ _ _ hv⟩
 
+/-- Kind: privacy invariant. Says: a change event lists only cookies the document reads
+(before or after the change): the cookies of its own host, never `HttpOnly` ones. -/
+theorem changes_sub (before after : List Cookie) :
+    (∀ c ∈ (changes before after).1, c ∈ after) ∧ (∀ c ∈ (changes before after).2, c ∈ before) :=
+  ⟨fun _ h => (List.mem_filter.mp h).1, fun _ h => (List.mem_filter.mp h).1⟩
+
 /-- Kind: validity rule. Says: a name holding `=` is never set. -/
 theorem set_refuses_eq (jar : Jar) (site : Site) (now : Nat) (name value : String) (domain path : Option String)
     (expires : Option Nat) (h : (normalize name).toList.contains '=' = true) :
@@ -257,7 +280,7 @@ private def setC (n v : String) (dom path exp : Option String := none) : List St
 private def getC (n : String) (url : String := "") : List String := ["get", U, "1700000000000", "1", n, url]
 
 #guard run [setC "cookie-name" "cookie-value", getC "cookie-name", getC " cookie-name \t"] ==
-  ["ok", "ok cookie-name cookie-value", "ok cookie-name cookie-value"]
+  ["ok + cookie-name cookie-value", "ok cookie-name cookie-value", "ok cookie-name cookie-value"]
 #guard run [setC "" "", setC "" "suspicious-value=resembles-name-and-value", setC "a=b" "v", setC "cookie;name" "v",
   setC "n" "cookie\u0001value", setC "   " "   ", setC "__Http-cookie-name" "v", setC "  __Host-Http-x" "v",
   setC "" "__Host-nameless-cookie", setC "cookie-name\r1" "v"] ==
@@ -266,26 +289,28 @@ private def getC (n : String) (url : String := "") : List String := ["get", U, "
 #guard run [setC "n" "v" (dom := some ".web-platform.test"), setC "n" "v" (dom := some "example.com"),
   setC "n" "v" (dom := some "sub.web-platform.test"), setC "n" "v" (dom := some "platform.test"),
   setC "n" "v" (dom := some "web-platform.test"), getC "n"] ==
-  ["!TypeError", "!TypeError", "!TypeError", "!TypeError", "ok", "ok n v"]
+  ["!TypeError", "!TypeError", "!TypeError", "!TypeError", "ok + n v", "ok n v"]
 -- expires in the past: nothing is stored; in the future: kept
 #guard run [setC "n" "v" (exp := some "1000"), getC "n", setC "n" "v" (exp := some "2000000000000"), getC "n"] ==
-  ["ok", "ok", "ok", "ok n v"]
+  ["ok", "ok", "ok + n v", "ok n v"]
 -- path: must start with "/"; a subdirectory's cookie is not read here; no "/" is appended
 #guard run [setC "n" "v" (path := some "cookiestore"), setC "n" "v" (path := some "/cookiestore/sub/"), getC "n",
   setC "n" "w" (path := some "/cookiestore/"), getC "n", setC "m" "v" (path := some "/cookiestore"), getC "m"] ==
-  ["!TypeError", "ok", "ok", "ok", "ok n w", "ok", "ok m v"]
+  ["!TypeError", "ok", "ok", "ok + n w", "ok n w", "ok + m v", "ok m v"]
 -- __Host-: no domain, path "/" only; __Secure-: fine on a secure page
 #guard run [setC "__Host-c" "v" (dom := some "web-platform.test"), setC "__Host-c" "v" (path := some "/path"),
   setC "__Host-c" "v" (path := some "/"), getC "__Host-c", setC "__Secure-c" "v", getC "__Secure-c"] ==
-  ["!TypeError", "!TypeError", "ok", "ok __Host-c v", "ok", "ok __Secure-c v"]
+  ["!TypeError", "!TypeError", "ok + __Host-c v", "ok __Host-c v", "ok + __Secure-c v", "ok __Secure-c v"]
 -- delete: by name and path; an empty name is fine
 #guard run [setC "n" "v", ["delete", U, "1700000000000", " n\t", "0", "", "0", ""], getC "n",
   ["delete", U, "1700000000000", "", "0", "", "0", ""], ["delete", U, "1700000000000", "n", "1", ".x", "0", ""]] ==
-  ["ok", "ok", "ok", "ok", "!TypeError"]
+  ["ok + n v", "ok - n", "ok", "ok", "!TypeError"]
+-- change events: rewriting a value is a change, rewriting the same value is none
+#guard run [setC "n" "v", setC "n" "v", setC "n" "w", setC "a" "1" (exp := some "1000")] == ["ok + n v", "ok", "ok + n w", "ok"]
 -- url option: the document's URL (a fragment aside), else TypeError
 #guard run [setC "n" "v", getC "n" (U ++ "#foo"), getC "n" "https://web-platform.test:8443/different/path",
   getC "n" "https://www.example.com/cookiestore/t.html"] ==
-  ["ok", "ok n v", "!TypeError", "!TypeError"]
+  ["ok + n v", "ok n v", "!TypeError", "!TypeError"]
 -- getAll order and document.cookie interplay: one jar
 #guard (let j := setFromScript {} { host := "web-platform.test", path := "/cookiestore/t.html", secure := true } 1700000000
           "dc=1; path=/";
