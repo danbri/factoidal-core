@@ -2374,3 +2374,11 @@ L4Factoidal_XPath4_atomInBodyF  # (c) the nesting of a simple type definition, f
 L4Factoidal_XPath4_castToBodyF  # (c) the nesting of a simple type definition, fuel 16; the tokens of a list value are a loop (castTokens)
 L4Factoidal_XPath4_generalizedF  # (c) the nesting of a simple type definition, fuel 16
 L4Factoidal_XPath4_pureLeavesF  # (c) the nesting of a simple type definition, fuel 16; the members are a loop (leavesAll)
+L4Factoidal_Rendering_CssRegister_hasFontRelative  # (c) the nesting of one value, at most maxNesting + 2 = 66
+L4Factoidal_Rendering_CssValues_propsOf  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_simpleRefs  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_unparse  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_expandF  # (c) fuel 4: a shorthand whose parts are shorthands
+L4Factoidal_Rendering_CssValues_recombineF  # (c) fuel 4: a shorthand whose parts are shorthands
+L4Factoidal_Rendering_CssValues_filterComputed  # (c) the nesting of one value, fuel 8
+L4Factoidal_Rendering_CSS_complexSpecificity  # (c) the nesting of a selector, at most DOM.Selectors.maxNesting = 32

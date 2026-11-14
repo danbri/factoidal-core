@@ -172,14 +172,23 @@ def canonical (p v : String) : String :=
   | "scale" => if v == "none" then v else scaleCanon v
   | _ => v
 
+/-- Whether the values can not be the value of a custom property (CSS Variables 1 §2): a
+bad string or url, an unmatched closing token, or a top-level `;` or `!`. A `{}` block is
+allowed. -/
+def badCustomValue (top : List CV) : Bool :=
+  hasBadToken 32 false top || top.any fun cv => match cv with
+    | .tok .semicolon => true
+    | .tok (.delim '!') => true
+    | _ => false
+
 /-- The canonical specified value of `value` for property `property`: `none` when the
 property is not known or the value is not one of its values. -/
 def specified (property value : String) : Option String :=
   let p := propertyName property
   let cvs := CV.parse value
   let top := stripWs cvs
-  if hasBadToken 32 true top then none
-  else if isCustom p then some (trimText value)
+  if isCustom p then (if badCustomValue top then none else some (trimText value))
+  else if hasBadToken 32 true top then none
   else
     match lookup p with
     | none => none
@@ -745,6 +754,9 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "width" "-1px" == none
 #guard specified "width" "var(--x)" == some "var(--x)"
 #guard specified "--x" " a  b " == some "a  b"
+#guard specified "--x" "{ a: b }" == some "{ a: b }"
+#guard specified "--x" "a ; b" == none
+#guard specified "--x" "a )" == none
 #guard specified "-webkit-transform" "none" == some "none"
 #guard propertyName "WORD-WRAP" == "overflow-wrap"
 #guard specified "nonsense" "1px" == none
