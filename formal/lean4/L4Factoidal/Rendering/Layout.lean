@@ -1316,15 +1316,20 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             -- CSS 2.1 §8.3.1: the margin before this box and its own top margin collapse.
             let overlap := min previous (if cs.display == .block then leadMargin dom styles fuel child else cs.margin.top)
             let top := innerY+content.height-overlap
-            -- §9.5: a box with a formatting context of its own (a table, a flex container, a
-            -- box that clips) is beside the floats; a plain block is under them and its lines
-            -- are beside them.
-            let r ← if floats.isEmpty then layoutTask dom styles font embedding pictures fuel (.box child) innerX top width
-              else if cs.display != .block || cs.clipOverflow then do
+            -- §9.5: a plain block is part of this formatting context: it is laid out under the
+            -- floats with its lines beside them, and floats inside it stay in the context for
+            -- what follows it (`Task.flowed`). A box with a formatting context of its own (a
+            -- table, a flex container, a box that clips, a replaced element) is beside the floats.
+            let cn := dom.get child
+            let plain := cs.display == .block && !cs.clipOverflow && (pictures child).isNone &&
+              (blankReplaced cn).isNone && cn.ns != some DOM.svgNS && cn.lname != "hr"
+            let r ← if plain then layoutTask dom styles font embedding pictures fuel (.flowed child floats) innerX top width
+              else if floats.isEmpty then layoutTask dom styles font embedding pictures fuel (.box child) innerX top width
+              else do
                 let (offset,room) := floatBand floats innerX width top 1
                 layoutTask dom styles font embedding pictures fuel (.box child) (innerX+offset) top room
-              else layoutTask dom styles font embedding pictures fuel (.flowed child floats) innerX top width
-            if !floats.isEmpty && cs.display == .block && !cs.clipOverflow then floats := r.floats
+            -- the floats of a context only grow
+            if plain && r.floats.size >= floats.size then floats := r.floats
             content := {append content r with height := content.height-overlap+r.height}
             previous := r.marginBottom
           else if cs.display.isInlineContainer || (cs.display == .inlineBlock && blockInside dom styles child) then
@@ -1563,7 +1568,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     -- parent formatting context decided (`Task.sized`); with `contentOnly` the contents alone
     -- (`Task.inner`).
     let box (id : Nat) (imposedWidth imposedHeight : Option Float) (contentOnly : Bool)
-        (around : Array Floats.Box := #[]) : Except String Result := do
+        (around : Array Floats.Box := #[]) (participates : Bool := false) : Except String Result := do
       let n := dom.get id
       let s := styles[id]!
       if s.display == .none then return {}
@@ -1656,7 +1661,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- CSS 2.1 §10.6.7: a box that is the root of its block formatting context (one laid
       -- out with no floats around it) is as high as its floats; one in a context with floats
       -- hands them on to the flow after it.
-      let content := if around.isEmpty then
+      let content := if !participates then
           {content with height := max content.height (floatsHeight content.floats innerY), floats := #[],
                         marginBottom := if floatsHeight content.floats innerY > content.height then 0 else content.marginBottom}
         else content
@@ -1687,14 +1692,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let dy := match s.pos.top with
           | .px t => t
           | _ => match s.pos.bottom with | .px e => -e | _ => 0
-        return framed.shift dx dy
+        -- the floats of the context do not move with it
+        return {framed.shift dx dy with floats := framed.floats}
       return framed
     match task with
     | .contents container kids =>
       let content ← flow (styles[container]!) container kids #[] x y available
       return {content with height := max content.height (floatsHeight content.floats y), floats := #[]}
     | .table element container kids => table element container kids
-    | .flowed id floats => box id none none false floats
+    | .flowed id floats => box id none none false floats true
     | .box id => box id none none false
     | .sized id width height => box id (some width) height false
     | .inner id width => box id (some width) none true
