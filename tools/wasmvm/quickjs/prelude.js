@@ -3399,7 +3399,9 @@
   // ==== end customelements ================================================================
   def('location', location);
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
-    cookieEnabled: false, hardwareConcurrency: 1, gpu }));
+    cookieEnabled: false, hardwareConcurrency: 1, gpu,
+    // StorageManager (section File System API); undefined on an engine without the ops.
+    get storage() { return fsApi()?.manager; } }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
@@ -7090,6 +7092,304 @@
     'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList']) lazy(name, () => idb()?.classes[name]);
   // ==== end IndexedDB ============================================================================
 
+  // ==== File System API (WHATWG fs) and StorageManager =========================================
+  // The origin private file system of the storage key is Lean's (ClientStorage/FileSystem.lean,
+  // web_api op 201): a tree of names to bytes in memory. No host file is read or written, and
+  // nothing is on disk. Lean decides names, kinds, locks, the swap buffer of a writable (nothing
+  // is visible before close) and every exception. A handle here is a path and a kind.
+  // StorageManager (op 202): usage is the sum of what IndexedDB and the file system hold for
+  // this key, the quota a constant of the engine; persist() and persisted() answer false.
+  const makeFs = () => {
+    const td = new TextDecoder(), text = b => td.decode(b);
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
+      const out = [];
+      for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    const call = (op, args, what) => {
+      const r = apiCall(op, args, 0, true);
+      if (typeof r === 'number') throw new DOMException(`${what}: storage is not available.`, r === -5 ? 'QuotaExceededError' : 'UnknownError');
+      const f = unpack(r), head = text(f[0]);
+      if (head === 'ok') return f.slice(1);
+      if (head[0] !== '!') return null;
+      const name = head.slice(1);
+      if (name === 'TypeError') throw new TypeError(`Failed to execute '${what}'`);
+      if (name === 'QuotaExceededError') throw new (makeQuotaError())(`Failed to execute '${what}': the quota has been exceeded.`);
+      throw new DOMException(`Failed to execute '${what}': ${name}`, name);
+    };
+    // An operation of a promise-returning method: its exception is the promise's rejection.
+    const later = f => { try { return Promise.resolve(f()); } catch (e) { return Promise.reject(e); } };
+    const kinds = new WeakMap();
+    const st = (o, what) => { const s = kinds.get(o); if (!s || s.path === undefined) throw new TypeError('Illegal invocation: ' + what); return s; };
+    const join = (dir, name) => dir === '' ? name : dir + '/' + name;
+    const need = (k, have, what) => { if (have < k) throw new TypeError(`Failed to execute '${what}': ${k} argument${k > 1 ? 's' : ''} required, but only ${have} present.`); };
+    let making = false;
+    const guard = () => { if (!making) throw new TypeError('Illegal constructor'); };
+    const make = (C, state) => { making = true; let o; try { o = new C(); } finally { making = false; } kinds.set(o, state); return o; };
+    const idl = (C, tag) => {
+      setTag(C, tag);
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        Object.defineProperty(C.prototype, k, { ...Object.getOwnPropertyDescriptor(C.prototype, k), enumerable: true });
+      }
+      return C;
+    };
+    const handle = (path, name, dir) => make(dir ? FileSystemDirectoryHandle : FileSystemFileHandle, { path, name, dir });
+    const bytesOf = data => {
+      if (typeof data === 'string') return utf8(data);
+      if (BlobC && data instanceof BlobC) return blobBytes(data);
+      if (data instanceof ArrayBuffer) return new Uint8Array(data.slice(0));
+      if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+      return null;
+    };
+    const size = (v, what) => { const x = Number(v); if (!Number.isFinite(x) || x < 0) throw new TypeError(`Failed to execute '${what}': the value is not a size.`); return Math.trunc(x); };
+
+    class FileSystemHandle {
+      constructor() { guard(); }
+      get kind() { return st(this, 'FileSystemHandle.kind').dir ? 'directory' : 'file'; }
+      get name() { return st(this, 'FileSystemHandle.name').name; }
+      isSameEntry(other) {
+        return later(() => {
+          const s = st(this, 'FileSystemHandle.isSameEntry');
+          need(1, arguments.length, 'FileSystemHandle.isSameEntry');
+          const o = st(other, 'FileSystemHandle.isSameEntry');
+          return text(call(201, ['same', s.path, s.dir ? 'd' : 'f', o.path, o.dir ? 'd' : 'f'], 'isSameEntry')[0]) === '1';
+        });
+      }
+      remove(options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemHandle.remove'), d = dict(options, 'FileSystemHandle.remove');
+          call(201, ['remove', s.path, '', d.recursive ? '1' : '0'], 'FileSystemHandle.remove');
+        });
+      }
+      getUniqueId() { return later(() => { const s = st(this, 'FileSystemHandle.getUniqueId'); return (s.dir ? 'd:' : 'f:') + s.path; }); }
+    }
+    idl(FileSystemHandle, 'FileSystemHandle');
+    class FileSystemFileHandle extends FileSystemHandle {
+      constructor() { super(); }
+      getFile() {
+        return later(() => {
+          const s = st(this, 'FileSystemFileHandle.getFile');
+          const f = call(201, ['stat', s.path], 'FileSystemFileHandle.getFile');
+          return new (makeFile())([f[1].slice()], s.name, { lastModified: Number(text(f[0])) });
+        });
+      }
+      createWritable(options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemFileHandle.createWritable'), d = dict(options, 'FileSystemFileHandle.createWritable');
+          const mode = d.mode === undefined ? 'siloed' : String(d.mode);
+          if (mode !== 'siloed' && mode !== 'exclusive') throw new TypeError(`Failed to execute 'createWritable': '${mode}' is not a valid mode.`);
+          const id = Number(text(call(201, ['wopen', s.path, d.keepExistingData ? '1' : '0', mode === 'exclusive' ? '1' : '0'], 'FileSystemFileHandle.createWritable')[0]));
+          return newWritable(id);
+        });
+      }
+      move(...args) {
+        return later(() => {
+          const s = st(this, 'FileSystemFileHandle.move');
+          need(1, args.length, 'FileSystemFileHandle.move');
+          const dest = args.length > 1 || (typeof args[0] === 'object' && args[0] !== null) ? st(args[0], 'FileSystemFileHandle.move') : null;
+          const name = String(args.length > 1 ? args[1] : dest ? s.name : args[0]);
+          const dir = dest ? dest.path : s.path.includes('/') ? s.path.slice(0, s.path.lastIndexOf('/')) : '';
+          call(201, ['move', s.path, dir, stEnc(name)], 'FileSystemFileHandle.move');
+          s.path = join(dir, stEnc(name)); s.name = name;
+        });
+      }
+    }
+    idl(FileSystemFileHandle, 'FileSystemFileHandle');
+    // createSyncAccessHandle is exposed in dedicated workers only.
+    if (typeof document === 'undefined')
+      Object.defineProperty(FileSystemFileHandle.prototype, 'createSyncAccessHandle', { writable: true, enumerable: true, configurable: true,
+        value: function createSyncAccessHandle(options = undefined) {
+          return later(() => {
+            const s = st(this, 'FileSystemFileHandle.createSyncAccessHandle'), d = dict(options, 'createSyncAccessHandle');
+            const modes = ['readwrite', 'read-only', 'readwrite-unsafe'], mode = d.mode === undefined ? 'readwrite' : String(d.mode);
+            if (!modes.includes(mode)) throw new TypeError(`Failed to execute 'createSyncAccessHandle': '${mode}' is not a valid mode.`);
+            const id = Number(text(call(201, ['aopen', s.path, String(modes.indexOf(mode))], 'createSyncAccessHandle')[0]));
+            return make(FileSystemSyncAccessHandle, { access: id, open: true });
+          });
+        } });
+    const entriesOf = (self, pick) => {
+      let items = null, i = 0;
+      const it = {
+        next() {
+          return later(() => {
+            if (items === null) {
+              const s = st(self, 'FileSystemDirectoryHandle'), f = call(201, ['list', s.path], 'FileSystemDirectoryHandle');
+              items = [];
+              for (let k = 0; k + 1 < f.length; k += 2) { const enc = text(f[k]); items.push(handle(join(s.path, enc), stDec(enc), text(f[k + 1]) === 'd')); }
+            }
+            if (i >= items.length) return { value: undefined, done: true };
+            const h = items[i++];
+            return { value: pick === 0 ? h.name : pick === 1 ? h : [h.name, h], done: false };
+          });
+        },
+        return(value) { i = Infinity; items = items ?? []; return Promise.resolve({ value, done: true }); },
+        [Symbol.asyncIterator]() { return this; },
+      };
+      return it;
+    };
+    class FileSystemDirectoryHandle extends FileSystemHandle {
+      constructor() { super(); }
+      getFileHandle(name, options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemDirectoryHandle.getFileHandle');
+          need(1, arguments.length, 'FileSystemDirectoryHandle.getFileHandle');
+          const d = dict(options, 'getFileHandle'), nm = String(name), enc = stEnc(nm);
+          call(201, ['get', s.path, enc, 'f', d.create ? '1' : '0'], 'FileSystemDirectoryHandle.getFileHandle');
+          return handle(join(s.path, enc), nm, false);
+        });
+      }
+      getDirectoryHandle(name, options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemDirectoryHandle.getDirectoryHandle');
+          need(1, arguments.length, 'FileSystemDirectoryHandle.getDirectoryHandle');
+          const d = dict(options, 'getDirectoryHandle'), nm = String(name), enc = stEnc(nm);
+          call(201, ['get', s.path, enc, 'd', d.create ? '1' : '0'], 'FileSystemDirectoryHandle.getDirectoryHandle');
+          return handle(join(s.path, enc), nm, true);
+        });
+      }
+      removeEntry(name, options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemDirectoryHandle.removeEntry');
+          need(1, arguments.length, 'FileSystemDirectoryHandle.removeEntry');
+          const d = dict(options, 'removeEntry'), nm = String(name);
+          if (nm === '') throw new TypeError("Failed to execute 'removeEntry': the name is empty.");
+          call(201, ['remove', s.path, stEnc(nm), d.recursive ? '1' : '0'], 'FileSystemDirectoryHandle.removeEntry');
+        });
+      }
+      resolve(possibleDescendant) {
+        return later(() => {
+          const s = st(this, 'FileSystemDirectoryHandle.resolve');
+          need(1, arguments.length, 'FileSystemDirectoryHandle.resolve');
+          const o = st(possibleDescendant, 'FileSystemDirectoryHandle.resolve');
+          const f = call(201, ['resolve', s.path, o.path], 'FileSystemDirectoryHandle.resolve');
+          return f === null ? null : f.map(b => stDec(text(b)));
+        });
+      }
+      keys() { st(this, 'FileSystemDirectoryHandle.keys'); return entriesOf(this, 0); }
+      values() { st(this, 'FileSystemDirectoryHandle.values'); return entriesOf(this, 1); }
+      entries() { st(this, 'FileSystemDirectoryHandle.entries'); return entriesOf(this, 2); }
+      [Symbol.asyncIterator]() { st(this, 'FileSystemDirectoryHandle.entries'); return entriesOf(this, 2); }
+    }
+    idl(FileSystemDirectoryHandle, 'FileSystemDirectoryHandle');
+
+    // ---- FileSystemWritableFileStream: a WritableStream when the engine has one -----------------
+    const Base = typeof WritableStream === 'function' ? WritableStream : Object;
+    // One chunk (the standard's "write a chunk"): a write, a seek or a truncate on the swap buffer.
+    const writeChunk = (w, chunk) => {
+      if (!w.open) throw new TypeError('The stream is closed.');
+      try {
+        const data = bytesOf(chunk);
+        if (data !== null) { call(201, ['wwrite', String(w.id), '', data], 'write'); return; }
+        if (chunk === null || typeof chunk !== 'object') throw new TypeError("Failed to execute 'write': the data is not writable.");
+        const type = String(chunk.type);
+        if (type === 'write') {
+          if (chunk.data === undefined) throw new DOMException("Failed to execute 'write': write requires a data argument.", 'SyntaxError');
+          const bytes = bytesOf(chunk.data);
+          if (bytes === null) throw new TypeError("Failed to execute 'write': the data is not writable.");
+          call(201, ['wwrite', String(w.id), chunk.position === undefined || chunk.position === null ? '' : String(size(chunk.position, 'write')), bytes], 'write');
+        } else if (type === 'seek') {
+          if (chunk.position === undefined || chunk.position === null) throw new DOMException("Failed to execute 'write': seek requires a position argument.", 'SyntaxError');
+          call(201, ['wseek', String(w.id), String(size(chunk.position, 'seek'))], 'seek');
+        } else if (type === 'truncate') {
+          if (chunk.size === undefined || chunk.size === null) throw new DOMException("Failed to execute 'write': truncate requires a size argument.", 'SyntaxError');
+          call(201, ['wtrunc', String(w.id), String(size(chunk.size, 'truncate'))], 'truncate');
+        } else throw new TypeError(`Failed to execute 'write': '${type}' is not a valid command.`);
+      } catch (e) {
+        // an error ends the stream: the swap buffer is dropped and nothing was written to the file
+        w.open = false;
+        apiCall(201, ['wabort', String(w.id)], 0, true);
+        throw e;
+      }
+    };
+    const closeW = w => { if (!w.open) throw new TypeError('The stream is closed.'); w.open = false; call(201, ['wclose', String(w.id)], 'close'); };
+    const abortW = w => { if (w.open) { w.open = false; apiCall(201, ['wabort', String(w.id)], 0, true); } };
+    let sinkFor = null;
+    class FileSystemWritableFileStream extends Base {
+      constructor() {
+        guard();
+        const w = sinkFor;
+        if (Base === Object) super();
+        else super({ write(chunk) { writeChunk(w, chunk); }, close() { closeW(w); }, abort() { abortW(w); } });
+      }
+      write(data) {
+        const w = kinds.get(this);
+        if (Base !== Object) return later(() => { const writer = this.getWriter(), p = writer.write(data); writer.releaseLock(); return p; });
+        return later(() => writeChunk(w, data));
+      }
+      seek(position) { need(1, arguments.length, 'FileSystemWritableFileStream.seek'); return this.write({ type: 'seek', position }); }
+      truncate(size) { need(1, arguments.length, 'FileSystemWritableFileStream.truncate'); return this.write({ type: 'truncate', size }); }
+    }
+    if (Base === Object) {
+      FileSystemWritableFileStream.prototype.close = function close() { const w = kinds.get(this); return later(() => closeW(w)); };
+      FileSystemWritableFileStream.prototype.abort = function abort() { const w = kinds.get(this); return later(() => abortW(w)); };
+    }
+    idl(FileSystemWritableFileStream, 'FileSystemWritableFileStream');
+    const newWritable = id => { const w = { id, open: true }; sinkFor = w; try { return make(FileSystemWritableFileStream, w); } finally { sinkFor = null; } };
+
+    // ---- FileSystemSyncAccessHandle (dedicated workers): reads and writes in place --------------
+    const acc = (o, what) => { const s = kinds.get(o); if (!s || s.access === undefined) throw new TypeError('Illegal invocation: FileSystemSyncAccessHandle.' + what); return s; };
+    const atOf = (options, what) => { const d = dict(options, what); return d.at === undefined ? '' : String(size(d.at, what)); };
+    const view = (b, what) => { if (b instanceof ArrayBuffer) return new Uint8Array(b); if (ArrayBuffer.isView(b)) return new Uint8Array(b.buffer, b.byteOffset, b.byteLength); throw new TypeError(`Failed to execute '${what}': the buffer is not a BufferSource.`); };
+    class FileSystemSyncAccessHandle {
+      constructor() { guard(); }
+      read(buffer, options = undefined) {
+        const s = acc(this, 'read');
+        need(1, arguments.length, 'FileSystemSyncAccessHandle.read');
+        const u = view(buffer, 'read'), at = atOf(options, 'read');
+        const f = call(201, ['aread', String(s.access), at, String(u.length)], 'FileSystemSyncAccessHandle.read');
+        u.set(f[0]);
+        return f[0].length;
+      }
+      write(buffer, options = undefined) {
+        const s = acc(this, 'write');
+        need(1, arguments.length, 'FileSystemSyncAccessHandle.write');
+        const u = view(buffer, 'write'), at = atOf(options, 'write');
+        return Number(text(call(201, ['awrite', String(s.access), at, u.slice()], 'FileSystemSyncAccessHandle.write')[0]));
+      }
+      truncate(newSize) { const s = acc(this, 'truncate'); need(1, arguments.length, 'FileSystemSyncAccessHandle.truncate'); call(201, ['atrunc', String(s.access), String(size(newSize, 'truncate'))], 'FileSystemSyncAccessHandle.truncate'); }
+      getSize() { const s = acc(this, 'getSize'); return Number(text(call(201, ['asize', String(s.access)], 'FileSystemSyncAccessHandle.getSize')[0])); }
+      flush() { const s = acc(this, 'flush'); call(201, ['aflush', String(s.access)], 'FileSystemSyncAccessHandle.flush'); }
+      close() { const s = acc(this, 'close'); if (s.open) { s.open = false; call(201, ['aclose', String(s.access)], 'FileSystemSyncAccessHandle.close'); } }
+    }
+    idl(FileSystemSyncAccessHandle, 'FileSystemSyncAccessHandle');
+
+    // ---- StorageManager -------------------------------------------------------------------------
+    class StorageManager {
+      constructor() { guard(); }
+      estimate() {
+        return later(() => {
+          if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.estimate');
+          const f = call(202, ['estimate'], 'StorageManager.estimate');
+          return { usage: Number(text(f[0])), quota: Number(text(f[1])), usageDetails: { indexedDB: Number(text(f[2])), fileSystem: Number(text(f[3])) } };
+        });
+      }
+      persisted() { return later(() => { if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.persisted'); return text(call(202, ['persisted'], 'StorageManager.persisted')[0]) === '1'; }); }
+      getDirectory() {
+        return later(() => {
+          if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.getDirectory');
+          call(201, ['root'], 'StorageManager.getDirectory');
+          return handle('', '', true);
+        });
+      }
+    }
+    // persist() is exposed in windows only.
+    if (typeof document !== 'undefined')
+      StorageManager.prototype.persist = function persist() { return later(() => { if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.persist'); return text(call(202, ['persist'], 'StorageManager.persist')[0]) === '1'; }); };
+    idl(StorageManager, 'StorageManager');
+    return { manager: make(StorageManager, {}), classes: { FileSystemHandle, FileSystemFileHandle, FileSystemDirectoryHandle, FileSystemWritableFileStream,
+      FileSystemSyncAccessHandle, StorageManager } };
+  };
+  let fsMade;
+  const fsApi = () => {
+    if (fsMade !== undefined) return fsMade;
+    return fsMade = !apiOn() || apiCall(202, ['persisted'], 0, true) === -2 ? null : makeFs();
+  };
+  for (const name of ['FileSystemHandle', 'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle',
+    'StorageManager']) lazy(name, () => fsApi()?.classes[name]);
+  // ==== end File System API ======================================================================
+
   // ---- User Timing: performance.mark, measure ---------------------------------------------
   // performance.now and timeOrigin are QuickJS-NG's, on the WASI clock, which is Lean's script
   // clock (Hosts.Page.ScriptClock). The entries are this list.
@@ -9038,7 +9338,11 @@
     'WebGLVertexArrayObject', 'WebGLUniformLocation', 'WebGLActiveInfo', 'WebGLShaderPrecisionFormat', 'WebGLContextEvent',
     // WebCodecs' are [Exposed=(Window,DedicatedWorker)].
     'VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioData', 'AudioDecoder', 'VideoDecoder',
-    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect']);
+    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect',
+    // client-side storage (sections IndexedDB and File System API)
+    'indexedDB', 'IDBFactory', 'IDBRequest', 'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange', 'IDBObjectStore', 'IDBIndex', 'IDBCursor',
+    'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList', 'QuotaExceededError', 'FileSystemHandle',
+    'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
@@ -9051,7 +9355,7 @@
     for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
       Object.defineProperty(WorkerLocation.prototype, k, { get() { return parts.get(this)[k]; }, configurable: true, enumerable: true });
     class WorkerNavigator { constructor() { throw new TypeError('Illegal constructor'); } }
-    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency'])
+    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'storage'])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return nav[k]; }, configurable: true, enumerable: true });
     for (const [k, v] of [['appCodeName', 'Mozilla'], ['appName', 'Netscape'], ['product', 'Gecko']])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return v; }, configurable: true, enumerable: true });
