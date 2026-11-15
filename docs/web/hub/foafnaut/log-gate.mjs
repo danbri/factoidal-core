@@ -19,8 +19,12 @@ export function messageKey(text) {
   return String(text).slice(0,160).replace(/\d+/g,'#');
 }
 
-/** A gate. `write(level,args)` writes a line as the host's console would. */
-export function createLogGate({write,now=()=>performance.now(),perSecond=50,perWindow=200,windowMs=10000,inARow=3,all=false,onTrip,name='foafnaut'}={}) {
+/**
+ * A gate. `write(level,args)` writes a line as the host's console would.
+ * @param {{write?:(level:string,args:unknown[])=>void,now?:()=>number,perSecond?:number,perWindow?:number,windowMs?:number,
+ *   inARow?:number,all?:boolean,onTrip?:(event:{at:number,top:{message:string,count:number}[],lines:number})=>void,name?:string}} [options]
+ */
+export function createLogGate({write=(_level,_args)=>{},now=()=>performance.now(),perSecond=50,perWindow=200,windowMs=10000,inARow=3,all=false,onTrip,name='foafnaut'}={}) {
   const stats={lines:0,written:0,suppressed:0,collapsed:0,traces:0,trips:0,tripped:false};
   let last,lastLevel='log',repeats=0,repeatSince=0;
   let secondAt=-Infinity,inSecond=0,windowAt=-Infinity,inWindow=0;
@@ -90,7 +94,9 @@ export function createLogGate({write,now=()=>performance.now(),perSecond=50,perW
 }
 
 /** Put the gate in front of a console's log, info, warn, error and debug. Answers the gate;
-`restore()` puts the console back. */
+`restore()` puts the console back.
+ * @param {Console} [target]
+ * @param {Parameters<typeof createLogGate>[0]} [options] */
 export function gateConsole(target=console,options={}) {
   const original={};
   for(const level of ['log','info','warn','error','debug'])original[level]=target[level].bind(target);
