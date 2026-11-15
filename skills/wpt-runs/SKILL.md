@@ -248,7 +248,7 @@ recorded as CRASH.
 
 The Test262-through-WPT number (`third_party/test262/` pages, Chrome's subtests) is a browser test of
 a part of Test262. The **full Test262 run** is the JavaScript engine's own score: the whole upstream
-suite, every file, by Test262's rules. Workflow `test262.yml` ("Test262 full run") in
+suite, every file, by Test262's rules. Workflow `test262.yml` ("Test262") in
 `danbri/factoidal-builds`, script `release-tests/test262.py`.
 
 - **Suite**: tc39/test262 at a pinned commit (`TEST262_PINNED` in `test262.yml`; 2e58f87d83 since
