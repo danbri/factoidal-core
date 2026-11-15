@@ -346,7 +346,21 @@ Deno.test("page-load: the animated values of a turn",async()=>{
   assert.deepEqual(pageLayoutFields(page),{url:"http://a.test/"});
   // every host takes it through the one function
   const doc=await Deno.readTextFile(`${lab}native_html_document.ts`),hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
-  assert(doc.includes("takeAnimated(options,turn)")&&hub.includes("takeAnimated(page,turn)"),"a host does not carry a turn's animated values to its requests");
+  assert(doc.includes("takeTurn(options,turn)")&&hub.includes("takeTurn(page,turn)"),"a host does not carry a turn's animated values to its requests");
+});
+
+// A script turn, the same rule in every host (issue 450): commands of a turn that changed the page
+// and moved animated values ask for a frame; the Hub draws it on the layered path, as the window does.
+Deno.test("page-load: a script turn on the page record",async()=>{
+  const {takeTurn}=await import("../../../docs/web/hub/foafnaut/page-load.mjs");
+  const page:Record<string,unknown>={};
+  assert.equal(takeTurn(page,{changed:false}),false);
+  const commands=[{op:"setAttribute",nodeId:3,name:"transform",value:"scale(2)"}];
+  assert.equal(takeTurn(page,{changed:true,commands}),true);assert.deepEqual(page.commands,commands);
+  assert.equal(takeTurn(page,{changed:false,animated:[[3,"opacity","0.5",false]]}),true);assert.deepEqual(page.commands,commands);
+  assert.equal(takeTurn(page,{changed:false,animated:[[3,"opacity","0.5",false]]}),false);
+  const hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
+  assert(/if\(takeTurn\(page,turn\)&&page===doc\)\{bandWanted=layered!==false&&!!L;request\(\);\}/.test(hub),"the Hub does not draw a script turn's frame on the layered path");
 });
 
 // @import: the engine names what it lacks, the host fetches, until nothing is lacking.
