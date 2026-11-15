@@ -12,6 +12,30 @@ const here=new URL(".",import.meta.url).pathname;
 const windowLib=`${here}.build/native/libnative-window.dylib`;
 const engineLib=Deno.env.get("WEB_RENDER_DYLIB")??`${here}.build/web-render/engines/libweb-render.dylib`;
 const exists=(p:string)=>{try{return Deno.statSync(p).isFile;}catch{return false;}};
+// Offline replay (realpages/replay.ts), any platform: a host preloaded with it gets the
+// snapshot's answers, a 404 for a URL not in it, the recorded address for a name, and the real
+// fetch for file: URLs.
+{
+  const {writeZip}=await import("./realpages/zip.ts");
+  const dir=await Deno.makeTempDir(),enc=new TextEncoder();
+  const manifest={entries:[
+    {url:"https://replay.test/",status:301,headers:[["location","https://www.replay.test/page"]],remote_ip:"203.0.113.7"},
+    {url:"https://www.replay.test/page",status:200,headers:[["content-type","text/html"],["content-encoding","gzip"]],body:"bodies/0001",remote_ip:"2001:db8::7"}]};
+  Deno.writeFileSync(`${dir}/s.zip`,await writeZip([{name:"manifest.json",data:enc.encode(JSON.stringify(manifest))},{name:"bodies/0001",data:enc.encode("<p>replayed</p>")}]));
+  Deno.writeTextFileSync(`${dir}/local.txt`,"local");
+  Deno.writeTextFileSync(`${dir}/main.ts`,`const r=await fetch("https://replay.test/");const m=await fetch("https://replay.test/x");
+const h=await fetch("https://replay.test/",{redirect:"manual"});const f=await fetch(new URL("file://${dir}/local.txt"));
+console.log(JSON.stringify({status:r.status,url:r.url,body:await r.text(),enc:r.headers.get("content-encoding"),miss:m.status,manual:h.status,
+loc:h.headers.get("location"),file:await f.text(),a:await Deno.resolveDns("replay.test","A"),aaaa:await Deno.resolveDns("www.replay.test","AAAA"),none:await Deno.resolveDns("other.test","A")}));`);
+  const o=await new Deno.Command(Deno.execPath(),{args:["run","-A","--preload",`${here}realpages/replay.ts`,`${dir}/main.ts`],env:{REALPAGES_REPLAY:`${dir}/s.zip`},stdout:"piped",stderr:"piped"}).output();
+  const got=new TextDecoder().decode(o.stdout).trim(),err=new TextDecoder().decode(o.stderr);
+  const want=JSON.stringify({status:200,url:"https://www.replay.test/page",body:"<p>replayed</p>",enc:null,miss:404,manual:301,loc:"https://www.replay.test/page",
+    file:"local",a:["203.0.113.7"],aaaa:["2001:db8::7"],none:[]});
+  await Deno.remove(dir,{recursive:true});
+  if(got!==want||!err.includes('"realpages-replay-miss"')||!err.includes('{"type":"realpages-replay","hits":3,"misses":1}')){
+    console.error(`realpages_check.ts FAILED: replay\n  got  ${got}\n  want ${want}\n  ${err.slice(-400)}`);Deno.exit(1);}
+  console.log("replay: snapshot answers, redirects, misses, names and file: as expected");
+}
 if(Deno.build.os!=="darwin"){console.log("NOT RUN: realpages_check.ts needs the macOS window library");Deno.exit(0);}
 for(const need of [windowLib,engineLib,`${here}.build/native-html/runtime/web-render.mjs`])
   if(!exists(need)){console.log(`NOT RUN: realpages_check.ts needs ${need}`);Deno.exit(0);}

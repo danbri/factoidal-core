@@ -4,6 +4,9 @@
 //
 //   deno run --allow-read --allow-write labs/demos/foafnaut/realpages/compare.ts --current summary.json
 //     [--previous summary.json] [--markdown OUT.md] [--trend trend.csv] [--run-id ID] [--run-url URL] [--annotate]
+//     [--informational]
+// --informational (the live survey: the network and the pages change under it): a crash is a
+// warning too, and the exit is 0. The offline survey (snapshots) is the gate.
 //
 // Regressions: a crash; a verdict worse than before (unreachable, before or now, is not one: it
 // is the network); a number over 1.5 times its previous value and more than its noise floor
@@ -11,7 +14,7 @@
 import {VERDICT_RANK,type Verdict} from "./metrics.ts";
 
 type Row=Record<string,unknown>&{id:string;verdict:Verdict;state:string};
-export type Summary={platform:string;release:string|null;engine:{sha256:string};host:{commit:string|null;shot_at_end:boolean;liberal_report:boolean};
+export type Summary={platform:string;mode?:string;release:string|null;engine:{sha256:string};host:{commit:string|null;shot_at_end:boolean;liberal_report:boolean};
   started:string;totals:Record<string,number>;pages:Row[]};
 
 /** Field, column title, noise floor (an increase below it is never a regression). */
@@ -58,7 +61,7 @@ export function markdown(cur:Summary,prev?:Summary):string{
   const fields=fieldsOf(cur.platform);
   const extra=cur.platform==="macos"?["Skips","Layout similarity"]:["Rows","Links"];
   const lines=[
-    `Real-page survey, ${cur.platform}, ${cur.release??"engine "+cur.engine.sha256.slice(0,12)} (host ${cur.host.commit?.slice(0,9)??"?"}${cur.platform==="macos"&&!cur.host.shot_at_end?", picture at first idle frame":""}${cur.platform==="macos"&&!cur.host.liberal_report?", skips not reported by this host":""})`+
+    `Real-page survey, ${cur.platform}, ${cur.mode??"live"}, ${cur.release??"engine "+cur.engine.sha256.slice(0,12)} (host ${cur.host.commit?.slice(0,9)??"?"}${cur.platform==="macos"&&!cur.host.shot_at_end?", picture at first idle frame":""}${cur.platform==="macos"&&!cur.host.liberal_report?", skips not reported by this host":""})`+
       (prev?`; changes against ${prev.release??prev.engine.sha256.slice(0,12)}`:"; no previous survey"),"",
     `| Page | Verdict | ${fields.map(f=>f[1]).join(" | ")} | ${extra.join(" | ")} |`,
     `|---|---|${fields.map(()=>"---:").join("|")}|${extra.map(()=>"---:").join("|")}|`,
@@ -79,12 +82,12 @@ export function markdown(cur:Summary,prev?:Summary):string{
   return lines.join("\n")+"\n";
 }
 
-export const TREND_COLUMNS=["run_id","run_url","started","platform","release","engine_sha256","host_commit","page","state","verdict",
+export const TREND_COLUMNS=["run_id","run_url","started","platform","mode","release","engine_sha256","host_commit","page","state","verdict",
   "first_frame_s","first_layout_ms","prims","gpu_p50_ms","cpu_idle_pct","script_turn_max_ms","scroll_latency_p50_ms","scroll_latency_p95_ms",
   "rss_peak_mb","skips_count","layout_similarity","load_ms","cpu_s","crash_reason"];
 export function trendRows(cur:Summary,runId:string,runUrl:string):string[]{
   const q=(v:unknown)=>{const s=v===null||v===undefined?"":String(v);return /[",\n]/.test(s)?`"${s.replaceAll('"','""')}"`:s;};
-  return cur.pages.map(r=>TREND_COLUMNS.map(c=>q(({run_id:runId,run_url:runUrl,started:cur.started,platform:cur.platform,release:cur.release,
+  return cur.pages.map(r=>TREND_COLUMNS.map(c=>q(({run_id:runId,run_url:runUrl,started:cur.started,platform:cur.platform,mode:cur.mode??"live",release:cur.release,
     engine_sha256:cur.engine.sha256,host_commit:cur.host.commit,page:r.id} as Record<string,unknown>)[c]??r[c])).join(","));
 }
 
@@ -102,7 +105,8 @@ if(import.meta.main){
     const exists=await Deno.stat(path).then(()=>true,()=>false);
     await Deno.writeTextFile(path,(exists?"":TREND_COLUMNS.join(",")+"\n")+trendRows(cur,opt("--run-id")??"local",opt("--run-url")??"").join("\n")+"\n",{append:true});
   }
-  const fs=findings(cur,prev);
-  if(a.includes("--annotate"))for(const f of fs)if(f.level!=="note")console.log(`::${f.level}::${f.page}: ${f.text}`);
+  const info=a.includes("--informational");
+  const fs=findings(cur,prev).map(f=>info&&f.level==="error"?{...f,level:"warning" as const}:f);
+  if(a.includes("--annotate"))for(const f of fs)if(f.level!=="note")console.log(`::${f.level}::${cur.mode??"live"} ${f.page}: ${f.text}`);
   if(fs.some(f=>f.level==="error"))Deno.exitCode=1;
 }

@@ -8,6 +8,7 @@ import {cpuShare,FETCH_FAILURE,overBudget,parseScroll,parseTextnaut,parseWatch,p
 import {crop,decodePNG,ssim} from "./realpages/visual.ts";
 import {findings,markdown,trendRows,TREND_COLUMNS,type Summary} from "./realpages/compare.ts";
 import {pngOf} from "./png_write.ts";
+import {crc32,readZip,writeZip} from "./realpages/zip.ts";
 import {addEntries,reportSystemEntries,type ConsoleEntry} from "./native_console.ts";
 
 const frame=(n:number,layoutMs:number,prims:number)=>JSON.stringify({type:"native-html-frame",t:1000+n,frame:n,primitives:prims,layoutMs,totalMs:layoutMs+5,layers:{top:65,bandTop:0}});
@@ -124,4 +125,14 @@ Deno.test("--liberal-report: each System entry once, page entries never, nothing
     addEntries(page,[{source:"System",severity:"warning",feature:"g",where:"w",message:"n"}]);
   } finally {reportSystemEntries(undefined);}
   assert.deepEqual(heard.map(e=>e.feature),["g"],"f was kept before the report was on; g once");
+});
+
+Deno.test("snapshot ZIP: written, read back, the same bytes for the same files", async ()=>{
+  assert.equal(crc32(new TextEncoder().encode("123456789")),0xcbf43926);
+  const big=new TextEncoder().encode("abc ".repeat(5000)),odd=crypto.getRandomValues(new Uint8Array(300));
+  const files=[{name:"manifest.json",data:new TextEncoder().encode("{}")},{name:"bodies/0001",data:big},{name:"bodies/0002",data:odd},{name:"empty",data:new Uint8Array()}];
+  const zip=await writeZip(files),back=await readZip(zip);
+  assert(zip.length<big.length/10,"text is deflated");
+  for(const f of files)assert.deepEqual(back.get(f.name),f.data,f.name);
+  assert.deepEqual(await writeZip(files),zip,"deterministic");
 });

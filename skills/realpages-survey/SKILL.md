@@ -1,6 +1,6 @@
 ---
 name: realpages-survey
-description: The real-page survey of each Foafnaut release (Wikipedia desktop and mobile skins, BBC News, GitHub, MDN, a blog, Hacker News, a W3C spec, the Spinal Tap showcase), probed live and measured on the native engine; per page a verdict, first frame, first layout, GPU per frame, idle CPU, longest script turn, scroll latency, peak RSS, liberal-mode skips, crash or exit, and layout similarity against headless Chrome. Use before running the survey locally, adding or changing a page or budget, reading the trend, or changing realpages.yml.
+description: The real-page survey of each Foafnaut release, offline on vendored snapshots (the gate) and live (drift) (Wikipedia desktop and mobile skins, BBC News, GitHub, MDN, a blog, Hacker News, a W3C spec, the Spinal Tap showcase), probed live and measured on the native engine; per page a verdict, first frame, first layout, GPU per frame, idle CPU, longest script turn, scroll latency, peak RSS, liberal-mode skips, crash or exit, and layout similarity against headless Chrome. Use before running the survey locally, adding or changing a page or budget, reading the trend, or changing realpages.yml.
 ---
 
 # The real-page survey
@@ -11,16 +11,23 @@ or only the one that renders well enough to be measured?).
 
 ## Rules
 
-- **Real pages are copyright.** The survey probes them live at run time. `pages.json` holds URLs only.
-  Pictures and logs go to a workflow artifact kept 7 days, or to local scratch; never into git, a release, an
-  issue or a PR. Public outputs are numbers, verdicts and defect lists (a defect is described in our own
-  words: "mask-image icons drawn as black squares", not a copy of the page).
+- **Two modes.** Offline (the gate): each page is answered from its snapshot, a ZIP vendored in
+  `danbri/factoidal-builds` under `third_party/realpages/<site>/<id>-<YYYYMMDD>.zip`, replayed into the
+  host by `realpages/replay.ts` (`deno run --preload`), so a run can be repeated and a change in the numbers
+  is the engine's. Live (information): the pages as they are now, for drift; never a failure.
+- **Snapshots live in the builds repository, never in core.** Core keeps the runner, `pages.json` (URLs,
+  licence, attribution) and original fixtures. Snapshots are public pages only, nothing behind a login,
+  vendored as fair use for testing, each with its URL, fetch time, HTTP header fields (Set-Cookie dropped),
+  licence and attribution (`manifest.json`, `PROVENANCE.txt` in the ZIP, and the README beside them). Keep
+  that directory under about 50 MB. Pictures and logs of each run stay workflow artifacts (7 days).
 - **The host is the release's own commit.** `run_html.ts` and Textnaut change with the engine; a newer host
   on an older engine measures the host, not the release (on 2026-11-15 the host of main drew the Spinal Tap
-  page at 41 ms GPU per frame on engine cc73af028, against 337 ms with cc73af028's own host). The survey
-  tools (`realpages/`) come from main, so an old release is judged by today's rules.
-- **Unreachable is not a regression.** A page whose fetch fails (after two more tries, 5 and 10 s apart) is
-  `unreachable`. A run that ends by a signal or an error of the browser is a `crash`: a hard failure.
+  page at 41 ms GPU per frame on engine cc73af028, against 337 ms with cc73af028's own host). The host
+  checkout needs `third_party/fonts` too, or it draws in the bitmap font. The survey tools (`realpages/`)
+  come from main, so an old release is judged by today's rules.
+- **Unreachable is not a regression.** A live page whose fetch fails (after two more tries, 5 and 10 s apart)
+  is `unreachable`; offline, a page with no snapshot is. A run that ends by a signal or an error of the
+  browser is a `crash`: a hard failure offline.
 
 ## Run it locally (macOS)
 
@@ -35,6 +42,12 @@ deno run -A realpages/survey.ts --engine ~/.foafnaut/current/foafnaut/libweb-ren
   --out /tmp/rp --lock /tmp/foafnaut-timing.lock
 deno run --allow-read --allow-write realpages/compare.ts --current /tmp/rp/summary.json [--previous OLD.json]
 ```
+
+Offline: add `--snapshots DIR` (a checkout of factoidal-builds' `third_party/realpages`). New snapshots:
+`deno run -A realpages/snapshot.ts --out DIR [--only id]` (headless Chrome records every response while
+the page loads; the document is the one the host's own fetch gets; media, bodies over 1.5 MB, images over
+300 KB and anything past 6 MB a page are left out and listed). A row's `replay` gives the requests answered
+from the snapshot and those that were not (404, one `realpages-replay-miss` line each in the log).
 
 On the shared Mac pass `--lock /tmp/foafnaut-timing.lock` so runs do not overlap other agents' timings. To
 measure a release as released, give `--host` a checkout of its commit (sparse: `labs/demos/foafnaut`,
@@ -77,13 +90,13 @@ page. The next survey compares it with nothing; the one after with its first row
 ## Read the trend
 
 On `danbri/factoidal-builds`, branch `wpt-scores`, directory `realpages/`: `trend.csv` (one row per run,
-platform and page; columns in `compare.ts` `TREND_COLUMNS`), `runs/<run_id>/<platform>.json` (the whole
-summary), `latest-<platform>.json` and `previous-<platform>.json` (the newest two releases surveyed). Each
-surveyed release has the assets `realpages-<platform>.json` and `realpages-<platform>.md` (the table with
+platform, mode and page; columns in `compare.ts` `TREND_COLUMNS`), `runs/<run_id>/<platform>-<mode>.json`
+(the whole summary), `latest-<platform>-<mode>.json` and `previous-...` (the newest two releases surveyed).
+Each surveyed release has the assets `realpages-<platform>-<mode>.json` and `.md` (the table with
 changes). A run's job summary has the same table; its pictures are the artifact `realpages-<platform>-pictures`
 for 7 days.
 
-Regressions (`compare.ts`): a crash (fails the job), a worse verdict, a number over 1.5 times the previous
+Regressions (`compare.ts`): a crash (fails the job offline; `--informational` live), a worse verdict, a number over 1.5 times the previous
 one and above its noise floor (first frame 1 s, layout 50 ms, GPU 10 ms, idle CPU 10 points, script turn
 100 ms, scroll 50 ms, RSS 200 MB), layout similarity down by more than 0.05. Unreachable, before or now, is
 never a regression.
@@ -91,5 +104,6 @@ never a regression.
 ## Checks
 
 `realpages_test.ts` (pure: log parsing, verdict, PNG decoding and similarity, comparison, the System entry
-report) runs in test.sh's pure tests; `realpages_check.ts` (macOS, engine and window library: the two
-run_html.ts options and the survey on one lab page, no network) in its engine section.
+report) runs in test.sh's pure tests; `realpages_check.ts` (replay on any platform; then, on macOS with the
+engine and window library, the two run_html.ts options and the survey on one lab page, no network) in its
+engine section.
