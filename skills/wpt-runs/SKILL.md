@@ -337,9 +337,10 @@ quoted next to the WPT number, never folded into it: `wpt-reftest-svg` (svg/, fi
   machine with a WPT run.
 - **Rivals**: Chrome, Firefox, Safari and Edge on the same tests at the same WPT commit, from
   wpt.fyi's summaries (`s` = P/F). `reftest-rivals.csv` on `wpt-scores`.
-- **Valid**: every shard present, every test has a status, ERROR + CRASH + STALL under 0.5% of
-  tests. A CRASH (the drawing process died on a page) or STALL (over 90 s on one page) is a
-  defect, as in section 6.
+- **Valid**: every shard present, every test has a status, ERROR (the harness: a fetch, the
+  runner, a missing picture) under 0.5% of tests. The engine refusing a page is FAIL with its
+  message. A CRASH (the drawing process died on a page) or STALL (over 90 s on one page) is the
+  engine's defect, as in section 6: listed with its page, never ignored.
 - **Records** (`wpt-scores`): `runs.csv` rows with `suite=wpt-reftest-svg` (`passed`/`denominator`
   are tests; `share_ex_encoding_pct` empty; `engine=native-cpu-raster`), `reftest-rivals.csv`,
   `runs/<run_id>/meta.json` (totals, statuses, each rival's share, directories, changes),

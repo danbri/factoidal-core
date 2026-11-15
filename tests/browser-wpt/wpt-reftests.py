@@ -28,11 +28,13 @@ allowed difference range starts at 0) or both numbers are inside their ranges. T
 annotation is looked up as wptrunner does: (node, reference, relation), then the reference
 alone, then the node's default, on the node being compared (the test, or a reference in a chain).
 
-Statuses: PASS, FAIL; TIMEOUT when a page on the path kept `reftest-wait` for the page-time
-budget; ERROR when the engine refused or failed to draw a page (its message is kept); CRASH
-when the drawing process died on a page; STALL when a page took longer than --stall seconds of
-wall time (the process is ended and the rest of its pages go to a new one). Like wpt.fyi, a
-reftest is one test: PASS or not.
+Statuses: PASS, FAIL (a picture that does not hold, or the engine refusing a page: its message
+is kept); TIMEOUT when a page on the path kept `reftest-wait` for the page-time budget; ERROR
+when the harness failed (a fetch, the runner, a picture missing); CRASH when the drawing
+process died on a page; STALL when a page took longer than --stall seconds of wall time (the
+process is ended and the rest of its pages go to a new one). Like wpt.fyi, a reftest is one
+test: PASS or not. Valid: every test has a status and ERROR is under 0.5% of tests; CRASH and
+STALL are the engine's defects, listed with their pages.
 
 Pages are served from --wpt-root by a server of this script on 127.0.0.1 (a random port; it
 never uses wptserve's port 8000, so it can run beside a WPT run): files as they are, the
@@ -389,6 +391,10 @@ def run(a):
             bad = rn if pn is None else rr if pr is None else None
             if bad is not None:
                 st = {"error": "ERROR", "crash": "CRASH", "stall": "STALL", "missing": "ERROR"}.get(bad.get("status"), "ERROR")
+                # the engine refusing a page is the engine's failure, as a wrong picture is
+                # (FAIL); ERROR is kept for the harness (a fetch, the runner, a missing picture)
+                if st == "ERROR" and str(bad.get("message") or "").startswith("Lean HTML:"):
+                    st = "FAIL"
                 edges.append({"from": node, "to": ref, "relation": rel, "status": st, "message": bad.get("message")})
                 status = status or st; message = message or bad.get("message")
                 continue
@@ -441,7 +447,9 @@ def run(a):
     passed = counts.get("PASS", 0)
     chrome_rows = [r for r in rows if "chrome" in r]
     chrome_pass = sum(1 for r in rows if r.get("chrome") == "PASS")
-    harness = sum(counts.get(k, 0) for k in ("ERROR", "CRASH", "STALL"))
+    # validity counts the harness's failures only; CRASH and STALL are the engine's defects,
+    # reported with their pages, as in the full WPT and Test262 runs
+    harness = counts.get("ERROR", 0)
     meta = {
         "format": "factoidal-wpt-reftests-v1", "prefix": prefix, "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t0)),
         "finishedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "wallSeconds": round(time.time() - t0, 1),
