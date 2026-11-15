@@ -106,7 +106,7 @@
   }
  },
  "hub": {
-  "measured": "2026-11-15, Apple M1, headless Chrome 157 with WebGPU (adapter apple metal-3), 45 s; the published Hub (engine as deployed) and the same with this checkout's host files: both runs within the margins below",
+  "measured": "2026-11-15, Apple M1, headless Chrome 157 with WebGPU (adapter apple metal-3), 45 s; the published Hub (engine as deployed) and the same with this checkout's host files: both runs within the margins below; after takeTurn (wip/spinal-layers): 46 of 46 frames layered, layout median 35 ms, draw median 553 ms, max 3,480 ms (the draw follows the zoom's scale; see issue 450)",
   "budgets": {
    "frames.count": {
     "min": 10,
@@ -146,15 +146,21 @@
     "max": 64,
     "measured": 8.4,
     "what": "JS heap of the engine worker at the end"
+   },
+   "frames.whole_page": {
+    "max": 0,
+    "measured": 0,
+    "was": 46,
+    "issue": "https://github.com/danbri/factoidal-core/issues/450",
+    "what": "animation frames on the whole-page path (stats.path frame). Since a script turn's frame asks for layers in every host (page-load.mjs takeTurn), the zoom's frames are layered: 46 of 46 on 2026-11-15, 0 before that change (46 of 46 on frame)."
+   },
+   "frames.layered": {
+    "min": 10,
+    "measured": 46,
+    "what": "frames after the first on the layered path"
    }
   },
   "known_failures": {
-   "frames.whole_page": {
-    "want_max": 0,
-    "measured": 43,
-    "issue": "https://github.com/danbri/factoidal-core/issues/450",
-    "what": "animation frames on the whole-page path (stats.path frame): every frame after the first, 43 of 43. The page's zoom changes the DOM from requestAnimationFrame (turn.changed), and browser-worker.mjs asks for layers only when animation values changed (takeAnimated), so 8c96d3ec8 does not reach this page. The native layered path draws the same ticks as paint-only frames (native tick.whole_page_ticks)."
-   },
    "frames.draw_ms.median": {
     "want_max": 50,
     "measured": 457,
