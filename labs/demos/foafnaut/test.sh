@@ -213,6 +213,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # wakeups per second against the window section of the same budgets. About 10 s.
   check "idle_loop_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --allow-read --allow-run --allow-env \
     --allow-write "$LAB/idle_loop_check.ts"
+  # The real-page survey's host options (--shot-at-end, --liberal-report json) on a local fixture,
+  # and survey.ts on one lab page (no network, no Chrome). About 15 s.
+  check "realpages_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --allow-read --allow-run --allow-env \
+    --allow-write "$LAB/realpages_check.ts"
   if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then
     check "page_gpu_test.ts (bubblepop)" env SCRIPT_ENGINE=bubblepop deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/page_gpu_test.ts"

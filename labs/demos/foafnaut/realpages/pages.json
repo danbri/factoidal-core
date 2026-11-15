@@ -1,0 +1,32 @@
+{
+  "note": "Real pages of the survey: URLs only, never page content (the pages are probed live at run time). lab: URLs are pages of this lab. viewport is WIDTHxHEIGHT in CSS px at scale 1; mobile rows give Chrome an iPhone user agent (Foafnaut sends its own). scripts:false runs with --no-scripts. budgets: the goal for each summary field; a page over a budget is listed, not failed. A page's own budgets override the defaults.",
+  "defaults": {
+    "viewport": "1280x800",
+    "budgets": {
+      "first_frame_s": 5,
+      "first_layout_ms": 1000,
+      "gpu_p50_ms": 50,
+      "cpu_idle_pct": 10,
+      "script_turn_max_ms": 500,
+      "scroll_latency_p95_ms": 250,
+      "rss_peak_mb": 1500
+    }
+  },
+  "pages": [
+    {"id": "spinal-showcase", "url": "lab:pages/spinal-tap-sparql.html", "note": "our own showcase page"},
+    {"id": "wp-stub", "url": "https://en.wikipedia.org/wiki/Spodnje_Danje"},
+    {"id": "wp-spinal", "url": "https://en.wikipedia.org/wiki/This_Is_Spinal_Tap"},
+    {"id": "wp-us", "url": "https://en.wikipedia.org/wiki/United_States", "budgets": {"first_frame_s": 10, "rss_peak_mb": 2500}},
+    {"id": "m-stub", "url": "https://en.wikipedia.org/wiki/Spodnje_Danje?useskin=minerva", "viewport": "412x860", "mobile": true},
+    {"id": "m-spinal", "url": "https://en.wikipedia.org/wiki/This_Is_Spinal_Tap?useskin=minerva", "viewport": "412x860", "mobile": true},
+    {"id": "m-us", "url": "https://en.wikipedia.org/wiki/United_States?useskin=minerva", "viewport": "412x860", "mobile": true, "budgets": {"first_frame_s": 10, "rss_peak_mb": 2500}},
+    {"id": "m-stub-enm", "url": "https://en.m.wikipedia.org/wiki/Spodnje_Danje", "viewport": "412x860", "mobile": true},
+    {"id": "news-bbc", "url": "https://www.bbc.co.uk/news/articles/cwdr1dmn563do"},
+    {"id": "news-bbc-noscripts", "url": "https://www.bbc.co.uk/news/articles/cwdr1dmn563do", "scripts": false, "scroll": false},
+    {"id": "gh-deno", "url": "https://github.com/denoland/deno"},
+    {"id": "mdn-display", "url": "https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/display"},
+    {"id": "blog-jvns", "url": "https://jvns.ca/"},
+    {"id": "hn", "url": "https://news.ycombinator.com/"},
+    {"id": "w3c-flexbox", "url": "https://www.w3.org/TR/css-flexbox-1/", "budgets": {"first_frame_s": 10, "rss_peak_mb": 2500}}
+  ]
+}

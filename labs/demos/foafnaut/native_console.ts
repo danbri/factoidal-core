@@ -13,6 +13,11 @@ export const MAX_CONSOLE_ENTRIES=1000;
 const entries=new WeakMap<object,ConsoleEntry[]>();
 const seen=new WeakMap<object,Set<string>>();
 
+/** Who hears each new System entry as it is kept (run_html.ts --liberal-report json): none by
+default, so a host that does not ask pays one comparison per entry. */
+let systemReport:((entry:ConsoleEntry)=>void)|undefined;
+export function reportSystemEntries(report:((entry:ConsoleEntry)=>void)|undefined){systemReport=report;}
+
 /** The entries of a page, oldest first. */
 export function consoleOf(page:object):ConsoleEntry[]{
   let list=entries.get(page);
@@ -32,6 +37,7 @@ export function addEntries(page:object,list:ConsoleEntry[]){
       const key=JSON.stringify([entry.feature,entry.where,entry.message]);
       if(keys.has(key))continue;
       keys.add(key);
+      systemReport?.(entry);
     }
     kept.push(entry);
   }
