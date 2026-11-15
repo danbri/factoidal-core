@@ -8,6 +8,7 @@
 // layout and no scene draw.
 import {requestRenderPlan,bufferUsage,commandInterpreter} from '../html-webgpu/runtime/render-plan-host.mjs';
 import {createPageGpu} from './page-gpu.mjs';
+import {sceneWork} from './scene-work.mjs';
 
 const READBACK=new Set(['copyTextureToBuffer','mapRead','readMapped','unmap']);
 // The composite uniform: the place and the press-rectangle count, then the rectangles
@@ -122,7 +123,21 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
   // Draw one Lean scene into the slot's texture (made at the scene's size), or into the texture
   // that targetOf gives. That is asked for only after every await: a canvas texture lasts
   // until the browser presents it.
+  // With waitForGpu (?stats=1): each scene draw's split, kept as `lastDraw[slot name]`: ms to
+  // a plan and the writes and commands submitted (`cpuMs`), ms until the GPU finished them
+  // (`gpuMs`, onSubmittedWorkDone; no timestamp queries), and the shader work of the draw
+  // (scene-work.mjs). Not measured otherwise: a page that is not measured pays nothing.
+  const lastDraw={};
   async function drawScene(slot,frame,checking,targetOf){
+    const started=waitForGpu?performance.now():0;
+    const pixels=await drawSceneNow(slot,frame,checking,targetOf);
+    if(waitForGpu){
+      const submitted=performance.now();await device.queue.onSubmittedWorkDone();
+      lastDraw[slot.name]={cpuMs:Math.round((submitted-started)*10)/10,gpuMs:Math.round((performance.now()-submitted)*10)/10,...slot.work};
+    }
+    return pixels;
+  }
+  async function drawSceneNow(slot,frame,checking,targetOf){
     const p=await plan(frame.width,frame.height,frame.data);
     const pipeline=await pipelineFor(p,frame.wgsl);
     const target=targetOf?.();
@@ -137,7 +152,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     }
     // Lean's damage (WebPaint.retainedAnswer): the texture holds the answer it names.
     const damage=frame.damage;
-    if(!target&&!checking&&damage&&slot.drawn===damage.id){stats.scenesKept=(stats.scenesKept??0)+1;return undefined;}
+    if(!target&&!checking&&damage&&slot.drawn===damage.id){stats.scenesKept=(stats.scenesKept??0)+1;if(waitForGpu)slot.work={kept:true};return undefined;}
     const tileWords=frame.tiles,uniformBytes=p.uniform.bytes,tileBytes=tileWords?Math.max(16,tileWords.length*4):0;
     const before=[slot.uniform?.buffer,slot.tiles?.buffer];
     slot.uniform=grow(slot.uniform,uniformBytes,bufferUsage(p.uniform.usage));
@@ -155,6 +170,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     };
     // A frame whose damage Lean knows and whose base is in the texture: only those rectangles.
     const rects=!target&&!checking&&damage?.rects&&damage.base!==null&&slot.drawn===damage.base&&slot.texture?damage.rects:undefined;
+    if(waitForGpu)slot.work=sceneWork(frame,rects);
     let pixels;
     if(rects){
       stats.scenesPartial=(stats.scenesPartial??0)+1;
@@ -178,7 +194,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     if(!target)slot.drawn=damage?.id;
     return pixels;
   }
-  const chrome={},page={},single={};
+  const chrome={name:'chrome'},page={name:'page'},single={name:'single'};
   // Page canvases drawn by page scripts (page-gpu.mjs): Lean-validated commands, blitted into
   // the page layer at Lean's rectangles.
   let pageGpu;
@@ -212,6 +228,8 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
   return {
     format,
     get stats(){return {...stats,failed,lost,cause};},
+    /** With waitForGpu: the last draw of each scene (chrome, page, single), see drawScene. */
+    get lastDraw(){return {...lastDraw};},
     get layers(){return shown;},
     /** Draw both layers of one Lean render into their textures. */
     async drawLayers(answer){

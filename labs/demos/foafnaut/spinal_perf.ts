@@ -26,6 +26,7 @@ import {dirname,join,resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {loadHTML,type HTMLLayers,type FrameWork} from "./native_html_engine.ts";
 import {prepareHTML,loadFontFile,setScriptHost} from "./native_html_document.ts";
+import {sceneWork} from "../../../docs/web/hub/foafnaut/scene-work.mjs";
 
 const here=dirname(fileURLToPath(import.meta.url));
 const root=resolve(here,"../../..");
@@ -43,7 +44,10 @@ type Engine={frameWork:(reset?:boolean)=>FrameWork|undefined;compileLayers:(s:st
   engineBuild?:()=>{commit:string;version:string}};
 export type Tick={i:number;turnMs:number;frameMs:number;changed:boolean;animated:number;layouts:number;kept:number;
   paintOnly:number;recompiled:number;reused:number;primitives:number;wholePage:boolean;scriptLayouts:number;
-  instructions:number;rss:number;heap:number};
+  instructions:number;rss:number;heap:number;
+  /** The GPU work of drawing the tick's page layer (scene-work.mjs), in millions of shader
+  loop trips: records visited, path edges walked, and edges walked outside the record's clip. */
+  drawnPixels:number;listedM:number;segmentsM:number;outsideClipM:number;binnedM:number;uploadKB:number;partial:boolean};
 type Stat={median:number;p95:number;max:number};
 export type SpinalRun={page:string;engine:string;engine_commit?:string;valid:boolean;why?:string;ticks:number;tick_ms:number;
   load_ms:number;web_fonts:string[];
@@ -55,13 +59,15 @@ export type SpinalRun={page:string;engine:string;engine_commit?:string;valid:boo
   tick:{turn_ms:Stat;frame_ms:Stat;engine_ms:Stat&{total:number};
     layouts:number;kept:number;paint_only:number;whole_page_ticks:number;layered_ticks:number;changed_ticks:number;
     animated_ticks:number;script_layouts:number;primitives_max:number;recompiled_max:number;recompiled_total:number;
-    zoom_driver:string;frame_ms_early:number;frame_ms_late:number;late_over_early:number};
+    zoom_driver:string;frame_ms_early:number;frame_ms_late:number;late_over_early:number;
+    draw:{segments_m:Stat&{total:number};outside_clip_m:Stat&{total:number};binned_m:Stat&{total:number};listed_m:Stat;drawn_pixels:Stat;upload_kb:Stat;partial_ticks:number}};
   rss_mb:{start:number;end:number;growth:number;growth_after_warmup:number;peak:number};
   heap_mb:{start:number;end:number;growth:number};
   script:{errors:number;first_error?:string};
   ticks_detail:Tick[];run_ms:number};
 
 const r1=(x:number)=>Math.round(x*10)/10;
+const r2=(x:number)=>Math.round(x*100)/100;
 const stat=(xs:number[]):Stat=>{
   const s=[...xs].sort((a,b)=>a-b),q=(p:number)=>s.length?s[Math.min(s.length-1,Math.floor(p*s.length))]:0;
   return {median:r1(q(0.5)),p95:r1(q(0.95)),max:r1(s.length?s[s.length-1]:0)};
@@ -138,7 +144,11 @@ export async function measure({library=defaultLibrary,ticks=DEFAULT_TICKS}:{libr
       const after=engine.frameWork();
       const primitives=l.page.primitiveCount,recompiled=delta(before,after,"recompiled"),layouts=delta(before,after,"layouts");
       const mem=Deno.memoryUsage();
-      list.push({i,turnMs:r1(turnMs),frameMs:r1(frameMs),changed:!!t.changed,animated:Array.isArray(t.animated)?t.animated.length:0,
+      // The draw the Hub makes of this answer: the damage rectangles over the last frame, or all.
+      const damage=(l.page as unknown as {damage?:{base:number|null;rects:number[][]|null}}).damage;
+      const work=sceneWork(l.page,damage?.rects&&damage.base!==null?damage.rects:undefined);
+      list.push({drawnPixels:work.drawnPixels,listedM:r2(work.listed/1e6),segmentsM:r2(work.segments/1e6),
+        outsideClipM:r2(work.segmentsOutsideClip/1e6),binnedM:r2(work.segmentsBinned/1e6),uploadKB:Math.round(work.uploadBytes/1024),partial:work.partial,i,turnMs:r1(turnMs),frameMs:r1(frameMs),changed:!!t.changed,animated:Array.isArray(t.animated)?t.animated.length:0,
         layouts,kept:delta(before,after,"kept"),paintOnly:delta(before,after,"paintOnly"),recompiled,reused:delta(before,after,"reused"),
         primitives,wholePage:layouts>0||(primitives>0&&recompiled>=primitives),scriptLayouts:t.layouts??0,instructions:t.instructions??0,
         rss:mem.rss,heap:mem.heapUsed});
@@ -159,7 +169,12 @@ export async function measure({library=defaultLibrary,ticks=DEFAULT_TICKS}:{libr
       recompiled_max:Math.max(0,...list.filter(t=>!t.wholePage).map(t=>t.recompiled)),
       recompiled_total:list.reduce((a,t)=>a+t.recompiled,0),
       zoom_driver:animated?"svg-animation":changed?"requestAnimationFrame":"none",
-      frame_ms_early:early,frame_ms_late:late,late_over_early:early?Math.round(late/early*100)/100:0};
+      frame_ms_early:early,frame_ms_late:late,late_over_early:early?Math.round(late/early*100)/100:0,
+      draw:{segments_m:{...stat(list.map(t=>t.segmentsM)),total:r1(list.reduce((a,t)=>a+t.segmentsM,0))},
+        outside_clip_m:{...stat(list.map(t=>t.outsideClipM)),total:r1(list.reduce((a,t)=>a+t.outsideClipM,0))},
+        binned_m:{...stat(list.map(t=>t.binnedM)),total:r1(list.reduce((a,t)=>a+t.binnedM,0))},
+        listed_m:stat(list.map(t=>t.listedM)),drawn_pixels:stat(list.map(t=>t.drawnPixels)),upload_kb:stat(list.map(t=>t.uploadKB)),
+        partial_ticks:list.filter(t=>t.partial).length}};
     // Growth after warm-up: from a quarter of the ticks to the end (the first frames of the
     // zoom allocate what every later frame reuses).
     const warm=list[list.length>>2];
