@@ -145,6 +145,22 @@ export function takeAnimated(page,turn) {
   return true;
 }
 
+/** A script turn on the host's record of the page, the same in every host: the DOM commands
+of a turn that changed the page and its animated values (takeAnimated) go into the page's next
+requests. The answer is whether the page is drawn again; that frame is a layered frame (a render
+with `layers:true`) wherever the engine makes layers, as for an animation value. The engine then
+decides the cost: a layout only when the layout key (which holds the commands) is one it has not
+laid out, and otherwise the kept layout painted with the new values, the primitives whose keys
+changed compiled again and their damage named, so that a script that moves or fades an element
+(transform, opacity) costs a paint-only frame (FrameCost.run_paints_never_layout) and a draw of the
+damage, not a whole-page frame. */
+export function takeTurn(page,turn) {
+  const changed=!!(turn?.changed&&turn.commands);
+  if(changed)page.commands=turn.commands;
+  const moved=takeAnimated(page,turn);
+  return changed||moved;
+}
+
 /** The embedder's answer to one script fetch of a turn (`fetches`: a worker's script, an
 imported script): the status, the final URL, and the Content-Type and X-Content-Type-Options
 as the server sent them, with the text. The engine decides whether it is a script

@@ -12,7 +12,7 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
-import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeAnimated,loadImports} from './page-load.mjs';
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports} from './page-load.mjs';
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
 // Liberal mode (WebAccept.lean, the Settings checkbox "Be liberal in what we accept"), the
@@ -804,13 +804,13 @@ function scriptTurn(page,turn){
   netRequests(page,turn);
   // The start turn comes before the page is shown: its commands make the objects.
   if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
-  if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}
-  // The values of the page's running animations (page-load.mjs takeAnimated): a new frame when they changed.
-  // As the engine's own animation clock does (the layered path, with Lean's damage rectangles):
-  // a frame of the whole page without layers costs a full redraw and a new render plan each time,
-  // and at the rate of script turns it made the Spinal Tap page slower each frame until the GPU
-  // device was lost.
-  if(takeAnimated(page,turn)&&page===doc){bandWanted=true;request();}
+  // The turn's commands and animated values (page-load.mjs takeTurn, the rule of every host): a
+  // new frame when either changed, on the layered path as the window draws it, so that Lean
+  // decides the cost (a kept layout and its damage rectangles for a transform or an opacity). A
+  // frame of the whole page without layers costs a full redraw and a new render plan each time:
+  // at the rate of the Spinal Tap page's requestAnimationFrame turns its frames took 0.4 to 3.3 s
+  // (issue 450).
+  if(takeTurn(page,turn)&&page===doc){bandWanted=layered!==false&&!!L;request();}
   if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
 }
 // Dedicated workers (BubblePopJS; docs/designissues/2026-11-09-dedicated-workers.md): the
