@@ -2386,9 +2386,7 @@ declares `let`, `const` or functions; functions are created here (hoisting). -/
 def enterBlock : Nat → Ctx → List Stmt → M Ctx
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, ss => do
-    let needs := ss.any fun s => match s with
-      | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
-      | _ => false
+    let needs := ss.any Stmt.isLexical
     if !needs then return ctx
     let env ← newEnv ctx.env
     let ctx' := { ctx with env }
@@ -2539,6 +2537,27 @@ def assignLocal : Nat → Ctx → String → Nat → Nat → Value → M Unit
       else assignName n ctx x v
     | _, _ => assignName n ctx x v
 termination_by structural n _ _ _ _ _ => n
+
+/-- Tier 1 (`Expr.incLocal`): the environment and the number in slot `idx`, `hops` up, when that
+slot has the name `x`, holds a number and may be written; `none` otherwise (the node then takes
+the path of `update` on a `local`). -/
+@[inline] def slotNum? (h : HeapOf H) (ctx : Ctx) (x : String) (hops idx : Nat) : Option (Nat × Float) :=
+  let e := h.envUp hops ctx.env
+  let env := h.envs.getD e default
+  match env.names[idx]?, env.vals[idx]? with
+  | some y, some (.num old) => if y == x && env.mutableAt idx then some (e, old) else none
+  | _, _ => none
+
+/-- Tier 1 (`Expr.setLocal`): the environment of slot `idx`, `hops` up, when that slot has the
+name `x`, is initialised and may be written; `none` otherwise (the node then calls
+`assignLocal`). -/
+@[inline] def slotSet? (h : HeapOf H) (ctx : Ctx) (x : String) (hops idx : Nat) : Option Nat :=
+  let e := h.envUp hops ctx.env
+  let env := h.envs.getD e default
+  match env.names[idx]?, env.vals[idx]? with
+  | some _, some .hole => none
+  | some y, some _ => if y == x && env.mutableAt idx then some e else none
+  | _, _ => none
 
 /-- The value of a leaf expression that reads no outside state beyond the heap and has no
 effects: a literal, a resolved name that holds, `this`. `Value.hole` for anything else (the
@@ -2978,6 +2997,39 @@ def evalExpr : Nat → Ctx → Expr → M Value
           let nv := if inc then old + 1 else old - 1
           assignLocal n ctx x h i (.num nv)
           pure (.num (if pre then nv else old))
+    -- Tier 1 (`JS/Tier1.lean`, proofs in `JS/Tier1Proofs.lean`): equal to `update pre inc (local ..)`
+    | .incLocal pre inc x hops idx =>
+      match n, slotNum? (← get) ctx x hops idx with
+      | _ + 1, some (e, old) =>
+        let nv := if inc then old + 1 else old - 1
+        setSlot e idx (.num nv)
+        pure (.num (if pre then nv else old))
+      | _, _ =>
+        match ← lookupLocal n ctx x hops idx with
+        | .num old =>
+          let nv := if inc then old + 1 else old - 1
+          assignLocal n ctx x hops idx (.num nv)
+          pure (.num (if pre then nv else old))
+        | p =>
+          match ← toPrim n p "number" with
+          | .big big =>
+            let nv := if inc then big + 1 else big - 1
+            assignLocal n ctx x hops idx (.big nv)
+            pure (.big (if pre then nv else big))
+          | p =>
+            let old ← toNum n p
+            let nv := if inc then old + 1 else old - 1
+            assignLocal n ctx x hops idx (.num nv)
+            pure (.num (if pre then nv else old))
+    -- Tier 1: equal to `assign none (local ..) rhs` when `rhs` is not a function expression
+    | .setLocal x hops idx rhs =>
+      match n with
+      | 0 => throw (.halt "fuel")
+      | j + 1 =>
+        let v ← evalExpr (j + 1) ctx rhs
+        match j, slotSet? (← get) ctx x hops idx with
+        | _ + 1, some e => setSlot e idx v; pure v
+        | _, _ => assignLocal j ctx x hops idx v; pure v
     | .update pre inc target =>
       let (b, k) ← evalRef n ctx target
       match ← toPrim n (← getRef n ctx target b k) "number" with
@@ -3290,6 +3342,11 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
         pure .normal
       else evalStmt n ctx labels s
     | .block ss => evalBlock n ctx ss
+    -- Tier 1: equal to `block ss` when `ss` declares nothing lexical (`evalBlock`, `enterBlock`)
+    | .blockN ss =>
+      match n with
+      | 0 | 1 => throw (.halt "fuel")
+      | m + 2 => evalStmts (m + 1) ctx ss
     | .blockF ss =>
       -- no closure holds this block's environment: its slot is reused on a normal end
       -- (after a throw it stays allocated, which is only memory)

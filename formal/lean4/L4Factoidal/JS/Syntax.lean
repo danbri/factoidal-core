@@ -293,6 +293,12 @@ inductive Expr where
   | chain (e : Expr)
   | optBase (e : Expr)
   | optCallee (e : Expr)
+  /-- Tier 1 (`JS/Tier1.lean`): `x++`, `x--`, `++x`, `--x` on a resolved name; the evaluator
+  on it equals the evaluator on `update pre inc (local name hops idx)` (`JS/Tier1Proofs.lean`). -/
+  | incLocal (pre inc : Bool) (name : String) (hops idx : Nat)
+  /-- Tier 1: `x = value` on a resolved name, `value` not a function expression; equal to
+  `assign none (local name hops idx) value`. -/
+  | setLocal (name : String) (hops idx : Nat) (value : Expr)
 
 /-- A property definition in an object literal (§13.2.5). -/
 inductive PropDef where
@@ -369,6 +375,8 @@ inductive Stmt where
   | block (body : List Stmt)
   /-- A block whose environment no closure can hold: its slot is reused when it ends. -/
   | blockF (body : List Stmt)
+  /-- Tier 1: a block that declares nothing lexical (no environment); equal to `block body`. -/
+  | blockN (body : List Stmt)
   /-- A top-level loop with its code for the register machine, and the loop itself. -/
   | compiled (c : Code) (s : Stmt)
   | throwS (e : Expr)
@@ -482,6 +490,9 @@ def Expr.hasYieldF : Nat → Expr → Bool
     | .assignPat _ v => Expr.hasYieldF n v
     | .cond a b c => Expr.hasYieldF n a || Expr.hasYieldF n b || Expr.hasYieldF n c
     | .call f args | .new f args => Expr.hasYieldF n f || Expr.anyYield n args
+    -- as the nodes they stand for (`update` and `assign` of a `local`, which answers `n == 0`)
+    | .incLocal .. => n == 0
+    | .setLocal _ _ _ v => n == 0 || Expr.hasYieldF n v
 
 def Expr.anyYield : Nat → List Expr → Bool
   | 0, _ => true
@@ -498,6 +509,13 @@ def PropDef.anyYield : Nat → List PropDef → Bool
       | .spread e => Expr.hasYieldF n e
       | .getter (.computed k) _ | .setter (.computed k) _ => Expr.hasYieldF n k
       | _ => false) || PropDef.anyYield n ps
+
+/-- The statement declares a name in its block's lexical environment (`let`, `const`, a
+function or a class): `enterBlock` makes an environment for a block that has one. -/
+def Stmt.isLexical (s : Stmt) : Bool :=
+  match s with
+  | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
+  | _ => false
 
 def Stmt.hasYieldF : Nat → Stmt → Bool
   | 0, _ => true
@@ -518,7 +536,7 @@ def Stmt.hasYieldF : Nat → Stmt → Bool
       (match t with | some e => Expr.hasYieldF n e | none => false) ||
       (match u with | some e => Expr.hasYieldF n e | none => false) || Stmt.hasYieldF n b
     | .forIn _ _ o b | .forOf _ _ o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
-    | .block ss | .blockF ss => Stmt.anyYield n ss
+    | .block ss | .blockF ss | .blockN ss => Stmt.anyYield n ss
     | .compiled _ s => Stmt.hasYieldF n s
     | .tryS b _ h f => Stmt.anyYield n b ||
         (match h with | some h => Stmt.anyYield n h | none => false) ||

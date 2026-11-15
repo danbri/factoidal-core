@@ -208,6 +208,8 @@ def eExpr : Nat → Expr → EM Unit
     | .chain a => do putNat 33; eExpr n a
     | .optBase a => do putNat 34; eExpr n a
     | .optCallee a => do putNat 35; eExpr n a
+    | .incLocal pre inc x h i => do putNat 62; putBool pre; putBool inc; putStr x; putNat h; putNat i
+    | .setLocal x h i v => do putNat 63; putStr x; putNat h; putNat i; eExpr n v
 
 def eExprs : Nat → List Expr → EM Unit
   | 0, _ => throw "snapshot: syntax too deep"
@@ -339,6 +341,7 @@ def eStmt : Nat → Stmt → EM Unit
       putNat 10; putOpt k (putCode declKinds); ePat n p; eExpr n o; eStmt n b
     | .block ss => do putNat 11; eStmts n ss
     | .blockF ss => do putNat 40; eStmts n ss
+    | .blockN ss => do putNat 41; eStmts n ss
     | .compiled _ b => eStmt n b
     | .throwS e => do putNat 12; eExpr n e
     | .tryS b p h f => do
@@ -645,6 +648,10 @@ def dExpr : Nat → DM Expr
     | 5 => pure (.ident (← getStr))
     | 60 => do let x ← getStr; let h ← getNat; let i ← getNat; pure (.local x h i)
     | 61 => pure (.lit (← dValue))
+    | 62 => do
+      let pre ← getBool; let inc ← getBool; let x ← getStr; let h ← getNat; let i ← getNat
+      pure (.incLocal pre inc x h i)
+    | 63 => do let x ← getStr; let h ← getNat; let i ← getNat; pure (.setLocal x h i (← dExpr n))
     | 6 => pure .this
     | 7 => pure (.array (← dExprs n))
     | 8 => pure (.object (← dProps n))
@@ -839,6 +846,7 @@ def dStmt : Nat → DM Stmt
       pure (.forOf k p o (← dStmt n))
     | 11 => pure (.block (← dStmts n))
     | 40 => pure (.blockF (← dStmts n))
+    | 41 => pure (.blockN (← dStmts n))
     | 12 => pure (.throwS (← dExpr n))
     | 13 =>
       let b ← dStmts n; let p ← dOptPat n

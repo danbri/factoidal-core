@@ -2,6 +2,7 @@ import Std.Data.HashSet
 import Std.Data.HashMap
 import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Compile
+import L4Factoidal.JS.Tier1
 
 /-!
 # L4Factoidal.JS.Resolve — names resolved ahead of time
@@ -96,7 +97,8 @@ def rE : Nat → Frames → Expr → R Expr
     | .str s => pure (.lit (.str s))
     | .bool b => pure (.lit (.bool b))
     | .null => pure (.lit .null)
-    | .bigint _ | .this | .newTarget | .regex _ _ | .superMember _ | .local .. | .lit _ => pure e
+    | .bigint _ | .this | .newTarget | .regex _ _ | .superMember _ | .local .. | .lit _ | .incLocal .. => pure e
+    | .setLocal x h i v => pure (.setLocal x h i (← rE n fs v))
     | .ident x => pure (nameE fs x)
     | .array es => pure (.array (← rEs n fs es))
     | .object ps => pure (.object (← rProps n fs ps))
@@ -220,6 +222,8 @@ def rFun : Nat → Frames → Bool → FunDef → R FunDef
       let code := if inner.dynamic then none else Compile.compile fd
       if code.isSome then modify fun s => { s with compiled := s.compiled + 1 }
       let info := { info with code }
+      -- tier 1 (`JS/Tier1.lean`), after the register machine's compiler saw the plain tree
+      let body' := if gen || async then body' else Tier1.stmts body'
       pure (.mk name params' rest' body' vars usesArgs strict kind gen async info)
 
 def rParams : Nat → Frames → List PatElem → R (List PatElem)
@@ -320,7 +324,7 @@ def rS : Nat → Frames → Stmt → R Stmt
       set { inner with closure := outer.closure || inner.closure }
       if (blockFrame ss).isSome && !inner.closure && !inner.dynamic then pure (.blockF ss')
       else pure (.block ss')
-    | .blockF _ | .compiled .. => pure s
+    | .blockF _ | .blockN _ | .compiled .. => pure s
     | .throwS e => pure (.throwS (← rE n fs e))
     | .tryS body param handler fin =>
       let body' ← rBlock n fs body
@@ -386,6 +390,12 @@ def script (s : Script) : Script :=
       | some c => Stmt.compiled c b
       | none => b
     | _ => b
+  let body := body.map fun b =>
+    match b with
+    | .compiled .. => b
+    | _ => match Tier1.stmts [b] with
+      | [b'] => b'
+      | _ => b
   { s with body }
 
 end L4Factoidal.JS.Resolve
