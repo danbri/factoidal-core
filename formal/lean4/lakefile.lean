@@ -330,6 +330,9 @@ lean_lib LeanJSHost where
 @[default_target] lean_lib JS where
   roots := #[`L4Factoidal.JS]
 lean_exe leanjs where root := `L4Factoidal.JS.Main
+-- Test262 files on the page realm (BubblePopJS with prelude.js, as Foafnaut runs page scripts):
+-- the full Test262 run of danbri/factoidal-builds (test262.yml).
+lean_exe «bubblepop-test262» where root := `L4Factoidal.WasmVM.Hosts.Test262Page
 -- BubblePopJS's realm with the page objects as data, made at build time
 -- (labs/demos/foafnaut/build-web-render.sh writes L4Factoidal/WasmVM/Hosts/LeanJSRealmData.lean).
 lean_exe «bubblepop-realm» where root := `L4Factoidal.WasmVM.Hosts.LeanJSRealmGen
