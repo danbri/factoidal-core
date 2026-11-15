@@ -23,8 +23,9 @@ Two packages exist. Only one is current.
 2026-10-10: "We should make the main module Lean4-based. Private builds
 might compare this with F\* (or indeed different wasms from different
 toolchains)." The F\* bundles (`factoidal.js`, `factoidal-npm-entry*.js`,
-their wasm builds, `hacl-wasm/`) are `danbri/factoidal-builds` artifacts
-only, used by the private comparison harness
+their wasm builds, `hacl-wasm/`) are built by hand only since 2026-11-15
+(`formal/fstar/build-ocaml.sh js`; no `danbri/factoidal-builds` release carries
+them after that date), for the private comparison harness
 `tests/engine-compare/run.sh PATH/TO/factoidal-npm-entry.js`. Do not put an
 F\* bundle back into `files`. Record:
 `docs/designissues/2026-10-10-npm-lean-only.md`,
@@ -104,6 +105,7 @@ them). They are not part of the package since 0.9.0. The comparison harness
 takes the npm-entry bundle by path:
 
 ```bash
+# web releases before 2026-11-15 carry it; later ones are Lean only
 tools/fetch-builds.sh --set web           # docs/fstar-extracted/factoidal-npm-entry.js
 tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js
 ```

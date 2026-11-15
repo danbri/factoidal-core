@@ -51,7 +51,9 @@ standards conformance.
 - Run `tools/premerge.sh` before pushing to main (about 15 s; `--with-lean` adds the lake build, tail-recursion gate and
   dataflow drift test, `--with-engines` the whole test.sh).
 - One Lean build at a time: use the build lock (`leanlock.sh`, path in the task brief).
-- Cloud builds (`danbri/factoidal-builds`, `build.yml`, `core_ref=<branch>`) take about 1.5 h. Check the queue first,
+- Cloud builds (`danbri/factoidal-builds`, `build.yml`, `core_ref=<branch>`): the first test result (`foafnaut-host-tests`)
+  comes 30 to 40 min after dispatch, the macOS bundle after 1 to 1.5 h, longer when macOS runners are busy
+  ([ci-caching.md](ci-caching.md)). Check the queue first,
   batch changes into few builds, never cancel another agent's run, and log each dispatch.
 - WPT: follow [`wpt-runs`](../wpt-runs/SKILL.md). Full measured runs only, BubblePopJS, one WPT run per machine (the
   runner refuses a taken port 8000; wait, never kill). Report subtests before and after, plus a regression check.
