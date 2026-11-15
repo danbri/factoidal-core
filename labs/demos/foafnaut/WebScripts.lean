@@ -204,7 +204,6 @@ structure Turn where
   next ask. -/
   pending : Array (Nat × ByteArray) := #[]
 
-/-- What the engine holds between calls: the prepared module and one session. -/
 /-- Where a BubblePopJS `start` waits for a sync answer: the page and URL of the start, the
 session before the classic script that waited, that script and the ones after it, the module
 graphs and the scripts that did not load (`startLean`). -/
@@ -218,6 +217,7 @@ structure StartPoint where
 
 instance : Inhabited StartPoint := ⟨{ html := "", url := "", session := default, todo := [], mods := {}, missing := #[] }⟩
 
+/-- What the engine holds between calls: the prepared module and one session. -/
 structure Held where
   module : Option Page.Module' := none
   moduleBytes : Nat := 0
@@ -1238,13 +1238,13 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
     | some e => if held.syncCache.isEmpty then entropy id else pure e
     | none => entropy id
   let lim : Page.Limits := { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
-  let syntax := str request "syntax"
+  let syn := str request "syntax"
   let kept := match held.startParsed with
-    | some (h, u, sy, p) => if !held.syncCache.isEmpty && h == html && u == url && sy == syntax then some p else none
+    | some (h, u, sy, p) => if !held.syncCache.isEmpty && h == html && u == url && sy == syn then some p else none
     | none => none
   let made := show Except String (Array (Nat × String) × Array String × Bool × DOM.Dom) from do
     if let some p := kept then return p
-    let dom ← parse html url syntax
+    let dom ← parse html url syn
     let (scripts, missing, hasModule) ← scriptSources dom request (modules := true)
     return (scripts, missing, hasModule, dom)
   match made with
@@ -1272,8 +1272,8 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       let (loaded, memo) := if hasModule then LeanJSModules.load dom url page held.syncCache memo else (.ok {}, #[])
       if let .error w := loaded then
         -- no script ran: the parse is kept for the next attempt (`startParsed`)
-        return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo,
-          startParsed := some (html, url, syntax, (scripts0, missing, hasModule, dom)) }, netSyncAnswer id w)
+        let parsed := some (html, url, syn, (scripts0, missing, hasModule, dom))
+        return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo, startParsed := parsed }, netSyncAnswer id w)
       let mods := match loaded with | .ok m => m | .error _ => {}
       let lim := { lim with syncAnswers := held.syncCache.extract mods.used held.syncCache.size }
       let (vw, vh) := (viewport request).getD (800, 600)
