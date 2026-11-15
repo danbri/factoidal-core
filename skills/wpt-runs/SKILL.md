@@ -261,11 +261,13 @@ suite, every file, by Test262's rules. Workflow `test262.yml` ("Test262 full run
   linking, `runtime`). An async test passes when `$DONE` prints `Test262:AsyncTestComplete`. `$262`
   has `global` and `detachArrayBuffer`; tests that need `createRealm`, `evalScript`, `gc`, `agent` or
   `IsHTMLDDA` fail.
-- **Engine**: core's `leanjs test262-files`, built in the workflow from the release's core commit
-  (build.yml's Lake cache, restore only). It is the Lean interpreter (`L4Factoidal.JS`) that the
-  engine library runs page scripts with; Test262 needs no page, so no browser host. Recorded as
-  `engine=bubblepopjs-leanjs`, `script_engine=bubblepop`. QuickJS never: its Test262 numbers are a
-  differential check only.
+- **Engine**: core's `bubblepop-test262 test262-files` (`WasmVM/Hosts/Test262Page.lean`), built in
+  the workflow from the release's core commit (build.yml's Lake cache, restore only): BubblePopJS on
+  the page realm Foafnaut runs page scripts in (`LeanJS.prepareSource`: `prelude.js` on an empty
+  document, so Temporal, Intl and the window's globals are there, as on a page). Recorded as
+  `engine=bubblepopjs-page`, `script_engine=bubblepop`. `realm=engine` runs `leanjs test262-files`
+  (the interpreter alone, no page objects): a diagnostic, never recorded. QuickJS never: its Test262
+  numbers are a differential check only. Both runners share `JS/Test262.lean`.
 - **Score**: a file passes when all its modes pass (the unit test262.fyi uses, so other engines compare
   on one scale). The headline counts every file. **Two numbers, always together**: the share, and the
   share without the files of the excluded features: `release-tests/test262-excluded-features.txt`
@@ -294,8 +296,8 @@ suite, every file, by Test262's rules. Workflow `test262.yml` ("Test262 full run
   QuickJS-NG and the rest, files passed of 53,795): `status=ok` only when test262.fyi ran the same
   Test262 commit, else `other_commit` (not comparable), or `unavailable` with the reason; never fails
   the run. `meta.json` `rivals.directories` has their passes per directory for comparison.
-- **Locally**: `lake build leanjs`, a Test262 checkout, then `release-tests/test262.py list --root T
-  --out files.json` and `test262.py run --leanjs .lake/build/bin/leanjs --root T --files files.json
+- **Locally**: `lake build bubblepop-test262` (or `leanjs`), a Test262 checkout, then `release-tests/test262.py list --root T
+  --out files.json` and `test262.py run --leanjs .lake/build/bin/bubblepop-test262 --root T --files files.json
   --out OUT` (one shard: `--shard k --shards n`), `test262.py score ... --no-rivals`. The core tree
   `third_party/testing/test262` is a 6,301-file subset for tier comparisons (`leanjs test262`), not a
   score.
