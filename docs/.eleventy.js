@@ -55,6 +55,11 @@ module.exports = function(eleventyConfig) {
   // made from labs/demos/foafnaut/textnaut/grid.ts at build time (web/hub/textnaut/grid.11ty.js).
   eleventyConfig.addPassthroughCopy("web/hub/textnaut/*.mjs");
   eleventyConfig.addPassthroughCopy("web/hub/notebook/*.mjs");
+  // The Conformance page: its module, its schema, and the data files data.json and
+  // history.json, which the Pages build copies in from the hub-data branch of
+  // danbri/factoidal-builds (they are not in this repository).
+  eleventyConfig.addPassthroughCopy("web/hub/conformance/*.mjs");
+  eleventyConfig.addPassthroughCopy("web/hub/conformance/*.json");
   eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
   eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans": "web/hub/foafnaut/fonts/noto-sans" });
   // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py); the Hub fetches each only for a page that needs it.
