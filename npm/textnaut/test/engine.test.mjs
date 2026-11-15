@@ -33,7 +33,7 @@ function fixture() {
 }
 
 test('the pin names a release, a commit and two runtime files with sha256', () => {
-  assert.match(pin.release, /^build-ff075ad5af99-foafnaut-web$/);
+  assert.match(pin.release, /^build-2f3e888e2d0e-foafnaut-web$/);
   assert.match(pin.tarball.sha256, /^[0-9a-f]{64}$/);
   assert.deepEqual(Object.values(pin.files).map((f) => f.name).sort(), ['web-render.mjs', 'web-render.wasm']);
   assert(pin.url.startsWith('https://github.com/danbri/factoidal-builds/releases/download/'));
@@ -100,7 +100,7 @@ test('the installed foafnaut library comes before the fetch, and FOAFNAUT_HOME m
 });
 
 test('the cache directory is keyed by the engine commit', () => {
-  assert(cacheDir({ TEXTNAUT_CACHE: '/c' }, '/h').endsWith('engine-ff075ad5af99'));
-  assert.equal(cacheDir({ XDG_CACHE_HOME: '/x' }, '/h'), '/x/textnaut/engine-ff075ad5af99');
-  assert.equal(cacheDir({}, '/h'), '/h/.cache/textnaut/engine-ff075ad5af99');
+  assert(cacheDir({ TEXTNAUT_CACHE: '/c' }, '/h').endsWith('engine-2f3e888e2d0e'));
+  assert.equal(cacheDir({ XDG_CACHE_HOME: '/x' }, '/h'), '/x/textnaut/engine-2f3e888e2d0e');
+  assert.equal(cacheDir({}, '/h'), '/h/.cache/textnaut/engine-2f3e888e2d0e');
 });
