@@ -1690,6 +1690,11 @@ session.
   reported: full measured runs only, BubblePopJS, share with and without
   `encoding/`, validity rules, cloud runs on every release and four times a
   day, `runs.csv` and per-run metadata, one WPT run per machine.
+- [`realpages-survey`](skills/realpages-survey/SKILL.md) — everyday pages measured on each
+  Foafnaut release (`realpages.yml`): verdict, first frame, layout, GPU, idle CPU, script turns,
+  scroll latency, memory, skips, crashes and layout similarity against Chrome; run it locally,
+  add a page, read `realpages/trend.csv`. Offline on snapshots vendored in factoidal-builds
+  (`third_party/realpages`; the gate) and live (drift); no page is committed to core.
 - [`node-crypto-haclstar-vc-wasm-build`](skills/node-crypto-haclstar-vc-wasm-build/SKILL.md)
   — the concrete build: VC Data-Integrity crypto running off-native
   (Node + browser) via HACL\*'s official wasm (#286). Three realisation

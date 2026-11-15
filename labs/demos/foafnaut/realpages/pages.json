@@ -1,0 +1,120 @@
+{
+ "note": "Real pages of the survey: URLs only (no page content here). Snapshots for offline runs (snapshot.ts) are vendored in danbri/factoidal-builds third_party/realpages/<site>/, with the licence and attribution given here. lab: URLs are pages of this lab. viewport is WIDTHxHEIGHT in CSS px at scale 1; mobile rows give Chrome an iPhone user agent (Foafnaut sends its own). scripts:false runs with --no-scripts. budgets: the goal for each summary field; a page over a budget is listed, not failed. A page's own budgets override the defaults. snapshot: the id of another page whose snapshot this page uses (the same URL).",
+ "defaults": {
+  "viewport": "1280x800",
+  "budgets": {
+   "first_frame_s": 5,
+   "first_layout_ms": 1000,
+   "gpu_p50_ms": 50,
+   "cpu_idle_pct": 10,
+   "script_turn_max_ms": 500,
+   "scroll_latency_p95_ms": 250,
+   "rss_peak_mb": 1500
+  },
+  "licence": "copyright of its owners; public page vendored as fair use for testing"
+ },
+ "pages": [
+  {
+   "id": "spinal-showcase",
+   "url": "lab:pages/spinal-tap-sparql.html",
+   "note": "our own showcase page"
+  },
+  {
+   "id": "wp-stub",
+   "url": "https://en.wikipedia.org/wiki/Spodnje_Danje",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images under their own licences; skin and scripts of the Wikimedia Foundation (GPL-2.0+ MediaWiki)",
+   "attribution": "Wikipedia contributors, \"Spodnje Danje\", https://en.wikipedia.org/wiki/Spodnje_Danje"
+  },
+  {
+   "id": "wp-spinal",
+   "url": "https://en.wikipedia.org/wiki/This_Is_Spinal_Tap",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images under their own licences; skin and scripts of the Wikimedia Foundation (GPL-2.0+ MediaWiki)",
+   "attribution": "Wikipedia contributors, \"This Is Spinal Tap\", https://en.wikipedia.org/wiki/This_Is_Spinal_Tap"
+  },
+  {
+   "id": "wp-us",
+   "url": "https://en.wikipedia.org/wiki/United_States",
+   "budgets": {
+    "first_frame_s": 10,
+    "rss_peak_mb": 2500
+   },
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images under their own licences; skin and scripts of the Wikimedia Foundation (GPL-2.0+ MediaWiki)",
+   "attribution": "Wikipedia contributors, \"United States\", https://en.wikipedia.org/wiki/United_States"
+  },
+  {
+   "id": "m-stub",
+   "url": "https://en.wikipedia.org/wiki/Spodnje_Danje?useskin=minerva",
+   "viewport": "412x860",
+   "mobile": true,
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images under their own licences; skin and scripts of the Wikimedia Foundation (GPL-2.0+ MediaWiki)",
+   "attribution": "Wikipedia contributors, \"Spodnje Danje\", https://en.wikipedia.org/wiki/Spodnje_Danje"
+  },
+  {
+   "id": "m-spinal",
+   "url": "https://en.wikipedia.org/wiki/This_Is_Spinal_Tap?useskin=minerva",
+   "viewport": "412x860",
+   "mobile": true,
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images under their own licences; skin and scripts of the Wikimedia Foundation (GPL-2.0+ MediaWiki)",
+   "attribution": "Wikipedia contributors, \"This Is Spinal Tap\", https://en.wikipedia.org/wiki/This_Is_Spinal_Tap"
+  },
+  {
+   "id": "m-us",
+   "url": "https://en.wikipedia.org/wiki/United_States?useskin=minerva",
+   "viewport": "412x860",
+   "mobile": true,
+   "budgets": {
+    "first_frame_s": 10,
+    "rss_peak_mb": 2500
+   },
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images under their own licences; skin and scripts of the Wikimedia Foundation (GPL-2.0+ MediaWiki)",
+   "attribution": "Wikipedia contributors, \"United States\", https://en.wikipedia.org/wiki/United_States"
+  },
+  {
+   "id": "m-stub-enm",
+   "url": "https://en.m.wikipedia.org/wiki/Spodnje_Danje",
+   "viewport": "412x860",
+   "mobile": true,
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images under their own licences; skin and scripts of the Wikimedia Foundation (GPL-2.0+ MediaWiki)",
+   "attribution": "Wikipedia contributors, \"Spodnje Danje\", https://en.wikipedia.org/wiki/Spodnje_Danje"
+  },
+  {
+   "id": "news-bbc",
+   "url": "https://www.bbc.co.uk/news/articles/cwdr1dmn563do"
+  },
+  {
+   "id": "news-bbc-noscripts",
+   "url": "https://www.bbc.co.uk/news/articles/cwdr1dmn563do",
+   "scripts": false,
+   "scroll": false,
+   "snapshot": "news-bbc"
+  },
+  {
+   "id": "gh-deno",
+   "url": "https://github.com/denoland/deno"
+  },
+  {
+   "id": "mdn-display",
+   "url": "https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/display",
+   "licence": "prose CC BY-SA 2.5 (https://creativecommons.org/licenses/by-sa/2.5/), code samples CC0; site of Mozilla",
+   "attribution": "Mozilla Contributors, MDN Web Docs, https://developer.mozilla.org/"
+  },
+  {
+   "id": "blog-jvns",
+   "url": "https://jvns.ca/"
+  },
+  {
+   "id": "hn",
+   "url": "https://news.ycombinator.com/"
+  },
+  {
+   "id": "w3c-flexbox",
+   "url": "https://www.w3.org/TR/css-flexbox-1/",
+   "budgets": {
+    "first_frame_s": 10,
+    "rss_peak_mb": 2500
+   },
+   "licence": "W3C Document License (https://www.w3.org/copyright/document-license-2023/)",
+   "attribution": "W3C, CSS Flexible Box Layout Module Level 1, https://www.w3.org/TR/css-flexbox-1/"
+  }
+ ]
+}

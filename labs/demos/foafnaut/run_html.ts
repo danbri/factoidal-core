@@ -5,7 +5,7 @@ import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH
 import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
-import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
+import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
 import {netAnswer,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
 import {loadNativeWindow} from "./native_window.ts";
@@ -44,9 +44,10 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let pollIdle=false,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
+  let shotAtEnd=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
@@ -62,6 +63,13 @@ async function main() {
     // Off screen: a PNG of the window after the 120th present of page canvases, a picture of
     // what the native engine drew (the page's layers, its canvases and the chrome).
     else if(arg==="--shot"){shotFile=args.shift();if(!shotFile)throw new Error("--shot needs a file path");}
+    // With --watch-sweep: take the --shot picture when the watch ends instead (what the page shows
+    // after its scripts and images had the watch to run; the real-page survey compares that).
+    else if(arg==="--shot-at-end")shotAtEnd=true;
+    // Each System entry of the console (what liberal mode skipped, refusals, failed fetches) also
+    // as one JSON line {"type":"native-html-skip",...} on standard output when it is first kept.
+    else if(arg==="--liberal-report"){const how=args.shift();if(how!=="json")throw new Error("--liberal-report needs json");
+      reportSystemEntries(entry=>console.log(JSON.stringify({type:"native-html-skip",t:Math.round(performance.now()),...entry})));}
     // The off-screen window in points and its backing scale (`--offscreen-size 1280x1600@1`), and the text
     // size of the window in percent of a usual browser's (with none, the default of a new window, 200).
     else if(arg==="--offscreen-size"){const m=/^(\d+)x(\d+)(?:@(\d))?$/.exec(args.shift()??"");
@@ -281,7 +289,7 @@ async function main() {
     while(gpuTurns.length){const t=gpuTurns.shift()!,start=performance.now();
       session.pageGpu(t.page,t.commands).then(r=>{if(!r?.presented)return;const ms=Math.round((performance.now()-start)*10)/10;
         pageGpuMs.push(ms);if(perfSummary)console.log(JSON.stringify({type:"native-html-page-canvas",t:Math.round(performance.now()),ms}));
-        if(shotFile&&pageGpuMs.length>=120&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())takeShot();})
+        if(shotFile&&!shotAtEnd&&pageGpuMs.length>=120&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())takeShot();})
         .catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
   let scriptsOn=false,scriptOps:string[]=[];
@@ -399,6 +407,7 @@ async function main() {
   // Liberal is the default (owner, 2026-11-09): the browser shows what it can and lists the rest
   // in the console tab. --strict, or the Settings choice, refuses such pages instead.
   if(cliLiberal&&cliStrict)throw new Error("Use one of --strict and --be-liberal-in-what-we-accept");
+  if(shotAtEnd&&!shotFile)throw new Error("--shot-at-end needs --shot FILE");
   let liberal=!cliStrict;
   // The start page has a script. A host that can run no page script (the Wasm engine with no
   // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
@@ -1360,7 +1369,7 @@ async function main() {
         layoutMs:ms(frameStart,compiled),sessionMs:Math.round(result.prepareMs*10)/10,drawMs:Math.round(result.drawMs*10)/10,totalMs:ms(frameStart,finished),
         resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:result.presented,compiledIn:where,workerMs:workerMs===undefined?null:Math.round(workerMs*10)/10,
         checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,
-        ...(nextLayers?{layers:{bandTop:nextLayers.layers.bandTop,bandHeight:nextLayers.layers.bandHeight,offset:place!.offset,chromeFloats:nextLayers.chrome.data.length}}:{}),...engineFact});
+        ...(nextLayers?{layers:{top:nextLayers.layers.top,bandTop:nextLayers.layers.bandTop,bandHeight:nextLayers.layers.bandHeight,offset:place!.offset,chromeFloats:nextLayers.chrome.data.length}}:{}),...engineFact});
       resizeAt=undefined;
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
       firstFrameAt??=finished;totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
@@ -1427,7 +1436,7 @@ async function main() {
       trace("native-html-checked",{frame:frameNumber,why:"idle",idleMs:ms(lastActivity,idleStart),drawMs:Math.round(result.drawMs*10)/10,pixelHash:result.pixelHash});
       // --shot on a page with no animated page canvas: the first idle-checked frame.
       // (A capture waits for the page's images, which a window takes after the first frame.)
-      if(shotFile&&!pageGpuMs.length&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())await takeShot();
+      if(shotFile&&!shotAtEnd&&!pageGpuMs.length&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())await takeShot();
     };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}
@@ -1870,6 +1879,10 @@ async function main() {
     }
   } finally {
     running=false;controller?.abort();quitAt=performance.now();
+    // --shot-at-end: the picture of the last frame, once a frame in progress has ended.
+    if(shotAtEnd&&shotFile&&session?.frames){
+      try{await rendering;await shifting;await takeShot();}catch(error){console.error("Native HTML: shot at end failed:",String(error));}
+    }
     // Quit or close: no new GPU work from here on; a frame in progress ends with what it has.
     const gpuIdle=session?.halt();
     // A frame in progress ends before its session is disposed.
