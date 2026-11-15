@@ -17,6 +17,13 @@ private def ell := vertices [(pt 0 0,true),(pt 3 0,false),(pt 3 4,false)]
 -- Distances do not decrease (not proved over Float; checked here).
 #guard (ell.zip ell.tail).all fun (a,b) => a.length ≤ b.length
 #guard totalLength ell == 7
+-- the `path` attribute of a textPath: up to the first error, else none (the href is used)
+#guard pathDataPrefix "M 10 50 Q 100 10 200 50 T 390 50 L 100" == some "M 10 50 Q 100 10 200 50 T 390 50"
+#guard pathDataPrefix "M 10 50 Q 100 10 200 50 T 390 50 INVALID" == some "M 10 50 Q 100 10 200 50 T 390 50"
+#guard pathDataPrefix "M10,50 L20,60" == some "M10 50 L20 60"
+#guard pathDataPrefix "" == none
+#guard pathDataPrefix "   " == none
+#guard pathDataPrefix "Invalid path" == none
 
 -- The point at a distance, and the tangent there.
 #guard match placeAt ell 1.5 with
