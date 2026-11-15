@@ -148,6 +148,8 @@ async function macPage(p:Page,row:Row,zip:string|null){
     try{await Deno.remove(shot);}catch{/* none */}
     watch=await run([...base,"--shot",shot,...(caps.shotAtEnd?["--shot-at-end"]:[]),...(caps.liberalReport?["--liberal-report","json"]:[]),"--watch-sweep",String(watchS)],
       `${out}/logs/${p.id}.watch.log`,'"native-html-presented"',host,o.env);
+    // Offline, the page itself missing from the snapshot is a defect of the snapshot, not a crash.
+    if(zip&&watch.firstAt===null&&watch.rc!==0&&watch.log.includes(`HTTP 404: ${url}`)){row.state="unreachable";row.unreachable_reason="the page is not in its snapshot";return;}
     const fetchFailed=!zip&&watch.firstAt===null&&!watch.timedOut&&watch.rc!==0&&FETCH_FAILURE.test(watch.log);
     if(!fetchFailed)break;
     if(attempt===retries+1){row.state="unreachable";row.unreachable_reason=firstError(watch.log)??"page fetch failed";return;}
