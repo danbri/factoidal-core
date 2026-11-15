@@ -65,6 +65,7 @@ import WebConsole
 import WebPaint
 import WebBuild
 import WebAbout
+import WebHostContract
 import WebDocument
 import RenderPlan
 
