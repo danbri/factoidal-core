@@ -10,7 +10,8 @@
 // - `segmentsOutsideClip`: edges of records in tiles that lie wholly outside one of the
 //   record's clip rectangles. A shader that goes to the next record when the clip fails (its
 //   text has `if(!clipHit){continue;}`, `skipsClipped`) does not walk them, and they are not in
-//   `segments`; an older shader walks them and drops the result, and they are;
+//   `segments`; an older shader walks them and drops the result, and they are. A scene with
+//   tile edge lists (its shader has `fn pathWinding(`) walks only the tile's list of a path;
 // - `segmentsBinned`: what `segments` would be if each tile walked only the edges of a record
 //   that can change the winding number differently across that tile (an edge whose rows meet
 //   the tile's and that is not wholly left of it, less an edge wholly right of it that spans
@@ -20,21 +21,23 @@
 // and whole tiles are judged by their corners, so they are estimates of the shader's loop
 // trips, exact for the record lists and the drawn area. Also: `uploadBytes` (storage floats and
 // tile words written each draw), `drawnPixels`, `tiles`, `tileEntries`.
-const SAMPLES=4,FIXED_ROWS=5,DASH_ROWS=5,CLIP_ROWS=3,AFFINE_ROWS=2,PATH=6,POLYGON=5;
+const ALL_EDGES=4294967295,SAMPLES=4,FIXED_ROWS=5,DASH_ROWS=5,CLIP_ROWS=3,AFFINE_ROWS=2,PATH=6,POLYGON=5;
 
 /** Work of drawing `frame` (an artifact: width, height, data, tiles, damage) over `rects`
 (damage rectangles [x,y,w,h]; undefined for a full draw). */
 export function sceneWork(frame,rects){
   const data=frame.data,tiles=frame.tiles,width=frame.width,height=frame.height;
   const out={uploadBytes:(data?.length??0)*4+(tiles?.length??0)*4,drawnPixels:0,tiles:0,tileEntries:0,listed:0,segments:0,segmentsOutsideClip:0,
-    partial:!!rects,maxSegmentsPerSample:0,segmentsBinned:0,skipsClipped:typeof frame.wgsl==='string'&&frame.wgsl.includes('if(!clipHit){continue;}')};
+    partial:!!rects,maxSegmentsPerSample:0,segmentsBinned:0,segmentsRows:0,skipsClipped:typeof frame.wgsl==='string'&&frame.wgsl.includes('if(!clipHit){continue;}'),
+    // Tile edge lists (tilesOf): each listed record has a list word after the entries.
+    edgeLists:typeof frame.wgsl==='string'&&frame.wgsl.includes('fn pathWinding(')};
   if(!data||!tiles||tiles.length<4)return out;
   const row=i=>[data[4*i],data[4*i+1],data[4*i+2],data[4*i+3]];
   const rowCount=data.length/4;
   if(rowCount<2)return out;
   const [sx,sy,ox,oy]=row(0),[wx,wy]=row(1);
   const world=(x,y)=>[(x-ox)/sx+wx,(y-oy)/sy+wy];
-  const size=tiles[0],across=tiles[1],down=tiles[2],listBase=4+across*down;
+  const size=tiles[0],across=tiles[1],down=tiles[2],listBase=4+across*down,refBase=listBase+tiles[3+across*down];
   out.tiles=across*down;out.tileEntries=tiles[3+across*down]-tiles[3];
   // Pixels of each tile that are drawn: all of it, or its part inside the damage rectangles.
   const drawn=(x0,y0,x1,y1)=>{
@@ -76,21 +79,26 @@ export function sceneWork(frame,rects){
         if(cx[3]!==1||x1<qx||x0>qx+qw||y1<qy||y0>qy+qh){outside=true;break;}
       }
       if(outside){out.segmentsOutsideClip+=samples*count;if(out.skipsClipped)continue;}
-      out.segments+=samples*count;perSample+=count;
+      // A path's fill walks the tile's edge list when the scene has them.
+      const word=out.edgeLists&&tag===PATH?tiles[refBase+item]:ALL_EDGES;
+      const walked=word===ALL_EDGES?count:Math.min(tiles[word],count);
+      out.segments+=samples*walked;perSample+=walked;
       // The edges this tile would keep (tile box in the record's space).
       const X0=Math.min(...xs),X1=Math.max(...xs),Y0=Math.min(...ys),Y1=Math.max(...ys);
-      let kept=0;
+      let kept=0,rows=0;
       for(let k=0;k<count;k++){
         let ax,ay,bx,by;
         if(tag===PATH){const r=4*(base+FIXED_ROWS+k);ax=data[r];ay=data[r+1];bx=data[r+2];by=data[r+3];}
         else{const a=4*(base+FIXED_ROWS)+2*k,b=4*(base+FIXED_ROWS)+2*((k+1)%count);ax=data[a];ay=data[a+1];bx=data[b];by=data[b+1];}
         const y0=Math.min(ay,by),y1=Math.max(ay,by);
-        if(y1<Y0||y0>Y1||Math.max(ax,bx)<X0)continue;
+        if(y1<Y0||y0>Y1)continue;
+        rows++;
+        if(Math.max(ax,bx)<X0)continue;
         if(Math.min(ax,bx)>X1&&y0<=Y0&&y1>=Y1)continue;
         kept++;
       }
       // Per-tile edge lists with the clip skip: a tile outside the clip lists nothing.
-      if(!outside)out.segmentsBinned+=samples*kept;
+      if(!outside){out.segmentsBinned+=samples*kept;out.segmentsRows+=samples*rows;}
     }
     out.maxSegmentsPerSample=Math.max(out.maxSegmentsPerSample,perSample);
   }
