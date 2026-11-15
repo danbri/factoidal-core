@@ -16,7 +16,7 @@ import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.
 import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
-import {fetchedAnswer} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+import {fetchedAnswer,scriptFailure} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
@@ -468,6 +468,11 @@ async function main() {
   // A turn of a page's script session: its logs, and a new frame only when the DOM changed
   // (no DOM change, no layout; the commands are part of the layout key).
   let scriptBusy=false;
+  // A failed action of a page's script session (page-load.mjs scriptFailure, the rule of every
+  // host): a session the engine no longer holds ends the page's scripts with one line; a failed
+  // timer turn stops its timers; other failures are said once per page and message.
+  const scriptFailed=(page:typeof document,error:unknown,what:string)=>
+    scriptFailure(page,error,what,(line:string)=>console.error(`Native HTML: ${line}`));
   // Pointer input for page scripts (WebScripts pointer): Lean finds the target and the
   // coordinates (nodeAt), then dispatches pointer and mouse events, a click on release, at
   // most one move in a frame. A move waits while one is on its way. An engine without the
@@ -488,7 +493,7 @@ async function main() {
       const turn=await scriptInput("scriptSession","",{action:"pointer",session,kind,...at,node,button:0,
         buttons:ended?0:1,pressure:ended?0:0.5,pointerType:"mouse"}) as ScriptTurn;
       scriptTurn(page,turn,`pointer ${kind}`);
-    }).catch(error=>console.error("Native HTML: page script pointer failed:",String(error)));
+    }).catch(error=>scriptFailed(page,error,"pointer"));
   };
   // Keys for the page (WebScripts action key: L4Factoidal.WebDriver.HostKeys turns them into
   // the WebDriver key actions test_driver's keys take, on the trusted input path). One at a
@@ -502,7 +507,7 @@ async function main() {
       const turn=await scriptCall("scriptSession","",{action:"key",session,...request}) as ScriptTurn;
       scriptTurn(page,turn,"key");
       if(after&&turn.keyDefault!==false&&page===document)after();
-    }).catch(error=>{console.error("Native HTML: page script key failed:",String(error));if(page===document)after?.();});
+    }).catch(error=>{scriptFailed(page,error,"key");if(page===document)after?.();});
   };
   // The session lays the page out for its scripts with the request of its start: tell it what
   // arrived since (a sheet, an imported sheet, images: WebScripts.takeLayout), with the view as at start.
@@ -513,7 +518,7 @@ async function main() {
     (scriptCall("scriptSession","",{action:"turn",session,layout:{url:page.url,textScalePercent:view.textScalePercent??100,
       zoomUnit:view.zoomUnit??100,...fields}}) as Promise<ScriptTurn>)
       .then(next=>{if(page.script?.session===session)scriptTurn(page,next,"layout");})
-      .catch(error=>console.error("Native HTML: page script layout update failed:",String(error)));
+      .catch(error=>scriptFailed(page,error,"layout update"));
   };
   // What arrived after a page was first shown (its `revision`): the page is drawn again.
   const revisionShown=new WeakMap<object,number>();
@@ -554,7 +559,7 @@ async function main() {
       return {status:200,url:r.url,contentType:r.contentType,contentTypeOptions:r.contentTypeOptions,source:r.source};})));
     if(page.script?.session!==session)return;
     (scriptCall("scriptSession","",{action:"fetched",session,results}) as Promise<ScriptTurn>)
-      .then(turn=>scriptTurn(page,turn,"worker scripts")).catch(error=>console.error("Native HTML: worker scripts failed:",String(error)));
+      .then(turn=>scriptTurn(page,turn,"worker scripts")).catch(error=>scriptFailed(page,error,"worker scripts"));
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
@@ -1335,6 +1340,10 @@ async function main() {
         if(worker&&!worker.alive){
           // The worker died: Lean runs on the main thread from now on, and the trace says so.
           await useMainEngine("worker died: "+String(error));
+          // The pages' script sessions were the worker engine's: the main-thread engine holds
+          // none, so each page's scripts end here with one line, not a failed call per turn.
+          for(const page of new Set([document,...tabs.map(tab=>tab.document)]))
+            scriptFailed(page,new Error("scriptSession: session ended: the engine worker stopped"),"engine worker");
           awaiting=[...stamps,...awaiting];dirty=true;return;
         }
         awaiting=[...stamps,...awaiting];candidate=undefined;dirty=false;refuse(nextDocument.url,error);return;
@@ -1465,7 +1474,7 @@ async function main() {
           if(event.a!==width||event.b!==height){width=event.a;height=event.b;dirty=true;if((document as Page).graph)graphInput(1,width,height);
             if(scriptsOn&&document.script&&scriptOps.includes("resize")){const page=document;
               (scriptCall("scriptSession","",{action:"resize",session:document.script.session,width,height,zoomUnit:view.zoomUnit??100,shell:shell()}) as Promise<ScriptTurn>)
-                .then(turn=>scriptTurn(page,turn,"resize")).catch(error=>console.error("Native HTML: page script resize failed:",String(error)));}resizeAt??=performance.now();trace("native-html-resize",{width,height});}
+                .then(turn=>scriptTurn(page,turn,"resize")).catch(error=>scriptFailed(page,error,"resize"));}resizeAt??=performance.now();trace("native-html-resize",{width,height});}
         }
         if(event.kind===8&&event.a)dirty=true;
         if(event.kind===3)pointAt(event.a,event.b);
@@ -1558,7 +1567,7 @@ async function main() {
             scriptInput("nodeAt",page.source,hit.width,hit.height,{...hit.options,x:released[0],y:released[1]})
               .then(node=>typeof node==="number"?scriptInput("scriptSession","",{action:"click",session,node}) as Promise<ScriptTurn>:undefined)
               .then(turn=>{if(turn)scriptTurn(page,turn,"click");})
-              .catch(error=>console.error("Native HTML: page script click failed:",String(error)));
+              .catch(error=>scriptFailed(page,error,"click"));
           }
           const target=engine.hit(frame,released[0],pageRow(released[1]));
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
@@ -1851,7 +1860,7 @@ async function main() {
           const page=document;scriptBusy=true;
           (scriptCall("scriptSession","",{action:"advance",session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}) as Promise<ScriptTurn>)
             .then(turn=>scriptTurn(page,turn,"timers"))
-            .catch(error=>console.error("Native HTML: page script timers failed:",String(error)))
+            .catch(error=>scriptFailed(page,error,"timers"))
             .finally(()=>{scriptBusy=false;});
         }
       }
@@ -1860,7 +1869,8 @@ async function main() {
         if(wire.method.startsWith("WEBSOCKET")){netSocket(session,wire);continue;}
         netFetch(wire).then(answer=>scriptCall("scriptSession","",{action:"net",session,results:[answer]}) as Promise<ScriptTurn>)
           .then(turn=>{if(document.script?.session===session)scriptTurn(document,turn,"net");})
-          .catch(error=>console.error("Native HTML: page request failed:",String(error)));
+          .catch(error=>{if(document.script?.session===session)scriptFailed(document,error,"request");
+            else console.error("Native HTML: page request failed:",String(error));});
       }
       // Wake at least every 8 ms to pump, sooner for the page's next timer or animation frame
       // (a fixed 8 ms paced 16 ms frames at about 21 ms); wake at once when a frame ends.
