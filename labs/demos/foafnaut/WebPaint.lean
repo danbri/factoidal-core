@@ -544,6 +544,125 @@ def LeafKey.sameContext (a b : LeafKey) : Bool :=
   sameTransform a.t b.t && sameTransform a.parent b.parent &&
   a.clips.length == b.clips.length && (a.clips.zip b.clips).all fun (x,y) => sameClip x y
 
+/-! Structural equality of primitives (issue 450). A layout makes every primitive a new
+object, so the address test of the retained compile kept none of them; these compare the
+values, floats by their bits, and are proved to say `true` only of equal values. -/
+
+deriving instance DecidableEq for Math.Affine2
+deriving instance DecidableEq for Rendering.Point, Rendering.PathSegment, Rendering.Contour, Rendering.Color,
+  Rendering.Geometry, Rendering.GradientStop, Rendering.GradientShape, Rendering.FallbackPaint, Rendering.Gradient,
+  Rendering.GradientRecord, Rendering.Length, Rendering.StrokePiece, Rendering.ClipRect
+deriving instance DecidableEq for Rendering.FillRule, Rendering.LineCap, Rendering.LineJoin
+
+/-- Image records: the same map, id and bitmap, the bitmaps compared by `bm`. -/
+def sameImage (bm : Rendering.Bitmap → Rendering.Bitmap → Bool) (a b : Rendering.ImageRecord) : Bool :=
+  decide (a.map = b.map) && a.id == b.id && bm a.bitmap b.bitmap
+def samePaint (bm : Rendering.Bitmap → Rendering.Bitmap → Bool) : Rendering.Paint → Rendering.Paint → Bool
+  | .none,.none | .current,.current => true
+  | .solid a,.solid b => decide (a = b)
+  | .gradient a,.gradient b => decide (a = b)
+  | .gradientRecord c a,.gradientRecord d b => c == d && decide (a = b)
+  | .image a,.image b => sameImage bm a b
+  | .imageRecord c a,.imageRecord d b => c == d && sameImage bm a b
+  | _,_ => false
+def sameStyle (bm : Rendering.Bitmap → Rendering.Bitmap → Bool) (a b : Rendering.Style) : Bool :=
+  samePaint bm a.fill b.fill && samePaint bm a.stroke b.stroke && decide (a.currentColor = b.currentColor) &&
+  decide (a.strokeWidth = b.strokeWidth) && decide (a.dashArray = b.dashArray) && decide (a.dashOffset = b.dashOffset) &&
+  decide (a.fillOpacity = b.fillOpacity) && decide (a.strokeOpacity = b.strokeOpacity) && a.visible == b.visible &&
+  decide (a.rule = b.rule) && decide (a.lineCap = b.lineCap) && decide (a.lineJoin = b.lineJoin) &&
+  decide (a.miterLimit = b.miterLimit) && a.pointerEvents == b.pointerEvents
+/-- Primitives equal in every field, bitmaps compared by `bm`. -/
+def samePrimitive (bm : Rendering.Bitmap → Rendering.Bitmap → Bool) (a b : Rendering.Primitive) : Bool :=
+  decide (a.geometry = b.geometry) && sameStyle bm a.style b.style && decide (a.opacity = b.opacity) &&
+  decide (a.transform = b.transform) && decide (a.dashParts = b.dashParts) && decide (a.groupPath = b.groupPath) &&
+  decide (a.clips = b.clips) && decide (a.pathLength = b.pathLength) && decide (a.element = b.element)
+
+section
+variable {bm : Rendering.Bitmap → Rendering.Bitmap → Bool} (hbm : ∀ x y, bm x y = true → x = y)
+include hbm
+
+theorem sameImage_eq {a b : Rendering.ImageRecord} (h : sameImage bm a b = true) : a = b := by
+  rcases a with ⟨m,i,x⟩; rcases b with ⟨n,j,y⟩
+  simp only [sameImage, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at h
+  obtain ⟨⟨rfl,rfl⟩,hb⟩ := h; rw [hbm _ _ hb]
+
+theorem samePaint_eq {a b : Rendering.Paint} (h : samePaint bm a b = true) : a = b := by
+  cases a <;> cases b <;> simp only [samePaint, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, reduceCtorEq] at h ⊢
+  all_goals first
+    | exact h | rfl | exact absurd h (by decide)
+    | (rw [sameImage_eq hbm h])
+    | (rw [h.1, sameImage_eq hbm h.2])
+    | (rw [h.1, h.2])
+    | (subst h; rfl)
+
+theorem sameStyle_eq {a b : Rendering.Style} (h : sameStyle bm a b = true) : a = b := by
+  rcases a; rcases b
+  simp only [sameStyle, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨h1,h2⟩,h3⟩,h4⟩,h5⟩,h6⟩,h7⟩,h8⟩,h9⟩,h10⟩,h11⟩,h12⟩,h13⟩,h14⟩ := h
+  cases samePaint_eq hbm h1; cases samePaint_eq hbm h2; subst_vars; rfl
+
+/-- Reuse after a layout is sound: `samePrimitive` says `true` only of equal primitives. -/
+theorem samePrimitive_eq {a b : Rendering.Primitive} (h : samePrimitive bm a b = true) : a = b := by
+  rcases a; rcases b
+  simp only [samePrimitive, Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨h1,h2⟩,h3⟩,h4⟩,h5⟩,h6⟩,h7⟩,h8⟩,h9⟩ := h
+  cases sameStyle_eq hbm h2; subst_vars; rfl
+end
+
+/-- With bitmaps compared by value, the comparison is reflexive: equal primitives are
+reused. -/
+theorem samePrimitive_refl (bm : Rendering.Bitmap → Rendering.Bitmap → Bool) (hrefl : ∀ x, bm x x = true) (a : Rendering.Primitive) :
+    samePrimitive bm a a = true := by
+  rcases a with ⟨g,s,o,t,d,gp,c,pl,e⟩
+  rcases s with ⟨f,st,_,_,_,_,_,_,_,_,_,_,_,_⟩
+  have hp : ∀ p, samePaint bm p p = true := by
+    intro p; cases p <;> simp [samePaint, sameImage, hrefl]
+  simp [samePrimitive, sameStyle, hp]
+
+private theorem sameFloat_eq {a b : Float} (h : sameFloat a b = true) : a = b := by
+  rcases a with ⟨⟨x,hx⟩⟩; rcases b with ⟨⟨y,hy⟩⟩
+  have : x = y := by simpa [sameFloat, Float.toBits] using h
+  subst this; rfl
+private theorem sameTransform_eq {a b : Transform} (h : sameTransform a b = true) : a = b := by
+  rcases a; rcases b
+  simp only [sameTransform, Bool.and_eq_true] at h
+  obtain ⟨⟨⟨⟨⟨h1,h2⟩,h3⟩,h4⟩,h5⟩,h6⟩ := h
+  rw [sameFloat_eq h1,sameFloat_eq h2,sameFloat_eq h3,sameFloat_eq h4,sameFloat_eq h5,sameFloat_eq h6]
+private theorem sameClip_eq {a b : NativeSVG.ClipRect} (h : sameClip a b = true) : a = b := by
+  rcases a; rcases b
+  simp only [sameClip, Bool.and_eq_true] at h
+  obtain ⟨⟨⟨⟨h1,h2⟩,h3⟩,h4⟩,h5⟩ := h
+  rw [sameFloat_eq h1,sameFloat_eq h2,sameFloat_eq h3,sameFloat_eq h4,sameTransform_eq h5]
+private theorem sameClips_eq : ∀ {a b : List NativeSVG.ClipRect}, a.length = b.length →
+    ((a.zip b).all fun (x,y) => sameClip x y) = true → a = b
+  | [],[],_,_ => rfl
+  | x::a,y::b,hl,h => by
+    simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at h
+    rw [sameClip_eq h.1, sameClips_eq (by simpa using hl) h.2]
+  | [],_::_,hl,_ | _::_,[],hl,_ => by simp at hl
+
+/-- `sameContext` says `true` only of keys with equal cull box, transforms and clips. -/
+theorem LeafKey.sameContext_eq {a b : LeafKey} (h : a.sameContext b = true) :
+    a.cull = b.cull ∧ a.t = b.t ∧ a.parent = b.parent ∧ a.clips = b.clips := by
+  rcases a with ⟨p,⟨c1,c2,c3,c4⟩,t,pa,cl⟩; rcases b with ⟨q,⟨d1,d2,d3,d4⟩,u,pb,dl⟩
+  simp only [LeafKey.sameContext, Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨h1,h2⟩,h3⟩,h4⟩,h5⟩,h6⟩,h7⟩,h8⟩ := h
+  refine ⟨?_,sameTransform_eq h5,sameTransform_eq h6,sameClips_eq h7 h8⟩
+  rw [sameFloat_eq h1,sameFloat_eq h2,sameFloat_eq h3,sameFloat_eq h4]
+
+/-- The reuse rule of the retained compile, by value (the engine tries addresses first). -/
+def reuseByValue (bm : Rendering.Bitmap → Rendering.Bitmap → Bool) (a b : LeafKey) : Bool :=
+  WebPaint.samePrimitive bm a.primitive b.primitive && a.sameContext b
+
+/-- Reuse implies equal keys: a kept record is one compiled from an equal leaf. -/
+theorem reuseByValue_eq {bm : Rendering.Bitmap → Rendering.Bitmap → Bool} (hbm : ∀ x y, bm x y = true → x = y) {a b : LeafKey}
+    (h : reuseByValue bm a b = true) : a = b := by
+  simp only [reuseByValue, Bool.and_eq_true] at h
+  have hp := WebPaint.samePrimitive_eq hbm h.1
+  obtain ⟨h1,h2,h3,h4⟩ := LeafKey.sameContext_eq h.2
+  rcases a; rcases b; simp_all
+
+
 /-- `cullPrimitive` gives this primitive back with its geometry as it was: no curve is off the
 canvas on one side, or long enough for `cullCurve` to cut. Then the flattened geometry of one
 transform serves another with the same linear part. -/
