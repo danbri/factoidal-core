@@ -65,6 +65,13 @@ test('latest skips releases that are not self-contained', async () => {
   assert.equal(choice.tarball.sha256, sha256(GZ));
 });
 
+test('a named release is used only if it is self-contained', async () => {
+  const thePin = { repository: 'r/b' };
+  assert.equal((await nativeChoice('linux-x86_64', { channel: TAG, fetchImpl: fakeFetch(), thePin })).release, TAG);
+  await assert.rejects(nativeChoice('linux-x86_64', { channel: OLD, fetchImpl: fakeFetch(), thePin }), /not a self-contained/);
+  await assert.rejects(nativeChoice('linux-x86_64', { channel: 'build-0123456789ab-foafnaut-web', fetchImpl: fakeFetch(), thePin }), /not a release of/);
+});
+
 test('a pinned entry is used as it is, with no release list', async () => {
   const seen = [];
   const entry = { release: TAG, url: URL_, commit: 'c'.repeat(40), tarball: { bytes: GZ.length, sha256: sha256(GZ) }, file: { bytes: LIB.length, sha256: sha256(LIB) } };

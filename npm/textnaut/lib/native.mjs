@@ -18,7 +18,11 @@ export function nativePlatform(os = platform(), cpu = osArch()) {
   return cpu === 'x64' ? 'linux-x86_64' : cpu === 'arm64' ? 'linux-arm64' : undefined;
 }
 
-/** The release to install: {release, url, commit, tarball: {bytes, sha256}, file: {bytes, sha256}, pinned}. */
+/**
+ * The release to install: {release, url, commit, tarball: {bytes, sha256}, file: {bytes, sha256}, pinned}.
+ * channel: 'pinned' (engine-pin.json's entry, else as 'latest'), 'latest' (the newest self-contained
+ * release), or a release tag build-<12 hex>-foafnaut-<target> (that release, if it is self-contained).
+ */
 export async function nativeChoice(target, { channel = 'pinned', fetchImpl = globalThis.fetch, thePin = pin } = {}) {
   const pinned = thePin.native?.[target];
   if (channel === 'pinned' && pinned) return { ...pinned, pinned: true };
@@ -26,7 +30,9 @@ export async function nativeChoice(target, { channel = 'pinned', fetchImpl = glo
   const list = await fetchImpl(`https://api.github.com/repos/${thePin.repository}/releases?per_page=100`, { headers });
   if (!list.ok) throw new Error(`the release list: HTTP ${list.status}`);
   const tag = new RegExp(`^build-[0-9a-f]{12}-foafnaut-${target}$`);
-  const releases = (await list.json()).filter((r) => tag.test(r.tag_name) && r.published_at)
+  const named = channel !== 'pinned' && channel !== 'latest';
+  if (named && !tag.test(channel)) throw new Error(`${channel} is not a release of the ${target} engine (build-<12 hex>-foafnaut-${target})`);
+  const releases = (await list.json()).filter((r) => tag.test(r.tag_name) && r.published_at && (!named || r.tag_name === channel))
     .sort((a, b) => b.published_at.localeCompare(a.published_at));
   const asset = `foafnaut-${target}.tar.gz`;
   for (const r of releases) {
@@ -44,7 +50,7 @@ export async function nativeChoice(target, { channel = 'pinned', fetchImpl = glo
     return { release: r.tag_name, url, commit: info.source_commit, tarball: { bytes: art.size, sha256: art.sha256 },
       file: { bytes: file.size, sha256: file.sha256 }, pinned: false };
   }
-  throw new Error(`no self-contained ${target} engine release in ${thePin.repository} yet`);
+  throw new Error(named ? `${channel} is not a self-contained engine release in ${thePin.repository}` : `no self-contained ${target} engine release in ${thePin.repository} yet`);
 }
 
 /** Checks the download against the choice and returns the files to keep: [{name, data}]. */
@@ -63,7 +69,7 @@ const mb = (n) => (n / 1e6).toFixed(1);
 
 /**
  * Downloads, checks and installs the native engine; returns the library's path.
- * `channel`: 'pinned' (engine-pin.json's entry, else the newest self-contained release) or 'latest'.
+ * `channel`: as nativeChoice.
  */
 export async function installNative({ channel = 'pinned', env = process.env, home = homedir(), os = platform(), cpu = osArch(),
   fetchImpl = globalThis.fetch, log = (s) => process.stderr.write(s + '\n'), thePin = pin } = {}) {

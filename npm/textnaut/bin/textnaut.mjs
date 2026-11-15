@@ -17,7 +17,7 @@ const args = process.argv.slice(2);
 
 const HELP = `textnaut [OPTIONS] URL_OR_FILE      a text-mode web browser (experimental)
 textnaut --screensaver [NAME]      screensavers; no page and no engine
-textnaut --install-native [latest] Linux: install the native engine into ~/.foafnaut (checked by SHA-256)
+textnaut --install-native [latest|TAG]  Linux: install the native engine into ~/.foafnaut (SHA-256 checked)
 
 Keys: arrows, j, k, Page Up/Down, Space scroll; [n] Enter follows link n; Tab next link; b back;
 ? or h help; q quit.
@@ -33,7 +33,7 @@ Uses your Deno if it is ${MIN_DENO.join('.')} or later; otherwise fetches Deno o
 
 if (args.includes('--help') || args.includes('-h')) { console.log(HELP); process.exit(0); }
 if (args[0] === '--install-native') {
-  const channel = args[1] === 'latest' ? 'latest' : 'pinned';
+  const channel = args[1] && !args[1].startsWith('-') ? args[1] : 'pinned';
   try { await installNative({ channel }); } catch (error) { console.error(`textnaut: ${error.message}`); process.exit(1); }
   process.exit(0);
 }
