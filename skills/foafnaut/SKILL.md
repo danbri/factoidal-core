@@ -241,6 +241,9 @@ bash test.sh --skip-build
 bash sweeps.sh [--only NAME]... [--wasm-only]
 ```
 
+- `test.sh` runs every check, even after one fails, and ends with a summary: each check, its
+  time, and the failed ones (exit 1 if any failed). `--fail-fast` (or `FOAFNAUT_FAIL_FAST=1`)
+  stops at the first failure.
 - Read every `NOT RUN` line. `test.sh` exits 0 with `NOT RUN` lines. A `NOT RUN` is a
   check that did not happen. Do not report it as a pass.
 - `sweeps.sh` runs each sweep of `run_html.ts` with `--offscreen`: a hidden window, the
@@ -256,6 +259,10 @@ bash sweeps.sh [--only NAME]... [--wasm-only]
   `native_html_scripts_test.ts` and `print_document_check.ts`. The only sweep in CI is the
   start check of `build-executables.sh`. Run `test.sh` and `sweeps.sh` locally before you land an
   engine or window change.
+- `build.yml` also runs `test.sh --skip-build` in the job `foafnaut-host-tests` (Linux) as soon as
+  `foafnaut-engines` is done, on its Wasm engines: about 45 minutes after dispatch, not after the
+  macOS bundle (2.5 hours). Checks that need `web-render-native`, `libweb-render.dylib` or macOS
+  print `NOT RUN` there and still run in the macOS bundle job.
 - Hub checks, from the repository root, Chrome needed: `node labs/demos/foafnaut/hub_links_check.mjs`
   (before every Pages deploy; `--only published`, `--runtime DIR`), and the other
   `LAB/hub_*_check.mjs` files. See `docs/web/hub/README.md`.
