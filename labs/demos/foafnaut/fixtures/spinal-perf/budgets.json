@@ -1,7 +1,7 @@
 {
  "about": "Budgets of the Spinal Tap page (pages/spinal-tap-sparql.html) as a measured test, core issue 450. native: spinal_perf.ts, asserted by spinal_perf_test.ts in test.sh. hub: hub_spinal_perf.mjs (headless Chrome, the Hub). Each section has budgets ({max} or {min} on a dot path of the run's JSON) and known failures ({want_max} or {want_min} not met today, each with its issue). A budget may only tighten: spinal_perf_test.ts compares this file with the one on the merge base and fails when a max rises or a min falls, unless that entry carries a new 'accepted' text saying why (the cost is wanted). Times have a margin of about three times the measurement for slower CI runners; exact counters have none.",
  "native": {
-  "measured": "2026-11-15, Apple M1 (load average 11 to 13), macOS engine of main 3bf480d92 (build-3bf480d922cc-foafnaut-engine-darwin-arm64), 600 ticks of 16 ms; draw counts and the clip skip: engine d325ea8d4 of wip/spinal-draw (foafnaut-macos.yml branch build 43707008769)",
+  "measured": "2026-11-15, Apple M1 (load average 11 to 13), macOS engine of main 3bf480d92 (build-3bf480d922cc-foafnaut-engine-darwin-arm64), 600 ticks of 16 ms; draw counts and the clip skip: engine d325ea8d4 of wip/spinal-draw (foafnaut-macos.yml branch build 43707008769); draw counts of wip/spinal-edges: engine 63554d8ad (foafnaut-macos.yml 43736219293)",
   "budgets": {
    "layered.first_ms": {
     "max": 400,
@@ -96,20 +96,37 @@
     "what": "the whole native run"
    },
    "tick.draw.segments_m.max": {
-    "max": 2000,
-    "measured": 1867.1,
-    "was": 2853,
-    "what": "millions of path edges the scene shader walks to draw a tick's page layer (scene-work.mjs, four samples a pixel): the GPU cost of a frame, counted with no GPU. 2,853 before the shader skipped a clipped record's geometry (wip/spinal-draw, engine d325ea8d4)"
+    "max": 700,
+    "measured": 667.3,
+    "was": 1867.1,
+    "what": "millions of path edges the scene shader walks to draw a tick's page layer (scene-work.mjs, four samples a pixel). 2,853 before the clip skip, 1,867 after it, 667 with tile edge lists and paint boxes cut to clips (wip/spinal-edges)"
    },
    "tick.draw.segments_m.median": {
-    "max": 1500,
-    "measured": 1346.7,
-    "was": 1526.5
+    "max": 150,
+    "measured": 73.2,
+    "was": 1346.7
    },
    "tick.draw.outside_clip_m.max": {
     "max": 1000,
     "measured": 985.9,
     "what": "edges of records in tiles wholly outside their clip: no longer walked by the shader, still listed in the tiles (Primitive.screenBox does not use clips)"
+   },
+   "tick.draw.pieces_m.max": {
+    "max": 600,
+    "measured": 247.2,
+    "was": 11973.9,
+    "what": "millions of stroke pieces tested to draw a tick's page layer (strips, disks, triangles of strokes): 11,974 before tile piece lists and paint boxes, 247 with them"
+   },
+   "tick.draw.pieces_m.median": {
+    "max": 200,
+    "measured": 87.4,
+    "was": 2804.4
+   },
+   "tick.draw.drawn_pixels.median": {
+    "max": 400000,
+    "measured": 147456,
+    "was": 2251520,
+    "what": "pixels drawn a tick: the damage of the zoom, now its stage (paint boxes cut to clips), was the whole band"
    }
   },
   "known_failures": {
@@ -128,7 +145,7 @@
   }
  },
  "hub": {
-  "measured": "2026-11-15, Apple M1, headless Chrome 157 with WebGPU (adapter apple metal-3), 45 s; the published Hub (engine as deployed) and the same with this checkout's host files: both runs within the margins below; after takeTurn (wip/spinal-layers): 46 of 46 frames layered, layout median 35 ms, draw median 553 ms, max 3,480 ms (the draw follows the zoom's scale; see issue 450)",
+  "measured": "2026-11-15, Apple M1, headless Chrome 157 with WebGPU (adapter apple metal-3), 45 s; the published Hub (engine as deployed) and the same with this checkout's host files: both runs within the margins below; after takeTurn (wip/spinal-layers): 46 of 46 frames layered, layout median 35 ms, draw median 553 ms, max 3,480 ms (the draw follows the zoom's scale; see issue 450); wip/spinal-edges engine of build.yml 43736222189 (--runtime), 2026-11-15: 91 frames in 45 s, draw median 44 ms, p95 114, max 194, GPU median 29.5 ms. The published Hub meets these budgets once an engine with these changes is deployed.",
   "budgets": {
    "frames.count": {
     "min": 10,
@@ -141,13 +158,15 @@
     "what": "engine layout ms of a frame"
    },
    "frames.draw_ms.median": {
-    "max": 1500,
-    "measured": 457,
-    "what": "draw ms of a frame (GPU adapter only; a fallback adapter is not measured against budgets)"
+    "max": 150,
+    "measured": 44,
+    "what": "draw ms of a frame (GPU adapter only; a fallback adapter is not measured against budgets)",
+    "was": 543
    },
    "frames.draw_ms.max": {
-    "max": 10000,
-    "measured": 3349
+    "max": 1000,
+    "measured": 194,
+    "was": 3449
    },
    "errors.count": {
     "max": 0,
@@ -187,33 +206,27 @@
     "what": "CPU ms of the page layer draw to submit (plan, writes, commands)"
    },
    "draw_split.gpu_ms.max": {
-    "max": 4000,
-    "measured": 1848,
-    "what": "GPU ms of the page layer draw until done (published engine, before the clip skip)"
+    "max": 600,
+    "measured": 169.2,
+    "what": "GPU ms of the page layer draw until done (published engine, before the clip skip)",
+    "was": 1836.8
    },
    "draw_split.composite_ms.median": {
     "max": 20,
     "measured": 2.1
+   },
+   "draw_split.gpu_ms.median": {
+    "max": 100,
+    "measured": 29.5,
+    "was": 503.1
    }
   },
   "known_failures": {
    "frames.draw_ms.median": {
-    "want_max": 50,
-    "measured": 457,
+    "want_max": 16,
+    "measured": 44,
     "issue": "https://github.com/danbri/factoidal-core/issues/450",
-    "what": "a frame drawn in under 50 ms"
-   },
-   "frames.draw_ms.max": {
-    "want_max": 1000,
-    "measured": 3349,
-    "issue": "https://github.com/danbri/factoidal-core/issues/450",
-    "what": "no frame over 1 s (a GPU command buffer of seconds risks the device)"
-   },
-   "draw_split.gpu_ms.max": {
-    "want_max": 1000,
-    "measured": 1848,
-    "issue": "https://github.com/danbri/factoidal-core/issues/450",
-    "what": "GPU ms of the page layer draw: 1,848 with the published engine, 747 to 777 with the shader of wip/spinal-draw (tried on the Hub with that shader text): expected to flip when that engine is published"
+    "what": "a frame drawn within a 60 Hz frame"
    }
   }
  }
