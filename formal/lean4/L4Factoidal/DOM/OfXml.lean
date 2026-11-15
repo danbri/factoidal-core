@@ -176,6 +176,15 @@ def isXmlPath (url : String) : Bool :=
     ((((url.splitOn "#").headD "").splitOn "?" |>.headD "").toLower.endsWith ".svg")
 
 #guard isXmlPath "http://a.example/x.svg" && isXmlPath "http://a.example/x.SVG?q=.html#f" && isXmlPath "a.xht"
+
+/-- The syntax a document is read in: a request's `syntax` field when the host knows it (`"html"`
+for the result of an XSLT transform whose output method is html or text, HTML §16.3 and XSLT
+1.0 §16: the result is an HTML document whatever its URL), else the URL's (`isXmlPath`). -/
+def xmlSyntax (url kind : String) : Bool :=
+  if kind == "html" then false else if kind == "xml" then true else isXmlPath url
+
+#guard !xmlSyntax "http://a.example/books.xml" "html" && xmlSyntax "http://a.example/books.xml" ""
+#guard xmlSyntax "http://a.example/p.html" "xml" && !xmlSyntax "http://a.example/p.html" ""
 #guard !isXmlPath "http://a.example/x.svg.html" && !isXmlPath "http://a.example/svg" && !isXhtmlPath "a.svg"
 
 /-- The text of the first Text node of a parsed document, for the checks below. -/

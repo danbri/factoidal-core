@@ -114,6 +114,14 @@ private def outputMethod (root : XML.Node) : String :=
     | none => false
   (output.bind (XSLT.attrOf · "method")).getD ""
 
+/-- The syntax of the page an XSLT stylesheet makes: `"html"` for the output methods html and
+text (`transform` writes text as an HTML page), else `""` (the page is read by its URL, as
+`DOM.xmlSyntax` does). Hosts carry it as the `syntax` field of the page's requests. -/
+def resultSyntax (style : String) : String :=
+  match stylesheetRoot style with
+  | .ok root => let m := (outputMethod root).toLower; if m == "html" || m == "text" then "html" else ""
+  | .error _ => ""
+
 /-- Serialized principal result of XSLT 2.0, 3.0 or 4.0. -/
 private def runXslt4 (style source url styleUrl : String) : Except String String := do
   let sheet ← match XSLT4.compileStylesheet styleUrl [(styleUrl,style)] with

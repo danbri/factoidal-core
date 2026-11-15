@@ -293,7 +293,7 @@ def shapeKept (_key : String) (fonts : Array Rendering.SfntProfile.Font) (text :
 `DOM.parseXmlDocument`, `DOM.isXmlPath`), else the HTML syntax (HTML §13). -/
 def prepareDOMIn (kept : Kept) (html : String) (request : JSON.Json) : Except String (DOM.Dom × Made) := do
   if html.utf8ByteSize > WebRender.maxSourceBytes then throw "document HTML exceeds 16 MiB"
-  let (dom,made) := parseIn kept html (DOM.isXmlPath (str request "url"))
+  let (dom,made) := parseIn kept html (DOM.xmlSyntax (str request "url") (str request "syntax"))
   return (← WebRenderScript.applyCommands (← dom) ((request.field? "commands").getD (.array [])),made)
 
 /-- `prepareDOMIn` with nothing kept. -/
@@ -1689,7 +1689,7 @@ host gives the list of its script session's last turn, so the frame it paints ha
 values the page's scripts read. Until 2026-11-14 the field was not in this list, and a
 render's layout never saw it: content that fades in from `opacity: 0` stayed invisible. A
 page with no animation sends no such field and its key is as before. -/
-def layoutFields : List String := ["commands","resources","images","heldImages","url","fontData","textScalePercent","graphModel",
+def layoutFields : List String := ["commands","resources","images","heldImages","url","syntax","fontData","textScalePercent","graphModel",
   "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported"]
 
 /-- The request with only `layoutFields`, in that order. -/
@@ -2228,7 +2228,7 @@ why). -/
 def storeAheadOf (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) :
     Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
   let layout := layoutRequest ((request.field? "layout").getD (.object []))
-  match (parseIn kept html (DOM.isXmlPath (str layout "url"))).1, suppliedImages layout with
+  match (parseIn kept html (DOM.xmlSyntax (str layout "url") (str layout "syntax"))).1, suppliedImages layout with
   | .ok dom, .ok supplied =>
     let url := baseURL dom (str layout "url")
     let images := supplied ++ heldBytes h (heldNamed h ((namedImages layout).toOption.getD []))
@@ -2875,7 +2875,8 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     return ((JSON.Json.object [("url",url)]).toString,#[])
   if str request "op" == "xslt" then
     let (source,engine) ← WebXslt.transform html (str request "stylesheet") (str request "url") (str request "stylesheetURL")
-    return ((JSON.Json.object [("source",.string source),("engine",.string engine)]).toString,#[])
+    return ((JSON.Json.object [("source",.string source),("engine",.string engine),
+      ("syntax",.string (WebXslt.resultSyntax (str request "stylesheet")))]).toString,#[])
   -- `press` reads the link regions of the frame, decoded once (`decodeKept`).
   if str request "op" == "press" then
     match request.field? "linksText" with

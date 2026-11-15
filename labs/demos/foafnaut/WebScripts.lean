@@ -495,9 +495,9 @@ theorem takeLayout_absent (held : Held) (action : String) (request : JSON.Json)
 
 /-- The page's arena, parsed as `WebDocument.prepareDOM` parses it, so node numbers agree
 with a render's replay of the commands. -/
-def parse (html url : String) : Except String DOM.Dom :=
+def parse (html url : String) (kind : String := "") : Except String DOM.Dom :=
   if html.utf8ByteSize > 1048576 then .error "document HTML exceeds 1MiB"
-  else if DOM.isXmlPath url then DOM.parseXmlDocument html
+  else if DOM.xmlSyntax url kind then DOM.parseXmlDocument html
   else .ok (DOM.parseHtmlDocument html)
 
 /-- The classic scripts in document order, with the sources a host supplied for `src`
@@ -824,9 +824,9 @@ def frameDocument (request : JSON.Json) : Except String (String × Bool × Array
       | none => throw "bytesBase64 is not Base64"
     | _ => pure (str request "source", str request "encoding")
   if src.isEmpty then return ("", false, #[], enc)
-  let dom ← parse src url
+  let dom ← parse src url (str request "syntax")
   let (scripts, _) ← scriptSources dom request
-  return (src, DOM.isXmlPath url, scripts, enc)
+  return (src, DOM.xmlSyntax url (str request "syntax"), scripts, enc)
 
 
 /-! ### Sandboxed frames: script sessions of their own (`HTML.FrameSessions`)
@@ -1106,7 +1106,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
     | none => entropy id
   let lim : Page.Limits := { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
   let made := show Except String (Array (Nat × String) × Array String × Bool × DOM.Dom) from do
-    let dom ← parse html url
+    let dom ← parse html url (str request "syntax")
     let (scripts, missing, hasModule) ← scriptSources dom request (modules := true)
     return (scripts, missing, hasModule, dom)
   match made with
@@ -1384,7 +1384,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
       let commands := min 1048576 ((natField request "commandLimit").getD L4Factoidal.WasmVM.Hosts.Dom.maxCommands)
       let logs := min 1048576 ((natField request "logLimit").getD 1024)
       let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
-        let dom ← parse html url
+        let dom ← parse html url (str request "syntax")
         let (scripts, missing, _) ← scriptSources dom request
         return (scripts, missing, dom)
       match made with
@@ -1404,7 +1404,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
       let logs := min 1048576 ((natField request "logLimit").getD 1024)
       let ent ← entropy held.nextSession
       let started ← WebWasm.timed fun _ => show Except String Page.Session from do
-        let dom ← parse html url
+        let dom ← parse html url (str request "syntax")
         let (scripts, missing, _) ← scriptSources dom request
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }

@@ -397,12 +397,14 @@ async function prepare(url){
   const sheet=call(page.source,{op:'xmlStylesheet',url:page.url});
   if(sheet.url){
     const xsl=await fetchText(sheet.url);
-    page.source=call(page.source,{op:'xslt',url:page.url,stylesheet:xsl.source,stylesheetURL:xsl.url}).source;
+    const made=call(page.source,{op:'xslt',url:page.url,stylesheet:xsl.source,stylesheetURL:xsl.url});
+    // The result's syntax (HTML for the output methods html and text): every request carries it (pageLayoutFields).
+    page.source=made.source;if(made.syntax)page.syntax=made.syntax;
     sources[0].kind='XML source';
     sources.push({kind:'XSLT source',url:xsl.url,source:xsl.source},{kind:'Generated page',url:page.url,source:page.source});
   }
   await loadFallbackFonts(page.source,fallbackWait);
-  const facts=call(page.source,{op:'inspect',url:page.url,...(liberal?{liberal:true}:{})});
+  const facts=call(page.source,{op:'inspect',url:page.url,...(page.syntax?{syntax:page.syntax}:{}),...(liberal?{liberal:true}:{})});
   const images=await pageImages(facts.images);
   // The linked style sheets Lean listed, as the window fetches them (page-load.mjs): from this
   // site only, as the page's images and fonts are. One that is not read goes to Lean as a
@@ -411,7 +413,7 @@ async function prepare(url){
   for(const r of sheets.resources)sources.push({kind:'Style sheet',url:r.url,source:r.source});
   // The sheets those sheets import (page-load.mjs loadImports): named by Lean, read from this
   // site as the linked ones are.
-  const imported=await loadImports(list=>call(page.source,{op:'inspect',url:page.url,...(liberal?{liberal:true}:{}),
+  const imported=await loadImports(list=>call(page.source,{op:'inspect',url:page.url,...(page.syntax?{syntax:page.syntax}:{}),...(liberal?{liberal:true}:{}),
       ...(sheets.resources.length?{resources:sheets.resources}:{}),...(list.length?{imported:list}:{})}),siteText,[],
     (sheetURL,reason)=>console.warn('foafnaut: imported style sheet not read:',sheetURL,reason));
   for(const r of imported)sources.push({kind:'Style sheet',url:r.url,source:r.source});
@@ -784,7 +786,7 @@ async function startScripts(page,scripts){
   if(!plan.run){if(plan.notice)console.warn('foafnaut:',plan.notice);if(page===doc)request();return;}
   // The first page of a session starts before the history exists: no shell then.
   const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,zoomUnit:zoomUnit(),...(history?{shell:shell()}:{}),layout,
-    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{}),
+    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{}),...(page.syntax?{syntax:page.syntax}:{}),
     ...(scriptOps.includes('net')?{network:true,hostCors:true}:{}),
     // the layer surface replays page GPU commands on WebGPU (not in CPU mode)
     ...(!cpuMode&&self.navigator?.gpu?{gpuReplay:true}:{})});

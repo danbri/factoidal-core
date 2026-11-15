@@ -311,7 +311,11 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   if(xml.url) {
     navigationURL(xml.url,document.url,document.url);
     const sheet=await readSource(xml.url,signal);
-    document.source=(await engine.xslt(document.source,{url:document.url,stylesheet:sheet.source,stylesheetURL:sheet.url})).source;
+    const made=await engine.xslt(document.source,{url:document.url,stylesheet:sheet.source,stylesheetURL:sheet.url});
+    document.source=made.source;
+    // The result's syntax (HTML for the output methods html and text), which Lean decided; every
+    // request of the page carries it, so the page is not read as XML because its URL ends in .xml.
+    if((made as {syntax?:string}).syntax)mode.syntax=(made as {syntax?:string}).syntax;
     sources[0].kind="XML source";
     sources.push({kind:"XSLT source",url:sheet.url,source:sheet.source},{kind:"Generated page",url:document.url,source:document.source});
   }

@@ -120,6 +120,7 @@ export function pageLayoutFields(page) {
   const out={url:page.url};
   if(page.liberal)out.liberal=true;
   if(page.scripting===false)out.scripting=false;
+  if(page.syntax)out.syntax=page.syntax;
   for(const key of ['resources','resourceFailures','imported','images','heldImages','webFonts','commands','animated']) {
     const value=page[key];
     if(Array.isArray(value)&&value.length)out[key]=value;
