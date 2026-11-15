@@ -247,9 +247,9 @@ linked and evaluated (`runModuleGraph`, which evaluates a module once), and the 
 with the module's namespace object or the error (a module that does not parse is a SyntaxError,
 one that cannot be found or has an unknown `type` a TypeError); then the jobs run, which may
 import again. At most `maxImportRounds` rounds: the calls of later rounds stay pending. A halt
-(step budget, heap size) ends it, with the reason. -/
+(step budget, heap size) ends it, with the reason; so does an error of the test's own module graph when it goes on after an import (the outcome of the test). -/
 def serveImports (path : String) (h : HeapOf H) (g : ModGraph) (lives : ModLives)
-    (resume : Option Nat := none) : IO (Option String × HeapOf H) := do
+    (resume : Option Nat := none) : IO (Option Outcome × HeapOf H) := do
   let mut h := h
   let mut g := g
   let mut lives := lives
@@ -276,13 +276,13 @@ def serveImports (path : String) (h : HeapOf H) (g : ModGraph) (lives : ModLives
           lives := lv
           h := settleImport h2 pid (ns.getD .undef) false
         | .threw v _ => h := settleImport h pid v true
-        | .halted w => return (some w, h)
+        | .halted w => return (some (.halted w), h)
         | .syntaxError m =>
           let (e, h1) := newError h .syntax m
           h := settleImport h1 pid e true
     let ((o, _), h2) := checkpoint h
     h := h2
-    if let .halted w := o then return (some w, h)
+    if let .halted w := o then return (some (.halted w), h)
     -- a module test whose graph waits for an import (top-level `await import(...)`): run the
     -- graph again, which goes on from the module that waited
     if let some root := resume then
@@ -290,8 +290,8 @@ def serveImports (path : String) (h : HeapOf H) (g : ModGraph) (lives : ModLives
       lives := lv
       h := h3
       match o with
-      | .halted w => return (some w, h)
-      | .threw v _ => return (some s!"module evaluation threw: {describeThrown h v}", h)
+      | .halted w => return (some (.halted w), h)
+      | .threw v m => return (some (.threw v m), h)
       | _ => pure ()
   return (none, h)
 
@@ -351,7 +351,7 @@ def runTest (root : System.FilePath) (fresh base : HeapOf H) (page : Bool) (path
   -- the `import()` calls of the run, served after its turn (none: nothing to do)
   let (o, hOut) ← if (hOut.importQueue.getD #[]).isEmpty then pure (o, hOut) else do
       let (halt, h3) ← serveImports path.toString hOut g lives (if isModule then some 0 else none)
-      pure ((match o, halt with | .ok, some w => Outcome.halted w | _, _ => o), h3)
+      pure ((match o, halt with | .ok, some o' => o' | _, _ => o), h3)
   if isAsync && m.negPhase.isNone then
     match o with
     | .ok =>
