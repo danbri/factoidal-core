@@ -251,3 +251,68 @@ nodes remove one or two calls from operations that take five to nine.
   ([#378](https://github.com/danbri/factoidal-core/issues/378)); the guard-and-fallback pattern
   of `arith` (guard: both operands known numbers; else the original code) is the pattern its
   proofs will follow.
+
+## Region code: every function on the register machine (measured 2026-11-15)
+
+Rank 1 of the design review: a function body the register code does not take (it makes a
+closure, has parameters that are not plain, uses `arguments`, `try`, `switch`, ...) is
+compiled as region code (`Compile.compileRegion`, `Code.region`). Its variables stay in the
+evaluator's environments, registers hold temporaries only, register 0 holds `this`, and
+anything the compiler does not handle runs in the evaluator from inside the machine
+(`evalE`, `evalS`, with `break`, `continue` and `return` completions mapped back). Blocks
+and `for (let ...)` loops make, copy, release and leave environments exactly as the evaluator
+does (`enterBlk`, `newEnv`, `copyEnv`, `popEnv`), so the heap is the evaluator's heap at
+each instruction boundary up to the register scratch fields. Generators and async functions
+stay on their own machine; a script with direct `eval` or `with` stays unresolved.
+
+The `for` loop now ticks, copies, updates and tests in the order of `forLoop` (register code
+too).
+
+Tools: `BUBBLEPOP_VMSTATS=1 leanjs run F` counts calls by how they ran and, for the tree,
+why the register code did not take the function (computed only when counting);
+`BUBBLEPOP_VM=off|noregion`; `bubblepop_perf/tiershare.py` splits a `sample` profile between
+the register machine and the tree; `bubblepop_perf/wikilike.js` is a closure-heavy script in
+the style of a wiki's start-up code (an original construct).
+
+Proved (`JS/RegionProofs.lean`): with the machine or region code off the wrapper statement is
+the body one unit of fuel later (`compiled_off`, `compiled_noregion`, `block_is_body`,
+`enterBlock_plain`); `pushEnv` puts the record at the slot it answers, with its parent
+(`pushEnv_get`, `pushEnv_parent`). Tested, not proved: the instructions against the
+evaluator. Test262 (6,301 files): off, register code only, and region code give identical
+verdict lists, failure messages included (5,871 pass, 426 fail, 4 skip). The corpus gives
+the same answers in all three modes.
+
+Measured (Mac, loaded by other builds, best of 3, user CPU seconds, whole run incl. load):
+
+| Workload | calls in register code before / with regions | tree time share before / with | off | register only | regions |
+| --- | --- | --- | --- | --- | --- |
+| lodash 4N | 98.9% / 100% | 5% / 6% | 0.77 | 0.40 | 0.40 |
+| acorn 4N | 86% / 100% | 52% / 28% | 0.95 | 0.80 | 0.80 |
+| pako 4N | 98.4% / 100% | 42% / 13% | 1.94 | 1.73 | 1.71 |
+| marked 4N | 66% / 100% | 65% / 7% | 0.20 | 0.21 | 0.20 |
+| immutable 4N | 95% / 100% | 13% / 4% | 1.27 | 0.80 | 0.78 |
+| wikilike 200 | 67% / 100% | 78% / 40% | 0.31 | 0.29 | 0.33 |
+
+Loops in a function that makes a closure (3M iterations; `callper` 1M): empty `for` 0.57 /
+0.54 / 0.44; `s = s + i*i - 1` 1.17 / 1.20 / 0.88; `while` 0.52 / 0.51 / 0.44; a call per
+iteration 0.58 / 0.53 / 0.39; a closure call in a `let` loop 0.56 / 0.54 / 0.47.
+
+Findings:
+
+- The premise that real libraries run in the tree does not hold for this corpus: 66 to 99%
+  of dynamic calls already ran in register code (the callbacks are small and frame-local;
+  the closure-making outer functions run once).
+- Region code takes the rest (100% of calls) and moves 30 to 60 points of time from the
+  tree to the machine, with no change in run time on the corpus (within noise) and 1.1 to
+  1.4 times on closure-heavy loops.
+- Where the time is: helpers both machines call (property reads and writes, built-ins,
+  allocation and freeing, boxed numbers in environment slots) and, inside the machine, the
+  dispatch of `vmLoop` itself (60% of an arithmetic loop's samples are in `vmLoop`'s own
+  frame: boxed `Instr`, `Nat` registers and program counter).
+- Go/no-go: **no-go** for 2 times on the corpus by rank 1. The register machine over the
+  whole register-machine-to-tree gap is 1.0 to 1.9 times on the corpus already (off against
+  on), and region code adds nothing measurable there. The next gains are rank 2 (stage C:
+  word values, flat heap, shapes and inline caches) and rank 4 (flat instruction words,
+  `USize` counters), as the review says. Region code is still worth keeping as the single
+  machine that later work proves (`compile_correct` covers every function), and it is
+  needed for unboxed locals in closure-making functions.
