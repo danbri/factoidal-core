@@ -1420,7 +1420,7 @@ async function draw(){
       post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
         stats:{path,...(cpuMode?{cpu:true}:{}),layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
-          leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),...(statsMode&&layerSurface?.lastDraw?{draws:layerSurface.lastDraw}:{}),rows:Math.round(frame.data.length/4),scripts:{...scriptStats},...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
+          leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),...(statsMode&&layerSurface?.lastDraw?{draws:layerSurface.lastDraw,surface:layerSurface.stats}:{}),rows:Math.round(frame.data.length/4),scripts:{...scriptStats},...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
           // For hub_links_check.mjs: the links of a one-frame view, and who routes them.
           ...(statsMode&&layered===false?{links:frame.webRender.links,routes:router.lean?'lean':'fallback'}:{})}},rgba?[rgba.buffer]:[]);
       if(!phasesPosted){phasesPosted=true;post({type:'phases',phases});firstFrameSeen();}

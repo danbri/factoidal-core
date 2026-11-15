@@ -119,7 +119,7 @@ async function session(adapterMode){
     while(Date.now()-t1<SECONDS*1000){
       await sleep(1000);
       const got=await evaluate(`(()=>{const f=window.__frames??[];window.__frames=[];return f.map(x=>({t:x.t,path:x.path,url:x.url,layoutMs:x.layoutMs,drawMs:x.drawMs,
-        gpuMs:x.gpuMs,totalMs:x.totalMs,primitives:x.primitives,leanRenders:x.leanRenders,rows:x.rows,scriptTurns:x.scripts?.turns,scriptMs:x.scripts?.ms,draw:x.draws?.page??x.draws?.single}));})()`).catch(()=>[]);
+        gpuMs:x.gpuMs,totalMs:x.totalMs,primitives:x.primitives,leanRenders:x.leanRenders,rows:x.rows,scriptTurns:x.scripts?.turns,scriptMs:x.scripts?.ms,draw:x.draws?.page??x.draws?.single,chrome:x.draws?.chrome,composite:x.draws?.composite,planRequests:x.surface?.planRequests,pipelineBuilds:x.surface?.pipelineBuilds}));})()`).catch(()=>[]);
       frames.push(...got);
       if(Date.now()-t1>=nextSample){
         nextSample+=5000;
@@ -148,11 +148,16 @@ async function session(adapterMode){
     // Where a draw's time goes (layers.mjs drawScene with ?stats=1): CPU ms to submit, GPU ms
     // until done, and the shader's work counted from the scene (scene-work.mjs), in millions of
     // loop trips at four samples a pixel.
+    const chromeOf=f=>f.chrome&&!f.chrome.kept&&typeof f.chrome.gpuMs==='number'?f.chrome.cpuMs+f.chrome.gpuMs:0;
+    const otherOf=f=>f.drawMs-f.draw.cpuMs-f.draw.gpuMs-chromeOf(f)-(f.composite?f.composite.cpuMs+f.composite.gpuMs:0);
     const draws=drawn.map(f=>f.draw).filter(d=>d&&!d.kept&&typeof d.gpuMs==='number');
     const m=x=>Math.round(x/1e4)/100;
     out.draw_split={n:draws.length,cpu_ms:stat(draws.map(d=>d.cpuMs)),gpu_ms:stat(draws.map(d=>d.gpuMs)),
       segments_m:stat(draws.map(d=>m(d.segments))),outside_clip_m:stat(draws.map(d=>m(d.segmentsOutsideClip))),listed_m:stat(draws.map(d=>m(d.listed))),
       drawn_pixels:stat(draws.map(d=>d.drawnPixels)),upload_kb:stat(draws.map(d=>Math.round(d.uploadBytes/1024))),partial:draws.filter(d=>d.partial).length,
+      // The rest of a frame's draw time: what the page draw, the chrome draw and the composite do not account for.
+      other_ms:stat(later.filter(f=>f.draw&&!f.draw.kept&&typeof f.draw.gpuMs==='number').map(otherOf)),
+      composite_ms:stat(later.filter(f=>f.composite).map(f=>f.composite.cpuMs+f.composite.gpuMs)),
       // GPU ms for a thousand million edge trips: what the adapter does per unit of the counted work.
       gpu_ms_per_g_segments:(()=>{const a=draws.reduce((t,d)=>t+d.gpuMs,0),b=draws.reduce((t,d)=>t+d.segments,0);return b?r1(a/(b/1e9)):0;})()};
     out.frames.late_over_early=out.frames.draw_ms_early?Math.round(out.frames.draw_ms_late/out.frames.draw_ms_early*100)/100:0;
@@ -165,7 +170,8 @@ async function session(adapterMode){
       gpu:messages.filter(m=>gpuText.test(m.text)).length,device_lost:messages.some(m=>lostText.test(m.text))?1:0,first:messages.slice(0,12)};
     out.frames_detail=pageFrames.map(f=>({s:r1((f.t)/1000),path:f.path,layoutMs:f.layoutMs,drawMs:f.drawMs,primitives:f.primitives,
       ...(f.draw&&!f.draw.kept?{cpuMs:f.draw.cpuMs,gpuMs:f.draw.gpuMs,segmentsM:m(f.draw.segments),outsideClipM:m(f.draw.segmentsOutsideClip),
-        listedM:m(f.draw.listed),drawnPixels:f.draw.drawnPixels,uploadKB:Math.round(f.draw.uploadBytes/1024),partial:f.draw.partial}:{})}));
+        listedM:m(f.draw.listed),drawnPixels:f.draw.drawnPixels,uploadKB:Math.round(f.draw.uploadBytes/1024),partial:f.draw.partial,
+        chromeMs:r1(chromeOf(f)),chromeGpuMs:f.chrome?.gpuMs,planRequests:f.planRequests,pipelineBuilds:f.pipelineBuilds,compositeMs:f.composite?r1(f.composite.cpuMs+f.composite.gpuMs):undefined,otherMs:r1(otherOf(f))}:{})}));
     out.valid=pageFrames.length>1;
     if(!out.valid)out.why=`the page drew ${pageFrames.length} frames`;
     return out;
