@@ -1,4 +1,5 @@
 import L4Factoidal.JS.Value
+import L4Factoidal.JS.VmFast
 import L4Factoidal.JS.Clone
 import L4Factoidal.JS.Parser
 import L4Factoidal.JS.Resolve
@@ -5950,18 +5951,6 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
 termination_by structural n _ _ _ _ => n
 
 
-/-- A global name read through the cache: the value, or `Value.hole` when the general path
-must look (not a plain writable data property, or a lexical binding may shadow it). -/
-def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
-  match h.findEnv x 100000 env with
-  | some _ => .hole
-  | none =>
-    let g := h.obj h.realm.globalObj
-    let slot := h.globalCache[site]!
-    match g.props.ks[slot]?, g.props.vs[slot]? with
-    | some k, some (.data v ..) => if k == x then v else .hole
-    | _, _ => .hole
-
 /-- Assign a global name through the cache: only when no lexical binding shadows it and the
 cached slot holds this name as a plain writable data property; `false` otherwise. -/
 def vmGlobalSet (env : Nat) (x : String) (site : Nat) (v : Value) : M Bool := do
@@ -6389,6 +6378,13 @@ def vmLoop : Nat → Ctx → Array Stmt → Code → Nat → Nat → Nat → Lis
     | .tick =>
       tick
       vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+    | .tickF =>
+      -- the head of a loop of instructions the inner loop runs (`JS/VmFast.lean`)
+      let o ← vmFast code.instrs env n pc bp regs fregs
+      if o.pc == pc then
+        tick
+        vmLoop n cx subs code (pc + 1) bp env fr o.regs o.fregs
+      else vmLoop n cx subs code o.pc bp env fr o.regs o.fregs
     | .getGlobal dst x site =>
       let h ← get
       match vmGlobalHit h env x site with

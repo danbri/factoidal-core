@@ -316,3 +316,59 @@ Findings:
   `USize` counters), as the review says. Region code is still worth keeping as the single
   machine that later work proves (`compile_correct` covers every function), and it is
   needed for unboxed locals in closure-making functions.
+
+## Stage C spike: the inner loop, and where stage C pays (measured 2026-11-15)
+
+Branch `wip/jit-c` on `wip/jit-vm`. What was measured first, then what was built.
+
+Where the register machine's time goes. `vmLoop` is one function with an arm for every
+instruction, in the evaluator's monad. A loop of number instructions in a frame-local function
+(`s = s + i*i - 1`) retires about 1,500 machine instructions per iteration, about 200 per
+register-machine instruction, all in `vmLoop`'s own frame (no calls, no allocation). A model of
+the same arms in a small function (`bubblepop_perf`-style standalone file, not committed) runs
+them in about 90; the same model with flat `UInt32` instruction words and `USize` counters in
+about 75. So the size of `vmLoop` costs about 2 times on dispatch, and flat words add about 1.2
+times on top: the instruction encoding is not where the time is.
+
+What was built:
+
+- `JS/VmFast.lean`, `vmFastGo`: the register machine's inner loop, a small function over the
+  same state (instructions, registers, float registers, the heap). It runs moves, constants,
+  number arithmetic and comparisons on number registers, jumps, the step of the budget, the
+  heap's fast property read (`HeapOf.fastGetV`), dense array elements, environment slots
+  (`getUp`, `setUp`) and the global-name cache. Each arm is `vmLoop`'s arm for the instruction
+  written with the same expressions; where an operand fails its test, it stops and `vmLoop` runs
+  that instruction. A number written into an environment slot reuses the old number's box
+  (`setNumSlot`), so such a loop allocates nothing.
+- `Compile.markFastLoops`: the `tick` at the head of a loop becomes `tickF` when every
+  instruction from the head to the jump back is one the inner loop runs. Only at `tickF` does
+  `vmLoop` call the inner loop. Entering it at every loop head (the first version) made the
+  corpus 5 to 14% slower: on a loop whose body calls a function, the entry and exit cost more
+  than the few instructions it ran. With the marking, other loops run exactly as before.
+- `BUBBLEPOP_VM=nofast` (`HeapOf.vmFastOn`): the inner loop off, for the differential test.
+
+Proved (`JS/VmFastProofs.lean`, `JS/VmFastSteps.lean`, standard axioms only): with the inner
+loop off, `vmFast` returns at once and changes nothing (`vmFast_off`), and `tickF` is `tick`
+(`vmLoop_tickF_off`); marking only turns a `tick` into `tickF` and keeps the size
+(`markAt_cases`, `markFastLoops_size`); the slot write with box reuse is the plain write
+(`setNumSlot_eq`, `fastSetSlot_fl`, `fastSetSlot_val`); and for each instruction the inner loop
+runs, one step of `vmLoop` with the operands that pass the test is the inner loop's step, one
+unit of fuel later (`vmLoop_add`, `vmLoop_jnltK`, `vmLoop_tick`, `vmLoop_getUp_num`,
+`vmLoop_getMember_num`, ... 25 theorems). The proofs unfold `vmLoop` by `vmLoop.eq_def`, which
+Lean generates in a few seconds. Not mechanised: the induction that strings these steps into
+"a run of the inner loop is that many steps of `vmLoop` with the inner loop off", and the step
+from there to whole runs, which needs fuel monotonicity (the inner loop uses less fuel than the
+steps it stands for; `jit-proof`'s spike). Tested: Test262 (6,301 files) gives the same verdict
+list, messages included, with the machine off, region code off, the inner loop off and on; the
+corpus and the loops give the same answers in all modes.
+
+Stage C (shapes and inline caches) on the present heap: an object's own properties are a short
+key array scanned by pointer first (`PropMap`), so a cache of the slot for a site saves a scan
+of a few keys and nothing else, unless "a shape determines the keys" holds, which needs the key
+arrays moved out of the objects into a shape table: a change to every property operation of
+the evaluator. In sampled profiles of acorn, immutable and pako the property-lookup code
+(`fastGet`, `PropMap.scan`, string hashing for big maps, `getOwn`) is 5 to 15% of the samples;
+allocation and freeing (`mi_free`, `mi_malloc_small`, `lean_dec_ref_cold`, `lean_del`) 15 to 25%;
+`vmLoop`'s own frame 30 to 45%. Go/no-go: inline caches on the present heap, no-go (at most 1.15
+times on the corpus); shapes as a heap redesign, only together with word values (the
+allocation share), as issue 378 plans; the inner loop, go for loops.

@@ -153,6 +153,10 @@ inductive Instr where
   | jnge (a b t : Nat)
   /-- A step of the script's budget: the head of a loop. -/
   | tick
+  /-- `tick` at the head of a loop whose instructions are all ones the inner loop runs
+  (`Compile.markFastLoops`): the register machine hands the loop to `vmFast`
+  (`JS/VmFast.lean`). The same step as `tick`. -/
+  | tickF
   /-- A global name; `site` numbers a slot of the global name cache (`HeapOf.globalCache`). -/
   | getGlobal (dst : Nat) (name : String) (site : Nat)
   | setGlobal (src : Nat) (name : String) (site : Nat)
