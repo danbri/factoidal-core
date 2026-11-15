@@ -417,6 +417,9 @@ import L4Factoidal.CID.Tests
 import L4Factoidal.Identity.Binding
 import L4Factoidal.Authz.CredentialMatch
 import L4Factoidal.Authz.Acp
+import L4Factoidal.GpuKernel.Race
+import L4Factoidal.GpuKernel.Expr
+import L4Factoidal.GpuKernel.Gather
 import L4Factoidal.Geo.Types
 import L4Factoidal.Geo.Order
 import L4Factoidal.Geo.BBox
