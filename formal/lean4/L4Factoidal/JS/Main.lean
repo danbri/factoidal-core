@@ -165,7 +165,9 @@ def main (args : List String) : IO UInt32 := do
   -- `BUBBLEPOP_VM=off`: the register machine is off for the run (the heap's `useVm`)
   let vm := (← IO.getEnv "BUBBLEPOP_VM") != some "off"
   let regions := (← IO.getEnv "BUBBLEPOP_VM") != some "noregion"
-  let fresh : Heap := { freshHeap with useVm := vm, vmRegions := regions }
+  -- `BUBBLEPOP_VM=nofast`: the register machine's inner loop (`vmFast`) is off
+  let fast := (← IO.getEnv "BUBBLEPOP_VM") != some "nofast"
+  let fresh : Heap := { freshHeap with useVm := vm, vmRegions := regions, vmFastOn := fast }
   match args with
   | ["run", file] =>
     -- `BUBBLEPOP_VM=noregion`: function bodies the register code does not take run in the

@@ -664,6 +664,9 @@ structure HeapOf (H : Type) extends ColdHeap H where
   /-- Region code (`Code.region`, function bodies that the register code does not take) runs
   on the register machine; off, those bodies run in the evaluator (`BUBBLEPOP_VM=noregion`). -/
   vmRegions : Bool := true
+  /-- The inner loop of the register machine (`JS/VmFast.lean`) runs from loop heads; off, every
+  instruction runs in `vmLoop` (`BUBBLEPOP_VM=nofast`). -/
+  vmFastOn : Bool := true
   /-- Counts of calls by how they ran (`BUBBLEPOP_VMSTATS`); `none`, the default, counts
   nothing. -/
   vmStats : Option (Std.HashMap String Nat) := none
