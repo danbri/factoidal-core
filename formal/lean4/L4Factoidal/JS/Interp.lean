@@ -1594,6 +1594,20 @@ structure VFrame where
   dst : Nat
   depth : Nat
 
+/-- `tryCatch` for the completions of the language: the handler sees thrown values and the
+evaluator's own `Abrupt` values, but never a halt (out of fuel, out of steps, a full heap, a
+failed check): a halt is an interrupt and passes through every handler unchanged. Optional
+chaining's `shortSignal` is a halt too, and only `Expr.chain` (with a plain `tryCatch`) stops it.
+
+This makes the evaluator monotone in its fuel: a run that ends at fuel `n` with anything but
+`halt "fuel"` ends the same way at every larger fuel (`JS/FuelMono.lean`). Before it, a handler
+that dropped every completion (IteratorClose after a throw) also dropped an out-of-fuel halt in
+the iterator's `return`, and the run went on with a different result. -/
+@[inline] def catchJS {α : Type} (x : M α) (k : Abrupt → M α) : M α :=
+  tryCatch x fun a => match a with
+    | .halt w => throw (.halt w)
+    | a => k a
+
 /-- Compiled functions may nest this deep (they do not use the host's stack). -/
 def vmMaxDepth : Nat := 20000
 
@@ -2234,7 +2248,7 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
       if fd.async && !fd.gen then
         -- EvaluateAsyncFunctionBody (§15.8.4): an error while the parameters are bound rejects
         -- the function's promise instead of throwing at the call
-        let r ← tryCatch (do bindChecked; pure none) fun e => match e with
+        let r ← catchJS (do bindChecked; pure none) fun e => match e with
           | .throw v => pure (some v)
           | a => throw a
         if let some v := r then
@@ -3264,14 +3278,14 @@ def forOfLoop : Nat → Ctx → List String → Option DeclKind → Pat → Valu
     match ← iterStep n it with
     | none => pure .normal
     | some v =>
-      let r ← tryCatch (do
+      let r ← catchJS (do
           let ctx' ← bindIter n ctx kind target v
           let c ← evalStmt n ctx' [] body
           pure (Except.ok c))
         (fun a => pure (Except.error a))
       match r with
       | .error (.throw e) =>
-        let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+        let _ ← catchJS (iterClose n it) (fun _ => pure ())
         throw (.throw e)
       | .error a => throw a
       | .ok c =>
@@ -3399,11 +3413,11 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
       pure c
     | .throwS e => throw (.throw (← evalExpr n ctx e))
     | .tryS body param handler fin =>
-      let r ← tryCatch (do let c ← evalBlock n ctx body; pure (Except.ok c))
+      let r ← catchJS (do let c ← evalBlock n ctx body; pure (Except.ok c))
         (fun a => pure (Except.error a))
       let r ← match r, handler with
         | .error (.throw v), some hs =>
-          tryCatch (do
+          catchJS (do
             let env ← newEnv ctx.env
             if let some p := param then
               for x in p.names do declare env x { v := .undef, init := false }
@@ -3487,7 +3501,7 @@ def bindPat : Nat → Ctx → Pat → Value → BindMode → M Unit
         bindPat n ctx r (.obj o) mode
     | .arr elems rest =>
       let it ← getIterator n v
-      let r ← tryCatch (do
+      let r ← catchJS (do
           let done ← bindElems n ctx elems it mode false
           let done ← match rest with
             | some rp =>
@@ -3504,7 +3518,7 @@ def bindPat : Nat → Ctx → Pat → Value → BindMode → M Unit
       match r with
       | .ok done => if !done then iterClose n it
       | .error (.throw e) =>
-        let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+        let _ ← catchJS (iterClose n it) (fun _ => pure ())
         throw (.throw e)
       | .error a => throw a
 termination_by structural n _ _ _ _ => n
@@ -3800,7 +3814,7 @@ def genRun : Nat → List GFrame → GInput → M GOut
     | f :: rest =>
       match f with
       | .resume ctx target =>
-        let r ← tryCatch (do
+        let r ← catchJS (do
             if let some (p, m) := target then bindPat n ctx p v m
             pure none)
           (fun a => pure (some a))
@@ -3815,7 +3829,7 @@ def genRun : Nat → List GFrame → GInput → M GOut
           -- awaited result of the inner iterator's method (phases 1 to 4)
           -- the answer: 0 await this, 1 the delegation ended with this value, 2 yield this,
           -- 3 return this
-          let r ← tryCatch (do
+          let r ← catchJS (do
               if ph == 0 then
                 let res ← callV n nextM iter #[v]
                 setDelegatePhase it 1
@@ -3838,7 +3852,7 @@ def genRun : Nat → List GFrame → GInput → M GOut
           | .ok (2, x) => pure (.yielded x (f :: rest))
           | .ok (_, x) => genUnwind n rest (.ret x)
         | none =>
-        let r ← tryCatch (do
+        let r ← catchJS (do
             let next ← getV n it "next"
             let res ← callV n next it #[v]
             if !res.isObj then throwErr .type "Iterator result is not an object"
@@ -3858,7 +3872,7 @@ def genRun : Nat → List GFrame → GInput → M GOut
       | .block _ [] => genRun n rest (.send .undef)
       | .block ctx (s :: ss) =>
         if !s.hasYield then
-          let r ← tryCatch (do let c ← evalStmt n ctx [] s; pure (Except.ok c))
+          let r ← catchJS (do let c ← evalStmt n ctx [] s; pure (Except.ok c))
             (fun a => pure (Except.error a))
           match r with
           | .error (.throw e) => genUnwind n (.block ctx ss :: rest) (.throw e)
@@ -3884,7 +3898,7 @@ def genRun : Nat → List GFrame → GInput → M GOut
           else genRun n rest (.send .undef)
       | .loopFor ctx labels perIter test update body first =>
         let ctx ← if perIter.isEmpty then pure ctx else copyEnv n ctx perIter
-        let r ← tryCatch (do
+        let r ← catchJS (do
             if !first then
               if let some u := update then let _ ← evalExpr n ctx u
             match test with
@@ -3898,17 +3912,17 @@ def genRun : Nat → List GFrame → GInput → M GOut
         | .ok true =>
           genRun n (.block ctx [body] :: .loopFor ctx labels perIter test update body false :: rest) (.send .undef)
       | .loopOf ctx labels kind target it body =>
-        let r ← tryCatch (do pure (Except.ok (← iterStep n it))) (fun a => pure (Except.error a))
+        let r ← catchJS (do pure (Except.ok (← iterStep n it))) (fun a => pure (Except.error a))
         match r with
         | .error (.throw e) => genUnwind n rest (.throw e)
         | .error a => throw a
         | .ok none => genRun n rest (.send .undef)
         | .ok (some x) =>
-          let r ← tryCatch (do pure (Except.ok (← bindIter n ctx kind target x)))
+          let r ← catchJS (do pure (Except.ok (← bindIter n ctx kind target x)))
             (fun a => pure (Except.error a))
           match r with
           | .error (.throw e) =>
-            let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+            let _ ← catchJS (iterClose n it) (fun _ => pure ())
             genUnwind n rest (.throw e)
           | .error a => throw a
           | .ok ctx' => genRun n (.block ctx' [body] :: f :: rest) (.send .undef)
@@ -3922,7 +3936,7 @@ termination_by structural n _ _ => n
 def genEval : Nat → Ctx → Expr → M (Except Value Value)
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, e => do
-    let r ← tryCatch (do pure (Except.ok (← evalExpr n ctx e))) (fun a => pure (Except.error a))
+    let r ← catchJS (do pure (Except.ok (← evalExpr n ctx e))) (fun a => pure (Except.error a))
     match r with
     | .ok v => pure (.ok v)
     | .error (.throw v) => pure (.error v)
@@ -3940,7 +3954,7 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
           | .ok v =>
             if delegate then do
               -- `yield*` in an async generator: GetIterator(v, async), then the record
-              let r ← tryCatch (do
+              let r ← catchJS (do
                   let iter ← callNative n (.x (.forAwait 0)) .undef #[v] none
                   let nextM ← getV n iter "next"
                   let rec ← alloc { proto := .null }
@@ -3961,7 +3975,7 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       | .error e => genUnwind n rest (.throw e)
       | .ok v =>
         if delegate then
-          let r ← tryCatch (do pure (Except.ok (← getIterator n v))) (fun a => pure (Except.error a))
+          let r ← catchJS (do pure (Except.ok (← getIterator n v))) (fun a => pure (Except.error a))
           match r with
           | .error (.throw e) => genUnwind n rest (.throw e)
           | .error a => throw a
@@ -4058,7 +4072,7 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
         genRun n (.block ctx [.decl .letK [Decl.mk (.id f) (some (.bool false))],
           labels.foldr .labeled loop] :: rest) (.send .undef)
       else
-      let r ← tryCatch (do
+      let r ← catchJS (do
           match init with
           | some (.decl .var ds) => evalDecls n ctx .var ds; pure (Except.ok (ctx, ([] : List String)))
           | some (.decl k ds) =>
@@ -4089,7 +4103,7 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
         genRun n (.block ctx [.decl .letK [Decl.mk (.id t) (some obj)],
           labels.foldr .labeled (.forOf kind target (.ident t) body)] :: rest) (.send .undef)
       else
-      let r ← tryCatch (do pure (Except.ok (← getIterator n (← evalExpr n ctx obj))))
+      let r ← catchJS (do pure (Except.ok (← getIterator n (← evalExpr n ctx obj))))
         (fun a => pure (Except.error a))
       match r with
       | .error (.throw x) => genUnwind n rest (.throw x)
@@ -4148,7 +4162,7 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
       else iterClose n it; genUnwind n rest c
     | .loopOf _ _ _ _ it _, .ret _ => iterClose n it; genUnwind n rest c
     | .loopOf _ _ _ _ it _, .throw _ =>
-      let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+      let _ ← catchJS (iterClose n it) (fun _ => pure ())
       genUnwind n rest c
     | .delegate _ it _, .throw v =>
       if let some (iter, _, ph) := ← asyncDelegate? it then
@@ -4158,7 +4172,7 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
         if ph != 0 then
           setDelegatePhase it 0
           return ← genUnwind n rest c
-        let r ← tryCatch (do
+        let r ← catchJS (do
             let th ← getV n iter "throw"
             match th with
             | .undef | .null =>
@@ -4181,7 +4195,7 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
       let th ← getV n it "throw"
       match th with
       | .undef | .null =>
-        let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+        let _ ← catchJS (iterClose n it) (fun _ => pure ())
         genUnwind n rest (.throw (← mkError .type "The iterator does not provide a 'throw' method"))
       | _ =>
         let res ← callV n th it #[v]
@@ -4195,7 +4209,7 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
         if ph != 0 then
           setDelegatePhase it 0
           return ← genUnwind n rest c
-        let r ← tryCatch (do
+        let r ← catchJS (do
             let rt ← getV n iter "return"
             match rt with
             | .undef | .null =>
@@ -4221,7 +4235,7 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
     | .tryF ctx param (some hs) fin 0, .throw v =>
       let env ← newEnv ctx.env
       let ctx' := { ctx with env }
-      let r ← tryCatch (do
+      let r ← catchJS (do
           if let some p := param then
             for x in p.names do declare env x { v := .undef, init := false }
             bindPat n ctx' p v (.declare env true)
@@ -4245,7 +4259,7 @@ def asyncStep : Nat → Nat → GInput → M Unit
   | n + 1, co, input => do
     match (← getObj co).kind with
     | .coro frames pid =>
-      let r ← tryCatch (do pure (Except.ok (← genRun n frames input))) (fun a => pure (Except.error a))
+      let r ← catchJS (do pure (Except.ok (← genRun n frames input))) (fun a => pure (Except.error a))
       match r with
       | .error (.throw e) => modifyObj co (fun o => { o with kind := .coro [] pid }); rejectPromise n pid e
       | .error a => throw a
@@ -4291,7 +4305,7 @@ def resolvePromise : Nat → Nat → Value → M Unit
     | .obj xid =>
       if xid == pid then
         return ← rejectPromise n pid (← mkError .type "Chaining cycle detected for promise")
-      let r ← tryCatch (do pure (Except.ok (← getV n x "then"))) (fun a => pure (Except.error a))
+      let r ← catchJS (do pure (Except.ok (← getV n x "then"))) (fun a => pure (Except.error a))
       match r with
       | .error (.throw e) => rejectPromise n pid e
       | .error a => throw a
@@ -4347,7 +4361,7 @@ def runJobs : Nat → M Unit
       else { h with jobHead := h.jobHead + 1, jobsRun := h.jobsRun + 1 }
     set h
     tick
-    let r ← tryCatch (do let _ ← callV n f .undef args; pure none) (fun a => pure (some a))
+    let r ← catchJS (do let _ ← callV n f .undef args; pure none) (fun a => pure (some a))
     match r with
     | some (.halt w) => throw (.halt w)
     | _ => runJobs n
@@ -4405,7 +4419,7 @@ PromiseResolve throws (a poisoned `constructor`) is a rejection. -/
 def agenAwait : Nat → Nat → Value → Nat → Nat → M Unit
   | 0, _, _, _, _ => throw (.halt "fuel")
   | n + 1, gid, v, onF, onR => do
-    let p ← tryCatch (promiseResolve n v) (fun a => match a with
+    let p ← catchJS (promiseResolve n v) (fun a => match a with
       | .throw e => do
         let p ← newPromise
         rejectPromise n p e
@@ -4422,7 +4436,7 @@ termination_by structural n _ _ _ _ => n
 def agenRun : Nat → Nat → List GFrame → GInput → M Unit
   | 0, _, _, _ => throw (.halt "fuel")
   | n + 1, gid, frames, input => do
-    let r ← tryCatch (do pure (Except.ok (← genRun n frames input))) (fun a => pure (Except.error a))
+    let r ← catchJS (do pure (Except.ok (← genRun n frames input))) (fun a => pure (Except.error a))
     let q := match (← getObj gid).kind with | .agen _ _ q => q | _ => #[]
     let pid := (q.getD 0 (GInput.send .undef, 0)).2
     let set (fs : List GFrame) (s : Nat) (q : Array (GInput × Nat)) : M Unit :=
@@ -4843,7 +4857,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       if let some o := self? then
         if hiddenFlag (← getObj o) joiningKey then throwErr .range "Maximum call stack size exceeded"
         setHidden o joiningKey (.bool true)
-      let res ← tryCatch (do
+      let res ← catchJS (do
           let es ← elemsOf n thisV
           let sep ← if id == .arrayJoin then (match a0 with | .undef => pure "," | v => toStr n v) else pure ","
           let parts ← es.toList.mapM fun v => match v with
@@ -5215,12 +5229,12 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           | none => break
           | some v =>
             -- an abrupt completion of the mapping or the definition closes the iterator first
-            let v ← tryCatch (do
+            let v ← catchJS (do
                 let v ← if mapping then callV n mapFn (argD args 2) #[v, .num (Float.ofNat k)] else pure v
                 if let some a := a then put a k v
                 pure v)
               fun e => do
-                tryCatch (iterClose n it) fun _ => pure ()
+                catchJS (iterClose n it) fun _ => pure ()
                 throw e
             if a.isNone then vs := vs.push v
             k := k + 1
@@ -5248,7 +5262,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       if pp.isObj then modifyObj pid fun o => { o with proto := pp }
       let res ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj pid] }
       let rej ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj pid] }
-      let x ← tryCatch (do let _ ← callV n a0 .undef #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
+      let x ← catchJS (do let _ ← callV n a0 .undef #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
       match x with
       | some (.throw e) => let _ ← callV n (.obj rej) .undef #[e]
       | some a => throw a
@@ -5308,7 +5322,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let arg := argD args 2
       let rejected := toBool (argD args 3)
       if ← isCallable handler then
-        let x ← tryCatch (do pure (Except.ok (← callV n handler .undef #[arg]))) (fun a => pure (Except.error a))
+        let x ← catchJS (do pure (Except.ok (← callV n handler .undef #[arg]))) (fun a => pure (Except.error a))
         match derived, x with
         | .obj d, .ok v => resolvePromise n d v
         | .obj d, .error (.throw e) => rejectPromise n d e
@@ -5329,7 +5343,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         let record ← alloc { proto := .null }
         let res ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x (.promiseThenableFn false))) .undef #[.obj pid, .obj record] }
         let rej ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x (.promiseThenableFn true))) .undef #[.obj pid, .obj record] }
-        let x ← tryCatch (do let _ ← callV n (argD args 2) a1 #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
+        let x ← catchJS (do let _ ← callV n (argD args 2) a1 #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
         match x with
         | some (.throw e) => let _ ← callV n (.obj rej) .undef #[e]
         | some a => throw a
@@ -5338,7 +5352,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | _ => pure .undef
     | .promiseAll =>
       let res ← newPromise
-      let x ← tryCatch (do
+      let x ← catchJS (do
           let it ← getIterator n a0
           let items ← iterToArray n it #[]
           let vals ← newArray (Array.replicate items.size .undef)
@@ -5361,7 +5375,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       pure (.obj res)
     | (.x (.promiseCombinator k)) =>
       let res ← newPromise
-      let x ← tryCatch (do
+      let x ← catchJS (do
           let it ← getIterator n a0
           let items ← iterToArray n it #[]
           let vals ← newArray (Array.replicate items.size .undef)
@@ -5601,7 +5615,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
                 if ro.extensible then defineOwn cur key (.data val true true true); return .bool true
                 else return .bool false
             | _ => return .bool false
-        let ok ← tryCatch (do putV n a0 (← toKey n a1) (argD args 2) true; pure true) (fun e => match e with
+        let ok ← catchJS (do putV n a0 (← toKey n a1) (argD args 2) true; pure true) (fun e => match e with
           | .throw _ => pure false
           | a => throw a)
         pure (.bool ok)
@@ -5898,7 +5912,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
             | .genNext => GInput.send a0
             | .genReturn => .retV a0
             | _ => .throwV a0
-          let r ← tryCatch (do pure (Except.ok (← genRun n frames input)))
+          let r ← catchJS (do pure (Except.ok (← genRun n frames input)))
             (fun a => pure (Except.error a))
           match r with
           | .error a => setG [] 3; throw a
@@ -8343,7 +8357,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         let mut i := es.size / 2
         for _ in [0:es.size / 2] do
           i := i - 1
-          let x ← tryCatch (do let _ ← callV n es[2 * i + 1]! es[2 * i]! #[]; pure none) fun e => match e with
+          let x ← catchJS (do let _ ← callV n es[2 * i + 1]! es[2 * i]! #[]; pure none) fun e => match e with
             | .throw v => pure (some v)
             | a => throw a
           if let some v := x then
@@ -8469,7 +8483,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       -- §27.2.4.8 Promise.try: NewPromiseCapability(this), then the callback's completion
       if !thisV.isObj then throwErr .type "Promise.try called on a non-object"
       let cap ← callNative n (.x .promiseWithResolvers) thisV #[] none
-      let x ← tryCatch (do pure (Except.ok (← callV n a0 .undef (args.extract 1 args.size)))) (fun e => pure (Except.error e))
+      let x ← catchJS (do pure (Except.ok (← callV n a0 .undef (args.extract 1 args.size)))) (fun e => pure (Except.error e))
       match x with
       | .ok v => let _ ← callV n (← getV n cap "resolve") .undef #[v]
       | .error (.throw e) => let _ ← callV n (← getV n cap "reject") .undef #[e]
@@ -8503,7 +8517,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let closeAll (sl : Array Value) : M Unit := do
         for j in [0:sl.size / 2] do
           let i := sl.size / 2 - 1 - j
-          tryCatch (iterClose n sl[2 * i]!) fun _ => pure ()
+          catchJS (iterClose n sl[2 * i]!) fun _ => pure ()
       -- GetIteratorFlattenable(value, reject-strings)
       let flat (v : Value) : M (Value × Value) := do
         if !v.isObj then throwErr .type s!"{what}: an iterable is not an object"
@@ -8516,7 +8530,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       if keyed then
         let oid := match a0 with | .obj o => o | _ => 0
         for k in (← ownKeysOf n oid) do
-          let r ← tryCatch (do
+          let r ← catchJS (do
               match ← ownDesc n oid k with
               | some d =>
                 if d.enumerable then
@@ -8534,15 +8548,15 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       else
         let input ← getIterator n a0
         for _ in [0:1000000000] do
-          let r ← tryCatch (do
+          let r ← catchJS (do
               match ← iterStep n input with
               | none => pure (Except.ok none)
               | some v =>
-                let x ← tryCatch (do pure (Except.ok (← flat v))) fun e => pure (Except.error e)
+                let x ← catchJS (do pure (Except.ok (← flat v))) fun e => pure (Except.error e)
                 match x with
                 | .ok p => pure (Except.ok (some p))
                 | .error e =>
-                  tryCatch (iterClose n input) fun _ => pure ()
+                  catchJS (iterClose n input) fun _ => pure ()
                   throw e) fun e => pure (Except.error e)
           match r with
           | .error e => closeAll slots; throw e
@@ -8553,12 +8567,12 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       if mode == 1 && padOpt.isObj then
         if keyed then
           for i in [0:count] do
-            let pv ← tryCatch (do pure (Except.ok (← getV n padOpt (← toKey n keys[i]!)))) fun e => pure (Except.error e)
+            let pv ← catchJS (do pure (Except.ok (← getV n padOpt (← toKey n keys[i]!)))) fun e => pure (Except.error e)
             match pv with
             | .ok v => pads := pads.set! i v
             | .error e => closeAll slots; throw e
         else
-          let r ← tryCatch (do
+          let r ← catchJS (do
               let pit ← getIterator n padOpt
               let mut usePad := true
               let mut out : Array Value := #[]
@@ -8668,7 +8682,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let guarded (f : M Value) : M Value := tryCatch f fun e => do
         match e with
         | .throw _ =>
-          tryCatch (iterClose n thisV) fun _ => pure ()
+          catchJS (iterClose n thisV) fun _ => pure ()
           throw e
         | _ => throw e
       let mut acc := if k == 0 then a1 else .undef
@@ -8735,7 +8749,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
             match cur[2 * i]! with
             | .null => pure ()
             | iv =>
-              let r ← tryCatch (do iterClose n iv; pure none) fun e => match e with
+              let r ← catchJS (do iterClose n iv; pure none) fun e => match e with
                 | .throw v => pure (some v)
                 | a => throw a
               if err.isNone then err := r
@@ -8745,7 +8759,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         if !(hiddenFlag o helperDone) then
           setF helperDone (.bool true)
           match field helperInner with
-          | .obj _ => tryCatch (iterClose n (field helperInner)) fun _ => pure ()
+          | .obj _ => catchJS (iterClose n (field helperInner)) fun _ => pure ()
           | _ => pure ()
           iterClose n it
         return ← result .undef true
@@ -8755,7 +8769,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         -- values yielded again; `helperCount` the next iterable, `helperFn` the inner `next`
         let items ← elemsOf n it
         setF helperRunning (.bool true)
-        let out ← tryCatch (do
+        let out ← catchJS (do
           let mut answer : Option Value := none
           for _ in [0:1000000000] do
             let o ← getObj hid
@@ -8810,7 +8824,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
               match cur[2 * i]! with
               | .null => pure ()
               | iv =>
-                let r ← tryCatch (do iterClose n iv; pure none) fun e => match e with
+                let r ← catchJS (do iterClose n iv; pure none) fun e => match e with
                   | .throw v => pure (some v)
                   | a => throw a
                 if err.isNone && !thrown then err := r
@@ -8819,7 +8833,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           setF helperDone (.bool true)
           return ← result .undef true
         setF helperRunning (.bool true)
-        let out ← tryCatch (do
+        let out ← catchJS (do
           let mut results : Array Value := #[]
           let mut finished := false
           for i in [0:m] do
@@ -8829,7 +8843,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
             | .null => results := results.push (pads.getD i .undef)
             | iv =>
               -- IteratorStepValue; an abrupt step closes the others
-              let step ← tryCatch (do
+              let step ← catchJS (do
                   let r ← callV n cur[2 * i + 1]! iv #[]
                   if !r.isObj then throwErr .type "Iterator result is not an object"
                   if toBool (← getV n r "done") then pure (Except.ok none)
@@ -8852,7 +8866,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
                   for k in [1:m] do
                     let cur2 ← elemsOf n it
                     let ik := cur2[2 * k]!
-                    let r2 ← tryCatch (do
+                    let r2 ← catchJS (do
                         let r ← callV n cur2[2 * k + 1]! ik #[]
                         if !r.isObj then throwErr .type "Iterator result is not an object"
                         pure (Except.ok (toBool (← getV n r "done")))) fun e => pure (Except.error e)
@@ -8904,11 +8918,11 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           match e with
           | .throw _ =>
             setF helperDone (.bool true)
-            tryCatch (iterClose n it) fun _ => pure ()
+            catchJS (iterClose n it) fun _ => pure ()
             throw e
           | _ => throw e
       setF helperRunning (.bool true)
-      let out ← tryCatch (do
+      let out ← catchJS (do
         let mut answer : Option Value := none
         for _ in [0:1000000000] do
           let o ← getObj hid
@@ -9336,7 +9350,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       pure (.obj o)
     | (.x .promiseAny) =>
       let res ← newPromise
-      let x ← tryCatch (do
+      let x ← catchJS (do
           let it ← getIterator n a0
           let items ← iterToArray n it #[]
           let errs ← newArray (Array.replicate items.size .undef)
@@ -9738,7 +9752,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           pure (.obj out)
     | (.x .dynImport) =>
       let pid ← newPromise
-      let x ← tryCatch (do let _ ← toStr n a0; pure none) (fun a => pure (some a))
+      let x ← catchJS (do let _ ← toStr n a0; pure none) (fun a => pure (some a))
       match x with
       | some (.throw e) => rejectPromise n pid e
       | some a => throw a
@@ -9783,7 +9797,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
     | (.x (.asyncFromSync 5)) =>
       -- the value was a rejected promise: IteratorClose(sync, ThrowCompletion(reason)); what
       -- `return` throws is dropped (bound argument: the sync iterator)
-      let _ ← tryCatch (iterClose n a0) (fun a => match a with | .halt w => throw (.halt w) | _ => pure ())
+      let _ ← catchJS (iterClose n a0) (fun a => match a with | .halt w => throw (.halt w) | _ => pure ())
       throw (.throw a1)
     | (.x (.asyncFromSync k)) =>
       -- %AsyncFromSyncIteratorPrototype%.next, .return, .throw (§27.1.6.2): every abrupt
@@ -9800,7 +9814,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | none => rejectPromise n pid (← mkError .type "not an async-from-sync iterator")
       | some (sync, nextM) =>
         let given : Array Value := if args.size > 0 then #[a0] else #[]
-        let x ← tryCatch (do
+        let x ← catchJS (do
             let res : Option Value ← match k with
               | 0 => do pure (some (← callV n nextM sync given))
               | 1 => do
@@ -9828,12 +9842,12 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
               let done := toBool (← getV n res "done")
               let value ← getV n res "value"
               let close := !done && k != 1
-              let vw ← tryCatch (do pure (Except.ok (← promiseResolve n value))) (fun a => pure (Except.error a))
+              let vw ← catchJS (do pure (Except.ok (← promiseResolve n value))) (fun a => pure (Except.error a))
               let vp ← match vw with
                 | .ok vp => pure vp
                 | .error (.throw e) =>
                   if close then
-                    let _ ← tryCatch (iterClose n sync) (fun a => match a with | .halt w => throw (.halt w) | _ => pure ())
+                    let _ ← catchJS (iterClose n sync) (fun a => match a with | .halt w => throw (.halt w) | _ => pure ())
                   throw (.throw e)
                 | .error a => throw a
               let onF ← nativeFn (.x (.asyncFromSync (if done then 4 else 3)))
@@ -9853,7 +9867,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       -- Array.fromAsync (asyncItems, mapfn, thisArg): a promise for the array; every abrupt
       -- completion of the setup rejects it (IfAbruptRejectPromise)
       let pid ← newPromise
-      let x ← tryCatch (do
+      let x ← catchJS (do
           let mapfn := a1
           if !(mapfn matches .undef) && !(← isCallable mapfn) then throwErr .type "Array.fromAsync: mapfn is not callable"
           let nullish (v : Value) : Bool := match v with | .undef | .null => true | _ => false
@@ -9898,13 +9912,13 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         let vp ← promiseResolve n v
         performThen n vp onF onR .undef
       let closeIt : M Unit := do
-        let _ ← tryCatch (do
+        let _ ← catchJS (do
             let m ← getV n src "return"
             if ← isCallable m then
               discard <| callV n m src #[]
             pure ())
           (fun a => match a with | .halt w => throw (.halt w) | _ => pure ())
-      let x ← tryCatch (do
+      let x ← catchJS (do
           match k with
           | 5 => rejectPromise n pid (argD args 1)
           | 4 =>
@@ -9925,7 +9939,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
                 putV n arr (toString idx) v true
                 let _ ← callNative n (.x (.fromAsyncStep 6)) .undef (state (idx + 1)) none
               else
-                let mv ← tryCatch (do pure (Except.ok (← callV n mapfn thisArg #[v, .num (Float.ofNat idx)])))
+                let mv ← catchJS (do pure (Except.ok (← callV n mapfn thisArg #[v, .num (Float.ofNat idx)])))
                   (fun a => pure (Except.error a))
                 match mv with
                 | .ok m => awaitV m (← bindStep 1 (state idx)) (← bindStep 4 (#[.obj pid, .undef, src]))
