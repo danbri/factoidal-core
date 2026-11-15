@@ -444,7 +444,7 @@
    ],
    "needs": "page scripts and the page GPU commands (WGSL for WebGPU, GLSL ES 3.00 for WebGL 2, L4Factoidal.PageGpu) in the engine and the guest",
    "appRefused": "does not execute scripts",
-   "shows": "a ray-marched scene of signed distance fields (a turning torus and two spheres over a chequered floor, soft shadow in high quality) in one fragment shader, written in WGSL and in GLSL ES 3.00; at most 64 steps a pixel, 160 x 100 by default, at most 30 frames a second, scene time by elapsed time, no frames while hidden or paused",
+   "shows": "a ray-marched scene of signed distance fields (a turning torus and two spheres over a chequered floor, soft shadow in high quality) in one fragment shader, written in WGSL and in GLSL ES 3.00; at most 64 steps a pixel, 160 x 100 by default, 30 frames a second by default, ?fps=display for every animation frame (the display's rate) and ?fps=max for bursts timed draw to done (onSubmittedWorkDone, or a one-pixel readPixels), with frame-time p50 and p95 from a histogram, scene time by elapsed time, no frames while hidden or paused",
    "doesNotShow": "user functions, break or while in the shaders: the GPU subset has none, so the distance function is written out in place"
   }
  ]
