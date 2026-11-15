@@ -47,7 +47,7 @@ export type Tick={i:number;turnMs:number;frameMs:number;changed:boolean;animated
   instructions:number;rss:number;heap:number;
   /** The GPU work of drawing the tick's page layer (scene-work.mjs), in millions of shader
   loop trips: records visited, path edges walked, and edges walked outside the record's clip. */
-  drawnPixels:number;listedM:number;segmentsM:number;outsideClipM:number;binnedM:number;rowsM:number;uploadKB:number;partial:boolean};
+  drawnPixels:number;listedM:number;segmentsM:number;outsideClipM:number;binnedM:number;rowsM:number;piecesM:number;uploadKB:number;partial:boolean};
 type Stat={median:number;p95:number;max:number};
 export type SpinalRun={page:string;engine:string;engine_commit?:string;valid:boolean;why?:string;ticks:number;tick_ms:number;
   load_ms:number;web_fonts:string[];
@@ -60,7 +60,7 @@ export type SpinalRun={page:string;engine:string;engine_commit?:string;valid:boo
     layouts:number;kept:number;paint_only:number;whole_page_ticks:number;layered_ticks:number;changed_ticks:number;
     animated_ticks:number;script_layouts:number;primitives_max:number;recompiled_max:number;recompiled_total:number;
     zoom_driver:string;frame_ms_early:number;frame_ms_late:number;late_over_early:number;
-    draw:{segments_m:Stat&{total:number};outside_clip_m:Stat&{total:number};binned_m:Stat&{total:number};rows_m:Stat&{total:number};listed_m:Stat;drawn_pixels:Stat;upload_kb:Stat;partial_ticks:number}};
+    draw:{segments_m:Stat&{total:number};outside_clip_m:Stat&{total:number};binned_m:Stat&{total:number};rows_m:Stat&{total:number};pieces_m:Stat&{total:number};listed_m:Stat;drawn_pixels:Stat;upload_kb:Stat;partial_ticks:number}};
   rss_mb:{start:number;end:number;growth:number;growth_after_warmup:number;peak:number};
   heap_mb:{start:number;end:number;growth:number};
   script:{errors:number;first_error?:string};
@@ -148,7 +148,7 @@ export async function measure({library=defaultLibrary,ticks=DEFAULT_TICKS}:{libr
       const damage=(l.page as unknown as {damage?:{base:number|null;rects:number[][]|null}}).damage;
       const work=sceneWork(l.page,damage?.rects&&damage.base!==null?damage.rects:undefined);
       list.push({drawnPixels:work.drawnPixels,listedM:r2(work.listed/1e6),segmentsM:r2(work.segments/1e6),
-        outsideClipM:r2(work.segmentsOutsideClip/1e6),binnedM:r2(work.segmentsBinned/1e6),rowsM:r2(work.segmentsRows/1e6),uploadKB:Math.round(work.uploadBytes/1024),partial:work.partial,i,turnMs:r1(turnMs),frameMs:r1(frameMs),changed:!!t.changed,animated:Array.isArray(t.animated)?t.animated.length:0,
+        outsideClipM:r2(work.segmentsOutsideClip/1e6),binnedM:r2(work.segmentsBinned/1e6),rowsM:r2(work.segmentsRows/1e6),piecesM:r2(work.pieces/1e6),uploadKB:Math.round(work.uploadBytes/1024),partial:work.partial,i,turnMs:r1(turnMs),frameMs:r1(frameMs),changed:!!t.changed,animated:Array.isArray(t.animated)?t.animated.length:0,
         layouts,kept:delta(before,after,"kept"),paintOnly:delta(before,after,"paintOnly"),recompiled,reused:delta(before,after,"reused"),
         primitives,wholePage:layouts>0||(primitives>0&&recompiled>=primitives),scriptLayouts:t.layouts??0,instructions:t.instructions??0,
         rss:mem.rss,heap:mem.heapUsed});
@@ -174,6 +174,7 @@ export async function measure({library=defaultLibrary,ticks=DEFAULT_TICKS}:{libr
         outside_clip_m:{...stat(list.map(t=>t.outsideClipM)),total:r1(list.reduce((a,t)=>a+t.outsideClipM,0))},
         binned_m:{...stat(list.map(t=>t.binnedM)),total:r1(list.reduce((a,t)=>a+t.binnedM,0))},
         rows_m:{...stat(list.map(t=>t.rowsM)),total:r1(list.reduce((a,t)=>a+t.rowsM,0))},
+        pieces_m:{...stat(list.map(t=>t.piecesM)),total:r1(list.reduce((a,t)=>a+t.piecesM,0))},
         listed_m:stat(list.map(t=>t.listedM)),drawn_pixels:stat(list.map(t=>t.drawnPixels)),upload_kb:stat(list.map(t=>t.uploadKB)),
         partial_ticks:list.filter(t=>t.partial).length}};
     // Growth after warm-up: from a quarter of the ticks to the end (the first frames of the
