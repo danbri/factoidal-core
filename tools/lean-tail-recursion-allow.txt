@@ -2433,3 +2433,8 @@ L4Factoidal_Rendering_CSS_resolveHasIn  # (c) the nesting of :is()/:not()/:where
 L4Factoidal_Rendering_CSS_mentionsHas  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
 L4Factoidal_Rendering_CSS_resolveStructuralIn  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
 L4Factoidal_Rendering_CSS_mentionsStructural  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
+L4Factoidal_GpuKernel_E_*  # (c) GPU kernel expressions (GpuKernel/Expr.lean): ASTs written as constants in Lean (binPred is 6 deep), never built from page input
+L4Factoidal_GpuKernel_P_*  # (c) GPU kernel conditions (GpuKernel/Expr.lean): constant ASTs, as E above
+L4Factoidal_GpuKernel_lastWrite  # (s) GpuKernel/Race.lean: the meaning of a write list for applyWrites_apply and the race theorems; the executed path is applyWrites (List.foldl)
+L4Factoidal_GpuKernel_Resident_fit  # (a) PENDING https://github.com/danbri/factoidal-core/issues/398 one frame's resident entries; to become an accumulator form proved equal before the host calls it
+L4Factoidal_GpuKernel_Resident_total  # (a) PENDING https://github.com/danbri/factoidal-core/issues/398 List.sum (foldr) over one frame's entries, as fit above
