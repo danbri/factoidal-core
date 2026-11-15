@@ -131,6 +131,12 @@ PLIST
 set -eu
 LOG="\$HOME/Library/Logs/$name"
 mkdir -p "\$LOG"
+# Keep the trace bounded: at launch, a trace over 64 MiB becomes trace.1.jsonl
+# (replacing the previous one), so traces of old runs never pile up.
+# Floods within one run are summarised by the log gate (docs/web/hub/foafnaut/log-gate.mjs).
+if [ -f "\$LOG/trace.jsonl" ] && [ "\$(wc -c <"\$LOG/trace.jsonl")" -gt 67108864 ]; then
+  mv -f "\$LOG/trace.jsonl" "\$LOG/trace.1.jsonl"
+fi
 cd "\$(dirname "\$0")/../../.."
 FACTOIDAL_APP_NAME='$name' exec $command "\$@" >>"\$LOG/trace.jsonl" 2>&1
 LAUNCHER
