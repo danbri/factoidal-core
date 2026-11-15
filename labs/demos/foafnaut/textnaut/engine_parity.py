@@ -97,7 +97,8 @@ def loaded(name):
     """The top bar names the engine and does not say loading."""
     bar = re.compile(rb"(loading )?" + name.encode() + rb" engine")
     def pred(out):
-        found = bar.findall(out)
+        # The bar may colour each pair of letters (a gradient): read it without escapes.
+        found = bar.findall(re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b"", out))
         return bool(found) and found[-1] == b""
     return pred
 
@@ -128,7 +129,7 @@ def interactive(args, engine, start_page):
             times = []
             for _ in range(3):
                 t0 = time.perf_counter(); s.send(key)
-                ok = s.until(lambda o: b"loading " in o, 30) is not None and s.until(loaded(engine), 120) is not None
+                ok = s.until(lambda o: b"loading " in re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b"", o), 30) is not None and s.until(loaded(engine), 120) is not None
                 times.append((time.perf_counter() - t0) * 1000 if ok else float("nan"))
                 s.quiet(100)
                 if key == b"1\r": s.send(b"b"); s.until(loaded(engine), 120); s.quiet(100)
