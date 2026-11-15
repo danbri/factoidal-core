@@ -30,12 +30,9 @@
 name: Check F* purity (rule #11)
 
 on:
-  push:
-    branches:
-      - '**'
-  pull_request:
-    branches:
-      - '**'
+  # Manual only since 2026-11-15: the project is Lean first and no F* build, check or
+  # test runs automatically. The F* sources stay; run this by hand when F* is worked on.
+  workflow_dispatch: {}
 
 permissions:
   contents: read
