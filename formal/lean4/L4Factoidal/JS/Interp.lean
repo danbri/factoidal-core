@@ -1611,6 +1611,15 @@ the iterator's `return`, and the run went on with a different result. -/
 /-- Compiled functions may nest this deep (they do not use the host's stack). -/
 def vmMaxDepth : Nat := 20000
 
+/-- Count one event under `key ()` when the heap counts (`HeapOf.vmStats`); nothing else
+otherwise, and the key is not made. -/
+@[inline] def vmCount (key : Unit → String) : M Unit :=
+  modify fun h => match h.vmStats with
+    | none => h
+    | some m =>
+      let k := key ()
+      { h with vmStats := some (m.insert k (m.getD k 0 + 1)) }
+
 @[inline] def vmStash (regs : Array Value) (fregs : FloatArray) (top : Nat) : M Unit :=
   modify fun h => { h with vmRegs := regs, vmF := fregs, vmTop := top }
 
@@ -2166,6 +2175,11 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
     if h.depth ≥ h.maxDepth then throwErr .range "Maximum call stack size exceeded"
     let saved := h.depth
     set { h with depth := h.depth + 1 }
+    vmCount fun _ =>
+      if h.useVm && fd.info.code.isSome then "vm: register code, called from the evaluator" else
+      match fd.body with
+      | [.compiled c _ _] => if h.useVm && c.region && h.vmRegions then "vm: region code" else "tree: " ++ fd.info.why.get
+      | _ => "tree: " ++ fd.info.why.get
     -- The depth comes back on every exit, a throw included (a throw that a caller catches
     -- must not use up the call depth).
     -- the environment: the arguments are its first slots when the parameters are plain
@@ -3393,10 +3407,13 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
       let v ← evalClass n ctx c name
       declare ctx.env name { v }
       pure .normal
-    | .compiled c s =>
+    | .compiled c s subs =>
       if (← get).useVm then
-        let _ ← vmEnter n c ctx.env ctx.thisV ctx.thisV #[]
-        pure .normal
+        if c.region then
+          if (← get).vmRegions then vmRegion n c ctx subs else evalStmt n ctx labels s
+        else
+          let _ ← vmEnter n c ctx.env ctx.thisV ctx.thisV #[]
+          pure .normal
       else evalStmt n ctx labels s
     | .block ss => evalBlock n ctx ss
     -- Tier 1: equal to `block ss` when `ss` declares nothing lexical (`evalBlock`, `enterBlock`)
@@ -6042,37 +6059,37 @@ def vmGetIndex : Nat → Value → Value → M Value
 termination_by structural n _ _ => n
 
 /-- Run a compiled function: registers `bp` up. -/
-def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Value → FloatArray → M Value
-  | 0, _, _, _, _, _, regs, fregs => do vmStash regs fregs 0; throw (.halt "fuel")
-  | n + 1, code, pc, bp, env, fr, regs, fregs => do
+def vmLoop : Nat → Ctx → Array Stmt → Code → Nat → Nat → Nat → List VFrame → Array Value → FloatArray → M Value
+  | 0, _, _, _, _, _, _, _, regs, fregs => do vmStash regs fregs 0; throw (.halt "fuel")
+  | n + 1, cx, subs, code, pc, bp, env, fr, regs, fregs => do
     match code.instrs[pc]! with
     | .move dst src =>
       match regs[bp + src]! with
-      | .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + src)))
-      | v => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) v) fregs
-    | .loadF dst x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-    | .loadV dst v => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) v) fregs
-    | .setHole r => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + r) .hole) fregs
+      | .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + src)))
+      | v => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) v) fregs
+    | .loadF dst x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+    | .loadV dst v => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) v) fregs
+    | .setHole r => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + r) .hole) fregs
     | .checkInit r x =>
       match regs[bp + r]! with
       | .hole =>
         vmStash regs fregs (bp + code.nregs)
         throwErr .reference s!"Cannot access '{x}' before initialization"
-      | _ => vmLoop n code (pc + 1) bp env fr regs fregs
+      | _ => vmLoop n cx subs code (pc + 1) bp env fr regs fregs
     | .add dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
-      | .fl, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) + fregs.get! (bp + b)))
+      | .fl, .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) + fregs.get! (bp + b)))
       -- `s += t` on strings (`dst` = `a`): the register lets go of the string before the
       -- append, so the append is in place when nothing else holds the string, and a loop of
       -- appends is linear (as `dropSlotStr` in the evaluator)
       | .str x, .str y =>
         checkStrLen (x.utf8ByteSize + y.utf8ByteSize)
         let regs := if dst == a then regs.set! (bp + a) .undef else regs
-        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.str (Str.jsAppend x y))) fregs
+        vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.str (Str.jsAppend x y))) fregs
       | .str x, .fl =>
         let y := numToString (fregs.get! (bp + b))
         let regs := if dst == a then regs.set! (bp + a) .undef else regs
-        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.str (Str.jsAppend x y))) fregs
+        vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.str (Str.jsAppend x y))) fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
@@ -6080,11 +6097,11 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← binop n .add x y
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .sub dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
-      | .fl, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) - fregs.get! (bp + b)))
+      | .fl, .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) - fregs.get! (bp + b)))
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
@@ -6092,11 +6109,11 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← binop n .sub x y
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .mul dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
-      | .fl, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) * fregs.get! (bp + b)))
+      | .fl, .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) * fregs.get! (bp + b)))
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
@@ -6104,11 +6121,11 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← binop n .mul x y
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .div dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
-      | .fl, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) / fregs.get! (bp + b)))
+      | .fl, .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) / fregs.get! (bp + b)))
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
@@ -6116,13 +6133,13 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← binop n .div x y
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .lt dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) < fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
-        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+        if fregs.get! (bp + a) < fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
@@ -6130,13 +6147,13 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← binop n .lt x y
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .gt dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) > fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
-        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+        if fregs.get! (bp + a) > fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
@@ -6144,13 +6161,13 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← binop n .gt x y
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .le dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) ≤ fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
-        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+        if fregs.get! (bp + a) ≤ fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
@@ -6158,13 +6175,13 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← binop n .le x y
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .ge dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) ≥ fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
-        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+        if fregs.get! (bp + a) ≥ fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
@@ -6172,101 +6189,101 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← binop n .ge x y
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .addK dst a k =>
       match regs[bp + a]! with
-      | .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) + k))
+      | .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) + k))
       | _ =>
         let x := vmRd regs fregs (bp + a)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .add x (.num k)
         let (regs, fregs) ← vmTake
         match v with
-        | .num r => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) r)
-        | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+        | .num r => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) r)
+        | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .subK dst a k =>
       match regs[bp + a]! with
-      | .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) - k))
+      | .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) - k))
       | _ =>
         let x := vmRd regs fregs (bp + a)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .sub x (.num k)
         let (regs, fregs) ← vmTake
         match v with
-        | .num r => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) r)
-        | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+        | .num r => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) r)
+        | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .mulK dst a k =>
       match regs[bp + a]! with
-      | .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) * k))
+      | .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) * k))
       | _ =>
         let x := vmRd regs fregs (bp + a)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .mul x (.num k)
         let (regs, fregs) ← vmTake
         match v with
-        | .num r => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) r)
-        | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+        | .num r => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) r)
+        | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .jnltK a k t =>
       match regs[bp + a]! with
       | .fl =>
-        if fregs.get! (bp + a) < k then vmLoop n code (pc + 1) bp env fr regs fregs
-        else vmLoop n code t bp env fr regs fregs
+        if fregs.get! (bp + a) < k then vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+        else vmLoop n cx subs code t bp env fr regs fregs
       | _ =>
         let x := vmRd regs fregs (bp + a)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .lt x (.num k)
         let (regs, fregs) ← vmTake
-        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+        if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .jngtK a k t =>
       match regs[bp + a]! with
       | .fl =>
-        if fregs.get! (bp + a) > k then vmLoop n code (pc + 1) bp env fr regs fregs
-        else vmLoop n code t bp env fr regs fregs
+        if fregs.get! (bp + a) > k then vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+        else vmLoop n cx subs code t bp env fr regs fregs
       | _ =>
         let x := vmRd regs fregs (bp + a)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .gt x (.num k)
         let (regs, fregs) ← vmTake
-        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+        if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .jnleK a k t =>
       match regs[bp + a]! with
       | .fl =>
-        if fregs.get! (bp + a) ≤ k then vmLoop n code (pc + 1) bp env fr regs fregs
-        else vmLoop n code t bp env fr regs fregs
+        if fregs.get! (bp + a) ≤ k then vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+        else vmLoop n cx subs code t bp env fr regs fregs
       | _ =>
         let x := vmRd regs fregs (bp + a)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .le x (.num k)
         let (regs, fregs) ← vmTake
-        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+        if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .jngeK a k t =>
       match regs[bp + a]! with
       | .fl =>
-        if fregs.get! (bp + a) ≥ k then vmLoop n code (pc + 1) bp env fr regs fregs
-        else vmLoop n code t bp env fr regs fregs
+        if fregs.get! (bp + a) ≥ k then vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+        else vmLoop n cx subs code t bp env fr regs fregs
       | _ =>
         let x := vmRd regs fregs (bp + a)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .ge x (.num k)
         let (regs, fregs) ← vmTake
-        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+        if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .seq dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) == fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
-        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+        if fregs.get! (bp + a) == fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
       | _, _ =>
         let r := strictEq (vmRd regs fregs (bp + a)) (vmRd regs fregs (bp + b))
-        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (if r then .bool true else .bool false)) fregs
+        vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (if r then .bool true else .bool false)) fregs
     | .sne dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) == fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
-        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        if fregs.get! (bp + a) == fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+        else vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
       | _, _ =>
         let r := strictEq (vmRd regs fregs (bp + a)) (vmRd regs fregs (bp + b))
-        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (if r then .bool false else .bool true)) fregs
+        vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (if r then .bool false else .bool true)) fregs
     | .binop op dst a b =>
       let x := vmRd regs fregs (bp + a)
       let y := vmRd regs fregs (bp + b)
@@ -6274,14 +6291,14 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       let v ← binop n op x y
       let (regs, fregs) ← vmTake
       match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .inc nw old src up =>
       match regs[bp + src]! with
       | .fl =>
         let x := fregs.get! (bp + src)
         let d := if up then x + 1 else x - 1
-        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + old) .fl |>.set! (bp + nw) .fl) (fregs.set! (bp + old) x |>.set! (bp + nw) d)
+        vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + old) .fl |>.set! (bp + nw) .fl) (fregs.set! (bp + old) x |>.set! (bp + nw) d)
       | _ =>
         let v := vmRd regs fregs (bp + src)
         vmStash regs fregs (bp + code.nregs)
@@ -6293,115 +6310,115 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let (regs, fregs) ← vmTake
         let regs := regs.set! (bp + old) o
         match (nv) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + nw) .fl) (fregs.set! (bp + nw) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + nw) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + nw) .fl) (fregs.set! (bp + nw) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + nw) wv) fregs
     | .unop op dst a =>
       match op, regs[bp + a]! with
-      | .neg, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (-(fregs.get! (bp + a))))
-      | .plus, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a)))
+      | .neg, .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (-(fregs.get! (bp + a))))
+      | .plus, .fl => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a)))
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         vmStash regs fregs (bp + code.nregs)
         let v ← vmUnary n op x
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .not dst a =>
       match regs[bp + a]! with
       | .fl =>
         let x := fregs.get! (bp + a)
-        if x == 0 || x.isNaN then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
-        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
-      | v => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (if toBool v then .bool false else .bool true)) fregs
-    | .jmp t => vmLoop n code t bp env fr regs fregs
+        if x == 0 || x.isNaN then vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+      | v => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (if toBool v then .bool false else .bool true)) fregs
+    | .jmp t => vmLoop n cx subs code t bp env fr regs fregs
     | .jf a t =>
       match regs[bp + a]! with
       | .fl =>
         let x := fregs.get! (bp + a)
-        if x == 0 || x.isNaN then vmLoop n code t bp env fr regs fregs else vmLoop n code (pc + 1) bp env fr regs fregs
-      | v => if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+        if x == 0 || x.isNaN then vmLoop n cx subs code t bp env fr regs fregs else vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+      | v => if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .jt a t =>
       match regs[bp + a]! with
       | .fl =>
         let x := fregs.get! (bp + a)
-        if x == 0 || x.isNaN then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
-      | v => if toBool v then vmLoop n code t bp env fr regs fregs else vmLoop n code (pc + 1) bp env fr regs fregs
+        if x == 0 || x.isNaN then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
+      | v => if toBool v then vmLoop n cx subs code t bp env fr regs fregs else vmLoop n cx subs code (pc + 1) bp env fr regs fregs
     | .jnull a t =>
       match regs[bp + a]! with
-      | .undef | .null => vmLoop n code t bp env fr regs fregs
-      | _ => vmLoop n code (pc + 1) bp env fr regs fregs
+      | .undef | .null => vmLoop n cx subs code t bp env fr regs fregs
+      | _ => vmLoop n cx subs code (pc + 1) bp env fr regs fregs
     | .jnotnull a t =>
       match regs[bp + a]! with
-      | .undef | .null => vmLoop n code (pc + 1) bp env fr regs fregs
-      | _ => vmLoop n code t bp env fr regs fregs
+      | .undef | .null => vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+      | _ => vmLoop n cx subs code t bp env fr regs fregs
     | .jnlt a b t =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) < fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr regs fregs
-        else vmLoop n code t bp env fr regs fregs
+        if fregs.get! (bp + a) < fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+        else vmLoop n cx subs code t bp env fr regs fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .lt x y
         let (regs, fregs) ← vmTake
-        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+        if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .jngt a b t =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) > fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr regs fregs
-        else vmLoop n code t bp env fr regs fregs
+        if fregs.get! (bp + a) > fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+        else vmLoop n cx subs code t bp env fr regs fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .gt x y
         let (regs, fregs) ← vmTake
-        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+        if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .jnle a b t =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) ≤ fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr regs fregs
-        else vmLoop n code t bp env fr regs fregs
+        if fregs.get! (bp + a) ≤ fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+        else vmLoop n cx subs code t bp env fr regs fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .le x y
         let (regs, fregs) ← vmTake
-        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+        if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .jnge a b t =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl =>
-        if fregs.get! (bp + a) ≥ fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr regs fregs
-        else vmLoop n code t bp env fr regs fregs
+        if fregs.get! (bp + a) ≥ fregs.get! (bp + b) then vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+        else vmLoop n cx subs code t bp env fr regs fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
         vmStash regs fregs (bp + code.nregs)
         let v ← binop n .ge x y
         let (regs, fregs) ← vmTake
-        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+        if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .tick =>
       tick
-      vmLoop n code (pc + 1) bp env fr regs fregs
+      vmLoop n cx subs code (pc + 1) bp env fr regs fregs
     | .getGlobal dst x site =>
       let h ← get
       match vmGlobalHit h env x site with
-      | .num xf => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) xf)
+      | .num xf => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) xf)
       | .hole =>
         vmStash regs fregs (bp + code.nregs)
         let v ← vmGlobalMiss n env x site code.strict
         let (regs, fregs) ← vmTake
         match v with
-        | .num xf => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) xf)
-        | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
-      | v => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) v) fregs
+        | .num xf => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) xf)
+        | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+      | v => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) v) fregs
     | .setGlobal src x site =>
       let v := vmRd regs fregs (bp + src)
       if ← vmGlobalSet env x site v then
-        vmLoop n code (pc + 1) bp env fr regs fregs
+        vmLoop n cx subs code (pc + 1) bp env fr regs fregs
       else
         vmStash regs fregs (bp + code.nregs)
         assignName n { env, thisV := .undef, strict := code.strict } x v
@@ -6411,7 +6428,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
           | some slot => set { h with globalCache := h.globalCache.setIfInBounds site slot }
           | none => pure ()
         let (regs, fregs) ← vmTake
-        vmLoop n code (pc + 1) bp env fr regs fregs
+        vmLoop n cx subs code (pc + 1) bp env fr regs fregs
     | .typeofGlobal dst x =>
       vmStash regs fregs (bp + code.nregs)
       let h ← get
@@ -6422,8 +6439,8 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         else pure (.str (← typeOf (← lookup n { env, thisV := .undef, strict := code.strict } x)))
       let (regs, fregs) ← vmTake
       match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .getUp dst hops idx x =>
       let h ← get
       let e := h.envUp hops env
@@ -6436,31 +6453,31 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
             vmStash regs fregs (bp + code.nregs)
             throwErr .reference s!"Cannot access '{x}' before initialization"
           | _ => match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
         else
           vmStash regs fregs (bp + code.nregs)
           let v ← lookup n { env, thisV := .undef, strict := code.strict } x
           let (regs, fregs) ← vmTake
           match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
       | _, _ =>
         vmStash regs fregs (bp + code.nregs)
         let v ← lookup n { env, thisV := .undef, strict := code.strict } x
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .setUp src hops idx x =>
       let v := vmRd regs fregs (bp + src)
       if ← vmSetUp env hops idx x v then
-        vmLoop n code (pc + 1) bp env fr regs fregs
+        vmLoop n cx subs code (pc + 1) bp env fr regs fregs
       else
         vmStash regs fregs (bp + code.nregs)
         assignName n { env, thisV := .undef, strict := code.strict } x v
         let (regs, fregs) ← vmTake
-        vmLoop n code (pc + 1) bp env fr regs fregs
+        vmLoop n cx subs code (pc + 1) bp env fr regs fregs
     | .getMember dst o k =>
       let b := vmRd regs fregs (bp + o)
       match (← get).fastGetV b k with
@@ -6469,18 +6486,18 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← getV n b k
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
       | v => match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .setMember o k src =>
       let b := vmRd regs fregs (bp + o)
       let v := vmRd regs fregs (bp + src)
       vmStash regs fregs (bp + code.nregs)
       putV n b k v code.strict
       let (regs, fregs) ← vmTake
-      vmLoop n code (pc + 1) bp env fr regs fregs
+      vmLoop n cx subs code (pc + 1) bp env fr regs fregs
     | .getIndex dst o i =>
       let b := vmRd regs fregs (bp + o)
       match b, regs[bp + i]! with
@@ -6490,30 +6507,30 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         | .array es =>
           if x ≥ 0 && x < Float.ofNat es.size && x.floor == x && !(es.getD x.toUInt64.toNat .undef).isHole then
             match ((es.getD x.toUInt64.toNat .undef)) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
           else
             vmStash regs fregs (bp + code.nregs)
             let v ← getV n b (keyOfNum x)
             let (regs, fregs) ← vmTake
             match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
         | _ =>
           vmStash regs fregs (bp + code.nregs)
           let v ← getV n b (keyOfNum x)
           let (regs, fregs) ← vmTake
           match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
       | _, _ =>
         let kv := vmRd regs fregs (bp + i)
         vmStash regs fregs (bp + code.nregs)
         let v ← vmGetIndex n b kv
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .setIndex o i src =>
       let b := vmRd regs fregs (bp + o)
       let kv := vmRd regs fregs (bp + i)
@@ -6530,7 +6547,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let key ← toKey n kv
         putV n b key v code.strict
       let (regs, fregs) ← vmTake
-      vmLoop n code (pc + 1) bp env fr regs fregs
+      vmLoop n cx subs code (pc + 1) bp env fr regs fregs
     | .call dst f thisR base k what =>
       let fv := vmRd regs fregs (bp + f)
       let thisV := if thisR == noReg then Value.undef else vmRd regs fregs (bp + thisR)
@@ -6549,6 +6566,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         | none => none
       match callee with
       | some (c, cenv, capThis) =>
+        vmCount fun _ => "vm: register code, called from the machine"
         tickCall
         let depth := (match fr with | f0 :: _ => f0.depth + 1 | [] => 1)
         if depth > vmMaxDepth then
@@ -6569,7 +6587,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
           | some r => regs.set! (bp' + r) thisC
           | none => regs
         let frame : VFrame := { code, pc := pc + 1, bp, env, dst, depth }
-        vmLoop n c 0 bp' cenv (frame :: fr) regs fregs
+        vmLoop n cx subs c 0 bp' cenv (frame :: fr) regs fregs
       | none =>
         let args := vmArgs regs fregs (bp + base) k (Array.emptyWithCapacity k)
         vmStash regs fregs (bp + code.nregs)
@@ -6577,8 +6595,8 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         let v ← callV n fv thisV args
         let (regs, fregs) ← vmTake
         match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .new dst f base k what =>
       let fv := vmRd regs fregs (bp + f)
       let args := vmArgs regs fregs (bp + base) k (Array.emptyWithCapacity k)
@@ -6587,8 +6605,8 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       let v ← construct n fv args fv
       let (regs, fregs) ← vmTake
       match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
     | .ret a =>
       let v := if a == noReg then Value.undef else vmRd regs fregs (bp + a)
       match fr with
@@ -6597,25 +6615,121 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         pure v
       | f0 :: rest =>
         match v with
-        | .num x => vmLoop n f0.code f0.pc f0.bp f0.env rest (regs.set! (f0.bp + f0.dst) .fl) (fregs.set! (f0.bp + f0.dst) x)
-        | _ => vmLoop n f0.code f0.pc f0.bp f0.env rest (regs.set! (f0.bp + f0.dst) v) fregs
+        | .num x => vmLoop n cx subs f0.code f0.pc f0.bp f0.env rest (regs.set! (f0.bp + f0.dst) .fl) (fregs.set! (f0.bp + f0.dst) x)
+        | _ => vmLoop n cx subs f0.code f0.pc f0.bp f0.env rest (regs.set! (f0.bp + f0.dst) v) fregs
     | .arr dst base k =>
       let es := vmArgs regs fregs (bp + base) k (Array.emptyWithCapacity k)
       let a ← newArray es
-      vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) a) fregs
+      vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) a) fregs
     | .obj dst =>
       let id ← newObject
-      vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.obj id)) fregs
+      vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) (.obj id)) fregs
     | .defProp o k src =>
       let v := vmRd regs fregs (bp + src)
       match regs[bp + o]! with
-      | .obj id => defineOwn id k (.data v true true true); vmLoop n code (pc + 1) bp env fr regs fregs
-      | _ => vmLoop n code (pc + 1) bp env fr regs fregs
+      | .obj id => defineOwn id k (.data v true true true); vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+      | _ => vmLoop n cx subs code (pc + 1) bp env fr regs fregs
     | .throw a =>
       let v := vmRd regs fregs (bp + a)
       vmStash regs fregs (bp + code.nregs)
       throw (.throw v)
-termination_by structural n _ _ _ _ _ _ _ => n
+    -- Region code (`Code.region`): the environment `env` is the evaluator's running one, and
+    -- each of these instructions calls the evaluator's own function for what it stands for.
+    -- Every instruction that can throw or run script code first puts the registers back in
+    -- the heap (`vmStash`), as above.
+    | .evalE dst k =>
+      vmStash regs fregs (bp + code.nregs)
+      let e := match subs[k]! with
+        | .expr e => e
+        | _ => Expr.null
+      let v ← evalExpr n { cx with env } e
+      let (regs, fregs) ← vmTake
+      match v with
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .evalS k dst brk cont ret =>
+      vmStash regs fregs (bp + code.nregs)
+      let c ← evalStmt n { cx with env } [] subs[k]!
+      let (regs, fregs) ← vmTake
+      match c with
+      | .normal => vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+      | .ret v => vmLoop n cx subs code ret bp env fr (regs.set! (bp + dst) v) fregs
+      | .brk none =>
+        if brk == noReg then vmStash regs fregs (bp + code.nregs); throw (.halt "region: break")
+        else vmLoop n cx subs code brk bp env fr regs fregs
+      | .cont none =>
+        if cont == noReg then vmStash regs fregs (bp + code.nregs); throw (.halt "region: continue")
+        else vmLoop n cx subs code cont bp env fr regs fregs
+      | _ => vmStash regs fregs (bp + code.nregs); throw (.halt "region: a labelled completion")
+    | .enterBlk k =>
+      let ss := match subs[k]! with
+        | .block ss => ss
+        | _ => []
+      vmStash regs fregs (bp + code.nregs)
+      let c' ← enterBlock n { cx with env } ss
+      let (regs, fregs) ← vmTake
+      vmLoop n cx subs code (pc + 1) bp c'.env fr regs fregs
+    | .popEnv rel =>
+      let p := ((← get).envs.getD env default).parent
+      if rel then releaseEnv env
+      vmLoop n cx subs code (pc + 1) bp p fr regs fregs
+    | .newEnv =>
+      let e ← newEnv env
+      vmLoop n cx subs code (pc + 1) bp e fr regs fregs
+    | .declHole x m =>
+      declare env x { v := .undef, mutable := m, init := false }
+      vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+    | .bindId src x mode =>
+      let v := vmRd regs fregs (bp + src)
+      vmStash regs fregs (bp + code.nregs)
+      bindPat n { cx with env } (.id x) v
+        (match mode with | 0 => .var | 1 => .declare env true | _ => .declare env false)
+      let (regs, fregs) ← vmTake
+      vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+    | .copyEnv names =>
+      vmStash regs fregs (bp + code.nregs)
+      let c' ← copyEnv n { cx with env } names
+      let (regs, fregs) ← vmTake
+      vmLoop n cx subs code (pc + 1) bp c'.env fr regs fregs
+    | .addUp dst old rv hops idx x =>
+      -- the evaluator's `.assign (some .add) (.local ..)` after its first read
+      let o := vmRd regs fregs (bp + old)
+      let r := vmRd regs fregs (bp + rv)
+      -- the register lets go of the old value: a string the slot alone holds is appended to
+      -- in place
+      let regs := regs.set! (bp + old) .undef
+      vmStash regs fregs (bp + code.nregs)
+      let cx' := { cx with env }
+      let v ← match o, r with
+        | .num p, .num q => pure (.num (p + q))
+        | .str p, .str q => checkStrLen (p.utf8ByteSize + q.utf8ByteSize); dropSlotStr cx' hops idx p; pure (.str (Str.jsAppend p q))
+        | .str p, .num q => dropSlotStr cx' hops idx p; pure (.str (Str.jsAppend p (numToString q)))
+        | _, _ => binop n .add o r
+      assignLocal n cx' x hops idx v
+      let (regs, fregs) ← vmTake
+      match v with
+          | .num x => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .prepIndex o i =>
+      match vmRd regs fregs (bp + o), regs[bp + i]! with
+      | .undef, _ =>
+        vmStash regs fregs (bp + code.nregs)
+        throwErr .type "Cannot read properties of undefined"
+      | .null, _ =>
+        vmStash regs fregs (bp + code.nregs)
+        throwErr .type "Cannot read properties of null"
+      | _, .obj _ =>
+        -- `toKey` of an object key, up to the part that can run script code
+        let kv := vmRd regs fregs (bp + i)
+        vmStash regs fregs (bp + code.nregs)
+        let p ← toPrim n kv "string"
+        let (regs, fregs) ← vmTake
+        vmLoop n cx subs code (pc + 1) bp env fr (regs.set! (bp + i) p) fregs
+      | _, _ => vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+    | .endR =>
+      vmStash regs fregs bp
+      pure .hole
+termination_by structural n _ _ _ _ _ _ _ _ _ => n
 
 /-- Enter a compiled function from the evaluator. -/
 def vmEnter : Nat → Code → Nat → Value → Value → Array Value → M Value
@@ -6639,7 +6753,7 @@ def vmEnter : Nat → Code → Nat → Value → Value → Array Value → M Val
       | some r => regs.set! (base + r) thisC
       | none => regs
     tryCatch (do
-        let v ← vmLoop n c 0 base env [] regs fregs
+        let v ← vmLoop n { env, thisV := .undef, strict := c.strict } #[] c 0 base env [] regs fregs
         modify fun h => { h with vmTop := base }
         pure v)
       fun e => do
@@ -6647,6 +6761,28 @@ def vmEnter : Nat → Code → Nat → Value → Value → Array Value → M Val
         throw e
 termination_by structural n _ _ _ _ _ => n
 
+
+/-- Run region code (`Code.region`, a function body) on the register machine in the
+evaluator's context `ctx`: the completion the evaluator would give for the body. -/
+def vmRegion : Nat → Code → Ctx → Array Stmt → M Compl
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, c, ctx, subs => do
+    let base := (← get).vmTop
+    let (regs, fregs) ← vmTake
+    let need := base + c.nregs + 1
+    let regs := vmGrowRegs regs need
+    let fregs := vmGrowF fregs need
+    let regs := regs.set! base ctx.thisV
+    tryCatch (do
+        let v ← vmLoop n ctx subs c 0 base ctx.env [] regs fregs
+        modify fun h => { h with vmTop := base }
+        match v with
+        | .hole => pure .normal
+        | v => pure (.ret v))
+      fun e => do
+        modify fun h => { h with vmTop := base }
+        throw e
+termination_by structural n _ _ _ => n
 
 def genericPush : Nat → Value → Array Value → M Value
   | 0, _, _ => throw (.halt "fuel")

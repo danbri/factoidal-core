@@ -56,6 +56,8 @@ structure Loop where
   /-- Instruction indices of `break` and `continue` jumps to patch. -/
   breaks : Array Nat := #[]
   conts : Array Nat := #[]
+  /-- Region code: the environments pushed when the loop's body starts (`CS.envs`). -/
+  envDepth : Nat := 0
 
 structure CS where
   code : Array Instr := #[]
@@ -65,10 +67,53 @@ structure CS where
   maxReg : Nat := 0
   loops : List Loop := []
   thisReg : Option Nat := none
+  /-- Region code (`compileRegion`): variables are read and written in their environments,
+  registers hold temporaries only, and what the compiler does not handle runs in the
+  evaluator (`evalE`, `evalS`). Off: the register code of `compile`. -/
+  slots : Bool := false
+  /-- Region code: the statements that `evalE`, `evalS` and `enterBlk` name. -/
+  subs : Array Stmt := #[]
+  /-- Region code: the environments the code has pushed and not yet left, innermost first;
+  `true` for a block whose environment is released when it ends (`Stmt.blockF`). -/
+  envs : List Bool := []
 
-abbrev C := StateT CS (Except Unit)
+/-- Compilation answers why it did not compile (`whyNot`, `BUBBLEPOP_VMSTATS`). -/
+abbrev C := StateT CS (Except String)
 
-def fail {α} : C α := throw ()
+def fail {α} (why : String := "limit") : C α := throw why
+
+/-- A short name of an expression's kind, for the reasons of `whyNot`. -/
+def exprTag : Expr → String
+  | .func _ => "function expression" | .classE _ => "class" | .template .. => "template"
+  | .tagged .. => "tagged template" | .regex .. => "regexp literal" | .chain _ => "optional chain"
+  | .spread _ => "spread" | .assignPat .. => "destructuring assignment" | .logAssign .. => "logical assignment"
+  | .superCall _ | .superMember _ | .superIndex _ => "super" | .newTarget => "new.target"
+  | .yieldE .. => "yield" | .bigint _ => "bigint" | .unary .delete _ => "delete"
+  | .call .. => "call form" | .assign .. => "assignment form" | .update .. => "update form"
+  | .object _ => "object literal form" | .array _ => "array form" | _ => "expression"
+
+/-- A short name of a statement's kind, for the reasons of `whyNot`. -/
+def stmtTag : Stmt → String
+  | .tryS .. => "try" | .switchS .. => "switch" | .forIn .. => "for-in" | .forOf .. => "for-of"
+  | .classDecl .. => "class" | .funDecl .. => "nested function declaration" | .labeled .. => "label"
+  | .withS .. => "with" | .brk (some _) | .cont (some _) => "labelled break/continue"
+  | .decl .. => "declaration form" | .forS .. => "for form" | _ => "statement"
+
+/-- An expression the evaluator can run on its own in the running context: not a part of a
+larger form whose meaning depends on it (`...e`, the links of `?.`, `yield`, the hole). -/
+def standalone : Expr → Bool
+  | .spread _ | .optBase _ | .optCallee _ | .yieldE .. | .ident "" => false
+  | _ => true
+
+/-- An initialiser that takes the name of its binding (NamedEvaluation, `evalNamed`). -/
+def namedInit : Expr → Bool
+  | .func f => f.name.isNone
+  | .classE (.mk none ..) => true
+  | _ => false
+
+/-- A statement for the evaluator; its number in `subs`. -/
+def addSub (st : Stmt) : C Nat :=
+  modifyGet fun s => (s.subs.size, { s with subs := s.subs.push st })
 
 def emit (i : Instr) : C Nat := modifyGet fun s => (s.code.size, { s with code := s.code.push i })
 
@@ -155,19 +200,19 @@ def targetOf (e : Expr) : C (String × Target) := do
     | some sc =>
       match sc.get? x with
       | some v =>
-        if !v.mutable then fail
+        if !v.mutable then fail "assignment to a constant"
         if !v.ready then discard <| emit (.checkInit v.reg x)
         pure (x, .reg v.reg)
-      | none => fail
+      | none => fail "assignment target"
     | none => pure (x, .up (h - s.scopes.length) i)
   | .ident x =>
     match findVar x (← get).scopes with
     | some (_, v) =>
-      if !v.mutable then fail
+      if !v.mutable then fail "assignment to a constant"
       if !v.ready then discard <| emit (.checkInit v.reg x)
       pure (x, .reg v.reg)
     | none => pure (x, .global)
-  | _ => fail
+  | _ => fail "assignment target"
 
 /-- The register of a name that is a mutable, initialised local variable of the code being
 compiled; nothing is emitted. -/
@@ -210,14 +255,65 @@ def calleeName : Expr → String
   | .member _ k => k
   | _ => "expression"
 
+/-- Region code: the environments pushed since depth `d` (`CS.envs`) are left, innermost
+first, as the evaluator leaves them when a `break` or `continue` ends their blocks. -/
+def popsTo (d : Nat) : C Unit := do
+  let es := (← get).envs
+  for rel in es.take (es.length - d) do discard <| emit (.popEnv rel)
+
+/-- Region code, before a `return`: the evaluator releases the environment of every
+`Stmt.blockF` that the return ends (in order, innermost first); the walk stops at the
+outermost such block. -/
+def popsForReturn : C Unit := do
+  let es := (← get).envs
+  let keep := (es.reverse.dropWhile (· == false)).reverse
+  for rel in keep do discard <| emit (.popEnv rel)
+
+/-- Region code: the statement `st` runs in the evaluator (`evalS`). Its completion: a
+`break` or `continue` with no label leaves the blocks up to the innermost loop and jumps as
+the loop's own would; a `return` releases what the evaluator releases and returns. -/
+def fallbackS (st : Stmt) : C Unit := do
+  let k ← addSub st
+  let base := (← get).next
+  let dst ← fresh
+  let at_ ← emit (.evalS k dst noReg noReg noReg)
+  let jnext ← emit (.jmp 0)
+  let (brk, cont) ← match (← get).loops with
+    | l :: ls =>
+      let b ← here
+      popsTo l.envDepth
+      let jb ← emit (.jmp 0)
+      let c ← here
+      popsTo l.envDepth
+      let jc ← emit (.jmp 0)
+      modify fun s => { s with loops := { l with breaks := l.breaks.push jb, conts := l.conts.push jc } :: ls }
+      pure (b, c)
+    | [] => pure (noReg, noReg)
+  let ret ← here
+  popsForReturn
+  discard <| emit (.ret dst)
+  patch jnext (← here)
+  modify fun s => { s with code := s.code.set! at_ (.evalS k dst brk cont ret) }
+  release base
+
 mutual
-/-- Compile `e`; its value ends up in `dst`. -/
+/-- Compile `e`; its value ends up in `dst`. In region code, an expression the compiler does
+not handle runs in the evaluator (`evalE`), where it can run on its own (`standalone`). -/
 def cE : Nat → Expr → Nat → C Unit
+  | 0, _, _ => fail
+  | n + 1, e, dst => do
+    if !(← get).slots then cE0 n e dst else
+    tryCatch (cE0 n e dst) fun why => do
+      if !standalone e then throw why
+      let k ← addSub (.expr e)
+      discard <| emit (.evalE dst k)
+
+def cE0 : Nat → Expr → Nat → C Unit
   | 0, _, _ => fail
   | n + 1, e, dst => do
     match e with
     -- `#x in o`: the left operand is not an expression (`privIn`); the evaluator runs it
-    | .binary .inOp (.member (.ident "") _) _ => fail
+    | .binary .inOp (.member (.ident "") _) _ => fail "private in"
     | .lit (.num x) => discard <| emit (.loadF dst x)
     | .lit v => discard <| emit (.loadV dst v)
     | .num x => discard <| emit (.loadF dst x)
@@ -248,7 +344,7 @@ def cE : Nat → Expr → Nat → C Unit
         | some r => pure r
         | none => do
           -- a register for `this`, below every temporary: reserved at entry (`compile`)
-          fail
+          fail "this"
       if r != dst then discard <| emit (.move dst r)
     | .binary op a b =>
       let base := (← get).next
@@ -292,7 +388,7 @@ def cE : Nat → Expr → Nat → C Unit
       patch jend (← here)
     | .unary op a =>
       match op, a with
-      | .delete, _ => fail
+      | .delete, _ => fail "delete"
       | .typeof, .ident x =>
         match findVar x (← get).scopes with
         | some (_, v) =>
@@ -316,6 +412,11 @@ def cE : Nat → Expr → Nat → C Unit
       release base
       cE n b dst
     | .assign none t v =>
+      -- the evaluator names an anonymous function assigned to a name (NamedEvaluation)
+      if (← get).slots then
+        match t, v with
+        | .local .., .func _ | .ident _, .func _ => fail "named function value"
+        | _, _ => pure ()
       match t with
       | .local x h i =>
         match (← get).scopes[h]? with
@@ -327,20 +428,20 @@ def cE : Nat → Expr → Nat → C Unit
               let r ← fresh
               cE n v r
               release base
-              fail  -- assignment to a constant: the evaluator reports it
+              fail "assignment to a constant"  -- the evaluator reports it
             if !vr.ready then discard <| emit (.checkInit vr.reg x)
             -- a named value needs the evaluator's NamedEvaluation only for functions, and
             -- this function has no closures
             cE n v dst
             if vr.reg != dst then discard <| emit (.move vr.reg dst)
-          | none => fail
+          | none => fail "assignment target"
         | none =>
           cE n v dst
           discard <| emit (.setUp dst (h - (← get).scopes.length) i x)
       | .ident x =>
         match findVar x (← get).scopes with
         | some (_, vr) =>
-          if !vr.mutable then fail
+          if !vr.mutable then fail "assignment to a constant"
           if !vr.ready then discard <| emit (.checkInit vr.reg x)
           cE n v dst
           if vr.reg != dst then discard <| emit (.move vr.reg dst)
@@ -357,12 +458,22 @@ def cE : Nat → Expr → Nat → C Unit
         let base := (← get).next
         let ro ← operand n o (writes n k || writes n v)
         let rk ← operand n k (writes n v)
+        if (← get).slots then discard <| emit (.prepIndex ro rk)
         cE n v dst
         discard <| emit (.setIndex ro rk dst)
         release base
-      | _ => fail
+      | _ => fail "assignment target"
     | .assign (some op) t v =>
       let base := (← get).next
+      -- region code: `x += v` on a resolved name, as the evaluator's arm for it (the old value
+      -- first; the slot lets go of a string before the append)
+      if let (.local x h i, true, .add) := (t, (← get).slots, op) then
+        let old ← fresh
+        discard <| emit (.getUp old h i x)
+        let rv ← operand n v false
+        discard <| emit (.addUp dst old rv h i x)
+        release base
+        return
       match t with
       | .member o k =>
         let ro ← operand n o (writes n v)
@@ -372,6 +483,8 @@ def cE : Nat → Expr → Nat → C Unit
         discard <| emit (opInstr op dst old rv)
         discard <| emit (.setMember ro k dst)
       | .index o k =>
+        -- the key would be converted twice (`getIndex`, `setIndex`): the evaluator runs it
+        if (← get).slots then fail "compound assignment to an element"
         let ro ← operand n o (writes n k || writes n v)
         let rk ← operand n k (writes n v)
         let old ← fresh
@@ -425,7 +538,8 @@ def cE : Nat → Expr → Nat → C Unit
           let rk ← operand n k false
           discard <| emit (.getIndex f thisR rk)
           pure true
-        | .ident "eval" => fail
+        | .ident "eval" => fail "direct eval"
+        | .superMember _ | .optCallee _ => fail "call form"
         | c =>
           cE n c f
           pure false
@@ -465,7 +579,7 @@ def cE : Nat → Expr → Nat → C Unit
       cProps n ps o
       discard <| emit (.move dst o)
       release base
-    | _ => fail
+    | _ => fail (exprTag e)
 
 /-- A register holding the value of `e`: a local variable's own register when `copy` is false
 and it needs no check, otherwise a temporary. -/
@@ -496,7 +610,7 @@ def cArgs : Nat → List Expr → C Nat
     let mut k := 0
     for e in es do
       match e with
-      | .spread _ | .ident "" => fail
+      | .spread _ | .ident "" => fail "spread or hole"
       | _ => pure ()
       let t ← fresh
       cE n e t
@@ -509,15 +623,15 @@ def cProps : Nat → List PropDef → Nat → C Unit
     for p in ps do
       match p with
       | .init (.lit k) v =>
-        if k == "__proto__" then fail
+        if k == "__proto__" then fail "object literal form"
         match v with
-        | .func _ | .classE _ => fail
+        | .func _ | .classE _ => fail "object literal form"
         | _ => pure ()
         let base := (← get).next
         let r ← operand n v false
         discard <| emit (.defProp o k r)
         release base
-      | _ => fail
+      | _ => fail "object literal form"
 
 /-- The false-exit jumps of a condition (patched by the caller). -/
 def cCond : Nat → Expr → C (List Nat)
@@ -567,12 +681,36 @@ def cCond : Nat → Expr → C (List Nat)
 def cDecls : Nat → DeclKind → List Decl → C Unit
   | 0, _, _ => fail
   | n + 1, k, ds => do
+    if (← get).slots then
+      -- region code: `evalDecls`, one name at a time: the initialiser, then `bindPat` of the
+      -- name (`var`: an assignment; `let`, `const`: a binding of the running environment)
+      for d in ds do
+        match d with
+        | .mk (.id x) i =>
+          let mode := match k with | .var => 0 | .letK => 1 | .constK => 2
+          match k, i with
+          | .var, none => pure ()
+          | _, some e =>
+            if namedInit e then fail "named function value"
+            let base := (← get).next
+            let t ← fresh
+            cE n e t
+            discard <| emit (.bindId t x mode)
+            release base
+          | _, none =>
+            let base := (← get).next
+            let t ← fresh
+            discard <| emit (.loadV t .undef)
+            discard <| emit (.bindId t x mode)
+            release base
+        | _ => fail "destructuring declaration"
+      return
     for d in ds do
       match d with
       | .mk p i =>
       let x ← match p with
         | .id x => pure x
-        | _ => fail
+        | _ => fail "destructuring declaration"
       match k with
       | .var =>
         match i with
@@ -597,7 +735,7 @@ def cDecls : Nat → DeclKind → List Decl → C Unit
             release base
           | none => discard <| emit (.loadV v.reg .undef)
           markReady x h
-        | none => fail
+        | none => fail "declaration"
 
 /-- The block frame of `ss`, if the evaluator makes one: registers for its names, marked not
 initialised, and a hole written at entry. -/
@@ -625,18 +763,42 @@ def cSs : Nat → List Stmt → C Unit
   | 0, _ => fail
   | n + 1, ss => do for st in ss do cS n st
 
-def cBlock : Nat → List Stmt → C Unit
-  | 0, _ => fail
-  | n + 1, ss => do
+/-- A block; `rel`: a `Stmt.blockF`, whose environment the evaluator releases when it ends. -/
+def cBlock : Nat → List Stmt → Bool → C Unit
+  | 0, _, _ => fail
+  | n + 1, ss, rel => do
+    if (← get).slots then
+      -- region code: the evaluator's `enterBlock` makes the environment (and the block's
+      -- functions); it is left at the end, and on a `break`, `continue` or `return` (`popsTo`)
+      if ss.any Stmt.isLexical then
+        let k ← addSub (.block ss)
+        discard <| emit (.enterBlk k)
+        modify fun s => { s with envs := rel :: s.envs }
+        cSs n ss
+        modify fun s => { s with envs := s.envs.drop 1 }
+        discard <| emit (.popEnv rel)
+      else cSs n ss
+      return
     let saved := (← get).next
     let pushed ← pushBlock ss
     cSs n ss
     popBlock pushed saved
 
+/-- Compile a statement. In region code, a statement the compiler does not handle runs in
+the evaluator (`fallbackS`). -/
 def cS : Nat → Stmt → C Unit
+  | 0, _ => fail
+  | n + 1, st => do
+    if !(← get).slots then cS0 n st else
+    tryCatch (cS0 n st) fun _ => fallbackS st
+
+def cS0 : Nat → Stmt → C Unit
   | 0, _ => fail
   | n + 1, s => do
     match s with
+    | .funDecl .. =>
+      -- made when its block is entered (`enterBlock`); the statement itself does nothing
+      if !(← get).slots then fail "nested function declaration"
     | .expr e =>
       let base := (← get).next
       -- `s += v` on a local variable: the sum goes to the variable's own register (`cE`)
@@ -650,10 +812,13 @@ def cS : Nat → Stmt → C Unit
         cE n e t
       release base
     | .decl k ds => cDecls n k ds
-    | .ret none => discard <| emit (.ret noReg)
+    | .ret none =>
+      popsForReturn
+      discard <| emit (.ret noReg)
     | .ret (some e) =>
       let base := (← get).next
       let t ← operand n e false
+      popsForReturn
       discard <| emit (.ret t)
       release base
     | .ifS c t f =>
@@ -689,8 +854,9 @@ def cS : Nat → Stmt → C Unit
     | .forS init test update body =>
       let saved := (← get).next
       let scopes := (← get).scopes
-      -- a `let`/`const` loop scope: one frame (the resolver made the loop `letOnce`, or the
-      -- function has no closure and a copy could not be observed)
+      let slots := (← get).slots
+      let mut perIter : List String := []
+      let mut pushed := false
       match init with
       | some (.decl .var ds) => cDecls n .var ds
       | some (.expr e) =>
@@ -698,58 +864,89 @@ def cS : Nat → Stmt → C Unit
         cE n e t
         release t
       | some (.decl k ds) | some (.letOnce ds) =>
-        let k := match s with
-          | .forS (some (.decl k' _)) _ _ _ => k'
-          | _ => DeclKind.letK
-        let mut sc : Scope := {}
-        for x in addNames #[] (ds.flatMap Decl.names) do
-          let r ← fresh
-          discard <| emit (.setHole r)
-          sc := sc.insert x { reg := r, mutable := k != .constK, ready := false }
-        modify fun st => { st with scopes := sc :: scopes }
-        cDecls n .letK ds
+        let (k, once) := match init with
+          | some (.decl k' _) => (k', false)
+          | _ => (DeclKind.letK, true)
+        if slots then
+          -- region code: the loop's environment as the evaluator makes it (`evalStmt`,
+          -- `.forS`), and a copy for each iteration of a `let` loop (`copyEnv`)
+          discard <| emit .newEnv
+          for d in ds do
+            for x in d.names do discard <| emit (.declHole x (k == .letK))
+          modify fun st => { st with envs := false :: st.envs }
+          pushed := true
+          cDecls n k ds
+          if !once && k == .letK then perIter := ds.flatMap Decl.names
+        else
+          -- a `let`/`const` loop scope: one frame (the resolver made the loop `letOnce`, or the
+          -- function has no closure and a copy could not be observed)
+          let mut sc : Scope := {}
+          for x in addNames #[] (ds.flatMap Decl.names) do
+            let r ← fresh
+            discard <| emit (.setHole r)
+            sc := sc.insert x { reg := r, mutable := k != .constK, ready := false }
+          modify fun st => { st with scopes := sc :: scopes }
+          cDecls n .letK ds
       | none => pure ()
+      -- the order of `forLoop`: each iteration ticks, copies the environment, runs the update
+      -- (not on the first), then the test and the body
+      discard <| emit .tick
+      if !perIter.isEmpty then discard <| emit (.copyEnv perIter)
+      let j0 ← emit (.jmp 0)
       let top ← here
       discard <| emit .tick
-      let jf ← match test with
-        | some t => cCond n t
-        | none => pure []
-      cLoopBody n body
-      let updateAt ← here
-      patchConts updateAt
+      if !perIter.isEmpty then discard <| emit (.copyEnv perIter)
       match update with
       | some u =>
         let t ← fresh
         cE n u t
         release t
       | none => pure ()
+      patch j0 (← here)
+      let jf ← match test with
+        | some t => cCond n t
+        | none => pure []
+      cLoopBody n body
+      patchConts top
       discard <| emit (.jmp top)
       for j in jf do patch j (← here)
       finishLoop none
+      if pushed then
+        modify fun st => { st with envs := st.envs.drop 1 }
+        discard <| emit (.popEnv false)
       modify fun st => { st with scopes := scopes, next := saved }
-    | .block ss | .blockF ss => cBlock n ss
+    | .block ss => cBlock n ss false
+    | .blockF ss => cBlock n ss true
     | .throwS e =>
       let base := (← get).next
       let t ← operand n e false
       discard <| emit (.throw t)
       release base
     | .brk none =>
-      let j ← emit (.jmp 0)
       match (← get).loops with
-      | l :: ls => modify fun s => { s with loops := { l with breaks := l.breaks.push j } :: ls }
-      | [] => fail
+      | l :: _ =>
+        popsTo l.envDepth
+        let j ← emit (.jmp 0)
+        modify fun s => match s.loops with
+          | l :: ls => { s with loops := { l with breaks := l.breaks.push j } :: ls }
+          | [] => s
+      | [] => fail "break outside a loop"
     | .cont none =>
-      let j ← emit (.jmp 0)
       match (← get).loops with
-      | l :: ls => modify fun s => { s with loops := { l with conts := l.conts.push j } :: ls }
-      | [] => fail
+      | l :: _ =>
+        popsTo l.envDepth
+        let j ← emit (.jmp 0)
+        modify fun s => match s.loops with
+          | l :: ls => { s with loops := { l with conts := l.conts.push j } :: ls }
+          | [] => s
+      | [] => fail "continue outside a loop"
     | .empty => pure ()
-    | _ => fail
+    | _ => fail (stmtTag s)
 
 def cLoopBody : Nat → Stmt → C Unit
   | 0, _ => fail
   | n + 1, b => do
-    modify fun s => { s with loops := {} :: s.loops }
+    modify fun s => { s with loops := { envDepth := s.envs.length } :: s.loops }
     cS n b
 
 /-- `continue` jumps of the innermost loop go to `t`. -/
@@ -774,15 +971,10 @@ end
 of statements or arguments do not use it up. -/
 def fuel : Nat := 500
 
-/-- Code for a function, or `none` when it is not compilable (`FunInfo` is already filled).
-Parameters take the first registers (the arguments of a call are already there), then the
-`var`s, then `this`, then the block scopes and temporaries. -/
-def compile (f : FunDef) : Option Code :=
+/-- The register code of a function's body, whatever the function is (the walk that
+`compile` makes; `whyNot` reports where it stops). -/
+def compileBody (f : FunDef) : Except String CS :=
   let info := f.info
-  if !(info.plain && info.frameLocal) || f.gen || f.async || f.usesArgs then none else
-  match f.kind with
-  | .ctor true => none
-  | _ =>
   let scope : Scope :=
     (info.layout.zipIdx).foldl (fun m (x, i) => m.insert x { reg := i }) {}
   let st0 : CS := { scopes := [scope], next := info.layout.size + 1, maxReg := info.layout.size + 1,
@@ -793,12 +985,63 @@ def compile (f : FunDef) : Option Code :=
     cSs fuel f.body
     popBlock pushed saved
     discard <| emit (.ret noReg)
-  match run.run st0 with
-  | .ok (_, s) =>
+  (run.run st0).map (·.2)
+
+/-- Why `compile` does not take a function: the first condition on the function it fails,
+and where the walk of its body stops. Empty when it takes it. -/
+def whyNot (f : FunDef) : String :=
+  let info := f.info
+  let gate :=
+    if f.gen || f.async then "generator or async"
+    else if !info.frameLocal then "a closure can hold its environment"
+    else if !info.plain then "parameters not plain"
+    else if f.usesArgs then "arguments"
+    else if f.kind == .ctor true then "derived constructor"
+    else ""
+  let body := match compileBody f with
+    | .ok _ => ""
+    | .error w => w
+  if gate.isEmpty then body else if body.isEmpty then gate else gate ++ " + " ++ body
+
+/-- Code for a function, or `none` when it is not compilable (`FunInfo` is already filled).
+Parameters take the first registers (the arguments of a call are already there), then the
+`var`s, then `this`, then the block scopes and temporaries. -/
+def compile (f : FunDef) : Option Code :=
+  let info := f.info
+  if !(info.plain && info.frameLocal) || f.gen || f.async || f.usesArgs then none else
+  match f.kind with
+  | .ctor true => none
+  | _ =>
+  match compileBody f with
+  | .ok s =>
     some { instrs := s.code, nregs := s.maxReg + 1, nparams := info.nParams,
            nvars := info.layout.size + 1,
            thisReg := some info.layout.size, strict := f.strict, isArrow := f.arrow,
            name := f.name.getD "" }
+  | .error _ => none
+
+/-- Region code for a function's body (`Code.region`): its variables stay in the
+environments the evaluator makes (so closures, `arguments` and parameters of any form work as
+in the evaluator, which binds them before the body), registers hold temporaries, register 0
+holds `this`, and what the compiler does not handle runs in the evaluator. The statements
+that the code names (`subs`) go with it in `Stmt.compiled`. Not for generators and async
+functions, which run on their own machine. -/
+def compileRegion (f : FunDef) : Option (Code × Array Stmt) :=
+  if f.gen || f.async then none else
+  let st0 : CS := { slots := true, scopes := [], next := 1, maxReg := 1, thisReg := some 0 }
+  let run : C Unit := do
+    -- the body's own block (`evalBody`, `enterBlock`)
+    if f.body.any Stmt.isLexical then
+      let k ← addSub (.block f.body)
+      discard <| emit (.enterBlk k)
+      modify fun s => { s with envs := [false] }
+    cSs fuel f.body
+    discard <| emit .endR
+  match run.run st0 with
+  | .ok (_, st) =>
+    some ({ instrs := st.code, nregs := st.maxReg + 1, nparams := 0, nvars := 1,
+            thisReg := some 0, strict := f.strict, isArrow := f.arrow,
+            name := f.name.getD "", region := true }, st.subs)
   | .error _ => none
 
 /-- Code for a top-level loop of a script: no parameters, its block and loop scopes are its

@@ -10,6 +10,7 @@ import L4Factoidal.JS.Date
 import L4Factoidal.JS.Theorems
 import L4Factoidal.JS.Tier1
 import L4Factoidal.JS.Tier1Proofs
+import L4Factoidal.JS.RegionProofs
 import L4Factoidal.JS.EnvIndexTheorems
 import L4Factoidal.JS.Tests
 import L4Factoidal.JS.RegressionTests

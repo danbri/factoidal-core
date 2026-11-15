@@ -164,11 +164,22 @@ def timeIt (name src : String) : IO Unit := do
 def main (args : List String) : IO UInt32 := do
   -- `BUBBLEPOP_VM=off`: the register machine is off for the run (the heap's `useVm`)
   let vm := (← IO.getEnv "BUBBLEPOP_VM") != some "off"
-  let fresh : Heap := { freshHeap with useVm := vm }
+  let regions := (← IO.getEnv "BUBBLEPOP_VM") != some "noregion"
+  let fresh : Heap := { freshHeap with useVm := vm, vmRegions := regions }
   match args with
   | ["run", file] =>
-    let (o, h) := runScript fresh (← IO.FS.readFile file)
+    -- `BUBBLEPOP_VM=noregion`: function bodies the register code does not take run in the
+    -- evaluator; `BUBBLEPOP_VMSTATS=1`: counts of calls by how they ran, on stderr
+    let stats := (← IO.getEnv "BUBBLEPOP_VMSTATS") == some "1"
+    let h0 : Heap := { fresh with vmStats := if stats then some {} else none }
+    let (o, h) := runScript h0 (← IO.FS.readFile file)
     let out := h.out
+    if let some m := h.vmStats then
+      let tot := m.fold (fun a _ v => a + v) 0
+      IO.eprintln s!"vmstats: {tot} calls"
+      -- unsorted (`sort -k2 -n -r` sorts them)
+      for (k, v) in m.toArray do
+        IO.eprintln s!"vmstats: {v} {k}"
     for l in out do IO.println l
     match o with
     | .ok => pure 0

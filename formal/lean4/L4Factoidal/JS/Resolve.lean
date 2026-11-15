@@ -222,9 +222,18 @@ def rFun : Nat → Frames → Bool → FunDef → R FunDef
       let fd : FunDef := .mk name params' rest' body' vars usesArgs strict kind gen async info
       let code := if inner.dynamic then none else Compile.compile fd
       if code.isSome then modify fun s => { s with compiled := s.compiled + 1 }
-      let info := { info with code }
+      let why : Thunk String := if code.isSome then Thunk.pure "" else if inner.dynamic then Thunk.pure "direct eval or with"
+        else Thunk.mk fun _ => Compile.whyNot fd
+      let info := { info with code, why }
+      -- region code for a function the register code does not take (`Compile.compileRegion`):
+      -- the body becomes one `Stmt.compiled` statement that stands for the body as a block
+      -- (`evalBody` and `evalBlock` make the same environment for it)
+      let region := if code.isSome || inner.dynamic then none else Compile.compileRegion fd
       -- tier 1 (`JS/Tier1.lean`), after the register machine's compiler saw the plain tree
       let body' := if gen || async then body' else Tier1.stmts body'
+      let body' := match region with
+        | some (c, subs) => [Stmt.compiled c (.block body') subs]
+        | none => body'
       pure (.mk name params' rest' body' vars usesArgs strict kind gen async info)
 
 def rParams : Nat → Frames → List PatElem → R (List PatElem)
@@ -388,7 +397,7 @@ def script (s : Script) : Script :=
     match b with
     | .forS .. | .whileS .. | .doWhile .. =>
       match Compile.compileLoop b s.strict with
-      | some c => Stmt.compiled c b
+      | some c => Stmt.compiled c b #[]
       | none => b
     | _ => b
   let body := body.map fun b =>
