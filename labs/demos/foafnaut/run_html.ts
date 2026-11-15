@@ -16,7 +16,7 @@ import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.
 import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
-import {fetchedAnswer,scriptFailure,scrollLimitOf} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+import {fetchedAnswer,scriptFailure,scrollLimitOf,inputFirst,scrollFirst,turnSliceSteps} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
@@ -487,6 +487,15 @@ async function main() {
   // A turn of a page's script session: its logs, and a new frame only when the DOM changed
   // (no DOM change, no layout; the commands are part of the layout key).
   let scriptBusy=false;
+  // The last scroll, key or press (a STAMPED event) and since when a due timer turn waits for input.
+  let inputAt=-Infinity,timerHeldSince:number|undefined;
+  // Scroll first (page-load.mjs scrollFirst): while the user scrolls, a change of the page by its
+  // scripts or by a late resource waits (pageChanged) and the bands the scroll needs are made from
+  // the page as it is on screen (its kept layout), as a browser's compositor scrolls what it has;
+  // the change is drawn when the scroll pauses, or after SCROLL_HOLD_MAX_MS.
+  let scrollAt=-Infinity,pageChanged:number|undefined;
+  const scrollHolds=(now:number)=>scrollFirst({now,scrollAt,changedAt:pageChanged});
+  const pageChangedNow=()=>{if(scrollHolds(performance.now()))pageChanged??=performance.now();else dirty=true;};
   // A failed action of a page's script session (page-load.mjs scriptFailure, the rule of every
   // host): a session the engine no longer holds ends the page's scripts with one line; a failed
   // timer turn stops its timers; other failures are said once per page and message.
@@ -548,7 +557,7 @@ async function main() {
     if(revision===undefined||revisionShown.get(document)===revision)return;
     const first=!revisionShown.has(document);
     revisionShown.set(document,revision);
-    if(!first||revision>0){dirty=true;tellSession(document);}
+    if(!first||revision>0){pageChangedNow();tellSession(document);}
   };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
@@ -560,9 +569,9 @@ async function main() {
     // with probes, which held up the next turns) while the page animates its canvas.
     if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
     if(page.applyTurn(turn)){
-      if(page===document)dirty=true;
+      if(page===document)pageChangedNow();
       // What elements made or changed by the turn ask for (a sheet, an image): fetched, then drawn.
-      if(turn.changed)page.fetchAdded?.(()=>{if(page===document)dirty=true;tellSession(page);});
+      if(turn.changed)page.fetchAdded?.(()=>{if(page===document)pageChangedNow();tellSession(page);});
     }
     if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
   };
@@ -884,7 +893,16 @@ async function main() {
     if(record.document===document)presented={document:record.document,width:record.width,height:record.height,scroll:at,options:record.request.options};
   };
   const scriptHitRequest=(page:typeof document)=>pointerRequest(page,presented,()=>({width,height,options:requestAt(page,page===document?scroll:0).options}));
-  const stateNow=()=>stateKey(document,requestAt(document,scroll).options,width,height);
+  // The request of the page at scroll `at`: as it is on screen while a change waits for the
+  // scroll to pause (pageChanged), else as it is now.
+  const requestFor=(at:number)=>{
+    if(pageChanged!==undefined&&presented?.document===document&&presented.width===width&&presented.height===height&&layered){
+      const options=presented.options as Record<string,unknown>;
+      return {source:requestAt(document,at).source,options:{...options,shell:{...(options.shell as Record<string,unknown>),scroll:at}}};
+    }
+    return requestAt(document,at);
+  };
+  const stateNow=()=>stateKey(document,requestFor(scroll).options,width,height);
   // The prefetched band can be shown now in place of a Lean frame.
   const swapReady=()=>!!current&&!!prefetched&&canSwap(current.layers.layers,{key:prefetched.key,band:prefetched.layers.layers},stateNow(),scroll);
   // A band that keeps this scroll is ready, or is being made for the same state: wait for it.
@@ -1334,7 +1352,7 @@ async function main() {
       // A new page starts at the top, so its band does too.
       const clock=animationOf(nextDocument);
       if(clock.running)clock.time=Math.round(performance.now()-clock.epoch);
-      const request=requestAt(nextDocument,nextDocument!==document?0:scroll);
+      const request=nextDocument!==document?requestAt(nextDocument,0):requestFor(scroll);
       const sentWidth=width,sentHeight=height;
       // The press this frame includes (`active`, `shell.pressed`), if any.
       const carried=pressed;if(carried)carried.asked=true;
@@ -1386,13 +1404,17 @@ async function main() {
       }
       // Released while Lean made this frame with the press: draw it again without.
       if(carried&&carried!==pressed)dirty=true;
+      // What of the request differs from the frame before (by reference: a field a frame did not
+      // change is the same object), so a trace shows why a frame laid the page out again.
+      const before=lastRequest?.document===nextDocument?lastRequest.request.options:undefined;
+      const why=before?Object.keys({...before,...request.options}).filter(k=>k!=="shell"&&before[k]!==request.options[k]):["page"];
       if(result.presented)lastRequest={request,width:sentWidth,height:sentHeight,document:nextDocument};
       const finished=performance.now();
       const stats=session!.stats;
       trace("native-html-frame",{frame:++frameNumber,width:sentWidth,height:sentHeight,primitives:next.primitiveCount,wgslBytes:next.wgsl.length,dataFloats:next.data.length,
         layoutMs:ms(frameStart,compiled),sessionMs:Math.round(result.prepareMs*10)/10,drawMs:Math.round(result.drawMs*10)/10,totalMs:ms(frameStart,finished),
         resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:result.presented,compiledIn:where,workerMs:workerMs===undefined?null:Math.round(workerMs*10)/10,
-        checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,
+        why,checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,
         ...(nextLayers?{layers:{top:nextLayers.layers.top,bandTop:nextLayers.layers.bandTop,bandHeight:nextLayers.layers.bandHeight,offset:place!.offset,chromeFloats:nextLayers.chrome.data.length}}:{}),...engineFact});
       resizeAt=undefined;
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
@@ -1643,6 +1665,8 @@ async function main() {
       for(const {event,at} of readyInput(batch,firstFrameAt!==undefined)){
         if(!running)break;
         shiftedByEvent=false;eventAt=at;
+        if(STAMPED.has(event.kind))inputAt=Math.max(inputAt,at);
+        if(event.kind===11)scrollAt=Math.max(scrollAt,at);
         handle(event);
         // An event with a visible effect waits until a frame that includes it is presented.
         // A scroll in the band waits only for the composite at its offset.
@@ -1717,7 +1741,7 @@ async function main() {
       if(layered&&worker?.alive&&!prefetching&&motion&&current&&canShift()&&!dirty&&!rendering&&!loading&&!graphBusy()&&worker.pending===0){
         const band=current.layers.layers;
         const target=prefetchTarget(band,scroll,motion,{marginRows:PREFETCH_MARGIN_ROWS,horizonMs:2*FRAME_MS+bandMs,limit:scrollLimit()});
-        const request=target===undefined?undefined:requestAt(document,target);
+        const request=target===undefined?undefined:requestFor(target);
         const key=request?stateKey(document,request.options,width,height):undefined;
         if(target!==undefined&&request&&key&&!(prefetched&&prefetched.target===target&&sameState(prefetched.key,key))){
           const record:RequestRecord={request,width,height,document},sent=performance.now(),from=scroll,client=worker;
@@ -1741,6 +1765,8 @@ async function main() {
         }
       }
       if(animationDue&&!rendering&&performance.now()>=gpuHoldUntil){animationDue=false;dirty=true;}
+      // The scroll paused (or held the change long enough): the page's change is drawn now.
+      if(pageChanged!==undefined&&!scrollHolds(performance.now())){pageChanged=undefined;dirty=true;}
       if(dirty&&canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
@@ -1879,12 +1905,20 @@ async function main() {
       // follows real time since the page's scripts started. Lean decides what runs, at most
       // one animation frame a turn. Frame pacing: no turn while a frame is pending (asked for
       // or being made), so each presented frame has at most one turn before it.
+      // Input first (page-load.mjs inputFirst, the rule of every host): no timer turn while a
+      // scroll, key or press waits for its frame or came in the last few milliseconds, for at
+      // most a while; and each timer turn is a slice of at most turnSliceSteps steps of the
+      // page's scripts (the engine stops between two tasks and the rest is due at once), so
+      // input waits for at most one slice, not for a whole long turn.
       const script=document.script;
-      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&performance.now()>=gpuHoldUntil){
-        const elapsed=performance.now()-(scriptEpochs.get(script.session)??performance.now());
-        if(elapsed>=script.turn.nextWake){
-          const page=document;scriptBusy=true;
-          (scriptCall("scriptSession","",{action:"advance",session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}) as Promise<ScriptTurn>)
+      const now=performance.now();
+      const held=inputFirst({now,inputAt,waiting:shifting!==undefined||shiftPending||awaitingShift.length>0||awaitingBand.length>0,heldSince:timerHeldSince});
+      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil){
+        const elapsed=now-(scriptEpochs.get(script.session)??now);
+        if(elapsed>=script.turn.nextWake&&held)timerHeldSince??=now;
+        else if(elapsed>=script.turn.nextWake){
+          const page=document;scriptBusy=true;timerHeldSince=undefined;
+          (scriptCall("scriptSession","",{action:"advance",session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock)),sliceSteps:turnSliceSteps}) as Promise<ScriptTurn>)
             .then(turn=>scriptTurn(page,turn,"timers"))
             .catch(error=>scriptFailed(page,error,"timers"))
             .finally(()=>{scriptBusy=false;});

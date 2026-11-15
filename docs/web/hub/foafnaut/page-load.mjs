@@ -161,6 +161,39 @@ export function takeTurn(page,turn) {
   return changed||moved;
 }
 
+/** The steps of a page's scripts in one timer turn of a host that takes input between turns
+(WebScripts action `advance` with `sliceSteps`): the engine stops between two tasks past it,
+and the rest is due at once (`nextWake`). About 50 ms of BubblePopJS on the native engine
+(LeanJS.stepsPerMs, 500 steps a millisecond); an engine without slices ignores the field. */
+export const turnSliceSteps=25000;
+
+/** How long a scroll, key or press holds the next timer turn back (ms), and the most a due
+timer turn waits for input (ms): input comes first, timers are never starved. */
+export const INPUT_FIRST_MS=50,TIMER_HOLD_MAX_MS=250;
+
+/** Input first, the rule of every host: whether a due timer turn waits, because input is
+waiting for its frame (`waiting`) or came in the last INPUT_FIRST_MS (`inputAt`), unless the
+turn has already waited TIMER_HOLD_MAX_MS (`heldSince`, undefined when it has not waited). */
+export function inputFirst({now,inputAt,waiting,heldSince}) {
+  if(heldSince!==undefined&&now-heldSince>=TIMER_HOLD_MAX_MS)return false;
+  return waiting||now-inputAt<INPUT_FIRST_MS;
+}
+
+/** How long after the last scroll event a change of the page waits (ms), and the most it
+waits (ms). */
+export const SCROLL_QUIET_MS=150,SCROLL_HOLD_MAX_MS=1000;
+
+/** Scroll first, the rule of every host that scrolls bands of a kept layout: whether a change
+of the page by its scripts or by a late resource (`changedAt`, undefined when none waits yet)
+waits, because the user scrolled in the last SCROLL_QUIET_MS (`scrollAt`). Meanwhile the host
+shows, and makes the bands of, the page as it is on screen, so a scroll never waits for a
+layout of the new page; the change is drawn when the scroll pauses, or after
+SCROLL_HOLD_MAX_MS. */
+export function scrollFirst({now,scrollAt,changedAt}) {
+  if(changedAt!==undefined&&now-changedAt>=SCROLL_HOLD_MAX_MS)return false;
+  return now-scrollAt<SCROLL_QUIET_MS;
+}
+
 /** Whether an engine's error says the page's script session is gone: the engine holds no
 session (`no session`), holds another page's (`not the current session`), or ended this one
 (`session ended`, WebScripts.sealAnswer). Asking that session again can only fail again. */

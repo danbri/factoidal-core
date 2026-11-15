@@ -1224,8 +1224,8 @@ def percentOf (text : String) : Option Float :=
 property table reads it: lengths in px, colours as hex, `display` as the nearest box this
 profile lays out, border styles it does not draw as `solid`. `s` is the style so far (its
 font size is the element's, or the parent's for `font-size` itself). -/
-def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
-  let value := fun (v : String) => some { d with value := v }
+def tableValue (s : Computed) (d : Declaration) : Option String :=
+  let value := fun (v : String) => some v
   let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
   match d.property with
   | "color" | "border-color" => (colorHex d.value).bind fun h => if h == "transparent" then none else value h
@@ -1285,7 +1285,7 @@ def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
     | none => none
   | "border-width" =>
     (tableComputed s.fontSize "border-width" d.value).map fun t =>
-      { d with value := " ".intercalate ((words t).map fun w => (CssValues.lineWidthKeyword w).getD w) }
+      " ".intercalate ((words t).map fun w => (CssValues.lineWidthKeyword w).getD w)
   | "display" =>
     match (CssValues.specified "display" d.value) with
     | none => none
@@ -1317,15 +1317,85 @@ def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
     -- a keyword property: the table's canonical form (lower case)
     (CssValues.specified d.property d.value).bind fun t => if t == d.value then none else value t
 
+/-- The declaration with the value the table gives (`tableValue`): the same property. -/
+def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
+  (tableValue s d).map fun v => { d with value := v }
+
+theorem tableDeclaration_property (s : Computed) (d d' : Declaration) (h : tableDeclaration s d = some d') :
+    d'.property = d.property := by
+  unfold tableDeclaration at h
+  cases hv : tableValue s d with
+  | none => simp [hv] at h
+  | some v => simp only [hv, Option.map_some, Option.some.injEq] at h; rw [← h]
+
+/-- The properties `apply` names in its own arms. -/
+def ownProperties : List String :=
+  ["display","width","height","margin","padding","margin-top","margin-right","margin-bottom","margin-left",
+   "text-align","direction","unicode-bidi","padding-top","padding-right","padding-bottom","padding-left",
+   "color","background","background-color","font-size","line-height","white-space","white-space-collapse",
+   "visibility","overflow","text-decoration","text-decoration-line","border-style",
+   "border-top-width","border-right-width","border-bottom-width","border-left-width",
+   "border-top-style","border-right-style","border-bottom-style","border-left-style",
+   "border-top-color","border-right-color","border-bottom-color","border-left-color",
+   "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
+   "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
+   "font-family"]
+
+/-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
+alignment, position and grid readers take, `content`, and the prefixed names those readers
+map to a standard one (`-webkit-`, `-moz-`, `grid-`). For any other property `apply`
+refuses every value (`apply_other`). -/
+def appliedName (p : String) : Bool :=
+  p.startsWith "-webkit-" || p.startsWith "-moz-" || p.startsWith "grid-" || p == "content" ||
+    ownProperties.contains p || flexProperties.contains p || alignProperties.contains p ||
+    positionProperties.contains p || gridProperties.contains p
+
+/-- Kind: equivalence (the guard of a fast path). Says: `apply` refuses a declaration of a
+property that `appliedName` does not name, whatever its value and the style. -/
+theorem apply_other (s : Computed) (d : Declaration) (h : appliedName d.property = false) :
+    ∃ e, apply s d = .error e := by
+  simp only [appliedName, Bool.or_eq_false_iff] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨hw, hm⟩, hg⟩, hc⟩, hown⟩, hflex⟩, halign⟩, hpos⟩, hgrid⟩ := h
+  unfold apply
+  split
+  all_goals first
+    | (rename_i heq; simp [heq, ownProperties] at hown; done)
+    | (simp [FlexStyle.set, AlignStyle.set, PositionStyle.set, GridStyle.set, hw, hm, hg, hflex, halign, hpos, hgrid,
+          show (d.property == "content") = false from hc])
+
 /-- A value or property this profile can not use leaves the style as it was: after the
 second reading through the property table (`tableDeclaration`). -/
-private def applyOrKeep (s : Computed) (d : Declaration) : Computed :=
+private def applyOrKeepSlow (s : Computed) (d : Declaration) : Computed :=
   match apply s d with
   | .ok r => r
   | .error _ =>
     match tableDeclaration s d with
     | some d' => (apply s d').toOption.getD s
     | none => s
+
+/-- `applyOrKeepSlow` with no reading at all for a property that `apply` never reads
+(`appliedName`): on a documentation page with modern sheets the table's reading of such
+declarations was a fifth of each layout. The same style (`applyOrKeep_eq`). -/
+private def applyOrKeep (s : Computed) (d : Declaration) : Computed :=
+  if appliedName d.property then applyOrKeepSlow s d else s
+
+/-- Kind: equivalence (the fast path changes no style). -/
+private theorem applyOrKeep_eq (s : Computed) (d : Declaration) : applyOrKeep s d = applyOrKeepSlow s d := by
+  unfold applyOrKeep
+  split
+  · rfl
+  · rename_i h
+    have h : appliedName d.property = false := by simpa using h
+    obtain ⟨e, he⟩ := apply_other s d h
+    unfold applyOrKeepSlow
+    rw [he]
+    cases ht : tableDeclaration s d with
+    | none => rfl
+    | some d' =>
+      have hp := tableDeclaration_property s d d' ht
+      obtain ⟨e', he'⟩ := apply_other s d' (by rw [hp]; exact h)
+      simp only [he']
+      rfl
 
 /-! ### CSS-wide keywords (CSS Cascade 4 §7.3) -/
 

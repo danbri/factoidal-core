@@ -752,16 +752,12 @@ about 540 KB, some 55 % of it. Safari's worker stack was not measured (record
 2026-11-08-lean-js-engine.md, section 17). -/
 def callDepth : Nat := if System.Platform.numBits == 32 then 100 else 400
 
-/-- Start a page on the prepared realm (as `Page.start` and `Page.Session.startP`): the
-content event handler attributes, the URL, the classic scripts in document order (each with
-the current script set and a microtask checkpoint after it), the module scripts of `mods`
-(`Session.runModule`), `DOMContentLoaded`, the
-window's `load` event as a task, and the tasks due at time 0. `origins`: a sandboxed
-frame's own session (`HTML.FrameSessions`), with its own origin and its parent's. -/
-def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Page.Limits := {})
+/-- A start before its classic scripts: the session of the page on the prepared realm, its
+arena, the script clock and the network state, the `start` and `url` calls of the page
+objects. -/
+def startBegin (base : Session) (dom : Arena) (url : String) (lim : Page.Limits := {})
     (reads : Reads := {}) (time : ScriptClock := {})
-    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
-    (mods : LeanJSModules.Loaded := {}) : Session := Id.run do
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none) : Session := Id.run do
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage lim.gpuReplay
   let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
   -- the page's own iframes get browsing contexts before its scripts run (as `Page.Session.startP`)
@@ -780,11 +776,20 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, net := { enabled := lim.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url lim.hostCors lim.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader lim.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf lim.csp lim.cspReportOnly lim.cspMeta, violations := lim.cspViolations, syncOk := lim.syncOk, syncAnswers := lim.syncAnswers, mayBlock := lim.mayBlock } } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1
-  for (node, src) in scripts do
-    s := (s.api? "script" #[.num (Float.ofNat node)]).1
-    s := s.eval src
-    s := engine.checkpoint s
-  s := (s.api? "script" #[.num (-1)]).1
+  return s
+
+/-- One classic script of a start: the current script set, the script, a checkpoint. -/
+def startScript (s : Session) (node : Nat) (src : String) : Session :=
+  engine.checkpoint ((((s.api? "script" #[.num (Float.ofNat node)]).1).eval src))
+
+/-- The classic scripts `scripts` of a start, in order. -/
+def startScripts (s : Session) (scripts : List (Nat × String)) : Session :=
+  scripts.foldl (fun s (node, src) => startScript s node src) s
+
+/-- After the classic scripts: the module scripts of `mods`, `DOMContentLoaded`, the window's
+`load` event as a task, and the tasks due at time 0. -/
+def startFinish (s : Session) (mods : LeanJSModules.Loaded := {}) : Session := Id.run do
+  let mut s := (s.api? "script" #[.num (-1)]).1
   -- module scripts, deferred: after the classic scripts, in document order, before
   -- `DOMContentLoaded` (`document.currentScript` is null for them)
   let mut lives : JS.ModLives := #[]
@@ -798,6 +803,98 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   else
     s := engine.setLoop s ((engine.loop s).queueTask .domManipulation 0 (some { type := "load", target := Page.windowId }))
   return (engine.advance s 0).1
+
+/-- Start a page on the prepared realm (as `Page.start` and `Page.Session.startP`): the
+content event handler attributes, the URL, the classic scripts in document order (each with
+the current script set and a microtask checkpoint after it), the module scripts of `mods`
+(`Session.runModule`), `DOMContentLoaded`, the
+window's `load` event as a task, and the tasks due at time 0. `origins`: a sandboxed
+frame's own session (`HTML.FrameSessions`), with its own origin and its parent's. -/
+def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Page.Limits := {})
+    (reads : Reads := {}) (time : ScriptClock := {})
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
+    (mods : LeanJSModules.Loaded := {}) : Session :=
+  startFinish (startScripts (startBegin base dom url lim reads time origins) scripts.toList) mods
+
+/-! ### A start that waits for a sync answer goes on from the script that waited
+
+A classic script that makes a sync request whose answer the host has not given yet sets
+`syncWanted`; the host answers and the start is made again with the answer
+(`Net.Xhr.syncFetch`: the answers are read in order, `syncUsed`). Made again from the
+beginning, every script before that one runs again: on a news page with 130 such answers the
+start ran about thirty times. `startUntil` stops at the first script that waits and keeps
+the session as it was before that script; the start goes on from there (`startFrom`), with
+the answers that came. The scripts before it read only the answers they read before (the
+first answer they did not have would have made them wait), so they would give the same
+session again; that is not proved here. What is proved: going on from a script, through
+the same steps, is the start (`startScripts_split`, `start_eq_from`). -/
+
+/-- The classic scripts from the start of `scripts`, stopping after the first one that waits
+for a sync answer: the session, and the session before that script with the scripts from it
+(none when no script waited). Only for a page that may make sync requests (`mayBlock`): the
+kept session holds the heap as it was, so the next script's first write copies it. -/
+def startUntil (s : Session) : List (Nat × String) → Session × Option (Session × List (Nat × String))
+  | [] => (s, none)
+  | (node, src) :: rest =>
+    let s' := startScript s node src
+    if s'.host.web.net.syncWanted.isSome then (s', some (s, (node, src) :: rest))
+    else startUntil s' rest
+
+/-- Kind: equivalence. Says: the scripts of a start are the scripts before any point and then
+the scripts from it. -/
+theorem startScripts_split (s : Session) (pre post : List (Nat × String)) :
+    startScripts s (pre ++ post) = startScripts (startScripts s pre) post := by
+  simp [startScripts, List.foldl_append]
+
+/-- Kind: equivalence. Says: when `startUntil` runs to the end with no script waiting, it is
+the classic scripts of the start. -/
+theorem startUntil_none (s : Session) :
+    ∀ (scripts : List (Nat × String)) (s' : Session), startUntil s scripts = (s', none) → s' = startScripts s scripts := by
+  intro scripts
+  induction scripts generalizing s with
+  | nil => intro s' h; simp [startUntil] at h; simp [startScripts, h]
+  | cons hd rest ih =>
+    intro s' h
+    obtain ⟨node, src⟩ := hd
+    simp only [startUntil] at h
+    split at h
+    · simp at h
+    · have := ih _ _ h
+      simp only [startScripts, List.foldl_cons] at this ⊢
+      exact this
+
+/-- Kind: equivalence. Says: when `startUntil` stops, the point it keeps is on the way of the
+start: the session it keeps is the scripts before the point, and the scripts it keeps are the
+rest, so going on from it through the same steps is the start. -/
+theorem startUntil_some (s : Session) :
+    ∀ (scripts : List (Nat × String)) (s' k : Session) (rest : List (Nat × String)),
+      startUntil s scripts = (s', some (k, rest)) →
+        ∃ pre, scripts = pre ++ rest ∧ k = startScripts s pre := by
+  intro scripts
+  induction scripts generalizing s with
+  | nil => intro s' k rest h; simp [startUntil] at h
+  | cons hd tl ih =>
+    intro s' k rest h
+    obtain ⟨node, src⟩ := hd
+    simp only [startUntil] at h
+    split at h
+    · simp only [Prod.mk.injEq, Option.some.injEq] at h
+      obtain ⟨-, rfl, rfl⟩ := h
+      exact ⟨[], by simp, by simp [startScripts]⟩
+    · obtain ⟨pre, h1, h2⟩ := ih _ _ _ _ h
+      exact ⟨(node, src) :: pre, by simp [h1], by simp [h2, startScripts, List.foldl_cons]⟩
+
+/-- Kind: equivalence. Says: the start is the start from any point that `startUntil` keeps:
+from the kept session, the kept scripts and the rest of the start. -/
+theorem start_eq_from (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String))
+    (lim : Page.Limits) (reads : Reads) (time : ScriptClock)
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin))
+    (mods : LeanJSModules.Loaded) (s' k : Session) (rest : List (Nat × String))
+    (h : startUntil (startBegin base dom url lim reads time origins) scripts.toList = (s', some (k, rest))) :
+    start base dom url scripts lim reads time origins mods = startFinish (startScripts k rest) mods := by
+  obtain ⟨pre, h1, h2⟩ := startUntil_some _ _ _ _ _ h
+  unfold start
+  rw [h1, startScripts_split, ← h2]
 
 /-- A frame's navigation ends with document `source` (as `Page.Session.loadFrameP`): it
 joins the arena, its classic scripts run in the page's realm with the current script set

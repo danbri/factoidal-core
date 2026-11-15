@@ -1,4 +1,7 @@
 import ImagePNG
+-- the fast `Float.ofNat` (its `csimp` theorems): the per-pixel conversions below read 2^53
+-- from decimal text through GMP without it (5.3 s of an 8.3 s layout of a news page with large photos)
+import L4Factoidal.Prim.FloatOfNat
 
 /- JPEG decoder (ITU T.81), for raster paint. Baseline and extended sequential
    DCT with 8-bit samples, and progressive DCT with Huffman coding. One component

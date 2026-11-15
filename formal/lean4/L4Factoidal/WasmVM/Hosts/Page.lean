@@ -133,6 +133,30 @@ theorem ScriptClock.ms_mark (c : ScriptClock) (h : c.steps - c.markSteps < max 1
     c.ms = c.markClock := by
   simp [ScriptClock.ms, Nat.div_eq_of_lt h]
 
+/-- Kind: cost (a bound on a loop that waits for the clock). Says: `k` milliseconds' worth
+of instructions (`k · instructionsPerMs`) run past any point after the mark move script
+time by exactly `k` ms. So a script that runs until the clock reads a deadline `d` ms
+ahead (a time-sliced loop, `while (performance.now() < end)`) stops within
+`(d + 1) · instructionsPerMs` instructions of its first reading; the rate decides how
+much work that is. Does not say: how long an instruction takes on a machine. -/
+theorem ScriptClock.ms_after (c : ScriptClock) (k : Nat) (h : c.markSteps ≤ c.steps) :
+    ({ c with steps := c.steps + k * max 1 c.instructionsPerMs } : ScriptClock).ms = c.ms + k := by
+  simp only [ScriptClock.ms]
+  have hr : 0 < max 1 c.instructionsPerMs := Nat.lt_of_lt_of_le Nat.one_pos (Nat.le_max_left _ _)
+  rw [show c.steps + k * max 1 c.instructionsPerMs - c.markSteps
+      = (c.steps - c.markSteps) + k * max 1 c.instructionsPerMs by omega,
+    Nat.add_mul_div_right _ _ hr]
+  omega
+
+/-- Kind: cost. Says: a reading after `k · instructionsPerMs` more instructions is at least
+`k` ms past script time before them, whatever the loop's clock and the last reading:
+a clock-waiting loop sees its deadline. -/
+theorem ScriptClock.reading_after (c : ScriptClock) (clock k : Nat) (h : c.markSteps ≤ c.steps) :
+    (c.ms + k) * 1000000 ≤
+      ({ c with steps := c.steps + k * max 1 c.instructionsPerMs } : ScriptClock).reading clock := by
+  rw [ScriptClock.reading, ScriptClock.ms_after c k h]
+  exact Nat.le_trans (Nat.mul_le_mul_right _ (Nat.le_max_right _ _)) (Nat.le_max_right _ _)
+
 /-! ### Pointer input and layout reads -/
 
 /-- A press, a pointer move waiting for its frame, and the event being dispatched. -/
@@ -780,6 +804,17 @@ def Host.measured (h : Host) : Host × Option Answers :=
   | some (v, f) =>
     if v == h.reads.version && (h.anim.idle || h.reads.keptNow == h.anim.now) then (h, some f) else h.measureNow
   | none => h.measureNow
+
+/-- Kind: cost (a forced layout is made once). Says: a layout read when the kept layout is of
+the arena's current version (nothing was written since it was made) and of the current time
+(or no animation runs) makes no layout: the host is as it was (so `reads.layouts` too) and
+the answers are the kept ones. -/
+theorem Host.measured_kept (h : Host) (f : Answers) (hk : h.reads.kept = some (h.reads.version, f))
+    (ht : h.anim.idle = true ∨ h.reads.keptNow = h.anim.now) : h.measured = (h, some f) := by
+  unfold Host.measured
+  rw [hk]
+  rcases ht with ht | ht <;> simp [ht]
+
 
 /-- The event types of CSS Animations 1 §5 and CSS Transitions 1 §6, with the prefixed
 types of Compatibility §3.3. -/
