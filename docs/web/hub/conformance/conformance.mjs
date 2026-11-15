@@ -8,7 +8,7 @@
 
 export const NAMES = {us: 'Foafnaut', chrome: 'Chrome', firefox: 'Firefox', safari: 'Safari', edge: 'Edge', servo: 'Servo', wpewebkit: 'WPE WebKit', ladybird: 'Ladybird'};
 export const STALE_HOURS = 12;
-const T262_EXPLAIN = {'EU bar': '80% EU bar', Goal: '90% goal'};
+const T262_EXPLAIN = {"Apple's bar": "80% Apple's bar", Goal: '90% goal'};
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const fmt = n => n == null ? 'n/a' : Number(n).toLocaleString('en-GB');
@@ -94,13 +94,13 @@ function staleNote(iso, now, what) {
 export function test262HTML(D, H, {now, width}) {
   const T = D.test262, F = T.full, w = T.wpt, marks = T.targets;
   let h = '<section class="suite t262" id="test262" aria-labelledby="t262h"><h2 id="t262h">Test262</h2>' +
-    '<p class="muted">The ECMAScript conformance suite, run on BubblePopJS, the built-in JavaScript engine. The EU browser-engine bar for Test262 is 80%; the project goal is 90%.</p>';
+    '<p class="muted">The ECMAScript conformance suite, run on BubblePopJS, the built-in JavaScript engine. Apple&rsquo;s threshold for alternative browser engines in the EU is 80% of Test262 (Apple&rsquo;s rule, set after the DMA required it to allow other engines); the project goal is 90%.</p>';
   if (F && F.latest) {
     const x = F.latest, nx = marks.find(t => t[1] / 100 > x.share);
     h += '<div class="card hero"><h3>Full Test262</h3>' +
       `<div class="big"><b>${p1(x.share)}</b><span>${fmt(x.passed)} of ${fmt(x.total)} tests passed</span></div>` +
       (x.shareEx != null ? `<div class="big second"><b>${p1(x.shareEx)}</b><span>without the excluded features${x.excludedFeatures && x.excludedFeatures.length ? ' (' + x.excludedFeatures.map(esc).join(', ') + ')' : ''}</span></div>` : '') +
-      bar(x.share, marks, `Full Test262 ${p1(x.share)}; EU bar 80%, goal 90%`) +
+      bar(x.share, marks, `Full Test262 ${p1(x.share)}; Apple's bar 80%, goal 90%`) +
       `<p class="muted">${nx ? fmt(Math.ceil(nx[1] / 100 * x.total - x.passed)) + ' more passing tests reach the ' + T262_EXPLAIN[nx[0]] + '.' : 'Above the 90% goal.'} ` +
       `Run finished ${when(x.finished)}, engine ${commitLink(x.engine)}, ${esc(x.where)}${x.workflow ? `, <a href="${esc(x.workflow)}">workflow run</a>` : ''}.</p>` +
       staleNote(x.finished, now, 'The newest full Test262 run') +
@@ -113,7 +113,7 @@ export function test262HTML(D, H, {now, width}) {
     h += '<h4>Full Test262 over time</h4>' + lineChart({width, series: [
       {label: 'Full Test262', cls: 's1', pts: H.test262.map(r => tPoint(r.finished, r.share, `${p1(r.share)}, ${r.engine}, ${when(r.finished)}`))},
       ...(H.test262.some(r => r.shareEx != null) ? [{label: 'Without excluded features', cls: 's2', pts: H.test262.filter(r => r.shareEx != null).map(r => tPoint(r.finished, r.shareEx, `${p1(r.shareEx)}, ${r.engine}`))}] : [])],
-      targets: marks, title: 'Full Test262 share over time, with the 80% EU bar and the 90% goal'}) + '</div>';
+      targets: marks, title: 'Full Test262 share over time, with the 80% Apple\'s bar and the 90% goal'}) + '</div>';
   } else {
     h += '<div class="card hero empty"><h3>Full Test262</h3><p><b>No full Test262 run recorded yet.</b> When the Test262 workflow records its first valid run, its share, its share without the excluded features, the directories with the most failures and its history appear here. Until then, Test262 through WPT, below, is the Test262 number.</p></div>';
   }
@@ -122,12 +122,12 @@ export function test262HTML(D, H, {now, width}) {
     const rows = [{name: 'Foafnaut', us: true, share}].concat(D.engines.filter(b => w.browsers[b] != null).map(b => ({name: NAMES[b] || b, share: w.browsers[b] / w.u})));
     h += `<div class="card${F ? '' : ' hero'}"><h3>Test262 through WPT</h3>` +
       `<div class="big${F ? ' second' : ''}"><b>${p1(share)}</b><span>${fmt(w.us)} of ${fmt(w.u)} tests in WPT's third_party/test262, in the full WPT run below</span></div>` +
-      bar(share, marks, `Test262 through WPT ${p1(share)}; EU bar 80%, goal 90%`) +
+      bar(share, marks, `Test262 through WPT ${p1(share)}; Apple's bar 80%, goal 90%`) +
       `<p class="muted">${nx ? fmt(Math.ceil(nx[1] / 100 * w.u - w.us)) + ' more passing tests reach the ' + T262_EXPLAIN[nx[0]] + '.' : 'Above the 90% goal.'} Other engines from wpt.fyi at the same WPT commit.</p>` +
       compareRows(rows, marks) + `<div class="cmp">${missingRows(D)}</div>` +
       '<h4>Test262 through WPT over time</h4>' + lineChart({width, series: [{label: 'Test262 through WPT', cls: 's1',
         pts: H.test262wpt.map(r => tPoint(r.finished, r.share, `${p1(r.share)}, ${r.engine}, WPT ${r.wpt}`))}], targets: marks,
-        title: 'Test262 through WPT share over time, with the 80% EU bar and the 90% goal'}) + '</div>';
+        title: 'Test262 through WPT share over time, with the 80% Apple\'s bar and the 90% goal'}) + '</div>';
   }
   return h + '</section>';
 }
@@ -152,7 +152,7 @@ export function wptHTML(D, H, {now, width}) {
     '<h4>WPT over time</h4>' + lineChart({width, series: [
       {label: 'All subtests', cls: 's1', pts: H.wpt.map(r => tPoint(r.finished, r.share, `${p2(r.share)}, ${r.engine}, WPT ${r.wpt}`))},
       {label: 'Without encoding', cls: 's2', pts: H.wpt.map(r => tPoint(r.finished, r.shareEx, `${p2(r.shareEx)}, ${r.engine}`))}],
-      targets: [D.milestones[D.milestones.length - 1]].map(m => ['EU bar', m[1]]), title: 'WPT share over time, all subtests and without encoding'}) + '</div>' +
+      targets: [D.milestones[D.milestones.length - 1]].map(m => ["Apple's bar", m[1]]), title: 'WPT share over time, all subtests and without encoding'}) + '</div>' +
     '<div class="card"><h4>Map of WPT directories</h4>' +
     '<p class="muted">Each rectangle is a WPT directory; its area is the number of Chrome\'s subtests in it, its colour the share the selected engine passes. Tap a rectangle for its numbers.</p>' +
     '<div class="controls"><span class="crumb" id="crumb">All directories</span><button class="btn" id="up" hidden>Back to all directories</button>' +
