@@ -310,6 +310,6 @@ plain ones) is still out of reach, and for a reason the spike makes precise: tie
 the bodies stored in closures in the heap, so the two runs have different heaps, and the walk
 that proves the steps above relies on the two sides being the same term but for fuel (every
 helper call closes by reflexivity). The composition needs a heap relation ("equal but for
-tier-1 rewriting of function bodies") preserved by every helper that reads an object, about
-400 functions outside the block as well as the 116 inside. Fuel monotonicity is the smaller
+tier-1 rewriting of function bodies") preserved by every helper that reads an object: the 206
+definitions of `Interp.lean` outside the block as well as the 116 inside. Fuel monotonicity is the smaller
 first instance of the same induction; it should be finished before this one is started.
