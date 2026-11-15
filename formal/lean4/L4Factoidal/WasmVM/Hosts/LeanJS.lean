@@ -39,6 +39,17 @@ or a loop iteration; 5 M of them take about as long natively as the 4 G instruct
 loops until the budget ends). -/
 def runBudget : Nat := 5000000
 
+/-- The rate of the script clock (`Page.ScriptClock.instructionsPerMs`) for BubblePopJS when
+the host names none: steps for one millisecond of script time. It is about the native
+engine's own rate on everyday pages (440 to 650 steps a millisecond on an Apple M1,
+2026-11-15), so `performance.now()` and `Date.now()` move with the work done. The rate of
+QuickJS in WasmVM (100000 instructions a millisecond) made a step two hundred times too
+short: a time-sliced loop (`while (performance.now() < end)`, as script loaders that work
+in 50 ms slices do) ran 5 M steps, about ten seconds, until `runBudget` halted it. With
+this rate it stops within `(d + 1) · stepsPerMs` steps of a deadline `d` ms ahead
+(`Page.ScriptClock.ms_after`). Tests and the WPT runner name their own rate. -/
+def stepsPerMs : Nat := 500
+
 /-! ## Dedicated workers: what a realm asks of them (`Hosts.LeanJSWorkers`) -/
 
 /-- An ask of a realm's scripts about workers, in the order made. A page creates, posts to

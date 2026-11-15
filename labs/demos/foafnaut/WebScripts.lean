@@ -105,7 +105,8 @@ argument for `start`:
 `start` also takes `width` and `height` (the viewport in CSS pixels: `innerWidth`,
 `innerHeight`), `layout` (the render request whose `layoutFields` lay the page out for
 the layout reads of its scripts, `WebDocument.measure`) and `instructionsPerMs` (the
-rate of the script clock, `Page.ScriptClock`; 100000 by default).
+rate of the script clock, `Page.ScriptClock`; by default 100000 for QuickJS-NG in WasmVM and
+`LeanJS.stepsPerMs` for BubblePopJS).
 
 Every answer but `info` and `close` is a turn: `session`, `clock`, `changed`,
 `commandCount`, `commands` (the whole list, compacted: one write per attribute and per
@@ -1200,7 +1201,8 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       let lim := { lim with syncAnswers := held.syncCache.extract mods.used held.syncCache.size }
       let (vw, vh) := (viewport request).getD (800, 600)
       let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
-      let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
+      -- BubblePopJS steps, not QuickJS instructions: its own rate (`LeanJS.stepsPerMs`)
+      let rate := max 1 ((natField request "instructionsPerMs").getD LeanJS.stepsPerMs)
       let b ← turnBytes
       let wEnt := workerEntropyOf id b
       let (a, ns) ← WebWasm.timed fun _ =>
