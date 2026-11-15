@@ -857,6 +857,15 @@ def newPromise : M Nat := do
 def enqueue (f : Value) (args : Array Value) : M Unit :=
   modify fun h => { h with jobs := h.jobs.push (f, args) }
 
+/-- Append `undefined` to an internal list kept as an array (the values of `Promise.all` and the
+others, §27.2.4.1.2 step 8.e "Append undefined to values"): an own element made directly, so no
+setter of `Array.prototype` runs. -/
+def pushHole (arr : Value) : M Unit := do
+  if let .obj id := arr then
+    modifyObj id fun o => match o.kind with
+      | .array es => { o with kind := .array (es.push .undef) }
+      | _ => o
+
 /-- A function object for a native, without `name` and `length` (internal use). -/
 def nativeFn (id : Native) : M Value := do
   let r ← realm
@@ -5458,7 +5467,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           iterEach n it fun item => do
             let i ← toNum n (← getV n (.obj counter) "i")
             setHidden counter "i" (.num (i + 1))
-            putV n vals (numToString i) .undef true
+            pushHole vals
             let p ← promiseResolve n item
             let elF ← nativeFn .promiseAllElement
             let elArgs : Array Value := #[.obj res, vals, .obj counter, .num i]
@@ -5488,7 +5497,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           iterEach n it fun item => do
             let i ← toNum n (← getV n (.obj counter) "i")
             setHidden counter "i" (.num (i + 1))
-            if k != 0 then putV n vals (numToString i) .undef true
+            if k != 0 then pushHole vals
             let p ← promiseResolve n item
             let (onF, onR) ← if k == 0 then do
                 let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
@@ -9505,7 +9514,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           iterEach n it fun item => do
             let i ← toNum n (← getV n (.obj counter) "i")
             setHidden counter "i" (.num (i + 1))
-            putV n errs (numToString i) .undef true
+            pushHole errs
             let p ← promiseResolve n item
             let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
             let elArgs : Array Value := #[.obj res, errs, .obj counter, .num i]
@@ -9941,6 +9950,12 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | .error (.throw e) => rejectPromise n pid e
       | .error a => throw a
       | .ok (spec, ty) =>
+        if args.size ≥ 3 then
+          -- `import.source(x)`: GetModuleSource of a Source Text Module Record throws a
+          -- SyntaxError... of the module's own; this host gives a JavaScript module no source
+          -- phase object, which the proposal leaves to the host: a TypeError
+          rejectPromise n pid (← mkError .type "import.source(): this module has no source phase representation")
+        else
         match (← get).importQueue with
         | some q => modify fun h => { h with importQueue := some (q.push (Str.toHost spec, ty, pid)) }
         | none => rejectPromise n pid (← mkError .type "import() is not supported in this script")

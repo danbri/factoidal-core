@@ -1382,6 +1382,7 @@ def parsePrimary : Nat → P Expr
         fail "'super' keyword unexpected here"
       | "import" =>
         advance
+        let mut sourcePhase := false
         if ← atP "." then
           advance
           let mt ← peek
@@ -1390,9 +1391,11 @@ def parsePrimary : Nat → P Expr
             modify fun s => { s with usesMeta := true }
             return .ident metaName
           -- `import.source(x)` and `import.defer(x)` (the source phase and deferred import
-          -- proposals): an ImportCall with a phase; read as `import(x)`
+          -- proposals): an ImportCall with a phase; `defer` read as `import(x)`, `source` as an
+          -- import whose promise is rejected (no module here has a source phase object)
           if mt.kind == .ident && (mt.text == "source" || mt.text == "defer") && !mt.escaped &&
               isP (← peekAt 1) "(" then
+            sourcePhase := mt.text == "source"
             advance
           else fail "'import.meta' may only be used in module code"
         if ← atP "(" then
@@ -1405,6 +1408,9 @@ def parsePrimary : Nat → P Expr
               opts := [← parseAssign n false]
               let _ ← eatP ","
           expectP ")"
+          -- the source phase: a third argument the native reads (no source text can pass one:
+          -- an ImportCall has at most two)
+          if sourcePhase then return .call (.ident dynImportName) [spec, opts.headD (.ident "undefined"), .lit (.str "source")]
           return .call (.ident dynImportName) (spec :: opts)
         fail "unexpected 'import'"
       | _ => fail "unexpected keyword"

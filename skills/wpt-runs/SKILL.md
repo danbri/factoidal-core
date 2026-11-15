@@ -264,7 +264,7 @@ suite, every file, by Test262's rules. Workflow `test262.yml` ("Test262") in
   heap, a realm switch at each call of another realm's function); tests that need `agent` or
   `IsHTMLDDA` fail. `import()` is served by the runner after the script's turn (module map per
   test, JSON modules by `with { type: "json" }`); modules with top-level `await` run as async
-  generators. One run's heap is 2^21 objects (`runMaxObjs`), so a runaway test halts before the
+  generators. One run's heap is 2^22 objects (`runMaxObjs`), so a runaway test halts before the
   driver's 3,000 MB kill.
 - **Engine**: core's `bubblepop-test262 test262-files` (`WasmVM/Hosts/Test262Page.lean`), built in
   the workflow from the release's core commit (build.yml's Lake cache, restore only): BubblePopJS on

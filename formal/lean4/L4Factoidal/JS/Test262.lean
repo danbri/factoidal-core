@@ -298,14 +298,15 @@ def serveImports (path : String) (h : HeapOf H) (g : ModGraph) (lives : ModLives
 /-- The step budget of one run of a test. -/
 def runSteps : UInt64 := 20000000
 
-/-- The heap size of one run of a test (`HeapOf.full`): a quarter of the engine's default
+/-- The heap size of one run of a test (`HeapOf.full`): half the engine's default
 (`ColdHeap.maxObjs`, 2^23 objects, 2 to 4 GiB), so a test that makes objects for ever halts
-with the engine's refusal (`heapFullMsg`) at about 1 GiB, under the 3,000 MB at which the
-driver (`release-tests/test262.py`) kills the process and loses the rest of its chunk. -/
-def runMaxObjs : Nat := 2097152
+with the engine's refusal (`heapFullMsg`) at 1 to 2 GiB, under the 3,000 MB at which the
+driver (`release-tests/test262.py`) kills the process and loses the rest of its chunk. (A
+quarter was too small for the `staging/sm/Date/dst-offset-caching-*` tests.) -/
+def runMaxObjs : Nat := 4194304
 
-/-- Kind: a bound. Says: the heap of one test run is a quarter of the engine's default size. -/
-theorem runMaxObjs_quarter : runMaxObjs * 4 = 8388608 ∧ runMaxObjs < 8388608 := by decide
+/-- Kind: a bound. Says: the heap of one test run is half the engine's default size. -/
+theorem runMaxObjs_half : runMaxObjs * 2 = 8388608 ∧ runMaxObjs < 8388608 := by decide
 
 #guard (({} : ColdHeap Unit).maxObjs) == 8388608
 
