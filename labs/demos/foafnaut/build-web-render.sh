@@ -173,7 +173,8 @@ if [ "$MODE" = --native ]; then
   done
   LEANLIB="$TOOLCHAIN/lib/lean"
   # Native macOS builds link Lean's runtime without GNU MP (issue 393): see
-  # build-leanrt-no-gmp.sh. Linux still links through leanc with GMP (not yet changed).
+  # build-leanrt-no-gmp.sh. The Linux library does too (below); the Linux web-render-native
+  # program still links through leanc with GMP (not yet changed).
   if [ "$(uname -s)" = Darwin ]; then
     LEANRT=$("$LAB/build-leanrt-no-gmp.sh" "$TOOLCHAIN" "$LAB/.build/leanrt-no-gmp" | tail -1)
     "${CC:-cc}" -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}" \
@@ -193,16 +194,34 @@ if [ "$MODE" = --native ]; then
     Linux) LIBRARY="$BUILD/engines/libweb-render.so";;
     *) LIBRARY="";;
   esac
-  # Linux makes the library for the WPT runner (tests/browser-wpt/testharness-run.ts
-  # --native-engine). It links Lean's shared runtime: libleanrt.a holds mimalloc with
-  # local-exec thread-local storage, which a shared library can not link (Lean 4.33.1).
-  # So this library needs the same Lean toolchain at run time.
+  # Linux makes the library for Textnaut and the WPT runner (tests/browser-wpt/testharness-run.ts
+  # --native-engine). It is self-contained: Lean's runtime, Init, Std, libuv and libc++ are
+  # linked in statically, so no Lean toolchain is needed at run time. The runtime is the
+  # GMP-free one of build-leanrt-no-gmp.sh, with initial-exec thread-local storage (the
+  # toolchain's libleanrt.a uses local-exec, which a shared object can not hold). leanc links
+  # it, so it is linked against the toolchain's old glibc and runs on older systems too.
+  # --exclude-libs keeps the archives' symbols out of the dynamic table: only the shim's
+  # entry points are exported. The check below fails the build if the library would need
+  # anything beyond the C library.
   if [ "$(uname -s)" = Linux ]; then
   mkdir -p "$BUILD/engines"
+  LEANRT=$("$LAB/build-leanrt-no-gmp.sh" "$TOOLCHAIN" "$LAB/.build/leanrt-no-gmp" | tail -1)
   "${CC:-cc}" -O3 -DNDEBUG -fPIC -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
-  leanc -shared -O3 -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
-    -L"$LEANLIB" -lInit_shared -lleanshared_2 -lleanshared_1 -lleanshared \
-    -Wl,-rpath,"$LEANLIB" -Wl,--no-undefined
+  leanc -shared -O3 -o "$LIBRARY" -Wl,--as-needed "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
+    "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANRT" \
+    "$TOOLCHAIN/lib/libuv.a" "$TOOLCHAIN/lib/libc++.a" "$TOOLCHAIN/lib/libc++abi.a" "$TOOLCHAIN/lib/libunwind.a" \
+    -Wl,--exclude-libs,ALL -Wl,-Bsymbolic -Wl,--gc-sections -Wl,--no-undefined -lpthread -ldl -lm
+  assert_no_gmp "$LIBRARY"
+  # Only C library dependencies, and no run path into a toolchain.
+  NEEDED=$(readelf -dW "$LIBRARY" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort | tr '\n' ' ')
+  for lib in $NEEDED; do
+    case "$lib" in libc.so.*|libm.so.*|libdl.so.*|libpthread.so.*|librt.so.*|ld-linux*) ;;
+      *) echo "$LIBRARY needs $lib; it must need only the C library (NEEDED: $NEEDED)" >&2; exit 1;; esac
+  done
+  if readelf -dW "$LIBRARY" | grep -E 'R(UN)?PATH' | grep -q -v 'ORIGIN'; then
+    echo "$LIBRARY has a run path outside its own directory: $(readelf -dW "$LIBRARY" | grep -E 'R(UN)?PATH')" >&2; exit 1
+  fi
+  echo "SELF_CONTAINED $(basename "$LIBRARY"): NEEDED $NEEDED"
   echo "WEB_RENDER_LIBRARY=$LIBRARY"
   LIBRARY=""
   fi
