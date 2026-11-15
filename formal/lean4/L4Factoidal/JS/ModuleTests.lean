@@ -96,7 +96,8 @@ def runMods (mods : List (String × String)) (roots : List Nat) : List String :=
   | .ok syn => (resolvedFunction syn).body.any (fun s => match s with | .ifS _ (.block _) _ => true | _ => false) &&
       (resolvedFunction syn).body.any (fun s => match s with | .block _ => true | _ => false)
   | .error _ => false)
-#guard (parseModule "let c = 1; if (c) { await f() }").toOption.isNone
+-- top-level `await` in a block: a module that awaits (its function an async generator)
+#guard (parseModule "let c = 1; if (c) { await f() }").toOption.map (·.hasTLA) == some true
 -- the same with the register machine off
 #guard (match graphOf [("a", "let c = 1; if (c) { print('x') } for (let i = 0; i < 2; i++) { print(i) }")] with
   | .error e => [e]
@@ -104,6 +105,11 @@ def runMods (mods : List (String × String)) (roots : List Nat) : List String :=
 
 -- syntax: early errors
 #guard (parseModule "export const a = 1; export {a}").toOption.isNone
+-- a top-level function of a module is lexical: no `var` and no second function of its name
+#guard (parseModule "var smoosh; function smoosh() {}").toOption.isNone
+#guard (parseModule "function f() {} function f() {}").toOption.isNone
+#guard (parseModule "{ var f; } function f() {}").toOption.isNone
+#guard (parseModule "function f() { var f; } var g;").toOption.isSome
 #guard (parseModule "import {a} from 'x'; let a = 1").toOption.isNone
 #guard (parseModule "export {nothere}").toOption.isNone
 #guard (parseModule "return 1").toOption.isNone
@@ -118,6 +124,8 @@ def runMods (mods : List (String × String)) (roots : List Nat) : List String :=
 #guard (parseModule "var x = await 1;").toOption.map (·.hasTLA) == some true
 #guard (parseModule "var x = 1; async function f() { await x }").toOption.map (·.hasTLA) == some false
 #guard (parseModule "function f() { await 1 }").toOption.isNone
+-- a module that awaits runs to its end before the module that imports it (one async module at a time)
+#guard runMods [("a", "import 'b'; print('a')"), ("b", "print('b1'); await null; print('b2')")] [0] == ["b1", "b2", "a"]
 #guard (parseModule "import {a as b, 'c d' as e, default as f} from 'm'; export {b, e as 'e f'}").toOption.map (·.imports.size) == some 3
 #guard (parseModule "import 'a'; import {b} from 'b'; export * from 'a'").toOption.map (·.requests) == some #["a", "b"]
 -- classic scripts: `import.meta` is a SyntaxError, `import()` parses

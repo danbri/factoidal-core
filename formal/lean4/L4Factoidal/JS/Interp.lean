@@ -2222,7 +2222,12 @@ def callV : Nat → Value → Value → Array Value → M Value
       match (← getObj id).kind with
       | .closure fd env capThis capNT home _ =>
         match fd.kind with
-        | .ctor _ => throwErr .type "Class constructor cannot be invoked without 'new'"
+        | .ctor _ =>
+          -- the TypeError of the callee's realm (§10.2.1 step 2, after PrepareForOrdinaryCall)
+          let h ← get
+          let k := fnRealmIdx h id
+          if h.realms.isEmpty || k == h.curRealm then throwErr .type "Class constructor cannot be invoked without 'new'"
+          else inRealm k (throwErr .type "Class constructor cannot be invoked without 'new'")
         | _ => callClosure n fd env capThis capNT home f thisV .undef args
       | .native nid =>
         let h ← get
@@ -4164,6 +4169,26 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       | .error (.throw x) => genUnwind n rest (.throw x)
       | .error a => throw a
       | .ok (ctx', perIter) => genRun n (.loopFor ctx' labels perIter test update body true :: rest) (.send .undef)
+    | .forIn kind target obj body =>
+      if obj.hasYield then
+        -- the object's yields first, in a temporary (as for `for-of`)
+        let t := s!"%it{(← get).envs.size}"
+        genRun n (.block ctx [.decl .letK [Decl.mk (.id t) (some obj)],
+          labels.foldr .labeled (.forIn kind target (.ident t) body)] :: rest) (.send .undef)
+      else if !body.hasYield then genLift n ctx s rest
+      else
+      -- a `for-in` whose body yields (an `await` in an async function): the keys of the object
+      -- (EnumerateObjectProperties, §14.7.5.9) taken first, then walked as a `for-of` over
+      -- them. Does not do: skip a key deleted by the body before its turn (`forInLoop` does).
+      let r ← catchJS (do
+          let o ← evalExpr n ctx obj
+          let keys ← enumKeys o
+          pure (Except.ok (← getIterator n (← newArray (keys.map keyStrV)))))
+        (fun a => pure (Except.error a))
+      match r with
+      | .error (.throw x) => genUnwind n rest (.throw x)
+      | .error a => throw a
+      | .ok it => genRun n (.loopOf ctx labels kind target it body :: rest) (.send .undef)
     | .forOf kind target obj body =>
       if obj.hasYield then
         -- the iterable's yields first, in a temporary
@@ -9584,11 +9609,14 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       defineOwn r.globalObj namedGetterKey (.data a0 false false false)
       pure .undef
     | (.x .symbolFor) | (.x .symbolKeyFor) =>
-      let reg ← match (← getObj r.globalObj).props.get? symbolRegistryKey with
+      -- the GlobalSymbolRegistry is one for all realms (§20.4.2.2): it hangs on realm 0's global
+      let h ← get
+      let gReg := if h.curRealm == 0 then r.globalObj else (h.realms.getD 0 {}).realm.globalObj
+      let reg ← match (← getObj gReg).props.get? symbolRegistryKey with
         | some (.data (.obj id) ..) => pure id
         | _ => do
           let id ← alloc { proto := .null }
-          setHidden r.globalObj symbolRegistryKey (.obj id)
+          setHidden gReg symbolRegistryKey (.obj id)
           pure id
       if id == (.x .symbolFor) then
         let key ← toStr n a0

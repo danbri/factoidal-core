@@ -1996,13 +1996,18 @@ def items : Nat → Acc → P Acc
 
 /-- The early errors of a module (§16.2.1.1), and the local exports of imported names made
 indirect (ParseModule step 10). -/
-def finish (a : Acc) (vars : List String) (usesMeta : Bool) (hasTLA : Bool := false) : Except String ModuleSyntax := do
+def finish (a : Acc) (vars : List String) (usesMeta : Bool) (hasTLA : Bool := false)
+    (realVars : List String := []) : Except String ModuleSyntax := do
   let body := a.body.toList
   let lex := lexNames body
   let funs := body.flatMap fun s => match s with | .funDecl x _ => [x] | _ => []
   let imported := a.imports.toList.map (·.localName)
   let declared := lex ++ imported
   if declared.eraseDups.length != declared.length || declared.any (fun x => vars.contains x || funs.contains x) then
+    throw "SyntaxError: identifier has already been declared"
+  -- a module's top-level functions are lexical declarations (§16.2.1.1): one may not share its
+  -- name with another function or with a `var`
+  if funs.eraseDups.length != funs.length || funs.any (realVars.contains ·) then
     throw "SyntaxError: identifier has already been declared"
   let names := a.localExports.toList.map (·.1) ++ a.indirect.toList.map (·.1)
   if names.eraseDups.length != names.length then throw "SyntaxError: duplicate export name"
@@ -2030,7 +2035,7 @@ def parseModule (src : String) : Except String ModuleSyntax :=
     let toks := internToks toks
     let st : PState := { toks, strict := true, src := cs, module := true, inAsync := true, tla := true }
     match (ModuleParse.items (parseFuel (cs.size + 1)) {}).run st with
-    | .ok a st' => ModuleParse.finish a st'.vars.toList st'.usesMeta st'.usesTLA
+    | .ok a st' => ModuleParse.finish a st'.vars.toList st'.usesMeta st'.usesTLA st'.realVars.toList
     | .error e _ => .error e
 
 end L4Factoidal.JS

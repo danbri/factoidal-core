@@ -194,10 +194,22 @@ def linkError (g : ModGraph) (root : Nat) : Option String :=
   (evalOrder g root).findSome? fun m =>
     match g[m]? with
     | none => none
-    | some node => node.syn.imports.toList.findSome? fun e =>
-      match importTarget g m e with
-      | .error msg => some msg
-      | .ok _ => none
+    | some node =>
+      -- InitializeEnvironment (§16.2.1.6.4) step 1: each indirect export must resolve
+      let ind := node.syn.indirect.toList.findSome? fun (x, _, imp) =>
+        match imp with
+        | .ns => none
+        | .named _ =>
+          match resolveExport g (resolveFuel g) m x [] with
+          | .none => some s!"the export '{x}' cannot be resolved (circular or missing)"
+          | .ambiguous => some s!"the export '{x}' is ambiguous"
+          | _ => none
+      match ind with
+      | some msg => some msg
+      | none => node.syn.imports.toList.findSome? fun e =>
+        match importTarget g m e with
+        | .error msg => some msg
+        | .ok _ => none
 
 /-! ## Theorems -/
 

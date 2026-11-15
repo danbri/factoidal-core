@@ -712,4 +712,9 @@ iterator's own fails. -/
 -- an endless iterator whose values are kept stops at the step budget, not when memory runs out
 #guard outWith 200000 "var it = {}; it[Symbol.iterator] = function () { return { next: function () { return { value: [1, 2], done: false }; } }; }; new Map(it)" == ["halted step budget exhausted"]
 
+
+-- `for-in` with `await` in its body or in its object, in an async function (the generator
+-- machine had no `for-in`: "yield in this position is not supported")
+#guard out "async function f() { var o = { a: 1, b: 2 }, s = ''; for (var k in o) { s += k + (await o[k]); } for (var j in await o) s += j; return s; } f().then(function (v) { print(v); })" == ["a1b2ab"]
+
 end L4Factoidal.JS.Tests
