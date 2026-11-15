@@ -256,6 +256,11 @@ structure Held where
   (`LeanJS.startUntil`): `syncAnswer` goes on from the session before that script
   (`LeanJS.start_eq_from`) instead of making the whole start again. -/
   startPoint : Option StartPoint := none
+  /-- The parse of the page of a `start` that waits for sync answers (its tree, scripts, the
+  scripts that did not load, whether it has module scripts), by page, URL and syntax: each
+  attempt of the same start parses the same text the same way, so the attempts after the first
+  take it (a news page waited for 130 module answers: 1.4 s of parsing). -/
+  startParsed : Option (String × String × String × (Array (Nat × String) × Array String × Bool × DOM.Dom)) := none
   /-- The dedicated workers of that session's page (`Hosts.LeanJSWorkers`). -/
   leanWorkers : LeanJSWorkers.Workers := {}
   /-- The `layout` request of the session's `start`: its layout reads (`Page.Reads.measure`)
@@ -1198,7 +1203,7 @@ def startEnd (held : Held) (html : String) (request : JSON.Json) (id : Nat) (bas
     match a.page.host.web.net.syncWanted with
     | some w => ({ waiting with startPoint := none }, netSyncAnswer id w)
     | none =>
-      let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], moduleMemo := #[], pendingSync := none, startEntropy := none, startPoint := none }
+      let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], moduleMemo := #[], pendingSync := none, startEntropy := none, startPoint := none, startParsed := none }
       leanTurn { held with frames := #[], leanFrames := #[], frameScan := 0 }
         id {} a {} true ns (frameEntropyOf id ent b)
 
@@ -1233,8 +1238,13 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
     | some e => if held.syncCache.isEmpty then entropy id else pure e
     | none => entropy id
   let lim : Page.Limits := { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
+  let syntax := str request "syntax"
+  let kept := match held.startParsed with
+    | some (h, u, sy, p) => if !held.syncCache.isEmpty && h == html && u == url && sy == syntax then some p else none
+    | none => none
   let made := show Except String (Array (Nat × String) × Array String × Bool × DOM.Dom) from do
-    let dom ← parse html url (str request "syntax")
+    if let some p := kept then return p
+    let dom ← parse html url syntax
     let (scripts, missing, hasModule) ← scriptSources dom request (modules := true)
     return (scripts, missing, hasModule, dom)
   match made with
@@ -1243,6 +1253,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
     -- Content Security Policy: the page's policy (its response's fields from the embedder, its
     -- `meta` elements) decides which of its classic scripts run; the others are violations
     let cspMeta := L4Factoidal.HTML.CspSource.metaText dom 0
+    let scripts0 := scripts
     let (scripts, cspViolations) := L4Factoidal.HTML.CspSource.filterScripts (str request "csp") (str request "cspReportOnly")
       (L4Factoidal.Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")) dom (LeanJSModules.baseOf dom url) scripts
     let lim := { lim with csp := str request "csp", cspReportOnly := str request "cspReportOnly", cspMeta, cspViolations }
@@ -1260,7 +1271,9 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       let memo := if held.syncCache.isEmpty then #[] else held.moduleMemo
       let (loaded, memo) := if hasModule then LeanJSModules.load dom url page held.syncCache memo else (.ok {}, #[])
       if let .error w := loaded then
-        return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo }, netSyncAnswer id w)
+        -- no script ran: the parse is kept for the next attempt (`startParsed`)
+        return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo,
+          startParsed := some (html, url, syntax, (scripts0, missing, hasModule, dom)) }, netSyncAnswer id w)
       let mods := match loaded with | .ok m => m | .error _ => {}
       let lim := { lim with syncAnswers := held.syncCache.extract mods.used held.syncCache.size }
       let (vw, vh) := (viewport request).getD (800, 600)
