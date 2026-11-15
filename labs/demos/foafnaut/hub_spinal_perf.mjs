@@ -153,7 +153,7 @@ async function session(adapterMode){
     const draws=drawn.map(f=>f.draw).filter(d=>d&&!d.kept&&typeof d.gpuMs==='number');
     const m=x=>Math.round(x/1e4)/100;
     out.draw_split={n:draws.length,cpu_ms:stat(draws.map(d=>d.cpuMs)),gpu_ms:stat(draws.map(d=>d.gpuMs)),
-      segments_m:stat(draws.map(d=>m(d.segments))),outside_clip_m:stat(draws.map(d=>m(d.segmentsOutsideClip))),listed_m:stat(draws.map(d=>m(d.listed))),
+      segments_m:stat(draws.map(d=>m(d.segments))),outside_clip_m:stat(draws.map(d=>m(d.segmentsOutsideClip))),pieces_m:stat(draws.map(d=>m(d.pieces??0))),listed_m:stat(draws.map(d=>m(d.listed))),
       drawn_pixels:stat(draws.map(d=>d.drawnPixels)),upload_kb:stat(draws.map(d=>Math.round(d.uploadBytes/1024))),partial:draws.filter(d=>d.partial).length,
       // The rest of a frame's draw time: what the page draw, the chrome draw and the composite do not account for.
       other_ms:stat(later.filter(f=>f.draw&&!f.draw.kept&&typeof f.draw.gpuMs==='number').map(otherOf)),
@@ -169,7 +169,7 @@ async function session(adapterMode){
     out.errors={count:messages.filter(m=>m.type!=='warning').length,warnings:messages.filter(m=>m.type==='warning').length,
       gpu:messages.filter(m=>gpuText.test(m.text)).length,device_lost:messages.some(m=>lostText.test(m.text))?1:0,first:messages.slice(0,12)};
     out.frames_detail=pageFrames.map(f=>({s:r1((f.t)/1000),path:f.path,layoutMs:f.layoutMs,drawMs:f.drawMs,primitives:f.primitives,
-      ...(f.draw&&!f.draw.kept?{cpuMs:f.draw.cpuMs,gpuMs:f.draw.gpuMs,segmentsM:m(f.draw.segments),outsideClipM:m(f.draw.segmentsOutsideClip),
+      ...(f.draw&&!f.draw.kept?{cpuMs:f.draw.cpuMs,gpuMs:f.draw.gpuMs,segmentsM:m(f.draw.segments),outsideClipM:m(f.draw.segmentsOutsideClip),piecesM:m(f.draw.pieces??0),
         listedM:m(f.draw.listed),drawnPixels:f.draw.drawnPixels,uploadKB:Math.round(f.draw.uploadBytes/1024),partial:f.draw.partial,
         chromeMs:r1(chromeOf(f)),chromeGpuMs:f.chrome?.gpuMs,planRequests:f.planRequests,pipelineBuilds:f.pipelineBuilds,compositeMs:f.composite?r1(f.composite.cpuMs+f.composite.gpuMs):undefined,otherMs:r1(otherOf(f))}:{})}));
     out.valid=pageFrames.length>1;
