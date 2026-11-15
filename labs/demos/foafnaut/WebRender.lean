@@ -461,6 +461,25 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
     let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store) glyphs
     return placeSVG scene id style width height,picturesOf store imgs,made,madeWords)
 
+/-- The pictures of a page drawn with no SVG: the `img` pictures, made as on a page with no
+`svg` element, and an embedding that refuses every `svg` root with `refusal` (liberal mode
+draws a refused root as nothing). The fallback of liberal mode when the SVG of a document
+can not be read at all: the rest of the page is still drawn. -/
+def makeReplacedNoSvg (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (refusal : String) :
+    Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
+      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words :=
+  let imgs := htmlImageKeys dom documentURL
+  let (store,made) := storeIn kept (imgs.map (·.2)) images
+  (fun _ _ _ _ => .error refusal,picturesOf store imgs,made,{})
+
+/-- Kind: safety. Says: the embedding of `makeReplacedNoSvg` answers every `svg` root with its
+refusal and nothing else, so the layout that takes it (liberal mode, `quiet`) draws no SVG and
+reads no SVG source. -/
+theorem makeReplacedNoSvg_refuses (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (refusal : String) (id : Nat) (s : Rendering.CSS.Computed) (w h : Float) :
+    (makeReplacedNoSvg kept dom documentURL images refusal).1 id s w h = .error refusal := rfl
+
 /-- `makeReplacedIn` with no kept store. -/
 def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
     (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
