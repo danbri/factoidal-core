@@ -199,6 +199,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # The cost ratchet: element-by-element work (push, a[i] = v, charCodeAt) is linear.
   check "bubblepop_cost_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
     --allow-read --allow-ffi --allow-env "$LAB/bubblepop_cost_test.ts"
+  # The Spinal Tap page as a budgeted run (issue 450): load, layouts and 600 animation ticks on
+  # the native engine against fixtures/spinal-perf/budgets.json (known failures printed). About 15 s.
+  deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi --allow-read --allow-ffi --allow-env \
+    --allow-net=127.0.0.1 --allow-write="$LAB/.build" --allow-run=git "$LAB/spinal_perf_check.ts"
   if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then
     check "page_gpu_test.ts (bubblepop)" env SCRIPT_ENGINE=bubblepop deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/page_gpu_test.ts"
