@@ -176,6 +176,11 @@ inductive NativeX where
   | weakRefCtor | weakRefDeref | finRegCtor | finRegMethod (k : Nat)
   /-- `getOrInsert` and `getOrInsertComputed` of Map and WeakMap (the upsert proposal). -/
   | mapUpsert (computed weak : Bool)
+  /-- A test host's `$262.createRealm()` (Test262 `INTERPRETING.md`): the `$262` object of the
+  next realm the host made in advance (`ColdHeap.spareRealms`), or a TypeError when none is
+  left; and `$262.gc()`, which does nothing (the heap has no collector). Only a host that puts
+  them on its own objects gives them to scripts; a page never has them. -/
+  | realmTake | gcNoop
   deriving BEq, Repr, Inhabited
 
 /-- The built-in functions (§19 to §28 for the subset). -/
@@ -556,6 +561,15 @@ def Realm.closureProto (r : Realm) (gen async : Bool) : Nat := r.orFn (r.closure
 def errorNames : Array String :=
   #["Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError"]
 
+/-- A realm of the heap (§9.3) while another one runs: its intrinsics and its global
+environment record, which is environment 0 while it runs (`ColdHeap.realms`). -/
+structure SavedRealm where
+  realm : Realm := {}
+  env0 : Env := {}
+  /-- What the host keeps for the realm: a test host's `$262` object of it. -/
+  host : Value := .undef
+  deriving Inhabited
+
 inductive ErrKind where
   | error | eval | range | reference | syntax | type | uri
   deriving BEq, Repr, Inhabited
@@ -631,6 +645,21 @@ structure ColdHeap (H : Type) where
   `var arguments` (EvalDeclarationInstantiation). -/
   paramEnv : Nat := 0
   realm : Realm := {}
+  /-- Every realm of the heap (§9.3), by number, when a host made more than one (empty
+  otherwise: a page has one realm and pays nothing). The entry of the running realm
+  (`curRealm`) is stale while it runs: its state is `realm` and environment 0. -/
+  realms : Array SavedRealm := #[]
+  curRealm : Nat := 0
+  /-- The [[Realm]] of each function object (§10.2, §10.3) that a realm other than realm 0 made;
+  a function not here is realm 0's. A call of a function of another realm runs in that realm
+  (PrepareForOrdinaryCall, §10.2.1.1, and the same for built-ins, §10.3.1). -/
+  fnRealm : Std.HashMap Nat Nat := {}
+  /-- Realms the host made that no script has taken yet (`NativeX.realmTake`). -/
+  spareRealms : Array Nat := #[]
+  /-- The `import()` calls (§13.3.10, HostLoadImportedModule §16.2.1.10) waiting for the host:
+  the specifier, the `type` import attribute (or ""), and the promise to settle. `none` when
+  the host loads no modules for scripts (`import()` then answers a rejected promise). -/
+  importQueue : Option (Array (String × String × Nat)) := none
   /-- The description of each Symbol; the well-known ones first (`wellKnown`). -/
   syms : Array String := wellKnown.map ("Symbol." ++ ·)
   /-- The host's state; `none` while one of its natives runs (taken out, so the host

@@ -690,4 +690,26 @@ def outVm (vm : Bool) (src : String) : List String :=
 -- which matches on `block`)
 #guard out "var c = 1; var log = []; async function f() { log.push('f') } async function h() { for (let i = 0; i < 2; i++) { if (c) { await f(); log.push(i) } } { await null; log.push('b') } } h().then(() => print(log.join()))" == ["f,0,f,1,b"]
 
+/-! ## Iterators that never end (Test262 CRASH runs of 2026-11-15)
+
+The collection constructors (AddEntriesFromIterable, §24.1.1.2) and the Promise combinators
+(§27.2.4) took every value of their iterator before doing anything with the first, so an
+iterator that never ends grew the heap until the Test262 driver killed the process at 3 GB
+(`WeakSet/iterator-close-after-add-failure.js`, `Promise/{any,race,allSettled}/invoke-then-*-close.js`).
+They now take one value at a time (`iterEach`) and close the iterator when a step after the
+iterator's own fails. -/
+
+-- an adder that throws closes the endless iterator, once, and the error reaches the caller
+#guard out "var c = 0; var it = {}; it[Symbol.iterator] = function () { return { next: function () { return { value: null, done: false }; }, return: function () { c++; return {}; } }; }; WeakSet.prototype.add = function () { throw new Error('add'); }; try { new WeakSet(it); } catch (e) { print(e.message); } print(c)" == ["add", "1"]
+#guard out "var c = 0; var it = {}; it[Symbol.iterator] = function () { return { next: function () { return { value: 1, done: false }; }, return: function () { c++; return {}; } }; }; try { new Map(it); } catch (e) { print(e instanceof TypeError); } print(c)" == ["true", "1"]
+-- an error of the iterator's own `next` does not close it
+#guard out "var c = 0; var it = {}; it[Symbol.iterator] = function () { return { next: function () { throw new Error('next'); }, return: function () { c++; return {}; } }; }; try { new Set(it); } catch (e) { print(e.message); } print(c)" == ["next", "0"]
+-- `then` is read from each value (Invoke, §27.2.4.5.1): a getter that throws rejects the
+-- result and closes the endless iterator
+#guard out "var c = 0; var p = new Promise(function () {}); Object.defineProperty(p, 'then', { get: function () { throw new Error('then'); } }); var it = {}; it[Symbol.iterator] = function () { return { next: function () { return { value: p, done: false }; }, return: function () { c++; return {}; } }; }; Promise.race(it).catch(function (e) { print(e.message); }); Promise.any(it).catch(function (e) { print(e.message); }); Promise.allSettled(it).catch(function (e) { print(e.message); }); Promise.all(it).catch(function (e) { print(e.message); }); print(c)" == ["4", "then", "then", "then", "then"]
+-- the combinators still settle as before
+#guard out "Promise.all([1, Promise.resolve(2), 3]).then(function (v) { print(v.join()); }); Promise.allSettled([1, Promise.reject(2)]).then(function (v) { print(v[0].status + ' ' + v[1].status + ' ' + v[1].reason); }); Promise.any([Promise.reject(1), 2]).then(function (v) { print(v); }); Promise.race([new Promise(function () {}), 5]).then(function (v) { print(v); })" == ["1,2,3", "fulfilled rejected 2", "2", "5"]
+-- an endless iterator whose values are kept stops at the step budget, not when memory runs out
+#guard outWith 200000 "var it = {}; it[Symbol.iterator] = function () { return { next: function () { return { value: [1, 2], done: false }; } }; }; new Map(it)" == ["halted step budget exhausted"]
+
 end L4Factoidal.JS.Tests

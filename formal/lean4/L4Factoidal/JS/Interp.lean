@@ -103,6 +103,45 @@ def setOwnData (id : Nat) (key : String) (v : Value) : M Bool :=
 
 @[inline] def realm : M Realm := do pure (← get).realm
 
+/-! ## Realms (§9.3)
+
+A heap has one realm unless its host makes more (`ColdHeap.realms`): a test host's
+`$262.createRealm`, as a browser makes one for each new global (a frame's window). Objects
+of all realms live in the one heap; what a realm owns is its intrinsics (`Realm`) and its
+global environment record, which is environment 0 while the realm runs. A call of a
+function of another realm runs in that realm (`inRealm`): its intrinsics and its global
+environment are swapped in for the call and back after it, a throw included. With one realm
+none of this runs: `realms` is empty, and each check is that one test. -/
+
+/-- Make realm `k` the running realm: the running realm's intrinsics and global environment
+go to its entry of `realms`, realm `k`'s come out (its entry keeps no copy, so environment 0
+has one owner and changes in place). Nothing happens when `k` runs already or is not a realm
+of the heap. -/
+def switchRealm (k : Nat) : M Unit := modify fun h =>
+  if k == h.curRealm || k ≥ h.realms.size || h.curRealm ≥ h.realms.size then h else
+  let saved : SavedRealm := { (h.realms[h.curRealm]!) with realm := h.realm, env0 := h.envs[0]! }
+  let realms := h.realms.set! h.curRealm saved
+  let next := realms[k]!
+  let realms := realms.set! k { next with env0 := {} }
+  { h with realms, realm := next.realm, envs := h.envs.set! 0 next.env0, curRealm := k }
+
+/-- Run `act` in realm `k`, then go back to the realm that ran before, on a throw too. -/
+@[inline] def inRealm {α} (k : Nat) (act : M α) : M α := do
+  let back := (← get).curRealm
+  switchRealm k
+  let r ← tryCatch act (fun e => do switchRealm back; throw e)
+  switchRealm back
+  pure r
+
+/-- The realm a function object belongs to (its [[Realm]]): realm 0 unless another realm
+made it. -/
+@[inline] def fnRealmIdx (h : HeapOf H) (id : Nat) : Nat := h.fnRealm.getD id 0
+
+/-- Record that the running realm made function object `id` (nothing in realm 0). -/
+@[inline] def tagFn (id : Nat) : M Unit :=
+  modify fun h => if h.curRealm == 0 then h else { h with fnRealm := h.fnRealm.insert id h.curRealm }
+
+
 /-- Put an environment record in a free slot of the environment array. -/
 @[inline] def pushEnv (en : Env) : M Nat :=
   modifyGet fun h =>
@@ -183,6 +222,10 @@ def charge (k : Nat) : M Unit := do
 
 /-- The longest string `repeat` and `padStart` make: 256 MiB of UTF-8. -/
 def maxStringBytes : Nat := 268435456
+
+/-- The most values `iterEach` takes from one iterator: past it the run halts. Each value also
+takes a step (`tick`), so the step budget ends any run long before this. -/
+def iterEachMax : Nat := 4294967296
 
 /-- The most elements `new Array(n)` and an assignment to an array's `length` make at once:
 2^25 (256 MiB of values). Arrays are dense here (an array of `n` elements holds `n` values), so
@@ -311,6 +354,33 @@ def mkError (k : ErrKind) (msg : String) : M Value := do
 def throwErr {α} (k : ErrKind) (msg : String) : M α := do
   throw (.throw (← mkError k msg))
 
+/-- GetFunctionRealm (§7.3.24): the realm of a function, through bound functions to their
+target and through proxies to theirs (a revoked proxy is a TypeError); the running realm for
+anything else. With one realm, the running realm. -/
+def funRealm (v : Value) : M Realm := do
+  let h ← get
+  if h.realms.isEmpty then return h.realm
+  let mut cur := v
+  for _ in [0:4096] do
+    match cur with
+    | .obj id =>
+      match (h.obj id).kind with
+      | .bound t _ _ => cur := t
+      | .proxy t hnd =>
+        if let .null := hnd then throwErr .type "Cannot perform 'GetFunctionRealm' on a proxy that has been revoked"
+        cur := t
+      | .closure .. | .native _ =>
+        let k := fnRealmIdx h id
+        return (if k == h.curRealm then h.realm else (h.realms.getD k {}).realm)
+      | _ => return h.realm
+    | _ => return h.realm
+  return h.realm
+
+/-- `p` when it is an object, else the intrinsic `pick` of `nt`'s realm: the last steps of
+GetPrototypeFromConstructor (§10.1.14) after `nt.prototype` was read. -/
+def protoOr (p nt : Value) (pick : Realm → Nat) : M Value := do
+  if p.isObj then pure p else pure (.obj (pick (← funRealm nt)))
+
 /-- `s` repeated `n` times, by doubling: about log₂ n appends and no list of `n` parts
 (`"a".repeat(2 ** 28)` as a list of parts took gigabytes before the string was made). -/
 def repeatStr (s : String) (n : Nat) : String :=
@@ -394,6 +464,7 @@ def dynFunctionSource (kw : String) (ps : List String) (body : String) : String 
 def mkNative (id : Native) (name : String) (len : Nat) : M Value := do
   let r ← realm
   let o ← alloc { proto := .obj r.functionProto, kind := .native id }
+  tagFn o
   defineOwn o "length" (.data (.num (Float.ofNat len)) false false true)
   defineOwn o "name" (.data (.str name) false false true)
   pure (.obj o)
@@ -417,6 +488,7 @@ def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value
   -- the [[Prototype]] of the function: %GeneratorFunction.prototype%, %AsyncGeneratorFunction.prototype%,
   -- %AsyncFunction.prototype% or %Function.prototype% (§10.2.3 step 1, from the callers' choice)
   let id ← alloc { proto := .obj (r.closureProto f.gen f.async), kind := .closure f env ctx.thisV ctx.newTarget home #[] }
+  tagFn id
   if env != ctx.env then
     if let some n := f.name then declare env n { v := .obj id, mutable := false }
   defineOwn id "length" (.data (.num (Float.ofNat f.expectedArgs)) false false true)
@@ -788,7 +860,9 @@ def enqueue (f : Value) (args : Array Value) : M Unit :=
 /-- A function object for a native, without `name` and `length` (internal use). -/
 def nativeFn (id : Native) : M Value := do
   let r ← realm
-  pure (.obj (← alloc { proto := .obj r.functionProto, kind := .native id }))
+  let o ← alloc { proto := .obj r.functionProto, kind := .native id }
+  tagFn o
+  pure (.obj o)
 
 /-- Array.prototype.flat's FlattenIntoArray (§23.1.3.13.1) on dense arrays. -/
 def flattenArr (d : Nat) (vs : Array Value) : Nat → M (Array Value)
@@ -2150,7 +2224,11 @@ def callV : Nat → Value → Value → Array Value → M Value
         match fd.kind with
         | .ctor _ => throwErr .type "Class constructor cannot be invoked without 'new'"
         | _ => callClosure n fd env capThis capNT home f thisV .undef args
-      | .native nid => callNative n nid thisV args none
+      | .native nid =>
+        let h ← get
+        let k := fnRealmIdx h id
+        if h.realms.isEmpty || k == h.curRealm then callNative n nid thisV args none
+        else inRealm k (callNative n nid thisV args none)
       | .bound t bt bargs => callV n t bt (bargs ++ args)
       | _ => throwErr .type "not a function"
     | _ => throwErr .type "not a function"
@@ -2163,6 +2241,12 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
   | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args => do
     tickCall
     let h ← get
+    -- PrepareForOrdinaryCall (§10.2.1.1): the callee's realm runs (only with more than one)
+    if !h.realms.isEmpty then
+      if let .obj fid := fnObj then
+        let k := fnRealmIdx h fid
+        if k != h.curRealm then
+          return ← inRealm k (callClosure n fd env capThis capNT home fnObj thisV newTarget args)
     if h.depth ≥ h.maxDepth then throwErr .range "Maximum call stack size exceeded"
     let saved := h.depth
     set { h with depth := h.depth + 1 }
@@ -2346,6 +2430,48 @@ def initFields : Nat → Ctx → Value → Value → M Unit
     | _ => pure ()
 termination_by structural n _ _ _ => n
 
+/-- GetPrototypeFromConstructor (§10.1.14): `newTarget.prototype` when it is an object, else
+the intrinsic `pick` of the new target's realm (GetFunctionRealm). -/
+def protoFromCtor : Nat → Value → (Realm → Nat) → M Value
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, nt, pick => do
+    let p ← getV n nt "prototype"
+    if p.isObj then pure p else pure (.obj (pick (← funRealm nt)))
+termination_by structural n _ _ => n
+
+/-- [[Construct]] of a built-in constructor whose steps do not read the new target
+(OrdinaryCreateFromConstructor, §10.1.13): with a new target other than the constructor itself
+(`Reflect.construct`, a subclass), the object it made gets the new target's prototype, or the
+intrinsic of the new target's realm. `Object` with such a new target makes a new ordinary
+object and reads no argument (§20.1.1.1 step 1). -/
+def constructNative : Nat → Native → Value → Array Value → Value → M Value
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, nid, f, args, nt => do
+    let same := strictEq nt f
+    let pick? : Option (Realm → Nat) := match nid with
+      | .objectCtor => some (·.objectProto) | .functionCtor => some (·.functionProto)
+      | .arrayCtor => some (·.arrayProto) | .stringCtor => some (·.stringProto)
+      | .numberCtor => some (·.numberProto) | .booleanCtor => some (·.booleanProto)
+      | .regexpCtor => some (·.regexpProto) | .dataViewCtor => some (·.dataViewProto)
+      | .typedCtor i => some (fun r => r.typedProtos.getD i r.objectProto)
+      | .x (.dynFunction 1) => some (fun r => r.orFn r.genFnProto)
+      | .x (.dynFunction 2) => some (fun r => r.orFn r.asyncFnProto)
+      | .x (.dynFunction 3) => some (fun r => r.orFn r.asyncGenFnProto)
+      | _ => none
+    match pick? with
+    | some pick =>
+      if same then callNative n nid .undef args (some nt)
+      else if nid == .objectCtor then
+        pure (.obj (← alloc { proto := ← protoFromCtor n nt pick }))
+      else
+        let res ← callNative n nid .undef args (some nt)
+        if let .obj o := res then
+          let p ← protoFromCtor n nt pick
+          modifyObj o fun ob => { ob with proto := p }
+        pure res
+    | none => callNative n nid .undef args (some nt)
+termination_by structural n _ _ _ _ => n
+
 /-- `[[Construct]]` (§10.2.2). -/
 def construct : Nat → Value → Array Value → Value → M Value
   | 0, _, _, _ => throw (.halt "fuel")
@@ -2358,15 +2484,19 @@ def construct : Nat → Value → Array Value → Value → M Value
         | .arrow | .method => throwErr .type "not a constructor"
         | _ =>
           let p ← getV n newTarget "prototype"
-          let r ← realm
-          let o ← alloc { proto := if p.isObj then p else .obj r.objectProto }
+          -- GetPrototypeFromConstructor (§10.1.14): the fallback is of the new target's realm
+          let o ← alloc { proto := (← protoOr p newTarget (·.objectProto)) }
           let res ← callClosure n fd env capThis capNT home f (.obj o) newTarget args
           match fd.kind, res with
           | _, .obj _ => pure res
           | .ctor true, .undef => pure (.obj o)
           | .ctor true, _ => throwErr .type "Derived constructors may only return object or undefined"
           | _, _ => pure (.obj o)
-      | .native nid => callNative n nid .undef args (some newTarget)
+      | .native nid =>
+        let h ← get
+        let k := fnRealmIdx h id
+        if h.realms.isEmpty || k == h.curRealm then constructNative n nid f args newTarget
+        else inRealm k (constructNative n nid f args newTarget)
       | .bound t _ bargs => construct n t (bargs ++ args) (if strictEq newTarget f then t else newTarget)
       | .proxy t hnd =>
         -- [[Construct]] of a Proxy (§10.5.13): the `construct` trap with the target, the
@@ -3517,6 +3647,36 @@ def iterToArray : Nat → Value → Array Value → M (Array Value)
     | none => pure acc
 termination_by structural n _ _ => n
 
+/-- IteratorClose (§7.4.11) with an abrupt completion: on a throw, `return` is called and what it
+does is ignored (the original throw wins, step 5), then the completion goes on; a halt goes on
+at once, with no call. It never returns normally. -/
+def iterCloseAbrupt : Nat → Value → Abrupt → M Unit
+  | 0, _, a => throw a
+  | n + 1, it, a => do
+    if let .throw _ := a then
+      let _ ← catchJS (iterClose n it) (fun _ => pure ())
+    throw a
+termination_by structural n _ _ => n
+
+/-- `f` on each value of the iterator, a step at a time (IteratorStepValue, §7.4.10), as
+AddEntriesFromIterable (§24.1.1.2) and the Promise combinators (§27.2.4) walk theirs: an abrupt
+completion of `f` closes the iterator (`iterCloseAbrupt`); one of the step itself does not.
+Nothing is collected first, so an iterator that never ends costs one step a value and stops
+at the step budget or the heap's size (`tick`), not when memory runs out. -/
+def iterEach : Nat → Value → (Value → M Unit) → M Unit
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, it, f => do
+    for _ in [0:iterEachMax] do
+      tick
+      match ← iterStep n it with
+      | none => return
+      | some v =>
+        match ← catchJS (do f v; pure none) (fun a => pure (some a)) with
+        | some a => iterCloseAbrupt n it a
+        | none => pure ()
+    throw (.halt "iteration limit")
+termination_by structural n _ _ => n
+
 /-- `super.k`: [[Get]] on the home object's prototype with `this` as receiver. -/
 def getSuper : Nat → Value → String → Value → M Value
   | 0, _, _, _ => throw (.halt "fuel")
@@ -3545,7 +3705,18 @@ def superCall : Nat → Ctx → Array Value → M Value
             if let .obj tid := ctx.thisV then
               if let .obj rid := r then
                 let ro ← getObj rid
-                modifyObj tid fun o => { o with kind := ro.kind, props := ro.props, keys := ro.keys }
+                -- a proxy whose target is `this` itself (a parent constructor that returns
+                -- `new Proxy(this, ...)`): `this` would become its own target, and every use of
+                -- it a loop with no step taken (a Test262 STALL); the target becomes a copy of
+                -- `this` as it was
+                let kind ← match ro.kind with
+                  | .proxy (.obj t) hnd =>
+                    if t == tid then do
+                      let o2 ← alloc (← getObj tid)
+                      pure (Kind.proxy (.obj o2) hnd)
+                    else pure ro.kind
+                  | k => pure k
+                modifyObj tid fun o => { o with kind, props := ro.props, keys := ro.keys }
       | .native _ | .bound .. =>
         let r ← construct n parent args ctx.newTarget
         if let .obj tid := ctx.thisV then
@@ -3592,6 +3763,7 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
         else FunDef.mk none [] none [] [] false true (.ctor false) false false {}
     let cname := name.getD nameHint
     let fid ← alloc { proto := ctorParent, kind := .closure fd cenv .undef .undef (.obj proto) #[] }
+    tagFn fid
     defineOwn fid "length" (.data (.num (Float.ofNat fd.expectedArgs)) false false true)
     defineOwn fid "name" (.data (.str cname) false false true)
     defineOwn fid "prototype" (.data (.obj proto) false false false)
@@ -4935,7 +5107,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let proto ← match newTarget with
         | some nt => do
           let p ← getV n nt "prototype"
-          pure (if p.isObj then p else .obj (r.errorProtos.getD k r.objectProto))
+          let nr ← funRealm nt
+          pure (if p.isObj then p else .obj (nr.errorProtos.getD k nr.objectProto))
         | none => pure (.obj (r.errorProtos.getD k r.objectProto))
       let o ← alloc { proto, kind := .error }
       match a0 with
@@ -5155,7 +5328,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       if !(← isCallable a0) then throwErr .type "Promise resolver is not a function"
       let pid ← newPromise
       let pp ← getV n nt "prototype"
-      if pp.isObj then modifyObj pid fun o => { o with proto := pp }
+      let pp ← if pp.isObj then pure pp else pure (.obj (← funRealm nt).promiseProto)
+      modifyObj pid fun o => { o with proto := pp }
       let res ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj pid] }
       let rej ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj pid] }
       let x ← catchJS (do let _ ← callV n a0 .undef #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
@@ -5250,17 +5424,24 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let res ← newPromise
       let x ← catchJS (do
           let it ← getIterator n a0
-          let items ← iterToArray n it #[]
-          let vals ← newArray (Array.replicate items.size .undef)
+          -- PerformPromiseAll (§27.2.4.1.2): a value at a time; `counter.n` is
+          -- remainingElementsCount, `counter.i` the index of the next value.
+          let vals ← newArray #[]
           let counter ← newObject
-          setHidden counter "n" (.num (Float.ofNat items.size + 1))
-          for i in [0:items.size] do
-            let p ← promiseResolve n items[i]!
+          setHidden counter "n" (.num 1)
+          setHidden counter "i" (.num 0)
+          iterEach n it fun item => do
+            let i ← toNum n (← getV n (.obj counter) "i")
+            setHidden counter "i" (.num (i + 1))
+            putV n vals (numToString i) .undef true
+            let p ← promiseResolve n item
             let elF ← nativeFn .promiseAllElement
-            let elArgs : Array Value := #[.obj res, vals, .obj counter, .num (Float.ofNat i)]
+            let elArgs : Array Value := #[.obj res, vals, .obj counter, .num i]
             let el ← alloc { proto := .obj r.functionProto, kind := .bound elF .undef elArgs }
             let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj res] }
-            performThen n p (.obj el) (.obj rj) .undef
+            let k ← toNum n (← getV n (.obj counter) "n")
+            putV n (.obj counter) "n" (.num (k + 1)) true
+            let _ ← callV n (← getV n (.obj p) "then") (.obj p) #[.obj el, .obj rj]
           let _ ← callNative n .promiseAllElement .undef #[.obj res, vals, .obj counter, .num (-1), .undef] none
           pure none)
         (fun a => pure (some a))
@@ -5273,21 +5454,29 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let res ← newPromise
       let x ← catchJS (do
           let it ← getIterator n a0
-          let items ← iterToArray n it #[]
-          let vals ← newArray (Array.replicate items.size .undef)
+          -- PerformPromiseRace (k = 0, §27.2.4.5.1) and PerformPromiseAllSettled (k = 1,
+          -- §27.2.4.2.1): a value at a time, `Invoke(nextPromise, "then", ...)` for each.
+          let vals ← newArray #[]
           let counter ← newObject
-          setHidden counter "n" (.num (Float.ofNat items.size + 1))
-          for i in [0:items.size] do
-            let p ← promiseResolve n items[i]!
-            if k == 0 then
-              let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
-              let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj res] }
-              performThen n p (.obj rs) (.obj rj) .undef
-            else
-              let elArgs : Array Value := #[.obj res, vals, .obj counter, .num (Float.ofNat i)]
-              let onF ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn ((.x (.promiseSettleElement 0)))) .undef elArgs }
-              let onR ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn ((.x (.promiseSettleElement 1)))) .undef elArgs }
-              performThen n p (.obj onF) (.obj onR) .undef
+          setHidden counter "n" (.num 1)
+          setHidden counter "i" (.num 0)
+          iterEach n it fun item => do
+            let i ← toNum n (← getV n (.obj counter) "i")
+            setHidden counter "i" (.num (i + 1))
+            if k != 0 then putV n vals (numToString i) .undef true
+            let p ← promiseResolve n item
+            let (onF, onR) ← if k == 0 then do
+                let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
+                let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj res] }
+                pure (rs, rj)
+              else do
+                let elArgs : Array Value := #[.obj res, vals, .obj counter, .num i]
+                let onF ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn ((.x (.promiseSettleElement 0)))) .undef elArgs }
+                let onR ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn ((.x (.promiseSettleElement 1)))) .undef elArgs }
+                let c ← toNum n (← getV n (.obj counter) "n")
+                putV n (.obj counter) "n" (.num (c + 1)) true
+                pure (onF, onR)
+            let _ ← callV n (← getV n (.obj p) "then") (.obj p) #[.obj onF, .obj onR]
           if k != 0 then
             let _ ← callNative n .promiseAllElement .undef #[.obj res, vals, .obj counter, .num (-1), .undef] none
           pure none)
@@ -5360,14 +5549,18 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | some nt => pure nt
         | none => throwErr .type "Constructor requires 'new'"
       let pp ← getV n nt "prototype"
+      -- GetPrototypeFromConstructor (§10.1.14): %Map.prototype% and the others of the new target's realm
+      let pp ← if pp.isObj then pure pp else
+        getV n (← getV n (.obj (← funRealm nt).globalObj) (#["Map", "Set", "WeakMap", "WeakSet"].getD k "Map")) "prototype"
       let o ← alloc { proto := pp, kind := .coll k #[] {} }
       match a0 with
       | .undef | .null => pure ()
       | it =>
         let adder ← getV n (.obj o) (if k == 0 || k == 2 then "set" else "add")
         if !(← isCallable adder) then throwErr .type "adder is not a function"
-        let items ← iterToArray n (← getIterator n it) #[]
-        for item in items do
+        -- AddEntriesFromIterable (§24.1.1.2) and the Set constructor's loop (§24.2.2.1): a value
+        -- at a time; an error of the adder or of an entry closes the iterator.
+        iterEach n (← getIterator n it) fun item => do
           if k == 0 || k == 2 then
             if !item.isObj then throwErr .type "Iterator value is not an entry object"
             let key ← getV n item "0"
@@ -6440,8 +6633,10 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         | _ => none
       -- a primitive `this` for a sloppy function needs an object made: the general path
       let primThis := match thisV with | .undef | .null | .obj _ => false | _ => true
+      -- with more than one realm, every call takes the general path (`callClosure` changes realm)
       let callee := match callee with
-        | some (c, cenv, capThis) => if primThis && !c.isArrow && !c.strict then none else some (c, cenv, capThis)
+        | some (c, cenv, capThis) =>
+          if (primThis && !c.isArrow && !c.strict) || !h.realms.isEmpty then none else some (c, cenv, capThis)
         | none => none
       match callee with
       | some (c, cenv, capThis) =>
@@ -7390,7 +7585,8 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       -- the prototype is the new target's (OrdinaryCreateFromConstructor)
       if let (.obj bid, some nt) := (buf, newTarget) then
         let p ← getV n nt "prototype"
-        if p.isObj then modifyObj bid fun o => { o with proto := p }
+        let p ← if p.isObj then pure p else pure (.obj (← funRealm nt).bufferProto)
+        modifyObj bid fun o => { o with proto := p }
       pure buf
     | .bufferSlice =>
       let bytes ← match thisV with
@@ -7577,7 +7773,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
           for i in [0:min 7 args.size] do xs := xs.push (← toNum n args[i]!)
           pure (Date.timeClip (dateOfParts xs))
       let p ← getV n nt "prototype"
-      let id ← alloc { proto := if p.isObj then p else .obj r.dateProto, kind := .prim (.num t) }
+      let id ← alloc { proto := (← protoOr p nt (·.dateProto)), kind := .prim (.num t) }
       defineOwn id dateKey (.data (.bool true) true false false)
       pure (.obj id)
     | .dateGetTime =>
@@ -7912,7 +8108,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       if let some m := max then
         if len > m then throwErr .range "byteLength exceeds maxByteLength"
       let p ← getV n nt "prototype"
-      let sid ← alloc { proto := if p.isObj then p else .obj r.sharedBufferProto,
+      let sid ← alloc { proto := (← protoOr p nt (·.sharedBufferProto)),
                         kind := .buffer (ByteArray.mk (Array.replicate len.toUInt64.toNat 0)) }
       defineOwn sid bufSharedKey (.data (.bool true) true false false)
       if let some m := max then defineOwn sid bufMaxKey (.data (.num m) true false false)
@@ -8208,13 +8404,13 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let some nt := newTarget | throwErr .type "Constructor Iterator requires 'new'"
       if strictEq nt (← getV n (.obj r.globalObj) "Iterator") then throwErr .type "Abstract class Iterator not directly constructable"
       let p ← getV n nt "prototype"
-      pure (.obj (← alloc { proto := if p.isObj then p else .obj r.iterProto }))
+      pure (.obj (← alloc { proto := (← protoOr p nt (·.iterProto)) }))
     | (.x .suppressedErrorCtor) =>
       -- SuppressedError(error, suppressed, message)
       let proto ← match newTarget with
         | some nt => do
           let p ← getV n nt "prototype"
-          pure (if p.isObj then p else .obj r.suppressedErrorProto)
+          protoOr p nt (·.suppressedErrorProto)
         | none => pure (.obj r.suppressedErrorProto)
       let o ← alloc { proto, kind := .error }
       match argD args 2 with
@@ -8226,7 +8422,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
     | (.x .disposableStackCtor) =>
       let some nt := newTarget | throwErr .type "Constructor DisposableStack requires 'new'"
       let p ← getV n nt "prototype"
-      let o ← alloc { proto := if p.isObj then p else .obj r.disposableStackProto }
+      let o ← alloc { proto := (← protoOr p nt (·.disposableStackProto)) }
       setHidden o dsStackKey (← newArray #[])
       setHidden o dsStateKey (.bool false)
       pure (.obj o)
@@ -8934,6 +9130,34 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | .ok sc =>
         let g := r.globalObj
         let ctx : Ctx := { env := 0, thisV := .obj g, strict := sc.strict }
+        -- GlobalDeclarationInstantiation's checks (§16.1.7 steps 3 to 10), all before any binding
+        -- is made: a lexical name that a var, a lexical binding or a non-configurable global
+        -- property has is a SyntaxError; a function the global object cannot take
+        -- (CanDeclareGlobalFunction) or a var it cannot take (CanDeclareGlobalVar) a TypeError
+        let go ← getObj g
+        let funNames := sc.body.filterMap fun st => match st with | .funDecl x _ => some x | _ => none
+        let lexNames := sc.body.flatMap fun st => match st with
+          | .decl .letK ds | .decl .constK ds => ds.flatMap (·.names)
+          | .classDecl x _ => [x]
+          | _ => []
+        for x in lexNames do
+          if (← getBinding 0 x).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
+          if sc.vars.contains x || funNames.contains x then throwErr .syntax s!"Identifier '{x}' has already been declared"
+          if let some p := go.getOwn x then
+            if !p.configurable then throwErr .syntax s!"Identifier '{x}' has already been declared"
+        for x in sc.vars ++ funNames do
+          if (← getBinding 0 x).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
+        for f in funNames do
+          match go.getOwn f with
+          | none => if !go.extensible then throwErr .type s!"Cannot declare global function '{f}'"
+          | some p =>
+            if !p.configurable then
+              match p with
+              | .data _ true true _ => pure ()
+              | _ => throwErr .type s!"Cannot redefine global function '{f}'"
+        for v in sc.vars do
+          if !funNames.contains v && (go.getOwn v).isNone && !go.extensible then
+            throwErr .type s!"Cannot declare global variable '{v}'"
         for v in sc.vars do
           if ((← getObj g).getOwn v).isNone then defineOwn g v (.data .undef true true false)
         for st in sc.body do
@@ -9232,7 +9456,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let proto ← match newTarget with
         | some nt => do
           let p ← getV n nt "prototype"
-          pure (if p.isObj then p else .obj r.aggregateErrorProto)
+          protoOr p nt (·.aggregateErrorProto)
         | none => pure (.obj r.aggregateErrorProto)
       let o ← alloc { proto, kind := .error }
       match a1 with
@@ -9248,16 +9472,22 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let res ← newPromise
       let x ← catchJS (do
           let it ← getIterator n a0
-          let items ← iterToArray n it #[]
-          let errs ← newArray (Array.replicate items.size .undef)
+          -- PerformPromiseAny (§27.2.4.3.1): a value at a time.
+          let errs ← newArray #[]
           let counter ← newObject
-          setHidden counter "n" (.num (Float.ofNat items.size + 1))
-          for i in [0:items.size] do
-            let p ← promiseResolve n items[i]!
+          setHidden counter "n" (.num 1)
+          setHidden counter "i" (.num 0)
+          iterEach n it fun item => do
+            let i ← toNum n (← getV n (.obj counter) "i")
+            setHidden counter "i" (.num (i + 1))
+            putV n errs (numToString i) .undef true
+            let p ← promiseResolve n item
             let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
-            let elArgs : Array Value := #[.obj res, errs, .obj counter, .num (Float.ofNat i)]
+            let elArgs : Array Value := #[.obj res, errs, .obj counter, .num i]
             let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x .promiseAnyReject)) .undef elArgs }
-            performThen n p (.obj rs) (.obj rj) .undef
+            let c ← toNum n (← getV n (.obj counter) "n")
+            putV n (.obj counter) "n" (.num (c + 1)) true
+            let _ ← callV n (← getV n (.obj p) "then") (.obj p) #[.obj rs, .obj rj]
           let _ ← callNative n (.x .promiseAnyReject) .undef #[.obj res, errs, .obj counter, .num (-1), .undef] none
           pure none)
         (fun a => pure (some a))
@@ -9395,7 +9625,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | none => throwErr .type "Constructor WeakRef requires 'new'"
       if !a0.isObj then throwErr .type "WeakRef: the target must be an object"
       let pp ← getV n nt "prototype"
-      let proto ← if pp.isObj then pure pp else getV n (← getV n (.obj r.globalObj) "WeakRef") "prototype"
+      let proto ← if pp.isObj then pure pp else getV n (← getV n (.obj (← funRealm nt).globalObj) "WeakRef") "prototype"
       let o ← alloc { proto }
       setHidden o weakRefTargetKey a0
       pure (.obj o)
@@ -9412,7 +9642,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | none => throwErr .type "Constructor FinalizationRegistry requires 'new'"
       if !(← isCallable a0) then throwErr .type "FinalizationRegistry: the cleanup callback is not a function"
       let pp ← getV n nt "prototype"
-      let proto ← if pp.isObj then pure pp else getV n (← getV n (.obj r.globalObj) "FinalizationRegistry") "prototype"
+      let proto ← if pp.isObj then pure pp else getV n (← getV n (.obj (← funRealm nt).globalObj) "FinalizationRegistry") "prototype"
       let o ← alloc { proto }
       setHidden o finRegCallbackKey a0
       setHidden o finRegTokensKey (← newArray #[])
@@ -9646,13 +9876,46 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
             defineOwn c "groups" (.data (.obj g) true true true)
             defineOwn out name (.data (.obj c) true true true)
           pure (.obj out)
+    | (.x .realmTake) =>
+      -- a test host's `$262.createRealm()`: the next realm the host made (`addRealm`)
+      let h ← get
+      match h.spareRealms[0]? with
+      | none => throwErr .type "$262.createRealm: the host has no realm left to give"
+      | some k =>
+        set { h with spareRealms := h.spareRealms.extract 1 h.spareRealms.size }
+        pure (h.realms.getD k {}).host
+    | (.x .gcNoop) => pure .undef
     | (.x .dynImport) =>
+      -- EvaluateImportCall (§13.3.10.1): the specifier as a string, then the options' `with`
+      -- object, whose values must be strings (steps 7 to 10); an abrupt step rejects the promise.
       let pid ← newPromise
-      let x ← catchJS (do let _ ← toStr n a0; pure none) (fun a => pure (some a))
+      let x ← catchJS (do
+          let spec ← toStr n a0
+          let mut ty := ""
+          match a1 with
+          | .undef => pure ()
+          | .obj _ =>
+            match ← getV n a1 "with" with
+            | .undef => pure ()
+            | .obj wid =>
+              for k in ← ownKeysOf n wid do
+                if isSymKey k || isPrivKey k then continue
+                let some d ← ownDesc n wid k | continue
+                if !d.enumerable then continue
+                match ← getV n (.obj wid) k with
+                | .str v => if k == "type" then ty := Str.toHost v
+                | _ => throwErr .type "import(): the value of an import attribute must be a string"
+            | _ => throwErr .type "import(): the 'with' option must be an object"
+          | _ => throwErr .type "import(): the second argument must be an object"
+          pure (Except.ok (spec, ty)))
+        (fun a => pure (Except.error a))
       match x with
-      | some (.throw e) => rejectPromise n pid e
-      | some a => throw a
-      | none => rejectPromise n pid (← mkError .type "import() is not supported in this script")
+      | .error (.throw e) => rejectPromise n pid e
+      | .error a => throw a
+      | .ok (spec, ty) =>
+        match (← get).importQueue with
+        | some q => modify fun h => { h with importQueue := some (q.push (Str.toHost spec, ty, pid)) }
+        | none => rejectPromise n pid (← mkError .type "import() is not supported in this script")
       pure (.obj pid)
     | (.x (.promiseThenableFn reject)) =>
       -- bound arguments: the promise and the pair's [[AlreadyResolved]] record
@@ -9971,6 +10234,7 @@ def initDisposal (g errorProto : Nat) : M Unit := do
 def initRealm : M Unit := do
   let objectProto ← alloc {}
   let functionProto ← alloc { proto := .obj objectProto, kind := .native .functionProto }
+  tagFn functionProto
   let mk (k : Kind := .ordinary) : M Nat := alloc { proto := .obj objectProto, kind := k }
   let arrayProto ← mk (.array #[])
   let stringProto ← mk (.prim (.str ""))
@@ -10487,6 +10751,30 @@ def freshHeapOf (host : Option H) (hostCall : H → Nat → Array HostArg → Na
   match (initRealm : M Unit).run { host, hostCall } with
   | .ok _ h => h
   | .error _ h => h
+
+/-- Make another realm in this heap (InitializeHostDefinedRealm, §9.6): its own intrinsics
+and an empty global environment record, made by `initRealm` while it runs; then the realm
+that ran before runs again. The answer is the new realm's number. A host calls this; no
+script can. -/
+def addRealm (h : HeapOf H) : Nat × HeapOf H :=
+  let h := if h.realms.isEmpty then { h with realms := #[{}], curRealm := 0 } else h
+  let back := h.curRealm
+  let k := h.realms.size
+  let saved : SavedRealm := { (h.realms.getD back {}) with realm := h.realm, env0 := h.envs[0]! }
+  let h := { h with realms := (h.realms.set! back saved).push {}, realm := {},
+                    envs := h.envs.set! 0 {}, curRealm := k }
+  let h := match (initRealm : M Unit).run h with | .ok _ h => h | .error _ h => h
+  match (switchRealm back : M Unit).run h with
+  | .ok _ h => (k, h)
+  | .error _ h => (k, h)
+
+/-- Run `f` on the heap with realm `k` running, then switch back to the realm that ran. -/
+def inRealmH {α : Type} (h : HeapOf H) (k : Nat) (f : HeapOf H → α × HeapOf H) : α × HeapOf H :=
+  let back := h.curRealm
+  let h := match (switchRealm k : M Unit).run h with | .ok _ h => h | .error _ h => h
+  let (a, h) := f h
+  let h := match (switchRealm back : M Unit).run h with | .ok _ h => h | .error _ h => h
+  (a, h)
 
 /-- A fresh realm with no host. -/
 def freshHeap : Heap := freshHeapOf none fun h _ _ _ => (h, .val .undef)

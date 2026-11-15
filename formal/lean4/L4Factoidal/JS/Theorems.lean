@@ -21,6 +21,8 @@ import L4Factoidal.JS.Interp
 - `strKey_not_priv`, `strKey_not_sym`, `keyStr_strKey`, `strKey_injective`,
   `strKey_ne_privKey`: the property key of a String value is never a private name's or a
   Symbol's key, is injective, and is undone by `keyStr`.
+- `switchRealm_one_realm`, `switchRealm_unknown`, `tagFn_realm0`: with one realm (every page)
+  the realm machinery leaves the heap as it was; an unknown realm is never entered.
 
 The evaluator is a Lean function, so it is deterministic by construction: the same
 script and heap give the same outcome and heap. Each function of the parser and of
@@ -598,5 +600,30 @@ theorem advanceIndex_gt (s : String) (i : Nat) (u : Bool) :
   · split
     · split <;> omega
     · omega
+
+/-! ## Realms (`ColdHeap.realms`, `switchRealm`)
+
+A host may make more realms in one heap (a test host's `$262.createRealm`); a call of a
+function of another realm runs in that realm (`inRealm`). A heap with one realm, every page's,
+must pay nothing for it. -/
+
+/-- Kind: a cost. Says: with one realm (`realms` empty), changing the running realm changes
+nothing at all: the heap comes back as it was.
+Does not say: what a call costs with one realm (each call site tests `realms.isEmpty` once). -/
+theorem switchRealm_one_realm {H : Type} (h : HeapOf H) (k : Nat) (hr : h.realms = #[]) :
+    (switchRealm k : JSM H Unit).run h = .ok () h := by
+  simp [switchRealm, hr, EStateM.run, modify, modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet]
+
+/-- Kind: a refusal. Says: a realm number that is not a realm of the heap is never made the
+running realm: the heap comes back as it was. -/
+theorem switchRealm_unknown {H : Type} (h : HeapOf H) (k : Nat) (hk : h.realms.size ≤ k) :
+    (switchRealm k : JSM H Unit).run h = .ok () h := by
+  simp [switchRealm, hk, EStateM.run, modify, modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet]
+
+/-- Kind: a cost. Says: in realm 0 a new function object is not recorded anywhere (`tagFn` leaves
+the heap as it was), so the map of function realms stays empty in a page. -/
+theorem tagFn_realm0 {H : Type} (h : HeapOf H) (id : Nat) (h0 : h.curRealm = 0) :
+    (tagFn id : JSM H Unit).run h = .ok () h := by
+  simp [tagFn, h0, EStateM.run, modify, modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet]
 
 end L4Factoidal.JS

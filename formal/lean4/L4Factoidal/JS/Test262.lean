@@ -59,11 +59,11 @@ inductive Verdict where
   /-- `neg`: a negative test (an expected error). -/
   | pass (neg : Bool) | fail (why : String) | skip (why : String)
 
-/-- The host-defined `$262` object (Test262 `INTERPRETING.md`, "Host-Defined Functions"), as
-far as this runner can give it without a way back into the interpreter: `global`, and
-`detachArrayBuffer` by `ArrayBuffer.prototype.transfer` (which detaches its receiver,
-§25.1.6.9 ArrayBufferCopyAndDetach), taken before any test code runs. Not given, so the
-tests that call them fail: `createRealm`, `evalScript`, `gc`, `agent`, `IsHTMLDDA`. -/
+/-- The host-defined `$262` object (Test262 `INTERPRETING.md`, "Host-Defined Functions"):
+`global`, and `detachArrayBuffer` by `ArrayBuffer.prototype.transfer` (which detaches its
+receiver, §25.1.6.9 ArrayBufferCopyAndDetach), taken before any test code runs; the engine's
+built-ins of `hostNatives` are added to it. Not given, so the tests that call them fail:
+`agent` (no second thread of execution), `IsHTMLDDA`. -/
 def host262 : String :=
   "var $262 = (function () { var t = ArrayBuffer.prototype.transfer; var call = Function.prototype.call; " ++
   "return { global: globalThis, detachArrayBuffer: function (b) { call.call(t, b); return null; } }; })();"
@@ -74,6 +74,53 @@ def pagePrint : String :=
   "(function () { var out = ''; Object.defineProperty($262, 'out', { get: function () { return out; } }); " ++
   "globalThis.print = function (m) { out = out + String(m) + '\\n'; }; })();"
 
+/-- The `$262` functions the engine serves: `createRealm` (the `$262` of the next realm this
+runner made for the test, `addTestRealms`), `evalScript` (a classic script in the global scope
+of the `$262`'s own realm, as `importScripts` runs one) and `gc` (does nothing: the heap has
+no collector). -/
+def hostNatives : Array (String × Native × Nat) :=
+  #[("createRealm", .x .realmTake, 0), ("evalScript", .x .classicScript, 1), ("gc", .x .gcNoop, 0)]
+
+/-- `$262` of the running realm with `hostNatives` added. -/
+def install262 (h : HeapOf H) (src : String) : Option (Value × HeapOf H) :=
+  match runScript h src with
+  | (.ok, h) =>
+    match evalValue h "$262" with
+    | ((.ok, v), h) => some (v, addNatives h v hostNatives)
+    | _ => none
+  | _ => none
+
+/-- The most realms one test gets (`addTestRealms`). -/
+def maxTestRealms : Nat := 8
+
+/-- How many realms to make for a test: two for each place its source names `createRealm`,
+at most `maxTestRealms`; none for the rest, which pay nothing. -/
+def realmsWanted (src : String) : Nat :=
+  Nat.min maxTestRealms (2 * ((src.splitOn "createRealm").length - 1))
+
+#guard realmsWanted "var x = 1;" = 0
+#guard realmsWanted "$262.createRealm(); $262.createRealm()" = 4
+#guard realmsWanted (String.join (List.replicate 9 "createRealm ")) = maxTestRealms
+
+/-- Kind: a bound. Says: one test never gets more than `maxTestRealms` realms, however often its
+source names `createRealm`; past them `$262.createRealm()` is a TypeError. -/
+theorem realmsWanted_le (src : String) : realmsWanted src ≤ maxTestRealms := Nat.min_le_left _ _
+
+/-- `count` new realms (`addRealm`), each with its own `$262` (with `hostNatives`), given out
+in order by `$262.createRealm()` of any realm (`ColdHeap.spareRealms`); past them it is a
+TypeError, a refusal at a bound the runner chose. The realm that ran before runs again. -/
+def addTestRealms (h : HeapOf H) (count : Nat) : HeapOf H := Id.run do
+  let mut h := h
+  for _ in [0:count] do
+    let (k, h1) := addRealm h
+    let (v, h2) := inRealmH h1 k fun hk =>
+      match install262 hk host262 with
+      | some (v, hk) => (v, hk)
+      | none => (.undef, hk)
+    h := { h2 with realms := h2.realms.modify k (fun r => { r with host := v }),
+                   spareRealms := h2.spareRealms.push k }
+  return h
+
 /-- What the test printed: the engine's own `print` lines, and on the page realm `$262.out`. -/
 def printed (h : HeapOf H) (page : Bool) : Array String :=
   if !page then h.out else
@@ -83,9 +130,9 @@ def printed (h : HeapOf H) (page : Bool) : Array String :=
 
 /-- A realm with `$262`: what a `raw` test runs on. -/
 def withHost262 (fresh : HeapOf H) (page : Bool) : IO (HeapOf H) :=
-  match runScript fresh (host262 ++ (if page then pagePrint else "")) with
-  | (.ok, h) => pure h
-  | _ => throw (IO.userError "the $262 host object failed")
+  match install262 fresh (host262 ++ (if page then pagePrint else "")) with
+  | some (_, h) => pure h
+  | none => throw (IO.userError "the $262 host object failed")
 
 /-- The heap after `$262` and the default harness, computed once per run. -/
 def harnessHeap (root : System.FilePath) (fresh : HeapOf H) (page : Bool) : IO (HeapOf H) := do
@@ -116,14 +163,51 @@ def resolveSpec (from_ spec : String) : String :=
 /-- At most this many modules in one test's graph (the largest Test262 graph has a few dozen). -/
 def maxModules : Nat := 512
 
-/-- Load the module graph of `root` (a file path): each module read and parsed once, each
-specifier resolved against the path of the module naming it. An error is `(phase, message)`:
-`parse` for the test file itself, `resolution` for a module it loads. -/
-def loadGraph (root : String) (rootSrc : String) : IO (Except (String × String) ModGraph) := do
+/-- A JSON module (import attribute `type: "json"`, ECMA-262 §16.2.1.8 and the JSON modules
+proposal): a module whose default export is the value `JSON.parse` makes of the file's text. -/
+def jsonModuleSource (text : String) : String :=
+  let esc := text.foldl (init := "") fun acc c =>
+    match c with
+    | '\\' => acc ++ "\\\\" | '"' => acc ++ "\\\"" | '\n' => acc ++ "\\n" | '\r' => acc ++ "\\r"
+    | '\u2028' => acc ++ "\\u2028" | '\u2029' => acc ++ "\\u2029"
+    | c => acc.push c
+  "export default JSON.parse(\"" ++ esc ++ "\");"
+
+#guard jsonModuleSource "{\"a\": \"x\\n\"}\n" = "export default JSON.parse(\"{\\\"a\\\": \\\"x\\\\n\\\"}\\n\");"
+
+/-- The module a request names from module `fromUrl` (`splitRequest`): its key in the module map
+and its source text. A `type: "json"` module has the key of its path and `#json` (a JSON module
+and a JavaScript module of one file are two records) and the source `jsonModuleSource`; a JSON
+text that does not parse is a SyntaxError here, when the module is loaded (ParseJSONModule). An
+unknown type, or a file that is not there, is an error. -/
+def readModule (fromUrl request : String) : IO (Except String (String × String)) := do
+  let (spec, ty) := ModuleParse.splitRequest request
+  let p := resolveSpec fromUrl spec
+  if ty != "" && ty != "json" then return .error s!"unsupported module type '{ty}'"
+  if !(← System.FilePath.pathExists p) || (← System.FilePath.isDir p) then
+    return .error s!"cannot find module {spec}"
+  let text ← try IO.FS.readFile p catch e => return .error s!"cannot read module {spec}: {e}"
+  if ty == "json" then
+    match jsonParseText text.trimAscii.toString with
+    | .error _ => return .error s!"SyntaxError: {spec} is not a JSON text"
+    | .ok (_, e) =>
+      if e < text.trimAscii.toString.length then return .error s!"SyntaxError: {spec} is not a JSON text"
+      return .ok (p ++ "#json", jsonModuleSource text)
+  return .ok (p, text)
+
+/-- Load module `root` (a file path, its source `rootSrc`) and the modules it needs into graph
+`g`: each module read and parsed once, a module already in `g` not read again (the module map:
+one module record for each path), each specifier resolved against the path of the module naming
+it. The answer is the root's index and the graph; on an error nothing is added. An error is
+`(phase, message)`: `parse` for the root itself, `resolution` for a module it loads. -/
+def loadInto (g : ModGraph) (root : String) (rootSrc : String) :
+    IO (Except (String × String) (Nat × ModGraph)) := do
+  if let some k := g.findIdx? (·.url == root) then return .ok (k, g)
   let rootSyn ← match parseModule rootSrc with
     | .ok s => pure s
     | .error e => return .error ("parse", e)
-  let mut urls : Array String := #[root]
+  let start := g.size
+  let mut urls : Array String := (g.map (·.url)).push root
   let mut syns : Array ModuleSyntax := #[rootSyn]
   let mut deps : Array (Array (String × Nat)) := #[]
   let mut i := 0
@@ -132,21 +216,98 @@ def loadGraph (root : String) (rootSrc : String) : IO (Except (String × String)
       let syn := syns[i]
       let mut ds : Array (String × Nat) := #[]
       for spec in syn.requests do
-        let p := resolveSpec urls[i]! spec
-        match urls.findIdx? (· == p) with
+        let (sp, ty) := ModuleParse.splitRequest spec
+        let key := resolveSpec urls[start + i]! sp ++ (if ty == "json" then "#json" else "")
+        match urls.findIdx? (· == key) with
         | some k => ds := ds.push (spec, k)
         | none =>
-          if !(← System.FilePath.pathExists p) then return .error ("resolution", s!"cannot find module {spec}")
-          match parseModule (← IO.FS.readFile p) with
-          | .error e => return .error ("resolution", s!"SyntaxError in {spec}: {e}")
-          | .ok s =>
-            ds := ds.push (spec, urls.size)
-            urls := urls.push p
-            syns := syns.push s
+          match ← readModule urls[start + i]! spec with
+          | .error e => return .error ("resolution", e)
+          | .ok (key, text) =>
+            match parseModule text with
+            | .error e => return .error ("resolution", s!"SyntaxError in {sp}: {e}")
+            | .ok s =>
+              ds := ds.push (spec, urls.size)
+              urls := urls.push key
+              syns := syns.push s
       deps := deps.push ds
       i := i + 1
   if i < syns.size then return .error ("resolution", s!"more than {maxModules} modules")
-  return .ok ((urls.zip syns).zip deps |>.map fun ((u, s), ds) => { ModNode.ofSyntax u s with deps := ds })
+  let fresh := ((urls.extract start urls.size).zip syns).zip deps |>.map fun ((u, s), ds) =>
+    { ModNode.ofSyntax u s with deps := ds }
+  return .ok (start, g ++ fresh)
+
+/-- The most rounds of `import()` calls one test may make (`serveImports`). -/
+def maxImportRounds : Nat := 256
+
+/-- Serve the `import()` calls of a run (HostLoadImportedModule, §16.2.1.10, as a host does after
+the script's turn): each specifier resolved against the test's own path, loaded into the test's
+module graph (`loadInto`: a module once loaded is the same module for every later import),
+linked and evaluated (`runModuleGraph`, which evaluates a module once), and the promise settled
+with the module's namespace object or the error (a module that does not parse is a SyntaxError,
+one that cannot be found or has an unknown `type` a TypeError); then the jobs run, which may
+import again. At most `maxImportRounds` rounds: the calls of later rounds stay pending. A halt
+(step budget, heap size) ends it, with the reason. -/
+def serveImports (path : String) (h : HeapOf H) (g : ModGraph) (lives : ModLives)
+    (resume : Option Nat := none) : IO (Option String × HeapOf H) := do
+  let mut h := h
+  let mut g := g
+  let mut lives := lives
+  for _ in [0:maxImportRounds] do
+    let q := h.importQueue.getD #[]
+    if q.isEmpty then break
+    h := { h with importQueue := some #[] }
+    for (spec, ty, pid) in q do
+      let res ← match ← readModule path (ModuleParse.withType spec ty) with
+        | .error e => pure (.error ((if e.startsWith "SyntaxError" then "parse" else "type"), e))
+        | .ok (key, text) => loadInto g key text
+      match res with
+      | .error (ph, msg) =>
+        let (e, h1) := newError h (if ph == "type" then .type else .syntax) msg
+        h := settleImport h1 pid e true
+      | .ok (root, g') =>
+        g := g'
+        let ((o, lv), h1) := runModuleGraph h g root lives
+        lives := lv
+        h := h1
+        match o with
+        | .ok =>
+          let ((ns, lv), h2) := moduleNamespace h g root lives
+          lives := lv
+          h := settleImport h2 pid (ns.getD .undef) false
+        | .threw v _ => h := settleImport h pid v true
+        | .halted w => return (some w, h)
+        | .syntaxError m =>
+          let (e, h1) := newError h .syntax m
+          h := settleImport h1 pid e true
+    let ((o, _), h2) := checkpoint h
+    h := h2
+    if let .halted w := o then return (some w, h)
+    -- a module test whose graph waits for an import (top-level `await import(...)`): run the
+    -- graph again, which goes on from the module that waited
+    if let some root := resume then
+      let ((o, lv), h3) := runModuleGraph h g root lives
+      lives := lv
+      h := h3
+      match o with
+      | .halted w => return (some w, h)
+      | .threw v _ => return (some s!"module evaluation threw: {describeThrown h v}", h)
+      | _ => pure ()
+  return (none, h)
+
+/-- The step budget of one run of a test. -/
+def runSteps : UInt64 := 20000000
+
+/-- The heap size of one run of a test (`HeapOf.full`): a quarter of the engine's default
+(`ColdHeap.maxObjs`, 2^23 objects, 2 to 4 GiB), so a test that makes objects for ever halts
+with the engine's refusal (`heapFullMsg`) at about 1 GiB, under the 3,000 MB at which the
+driver (`release-tests/test262.py`) kills the process and loses the rest of its chunk. -/
+def runMaxObjs : Nat := 2097152
+
+/-- Kind: a bound. Says: the heap of one test run is a quarter of the engine's default size. -/
+theorem runMaxObjs_quarter : runMaxObjs * 4 = 8388608 ∧ runMaxObjs < 8388608 := by decide
+
+#guard (({} : ColdHeap Unit).maxObjs) == 8388608
 
 /-- `force`: `some true` runs the test as strict code, `some false` as sloppy code, `none` by its
 flags (strict only for `onlyStrict`). `module` tests run as a module graph (strict); a
@@ -168,21 +329,28 @@ def runTest (root : System.FilePath) (fresh base : HeapOf H) (page : Bool) (path
       match runScript h (← IO.FS.readFile p) with
       | (.ok, h') => h := h'
       | _ => return .fail s!"include {inc} failed"
-  let hRun := { h with steps := 20000000 }
+  let wanted := realmsWanted src
+  if wanted > 0 then h := addTestRealms h wanted
+  let hRun := { h with steps := runSteps, maxObjs := runMaxObjs,
+                       importQueue := if (src.splitOn "import").length > 1 then some #[] else none }
   -- (outcome, phase of an error: parse, resolution or runtime, heap after)
-  let (o, phase, hOut) ← if isModule then do
-      match ← loadGraph path.toString src with
-      | .error (ph, e) => pure (Outcome.syntaxError e, ph, hRun)
-      | .ok g =>
+  let (o, phase, hOut, g, lives) ← if isModule then do
+      match ← loadInto #[] path.toString src with
+      | .error (ph, e) => pure (Outcome.syntaxError e, ph, hRun, #[], #[])
+      | .ok (_, g) =>
         match linkError g 0 with
-        | some e => pure (Outcome.syntaxError e, "resolution", hRun)
+        | some e => pure (Outcome.syntaxError e, "resolution", hRun, g, #[])
         | none =>
-          let ((o, _), h1) := runModuleGraph hRun g 0 #[]
+          let ((o, lives), h1) := runModuleGraph hRun g 0 #[]
           let ((o2, _), h2) := checkpoint h1
-          pure ((match o with | .ok => o2 | _ => o), "runtime", h2)
+          pure ((match o with | .ok => o2 | _ => o), "runtime", h2, g, lives)
     else
       let (o, h1) := runScript hRun src strict
-      pure (o, (match o with | .syntaxError _ => "parse" | _ => "runtime"), h1)
+      pure (o, (match o with | .syntaxError _ => "parse" | _ => "runtime"), h1, #[], #[])
+  -- the `import()` calls of the run, served after its turn (none: nothing to do)
+  let (o, hOut) ← if (hOut.importQueue.getD #[]).isEmpty then pure (o, hOut) else do
+      let (halt, h3) ← serveImports path.toString hOut g lives (if isModule then some 0 else none)
+      pure ((match o, halt with | .ok, some w => Outcome.halted w | _, _ => o), h3)
   if isAsync && m.negPhase.isNone then
     match o with
     | .ok =>

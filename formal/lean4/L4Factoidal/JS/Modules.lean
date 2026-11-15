@@ -62,7 +62,7 @@ def moduleFunction (syn : ModuleSyntax) : FunDef :=
     .getter (.lit l) (FunDef.mk none [] none [.ret (some (.ident l))] [] false true .method false false {})
   let prologue : List Stmt :=
     [.expr (.assign none (.ident localsName) (.object (locals.map getter))), .expr (.yieldE false none)]
-  FunDef.mk none [] none (prologue ++ syn.body) syn.vars false true .normal true false {}
+  FunDef.mk none [] none (prologue ++ syn.body) syn.vars false true .normal true syn.hasTLA {}
 
 /-- The module's function with its names resolved (`Resolve.script`, as for a script whose one
 statement is the function: the function's own names get slots; a free name stays a name and is
@@ -241,14 +241,18 @@ structure ModLive where
   ns : Option Nat := none
   state : Nat := 0
   error : Value := .undef
+  /-- State 3: a module with top-level `await` whose evaluation waits for this promise (its
+  generator's step); the modules after it wait too, until a later run of the graph. -/
+  promise : Value := .undef
   deriving Inhabited
 
 /-- The live modules of a realm, by graph index. -/
 abbrev ModLives := Array (Option ModLive)
 
-/-- Resume a generator with `next()`: the built-in, not a property the page can replace. -/
-def genResume (n : Nat) (g : Value) : M Value := do
-  let next ← mkNative .genNext "next" 1
+/-- Resume a generator with `next()`: the built-in, not a property the page can replace. An
+async generator (a module with top-level `await`) answers a promise. -/
+def genResume (n : Nat) (g : Value) (async : Bool := false) : M Value := do
+  let next ← mkNative (if async then .agenNext else .genNext) "next" 1
   callV n next g #[]
 
 /-- Instantiate module `m`: its imports object (with `import.meta` when the module names it),
@@ -263,7 +267,7 @@ def instantiate (n : Nat) (node : ModNode) : M ModLive := do
   let env ← pushEnv { withObj := some io, parent := 0 }
   let f ← makeClosure { env, thisV := .undef, strict := true } node.fn
   let g ← callV n f .undef #[]
-  let _ ← genResume n g
+  let _ ← genResume n g node.syn.hasTLA
   match (← getObj io).getOwn localsName with
   | some (.data (.obj l) ..) => pure { imports := io, locals := l, gen := g }
   | _ => throw (.halt "module: no getters object")
@@ -341,10 +345,40 @@ def runGraphM (n : Nat) (g : ModGraph) (root : Nat) (lives : ModLives) : M (ModL
     match live.state with
     | 1 => pure ()
     | 2 => return (lives, some live.error)
+    | 3 =>
+      -- an async module still evaluating: settled now, or the rest waits for a later run
+      runJobs n
+      match live.promise with
+      | .obj pid =>
+        match (← getObj pid).kind with
+        | .promise 1 _ _ _ => lives := lives.set! m (some { live with state := 1 })
+        | .promise 2 reason _ _ =>
+          lives := lives.set! m (some { live with state := 2, error := reason })
+          return (lives, some reason)
+        | _ => return (lives, none)
+      | _ => return (lives, none)
     | _ =>
-      let r ← tryCatch (do let _ ← genResume n live.gen; pure (Except.ok ())) fun a => pure (Except.error a)
+      let some node := g[m]? | throw (.halt "module: no such module")
+      let r ← tryCatch (do
+          let p ← genResume n live.gen node.syn.hasTLA
+          if node.syn.hasTLA then
+            -- a module with top-level `await` (§16.2.1.5.3.1 ExecuteAsyncModule): its evaluation
+            -- is the promise of the generator's step; the jobs run until it settles, and the
+            -- modules after it in the order wait for it (one async module at a time). Still
+            -- pending (it waits for the host, an `import()`): state 3, and this run stops here
+            runJobs n
+            match p with
+            | .obj pid =>
+              match (← getObj pid).kind with
+              | .promise 2 reason _ _ => throw (.throw reason)
+              | .promise 1 _ _ _ => pure (Except.ok none)
+              | _ => pure (Except.ok (some p))
+            | _ => pure (Except.ok none)
+          else pure (Except.ok none))
+        fun a => pure (Except.error a)
       match r with
-      | .ok _ => lives := lives.set! m (some { live with state := 1 })
+      | .ok (some p) => return (lives.set! m (some { live with state := 3, promise := p }), none)
+      | .ok none => lives := lives.set! m (some { live with state := 1 })
       | .error (.throw v) =>
         -- this module and the modules after it in this order that import it, directly or not
         let failed := order.foldl (init := [m]) fun acc k =>
@@ -372,5 +406,20 @@ def runModuleGraph (h : HeapOf H) (g : ModGraph) (root : Nat) (lives : ModLives)
   | .ok (lv, some v) h' => ((.threw v (describeThrown h' v), lv), h')
   | .error (.throw v) h' => ((.threw v (describeThrown h' v), lives), h')
   | .error (.halt w) h' => ((.halted w, lives), h')
+
+/-- The namespace object of module `root` of the graph (made once, `namespaceOf`), for the
+promise of an `import()` (§13.3.10.1, ContinueDynamicImport §16.2.1.11 step 6). -/
+def moduleNamespace (h : HeapOf H) (g : ModGraph) (root : Nat) (lives : ModLives) :
+    (Option Value × ModLives) × HeapOf H :=
+  match (namespaceOf g (resolveFuel g) root lives : M (Nat × ModLives)).run h with
+  | .ok (o, lv) h' => ((some (.obj o), lv), h')
+  | .error _ h' => ((none, lives), h')
+
+/-- Settle promise `pid`: resolve it with `v`, or reject it with `v` (FinishLoadingImportedModule
+for `import()`, by its host). Its reactions are jobs: the host's next checkpoint runs them. -/
+def settleImport (h : HeapOf H) (pid : Nat) (v : Value) (reject : Bool) : HeapOf H :=
+  match ((if reject then rejectPromise defaultFuel pid v else resolvePromise defaultFuel pid v) : M Unit).run h with
+  | .ok _ h' => h'
+  | .error _ h' => h'
 
 end L4Factoidal.JS

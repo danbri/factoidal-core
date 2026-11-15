@@ -108,7 +108,16 @@ def runMods (mods : List (String × String)) (roots : List Nat) : List String :=
 #guard (parseModule "export {nothere}").toOption.isNone
 #guard (parseModule "return 1").toOption.isNone
 #guard (parseModule "with (o) {}").toOption.isNone
-#guard (parseModule "import x from 'y' with { type: 'json' }").toOption.isNone
+-- import attributes: `type` goes with the request (`attrMark`); another key, a key twice or a
+-- value that is not a string is a SyntaxError
+#guard (parseModule "import x from 'y' with { type: 'json' }").toOption.map (·.requests) == some #["y" ++ ModuleParse.attrMark ++ "json"]
+#guard (parseModule "import x from 'y' with { lazy: 'yes' }").toOption.isNone
+#guard (parseModule "import x from 'y' with { type: 'json', type: 'json' }").toOption.isNone
+#guard (parseModule "import x from 'y' with { type: 1 }").toOption.isNone
+-- top-level await: the module's function is an async generator only when the module awaits
+#guard (parseModule "var x = await 1;").toOption.map (·.hasTLA) == some true
+#guard (parseModule "var x = 1; async function f() { await x }").toOption.map (·.hasTLA) == some false
+#guard (parseModule "function f() { await 1 }").toOption.isNone
 #guard (parseModule "import {a as b, 'c d' as e, default as f} from 'm'; export {b, e as 'e f'}").toOption.map (·.imports.size) == some 3
 #guard (parseModule "import 'a'; import {b} from 'b'; export * from 'a'").toOption.map (·.requests) == some #["a", "b"]
 -- classic scripts: `import.meta` is a SyntaxError, `import()` parses

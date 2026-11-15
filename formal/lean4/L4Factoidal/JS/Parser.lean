@@ -48,6 +48,11 @@ structure PState where
   inGen : Bool := false
   /-- In the body of an async function: `await` is an operator. -/
   inAsync : Bool := false
+  /-- At the top level of a module (§16.2.1.6.1, top-level `await`): `await` is an operator,
+  lowered as in an async generator (the module's function is one when it awaits:
+  `usesTLA`). -/
+  tla : Bool := false
+  usesTLA : Bool := false
   /-- Enclosing loops, and loops or switches, of the current function (§14.8.1,
   §14.9.1 early errors for `continue` and `break`). -/
   loops : Nat := 0
@@ -887,7 +892,9 @@ def parseFor : Nat → P Stmt
             | .call .. => if (← get).strict then fail "invalid left-hand side in for-in/of" else pure (none, Pat.target e)
             | _ => fail "invalid left-hand side in for-in/of"
         | none => fail "invalid for-in/of"
-      if isAwait then return forAwaitStmt (← get).inGen t.pos kind pat obj body
+      if isAwait then
+        if (← get).tla then modify fun s => { s with usesTLA := true }
+        return forAwaitStmt ((← get).inGen || (← get).tla) t.pos kind pat obj body
       return if isOf then .forOf kind pat obj body else .forIn kind pat obj body
     expectP ";"
     let test ← if ← atP ";" then pure none else pure (some (← parseExpr n false))
@@ -942,10 +949,14 @@ def parseFunction : Nat → Option String → FunKind → Nat → P FunDef
   | 0, _, _, _ => fail "parser fuel exhausted"
   | n + 1, name, kind, gen => do
     expectP "("
-    let outerGen := (← get).inGen
-    modify fun s => { s with inGen := gen == 1 || gen == 3 }
+    let outer ← get
+    -- at a module's top level `await` is an operator (`tla`), but not in the parameters of a
+    -- function there, which are not module code's top level (§16.2.1.6.1: the early error of
+    -- `await` in a FormalParameters does not see the module's [+Await])
+    modify fun s => { s with inGen := gen == 1 || gen == 3,
+                             inAsync := if outer.tla then gen == 2 || gen == 3 else outer.inAsync, tla := false }
     let (ps, rest) ← parseMethodParams n (kind != FunKind.normal)
-    modify fun s => { s with inGen := outerGen }
+    modify fun s => { s with inGen := outer.inGen, inAsync := outer.inAsync, tla := outer.tla }
     parseBody n name ps rest kind gen
 
 /-- The parameter list of a function that is not an arrow function: `arguments` there is the
@@ -999,7 +1010,7 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
       fail "duplicate parameter name not allowed in this context"
     set { outer with vars := #[], varSet := {}, realVars := #[], usesArgs := false, strict, inFun := true, loops := 0,
                      breakables := 0, labels := [],
-                     inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3,
+                     inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3, tla := false,
                      depth := 0, topDepth := 1, lexStack := [names], pending := #[],
                      fieldInit := outer.staticNext || (kind == FunKind.arrow && outer.fieldInit),
                      staticNext := false, superCall := superCallIn kind outer.superCall,
@@ -1011,7 +1022,8 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
     let arrow := kind == .arrow
     set { inner with vars := outer.vars, varSet := outer.varSet, realVars := outer.realVars, strict := outer.strict, inFun := outer.inFun,
                      loops := outer.loops, breakables := outer.breakables, labels := outer.labels,
-                     inGen := outer.inGen, inAsync := outer.inAsync, usesArgs := outer.usesArgs || (arrow && usesArgs),
+                     inGen := outer.inGen, inAsync := outer.inAsync, tla := outer.tla,
+                     usesArgs := outer.usesArgs || (arrow && usesArgs),
                      depth := outer.depth, topDepth := outer.topDepth, lexStack := outer.lexStack,
                      pending := outer.pending, fieldInit := outer.fieldInit, staticNext := false,
                      superCall := outer.superCall, superProp := outer.superProp, newTargetOk := outer.newTargetOk }
@@ -1024,10 +1036,11 @@ def parseArrowBody : Nat → List PatElem → Option Pat → Nat → P Expr
   | n + 1, params, rest, coro => do
     if ← atP "{" then return .func (← parseBody n none params rest .arrow coro)
     let outer ← get
-    set { outer with vars := #[], varSet := {}, inFun := true, inAsync := coro == 2, inGen := false }
+    set { outer with vars := #[], varSet := {}, inFun := true, inAsync := coro == 2, inGen := false, tla := false }
     let e ← parseAssign n false
     let inner ← get
-    set { inner with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun, inAsync := outer.inAsync, inGen := outer.inGen }
+    set { inner with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun, inAsync := outer.inAsync,
+                     inGen := outer.inGen, tla := outer.tla }
     return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow false (coro == 2) {})
 
 def parseExpr : Nat → Bool → P Expr
@@ -1185,7 +1198,8 @@ def parseUnary : Nat → P Expr
       if t.kind == .ident && t.text == "await" && !t.escaped && (← get).inAsync then
         advance
         let e ← parseUnary n
-        if (← get).inGen then return .yieldE false (some (.call (.ident "%await") [e]))
+        if (← get).tla then modify fun s => { s with usesTLA := true }
+        if (← get).inGen || (← get).tla then return .yieldE false (some (.call (.ident "%await") [e]))
         return .yieldE false (some e)
       parsePostfix n
 
@@ -1385,12 +1399,13 @@ def parsePrimary : Nat → P Expr
           -- ImportCall (§13.3.10): a specifier and, optionally, an options argument
           advance
           let spec ← parseAssign n false
+          let mut opts : List Expr := []
           if ← eatP "," then
             if !(← atP ")") then
-              let _ ← parseAssign n false
+              opts := [← parseAssign n false]
               let _ ← eatP ","
           expectP ")"
-          return .call (.ident dynImportName) [spec]
+          return .call (.ident dynImportName) (spec :: opts)
         fail "unexpected 'import'"
       | _ => fail "unexpected keyword"
     | .punct =>
@@ -1745,6 +1760,8 @@ structure ModuleSyntax where
   /-- `[[StarExportEntries]]`: `export * from "spec"`. -/
   stars : Array String := #[]
   usesMeta : Bool := false
+  /-- The module awaits at its top level (§16.2.1.6 [[HasTLA]]). -/
+  hasTLA : Bool := false
   deriving Inhabited
 
 namespace ModuleParse
@@ -1771,11 +1788,51 @@ def exportName : P String := do
   if t.kind == .ident || t.kind == .kw || t.kind == .str then advance; pure t.text
   else fail "expected an export name"
 
-/-- `with { type: "json" }` after a specifier (import attributes). Only no attributes are
-supported: a JSON or CSS module is refused, as an unknown `type` must be. -/
-def attributes : P Unit := do
-  if !(← atK "with") then return
-  fail "import attributes are not supported (JSON and CSS modules)"
+/-- What a module request carries after its specifier when it has a `type` import attribute:
+`"\x00type="` and the type (a module request is a string of the record, `ModuleSyntax.requests`;
+no specifier of source text can hold U+0000 here unescaped, and the host splits it off,
+`splitRequest`). -/
+def attrMark : String := String.singleton (Char.ofNat 0) ++ "type="
+
+/-- A module request: the specifier and the `type` import attribute ("" for none). -/
+def splitRequest (r : String) : String × String :=
+  match r.splitOn attrMark with
+  | [s, t] => (s, t)
+  | _ => (r, "")
+
+#guard splitRequest ("./a.json" ++ attrMark ++ "json") = ("./a.json", "json")
+#guard splitRequest "./a.js" = ("./a.js", "")
+
+/-- `with { type: "json" }` after a specifier (WithClause, §16.2.2): the attributes, keys
+identifier names or strings, values strings, no key twice (an early error). `type` is the only
+key this host knows; any other is a SyntaxError (§16.2.1.10: a host refuses keys it does not
+support). The answer is the `type` ("" when absent). -/
+def attributes : P String := do
+  if !(← atK "with") then return ""
+  advance
+  expectP "{"
+  let mut keys : Array String := #[]
+  let mut ty := ""
+  for _ in [0:64] do
+    if ← eatP "}" then return ty
+    let k ← peek
+    if !(k.kind == .ident || k.kind == .kw || k.kind == .str) then fail "expected an import attribute key"
+    advance
+    expectP ":"
+    let v ← peek
+    if v.kind != .str then fail "the value of an import attribute must be a string"
+    advance
+    if keys.contains k.text then fail s!"duplicate import attribute '{k.text}'"
+    keys := keys.push k.text
+    if k.text == "type" then ty := v.text
+    else fail s!"unsupported import attribute '{k.text}'"
+    if !(← eatP ",") then
+      expectP "}"
+      return ty
+  fail "too many import attributes"
+
+/-- A specifier with its `type` attribute, as one module request. -/
+def withType (spec ty : String) : String := if ty == "" then spec else spec ++ attrMark ++ ty
 
 /-- `from "specifier"`. -/
 def fromClause : P String := do
@@ -1784,8 +1841,7 @@ def fromClause : P String := do
   let s ← peek
   if s.kind != .str then fail "expected a module specifier"
   advance
-  attributes
-  pure s.text
+  pure (withType s.text (← attributes))
 
 /-- `{ a, b as c, "d" as e }` of an import, after the `{`. -/
 def importSpecs : Nat → Array (ImportName × String) → P (Array (ImportName × String))
@@ -1830,9 +1886,9 @@ def importDecl (n : Nat) (a : Acc) : P Acc := do
   let t ← peek
   if t.kind == .str then
     advance
-    attributes
+    let ty ← attributes
     semi
-    return a.request t.text
+    return a.request (withType t.text ty)
   let mut entries : Array (ImportName × String) := #[]
   let mut more := true
   if !(isP t "*" || isP t "{") then
@@ -1940,7 +1996,7 @@ def items : Nat → Acc → P Acc
 
 /-- The early errors of a module (§16.2.1.1), and the local exports of imported names made
 indirect (ParseModule step 10). -/
-def finish (a : Acc) (vars : List String) (usesMeta : Bool) : Except String ModuleSyntax := do
+def finish (a : Acc) (vars : List String) (usesMeta : Bool) (hasTLA : Bool := false) : Except String ModuleSyntax := do
   let body := a.body.toList
   let lex := lexNames body
   let funs := body.flatMap fun s => match s with | .funDecl x _ => [x] | _ => []
@@ -1961,7 +2017,7 @@ def finish (a : Acc) (vars : List String) (usesMeta : Bool) : Except String Modu
     | some { spec, name := .named nm, .. } => indirect := indirect.push (e, spec, .named nm)
     | _ => locals := locals.push (e, l)
   return { body, vars, requests := a.requests, imports := a.imports, localExports := locals, indirect,
-           stars := a.stars, usesMeta }
+           stars := a.stars, usesMeta, hasTLA }
 
 end ModuleParse
 
@@ -1972,9 +2028,9 @@ def parseModule (src : String) : Except String ModuleSyntax :=
   | .error e => .error e
   | .ok toks =>
     let toks := internToks toks
-    let st : PState := { toks, strict := true, src := cs, module := true }
+    let st : PState := { toks, strict := true, src := cs, module := true, inAsync := true, tla := true }
     match (ModuleParse.items (parseFuel (cs.size + 1)) {}).run st with
-    | .ok a st' => ModuleParse.finish a st'.vars.toList st'.usesMeta
+    | .ok a st' => ModuleParse.finish a st'.vars.toList st'.usesMeta st'.usesTLA
     | .error e _ => .error e
 
 end L4Factoidal.JS
