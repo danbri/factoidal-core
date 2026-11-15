@@ -17,6 +17,7 @@ import L4Factoidal.Tdb2.Format
 import L4Factoidal.Rendering.FloatFormat
 import L4Factoidal.Rendering.Scene
 import L4Factoidal.XML.NamespaceView
+import L4Factoidal.Par.Chunked
 
 /- Isolated strict SVG document reader, not SVG Tiny/full conformance.
    XML and expanded names come from the current Factoidal XML implementation.
@@ -3557,6 +3558,23 @@ def tilesOfListingsRows (width height : Nat) (tail : Array Nat) (rows : Array Na
     k := k+1
   return #[tileSize,across,down] ++ offsets ++ entries ++ refs ++ pool ++ tail
 
+/-- Below this many primitives the listings are made on the calling thread (`listingsOf`). -/
+def listingParLeast : Nat := 64
+/-- The chunks the listings of a scene are cut into, each listed by a task (`listingsOf`). How
+many run at once is the host's thread pool; the result does not depend on it. -/
+def listingChunks : Nat := 4
+
+/-- The tile listing of each primitive (`Primitive.tileListing`), in contiguous chunks listed by
+tasks when there are at least `listingParLeast`. Each listing is a function of its primitive,
+the mapping and the grid alone, so the chunks are independent; `listingsOf_eq` says the result
+is the sequential map. -/
+def listingsOf (mapping : Mapping) (across down : Nat) (ps : Array BackendPrimitive) : Array TileListing :=
+  L4Factoidal.Par.mapChunksAbove listingParLeast listingChunks (Primitive.tileListing mapping across down) ps
+
+theorem listingsOf_eq (mapping : Mapping) (across down : Nat) (ps : Array BackendPrimitive) :
+    listingsOf mapping across down ps = ps.map (Primitive.tileListing mapping across down) :=
+  L4Factoidal.Par.mapChunksAbove_eq _ _ _ _
+
 /-- The tile words from each primitive's listing, in paint order (`tilesOf`). -/
 def tilesOfListings (width height : Nat) (compiled : List BackendPrimitive) (listings : Array TileListing) : Array Nat :=
   tilesOfListingsRows width height (paintTailOf compiled) (compiled.toArray.map (·.rowCount)) listings
@@ -3625,7 +3643,7 @@ holds, for each cell of the tile, the pieces whose box meets the cell (`binPiece
 def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPrimitive) : Array Nat :=
   let across := (width+tileSize-1)/tileSize
   let down := (height+tileSize-1)/tileSize
-  tilesOfListings width height compiled (compiled.toArray.map (Primitive.tileListing mapping across down))
+  tilesOfListings width height compiled (listingsOf mapping across down compiled.toArray)
 
 /-- The tile words of a scene (`tilesOf` of its compiled primitives). -/
 def Scene.tiles (s : Scene) : Array Nat := tilesOf s.width s.height s.mapping s.compiled
@@ -4636,6 +4654,79 @@ theorem retainedRecord_pieces {κ : Type} (mapping : Mapping) (width height curs
     (retainedRecord mapping width height cursor key {item.compiled with transform:=t,opacity:=o}).compiled.geometry =
       item.compiled.geometry := ⟨rfl,rfl⟩
 
+/-- `retainedRecord` with no tile listing yet (`default`): `compileRetained` lists the items
+that need a listing after its loop (`listRetained`, in parallel chunks); `retainedBare_listed`
+says that such an item with its listing written is `retainedRecord`. -/
+def retainedBare {κ : Type} (mapping : Mapping) (cursor : Nat) (key : κ)
+    (compiled : BackendPrimitive) : RetainedItem κ :=
+  ⟨key,compiled,Primitive.writeRows (ByteArray.emptyWithCapacity (compiled.storageRows*16)) compiled,
+    cursor,compiled.storageRows,compiled.paintWords.length,compiled.paintBox mapping,default⟩
+
+/-- `retainItem` with the listing of a changed item left for `listRetained`: the item (a kept
+one whole, a changed one bare), whether its pixels can change, and whether it kept its geometry. -/
+def retainItemBare {κ : Type} (mapping : Mapping) (cursor : Nat) (key : κ)
+    (render : Unit → Except String Primitive) (kept : Option (RetainedItem κ × Reuse)) :
+    Except String (RetainedItem κ × Bool × Bool) :=
+  match kept with
+  | some (item,.same) => pure ({item with key},false,false)
+  | some (item,.moved transform opacity) =>
+    pure (retainedBare mapping cursor key {item.compiled with transform,opacity},true,true)
+  | _ => do
+    let p ← render ()
+    let compiled ← compilePrimitive mapping cursor p
+    pure (retainedBare mapping cursor key compiled,true,false)
+
+/-- An item with its own listing kept (`keep`), or made from its compiled primitive: what
+`listRetained` is to leave at each index. -/
+def RetainedItem.listed {κ : Type} (mapping : Mapping) (across down : Nat) (item : RetainedItem κ) (keep : Bool) : RetainedItem κ :=
+  if keep then item else {item with listing := item.compiled.tileListing mapping across down}
+
+/-- Says: a bare item (`retainedBare`) with its listing made is the item `retainItem` makes at
+once (`retainedRecord`), so the cost theorems `retainItem_moved` and `retainedRecord_pieces`
+speak of the listed items too. -/
+theorem retainedBare_listed {κ : Type} (mapping : Mapping) (width height cursor : Nat) (key : κ) (compiled : BackendPrimitive) :
+    (retainedBare mapping cursor key compiled).listed mapping ((width+tileSize-1)/tileSize) ((height+tileSize-1)/tileSize) false =
+      retainedRecord mapping width height cursor key compiled := rfl
+
+/-- Says: `retainItemBare` followed by the listing of what changed is `retainItem`, for every
+reuse: the same item, the same changed and moved marks, the same refusal. A kept item
+(`Reuse.same`) is not listed again. Does not say: that `listRetained` leaves `listed` at each
+index (its listings are `listingsOf`, which `listingsOf_eq` says is the sequential map; the
+writing back in place is tested by `partial_frame_test.ts`, not proved). -/
+theorem retainItemBare_listed {κ : Type} (mapping : Mapping) (width height cursor : Nat) (key : κ)
+    (render : Unit → Except String Primitive) (kept : Option (RetainedItem κ × Reuse)) :
+    (retainItemBare mapping cursor key render kept).map (fun r =>
+      (r.1.listed mapping ((width+tileSize-1)/tileSize) ((height+tileSize-1)/tileSize) (!r.2.1),r.2.1,r.2.2)) =
+    retainItem mapping width height cursor key render kept := by
+  unfold retainItemBare retainItem
+  split
+  · rfl
+  · rfl
+  · cases render () with
+    | error e => rfl
+    | ok p =>
+      cases compilePrimitive mapping cursor p with
+      | error e => rfl
+      | ok compiled => rfl
+
+/-- The items of a retained compile with the listing of each item that did not keep its own
+(`kept` false) made again. Only those items' primitives go to the tasks (`listingsOf`, in
+parallel chunks when there are at least `listingParLeast`): a task marks what it is given as
+shared between threads, so the kept items are not given to it. The listings are then written
+back in place, in order. `listingsOf_eq` says the listings are the sequential map. -/
+def listRetained {κ : Type} (mapping : Mapping) (across down : Nat) (items : Array (RetainedItem κ)) (kept : Array Bool) :
+    Array (RetainedItem κ) := Id.run do
+  let mut fresh : Array Nat := #[]
+  for i in [0:items.size] do
+    if !(kept.getD i true) then fresh := fresh.push i
+  -- Every index in `fresh` is below `items.size`, so no primitive is dropped here.
+  let listings := listingsOf mapping across down (fresh.filterMap fun i => items[i]?.map (·.compiled))
+  let mut out := items
+  for k in [0:fresh.size] do
+    out := out.modify (fresh.getD k 0) fun item => {item with listing := listings.getD k default}
+  return out
+
+
 /-- Compile the primitives of `leaves` (a key, and how to make the primitive when it has to be
 compiled), reusing the items of `prev` by `reuse` of their key and the key at their index. The
 second result is the indices whose pixels can change, or `none` when `prev` does not serve
@@ -4651,20 +4742,25 @@ def compileRetained {κ : Type} (reuse : κ → κ → Reuse) (prev : Option (Re
   let mut rows := 2
   let mut cursor := 0
   let mut moved := 0
+  -- Whether each item kept its listing (`Reuse.same`); the others are listed after the loop,
+  -- in parallel chunks (`listRetained`).
+  let mut kept : Array Bool := Array.emptyWithCapacity leaves.size
   for (key,render) in leaves, i in [0:leaves.size] do
-    let kept : Option (RetainedItem κ × Reuse) := match usable with
+    let reused : Option (RetainedItem κ × Reuse) := match usable with
       | some r => match r.items[i]? with
         | some item => if item.cursor == cursor then some (item,reuse item.key key) else none
         | none => none
       | none => none
-    let (item,isChanged,isMoved) ← retainItem mapping width height cursor key render kept
+    let (item,isChanged,isMoved) ← retainItemBare mapping cursor key render reused
     if isChanged then changed := changed.map (fun (c : Array Nat) => c.push i)
     if isMoved then moved := moved+1
+    kept := kept.push (!isChanged)
     rows := rows+item.rows
     if rows*4 > maxDataFloats then throw s!"storage data exceeds {maxDataFloats} floats"
     cursor := cursor+item.paintWords
     items := items.push item
-  return (⟨width,height,mapping,items⟩,changed,moved)
+  let listed := listRetained mapping ((width+tileSize-1)/tileSize) ((height+tileSize-1)/tileSize) items kept
+  return (⟨width,height,mapping,listed⟩,changed,moved)
 
 /-- The storage bytes of a retained compile: the same as `Scene.float32Bytes` of its scene:
 the two mapping rows, then the records. -/
