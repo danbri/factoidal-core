@@ -89,9 +89,9 @@ def runMods (mods : List (String × String)) (roots : List Nat) : List String :=
 -- module code may use globals and loops (the register machine sees imports through the imports object)
 #guard runMods [("a", "import {k} from 'b'; let s = 0; for (let i = 0; i < 10; i++) s += k; print(s, Math.max(1, 2))"), ("b", "export const k = 3")] [0] == ["30 2"]
 #guard runMods [("a", "import {k} from 'b'; function f() { let s = 0; for (let i = 0; i < 10; i++) s += k; return s } print(f())"), ("b", "export const k = 3")] [0] == ["30"]
--- A block at the top level of a module stays a `block`: the module's function is a generator,
--- and tier 1 (`JS/Tier1.lean`) does not enter generator or async bodies, so a block that will hold
--- a top-level `await` is never made a `blockN`. Top-level `await` itself is not parsed yet.
+-- A block at the top level of a module stays a `block` once resolved: the module's function is a
+-- generator, run by the generator machine, which matches on `block` (a pass that specialises
+-- blocks must not enter it). Top-level `await` itself is not parsed yet.
 #guard (match parseModule "let c = 1; if (c) { print(c) } { print(2) }" with
   | .ok syn => (resolvedFunction syn).body.any (fun s => match s with | .ifS _ (.block _) _ => true | _ => false) &&
       (resolvedFunction syn).body.any (fun s => match s with | .block _ => true | _ => false)

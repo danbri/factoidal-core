@@ -686,8 +686,8 @@ def outVm (vm : Bool) (src : String) : List String :=
 #guard outVm false "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2) } let s = 0; for (let i = 0; i < 20; i++) s += i; print(fib(15), s)" == ["610 190"]
 #guard outVm true "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2) } let s = 0; for (let i = 0; i < 20; i++) s += i; print(fib(15), s)" == ["610 190"]
 #guard (freshHeap : Heap).useVm
--- `await` inside plain blocks of an async function (tier 1 leaves async bodies to the generator
--- machine, which matches on `block`)
+-- `await` inside plain blocks of an async function (async bodies run on the generator machine,
+-- which matches on `block`)
 #guard out "var c = 1; var log = []; async function f() { log.push('f') } async function h() { for (let i = 0; i < 2; i++) { if (c) { await f(); log.push(i) } } { await null; log.push('b') } } h().then(() => print(log.join()))" == ["f,0,f,1,b"]
 
 end L4Factoidal.JS.Tests

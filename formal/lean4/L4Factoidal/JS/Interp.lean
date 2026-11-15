@@ -3913,7 +3913,7 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
         let fs := .resume ctx (some (.id "%ret", .declare ctx.env true)) ::
           .block ctx [.ret (some (.ident "%ret"))] :: rest
         pure (if isAwait then .awaited v fs else .yielded v fs)
-    | .block ss | .blockF ss | .blockN ss =>
+    | .block ss | .blockF ss =>
       let ctx' ← enterBlock n ctx ss
       genRun n (.block ctx' ss :: rest) (.send .undef)
     | .ifS c t e =>
