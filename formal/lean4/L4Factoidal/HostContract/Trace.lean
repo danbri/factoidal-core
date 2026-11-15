@@ -95,6 +95,21 @@ the bound, not a long run). -/
 def violations (t : Target) (tr : List Call) : List Violation :=
   if tr.length > maxCalls then [.tooLong tr.length] else violationsFrom t 0 tr
 
+/-- `violationsFrom` with an accumulator: the compiled form (a loop, no stack per call). -/
+def violationsAcc (t : Target) : Nat → List Call → List Violation → List Violation
+  | _, [], acc => acc
+  | i, c :: cs, acc => violationsAcc t (i + 1) cs (acc ++ callViolations t i c)
+
+theorem violationsAcc_eq (t : Target) : ∀ (i : Nat) (cs : List Call) (acc : List Violation),
+    violationsAcc t i cs acc = acc ++ violationsFrom t i cs
+  | _, [], acc => by simp [violationsAcc, violationsFrom]
+  | i, c :: cs, acc => by simp [violationsAcc, violationsFrom, violationsAcc_eq t (i + 1) cs]
+
+def violationsFromTR (t : Target) (i : Nat) (cs : List Call) : List Violation := violationsAcc t i cs []
+
+@[csimp] theorem violationsFrom_eq_TR : @violationsFrom = @violationsFromTR := by
+  funext t i cs; simp [violationsFromTR, violationsAcc_eq]
+
 /-- A call within target `t`'s contract. -/
 def CallOk (t : Target) (c : Call) : Prop :=
   c.input.sym ∈ t.exports ∧ allowedOp t c.input.op = true ∧ (∀ f ∈ c.fields, f ∈ t.relax) ∧
@@ -204,6 +219,21 @@ def Recorded {σ ω : Type} (e : Engine σ ω) : σ → List Call → Prop
 def annotate : List Input → List Call → List (List Input × Call)
   | _, [] => []
   | acc, c :: cs => (acc, c) :: annotate (if affects c.input.op then c.input :: acc else acc) cs
+
+/-- `annotate` with an accumulator: the compiled form. -/
+def annotateAcc : List Input → List Call → List (List Input × Call) → List (List Input × Call)
+  | _, [], out => out.reverse
+  | acc, c :: cs, out => annotateAcc (if affects c.input.op then c.input :: acc else acc) cs ((acc, c) :: out)
+
+theorem annotateAcc_eq : ∀ (cs : List Call) (acc : List Input) (out : List (List Input × Call)),
+    annotateAcc acc cs out = out.reverse ++ annotate acc cs
+  | [], _, out => by simp [annotateAcc, annotate]
+  | c :: cs, acc, out => by simp [annotateAcc, annotate, annotateAcc_eq cs]
+
+def annotateTR (acc : List Input) (cs : List Call) : List (List Input × Call) := annotateAcc acc cs []
+
+@[csimp] theorem annotate_eq_TR : @annotate = @annotateTR := by
+  funext acc cs; simp [annotateTR, annotateAcc_eq]
 
 /-- Two calls that must agree: compared, same input, same visible history. -/
 def mustAgree (x y : List Input × Call) : Bool :=

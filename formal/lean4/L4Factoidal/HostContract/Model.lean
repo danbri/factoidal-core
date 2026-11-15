@@ -147,6 +147,12 @@ from), `network` (page scripts may fetch), `navigations`, `liberal` (draw what c
 what was skipped), `scripting` (`false`: no page script runs here). -/
 def relaxFields : List String := ["hostCors", "address", "network", "navigations", "liberal", "scripting"]
 
+/-- Top-level answer fields that are measurements, not page answers: `ns`, the engine time a
+`scriptSession` turn took (WasmVM/Hosts). They differ between two runs of one build, so a trace
+digests an answer without them (`host-trace.mjs` takes this list from the `hostContract` answer and
+the check fails if its own copy differs). -/
+def measureFields : List String := ["ns"]
+
 /-- Which build of the engine a target links. -/
 inductive Build where
   | nativeMac | nativeLinux | nativeWindows | wasm

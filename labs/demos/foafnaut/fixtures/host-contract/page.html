@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Host contract fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 8px; }
+  h1 { font-size: 20px; }
+  .box { display: flex; gap: 8px; }
+  .box > p { flex: 1; border: 1px solid #555; padding: 4px; }
+</style>
+</head>
+<body>
+<h1>One page, every host</h1>
+<p>Each host shell gives the engine this page and records what crossed the boundary.</p>
+<div class="box"><p>Left column</p><p>Right column</p></div>
+<ul id="list"></ul>
+<script>
+  // Script work the engine runs: the list is filled now and after a timer.
+  const list = document.getElementById("list");
+  for (const name of ["parse", "style", "layout"]) {
+    const li = document.createElement("li");
+    li.textContent = name;
+    list.appendChild(li);
+  }
+  setTimeout(() => {
+    const li = document.createElement("li");
+    li.textContent = "paint";
+    list.appendChild(li);
+  }, 10);
+</script>
+</body>
+</html>

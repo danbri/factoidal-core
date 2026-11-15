@@ -16,7 +16,7 @@ import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.
 import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
-import {fetchedAnswer,scriptFailure} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+import {fetchedAnswer,scriptFailure,scrollLimitOf} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
@@ -840,14 +840,8 @@ async function main() {
     dirty=true;
   };
   const leaveAddress=()=>{focused=false;field=showURL(document.url);dirty=true;};
-  const scrollLimit=()=>{
-    // Lean's limit for the layers on screen (WebDocument.scrollLimit): the view then ends at the last page row.
-    const limit=current?.layers.layers.scrollLimit;
-    if(typeof limit==="number")return limit;
-    const boxes=frame.webRender.boxes as number[][]|undefined;
-    const bottom=Math.max(0,...(boxes??[]).map(box=>box[2]+box[4]));
-    return Math.max(0,bottom-height+Math.round(60*scale));
-  };
+  // The engine's limit for the layers on screen (page-load.mjs scrollLimitOf, shared with the Hub).
+  const scrollLimit=()=>scrollLimitOf(current?.layers.layers,frame.webRender.boxes as number[][]|undefined,height,scale);
   const scrollBy=(amount:number)=>{
     const next=Math.max(0,Math.min(scrollLimit(),scroll+Math.round(amount)));
     if(next===scroll)return;
