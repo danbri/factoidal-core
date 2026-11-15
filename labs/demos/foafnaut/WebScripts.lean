@@ -225,6 +225,10 @@ structure Held where
   frameScan : Nat := 0
   /-- The answers of the sync requests of the action being redone (`Net.Xhr`). -/
   syncCache : Array Net.PageFetch.Answer := #[]
+  /-- The modules a `start` that waits for sync answers fetched and parsed
+  (`LeanJSModules.Fetched`): read only while `syncCache` holds that start's answers, and
+  cleared with it, so the next attempt does not decode and parse them again. -/
+  moduleMemo : Array LeanJSModules.Fetched := #[]
   /-- The action that waits for the answer to a sync request (`netSync`), and its page and
   request; `syncAnswer` puts the answer in `syncCache` and does the action again. -/
   pendingSync : Option (String × String × JSON.Json) := none
@@ -1140,9 +1144,12 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       -- module scripts: their graphs are fetched first (each request a `netSync` and the start
       -- made again), so no script runs before they are all there. A page with none pays nothing.
       let page := Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")
-      let loaded := if hasModule then LeanJSModules.load dom url page held.syncCache else .ok {}
+      -- the modules of the attempts before, while this start's answers are held (a first
+      -- attempt, with no answers, takes none)
+      let memo := if held.syncCache.isEmpty then #[] else held.moduleMemo
+      let (loaded, memo) := if hasModule then LeanJSModules.load dom url page held.syncCache memo else (.ok {}, #[])
       if let .error w := loaded then
-        return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent }, netSyncAnswer id w)
+        return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo }, netSyncAnswer id w)
       let mods := match loaded with | .ok m => m | .error _ => {}
       let lim := { lim with syncAnswers := held.syncCache.extract mods.used held.syncCache.size }
       let (vw, vh) := (viewport request).getD (800, 600)
@@ -1156,9 +1163,9 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
         -- workers the page's scripts made: their scripts are asked for
         LeanJSWorkers.pump { page := s, base := some base, entropy := wEnt }
       match a.page.host.web.net.syncWanted with
-      | some w => return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent }, netSyncAnswer id w)
+      | some w => return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo }, netSyncAnswer id w)
       | none =>
-        let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], pendingSync := none, startEntropy := none }
+        let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], moduleMemo := #[], pendingSync := none, startEntropy := none }
         return leanTurn { held with frames := #[], leanFrames := #[], frameScan := 0 }
           id {} a {} true (ns0 + ns) (frameEntropyOf id lim.entropy b)
 
@@ -1186,7 +1193,7 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     let (a', ns) ← WebWasm.timed fun _ => f a
     match a'.page.host.web.net.syncWanted, snap with
     | some w, some old => return ({ held with leanSession := some (id, old, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
-    | _, _ => return leanTurn { held with syncCache := #[], pendingSync := none } id before a' marks full ns fEnt
+    | _, _ => return leanTurn { held with syncCache := #[], moduleMemo := #[], pendingSync := none } id before a' marks full ns fEnt
   let keep := fun (msg : String) => pure (f := M) ({ held with leanSession := some (id, s, marks) }, Except.error msg)
   match action with
   | "click" =>

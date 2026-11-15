@@ -86,6 +86,21 @@ inductive Outcome where
   | rethrow (isSyntax : Bool) (msg : String)
   deriving Inhabited, BEq, Repr
 
+/-- A module fetched and parsed by an earlier attempt of the same start: the request (URL,
+credentials, and the number of answers used before it), the number used after it, and what it
+gave: why the fetch failed, or the parse of the text (an error, or the module). The start is
+made again after each answer (`WebScripts`, `syncCache`), and each attempt reads the same
+answers in the same order, so the fetches before the new answer give the same results: kept
+here, they are not decoded and parsed again (BBC News, 130 modules: 79 s of the engine's time
+in attempts, n² in the number of modules). -/
+structure Fetched where
+  url : String
+  credentials : Bool
+  usedBefore : Nat
+  usedAfter : Nat
+  result : Except String (Except String JS.ModNode)
+  deriving Inhabited
+
 /-- The module graph of a document, as fetched so far. -/
 structure Loader where
   page : Page
@@ -97,6 +112,8 @@ structure Loader where
   graph : JS.ModGraph := #[]
   /-- The requests of each module of the graph, by graph index. -/
   kids : Array (Array (String × Child)) := #[]
+  /-- The modules fetched and parsed, by this attempt and the attempts before (`Fetched`). -/
+  memo : Array Fetched := #[]
   deriving Inhabited
 
 /-- Follow a transfer through the answers: the response, why it failed, or `none` when the
@@ -124,13 +141,50 @@ def fetchModule (l : Loader) (url : String) (credentials : Bool) : Loader × Opt
   | (l, some (.error why)) => (l, some (.error why))
   | (l, some (.ok r)) => (l, some ((moduleText r).map fun t => (if r.url.isEmpty then url else r.url, t)))
 
+/-- A parsed module in the graph (or its parse error), with no requests followed yet. -/
+def addParsed (l : Loader) (parsed : Except String JS.ModNode) : Loader × Entry :=
+  match parsed with
+  | .error e => (l, .parseError e)
+  | .ok node =>
+    let i := l.graph.size
+    ({ l with graph := l.graph.push node, kids := l.kids.push #[] }, .node i)
+
+/-- The parse of module text `text` at `url`. -/
+def parseAt (url text : String) : Except String JS.ModNode :=
+  (JS.parseModule text).map (JS.ModNode.ofSyntax url)
+
 /-- A parsed module in the graph, with no requests followed yet. -/
 def addModule (l : Loader) (url text : String) : Loader × Entry :=
-  match JS.parseModule text with
-  | .error e => (l, .parseError e)
-  | .ok syn =>
-    let i := l.graph.size
-    ({ l with graph := l.graph.push (JS.ModNode.ofSyntax url syn), kids := l.kids.push #[] }, .node i)
+  addParsed l (parseAt url text)
+
+/-- Fetch and parse `url` (`fetchModule`, `parseAt`), or take what an earlier attempt kept for the
+same request at the same point of the answers (`Fetched`). -/
+def fetchParsed (l : Loader) (url : String) (cred : Bool) :
+    Loader × Option (Except String (Except String JS.ModNode)) :=
+  match l.memo.find? (fun f => f.url == url && f.credentials == cred && f.usedBefore == l.used) with
+  | some f => ({ l with used := f.usedAfter }, some f.result)
+  | none =>
+    let before := l.used
+    match fetchModule l url cred with
+    | (l, none) => (l, none)
+    | (l, some r) =>
+      let res := r.map fun (final, text) => parseAt final text
+      ({ l with memo := l.memo.push { url, credentials := cred, usedBefore := before, usedAfter := l.used, result := res } }, some res)
+
+/-- Kind: equivalence. Says: with nothing kept for the request, `fetchParsed` answers what
+`fetchModule` and `parseAt` answer, and moves through the answers as `fetchModule` does. Does
+not say that a kept entry is right: that holds when each entry was made by this function on the
+same page and the same answers before `usedAfter`, which `WebScripts` keeps by holding the memo
+only between the attempts of one start (it is cleared with `syncCache`); that is not proved. -/
+theorem fetchParsed_miss (l : Loader) (url : String) (cred : Bool)
+    (h : l.memo.find? (fun f => f.url == url && f.credentials == cred && f.usedBefore == l.used) = none) :
+    (fetchParsed l url cred).2 = (fetchModule l url cred).2.map (·.map fun (final, text) => parseAt final text) ∧
+    (fetchParsed l url cred).1.used = (fetchModule l url cred).1.used := by
+  unfold fetchParsed
+  rw [h]
+  simp only []
+  cases fetchModule l url cred with
+  | mk l' r => cases r <;> simp
 
 /-- Record request `spec` of module `i` as `c` (a module also becomes a dependency). -/
 def addKid (l : Loader) (i : Nat) (spec : String) (c : Child) : Loader :=
@@ -149,11 +203,11 @@ def visit : Nat → Loader → String → Bool → Loader × Option Entry
     match l.map.find? (·.1 == url) with
     | some (_, e) => (l, some e)
     | none =>
-      match fetchModule l url cred with
+      match fetchParsed l url cred with
       | (l, none) => (l, none)
       | (l, some (.error why)) => ({ l with map := l.map.push (url, .failed why) }, some (.failed why))
-      | (l, some (.ok (final, text))) =>
-        let (l, e) := addModule l final text
+      | (l, some (.ok parsed)) =>
+        let (l, e) := addParsed l parsed
         let l := { l with map := l.map.push (url, e) }
         match e with
         | .node i =>
@@ -239,13 +293,16 @@ structure Loaded where
   deriving Inhabited
 
 /-- Load the module scripts of a document: `.error w` asks the host for request `w` (the
-start is made again with its answer), `.ok` has every graph. A document with no module
+start is made again with its answer), `.ok` has every graph. With the modules that earlier
+attempts of the same start fetched and parsed (`memo`, `Fetched`), and those of this attempt
+after them, for the next. A document with no module
 script makes no request and reads nothing but its tree. -/
-def load (dom : DOM.Dom) (docUrl : String) (page : Page) (answers : Array Answer) : Except Wire Loaded := Id.run do
+def load (dom : DOM.Dom) (docUrl : String) (page : Page) (answers : Array Answer)
+    (memo : Array Fetched := #[]) : Except Wire Loaded × Array Fetched := Id.run do
   let scripts := scriptsOf dom
-  if scripts.isEmpty then return .ok {}
+  if scripts.isEmpty then return (.ok {}, memo)
   let base := baseOf dom docUrl
-  let mut l : Loader := { page, answers }
+  let mut l : Loader := { page, answers, memo }
   let mut out : Array (Nat × Outcome) := #[]
   for sc in scripts do
     match sc.src with
@@ -256,7 +313,7 @@ def load (dom : DOM.Dom) (docUrl : String) (page : Page) (answers : Array Answer
         let (l', e) := visit 4096 l url sc.credentials
         l := l'
         match e with
-        | none => return .error (l.wanted.getD (moduleTransfer page url sc.credentials).mainWire)
+        | none => return (.error (l.wanted.getD (moduleTransfer page url sc.credentials).mainWire), l.memo)
         | some e => out := out.push (sc.node, outcome l e true)
     | none =>
       let (l', e) := addModule l base sc.source
@@ -265,10 +322,10 @@ def load (dom : DOM.Dom) (docUrl : String) (page : Page) (answers : Array Answer
       | .node i =>
         let (l', ok) := visitKids 4096 l i ((l.graph[i]?.map (·.syn.requests.toList)).getD []) sc.credentials
         l := l'
-        if !ok then return .error (l.wanted.getD (moduleTransfer page base sc.credentials).mainWire)
+        if !ok then return (.error (l.wanted.getD (moduleTransfer page base sc.credentials).mainWire), l.memo)
         out := out.push (sc.node, outcome l e false)
       | e => out := out.push (sc.node, outcome l e false)
-  return .ok { graph := l.graph, scripts := out, used := l.used }
+  return (.ok { graph := l.graph, scripts := out, used := l.used }, l.memo)
 where
   /-- The `src` of a script element: any URL, relative to the document's base URL. -/
   resolveSpecifier' (src base : String) : Option String :=
