@@ -11,6 +11,8 @@ import L4Factoidal.JS.Theorems
 import L4Factoidal.JS.Tier1
 import L4Factoidal.JS.Tier1Proofs
 import L4Factoidal.JS.RegionProofs
+import L4Factoidal.JS.VmFastProofs
+import L4Factoidal.JS.VmFastSteps
 import L4Factoidal.JS.EnvIndexTheorems
 import L4Factoidal.JS.Tests
 import L4Factoidal.JS.RegressionTests
