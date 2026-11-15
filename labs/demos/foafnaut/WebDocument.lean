@@ -1386,9 +1386,14 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
         let layoutText := previous.bind fun k =>
           if ptrEq k.boxes boxes && ptrEq k.face face && ptrEq k.page.links page.links && ptrEq k.page.glyphRuns page.glyphRuns then
             some k.layoutText else none
+        -- A layout makes every primitive a new object: the address test first, then the
+        -- values (`WebPaint.samePrimitive`, proved to hold only of equal primitives; bitmaps
+        -- by address, as the paint table keeps one per image).
+        let bitmaps := fun (x y : Rendering.Bitmap) => ptrEq x y
         let reuseLeaf := fun (a b : WebPaint.LeafKey) =>
-          if ptrEq a.primitive b.primitive && a.sameContext b then NativeSVG.Reuse.same
-          else if ptrEq a.primitive.geometry b.primitive.geometry && ptrEq a.primitive.style b.primitive.style then a.movedOf b
+          if (ptrEq a.primitive b.primitive || WebPaint.samePrimitive bitmaps a.primitive b.primitive) && a.sameContext b then NativeSVG.Reuse.same
+          else if (ptrEq a.primitive.geometry b.primitive.geometry || decide (a.primitive.geometry = b.primitive.geometry)) &&
+              (ptrEq a.primitive.style b.primitive.style || WebPaint.sameStyle bitmaps a.primitive.style b.primitive.style) then a.movedOf b
           else NativeSVG.Reuse.different
         match WebPaint.retainedAnswer reuseLeaf (previous.bind (·.retained)) layer boxes face first layoutText with
         | .error e => return .error e

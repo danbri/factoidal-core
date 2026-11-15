@@ -11,7 +11,7 @@ import {bisect,markdown} from "./spinal_bisect.ts";
 import {defaultLibrary} from "./spinal_variants.ts";
 import {checkBudgets,knownFailures,ratchet} from "./spinal_budgets.mjs";
 
-export const FAST=["full","static","no-svg","text-only","plain-text","empty"];
+export const FAST=["full","static","no-svg","text-only","plain-text","empty","plus-timer"];
 const here=new URL(".",import.meta.url).pathname;
 const budgetsPath="labs/demos/foafnaut/fixtures/spinal-bisect/budgets.json";
 const budgets=JSON.parse(Deno.readTextFileSync(new URL("./fixtures/spinal-bisect/budgets.json",import.meta.url)));
