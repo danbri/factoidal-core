@@ -16,6 +16,7 @@ import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.Rendering.FloatFormat
 import L4Factoidal.Rendering.Scene
+import L4Factoidal.Rendering.CssValues.Color
 import L4Factoidal.XML.NamespaceView
 
 /- Isolated strict SVG document reader, not SVG Tiny/full conformance.
@@ -318,7 +319,27 @@ private def systemColors : List (String × Nat × Nat × Nat) :=
    ("threedlightshadow",(212,208,200)),("threedshadow",(128,128,128)),("window",(255,255,255)),
    ("windowframe",(0,0,0)),("windowtext",(0,0,0))]
 
-private def color (input : String) : Except String Color := do
+/-- An opaque colour of CSS Color 4 as sRGB channels clamped to [0, 1] (out-of-gamut
+colours are clipped). `none` for an invalid colour, `currentcolor`, a colour with alpha
+below 1, or one with a missing component. -/
+private def cssOpaque? (text : String) : Option Color :=
+  match L4Factoidal.Rendering.CssValues.trimWs (L4Factoidal.Rendering.CssValues.CV.parse text) with
+  | [cv] =>
+    match L4Factoidal.Rendering.CssValues.Color.resolve {} cv with
+    | none => none
+    | some c =>
+      if c.alpha != some 1 then none else
+      match L4Factoidal.Rendering.CssValues.Color.toMixSpace .srgb c with
+      | none => none
+      | some s =>
+        let f := fun (x : Option Rat) => x.map fun v =>
+          let v := L4Factoidal.Rendering.CssValues.Color.clamp01 v
+          Float.ofInt v.num / Float.ofNat v.den
+        match f s.c1, f s.c2, f s.c3 with
+        | some r, some g, some b => some ⟨r, g, b⟩
+        | _, _, _ => none
+  | _ => none
+private def colorBase (input : String) : Except String Color := do
   let s := (trim input).toLower
   if s.startsWith "#" then
     let digits ← need ((s.toList.drop 1).mapM hex) "invalid hex color"
@@ -344,6 +365,17 @@ private def color (input : String) : Except String Color := do
         (fun _ => systemColors.find? (fun item => item.1 == s.toLower)) with
     | some (_,r,g,b) => return rgb r g b
     | none => throw s!"unsupported color: {input}"
+/-- A colour of this reader: hex, comma `rgb()`, named and system colours here; the rest of
+    CSS Color 4 (`hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`, `color()`, the
+    space-separated `rgb()`, opaque `rgba()` and `#rrggbbaa`) through the page CSS colour
+    parser (`CssValues.Color`), as sRGB (`cssOpaque?`). Only opaque colours: this
+    reader has no colour alpha. The refusal is the reader's own when neither knows it. -/
+private def color (input : String) : Except String Color :=
+  match colorBase input with
+  | .ok c => .ok c
+  | .error e => match cssOpaque? input with
+    | some c => .ok c
+    | none => .error e
 abbrev Gradient := L4Factoidal.Rendering.Gradient
 abbrev GradientStop := L4Factoidal.Rendering.GradientStop
 abbrev GradientRecord := L4Factoidal.Rendering.GradientRecord
@@ -409,7 +441,14 @@ attribute and which pages write on an `svg` as they would on an `img`: lean-lang
 its whole `svg`: every icon of gov.uk (`focusable`), of developer.mozilla.org (`class`) and of
 BBC News (`class`, `focusable`, `aria-hidden`). -/
 def inertAttribute (name : String) : Bool :=
-  name.startsWith "aria-" || name.startsWith "data-" || ["focusable","role","tabindex","lang","class","alt"].contains name
+  name.startsWith "aria-" || name.startsWith "data-" || ["focusable","role","tabindex","lang","class","alt"].contains name ||
+  eventHandler name
+where
+  /-- An event handler content attribute (HTML §8.1.8.1; SVG 2 §15.10: `onload`, `onclick`,
+  `onbegin`, ...): the page's scripts read it, and it draws nothing. Before 2026-11-15 an
+  `onload` on an `svg` refused the whole drawing (11 WPT reftests drew a blank page). -/
+  eventHandler (name : String) : Bool :=
+    name.length > 2 && name.startsWith "on" && name.toList.all fun c => c.isLower
 
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
@@ -435,7 +474,9 @@ private def applyCSSWith (validate : NativeSVGCSS.Declaration → Except String 
     (["use","symbol"].contains tag || (tag == "svg" && nested)) && ["width","height"].contains d.property
   let inlineStyle := inlineStyle.filter (!ignoredDimension ·)
   let rules := rules.map fun rule => {rule with declarations:=rule.declarations.filter (!ignoredDimension ·)}
-  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle
+  -- the words of `class`, split at ASCII white space (DOM §4.9 "ordered set parser")
+  let classes := (((attr attrs "class").getD "").map fun c => if c.isWhitespace then ' ' else c).splitOn " " |>.filter (!·.isEmpty)
+  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle classes (attr attrs "id")
   pure (attrs.filter (fun a => !(a.name.namespace_.isNone && (cssProperties.contains a.name.localPart || a.name.localPart=="style"))) ++ winning.map cssAttribute)
 
 /-- Document data that a paint reference needs. -/

@@ -101,6 +101,21 @@ def run : IO Unit := do
   let painted ← unwrap (parseRootInContext paints [1])
   color painted 50 50 0 0 1 "paint server in a hidden root was treated as missing fallback"
   IO.println "PASS cross-root cycle refusal, sibling survival, global SVG styles and global paint server"
+  -- 2026-11-15 (WPT reftests): CSS Color 4 colours through the page colour parser, `#id`
+  -- and `.class` selectors with specificity, and event handler attributes read past.
+  let page := fun (body : String) => parse ("<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'>" ++ body ++ "</svg>") 100 100
+  let hsl ← unwrap (page "<rect width='100' height='100' fill='hsl(120 100% 25%)'/>")
+  color hsl 50 50 0 0.5 0 "hsl() fill"
+  let rgbSpace ← unwrap (page "<rect width='100' height='100' fill='rgb(0 0 255)'/>")
+  color rgbSpace 50 50 0 0 1 "space-separated rgb() fill"
+  check (page "<rect width='100' height='100' fill='rgba(0,0,255,0.5)'/>").toOption.isNone "translucent colour still refused"
+  let selected ← unwrap (page "<style>#t {fill: blue} .c {fill: red} rect {fill: red}</style><rect id='t' class='c' width='100' height='100'/>")
+  color selected 50 50 0 0 1 "#id beats .class and type"
+  let byClass ← unwrap (page "<style>.c {fill: blue} rect {fill: red}</style><rect class='a  c' width='100' height='100'/>")
+  color byClass 50 50 0 0 1 ".class beats type, class words split on white space"
+  let handler ← unwrap (parse "<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' onload='go()'><rect width='100' height='100' fill='blue' onclick='x()'/></svg>" 100 100)
+  color handler 50 50 0 0 1 "onload and onclick read past"
+  IO.println "PASS CSS Color 4 colours, #id/.class selectors by specificity, event handler attributes"
 
 #eval run
 end NativeSVGDocumentTests
