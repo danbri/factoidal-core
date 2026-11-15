@@ -525,8 +525,30 @@ def compare(a):
         open(a.out, "w").write(text)
     else:
         print(text)
+    # each newly passing test under the cause it had before (clusters of the previous run)
+    cause = {}
+    prev_doc = json.load(open(a.prev))
+    for r in prev_doc["tests"]:
+        if r["status"] == "PASS":
+            continue
+        skips = [m for v in (r.get("skipped") or {}).values() for m in v]
+        for name, kind, pat in CLUSTERS:
+            if (kind == "status" and r["status"] == pat) or \
+               (kind == "skip" and any(re.search(pat, m.split(": ", 1)[-1]) for m in skips)) or \
+               (kind == "path" and re.search(pat, r["test"])):
+                cause[r["test"]] = name
+                break
+    by = collections.Counter(cause.get(t, "?") for t in up)
+    before = collections.Counter(cause.values())
+    table = ["", "| cause (previous run) | not passing before | newly passing |", "|---|---:|---:|"] + \
+        [f"| {n} | {before[n]} | {by.get(n, 0)} |" for n, _ in before.most_common()]
+    if a.out:
+        open(a.out, "a").write("\n".join(table) + "\n")
+    else:
+        print("\n".join(table))
     if a.json:
-        json.dump({"passedBefore": pp, "passedAfter": cp, "newlyPassing": up, "newlyFailing": down, "new": new, "gone": gone}, open(a.json, "w"), indent=1)
+        json.dump({"passedBefore": pp, "passedAfter": cp, "newlyPassing": up, "newlyFailing": down, "new": new, "gone": gone,
+                   "newlyPassingByCause": dict(by)}, open(a.json, "w"), indent=1)
 
 
 # Causes, in order: the first that fits a test names its cluster. A pattern is matched against
