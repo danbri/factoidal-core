@@ -119,7 +119,7 @@ async function session(adapterMode){
     while(Date.now()-t1<SECONDS*1000){
       await sleep(1000);
       const got=await evaluate(`(()=>{const f=window.__frames??[];window.__frames=[];return f.map(x=>({t:x.t,path:x.path,url:x.url,layoutMs:x.layoutMs,drawMs:x.drawMs,
-        gpuMs:x.gpuMs,totalMs:x.totalMs,primitives:x.primitives,leanRenders:x.leanRenders,rows:x.rows,scriptTurns:x.scripts?.turns,scriptMs:x.scripts?.ms,draw:x.draws?.page??x.draws?.single,chrome:x.draws?.chrome,composite:x.draws?.composite,planRequests:x.surface?.planRequests,pipelineBuilds:x.surface?.pipelineBuilds}));})()`).catch(()=>[]);
+        gpuMs:x.gpuMs,totalMs:x.totalMs,primitives:x.primitives,leanRenders:x.leanRenders,leanCalls:x.leanCalls,rows:x.rows,scriptTurns:x.scripts?.turns,scriptMs:x.scripts?.ms,scriptLastMs:x.scripts?.lastMs,draw:x.draws?.page??x.draws?.single,chrome:x.draws?.chrome,composite:x.draws?.composite,planRequests:x.surface?.planRequests,pipelineBuilds:x.surface?.pipelineBuilds}));})()`).catch(()=>[]);
       frames.push(...got);
       if(Date.now()-t1>=nextSample){
         nextSample+=5000;
@@ -168,7 +168,10 @@ async function session(adapterMode){
     const gpuText=/GPU|WebGPU|device/i,lostText=/device (was )?lost|lost:|GPU layer surface is failed/i;
     out.errors={count:messages.filter(m=>m.type!=='warning').length,warnings:messages.filter(m=>m.type==='warning').length,
       gpu:messages.filter(m=>gpuText.test(m.text)).length,device_lost:messages.some(m=>lostText.test(m.text))?1:0,first:messages.slice(0,12)};
+    // With each frame, the page's script turns so far (count, total ms, the last turn's ms) and
+    // the engine calls: a gap between frames is a script turn, an engine call or neither.
     out.frames_detail=pageFrames.map(f=>({s:r1((f.t)/1000),path:f.path,layoutMs:f.layoutMs,drawMs:f.drawMs,primitives:f.primitives,
+      scriptTurns:f.scriptTurns,scriptMs:f.scriptMs===undefined?undefined:r1(f.scriptMs),scriptLastMs:f.scriptLastMs,leanCalls:f.leanCalls,leanRenders:f.leanRenders,
       ...(f.draw&&!f.draw.kept?{cpuMs:f.draw.cpuMs,gpuMs:f.draw.gpuMs,segmentsM:m(f.draw.segments),outsideClipM:m(f.draw.segmentsOutsideClip),piecesM:m(f.draw.pieces??0),
         listedM:m(f.draw.listed),drawnPixels:f.draw.drawnPixels,uploadKB:Math.round(f.draw.uploadBytes/1024),partial:f.draw.partial,
         chromeMs:r1(chromeOf(f)),chromeGpuMs:f.chrome?.gpuMs,planRequests:f.planRequests,pipelineBuilds:f.pipelineBuilds,compositeMs:f.composite?r1(f.composite.cpuMs+f.composite.gpuMs):undefined,otherMs:r1(otherOf(f))}:{})}));
