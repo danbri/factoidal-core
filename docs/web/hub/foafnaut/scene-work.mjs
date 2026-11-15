@@ -7,8 +7,10 @@
 // - `listed`: primitive records visited (each tile's list, for each pixel of the tile);
 // - `segments`: path and polygon edges the winding loop walks (it walks every edge of a path or
 //   polygon for each sample inside the record's bounds);
-// - `segmentsOutsideClip`: the part of `segments` in tiles that lie wholly outside one of the
-//   record's clip rectangles, where the shader walks the edges and then drops the result;
+// - `segmentsOutsideClip`: edges of records in tiles that lie wholly outside one of the
+//   record's clip rectangles. A shader that goes to the next record when the clip fails (its
+//   text has `if(!clipHit){continue;}`, `skipsClipped`) does not walk them, and they are not in
+//   `segments`; an older shader walks them and drops the result, and they are;
 // - `segmentsBinned`: what `segments` would be if each tile walked only the edges of a record
 //   that can change the winding number differently across that tile (an edge whose rows meet
 //   the tile's and that is not wholly left of it, less an edge wholly right of it that spans
@@ -25,7 +27,7 @@ const SAMPLES=4,FIXED_ROWS=5,DASH_ROWS=5,CLIP_ROWS=3,AFFINE_ROWS=2,PATH=6,POLYGO
 export function sceneWork(frame,rects){
   const data=frame.data,tiles=frame.tiles,width=frame.width,height=frame.height;
   const out={uploadBytes:(data?.length??0)*4+(tiles?.length??0)*4,drawnPixels:0,tiles:0,tileEntries:0,listed:0,segments:0,segmentsOutsideClip:0,
-    partial:!!rects,maxSegmentsPerSample:0,segmentsBinned:0};
+    partial:!!rects,maxSegmentsPerSample:0,segmentsBinned:0,skipsClipped:typeof frame.wgsl==='string'&&frame.wgsl.includes('if(!clipHit){continue;}')};
   if(!data||!tiles||tiles.length<4)return out;
   const row=i=>[data[4*i],data[4*i+1],data[4*i+2],data[4*i+3]];
   const rowCount=data.length/4;
@@ -66,6 +68,14 @@ export function sceneWork(frame,rects){
       const xs=box.map(c=>c[0]),ys=box.map(c=>c[1]);
       // withinBounds: no edge is walked where the tile misses the record's bounds.
       if(Math.max(...xs)<bx0||Math.min(...xs)>bx1||Math.max(...ys)<by0||Math.min(...ys)>by1)continue;
+      const clipBase=base+FIXED_ROWS+tailRows+(affine?AFFINE_ROWS:0);
+      let outside=false;
+      for(let c=0;c<clipCount;c++){
+        const cx=row(clipBase+CLIP_ROWS*c),cy=row(clipBase+CLIP_ROWS*c+1),[qx,qy,qw,qh]=row(clipBase+CLIP_ROWS*c+2);
+        const [x0,y0,x1,y1]=mapBox(corners,cx,cy);
+        if(cx[3]!==1||x1<qx||x0>qx+qw||y1<qy||y0>qy+qh){outside=true;break;}
+      }
+      if(outside){out.segmentsOutsideClip+=samples*count;if(out.skipsClipped)continue;}
       out.segments+=samples*count;perSample+=count;
       // The edges this tile would keep (tile box in the record's space).
       const X0=Math.min(...xs),X1=Math.max(...xs),Y0=Math.min(...ys),Y1=Math.max(...ys);
@@ -79,13 +89,8 @@ export function sceneWork(frame,rects){
         if(Math.min(ax,bx)>X1&&y0<=Y0&&y1>=Y1)continue;
         kept++;
       }
-      out.segmentsBinned+=samples*kept;
-      const clipBase=base+FIXED_ROWS+tailRows+(affine?AFFINE_ROWS:0);
-      for(let c=0;c<clipCount;c++){
-        const cx=row(clipBase+CLIP_ROWS*c),cy=row(clipBase+CLIP_ROWS*c+1),[qx,qy,qw,qh]=row(clipBase+CLIP_ROWS*c+2);
-        const [x0,y0,x1,y1]=mapBox(corners,cx,cy);
-        if(cx[3]!==1||x1<qx||x0>qx+qw||y1<qy||y0>qy+qh){out.segmentsOutsideClip+=samples*count;break;}
-      }
+      // Per-tile edge lists with the clip skip: a tile outside the clip lists nothing.
+      if(!outside)out.segmentsBinned+=samples*kept;
     }
     out.maxSegmentsPerSample=Math.max(out.maxSegmentsPerSample,perSample);
   }
