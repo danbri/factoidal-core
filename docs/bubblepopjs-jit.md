@@ -1,7 +1,7 @@
 # BubblePopJS JIT: proven equivalent to the interpreter
 
-Status: design draft, 2026-11-15. Tracking issue: BubblePopJS JIT (link added when the issue is
-open). Related: [BubblePopJS plan and key results](https://github.com/danbri/factoidal-core/issues/378),
+Status: design draft, 2026-11-15. Tracking issue:
+[BubblePopJS JIT: proven equivalent to the interpreter](https://github.com/danbri/factoidal-core/issues/471). Related: [BubblePopJS plan and key results](https://github.com/danbri/factoidal-core/issues/378),
 [the plan record](https://github.com/danbri/factoidal-core/blob/claude/foafnaut-perf-bottlenecks-7hpt38/docs/designissues/2026-11-09-bubblepopjs-plan.md),
 [WasmVM AOT record](designissues/2026-11-08-wasmvm-aot.md).
 
