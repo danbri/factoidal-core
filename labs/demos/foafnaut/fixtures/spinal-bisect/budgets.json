@@ -1,0 +1,77 @@
+{
+ "about": "Budgets of the fast mode of spinal_bisect.ts (spinal_bisect_check.ts in test.sh, core issue 450): variants of the Spinal Tap page on the native engine with no window, 40 ticks of 16 ms. Paths are into the run's JSON (variants.NAME.engine...). Rules of spinal_budgets.mjs: a budget fails when missed; a known failure is printed while it fails and fails the check when met (move it to the budgets); the file may only tighten (ratchet against the merge base). Times have about three times the measurement as margin; frame counters are exact.",
+ "native": {
+  "measured": "2026-11-15, Apple M1, release engine cc73af028 (timing lock held), before PR 460; spinal_bisect_check.ts 40 ticks",
+  "budgets": {
+   "variants.static.engine.tick.layouts": {
+    "max": 0,
+    "measured": 0,
+    "what": "the page's DOM with no scripts: 40 ticks lay out nothing (a page that does not change pays no layout)"
+   },
+   "variants.static.engine.tick.recompiled": {
+    "max": 0,
+    "measured": 0,
+    "what": "and compile no primitive again"
+   },
+   "variants.static.engine.second_layouts": {
+    "max": 0,
+    "measured": 0,
+    "what": "a second frame of the unchanged page keeps its layout"
+   },
+   "variants.empty.engine.primitives": {
+    "max": 0,
+    "measured": 0,
+    "what": "an empty page draws nothing"
+   },
+   "variants.empty.engine.tick.median": {
+    "max": 6,
+    "measured": 1.8,
+    "what": "a tick of an empty page"
+   },
+   "variants.empty.engine.first_ms": {
+    "max": 10,
+    "measured": 2.6
+   },
+   "variants.static.engine.first_ms": {
+    "max": 350,
+    "measured": 114.9,
+    "what": "first layered frame of the page's DOM (layout and compile)"
+   },
+   "variants.static.engine.tick.median": {
+    "max": 36,
+    "measured": 11.5,
+    "what": "a tick of the unchanged page (no layout, no recompile): the cost of an answer that changed nothing"
+   },
+   "variants.static.engine.probe_ms": {
+    "max": 1500,
+    "measured": 519.7,
+    "what": "a whole-page frame with the CPU probe; known slow (issue 450), may not get worse"
+   },
+   "variants.no-svg.engine.probe_ms": {
+    "max": 220,
+    "measured": 70,
+    "what": "the same with no inline SVG: the probe cost is the SVG text (glyph outlines)"
+   },
+   "variants.plain-text.engine.first_ms": {
+    "max": 300,
+    "measured": 87.5
+   },
+   "variants.full.engine.first_ms": {
+    "max": 400,
+    "measured": 107.2
+   }
+  },
+  "known_failures": {
+   "variants.static.engine.tick.median": {
+    "want_max": 4,
+    "measured": 11.5,
+    "issue": "issue 450: an unchanged frame still costs 11 ms (7.6 ms of it the host's finite check, PR 460; the rest is the 4.4 MB answer made again)"
+   },
+   "variants.static.engine.probe_ms": {
+    "want_max": 200,
+    "measured": 519.7,
+    "issue": "issue 450: the CPU probe of stroked glyph outlines costs 7 times the frame"
+   }
+  }
+ }
+}

@@ -306,6 +306,17 @@ Measuring:
   Chrome with WebGPU for 45 s (frame path, draw ms, heap, RSS, GPU errors) against the same file.
   Times with the CPU probe (`checks` on, the default of `compile`) are about five times those
   without it on this page: say which one a number is.
+- Which features of a page cost what: `spinal_variants.ts` makes about 25 variants of the Spinal
+  Tap page at test time (none committed): its DOM after load with no scripts, then one feature
+  taken away (SVG, strokes, gradients, the web font, clip, borders, half the DOM, ...) or added
+  (shadows, fixed and sticky boxes, a CSS animation, filters, a 16 ms timer, images), down to
+  plain text and an empty page. `spinal_bisect.ts` measures each on the native engine (load,
+  first and kept frames, the CPU probe, ticks, scroll bands, RSS) and, with `--app DIR`, in the
+  desktop browser off screen (first frame, frame and GPU ms, the longest pump gap, the idle
+  check, idle CPU %, scroll input latency), and ranks feature against added cost.
+  `spinal_bisect_check.ts` (test.sh, about 20 s) is the fast mode against
+  `fixtures/spinal-bisect/budgets.json`; `sh spinal_bisect_full.sh` is the full mode (25 to 40
+  minutes). Every timed run holds `flock /tmp/foafnaut-timing.lock`.
 
 ### Measure BubblePopKit and BubblePopJS with no Mac
 

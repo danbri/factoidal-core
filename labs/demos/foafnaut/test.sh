@@ -203,6 +203,12 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # the native engine against fixtures/spinal-perf/budgets.json (known failures printed). About 15 s.
   check "spinal_perf_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi --allow-read --allow-ffi --allow-env \
     --allow-net=127.0.0.1 --allow-write="$LAB/.build" --allow-run=git "$LAB/spinal_perf_check.ts"
+  # Which features of the Spinal Tap page cost what (issue 450): variants made from the page at
+  # test time (DOM with no scripts, no SVG, text only, plain text, empty), each on the native
+  # engine in a process of its own, against fixtures/spinal-bisect/budgets.json. About 20 s.
+  # The full mode, with the desktop browser, is spinal_bisect_full.sh (not here).
+  check "spinal_bisect_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi --allow-read --allow-ffi --allow-env \
+    --allow-net=127.0.0.1 --allow-write="$LAB/.build,/tmp/foafnaut-timing.lock" --allow-run "$LAB/spinal_bisect_check.ts"
   if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then
     check "page_gpu_test.ts (bubblepop)" env SCRIPT_ENGINE=bubblepop deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/page_gpu_test.ts"
