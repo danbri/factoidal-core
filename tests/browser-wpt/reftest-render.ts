@@ -38,6 +38,10 @@ const outDir=opt("--out","reftest-out"),waitMs=Number(opt("--wait-ms","6000"));
 const here=new URL(".",import.meta.url).pathname;
 const fontFile=opt("--font",decodeURIComponent(new URL("../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname));
 const bitmap=args.includes("--bitmap-font");
+// --scenes DIR: also write each page's scene (the storage floats, tile words and WGSL the GPU
+// path draws) and its CPU pixels, for reftest-gpu-check.mjs to draw on WebGPU and compare.
+const scenesDir=opt("--scenes");
+if(scenesDir)await Deno.mkdir(scenesDir,{recursive:true});
 await Deno.mkdir(outDir,{recursive:true});
 
 type Turn=import("../../labs/demos/foafnaut/native_html_engine.ts").ScriptTurn&{netSync?:unknown;netRequests?:unknown[];fetches?:{id:number;url:string}[];logs:string[];errors:string[]};
@@ -139,6 +143,16 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
   const [offset,length]=sections[k];
   if(length!==job.width*job.height*4)throw new Error(`CPU pixels ${length} bytes for ${job.width}x${job.height}`);
   const rgba=new Uint8Array(buffer,offset,length);
+  if(scenesDir){
+    const section=(key:string)=>{const i=scene[key];if(typeof i!=="number")return undefined;const [o,l]=sections[i];return new Uint8Array(buffer,o,l);};
+    const data=section("dataSection"),tiles=section("tilesSection");
+    if(data&&tiles&&typeof scene.wgsl==="string"){
+      await Deno.writeFile(`${scenesDir}/${job.file}.data`,data);
+      await Deno.writeFile(`${scenesDir}/${job.file}.tiles`,tiles);
+      await Deno.writeFile(`${scenesDir}/${job.file}.cpu`,rgba);
+      await Deno.writeTextFile(`${scenesDir}/${job.file}.json`,JSON.stringify({url:job.url,width:job.width,height:job.height,wgsl:scene.wgsl}));
+    }
+  }
   // A page is drawn on an opaque canvas: what is left transparent is white, as in a browser's screenshot.
   const rgb=new Uint8Array(job.width*job.height*3),out=new Uint8Array(length);
   for(let p=0,q=0;p<length;p+=4,q+=3){
