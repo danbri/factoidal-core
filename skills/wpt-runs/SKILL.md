@@ -353,7 +353,8 @@ quoted next to the WPT number, never folded into it: `wpt-reftest-svg` (svg/, fi
   (`--only /svg/painting/` for a directory; OUT/summary.md, OUT/results.json, OUT/failures/).
   A WPT checkout of the directory and its support is enough (a sparse partial clone: `svg/`,
   `css/reference/`, `fonts/`, `common/`, `resources/`, `images/`, `css/support/`).
-  `wpt-reftests.py compare --prev A/results.json --cur B/results.json` lists what changed.
+  `wpt-reftests.py compare --prev A/results.json --cur B/results.json` lists what changed;
+  `wpt-reftests.py clusters --results OUT/results.json` groups what does not pass by cause.
 - **Planning**: rank failing reftests by root cause (cluster by feature: markers, patterns,
   gradients, text, masking, filters, clipPath, stroke, nested svg and viewBox, use, images,
   animation, scripting), fix the largest clusters, and report before and after per cluster.

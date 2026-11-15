@@ -3,6 +3,8 @@
 
   run      run every reftest of the WPT manifest under --prefix (e.g. svg/), compare, write results
   compare  two results.json files: newly passing and newly failing tests (changes.md)
+  clusters the tests that do not pass, grouped by cause (the engine's skip messages first,
+           then the test's directory and markup), with how many Chrome passes
 
     wpt-reftests.py run --manifest MANIFEST.json --wpt-root WPT --native-engine LIB --prefix svg/ \
         --out DIR [--chrome-summary chrome-summary_v2.json] [--jobs 3] [--only a,b] [--shard k --shards n]
@@ -519,6 +521,59 @@ def compare(a):
         json.dump({"passedBefore": pp, "passedAfter": cp, "newlyPassing": up, "newlyFailing": down, "new": new, "gone": gone}, open(a.json, "w"), indent=1)
 
 
+# Causes, in order: the first that fits a test names its cluster. A pattern is matched against
+# the engine's skip messages for the test and its references ("skip"), or the test's path ("path").
+CLUSTERS = [
+    ("scripted page never ended reftest-wait (SMIL API, load events of images, use)", "status", "TIMEOUT"),
+    ("SVG <style> selectors beyond the slice", "skip", r"CSS selector"),
+    ("event handler attributes", "skip", r"attribute on \w+: on[a-z]+"),
+    ("colours beyond hex and rgb()", "skip", r"color|rgb\(\)"),
+    ("markers", "skip", r"marker"),
+    ("external <use> references", "skip", r"external use|use reference"),
+    ("foreignObject", "skip", r"foreignObject|foreign/non-SVG element"),
+    ("SVG images and data: URLs", "skip", r"data URI|svg\+xml"),
+    ("CSS geometry properties (cx, r, rx, x, d ...)", "skip", r"CSS property: (cx|cy|r|rx|ry|x|y|d)$|CSS geometry property"),
+    ("transform on the outer svg, CSS transform", "skip", r"transform"),
+    ("masking, clipping, filters, blending", "skip", r"mask|clip|filter|blend"),
+    ("patterns", "skip", r"pattern"),
+    ("gradients", "skip", r"[Gg]radient"),
+    ("CSS values: calc(), var(), strings, units", "skip", r"calc|var\(|strings|unit"),
+    ("pathLength", "skip", r"pathLength|path-length"),
+    ("other features the reader skips", "skip", r"."),
+    ("text layout and painting", "path", r"/text/"),
+    ("svgView and media fragments", "path", r"svgview|media-fragment"),
+    ("linked parameters", "path", r"css-linked-parameters"),
+    ("embedded and as-image", "path", r"/embedded/|/as-image/"),
+    ("other, nothing skipped", "path", r"."),
+]
+
+
+def clusters(a):
+    doc = json.load(open(a.results))
+    if a.chrome_summary:
+        ch = json.load(open(a.chrome_summary))
+        for r in doc["tests"]:
+            if r["test"] in ch:
+                r["chrome"] = {"P": "PASS", "F": "FAIL"}.get(ch[r["test"]].get("s"), ch[r["test"]].get("s"))
+    out = collections.OrderedDict((name, []) for name, _, _ in CLUSTERS)
+    for r in doc["tests"]:
+        if r["status"] == "PASS":
+            continue
+        skips = [m for v in (r.get("skipped") or {}).values() for m in v]
+        for name, kind, pat in CLUSTERS:
+            if (kind == "status" and r["status"] == pat) or \
+               (kind == "skip" and any(re.search(pat, m.split(": ", 1)[-1]) for m in skips)) or \
+               (kind == "path" and re.search(pat, r["test"])):
+                out[name].append(r)
+                break
+    rows = sorted(((n, len(v), sum(1 for r in v if r.get("chrome") == "PASS")) for n, v in out.items() if v), key=lambda x: (-x[2], -x[1]))
+    lines = ["| cause | not passing | Chrome passes |", "|---|---:|---:|"] + [f"| {n} | {k} | {c} |" for n, k, c in rows]
+    text = "\n".join(lines) + "\n"
+    if a.json:
+        json.dump({n: [r["test"] for r in v] for n, v in out.items() if v}, open(a.json, "w"), indent=1)
+    print(text)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -543,8 +598,12 @@ def main():
     c.add_argument("--cur", required=True)
     c.add_argument("--out")
     c.add_argument("--json")
+    k = sub.add_parser("clusters")
+    k.add_argument("--results", required=True)
+    k.add_argument("--json")
+    k.add_argument("--chrome-summary")
     a = p.parse_args()
-    sys.exit(run(a) if a.cmd == "run" else compare(a))
+    sys.exit(run(a) if a.cmd == "run" else compare(a) if a.cmd == "compare" else clusters(a))
 
 
 if __name__ == "__main__":
