@@ -177,7 +177,8 @@ def main (args : List String) : IO UInt32 := do
     if let some m := h.vmStats then
       let tot := m.fold (fun a _ v => a + v) 0
       IO.eprintln s!"vmstats: {tot} calls"
-      for (k, v) in m.toArray.qsort (fun a b => a.2 > b.2) do
+      -- unsorted (`sort -k2 -n -r` sorts them)
+      for (k, v) in m.toArray do
         IO.eprintln s!"vmstats: {v} {k}"
     for l in out do IO.println l
     match o with
