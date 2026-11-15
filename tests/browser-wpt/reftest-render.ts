@@ -106,7 +106,9 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
   const scriptErrors:string[]=[];
   if(script){
     const take=async(next:Turn)=>{
-      for(const e of next.errors??[])if(scriptErrors.length<4)scriptErrors.push(String(e).slice(0,200));
+      // the turn's errors, and the console lines of uncaught exceptions
+      for(const e of [...(next.errors??[]),...(next.logs??[]).filter(l=>/^Uncaught /.test(String(l)))])if(scriptErrors.length<4)scriptErrors.push(String(e).slice(0,200));
+      if(Deno.env.get("REFTEST_DEBUG"))console.error(JSON.stringify({logs:next.logs,errors:next.errors,changed:(next as {changed?:boolean}).changed,clock:(next as {clock?:number}).clock}).slice(0,600));
       page.applyTurn(next as never);
       for(const wire of next.netRequests??[])await take(await synced(call("",{action:"net",session:next.session,results:[await netAnswer(wire as never)]})));
       if(next.fetches?.length){
