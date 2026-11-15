@@ -209,6 +209,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # The full mode, with the desktop browser, is spinal_bisect_full.sh (not here).
   check "spinal_bisect_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi --allow-read --allow-ffi --allow-env \
     --allow-net=127.0.0.1 --allow-write="$LAB/.build,/tmp/foafnaut-timing.lock" --allow-run "$LAB/spinal_bisect_check.ts"
+  # The idle loop (issue 450): an idle off-screen window waits for events, not an 8 ms poll;
+  # wakeups per second against the window section of the same budgets. About 10 s.
+  check "idle_loop_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --allow-read --allow-run --allow-env \
+    --allow-write "$LAB/idle_loop_check.ts"
   if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then
     check "page_gpu_test.ts (bubblepop)" env SCRIPT_ENGINE=bubblepop deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/page_gpu_test.ts"

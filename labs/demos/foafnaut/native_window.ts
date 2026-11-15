@@ -17,6 +17,8 @@ export function loadNativeWindow() {
     // Optional, so an older window library still opens.
     ng_events_dropped: { parameters: [], result: "u32", optional: true },
     ng_event_clock: { parameters: [], result: "u32", optional: true },
+    ng_wait_event: { parameters: ["f64"], result: "i32", optional: true },
+    ng_pump_quiet: { parameters: [], result: "i32", optional: true },
     ng_hide: { parameters: [], result: "void" },
     ng_set_title: { parameters: ["buffer"], result: "void" },
     ng_prepare_surface: { parameters: [], result: "void" },
@@ -131,6 +133,18 @@ export function loadNativeWindow() {
     pump() {
       if (!isMainThread()) throw new Error("Native event pump moved off main thread");
       symbols.ng_pump();
+    },
+    // An idle host waits here for the next native event, up to ms milliseconds, instead of
+    // polling; an older window library has no wait (false: the caller naps as before).
+    canWait: () => !!symbols.ng_wait_event && !!symbols.ng_pump_quiet,
+    waitEvent(ms: number): boolean {
+      if (!isMainThread()) throw new Error("Native event wait moved off main thread");
+      return symbols.ng_wait_event?.(ms) === 1;
+    },
+    // The pump after an idle wait: no window update or Core Animation flush with no event.
+    pumpQuiet(): number {
+      if (!isMainThread()) throw new Error("Native event pump moved off main thread");
+      return symbols.ng_pump_quiet ? symbols.ng_pump_quiet() : (symbols.ng_pump(), 0);
     },
     next(): UIEvent | null {
       return symbols.ng_next_event(buffer) ? { kind:view.getUint32(0,true), a:view.getInt32(4,true), b:view.getInt32(8,true), time:view.getUint32(12,true) } : null;

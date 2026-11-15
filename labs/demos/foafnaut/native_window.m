@@ -72,7 +72,19 @@ static uint32_t eventTime(void) {
   if (eventEpoch == 0) eventEpoch = now;
   return (uint32_t)llround((now - eventEpoch) * 1000.0);
 }
+// Set while the host waits in ng_wait_event. An event queued meanwhile by a notification
+// (occlusion, resize, focus), not by an NSEvent, ends the wait with an empty
+// application-defined event.
+static int idleWaiting;
+static void wakeIdleWait(void) {
+  if (!idleWaiting) return;
+  idleWaiting=0;
+  NSEvent *wake=[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint modifierFlags:0
+    timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0];
+  [NSApp postEvent:wake atStart:NO];
+}
 static void enqueue(uint32_t type, int32_t a, int32_t b) {
+  wakeIdleWait();
   uint32_t time = eventTime();
   if (eventCount) {
     struct NGEvent *last = &events[eventHead + eventCount - 1];
@@ -669,15 +681,19 @@ void ng_test_window_frame(double *out) {
   out[0]=f.origin.x;out[1]=f.origin.y;out[2]=f.size.width;out[3]=f.size.height;
   out[4]=hoverEdges;out[5]=resizeEdges;
 }
-void ng_pump(void) {
-  if (!pthread_main_np()) return;
+// Take the queued events (at most 256, so the JS event loop can submit frames under input
+// floods). `always`: then update the windows and flush Core Animation, as every pump did;
+// otherwise only when an event was sent (ng_pump_quiet, after an idle wait). Returns the
+// number of events taken.
+static int pumpEvents(BOOL always) {
+  int taken=0;
   @autoreleasepool {
     NSEvent *event;
-    // Bound each pump so the JS event loop can submit frames under input floods.
     for (int i=0; i<256; i++) {
       event = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate distantPast]
         inMode:NSDefaultRunLoopMode dequeue:YES];
       if (!event) break;
+      taken++;
       if(traceInput) {
         if(event.type==NSEventTypeLeftMouseDown)tracePointer("raw",event,2,&rawMoveTraced);
         else if(event.type==NSEventTypeLeftMouseUp)tracePointer("raw",event,4,&rawMoveTraced);
@@ -687,9 +703,54 @@ void ng_pump(void) {
       [NSApp sendEvent:event];
       hoverEdgeCursor(event);
     }
-    [NSApp updateWindows];
-    [CATransaction flush];
+    if (always || taken) {
+      [NSApp updateWindows];
+      [CATransaction flush];
+    }
   }
+  return taken;
+}
+void ng_pump(void) {
+  if (!pthread_main_np()) return;
+  pumpEvents(YES);
+}
+// An idle host (nothing to draw, nothing in flight): block until a native event is queued or
+// `ms` milliseconds have passed, without taking the event (ng_pump_quiet takes it). Returns 1
+// when an event is waiting. The run loop runs meanwhile, so its sources and timers still fire.
+int ng_wait_event(double ms) {
+  if (!pthread_main_np()) return 0;
+  if (eventCount) return 1;  // queued already (ng_test_event, or a pump that stopped at 256)
+  if (!(ms>0)) ms=0;
+  if (ms>1000) ms=1000;
+  @autoreleasepool {
+    idleWaiting=1;
+    NSEvent *event=[NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate dateWithTimeIntervalSinceNow:ms/1000.0]
+      inMode:NSDefaultRunLoopMode dequeue:NO];
+    idleWaiting=0;
+    return event||eventCount ? 1 : 0;
+  }
+}
+// Tests: post an application-defined event from another thread after ms milliseconds, as
+// the window server does with input while the host waits in ng_wait_event.
+void ng_test_post_later(double ms) {
+  dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,DISPATCH_TIMER_STRICT,
+    dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0));
+  dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,(int64_t)(ms*1e6)),DISPATCH_TIME_FOREVER,0);
+  dispatch_source_set_event_handler(timer,^{
+    @autoreleasepool {
+      NSEvent *event=[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint modifierFlags:0
+        timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0];
+      [NSApp postEvent:event atStart:NO];
+    }
+    dispatch_source_cancel(timer);
+  });
+  dispatch_resume(timer);
+}
+// The pump after an idle wait: no window update and no Core Animation flush when no event
+// came (nothing was drawn and nothing changed). Returns the number of events taken.
+int ng_pump_quiet(void) {
+  if (!pthread_main_np()) return 0;
+  return pumpEvents(NO);
 }
 int ng_next_event(void *out) {
   if (!pthread_main_np() || !eventCount) return 0;
