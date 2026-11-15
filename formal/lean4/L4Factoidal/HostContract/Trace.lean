@@ -90,11 +90,6 @@ def violationsFrom (t : Target) : Nat → List Call → List Violation
   | _, [] => []
   | i, c :: cs => callViolations t i c ++ violationsFrom t (i + 1) cs
 
-/-- Every violation of a trace; a trace past `maxCalls` is refused as a whole (a defined answer at
-the bound, not a long run). -/
-def violations (t : Target) (tr : List Call) : List Violation :=
-  if tr.length > maxCalls then [.tooLong tr.length] else violationsFrom t 0 tr
-
 /-- `violationsFrom` with an accumulator: the compiled form (a loop, no stack per call). -/
 def violationsAcc (t : Target) : Nat → List Call → List Violation → List Violation
   | _, [], acc => acc
@@ -109,6 +104,11 @@ def violationsFromTR (t : Target) (i : Nat) (cs : List Call) : List Violation :=
 
 @[csimp] theorem violationsFrom_eq_TR : @violationsFrom = @violationsFromTR := by
   funext t i cs; simp [violationsFromTR, violationsAcc_eq]
+
+/-- Every violation of a trace; a trace past `maxCalls` is refused as a whole (a defined answer at
+the bound, not a long run). -/
+def violations (t : Target) (tr : List Call) : List Violation :=
+  if tr.length > maxCalls then [.tooLong tr.length] else violationsFrom t 0 tr
 
 /-- A call within target `t`'s contract. -/
 def CallOk (t : Target) (c : Call) : Prop :=
