@@ -293,6 +293,52 @@ def frameEntropyOf (id : Nat) (parent b : ByteArray) : Nat → ByteArray :=
 def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "webdriverStart", "webdriver", "computed", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer", "cookies", "gpuRead"]
 
+/-- The actions that name a session the engine holds (`session` in the request). -/
+def sessionActions : List String := ["click", "pointer", "key", "actions", "message", "computed", "resize", "advance", "settle", "turn",
+  "resume", "host", "frame", "fetched", "net", "cookies", "gpuRead"]
+
+/-- The start of the error answer that says the session is gone: the host ends the page's
+scripts on it (stops its timers and frames) and asks nothing more of that session. -/
+def endedPrefix : String := "scriptSession: session ended: "
+
+/-- The answer after an action, given the session it named (`named`) and the session the
+engine held before (`before`) and after (`after`) the call. An action on the current session
+that left the engine without it (a failed AOT turn: `answerTurn`) answers that the session
+ended, with the cause, so no host takes the answer as a turn or asks the session again. -/
+def sealAnswer (action : String) (named before after : Option Nat) (answer : Except String String) : Except String String :=
+  if sessionActions.contains action && named.isSome && named == before && after != before then
+    .error (endedPrefix ++ match answer with
+      | .error e => e
+      | .ok _ => "the engine no longer holds it")
+  else answer
+
+/-- For every action on the current session `i`: after the call the engine holds session
+`i`, or the answer says the session ended. -/
+theorem sealAnswer_keeps (action : String) (i : Nat) (after : Option Nat) (answer : Except String String)
+    (ha : sessionActions.contains action = true) :
+    after = some i ∨ ∃ e, sealAnswer action (some i) (some i) after answer = .error (endedPrefix ++ e) := by
+  by_cases h : after = some i
+  · exact .inl h
+  · refine .inr ⟨match answer with | .error e => e | .ok _ => "the engine no longer holds it", ?_⟩
+    unfold sealAnswer
+    have ha' : action ∈ sessionActions := by simpa using ha
+    rw [if_pos (by simp [ha', h])]
+
+/-- An action that keeps the session keeps its answer. -/
+theorem sealAnswer_same (action : String) (named before : Option Nat) (answer : Except String String) :
+    sealAnswer action named before before answer = answer := by
+  simp [sealAnswer]
+
+/-- The text of an answer, for the checks below. -/
+def answerText : Except String String → String
+  | .ok a => "ok:" ++ a
+  | .error e => "error:" ++ e
+#guard answerText (sealAnswer "advance" (some 3) (some 3) none (.error "x")) == "error:scriptSession: session ended: x"
+#guard answerText (sealAnswer "advance" (some 3) (some 3) (some 3) (.ok "a")) == "ok:a"
+#guard answerText (sealAnswer "start" (some 3) (some 3) (some 4) (.ok "a")) == "ok:a"
+#guard answerText (sealAnswer "advance" (some 2) (some 3) none (.error "n")) == "error:n"
+#guard answerText (sealAnswer "advance" (some 3) (some 3) none (.ok "{}")) == "error:scriptSession: session ended: the engine no longer holds it"
+
 /-- An answer object with `nextSession` first: the number of the next session. -/
 def withNext (n : Nat) (answer : String) : String :=
   if answer.startsWith "{" then "{\"nextSession\":" ++ toString n ++ "," ++ (answer.drop 1).toString else answer
@@ -1520,6 +1566,15 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
           return (← s.advanceP s.loop.clock).1
       | _ => return ({ held with session := some (id, s, marks) }, .error "scriptSession: unknown action")
 
+/-- The number of the session the engine holds: the Lean engine's, QuickJS's, or that of the
+AOT turn waiting on the host. -/
+def currentId (held : Held) : Option Nat :=
+  match held.leanSession, held.session, held.turn with
+  | some (i, _, _), _, _ => some i
+  | none, some (i, _, _), _ => some i
+  | none, none, some t => some t.id
+  | none, none, none => none
+
 /-- The `scriptSession` operation. `html` is the page, for `start`. -/
 def op {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (name html : String) (request : JSON.Json)
     (measure : JSON.Json → Option Page.Measure := fun _ => none)
@@ -1540,7 +1595,10 @@ def op {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (name htm
         ({ held with syncCache := held.syncCache.push (answer.getD {}), pendingSync := none }, a, h, r)
       | none => (held, action, html, request)
     else (held, action, html, request)
+  let before := currentId held
   let (held, answer) ← act held action html request measure (canvas ())
+  -- every answer on a named session says whether the engine still holds it (`sealAnswer_keeps`)
+  let answer := sealAnswer action (natField request "session") before (currentId held) answer
   return (held, answer.map (some ∘ withNext held.nextSession))
 
 /-- The ops that answer bytes (`web_document_call_bin`): `aotModule`, the host module of

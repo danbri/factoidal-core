@@ -12,7 +12,7 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
-import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports} from './page-load.mjs';
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone} from './page-load.mjs';
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
 // Liberal mode (WebAccept.lean, the Settings checkbox "Be liberal in what we accept"), the
@@ -693,6 +693,14 @@ const runtimeFunction=name=>{const d=Object.getOwnPropertyDescriptor(module,name
 let scriptStackTop,scriptTraps=0;
 function scriptFailed(page,error,what){
   const message=String(error?.message??error);
+  // An answer that says the session is gone (page-load.mjs scriptFailure): the page's scripts end here.
+  if(scriptSessionGone(message)){
+    if(!page?.script)return;
+    console.warn(`foafnaut: page scripts stopped (${what}): the engine no longer holds this page's script session (${message})`);
+    page.script=undefined;page.pendingScripts=undefined;page.scriptStopped=true;
+    if(page===doc)request();
+    return;
+  }
   if(!(error instanceof WebAssembly.RuntimeError||error instanceof RangeError)){console.warn(`foafnaut: page script ${what}:`,message);return;}
   const restore=runtimeFunction('stackRestore');
   if(restore&&scriptStackTop!==undefined)restore(scriptStackTop);

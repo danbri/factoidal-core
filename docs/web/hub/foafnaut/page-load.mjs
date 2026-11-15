@@ -161,6 +161,38 @@ export function takeTurn(page,turn) {
   return changed||moved;
 }
 
+/** Whether an engine's error says the page's script session is gone: the engine holds no
+session (`no session`), holds another page's (`not the current session`), or ended this one
+(`session ended`, WebScripts.sealAnswer). Asking that session again can only fail again. */
+export function scriptSessionGone(message) {
+  return /scriptSession: (no session|not the current session|session ended)/.test(String(message));
+}
+
+/** A failed action of a page's script session, the rule of every host: an answer that says the
+session is gone ends the page's scripts in the host (no timer, frame, input or request asks it
+again) with one line; a failed timer turn stops the page's timers; any other failure is logged
+once for each page and message, never once for each retry. `log` takes the line. Answers
+`ended`, `stopped`, `logged`, `repeated` (not logged again) or `none` (the page has no scripts). */
+export function scriptFailure(page,error,what,log) {
+  const message=String(error?.message??error);
+  if(!page?.script)return 'none';
+  if(scriptSessionGone(message)){
+    page.script=undefined;page.scriptStopped=true;
+    log(`page scripts stopped (${what}): the engine no longer holds this page's script session (${message})`);
+    return 'ended';
+  }
+  if(what==='timers'&&page.script.turn){
+    page.script.turn.nextWake=null;
+    log(`page script timers stopped: ${message}`);
+    return 'stopped';
+  }
+  const seen=page.scriptFailures??=new Set();
+  if(seen.has(message))return 'repeated';
+  seen.add(message);
+  log(`page script ${what} failed: ${message}`);
+  return 'logged';
+}
+
 /** The embedder's answer to one script fetch of a turn (`fetches`: a worker's script, an
 imported script): the status, the final URL, and the Content-Type and X-Content-Type-Options
 as the server sent them, with the text. The engine decides whether it is a script
