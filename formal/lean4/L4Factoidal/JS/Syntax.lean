@@ -299,6 +299,9 @@ inductive Expr where
   /-- Tier 1: `x = value` on a resolved name, `value` not a function expression; equal to
   `assign none (local name hops idx) value`. -/
   | setLocal (name : String) (hops idx : Nat) (value : Expr)
+  /-- Tier 1: `a op b` for `op` one of `+ - * /`; equal to `binary op a b`. Numbers from
+  leaves and from nested `arith` nodes are combined with no step of the monad. -/
+  | arith (op : BinOp) (a b : Expr)
 
 /-- A property definition in an object literal (§13.2.5). -/
 inductive PropDef where
@@ -485,7 +488,7 @@ def Expr.hasYieldF : Nat → Expr → Bool
     | .array es | .template _ es | .superCall es | .tagged _ _ _ es => Expr.anyYield n es
     | .object ps => PropDef.anyYield n ps
     | .unary _ a | .update _ _ a | .spread a | .superIndex a | .member a _ => Expr.hasYieldF n a
-    | .binary _ a b | .logical _ a b | .assign _ a b | .logAssign _ a b | .index a b | .seq a b =>
+    | .binary _ a b | .arith _ a b | .logical _ a b | .assign _ a b | .logAssign _ a b | .index a b | .seq a b =>
       Expr.hasYieldF n a || Expr.hasYieldF n b
     | .assignPat _ v => Expr.hasYieldF n v
     | .cond a b c => Expr.hasYieldF n a || Expr.hasYieldF n b || Expr.hasYieldF n c

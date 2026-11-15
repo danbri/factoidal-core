@@ -2574,6 +2574,33 @@ caller evaluates the expression the full way, which also reports an uninitialise
   | .this => ctx.thisV
   | _ => .hole
 
+/-- Tier 1 (`Expr.arith`): an operation of `Tier1.isArith` on two numbers. -/
+@[inline] def arithOp (op : BinOp) (p q : Float) : Float :=
+  match op with
+  | .add => p + q
+  | .sub => p - q
+  | .mul => p * q
+  | _ => p / q
+
+/-- Tier 1 (`Expr.arith`): the number that the evaluator gives for the operand `c` at fuel `n`
+(a leaf through `leafV`, or a nested `arith` of numbers), computed with no step of the monad
+and no change to the heap; `none` when that is not known this way (the node then takes the
+path of `binary`). -/
+def pureNum (h : HeapOf H) (ctx : Ctx) : Nat → Expr → Option Float
+  | n, c =>
+    match leafV h ctx c with
+    | .num p => some p
+    | .hole =>
+      match n, c with
+      | k + 1, .arith op a b =>
+        if Tier1.isArith op then
+          match pureNum h ctx k a, pureNum h ctx k b with
+          | some p, some q => some (arithOp op p q)
+          | _, _ => none
+        else none
+      | _, _ => none
+    | _ => none
+
 /-- The value of a name that has no binding and that the global object and its prototype
 chain do not have, from the host: the global object's internal slot `namedGetterKey` holds a
 function of the name (for a page, the named properties of the Window object, HTML §7.3.3,
@@ -2893,6 +2920,26 @@ def evalExpr : Nat → Ctx → Expr → M Value
       | .seq, _, _ => if strictEq x y then pure (.bool true) else pure (.bool false)
       | .sne, _, _ => if strictEq x y then pure (.bool false) else pure (.bool true)
       | _, _, _ => binop n op x y
+    -- Tier 1: equal to `binary op a b` for an operation of `Tier1.isArith`
+    | .arith op a b =>
+      match pureNum (← get) ctx n a, pureNum (← get) ctx n b with
+      | some p, some q => pure (.num (arithOp op p q))
+      | _, _ =>
+          let x ← (match leafV (← get) ctx a with | .hole => evalExpr n ctx a | v => pure v)
+          let y ← (match leafV (← get) ctx b with | .hole => evalExpr n ctx b | v => pure v)
+          -- the constant values `.bool true`, `.bool false` are not allocated (`if`, not `.bool (p < q)`)
+          match op, x, y with
+          | .add, .num p, .num q => pure (.num (p + q))
+          | .sub, .num p, .num q => pure (.num (p - q))
+          | .mul, .num p, .num q => pure (.num (p * q))
+          | .div, .num p, .num q => pure (.num (p / q))
+          | .lt, .num p, .num q => if p < q then pure (.bool true) else pure (.bool false)
+          | .gt, .num p, .num q => if p > q then pure (.bool true) else pure (.bool false)
+          | .le, .num p, .num q => if p ≤ q then pure (.bool true) else pure (.bool false)
+          | .ge, .num p, .num q => if p ≥ q then pure (.bool true) else pure (.bool false)
+          | .seq, _, _ => if strictEq x y then pure (.bool true) else pure (.bool false)
+          | .sne, _, _ => if strictEq x y then pure (.bool false) else pure (.bool true)
+          | _, _, _ => binop n op x y
     | .logical op a b =>
       let x ← evalExpr n ctx a
       match op with

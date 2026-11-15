@@ -99,6 +99,7 @@ def rE : Nat → Frames → Expr → R Expr
     | .null => pure (.lit .null)
     | .bigint _ | .this | .newTarget | .regex _ _ | .superMember _ | .local .. | .lit _ | .incLocal .. => pure e
     | .setLocal x h i v => pure (.setLocal x h i (← rE n fs v))
+    | .arith op a b => pure (.arith op (← rE n fs a) (← rE n fs b))
     | .ident x => pure (nameE fs x)
     | .array es => pure (.array (← rEs n fs es))
     | .object ps => pure (.object (← rProps n fs ps))

@@ -210,6 +210,7 @@ def eExpr : Nat → Expr → EM Unit
     | .optCallee a => do putNat 35; eExpr n a
     | .incLocal pre inc x h i => do putNat 62; putBool pre; putBool inc; putStr x; putNat h; putNat i
     | .setLocal x h i v => do putNat 63; putStr x; putNat h; putNat i; eExpr n v
+    | .arith op a b => do putNat 64; putCode binOps op; eExpr n a; eExpr n b
 
 def eExprs : Nat → List Expr → EM Unit
   | 0, _ => throw "snapshot: syntax too deep"
@@ -652,6 +653,7 @@ def dExpr : Nat → DM Expr
       let pre ← getBool; let inc ← getBool; let x ← getStr; let h ← getNat; let i ← getNat
       pure (.incLocal pre inc x h i)
     | 63 => do let x ← getStr; let h ← getNat; let i ← getNat; pure (.setLocal x h i (← dExpr n))
+    | 64 => do let op ← getCode binOps; let a ← dExpr n; pure (.arith op a (← dExpr n))
     | 6 => pure .this
     | 7 => pure (.array (← dExprs n))
     | 8 => pure (.object (← dProps n))

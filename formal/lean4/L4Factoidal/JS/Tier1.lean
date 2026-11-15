@@ -11,13 +11,16 @@ fresh result object, and allocation is more than half of the time of a plain loo
   is read and written in place, with no call of `lookupLocal` and `assignLocal`;
 - `assign none (local x h i) v` (`v` not a function expression, whose name the assignment
   gives it) becomes `setLocal x h i v`: no `evalRef`, no pair of options, no `putTarget`;
+- `binary op a b` for `op` one of `+ - * /` becomes `arith op a b`: when both operands are
+  numbers held by leaves or nested `arith` nodes, the whole expression is computed with no
+  call and no step of the monad; otherwise the node runs the code of `binary`;
 - `block ss`, when `ss` declares nothing lexical, becomes `blockN ss`: no `evalBlock`, no
   `enterBlock` and no scan of the statements at each entry.
 
 **What is proved.** `JS/Tier1Proofs.lean`: for every fuel, context and heap, the evaluator on
 each specialised node gives the same result and the same heap as the evaluator on the node it
 replaces, the fuel exhaustion and the steps included (`incLocal_eq`, `setLocal_eq`,
-`blockN_eq`). Nodes this pass does not specialise are left as they are (the identity).
+`arith_eq`, `blockN_eq`). Nodes this pass does not specialise are left as they are (the identity).
 
 The pass does not enter function bodies (each function is rewritten once, by the resolver,
 when its own body is resolved), generator and async bodies (their machine matches on the
@@ -36,6 +39,12 @@ def enabled : Bool := true
 /-- The statements declare something lexical: `enterBlock` would make an environment. -/
 def lexical (ss : List Stmt) : Bool := ss.any Stmt.isLexical
 
+/-- The operations of `Expr.arith`: on two numbers, the evaluator answers the number with no
+call. -/
+def isArith : BinOp → Bool
+  | .add | .sub | .mul | .div => true
+  | _ => false
+
 mutual
 def tE : Nat → Expr → Expr
   | 0, e => e
@@ -47,7 +56,8 @@ def tE : Nat → Expr → Expr
       | .func _ => e
       | _ => .setLocal x h i (tE n v)
     | .unary op a => .unary op (tE n a)
-    | .binary op a b => .binary op (tE n a) (tE n b)
+    | .binary op a b =>
+      if isArith op then .arith op (tE n a) (tE n b) else .binary op (tE n a) (tE n b)
     | .logical op a b => .logical op (tE n a) (tE n b)
     | .assign op t v =>
       match v with
