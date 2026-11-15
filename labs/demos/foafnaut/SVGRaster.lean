@@ -140,6 +140,45 @@ theorem rasterPrepared_eq (s : Scene) (data : Array Float) (g : Grid) (all : Arr
   funext a b
   exact samplePrepared_eq s.mapping data _ a b
 
+/-! ## The tile edge lists
+
+The scene shader walks, for a path's fill, the edge list that `tilesOf` made for the
+pixel's tile. `rasterTiles` is `rasterSpec` with each path record of a tile tested over
+that list (`Primitive.prepareCoverageEdges`, `pathHitList`). `pathHitList_eq` states that a
+list gives the full scan's fill at every point whose spanning edges it keeps; that the
+margins of `Primitive.localRows` keep them for every sample of the tile rests on Float
+comparisons, so it is checked: the guards below compare the two rasters byte for byte. -/
+
+/-- The edge list word of item `k` of tile `t`, after the entries (`tilesOf`). -/
+def Grid.edgeWord (g : Grid) (t k : Nat) : Nat :=
+  let listBase := 4 + g.across*g.down
+  let total := g.words[3+g.across*g.down]!
+  g.words[listBase+total+g.words[3+t]!+k]!
+
+/-- The edge list at word `w`: a count, then the edge indices; none for `allEdges`. -/
+def Grid.edgeList (g : Grid) (w : Nat) : Option (Array Nat) :=
+  if w == allEdges then none
+  else
+    let n := g.words[w]!
+    some ((Array.range n).map fun j => g.words[w+1+j]!)
+
+/-- The records of tile `t`, each prepared with the tile's edge list for a path fill. -/
+def tilePrepared (g : Grid) (data : Array Float) (all : Array Item) (index : Std.HashMap Nat Nat)
+    (t : Nat) : List PreparedSample :=
+  ((g.rows t).zipIdx.filterMap fun (row,k) => (index.get? row).bind (all[·]?) |>.map fun (p,base) =>
+    let sample := p.prepareSample data base
+    match g.edgeList (g.edgeWord t k) with
+    | some edges => {sample with coverage := p.prepareCoverageEdges data base edges}
+    | none => sample)
+
+/-- `rasterSpec` with the tile edge lists of the scene shader. -/
+def _root_.NativeSVG.Scene.rasterTiles (s : Scene) (top rows : Nat) : ByteArray :=
+  let data := s.data
+  let g : Grid := ⟨s.tiles⟩
+  let (all,index) := items s
+  ⟨((List.range rows).flatMap fun j => (List.range s.width).flatMap fun x =>
+    pixelBytes (pixelPrepared s (data.size/4) (tilePrepared g data all index (g.tile x (top+j))) x (top+j))).toArray⟩
+
 /-! ## The fast form -/
 
 /-- A prepared record, the record itself, and its conservative box in target pixels. -/
@@ -273,6 +312,21 @@ private def guardScene (_ : Unit) : Option Scene := (parse ("<svg xmlns='http://
 #guard ((guardScene ()).map fun s => (s.rasterFast 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
 #guard ((guardScene ()).map fun s => (s.rasterFast 9 20).data == (s.rasterSpec 9 20).data) == some true
 #guard ((guardScene ()).map fun s => (s.rgba.size,s.width*s.height*4)) == some (40*36*4,40*36*4)
+
+-- The tile edge lists give the reference bytes: the guard scene (paths in a rotation, a
+-- translation, a nested svg and even-odd), and a path zoomed far past its tiles.
+#guard ((guardScene ()).map fun s => (s.rasterTiles 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
+private def zoomScene (k : String) : Option Scene := (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='32' height='28' viewBox='0 0 96 80'>" ++
+  "<g transform='translate(48 40) scale(" ++ k ++ ") translate(-48 -40)'>" ++
+  "<path d='M10 70 Q48 -20 86 70 C70 90 26 90 10 70Z M40 40 C42 36 54 36 56 40 C58 46 50 50 48 50 C46 50 38 46 40 40Z' fill='#204080' fill-rule='evenodd'/>" ++
+  "<path d='M47 37 L49 37 L49.5 39 L46.5 39Z' fill='#d04020' transform='rotate(30 48 38)'/></g></svg>") 32 28).toOption
+#guard ((zoomScene "1").map fun s => (s.rasterTiles 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
+#guard ((zoomScene "40").map fun s => (s.rasterTiles 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
+-- Edge lists are made: the zoomed scene's tile words hold lists shorter than the paths.
+#guard ((zoomScene "40").map fun s =>
+  let g : Grid := ⟨s.tiles⟩
+  (List.range (g.across*g.down)).any fun t => (List.range (g.rows t).length).any fun k =>
+    match g.edgeList (g.edgeWord t k) with | some e => e.size < 8 | none => false) == some true
 
 #print axioms samplePrepared_eq
 #print axioms rasterPrepared_eq
