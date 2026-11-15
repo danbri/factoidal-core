@@ -784,7 +784,7 @@ def startScript (s : Session) (node : Nat) (src : String) : Session :=
 
 /-- The classic scripts `scripts` of a start, in order. -/
 def startScripts (s : Session) (scripts : List (Nat × String)) : Session :=
-  scripts.foldl (fun s (node, src) => startScript s node src) s
+  scripts.foldl (fun s p => startScript s p.1 p.2) s
 
 /-- After the classic scripts: the module scripts of `mods`, `DOMContentLoaded`, the window's
 `load` event as a task, and the tasks due at time 0. -/

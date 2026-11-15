@@ -1356,12 +1356,26 @@ theorem apply_other (s : Computed) (d : Declaration) (h : appliedName d.property
     ∃ e, apply s d = .error e := by
   simp only [appliedName, Bool.or_eq_false_iff] at h
   obtain ⟨⟨⟨⟨⟨⟨⟨⟨hw, hm⟩, hg⟩, hc⟩, hown⟩, hflex⟩, halign⟩, hpos⟩, hgrid⟩ := h
+  have h1 : FlexStyle.set s.fontSize s.flex d.property d.value = none := by
+    unfold FlexStyle.set
+    simp only [hw, Bool.false_eq_true, if_false]
+    rw [if_pos (by simpa using hflex)]
+  have h2 : AlignStyle.set s.fontSize s.align d.property d.value = none := by
+    unfold AlignStyle.set
+    simp only [hw, hg, Bool.or_false, Bool.false_eq_true, if_false]
+    rw [if_pos (by simpa using halign)]
+  have h3 : PositionStyle.set s.fontSize s.pos d.property d.value = none := by
+    unfold PositionStyle.set
+    simp only [hw, hm, Bool.or_false, Bool.false_eq_true, if_false, hc]
+    rw [if_pos (by simpa using hpos)]
+  have h4 : GridStyle.set s.fontSize s.grid d.property d.value = none := by
+    unfold GridStyle.set
+    rw [if_pos (by simpa using hgrid)]
   unfold apply
   split
   all_goals first
     | (rename_i heq; simp [heq, ownProperties] at hown; done)
-    | (simp [FlexStyle.set, AlignStyle.set, PositionStyle.set, GridStyle.set, hw, hm, hg, hflex, halign, hpos, hgrid,
-          show (d.property == "content") = false from hc])
+    | (simp only [h1, h2, h3, h4]; exact ⟨_, rfl⟩)
 
 /-- A value or property this profile can not use leaves the style as it was: after the
 second reading through the property table (`tableDeclaration`). -/

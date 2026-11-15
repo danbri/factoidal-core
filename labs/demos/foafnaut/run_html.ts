@@ -494,8 +494,21 @@ async function main() {
   // the page as it is on screen (its kept layout), as a browser's compositor scrolls what it has;
   // the change is drawn when the scroll pauses, or after SCROLL_HOLD_MAX_MS.
   let scrollAt=-Infinity,pageChanged:number|undefined;
-  const scrollHolds=(now:number)=>scrollFirst({now,scrollAt,changedAt:pageChanged});
-  const pageChangedNow=()=>{if(scrollHolds(performance.now()))pageChanged??=performance.now();else dirty=true;};
+  // When each page was first shown: a reader often scrolls at once, and the changes that its
+  // scripts and late resources make then wait for the first scroll to pause too.
+  const firstShown=new WeakMap<object,number>();
+  // (the most a change waits counts from when the page was first shown, for a change made while
+  // its first frame was being made)
+  const scrollHolds=(now:number)=>{
+    const shownAt=firstShown.get(document);
+    return scrollFirst({now,scrollAt,changedAt:pageChanged===undefined?undefined:Math.max(pageChanged,shownAt??-Infinity),shownAt});
+  };
+  // A change before the page's first frame is shown waits for it (that frame has the page as
+  // it was asked for; the next one, after the hold, has the change).
+  const pageChangedNow=()=>{
+    const now=performance.now();
+    if((!firstShown.has(document)&&!!rendering)||scrollHolds(now))pageChanged??=now;else dirty=true;
+  };
   // A failed action of a page's script session (page-load.mjs scriptFailure, the rule of every
   // host): a session the engine no longer holds ends the page's scripts with one line; a failed
   // timer turn stops its timers; other failures are said once per page and message.
@@ -890,7 +903,10 @@ async function main() {
   };
   let presented:PresentedState<typeof document>|undefined;
   const recordPresented=(record:RequestRecord,at:number)=>{
-    if(record.document===document)presented={document:record.document,width:record.width,height:record.height,scroll:at,options:record.request.options};
+    if(record.document===document){
+      presented={document:record.document,width:record.width,height:record.height,scroll:at,options:record.request.options};
+      if(!firstShown.has(record.document))firstShown.set(record.document,performance.now());
+    }
   };
   const scriptHitRequest=(page:typeof document)=>pointerRequest(page,presented,()=>({width,height,options:requestAt(page,page===document?scroll:0).options}));
   // The request of the page at scroll `at`: as it is on screen while a change waits for the
@@ -1766,7 +1782,7 @@ async function main() {
       }
       if(animationDue&&!rendering&&performance.now()>=gpuHoldUntil){animationDue=false;dirty=true;}
       // The scroll paused (or held the change long enough): the page's change is drawn now.
-      if(pageChanged!==undefined&&!scrollHolds(performance.now())){pageChanged=undefined;dirty=true;}
+      if(pageChanged!==undefined&&(firstShown.has(document)||!rendering)&&!scrollHolds(performance.now())){pageChanged=undefined;dirty=true;}
       if(dirty&&canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
