@@ -47,7 +47,7 @@ async function main() {
   if(args.includes("--help")){
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
-  let pollIdle=false,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
+  let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
@@ -63,6 +63,9 @@ async function main() {
     else if(arg==="--log-all")logAll=true;
     else if(arg==="--fail-on-flood")failOnFlood=true;
     else if(arg==="--poll-idle")pollIdle=true;
+    // For comparison: page changes are not held while the user scrolls, timer turns not held for input.
+    else if(arg==="--no-scroll-first")scrollFirstOn=false;
+    else if(arg==="--no-input-first")inputFirstOn=false;
     // Off screen: a PNG of the window after the 120th present of page canvases, a picture of
     // what the native engine drew (the page's layers, its canvases and the chrome).
     else if(arg==="--shot"){shotFile=args.shift();if(!shotFile)throw new Error("--shot needs a file path");}
@@ -500,6 +503,7 @@ async function main() {
   // (the most a change waits counts from when the page was first shown, for a change made while
   // its first frame was being made)
   const scrollHolds=(now:number)=>{
+    if(!scrollFirstOn)return false;
     const shownAt=firstShown.get(document);
     return scrollFirst({now,scrollAt,changedAt:pageChanged===undefined?undefined:Math.max(pageChanged,shownAt??-Infinity),shownAt});
   };
@@ -507,7 +511,7 @@ async function main() {
   // it was asked for; the next one, after the hold, has the change).
   const pageChangedNow=()=>{
     const now=performance.now();
-    if((!firstShown.has(document)&&!!rendering)||scrollHolds(now))pageChanged??=now;else dirty=true;
+    if((scrollFirstOn&&!firstShown.has(document)&&!!rendering)||scrollHolds(now))pageChanged??=now;else dirty=true;
   };
   // A failed action of a page's script session (page-load.mjs scriptFailure, the rule of every
   // host): a session the engine no longer holds ends the page's scripts with one line; a failed
@@ -1928,7 +1932,10 @@ async function main() {
       // input waits for at most one slice, not for a whole long turn.
       const script=document.script;
       const now=performance.now();
-      const held=inputFirst({now,inputAt,waiting:shifting!==undefined||shiftPending||awaitingShift.length>0||awaitingBand.length>0,heldSince:timerHeldSince});
+      // (a page change that waits for the scroll holds the timers too: a turn now would hold the
+      // engine for the bands the scroll needs)
+      const held=inputFirstOn&&inputFirst({now,inputAt,heldSince:timerHeldSince,
+        waiting:shifting!==undefined||shiftPending||awaitingShift.length>0||awaitingBand.length>0||(pageChanged!==undefined&&scrollHolds(now))});
       if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil){
         const elapsed=now-(scriptEpochs.get(script.session)??now);
         if(elapsed>=script.turn.nextWake&&held)timerHeldSince??=now;
