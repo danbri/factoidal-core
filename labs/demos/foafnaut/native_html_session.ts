@@ -141,10 +141,20 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
       return present(lastLayers.width,lastLayers.height,lastLayers.offset,false,performance.now(),{});
     });
   }
+  let lastBands=1;
   async function renderLayers(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult> {
     if(disposed)throw new Error("Native HTML session already disposed");
     const start=performance.now();
-    const drawn=await layered.drawLayers(layers,check);
+    // A page whose last frames cost the GPU more than a frame is drawn in bands of about 16 ms
+    // each (issue 450): Deno's onSubmittedWorkDone blocks this thread until the GPU is done, so
+    // one large submission held input for seconds. Between bands the gate answers for the band
+    // before and the loop takes input. A light page draws in one pass, as before.
+    // The estimate of a whole frame: the last answer times the bands it was one of.
+    const recent=gate.recent,lastMs=(recent.length?recent[recent.length-1]:0)*lastBands;
+    const count=lastMs>24?Math.min(16,Math.ceil(lastMs/16)):1;
+    lastBands=count;
+    const bands=count>1?{count,between:async()=>{gate.after();await new Promise(resolve=>setTimeout(resolve,0));await gate.before();}}:undefined;
+    const drawn=await layered.drawLayers(layers,check,bands);
     const steps=Object.fromEntries([...Object.entries(drawn.chrome.steps).map(([k,v])=>["chrome."+k,v]),...Object.entries(drawn.page.steps).map(([k,v])=>["page."+k,v])]);
     lastLayers={layers,width,height,offset};
     return present(width,height,offset,check,start,steps);
