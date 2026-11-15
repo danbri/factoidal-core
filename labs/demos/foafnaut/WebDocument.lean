@@ -2290,46 +2290,65 @@ theorem keepStoreAhead_rest (h : Holds) (kept : Kept) (html : String) (request :
   unfold keepStoreAhead
   split <;> exact ⟨rfl,rfl,rfl⟩
 
-/-- The matcher of the animation rules (op 28 and op 24 of `measure`): the rule buckets and the
-element keys of the tree, made once. It is data, so that each element's matches are a look in
-tables made before; a closure over them was compiled with the tables made again at each call. -/
-inductive AnimMatcher where
-  | none
-  | flat (ix : Rendering.CSS.RuleIndex) (ks : Rendering.CSS.ElemKeys) (flat : DOM.Dom) (state : Rendering.CSS.ElementState)
+/-- A matcher of rules for the reads of `measure` (the animation rules of op 28 and op 24, and
+the rules of the computed values): the rule buckets and the element keys of the tree, made
+once. It is data, passed to the functions that use it: a closure over the tables was
+compiled with the tables made again at each call (each element read the keys of the whole
+document, n², 64 s in one script turn of a Wikipedia article on 2026-11-15). -/
+inductive RuleMatcher where
+  | empty
+  /-- With no key table: the keys of an element read when a rule tests it (a few elements). -/
+  | keysRead (ix : Rendering.CSS.RuleIndex) (tree : DOM.Dom) (state : Rendering.CSS.ElementState)
+  | plain (ix : Rendering.CSS.RuleIndex) (ks : Rendering.CSS.ElemKeys) (tree : DOM.Dom) (state : Rendering.CSS.ElementState)
   | scoped (ix : Rendering.CSS.ScopedIndex) (ks : Rendering.CSS.ElemKeys) (ts : Rendering.CSS.TreeScope) (state : Rendering.CSS.ElementState)
 
 /-- The tables of `rules` over the flat tree `flat`, or over the tree scope's node tree. -/
-def AnimMatcher.make (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
-    (treeScope : Option Rendering.CSS.TreeScope) (state : Rendering.CSS.ElementState) : AnimMatcher :=
+def RuleMatcher.make (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
+    (treeScope : Option Rendering.CSS.TreeScope) (state : Rendering.CSS.ElementState) : RuleMatcher :=
   match treeScope with
-  | none => .flat (Rendering.CSS.RuleIndex.build rules) (Rendering.CSS.ElemKeys.of flat) flat state
-  | some ts => .scoped (Rendering.CSS.ScopedIndex.build rules) (Rendering.CSS.ElemKeys.of ts.tree) ts state
+  | .none => .plain (Rendering.CSS.RuleIndex.build rules) (Rendering.CSS.ElemKeys.of flat) flat state
+  | .some ts => .scoped (Rendering.CSS.ScopedIndex.build rules) (Rendering.CSS.ElemKeys.of ts.tree) ts state
 
 /-- The matches of element `id`: a look in the tables. -/
-def AnimMatcher.matched : AnimMatcher → Nat → List Rendering.CSS.Match
-  | .none, _ => []
-  | .flat ix ks flat state, id => ix.matched (ks.get flat) flat id state
+def RuleMatcher.matched : RuleMatcher → Nat → List Rendering.CSS.Match
+  | .empty, _ => []
+  | .keysRead ix tree state, id => ix.matched (Rendering.CSS.readKeys tree) tree id state
+  | .plain ix ks tree state, id => ix.matched (ks.get tree) tree id state
   | .scoped ix ks ts state, id => ix.matched (ks.get ts.tree) ts id state
 
 /-- Kind: equivalence. The tables give the matches of the bucket matcher with the keys read
 once, as `CSS.computeAll` and `CSS.computeAllIn` take them: the data form changes when the
 work is done, not what an element matches. -/
-theorem AnimMatcher.make_matched (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
+theorem RuleMatcher.make_matched (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
     (treeScope : Option Rendering.CSS.TreeScope) (state : Rendering.CSS.ElementState) (id : Nat) :
-    (AnimMatcher.make rules flat treeScope state).matched id =
+    (RuleMatcher.make rules flat treeScope state).matched id =
       match treeScope with
-      | none => (Rendering.CSS.RuleIndex.build rules).matched ((Rendering.CSS.ElemKeys.of flat).get flat) flat id state
-      | some ts => (Rendering.CSS.ScopedIndex.build rules).matched ((Rendering.CSS.ElemKeys.of ts.tree).get ts.tree) ts id state := by
+      | .none => (Rendering.CSS.RuleIndex.build rules).matched ((Rendering.CSS.ElemKeys.of flat).get flat) flat id state
+      | .some ts => (Rendering.CSS.ScopedIndex.build rules).matched ((Rendering.CSS.ElemKeys.of ts.tree).get ts.tree) ts id state := by
   cases treeScope <;> rfl
 
 /-- Kind: equivalence. With no shadow tree the tables give the matches of every rule tried
 against the arena's own keys (`ElemKeys.get_of`): the keys table is the arena. -/
-theorem AnimMatcher.make_matched_keys (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
+theorem RuleMatcher.make_matched_keys (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
     (state : Rendering.CSS.ElementState) (id : Nat) :
-    (AnimMatcher.make rules flat none state).matched id =
+    (RuleMatcher.make rules flat Option.none state).matched id =
       (Rendering.CSS.RuleIndex.build rules).matched (Rendering.CSS.readKeys flat) flat id state := by
   show (Rendering.CSS.RuleIndex.build rules).matched ((Rendering.CSS.ElemKeys.of flat).get flat) flat id state = _
   rw [Rendering.CSS.ElemKeys.get_of]
+
+/-- The matches of every element of a tree of `size` nodes, each made when first asked for (one
+thunk a node), with the animated values after them (`CSS.withAnimated`). The matcher is an
+argument, made before the call: its tables are made once, whatever the number of elements. -/
+@[noinline] def RuleMatcher.memo (m : RuleMatcher) (state : Rendering.CSS.ElementState) (size : Nat) :
+    Array (Thunk (List Rendering.CSS.Match)) :=
+  let matchesOf := Rendering.CSS.withAnimated state m.matched
+  Array.ofFn (n := size) fun i => Thunk.mk fun _ => matchesOf i.val
+
+/-- Kind: equivalence. Says: the memo of an element is the matcher's matches of it, with the
+animated values: making them once changes when, not what. -/
+theorem RuleMatcher.memo_get (m : RuleMatcher) (state : Rendering.CSS.ElementState) (size i : Nat) (h : i < size) :
+    ((m.memo state size)[i]'(by simp [RuleMatcher.memo, h])).get = Rendering.CSS.withAnimated state m.matched i := by
+  simp [RuleMatcher.memo, Thunk.get]
 
 /-- The layout reads of a script session (`Page.Measure`) with the render request
 `request` (its `layoutFields`): the arena laid out `width` by `rows` (`layOutDOM`)
@@ -2390,26 +2409,20 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   -- an element, with the animated values after them (`CSS.withAnimated`), as in `computeFor`
   let styled : Thunk (Except String Rendering.ComputedGeneric.View) := Thunk.mk fun _ => do
     let (flat,rules,treeScope,state,textScale) ← inputs.get
-    -- the rule buckets of `computeFor`, built again only if such a value is asked for
-    let matchesOf : Nat → List Rendering.CSS.Match := match treeScope with
-      | some ts =>
-        let ix : Thunk Rendering.CSS.ScopedIndex := Thunk.mk fun _ => Rendering.CSS.ScopedIndex.build rules
-        let ks : Thunk Rendering.CSS.ElemKeys := Thunk.mk fun _ => Rendering.CSS.ElemKeys.of ts.tree
-        fun id => ix.get.matched (ks.get.get ts.tree) ts id state
+    -- the rule buckets of `computeFor` and the element keys, made once here (`RuleMatcher`)
+    let matcher : RuleMatcher := match treeScope with
+      | some ts => .scoped (Rendering.CSS.ScopedIndex.build rules) (Rendering.CSS.ElemKeys.of ts.tree) ts state
       | none =>
         match carry with
         -- a few elements are asked for: their keys are read when a rule tests them
-        | some _ => fun id => index.get.matched (Rendering.CSS.readKeys flat) flat id state
-        | none =>
-          let ks : Thunk Rendering.CSS.ElemKeys := Thunk.mk fun _ => Rendering.CSS.ElemKeys.of flat
-          fun id => index.get.matched (ks.get.get flat) flat id state
-    let matchesOf := Rendering.CSS.withAnimated state matchesOf
+        | some _ => .keysRead index.get flat state
+        | none => .plain index.get (Rendering.CSS.ElemKeys.of flat) flat state
+    let matchesOf := Rendering.CSS.withAnimated state matcher.matched
     -- an element's matches are made once a measure: the property table asks for them
     -- several times for one value (the cascaded value, the flow, the logical partner), and the
     -- animation engine reads several values of one element (one thunk a node; none is forced
     -- for a node nobody asks about)
-    let memo : Array (Thunk (List Rendering.CSS.Match)) :=
-      Array.ofFn (n := flat.size) fun i => Thunk.mk fun _ => matchesOf i.val
+    let memo : Array (Thunk (List Rendering.CSS.Match)) := matcher.memo state flat.size
     let matchesOf : Nat → List Rendering.CSS.Match := fun id =>
       match memo[id]? with
       | some t => t.get
@@ -2476,13 +2489,13 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     | .error _ => []
   -- their matches of an element, from rule buckets made once when first asked for (as
   -- `CSS.computeFor` matches: an element tries only the rules of its buckets). The buckets
-  -- and the element keys are data in the thunk (`AnimMatcher`), not a function: a thunk
+  -- and the element keys are data in the thunk (`RuleMatcher`), not a function: a thunk
   -- whose value was `fun id => …` was compiled with the keys of the whole document read
   -- again at each call, so op 28 cost n² (64 s in one script turn of a Wikipedia article).
-  let matcher : Thunk AnimMatcher := Thunk.mk fun _ =>
+  let matcher : Thunk RuleMatcher := Thunk.mk fun _ =>
     match inputs.get with
-    | .ok (flat,_,treeScope,state,_) => AnimMatcher.make animationRules.get flat treeScope state
-    | .error _ => .none
+    | .ok (flat,_,treeScope,state,_) => RuleMatcher.make animationRules.get flat treeScope state
+    | .error _ => .empty
   let matchedOf := fun (node : Nat) => matcher.get.matched node
   let element := fun (node : Nat) => node < dom.size && (dom.get node).type == .element
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout

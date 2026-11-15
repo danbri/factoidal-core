@@ -150,7 +150,7 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   check "many_images_test.ts script_reads_holds_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
     --allow-read --allow-ffi --allow-env --allow-write "$LAB/many_images_test.ts" "$LAB/script_reads_holds_test.ts"
   # A script turn that writes and reads styles costs in proportion to the page (no n² read of
-  # the element keys, WebDocument.AnimMatcher).
+  # the element keys, WebDocument.RuleMatcher).
   check "script_turn_cost_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
     --allow-read --allow-ffi --allow-env "$LAB/script_turn_cost_test.ts"
   # Inline SVG deep in the HTML is drawn or dropped, never a refusal of the page

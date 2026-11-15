@@ -1,4 +1,7 @@
 import L4Factoidal.JS.Lexer
+import L4Factoidal.Regex.XPath40
+import L4Factoidal.Unicode.ScriptData
+import L4Factoidal.Unicode.EmojiData
 
 /-!
 # L4Factoidal.JS.Regex — regular expressions of the engine (§22.2)
@@ -14,7 +17,10 @@ of the captures inside the atom at each repetition), capturing, non-capturing an
 groups, back references (`\1`, `\k<name>`), lookahead and lookbehind (positive and
 negative), `^`, `$`, `\b`, `\B`, `.`, classes with ranges and the escapes `\d \D \w \W
 \s \S`, the character escapes of §22.2.1 (`\n \r \t \v \f \0 \cX \xHH \uHHHH \u{H}`),
-identity escapes, and the Annex B forms (`]` and `{` as characters when they start no
+identity escapes, the property escapes `\p{…}` and `\P{…}` with the `u` flag (§22.2.2.9:
+General_Category values by short or long name, `Script=` by ISO 15924 code, the binary
+properties `Any`, `ASCII`, `ASCII_Hex_Digit`, `ID_Start`, `ID_Continue`, `White_Space` and the
+emoji properties of UTS #51 but `Extended_Pictographic`; any other name is a SyntaxError), and the Annex B forms (`]` and `{` as characters when they start no
 quantifier). Flags: `g`, `i`, `m`, `s`, `u`, `y` (`d` and `v` are accepted and do not
 change matching). Characters are Unicode scalar values, as the engine's strings are
 (design record, section 7); `i` compares by simple case mapping of each character.
@@ -31,6 +37,8 @@ inductive ClassItem where
   | range (lo hi : Char)
   /-- `\d` (0), `\w` (1), `\s` (2), negated when `neg`. -/
   | esc (kind : Nat) (neg : Bool)
+  /-- `\p{…}` (`\P{…}` when `neg`): the code points of sorted, disjoint ranges. -/
+  | prop (ranges : Array (Nat × Nat)) (neg : Bool)
   deriving Inhabited, Repr
 
 inductive Node where
@@ -92,8 +100,108 @@ structure PS where
   pos : Nat := 0
   groups : Nat := 0
   names : Array (String × Nat) := #[]
+  /-- The `u` flag: `\p{…}` is a property escape (else the identity escape `p`). -/
+  unicode : Bool := false
 
 abbrev P := StateT PS (Except String)
+
+/-! ### Property escapes (§22.2.2.9, UnicodeMatchProperty) -/
+
+/-- Whether `c` is in the sorted, disjoint ranges `rs`: a binary search (at most 64 steps). -/
+def inRanges (rs : Array (Nat × Nat)) (c : Nat) : Bool := Id.run do
+  let mut lo := 0
+  let mut hi := rs.size
+  for _ in [0:64] do
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      let (a, b) := rs[mid]!
+      if c < a then hi := mid
+      else if c > b then lo := mid + 1
+      else return true
+  return false
+
+/-- Sorted, merged ranges. -/
+def rangesOf (rs : List (Nat × Nat)) : Array (Nat × Nat) :=
+  (L4Factoidal.Text.CaseMap.normalizeRanges rs).toArray
+
+/-- The General_Category values by long name (PropertyValueAliases.txt), to their short names. -/
+def gcLong : List (String × String) :=
+  [("Letter","L"),("Cased_Letter","LC"),("Uppercase_Letter","Lu"),("Lowercase_Letter","Ll"),
+   ("Titlecase_Letter","Lt"),("Modifier_Letter","Lm"),("Other_Letter","Lo"),("Mark","M"),
+   ("Combining_Mark","M"),("Nonspacing_Mark","Mn"),("Spacing_Mark","Mc"),("Enclosing_Mark","Me"),
+   ("Number","N"),("Decimal_Number","Nd"),("digit","Nd"),("Letter_Number","Nl"),("Other_Number","No"),
+   ("Punctuation","P"),("punct","P"),("Connector_Punctuation","Pc"),("Dash_Punctuation","Pd"),
+   ("Open_Punctuation","Ps"),("Close_Punctuation","Pe"),("Initial_Punctuation","Pi"),
+   ("Final_Punctuation","Pf"),("Other_Punctuation","Po"),("Symbol","S"),("Math_Symbol","Sm"),
+   ("Currency_Symbol","Sc"),("Modifier_Symbol","Sk"),("Other_Symbol","So"),("Separator","Z"),
+   ("Space_Separator","Zs"),("Line_Separator","Zl"),("Paragraph_Separator","Zp"),("Other","C"),
+   ("Control","Cc"),("cntrl","Cc"),("Format","Cf"),("Surrogate","Cs"),("Private_Use","Co"),
+   ("Unassigned","Cn")]
+
+/-- The ranges of a General_Category value, by short or long name. -/
+def gcRanges (name : String) : Option (List (Nat × Nat)) :=
+  let short := ((gcLong.find? (·.1 == name)).map (·.2)).getD name
+  if short == "LC" then
+    some (["Lu","Ll","Lt"].flatMap fun k => (L4Factoidal.Regex.XPath40.categoryRanges k).getD [])
+  else if short == "Cs" then some [(0xD800, 0xDFFF)]
+  else if short.length ≤ 2 && short.all Char.isAlpha && (short.get 0).isUpper then
+    L4Factoidal.Regex.XPath40.categoryRanges short
+  else none
+
+/-- ID_Start (DerivedCoreProperties.txt): L, Nl and Other_ID_Start, without Pattern_Syntax and
+Pattern_White_Space (of these only U+2E2F is a letter). -/
+def idStart : Thunk (Array (Nat × Nat)) := Thunk.mk fun _ =>
+  let base := ((gcRanges "L").getD []) ++ ((gcRanges "Nl").getD []) ++
+    [(0x1885,0x1886),(0x2118,0x2118),(0x212E,0x212E),(0x309B,0x309C)]
+  rangesOf (base.flatMap fun (a, b) =>
+    if a ≤ 0x2E2F && 0x2E2F ≤ b then [(a, 0x2E2E), (0x2E30, b)] else [(a, b)])
+
+/-- ID_Continue: ID_Start, Mn, Mc, Nd, Pc and Other_ID_Continue (Unicode 16: with U+200C,
+U+200D, U+30FB and U+FF65). -/
+def idContinue : Thunk (Array (Nat × Nat)) := Thunk.mk fun _ =>
+  rangesOf (idStart.get.toList ++ (["Mn","Mc","Nd","Pc"].flatMap fun k => (gcRanges k).getD []) ++
+    [(0xB7,0xB7),(0x387,0x387),(0x1369,0x1371),(0x19DA,0x19DA),(0x200C,0x200D),(0x30FB,0x30FB),(0xFF65,0xFF65)])
+
+/-- `lo hi v;` hexadecimal rows of a range table text, with their values. -/
+def tableRows (text : String) : List (Nat × Nat × Nat) :=
+  (text.splitOn ";").filterMap fun row =>
+    match row.splitOn " " with
+    | [a, b, v] => match v.toNat? with
+      | some n => some (L4Factoidal.Regex.XPath40.hexNat a, L4Factoidal.Regex.XPath40.hexNat b, n)
+      | none => none
+    | _ => none
+
+/-- The ranges of the rows whose value `test` takes. -/
+def tableRanges (text : String) (test : Nat → Bool) : List (Nat × Nat) :=
+  (tableRows text).filterMap fun (a, b, v) => if test v then some (a, b) else none
+
+/-- The code points of the property named `name` (`name` or `name=value`), or none for a name
+that is not one of the supported properties (a SyntaxError). -/
+def propertyRanges (name : String) : Option (Array (Nat × Nat)) :=
+  match name.splitOn "=" with
+  | [k, v] =>
+    if k == "General_Category" || k == "gc" then (gcRanges v).map rangesOf
+    else if k == "Script" || k == "sc" then
+      match L4Factoidal.Unicode.ScriptData.codes.findIdx? (· == v) with
+      | some i => if i == 0 then none else some (rangesOf (tableRanges L4Factoidal.Unicode.ScriptData.tableText (· == i)))
+      | none => none
+    else none
+  | [k] =>
+    match k with
+    | "Any" => some #[(0, 0x10FFFF)]
+    | "ASCII" => some #[(0, 0x7F)]
+    | "ASCII_Hex_Digit" | "AHex" => some #[(0x30,0x39),(0x41,0x46),(0x61,0x66)]
+    | "ID_Start" | "IDS" => some idStart.get
+    | "ID_Continue" | "IDC" => some idContinue.get
+    | "White_Space" | "space" => some (rangesOf [(0x9,0xD),(0x20,0x20),(0x85,0x85),(0xA0,0xA0),(0x1680,0x1680),
+        (0x2000,0x200A),(0x2028,0x2029),(0x202F,0x202F),(0x205F,0x205F),(0x3000,0x3000)])
+    | "Emoji" => some (rangesOf (tableRanges L4Factoidal.Unicode.EmojiData.emojiText fun v => v &&& 16 != 0))
+    | "Emoji_Presentation" | "EPres" => some (rangesOf (tableRanges L4Factoidal.Unicode.EmojiData.emojiText fun v => v &&& 1 != 0))
+    | "Emoji_Modifier" | "EMod" => some (rangesOf (tableRanges L4Factoidal.Unicode.EmojiData.emojiText fun v => v &&& 2 != 0))
+    | "Emoji_Modifier_Base" | "EBase" => some (rangesOf (tableRanges L4Factoidal.Unicode.EmojiData.emojiText fun v => v &&& 4 != 0))
+    | "Emoji_Component" | "EComp" => some (rangesOf (tableRanges L4Factoidal.Unicode.EmojiData.emojiText fun v => v &&& 8 != 0))
+    | _ => (gcRanges k).map rangesOf
+  | _ => none
 
 section
 variable (cs : Array Char)
@@ -188,6 +296,24 @@ def classEscapeKind : Char → Option (Nat × Bool)
   | 's' => some (2, false) | 'S' => some (2, true)
   | _ => none
 
+/-- A property escape at `i` (`\p{…}` or `\P{…}`, with the `u` flag): its class item, with the
+position moved past it; none when the text at `i` is not one. -/
+def propEscape (i : Nat) : P (Option ClassItem) := do
+  if !(← get).unicode || cs[i]? != some '\\' then return none
+  let neg ← match cs[i+1]? with
+    | some 'p' => pure false
+    | some 'P' => pure true
+    | _ => return none
+  if cs[i+2]? != some '{' then throw "SyntaxError: Invalid regular expression: invalid property name"
+  let close := (List.range 64).find? fun k => cs[i + 3 + k]? == some '}'
+  match close with
+  | none => throw "SyntaxError: Invalid regular expression: invalid property name"
+  | some k =>
+    let name := String.ofList (cs.extract (i + 3) (i + 3 + k)).toList
+    match propertyRanges name with
+    | some rs => modify (fun s => { s with pos := i + 4 + k }); return some (.prop rs neg)
+    | none => throw s!"SyntaxError: Invalid regular expression: invalid property name '{name}'"
+
 /-- The items of a class after `[` (and `^`), up to `]`. -/
 def classItems : Nat → List ClassItem → P (List ClassItem)
   | 0, _ => throw "SyntaxError: Invalid regular expression: class too long"
@@ -197,6 +323,7 @@ def classItems : Nat → List ClassItem → P (List ClassItem)
     -- One class atom: a character or a class escape.
     let atom : P (Option Char ⊕ ClassItem) := do
       let i := (← get).pos
+      if let some item ← propEscape cs i then return .inr item
       if c == '\\' then
         match cs[i+1]? with
         | some e =>
@@ -220,6 +347,7 @@ def classItems : Nat → List ClassItem → P (List ClassItem)
         bump
         let c2 := (cs[i+1]?).getD ']'
         let b ← (do
+          if let some item ← propEscape cs (i + 1) then return Sum.inr item
           if c2 == '\\' then
             match cs[i+2]? with
             | some e =>
@@ -349,6 +477,7 @@ def atomP : Nat → P Node
       if (quantAt cs i).isSome then throw "SyntaxError: Invalid regular expression: nothing to repeat"
       bump; return .char '{'
     | '\\' =>
+      if let some item ← propEscape cs i then return .cls false [item]
       match cs[i+1]? with
       | none => throw "SyntaxError: Invalid regular expression: \\ at end of pattern"
       | some e =>
@@ -392,7 +521,7 @@ that starts with `SyntaxError:` when the pattern or the flags are not valid. -/
 def compile (pattern flags : String) : Except String Compiled := do
   let some fl := parseFlags flags | throw s!"SyntaxError: Invalid regular expression flags '{flags}'"
   let cs := pattern.toList.toArray
-  let (node, st) ← (disjunction cs (4 * cs.size + 16)).run {}
+  let (node, st) ← (disjunction cs (4 * cs.size + 16)).run { unicode := fl.unicode }
   if st.pos < cs.size then
     throw (if cs[st.pos]! == ')' then "SyntaxError: Invalid regular expression: unmatched ')'"
       else "SyntaxError: Invalid regular expression")
@@ -428,6 +557,10 @@ def itemMatches (icase : Bool) (c : Char) : ClassItem → Bool
       List.any [c.toUpper, c.toLower] fun d => lo ≤ d && d ≤ hi))
   | .esc k neg =>
     let r := match k with | 0 => c.isDigit | 1 => isWordChar c | _ => isSpace c
+    if neg then !r else r
+  | .prop rs neg =>
+    let r := inRanges rs c.toNat ||
+      (icase && List.any [fold c, c.toUpper, c.toLower] fun d => inRanges rs d.toNat)
     if neg then !r else r
 
 /-- Whether one character matches a node that is a single character matcher. -/
