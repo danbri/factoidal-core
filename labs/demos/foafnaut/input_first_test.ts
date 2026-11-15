@@ -41,3 +41,8 @@ Deno.test("scroll first: a page change waits while the user scrolls, at most SCR
   assert.equal(scrollFirst({now:5000,scrollAt:4999,changedAt:5000-SCROLL_HOLD_MAX_MS}),false);
   assert.equal(scrollFirst({now:5000,scrollAt:4999,changedAt:5000-SCROLL_HOLD_MAX_MS+1}),true);
 });
+
+Deno.test("scroll first: just after a page is first shown, a change waits SCROLL_QUIET_MS", ()=>{
+  assert.equal(scrollFirst({now:1000,scrollAt:-Infinity,changedAt:undefined,shownAt:1000-SCROLL_QUIET_MS+1}),true);
+  assert.equal(scrollFirst({now:1000,scrollAt:-Infinity,changedAt:undefined,shownAt:1000-SCROLL_QUIET_MS}),false);
+});

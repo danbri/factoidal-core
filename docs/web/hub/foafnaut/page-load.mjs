@@ -188,10 +188,11 @@ of the page by its scripts or by a late resource (`changedAt`, undefined when no
 waits, because the user scrolled in the last SCROLL_QUIET_MS (`scrollAt`). Meanwhile the host
 shows, and makes the bands of, the page as it is on screen, so a scroll never waits for a
 layout of the new page; the change is drawn when the scroll pauses, or after
-SCROLL_HOLD_MAX_MS. */
-export function scrollFirst({now,scrollAt,changedAt}) {
+SCROLL_HOLD_MAX_MS. Just after a page is first shown (`shownAt`) a change waits SCROLL_QUIET_MS
+too: a reader who scrolls at once scrolls the page as shown, not behind its next layout. */
+export function scrollFirst({now,scrollAt,changedAt,shownAt}) {
   if(changedAt!==undefined&&now-changedAt>=SCROLL_HOLD_MAX_MS)return false;
-  return now-scrollAt<SCROLL_QUIET_MS;
+  return now-scrollAt<SCROLL_QUIET_MS||(shownAt!==undefined&&now-shownAt<SCROLL_QUIET_MS);
 }
 
 /** Whether an engine's error says the page's script session is gone: the engine holds no

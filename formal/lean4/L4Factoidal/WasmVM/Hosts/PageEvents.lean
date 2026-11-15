@@ -147,6 +147,7 @@ theorem advanceUntil_never (s : σ) (target maxTasks : Nat) :
   have he := e.pureDriver.advanceGoStop_never target maxTasks
     (L4Factoidal.EventLoop.frameSlot (e.loop s).clock target (e.lastFrame s)) s 0
   unfold advanceUntil advance
+  dsimp only
   rw [hd, he]
   revert hn
   generalize e.pureDriver.advanceGoStop (fun _ => false) target maxTasks
