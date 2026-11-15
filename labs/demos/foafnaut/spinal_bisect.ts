@@ -23,9 +23,9 @@
 //
 //   deno run -A --unstable-ffi spinal_bisect.ts [--only a,b] [--ticks N] [--app DIR] [--watch S]
 //        [--present offscreen|window] [--out FILE] [--md FILE]
-import {dirname,join,resolve} from "node:path";
+import {dirname,join} from "node:path";
 import {fileURLToPath} from "node:url";
-import {generate,VARIANTS,defaultLibrary,defaultOut,root} from "./spinal_variants.ts";
+import {generate,defaultLibrary,defaultOut,root} from "./spinal_variants.ts";
 
 const here=dirname(fileURLToPath(import.meta.url));
 const W=1280,H=800,TICK_MS=16;
@@ -174,7 +174,8 @@ async function windowOne(name:string,file:string,app:string,watch:number,present
   out.layout_ms_p50=pct(frames.map(f=>f.layoutMs),0.5);
   out.gpu_ms_p50=summary?.gpu?.submitToDoneMsP50??null;out.gpu_ms_p95=summary?.gpu?.submitToDoneMsP95??null;
   out.pump_gap_max_ms=summary?.pumpGapAfterFirstFrameMs?.max??null;out.pump_gap_p50_ms=summary?.pumpGapAfterFirstFrameMs?.p50??null;
-  out.pumps_per_s=summary&&out.first_frame_ms!==null?r1((summary.pumpGapAfterFirstFrameMs?.count??0)/Math.max(1,(summary.t-out.first_frame_ms)/1000)):null;
+  const firstAt=out.first_frame_ms;
+  out.pumps_per_s=summary&&typeof firstAt==="number"?r1((summary.pumpGapAfterFirstFrameMs?.count??0)/Math.max(1,(summary.t-firstAt)/1000)):null;
   out.idle_checks=checks.length;out.idle_check_ms=checks.length?Math.max(...checks.map(c=>c.drawMs)):null;
   out.slow_calls=Object.fromEntries(Object.entries((summary?.slowCalls??{}) as Record<string,{maxMs:number}>).map(([k,v])=>[k,v.maxMs]));
   // Idle CPU: the last 10 s of the watch (the page has settled: the zoom ends 9 s after load).
@@ -261,4 +262,3 @@ if(import.meta.main){
   Deno.writeTextFileSync(outFile,JSON.stringify(run,null,1)+"\n");Deno.writeTextFileSync(mdFile,md);
   console.log("\n"+md);
 }
-void VARIANTS;void resolve;
