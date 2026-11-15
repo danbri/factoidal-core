@@ -21,7 +21,7 @@ async function pump(p:Page,turns:number,call:(request:Record<string,unknown>)=>P
 
 Deno.test("an engine answer 'no session' ends the page's scripts: one line, one advance", async()=>{
   const p=page(),lines:string[]=[];let calls=0;
-  await pump(p,5000,()=>{calls++;return Promise.reject(new Error("Lean HTML: scriptSession: no session"));},line=>lines.push(line));
+  await pump(p,5000,()=>{calls++;return Promise.reject(new Error("Lean HTML: scriptSession: no session"));},(line:string)=>lines.push(line));
   assertEquals(calls,1);
   assertEquals(lines.length,1);
   assert(lines[0].includes("page scripts stopped (timers)")&&lines[0].includes("scriptSession: no session"),lines[0]);
@@ -34,7 +34,7 @@ Deno.test("the other answers that say the session is gone end it too", ()=>{
     "scriptSession: session ended: the engine worker stopped"]){
     assert(scriptSessionGone(m),m);
     const p=page(),lines:string[]=[];
-    assertEquals(scriptFailure(p,new Error(m),"key",line=>lines.push(line)),"ended");
+    assertEquals(scriptFailure(p,new Error(m),"key",(line:string)=>lines.push(line)),"ended");
     assertEquals(lines.length,1);assertEquals(p.script,undefined);
   }
   assert(!scriptSessionGone("Lean HTML: scriptSession: click needs node"));
@@ -42,13 +42,13 @@ Deno.test("the other answers that say the session is gone end it too", ()=>{
 
 Deno.test("another failed timer turn stops the timers; other failures are said once per message", async()=>{
   const p=page(),lines:string[]=[];let calls=0;
-  await pump(p,1000,()=>{calls++;return Promise.reject(new Error("Lean HTML: scriptSession: frame: bad"));},line=>lines.push(line));
+  await pump(p,1000,()=>{calls++;return Promise.reject(new Error("Lean HTML: scriptSession: frame: bad"));},(line:string)=>lines.push(line));
   assertEquals(calls,1);assertEquals(lines.length,1);
   assert(p.script);assertEquals(p.script.turn.nextWake,null);
   const q=page(),more:string[]=[];
-  for(let i=0;i<100;i++)scriptFailure(q,new Error("busy"),"key",line=>more.push(line));
+  for(let i=0;i<100;i++)scriptFailure(q,new Error("busy"),"key",(line:string)=>more.push(line));
   assertEquals(more.length,1);assert(q.script);
-  assertEquals(scriptFailure({},new Error("x"),"key",line=>more.push(line)),"none");
+  assertEquals(scriptFailure({},new Error("x"),"key",(line:string)=>more.push(line)),"none");
 });
 
 Deno.test("run_html.ts sends every script failure through scriptFailure, and ends the sessions when its worker dies", async()=>{
