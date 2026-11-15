@@ -622,6 +622,178 @@ private def textInstance (targets : Std.HashMap String NamespaceNode) (attrs : L
     !(hasElement "text" maxDepth target || hasElement "textArea" maxDepth target) || hasElement "use" maxDepth target then none
   pure target
 
+/-! ### Markers (SVG 2 §11.6), lowered to transformed groups (2026-11-15)
+
+The strict reader has no `marker`. A `path`, `line`, `polyline` or `polygon` that names markers
+(`marker-start`, `marker-mid`, `marker-end`, or `marker`, as attributes or in `style`) is drawn
+as a group: the element without its marker properties, then one copy of the marker's content
+at each vertex, under the transform SVG 2 §11.6.2 gives: translate to the vertex, rotate by
+`orient`, scale by the stroke width (`markerUnits="strokeWidth"`) and by the `viewBox` mapping
+into `markerWidth` by `markerHeight`, then translate by `-refX`, `-refY`.
+
+Not drawn as specified (each is logged as `marker: ...` when it applies): the clip of the
+marker viewport (`overflow` hidden, the default) is not applied; the direction at an arc's end
+is its chord's; marker properties come from the element itself (its attributes and `style`),
+not from an ancestor or a style sheet; the content's inherited properties come from the
+`marker` element's own attributes only. -/
+
+/-- A vertex where markers go: the point, the directions of the segment in and out (none at
+    the ends of the whole path), and its kind. -/
+private structure MarkerVertex where
+  at_ : NativeSVGText.Point
+  dirIn : Option (Float × Float)
+  dirOut : Option (Float × Float)
+
+private def sub (a b : NativeSVGText.Point) : Float × Float := (a.x - b.x, a.y - b.y)
+private def nonZero (d : Float × Float) : Bool := d.1 != 0 || d.2 != 0
+/-- The first of the directions that is not zero, else the last. -/
+private def firstDir : List (Float × Float) → Float × Float
+  | [] => (0, 0)
+  | [d] => d
+  | d :: rest => if nonZero d then d else firstDir rest
+
+/-- The vertices of one contour: its start, then the end of each segment (SVG 2 §11.6.2,
+    "path vertices"), with the directions of the segments around each. -/
+private def contourVertices (start : NativeSVGText.Point) (segments : List L4Factoidal.Rendering.PathSegment)
+    (closed : Bool) : List MarkerVertex :=
+  -- each segment as (end point, direction at its start, direction at its end)
+  let step := fun (acc : NativeSVGText.Point × List (NativeSVGText.Point × (Float × Float) × (Float × Float))) (seg : L4Factoidal.Rendering.PathSegment) =>
+    let (from_, out) := acc
+    let (to, d0, d1) : NativeSVGText.Point × (Float × Float) × (Float × Float) := match seg with
+      | .line e => (e, sub e from_, sub e from_)
+      | .quadratic c e => (e, firstDir [sub c from_, sub e from_], firstDir [sub e c, sub e from_])
+      | .cubic c1 c2 e => (e, firstDir [sub c1 from_, sub c2 from_, sub e from_], firstDir [sub e c2, sub e c1, sub e from_])
+      | .arc _ _ _ _ _ e => (e, sub e from_, sub e from_)
+    (to, out ++ [(to, d0, d1)])
+  let (_, segs) := segments.foldl step (start, [])
+  let segs := if closed && !segs.isEmpty then segs ++ [(start, sub start ((segs.getLast?.map (·.1)).getD start), sub start ((segs.getLast?.map (·.1)).getD start))] else segs
+  match segs with
+  | [] => [{ at_ := start, dirIn := none, dirOut := none }]
+  | (_, d0, _) :: _ =>
+    let first : MarkerVertex := { at_ := start, dirIn := if closed then (segs.getLast?.map (·.2.2)) else none, dirOut := some d0 }
+    let rec go : List (NativeSVGText.Point × (Float × Float) × (Float × Float)) → List MarkerVertex
+      | [] => []
+      | [(p, _, dIn)] => [{ at_ := p, dirIn := some dIn, dirOut := if closed then some d0 else none }]
+      | (p, _, dIn) :: rest@((_, dNext, _) :: _) => { at_ := p, dirIn := some dIn, dirOut := some dNext } :: go rest
+    first :: go segs
+
+private def angleOf (d : Float × Float) : Float := Float.atan2 d.2 d.1 * 180 / 3.141592653589793
+
+/-- `orient="auto"` at a vertex: the bisector of the directions in and out (SVG 2 §11.6.2). -/
+private def autoAngle (v : MarkerVertex) : Float :=
+  match v.dirIn, v.dirOut with
+  | some a, some b =>
+    let la := Float.sqrt (a.1*a.1 + a.2*a.2); let lb := Float.sqrt (b.1*b.1 + b.2*b.2)
+    let ua := if la > 0 then (a.1/la, a.2/la) else (0, 0)
+    let ub := if lb > 0 then (b.1/lb, b.2/lb) else (0, 0)
+    let s := (ua.1 + ub.1, ua.2 + ub.2)
+    if nonZero s then angleOf s else angleOf (if lb > 0 then b else a)
+  | some a, none => angleOf a
+  | none, some b => angleOf b
+  | none, none => 0
+
+/-- The marker property `key` of an element: its attribute, else its `style` declaration,
+    else the `marker` shorthand; the id of a local `url(#id)`. -/
+private def markerRef (attrs : List NamespaceAttribute) (key : String) : Option String :=
+  let fromStyle := fun (k : String) => ((plainAttr attrs "style").getD "").splitOn ";" |>.findSome? fun (d : String) =>
+    match d.splitOn ":" with
+    | [n, v] => if n.trimAscii.toString == k then some v.trimAscii.toString else none
+    | _ => none
+  let value := (plainAttr attrs key).orElse (fun _ => fromStyle key) |>.orElse (fun _ => plainAttr attrs "marker")
+    |>.orElse (fun _ => fromStyle "marker")
+  value.bind fun v =>
+    let v := v.trimAscii.toString
+    if v.startsWith "url(#" && v.endsWith ")" then some ((v.drop 5).dropEnd 1).toString.trimAscii.toString else none
+
+private def markerKeys := ["marker-start","marker-mid","marker-end","marker"]
+
+/-- The element without its marker properties (attributes and `style` declarations). -/
+private def withoutMarkers (attrs : List NamespaceAttribute) : List NamespaceAttribute :=
+  attrs.filterMap fun (a : NamespaceAttribute) =>
+    if a.name.namespace_.isNone && markerKeys.contains a.name.localPart then none
+    else if a.name.namespace_.isNone && a.name.localPart == "style" then
+      let kept := (a.value.splitOn ";").filter fun (d : String) => match d.splitOn ":" with
+        | n :: _ => !markerKeys.contains n.trimAscii.toString
+        | [] => true
+      some { a with value := ";".intercalate kept }
+    else some a
+
+/-- The vertices of a shape that takes markers, in its user space. -/
+private def shapeVertices (tag : String) (attrs : List NamespaceAttribute) : List (List MarkerVertex) :=
+  let f := fun k => float (plainAttr attrs k) 0
+  let pt := fun (x y : Float) => ({ x, y } : NativeSVGText.Point)
+  if tag == "line" then
+    let a := pt (f "x1") (f "y1"); let b := pt (f "x2") (f "y2")
+    [contourVertices a [.line b] false]
+  else if tag == "polyline" || tag == "polygon" then
+    let nums := (((plainAttr attrs "points").getD "").map fun c => if c == ',' || c.isWhitespace then ' ' else c).splitOn " "
+      |>.filter (· != "") |>.map (fun n => float (some n) 0)
+    let rec pairs : Nat → List Float → List NativeSVGText.Point
+      | 0, _ => []
+      | _, [] | _, [_] => []
+      | n + 1, x :: y :: rest => pt x y :: pairs n rest
+    match pairs (nums.length + 1) nums with
+    | [] => []
+    | p :: rest => [contourVertices p (rest.map .line) (tag == "polygon")]
+  else
+    match NativeSVGPath.parse NativeSVG.number ((plainAttr attrs "d").getD "") with
+    | .ok contours => contours.filterMap fun
+        | .path start segs closed => some (contourVertices start segs closed)
+        | .empty _ => none
+    | .error _ => []
+
+/-- At most this many marker copies in one element; past it the element is drawn without
+    markers (bound on the size of the lowered tree). -/
+private def maxMarkerCopies : Nat := 1024
+
+/-- The marker copies of one shape, and the log. -/
+private def markerCopies (targets : Std.HashMap String NamespaceNode) (tag : String) (attrs : List NamespaceAttribute)
+    (content : NamespaceNode → List NamespaceNode) : List NamespaceNode × List String :=
+  let contours := shapeVertices tag attrs
+  let all := contours.flatten
+  let n := all.length
+  let strokeWidth := float ((plainAttr attrs "stroke-width").orElse fun _ =>
+    ((plainAttr attrs "style").getD "").splitOn ";" |>.findSome? fun (d : String) => match d.splitOn ":" with
+      | [k, v] => if k.trimAscii.toString == "stroke-width" then some v.trimAscii.toString else none
+      | _ => none) 1
+  let place := fun (key : String) (i : Nat) (v : MarkerVertex) =>
+    match markerRef attrs key |>.bind targets.get? with
+    | some (.element mn ma mc) =>
+      if mn.localPart != "marker" then ([], [s!"marker: #{(markerRef attrs key).getD ""} is a {mn.localPart}"]) else
+      let mw := float (plainAttr ma "markerWidth") 3
+      let mh := float (plainAttr ma "markerHeight") 3
+      let k := if (plainAttr ma "markerUnits").map (fun (u : String) => u.trimAscii.toString) == some "userSpaceOnUse" then 1 else strokeWidth
+      let (sx, sy) := match (((plainAttr ma "viewBox").getD "").map fun c => if c == ',' then ' ' else c).splitOn " " |>.filter (· != "") with
+        | [_, _, w, h] =>
+          let w := float (some w) 0; let h := float (some h) 0
+          if w > 0 && h > 0 then
+            let par := ((plainAttr ma "preserveAspectRatio").getD "").trimAscii.toString
+            if par.startsWith "none" then (mw / w, mh / h)
+            else
+              let s := if par.endsWith "slice" then max (mw / w) (mh / h) else min (mw / w) (mh / h)
+              (s, s)
+          else (1, 1)
+        | _ => (1, 1)
+      let orient := ((plainAttr ma "orient").getD "0").trimAscii.toString
+      let angle := if orient == "auto" then autoAngle v
+        else if orient == "auto-start-reverse" then autoAngle v + (if i == 0 && key == "marker-start" then 180 else 0)
+        else float (some ((orient.replace "deg" "").trimAscii.toString)) 0
+      let refX := float (plainAttr ma "refX") 0
+      let refY := float (plainAttr ma "refY") 0
+      let frame := s!"translate({v.at_.x},{v.at_.y}) rotate({angle}) scale({k}) scale({sx},{sy}) translate({-refX},{-refY})"
+      let inherited := (renameId ma).filter fun (a : NamespaceAttribute) => a.name.namespace_.isNone &&
+        !["id","viewBox","refX","refY","markerWidth","markerHeight","markerUnits","orient","preserveAspectRatio","overflow","class"].contains a.name.localPart
+      ([svgElement "g" (inherited ++ [mkAttr "transform" frame]) (mc.flatMap content)], [])
+    | _ => ([], [])
+  if n == 0 || n * 3 > maxMarkerCopies then ([], if n == 0 then [] else ["marker: more than 1024 marker copies, drawn without markers"])
+  else
+    let indexed := all.zipIdx
+    let starts := match indexed.head? with | some (v, i) => [place "marker-start" i v] | none => []
+    let mids := (indexed.drop 1 |>.dropLast).map fun (v, i) => place "marker-mid" i v
+    let ends := match indexed.getLast? with | some (v, i) => if n > 1 || true then [place "marker-end" i v] else [] | none => []
+    let parts := starts ++ mids ++ ends
+    (parts.flatMap (·.1), parts.flatMap (·.2) ++ ["marker: drawn without the marker viewport clip"].filter (fun _ => !parts.all (·.1.isEmpty)))
+
 /-- Remove foreign and unread elements, stray text and the content of silent
     elements, and lower `text` when a font is known. Returns the new tree and
     one log line for each removal. -/
@@ -675,6 +847,18 @@ private def normalise (fonts : List SVGFont) (sfnt : Array NativeSVGText.Font) (
       let kept := (renameId attrs).filter fun a => a.name.namespace_.isNone &&
         !["x","y","width","height","transform","href","font-size","font-family","text-anchor"].contains a.name.localPart
       (some (svgElement "g" (kept ++ [mkAttr "transform" frame]) node.toList),log)
+    else if ["path","line","polyline","polygon"].contains name.localPart && markerKeys.any (fun k => (markerRef attrs k).isSome) then
+      -- Markers: the shape without its marker properties, then a copy of the marker content at each vertex.
+      let inner := state.read attrs
+      let shape := normalise fonts sfnt targets fuel inner false (.element name (withoutMarkers attrs) children)
+      -- marker content is normalised as any content (no ids: a copy must not repeat one)
+      let content := fun (c : NamespaceNode) =>
+        let noId : NamespaceNode → NamespaceNode := fun
+          | .element n a ch => .element n (a.filter fun x => x.name.localPart != "id") ch
+          | other => other
+        (normalise fonts sfnt targets fuel inner false (noId c)).1.toList
+      let (copies, mlog) := markerCopies targets name.localPart attrs content
+      (some (svgElement "g" [] (shape.1.toList ++ copies)), shape.2 ++ mlog)
     else if !readable.contains name.localPart then (none,["element: " ++ name.localPart])
     else if silent.contains name.localPart then (some (.element name (renameId attrs) []),[])
     else
