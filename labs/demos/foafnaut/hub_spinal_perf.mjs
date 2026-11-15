@@ -3,7 +3,9 @@
 //
 // Recorded for each frame the Hub shows (window.foafnautFrame, browser.mjs): its path
 // (`layers`, `band`, `shift` or the whole-page `frame`), layout ms, draw ms, GPU ms, total ms
-// and primitives. Every 5 s: the JS heap of the page and of the engine's worker
+// and primitives, and for the page layer's draw the CPU ms to submit, the GPU ms until done and
+// the shader work counted from the scene (scene-work.mjs: records visited, path edges walked,
+// edges walked outside the record's clip, pixels drawn, bytes uploaded). Every 5 s: the JS heap of the page and of the engine's worker
 // (Runtime.getHeapUsage) and the RSS of all of Chrome's processes. All the time: the console
 // warnings, errors and exceptions of the page and the worker, and among them GPU errors and a
 // lost GPU device. The WebGPU adapter is recorded (vendor, architecture, whether it is a
@@ -117,7 +119,7 @@ async function session(adapterMode){
     while(Date.now()-t1<SECONDS*1000){
       await sleep(1000);
       const got=await evaluate(`(()=>{const f=window.__frames??[];window.__frames=[];return f.map(x=>({t:x.t,path:x.path,url:x.url,layoutMs:x.layoutMs,drawMs:x.drawMs,
-        gpuMs:x.gpuMs,totalMs:x.totalMs,primitives:x.primitives,leanRenders:x.leanRenders,rows:x.rows,scriptTurns:x.scripts?.turns,scriptMs:x.scripts?.ms}));})()`).catch(()=>[]);
+        gpuMs:x.gpuMs,totalMs:x.totalMs,primitives:x.primitives,leanRenders:x.leanRenders,rows:x.rows,scriptTurns:x.scripts?.turns,scriptMs:x.scripts?.ms,draw:x.draws?.page??x.draws?.single}));})()`).catch(()=>[]);
       frames.push(...got);
       if(Date.now()-t1>=nextSample){
         nextSample+=5000;
@@ -143,6 +145,16 @@ async function session(adapterMode){
       draw_ms_early:stat(drawn.slice(0,tenth).map(f=>f.drawMs)).median,draw_ms_late:stat(drawn.slice(-tenth).map(f=>f.drawMs)).median,
       primitives_max:Math.max(0,...later.map(f=>f.primitives??0)),
       fps:later.length>1?r1((later.length-1)/((later.at(-1).t-later[0].t)/1000)):0};
+    // Where a draw's time goes (layers.mjs drawScene with ?stats=1): CPU ms to submit, GPU ms
+    // until done, and the shader's work counted from the scene (scene-work.mjs), in millions of
+    // loop trips at four samples a pixel.
+    const draws=drawn.map(f=>f.draw).filter(d=>d&&!d.kept&&typeof d.gpuMs==='number');
+    const m=x=>Math.round(x/1e4)/100;
+    out.draw_split={n:draws.length,cpu_ms:stat(draws.map(d=>d.cpuMs)),gpu_ms:stat(draws.map(d=>d.gpuMs)),
+      segments_m:stat(draws.map(d=>m(d.segments))),outside_clip_m:stat(draws.map(d=>m(d.segmentsOutsideClip))),listed_m:stat(draws.map(d=>m(d.listed))),
+      drawn_pixels:stat(draws.map(d=>d.drawnPixels)),upload_kb:stat(draws.map(d=>Math.round(d.uploadBytes/1024))),partial:draws.filter(d=>d.partial).length,
+      // GPU ms for a thousand million edge trips: what the adapter does per unit of the counted work.
+      gpu_ms_per_g_segments:(()=>{const a=draws.reduce((t,d)=>t+d.gpuMs,0),b=draws.reduce((t,d)=>t+d.segments,0);return b?r1(a/(b/1e9)):0;})()};
     out.frames.late_over_early=out.frames.draw_ms_early?Math.round(out.frames.draw_ms_late/out.frames.draw_ms_early*100)/100:0;
     out.heap_mb={samples:heap,page_growth:heap.length?r1(heap.at(-1).pageMb-heap[0].pageMb):0,worker_growth:heap.length?r1(heap.at(-1).workerMb-heap[0].workerMb):0,
       worker_end:heap.at(-1)?.workerMb??0};
@@ -151,7 +163,9 @@ async function session(adapterMode){
     const gpuText=/GPU|WebGPU|device/i,lostText=/device (was )?lost|lost:|GPU layer surface is failed/i;
     out.errors={count:messages.filter(m=>m.type!=='warning').length,warnings:messages.filter(m=>m.type==='warning').length,
       gpu:messages.filter(m=>gpuText.test(m.text)).length,device_lost:messages.some(m=>lostText.test(m.text))?1:0,first:messages.slice(0,12)};
-    out.frames_detail=pageFrames.map(f=>({s:r1((f.t)/1000),path:f.path,layoutMs:f.layoutMs,drawMs:f.drawMs,gpuMs:f.gpuMs,primitives:f.primitives}));
+    out.frames_detail=pageFrames.map(f=>({s:r1((f.t)/1000),path:f.path,layoutMs:f.layoutMs,drawMs:f.drawMs,primitives:f.primitives,
+      ...(f.draw&&!f.draw.kept?{cpuMs:f.draw.cpuMs,gpuMs:f.draw.gpuMs,segmentsM:m(f.draw.segments),outsideClipM:m(f.draw.segmentsOutsideClip),
+        listedM:m(f.draw.listed),drawnPixels:f.draw.drawnPixels,uploadKB:Math.round(f.draw.uploadBytes/1024),partial:f.draw.partial}:{})}));
     out.valid=pageFrames.length>1;
     if(!out.valid)out.why=`the page drew ${pageFrames.length} frames`;
     return out;

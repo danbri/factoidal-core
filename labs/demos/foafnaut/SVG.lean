@@ -3254,6 +3254,10 @@ private def sceneShader : String :=
   "if(shapeRows>remaining||dashCount>remaining/" ++ toString dashPieceRowCount ++ "u||clipCount>remaining/" ++ toString clipRowCount ++ "u){break;}let tailRows=shapeRows+" ++ toString dashPieceRowCount ++ "u*dashCount;let affineRows=select(0u," ++ toString affineTransformRowCount ++ "u,(header.w%4u)>=2u);let recordRows=" ++ toString primitiveFixedRowCount ++ "u+tailRows+affineRows+" ++ toString clipRowCount ++ "u*clipCount;if(recordRows>remaining){break;}var p=worldP;if((header.w%4u)>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
   "p=vec4f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z,0,1);}" ++
   "var clipHit=true;let clipBase=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows+affineRows;for(var ci=0u;ci<clipCount;ci++){let cb=clipBase+" ++ toString clipRowCount ++ "u*ci;let x=params.rows[cb];let y=params.rows[cb+1u];let bounds=params.rows[cb+2u];let q=vec2f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z);if(x.w!=1.0||any(q<bounds.xy)||any(q>bounds.xy+bounds.zw)){clipHit=false;break;}}" ++
+  -- A record whose clip fails at the sample covers nothing there (`Primitive.sampleStep_clip_fail`):
+  -- go to the next record before its geometry. The winding loop of a path walks every edge, so
+  -- a large path clipped to a small box (a zoomed SVG) cost seconds a frame (issue 450).
+  "if(!clipHit){continue;}" ++
   "var fillHit=false;var strokeHit=false;switch tag {\n" ++
   shaderCase Geometry.rectRecordTag (.rect 0 0 0 0) ++ shaderCase Geometry.circleRecordTag (.circle 0 0 0) ++ shaderCase Geometry.ellipseRecordTag (.ellipse 0 0 0 0) ++
   s!"case {Geometry.lineRecordTag}u: " ++ "{if((header.w%2u)==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
@@ -3587,6 +3591,21 @@ def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat
   overColors (p.paintAt p.style.fill p.style.fillOpacity position)
     (p.paintAt p.style.stroke p.style.strokeOpacity position) p.effectiveOpacity
     (p.coverageAt data base position) result
+
+/-- A record whose clip rectangles do not all hold the point covers nothing there, whatever
+    its geometry: its step is the step of no coverage (both hits false), so the scene shader may
+    skip the record's geometry (the winding loop over every edge of a path) at such a sample.
+    That the no-coverage step leaves the colour as it is, as the shader's `continue` does, is
+    the same assumption as the tile lists and `Raster.rasterFast`'s skipped steps (a zero-alpha
+    layer over the result), checked byte for byte by the differential raster test, not proved
+    on `Float`. -/
+theorem Primitive.sampleStep_clip_fail (p : BackendPrimitive) (data : Array Float) (base : Nat)
+    (position : Float × Float) (result : Color)
+    (fails : clipPass data (p.clipStart base) p.clips position = false) :
+    p.sampleStep data base position result =
+      overColors (p.paintAt p.style.fill p.style.fillOpacity position)
+        (p.paintAt p.style.stroke p.style.strokeOpacity position) p.effectiveOpacity (false,false) result := by
+  simp [Primitive.sampleStep,Primitive.coverageAt,fails]
 
 structure PreparedSample where
   coverage : PreparedCoverage
