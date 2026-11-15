@@ -1,7 +1,7 @@
 {
  "about": "Budgets of the fast mode of spinal_bisect.ts (spinal_bisect_check.ts in test.sh, core issue 450): variants of the Spinal Tap page on the native engine with no window, 40 ticks of 16 ms. Paths are into the run's JSON (variants.NAME.engine...). Rules of spinal_budgets.mjs: a budget fails when missed; a known failure is printed while it fails and fails the check when met (move it to the budgets); the file may only tighten (ratchet against the merge base). Times have about three times the measurement as margin; frame counters are exact.",
  "native": {
-  "measured": "2026-11-15, Apple M1, release engine cc73af028 (timing lock held), before PR 460; spinal_bisect_check.ts 40 ticks",
+  "measured": "2026-11-15, Apple M1, engine wip/prim-reuse ac8688851 (macOS branch build 43736471631), after PR 460; spinal_bisect_check.ts 40 ticks",
   "budgets": {
    "variants.static.engine.tick.layouts": {
     "max": 0,
@@ -38,14 +38,14 @@
     "what": "first layered frame of the page's DOM (layout and compile)"
    },
    "variants.static.engine.tick.median": {
-    "max": 36,
-    "measured": 11.5,
-    "what": "a tick of the unchanged page (no layout, no recompile): the cost of an answer that changed nothing"
+    "max": 12,
+    "measured": 3.4,
+    "what": "a tick of the unchanged page (no layout, no recompile): 11.5 before PR 460, 3.4 after"
    },
    "variants.static.engine.probe_ms": {
-    "max": 1500,
-    "measured": 519.7,
-    "what": "a whole-page frame with the CPU probe; known slow (issue 450), may not get worse"
+    "max": 300,
+    "measured": 93.4,
+    "what": "a whole-page frame with the CPU probe"
    },
    "variants.no-svg.engine.probe_ms": {
     "max": 220,
@@ -59,18 +59,23 @@
    "variants.full.engine.first_ms": {
     "max": 400,
     "measured": 107.2
+   },
+   "variants.plus-timer.engine.tick.recompiled": {
+    "max": 40,
+    "measured": 40,
+    "what": "a 16 ms timer changing one digit: 40 ticks lay the page out again and compile only the changed glyph (structural reuse, WebPaint.samePrimitive; 113,840 = 2846 a tick before)"
+   },
+   "variants.plus-timer.engine.tick.median": {
+    "max": 80,
+    "measured": 25.9,
+    "what": "a tick of the timer page: 48.2 before structural reuse"
    }
   },
   "known_failures": {
-   "variants.static.engine.tick.median": {
-    "want_max": 4,
-    "measured": 11.5,
-    "issue": "issue 450: an unchanged frame still costs 11 ms (7.6 ms of it the host's finite check, PR 460; the rest is the 4.4 MB answer made again)"
-   },
-   "variants.static.engine.probe_ms": {
-    "want_max": 200,
-    "measured": 519.7,
-    "issue": "issue 450: the CPU probe of stroked glyph outlines costs 7 times the frame"
+   "variants.plus-timer.engine.tick.median": {
+    "want_max": 6,
+    "measured": 25.9,
+    "issue": "issue 450: a one-digit text change still lays out the whole page each tick (relayout of the changed subtree only is not done)"
    }
   }
  },

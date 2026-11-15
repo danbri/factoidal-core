@@ -80,3 +80,32 @@ Deno.test({name:"partial compile counts and bytes",ignore:noLibrary,sanitizeReso
     sameBytes(frame.page.tiles as ArrayLike<number>,plain.page.tiles as ArrayLike<number>,`tiles n=${n}`);
   }
 }});
+
+// A text change that lays the page out again (issue 450): the layout makes every primitive a
+// new object; those equal in value to the last frame's are kept (WebPaint.samePrimitive), so a
+// changed digit compiles a few primitives, not the page, and the bytes are those of the plain
+// compile.
+Deno.test({name:"a relayout keeps the primitives it did not change",ignore:noLibrary,sanitizeResources:false,sanitizeOps:false,fn:async()=>{
+  const engine=await loadHTML(library);
+  await loadFontFile(engine,new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname,"Noto Sans");
+  const rows=Array.from({length:200},(_,i)=>`<p style="margin:2px;border:1px solid #888">Row ${i} of a page that does not change</p>`).join("");
+  const html=`<!doctype html><body style="margin:0"><p id="tick">0</p>${rows}</body>`;
+  const doc=await prepareHTML(engine as never,url,undefined,html);
+  const nodes=(engine.inspect(doc.source,{url}) as unknown as {nodes:{id:number;attributes:Record<string,string>}[]}).nodes;
+  // inspect lists elements; the text node of #tick is the next node.
+  const tick=nodes.find(x=>x.attributes.id==="tick")!.id+1;
+  const base=doc.request(800,600).options;
+  const at=(digit:number,extra:Record<string,unknown>={})=>({...base,shell,checks:false,
+    commands:[{op:"replaceData",nodeId:tick,offset:0,count:1,value:String(digit)}],...extra});
+  engine.compileLayers(doc.source,800,600,at(1));
+  engine.compileLayers(doc.source,800,600,at(2));
+  engine.frameWork(true);
+  const frame=engine.compileLayers(doc.source,800,600,at(3));
+  const work=engine.frameWork(true)!;
+  const plain=engine.compileLayers(doc.source,800,600,at(3,{retained:false}));
+  assert.equal(work.layouts,1,`the text change lays out: ${JSON.stringify(work)}`);
+  assert(frame.page.primitiveCount>=60,`a page with many primitives: ${frame.page.primitiveCount}`);
+  assert(work.recompiled!+work.moved!<=4,`a changed digit compiles a few primitives: ${JSON.stringify(work)}`);
+  sameBytes(frame.page.data,plain.page.data,"relayout data");
+  sameBytes(frame.page.tiles as ArrayLike<number>,plain.page.tiles as ArrayLike<number>,"relayout tiles");
+}});
