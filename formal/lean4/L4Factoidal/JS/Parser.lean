@@ -1811,8 +1811,9 @@ def splitRequest (r : String) : String × String :=
 
 /-- `with { type: "json" }` after a specifier (WithClause, §16.2.2): the attributes, keys
 identifier names or strings, values strings, no key twice (an early error). `type` is the only
-key this host knows; any other is a SyntaxError (§16.2.1.10: a host refuses keys it does not
-support). The answer is the `type` ("" when absent). -/
+key this host knows; another key is not an early error but makes the module request one the host
+refuses when it loads it (a SyntaxError at resolution, AllImportAttributesSupported): the answer
+is then `!` and the key. Otherwise the answer is the `type` ("" when absent). -/
 def attributes : P String := do
   if !(← atK "with") then return ""
   advance
@@ -1830,8 +1831,8 @@ def attributes : P String := do
     advance
     if keys.contains k.text then fail s!"duplicate import attribute '{k.text}'"
     keys := keys.push k.text
-    if k.text == "type" then ty := v.text
-    else fail s!"unsupported import attribute '{k.text}'"
+    if !ty.startsWith "!" then
+      ty := if k.text == "type" then v.text else "!" ++ k.text
     if !(← eatP ",") then
       expectP "}"
       return ty

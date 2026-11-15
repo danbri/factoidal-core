@@ -183,6 +183,7 @@ unknown type, or a file that is not there, is an error. -/
 def readModule (fromUrl request : String) : IO (Except String (String × String)) := do
   let (spec, ty) := ModuleParse.splitRequest request
   let p := resolveSpec fromUrl spec
+  if ty.startsWith "!" then return .error s!"SyntaxError: unsupported import attribute '{(ty.drop 1).toString}'"
   if ty != "" && ty != "json" then return .error s!"unsupported module type '{ty}'"
   if !(← System.FilePath.pathExists p) || (← System.FilePath.isDir p) then
     return .error s!"cannot find module {spec}"

@@ -114,10 +114,10 @@ def runMods (mods : List (String × String)) (roots : List Nat) : List String :=
 #guard (parseModule "export {nothere}").toOption.isNone
 #guard (parseModule "return 1").toOption.isNone
 #guard (parseModule "with (o) {}").toOption.isNone
--- import attributes: `type` goes with the request (`attrMark`); another key, a key twice or a
--- value that is not a string is a SyntaxError
+-- import attributes: `type` goes with the request (`attrMark`); another key too, marked `!`, for
+-- the host to refuse at load; a key twice or a value that is not a string is a SyntaxError
 #guard (parseModule "import x from 'y' with { type: 'json' }").toOption.map (·.requests) == some #["y" ++ ModuleParse.attrMark ++ "json"]
-#guard (parseModule "import x from 'y' with { lazy: 'yes' }").toOption.isNone
+#guard (parseModule "import x from 'y' with { lazy: 'yes' }").toOption.map (·.requests) == some #["y" ++ ModuleParse.attrMark ++ "!lazy"]
 #guard (parseModule "import x from 'y' with { type: 'json', type: 'json' }").toOption.isNone
 #guard (parseModule "import x from 'y' with { type: 1 }").toOption.isNone
 -- top-level await: the module's function is an async generator only when the module awaits
