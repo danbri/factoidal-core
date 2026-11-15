@@ -15,7 +15,7 @@ export const SHARED = ['native_console.ts', 'native_html_document.ts', 'native_h
 /** Files outside labs/demos/foafnaut that the program imports: [import path relative to it, path in app/].
  * The import lines of the copied files are rewritten to the copy, so the package holds no path above app/. */
 export const OUTSIDE = [['../../../docs/web/hub/foafnaut/page-load.mjs', 'hub/page-load.mjs']];
-const TEXTNAUT_EXCLUDE = /(\.test\.ts|\.py|\.md)$|^textnaut$/;
+const TEXTNAUT_EXCLUDE = /(\.test\.ts|\.py|\.md)$|^textnaut$|^__pycache__$/;
 
 export function appFiles() {
   const own = readdirSync(join(source, 'textnaut')).filter((f) => !TEXTNAUT_EXCLUDE.test(f)).map((f) => `textnaut/${f}`);
