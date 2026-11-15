@@ -15,11 +15,12 @@ import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.t
 import {loadFontFile} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts} from "./native_html_fonts.ts";
 import {htmlQueue} from "./native_html_queue.ts";
+import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 export {REMOTE_CALLS};
 export type {RemoteCall};
-export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string}
+export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string;logAll?:boolean}
   |{id:number;op:"call";name:RemoteCall;args:unknown[];input?:boolean;low?:boolean}
   |{id:number;op:"dropLow"}
   // The fallback fonts a page needs (native_html_fonts.ts): chosen and read here, as bytes,
@@ -28,6 +29,8 @@ export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string}
 export type WorkerReply={id:number;ok:true;value?:unknown;ms:number}|{id:number;ok:false;error:string;dropped?:boolean};
 
 let engine:Promise<HTMLEngine>|undefined;
+// The worker's lines go through the log gate too (log-gate.mjs); --log-all comes with init.
+const logGate=gateConsole(console,{name:"foafnaut worker"});
 // Only an engine that answers its first font with `fonts` (the count held) adds a fallback
 // font after it; an older one would take it as a replacement (issue 1274).
 let fallbackFonts:ReturnType<typeof fallbackFontHost>|undefined;
@@ -36,6 +39,7 @@ const handle=async(request:WorkerRequest)=>{
   try{
     const start=performance.now();
     if(request.op==="init"){
+      if(request.logAll)logGate.setAll(true);
       engine=loadHTML(request.nativeEngine);const e=await engine;
       if(request.font&&typeof (await loadFontFile(e,request.font.path,request.font.family))?.fonts==="number")
         fallbackFonts=fallbackFontHost(fonts=>loadFallbackFonts(e,fonts));

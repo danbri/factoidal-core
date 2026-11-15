@@ -5,6 +5,7 @@ import { loadHTML, type HTMLEngine, type ScriptTurn } from "../native_html_engin
 import { inputURL, loadFontFile, navigationURL, prepareHTML, readSource, setScriptHost } from "../native_html_document.ts";
 import { netAnswer, type NetWire } from "../native_net.ts";
 import { fetchedAnswer } from "../../../../docs/web/hub/foafnaut/page-load.mjs";
+import { gateConsole } from "../../../../docs/web/hub/foafnaut/log-gate.mjs";
 import { barRow, type BigText, bodySize, CELL_HEIGHT, CELL_WIDTH, decorateGrid, displayRow, dumpText, fillerRow, type GlyphRun, type Grid, layoutGrid, type Level, type LinkRow, readPaint, sanitizeText } from "./grid.ts";
 import { useWasm } from "./web-render-select.mjs";
 import { Input, keysOf } from "./input.ts";
@@ -499,4 +500,13 @@ export async function main(args: string[]): Promise<number> {
   }
 }
 
-if (import.meta.main) Deno.exit(await main(Deno.args));
+if (import.meta.main) {
+  // The log gate (log-gate.mjs): a flood of lines (a page that logs in a loop) is summarised and
+  // named, not written line by line; FOAFNAUT_LOG=all writes every line.
+  let all = false;
+  try { all = Deno.env.get("FOAFNAUT_LOG") === "all"; } catch { /* no env permission */ }
+  const gate = gateConsole(console, { all, name: "textnaut" });
+  const code = await main(Deno.args);
+  gate.flush();
+  Deno.exit(code);
+}
