@@ -100,6 +100,76 @@ theorem Le.eq_of_not_out {x y : JSM H α} (h : Le x y) (s : HeapOf H) (hn : ¬ O
 theorem Le.unfold {x x' y y' : JSM H α} (hx : x = x') (hy : y = y') (h : Le x' y') : Le x y := by
   subst hx; subst hy; exact h
 
+
+/-! ## Rules for the loops and maps of the library -/
+
+theorem Le.map {x1 x2 : JSM H α} (f : α → β) (hx : Le x1 x2) : Le (f <$> x1) (f <$> x2) := by
+  intro s
+  show Out (EStateM.map f x1 s) ∨ EStateM.map f x1 s = EStateM.map f x2 s
+  unfold EStateM.map
+  rcases hx s with ⟨s', h⟩ | h
+  · left; rw [h]; exact ⟨s', rfl⟩
+  · rw [← h]
+    exact Or.inr rfl
+
+theorem Le.forIn_list {xs : List α} {b : β} {f1 f2 : α → β → JSM H (ForInStep β)}
+    (hf : ∀ a b, Le (f1 a b) (f2 a b)) : Le (forIn xs b f1) (forIn xs b f2) := by
+  induction xs generalizing b with
+  | nil => exact Le.refl _
+  | cons a as ih =>
+    rw [List.forIn_cons, List.forIn_cons]
+    refine Le.bind (hf a b) fun r => ?_
+    cases r with
+    | done b' => exact Le.refl _
+    | yield b' => exact ih
+
+theorem Le.forIn_array {xs : Array α} {b : β} {f1 f2 : α → β → JSM H (ForInStep β)}
+    (hf : ∀ a b, Le (f1 a b) (f2 a b)) : Le (forIn xs b f1) (forIn xs b f2) := by
+  rw [← Array.forIn_toList, ← Array.forIn_toList]
+  exact Le.forIn_list hf
+
+theorem Le.forIn_range {r : Std.Legacy.Range} {b : β} {f1 f2 : Nat → β → JSM H (ForInStep β)}
+    (hf : ∀ a b, Le (f1 a b) (f2 a b)) : Le (forIn r b f1) (forIn r b f2) := by
+  rw [Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.forIn_eq_forIn_range']
+  exact Le.forIn_list hf
+
+theorem Le.mapM_list {xs : List α} {f1 f2 : α → JSM H β}
+    (hf : ∀ a, Le (f1 a) (f2 a)) : Le (xs.mapM f1) (xs.mapM f2) := by
+  induction xs with
+  | nil => exact Le.refl _
+  | cons a as ih =>
+    rw [List.mapM_cons, List.mapM_cons]
+    exact Le.bind (hf a) fun _ => Le.bind ih fun _ => Le.refl _
+
+theorem Le.mapM_array {xs : Array α} {f1 f2 : α → JSM H β}
+    (hf : ∀ a, Le (f1 a) (f2 a)) : Le (xs.mapM f1) (xs.mapM f2) := by
+  rw [Array.mapM_eq_mapM_toList, Array.mapM_eq_mapM_toList]
+  exact Le.map _ (Le.mapM_list hf)
+
+theorem Le.foldlM_list {xs : List α} {b : β} {f1 f2 : β → α → JSM H β}
+    (hf : ∀ b a, Le (f1 b a) (f2 b a)) : Le (xs.foldlM f1 b) (xs.foldlM f2 b) := by
+  induction xs generalizing b with
+  | nil => exact Le.refl _
+  | cons a as ih =>
+    rw [List.foldlM_cons, List.foldlM_cons]
+    exact Le.bind (hf b a) fun _ => ih
+
+theorem Le.foldlM_array {xs : Array α} {b : β} {f1 f2 : β → α → JSM H β}
+    (hf : ∀ b a, Le (f1 b a) (f2 b a)) : Le (xs.foldlM f1 b) (xs.foldlM f2 b) := by
+  rw [← Array.foldlM_toList, ← Array.foldlM_toList]
+  exact Le.foldlM_list hf
+
+theorem Le.filterMapM_list {xs : List α} {f1 f2 : α → JSM H (Option β)}
+    (hf : ∀ a, Le (f1 a) (f2 a)) : Le (xs.filterMapM f1) (xs.filterMapM f2) := by
+  induction xs with
+  | nil => exact Le.refl _
+  | cons a as ih =>
+    rw [List.filterMapM_cons, List.filterMapM_cons]
+    refine Le.bind (hf a) fun r => ?_
+    cases r with
+    | none => exact ih
+    | some b => exact Le.bind ih fun _ => Le.refl _
+
 -- `Le` is opened only by the rules above, so that the walk below never unfolds it.
 attribute [irreducible] Le
 
@@ -110,18 +180,29 @@ but for the fuel of the calls in them, apart: binds, handlers and matches are sp
 pieces close by `Le.refl`, and a call closes by a hypothesis (the induction hypothesis for
 that function). -/
 
-syntax "fuel_mono_step" : tactic
+syntax "fuel_mono_pre" : tactic
 macro_rules
-  | `(tactic| fuel_mono_step) => `(tactic| first
+  | `(tactic| fuel_mono_pre) => `(tactic| first
+      | (cases ‹_ + 1 = Nat.succ _›)
       | with_reducible exact Le.refl _
       | exact Le.fuel _
-      | (apply Le.bind)
-      | (apply Le.catchJS)
-      | (intro _)
-      | split)
+      | with_reducible apply Le.bind
+      | with_reducible apply Le.catchJS)
 
-syntax "fuel_mono" : tactic
+syntax "fuel_mono_post" : tactic
 macro_rules
-  | `(tactic| fuel_mono) => `(tactic| repeat' (first | fuel_mono_step | (apply_assumption)))
+  | `(tactic| fuel_mono_post) => `(tactic| first
+      | with_reducible apply Le.forIn_range
+      | with_reducible apply Le.forIn_list
+      | with_reducible apply Le.forIn_array
+      | with_reducible apply Le.mapM_list
+      | with_reducible apply Le.mapM_array
+      | with_reducible apply Le.foldlM_list
+      | with_reducible apply Le.foldlM_array
+      | with_reducible apply Le.filterMapM_list
+      | with_reducible apply Le.map
+      | (intro _)
+      | split
+      | (dsimp only))
 
 end L4Factoidal.JS.FuelMono
