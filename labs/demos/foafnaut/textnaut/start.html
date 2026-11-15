@@ -1,23 +1,71 @@
 <!doctype html>
-<html lang="en">
-<meta charset="utf-8">
-<title>Textnaut start</title>
-<h1>Textnaut</h1>
-<p>A web browser for the terminal, on the Foafnaut engine. Pages to try it on:</p>
-<h2>Foafnaut pages</h2>
+<html lang="en"><head><meta charset="utf-8"><title>Foafnaut</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The start page of Foafnaut (window and Hub) and Textnaut (owner, 2026-11-15). Handwritten, and
+     light on purpose: no script, no web font, no image, no SVG. tools/build-demo-pages.py copies it to
+     textnaut/start.html with the links to Foafnaut's own pages made absolute (Hub addresses).
+     The notes on each site come from the real-page survey of core issue 450 and a Textnaut probe on
+     the native engine (2026-11-15); "slow" and "not yet" say what to expect today. -->
+<style>
+body{margin:0;padding:0;font-family:system-ui,sans-serif;font-size:15px;line-height:22px;color:#22303c;background:#f7f8fb}
+main{max-width:720px;margin:0 auto;padding:12px 16px 28px 16px}
+h1{margin:0;padding-top:8px;font-size:24px;line-height:32px;color:#184078}
+h2{margin:0;padding-top:20px;font-size:17px;line-height:24px;color:#184078}
+p{margin:0;padding-top:6px}
+ul{margin:0;padding:4px 0 0 20px}
+li{padding-top:4px}
+a{color:#1f5fbf}
+.lead{color:#34485c}
+.k{color:#5b6876;font-size:13px}
+.slow{color:#8a5a00}
+.no{color:#a03020}
+</style></head><body><main>
+<h1>Foafnaut</h1>
+<p class="lead">A web browser with its own built-in engine. Sites to try, then our own pages.</p>
+<p class="k">Marks: <span class="slow">slow</span> means usable but slow to open or to answer while its scripts run;
+<span class="no">not yet</span> means it does not draw usefully today.</p>
+
+<h2>Reference</h2>
 <ul>
-<li><a href="https://danbri.github.io/factoidal/web/hub/foafnaut/pages/index.html">Foafnaut demo pages</a></li>
-<li><a href="https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase.html">Foafnaut showcase</a></li>
-<li><a href="https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-dataviz.html">Data visualisation</a></li>
+<li><a href="https://en.wikipedia.org/wiki/World_Wide_Web">Wikipedia</a>: an article in the desktop skin. <span class="slow">Slow</span></li>
+<li><a href="https://en.wikipedia.org/wiki/World_Wide_Web?useskin=minerva">Wikipedia, mobile skin</a>: the same article in one column. <span class="slow">Slow</span></li>
+<li><a href="https://simple.wikipedia.org/wiki/World_Wide_Web">Simple English Wikipedia</a>: shorter articles in plain words. <span class="slow">Slow</span></li>
+<li><a href="https://en.wiktionary.org/wiki/browser">Wiktionary</a>: a dictionary entry. <span class="slow">Slow</span></li>
+<li><a href="https://www.gutenberg.org/ebooks/1342">Project Gutenberg</a>: free books; Pride and Prejudice.</li>
+<li><a href="https://arxiv.org/abs/1706.03762">arXiv</a>: an abstract page of a research paper.</li>
 </ul>
-<h2>The web</h2>
+
+<h2>News and discussion</h2>
 <ul>
-<li><a href="https://info.cern.ch/">info.cern.ch, the first web site</a></li>
-<li><a href="https://text.npr.org/">NPR text-only news</a></li>
-<li><a href="https://news.ycombinator.com/">Hacker News</a></li>
-<li><a href="https://en.wikipedia.org/wiki/World_Wide_Web">Wikipedia: World Wide Web</a></li>
+<li><a href="https://text.npr.org/">NPR text</a>: news, the text-only edition.</li>
+<li><a href="https://lite.cnn.com/">CNN lite</a>: headlines, the light edition.</li>
+<li><a href="https://news.ycombinator.com/">Hacker News</a>: links and comments, in small type.</li>
+<li><a href="https://lobste.rs/">Lobsters</a>: links and comments about computing.</li>
+<li><a href="https://www.bbc.co.uk/news">BBC News</a>: the news front page. <span class="slow">Slow</span></li>
 </ul>
-<h2>Keys</h2>
-<p>Type a link number, then Enter. Tab selects a link. b goes back. ? shows help. q quits.</p>
-<p>Open any page with <code>textnaut URL</code>. A bare name such as <code>info.cern.ch</code> works too.</p>
-</html>
+
+<h2>Developer documents and specifications</h2>
+<ul>
+<li><a href="https://html.spec.whatwg.org/multipage/introduction.html">WHATWG HTML</a>: the HTML standard, one section a page.</li>
+<li><a href="https://www.w3.org/TR/WCAG22/">W3C WCAG 2.2</a>: a W3C Recommendation in one long page. <span class="slow">Slow</span></li>
+<li><a href="https://developer.mozilla.org/en-US/docs/Web/HTML">MDN Web Docs</a>: HTML reference. <span class="slow">Slow</span></li>
+<li><a href="https://docs.python.org/3/tutorial/index.html">Python tutorial</a>: the official Python documentation.</li>
+<li><a href="https://doc.rust-lang.org/std/index.html">Rust standard library</a>: generated API documentation.</li>
+<li><a href="https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array">Stack Overflow</a>: a well-known question and its answers.</li>
+</ul>
+
+<h2>Code, maps and government</h2>
+<ul>
+<li><a href="https://github.com/denoland/deno">GitHub</a>: a repository page. <span class="no">Not yet</span></li>
+<li><a href="https://wiki.openstreetmap.org/wiki/Main_Page">OpenStreetMap wiki</a>: the map project's documentation.</li>
+<li><a href="https://www.gov.uk/">GOV.UK</a>: UK government services and information.</li>
+<li><a href="https://info.cern.ch/hypertext/WWW/TheProject.html">The first web site</a>: CERN's WorldWideWeb page of 1991.</li>
+</ul>
+
+<h2>Our own pages</h2>
+<ul>
+<li><a href="https://danbri.github.io/factoidal/web/hub/foafnaut/pages/index.html">Demos</a>: pages that show what the engine draws, by kind: scripts, WebGPU and WebGL, SVG, text, XML and XSLT.</li>
+<li><a href="https://danbri.github.io/factoidal/web/hub/foafnaut/pages/stress.html">Stress tests</a>: heavy pages, such as the Spinal Tap page and the shader gallery. They can be slow.</li>
+</ul>
+<p class="k">On the Hub, a link to another site opens in the browser you are using now, not inside Foafnaut.</p>
+</main></body></html>

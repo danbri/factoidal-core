@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Ray marching: WebGPU and WebGL 2</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">
+<style>
+body{margin:0;padding:16px;font-size:15px;line-height:22px;color:#22303c;background:#f4f6fb}
+main{max-width:640px;margin:0 auto}
+h1{margin:0;font-size:24px;line-height:32px;color:#184078}
+p{margin:0;padding-top:6px}
+a{color:#1f5fbf}
+.bar{padding-top:10px;font-size:14px}
+.bar b{color:#184078}
+canvas{display:block;width:480px;height:300px;margin-top:10px;background:#0b1020;border:1px solid #c9d6e8}
+.out{color:#184078;font-size:13px;line-height:19px}
+.note{color:#5b6876;font-size:13px;line-height:19px}
+code{color:#7a3e12}
+button{font-size:14px}
+@media (max-width:520px){canvas{width:320px;height:200px}}
+</style></head><body><main>
+<p><a href="index.html">Demo index</a> · <a href="start.html">Start page</a></p>
+<h1>Ray marching</h1>
+<p>A small scene of signed distance fields: a torus and two spheres over a chequered floor, lit by one light.
+Each pixel marches a ray through the scene with a fixed step count. The same picture is written twice,
+in WGSL for WebGPU and in GLSL ES 3.00 for WebGL 2.</p>
+<p class="bar">API: <a id="to-webgpu" href="?api=webgpu">WebGPU</a> · <a id="to-webgl2" href="?api=webgl2">WebGL 2</a></p>
+<p class="bar">Quality: <a id="to-low" href="?q=low">low</a> (160 × 100, 40 steps, no shadow) · <a id="to-high" href="?q=high">high</a> (480 × 300, 64 steps, soft shadow)</p>
+<canvas id="c" width="160" height="100" aria-label="A ray-marched scene: a torus and two spheres over a floor">This page needs scripts and WebGPU or WebGL 2.</canvas>
+<p class="bar"><button id="pause" type="button">Pause</button></p>
+<p class="out" id="status">The script has not run.</p>
+<p class="note">To keep the load small: at most 64 steps a pixel, a low resolution unless asked, at most 30 frames a second,
+movement by elapsed time (so a slow frame does not slow the scene), and no frames while the page is hidden or paused.
+In Foafnaut the built-in engine checks both shaders against its GPU subset (loops with literal bounds, no
+<code>break</code>, no user functions), which is why the distance function is written out in place.
+Written for this project; MIT, like the rest of the repository.</p>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search || '');
+const high = params.get('q') === 'high';
+let api = params.get('api') === 'webgl2' ? 'webgl2' : 'webgpu';
+const W = high ? 480 : 160, H = high ? 300 : 100, STEPS = high ? 64 : 40, SHADOW = high ? 24 : 0;
+const canvas = $('c');
+canvas.setAttribute('width', String(W)); canvas.setAttribute('height', String(H));
+// The links keep the other choice.
+$('to-webgpu').setAttribute('href', '?api=webgpu&q=' + (high ? 'high' : 'low'));
+$('to-webgl2').setAttribute('href', '?api=webgl2&q=' + (high ? 'high' : 'low'));
+$('to-low').setAttribute('href', '?api=' + api + '&q=low');
+$('to-high').setAttribute('href', '?api=' + api + '&q=high');
+const say = text => { $('status').textContent = text; };
+
+// ---- The scene, once: the distance at point P, written for both languages. ----
+// Floor y = 0; a torus (radii 0.9 and 0.28, centre y = 1) turning about x; two spheres on circles.
+// The torus is turned by angle a about the x axis (ca, sa precomputed): q = (x, y', z')
+// with y' = y cos a - z sin a, z' = y sin a + z cos a; distance length((length(q.xy) - R, q.z)) - r.
+// vec2( is written as vec2f( for WGSL by body() below.
+const sceneOf = P => `min(${P}.y, min(length(vec2(length(vec2(${P}.x, (${P}.y - 1.0) * ca - ${P}.z * sa)) - 0.9, (${P}.y - 1.0) * sa + ${P}.z * ca)) - 0.28, min(length(${P} - c1) - 0.42, length(${P} - c2) - 0.32)))`;
+
+function body(lang) {
+  const g = lang === 'glsl';
+  const v3 = g ? 'vec3' : 'vec3f', v2 = g ? 'vec2' : 'vec2f', f = g ? 'float ' : 'let ', fv = g ? 'float ' : 'var ';
+  const vv = g ? 'vec3 ' : 'var ', lv = g ? 'vec3 ' : 'let ';
+  const loop = (i, n) => g ? `for (int ${i} = 0; ${i} < ${n}; ${i}++)` : `for (var ${i} = 0; ${i} < ${n}; ${i}++)`;
+  const S = P => sceneOf(P).split('vec2(').join(v2 + '(');
+  const shadow = SHADOW ? `
+    ${fv}sh = 1.0;
+    ${fv}st = 0.03;
+    ${loop('j', SHADOW)} {
+      ${lv}q = p + n * 0.003 + ld * st;
+      ${f}h = ${S('q')};
+      sh = min(sh, 10.0 * h / st);
+      st += clamp(h, 0.03, 0.35);
+    }
+    sh = clamp(sh, 0.0, 1.0);` : `
+    ${f}sh = 1.0;`;
+  return `
+  ${f}t = ${g ? 'iTime' : 'u.iTime'};
+  ${g ? 'vec2 r = iResolution;' : 'let r = u.iResolution;'}
+  ${g ? 'vec2 fc = gl_FragCoord.xy;' : 'let fc = vec2f(pos.x, r.y - pos.y);'}
+  ${lv.replace('3', '2')}uv = (fc - 0.5 * r) / r.y;
+  ${f}yaw = 0.3 * t;
+  ${lv}ro = ${v3}(5.0 * sin(yaw), 2.1, 5.0 * cos(yaw));
+  ${lv}fw = normalize(${v3}(0.0, 0.8, 0.0) - ro);
+  ${lv}rt = normalize(cross(fw, ${v3}(0.0, 1.0, 0.0)));
+  ${lv}up = cross(rt, fw);
+  ${lv}rd = normalize(uv.x * rt + uv.y * up + 1.6 * fw);
+  ${f}ca = cos(0.7 * t);
+  ${f}sa = sin(0.7 * t);
+  ${lv}c1 = ${v3}(1.7 * sin(0.9 * t), 0.42, 1.7 * cos(0.9 * t));
+  ${lv}c2 = ${v3}(-1.5 * cos(0.6 * t), 0.9 + 0.4 * sin(1.3 * t), 1.5 * sin(0.6 * t));
+  ${fv}dist = 0.0;
+  ${fv}hit = 0.0;
+  ${loop('i', STEPS)} {
+    ${lv}p = ro + rd * dist;
+    ${f}d = ${S('p')};
+    if (hit < 0.5 && dist < 20.0) {
+      if (d < 0.001 * dist + 0.0005) { hit = 1.0; } else { dist += d; }
+    }
+  }
+  ${lv}sky = ${v3}(0.62, 0.72, 0.86) - 0.3 * rd.y;
+  ${vv}col = sky;
+  if (hit > 0.5) {
+    ${lv}p = ro + rd * dist;
+    ${f}e = 0.001;
+    ${lv}n = normalize(${v3}(
+      ${S(`(p + ${v3}(e, 0.0, 0.0))`)} - ${S(`(p - ${v3}(e, 0.0, 0.0))`)},
+      ${S(`(p + ${v3}(0.0, e, 0.0))`)} - ${S(`(p - ${v3}(0.0, e, 0.0))`)},
+      ${S(`(p + ${v3}(0.0, 0.0, e))`)} - ${S(`(p - ${v3}(0.0, 0.0, e))`)}));
+    ${lv}ld = normalize(${v3}(0.5, 0.9, 0.3));${shadow}
+    ${vv}alb = ${v3}(0.95, 0.72, 0.2);
+    if (p.y < 0.02) {
+      ${f}ch = ${g ? 'mod(floor(p.x) + floor(p.z), 2.0)' : 'fract(0.5 * (floor(p.x) + floor(p.z))) * 2.0'};
+      alb = mix(${v3}(0.2, 0.22, 0.27), ${v3}(0.78, 0.76, 0.7), ch);
+    } else if (length(p - c1) < 0.44) {
+      alb = ${v3}(0.9, 0.3, 0.22);
+    } else if (length(p - c2) < 0.34) {
+      alb = ${v3}(0.2, 0.55, 0.95);
+    }
+    ${f}dif = max(dot(n, ld), 0.0) * sh;
+    ${f}amb = 0.45 + 0.55 * n.y;
+    ${f}spe = pow(max(dot(reflect(rd, n), ld), 0.0), 20.0) * sh;
+    col = alb * (0.22 * amb + dif) + 0.4 * spe;
+    col = mix(col, sky, 1.0 - exp(-0.006 * dist * dist));
+  }
+  col = sqrt(col);`;
+}
+const WGSL = `struct U { iResolution: vec2f, iTime: f32, pad: f32 }
+@group(0) @binding(0) var<uniform> u: U;
+@vertex fn vs(@location(0) p: vec2f) -> @builtin(position) vec4f { return vec4f(p, 0.0, 1.0); }
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {${body('wgsl')}
+  return vec4f(col, 1.0);
+}`;
+const GLSL_VS = `#version 300 es
+in vec2 pos;
+void main() { gl_Position = vec4(pos, 0.0, 1.0); }`;
+const GLSL_FS = `#version 300 es
+precision highp float;
+uniform vec2 iResolution;
+uniform float iTime;
+out vec4 fragColor;
+void main() {${body('glsl')}
+  fragColor = vec4(col, 1.0);
+}`;
+const QUAD = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+
+// ---- WebGPU ----
+async function webgpu() {
+  if (!navigator.gpu) throw new Error('no navigator.gpu');
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error('no GPU adapter');
+  const device = await adapter.requestDevice();
+  const ctx = canvas.getContext('webgpu'), format = navigator.gpu.getPreferredCanvasFormat();
+  ctx.configure({ device, format, alphaMode: 'opaque' });
+  const vbuf = device.createBuffer({ size: QUAD.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(vbuf, 0, QUAD);
+  const ubuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.pushErrorScope('validation');
+  const module = device.createShaderModule({ code: WGSL });
+  const pipeline = device.createRenderPipeline({ layout: 'auto',
+    vertex: { module, entryPoint: 'vs', buffers: [{ arrayStride: 8, attributes: [{ format: 'float32x2', offset: 0, shaderLocation: 0 }] }] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list' } });
+  const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubuf } }] });
+  const error = await device.popErrorScope();
+  if (error) throw new Error(error.message);
+  const data = new Float32Array([W, H, 0, 0]);
+  return t => {
+    data[2] = t;
+    device.queue.writeBuffer(ubuf, 0, data);
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(),
+      clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' }] });
+    pass.setPipeline(pipeline); pass.setBindGroup(0, bind); pass.setVertexBuffer(0, vbuf);
+    pass.draw(6); pass.end();
+    device.queue.submit([encoder.finish()]);
+  };
+}
+// ---- WebGL 2 ----
+function webgl2() {
+  const gl = canvas.getContext('webgl2');
+  if (!gl) throw new Error('no WebGL 2 context');
+  const shader = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+  const fs = shader(gl.FRAGMENT_SHADER, GLSL_FS);
+  if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(fs) || 'the shader did not compile');
+  const program = gl.createProgram();
+  gl.attachShader(program, shader(gl.VERTEX_SHADER, GLSL_VS)); gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) || 'the program did not link');
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, QUAD, gl.STATIC_DRAW);
+  const pos = gl.getAttribLocation(program, 'pos'), res = gl.getUniformLocation(program, 'iResolution'), time = gl.getUniformLocation(program, 'iTime');
+  return t => {
+    gl.viewport(0, 0, W, H);
+    gl.useProgram(program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 8, 0);
+    gl.uniform2f(res, W, H); gl.uniform1f(time, t);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  };
+}
+
+// ---- The frame loop: at most 30 frames a second, scene time by elapsed time, nothing while hidden or paused ----
+let draw = null, paused = false, hidden = false, onScreen = true, scheduled = false;
+let sceneTime = 0, lastStamp = null, lastDraw = -1e9;
+let frames = 0, scriptMs = 0, sumGap = 0, gaps = 0, lastReport = 0;
+const running = () => draw && !paused && !hidden && onScreen;
+function wake() { if (running() && !scheduled) { scheduled = true; lastStamp = null; requestAnimationFrame(tick); } }
+function tick(now) {
+  scheduled = false;
+  if (!running()) return;
+  scheduled = true; requestAnimationFrame(tick);
+  if (now - lastDraw < 32) return;
+  // Scene time moves by the real time between drawn frames, at most a quarter second at once.
+  if (lastStamp !== null) { const gap = now - lastStamp; sceneTime += Math.min(gap, 250) / 1000; sumGap += gap; gaps++; }
+  lastStamp = now; lastDraw = now;
+  const start = performance.now();
+  draw(sceneTime);
+  scriptMs += performance.now() - start; frames++;
+  // The status line changes at most every 3 s: a change of text lays the page out again.
+  if (now - lastReport >= 3000 && gaps) {
+    say(label + ': ' + (1000 * gaps / sumGap).toFixed(1) + ' frames a second, ' + (scriptMs / frames).toFixed(2) + ' ms of script a frame.');
+    lastReport = now; frames = 0; scriptMs = 0; sumGap = 0; gaps = 0;
+  }
+}
+const label = (api === 'webgpu' ? 'WebGPU' : 'WebGL 2') + ', ' + W + ' × ' + H + ', ' + STEPS + ' steps' + (SHADOW ? ', shadow' : '');
+$('pause').addEventListener('click', () => {
+  paused = !paused;
+  $('pause').textContent = paused ? 'Play' : 'Pause';
+  if (paused) say(label + ': paused.'); else wake();
+});
+if (typeof document.addEventListener === 'function' && 'visibilityState' in document)
+  document.addEventListener('visibilitychange', () => { hidden = document.visibilityState === 'hidden'; wake(); });
+if (typeof IntersectionObserver === 'function')
+  new IntersectionObserver(entries => { onScreen = entries[entries.length - 1].isIntersecting; wake(); }).observe(canvas);
+
+(async () => {
+  try { draw = api === 'webgpu' ? await webgpu() : webgl2(); }
+  catch (e) {
+    say((api === 'webgpu' ? 'WebGPU' : 'WebGL 2') + ' is not available here: ' + (e && e.message || e) + '. Try the other API above.');
+    return;
+  }
+  say(label + ': drawing.');
+  wake();
+})();
+</script>
+</main></body></html>

@@ -39,7 +39,8 @@ function addEntries(page,list){
 const noteDiagnostics=(page,answer)=>{if(page)page.diagnosticsSeen=true;if(Array.isArray(answer?.diagnostics))addEntries(page,answer.diagnostics);};
 const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlobalScope;
 const pagesBase=new URL('./pages/',import.meta.url).href,siteOrigin=new URL(import.meta.url).origin;
-const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
+// Home is the light start page (start.html, shared with Textnaut; owner 2026-11-15), not the demo index.
+const homeURL=pagesBase+'start.html',settingsURL=pagesBase+'settings.html';
 // The site this browser loads pages from: other sites go to the host browser.
 const site={origin:siteOrigin,pages:pagesBase,files:false};
 const router=createRouter(request=>call('',request));
@@ -141,7 +142,7 @@ async function fontsWanted(source){
   for(const font of wanted)fontFile(font.path).catch(()=>{});
   return wanted;
 }
-fetchEarly(pagesBase+'index.html','text');
+fetchEarly(homeURL,'text');
 const pageURL=page=>page&&/^[a-z0-9-]+\.(html|xml)$/.test(page)?pagesBase+page:undefined;
 // Lean calls made, for ?stats=1 and the tests: a scroll inside a band makes none.
 let leanCalls=0,leanRenders=0;
