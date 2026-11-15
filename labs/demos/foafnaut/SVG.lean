@@ -2445,6 +2445,78 @@ def pathHitSpans (data : Array Float) (base count : Nat) (rule : FillRule)
       | none => pathWindingFrom data base q count 0 0
     if rule == .nonzero then winding != 0 else winding%2 != 0
 
+/-- Whether edge `i` of a path record can change the winding number on the line of `q`:
+    its two ends compare differently with `q`'s local `y`, by the `<=` of `edgeUp` and
+    `edgeDown` on the same Float values. -/
+def pathEdgeSpans (data : Array Float) (base : Nat) (q : Float × Float) (i : Nat) : Bool :=
+  let py := q.1*Float.ofNat 0+q.2*Float.ofNat 1
+  let a1 := data[base+(20+4*i)]!
+  let a2 := data[base+(20+4*i+1)]!
+  let b1 := data[base+(22+4*i)]!
+  let b2 := data[base+(22+4*i+1)]!
+  decide (a1*Float.ofNat 0+a2*Float.ofNat 1 <= py) != decide (b1*Float.ofNat 0+b2*Float.ofNat 1 <= py)
+
+/-- An edge that does not span the line of `q` leaves the winding number as it is: both of
+    its tests need its ends on two sides of the line. -/
+private theorem pathEdgeStep_of_not_spans (data : Array Float) (base : Nat) (q : Float × Float)
+    (w : Int) (i : Nat) (h : pathEdgeSpans data base q i = false) : pathEdgeStep data base q w i = w := by
+  unfold pathEdgeSpans at h
+  unfold pathEdgeStep edgeUp edgeDown edgeUpAt edgeDownAt
+  simp only [bne_eq_false_iff_eq, decide_eq_decide] at h
+  by_cases hA : data[base+(20+4*i)]!*Float.ofNat 0+data[base+(20+4*i+1)]!*Float.ofNat 1 <=
+      q.1*Float.ofNat 0+q.2*Float.ofNat 1 <;>
+    by_cases hB : data[base+(22+4*i)]!*Float.ofNat 0+data[base+(22+4*i+1)]!*Float.ofNat 1 <=
+      q.1*Float.ofNat 0+q.2*Float.ofNat 1 <;>
+    simp_all
+
+/-- A fold that a kept-out element does not change is the fold of the kept elements. -/
+theorem foldl_filter_of_fixed {α β : Type} (f : β → α → β) (keep : α → Bool) (l : List α) (b : β)
+    (fixed : ∀ x ∈ l, keep x = false → ∀ y, f y x = y) : (l.filter keep).foldl f b = l.foldl f b := by
+  induction l generalizing b with
+  | nil => rfl
+  | cons x rest ih =>
+    have restFixed : ∀ x ∈ rest, keep x = false → ∀ y, f y x = y :=
+      fun z hz => fixed z (List.mem_cons_of_mem x hz)
+    cases hk : keep x with
+    | true => simp [hk, ih _ restFixed]
+    | false => simp [hk, ih _ restFixed, fixed x List.mem_cons_self hk]
+
+/-- The winding number of a path at `q` from the edges that a filter keeps is the winding
+    number from every edge, when the filter keeps every edge that spans the line of `q`:
+    the per-tile edge lists of `tilesOf` against the full scan of `pathHitFast`. -/
+theorem pathWinding_filter (data : Array Float) (base : Nat) (q : Float × Float) (count : Nat)
+    (keep : Nat → Bool) (spans : ∀ i < count, pathEdgeSpans data base q i = true → keep i = true) :
+    ((List.range count).filter keep).foldl (pathEdgeStep data base q) 0 = pathWindingFrom data base q count 0 0 := by
+  rw [pathWindingFrom_eq data base q count count 0 0 (by omega), ← List.range_eq_range']
+  apply foldl_filter_of_fixed
+  intro i hi hk w
+  apply pathEdgeStep_of_not_spans
+  cases hs : pathEdgeSpans data base q i with
+  | false => rfl
+  | true => simp [spans i (List.mem_range.mp hi) hs] at hk
+
+/-- `pathHitFast` over an edge list: the bounds test, then the winding number from the
+    listed edges only. -/
+def pathHitList (data : Array Float) (base : Nat) (rule : FillRule) (edges : Array Nat)
+    (q : Float × Float) : Bool :=
+  let px := q.1*Float.ofNat 1+q.2*Float.ofNat 0
+  let py := q.1*Float.ofNat 0+q.2*Float.ofNat 1
+  if !((decide (data[base+0]! <= px) && decide (px <= data[base+2]!)) &&
+      (decide (data[base+1]! <= py) && decide (py <= data[base+3]!))) then false
+  else
+    let winding := edges.foldl (pathEdgeStep data base q) 0
+    if rule == .nonzero then winding != 0 else winding%2 != 0
+
+/-- The fill over a filtered edge list is the fill over every edge, at a point whose spanning
+    edges the filter keeps. -/
+theorem pathHitList_eq (data : Array Float) (base count : Nat) (rule : FillRule) (keep : Nat → Bool)
+    (q : Float × Float) (spans : ∀ i < count, pathEdgeSpans data base q i = true → keep i = true) :
+    pathHitList data base rule ((List.range count).filter keep).toArray q =
+      pathHitFast data base count rule q := by
+  have w := pathWinding_filter data base q count keep spans
+  simp only [pathHitList, pathHitFast, List.foldl_toArray', w]
+#print axioms pathHitList_eq
+
 private def windingWGSL (count : Nat) (conditions : Nat → Test × Test) (rule : FillRule) : String :=
   "var winding:i32=0;\n" ++ String.join ((List.range count).map fun i =>
     let (up,down) := conditions i
@@ -3161,24 +3233,80 @@ private def paintTailOf (compiled : List BackendPrimitive) : Array Nat := Id.run
       out := out.push (bitmap.word i)
   return out.push (start+used)
 
-/-- Primitive lists for each screen tile, in paint order: tile size, tiles
-across, tiles down, one start offset for each tile and a final end offset, then
-the record row of each listed primitive, then the paint table. A primitive is left out of a tile only
-when its conservative box does not touch the tile; there it can not change a
-pixel, so the image does not change. -/
+/-- The edge list word of a tile entry that names no list: the shader walks every edge. -/
+def allEdges : Nat := 4294967295
+
+/-- Limit on the words of all tile edge lists; past it an entry walks every edge. -/
+def maxTileEdgeWords : Nat := 4000000
+
+/-- The range of local `y` that the samples of a pixel box `x0..x1 × y0..y1` can have in a
+primitive's own space (page mapping, then the primitive's inverse transform), widened by
+half its height and a thousandth of its size for the binary32 arithmetic of the shader;
+`none` when a corner is not finite. -/
+def Primitive.localRows (m : Mapping) (p : BackendPrimitive) (x0 y0 x1 y1 : Float) : Option (Float × Float) :=
+  let inv := p.transform.inverse
+  let ys := [(x0,y0),(x1,y0),(x0,y1),(x1,y1)].map fun (x,y) =>
+    (inv.apply ((x-m.tx)/m.sx+m.minX) ((y-m.ty)/m.sy+m.minY)).2
+  if ys.any (fun v => v.isNaN || v.isInf) then none
+  else
+    let lo := ys.foldl min (ys.headD 0)
+    let hi := ys.foldl max (ys.headD 0)
+    let margin := (hi-lo)/2+(lo.abs+hi.abs)/1000+1/1000
+    some (lo-margin,hi+margin)
+
+/-- The edges of a path's fill that can change the winding number of a sample whose local
+`y` is in `lo..hi`: every edge but those with both ends below `lo` or both above `hi`
+(`List.range` filtered, as `pathWinding_filter` states it). -/
+def edgesMeeting (edges : Array (Float × Float)) (lo hi : Float) : Array Nat :=
+  ((List.range edges.size).filter fun i =>
+    let (a,b) := edges[i]!
+    !(max a b < lo) && !(min a b > hi)).toArray
+
+/-- Primitive lists for each screen tile, in paint order: tile size, tiles across, tiles
+down, one start offset for each tile and a final end offset, then the record row of each
+listed primitive, then for each listed primitive the word of its edge list (`allEdges`, or
+the index in these words of a count followed by that many edge indices), then the edge
+lists, then the paint table. A primitive is left out of a tile only when its conservative
+box does not touch the tile; there it can not change a pixel, so the image does not change.
+A path's edge list in a tile holds the edges whose ends do not both lie below or both above
+the local rows of the tile's samples (`Primitive.localRows`, `edgesMeeting`): the other
+edges change no winding number there (`pathWinding_filter`). The shader walks the list
+instead of every edge of the path. -/
 def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPrimitive) : Array Nat := Id.run do
   let tail := paintTailOf compiled
   let across := (width+tileSize-1)/tileSize
   let down := (height+tileSize-1)/tileSize
-  let mut lists : Array (Array Nat) := Array.replicate (across*down) #[]
+  let mut lists : Array (Array (Nat × Nat)) := Array.replicate (across*down) #[]
+  let mut pool : Array Nat := #[]
   let mut base := 2
   for p in compiled do
+    -- The local y of each end of each fill edge of a path (in the order of its record).
+    let ys : Option (Array (Float × Float)) := match p.geometry with
+      | .path contours => some ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray
+      | _ => none
+    -- A transform whose local y does not depend on x (no rotation or skew of y) maps a row
+    -- of tiles to one range of local y: one list for the row.
+    let inv := p.transform.inverse
+    let byRow := inv.b == 0
     let (left,top,right,bottom) := match p.screenBox mapping with
       | some (x0,y0,x1,y1) => (tileIndex x0 across,tileIndex y0 down,tileIndex x1 across,tileIndex y1 down)
       | none => (0,0,across-1,down-1)
     for y in [top:bottom+1] do
+      let mut rowRef : Option Nat := none
       for x in [left:right+1] do
-        lists := lists.modify (y*across+x) (·.push base)
+        let mut ref := allEdges
+        if let some edges := ys then
+          if let some r := rowRef then ref := r
+          else
+            let tx0 := Float.ofNat (x*tileSize)
+            let ty0 := Float.ofNat (y*tileSize)
+            if let some (lo,hi) := p.localRows mapping tx0 ty0 (tx0+tileSize.toFloat) (ty0+tileSize.toFloat) then
+              let kept := edgesMeeting edges lo hi
+              if pool.size+kept.size+1 <= maxTileEdgeWords then
+                ref := pool.size
+                pool := (pool.push kept.size) ++ kept
+        if byRow && ys.isSome then rowRef := some ref
+        lists := lists.modify (y*across+x) (·.push (base,ref))
     base := base+p.rowCount
   let mut offsets : Array Nat := #[]
   let mut total := 0
@@ -3193,12 +3321,16 @@ def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPri
     for p in compiled do
       rows := rows.push row
       row := row+p.rowCount
-    return #[max width height+1,1,1,0,rows.size] ++ rows ++ tail
-  let mut out : Array Nat := #[tileSize,across,down] ++ offsets
+    return #[max width height+1,1,1,0,rows.size] ++ rows ++ Array.replicate rows.size allEdges ++ tail
+  -- Edge lists are placed after the entries and their list words.
+  let poolStart := 3+offsets.size+2*total
+  let mut entries : Array Nat := #[]
+  let mut refs : Array Nat := #[]
   for list in lists do
-    out := out ++ list
-  return out ++ tail
-
+    for (row,ref) in list do
+      entries := entries.push row
+      refs := refs.push (if ref == allEdges then allEdges else poolStart+ref)
+  return #[tileSize,across,down] ++ offsets ++ entries ++ refs ++ pool ++ tail
 /-- The tile words of a scene (`tilesOf` of its compiled primitives). -/
 def Scene.tiles (s : Scene) : Array Nat := tilesOf s.width s.height s.mapping s.compiled
 
@@ -3215,6 +3347,15 @@ private def sceneShader : String :=
   "for(var i=0u;i<count;i++){let ai=select(2u*i,4u*i,stride==4u);let bi=select(2u*((i+1u)%count),4u*i+2u,stride==4u);" ++
   "let a=vec2f(parameter(base,20u+ai),parameter(base,21u+ai));" ++
   "let b=vec2f(parameter(base,20u+bi),parameter(base,21u+bi));" ++
+  "let cross=(b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x);" ++
+  "if(a.y<=p.y&&p.y<b.y&&cross>0.0){winding+=1;}" ++
+  "if(b.y<=p.y&&p.y<a.y&&cross<0.0){winding-=1;}}" ++
+  "if(rule==1u){return (winding%2)!=0;}return winding!=0; }\n" ++
+  -- A path's fill over the tile's edge list (`tilesOf`): a count, then edge indices; the word
+  -- `allEdges` walks every edge. The test of each edge is `windingContains`'s.
+  "fn pathWinding(base:u32,count:u32,rule:u32,p:vec2f,list:u32)->bool {if(list==" ++ toString allEdges ++ "u){return windingContains(base,count,rule,p,4u);}" ++
+  "var winding:i32=0;let n=min(tiles[list],count);for(var j=0u;j<n;j++){let i=tiles[list+1u+j];if(i>=count){break;}" ++
+  "let a=vec2f(parameter(base,20u+4u*i),parameter(base,21u+4u*i));let b=vec2f(parameter(base,22u+4u*i),parameter(base,23u+4u*i));" ++
   "let cross=(b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x);" ++
   "if(a.y<=p.y&&p.y<b.y&&cross>0.0){winding+=1;}" ++
   "if(b.y<=p.y&&p.y<a.y&&cross<0.0){winding-=1;}}" ++
@@ -3247,8 +3388,8 @@ private def sceneShader : String :=
   "var rgb=vec3f(1.0);let rowLimit=arrayLength(&params.rows);if(rowLimit<2u){return vec4f(rgb,1.0);}if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
   "let worldP=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);" ++
   "let across=tiles[1];let down=tiles[2];let tile=min(u32(pixel.y)/tiles[0],down-1u)*across+min(u32(pixel.x)/tiles[0],across-1u);" ++
-  "let listBase=4u+across*down;let listEnd=tiles[4u+tile];\n" ++
-  "for(var item=tiles[3u+tile];item<listEnd;item++)" ++ "{var base=tiles[listBase+item];" ++
+  "let listBase=4u+across*down;let listEnd=tiles[4u+tile];let refBase=listBase+tiles[3u+across*down];\n" ++
+  "for(var item=tiles[3u+tile];item<listEnd;item++)" ++ "{var base=tiles[listBase+item];let edgeList=tiles[refBase+item];" ++
   "let remaining=rowLimit-base;if(remaining<5u){break;}let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
   "if(count>2u*remaining){break;}let shapeRows=select((count+1u)/2u,count,tag==" ++ toString Geometry.pathRecordTag ++ "u);let dashCount=u32(params.rows[base+4u].z);let clipCount=header.w/4u;" ++
   "if(shapeRows>remaining||dashCount>remaining/" ++ toString dashPieceRowCount ++ "u||clipCount>remaining/" ++ toString clipRowCount ++ "u){break;}let tailRows=shapeRows+" ++ toString dashPieceRowCount ++ "u*dashCount;let affineRows=select(0u," ++ toString affineTransformRowCount ++ "u,(header.w%4u)>=2u);let recordRows=" ++ toString primitiveFixedRowCount ++ "u+tailRows+affineRows+" ++ toString clipRowCount ++ "u*clipCount;if(recordRows>remaining){break;}var p=worldP;if((header.w%4u)>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
@@ -3263,7 +3404,7 @@ private def sceneShader : String :=
   s!"case {Geometry.lineRecordTag}u: " ++ "{if((header.w%2u)==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
   ";}else{strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}}\n" ++
   s!"case {Geometry.polygonRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,2u);}}" ++
-  s!"case {Geometry.pathRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,4u);}} default:{} }\n" ++
+  s!"case {Geometry.pathRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=pathWinding(base,count,header.z,p.xy,edgeList);}} default:{} }\n" ++
   s!"if(params.rows[base+4u].w==1.0)" ++ "{strokeHit=false;let parentBase=base;for(var di=0u;di<dashCount;di++){base=parentBase+" ++ toString primitiveFixedRowCount ++ s!"u+shapeRows+di*{dashPieceRowCount}u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
   "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
   "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
@@ -3455,6 +3596,20 @@ def Primitive.prepareCoverageSpans (p : BackendPrimitive) (data : Array Float) (
       let count := (NativeSVGPath.edges contours).length
       .analytic p.transform.inverse data
         (.dynamic (fun env => pathHitSpans env.data base count p.style.rule spans env.position))
+        ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+    | _,_ => p.prepareLocal data base
+  match p.clips with
+  | [] => inner
+  | clips => .clipped (clipPass data (p.clipStart base) clips) inner
+
+/-- `prepareCoverage` with the path fill test over an edge list (`pathHitList`): the fill
+    of a tile's samples as the scene shader computes it from the tile's edge list. -/
+def Primitive.prepareCoverageEdges (p : BackendPrimitive) (data : Array Float) (base : Nat)
+    (edges : Array Nat) : PreparedCoverage :=
+  let inner : PreparedCoverage := match p.dashParts,p.geometry with
+    | none,.path _ =>
+      .analytic p.transform.inverse data
+        (.dynamic (fun env => pathHitList env.data base p.style.rule edges env.position))
         ((strokeCondition p.geometry base p.style.lineCap).prepare data)
     | _,_ => p.prepareLocal data base
   match p.clips with
