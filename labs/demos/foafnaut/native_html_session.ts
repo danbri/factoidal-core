@@ -10,8 +10,8 @@ import {requestRenderPlan,textureUsage,bufferUsage,commandInterpreter,type Rende
 import {SurfaceLifecycle} from "./surface_lifecycle.ts";
 import {unpad,checkPixels} from "./gpu_transport.ts";
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
-import {createLayerRenderer,READBACK_COMMANDS} from "./layer_compositor.ts";
-import {createGpuGate,sceneCost} from "./gpu_pacing.ts";
+import {createLayerRenderer,readbackStep,READBACK_COMMANDS} from "./layer_compositor.ts";
+import {createGpuGate,sceneCost,type PipeEvent} from "./gpu_pacing.ts";
 // The gate's first guess of GPU ms per sceneCost unit, before any frame has measured one on
 // this machine: 0.8, a little under the 0.99 measured on Spinal Tap on an Apple M1 (2026-11-15),
 // so a faster GPU waits at most a little for the first heavy frame and the M1 blocks little.
@@ -39,7 +39,9 @@ export type PresentTarget=Deno.UnsafeWindowSurface|{offscreen:true};
  * 0 is no bound, for measurement. onGpuDone gets the GPU time of each piece of GPU work. */
 export type SessionOptions={framesInFlight?:number;onGpuDone?:(gpuMs:number)=>void;
   /** The readbacks a replay of page `p`'s GPU commands made (page-gpu.mjs), for Lean's `gpuRead`. */
-  onGpuReads?:(p:number,results:unknown[])=>void};
+  onGpuReads?:(p:number,results:unknown[])=>void;
+  /** Each submission and each blocking GPU wait, for the pipeline trace (HostPipeline.Model). */
+  onPipe?:(event:PipeEvent)=>void};
 
 export async function createHTMLWindowSession(device:GPUDevice,target:PresentTarget,native:Native,options:SessionOptions={}) {
   // The Lean svg-offscreen plan always answers rgba8unorm, which a macOS window
@@ -101,23 +103,29 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
   }
   // Two layers (issue 1268): each Lean render is drawn into two textures, and every
   // present is Lean's composite of them at an offset. A scroll in the band presents again.
-  const layered=createLayerRenderer(device,format);
+  // A checked frame's readback is a blocking GPU wait too: in the pipeline trace it is the
+  // frame's submit and a wait (the gate counts the frame as answered: settled).
+  const onReadback=options.onPipe?(phase:"begin"|"end")=>{if(phase==="begin"){options.onPipe!("submit");options.onPipe!("ask");}else options.onPipe!("answer");}:undefined;
+  const layered=createLayerRenderer(device,format,device.limits,onReadback);
   let lastLayers:{layers:HTMLLayers;width:number;height:number;offset:number}|undefined;
   // GPU work of this session runs one call at a time, in the order asked. Each call first
   // waits until the GPU has finished the work of the call before (the gate), so a page whose
   // frames cost the GPU more than the host's turn can not queue frames on the GPU. After a
   // halt (quit, window close) a call asks the GPU for nothing and presents nothing.
-  const gate=createGpuGate(device.queue,options.framesInFlight??1,options.onGpuDone,GPU_MS_PER_UNIT);
+  const gate=createGpuGate(device.queue,options.framesInFlight??1,options.onGpuDone,GPU_MS_PER_UNIT,options.onPipe);
   let halted=false;
   const notPresented=():DrawResult=>({presented:false,checked:false,pixelHash:lastHash,steps:lastSteps,prepareMs:0,drawMs:0,presentedAt:0});
   let queue:Promise<unknown>=Promise.resolve();
   // `cost`: the submission's predicted GPU work (sceneCost), so the gate can sleep through it
   // instead of blocking the thread in Deno's wait. A composite alone counts its pixels.
-  const inOrder=<T>(work:()=>Promise<T>,cost=0):Promise<T|DrawResult>=>{
+  // A checked draw reads the frame back, which blocks until the GPU is done: it first waits
+  // until nothing is in flight and for the loop's next turn, so the block is its own frame's
+  // work alone, right after input was taken.
+  const inOrder=<T>(work:()=>Promise<T>,cost=0,check=false):Promise<T|DrawResult>=>{
     const run=async()=>{
-      await gate.before();
+      if(check){await gate.quiet();await gate.nextTurn();}else await gate.before();
       if(halted)return notPresented();
-      try{return await work();}finally{gate.after(cost);}
+      try{return await work();}finally{gate.after(cost,check);}
     };
     const next=queue.then(run,run);queue=next.catch(()=>{});return next;
   };
@@ -203,7 +211,7 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
       // Time each Lean plan command: mapRead waits for the GPU to finish the frame.
       for(const command of plan.commands){
         if(!check&&READBACK_COMMANDS.has(command))continue;
-        const s=performance.now();await interpreter.step(command);steps[command]=Math.round((performance.now()-s)*10)/10;
+        const s=performance.now();await readbackStep(interpreter,command,onReadback);steps[command]=Math.round((performance.now()-s)*10)/10;
       }
       if(check){
         const bytes=interpreter.mapped();if(!bytes)throw new Error("Lean plan produced no native HTML readback");
@@ -229,17 +237,17 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
   }
   return {
     /** Draw one Lean scene. check=true also reads the window back, checks Lean's probe pixels and hashes. */
-    draw:(frame:HTMLArtifact,check:boolean):Promise<DrawResult>=>inOrder(()=>{lastLayers=undefined;return render(frame,check);},sceneCost(frame as never)),
+    draw:(frame:HTMLArtifact,check:boolean):Promise<DrawResult>=>inOrder(()=>{lastLayers=undefined;return render(frame,check);},sceneCost(frame as never),check),
     /** Draw the two layers of one Lean render and present their composite at `offset`. */
     drawLayers:(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult>=>inOrder(()=>renderLayers(layers,width,height,offset,check),
-      sceneCost(layers.page as never)+sceneCost(layers.chrome as never)+width*height/1e6),
+      sceneCost(layers.page as never)+sceneCost(layers.chrome as never)+width*height/1e6,check),
     /** Present the layers already drawn at another offset: no Lean call and no scene draw. */
     shift:(offset:number,check:boolean):Promise<DrawResult>=>inOrder(async()=>{
       if(disposed)throw new Error("Native HTML session already disposed");
       if(!lastLayers)throw new Error("shift before any layers were drawn");
       lastLayers.offset=offset;
       return present(lastLayers.width,lastLayers.height,offset,check,performance.now(),{});
-    },lastLayers?lastLayers.width*lastLayers.height/1e6:0),
+    },lastLayers?lastLayers.width*lastLayers.height/1e6:0,check),
     /** Replay a turn's page GPU commands and present the page canvases (no Lean call). */
     pageGpu,
     /** The press rectangles of the next presents (Lean's `press` answer); undefined clears them. */
@@ -248,7 +256,7 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     /** Draw the last presented scene again with the readback checks. Used after input has been idle. */
     checkLast():Promise<DrawResult|undefined> {
       return inOrder<DrawResult|undefined>(()=>lastLayers?renderLayers(lastLayers.layers,lastLayers.width,lastLayers.height,lastLayers.offset,true)
-        :last?render(last,true):Promise.resolve(undefined));
+        :last?render(last,true):Promise.resolve(undefined),0,true);
     },
     get lastChecked(){return lastChecked;},
     /** Off screen: the texture the last frame was presented to (it has COPY_SRC), for --shot. */
@@ -259,6 +267,9 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     get stats(){return {...stats,layers:{...layered.stats},gpu:gate.stats};},
     /** Submit to done of recent GPU work, ms (about the GPU time, with the gate on). */
     get gpuTimes(){return gate.recent;},
+    /** The host loop's turn, right after it took input: GPU waits start only here from now on
+     * (gpu_pacing.ts `turn`), so at most one blocking wait comes between two pumps. */
+    gpuTurn(){gate.turn();},
     /** Quit or close: from now on no call asks the GPU for work. Resolves when the GPU has
      * finished what it was given (at most the frames in flight). */
     halt():Promise<unknown> {halted=true;return gate.idle();},

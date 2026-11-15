@@ -18,6 +18,12 @@ type CanvasPlace={canvases?:{node:number;rect:number[];clip:number[]}[];canvasBl
 // The plan commands that read the frame back to the CPU. Lean's plan always
 // lists them. The host leaves them out for a frame that is not checked.
 export const READBACK_COMMANDS:ReadonlySet<string>=new Set(["copyTextureToBuffer","mapRead","readMapped","unmap"]);
+/** One plan command; `mapRead` is bracketed by `onReadback` (the blocking part is the call). */
+export function readbackStep(interpreter:{step(command:string):unknown},command:string,onReadback?:(phase:"begin"|"end")=>void):unknown {
+  if(command!=="mapRead"||!onReadback)return interpreter.step(command);
+  onReadback("begin");
+  try{return interpreter.step(command);}finally{onReadback("end");}
+}
 
 /** FNV-1a over the pixels: two renderers agree only if every byte agrees. */
 export function pixelHash(pixels:Uint8Array):string {
@@ -70,7 +76,9 @@ export const MAX_PRESS_RECTS=8;
 const PLACE_WORDS=4*(MAX_PRESS_RECTS+2);
 const LAYER_USAGE=()=>GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC;
 
-export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,limits:DeviceFacts=device.limits) {
+/** `onReadback`: called just before and just after the call that maps the readback (Deno's
+ * mapAsync blocks inside the call until the GPU is done), for the pipeline trace. */
+export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,limits:DeviceFacts=device.limits,onReadback?:(phase:"begin"|"end")=>void) {
   const plans=new Map<string,RenderPlan>();
   const pipelines=new Map<string,GPURenderPipeline>();
   const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,bindGroups:0,scenesFull:0,scenesPartial:0,scenesKept:0,scenesSame:0,bandedScenes:0};
@@ -114,7 +122,7 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       const steps:Record<string,number>={};
       for(const command of p.commands){
         if(!check&&READBACK_COMMANDS.has(command))continue;
-        const s=performance.now();await interpreter.step(command);steps[command]=Math.round((performance.now()-s)*10)/10;
+        const s=performance.now();await readbackStep(interpreter,command,onReadback);steps[command]=Math.round((performance.now()-s)*10)/10;
       }
       let pixels:Uint8Array|undefined,hash="";
       if(check){

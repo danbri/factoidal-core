@@ -50,7 +50,7 @@ async function main() {
   let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -60,6 +60,9 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    // The main thread's pipeline events (pump, submit, ask, answer), one a line, for
+    // pipeline_trace_check.ts and L4Factoidal/HostPipeline/Model.lean.
+    else if(arg==="--pipe-trace")pipeTraceFile=args.shift();
     else if(arg==="--log-all")logAll=true;
     else if(arg==="--fail-on-flood")failOnFlood=true;
     else if(arg==="--poll-idle")pollIdle=true;
@@ -1269,7 +1272,7 @@ async function main() {
       idle:{...idleStats,waitedMs:Math.round(idleStats.waitedMs),idleMs:Math.round(idleStats.idleMs),
         turnsPerSecond:idleStats.idleMs>0?Math.round(idleStats.idleTurns/(idleStats.idleMs/1000)*10)/10:null},
       gpu:{framesInFlight,submitToDoneMsP50:percentile(session?.gpuTimes??[],0.5),submitToDoneMsP95:percentile(session?.gpuTimes??[],0.95),
-        maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
+        maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,maxBlockedMs:session?.stats.gpu.maxBlockedMs??0,maxWaitsBetweenPumps,turnAsks:session?.stats.gpu.turnAsks??0,fallbackAsks:session?.stats.gpu.fallbackAsks??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
       logGate:logGate.stats(),pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
@@ -1277,7 +1280,15 @@ async function main() {
     
     trace(line.type,line);
     // Off screen, "presented" means drawn and submitted to the texture: no compositor, no display.
-    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms, guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)\nlog: ${line.logGate.lines} lines, ${line.logGate.written} written, ${line.logGate.suppressed} held back in ${line.logGate.trips} flood${line.logGate.trips===1?"":"s"}, ${line.logGate.collapsed} repeats collapsed${line.logGate.top[0]?`; most said ${JSON.stringify(line.logGate.top[0].message)} ×${line.logGate.top[0].count}`:""}`);
+    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms (longest ${line.gpu.maxBlockedMs} ms, most waits between pumps ${line.gpu.maxWaitsBetweenPumps}), guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)\nlog: ${line.logGate.lines} lines, ${line.logGate.written} written, ${line.logGate.suppressed} held back in ${line.logGate.trips} flood${line.logGate.trips===1?"":"s"}, ${line.logGate.collapsed} repeats collapsed${line.logGate.top[0]?`; most said ${JSON.stringify(line.logGate.top[0].message)} ×${line.logGate.top[0].count}`:""}`);
+  };
+  // The pipeline trace (--pipe-trace): events of the main thread, and the most blocking GPU
+  // waits seen between two pumps (HostPipeline.Model: at most one).
+  const pipeEvents:string[]=[];let waitsSincePump=0,maxWaitsBetweenPumps=0,lastPipe="";
+  const pipeNote=(event:string)=>{
+    if(event==="pump"){waitsSincePump=0;if(lastPipe==="pump")return;}
+    else if(event==="ask"){waitsSincePump++;maxWaitsBetweenPumps=Math.max(maxWaitsBetweenPumps,waitsSincePump);}
+    lastPipe=event;if(pipeTraceFile&&pipeEvents.length<1000000)pipeEvents.push(event);
   };
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
@@ -1325,6 +1336,7 @@ async function main() {
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
     // One session for the window's life. It keeps the pipeline and buffers (issue 1268).
     session=await createHTMLWindowSession(device,target,native,{framesInFlight,
+      onPipe:event=>{pipeNote(event);},
       // GPU readbacks (mapAsync) go back to Lean, which resolves the page's promise in a task.
       onGpuReads:(p,results)=>{
         (scriptCall("scriptSession","",{action:"gpuRead",session:p,results}) as Promise<ScriptTurn>)
@@ -1680,6 +1692,8 @@ async function main() {
       // After an idle wait no window update or flush unless an event came.
       if(waited){idleStats.quietPumps++;if(native.pumpQuiet())idleStats.eventsAfterWait++;}else native.pump();
       waited=0;checkHold();const pumpEnd=performance.now();
+      // Input taken: the GPU gate may start one wait now (gpu_pacing.ts `turn`).
+      pipeNote("pump");session?.gpuTurn();
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       // Take every native event now and keep each with the time it was taken. None is dropped here.
       // The window library stamps each event when it is queued; its clock maps onto
@@ -1981,6 +1995,7 @@ async function main() {
     }
   } finally {
     running=false;controller?.abort();quitAt=performance.now();
+    if(pipeTraceFile){try{Deno.writeTextFileSync(pipeTraceFile,pipeEvents.join("\n")+"\n");}catch(error){console.error("Native HTML: pipeline trace not written:",String(error));}}
     // --shot-at-end: the picture of the last frame, once a frame in progress has ended.
     if(shotAtEnd&&shotFile&&session?.frames){
       try{await rendering;await shifting;await takeShot();}catch(error){console.error("Native HTML: shot at end failed:",String(error));}

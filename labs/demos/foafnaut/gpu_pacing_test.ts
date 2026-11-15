@@ -100,3 +100,36 @@ Deno.test("guard: the gap is bounded", ()=>{
   for(let i=0;i<3;i++)light.record(260);
   assert.equal(light.gapMs(),780);
 });
+
+Deno.test("gate driven by the loop: asks start only at a turn, one a turn, and are traced", async()=>{
+  const events:string[]=[];
+  // A queue that answers at once (the GPU is done when asked).
+  const queue={onSubmittedWorkDone:()=>Promise.resolve()};
+  const gate=createGpuGate(queue,1,undefined,0,event=>events.push(event));
+  gate.turn();
+  for(let i=0;i<3;i++){await gate.before();gate.after();}
+  await tick();
+  assert.equal(events.filter(e=>e==="ask").length,0);
+  gate.turn();events.push("pump");gate.turn();
+  assert.equal(events.filter(e=>e==="ask").length,1);
+  await tick();await tick();
+  assert.equal(gate.inFlight,0);
+  assert.deepEqual(events,["submit","submit","submit","ask","answer","pump"]);
+});
+
+Deno.test("gate driven by the loop: the fallback asks when the loop stops turning", async()=>{
+  const queue={onSubmittedWorkDone:()=>Promise.resolve()};
+  const gate=createGpuGate(queue,1);
+  gate.turn();gate.after();
+  await new Promise(resolve=>setTimeout(resolve,80));
+  assert.equal(gate.inFlight,0);
+  assert.equal(gate.stats.fallbackAsks,1);
+});
+
+Deno.test("gate: a settled submission (a readback) is answered at once", async()=>{
+  const queue=fakeQueue(),gate=createGpuGate(queue,1);
+  gate.turn();gate.after(0,true);
+  assert.equal(gate.inFlight,0);
+  await gate.quiet();
+  assert.equal(queue.asked,0);
+});
