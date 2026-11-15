@@ -226,7 +226,7 @@ def vmFastGo (instrs : @& Array Instr) (env : Nat) : Nat → Nat → Nat → Arr
       match regs[bp + a]! with
       | .undef | .null => vmFastGo instrs env n (pc + 1) bp regs fregs h
       | _ => vmFastGo instrs env n t bp regs fregs h
-    | .tick =>
+    | .tick | .tickF =>
       -- `tick` of `JS/Interp.lean`; where it would throw, `vmLoop` runs it
       if h.steps == 0 then fastStop pc regs fregs h
       else if h.steps % 1024 == 0 && h.full then fastStop pc regs fregs h

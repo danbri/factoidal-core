@@ -6376,7 +6376,10 @@ def vmLoop : Nat → Ctx → Array Stmt → Code → Nat → Nat → Nat → Lis
         let (regs, fregs) ← vmTake
         if toBool v then vmLoop n cx subs code (pc + 1) bp env fr regs fregs else vmLoop n cx subs code t bp env fr regs fregs
     | .tick =>
-      -- a loop head: the inner loop runs what it can (`JS/VmFast.lean`), from this `tick` on
+      tick
+      vmLoop n cx subs code (pc + 1) bp env fr regs fregs
+    | .tickF =>
+      -- the head of a loop of instructions the inner loop runs (`JS/VmFast.lean`)
       let o ← vmFast code.instrs env n pc bp regs fregs
       if o.pc == pc then
         tick

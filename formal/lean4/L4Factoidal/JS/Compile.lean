@@ -1003,6 +1003,46 @@ def whyNot (f : FunDef) : String :=
     | .error w => w
   if gate.isEmpty then body else if body.isEmpty then gate else gate ++ " + " ++ body
 
+/-- The instructions the inner loop of the register machine runs (`vmFastGo` in
+`JS/VmFast.lean`), when their operands pass its tests. -/
+def fastKind : Instr → Bool
+  | .move .. | .loadF .. | .loadV .. | .setHole _ | .add .. | .sub .. | .mul .. | .div ..
+  | .lt .. | .gt .. | .le .. | .ge .. | .addK .. | .subK .. | .mulK ..
+  | .jnltK .. | .jngtK .. | .jnleK .. | .jngeK .. | .jnlt .. | .jngt .. | .jnle .. | .jnge ..
+  | .inc .. | .jmp _ | .jnull .. | .jnotnull .. | .tick | .tickF
+  | .getMember .. | .getIndex .. | .getUp .. | .setUp .. | .getGlobal .. => true
+  | _ => false
+
+/-- The last jump back to `top` below index `j` and after `top`, scanning down; `none` if there
+is none. -/
+def backEdge (code : Array Instr) (top : Nat) : Nat → Option Nat
+  | 0 => none
+  | j + 1 =>
+    if j ≤ top then none else
+    match code[j]? with
+    | some (.jmp t) => if t == top then some j else backEdge code top j
+    | _ => backEdge code top j
+
+/-- Is the loop whose `tick` is at `top` made of `fastKind` instructions only, from its head to
+its jump back? -/
+def loopAllFast (code : Array Instr) (top : Nat) : Bool :=
+  match backEdge code top code.size with
+  | some j => (List.range' top (j + 1 - top)).all (fun k => fastKind (code.getD k Instr.tick))
+  | none => false
+
+/-- The instruction at `i` after marking: `tickF` for the `tick` of an all-fast loop. -/
+def markAt (code : Array Instr) (i : Nat) : Instr → Instr
+  | .tick => if loopAllFast code i then .tickF else .tick
+  | ins => ins
+
+/-- Mark the head of each loop whose instructions, from its `tick` to its jump back, are all
+`fastKind`: the `tick` becomes `tickF`, the same step, and the register machine runs the loop
+in its inner loop. A loop with anything else (a call, a property write, an evaluator
+fallback) keeps `tick` and runs as before, so it pays nothing for the inner loop. Only the
+instruction at the head changes (`VmFastProofs.markFastLoops_size`, `VmFastProofs.markAt_cases`). -/
+def markFastLoops (code : Array Instr) : Array Instr :=
+  code.mapIdx fun i ins => markAt code i ins
+
 /-- Code for a function, or `none` when it is not compilable (`FunInfo` is already filled).
 Parameters take the first registers (the arguments of a call are already there), then the
 `var`s, then `this`, then the block scopes and temporaries. -/
@@ -1014,7 +1054,7 @@ def compile (f : FunDef) : Option Code :=
   | _ =>
   match compileBody f with
   | .ok s =>
-    some { instrs := s.code, nregs := s.maxReg + 1, nparams := info.nParams,
+    some { instrs := markFastLoops s.code, nregs := s.maxReg + 1, nparams := info.nParams,
            nvars := info.layout.size + 1,
            thisReg := some info.layout.size, strict := f.strict, isArrow := f.arrow,
            name := f.name.getD "" }
@@ -1039,7 +1079,7 @@ def compileRegion (f : FunDef) : Option (Code × Array Stmt) :=
     discard <| emit .endR
   match run.run st0 with
   | .ok (_, st) =>
-    some ({ instrs := st.code, nregs := st.maxReg + 1, nparams := 0, nvars := 1,
+    some ({ instrs := markFastLoops st.code, nregs := st.maxReg + 1, nparams := 0, nvars := 1,
             thisReg := some 0, strict := f.strict, isArrow := f.arrow,
             name := f.name.getD "", region := true }, st.subs)
   | .error _ => none
@@ -1054,7 +1094,7 @@ def compileLoop (s : Stmt) (strict : Bool) : Option Code :=
     discard <| emit (.ret noReg)
   match run.run st0 with
   | .ok (_, st) =>
-    some { instrs := st.code, nregs := st.maxReg + 1, nparams := 0, nvars := 1,
+    some { instrs := markFastLoops st.code, nregs := st.maxReg + 1, nparams := 0, nvars := 1,
            thisReg := some 0, strict, isArrow := false, name := "" }
   | .error _ => none
 
