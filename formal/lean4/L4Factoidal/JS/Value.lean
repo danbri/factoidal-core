@@ -661,6 +661,12 @@ structure HeapOf (H : Type) extends ColdHeap H where
   vmRegs : Array Value := #[]
   vmF : FloatArray := .empty
   vmTop : Nat := 0
+  /-- Region code (`Code.region`, function bodies that the register code does not take) runs
+  on the register machine; off, those bodies run in the evaluator (`BUBBLEPOP_VM=noregion`). -/
+  vmRegions : Bool := true
+  /-- Counts of calls by how they ran (`BUBBLEPOP_VMSTATS`); `none`, the default, counts
+  nothing. -/
+  vmStats : Option (Std.HashMap String Nat) := none
   /-- The slot of a name in the global object's property map, by a hash of the name; checked
   at each use (the name in that slot). Starts out empty. -/
   globalCache : Array Nat := Array.replicate 1024 0

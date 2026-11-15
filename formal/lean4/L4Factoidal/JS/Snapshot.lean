@@ -343,7 +343,7 @@ def eStmt : Nat → Stmt → EM Unit
     | .block ss => do putNat 11; eStmts n ss
     | .blockF ss => do putNat 40; eStmts n ss
     | .blockN ss => do putNat 41; eStmts n ss
-    | .compiled _ b => eStmt n b
+    | .compiled _ b _ => eStmt n b
     | .throwS e => do putNat 12; eExpr n e
     | .tryS b p h f => do
       putNat 13; eStmts n b; eOptPat n p

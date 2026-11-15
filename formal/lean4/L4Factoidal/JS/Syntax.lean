@@ -184,6 +184,36 @@ inductive Instr where
   | obj (dst : Nat)
   | defProp (o : Nat) (key : String) (src : Nat)
   | throw (a : Nat)
+  /-- Region code (`Code.region`): evaluate the expression of the statement `subs[k]` (an
+  `Stmt.expr e`) with the evaluator, in the running environment; the value to `dst`. -/
+  | evalE (dst k : Nat)
+  /-- Region code: run the statement `subs[k]` with the evaluator. A `break` (`continue`) with
+  no label jumps to `brk` (`cont`); a `return` puts its value in `dst` and jumps to `ret`
+  (`noReg`: such a completion cannot happen there). -/
+  | evalS (k dst brk cont ret : Nat)
+  /-- Region code: BlockDeclarationInstantiation of the block `subs[k]` (`enterBlock`): the
+  running environment becomes its new one. -/
+  | enterBlk (k : Nat)
+  /-- Region code: the running environment's parent becomes the running environment; with
+  `release`, the left one is released (`Stmt.blockF`). -/
+  | popEnv (release : Bool)
+  /-- Region code: a new empty environment whose parent is the running one. -/
+  | newEnv
+  /-- Region code: an uninitialised binding `x` in the running environment. -/
+  | declHole (x : String) (mutable : Bool)
+  /-- Region code: `bindPat` of the name `x` to register `src`: `mode` 0 is `var`, 1 a `let`
+  and 2 a `const` declared in the running environment. -/
+  | bindId (src : Nat) (x : String) (mode : Nat)
+  /-- Region code: CreatePerIterationEnvironment (`copyEnv`) of a loop's `let` names. -/
+  | copyEnv (names : List String)
+  /-- Region code: `x += v` on a resolved name, as the evaluator does it: `old` holds the old
+  value, `rv` the right side; the slot lets go of a string before the append. -/
+  | addUp (dst old rv hops idx : Nat) (x : String)
+  /-- Region code, before the right side of `o[i] = v`: what the evaluator does with the base
+  and the key first (an error for `undefined` and `null`; an object key to a primitive). -/
+  | prepIndex (o i : Nat)
+  /-- Region code: the end of the region (a normal completion). -/
+  | endR
   deriving Inhabited
 
 /-- No register (a call with no `this`, a return with no value). -/
@@ -202,6 +232,9 @@ structure Code where
   strict : Bool := false
   isArrow : Bool := false
   name : String := ""
+  /-- Region code: variables live in environments, as in the evaluator; registers hold
+  temporaries only (`Compile.compileRegion`). -/
+  region : Bool := false
   deriving Inhabited
 
 /-- What the name resolver (`JS/Resolve.lean`) found about a function. -/
@@ -222,6 +255,9 @@ structure FunInfo where
   function shares it, so a name that the layout does not have is found absent with one hash
   and not with a comparison for each name. -/
   index : Option (Std.HashMap String Nat) := none
+  /-- Why the register machine's compiler did not take the function (`Compile.whyNot`); empty
+  when it did. A figure for tools (`BUBBLEPOP_VMSTATS`), computed only when asked for. -/
+  why : Thunk String := Thunk.pure ""
   deriving Inhabited
 
 /-- Layouts with more names than this get an index (the same limit as `envIndexed` for an
@@ -380,8 +416,10 @@ inductive Stmt where
   | blockF (body : List Stmt)
   /-- Tier 1: a block that declares nothing lexical (no environment); equal to `block body`. -/
   | blockN (body : List Stmt)
-  /-- A top-level loop with its code for the register machine, and the loop itself. -/
-  | compiled (c : Code) (s : Stmt)
+  /-- Code for the register machine and the statement it stands for: a top-level loop, or a
+  function body as region code (`Code.region`), whose instructions `evalE`, `evalS` and
+  `enterBlk` name the statements of `subs`. -/
+  | compiled (c : Code) (s : Stmt) (subs : Array Stmt)
   | throwS (e : Expr)
   | tryS (body : List Stmt) (param : Option Pat) (handler : Option (List Stmt))
       (finalizer : Option (List Stmt))
@@ -540,7 +578,7 @@ def Stmt.hasYieldF : Nat → Stmt → Bool
       (match u with | some e => Expr.hasYieldF n e | none => false) || Stmt.hasYieldF n b
     | .forIn _ _ o b | .forOf _ _ o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
     | .block ss | .blockF ss | .blockN ss => Stmt.anyYield n ss
-    | .compiled _ s => Stmt.hasYieldF n s
+    | .compiled _ s _ => Stmt.hasYieldF n s
     | .tryS b _ h f => Stmt.anyYield n b ||
         (match h with | some h => Stmt.anyYield n h | none => false) ||
         (match f with | some f => Stmt.anyYield n f | none => false)
