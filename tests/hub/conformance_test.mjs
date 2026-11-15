@@ -58,7 +58,7 @@ test('no full Test262 run: Test262 comes first, says so, and Test262 through WPT
   assert.match(html, /80\.6%/);
   assert.match(html, /Servo: no run at this WPT commit/);
   assert.match(html, /Ladybird: partial run: 51,020 of 94,695 tests reported/);
-  assert.match(html, /EU bar 80%/);
+  assert.match(html, /Apple&#39;s bar 80%/);
   assert.match(html, /Goal 90%/);
   assert.match(html, /Data as of <b>2026-11-15 18:41 UTC<\/b>/);
   assert.doesNotMatch(html, /class="stale"/, 'not stale at 20:00');
@@ -115,7 +115,7 @@ test('the directory table sorts and every engine has a column', () => {
 });
 
 test('a chart with one run and a chart with none', () => {
-  const one = lineChart({width: 360, series: [{label: 'x', cls: 's1', pts: [{t: NOW, v: 0.8, tip: 't'}]}], targets: [['EU bar', 80]], title: 't'});
+  const one = lineChart({width: 360, series: [{label: 'x', cls: 's1', pts: [{t: NOW, v: 0.8, tip: 't'}]}], targets: [["Apple's bar", 80]], title: 't'});
   assert.match(one, /<svg class="chart"/);
   assert.doesNotMatch(one, /NaN/);
   assert.match(lineChart({width: 360, series: [{label: 'x', cls: 's1', pts: []}], title: 't'}), /No runs to chart yet/);

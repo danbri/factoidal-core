@@ -115,7 +115,7 @@ first frame is drawn, so animated tests can not match yet. Results are in
 ## Whole-WPT score
 
 `wpt-score.py` measures Foafnaut's score over all of WPT the way wpt.fyi and
-Apple's EU browser-engine rule count it: subtests passed divided by the most
+Apple's rule for alternative browser engines in the EU counts it: subtests passed divided by the most
 subtests any browser runs on wpt.fyi (Chrome's count at the pinned WPT commit).
 **The score is a full measured run, not this sample** (2026-11-13; see
 [`skills/wpt-runs`](../../skills/wpt-runs/SKILL.md)): run every name in Chrome's list with

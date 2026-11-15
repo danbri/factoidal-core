@@ -47,8 +47,8 @@ spec.loader.exec_module(ws)
 
 RAW = "https://raw.githubusercontent.com/danbri/factoidal-builds/wpt-scores/"
 BROWSERS = ["chrome", "firefox", "safari", "edge", "servo", "wpewebkit", "ladybird"]
-MILESTONES = [["M1", 32], ["M2", 45], ["M3", 65], ["M4 and EU bar", 90]]
-T262_TARGETS = [["EU bar", 80], ["Goal", 90]]
+MILESTONES = [["M1", 32], ["M2", 45], ["M3", 65], ["M4 and Apple's bar", 90]]
+T262_TARGETS = [["Apple's bar", 80], ["Goal", 90]]
 PLATFORM = {"linux-x86_64": "Linux x86_64", "macos-arm64": "macOS arm64"}
 
 
