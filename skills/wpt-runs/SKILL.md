@@ -1,9 +1,12 @@
 ---
 name: wpt-runs
-description: How Foafnaut's Web Platform Tests score is measured, recorded and reported, and the other conformance suites with it. Full measured runs only (no sampled scores), BubblePopJS only, cloud runs on every release and four times a day, validity rules, runs.csv and per-run metadata. Use before running WPT, quoting a WPT number, comparing with other browsers, planning WPT work, or changing the test workflows.
+description: How Foafnaut's Web Platform Tests score and BubblePopJS's full Test262 score are measured, recorded and reported, and the other conformance suites with them. Full measured runs only (no sampled scores), BubblePopJS only, cloud runs on every release and four times a day, validity rules, runs.csv and per-run metadata. Use before running WPT or Test262, quoting a WPT or Test262 number, comparing with other browsers, planning WPT work, or changing the test workflows.
 ---
 
-# WPT runs: the testing regime
+# WPT and Test262 runs: the testing regime
+
+WPT is sections 1 to 8; Test262, the whole tc39/test262 suite on BubblePopJS, is section 9 (same
+regime: full runs only, validity rules, the same `runs.csv`).
 
 Since 2026-11-13, decisions are made on **full measured runs**, never on samples: a sampled estimate
 is too uncertain to plan from.
@@ -99,7 +102,11 @@ Where it lives (`danbri/factoidal-builds`):
   commit and its dates, snapshot branch, release tag, WPT commit, names run and total, passed,
   denominator, share, share without encoding, outcome counts, server failures, valid and reason, kind
   (full / sample / differential), shards, wall minutes, workflow run URL.
-- `rivals.csv`: WPT commit, browser, version, wpt.fyi run id, passed, share, names reported, partial.
+- `rivals.csv`: WPT commit, browser, version, wpt.fyi run id, passed, share, names reported, partial,
+  status, reason. A rival that wpt.fyi cannot give (no run at the WPT commit, or no answer after three
+  tries a few seconds apart) never fails the job: it is a row with `status=unavailable` and the reason
+  (once per WPT commit and browser), listed in the job summary, so the dashboard can say "Servo: no run
+  at this WPT commit". Rows before 2026-11-15 have empty status (= ok).
 - `runs/<run_id>/meta.json`: everything above plus build-info, runner and tool versions, list hashes,
   why that build was chosen, the per-directory table, and a link to the full result JSON.
 - `runs/<run_id>/incidents.json` and `incidents.md` (every full run since 2026-11-14 0907Z): the names
@@ -236,3 +243,59 @@ from an object cache, so only what the branch changes is compiled again). The la
 fails the build, and the summary shows it. One run per `core_ref` waits at a time: a newer dispatch of the same ref
 replaces a waiting one. A test process that grows past the memory limit is killed and its test is
 recorded as CRASH.
+
+## 9. Test262: the whole suite on BubblePopJS
+
+The Test262-through-WPT number (`third_party/test262/` pages, Chrome's subtests) is a browser test of
+a part of Test262. The **full Test262 run** is the JavaScript engine's own score: the whole upstream
+suite, every file, by Test262's rules. Workflow `test262.yml` ("Test262 full run") in
+`danbri/factoidal-builds`, script `release-tests/test262.py`.
+
+- **Suite**: tc39/test262 at a pinned commit (`TEST262_PINNED` in `test262.yml`; 2e58f87d83 since
+  2026-11-15, the revision test262.fyi ran that day): every `.js` file under `test/` except
+  `_FIXTURE` files (53,795 files: annexB, built-ins, harness, intl402, language, staging).
+- **Rules** (`INTERPRETING.md`): each file in the modes Test262 runs it in: sloppy and strict;
+  `onlyStrict` strict; `noStrict` and `raw` sloppy (`raw`: no harness); `module` once, as a module
+  graph loaded from the files it names. 103,533 runs. `includes:` from `harness/`. A negative test
+  passes on the named error type in the named phase (`parse`, `resolution` for module loading and
+  linking, `runtime`). An async test passes when `$DONE` prints `Test262:AsyncTestComplete`. `$262`
+  has `global` and `detachArrayBuffer`; tests that need `createRealm`, `evalScript`, `gc`, `agent` or
+  `IsHTMLDDA` fail.
+- **Engine**: core's `leanjs test262-files`, built in the workflow from the release's core commit
+  (build.yml's Lake cache, restore only). It is the Lean interpreter (`L4Factoidal.JS`) that the
+  engine library runs page scripts with; Test262 needs no page, so no browser host. Recorded as
+  `engine=bubblepopjs-leanjs`, `script_engine=bubblepop`. QuickJS never: its Test262 numbers are a
+  differential check only.
+- **Score**: a file passes when all its modes pass (the unit test262.fyi uses, so other engines compare
+  on one scale). The headline counts every file. **Two numbers, always together**: the share, and the
+  share without the files of the excluded features: `release-tests/test262-excluded-features.txt`
+  (host-hook and harness features, each with its reason) plus the stage 3 proposals of `features.txt`
+  at the pinned commit. Runs (file x mode) are in `meta.json` as a third, finer number.
+- **Valid** when: every shard is present; runs with no result plus harness errors (an include missing)
+  are under 0.5% of runs; at least 50,000 files listed. A test that crashes the process (CRASH, with
+  the exit or the runner's memory kill at 3,000 MB) or gives no result in 120 s (STALL) counts as a
+  failed file and is listed in `meta.json` `incidents`; the rest of its chunk runs in a new process.
+- **When**: each successful `build.yml` or "Foafnaut Linux engine" run on main (the newest Linux
+  release of main: `build-<sha12>-linux-x86_64` or `-foafnaut-linux-x86_64`; skipped when that commit
+  already has a valid run at the pinned commit), six times a day (`11 */4`: repeats show flakiness),
+  and `gh workflow run test262.yml -R danbri/factoidal-builds [-f core_ref=wip/x] [-f
+  test262_commit=...] [-f shards=8]`. A branch (`core_ref` not on main) is scored in the job summary
+  and artifact `test262-result` but not recorded. 8 shards x 4 processes.
+- **Records** (branch `wpt-scores`): `runs.csv` row with `suite=test262`; `wpt_commit` holds the
+  Test262 commit, `passed`/`denominator` are files, `share_ex_encoding_pct` holds the share without
+  the excluded features. `runs/<run_id>/meta.json` (`totals` with `share_ex_features_pct`,
+  `excluded_features`, `sections`, `directories` {built-ins/X, language/Y, annexB/Y, intl402/X,
+  staging/X, harness: total, passed, runs}, `features`, `top_failures`, `incidents`,
+  `since_previous`, `rivals`), `directories.csv`, `features.csv`, `changes.md` (newly passing and
+  newly failing files against the previous valid run at the same Test262 commit; a fall over 0.2
+  points is DROP). Every run's per-file, per-mode results: `<run_id>.test262.txt.gz` on the release
+  `test-results`.
+- **Other engines**: `test262-rivals.csv` from test262.fyi (V8, SpiderMonkey, JavaScriptCore,
+  QuickJS-NG and the rest, files passed of 53,795): `status=ok` only when test262.fyi ran the same
+  Test262 commit, else `other_commit` (not comparable), or `unavailable` with the reason; never fails
+  the run. `meta.json` `rivals.directories` has their passes per directory for comparison.
+- **Locally**: `lake build leanjs`, a Test262 checkout, then `release-tests/test262.py list --root T
+  --out files.json` and `test262.py run --leanjs .lake/build/bin/leanjs --root T --files files.json
+  --out OUT` (one shard: `--shard k --shards n`), `test262.py score ... --no-rivals`. The core tree
+  `third_party/testing/test262` is a 6,301-file subset for tier comparisons (`leanjs test262`), not a
+  score.
