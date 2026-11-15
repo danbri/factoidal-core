@@ -50,14 +50,28 @@ standards conformance.
   unless the brief says so.
 - Run `tools/premerge.sh` before pushing to main (about 15 s; `--with-lean` adds the lake build, tail-recursion gate and
   dataflow drift test, `--with-engines` the whole test.sh).
-- One Lean build at a time: use the build lock (`leanlock.sh`, path in the task brief).
+- One Lean build at a time: use the build lock (`~/working/foafnaut-tools/leanlock.sh`).
+- Cap the memory of every Lean process, proof checks above all: `ulimit -v` (or an equivalent cap) around `lake`/`lean`,
+  and check one theorem group per process. On 2026-11-15 one proof file of 116 theorems reached 17 GB and filled swap
+  and disk until the Mac rebooted. Tools that may start a build quietly (for example `tools/dataflow-inventory.py`)
+  count as Lean builds: take the lock.
 - Cloud builds (`danbri/factoidal-builds`, `build.yml`, `core_ref=<branch>`) take about 1.5 h. Check the queue first,
   batch changes into few builds, never cancel another agent's run, and log each dispatch.
 - WPT: follow [`wpt-runs`](../wpt-runs/SKILL.md). Full measured runs only, BubblePopJS, one WPT run per machine (the
   runner refuses a taken port 8000; wait, never kill). Report subtests before and after, plus a regression check.
-- Coordination log: `/tmp/foafnaut-coordination.log`. One line per claim, result or release, with a prefix naming you.
+- Coordination lives in `/Users/danbri/working/foafnaut/fncg` (it survives reboots): `coordination.log` (append-only;
+  one line per START, DISPATCH, RESULT, MERGED, NOTE or RELEASE, with a prefix naming you) and `status.md` (open work,
+  owners, PRs, decisions waiting on the owner). Read the log's tail and `status.md` before each stretch of work and
+  every few PRs; obey any OWNER DECISION or pause found there. `/tmp/foafnaut-coordination.log` is only a symlink to
+  the log (recreate it after a reboot).
+- Timing measurements on the Mac hold the timing lock (`fncg/locks/`, or `flock` on `/tmp/foafnaut-timing.lock`) so two
+  agents never measure at once.
+- A run that floods the terminal is a failure: the log gate (`docs/web/hub/foafnaut/log-gate.mjs`) names the message;
+  fix the cause, never hide it.
 - Never kill or signal processes you didn't start. Never touch other agents' worktrees.
-- Disk is tight: keep scratch small, delete copies you don't need, and stop and report below 4 GiB free.
+- Disk is tight: keep scratch small, delete `.lake`, worktrees and downloaded engines when done, check `df -h /` before
+  any build, and stop and report below 4 GiB free. A full disk rebooted the Mac on 2026-11-15.
+- Releases are never replaced: a published release stays as it is (packaged Textnaut pins its bytes). Publish a new one.
 - Don't sit idle. Commit early and often.
 
 ## Words
@@ -67,7 +81,14 @@ standards conformance.
 - Don't use the word "honest". Plain British English.
 - GitHub: technical content only; never quote the owner's chat; no links to upstream Lean issues; never suggest
   contacting people outside the project.
-- Real web pages are copyright: probe live, never commit them. Test fixtures are original constructs.
+- Real web pages are copyright. Public pages may be vendored as zipped snapshots, as fair use for testing, under
+  `third_party/realpages/` in **danbri/factoidal-builds** (not core), each with provenance (URL, fetch time, headers,
+  licence or "copyright, vendored as fair use for testing", attribution). Public pages only. Also probe live.
+  Minimal repro fixtures in core are original constructs.
+- The 90% WPT and 80% Test262 thresholds are Apple's own rules for alternative browser engines in the EU (the
+  Commission's DMA enforcement made Apple allow other engines; the criteria are Apple's). Say "Apple's bar", never
+  "the EU bar".
+- Lean first: F* is not built in CI; don't add F* work without the owner asking.
 
 ## Hand-back
 

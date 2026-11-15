@@ -389,7 +389,7 @@ Frame costs and design: [docs/designissues/2026-11-07-foafnaut-frame-pipeline.md
 
 Several sessions work on the owner's laptop at once.
 
-- Coordination log: `/Users/danbri/working/sandbox/october/tpac/depmap/cache/foafnaut-coordination.log`.
+- Coordination log: `/Users/danbri/working/foafnaut/fncg/coordination.log` (with `status.md` beside it; older paths are symlinks).
   Append only. One line, under 500 bytes. Format: `YYYY-MM-DD HH:MM UTC, session, TYPE: text`,
   TYPE one of CLAIM, RELEASE, DONE, NOTE, ASK. Read the CLAIM lines before you touch a
   shared resource (a file another session changes, a build tree, the bleeding-edge app).

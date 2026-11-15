@@ -18,7 +18,7 @@ Claude Code changes.
 | GitHub issues and PRs (`gh`) | read, write | not from its sandbox | the durable record |
 | Claude cross-session messages | `ListAgents`, `SendMessage` | no | Claude to Claude only |
 
-**Coordination log.** `/Users/danbri/working/sandbox/october/tpac/depmap/cache/foafnaut-coordination.log`.
+**Coordination log.** `/Users/danbri/working/foafnaut/fncg/coordination.log` (with `status.md` beside it; older paths are symlinks).
 `/tmp/foafnaut-coordination.log` is a link to it. Append only, one line, under 500 bytes:
 `YYYY-MM-DD HH:MM UTC, <session>, CLAIM|RELEASE|DONE|NOTE|ASK: text`. Post a CLAIM before you
 start on a shared file, and a DONE or RELEASE when you stop. Codex can not see Claude messages, so
