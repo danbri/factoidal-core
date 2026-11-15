@@ -99,11 +99,30 @@ if [ "$OS" = Linux ]; then
       -I "$HERE/mimalloc-$MIMALLOC_TAG/include" -w -x c++ -c "$HERE/mimalloc-$MIMALLOC_TAG/src/static.c" -o "$OBJ/static.c.o" ) &
   pids+=($!)
   MEMBERS+=(static.c.o)
+  # glibc 2.38 and later headers send strtol, fscanf and the like to __isoc23_* names under
+  # _GNU_SOURCE (always on for C++); the toolchain's older glibc, which leanc links against so
+  # the library runs on older systems, has none. These hidden forwarders, compiled as plain C11
+  # (no redirect), give the old functions. The C23 change is only that 0b prefixes are read.
+  cat > "$OBJ/isoc23_compat.c" <<'EOF'
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#define HIDDEN __attribute__((visibility("hidden")))
+HIDDEN long __isoc23_strtol(const char *s, char **e, int b) { return strtol(s, e, b); }
+HIDDEN unsigned long __isoc23_strtoul(const char *s, char **e, int b) { return strtoul(s, e, b); }
+HIDDEN long long __isoc23_strtoll(const char *s, char **e, int b) { return strtoll(s, e, b); }
+HIDDEN unsigned long long __isoc23_strtoull(const char *s, char **e, int b) { return strtoull(s, e, b); }
+HIDDEN int __isoc23_fscanf(FILE *f, const char *fmt, ...) { va_list a; va_start(a, fmt); int r = vfscanf(f, fmt, a); va_end(a); return r; }
+HIDDEN int __isoc23_sscanf(const char *s, const char *fmt, ...) { va_list a; va_start(a, fmt); int r = vsscanf(s, fmt, a); va_end(a); return r; }
+EOF
+  ( cd "$OBJ" && "${CC:-cc}" -std=c11 -O2 -fPIC -c isoc23_compat.c -o isoc23_compat.o ) &
+  pids+=($!)
+  MEMBERS+=(isoc23_compat.o)
 fi
 for pid in "${pids[@]}"; do wait "$pid"; done
 cp "$RUNTIME" "$OUT.tmp"
 chmod u+w "$OUT.tmp"
-ar d "$OUT.tmp" "${MEMBERS[@]}"
+ar d "$OUT.tmp" "${MEMBERS[@]}" 2>/dev/null || true
 ( cd "$OBJ" && ar r "$OUT.tmp" "${MEMBERS[@]}" 2>/dev/null )
 ranlib "$OUT.tmp" 2>/dev/null
 if nm "$OUT.tmp" 2>/dev/null | grep -q '_gmp'; then echo "GMP reference left in $OUT.tmp" >&2; exit 1; fi
