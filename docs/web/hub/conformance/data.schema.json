@@ -33,6 +33,17 @@
           "tests": {"$ref": "count"}
         }
       },
+      "semweb": {
+        "type": "object",
+        "required": ["fstarStopped", "groups"],
+        "properties": {
+          "groups": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["name", "rows"],
+            "properties": {"rows": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["label", "suite", "engine", "passed", "total", "run", "finished", "stale"],
+              "properties": {"engine": {"enum": ["lean", "fstar", null]}, "passed": {"type": ["integer", "null"], "minimum": 0},
+                "total": {"type": ["integer", "null"], "minimum": 0}, "run": {"type": ["integer", "null"], "minimum": 0},
+                "stale": {"type": "boolean"}}}}}}}
+        }
+      },
       "test262": {
         "type": "object",
         "required": ["targets", "wpt", "full"],

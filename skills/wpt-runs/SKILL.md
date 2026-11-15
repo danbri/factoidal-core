@@ -301,3 +301,37 @@ suite, every file, by Test262's rules. Workflow `test262.yml` ("Test262") in
   --out OUT` (one shard: `--shard k --shards n`), `test262.py score ... --no-rivals`. The core tree
   `third_party/testing/test262` is a 6,301-file subset for tier comparisons (`leanjs test262`), not a
   score.
+
+## 11. Semantic-web and data-format suites
+
+The other conformance suites run on the built-in engine (engine `lean`) in `release-tests.yml`'s
+suites job, on the same triggers as WPT, and are recorded in `runs.csv` (one row per suite).
+
+- **lean-w3c**: `l4w3c` from the release: `l4w3c-rdf11`, `-rdf12`, `-rdfc10`, `-sparql11`, `-sparql12`.
+- **lean-semweb** (since 2026-11-15): the job builds the other Lean runners from the release's
+  core commit (build.yml's Lake cache, restore only), runs them through core's
+  `tools/lean-scoreboard.sh --only ...` and maps its rows to `l4-*` suites (`SEMWEB_ROWS` in
+  `release-tests/release-tests.py`): SHACL 1.0/1.2, ShEx and ShExC, JSON-LD (toRdf, expand,
+  compact, flatten, fromRdf, HTML, framing), CSVW, RML modules, RIF Core, RDF 1.2 semantics,
+  VC/DID/Data Integrity, xmlconf, XSLT 1.0, Schematron, MathML, JSON Schema, OWL 2 species.
+- **OWL 2 as discrete populations** (`release-tests/owl-populations.py`): the W3C OWL 2 Test
+  Cases (`third_party/testing/owl/all.rdf`, 2009-11-18, every case not Rejected: 489 cases, 355
+  Approved; W3C Document Licence). One row per population: each of Positive/Negative
+  EntailmentTest, ConsistencyTest, InconsistencyTest under the Direct Semantics (`--dl`: RL
+  closure, materialisation, tableau refuter) and under the RDF-Based Semantics (`--rdf-based`),
+  `l4-owl2-<type>-<direct|rdfbased>`; ProfileIdentificationTest per profile EL, QL, RL
+  (`l4-owl2-profile-*`: no built-in recogniser, so `valid=false` with that reason and the
+  official size 418); species (`l4-owl2-species-all|dl|full-only`). The denominator is always
+  the population's full official count; `names_run` = units decided (pass + fail); meta.json
+  has the split by status (Approved, Proposed, Extracredit, none).
+- A row is valid when the scoreboard gave it status `ok` with tests found, or (OWL) the probe
+  reported exactly the official count. The F* rows (engine `fstar`) stop at 2026-11-15 15:00Z;
+  the Hub's "Semantic web and data formats" section shows a suite with no Lean row from its
+  last F* row, marked stale, never as current.
+- The F* suites with no Lean row: `rdf12c14n` (covered inside `l4w3c-rdf12`), the three SHACL
+  1.2 rules sub-suites `shacl12_rules_syntax`, `_wellformed`, `_stratification` (the Lean
+  rules runner reports one total), and the F* RL-closure runs over the OWL profile catalogs
+  (`owl2_profile_el`, `owl2_profile_ql`, `owl_rl_positive_entailment`), replaced by the
+  populations.
+- A check of the workflow without recording: `gh workflow run release-tests.yml -R
+  danbri/factoidal-builds --ref BRANCH -f suites=w3c -f force=true -f record=false`.

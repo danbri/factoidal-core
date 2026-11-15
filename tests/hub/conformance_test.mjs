@@ -120,3 +120,30 @@ test('a chart with one run and a chart with none', () => {
   assert.doesNotMatch(one, /NaN/);
   assert.match(lineChart({width: 360, series: [{label: 'x', cls: 's1', pts: []}], title: 't'}), /No runs to chart yet/);
 });
+
+test('semantic web and data formats: one row per suite, OWL by population, F* rows stale', async () => {
+  const {semwebHTML} = await import('../../docs/web/hub/conformance/conformance.mjs');
+  const schema = JSON.parse(fs.readFileSync(path.join(HERE, '..', '..', 'docs', 'web', 'hub', 'conformance', 'data.schema.json'), 'utf8'));
+  const [D0, H] = load('full-test262');
+  const D = structuredClone(D0);
+  D.semweb = {fstarStopped: '2026-11-15', groups: [
+    {name: 'OWL 2', note: 'W3C OWL 2 Test Cases', rows: [
+      {label: 'InconsistencyTest, Direct Semantics', suite: 'l4-owl2-inconsistency-direct', engine: 'lean', passed: 126, total: 127, run: 127,
+       finished: '2026-11-15T19:00:00Z', commit: 'abcdef012', stale: false, approved: {passed: 117, total: 118},
+       fstar: {suite: 'owl2_dl_inconsistency', passed: 126, total: 127, finished: '2026-11-15T15:01:00Z'}},
+      {label: 'ProfileIdentificationTest, OWL 2 EL', suite: 'l4-owl2-profile-el', engine: 'lean', passed: null, total: 418, run: 0,
+       finished: '2026-11-15T19:00:00Z', commit: 'abcdef012', stale: false, notRun: 'no built-in OWL 2 EL/QL/RL profile recogniser', fstar: null}]},
+    {name: 'SHACL', note: null, rows: [
+      {label: 'SHACL Core (1.0 suite)', suite: 'shacl_core', engine: 'fstar', passed: 98, total: 98, run: 98, finished: '2026-11-15T15:00:00Z',
+       commit: 'cc73af028', stale: true, staleReason: 'not run since F* CI stopped (2026-11-15)', fstar: {suite: 'shacl_core', passed: 98, total: 98, finished: '2026-11-15T15:00:00Z'}}]}]};
+  assert.deepEqual(validate(D, schema['data.json'], schema.definitions), []);
+  const html = semwebHTML(D, {now: NOW});
+  assert.ok(balanced(html), 'tags nest');
+  assert.match(html, /<h2 id="swh">Semantic web and data formats<\/h2>/);
+  assert.match(html, /InconsistencyTest, Direct Semantics<small>Approved: 117 of 118<\/small>/);
+  assert.match(html, /<b>126<\/b><\/td><td>127<\/td><td>99\.2%<\/td><td>100\.0%<\/td><td>built-in<\/td>/);
+  assert.match(html, /<span class="flag">not run<\/span> no built-in OWL 2 EL/);
+  assert.match(html, /<tr class="old"><td>SHACL Core \(1\.0 suite\)<\/td>.*<td>F\*<\/td>.*<span class="flag">stale<\/span> not run since F\* CI stopped/);
+  assert.match(pageHTML(D, H, {now: NOW}), /id="semweb"/);
+  assert.doesNotMatch(pageHTML(D0, H, {now: NOW}), /id="semweb"/, 'no section without data');
+});
