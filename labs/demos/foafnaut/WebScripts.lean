@@ -31,7 +31,9 @@ argument for `start`:
 - `start`: `url`, `resources` (`[{nodeId, source}]` for `src` scripts, as for
   stylesheets), optional `commandLimit` and `logLimit`. Runs the classic scripts in document order,
   `DOMContentLoaded`, then the `load` event.
-- `click` (`node`), `advance` (`ms`: move the virtual clock), `settle` (`budgetMs`: run
+- `click` (`node`), `advance` (`ms`: move the virtual clock; with `sliceSteps` on BubblePopJS,
+  stop between two tasks once the scripts ran that many steps, so the host takes input
+  before the rest, which is then due at once), `settle` (`budgetMs`: run
   until no task, timer or frame waits), `turn` (run what is due now), `close`.
 - `pointer` (`kind` down, move, up or cancel; `node`; the coordinates of the `nodeAt`
   answer; `button`, `buttons`, `pointerType`): the pointer and mouse events of
@@ -203,6 +205,19 @@ structure Turn where
   pending : Array (Nat × ByteArray) := #[]
 
 /-- What the engine holds between calls: the prepared module and one session. -/
+/-- Where a BubblePopJS `start` waits for a sync answer: the page and URL of the start, the
+session before the classic script that waited, that script and the ones after it, the module
+graphs and the scripts that did not load (`startLean`). -/
+structure StartPoint where
+  html : String
+  url : String
+  session : LeanJS.Session
+  todo : List (Nat × String)
+  mods : LeanJSModules.Loaded
+  missing : Array String
+
+instance : Inhabited StartPoint := ⟨{ html := "", url := "", session := default, todo := [], mods := {}, missing := #[] }⟩
+
 structure Held where
   module : Option Page.Module' := none
   moduleBytes : Nat := 0
@@ -237,6 +252,10 @@ structure Held where
   same, so `Math.random` and `crypto` give the rerun what they gave the run whose request
   the host has answered (a token a script drew is the token the request carried). -/
   startEntropy : Option ByteArray := none
+  /-- A BubblePopJS `start` that stopped at a classic script waiting for a sync answer
+  (`LeanJS.startUntil`): `syncAnswer` goes on from the session before that script
+  (`LeanJS.start_eq_from`) instead of making the whole start again. -/
+  startPoint : Option StartPoint := none
   /-- The dedicated workers of that session's page (`Hosts.LeanJSWorkers`). -/
   leanWorkers : LeanJSWorkers.Workers := {}
   /-- The `layout` request of the session's `start`: its layout reads (`Page.Reads.measure`)
@@ -441,7 +460,8 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
     ("timers",num loop.timers.length),
     ("nextTimer",match loop.timers with | t :: _ => num t.due | [] => .null),
     ("frames",num loop.frames.length),
-    ("nextWake",match [loop.timers.head?.map (·.due), s.nextFrame, s.moveWake].filterMap (fun x => x) with
+    -- a task still queued (an advance that stopped between tasks, `sliceSteps`) is due now
+    ("nextWake",match [if loop.idle then none else some loop.clock, loop.timers.head?.map (·.due), s.nextFrame, s.moveWake].filterMap (fun x => x) with
       | [] => .null
       | t :: ts => num (ts.foldl min t)),
     ("quiet",.bool s.quiet),
@@ -1153,6 +1173,35 @@ def leanTurn (held : Held) (id : Nat) (before : Before) (a : LeanJSWorkers.Agent
     ([("engine",.string "bubblepop")] ++ frameFields s.host loads ++ workers ++ netFields s.host ++ inputFields s)
   ({ held with leanSession := some (id, inputReported (drainedLean s), marks), leanWorkers := a.w, leanFrames := frames, frameScan := scan }, .ok answer)
 
+/-- The end of a BubblePopJS start from the session after its classic scripts: the module
+scripts and the events (`LeanJS.startFinish`), the scripts that did not load, and the
+scripts of the workers the page made, asked for. -/
+def startRest (base : LeanJS.Session) (wEnt : Nat → ByteArray) (mods : LeanJSModules.Loaded) (missing : Array String)
+    (s : LeanJS.Session) : LeanJSWorkers.Agents :=
+  let s := LeanJS.startFinish s mods
+  let s := missing.foldl LeanJS.Session.fail s
+  LeanJSWorkers.pump { page := s, base := some base, entropy := wEnt }
+
+/-- The answer of a BubblePopJS start: the turn, or the sync request it waits for (with the
+point to go on from when a classic script waited, `StartPoint`). -/
+def startEnd (held : Held) (html : String) (request : JSON.Json) (id : Nat) (base : LeanJS.Session)
+    (ent : ByteArray) (memo : Array LeanJSModules.Fetched) (mods : LeanJSModules.Loaded) (missing : Array String)
+    (b : ByteArray) (r : LeanJSWorkers.Agents ⊕ (LeanJS.Session × LeanJS.Session × List (Nat × String))) (ns : Nat) :
+    Held × Except String String :=
+  let waiting := { held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo }
+  match r with
+  | .inr (s, k, todo) =>
+    match s.host.web.net.syncWanted with
+    | some w => ({ waiting with startPoint := some { html, url := str request "url", session := k, todo, mods, missing } }, netSyncAnswer id w)
+    | none => (held, .error "scriptSession: a start stopped with no request")
+  | .inl a =>
+    match a.page.host.web.net.syncWanted with
+    | some w => ({ waiting with startPoint := none }, netSyncAnswer id w)
+    | none =>
+      let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], moduleMemo := #[], pendingSync := none, startEntropy := none, startPoint := none }
+      leanTurn { held with frames := #[], leanFrames := #[], frameScan := 0 }
+        id {} a {} true ns (frameEntropyOf id ent b)
+
 /-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
 once), and each page starts from it with its own arena. -/
 def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure)
@@ -1164,6 +1213,21 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let hostLoads := request.field? "navigations" == some (.bool true)
   let network := request.field? "network" == some (.bool true)
   let hostCors := request.field? "hostCors" == some (.bool true)
+  -- a start that stopped at a script waiting for this answer goes on from there
+  if let some p := held.startPoint then
+    if !held.syncCache.isEmpty && p.html == html && p.url == url then
+      if let (some base, some ent) := (held.leanBase, held.startEntropy) then
+        let answers := held.syncCache.extract p.mods.used held.syncCache.size
+        let k := p.session.setHost { p.session.host with web := { p.session.host.web with
+          net := { p.session.host.web.net with syncAnswers := answers, syncWanted := none } } }
+        let b ← turnBytes
+        let wEnt := workerEntropyOf id b
+        let (r, ns) ← WebWasm.timed fun _ =>
+          match LeanJS.startUntil k p.todo with
+          | (s, some (k', todo)) => Sum.inr (s, k', todo)
+          | (s, none) => Sum.inl (startRest base wEnt p.mods p.missing s)
+        return startEnd held html request id base ent held.moduleMemo p.mods p.missing b r ns
+  let held := { held with startPoint := none }
   -- a start done again after a sync request (its answers are in `syncCache`) keeps its entropy
   let ent ← match held.startEntropy with
     | some e => if held.syncCache.isEmpty then entropy id else pure e
@@ -1205,17 +1269,17 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       let rate := max 1 ((natField request "instructionsPerMs").getD LeanJS.stepsPerMs)
       let b ← turnBytes
       let wEnt := workerEntropyOf id b
-      let (a, ns) ← WebWasm.timed fun _ =>
-        let s := LeanJS.start base dom url scripts { lim with mayBlock := network && mentionsXhr scripts } reads { instructionsPerMs := rate } (mods := mods)
-        let s := missing.foldl LeanJS.Session.fail s
-        -- workers the page's scripts made: their scripts are asked for
-        LeanJSWorkers.pump { page := s, base := some base, entropy := wEnt }
-      match a.page.host.web.net.syncWanted with
-      | some w => return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo }, netSyncAnswer id w)
-      | none =>
-        let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], moduleMemo := #[], pendingSync := none, startEntropy := none }
-        return leanTurn { held with frames := #[], leanFrames := #[], frameScan := 0 }
-          id {} a {} true (ns0 + ns) (frameEntropyOf id lim.entropy b)
+      let lim := { lim with mayBlock := network && mentionsXhr scripts }
+      let begin := LeanJS.startBegin base dom url lim reads { instructionsPerMs := rate }
+      -- a page that may make sync requests stops at the first classic script that waits for an
+      -- answer and keeps the point (`LeanJS.startUntil`); any other page runs them all (`LeanJS.start`)
+      let (r, ns) ← WebWasm.timed fun _ =>
+        if lim.mayBlock then
+          match LeanJS.startUntil begin scripts.toList with
+          | (s, some (k, todo)) => Sum.inr (s, k, todo)
+          | (s, none) => Sum.inl (startRest base wEnt mods missing s)
+        else Sum.inl (startRest base wEnt mods missing (LeanJS.startScripts begin scripts.toList))
+      return startEnd held html request id base ent memo mods missing b r (ns0 + ns)
 
 /-- A later action on the Lean engine's session (the actions of `act`). -/
 def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s : LeanJS.Session) (marks : Marks) :
@@ -1291,7 +1355,18 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     match viewport request with
     | some (w, h) => run fun s => let s := e.resize s w h; (e.advance s (e.loop s).clock).1
     | none => keep "scriptSession: resize needs width and height"
-  | "advance" => run fun s => e.flushMove (e.advance s ((e.loop s).clock + ((natField request "ms").getD 0))).1
+  | "advance" =>
+    let ms := (natField request "ms").getD 0
+    match natField request "sliceSteps" with
+    | none => run fun s => e.flushMove (e.advance s ((e.loop s).clock + ms)).1
+    | some k =>
+      -- a host that takes input between slices: the advance stops between two tasks once the
+      -- page's scripts ran `k` steps in it; what is still due is due at once (`nextWake`), and the
+      -- next advance goes on from there (`PageEvents.Engine.advanceUntil`)
+      run fun s =>
+        let s := e.flushMove s
+        let limit := s.page.steps + max 1 k
+        (e.advanceUntil s ((e.loop s).clock + ms) (fun a => limit ≤ a.page.steps)).1
   | "settle" => run fun s => (e.settle (e.flushMove s) ((natField request "budgetMs").getD 30000) 100000 LeanJSWorkers.Agents.waits).1
   | "turn" => run fun s => let s := e.flushMove s; (e.advance s (e.loop s).clock).1
   | "frame" =>
