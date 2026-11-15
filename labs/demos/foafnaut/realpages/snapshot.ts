@@ -5,7 +5,12 @@
 // testing; each page's licence and attribution from pages.json), never in this repository.
 //
 //   deno run -A labs/demos/foafnaut/realpages/snapshot.ts --out DIR [--pages FILE] [--only id,id]
-//     [--chrome PATH] [--max-mb 6] [--max-file-kb 1500] [--max-image-kb 300]
+//     [--chrome PATH] [--max-mb 6] [--max-file-kb 1500] [--max-image-kb 300] [--engine LIB [--host LAB_DIR]]
+//
+// --engine: also load the page once in the Foafnaut host (run_html.ts off screen for 15 s on
+// macOS, Textnaut elsewhere; --host as in survey.ts) with replay.ts recording, so the snapshot
+// holds the requests the built-in engine itself makes (its script modules, its own query
+// strings), not only Chrome's. Those answers come first in the manifest.
 //
 // What is kept: the document as the Foafnaut host fetches it (Deno's fetch, its own request
 // fields, each redirect hop), and every response headless Chrome received while loading the
@@ -23,12 +28,13 @@ if(!out){console.log("snapshot.ts --out DIR [--pages FILE] [--only id,id] [--chr
 const CHROME=opt("--chrome",Deno.env.get("CHROME")??"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")!;
 const maxBytes=Number(opt("--max-mb","6"))*1048576,maxFile=Number(opt("--max-file-kb","1500"))*1024,maxImage=Number(opt("--max-image-kb","300"))*1024;
 const only=opt("--only")?.split(",");
+const engine=opt("--engine"),host=opt("--host",decodeURIComponent(new URL("../",import.meta.url).pathname))!.replace(/\/?$/,"/");
 const UA_IPHONE="Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 const REFERENCE_TOP=65;
 
 type Page={id:string;url:string;snapshot?:string;viewport?:string;mobile?:boolean;site?:string;licence?:string;attribution?:string};
 const spec=JSON.parse(await Deno.readTextFile(opt("--pages",here+"pages.json")!)) as {defaults:{viewport:string;licence?:string};pages:Page[]};
-type Entry={url:string;status:number;statusText:string;headers:[string,string][];body?:string;bytes?:number;remote_ip?:string;source:"deno"|"chrome";type?:string};
+type Entry={url:string;status:number;statusText:string;headers:[string,string][];body?:string;bytes?:number;remote_ip?:string;source:"deno"|"chrome"|"foafnaut";type?:string};
 const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
 const siteOf=(p:Page)=>p.site??new URL(p.url).hostname.replace(/^www\./,"");
 
@@ -100,6 +106,31 @@ async function capture(p:Page){
   }
 }
 
+/** The page loaded once in the Foafnaut host with replay.ts recording its requests. */
+async function foafnautRequests(p:Page):Promise<{entries:Entry[];bodies:Map<string,Uint8Array>}>{
+  const dir=await Deno.makeTempDir();
+  const [w,h]=(p.viewport??spec.defaults.viewport).split("x").map(Number);
+  const deno=Deno.execPath(),pre=["--preload",here+"replay.ts"];
+  const cmd=Deno.build.os==="darwin"
+    ?[deno,"run","--no-check","--no-config","--no-npm","--node-modules-dir=none","--unstable-webgpu","--unstable-ffi","-A",...pre,host+"run_html.ts","--native-engine",engine!,
+      "--offscreen","--offscreen-size",`${w}x${h}@1`,"--text-size","100","--no-state","--be-liberal-in-what-we-accept","--url",p.url,"--watch-sweep","15"]
+    :[deno,"run",...pre,"--no-prompt","--allow-read","--allow-ffi","--allow-net","--allow-env","--allow-write",`--import-map=${host}textnaut/import_map.json`,
+      host+"textnaut/textnaut.ts","--dump","--timing","--engine",engine!,p.url];
+  try{
+    await new Deno.Command(cmd[0],{args:cmd.slice(1),cwd:host,env:{REALPAGES_RECORD:dir},stdout:"null",stderr:"null",signal:AbortSignal.timeout(180000)}).output();
+  }catch{/* timed out: keep what was recorded */}
+  const entries:Entry[]=[],bodies=new Map<string,Uint8Array>();
+  try{
+    for(const line of (await Deno.readTextFile(`${dir}/index.jsonl`)).split("\n").filter(Boolean)){
+      const e=JSON.parse(line) as Entry&{file?:string};
+      if(e.file){bodies.set(e.url,await Deno.readFile(`${dir}/${e.file}`));delete e.file;}
+      entries.push({...e,source:"foafnaut" as Entry["source"]});
+    }
+  }catch{/* nothing recorded */}
+  await Deno.remove(dir,{recursive:true}).catch(()=>{});
+  return {entries,bodies};
+}
+
 const today=new Date().toISOString().slice(0,10).replaceAll("-","");
 let total=0;
 for(const p of spec.pages.filter(p=>!p.url.startsWith("lab:")&&!p.snapshot&&(!only||only.includes(p.id)))){
@@ -114,8 +145,17 @@ for(const p of spec.pages.filter(p=>!p.url.startsWith("lab:")&&!p.snapshot&&(!on
     else{delete e.body;}
     entries.push(e);
   };
-  for(const e of deno){const d=e._data;delete e._data;keep(e,d);}
-  const seen=new Set(entries.map(e=>e.url));
+  const fo=engine?await foafnautRequests(p):{entries:[],bodies:new Map<string,Uint8Array>()};
+  const seen=new Set<string>();
+  for(const e of fo.entries){
+    if(seen.has(e.url))continue;seen.add(e.url);
+    const d=fo.bodies.get(e.url),len=d?.length??0;
+    const ct=e.headers.find(([k])=>k.toLowerCase()==="content-type")?.[1]??"";
+    const reason=/^(video|audio)\//.test(ct)?"media":len>maxFile?"over the file limit":/^image\//.test(ct)&&len>maxImage?"image over the limit":size+len>maxBytes?"over the page limit":"";
+    if(reason){skipped.push({url:e.url.slice(0,300),reason,bytes:len});continue;}
+    keep(e,d);
+  }
+  for(const e of deno){const d=e._data;delete e._data;if(seen.has(e.url))continue;seen.add(e.url);keep(e,d);}
   for(const h of c.hops)if(!seen.has(h.url)){seen.add(h.url);keep(h,undefined);}
   // Smaller bodies first, so that the cap leaves out the big ones.
   const order=[...c.reqs].filter(([,r])=>r.done&&r.status).sort((x,y)=>(c.bodies.get(x[0])?.length??0)-(c.bodies.get(y[0])?.length??0));
@@ -137,7 +177,7 @@ for(const p of spec.pages.filter(p=>!p.url.startsWith("lab:")&&!p.snapshot&&(!on
     note:"Public page vendored as fair use for testing Foafnaut (danbri/factoidal-core labs/demos/foafnaut/realpages). Bodies are decoded (no content encoding). Not for redistribution as content.",
     bytes:size,entries,skipped};
   files.unshift({name:"manifest.json",data:new TextEncoder().encode(JSON.stringify(manifest,null,1))},{name:"reference.png",data:c.reference},
-    {name:"PROVENANCE.txt",data:new TextEncoder().encode(`URL: ${p.url}\nFetched: ${fetchedAt}\nLicence: ${licence}\n${p.attribution?`Attribution: ${p.attribution}\n`:""}Responses: ${entries.length} kept, ${skipped.length} left out (manifest.json lists both with their HTTP header fields).\nreference.png: headless Chrome (${c.ua}) at ${(p.viewport??spec.defaults.viewport).split("x")[0]}x${Number((p.viewport??spec.defaults.viewport).split("x")[1])-REFERENCE_TOP}.\n`)});
+    {name:"PROVENANCE.txt",data:new TextEncoder().encode(`URL: ${p.url}\nFetched: ${fetchedAt}\nLicence: ${licence}\n${p.attribution?`Attribution: ${p.attribution}\n`:""}Recorded by: ${fo.entries.length?"the Foafnaut host (its own requests), ":""}Deno's fetch (the document), headless Chrome (the rest)\nResponses: ${entries.length} kept, ${skipped.length} left out (manifest.json lists both with their HTTP header fields).\nreference.png: headless Chrome (${c.ua}) at ${(p.viewport??spec.defaults.viewport).split("x")[0]}x${Number((p.viewport??spec.defaults.viewport).split("x")[1])-REFERENCE_TOP}.\n`)});
   const zip=await writeZip(files);
   await Deno.mkdir(`${out}/${site}`,{recursive:true});
   const file=`${out}/${site}/${p.id}-${today}.zip`;

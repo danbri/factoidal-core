@@ -7,10 +7,39 @@
 // line {"type":"realpages-replay-miss","url":...} on standard error; nothing goes to the
 // network. file: and loopback URLs go to the real fetch (lab pages, local test servers).
 // At exit, one line {"type":"realpages-replay","hits":N,"misses":M} on standard error.
+//
+// Record mode (snapshot.ts --engine): REALPAGES_RECORD=DIR passes every request to the network
+// and writes what came back to DIR (index.jsonl and one file per body), with the address each
+// name resolved to: the requests the built-in engine itself makes, which a snapshot then holds.
 import {readZip} from "./zip.ts";
 
 type Entry={url:string;status:number;statusText?:string;headers:[string,string][];body?:string;remote_ip?:string};
-const path=Deno.env.get("REALPAGES_REPLAY");
+const path=Deno.env.get("REALPAGES_REPLAY"),recordDir=Deno.env.get("REALPAGES_RECORD");
+if(recordDir&&!path){
+  const realFetch=globalThis.fetch.bind(globalThis),realDns=Deno.resolveDns.bind(Deno);
+  const ips=new Map<string,string>();let n=0;
+  Deno.mkdirSync(recordDir,{recursive:true});
+  const note=(e:Record<string,unknown>,body?:Uint8Array)=>{
+    if(body?.length){const name=`r${String(++n).padStart(5,"0")}`;Deno.writeFileSync(`${recordDir}/${name}`,body);e.file=name;}
+    Deno.writeTextFileSync(`${recordDir}/index.jsonl`,JSON.stringify(e)+"\n",{append:true});
+  };
+  (Deno as unknown as {resolveDns:typeof realDns}).resolveDns=(async(name:string,type:"A"|"AAAA",...rest:unknown[])=>{
+    const r=await (realDns as (...a:unknown[])=>Promise<string[]>)(name,type,...rest);if(r.length)ips.set(name,r[0]);return r;}) as typeof realDns;
+  globalThis.fetch=(async(input:RequestInfo|URL,init?:RequestInit)=>{
+    const href=input instanceof Request?input.url:String(input);
+    const r=await realFetch(input as RequestInfo,init);
+    try{
+      const u=new URL(href);
+      if(u.protocol==="http:"||u.protocol==="https:"){
+        const body=new Uint8Array(await r.clone().arrayBuffer());
+        const ip=ips.get(new URL(r.url||href).hostname);
+        if(r.redirected&&r.url&&r.url!==href)note({url:href,status:302,statusText:"Found",headers:[["location",r.url]]});
+        note({url:r.url||href,status:r.status,statusText:r.statusText,headers:[...r.headers],...(ip?{remote_ip:ip}:{})},body);
+      }
+    }catch{/* not recorded */}
+    return r;
+  }) as typeof fetch;
+}
 if(path){
   const files=await readZip(await Deno.readFile(path));
   const manifest=JSON.parse(new TextDecoder().decode(files.get("manifest.json")!)) as {entries:Entry[]};
