@@ -1,5 +1,6 @@
 // Byte/JSON transport for the published Lean HTML engine. No host markup parser.
 import type {NetWire} from "./native_net.ts";
+import {allFinite} from "./finite_floats.ts";
 // This ignored runtime is installed only after checking the Builds manifest.
 // @ts-ignore generated release module
 import createModule from "./.build/native-html/runtime/web-render.mjs";
@@ -280,7 +281,7 @@ function sceneOf(result:Record<string,unknown>&{dataBase64?:unknown},width:numbe
   }
   const data=result.data as number[]|Float32Array,web=result.webRender as {links?:unknown}|undefined;
   if(result.abi!=="lean-svg-v1" || result.width!==width || result.height!==height ||
-     !(Array.isArray(data)||data instanceof Float32Array) || !data.length || !data.every(Number.isFinite) ||
+     !(Array.isArray(data)||data instanceof Float32Array) || !data.length || !allFinite(data) ||
      typeof result.wgsl!=="string" || !Array.isArray(result.checks) || !Array.isArray(web?.links))
     throw new Error("Unexpected published Lean HTML scene ABI");
   return result as unknown as HTMLArtifact;
