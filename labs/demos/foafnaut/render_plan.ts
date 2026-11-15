@@ -1,6 +1,7 @@
 // Checked transport for a plan computed by Lean. No layout or drawing policy.
 // @deno-types="./foafnaut-engine.d.ts"
 import createModule from "./.build/engines/render-plan.mjs";
+import {allFiniteF32} from "./finite_floats.ts";
 
 export type RenderPlan = {
   abi:"lean-render-plan-v1"; mode:"window"|"offscreen"|"svg-offscreen";
@@ -28,7 +29,7 @@ export async function requestRenderPlan(mode:"window"|"offscreen"|"svg-offscreen
   const args=[frame.width,frame.height,frame.data.length,capability(limits.maxUniformBufferBindingSize),
     capability(limits.maxTextureDimension2D),capability(limits.maxStorageBufferBindingSize??(mode==="svg-offscreen"?undefined:0)),
     capability(limits.maxBufferSize)];
-  if(!args.every(n=>Number.isInteger(n)&&n>=0&&n<=0xffffffff) || !frame.data.every(n=>Number.isFinite(n)&&Number.isFinite(Math.fround(n))))
+  if(!args.every(n=>Number.isInteger(n)&&n>=0&&n<=0xffffffff) || !allFiniteF32(frame.data))
     throw new Error("Invalid render-plan ABI inputs");
   const module=await (modulePromise??=createModule());
   const pointer=module.ccall("render_plan","number",["string","string",...args.map(()=>"number")],[mode,format,...args]);
