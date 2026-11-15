@@ -33,10 +33,20 @@ function fixture() {
 }
 
 test('the pin names a release, a commit and two runtime files with sha256', () => {
-  assert.match(pin.release, /^build-2f3e888e2d0e-foafnaut-web$/);
+  assert.match(pin.release, /^build-5029cc163906-foafnaut-web$/);
   assert.match(pin.tarball.sha256, /^[0-9a-f]{64}$/);
   assert.deepEqual(Object.values(pin.files).map((f) => f.name).sort(), ['web-render.mjs', 'web-render.wasm']);
   assert(pin.url.startsWith('https://github.com/danbri/factoidal-builds/releases/download/'));
+});
+
+test('the native Linux pin is a self-contained release of the same engine commit as the Wasm pin', () => {
+  const n = pin.native['linux-x86_64'];
+  assert.equal(n.release, 'build-5029cc163906-foafnaut-linux-x86_64');
+  assert.equal(n.commit, pin.commit);
+  assert.equal(n.url, `https://github.com/${pin.repository}/releases/download/${n.release}/foafnaut-linux-x86_64.tar.gz`);
+  assert.match(n.tarball.sha256, /^[0-9a-f]{64}$/);
+  assert.match(n.file.sha256, /^[0-9a-f]{64}$/);
+  assert(n.tarball.bytes > 0 && n.file.bytes > n.tarball.bytes);
 });
 
 test('a good download gives exactly the two runtime files', () => {
@@ -100,7 +110,7 @@ test('the installed foafnaut library comes before the fetch, and FOAFNAUT_HOME m
 });
 
 test('the cache directory is keyed by the engine commit', () => {
-  assert(cacheDir({ TEXTNAUT_CACHE: '/c' }, '/h').endsWith('engine-2f3e888e2d0e'));
-  assert.equal(cacheDir({ XDG_CACHE_HOME: '/x' }, '/h'), '/x/textnaut/engine-2f3e888e2d0e');
-  assert.equal(cacheDir({}, '/h'), '/h/.cache/textnaut/engine-2f3e888e2d0e');
+  assert(cacheDir({ TEXTNAUT_CACHE: '/c' }, '/h').endsWith('engine-5029cc163906'));
+  assert.equal(cacheDir({ XDG_CACHE_HOME: '/x' }, '/h'), '/x/textnaut/engine-5029cc163906');
+  assert.equal(cacheDir({}, '/h'), '/h/.cache/textnaut/engine-5029cc163906');
 });

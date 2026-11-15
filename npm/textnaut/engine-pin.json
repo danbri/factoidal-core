@@ -1,13 +1,13 @@
 {
-  "release": "build-2f3e888e2d0e-foafnaut-web",
+  "release": "build-5029cc163906-foafnaut-web",
   "repository": "danbri/factoidal-builds",
   "asset": "foafnaut-web.tar.gz",
-  "url": "https://github.com/danbri/factoidal-builds/releases/download/build-2f3e888e2d0e-foafnaut-web/foafnaut-web.tar.gz",
-  "commit": "2f3e888e2d0e126ee84ca68f89d8c1740846d5b4",
+  "url": "https://github.com/danbri/factoidal-builds/releases/download/build-5029cc163906-foafnaut-web/foafnaut-web.tar.gz",
+  "commit": "5029cc163906769080a93d7a31c0f91cc62f00d7",
   "runtimeFormat": "factoidal-html-webgpu-runtime-v1",
   "tarball": {
-    "bytes": 11729080,
-    "sha256": "d6c8052498d48ef785e87fb4e3b12754a93f7a09020240fadb5adc3ef8976e7d"
+    "bytes": 11729622,
+    "sha256": "22ae0e0a1cdf715a89c835fc217f295ce9370ec5e7fdb395828146ea350e648f"
   },
   "files": {
     "docs/web/hub/html-webgpu/runtime/web-render.mjs": {
@@ -17,8 +17,23 @@
     },
     "docs/web/hub/html-webgpu/runtime/web-render.wasm": {
       "name": "web-render.wasm",
-      "bytes": 47689481,
-      "sha256": "71a9f023f4ab06616e81f36eceb5720bddc6c5da0018098e5d71a13672bc542d"
+      "bytes": 47689512,
+      "sha256": "1b6356463827045daf8ee2588652290a65074e715f05e7bd95e7c896752fbc9f"
+    }
+  },
+  "native": {
+    "linux-x86_64": {
+      "release": "build-5029cc163906-foafnaut-linux-x86_64",
+      "url": "https://github.com/danbri/factoidal-builds/releases/download/build-5029cc163906-foafnaut-linux-x86_64/foafnaut-linux-x86_64.tar.gz",
+      "commit": "5029cc163906769080a93d7a31c0f91cc62f00d7",
+      "tarball": {
+        "bytes": 21687751,
+        "sha256": "a053a867057869e8956fed4935f0b46bf8a61293cb11b6d1a811457599187cfc"
+      },
+      "file": {
+        "bytes": 68624400,
+        "sha256": "0c4bc577ee4ba6f0b735567d176e9c7670a28b75de7b88a5ce936197f3625a16"
+      }
     }
   }
 }
