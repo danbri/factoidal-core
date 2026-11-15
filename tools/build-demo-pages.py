@@ -45,24 +45,42 @@ SVG_TINY_SCORES = 'https://danbri.github.io/factoidal/web/hub/render-scores/#svg
 GAMES_TEST = 'https://danbri.github.io/glitchcan-minigam/'
 BUILT_IN = {GAMES_TEST: 'Testing JavaScript games (on the web)', 'foafnaut:graph': 'Interactive FOAF graph', 'foafnaut:wasm': 'WebAssembly, run by the built-in engine (WasmVM)',
             SVG_TINY_SCORES: 'SVG Tiny 1.2 test suite results (on the web)'}
-START = ['foafnaut:graph', 'spinal-tap-sparql.html', 'shader-gallery.html', 'showcase.html',
-         'showcase-dataviz.html', 'showcase-scripts.html']
+START = ['foafnaut:graph', 'start.html', 'raymarch.html', 'showcase.html', 'showcase-dataviz.html', 'showcase-scripts.html',
+         'stress.html']
+# The stress tests (owner, 2026-11-15): pages that are heavy on purpose or by nature, kept out of the
+# start of the index and listed on stress.html (written below) with what makes each one heavy. Their
+# addresses do not change: spinal_perf.ts, spinal_bisect.ts, realpages/pages.json and the Hub checks
+# open them by name.
+STRESS = ['spinal-tap-sparql.html', 'shader-gallery.html', 'webgpu-force-graph.html', 'foaf-explorer-verified.html',
+          'wordmarks.html']
+STRESS_WHY = {
+    'spinal-tap-sparql.html': 'A long animated page: about 2,300 primitives a frame with strokes, gradients, a web font and SVG, '
+                              'redrawn by a script. The measured page of core issue 450 (spinal_perf.ts, spinal_bisect.ts, the real-page survey).',
+    'shader-gallery.html': 'Full-canvas fragment shaders up to 800 × 600 (1600 × 1000 if asked), with 96- and 256-step loops, every frame.',
+    'webgpu-force-graph.html': 'A WebGPU compute pass over 1,000 nodes each frame, then a draw of every node and edge.',
+    'foaf-explorer-verified.html': 'A script-driven graph layout with a WebAssembly check of every frame.',
+    'wordmarks.html': 'The old start page: a large SVG with gradients, layered strokes and text on a path, flipped by a script every animation frame.',
+}
 GROUPS = [
-    ('Pages with scripts', ['search.html', 'foaf-explorer.html', 'foaf-explorer-verified.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html', 'webgpu-force-graph.html',
-                            'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', 'shadow-and-frames.html', GAMES_TEST]),
+    ('Scripts, WebGPU and WebGL', ['raymarch.html', 'search.html', 'foaf-explorer.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html',
+                                   'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', 'shadow-and-frames.html', GAMES_TEST]),
     ('SVG and graphics', ['showcase-lettering.html', 'showcase-textpath.html', 'showcase-tables-svg.html', 'svg-gallery.html',
                           'svg-text-labels.html', 'solving-showcase.html', 'foaf-graph.html', 'svg-affine.html', 'svg-linear-paths.html']),
     ('Text, type and layout', ['showcase-emoji.html', 'typography-lab.xml', 'showcase-tables.html', 'showcase-images.html',
                                'showcase-image-formats.html', 'print-showcase.html', 'print-poster.html', 'markdown-sample.html']),
     ('XML, XSLT and data', ['foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',
                             'engine-pipeline.xml', 'books-svg.xml', 'books-xslt4.xml', 'books-xslt1.xml']),
-    ('About the engine', ['start.html', 'status.html', 'js-status.html', 'architecture.html', 'settings.html', 'foafnaut:wasm', SVG_TINY_SCORES]),
+    ('About the engine', ['status.html', 'js-status.html', 'architecture.html', 'settings.html', 'foafnaut:wasm', SVG_TINY_SCORES]),
+    ('Stress tests: heavy pages, slow to open or to scroll', STRESS),
 ]
 # One line for each link. A page with none here uses the start of its manifest "shows".
 BLURBS = {
     GAMES_TEST: 'A collection of JavaScript games, as a test. It does not work yet: the games need module scripts.',
     'foafnaut:graph': 'Drag and explore a network of people, laid out by the browser.',
-    'spinal-tap-sparql.html': 'Ask Wikidata about the band through QLever, from the page.',
+    'spinal-tap-sparql.html': 'Ask Wikidata about the band through QLever, from the page. Heavy.',
+    'stress.html': 'Heavy pages kept apart: the Spinal Tap page, the shader gallery, WebGPU compute and more.',
+    'raymarch.html': 'A small ray-marched scene in WebGPU or WebGL 2, light by default.',
+    'wordmarks.html': 'Seven Foafnaut wordmarks in one SVG, changed by a script.',
     'shader-gallery.html': 'WebGPU shaders to change and run, a ray marcher among them.',
     'showcase.html': 'What the engine draws well, and what it does not draw yet.',
     'showcase-dataviz.html': 'Charts drawn in SVG, labels and all.',
@@ -97,7 +115,7 @@ BLURBS = {
     'lab-files.xml': 'A table whose totals XSLT computes.',
     'engine-pipeline.xml': 'The engine\'s stages, drawn from an XML description.',
     'books-xslt4.xml': 'XSLT 4: maps, records and xsl:switch.',
-    'start.html': 'The page the app opens with: Foafnaut wordmarks, these pages on the web, and sites to try.',
+    'start.html': 'The page Foafnaut and Textnaut open with: sites on the web to try, and these pages.',
     'status.html': 'Where the project is, and its measured scores.',
     'js-status.html': 'The two JavaScript engines and their test scores.',
     'architecture.html': 'How the engine is put together.',
@@ -134,12 +152,39 @@ def index():
                    for name, pages in GROUPS)
     if other:
         body += '<h2>Other pages</h2>\n' + ''.join(item(page) for page in other)
-    return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Foafnaut</title>{ICON}'
-            f'<style>{STYLE}{INDEX_STYLE}</style></head><body><main>\n<h1>Foafnaut</h1>\n'
+    return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Foafnaut demos</title>{ICON}'
+            f'<style>{STYLE}{INDEX_STYLE}</style></head><body><main>\n<h1>Foafnaut demos</h1>\n'
             '<p class="lead">A web browser with its own built-in engine: it draws every page here itself, '
             'with WebGPU.</p>\n'
             '<div class="start"><h2>Start here</h2>\n' + ''.join(item(page) for page in present(START)) + '</div>\n'
             + body + '</main></body></html>\n')
+
+
+def stress():
+    titles = {p['page']: p['title'] for p in manifest['pages']}
+    items = ''.join(f'<p class="item"><a href="{html.escape(page)}">{html.escape(titles[page])}</a></p>\n'
+                    f'<p class="what">{html.escape(STRESS_WHY[page], quote=False)}</p>\n' for page in STRESS if page in titles)
+    return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Stress tests</title>{ICON}'
+            f'<style>{STYLE}{INDEX_STYLE}</style></head><body><main>\n'
+            '<p><a href="start.html">Start page</a> · <a href="index.html">Demo index</a></p>\n<h1>Stress tests</h1>\n'
+            '<p class="lead">Heavy pages. Each one asks a lot of the engine or the GPU, so it may take seconds to open, '
+            'scroll slowly or keep the processor busy. They are here to be measured and made faster; the light pages are '
+            'in the <a href="index.html">demo index</a>.</p>\n' + items
+            + '<p class="what">Their addresses have not changed: links to them from before still work. The Spinal Tap page '
+            'is a budgeted test (labs/demos/foafnaut/fixtures/spinal-perf/budgets.json); the others are not yet.</p>\n'
+            '</main></body></html>\n')
+
+
+# Textnaut ships its own copy of the start page (textnaut/start.html; it has no demo pages beside it), so
+# its links to Foafnaut's own pages go to the Hub. Same text otherwise: one page for both browsers.
+HUB_PAGES = 'https://danbri.github.io/factoidal/web/hub/foafnaut/pages/'
+
+
+def textnaut_start():
+    text = open(os.path.join(PAGES, 'start.html'), encoding='utf-8').read()
+    # Foafnaut's settings page sets Foafnaut, not Textnaut: left out of Textnaut's copy.
+    text = re.sub(r'<li><a href="settings.html">.*?</li>\n', '', text)
+    return re.sub(r'(href|src)="(?![a-z]+:|#|/)([^"]*)"', lambda m: f'{m.group(1)}="{HUB_PAGES}{m.group(2)}"', text)
 
 
 # The Foafnaut notes: one Markdown file a note, the one source of two things. Eleventy makes
@@ -233,12 +278,15 @@ for page in manifest['pages']:
         continue  # An XML page is its own source; the engine runs its stylesheet.
     if page.get('handwritten') or page.get('generator'):
         continue  # Written by hand, or by its generator (tools/showcase-pages.mjs): not rebuilt here.
-    if source is None:
+    if page['page'] == 'stress.html':
+        pages[page['page']] = stress()
+    elif source is None:
         pages[page['page']] = index()
     else:
         path = os.path.normpath(os.path.join(PAGES, source))
         pages[page['page']] = markdown(path) if source.endswith('.md') else svg(path, page['title'])
 pages['feed.xml'] = feed()
+pages['../textnaut/start.html'] = textnaut_start()
 stale = 0
 for name, text in pages.items():
     target = os.path.join(PAGES, name)

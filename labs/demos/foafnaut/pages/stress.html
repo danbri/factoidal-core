@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Stress tests</title><link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg"><style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}h1{margin:0;font-size:21px;line-height:28px;color:#184078}p{margin:0;padding-top:6px}svg{display:block}h2{margin:0;padding-top:22px;font-size:17px;line-height:24px;color:#184078}.lead{font-size:15px;line-height:22px;color:#34485c}.start{margin-top:12px;padding:6px 14px 12px;background:#eef3fa}.item{padding-top:8px}.what{padding-top:0;color:#5b6876;font-size:13px;line-height:18px}</style></head><body><main>
+<p><a href="start.html">Start page</a> · <a href="index.html">Demo index</a></p>
+<h1>Stress tests</h1>
+<p class="lead">Heavy pages. Each one asks a lot of the engine or the GPU, so it may take seconds to open, scroll slowly or keep the processor busy. They are here to be measured and made faster; the light pages are in the <a href="index.html">demo index</a>.</p>
+<p class="item"><a href="spinal-tap-sparql.html">Spın̈al Tap: a SPARQL client for Wikidata</a></p>
+<p class="what">A long animated page: about 2,300 primitives a frame with strokes, gradients, a web font and SVG, redrawn by a script. The measured page of core issue 450 (spinal_perf.ts, spinal_bisect.ts, the real-page survey).</p>
+<p class="item"><a href="shader-gallery.html">Shader gallery: two triangles</a></p>
+<p class="what">Full-canvas fragment shaders up to 800 × 600 (1600 × 1000 if asked), with 96- and 256-step loops, every frame.</p>
+<p class="item"><a href="webgpu-force-graph.html">WebGPU compute: a force-directed graph of 1,000 nodes</a></p>
+<p class="what">A WebGPU compute pass over 1,000 nodes each frame, then a draw of every node and edge.</p>
+<p class="item"><a href="foaf-explorer-verified.html">FOAF explorer, verified overlap check (WebAssembly)</a></p>
+<p class="what">A script-driven graph layout with a WebAssembly check of every frame.</p>
+<p class="item"><a href="wordmarks.html">Foafnaut wordmarks</a></p>
+<p class="what">The old start page: a large SVG with gradients, layered strokes and text on a path, flipped by a script every animation frame.</p>
+<p class="what">Their addresses have not changed: links to them from before still work. The Spinal Tap page is a budgeted test (labs/demos/foafnaut/fixtures/spinal-perf/budgets.json); the others are not yet.</p>
+</main></body></html>

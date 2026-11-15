@@ -1,9 +1,14 @@
 # foafnaut2525 demo pages
 
-Test pages for the Lean engine, the demo index (`index.html`) and the start page of
-`foafnaut` (`start.html`, handwritten; the window opens it when no page is given, and opens
-`index.html` for sweeps, checks, and a host that can run no page script). `manifest.json`
-lists each page and what the engine must do with it.
+Test pages for the Lean engine, the demo index (`index.html`) and the start page
+(`start.html`, handwritten). `start.html` is the one start page of Foafnaut and Textnaut: the
+window opens it when no page is given (sweeps, checks and prints open `index.html`), the Hub
+uses it as home, and `tools/build-demo-pages.py` copies it to `../textnaut/start.html` with
+links to these pages made absolute (Hub addresses). Keep it light: no script, no web font,
+no image or SVG; every site link carries a mark from a measured run when it is slow or does
+not draw yet. `stress.html` (written by the same script from `STRESS`) lists the heavy pages;
+they keep their addresses, so tests and old links that name them still work.
+`manifest.json` lists each page and what the engine must do with it.
 
 - `tools/build-demo-pages.py` writes the `.html` files from `source/`, the status note
   and `../svg-fixtures`, `index.html` from `START`, `GROUPS` and `BLURBS` in that script,

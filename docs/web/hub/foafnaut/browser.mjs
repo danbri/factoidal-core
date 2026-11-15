@@ -185,7 +185,7 @@ function askToLeave(){
 addEventListener('popstate',event=>{
   fling.stop();dropActions();
   if(event.state?.foafnaut==='guard'){askToLeave();return;}
-  fromHost=true;send({type:'visit',address:hubAddress()||new URL('pages/index.html',location.href).href});
+  fromHost=true;send({type:'visit',address:hubAddress()||new URL('pages/start.html',location.href).href});
 });
 // Keep focus where the loop puts it: the press must not move it back to the page.
 canvas.addEventListener('mousedown',event=>event.preventDefault());
