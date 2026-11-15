@@ -14340,9 +14340,12 @@
   let fontFaces;
   const facesNow = () => {
     if (fontFaces) return fontFaces;
-    let list = [];
-    try { const s = n.query(0, 23, ''); if (typeof s === 'string' && s !== '') list = JSON.parse(s); } catch { list = []; }
-    return fontFaces = list.map(f => {
+    // Kept only once Lean answered: the start of the prelude calls every getter once with a
+    // plain object (the interface checks), when there is no page to ask; an empty list kept
+    // then made document.fonts empty on every page.
+    let list = [], answered = false;
+    try { const s = n.query(0, 23, ''); if (typeof s === 'string') { answered = true; if (s !== '') list = JSON.parse(s); } } catch { list = []; }
+    const faces = list.map(f => {
       const face = { family: f.family, style: f.style, weight: f.weight, stretch: 'normal', unicodeRange: f.unicodeRange,
         variant: 'normal', featureSettings: 'normal', display: 'auto', status: f.status };
       let loaded;
@@ -14351,6 +14354,8 @@
       face.load = () => face.loaded;
       return Object.freeze(face);
     });
+    if (answered) fontFaces = faces;
+    return faces;
   };
   const faceRanges = face => face.unicodeRange.split(',').map(r => r.trim().replace(/^U\+/i, '').split('-').map(h => parseInt(h, 16)))
     .map(([lo, hi]) => [lo, hi ?? lo]);
