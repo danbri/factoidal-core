@@ -166,6 +166,41 @@ export function wptHTML(D, H, {now, width}) {
   return h;
 }
 
+/** Semantic web and data formats: every suite (OWL 2: every population) as its own row, with
+the newest run on the built-in engine, else the newest F* run marked stale. */
+export const SEMWEB_STALE_HOURS = 36;
+export function semwebHTML(D, {now}) {
+  const S = D.semweb;
+  if (!S || !S.groups) return '';
+  const status = r => {
+    if (r.notRun) return `<span class="flag">not run</span> ${esc(r.notRun)}`;
+    if (r.stale) return `<span class="flag">stale</span> ${esc(r.staleReason || '')}`;
+    if (r.finished && ageH(r.finished, now) > SEMWEB_STALE_HOURS) return `<span class="flag">stale</span> last run ${ageText(ageH(r.finished, now))} ago`;
+    return 'current';
+  };
+  let h = '<section class="suite semweb" id="semweb" aria-labelledby="swh"><h2 id="swh">Semantic web and data formats</h2>' +
+    '<p class="muted">The W3C and other conformance suites of the data formats and reasoners in the built-in engine, one row per suite; OWL 2 by population. ' +
+    `Rows marked stale come from the F* implementation, whose automatic runs stopped on ${esc(S.fstarStopped)}: they are its last numbers, not current ones. ` +
+    'Total is the whole suite or population; decided is the share the engine gave a verdict on (pass or fail).</p>';
+  for (const g of S.groups) {
+    h += `<div class="card"><h3>${esc(g.name)}</h3>` + (g.note ? `<p class="muted">${esc(g.note)}</p>` : '') +
+      '<div class="tw"><table class="num-table sw"><thead><tr><th>Suite or population</th><th>Passed</th><th>Total</th><th>Share</th><th>Decided</th><th>Engine</th><th>Last run (UTC)</th><th>F* last</th><th>Status</th></tr></thead><tbody>' +
+      g.rows.map(r => {
+        const stale = r.stale || r.notRun || (r.finished && ageH(r.finished, now) > SEMWEB_STALE_HOURS);
+        const ap = r.approved ? `<small>Approved: ${fmt(r.approved.passed)} of ${fmt(r.approved.total)}</small>` : '';
+        return `<tr class="${stale ? 'old' : ''}"><td>${esc(r.label)}${ap}</td>` +
+          `<td>${r.passed == null ? '&ndash;' : '<b>' + fmt(r.passed) + '</b>'}</td><td>${r.total == null ? '&ndash;' : fmt(r.total)}</td>` +
+          `<td>${r.passed == null || !r.total ? '&ndash;' : p1(r.passed / r.total)}</td>` +
+          `<td>${r.total ? p1((r.run || 0) / r.total) : '&ndash;'}</td>` +
+          `<td>${r.engine === 'lean' ? 'built-in' : r.engine === 'fstar' ? 'F*' : '&ndash;'}</td>` +
+          `<td>${r.finished ? esc(r.finished.replace('T', ' ').slice(0, 16)) + (r.commit ? ' ' + commitLink(r.commit) : '') : '&ndash;'}</td>` +
+          `<td>${r.fstar ? fmt(r.fstar.passed) + ' of ' + fmt(r.fstar.total) + '<small>' + esc(r.fstar.finished.slice(0, 10)) + '</small>' : '&ndash;'}</td>` +
+          `<td class="st">${status(r)}</td></tr>`;
+      }).join('') + '</tbody></table></div></div>';
+  }
+  return h + '</section>';
+}
+
 /** The whole page body below the title, except the parts mount() fills (treemap, directory table). */
 export function pageHTML(D, H, {now = Date.now(), width = 760} = {}) {
   const newest = [D.latest.finished, D.test262.full?.latest?.finished].filter(Boolean).sort().pop();
@@ -175,9 +210,10 @@ export function pageHTML(D, H, {now = Date.now(), width = 760} = {}) {
   const notes = '<section class="notes"><h2>About these numbers</h2>' +
     '<p><b>Test262.</b> Full Test262 runs are the suite=test262 rows of runs.csv. Test262 through WPT is WPT\'s third_party/test262 directory, scored like the rest of WPT in the full WPT run: one subtest per test.</p>' +
     '<p><b>WPT.</b> Every share is of Chrome\'s subtests at the run\'s WPT commit, with each engine\'s passes in a test capped at Chrome\'s count for it. About half of all WPT subtests are in the encoding directory, one per character of the legacy encodings. Milestones: ' + D.milestones.map(m => esc(m[0]) + ' ' + m[1] + '%').join(', ') + '.</p>' +
+    '<p><b>Semantic web and data formats.</b> release-tests runs these suites on the built-in engine with every release (suites l4w3c-* and l4-* of runs.csv). OWL 2 rows are populations of the W3C OWL 2 Test Cases: each test type under the Direct and the RDF-Based Semantics, profile identification for EL, QL and RL, and the DL species; each total is the population\'s full official count.</p>' +
     '<p><b>Other browsers.</b> wpt.fyi runs at the same WPT commit only; runs of other commits are never used in their place, and a run that reports fewer than 95% of Chrome\'s tests is not shown.' + (Object.keys(D.missing || {}).length ? ' Not shown: ' + Object.entries(D.missing).map(([b, w]) => esc(NAMES[b] || b) + ' (' + esc(w) + ')').join(', ') + '.' : '') + '</p>' +
     '<p><b>Source.</b> The data files <a href="data.json">data.json</a> and <a href="history.json">history.json</a> are written by tests/browser-wpt/passmap-data.py from the wpt-scores branch of danbri/factoidal-builds, and kept with their history on its <a href="https://github.com/danbri/factoidal-builds/commits/hub-data">hub-data</a> branch.</p></section>';
-  return head + test262HTML(D, H, {now, width}) + wptHTML(D, H, {now, width}) + notes;
+  return head + test262HTML(D, H, {now, width}) + wptHTML(D, H, {now, width}) + semwebHTML(D, {now}) + notes;
 }
 
 /** Strata rows as objects. */

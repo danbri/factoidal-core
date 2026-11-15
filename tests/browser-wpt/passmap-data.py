@@ -17,6 +17,9 @@ wpt.fyi summary_v2 files of the browsers, and writes one JSON object, the page's
   history    every valid full WPT run, one row per engine commit (its newest run), newest first
   test262    Test262 through WPT (the third_party/test262 stratum) and the full Test262
              runs (runs.csv suite=test262, valid=true), when there are any
+  semweb     the semantic-web and data-format suites (SEMWEB below), one row per suite or
+             OWL 2 population: the newest run on the built-in engine (engine lean), else the
+             newest F* run, marked stale (the F* runners stopped on 2026-11-15)
 
 Everything is at the run's own WPT commit; the denominator is the Chrome run the WPT run
 used (meta.json inputs.chrome_run). Other browsers come from rivals.csv rows at that commit,
@@ -228,6 +231,145 @@ def t262_wpt_history(fetch, hist, rows):
     return out
 
 
+# The semantic-web and data-format suites, by group: (label, Lean suite or None, F* suite or None).
+# Lean suites are release-tests' lean-w3c and lean-semweb rows (engine lean); the F* suite is the
+# same suite's row from before 2026-11-15, when automatic F* builds and their suite runs stopped.
+# A suite with no Lean row shows its newest F* row, marked stale. OWL 2 is listed by population of
+# the W3C OWL 2 Test Cases (release-tests/owl-populations.py in danbri/factoidal-builds).
+FSTAR_STOPPED = "2026-11-15"
+SEMWEB = [
+    ("RDF and SPARQL", None, [
+        ("RDF 1.1 syntaxes and semantics", "l4w3c-rdf11", "rdf"),
+        ("RDF 1.2 syntaxes (with N-Triples/N-Quads c14n)", "l4w3c-rdf12", "rdf12"),
+        ("RDF 1.2 canonical N-Triples/N-Quads (F*: its own row)", None, "rdf12c14n"),
+        ("RDF 1.2 semantics (entailment)", "l4-rdf12entail", "rdf12entail"),
+        ("RDF Dataset Canonicalization (RDFC-1.0)", "l4w3c-rdfc10", "rdfc10"),
+        ("SPARQL 1.1", "l4w3c-sparql11", "sparql"),
+        ("SPARQL 1.2", "l4w3c-sparql12", "sparql12"),
+    ]),
+    ("OWL 2", "W3C OWL 2 Test Cases (2009-11-18), every test case not Rejected: 489 cases, 355 Approved. "
+     "W3C Document Licence. Each row is one population with its full official count; a case typed "
+     "with two test types, or annotated with both semantics, is in each of those populations.", [
+        ("PositiveEntailmentTest, Direct Semantics", "l4-owl2-positive-entailment-direct", None),
+        ("NegativeEntailmentTest, Direct Semantics", "l4-owl2-negative-entailment-direct", None),
+        ("ConsistencyTest, Direct Semantics", "l4-owl2-consistency-direct", None),
+        ("InconsistencyTest, Direct Semantics", "l4-owl2-inconsistency-direct", "owl2_dl_inconsistency"),
+        ("PositiveEntailmentTest, RDF-Based Semantics", "l4-owl2-positive-entailment-rdfbased", None),
+        ("NegativeEntailmentTest, RDF-Based Semantics", "l4-owl2-negative-entailment-rdfbased", None),
+        ("ConsistencyTest, RDF-Based Semantics", "l4-owl2-consistency-rdfbased", None),
+        ("InconsistencyTest, RDF-Based Semantics", "l4-owl2-inconsistency-rdfbased", None),
+        ("ProfileIdentificationTest, OWL 2 EL", "l4-owl2-profile-el", None),
+        ("ProfileIdentificationTest, OWL 2 QL", "l4-owl2-profile-ql", None),
+        ("ProfileIdentificationTest, OWL 2 RL", "l4-owl2-profile-rl", None),
+        ("Syntax: species (OWL 2 DL or not), all cases", "l4-owl2-species-all", None),
+        ("Syntax: species DL", "l4-owl2-species-dl", "owl_syntax_dl_species"),
+        ("Syntax: species Full only", "l4-owl2-species-full-only", None),
+        ("F*: RL closure over the profile-EL catalog (all test types)", None, "owl2_profile_el"),
+        ("F*: RL closure over the profile-QL catalog (all test types)", None, "owl2_profile_ql"),
+        ("F*: RL closure, PositiveEntailmentTest of the profile-RL catalog", None, "owl_rl_positive_entailment"),
+    ]),
+    ("SHACL", None, [
+        ("SHACL Core (1.0 suite)", "l4-shacl_core", "shacl_core"),
+        ("SHACL-SPARQL (1.0 suite)", "l4-shacl_sparql", "shacl_sparql"),
+        ("SHACL 1.2 Core", "l4-shacl12_core", "shacl12_core"),
+        ("SHACL 1.2 SPARQL", "l4-shacl12_sparql", "shacl12_sparql"),
+        ("SHACL 1.2 node expressions", "l4-shacl12_node_expr", "shacl12_node_expr"),
+        ("SHACL 1.2 rules (Lean: every rules manifest; F*: eval only)", "l4-shacl12_rules", "shacl12_rules"),
+        ("SHACL 1.2 rules syntax (F*: its own row)", None, "shacl12_rules_syntax"),
+        ("SHACL 1.2 rules well-formedness (F*: its own row)", None, "shacl12_rules_wellformed"),
+        ("SHACL 1.2 rules stratification (F*: its own row)", None, "shacl12_rules_stratification"),
+    ]),
+    ("ShEx", None, [
+        ("ShEx validation (ShExJ)", "l4-shex", "shex"),
+        ("ShExC parser against the ShExJ twins", "l4-shexc_differential", None),
+        ("ShExC negative syntax", "l4-shexc_negative_syntax", None),
+        ("ShEx negative structure (ShEx 2.1 section 5.7)", "l4-shexc_negative_structure", None),
+    ]),
+    ("JSON-LD", None, [
+        ("toRdf", "l4-jsonld_tordf", "jsonld_tordf"),
+        ("expand", "l4-jsonld_expand", "jsonld_expand"),
+        ("compact", "l4-jsonld_compact", "jsonld_compact"),
+        ("flatten", "l4-jsonld_flatten", "jsonld_flatten"),
+        ("fromRdf", "l4-jsonld_fromrdf", "jsonld_fromrdf"),
+        ("HTML", "l4-jsonld_html", None),
+        ("framing", "l4-jsonld_frame", None),
+    ]),
+    ("CSV on the Web", None, [
+        ("csv2rdf", "l4-csvw_csv2rdf", "csvw_csv2rdf"),
+        ("csv2json", "l4-csvw_csv2json", "csvw_csv2json"),
+        ("validation", "l4-csvw_validation", "csvw_validation"),
+    ]),
+    ("RML and RIF", None, [
+        ("RML-Core", "l4-rml_core", "rml_core"),
+        ("RML-IO", "l4-rml_io", None),
+        ("RML-CC", "l4-rml_cc", None),
+        ("RML-star", "l4-rml_star", None),
+        ("RML-FNML", "l4-rml_fnml", None),
+        ("RIF Core", "l4-rif_core", "rif_core"),
+    ]),
+    ("Verifiable Credentials and DIDs", None, [
+        ("VC Data Model 2.0, structural", "l4-vc_stage1", "vc_stage1"),
+        ("did:key", "l4-did_key", "did_key"),
+        ("Data Integrity eddsa-rdfc-2022", "l4-vc_di_eddsa_rdfc_2022", None),
+        ("Data Integrity EdDSA spec vectors", "l4-vc_di_eddsa_vectors", None),
+        ("Data Integrity ECDSA spec vectors", "l4-vc_di_ecdsa_vectors", None),
+    ]),
+    ("XML and other formats", None, [
+        ("XML 1.0 conformance (xmlconf)", "l4-xml_conformance", "xml_conformance"),
+        ("XSLT 1.0", "l4-xslt", "xslt"),
+        ("Schematron", "l4-schematron", "schematron"),
+        ("MathML (Content)", "l4-mathml", "mathml"),
+        ("JSON Schema draft-07", "l4-jsonschema", "jsonschema"),
+    ]),
+]
+
+
+def semweb(fetch, rows):
+    """D.semweb: every suite of SEMWEB as its own row. The newest valid Lean row is the
+    number; with none, the newest Lean row's reason (a population not run) or the newest
+    valid F* row, marked stale. OWL 2 population rows also carry their Approved-only count
+    from the run's meta.json."""
+    newest = lambda suite, engine, valid=True: max((r for r in rows if r["suite"] == suite and r["engine"] == engine
+                                                    and (r["valid"] == "true") == valid), key=lambda r: r["finished_utc"], default=None)
+    groups = []
+    for name, note, entries in SEMWEB:
+        out = []
+        for label, lean, fstar in entries:
+            L = newest(lean, "lean") if lean else None
+            Li = newest(lean, "lean", False) if lean else None
+            F = newest(fstar, "fstar") if fstar else None
+            row = {"label": label, "suite": lean or fstar,
+                   "fstar": None if not F else {"suite": fstar, "passed": num(F["passed"], int), "total": num(F["denominator"], int),
+                                                 "finished": F["finished_utc"]}}
+            if L:
+                row.update(engine="lean", passed=num(L["passed"], int), total=num(L["denominator"], int),
+                           run=num(L["names_run"], int), finished=L["finished_utc"], commit=L["factoidal_commit"][:9],
+                           stale=False)
+                if lean.startswith("l4-owl2-") and L.get("meta_url"):
+                    try:
+                        sc = (fetch.json(L["meta_url"]).get("population") or {}).get("status_counts") or {}
+                        ap = sc.get("approved")
+                        if ap:
+                            row["approved"] = {"passed": ap.get("pass"), "total": ap.get("total")}
+                    except Exception as e:
+                        print(f"{lean} meta.json not read: {e}", file=sys.stderr)
+            elif Li and (not F or Li["finished_utc"] > F["finished_utc"]):
+                row.update(engine="lean", passed=None, total=num(Li["denominator"], int) or None, run=0,
+                           finished=Li["finished_utc"], commit=Li["factoidal_commit"][:9], stale=False,
+                           notRun=Li["invalid_reason"])
+            elif F:
+                row.update(engine="fstar", passed=num(F["passed"], int), total=num(F["denominator"], int),
+                           run=num(F["names_run"], int), finished=F["finished_utc"], commit=F["factoidal_commit"][:9],
+                           stale=True, staleReason=f"not run since F* CI stopped ({FSTAR_STOPPED})"
+                           + ("; no Lean runner" if not lean else "; the Lean run has no valid row yet"))
+            else:
+                row.update(engine=None, passed=None, total=None, run=0, finished=None, commit=None, stale=True,
+                           staleReason="never recorded")
+            out.append(row)
+        groups.append({"name": name, "note": note, "rows": out})
+    return {"fstarStopped": FSTAR_STOPPED, "groups": groups}
+
+
 def write_hub(D, out_dir):
     """The Hub's Conformance page files: data.json (the newest runs, without the history
     lists) and history.json (one compact row per engine commit, for the charts)."""
@@ -366,6 +508,7 @@ def build(a, fetch):
             "full": t262_full(fetch, rows),
             "wptHistory": t262_wpt_history(fetch, hist, wpt) if a.hub else [],
         },
+        "semweb": semweb(fetch, rows),
     }
     if a.out:
         with open(a.out, "w") as f:
