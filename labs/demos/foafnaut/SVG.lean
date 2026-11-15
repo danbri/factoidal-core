@@ -3278,41 +3278,65 @@ A path's edge list in a tile holds the edges whose ends do not both lie below or
 the local rows of the tile's samples (`Primitive.localRows`, `edgesMeeting`): the other
 edges change no winding number there (`pathWinding_filter`). The shader walks the list
 instead of every edge of the path. -/
-def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPrimitive) : Array Nat := Id.run do
+structure TileListing where
+  /-- Each tile the primitive is listed in, with the index of its edge list in `lists`, or
+  `allEdges`. -/
+  tiles : Array (Nat × Nat)
+  lists : Array (Array Nat)
+  deriving Inhabited
+
+/-- The tiles of one primitive and its edge lists there (`tilesOf`): a function of the
+primitive, the mapping and the grid alone, so a retained compile keeps it with the
+primitive (`RetainedItem.listing`) and a frame that changes nothing else lists it again
+without filtering any edge. -/
+def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPrimitive) : TileListing := Id.run do
+  -- The local y of each end of each fill edge of a path (in the order of its record).
+  let ys : Option (Array (Float × Float)) := match p.geometry with
+    | .path contours => some ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray
+    | _ => none
+  -- A transform whose local y does not depend on x (no rotation or skew of y) maps a row
+  -- of tiles to one range of local y: one list for the row.
+  let byRow := p.transform.inverse.b == 0
+  let (left,top,right,bottom) := match p.screenBox mapping with
+    | some (x0,y0,x1,y1) => (tileIndex x0 across,tileIndex y0 down,tileIndex x1 across,tileIndex y1 down)
+    | none => (0,0,across-1,down-1)
+  let mut tiles : Array (Nat × Nat) := #[]
+  let mut lists : Array (Array Nat) := #[]
+  for y in [top:bottom+1] do
+    let mut rowRef : Option Nat := none
+    for x in [left:right+1] do
+      let mut ref := allEdges
+      if let some edges := ys then
+        if let some r := rowRef then ref := r
+        else
+          let tx0 := Float.ofNat (x*tileSize)
+          let ty0 := Float.ofNat (y*tileSize)
+          if let some (lo,hi) := p.localRows mapping tx0 ty0 (tx0+tileSize.toFloat) (ty0+tileSize.toFloat) then
+            ref := lists.size
+            lists := lists.push (edgesMeeting edges lo hi)
+      if byRow && ys.isSome then rowRef := some ref
+      tiles := tiles.push (y*across+x,ref)
+  return ⟨tiles,lists⟩
+
+/-- The tile words from each primitive's listing, in paint order (`tilesOf`). -/
+def tilesOfListings (width height : Nat) (compiled : List BackendPrimitive) (listings : List TileListing) : Array Nat := Id.run do
   let tail := paintTailOf compiled
   let across := (width+tileSize-1)/tileSize
   let down := (height+tileSize-1)/tileSize
   let mut lists : Array (Array (Nat × Nat)) := Array.replicate (across*down) #[]
   let mut pool : Array Nat := #[]
   let mut base := 2
-  for p in compiled do
-    -- The local y of each end of each fill edge of a path (in the order of its record).
-    let ys : Option (Array (Float × Float)) := match p.geometry with
-      | .path contours => some ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray
-      | _ => none
-    -- A transform whose local y does not depend on x (no rotation or skew of y) maps a row
-    -- of tiles to one range of local y: one list for the row.
-    let inv := p.transform.inverse
-    let byRow := inv.b == 0
-    let (left,top,right,bottom) := match p.screenBox mapping with
-      | some (x0,y0,x1,y1) => (tileIndex x0 across,tileIndex y0 down,tileIndex x1 across,tileIndex y1 down)
-      | none => (0,0,across-1,down-1)
-    for y in [top:bottom+1] do
-      let mut rowRef : Option Nat := none
-      for x in [left:right+1] do
-        let mut ref := allEdges
-        if let some edges := ys then
-          if let some r := rowRef then ref := r
-          else
-            let tx0 := Float.ofNat (x*tileSize)
-            let ty0 := Float.ofNat (y*tileSize)
-            if let some (lo,hi) := p.localRows mapping tx0 ty0 (tx0+tileSize.toFloat) (ty0+tileSize.toFloat) then
-              let kept := edgesMeeting edges lo hi
-              if pool.size+kept.size+1 <= maxTileEdgeWords then
-                ref := pool.size
-                pool := (pool.push kept.size) ++ kept
-        if byRow && ys.isSome then rowRef := some ref
-        lists := lists.modify (y*across+x) (·.push (base,ref))
+  for (p,listing) in compiled.zip listings do
+    -- The listing's edge lists go into the pool once each; past the limit, every edge.
+    let mut at_ : Array Nat := #[]
+    for list in listing.lists do
+      if pool.size+list.size+1 <= maxTileEdgeWords then
+        at_ := at_.push pool.size
+        pool := (pool.push list.size) ++ list
+      else at_ := at_.push allEdges
+    for (t,ref) in listing.tiles do
+      if t < lists.size then
+        lists := lists.modify t (·.push (base,if ref == allEdges then allEdges else at_.getD ref allEdges))
     base := base+p.rowCount
   let mut offsets : Array Nat := #[]
   let mut total := 0
@@ -3337,6 +3361,12 @@ def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPri
       entries := entries.push row
       refs := refs.push (if ref == allEdges then allEdges else poolStart+ref)
   return #[tileSize,across,down] ++ offsets ++ entries ++ refs ++ pool ++ tail
+
+def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPrimitive) : Array Nat :=
+  let across := (width+tileSize-1)/tileSize
+  let down := (height+tileSize-1)/tileSize
+  tilesOfListings width height compiled (compiled.map (Primitive.tileListing mapping across down))
+
 /-- The tile words of a scene (`tilesOf` of its compiled primitives). -/
 def Scene.tiles (s : Scene) : Array Nat := tilesOf s.width s.height s.mapping s.compiled
 
@@ -4221,6 +4251,8 @@ structure RetainedItem (κ : Type) where
   rows : Nat
   paintWords : Nat
   box : Option (Float × Float × Float × Float)
+  /-- Its tiles and edge lists (`Primitive.tileListing`), made when it is compiled. -/
+  listing : TileListing
 
 /-- The compile of a layer. -/
 structure Retained (κ : Type) where
@@ -4268,7 +4300,8 @@ def compileRetained {κ : Type} (reuse : κ → κ → Reuse) (prev : Option (Re
       | none => none
     let record := fun (compiled : BackendPrimitive) =>
       (⟨key,compiled,Primitive.writeRows (ByteArray.emptyWithCapacity (compiled.storageRows*16)) compiled,
-        cursor,compiled.storageRows,compiled.paintWords.length,compiled.screenBox mapping⟩ : RetainedItem κ)
+        cursor,compiled.storageRows,compiled.paintWords.length,compiled.screenBox mapping,
+        compiled.tileListing mapping ((width+tileSize-1)/tileSize) ((height+tileSize-1)/tileSize)⟩ : RetainedItem κ)
     let item ← match kept with
       | some (item,.same) => pure {item with key}
       | some (item,.moved transform opacity) =>
@@ -4296,7 +4329,7 @@ def Retained.dataBytes {κ : Type} (r : Retained κ) : ByteArray :=
 
 /-- The tile words of a retained compile. -/
 def Retained.tileWords {κ : Type} (r : Retained κ) : Array Nat :=
-  tilesOf r.width r.height r.mapping (r.items.toList.map (·.compiled))
+  tilesOfListings r.width r.height (r.items.toList.map (·.compiled)) (r.items.toList.map (·.listing))
 
 /-- The JSON of a layer answer with `sections` data (checks and inspector tree off), as
 `Scene.artifactWith` gives it, and its sections. -/
