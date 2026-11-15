@@ -48,6 +48,8 @@ standards conformance.
 - Commits are authored by Dan Brickley <danbri@danbri.org>, with no Co-Authored-By or session trailers.
 - Work in your own worktree on a `wip/` branch. Push it after each passing step. Open a PR; don't merge or push to main
   unless the brief says so.
+- Run `tools/premerge.sh` before pushing to main (about 15 s; `--with-lean` adds the lake build, tail-recursion gate and
+  dataflow drift test, `--with-engines` the whole test.sh).
 - One Lean build at a time: use the build lock (`leanlock.sh`, path in the task brief).
 - Cloud builds (`danbri/factoidal-builds`, `build.yml`, `core_ref=<branch>`) take about 1.5 h. Check the queue first,
   batch changes into few builds, never cancel another agent's run, and log each dispatch.
