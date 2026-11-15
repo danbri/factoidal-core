@@ -2425,3 +2425,5 @@ L4Factoidal_Rendering_CSS_resolveHasIn  # (c) the nesting of :is()/:not()/:where
 L4Factoidal_Rendering_CSS_mentionsHas  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
 L4Factoidal_Rendering_CSS_resolveStructuralIn  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
 L4Factoidal_Rendering_CSS_mentionsStructural  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
+L4Factoidal_JS_Tier1_*  # (c) tier 1's rewrite of one function body (BubblePopJS JIT): depth is the nesting of its source, capped by Tier1.fuel (1000, a deeper subtree is left as it is); lists are mapped
+L4Factoidal_JS_pureNum  # (c) the nesting of `arith` nodes in one expression, made by Tier1.tE and so capped by Tier1.fuel (1000)

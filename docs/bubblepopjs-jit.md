@@ -194,8 +194,59 @@ it falls back to exactly the plain calls whenever its fast path does not apply.
 
 ## Tier 1 in this branch
 
-`JS/Tier1.lean` rewrites the resolved tree once (after `Resolve.script`), behind the engine
-flag `Tier1.enabled`. Each specialised node has its own case in the evaluator and a theorem in
-`JS/Tier1Proofs.lean` that the evaluator on it equals the evaluator on the node it replaces,
-for every fuel, context and heap. Measured results and the list of nodes are in the tracking
-issue.
+[`JS/Tier1.lean`](../formal/lean4/L4Factoidal/JS/Tier1.lean) rewrites each function body once,
+after the resolver and after the register machine's compiler has seen the plain tree, behind the
+flag `Tier1.enabled`. It does not enter generator or async bodies (their machine matches on the
+syntax), patterns, or top-level loops compiled for the register machine. Four nodes:
+
+| Node | Stands for | Fast path | Theorem |
+| --- | --- | --- | --- |
+| `incLocal pre inc x h i` | `update pre inc (local x h i)` | a number in a writable slot is read and written in place, with no call of `lookupLocal`/`assignLocal` | `incLocal_eq` |
+| `setLocal x h i v` | `assign none (local x h i) v`, `v` not a function expression | no `evalRef`, no pair of options, no `putTarget`; an initialised writable slot is written in place | `setLocal_eq` |
+| `arith op a b` | `binary op a b`, `op` one of `+ - * /` | numbers from leaves and nested `arith` nodes combined with no step of the monad (`pureNum`); else the code of `binary` | `arith_eq` (with `arith_fast`, `operand_eval`) |
+| `blockN ss` | `block ss`, `ss` declares nothing lexical | no `evalBlock`, no `enterBlock`, no scan of the statements | `blockN_eq` |
+
+Each theorem in [`JS/Tier1Proofs.lean`](../formal/lean4/L4Factoidal/JS/Tier1Proofs.lean) is an
+equality of functions of the heap in `EStateM Abrupt Heap`, for every fuel and context, with the
+same children on both sides. `tE_incLocal`, `tE_setLocal`, `tE_arith` and `tS_blockN` state that
+the pass makes each node only from the node its theorem names, under that theorem's side
+condition. The proofs use only Lean's standard axioms (`propext`, `Classical.choice`,
+`Quot.sound`). They unfold the evaluator's equations by definitional unfolding (`rfl`): the
+generated equation lemmas of the 8,000-line mutual block time out, definitional unfolding at a
+known constructor takes milliseconds.
+
+Not mechanised: the step from the local equalities to whole runs (above, "From local lemmas to
+the whole run"). It is the next proof task: state the evaluator as the fixed point of one
+functional over a record of its functions, then the step is one induction on fuel.
+
+### Measured (Mac, 2026-11-15, `5029cc163` against `wip/jit`, best of 3, other builds running)
+
+- Test262, the 6,301 files of the tree: 5,871 pass, 426 fail, 4 skip on both; the verdict lists,
+  failure messages included, are identical.
+- The real-world corpus (`bubblepop_perf/realworld.py`, lodash, acorn, pako, marked,
+  immutable): the same answers on all five; run time over the interpreter 0.97, 1.05, 0.93,
+  0.97, 1.00.
+- Loops in a function that makes a closure (the register machine does not take them):
+  empty `for`, 3 million iterations, 0.59 to 0.54 s; `s = s + i*i - 1` 1.30 to 1.21 s;
+  `while (i < n) i++` 0.61 to 0.58 s; a call per iteration 0.48 to 0.46 s.
+
+So tier 1 as it stands gives 5 to 10% on loops and nothing measurable on real code: below the
+target of 1.3. The profile explains it: the cost is per evaluator call (the result object, the
+reference counts of the tree and the context, the large frame of `evalExpr`), and these four
+nodes remove one or two calls from operations that take five to nine.
+
+### Findings for the next steps
+
+- Parameters of the tree and the context are owned, so every call increments and decrements
+  them. Marking them borrowed (`@&`, which changes no definition and so needs no proof) made a
+  loop with an assignment 8 to 18% faster and the empty loop slower: the hot functions disagree
+  on ownership. Worth a systematic pass.
+- `evalExpr` is one function with every case of the language: a large frame on each call. Tier
+  1 nodes that run whole loops in a small function of their own (a `for` whose test, update and
+  body are tier-1 nodes) avoid both the frame and most result objects. Their proofs follow the
+  pattern here, with an induction on fuel for the loop.
+- Writing `tick` to update the heap in place changed nothing measurable.
+- Tier 2 (shapes and inline caches) needs the heap layout of stage C of the plan
+  ([#378](https://github.com/danbri/factoidal-core/issues/378)); the guard-and-fallback pattern
+  of `arith` (guard: both operands known numbers; else the original code) is the pattern its
+  proofs will follow.
