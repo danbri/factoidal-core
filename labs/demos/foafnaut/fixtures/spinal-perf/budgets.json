@@ -1,0 +1,172 @@
+{
+ "about": "Budgets of the Spinal Tap page (pages/spinal-tap-sparql.html) as a measured test, core issue 450. native: spinal_perf.ts, asserted by spinal_perf_test.ts in test.sh. hub: hub_spinal_perf.mjs (headless Chrome, the Hub). Each section has budgets ({max} or {min} on a dot path of the run's JSON) and known failures ({want_max} or {want_min} not met today, each with its issue). A budget may only tighten: spinal_perf_test.ts compares this file with the one on the merge base and fails when a max rises or a min falls, unless that entry carries a new 'accepted' text saying why (the cost is wanted). Times have a margin of about three times the measurement for slower CI runners; exact counters have none.",
+ "native": {
+  "measured": "2026-11-15, Apple M1 (load average 11 to 13), macOS engine of main 3bf480d92 (build-3bf480d922cc-foafnaut-engine-darwin-arm64), 600 ticks of 16 ms",
+  "budgets": {
+   "layered.first_ms": {
+    "max": 400,
+    "measured": 109.1,
+    "what": "first layered frame (layout and compile, checks off) of the page with its web font"
+   },
+   "layered.second_ms": {
+    "max": 60,
+    "measured": 13.1,
+    "what": "a second layered frame of the unchanged page"
+   },
+   "layered.second_over_first": {
+    "max": 0.5,
+    "measured": 0.12,
+    "what": "a second frame of an unchanged document with the same web font is markedly cheaper than the first (layered path)"
+   },
+   "probe.no_probe_ms": {
+    "max": 160,
+    "measured": 39.8,
+    "what": "a whole-page frame with the layout kept and no CPU probe"
+   },
+   "probe.first_ms": {
+    "max": 1500,
+    "measured": 496.6,
+    "what": "a whole-page frame with the CPU probe (checks on); known slow, issue 450: may not get worse"
+   },
+   "tick.turn_ms.median": {
+    "max": 5,
+    "measured": 0.4,
+    "what": "script turn of a tick (advance 16 ms)"
+   },
+   "tick.engine_ms.median": {
+    "max": 70,
+    "measured": 21.4,
+    "what": "engine ms of a tick: turn and layered frame"
+   },
+   "tick.engine_ms.p95": {
+    "max": 90,
+    "measured": 26.4
+   },
+   "tick.engine_ms.max": {
+    "max": 250,
+    "measured": 73.9
+   },
+   "tick.layouts": {
+    "max": 2,
+    "measured": 2,
+    "what": "layouts in 600 ticks: the zoom's first transform and the report the page writes when the zoom ends (FrameCost.run_paints_never_layout: a run of paint-only frames lays out nothing after its first)"
+   },
+   "tick.whole_page_ticks": {
+    "max": 2,
+    "measured": 2,
+    "what": "ticks that laid out or compiled every primitive again; every other tick takes the layered, paint-only path"
+   },
+   "tick.script_layouts": {
+    "max": 0,
+    "measured": 0,
+    "what": "layouts the page's scripts forced by a layout read during the ticks"
+   },
+   "tick.recompiled_max": {
+    "max": 12,
+    "measured": 12,
+    "what": "primitives compiled again by a paint-only tick (of about 2,850)"
+   },
+   "tick.changed_ticks": {
+    "min": 400,
+    "measured": 481,
+    "what": "ticks in which the zoom changed the page: the animation ran"
+   },
+   "tick.late_over_early": {
+    "max": 1.5,
+    "measured": 0.91,
+    "what": "frame ms late in the zoom over early in it: frames do not grow slower"
+   },
+   "rss_mb.growth_after_warmup": {
+    "max": 64,
+    "measured": 18.2,
+    "what": "RSS growth from a quarter of the ticks to the end"
+   },
+   "rss_mb.peak": {
+    "max": 1024,
+    "measured": 470.7
+   },
+   "heap_mb.growth": {
+    "max": 64,
+    "measured": 17.8,
+    "what": "JS heap of the host over the ticks"
+   },
+   "run_ms": {
+    "max": 60000,
+    "measured": 14614.5,
+    "what": "the whole native run"
+   }
+  },
+  "known_failures": {
+   "probe.second_over_first": {
+    "want_max": 0.5,
+    "measured": 1.008,
+    "issue": "https://github.com/danbri/factoidal-core/issues/450",
+    "what": "a second whole-page frame with the CPU probe of the unchanged document costs as much as the first (about 500 ms), although the layout is kept (frameWork.kept 1): the probe's work with the web font is done again each frame. Without the web font the probe frame is about 90 ms. When this meets want_max, spinal_perf_test.ts fails: move the entry to native with a max and update issue 450."
+   }
+  }
+ },
+ "hub": {
+  "measured": "2026-11-15, Apple M1, headless Chrome 157 with WebGPU (adapter apple metal-3), 45 s; the published Hub (engine as deployed) and the same with this checkout's host files: both runs within the margins below",
+  "budgets": {
+   "frames.count": {
+    "min": 10,
+    "measured": 44,
+    "what": "frames the Hub drew of the page in 45 s"
+   },
+   "frames.layout_ms.median": {
+    "max": 200,
+    "measured": 65,
+    "what": "engine layout ms of a frame"
+   },
+   "frames.draw_ms.median": {
+    "max": 1500,
+    "measured": 457,
+    "what": "draw ms of a frame (GPU adapter only; a fallback adapter is not measured against budgets)"
+   },
+   "frames.draw_ms.max": {
+    "max": 10000,
+    "measured": 3349
+   },
+   "errors.count": {
+    "max": 0,
+    "measured": 0,
+    "what": "console errors and exceptions of the page and the engine worker"
+   },
+   "errors.device_lost": {
+    "max": 0,
+    "measured": 0,
+    "what": "1 when the GPU device was lost"
+   },
+   "rss_mb.peak": {
+    "max": 4096,
+    "measured": 1921,
+    "what": "RSS of all of Chrome's processes"
+   },
+   "heap_mb.worker_end": {
+    "max": 64,
+    "measured": 8.4,
+    "what": "JS heap of the engine worker at the end"
+   }
+  },
+  "known_failures": {
+   "frames.whole_page": {
+    "want_max": 0,
+    "measured": 43,
+    "issue": "https://github.com/danbri/factoidal-core/issues/450",
+    "what": "animation frames on the whole-page path (stats.path frame): every frame after the first, 43 of 43. The page's zoom changes the DOM from requestAnimationFrame (turn.changed), and browser-worker.mjs asks for layers only when animation values changed (takeAnimated), so 8c96d3ec8 does not reach this page. The native layered path draws the same ticks as paint-only frames (native tick.whole_page_ticks)."
+   },
+   "frames.draw_ms.median": {
+    "want_max": 50,
+    "measured": 457,
+    "issue": "https://github.com/danbri/factoidal-core/issues/450",
+    "what": "a frame drawn in under 50 ms"
+   },
+   "frames.draw_ms.max": {
+    "want_max": 1000,
+    "measured": 3349,
+    "issue": "https://github.com/danbri/factoidal-core/issues/450",
+    "what": "no frame over 1 s (a GPU command buffer of seconds risks the device)"
+   }
+  }
+ }
+}
