@@ -26,6 +26,13 @@ def elementBase (attrs : List NamespaceAttribute) (parent : Option String) : Opt
   | none => parent
   | some baseAttr => some (L4Factoidal.Syntax.resolveAgainst? parent baseAttr.value)
 
+/-- The depth of the document tree that the identifier index reads, and that an SVG root's
+source path may have. The index is of the whole HTML document, so the bound is of HTML
+nesting, which on everyday pages passes 32 (a GitHub repository page: an icon at depth 40).
+An element deeper than this is not indexed, and an SVG root deeper is refused by itself
+(`locate`): neither refuses the document. -/
+def maxIndexDepth : Nat := 256
+
 def collect (root : NamespaceNode) (maxNodes : Nat) (documentURL : Option String := none)
     (initialBaseURL : Option String := none) : Except String Index := do
   let mut pending := [(root,([] : List Nat),initialBaseURL.orElse (fun _ => documentURL))]
@@ -34,15 +41,17 @@ def collect (root : NamespaceNode) (maxNodes : Nat) (documentURL : Option String
     match pending with
     | [] => return ⟨out,documentURL⟩
     | (node,path,parentBase)::rest =>
-      if path.length > 32 then throw "SVG identifier nesting exceeds 32"
       pending := rest
-      match node with
-      | .other _ => pure ()
-      | .element _ attrs children =>
-        if let some id := attr attrs "id" then
-          if !out.contains id then out := out.insert id ⟨node,path,parentBase⟩
-        let base := elementBase attrs parentBase
-        pending := (children.zipIdx.map fun (child,i) => (child,path ++ [i],base)) ++ pending
+      -- deeper than the index reads: not indexed (a reference to it finds no target, as a
+      -- missing identifier), and its subtree is not read
+      if path.length ≤ maxIndexDepth then
+        match node with
+        | .other _ => pure ()
+        | .element _ attrs children =>
+          if let some id := attr attrs "id" then
+            if !out.contains id then out := out.insert id ⟨node,path,parentBase⟩
+          let base := elementBase attrs parentBase
+          pending := (children.zipIdx.map fun (child,i) => (child,path ++ [i],base)) ++ pending
   if pending.isEmpty then return ⟨out,documentURL⟩
   throw "SVG identifier node count exceeds input bound"
 
@@ -76,7 +85,7 @@ private theorem locateAux_path (node : NamespaceNode) (here : List Nat)
     positions include text/comments; a caller cannot substitute another root. -/
 def locate (document : NamespaceNode) (path : List Nat)
     (initialBaseURL : Option String := none) : Except String Entry :=
-  if path.length > 32 then .error "SVG root source path nesting exceeds 32"
+  if path.length > maxIndexDepth then .error s!"SVG root source path nesting exceeds {maxIndexDepth}"
   else locateAux document [] initialBaseURL path
 
 theorem locate_path (document : NamespaceNode) (path : List Nat)

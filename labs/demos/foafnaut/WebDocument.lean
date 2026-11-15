@@ -1852,6 +1852,46 @@ def stripSvg (dom : DOM.Dom) : DOM.Dom × Nat :=
   let roots := svgRoots dom
   (roots.foldl DOM.Dom.remove dom,roots.length)
 
+/-- The SVG step of a liberal layout (`layOutDOMIn`): the SVG of the document; when it can not
+be read, the document with its `svg` roots taken out (`stripSvg`); when even that can not be
+read (the reader reads the whole document tree, where the taken-out roots stay in the arena),
+the document with no SVG at all (`WebRender.makeReplacedNoSvg`). Its type has no refusal: in
+liberal mode no SVG content refuses the page (`liberalSvg_ok`, `liberalSvg_noSvg`). -/
+def liberalSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) :
+    Rendering.Layout.Embedding × Rendering.Layout.Pictures × DOM.Dom × List WebAccept.Diagnostic ×
+      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words :=
+  match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts with
+  | .ok (e,p,s,w) => (e,p,dom,[],s,w)
+  | .error e =>
+    let (bare,n) := stripSvg dom
+    let skipped : List WebAccept.Diagnostic := [{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}]
+    match WebRender.makeReplacedIn kept.stores kept.words bare documentURL images svgFonts with
+    | .ok (e',p,s,w) => (e',p,bare,skipped,s,w)
+    | .error _ =>
+      let (e',p,s,w) := WebRender.makeReplacedNoSvg kept.stores bare documentURL images e
+      (e',p,bare,skipped,s,w)
+
+/-- Kind: equivalence. Says: liberal mode is strict mode on a document whose SVG is read: the
+same embedding, pictures and document, with no diagnostic. -/
+theorem liberalSvg_ok (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) (e p s w)
+    (h : WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts = .ok (e,p,s,w)) :
+    liberalSvg kept dom documentURL images svgFonts = (e,p,dom,[],s,w) := by
+  simp [liberalSvg, h]
+
+/-- Kind: safety. Says: when neither the document nor the document with its `svg` roots taken
+out can be read, liberal mode lays out the page with an embedding that refuses every `svg` root
+with the first refusal (drawn as nothing), and says so in one diagnostic: the page is drawn. -/
+theorem liberalSvg_noSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) (e e2 : String)
+    (h1 : WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts = .error e)
+    (h2 : WebRender.makeReplacedIn kept.stores kept.words (stripSvg dom).1 documentURL images svgFonts = .error e2)
+    (id : Nat) (st : Rendering.CSS.Computed) (wd ht : Float) :
+    (liberalSvg kept dom documentURL images svgFonts).1 id st wd ht = .error e ∧
+    (liberalSvg kept dom documentURL images svgFonts).2.2.2.1.map (·.skip) = [.svgContent] := by
+  simp [liberalSvg, h1, h2, WebRender.makeReplacedNoSvg]
+
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
 run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
@@ -1906,15 +1946,11 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let documentURL := if url.isEmpty then none else some url
   let (embedding,pictures,dom,d0,madeStore,madeWords) ← match graph with
     | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none,({} : NativeSVGText.Words))
-    | none => match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts, m with
-      | .ok (e,p,s,w), _ => pure (e,p,dom,[],s,w)
-      | .error e, .strict => throw e
-      | .error e, .liberal =>
-        let (bare,n) := stripSvg dom
-        if n == 0 then throw e else
-        match WebRender.makeReplacedIn kept.stores kept.words bare documentURL images svgFonts with
-        | .ok (e',p,s,w) => pure (e',p,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}],s,w)
-        | .error _ => throw e
+    | none => match m with
+      | .strict => do
+        let (e,p,s,w) ← WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts
+        pure (e,p,dom,[],s,w)
+      | .liberal => pure (liberalSvg kept dom documentURL images svgFonts)
   modify (·.merge {store := madeStore,words := madeWords})
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
