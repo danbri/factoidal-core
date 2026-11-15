@@ -115,7 +115,16 @@ def run : IO Unit := do
   color byClass 50 50 0 0 1 ".class beats type, class words split on white space"
   let handler ← unwrap (parse "<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' onload='go()'><rect width='100' height='100' fill='blue' onclick='x()'/></svg>" 100 100)
   color handler 50 50 0 0 1 "onload and onclick read past"
-  IO.println "PASS CSS Color 4 colours, #id/.class selectors by specificity, event handler attributes"
+  -- SVG 2 geometry properties in style sheets and `style`; `ry: auto` takes `rx`
+  let geo ← unwrap (page "<style>circle {cx: 50px; cy: 50px; r: 30px; fill: blue} rect {r: 5px}</style><circle/>")
+  color geo 50 50 0 0 1 "cx, cy, r from a style sheet"
+  color geo 5 5 1 1 1 "nothing outside the circle"
+  let ell ← unwrap (page "<ellipse cx='50' cy='50' style='rx: 40px; ry: auto' fill='blue'/>")
+  color ell 50 15 0 0 1 "ry: auto is rx"
+  let over ← unwrap (page "<style>rect {x: 50px}</style><rect x='0' width='50' height='100' fill='blue'/>")
+  color over 75 50 0 0 1 "a sheet's x overrides the attribute"
+  color over 25 50 1 1 1 "the attribute's x is not drawn"
+  IO.println "PASS CSS Color 4 colours, #id/.class selectors by specificity, event handler attributes, geometry properties"
 
 #eval run
 end NativeSVGDocumentTests
