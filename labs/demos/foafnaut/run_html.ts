@@ -261,10 +261,17 @@ async function main() {
   // A sync XMLHttpRequest of a turn (netSync): the run was undone; the host answers and the
   // same action runs again (Net.Xhr), so no call here ever blocks the worker on the network.
   const syncAnswers=async(t:unknown)=>{
-    for(let i=0;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
+    let i=0,fetchMs=0,engineMs=0;
+    for(;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
+      const t0=performance.now();
       const a=await netFetch((t as ScriptTurn).netSync!);
+      const t1=performance.now();
       t=await scriptCallRaw("scriptSession","",{action:"syncAnswer",session:(t as ScriptTurn).session,answer:a});
+      fetchMs+=t1-t0;engineMs+=performance.now()-t1;
     }
+    // The requests a turn waited for (module graphs, sync XMLHttpRequest): each answer makes
+    // the action again, so their count and the engine's time show a graph fetched one by one.
+    if(i>0)console.log(JSON.stringify({type:"native-html-sync",t:Math.round(performance.now()),requests:i,fetchMs:Math.round(fetchMs),engineMs:Math.round(engineMs)}));
     return t;
   };
   const scriptCall:ScriptCall=async(name,...args)=>syncAnswers(await scriptCallRaw(name,...args));
