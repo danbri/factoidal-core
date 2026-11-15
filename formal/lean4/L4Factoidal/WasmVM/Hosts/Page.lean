@@ -219,6 +219,11 @@ structure Reads where
   keptNow : Int := 0
   /-- Layouts made for reads. -/
   layouts : Nat := 0
+  /-- Layout and style reads served (`pageQuery`), and how many of each op (op, count): the
+  profile of a script turn at the boundary of scripts and the document (`WebScripts` reports
+  each turn's part). A list: a page asks a few kinds of read. -/
+  queries : Nat := 0
+  queryOps : Array (Nat × Nat) := #[]
   /-- Of a page with animations: its last measure (`Host.measureNow`). -/
   styleKept : Option StyleKept := none
   /-- The elements to style again: those whose `style` attribute was written since the
@@ -1043,6 +1048,23 @@ def postToFrame (h : Host) (node : Nat) (q : String) : Host × Except Int String
         ({ h with outbox := h.outbox.push { frame := el, toParent := up, data, origin := src.serialize } }, .ok "1")
   | [] => (h, .error (-2))
 
+/-- One read of op `op` counted (`Reads.queries`, `Reads.queryOps`). The ops from 200 up (one
+for each property, `pageQuery`) are counted as 200: the table has at most 201 rows, whatever
+a page asks. -/
+def countOp (op : Nat) (a : Array (Nat × Nat)) : Array (Nat × Nat) :=
+  let op := min op 200
+  match a.findIdx? (·.1 == op) with
+  | some i => a.modify i fun (o, n) => (o, n + 1)
+  | none => a.push (op, 1)
+
+def Host.noteQuery (h : Host) (op : Nat) : Host :=
+  { h with reads := { h.reads with queries := h.reads.queries + 1, queryOps := countOp op h.reads.queryOps } }
+
+/-- Kind: equivalence. Counting a read changes nothing a read answers: only the two counts. -/
+theorem Host.noteQuery_same (h : Host) (op : Nat) :
+    { (h.noteQuery op) with reads := { (h.noteQuery op).reads with queries := h.reads.queries, queryOps := h.reads.queryOps } } = h := by
+  rfl
+
 /-- `node_query` ops served here: 16 the init of the event being dispatched; 17 a node's
 layout, "x y w h left top width height" (border box in the page, then the client box);
 18 an SVG element's bounding box in its user space, "x y w h"; 19 the viewport, "w h";
@@ -1237,7 +1259,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
         | .error e => (h, st, Hosts.Dom.codeOrTrap e)
         | .ok q =>
-          let (h, answer) := pageQuery h (a 0) (a 1) q
+          let (h, answer) := pageQuery (h.noteQuery (a 1)) (a 0) (a 1) q
           let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
           (h, st, r)
   | "listen" =>

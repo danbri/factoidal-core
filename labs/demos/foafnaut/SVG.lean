@@ -1899,12 +1899,15 @@ private def nodeIds (root : NamespaceNode) : Except String (List String) := do
     match pending with
     | [] => return ids.toList
     | (node,depth)::rest =>
-      if depth > 32 then throw "SVG metadata/identifier nesting exceeds 32"
-      match node with
-      | .other _ => pending := rest
-      | .element _ attrs children =>
-        if let some id := attr attrs "id" then ids := ids.push id
-        pending := children.map (fun child => (child,depth+1)) ++ rest
+      -- deeper than the identifier index reads (`NativeSVGReferences.maxIndexDepth`): not
+      -- read, as the index does not read it; never a refusal of the document
+      if depth > NativeSVGReferences.maxIndexDepth then pending := rest
+      else
+        match node with
+        | .other _ => pending := rest
+        | .element _ attrs children =>
+          if let some id := attr attrs "id" then ids := ids.push id
+          pending := children.map (fun child => (child,depth+1)) ++ rest
   throw "SVG identifier node count exceeds input bound"
 
 /-- Collect inert author style elements in document order, with explicit profile

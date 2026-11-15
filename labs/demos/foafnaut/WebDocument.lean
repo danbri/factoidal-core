@@ -1847,6 +1847,46 @@ def stripSvg (dom : DOM.Dom) : DOM.Dom × Nat :=
   let roots := svgRoots dom
   (roots.foldl DOM.Dom.remove dom,roots.length)
 
+/-- The SVG step of a liberal layout (`layOutDOMIn`): the SVG of the document; when it can not
+be read, the document with its `svg` roots taken out (`stripSvg`); when even that can not be
+read (the reader reads the whole document tree, where the taken-out roots stay in the arena),
+the document with no SVG at all (`WebRender.makeReplacedNoSvg`). Its type has no refusal: in
+liberal mode no SVG content refuses the page (`liberalSvg_ok`, `liberalSvg_noSvg`). -/
+def liberalSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) :
+    Rendering.Layout.Embedding × Rendering.Layout.Pictures × DOM.Dom × List WebAccept.Diagnostic ×
+      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words :=
+  match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts with
+  | .ok (e,p,s,w) => (e,p,dom,[],s,w)
+  | .error e =>
+    let (bare,n) := stripSvg dom
+    let skipped : List WebAccept.Diagnostic := [{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}]
+    match WebRender.makeReplacedIn kept.stores kept.words bare documentURL images svgFonts with
+    | .ok (e',p,s,w) => (e',p,bare,skipped,s,w)
+    | .error _ =>
+      let (e',p,s,w) := WebRender.makeReplacedNoSvg kept.stores bare documentURL images e
+      (e',p,bare,skipped,s,w)
+
+/-- Kind: equivalence. Says: liberal mode is strict mode on a document whose SVG is read: the
+same embedding, pictures and document, with no diagnostic. -/
+theorem liberalSvg_ok (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) (e p s w)
+    (h : WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts = .ok (e,p,s,w)) :
+    liberalSvg kept dom documentURL images svgFonts = (e,p,dom,[],s,w) := by
+  simp [liberalSvg, h]
+
+/-- Kind: safety. Says: when neither the document nor the document with its `svg` roots taken
+out can be read, liberal mode lays out the page with an embedding that refuses every `svg` root
+with the first refusal (drawn as nothing), and says so in one diagnostic: the page is drawn. -/
+theorem liberalSvg_noSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) (e e2 : String)
+    (h1 : WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts = .error e)
+    (h2 : WebRender.makeReplacedIn kept.stores kept.words (stripSvg dom).1 documentURL images svgFonts = .error e2)
+    (id : Nat) (st : Rendering.CSS.Computed) (wd ht : Float) :
+    (liberalSvg kept dom documentURL images svgFonts).1 id st wd ht = .error e ∧
+    (liberalSvg kept dom documentURL images svgFonts).2.2.2.1.map (·.skip) = [.svgContent] := by
+  simp [liberalSvg, h1, h2, WebRender.makeReplacedNoSvg]
+
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
 run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
@@ -1901,15 +1941,11 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let documentURL := if url.isEmpty then none else some url
   let (embedding,pictures,dom,d0,madeStore,madeWords) ← match graph with
     | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none,({} : NativeSVGText.Words))
-    | none => match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts, m with
-      | .ok (e,p,s,w), _ => pure (e,p,dom,[],s,w)
-      | .error e, .strict => throw e
-      | .error e, .liberal =>
-        let (bare,n) := stripSvg dom
-        if n == 0 then throw e else
-        match WebRender.makeReplacedIn kept.stores kept.words bare documentURL images svgFonts with
-        | .ok (e',p,s,w) => pure (e',p,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}],s,w)
-        | .error _ => throw e
+    | none => match m with
+      | .strict => do
+        let (e,p,s,w) ← WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts
+        pure (e,p,dom,[],s,w)
+      | .liberal => pure (liberalSvg kept dom documentURL images svgFonts)
   modify (·.merge {store := madeStore,words := madeWords})
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
@@ -2254,6 +2290,47 @@ theorem keepStoreAhead_rest (h : Holds) (kept : Kept) (html : String) (request :
   unfold keepStoreAhead
   split <;> exact ⟨rfl,rfl,rfl⟩
 
+/-- The matcher of the animation rules (op 28 and op 24 of `measure`): the rule buckets and the
+element keys of the tree, made once. It is data, so that each element's matches are a look in
+tables made before; a closure over them was compiled with the tables made again at each call. -/
+inductive AnimMatcher where
+  | none
+  | flat (ix : Rendering.CSS.RuleIndex) (ks : Rendering.CSS.ElemKeys) (flat : DOM.Dom) (state : Rendering.CSS.ElementState)
+  | scoped (ix : Rendering.CSS.ScopedIndex) (ks : Rendering.CSS.ElemKeys) (ts : Rendering.CSS.TreeScope) (state : Rendering.CSS.ElementState)
+
+/-- The tables of `rules` over the flat tree `flat`, or over the tree scope's node tree. -/
+def AnimMatcher.make (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
+    (treeScope : Option Rendering.CSS.TreeScope) (state : Rendering.CSS.ElementState) : AnimMatcher :=
+  match treeScope with
+  | none => .flat (Rendering.CSS.RuleIndex.build rules) (Rendering.CSS.ElemKeys.of flat) flat state
+  | some ts => .scoped (Rendering.CSS.ScopedIndex.build rules) (Rendering.CSS.ElemKeys.of ts.tree) ts state
+
+/-- The matches of element `id`: a look in the tables. -/
+def AnimMatcher.matched : AnimMatcher → Nat → List Rendering.CSS.Match
+  | .none, _ => []
+  | .flat ix ks flat state, id => ix.matched (ks.get flat) flat id state
+  | .scoped ix ks ts state, id => ix.matched (ks.get ts.tree) ts id state
+
+/-- Kind: equivalence. The tables give the matches of the bucket matcher with the keys read
+once, as `CSS.computeAll` and `CSS.computeAllIn` take them: the data form changes when the
+work is done, not what an element matches. -/
+theorem AnimMatcher.make_matched (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
+    (treeScope : Option Rendering.CSS.TreeScope) (state : Rendering.CSS.ElementState) (id : Nat) :
+    (AnimMatcher.make rules flat treeScope state).matched id =
+      match treeScope with
+      | none => (Rendering.CSS.RuleIndex.build rules).matched ((Rendering.CSS.ElemKeys.of flat).get flat) flat id state
+      | some ts => (Rendering.CSS.ScopedIndex.build rules).matched ((Rendering.CSS.ElemKeys.of ts.tree).get ts.tree) ts id state := by
+  cases treeScope <;> rfl
+
+/-- Kind: equivalence. With no shadow tree the tables give the matches of every rule tried
+against the arena's own keys (`ElemKeys.get_of`): the keys table is the arena. -/
+theorem AnimMatcher.make_matched_keys (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
+    (state : Rendering.CSS.ElementState) (id : Nat) :
+    (AnimMatcher.make rules flat none state).matched id =
+      (Rendering.CSS.RuleIndex.build rules).matched (Rendering.CSS.readKeys flat) flat id state := by
+  show (Rendering.CSS.RuleIndex.build rules).matched ((Rendering.CSS.ElemKeys.of flat).get flat) flat id state = _
+  rw [Rendering.CSS.ElemKeys.get_of]
+
 /-- The layout reads of a script session (`Page.Measure`) with the render request
 `request` (its `layoutFields`): the arena laid out `width` by `rows` (`layOutDOM`)
 when a read first asks, then the answers from that one layout. `overrides` are the
@@ -2398,21 +2475,15 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     | .ok (_,rules,_,_,_) => Rendering.Animation.Css.animationRules rules
     | .error _ => []
   -- their matches of an element, from rule buckets made once when first asked for (as
-  -- `CSS.computeFor` matches: an element tries only the rules of its buckets)
-  let matchesOf : Thunk (Nat → List Rendering.CSS.Match) := Thunk.mk fun _ =>
+  -- `CSS.computeFor` matches: an element tries only the rules of its buckets). The buckets
+  -- and the element keys are data in the thunk (`AnimMatcher`), not a function: a thunk
+  -- whose value was `fun id => …` was compiled with the keys of the whole document read
+  -- again at each call, so op 28 cost n² (64 s in one script turn of a Wikipedia article).
+  let matcher : Thunk AnimMatcher := Thunk.mk fun _ =>
     match inputs.get with
-    | .ok (flat,_,treeScope,state,_) =>
-      (match treeScope with
-        | none =>
-          let ix := Rendering.CSS.RuleIndex.build animationRules.get
-          let ks := Rendering.CSS.ElemKeys.of flat
-          fun id => ix.matched (ks.get flat) flat id state
-        | some ts =>
-          let ix := Rendering.CSS.ScopedIndex.build animationRules.get
-          let ks := Rendering.CSS.ElemKeys.of ts.tree
-          fun id => ix.matched (ks.get ts.tree) ts id state)
-    | .error _ => fun _ => []
-  let matchedOf := fun (node : Nat) => matchesOf.get node
+    | .ok (flat,_,treeScope,state,_) => AnimMatcher.make animationRules.get flat treeScope state
+    | .error _ => .none
+  let matchedOf := fun (node : Nat) => matcher.get.matched node
   let element := fun (node : Nat) => node < dom.size && (dom.get node).type == .element
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
   -- 23: the `@font-face` faces of the page and the state of each (`document.fonts`)
