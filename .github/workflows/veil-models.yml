@@ -1,0 +1,70 @@
+name: Veil models
+
+# System-level transition-system models (formal/veil), written with Veil
+# (https://github.com/verse-lab/veil, Apache-2.0). A separate Lake package on
+# Veil's toolchain; the engine library (formal/lean4) does not import it.
+#
+# The gate: the package builds (every `#check_invariants` and `#model_check`
+# in it succeeds; a failed one is an error), no SMT answer is trusted
+# without a reconstructed proof (Veil prints "Trusting SMT solver" when one
+# is), no `sorry`, and the axiom audit module reports only Lean's three.
+on:
+  pull_request:
+    paths:
+      - 'formal/veil/**'
+      - '.github/workflows/veil-models.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'formal/veil/**'
+      - '.github/workflows/veil-models.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veil-models-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan
+        shell: bash
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # Dependencies only (Veil and its requires, pinned by lake-manifest.json).
+      - uses: actions/cache@v4
+        with:
+          path: formal/veil/.lake/packages
+          key: veil-packages-${{ runner.os }}-${{ hashFiles('formal/veil/lake-manifest.json', 'formal/veil/lean-toolchain') }}
+
+      - name: Build models, check invariants, model check
+        working-directory: formal/veil
+        shell: bash
+        run: |
+          set -o pipefail
+          lake build 2>&1 | tee "$RUNNER_TEMP/veil-build.log"
+
+      - name: Trust gate
+        working-directory: formal/veil
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/veil-build.log"
+          if grep -n "Trusting SMT solver" "$log"; then echo "FAIL: an SMT answer was trusted without a reconstructed proof"; exit 1; fi
+          if grep -n "declaration uses 'sorry'" "$log"; then echo "FAIL: sorry"; exit 1; fi
+          if grep -rn --include='*.lean' -E 'native_decide|implemented_by|^\s*(axiom|unsafe) ' FoafnautModels FoafnautModels.lean; then echo "FAIL: escape hatch"; exit 1; fi
+          grep -q "No violation" "$log" || { echo "FAIL: no model-check result read"; exit 1; }
+          n=$(grep -c "audit .* axioms:" "$log" || true)
+          [ "$n" -gt 0 ] || { echo "FAIL: NOTHING READ, the axiom audit printed nothing"; exit 1; }
+          if grep "audit .* axioms:" "$log" | grep -v -E "axioms: \[((propext|Classical\.choice|Quot\.sound)(, )?)*\]"; then
+            echo "FAIL: a theorem rests on an axiom other than propext, Classical.choice, Quot.sound"; exit 1
+          fi
+          echo "OK: $n theorems audited"
