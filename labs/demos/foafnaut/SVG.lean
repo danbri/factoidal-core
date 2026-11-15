@@ -3388,14 +3388,18 @@ def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPr
   return ⟨tiles,lists⟩
 
 /-- The tile words from each primitive's listing, in paint order (`tilesOf`). -/
-def tilesOfListings (width height : Nat) (compiled : List BackendPrimitive) (listings : List TileListing) : Array Nat := Id.run do
+def tilesOfListings (width height : Nat) (compiled : List BackendPrimitive) (listings : Array TileListing) : Array Nat := Id.run do
   let tail := paintTailOf compiled
   let across := (width+tileSize-1)/tileSize
   let down := (height+tileSize-1)/tileSize
   let mut lists : Array (Array (Nat × Nat)) := Array.replicate (across*down) #[]
   let mut pool : Array Nat := #[]
   let mut base := 2
-  for (p,listing) in compiled.zip listings do
+  -- An index over an array: no list of pairs (a page of many primitives).
+  let mut k := 0
+  for p in compiled do
+    let listing := listings.getD k default
+    k := k+1
     -- The listing's edge lists go into the pool once each; past the limit, every edge.
     let mut at_ : Array Nat := #[]
     for list in listing.lists do
@@ -3444,7 +3448,7 @@ instead of every edge of the path. -/
 def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPrimitive) : Array Nat :=
   let across := (width+tileSize-1)/tileSize
   let down := (height+tileSize-1)/tileSize
-  tilesOfListings width height compiled (compiled.map (Primitive.tileListing mapping across down))
+  tilesOfListings width height compiled (compiled.toArray.map (Primitive.tileListing mapping across down))
 
 /-- The tile words of a scene (`tilesOf` of its compiled primitives). -/
 def Scene.tiles (s : Scene) : Array Nat := tilesOf s.width s.height s.mapping s.compiled
@@ -4449,7 +4453,7 @@ def Retained.dataBytes {κ : Type} (r : Retained κ) : ByteArray :=
 
 /-- The tile words of a retained compile. -/
 def Retained.tileWords {κ : Type} (r : Retained κ) : Array Nat :=
-  tilesOfListings r.width r.height (r.items.toList.map (·.compiled)) (r.items.toList.map (·.listing))
+  tilesOfListings r.width r.height (r.items.toList.map (·.compiled)) (r.items.map (·.listing))
 
 /-- The JSON of a layer answer with `sections` data (checks and inspector tree off), as
 `Scene.artifactWith` gives it, and its sections. -/
