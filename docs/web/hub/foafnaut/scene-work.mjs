@@ -12,6 +12,9 @@
 //   text has `if(!clipHit){continue;}`, `skipsClipped`) does not walk them, and they are not in
 //   `segments`; an older shader walks them and drops the result, and they are. A scene with
 //   tile edge lists (its shader has `fn pathWinding(`) walks only the tile's list of a path;
+// - `pieces`: stroke pieces tested (a stroke is drawn as a union of strips, disks and
+//   triangles; the tile's piece list when the scene has one, else every piece; an upper
+//   bound, as the shader stops at the first piece that holds the sample);
 // - `segmentsBinned`: what `segments` would be if each tile walked only the edges of a record
 //   that can change the winding number differently across that tile (an edge whose rows meet
 //   the tile's and that is not wholly left of it, less an edge wholly right of it that spans
@@ -28,7 +31,7 @@ const ALL_EDGES=4294967295,SAMPLES=4,FIXED_ROWS=5,DASH_ROWS=5,CLIP_ROWS=3,AFFINE
 export function sceneWork(frame,rects){
   const data=frame.data,tiles=frame.tiles,width=frame.width,height=frame.height;
   const out={uploadBytes:(data?.length??0)*4+(tiles?.length??0)*4,drawnPixels:0,tiles:0,tileEntries:0,listed:0,segments:0,segmentsOutsideClip:0,
-    partial:!!rects,maxSegmentsPerSample:0,segmentsBinned:0,segmentsRows:0,skipsClipped:typeof frame.wgsl==='string'&&frame.wgsl.includes('if(!clipHit){continue;}'),
+    partial:!!rects,maxSegmentsPerSample:0,segmentsBinned:0,segmentsRows:0,pieces:0,skipsClipped:typeof frame.wgsl==='string'&&frame.wgsl.includes('if(!clipHit){continue;}'),
     // Tile edge lists (tilesOf): each listed record has a list word after the entries.
     edgeLists:typeof frame.wgsl==='string'&&frame.wgsl.includes('fn pathWinding(')};
   if(!data||!tiles||tiles.length<4)return out;
@@ -62,8 +65,16 @@ export function sceneWork(frame,rects){
       if(base+FIXED_ROWS>rowCount)break;
       out.listed+=samples;
       const [tag,count,,w]=row(base+1);
+      // Stroke pieces (a stroke is a union of pieces): the tile's piece list, else all of them.
+      const [,,dashCount,dashed]=row(base+4);
+      const word=out.edgeLists?tiles[refBase+item]:ALL_EDGES;
+      if(dashed===1){
+        let n=dashCount;
+        if(word!==ALL_EDGES){const ne=tiles[word],pl=ne===ALL_EDGES?word+1:word+1+ne;if(tiles[pl]!==ALL_EDGES)n=Math.min(tiles[pl],dashCount);}
+        out.pieces+=samples*n;
+      }
       if(tag!==PATH&&tag!==POLYGON)continue;
-      const shapeRows=tag===PATH?count:Math.ceil(count/2),dashCount=row(base+4)[2]|0,clipCount=Math.floor(w/4);
+      const shapeRows=tag===PATH?count:Math.ceil(count/2),clipCount=Math.floor(w/4);
       const tailRows=shapeRows+DASH_ROWS*dashCount,affine=(w%4)>=2;
       let box=corners;
       if(affine){const ax=row(base+FIXED_ROWS+tailRows),ay=row(base+FIXED_ROWS+tailRows+1);const b=mapBox(corners,ax,ay);box=[[b[0],b[1]],[b[2],b[3]]];}
@@ -80,8 +91,7 @@ export function sceneWork(frame,rects){
       }
       if(outside){out.segmentsOutsideClip+=samples*count;if(out.skipsClipped)continue;}
       // A path's fill walks the tile's edge list when the scene has them.
-      const word=out.edgeLists&&tag===PATH?tiles[refBase+item]:ALL_EDGES;
-      const walked=word===ALL_EDGES?count:Math.min(tiles[word],count);
+      const walked=tag!==PATH||word===ALL_EDGES||tiles[word]===ALL_EDGES?count:Math.min(tiles[word],count);
       out.segments+=samples*walked;perSample+=walked;
       // The edges this tile would keep (tile box in the record's space).
       const X0=Math.min(...xs),X1=Math.max(...xs),Y0=Math.min(...ys),Y1=Math.max(...ys);

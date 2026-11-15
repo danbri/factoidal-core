@@ -3268,6 +3268,21 @@ theorem edgesMeeting_eq (edges : Array (Float × Float)) (lo hi : Float) :
   apply Array.ext'
   simp [edgesMeeting, Array.toList_range]
 
+/-- A box in the primitive's space that holds every point a dash piece covers: the
+    piece's points, widened by the stroke width (a strip), the radius (a disk), or a
+    millionth (a triangle), with room for rounding. -/
+def pieceBox (piece : NativeSVGStroke.Piece) (width : Float) : Float × Float × Float × Float :=
+  match piece with
+  | .strip a b =>
+    let m := width.abs*1.001+1e-6
+    (min a.x b.x-m,min a.y b.y-m,max a.x b.x+m,max a.y b.y+m)
+  | .disk c r =>
+    let m := r.abs*1.001+1e-6
+    (c.x-m,c.y-m,c.x+m,c.y+m)
+  | .triangle a b c =>
+    let m := 1e-6*(1+max (max (max a.x.abs a.y.abs) (max b.x.abs b.y.abs)) (max c.x.abs c.y.abs))
+    (min (min a.x b.x) c.x-m,min (min a.y b.y) c.y-m,max (max a.x b.x) c.x+m,max (max a.y b.y) c.y+m)
+
 /-- A clip rectangle's box in target pixels (its corners through its transform and the page
 mapping, with the margin of `Primitive.screenBox`); `none` for a clip that `ClipRect.valid`
 refuses or a corner that is not finite. -/
@@ -3298,8 +3313,9 @@ def Primitive.paintBox (m : Mapping) (p : BackendPrimitive) : Option (Float × F
     | b,none => b) (p.screenBox m)
 
 structure TileListing where
-  /-- Each tile the primitive is listed in, with the index of its edge list in `lists`, or
-  `allEdges`. -/
+  /-- Each tile the primitive is listed in, with the index of its list record in `lists`, or
+  `allEdges`. A record is the path's fill edges (a count, then the indices; the count
+  `allEdges` with no indices: every edge) then its stroke pieces in the same form. -/
   tiles : Array (Nat × Nat)
   lists : Array (Array Nat)
   deriving Inhabited
@@ -3314,7 +3330,7 @@ def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPr
     | .path contours => some ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray
     | _ => none
   -- A transform whose local y does not depend on x (no rotation or skew of y) maps a row
-  -- of tiles to one range of local y: one list for the row.
+  -- of tiles to one range of local y: one edge list for the row.
   let byRow := p.transform.inverse.b == 0
   let box := p.paintBox mapping
   -- Wholly clipped away: no tile.
@@ -3323,22 +3339,52 @@ def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPr
   let (left,top,right,bottom) := match box with
     | some (x0,y0,x1,y1) => (tileIndex x0 across,tileIndex y0 down,tileIndex x1 across,tileIndex y1 down)
     | none => (0,0,across-1,down-1)
+  -- The stroke pieces of each tile: each piece in the tiles its box meets (`pieceBox` through
+  -- the transform and the mapping, widened by two pixels); a piece whose box is not finite
+  -- goes in every tile. Each tile's pieces are in record order.
+  let width := (right+1-left)
+  let pieces : Option (Array (Array Nat)) := p.dashParts.map fun parts => Id.run do
+    let mut lists : Array (Array Nat) := Array.replicate (width*(bottom+1-top)) #[]
+    for (piece,i) in parts.zipIdx do
+      let (a0,b0,a1,b1) := pieceBox piece p.style.strokeWidth
+      let pixels := [(a0,b0),(a1,b0),(a0,b1),(a1,b1)].map fun (x,y) =>
+        let w := p.transform.apply x y
+        ((w.1-mapping.minX)*mapping.sx+mapping.tx,(w.2-mapping.minY)*mapping.sy+mapping.ty)
+      let xs := pixels.map (·.1)
+      let ys := pixels.map (·.2)
+      let (l,t,r,b) := if (xs++ys).any (fun v => v.isNaN || v.isInf) then (left,top,right,bottom)
+        else (tileIndex (xs.foldl min (xs.headD 0)-2) across,tileIndex (ys.foldl min (ys.headD 0)-2) down,
+          tileIndex (xs.foldl max (xs.headD 0)+2) across,tileIndex (ys.foldl max (ys.headD 0)+2) down)
+      for y in [max t top:min b bottom+1] do
+        for x in [max l left:min r right+1] do
+          lists := lists.modify ((y-top)*width+(x-left)) (·.push i)
+    return lists
   let mut tiles : Array (Nat × Nat) := #[]
   let mut lists : Array (Array Nat) := #[]
   for y in [top:bottom+1] do
-    let mut rowRef : Option Nat := none
+    let mut rowEdges : Option (Array Nat) := none
     for x in [left:right+1] do
-      let mut ref := allEdges
+      let mut edgePart : Array Nat := #[allEdges]
       if let some edges := ys then
-        if let some r := rowRef then ref := r
+        if let some r := rowEdges then edgePart := r
         else
           let tx0 := Float.ofNat (x*tileSize)
           let ty0 := Float.ofNat (y*tileSize)
           if let some (lo,hi) := p.localRows mapping tx0 ty0 (tx0+tileSize.toFloat) (ty0+tileSize.toFloat) then
-            ref := lists.size
-            lists := lists.push (edgesMeeting edges lo hi)
-      if byRow && ys.isSome then rowRef := some ref
-      tiles := tiles.push (y*across+x,ref)
+            let kept := edgesMeeting edges lo hi
+            edgePart := #[kept.size] ++ kept
+          if byRow then rowEdges := some edgePart
+      let piecePart : Array Nat := match pieces with
+        | some ps => let l := ps.getD ((y-top)*width+(x-left)) #[]; #[l.size] ++ l
+        | none => #[allEdges]
+      if edgePart.size == 1 && piecePart.size == 1 && edgePart[0]! == allEdges && piecePart[0]! == allEdges then
+        tiles := tiles.push (y*across+x,allEdges)
+      else
+        -- One record for a row of tiles that share it.
+        let record := edgePart ++ piecePart
+        let ref := if lists.back? == some record then lists.size-1 else lists.size
+        if ref == lists.size then lists := lists.push record
+        tiles := tiles.push (y*across+x,ref)
   return ⟨tiles,lists⟩
 
 /-- The tile words from each primitive's listing, in paint order (`tilesOf`). -/
@@ -3353,9 +3399,9 @@ def tilesOfListings (width height : Nat) (compiled : List BackendPrimitive) (lis
     -- The listing's edge lists go into the pool once each; past the limit, every edge.
     let mut at_ : Array Nat := #[]
     for list in listing.lists do
-      if pool.size+list.size+1 <= maxTileEdgeWords then
+      if pool.size+list.size <= maxTileEdgeWords then
         at_ := at_.push pool.size
-        pool := (pool.push list.size) ++ list
+        pool := pool ++ list
       else at_ := at_.push allEdges
     for (t,ref) in listing.tiles do
       if t < lists.size then
@@ -3423,6 +3469,7 @@ private def sceneShader : String :=
   -- A path's fill over the tile's edge list (`tilesOf`): a count, then edge indices; the word
   -- `allEdges` walks every edge. The test of each edge is `windingContains`'s.
   "fn pathWinding(base:u32,count:u32,rule:u32,p:vec2f,list:u32)->bool {if(list==" ++ toString allEdges ++ "u){return windingContains(base,count,rule,p,4u);}" ++
+  "if(tiles[list]==" ++ toString allEdges ++ "u){return windingContains(base,count,rule,p,4u);}" ++
   "var winding:i32=0;let n=min(tiles[list],count);for(var j=0u;j<n;j++){let i=tiles[list+1u+j];if(i>=count){break;}" ++
   "let a=vec2f(parameter(base,20u+4u*i),parameter(base,21u+4u*i));let b=vec2f(parameter(base,22u+4u*i),parameter(base,23u+4u*i));" ++
   "let cross=(b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x);" ++
@@ -3474,10 +3521,15 @@ private def sceneShader : String :=
   ";}else{strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}}\n" ++
   s!"case {Geometry.polygonRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,2u);}}" ++
   s!"case {Geometry.pathRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=pathWinding(base,count,header.z,p.xy,edgeList);}} default:{} }\n" ++
-  s!"if(params.rows[base+4u].w==1.0)" ++ "{strokeHit=false;let parentBase=base;for(var di=0u;di<dashCount;di++){base=parentBase+" ++ toString primitiveFixedRowCount ++ s!"u+shapeRows+di*{dashPieceRowCount}u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
+  -- The stroke pieces: the tile's piece list (after the edge part of the record), else every
+  -- piece; the first piece that holds the sample ends the loop (the pieces are a union).
+  "if(params.rows[base+4u].w==1.0)" ++ "{strokeHit=false;let parentBase=base;" ++
+  "var pl=" ++ toString allEdges ++ "u;if(edgeList!=" ++ toString allEdges ++ "u){let ne=tiles[edgeList];pl=select(edgeList+1u+ne,edgeList+1u,ne==" ++ toString allEdges ++ "u);}" ++
+  "var listed=false;var pieceCount=dashCount;if(pl!=" ++ toString allEdges ++ "u){if(tiles[pl]!=" ++ toString allEdges ++ "u){listed=true;pieceCount=min(tiles[pl],dashCount);}}" ++
+  "for(var dj=0u;dj<pieceCount;dj++){var di=dj;if(listed){di=tiles[pl+1u+dj];}if(di>=dashCount){break;}base=parentBase+" ++ toString primitiveFixedRowCount ++ s!"u+shapeRows+di*{dashPieceRowCount}u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
   "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
   "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
-  "else if(dt==7u){piece=" ++ relativeCondition (triangleCondition 0) ++ ";}strokeHit=strokeHit||piece;}base=parentBase;}" ++
+  "else if(dt==7u){piece=" ++ relativeCondition (triangleCondition 0) ++ ";}strokeHit=strokeHit||piece;if(strokeHit){break;}}base=parentBase;}" ++
   "fillHit=fillHit&&clipHit;strokeHit=strokeHit&&clipHit;var element=vec4f(0.0);" ++
   "if fillHit {let fill=paintSample(params.rows[base+2u],p.xy);element=vec4f(fill.rgb*fill.a,fill.a);}" ++
   "if strokeHit {let stroke=paintSample(params.rows[base+3u],p.xy);element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
@@ -3616,21 +3668,6 @@ def Primitive.pathEdges? (p : BackendPrimitive) : Option Nat :=
   | none,.path contours => some (NativeSVGPath.edges contours).length
   | _,_ => none
 
-/-- A box in the primitive's space that holds every point a dash piece covers: the
-    piece's points, widened by the stroke width (a strip), the radius (a disk), or a
-    millionth (a triangle), with room for rounding. -/
-private def pieceBox (piece : NativeSVGStroke.Piece) (width : Float) : Float × Float × Float × Float :=
-  match piece with
-  | .strip a b =>
-    let m := width.abs*1.001+1e-6
-    (min a.x b.x-m,min a.y b.y-m,max a.x b.x+m,max a.y b.y+m)
-  | .disk c r =>
-    let m := r.abs*1.001+1e-6
-    (c.x-m,c.y-m,c.x+m,c.y+m)
-  | .triangle a b c =>
-    let m := 1e-6*(1+max (max (max a.x.abs a.y.abs) (max b.x.abs b.y.abs)) (max c.x.abs c.y.abs))
-    (min (min a.x b.x) c.x-m,min (min a.y b.y) c.y-m,max (max a.x b.x) c.x+m,max (max a.y b.y) c.y+m)
-
 /-- `prepareCoverage` for the CPU raster: a dashed stroke tests a piece only when the
     point is in the piece's box (`pieceBox`). A point outside the box is outside the
     piece, so the coverage is that of `prepareCoverage`; no theorem states this (it
@@ -3684,6 +3721,56 @@ def Primitive.prepareCoverageEdges (p : BackendPrimitive) (data : Array Float) (
   match p.clips with
   | [] => inner
   | clips => .clipped (clipPass data (p.clipStart base) clips) inner
+
+/-- A union over the elements a filter keeps is the union over all of them, when the filter
+    keeps every element that holds: the stroke pieces of a tile's list against all pieces. -/
+theorem any_filter_of_keeps {α : Type} (l : List α) (f keep : α → Bool)
+    (keeps : ∀ x ∈ l, f x = true → keep x = true) : (l.filter keep).any f = l.any f := by
+  induction l with
+  | nil => rfl
+  | cons x rest ih =>
+    have restKeeps : ∀ y ∈ rest, f y = true → keep y = true := fun y hy => keeps y (List.mem_cons_of_mem x hy)
+    cases hk : keep x with
+    | true => simp [hk, ih restKeeps]
+    | false =>
+      have hf : f x = false := by
+        cases h : f x with
+        | false => rfl
+        | true => simp [keeps x List.mem_cons_self h] at hk
+      simp [hk, hf, ih restKeeps]
+
+/-- `prepareCoverageCulled` for one tile, as the scene shader draws it from the tile's list
+    record (`tilesOf`): a path's fill over the tile's edge list (`pathHitList`) when there is
+    one, and the stroke over the tile's pieces (`any_filter_of_keeps`) when there are. -/
+def Primitive.prepareCoverageTile (p : BackendPrimitive) (data : Array Float) (base : Nat)
+    (edges pieceList : Option (Array Nat)) : PreparedCoverage :=
+  match p.dashParts with
+  | none => match edges with
+    | some e => p.prepareCoverageEdges data base e
+    | none => p.prepareCoverage data base
+  | some pieces =>
+    let fill : Prepared Bool := match p.geometry,edges with
+      | .polygon points,_ => ((boundsCondition base).prepare data).and
+          (.dynamic (fun env => windingHitFast env.data base points.length p.style.rule env.position))
+      | .path _,some e => .dynamic (fun env => pathHitList env.data base p.style.rule e env.position)
+      | .path contours,none =>
+        .dynamic (fun env => pathHitFast env.data base (NativeSVGPath.edges contours).length p.style.rule env.position)
+      | g,_ => (fillCondition g base).prepare data
+    let start := base+20+geometryTailSize p.geometry
+    let all := pieces.zipIdx
+    let chosen := match pieceList with
+      | some l => all.filter fun (x : NativeSVGStroke.Piece × Nat) => l.contains x.2
+      | none => all
+    let culled := (chosen.map fun (piece,i) =>
+      let o := start+20*i
+      (pieceBox piece data[o+16]!,(pieceCondition piece o).prepare data)).toArray
+    let inner : PreparedCoverage := .local p.transform.inverse fun q =>
+      let env : Env := {data,position := q}
+      (fill.eval env,culled.any fun ((x0,y0,x1,y1),c) =>
+        x0 <= q.1 && q.1 <= x1 && y0 <= q.2 && q.2 <= y1 && c.eval env)
+    match p.clips with
+    | [] => inner
+    | clips => .clipped (clipPass data (p.clipStart base) clips) inner
 
 theorem Primitive.prepareCoverage_correct (p : BackendPrimitive) (data : Array Float)
     (base : Nat) (position : Float × Float) :
