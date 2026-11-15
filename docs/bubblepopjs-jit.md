@@ -251,3 +251,65 @@ nodes remove one or two calls from operations that take five to nine.
   ([#378](https://github.com/danbri/factoidal-core/issues/378)); the guard-and-fallback pattern
   of `arith` (guard: both operands known numbers; else the original code) is the pattern its
   proofs will follow.
+
+## After the design review (issue 471): fuel monotonicity and the statement for tiers
+
+The review asked for three things before more tier-1 work: the register machine as a parameter
+of the run, the `blockN` cases in the syntax scanners, and a proof spike on fuel monotonicity
+of the whole evaluator block, the property every whole-run statement needs.
+
+Done, on `wip/jit-proof` (PR 487, for main) and here:
+
+- `HeapOf.useVm` (default on; `BUBBLEPOP_VM=off` for `leanjs`): the reference is the evaluator
+  with the machine off. Test262 tree: the same verdict lists with the machine on and off.
+- `blockN` in `Stmt.contOutF` and `genEnter` (this branch only: tier 1 is not on main). A
+  module's top-level statements are never rewritten into `blockN`: the module's function is a
+  generator and tier 1 does not enter generator bodies (test in `ModuleTests`); top-level
+  `await` is not parsed yet.
+- **Fuel monotonicity was false.** 69 handlers in the block caught every completion, halts
+  included. IteratorClose after a throw dropped everything, so an out-of-fuel halt in an
+  iterator's `return` was dropped and the run went on: a `for`-`of` over such an iterator,
+  whose body throws, ended `ok [caught]` at fuels 18 to 59 and `ok [closed, caught]` above. Now
+  `catchJS` passes every halt (fuel, steps, full heap) through its handler; only `Expr.chain`
+  (optional chaining's `shortSignal`) and the handlers that restore state and rethrow keep
+  `tryCatch`. No difference on Test262.
+- The relation `Le x y` ("`x` ran out of fuel, or ends exactly as `y` does": value or
+  completion and the whole heap, so output, jobs, host state and steps left; a host call
+  receives the steps left and sees the same count) with rules for the monad, handlers and the
+  library's loops and maps (`JS/FuelMono.lean`). A generator (`tools/fuelmono-gen.py`) writes
+  the induction hypothesis over the 116 functions of the block that take fuel and a step lemma
+  per function, proved by one tactic that walks the two bodies apart. **75 of 116 steps are
+  proved** (31 s, peak 3.1 GB). Not proved: 21 bodies with local closures (`do` join points;
+  inlining them ran out of memory) and the 20 largest bodies. Whole-block monotonicity is not
+  proved yet.
+
+What it cost and what blocked:
+
+- Equation lemmas are available, slowly: `evalStmt` 3 s, `evalExpr` 25 s, `extraNative` 111 s,
+  `callNative` 573 s with no heartbeat limit. They time out under the default limit.
+- Memory, not time, is the limit. One file with all 116 steps reached 17 GB and filled swap;
+  proof checks now run one group per process under a memory cap. Splitting pure `match`es and
+  inlining `let`s multiplies the goals; extracting the `let`s (`lift_lets; extract_lets`) took
+  `binop` from out of memory to 4 s.
+- Next, in order: a tactic that pairs the two sides' join points and proves them related once;
+  the natives moved out of the block behind their entry points (the review's suggestion), which
+  removes about 3,500 lines and the two slowest equation lemmas; then the 20 large bodies one
+  per process.
+
+### The tier statement, restated
+
+For a tier `T` and its compile function, the statement is now: for every heap `s` (any host
+and `hostCall`, machine off) and fuel `n`, if the evaluator at `n` ends with a result other than
+`halt "fuel"`, then for every large enough fuel `m` the tier ends with the same result: the same
+value or completion and the same heap, so the same output, host state and steps left at every
+host call. For tier 1 the node lemmas (`incLocal_eq`, `setLocal_eq`, `arith_eq`, `blockN_eq`)
+are equalities at every fuel, which is stronger and implies this statement for each node.
+
+The composition for tier 1 (a run with rewritten function bodies against a run with the
+plain ones) is still out of reach, and for a reason the spike makes precise: tier 1 rewrites
+the bodies stored in closures in the heap, so the two runs have different heaps, and the walk
+that proves the steps above relies on the two sides being the same term but for fuel (every
+helper call closes by reflexivity). The composition needs a heap relation ("equal but for
+tier-1 rewriting of function bodies") preserved by every helper that reads an object, about
+400 functions outside the block as well as the 116 inside. Fuel monotonicity is the smaller
+first instance of the same induction; it should be finished before this one is started.
