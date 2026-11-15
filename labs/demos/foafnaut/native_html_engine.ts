@@ -92,7 +92,7 @@ export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCou
   /** A sync request: the turn changed nothing; answer it with action `syncAnswer` and the turn comes again. */
   netSync?:NetWire;
   logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
-  instructions:number;jobs:number;tasks:number;ns:number;
+  instructions:number;jobs:number;tasks:number;ns:number;layouts?:number;reads?:number;readOps?:string;
   /** Lean-validated page GPU commands of this turn (L4Factoidal.PageGpu) and their page session. */
   gpu?:unknown[];gpuPage?:number;
   /** Action `key`: whether the host may scroll for the key (its keydown was not canceled and
