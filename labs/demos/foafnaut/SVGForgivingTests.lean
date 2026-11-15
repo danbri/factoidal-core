@@ -201,3 +201,21 @@ private def baselineFont : SVGFont :=
   | .error _ => false
 -- https://github.com/danbri/factoidal/issues/1267: the sheet of the other document must not reach this rectangle.
 #guard green (linked "<use xlink:href='b.svg#r'/><rect width='40' height='40'/>") [(otherKey,(linked "<style>rect{fill:lime}</style><rect id='r' width='1' height='1'/>").toUTF8)]
+-- Markers (SVG 2 §11.6), lowered to transformed copies of the marker content. A 4x4 marker of
+-- a 10x10 viewBox, scaled by stroke-width 2, centred (refX, refY 5) on the end of a line.
+private def markerSvg (orient : String) : String :=
+  svg ("<defs><marker id='m' markerWidth='4' markerHeight='4' viewBox='0 0 10 10' refX='5' refY='5' orient='" ++ orient ++
+    "' fill='lime'><rect width='10' height='5'/></marker></defs>" ++
+    "<path d='M 4 20 L 30 20' stroke='blue' stroke-width='2' marker-end='url(#m)'/>")
+private def markerPixel (orient : String) (x y : Nat) : Option (Float × Float × Float) :=
+  match parse (markerSvg orient) 40 40 with
+  | .ok (s,_) => let c := s.samplePixel x y; some (c.r, c.g, c.b)
+  | .error _ => none
+-- the line is drawn, and the marker's top half (lime) is above the end point, its bottom half empty
+#guard markerPixel "0" 10 20 == some (0, 0, 1)
+#guard markerPixel "0" 30 17 == some (0, 1, 0)
+-- orient="auto" on a line going right is 0 degrees: the same picture; orient 180 turns it under
+#guard markerPixel "auto" 30 17 == some (0, 1, 0)
+#guard markerPixel "180" 30 23 == some (0, 1, 0)
+-- the path's marker properties are gone from it: the strict reader would refuse marker-end
+#guard ((parse (markerSvg "0") 40 40).toOption.map (·.2)).getD [] |>.all (fun l => !l.startsWith "removed")
