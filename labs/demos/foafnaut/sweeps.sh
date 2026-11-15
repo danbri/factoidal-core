@@ -6,6 +6,7 @@
 # The latency here includes the pixel check of every frame (a sweep checks each frame). For
 # input latency without it, run the sweep with --idle-checks-only: on 2026-11-08 the graph
 # click was 195 ms here and 27.6 ms with --idle-checks-only (native engine).
+# A run that trips the log gate (log-gate.mjs; --fail-on-flood) fails, naming the message.
 # Exit 0 only when every run exits 0, or 4 (not run: the engine lacks an op the sweep needs). Usage: sweeps.sh [--only NAME]... [--wasm-only]
 set -uo pipefail
 LAB=$(cd "$(dirname "$0")" && pwd)
@@ -59,7 +60,7 @@ for entry in "${SWEEPS[@]}"; do
     t0=$(date +%s)
     # shellcheck disable=SC2086 # the sweep arguments split on spaces, as written above
     timeout 600 deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi -A \
-      "$LAB/run_html.ts" --offscreen --perf-summary --no-state --strict $args "${choice[@]}" >"$log" 2>&1
+      "$LAB/run_html.ts" --offscreen --perf-summary --no-state --strict --fail-on-flood $args "${choice[@]}" >"$log" 2>&1
     rc=$?
     secs=$(( $(date +%s) - t0 ))
     summary=$(python3 -I - "$log" <<'EOF'

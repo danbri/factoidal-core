@@ -17,6 +17,7 @@ import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
 import {fetchedAnswer,scriptFailure} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
@@ -44,10 +45,10 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let pollIdle=false,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
-  let shotAtEnd=false;
+  let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
@@ -59,6 +60,8 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    else if(arg==="--log-all")logAll=true;
+    else if(arg==="--fail-on-flood")failOnFlood=true;
     else if(arg==="--poll-idle")pollIdle=true;
     // Off screen: a PNG of the window after the 120th present of page canvases, a picture of
     // what the native engine drew (the page's layers, its canvases and the chrome).
@@ -155,6 +158,15 @@ async function main() {
       [12,0,65537],[12,100,65540],[12,0,65544],"url:foafnaut:graph"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
+  // The log gate (log-gate.mjs): every console line of this program goes through it, so a
+  // flood is summarised and named, never thousands of lines. --log-all or FOAFNAUT_LOG=all
+  // writes every line. A trip is a trace event; with --fail-on-flood (test runs) it fails the run.
+  try{if(Deno.env.get("FOAFNAUT_LOG")==="all")logAll=true;}catch{/* no env permission: the flag only */}
+  const logGate=gateConsole(console,{all:logAll,onTrip:({top,lines}:{top:{message:string;count:number}[];lines:number})=>{
+    const say=logGate.original as Record<"log"|"error",(...a:unknown[])=>void>;
+    say.log(JSON.stringify({type:"native-html-log-flood",t:Math.round(performance.now()),lines,top}));
+    if(failOnFlood){say.error(`Native HTML: FAILED: the log gate tripped (--fail-on-flood): ${top.map(t=>t.message).join(" | ")}`);Deno.exitCode=1;}
+  }});
   // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
   // The app goes into the Dock and Command-Tab, with its menu, before the engine loads (issue 1268).
   const early=check||offscreen||Deno.build.os!=="darwin"?undefined:await nativePreflight(()=>loadNativeWindow());
@@ -239,12 +251,12 @@ async function main() {
     sayEngine("main-thread");
     if(workerFont)try{mainFallbacks=typeof (await loadFontFile(engine,workerFont.path,workerFont.family))?.fonts==="number";}catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
   } else {
-    try{worker=await startCompileWorker(workerFont,nativeEngine);}
+    try{worker=await startCompileWorker(workerFont,nativeEngine,logAll);}
     catch(error){
       if(workerFont&&!fontFile){
         console.error("Native HTML: bitmap font, because Noto Sans did not load or the worker failed:",String(error));
         workerFont=undefined;
-        try{worker=await startCompileWorker(undefined,nativeEngine);}catch(error2){await useMainEngine(String(error2));}
+        try{worker=await startCompileWorker(undefined,nativeEngine,logAll);}catch(error2){await useMainEngine(String(error2));}
       } else if(fontFile)throw error;
       else await useMainEngine(String(error));
     }
@@ -1204,6 +1216,7 @@ async function main() {
   const latencyFrom=()=>native?.eventClock()===null?"dequeued":"queued";
   // Exit summary: input to present latency, and frame totals. Always traced; --perf-summary also prints it.
   const summary=()=>{
+    logGate.flush();
     const line={type:"native-html-perf-summary",present:offscreen?"offscreen-texture":"window",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
       engine:engineRan,compileBackend:engineRan.startsWith("native")?"native":"wasm",layered,
       scrollPresents:{count:shifts.length,totalMsP50:percentile(shifts,0.5),totalMsP95:percentile(shifts,0.95),maxMs:shifts.length?Math.round(Math.max(...shifts)*10)/10:null},
@@ -1218,13 +1231,14 @@ async function main() {
         turnsPerSecond:idleStats.idleMs>0?Math.round(idleStats.idleTurns/(idleStats.idleMs/1000)*10)/10:null},
       gpu:{framesInFlight,submitToDoneMsP50:percentile(session?.gpuTimes??[],0.5),submitToDoneMsP95:percentile(session?.gpuTimes??[],0.95),
         maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
-      pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
+      logGate:logGate.stats(),pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
         frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
+    
     trace(line.type,line);
     // Off screen, "presented" means drawn and submitted to the texture: no compositor, no display.
-    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms, guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)`);
+    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms, guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)\nlog: ${line.logGate.lines} lines, ${line.logGate.written} written, ${line.logGate.suppressed} held back in ${line.logGate.trips} flood${line.logGate.trips===1?"":"s"}, ${line.logGate.collapsed} repeats collapsed${line.logGate.top[0]?`; most said ${JSON.stringify(line.logGate.top[0].message)} ×${line.logGate.top[0].count}`:""}`);
   };
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());

@@ -28,7 +28,7 @@ export type CompileClient={
   readonly alive:boolean;
   terminate():void;
 };
-export async function startCompileWorker(font?:{path:string;family:string},nativeEngine?:string):Promise<CompileClient> {
+export async function startCompileWorker(font?:{path:string;family:string},nativeEngine?:string,logAll=false):Promise<CompileClient> {
   const worker=new Worker(new URL("./native_html_worker.ts",import.meta.url),{type:"module"});
   const pending=new Map<number,{resolve:(reply:WorkerReply)=>void;reject:(error:Error)=>void}>();
   let next=0,alive=true,ordinary=0;
@@ -41,7 +41,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     if(!alive){reject(new Error("engine worker is not running"));return;}
     const id=++next;pending.set(id,{resolve,reject});worker.postMessage({...request,id});
   });
-  const init=await send({op:"init",font,nativeEngine});
+  const init=await send({op:"init",font,nativeEngine,...(logAll?{logAll}:{})});
   if(!init.ok)throw new Error(init.error);
   const invoke=async(input:boolean,name:RemoteCall,...args:unknown[])=>{
     ordinary++;

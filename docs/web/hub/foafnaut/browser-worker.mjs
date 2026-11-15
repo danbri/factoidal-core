@@ -13,6 +13,9 @@ import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
 import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone} from './page-load.mjs';
+import {gateConsole} from './log-gate.mjs';
+// The worker's console lines go through the log gate (log-gate.mjs): a flood is summarised and named.
+const logGate=gateConsole(console,{name:'foafnaut'});
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
 // Liberal mode (WebAccept.lean, the Settings checkbox "Be liberal in what we accept"), the
