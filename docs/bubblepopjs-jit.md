@@ -238,8 +238,9 @@ nodes remove one or two calls from operations that take five to nine.
 ### Findings for the next steps
 
 - Parameters of the tree and the context are owned, so every call increments and decrements
-  them. Marking them borrowed (`@&`, which changes no definition and so needs no proof) made a
-  loop with an assignment 8 to 18% faster and the empty loop slower: the hot functions disagree
+  them. Marking them borrowed (`@&`, which changes no definition and so needs no proof) made
+  loops with work in them 10 to 20% faster (an assignment, a call) and the empty loop 35%
+  slower, in one trial build: the hot functions disagree
   on ownership. Worth a systematic pass.
 - `evalExpr` is one function with every case of the language: a large frame on each call. Tier
   1 nodes that run whole loops in a small function of their own (a `for` whose test, update and
