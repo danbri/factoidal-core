@@ -80,7 +80,11 @@ local clone that is not pushed. Check again before you write that a part is miss
   https://github.com/danbri/factoidal/issues/1121 (MCP over XMPP, and MCP controls for the
   command line tools).
 - Textnaut, the browser in a text terminal: `labs/demos/foafnaut/textnaut/` (`README.md`,
-  `TUI-CATALOGUE.md`, the launcher `textnaut`).
+  `TUI-CATALOGUE.md`, the launcher `textnaut`). On Linux it runs on the native engine:
+  `foafnaut-linux.yml` releases a self-contained `libweb-render.so` (Lean runtime linked in, with
+  initial-exec TLS, by `build-leanrt-no-gmp.sh`; the build fails if it needs more than libc),
+  `textnaut --install-native` installs it, and `textnaut-native.yml` (builds) checks it against
+  the Wasm engine on a runner with no Lean (`textnaut/engine_parity.py`).
 - Names, parts and the state of each build: `labs/demos/foafnaut/README.md`, "Names and parts".
 - macOS app and window: `labs/demos/foafnaut/run_html.ts`, `native_window.m`,
   `build-executables.sh`. Hub version: `docs/web/hub/foafnaut/`.

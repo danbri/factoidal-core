@@ -6,10 +6,21 @@ The engine loads the page, lays it out and runs its scripts; textnaut maps the p
 to terminal cells. Prototype: stage 0 and stage 1 of that issue, plus page scripts at load.
 
 Run from `labs/demos/foafnaut`. The engine library is not in the repository: set
-`TEXTNAUT_NATIVE` to a built `libweb-render.dylib`, or `TEXTNAUT_WASM_DIR` to a directory with
-`web-render.mjs` and `web-render.wasm`. The native library is used when present; `--wasm` asks
-for the Wasm runtime. The header bar, `--timing` and a line on standard error in `--dump` mode
-name the engine that ran.
+`TEXTNAUT_NATIVE` to a built `libweb-render.dylib` (macOS) or `libweb-render.so` (Linux), or
+`TEXTNAUT_WASM_DIR` to a directory with `web-render.mjs` and `web-render.wasm`. The native library
+is used when present; `--wasm` asks for the Wasm runtime. The header bar, `--timing` and a line on
+standard error in `--dump` mode name the engine that ran.
+
+Linux: the `foafnaut-linux-x86_64` releases of `danbri/factoidal-builds` hold a self-contained
+`libweb-render.so` (the Lean runtime is linked in; it needs only glibc, no Lean toolchain).
+`textnaut --install-native` (the npm package) fetches one, checks it by SHA-256 and puts it in
+`~/.foafnaut/current/foafnaut/`, where the package finds it. Both hosts load it through the same
+Deno FFI code (`native_html_engine.ts`), so traces and checks of that boundary are the same.
+
+`python3 textnaut/engine_parity.py --native LIB --wasm-dir DIR PAGE...` renders pages on both
+engines, checks that the text grids are the same, and times the first render and keys (scroll,
+Tab, follow a link, back, resize) on a pseudo-terminal. CI runs it on each Linux engine release
+with no Lean toolchain on the runner (`factoidal-builds`, `textnaut-native.yml`).
 
     deno run --no-prompt --allow-read --allow-ffi --allow-net --allow-env \
       --import-map=textnaut/import_map.json textnaut/textnaut.ts pages/showcase.html

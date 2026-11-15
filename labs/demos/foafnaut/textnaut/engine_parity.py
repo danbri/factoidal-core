@@ -164,7 +164,8 @@ def main():
             ok = run.returncode == 0 and len(timings) == len(runs) and all(t["engine"] == engine for t in timings)
             check(f"{page}: {engine} engine renders", ok, f"exit {run.returncode}; {run.stderr.strip()[-300:]}" if not ok else "")
             results[engine] = {"text": run.stdout, "timing": {k: median([t[k] for t in timings]) for k in ("wall", "start", "load", "layout", "cells")} if timings else None}
-        same = results["native"]["text"] == results["wasm"]["text"] and results["native"]["text"].strip() != ""
+        # Both runs must have rendered (checked above); a page of boxes alone gives blank rows.
+        same = results["native"]["text"] == results["wasm"]["text"] and bool(results["native"]["timing"])
         detail = ""
         if not same:
             detail = "\n" + "".join(list(difflib.unified_diff(results["wasm"]["text"].splitlines(True), results["native"]["text"].splitlines(True), "wasm", "native"))[:40])
@@ -182,8 +183,8 @@ def main():
         start = os.path.join(os.environ.get("RUNNER_TEMP") or "/tmp", f"textnaut-parity-start-{os.getpid()}.html")
         with open(start, "w") as f:
             f.write("<!doctype html><title>Parity start</title><h1>Start</h1>"
-                    + "".join(f"<p>Line {i} of some text to scroll.</p>" for i in range(80)).replace("<p>Line 3 ", f"<p><a href=\"file://{target}\">the page</a> Line 3 ", 1)
-                    + "")
+                    + f"<p><a href=\"file://{target}\">the page</a></p>"
+                    + "".join(f"<p>Line {i} of some text to scroll, <a href=\"#l{i}\">anchor {i}</a>.</p>" for i in range(80)))
         for engine in ("native", "wasm"):
             keys = interactive(args, engine, start)
             report["keys"][engine] = keys
