@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chooseEngine, denoDir, ensureEngine } from '../lib/engine.mjs';
+import { installNative } from '../lib/native.mjs';
 
 const DENO_VERSION = '2.9.6';
 
@@ -16,6 +17,7 @@ const args = process.argv.slice(2);
 
 const HELP = `textnaut [OPTIONS] URL_OR_FILE      a text-mode web browser (experimental)
 textnaut --screensaver [NAME]      screensavers; no page and no engine
+textnaut --install-native [latest] Linux: install the native engine into ~/.foafnaut (checked by SHA-256)
 
 Keys: arrows, j, k, Page Up/Down, Space scroll; [n] Enter follows link n; Tab next link; b back;
 ? or h help; q quit.
@@ -23,12 +25,18 @@ Keys: arrows, j, k, Page Up/Down, Space scroll; [n] Enter follows link n; Tab ne
 Options: --width COLS (with --dump), --dump, --colour none|16|256|24bit, --big-headings=auto|on|off,
 --strict, --no-scripts, --timing, --verbose, --wasm, --engine FILE, --font FILE, --version.
 
-Engine, in order: --engine FILE or TEXTNAUT_NATIVE; TEXTNAUT_WASM_DIR; the library of an installed
-foafnaut (FOAFNAUT_HOME or ~/.foafnaut); else the pinned Wasm engine, downloaded once on first use
-into $TEXTNAUT_CACHE, $XDG_CACHE_HOME/textnaut or ~/.cache/textnaut.
+Engine, in order: --engine FILE or TEXTNAUT_NATIVE; TEXTNAUT_WASM_DIR; the native library in
+FOAFNAUT_HOME or ~/.foafnaut (the foafnaut app on macOS; textnaut --install-native on Linux); else
+the pinned Wasm engine, downloaded once on first use into $TEXTNAUT_CACHE, $XDG_CACHE_HOME/textnaut
+or ~/.cache/textnaut.
 Uses your Deno if it is ${MIN_DENO.join('.')} or later; otherwise fetches Deno once.`;
 
 if (args.includes('--help') || args.includes('-h')) { console.log(HELP); process.exit(0); }
+if (args[0] === '--install-native') {
+  const channel = args[1] === 'latest' ? 'latest' : 'pinned';
+  try { await installNative({ channel }); } catch (error) { console.error(`textnaut: ${error.message}`); process.exit(1); }
+  process.exit(0);
+}
 if (args.includes('--version')) { console.log(JSON.parse((await import('node:fs')).readFileSync(join(root, 'package.json'), 'utf8')).version); process.exit(0); }
 
 function denoVersion(command) {
