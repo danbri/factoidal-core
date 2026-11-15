@@ -15,7 +15,8 @@ import {createGpuGate,sceneCost} from "./gpu_pacing.ts";
 // The gate's first guess of GPU ms per sceneCost unit, before any frame has measured one on
 // this machine: 0.8, a little under the 0.99 measured on Spinal Tap on an Apple M1 (2026-11-15),
 // so a faster GPU waits at most a little for the first heavy frame and the M1 blocks little.
-const GPU_MS_PER_UNIT=Number(Deno.env.get("FOAFNAUT_GPU_MS_PER_UNIT")??"0.8");
+// Read without failing where the host has no env permission (tests run without --allow-env).
+const GPU_MS_PER_UNIT=(()=>{try{const v=Number(Deno.env.get("FOAFNAUT_GPU_MS_PER_UNIT")??"0.8");return Number.isFinite(v)&&v>=0?v:0.8;}catch{return 0.8;}})();
 
 // The plan commands that read the frame back to the CPU (layer_compositor.ts). The host
 // leaves them out for a frame that is not checked, and runs them in full under

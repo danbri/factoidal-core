@@ -45,12 +45,15 @@ only Lean's core library, so no lake build of the tree is needed), then `leanc`.
 async function buildReference():Promise<string> {
   const bin=join(out,"gpu-kernel-ref"),olean=join(out,"olean"),c=join(out,"c");
   await Deno.mkdir(join(olean,"L4Factoidal/GpuKernel"),{recursive:true});await Deno.mkdir(c,{recursive:true});
-  const env={LEAN_PATH:olean};
+  // The toolchain of formal/lean4 for every step: the tool is compiled from this folder, which
+  // has no lean-toolchain file, and a CI runner may have no elan default.
+  const toolchain=(await Deno.readTextFile(join(lean4,"lean-toolchain"))).trim();
+  const env={LEAN_PATH:olean,ELAN_TOOLCHAIN:toolchain};
   for(const m of ["Race","Expr","Gather"]){
     await run("lean",["-o",join(olean,`L4Factoidal/GpuKernel/${m}.olean`),"-c",join(c,`${m}.c`),`L4Factoidal/GpuKernel/${m}.lean`],env,lean4);
   }
   await run("lean",["--root=.","-c",join(c,"Ref.c"),"tools/GpuKernelRef.lean"],env,here);
-  await run("leanc",["-O2","-o",bin,...["Race","Expr","Gather","Ref"].map(m=>join(c,`${m}.c`))]);
+  await run("leanc",["-O2","-o",bin,...["Race","Expr","Gather","Ref"].map(m=>join(c,`${m}.c`))],{ELAN_TOOLCHAIN:toolchain});
   return bin;
 }
 
