@@ -7,9 +7,9 @@
 name: Check derived files
 
 on:
-  pull_request:
-    paths:
-      - 'formal/fstar/ocaml-output/*.ml'
+  # Manual only since 2026-11-15: the project is Lean first and no F* build, check or
+  # test runs automatically. The F* sources stay; run this by hand when F* is worked on.
+  workflow_dispatch: {}
 
 jobs:
   check-derived:

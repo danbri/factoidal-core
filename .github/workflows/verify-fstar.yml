@@ -16,19 +16,8 @@ name: Verify F* Proof Corpus
 # verify under z3 4.13.3, no --lax (Iron Rule #10).
 
 on:
-  pull_request:
-    paths:
-      - 'formal/fstar/*.fst'
-      - 'formal/fstar/*.fsti'
-      - 'formal/fstar/Makefile'
-      - '.github/workflows/verify-fstar.yml'
-  schedule:
-    # Nightly full-corpus safety net, independent of which PRs
-    # happened to touch formal/fstar/ that day. Same rationale as
-    # w3c-tests.yml's schedule entries: a cache-poisoning or
-    # toolchain-drift issue should not hide silently between PRs
-    # that touch few modules.
-    - cron: '30 3 * * *'
+  # Manual only since 2026-11-15: the project is Lean first and no F* build, check or
+  # test runs automatically. The F* sources stay; run this by hand when F* is worked on.
   workflow_dispatch: {}
 
 permissions:
