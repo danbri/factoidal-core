@@ -3240,8 +3240,9 @@ def allEdges : Nat := 4294967295
 def maxTileEdgeWords : Nat := 4000000
 
 /-- The range of local `y` that the samples of a pixel box `x0..x1 × y0..y1` can have in a
-primitive's own space (page mapping, then the primitive's inverse transform), widened by
-half its height and a thousandth of its size for the binary32 arithmetic of the shader;
+primitive's own space (page mapping, then the primitive's inverse transform), widened by a
+sixteenth of its height and 1/4096 of its size, far more than the rounding of the shader's
+binary32 arithmetic;
 `none` when a corner is not finite. -/
 def Primitive.localRows (m : Mapping) (p : BackendPrimitive) (x0 y0 x1 y1 : Float) : Option (Float × Float) :=
   let inv := p.transform.inverse
@@ -3251,16 +3252,21 @@ def Primitive.localRows (m : Mapping) (p : BackendPrimitive) (x0 y0 x1 y1 : Floa
   else
     let lo := ys.foldl min (ys.headD 0)
     let hi := ys.foldl max (ys.headD 0)
-    let margin := (hi-lo)/2+(lo.abs+hi.abs)/1000+1/1000
+    let margin := (hi-lo)/16+(lo.abs+hi.abs)/4096+1/4096
     some (lo-margin,hi+margin)
 
 /-- The edges of a path's fill that can change the winding number of a sample whose local
-`y` is in `lo..hi`: every edge but those with both ends below `lo` or both above `hi`
-(`List.range` filtered, as `pathWinding_filter` states it). -/
+`y` is in `lo..hi`: every edge but those with both ends below `lo` or both above `hi`. -/
+def edgeMeets (edges : Array (Float × Float)) (lo hi : Float) (i : Nat) : Bool :=
+  let (a,b) := edges[i]!
+  !(max a b < lo) && !(min a b > hi)
 def edgesMeeting (edges : Array (Float × Float)) (lo hi : Float) : Array Nat :=
-  ((List.range edges.size).filter fun i =>
-    let (a,b) := edges[i]!
-    !(max a b < lo) && !(min a b > hi)).toArray
+  (Array.range edges.size).filter (edgeMeets edges lo hi)
+/-- `edgesMeeting` is a filter of `List.range`, the form of `pathHitList_eq`. -/
+theorem edgesMeeting_eq (edges : Array (Float × Float)) (lo hi : Float) :
+    edgesMeeting edges lo hi = ((List.range edges.size).filter (edgeMeets edges lo hi)).toArray := by
+  apply Array.ext'
+  simp [edgesMeeting, Array.toList_range]
 
 /-- Primitive lists for each screen tile, in paint order: tile size, tiles across, tiles
 down, one start offset for each tile and a final end offset, then the record row of each

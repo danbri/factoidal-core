@@ -309,13 +309,14 @@ private def guardScene (_ : Unit) : Option Scene := (parse ("<svg xmlns='http://
   "<path d='M4 4 Q 12 0 18 8' fill='none' stroke='black' stroke-width='1' stroke-linejoin='miter'/></svg>") 40 36).toOption
 
 -- The fast form gives the reference bytes on this scene, for the whole target and a band of rows.
-#guard ((guardScene ()).map fun s => (s.rasterFast 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
+-- (With the tile edge lists, `rasterTiles`, against the same reference bytes: see below.)
+#guard ((guardScene ()).map fun s => let r := (s.rasterSpec 0 s.height).data;
+  (s.rasterFast 0 s.height).data == r && (s.rasterTiles 0 s.height).data == r) == some true
 #guard ((guardScene ()).map fun s => (s.rasterFast 9 20).data == (s.rasterSpec 9 20).data) == some true
 #guard ((guardScene ()).map fun s => (s.rgba.size,s.width*s.height*4)) == some (40*36*4,40*36*4)
 
--- The tile edge lists give the reference bytes: the guard scene (paths in a rotation, a
--- translation, a nested svg and even-odd), and a path zoomed far past its tiles.
-#guard ((guardScene ()).map fun s => (s.rasterTiles 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
+-- The tile edge lists give the reference bytes on the guard scene (above: paths in a rotation,
+-- a translation, a nested svg and even-odd) and on a path zoomed far past its tiles.
 private def zoomScene (k : String) : Option Scene := (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='32' height='28' viewBox='0 0 96 80'>" ++
   "<g transform='translate(48 40) scale(" ++ k ++ ") translate(-48 -40)'>" ++
   "<path d='M10 70 Q48 -20 86 70 C70 90 26 90 10 70Z M40 40 C42 36 54 36 56 40 C58 46 50 50 48 50 C46 50 38 46 40 40Z' fill='#204080' fill-rule='evenodd'/>" ++
