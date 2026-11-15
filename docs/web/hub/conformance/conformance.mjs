@@ -1,4 +1,4 @@
-// The Hub Conformance page: Test262 first, then WPT, from data.json and history.json
+// The Hub Conformance page: Test262 first, then WPT, then rendering (reftests), from data.json and history.json
 // (written by tests/browser-wpt/passmap-data.py --hub; schema data.schema.json).
 //
 // The page is built as HTML strings by pure functions (no DOM at import), so Node tests can
@@ -202,6 +202,37 @@ export function semwebHTML(D, {now}) {
   return h + '</section>';
 }
 
+/** Rendering (reftests): WPT reftests per suite (svg/, css/), which the WPT share above does not
+count (wpt.fyi gives a reftest no subtests). Each suite: Foafnaut and the browsers on wpt.fyi on
+the same tests at the same WPT commit, its directories, and its history. */
+export function reftestsHTML(D, H, {now, width}) {
+  const R = D.reftests || {}, keys = Object.keys(R);
+  let h = '<section class="suite reftests" id="reftests" aria-labelledby="refh"><h2 id="refh">Rendering (reftests)</h2>' +
+    '<p class="muted">WPT reftests compare a page with a reference page, picture against picture; the WPT share above counts only scripted subtests, so these are measured here. Each test is drawn by the release\'s engine (CPU raster, Noto Sans), compared by WPT\'s rules (fuzzy ranges, reference chains, == and !=), and counts as one test, as on wpt.fyi.</p>';
+  if (!keys.length) return h + '<div class="card empty"><p><b>No reftest run recorded yet.</b> The WPT reftests workflow records svg/ first, then css/.</p></div></section>';
+  for (const k of keys) {
+    const S = R[k], x = S.latest, share = x.total ? x.passed / x.total : 0;
+    const rows = [{name: 'Foafnaut', us: true, share, sub: `${fmt(x.passed)} of ${fmt(x.total)}`}].concat(
+      Object.entries(S.browsers || {}).map(([b, v]) => ({name: NAMES[b] || b, share: v.share, sub: `${String(v.version || '').split(' ')[0]}, ${fmt(v.passed)}`})));
+    const hist = (H.reftests || {})[k] || [];
+    h += `<div class="card"><h3>${esc(S.prefix)} reftests</h3>` +
+      `<div class="big"><b>${p1(share)}</b><span>${fmt(x.passed)} of ${fmt(x.total)} reftests in ${esc(S.prefix)} pass</span></div>` +
+      (x.chromePassesWeFail != null ? `<p class="muted">${fmt(x.chromePassesWeFail)} tests that Chrome passes do not pass here. Statuses: ${Object.entries(x.statuses || {}).map(([s, n]) => esc(s) + ' ' + fmt(n)).join(', ')}.</p>` : '') +
+      compareRows(rows, [[ '100%', 100 ]]) +
+      (Object.keys(S.missing || {}).length ? `<p class="muted">Not shown: ${Object.entries(S.missing).map(([b, w]) => esc(NAMES[b] || b) + ' (' + esc(w) + ')').join(', ')}.</p>` : '') +
+      `<p class="muted">Run finished ${when(x.finished)}, engine ${commitLink(x.engine)}, ${esc(x.where)}, WPT ${esc(x.wpt)}${x.workflow ? `, <a href="${esc(x.workflow)}">workflow run</a>` : ''}${x.results ? `, <a href="${esc(x.results)}">every test</a>` : ''}.</p>` +
+      staleNote(x.finished, now, `The newest ${S.prefix} reftest run`);
+    const dirs = (x.directories || []).filter(d => d[1]).sort((a, b) => (b[1] - b[2]) - (a[1] - a[2]));
+    if (dirs.length) h += '<h4>Directories</h4><div class="tw"><table class="num-table"><thead><tr><th>Directory</th><th>Tests</th><th>Foafnaut</th><th>Chrome</th></tr></thead><tbody>' +
+      dirs.slice(0, 20).map(d => `<tr><td>${esc(d[0])}</td><td>${fmt(d[1])}</td><td><b>${fmt(d[2])}</b> (${p1(d[2] / d[1])})</td><td>${d[3] == null ? 'n/a' : fmt(d[3]) + ' (' + p1(d[3] / d[1]) + ')'}</td></tr>`).join('') + '</tbody></table></div>';
+    h += `<h4>${esc(S.prefix)} reftests over time</h4>` + lineChart({width, series: [
+      {label: 'Foafnaut', cls: 's1', pts: hist.map(r => tPoint(r.finished, r.share, `${p1(r.share)} (${fmt(r.passed)} of ${fmt(r.total)}), ${r.engine}, WPT ${r.wpt}`))},
+      ...(hist.some(r => r.chrome != null) ? [{label: 'Chrome', cls: 's2', pts: hist.filter(r => r.chrome != null).map(r => tPoint(r.finished, r.chrome, `${p1(r.chrome)}, WPT ${r.wpt}`))}] : [])],
+      title: `${S.prefix} reftests passing over time, Foafnaut and Chrome`}) + '</div>';
+  }
+  return h + '</section>';
+}
+
 /** The whole page body below the title, except the parts mount() fills (treemap, directory table). */
 export function pageHTML(D, H, {now = Date.now(), width = 760} = {}) {
   const newest = [D.latest.finished, D.test262.full?.latest?.finished].filter(Boolean).sort().pop();
@@ -212,9 +243,10 @@ export function pageHTML(D, H, {now = Date.now(), width = 760} = {}) {
     '<p><b>Test262.</b> Full Test262 runs are the suite=test262 rows of runs.csv. Test262 through WPT is WPT\'s third_party/test262 directory, scored like the rest of WPT in the full WPT run: one subtest per test.</p>' +
     '<p><b>WPT.</b> Every share is of Chrome\'s subtests at the run\'s WPT commit, with each engine\'s passes in a test capped at Chrome\'s count for it. About half of all WPT subtests are in the encoding directory, one per character of the legacy encodings. Milestones: ' + D.milestones.map(m => esc(m[0]) + ' ' + m[1] + '%').join(', ') + '.</p>' +
     '<p><b>Semantic web and data formats.</b> release-tests runs these suites on the built-in engine with every release (suites l4w3c-* and l4-* of runs.csv). OWL 2 rows are populations of the W3C OWL 2 Test Cases: each test type under the Direct and the RDF-Based Semantics, profile identification for EL, QL and RL, and the DL species; each total is the population\'s full official count.</p>' +
+    '<p><b>Reftests.</b> WPT reftests are pages compared with reference pages as pictures. The WPT share counts none of them; the reftest suites (svg/, then css/) are their own numbers, each test PASS or not, with the browsers on wpt.fyi on the same tests at the same WPT commit.</p>' +
     '<p><b>Other browsers.</b> wpt.fyi runs at the same WPT commit only; runs of other commits are never used in their place, and a run that reports fewer than 95% of Chrome\'s tests is not shown.' + (Object.keys(D.missing || {}).length ? ' Not shown: ' + Object.entries(D.missing).map(([b, w]) => esc(NAMES[b] || b) + ' (' + esc(w) + ')').join(', ') + '.' : '') + '</p>' +
     '<p><b>Source.</b> The data files <a href="data.json">data.json</a> and <a href="history.json">history.json</a> are written by tests/browser-wpt/passmap-data.py from the wpt-scores branch of danbri/factoidal-builds, and kept with their history on its <a href="https://github.com/danbri/factoidal-builds/commits/hub-data">hub-data</a> branch.</p></section>';
-  return head + test262HTML(D, H, {now, width}) + wptHTML(D, H, {now, width}) + semwebHTML(D, {now}) + notes;
+  return head + test262HTML(D, H, {now, width}) + wptHTML(D, H, {now, width}) + reftestsHTML(D, H, {now, width}) + semwebHTML(D, {now}) + notes;
 }
 
 /** Strata rows as objects. */

@@ -20,6 +20,9 @@ wpt.fyi summary_v2 files of the browsers, and writes one JSON object, the page's
   semweb     the semantic-web and data-format suites (SEMWEB below), one row per suite or
              OWL 2 population: the newest run on the built-in engine (engine lean), else the
              newest F* run, marked stale (the F* runners stopped on 2026-11-15)
+  reftests   WPT reftests, per suite (runs.csv suite=wpt-reftest-svg, -css; valid=true):
+             the newest run, the rival browsers on the same tests at its WPT commit
+             (reftest-rivals.csv) and the history; the headline WPT share counts none of them
 
 Everything is at the run's own WPT commit; the denominator is the Chrome run the WPT run
 used (meta.json inputs.chrome_run). Other browsers come from rivals.csv rows at that commit,
@@ -212,6 +215,60 @@ def t262_full(fetch, rows):
     return {"latest": latest, "history": hist}
 
 
+REFTEST_SUITES = [("svg", "svg/"), ("css", "css/")]
+
+
+def reftests(fetch, rows):
+    """WPT reftests (runs.csv suite=wpt-reftest-<dir>, valid=true; skills/wpt-runs section 10):
+    for each suite with a valid run, the newest run (passed, total, share, statuses, the
+    directories from its meta.json), the rival browsers on the same tests at the same WPT
+    commit (reftest-rivals.csv), and one history row per engine commit (its newest run)."""
+    try:
+        riv = fetch.csv(RAW + "reftest-rivals.csv")
+    except Exception as e:
+        print(f"reftest-rivals.csv not read: {e}", file=sys.stderr)
+        riv = []
+    out = {}
+    for key, prefix in REFTEST_SUITES:
+        suite = f"wpt-reftest-{key}"
+        runs = sorted((r for r in rows if r["suite"] == suite and r["valid"] == "true"), key=lambda r: r["finished_utc"], reverse=True)
+        if not runs:
+            continue
+        r = runs[0]
+        meta = {}
+        try:
+            meta = fetch.json(r["meta_url"] or RAW + f"runs/{r['run_id']}/meta.json")
+        except Exception as e:
+            print(f"{suite} meta.json not read: {e}", file=sys.stderr)
+        rv = [x for x in riv if x["suite"] == suite and x["wpt_commit"] == r["wpt_commit"]]
+        browsers, missing = {}, {}
+        for x in rv:
+            if x["status"] == "ok":
+                browsers[x["browser"]] = {"version": x["version"], "passed": num(x["passed"], int), "share": (num(x["share_pct"]) or 0) / 100}
+            else:
+                missing[x["browser"]] = x.get("reason") or "no run at this WPT commit"
+        dirs = [[d, v.get("tests"), v.get("passed"), v.get("chrome")] for d, v in (meta.get("directories") or {}).items()]
+        tot = meta.get("totals") or {}
+        statuses = tot.get("statuses") or {}
+        chrome_by_run = {}
+        for x in riv:
+            if x["suite"] == suite and x["browser"] == "chrome" and x["status"] == "ok":
+                chrome_by_run[x["wpt_commit"]] = (num(x["share_pct"]) or 0) / 100
+        hist = []
+        for h in history(runs):
+            hist.append({"finished": h["finished"], "engine": h["engine"], "wpt": h["wpt"], "where": h["where"],
+                         "passed": h["passed"], "total": h["denominator"], "share": round(h["share"], 6),
+                         "chrome": chrome_by_run.get(next(x["wpt_commit"] for x in runs if x["run_id"] == h["run"])), "run": h["run"]})
+        out[key] = {"suite": suite, "prefix": prefix,
+                    "latest": {"run": r["run_id"], "finished": r["finished_utc"], "engine": r["factoidal_commit"], "where": where(r),
+                               "wpt": r["wpt_commit"][:10], "passed": num(r["passed"], int), "total": num(r["denominator"], int),
+                               "share": (num(r["share_pct"]) or 0) / 100, "statuses": statuses,
+                               "chromePassesWeFail": tot.get("chrome_passes_we_fail"), "workflow": r["workflow_run_url"],
+                               "results": r["result_url"], "directories": dirs},
+                    "browsers": browsers, "missing": missing, "history": hist}
+    return out
+
+
 def t262_wpt_history(fetch, hist, rows):
     """Test262 through WPT for each row of the WPT history: WPT's third_party directory
     (only third_party/test262 has tests) from the run's meta.json, on its own WPT commit."""
@@ -380,7 +437,8 @@ def write_hub(D, out_dir):
                      for k in ("finished", "engine", "wpt", "where", "passed", "denominator", "share", "shareEx", "run")}
                     for h in data.pop("history")],
             "test262wpt": data["test262"].pop("wptHistory", []),
-            "test262": []}
+            "test262": [],
+            "reftests": {k: v.pop("history") for k, v in (data.get("reftests") or {}).items()}}
     full = data["test262"].get("full")
     if full:
         hist["test262"] = [{k: h[k] for k in ("finished", "engine", "where", "passed", "total", "share", "shareEx", "run")}
@@ -509,6 +567,7 @@ def build(a, fetch):
             "wptHistory": t262_wpt_history(fetch, hist, wpt) if a.hub else [],
         },
         "semweb": semweb(fetch, rows),
+        "reftests": reftests(fetch, rows),
     }
     if a.out:
         with open(a.out, "w") as f:
