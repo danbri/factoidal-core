@@ -123,6 +123,14 @@ subtests any browser runs on wpt.fyi (Chrome's count at the pinned WPT commit).
 `encoding/`. The stratified sample below is kept for quick manual checks only; its estimates are
 not scores. First full record: `wpt-full-20261113.json`.
 
+`passmap-data.py` builds the data of the WPT Pass Map page from the recorded runs (the
+`wpt-scores` branch of factoidal-builds): the newest valid full WPT run per stratum, with the
+browsers' wpt.fyi runs at the same WPT commit (a browser with no run there is listed as
+missing, never replaced by a run of another commit), every valid full run (one row per
+engine commit), and Test262: the `third_party/test262` stratum and the full Test262 runs
+(`suite` = `test262`) when there are any. `python3 tests/browser-wpt/passmap-data.py --out
+passmap-data.json`; it downloads about 10 MB to a temporary directory and takes about 10 s.
+
 It uses `testharness-run.ts --wpt-root DIR --list FILE`, which runs tests by
 their wpt.fyi names from any WPT checkout. Since 2026-11-09 it runs them through
 WPT's own server, `wptserve` (see "Running through wptserve" below); the older

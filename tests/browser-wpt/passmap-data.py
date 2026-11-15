@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""passmap-data.py: the data of the WPT Pass Map page, from the recorded runs.
+
+Reads the wpt-scores branch of danbri/factoidal-builds (runs.csv, rivals.csv,
+runs/RUN_ID/meta.json, and the run's factoidal-wpt-full-v1 result file) and the
+wpt.fyi summary_v2 files of the browsers, and writes one JSON object, the page's `D`:
+
+  latest     the newest valid full WPT run (runs.csv: suite=wpt, valid=true, kind=full):
+             run id, finish time, engine commit, platform, its share and the share
+             without encoding/ on its own WPT commit's scale
+  strata     per stratum (wpt-score.py's strata), at the run's WPT commit:
+             [name, chrome subtests, Foafnaut, <one column per browser>, names run, names]
+             Each name's passes are capped at Chrome's count for it, as wpt-full.py
+             does; Foafnaut's passes of a name come from the run's "passing" table.
+  tot, totEx sums of strata, all and without encoding/
+  browsers   the aligned wpt.fyi runs used (rivals.csv rows at that commit, not partial)
+  history    every valid full WPT run, one row per engine commit (its newest run), newest first
+  test262    Test262 through WPT (the third_party/test262 stratum) and the full Test262
+             runs (runs.csv suite=test262, valid=true), when there are any
+
+Everything is at the run's own WPT commit; the denominator is the Chrome run the WPT run
+used (meta.json inputs.chrome_run). Other browsers come from rivals.csv rows at that commit,
+and otherwise from wpt.fyi's runs at that commit (stable Chrome, Firefox, Safari, Edge;
+experimental Servo, WPE WebKit, Ladybird). A browser with no run there, or a run that
+reports fewer than 95% of Chrome's names, is not shown; `missing` says why. Rival data of
+another commit is never used. Downloads go to --cache (default: a temporary
+directory, removed at the end) and are about 10 MB.
+
+  python3 tests/browser-wpt/passmap-data.py --out passmap-data.json
+  python3 tests/browser-wpt/passmap-data.py --run RUN_ID --out passmap-data.json
+"""
+import argparse, csv, gzip, importlib.util, io, json, os, shutil, sys, tempfile, time, urllib.request
+from collections import defaultdict
+from datetime import datetime, timezone
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+spec = importlib.util.spec_from_file_location("wptscore", os.path.join(HERE, "wpt-score.py"))
+ws = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ws)
+
+RAW = "https://raw.githubusercontent.com/danbri/factoidal-builds/wpt-scores/"
+BROWSERS = ["chrome", "firefox", "safari", "edge", "servo", "wpewebkit", "ladybird"]
+MILESTONES = [["M1", 32], ["M2", 45], ["M3", 65], ["M4 and EU bar", 90]]
+T262_TARGETS = [["EU bar", 80], ["Goal", 90]]
+PLATFORM = {"linux-x86_64": "Linux x86_64", "macos-arm64": "macOS arm64"}
+
+
+def top(name):
+    return name.split("?")[0].split("/")[1]
+
+
+class Fetch:
+    def __init__(self, cache):
+        self.cache = cache
+
+    def get(self, url, cache=True):
+        path = os.path.join(self.cache, url.replace("://", "_").replace("/", "_").replace("?", "_").replace("&", "_")[-180:])
+        if not cache or not os.path.exists(path):
+            for attempt in range(3):
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": "passmap-data"})
+                    with urllib.request.urlopen(req, timeout=120) as r, open(path + ".part", "wb") as f:
+                        shutil.copyfileobj(r, f)
+                    os.replace(path + ".part", path)
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        raise RuntimeError(f"fetch {url}: {e}")
+                    time.sleep(2 + 3 * attempt)
+        with open(path, "rb") as f:
+            data = f.read()
+        return gzip.decompress(data) if data[:2] == b"\x1f\x8b" else data
+
+    def json(self, url):
+        return json.loads(self.get(url))
+
+    def csv(self, url):
+        return list(csv.DictReader(io.StringIO(self.get(url).decode())))
+
+
+def num(x, f=float):
+    try:
+        return f(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def where(row):
+    plat = PLATFORM.get(row["platform"], row["platform"])
+    return ("local, " if row["run_id"].endswith("-local") else "cloud, ") + plat
+
+
+def stamp(iso):
+    return iso.replace("T", " ")[:16]
+
+
+def history(rows):
+    """One row per engine commit (its newest valid run), newest first."""
+    best, count = {}, defaultdict(int)
+    for r in rows:
+        c = r["factoidal_commit"]
+        count[c] += 1
+        if c not in best or r["finished_utc"] > best[c]["finished_utc"]:
+            best[c] = r
+    out = []
+    for r in sorted(best.values(), key=lambda r: r["finished_utc"], reverse=True):
+        out.append({"date": stamp(r["finished_utc"]), "finished": r["finished_utc"], "engine": r["factoidal_commit"][:9],
+                    "wpt": r["wpt_commit"][:10], "tests": num(r["names_run"], int), "passed": num(r["passed"], int),
+                    "denominator": num(r["denominator"], int), "share": num(r["share_pct"]) / 100,
+                    "shareEx": (num(r["share_ex_encoding_pct"]) or 0) / 100, "where": where(r),
+                    "runs": count[r["factoidal_commit"]], "run": r["run_id"]})
+    return out
+
+
+WPTFYI = "https://wpt.fyi/api/runs?sha={sha}&label={label}&max-count=1" + "".join(f"&product={b}" for b in BROWSERS)
+EXPERIMENTAL = {"servo", "wpewebkit", "ladybird"}
+
+
+def pick_rivals(fetch, rivals, commit):
+    """{browser: {version, channel, id, time, summary_url}} at exactly this WPT commit, and
+    {browser: reason} for the browsers with no run there."""
+    got, missing = {}, {}
+    for r in rivals:
+        if r["wpt_commit"] == commit and r["browser"] != "chrome":
+            got[r["browser"]] = {"version": r["version"].replace("Servo ", ""), "channel": r["channel"],
+                                 "id": num(r["wptfyi_run_id"], int), "time": r["run_time_utc"], "summary_url": r["summary_url"],
+                                 "source": "rivals.csv"}
+    want = [b for b in BROWSERS if b != "chrome" and b not in got]
+    if want:
+        for label in ("stable", "experimental"):
+            try:
+                runs = json.loads(fetch.get(WPTFYI.format(sha=commit[:10], label=label), cache=False))
+            except Exception as e:
+                print(f"wpt.fyi runs at {commit[:10]} ({label}) not read: {e}", file=sys.stderr)
+                for b in want:
+                    missing.setdefault(b, "wpt.fyi could not be read")
+                continue
+            for r in sorted(runs, key=lambda r: r["time_start"], reverse=True):
+                b = r["browser_name"]
+                if b in want and b not in got and (label == "experimental") == (b in EXPERIMENTAL) \
+                        and r.get("full_revision_hash", commit).startswith(commit[:10]):
+                    got[b] = {"version": r["browser_version"], "channel": label, "id": r["id"], "time": r["time_start"],
+                              "summary_url": r["results_url"], "source": "wpt.fyi"}
+    for b in BROWSERS:
+        if b != "chrome" and b not in got:
+            missing[b] = "no run at this WPT commit"
+    return got, missing
+
+
+def os_of(url):
+    # .../chrome-157.0.8103.78-linux-22.04-720356c15a-summary_v2.json.gz
+    base = url.rsplit("/", 1)[-1]
+    for o in ("linux", "mac", "win", "android", "ios"):
+        if f"-{o}-" in base:
+            return o
+    return ""
+
+
+def t262_full(fetch, rows):
+    """Full Test262 runs: runs.csv suite=test262, valid=true. Directory and feature
+    details are taken from meta.json when the runner writes them."""
+    runs = sorted((r for r in rows if r["suite"] == "test262" and r["valid"] == "true"),
+                  key=lambda r: r["finished_utc"], reverse=True)
+    if not runs:
+        return None
+    hist = []
+    for r in runs:
+        den = num(r["denominator"], int) or num(r["names_total"], int)
+        hist.append({"date": stamp(r["finished_utc"]), "finished": r["finished_utc"], "engine": r["factoidal_commit"][:9],
+                     "where": where(r), "passed": num(r["passed"], int), "failed": num(r["failed"], int),
+                     "skip": num(r["skip"], int), "total": den, "share": (num(r["share_pct"]) or 0) / 100,
+                     "shareEx": (num(r.get("share_ex_features_pct")) / 100) if num(r.get("share_ex_features_pct")) is not None else None,
+                     "run": r["run_id"]})
+    latest = dict(hist[0])
+    meta = {}
+    try:
+        meta = fetch.json(runs[0]["meta_url"] or RAW + f"runs/{runs[0]['run_id']}/meta.json")
+    except Exception as e:
+        print(f"test262 meta.json not read: {e}", file=sys.stderr)
+    tot = meta.get("totals") or {}
+    for k in ("share_ex_features_pct", "share_ex_features"):
+        v = num(tot.get(k))
+        if latest["shareEx"] is None and v is not None:
+            latest["shareEx"] = v / 100 if v > 1 else v
+    ex = meta.get("excluded_features") or tot.get("excluded_features") or meta.get("features_excluded")
+    latest["excludedFeatures"] = ex if isinstance(ex, list) else []
+    dirs = meta.get("directories") or {}
+    drows = []
+    for name, v in dirs.items():
+        if not isinstance(v, dict):
+            continue
+        t = num(v.get("total")) or num(v.get("names")) or num(v.get("tests"))
+        p = num(v.get("passed"))
+        if t and p is not None:
+            drows.append([name, int(t), int(p)])
+    drows.sort(key=lambda d: -d[1])
+    latest["directories"] = drows
+    latest["workflow"] = runs[0]["workflow_run_url"]
+    return {"latest": latest, "history": hist}
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("--out", required=True)
+    p.add_argument("--run", help="run_id of the WPT run to map (default: the newest valid full run)")
+    p.add_argument("--cache", help="download directory, kept (default: temporary, removed)")
+    a = p.parse_args()
+    cache = a.cache or tempfile.mkdtemp(prefix="passmap-")
+    os.makedirs(cache, exist_ok=True)
+    try:
+        build(a, Fetch(cache))
+    finally:
+        if not a.cache:
+            shutil.rmtree(cache, ignore_errors=True)
+
+
+def build(a, fetch):
+    t0 = time.time()
+    rows = fetch.csv(RAW + "runs.csv")
+    rivals = fetch.csv(RAW + "rivals.csv")
+    wpt = [r for r in rows if r["suite"] == "wpt" and r["valid"] == "true" and r["kind"] == "full"]
+    if not wpt:
+        sys.exit("no valid full WPT run in runs.csv")
+    run = max(wpt, key=lambda r: r["finished_utc"]) if not a.run else next(r for r in wpt if r["run_id"] == a.run)
+    meta = fetch.json(run["meta_url"] or RAW + f"runs/{run['run_id']}/meta.json")
+    res = fetch.json(run["result_url"])
+    passing, missing = res["passing"], set(res.get("missing", []))
+    chrome_own = fetch.json(meta["inputs"]["chrome_run"]["results_url"])
+    ran = {n for n, v in chrome_own.items() if v["c"][1] > 0} - missing
+
+    commit = run["wpt_commit"]
+    cr = meta["inputs"]["chrome_run"]
+    riv, missing = pick_rivals(fetch, rivals, commit)
+    riv["chrome"] = {"version": cr["browser_version"], "channel": "stable", "id": cr["id"], "time": cr["time_start"],
+                     "summary_url": cr["results_url"], "source": "meta.json"}
+    chrome = chrome_own
+    want = sorted(n for n, v in chrome.items() if v["c"][1] > 0)
+    summ = {"chrome": chrome}
+    for b in BROWSERS:
+        if b in riv and b != "chrome":
+            try:
+                summ[b] = fetch.json(riv[b]["summary_url"])
+            except Exception as e:
+                missing[b] = f"summary file not read ({e})"
+                continue
+            rep = sum(1 for n in want if n in summ[b])
+            if rep < 0.95 * len(want):
+                missing[b] = f"partial run: {rep:,} of {len(want):,} tests reported"
+                del summ[b]
+    names = [b for b in BROWSERS if b in summ]
+
+    k = len(names)
+    acc = defaultdict(lambda: [0] * (k + 4))  # u, us, browsers..., run, n
+    for n in want:
+        ch = chrome[n]["c"][1]
+        r = acc[ws.stratum(n)]
+        r[0] += ch
+        if n in passing:
+            r[1] += min(passing[n][0], ch)
+        for i, b in enumerate(names):
+            s = summ[b].get(n)
+            if s:
+                r[2 + i] += min(s["c"][0], ch)
+        if n in ran:
+            r[k + 2] += 1
+        r[k + 3] += 1
+    strata = [[s] + v for s, v in sorted(acc.items())]
+    keys = ["u", "us"] + names
+    tot = {kk: sum(r[1 + i] for r in strata) for i, kk in enumerate(keys)}
+    totEx = {kk: sum(r[1 + i] for r in strata if r[0].split("/")[0] != "encoding") for i, kk in enumerate(keys)}
+
+    browsers = {}
+    for b in names:
+        r = riv[b]
+        browsers[b] = {"id": r["id"], "browser_version": r["version"], "channel": r["channel"],
+                       "os_name": os_of(r["summary_url"]), "time_start": r["time"], "source": r["source"]}
+
+    t262row = next((r for r in strata if r[0] == "third_party/test262"), None)
+    own262 = (res.get("strata") or {}).get("third_party/test262") or {}
+    hist = history(wpt)
+    D = {
+        "format": "passmap-data-v2",
+        "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "wptCommit": commit,
+        "measuredAt": run["finished_utc"],
+        "engineCommit": run["factoidal_commit"][:9],
+        "engines": names,
+        "missing": {b: missing[b] for b in BROWSERS if b in missing},
+        "totals": {"testsRun": num(run["names_run"], int), "measured": num(run["passed"], int), "full": True},
+        "denominator": tot["u"],
+        "browsers": browsers,
+        "tot": tot,
+        "totEx": totEx,
+        "strata": strata,
+        "history": hist,
+        "milestones": MILESTONES,
+        "latest": {"run": run["run_id"], "date": run["finished_utc"][:10], "started": run["started_utc"],
+                   "finished": run["finished_utc"], "where": where(run), "wpt": run["wpt_commit"][:10],
+                   "engine": run["factoidal_commit"], "share": num(run["share_pct"]),
+                   "shareEx": num(run["share_ex_encoding_pct"]), "passed": num(run["passed"], int),
+                   "denominator": num(run["denominator"], int), "tests": num(run["names_run"], int),
+                   "workflow": run["workflow_run_url"], "result": run["result_url"],
+                   "outcomes": {o: num(run[o], int) for o in ("ok", "error", "timeout", "skip", "crash", "stall", "no_result")}},
+        "test262": {
+            "targets": T262_TARGETS,
+            "wpt": None if not t262row else {
+                "stratum": "third_party/test262", "u": t262row[1], "us": t262row[2],
+                "browsers": {b: t262row[3 + i] for i, b in enumerate(names)}, "run": t262row[-2], "names": t262row[-1],
+                "own": {"passed": own262.get("passed"), "chrome": own262.get("chrome"), "names": own262.get("names"),
+                        "share": own262.get("share")}},
+            "full": t262_full(fetch, rows),
+        },
+    }
+    with open(a.out, "w") as f:
+        json.dump(D, f, separators=(",", ":"))
+    w = D["test262"]["wpt"]
+    print(f"run {run['run_id']} ({run['finished_utc']}, engine {run['factoidal_commit'][:9]}): "
+          f"{run['share_pct']}% ({run['share_ex_encoding_pct']}% without encoding/) at WPT {run['wpt_commit'][:10]}; "
+          f"map: {100 * tot['us'] / tot['u']:.2f}% with {', '.join(names)}; missing {D['missing']}; "
+          f"Test262 through WPT {100 * w['us'] / w['u']:.2f}% of {w['u']}; "
+          f"full Test262 runs: {len(D['test262']['full']['history']) if D['test262']['full'] else 0}; "
+          f"history {len(hist)} engine commits; {time.time() - t0:.1f} s", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
