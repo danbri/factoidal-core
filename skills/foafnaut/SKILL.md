@@ -298,6 +298,14 @@ Measuring:
   `formal/lean4/L4Factoidal/FrameCost/`.
 - Profiling: macOS `sample` against a Deno loop over `engine.compileLayers`. No script for
   this is in the repository.
+- A real page as a budgeted test: the Spinal Tap page (issue 450). `spinal_perf.ts` loads it on
+  the native engine, lays it out, runs 600 animation ticks and writes JSON (per tick: engine ms,
+  `frameWork` deltas, whole-page or paint-only, RSS, heap); `spinal_perf_check.ts` (in `test.sh`,
+  about 15 s) checks it against `fixtures/spinal-perf/budgets.json`, which may only tighten, and
+  prints the known failures. `node hub_spinal_perf.mjs [--live]` measures the Hub in headless
+  Chrome with WebGPU for 45 s (frame path, draw ms, heap, RSS, GPU errors) against the same file.
+  Times with the CPU probe (`checks` on, the default of `compile`) are about five times those
+  without it on this page: say which one a number is.
 
 ### Measure BubblePopKit and BubblePopJS with no Mac
 
