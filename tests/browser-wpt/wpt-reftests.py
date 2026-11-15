@@ -415,6 +415,15 @@ def run(a):
         row = {"test": u, "status": status, "message": message, "edges": edges,
                "ms": sum(drawn.get(needed.get((p, size), ""), {}).get("ms", 0) for p in {u, *[e["to"] for e in edges]}),
                "scripted": bool(drawn.get(needed[(u, size)], {}).get("scripted"))}
+        # what the engine skipped (its liberal-mode diagnostics) on the test and on each reference
+        skipped = {p: drawn.get(needed.get((p, size), ""), {}).get("skipped") for p in [u] + [e["to"] for e in edges]}
+        skipped = {p: v for p, v in skipped.items() if v}
+        if skipped:
+            row["skipped"] = skipped
+        errs = {p: drawn.get(needed.get((p, size), ""), {}).get("scriptErrors") for p in [u] + [e["to"] for e in edges]}
+        errs = {p: v for p, v in errs.items() if v}
+        if errs:
+            row["scriptErrors"] = errs
         c = chrome.get(u)
         if c:
             row["chrome"] = {"P": "PASS", "F": "FAIL", "T": "TIMEOUT", "E": "ERROR", "C": "CRASH"}.get(c.get("s"), c.get("s"))
@@ -445,7 +454,10 @@ def run(a):
                    "harnessErrorShare": round(100 * harness / len(rows), 4) if rows else 0,
                    "chromeTests": len(chrome_rows), "chromePassed": chrome_pass,
                    "chromeShare": round(100 * chrome_pass / len(rows), 4) if rows and chrome_rows else None,
-                   "passedWhereChromePasses": sum(1 for r in rows if r["status"] == "PASS" and r.get("chrome") == "PASS")},
+                   "passedWhereChromePasses": sum(1 for r in rows if r["status"] == "PASS" and r.get("chrome") == "PASS"),
+                   # passes where the engine skipped something on the test or a reference (liberal
+                   # mode): both pictures may lack the same part, so such a pass says less
+                   "passedWithSkips": sum(1 for r in rows if r["status"] == "PASS" and r.get("skipped"))},
     }
     meta["valid"] = bool(rows) and harness < 0.005 * len(rows) and all(r["status"] for r in rows)
     meta["invalidReason"] = None if meta["valid"] else f"harness errors {harness} of {len(rows)} (limit 0.5%)"
@@ -472,6 +484,7 @@ def write_summary(out, meta, rows):
     t = meta["totals"]
     lines = [f"# WPT reftests {meta['prefix']}", "",
              f"**{t['passed']} of {t['tests']} pass ({t['share']:.2f}%)**" + (f"; Chrome {t['chromePassed']} ({t['chromeShare']:.2f}%) at the same WPT commit" if t.get("chromeShare") is not None else ""),
+             "", f"Of the passes, {t['passedWithSkips']} are of pages where the engine skipped something (test or reference).",
              "", f"Statuses: {', '.join(f'{k} {v}' for k, v in sorted(t['statuses'].items()))}. Valid: {meta['valid']}" + (f" ({meta['invalidReason']})" if not meta['valid'] else ""),
              f"{meta['pagesDrawn']} pages drawn in {meta['drawSeconds']} s. {meta['renderer']}.", "",
              "| directory | tests | Foafnaut | Chrome |", "|---|---:|---:|---:|"]

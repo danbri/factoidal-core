@@ -72,13 +72,37 @@ function waiting(source:string,url:string,options:Record<string,unknown>):boolea
   return !!root&&/(^|\s)reftest-wait(\s|$)/.test(root.attributes?.class??"");
 }
 
+/** wptrunner fires `TestRendered` at the root element once the page is drawn while it has
+`reftest-wait` (reftest-wait_webdriver.js). A page that listens for it gets a script that does
+the same: after the load event and two frames, if the root still has the class. The script
+removes its own element first, so the tree the page is drawn from is the page's. Only pages
+that name the event get it. */
+const testRendered=`(function(){var s=document.currentScript;if(s&&s.parentNode)s.parentNode.removeChild(s);`+
+  `function go(){requestAnimationFrame(function(){requestAnimationFrame(function(){var r=document.documentElement;`+
+  `if(r&&r.classList.contains("reftest-wait"))r.dispatchEvent(new Event("TestRendered"));});});}`+
+  `if(document.readyState==="complete")go();else addEventListener("load",go);})();`;
+function withTestRendered(source:string):string {
+  if(!source.includes("TestRendered"))return source;
+  const xml=/^\s*(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>]/.test(source);
+  if(xml){
+    const at=source.lastIndexOf("</");
+    return at<0?source:source.slice(0,at)+`<script xmlns="http://www.w3.org/2000/svg"><![CDATA[${testRendered}]]></script>`+source.slice(at);
+  }
+  return source+`<script>${testRendered}</script>`;
+}
+
 async function draw(job:{url:string;width:number;height:number;file:string}) {
   size={width:job.width,height:job.height};
-  const page=await prepareHTML(engine,inputURL(job.url),undefined,undefined,{liberal:true});
+  // The page's own bytes, decoded by the engine, with the TestRendered script when it listens for it.
+  const read=await readSource(inputURL(job.url),undefined,(b,c)=>(engine as {decodeDocument?:(b:Uint8Array,c:string)=>{encoding:string;source:string}|undefined}).decodeDocument?.(b,c));
+  const source0=withTestRendered(read.source);
+  const page=await prepareHTML(engine,read.url,undefined,source0===read.source?undefined:source0,{liberal:true});
   let waited=0,timedOut=false;
   const script=page.script;
+  const scriptErrors:string[]=[];
   if(script){
     const take=async(next:Turn)=>{
+      for(const e of next.errors??[])if(scriptErrors.length<4)scriptErrors.push(String(e).slice(0,200));
       page.applyTurn(next as never);
       for(const wire of next.netRequests??[])await take(await synced(call("",{action:"net",session:next.session,results:[await netAnswer(wire as never)]})));
       if(next.fetches?.length){
@@ -124,7 +148,10 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
   }
   await Deno.writeFile(`${outDir}/${job.file}`,await pngOf(job.width,job.height,out));
   const sha=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",rgb))).map(b=>b.toString(16).padStart(2,"0")).join("");
-  return {status:timedOut?"timeout":"ok",sha,waited,scripted:!!script};
+  // What the engine skipped on the page (liberal mode: WebAccept diagnostics), for finding causes.
+  const diags=((scene.diagnostics??head.diagnostics) as {feature?:string;message?:string}[]|undefined)??[];
+  const skipped=[...new Set(diags.map(d=>`${d.feature??""}: ${d.message??""}`.slice(0,160)))].slice(0,12);
+  return {status:timedOut?"timeout":"ok",sha,waited,scripted:!!script,...(skipped.length?{skipped}:{}),...(scriptErrors.length?{scriptErrors}:{})};
 }
 
 const jobs=(await Deno.readTextFile(opt("--list"))).split("\n").filter(Boolean).map(l=>JSON.parse(l));
