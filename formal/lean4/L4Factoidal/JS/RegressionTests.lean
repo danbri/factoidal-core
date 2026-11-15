@@ -670,4 +670,24 @@ without them every `:name` parameter was "missing" and a news site's router thre
 #guard out "print(/\\p{Emoji_Presentation}/u.test('\\u231a'), /^\\p{ASCII}+$/u.test('abc'), /\\p{L}/.test('p{L}'), /[^\\p{L}]/u.test('x'))" == ["true true true false"]
 #guard out "try { new RegExp('\\\\p{Nope}', 'u'); print('no error') } catch (e) { print(e instanceof SyntaxError) }" == ["true"]
 
+/-! ## The register machine is a parameter of the run (`HeapOf.useVm`)
+
+With it off, every function runs in the evaluator: the reference for theorems about the machine.
+The same scripts print the same lines either way. -/
+
+def outVm (vm : Bool) (src : String) : List String :=
+  let (o, h) := runScript { (freshHeap : Heap) with useVm := vm } src
+  match o with
+  | .ok => h.out.toList
+  | .threw _ m => h.out.toList ++ ["threw: " ++ m]
+  | .syntaxError m => ["syntax: " ++ m]
+  | .halted w => h.out.toList ++ ["halted: " ++ w]
+
+#guard outVm false "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2) } let s = 0; for (let i = 0; i < 20; i++) s += i; print(fib(15), s)" == ["610 190"]
+#guard outVm true "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2) } let s = 0; for (let i = 0; i < 20; i++) s += i; print(fib(15), s)" == ["610 190"]
+#guard (freshHeap : Heap).useVm
+-- `await` inside plain blocks of an async function (tier 1 leaves async bodies to the generator
+-- machine, which matches on `block`)
+#guard out "var c = 1; var log = []; async function f() { log.push('f') } async function h() { for (let i = 0; i < 2; i++) { if (c) { await f(); log.push(i) } } { await null; log.push('b') } } h().then(() => print(log.join()))" == ["f,0,f,1,b"]
+
 end L4Factoidal.JS.Tests

@@ -32,8 +32,8 @@ def jsFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
     n.endsWith ".js" && !n.endsWith "_FIXTURE.js"
   return fs.qsort (fun a b => a.toString < b.toString)
 
-def test262 (root : System.FilePath) (dirs : List String) (listOut : Option String) : IO Unit := do
-  let base ← harnessHeap root freshHeap false
+def test262 (fresh : Heap) (root : System.FilePath) (dirs : List String) (listOut : Option String) : IO Unit := do
+  let base ← harnessHeap root fresh false
   let mut lines : Array String := #[]
   let mut tp := 0; let mut tf := 0; let mut ts := 0; let mut tneg := 0
   let t0 ← IO.monoMsNow
@@ -41,7 +41,7 @@ def test262 (root : System.FilePath) (dirs : List String) (listOut : Option Stri
     let files ← jsFiles (root / d)
     let mut p := 0; let mut f := 0; let mut s := 0; let mut neg := 0
     for file in files do
-      let v ← runTest root freshHeap base false file
+      let v ← runTest root fresh base false file
       let rel := (file.toString.drop (root.toString.length + 1)).toString
       match v with
       | .pass ng =>
@@ -76,9 +76,13 @@ def timeIt (name src : String) : IO Unit := do
   IO.println s!"{name}: {res}; {(t1 - t0) / 1000000} ms"
 
 def main (args : List String) : IO UInt32 := do
+  -- `BUBBLEPOP_VM=off`: the register machine is off for the run (the heap's `useVm`)
+  let vm := (← IO.getEnv "BUBBLEPOP_VM") != some "off"
+  let fresh : Heap := { freshHeap with useVm := vm }
   match args with
   | ["run", file] =>
-    let (o, out) := run (← IO.FS.readFile file)
+    let (o, h) := runScript fresh (← IO.FS.readFile file)
+    let out := h.out
     for l in out do IO.println l
     match o with
     | .ok => pure 0
@@ -86,7 +90,8 @@ def main (args : List String) : IO UInt32 := do
     | .syntaxError m => IO.eprintln m; pure 1
     | .halted w => IO.eprintln s!"halted: {w}"; pure 2
   | ["eval", src] =>
-    let (o, out) := run src
+    let (o, h) := runScript fresh src
+    let out := h.out
     for l in out do IO.println l
     match o with
     | .ok => pure 0
@@ -97,10 +102,10 @@ def main (args : List String) : IO UInt32 := do
     let (dirs, listOut) := match rest.reverse with
       | out :: "--list" :: ds => (ds.reverse, some out)
       | _ => (rest, none)
-    test262 root dirs listOut
+    test262 fresh root dirs listOut
     pure 0
   | ["test262-files", root, list] =>
-    test262Files root list freshHeap
+    test262Files root list fresh
     pure 0
   | ["compile-stats", file] =>
     match parseScript (← IO.FS.readFile file) false with
@@ -114,7 +119,7 @@ def main (args : List String) : IO UInt32 := do
     timeIt "loop" loopSrc
     pure 0
   | _ =>
-    IO.eprintln "usage: leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | test262-files ROOT LIST | bench"
+    IO.eprintln "usage: [BUBBLEPOP_VM=off] leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | test262-files ROOT LIST | bench"
     pure 64
 
 end L4Factoidal.JS.Main
