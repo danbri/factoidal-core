@@ -17,7 +17,7 @@ evaluator for everything that is not a plain number operation or a plain propert
 
 **What is proved, and what is tested.** The compiler is not proved to agree with the
 evaluator. It is tested by running the Test262 subset and the benchmark programs with the
-register machine on and off (`Interp.useVm`) and comparing the outcome file by file.
+register machine on and off (the heap's `useVm`, `leanjs` with `BUBBLEPOP_VM=off`) and comparing the outcome file by file.
 
 The compiler walks with fuel, and on out of fuel answers `none`.
 -/

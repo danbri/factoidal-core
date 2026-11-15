@@ -293,6 +293,15 @@ inductive Expr where
   | chain (e : Expr)
   | optBase (e : Expr)
   | optCallee (e : Expr)
+  /-- Tier 1 (`JS/Tier1.lean`): `x++`, `x--`, `++x`, `--x` on a resolved name; the evaluator
+  on it equals the evaluator on `update pre inc (local name hops idx)` (`JS/Tier1Proofs.lean`). -/
+  | incLocal (pre inc : Bool) (name : String) (hops idx : Nat)
+  /-- Tier 1: `x = value` on a resolved name, `value` not a function expression; equal to
+  `assign none (local name hops idx) value`. -/
+  | setLocal (name : String) (hops idx : Nat) (value : Expr)
+  /-- Tier 1: `a op b` for `op` one of `+ - * /`; equal to `binary op a b`. Numbers from
+  leaves and from nested `arith` nodes are combined with no step of the monad. -/
+  | arith (op : BinOp) (a b : Expr)
 
 /-- A property definition in an object literal (§13.2.5). -/
 inductive PropDef where
@@ -369,6 +378,8 @@ inductive Stmt where
   | block (body : List Stmt)
   /-- A block whose environment no closure can hold: its slot is reused when it ends. -/
   | blockF (body : List Stmt)
+  /-- Tier 1: a block that declares nothing lexical (no environment); equal to `block body`. -/
+  | blockN (body : List Stmt)
   /-- A top-level loop with its code for the register machine, and the loop itself. -/
   | compiled (c : Code) (s : Stmt)
   | throwS (e : Expr)
@@ -477,11 +488,14 @@ def Expr.hasYieldF : Nat → Expr → Bool
     | .array es | .template _ es | .superCall es | .tagged _ _ _ es => Expr.anyYield n es
     | .object ps => PropDef.anyYield n ps
     | .unary _ a | .update _ _ a | .spread a | .superIndex a | .member a _ => Expr.hasYieldF n a
-    | .binary _ a b | .logical _ a b | .assign _ a b | .logAssign _ a b | .index a b | .seq a b =>
+    | .binary _ a b | .arith _ a b | .logical _ a b | .assign _ a b | .logAssign _ a b | .index a b | .seq a b =>
       Expr.hasYieldF n a || Expr.hasYieldF n b
     | .assignPat _ v => Expr.hasYieldF n v
     | .cond a b c => Expr.hasYieldF n a || Expr.hasYieldF n b || Expr.hasYieldF n c
     | .call f args | .new f args => Expr.hasYieldF n f || Expr.anyYield n args
+    -- as the nodes they stand for (`update` and `assign` of a `local`, which answers `n == 0`)
+    | .incLocal .. => n == 0
+    | .setLocal _ _ _ v => n == 0 || Expr.hasYieldF n v
 
 def Expr.anyYield : Nat → List Expr → Bool
   | 0, _ => true
@@ -498,6 +512,13 @@ def PropDef.anyYield : Nat → List PropDef → Bool
       | .spread e => Expr.hasYieldF n e
       | .getter (.computed k) _ | .setter (.computed k) _ => Expr.hasYieldF n k
       | _ => false) || PropDef.anyYield n ps
+
+/-- The statement declares a name in its block's lexical environment (`let`, `const`, a
+function or a class): `enterBlock` makes an environment for a block that has one. -/
+def Stmt.isLexical (s : Stmt) : Bool :=
+  match s with
+  | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
+  | _ => false
 
 def Stmt.hasYieldF : Nat → Stmt → Bool
   | 0, _ => true
@@ -518,7 +539,7 @@ def Stmt.hasYieldF : Nat → Stmt → Bool
       (match t with | some e => Expr.hasYieldF n e | none => false) ||
       (match u with | some e => Expr.hasYieldF n e | none => false) || Stmt.hasYieldF n b
     | .forIn _ _ o b | .forOf _ _ o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
-    | .block ss | .blockF ss => Stmt.anyYield n ss
+    | .block ss | .blockF ss | .blockN ss => Stmt.anyYield n ss
     | .compiled _ s => Stmt.hasYieldF n s
     | .tryS b _ h f => Stmt.anyYield n b ||
         (match h with | some h => Stmt.anyYield n h | none => false) ||
@@ -555,7 +576,7 @@ def Stmt.contOutF : Nat → Stmt → Bool
     match s with
     | .cont none => true
     | .ifS _ t e => Stmt.contOutF n t || (match e with | some e => Stmt.contOutF n e | none => false)
-    | .block ss | .blockF ss => Stmt.anyContOut n ss
+    | .block ss | .blockF ss | .blockN ss => Stmt.anyContOut n ss
     | .tryS b _ h f => Stmt.anyContOut n b ||
         (match h with | some h => Stmt.anyContOut n h | none => false) ||
         (match f with | some f => Stmt.anyContOut n f | none => false)

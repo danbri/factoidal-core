@@ -66,17 +66,17 @@ inductive Verdict where
   | pass (neg : Bool) | fail (why : String) | skip (why : String)
 
 /-- The heap after the default harness, computed once per run. -/
-def harnessHeap (root : System.FilePath) : IO Heap := do
+def harnessHeap (fresh : Heap) (root : System.FilePath) : IO Heap := do
   let a ← IO.FS.readFile (root / "harness" / "assert.js")
   let s ← IO.FS.readFile (root / "harness" / "sta.js")
-  match runScript freshHeap (a ++ "\n" ++ s) with
+  match runScript fresh (a ++ "\n" ++ s) with
   | (.ok, h) => pure h
   | (o, _) =>
     let why := match o with
       | .syntaxError m => m | .threw _ m => m | .halted w => w | .ok => ""
     throw (IO.userError s!"harness failed: {why}")
 
-def runTest (root : System.FilePath) (base : Heap) (path : System.FilePath) : IO Verdict := do
+def runTest (fresh : Heap) (root : System.FilePath) (base : Heap) (path : System.FilePath) : IO Verdict := do
   let src ← IO.FS.readFile path
   let m := parseMeta src
   if m.flags.contains "module" then return .skip "module"
@@ -84,7 +84,7 @@ def runTest (root : System.FilePath) (base : Heap) (path : System.FilePath) : IO
   if m.negPhase == some "resolution" then return .skip "resolution"
   let strict := m.flags.contains "onlyStrict"
   let raw := m.flags.contains "raw"
-  let mut h := if raw then freshHeap else base
+  let mut h := if raw then fresh else base
   if !raw then
     for inc in (if isAsync then ["doneprintHandle.js"] else []) ++ m.includes do
       let p := root / "harness" / inc
@@ -118,8 +118,8 @@ def jsFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
     n.endsWith ".js" && !n.endsWith "_FIXTURE.js"
   return fs.qsort (fun a b => a.toString < b.toString)
 
-def test262 (root : System.FilePath) (dirs : List String) (listOut : Option String) : IO Unit := do
-  let base ← harnessHeap root
+def test262 (fresh : Heap) (root : System.FilePath) (dirs : List String) (listOut : Option String) : IO Unit := do
+  let base ← harnessHeap fresh root
   let mut lines : Array String := #[]
   let mut tp := 0; let mut tf := 0; let mut ts := 0; let mut tneg := 0
   let t0 ← IO.monoMsNow
@@ -127,7 +127,7 @@ def test262 (root : System.FilePath) (dirs : List String) (listOut : Option Stri
     let files ← jsFiles (root / d)
     let mut p := 0; let mut f := 0; let mut s := 0; let mut neg := 0
     for file in files do
-      let v ← runTest root base file
+      let v ← runTest fresh root base file
       let rel := (file.toString.drop (root.toString.length + 1)).toString
       match v with
       | .pass ng =>
@@ -162,9 +162,13 @@ def timeIt (name src : String) : IO Unit := do
   IO.println s!"{name}: {res}; {(t1 - t0) / 1000000} ms"
 
 def main (args : List String) : IO UInt32 := do
+  -- `BUBBLEPOP_VM=off`: the register machine is off for the run (the heap's `useVm`)
+  let vm := (← IO.getEnv "BUBBLEPOP_VM") != some "off"
+  let fresh : Heap := { freshHeap with useVm := vm }
   match args with
   | ["run", file] =>
-    let (o, out) := run (← IO.FS.readFile file)
+    let (o, h) := runScript fresh (← IO.FS.readFile file)
+    let out := h.out
     for l in out do IO.println l
     match o with
     | .ok => pure 0
@@ -172,7 +176,8 @@ def main (args : List String) : IO UInt32 := do
     | .syntaxError m => IO.eprintln m; pure 1
     | .halted w => IO.eprintln s!"halted: {w}"; pure 2
   | ["eval", src] =>
-    let (o, out) := run src
+    let (o, h) := runScript fresh src
+    let out := h.out
     for l in out do IO.println l
     match o with
     | .ok => pure 0
@@ -183,7 +188,7 @@ def main (args : List String) : IO UInt32 := do
     let (dirs, listOut) := match rest.reverse with
       | out :: "--list" :: ds => (ds.reverse, some out)
       | _ => (rest, none)
-    test262 root dirs listOut
+    test262 fresh root dirs listOut
     pure 0
   | ["compile-stats", file] =>
     match parseScript (← IO.FS.readFile file) false with
@@ -197,7 +202,7 @@ def main (args : List String) : IO UInt32 := do
     timeIt "loop" loopSrc
     pure 0
   | _ =>
-    IO.eprintln "usage: leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | bench"
+    IO.eprintln "usage: [BUBBLEPOP_VM=off] leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | bench"
     pure 64
 
 end L4Factoidal.JS.Main
