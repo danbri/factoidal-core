@@ -7,7 +7,9 @@ Le the function at fuel m") and one step lemma (the body at n + 1 against m + 1,
 then `IH_zero` and `IH_all` (fuel monotonicity of the whole block).
 
 usage: fuelmono-gen.py Interp.lean out.lean [name,name,...]
-With a list of names, only those step lemmas are written (and no IH_all): for trying a few.
+With a list of names, only those step lemmas are written (and no IH_all). The committed file
+is written with the list of the functions whose step the tactic proves today (see the file's
+header), so `lake build L4Factoidal.JS.FuelMonoSteps` checks them.
 """
 import re
 import sys
@@ -70,7 +72,8 @@ w('fuel `m`. Each step lemma proves a function\'s body at `n + 1` against `m + 1
 w('by walking the two bodies apart (`fuel_mono_pre`, `fuel_call`, `fuel_mono_post`). `IH_all` puts them together:')
 w('fuel monotonicity of the whole block, for every heap (the register machine on or off). -/\n')
 w('namespace L4Factoidal.JS.FuelMono\nopen L4Factoidal.JS\n')
-w('set_option maxHeartbeats 4000000\n')
+w('set_option maxHeartbeats 4000000')
+w('set_option linter.unusedVariables false\n')
 w('/-- Every function of the block that takes fuel, at fuel `n` against fuel `m`. -/')
 w('structure IH (H : Type) (n m : Nat) : Prop where')
 for name, args in fns:
@@ -111,6 +114,28 @@ if not only:
     w('    have ih := IH_all n m (by omega)')
     w('    { ' + ',\n      '.join(f'h_{name} := {name}_step n m ih' for name, _ in fns) + ' }')
     w('')
+    w('''/-- Fuel monotonicity of statement lists, in the words of a run: from any heap (the register
+machine on or off, any host and `hostCall`), if `evalStmts` at fuel `n` ends with anything but
+`halt "fuel"`, it ends with the same result at every fuel `m ≥ n`: the same value or completion
+and the same heap, so the same output, jobs, host state and steps left (a host call receives the
+steps left, so it sees the same count at every call). -/
+theorem evalStmts_fuel_mono {H : Type} {n m : Nat} (h : n ≤ m) (ctx : Ctx) (ss : List Stmt)
+    (s : HeapOf H) (hn : ¬ Out (evalStmts n ctx ss s)) :
+    evalStmts m ctx ss s = evalStmts n ctx ss s :=
+  ((IH_all n m h).h_evalStmts ctx ss).eq_of_not_out s hn
+
+/-- The same for a call of a function value. -/
+theorem callV_fuel_mono {H : Type} {n m : Nat} (h : n ≤ m) (f thisV : Value) (args : Array Value)
+    (s : HeapOf H) (hn : ¬ Out (callV n f thisV args s)) :
+    callV m f thisV args s = callV n f thisV args s :=
+  ((IH_all n m h).h_callV f thisV args).eq_of_not_out s hn
+
+/-- The same for an expression. -/
+theorem evalExpr_fuel_mono {H : Type} {n m : Nat} (h : n ≤ m) (ctx : Ctx) (e : Expr)
+    (s : HeapOf H) (hn : ¬ Out (evalExpr n ctx e s)) :
+    evalExpr m ctx e s = evalExpr n ctx e s :=
+  ((IH_all n m h).h_evalExpr ctx e).eq_of_not_out s hn
+''')
 w('end L4Factoidal.JS.FuelMono')
 open(sys.argv[2], 'w').write('\n'.join(out) + '\n')
 print(len(fns), 'functions')

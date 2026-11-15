@@ -15,7 +15,35 @@ halt breaks the rule for `tryCatch` (`Le.tryCatch` needs the handler to pass `ha
 `catchJS` passes every halt on, so its rule has no side condition (`Le.catchJS`).
 
 The register machine is a parameter of the run (`HeapOf.useVm`); the relation is over every
-heap, so it covers the machine off (the reference) and on.
+heap, so it covers the machine off (the reference) and on. Equal results include equal heaps,
+so equal steps left: a host call (`hostCall`, which receives the steps left) sees the same
+count at either fuel.
+
+## State of the proof (2026-11-15)
+
+`JS/FuelMonoSteps.lean` is written by `tools/fuelmono-gen.py` from `JS/Interp.lean`: the
+induction hypothesis `IH H n m` over the 116 functions of the block that take fuel, and one
+step lemma per function (its body at `n + 1` against `m + 1`, from `IH H n m`), proved by the
+walk below with no hand-written proof. Proved today: 75 of the 116 steps, in 31 s (peak
+3.1 GB). Not proved:
+
+- 21 bodies with local functions (`do` join points `__do_jp`, local helpers such as `field`,
+  `keyOf`): the two sides bind different closures (one calls at `n`, the other at `m`), and the
+  walk stops at `Le (jpL x) (jpR x)`. Inlining them (zeta-delta) duplicates bodies and ran out
+  of memory (7 GB in 90 s on `binop`). Needed: a tactic that pairs the two let-bound closures
+  and proves `∀ x, Le (jpL x) (jpR x)` once by walking their bodies.
+- The 20 largest bodies (40 to 2,079 lines: `evalExpr`, `evalStmt`, `vmLoop`, the generator
+  machine, `callNative`, `extraNative`, `moreNative`): not tried after the first full run,
+  which with the earlier walk reached 17 GB. Their equation lemmas alone take 25 s
+  (`evalExpr.eq_2`), 111 s (`extraNative`) and 573 s (`callNative`).
+
+So `IH_all` (monotonicity of the whole block) is not proved yet. The rules and the steps that
+are proved use only `propext`, `Classical.choice` and `Quot.sound`.
+
+Fuel monotonicity was false before `catchJS`: a `for`-`of` whose body throws, over an iterator
+whose `return` nests calls, ended `ok [caught]` at fuels 18 to 59 and `ok [closed, caught]`
+above (IteratorClose dropped the out-of-fuel halt of `return`). `drop_not_out` below is the
+shape of that handler.
 -/
 
 namespace L4Factoidal.JS.FuelMono
@@ -183,9 +211,9 @@ that function). -/
 syntax "fuel_mono_pre" : tactic
 macro_rules
   | `(tactic| fuel_mono_pre) => `(tactic| first
-      | (cases ‹_ + 1 = Nat.succ _›)
+      | with_reducible (cases ‹_ + 1 = Nat.succ _›)
       | with_reducible exact Le.refl _
-      | exact Le.fuel _
+      | with_reducible exact Le.fuel _
       | with_reducible apply Le.bind
       | with_reducible apply Le.catchJS)
 
@@ -202,7 +230,8 @@ macro_rules
       | with_reducible apply Le.filterMapM_list
       | with_reducible apply Le.map
       | (intro _)
+      | (lift_lets; extract_lets)
       | split
-      | (dsimp only))
+      | (dsimp (config := { zeta := false }) only))
 
 end L4Factoidal.JS.FuelMono
