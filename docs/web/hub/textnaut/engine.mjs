@@ -36,3 +36,5 @@ export const textGrid=(id,input,options)=>request('textGrid',id,input,options);
 export const click=(id,x,y)=>request('click',id,x,y);
 export const linkAt=(id,x,y)=>request('linkAt',id,x,y);
 export const close=id=>request('close',id);
+/** Check view `id`'s text grid against the engine's own pixels (see engine-core.mjs gridCheck). */
+export const gridCheck=id=>request('gridCheck',id);

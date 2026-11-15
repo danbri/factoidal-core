@@ -51,6 +51,7 @@ async function visit(input,push){
     document.title=out.title?`${out.title} — Textnaut`:'Textnaut';
     if(push)history.push(input);
     if(input.url)location.replace('#'+encodeURIComponent(new URL(input.url,location.href).href));
+    window.textnautGridCheck=()=>engine.gridCheck('textnaut');
     window.textnautShown={url:out.url,title:out.title,timing:out.timing,counters:out.counters,text:out.text,targets:out.grid.targets};
     if(out.scripts?.errors?.length)note.textContent=`Page script errors: ${out.scripts.errors.slice(0,3).join(' | ')}`;
     view.element.focus({preventScroll:true});

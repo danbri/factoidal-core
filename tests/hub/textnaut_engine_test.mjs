@@ -77,3 +77,20 @@ test('views are bounded', {skip}, async () => {
   for(let i=0;i<30;i++)await e.open(`v${i}`,`<p>${i}</p>`,{width:100,height:40,base:BASE,draw:false});
   assert.ok(e.views<=24);
 });
+
+// Every cell background of the grid is a colour the engine painted at that place (core finding
+// 2026-11-15: shaped glyphs' bounds, in font units, were read as page boxes and painted large
+// dark blocks over the demo index's text).
+test('grid backgrounds agree with the engine\'s own pixels', {skip}, async () => {
+  const e=await engine();
+  const pages=['../foafnaut/pages/index.html',
+    {html:'<style>body{margin:8px;font-family:sans-serif}.a{background:#fde;padding:8px;border-radius:6px}.b{background:#123;color:#fff;padding:4px}</style>'+
+      '<h1>Boxes</h1><div class="a"><p>Pink box with <a href="x.html">a link</a>.</p></div><p class="b">Dark band of text</p><p>Plain text after.</p>'}];
+  for(const [i,page] of pages.entries()){
+    await e.textGrid(`bg${i}`,page,{cols:80,base:BASE});
+    const check=await e.gridCheck(`bg${i}`);
+    assert.equal(check.available,true);
+    assert.ok(check.checked>0,`page ${i}: some cells have a background (${check.coloured})`);
+    assert.equal(check.mismatches,0,`page ${i}: ${JSON.stringify(check.examples)}`);
+  }
+});

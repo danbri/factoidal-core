@@ -329,7 +329,7 @@ export function createEngineCore(host){
     const g=grid.layoutGrid({runs:frame.webRender.glyphRuns,links:frame.webRender.links,cols:v.cols,cellWidth:v.cellWidth,cellHeight:v.cellHeight,trimLeft:true,
       paint:grid.readPaint(frame),boxes:frame.webRender.boxes,resolve:href=>new URL(href,page.baseURL).href});
     const t2=now(),after=frameWork();
-    view.frame=frame;
+    view.frame=frame;view.grid=g;view.gridWidth=v.width;
     return {url:page.url,title:page.title,given:page.given,grid:g,text:grid.dumpText(g),
       timing:{layoutMs:round(t1-t0),cellsMs:round(t2-t1)},
       counters:{layouts,engineLayouts:after&&before?after.layouts-before.layouts:undefined,primitives:frame.primitiveCount??0,glyphRuns:frame.webRender.glyphRuns.length,
@@ -364,6 +364,20 @@ export function createEngineCore(host){
     }
     return {changed:false,link:linkAt(id,x,y)};
   }
+  /** Check view `id`'s text grid against the engine's own pixels of the same page (its CPU
+  drawing, as tall as the content up to 4096 px): every cell with a background must have that
+  colour painted under it (grid.mjs backgroundMismatches). */
+  async function gridCheck(id){
+    const view=viewOf(id),grid=await host.grid();
+    if(!view.grid)throw Error(`view ${id} is not a text grid`);
+    const content=Math.ceil(view.frame?.webRender?.boxes?.[0]?.[4]??600);
+    const h=Math.max(240,Math.min(LIMITS.height,content));
+    const frame=render(view.page.source,{...layoutOptions(view.page,1),cpu:true},view.gridWidth,h,false);
+    if(!(frame.pixels instanceof Uint8Array))return {available:false};
+    const found=grid.backgroundMismatches(view.grid,frame.pixels,frame.width,frame.height);
+    const coloured=view.grid.rows.reduce((n,row)=>n+row.filter(c=>c.bg).length,0);
+    return {available:true,coloured,checked:found.checked,mismatches:found.mismatches.length,examples:found.mismatches.slice(0,5)};
+  }
   function close(id){const view=views.get(id);if(view){closeScripts(view.page);views.delete(id);}}
-  return {ready,open,textGrid,linkAt,click,close,counters,get views(){return views.size;}};
+  return {ready,open,textGrid,gridCheck,linkAt,click,close,counters,get views(){return views.size;}};
 }

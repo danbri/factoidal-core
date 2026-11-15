@@ -47,6 +47,9 @@ export type Grid = {
   rules: number[];
   /** Set by `decorateGrid`: how each row goes to the terminal. Absent means one normal row. */
   kinds?: RowKind[];
+  /** Where the cells are on the page: row r is at page y `rowY[r]`, column c at page x
+  `origin + c * cellWidth` (for `backgroundMismatches` and other checks against the page). */
+  place?: { rowY: number[]; origin: number; cellWidth: number; cellHeight: number };
 };
 /** A row of `Grid.kinds`: two rows of a DEC double-height line, or two rows of one OSC 66 line. */
 export type RowKind = "dec-top" | "dec-bottom" | "kitty-first" | "kitty-second" | undefined;
@@ -123,15 +126,37 @@ export function readPaint(artifact: { abi?: string; primitiveCount?: number; dat
     const at = base * 4, tag = data[at + 4], shapes = data[at + 5], mode = data[at + 7], dashes = data[at + 18];
     const a = data[at + 11], rgb = [data[at + 8], data[at + 9], data[at + 10]].map((v) => Math.round(v * 255)) as RGB;
     const [p, q, r, s] = [data[at], data[at + 1], data[at + 2], data[at + 3]];
-    if (a > 0.1 && (tag === RECT_TAG || tag === PATH_TAG || tag === POLYGON_TAG)) {
-      const box = tag === RECT_TAG ? { x0: p, y0: q, x1: p + r, y1: q + s, rgb } : { x0: p, y0: q, x1: r, y1: s, rgb };
-      if (tag === PATH_TAG) glyphs.push(box);
-      if (a > 0.5) fills.push(box);
-    }
     const shapeRows = tag === PATH_TAG ? shapes : (shapes + 1) >> 1;
+    if (a > 0.1 && (tag === RECT_TAG || tag === PATH_TAG || tag === POLYGON_TAG)) {
+      const local = tag === RECT_TAG ? { x0: p, y0: q, x1: p + r, y1: q + s, rgb } : { x0: p, y0: q, x1: r, y1: s, rgb };
+      // A record with the inverse-CTM rows (mode bit 2) has its bounds in its own coordinates
+      // (a shaped glyph: font units); the rows map page to local, so the page box is the box of
+      // the four corners mapped back. A transformed path is a glyph or a transformed shape, never
+      // a box background: it colours text, not cells.
+      const transformed = mode % 4 >= 2;
+      const box = transformed ? pageBox(data, (base + 5 + shapeRows + 5 * dashes) * 4, local) : local;
+      if (!box) return undefined;
+      if (tag === PATH_TAG) glyphs.push(box);
+      if (a > 0.5 && !transformed) fills.push(box);
+    }
     base += 5 + shapeRows + 5 * dashes + (mode % 4 >= 2 ? 2 : 0) + 3 * (mode >> 2);
   }
   return base === rowCount ? { glyphs, fills } : undefined;
+}
+
+/** The page box of a box in a record's own coordinates: the record's affine rows at `at` map a
+page point w to a local point (a·w.x + b·w.y + c, d·w.x + e·w.y + f); the four corners are
+mapped back by its inverse. Undefined for a singular map. */
+function pageBox(data: ArrayLike<number>, at: number, box: Rect): Rect | undefined {
+  const [a, b, c, d, e, f] = [data[at], data[at + 1], data[at + 2], data[at + 4], data[at + 5], data[at + 6]];
+  const det = a * e - b * d;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return undefined;
+  const xs: number[] = [], ys: number[] = [];
+  for (const [lx, ly] of [[box.x0, box.y0], [box.x1, box.y0], [box.x0, box.y1], [box.x1, box.y1]]) {
+    xs.push((e * (lx - c) - b * (ly - f)) / det);
+    ys.push((-d * (lx - c) + a * (ly - f)) / det);
+  }
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys), rgb: box.rgb };
 }
 
 type Item = { x: number; endX: number; y: number; size: number; text: string; link?: number; marker?: string; fg?: RGB; bullet?: boolean };
@@ -282,7 +307,9 @@ export function layoutGrid(input: GridInput): Grid {
     cells.length = cols;
   }
   if (input.paint) paintBackgrounds(rows, rowY, input.paint.fills, cols, cw, origin);
-  return { cols, rows, targets, linkRows, headings, rules: input.paint ? findRules(rows, rowY, input.paint.fills, cols * cw, ch) : [] };
+  for (let k = 0; k < rows.length; k++) rowY[k] ??= rowY[k - 1] ?? 0;
+  return { cols, rows, targets, linkRows, headings, rules: input.paint ? findRules(rows, rowY, input.paint.fills, cols * cw, ch) : [],
+    place: { rowY: rowY.slice(0, rows.length), origin, cellWidth: cw, cellHeight: ch } };
 }
 
 /** A painted line at least half the text width and at most 3.5 px high, placed on a blank row at its height. */
@@ -423,6 +450,43 @@ function paintBackgrounds(rows: Cell[][], rowY: number[], fills: Rect[], cols: n
       for (let col = start; col < end; col++) rows[r][col] = { ...rows[r][col], bg: fill.rgb };
     }
   }
+}
+
+/**
+ * The cells whose background is not what the engine painted there: a check of the grid against
+ * the page's own pixels (`rgba`, `width` × `height`, of the same layout, from the engine's CPU
+ * drawing). For each cell with a background, the page is sampled at nine points of the cell's
+ * box; a cell is a mismatch when none of them is within `tolerance` (RGB distance) of its
+ * background. A background over text whose own box was not painted is a mismatch.
+ */
+export function backgroundMismatches(grid: Grid, rgba: ArrayLike<number>, width: number, height: number, tolerance = 48): { checked: number; mismatches: { row: number; col: number; bg: RGB; seen: RGB }[] } {
+  const place = grid.place, out: { row: number; col: number; bg: RGB; seen: RGB }[] = [];
+  let checked = 0;
+  if (!place) return { checked, mismatches: out };
+  const pixel = (x: number, y: number): RGB | undefined => {
+    const px = Math.floor(x), py = Math.floor(y);
+    if (px < 0 || py < 0 || px >= width || py >= height) return undefined;
+    const i = 4 * (py * width + px);
+    return [rgba[i], rgba[i + 1], rgba[i + 2]];
+  };
+  grid.rows.forEach((cells, r) => {
+    const y0 = place.rowY[r];
+    cells.forEach((cell, c) => {
+      if (!cell.bg || y0 === undefined) return;
+      const x0 = place.origin + c * place.cellWidth;
+      let seen: RGB | undefined, ok = false, any = false;
+      for (const fy of [0.2, 0.5, 0.8]) for (const fx of [0.2, 0.5, 0.8]) {
+        const p = pixel(x0 + fx * place.cellWidth, y0 + fy * place.cellHeight);
+        if (!p) continue;
+        any = true; seen ??= p;
+        if (Math.sqrt(distance(p, cell.bg)) <= tolerance) ok = true;
+      }
+      if (!any) return;
+      checked++;
+      if (!ok) out.push({ row: r, col: c, bg: cell.bg, seen: seen! });
+    });
+  });
+  return { checked, mismatches: out };
 }
 
 export const plainRow = (cells: Cell[]): string => cells.map((c) => c.c).join("").trimEnd();

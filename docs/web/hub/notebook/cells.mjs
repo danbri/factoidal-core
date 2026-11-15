@@ -170,6 +170,7 @@ export function textnaut(urlOrHtml,options={}){
       if(push)history.push(input);back.disabled=history.length<2;
       view.show(out.grid);
       where.textContent=out.given==='html'&&history.length<2?'(HTML of this cell)':out.url;
+      box.nbGridCheck=()=>engine.gridCheck(id);
       finish(box,time,'textnaut',out,id);
     }catch(error){fail(box,time,error);}
   }

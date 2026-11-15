@@ -69,6 +69,10 @@ try{
   check((shown?.counters?.rows??0)>5&&(shown?.counters?.links??0)>3,'textnaut grid has rows and numbered links');
   check(typeof shown?.timing?.layoutMs==='number'&&typeof shown?.timing?.engineMs==='number','textnaut page reports timings');
   result.textnaut.screenshot=await shot('textnaut.png');
+  // The grid's cell backgrounds against the engine's own pixels of the same page.
+  const bgCheck=await evaluate('window.textnautGridCheck()');
+  result.textnaut.gridCheck=bgCheck;
+  check(bgCheck?.available&&bgCheck.checked>0&&bgCheck.mismatches===0,`textnaut grid backgrounds match the engine's pixels (${bgCheck?.mismatches} of ${bgCheck?.checked} cells differ)`);
   // Follow link 1 with the keys: focus the grid, type 1, Enter.
   await evaluate(`window.textnautShown=undefined;document.querySelector('.textnaut-grid').focus()`);
   for(const key of [...String((target??0)+1),'Enter'])await s('Input.dispatchKeyEvent',{type:'keyDown',key,text:key==='Enter'?'\r':key,...(key==='Enter'?{code:'Enter',windowsVirtualKeyCode:13}:{})});
@@ -96,6 +100,9 @@ try{
     check(/layout [0-9.]+ ms/.test(c.time??''),`cell ${i} reports timings`);
   }
   result.notebook.records=await evaluate('window.hubNotebookCells');
+  const cellChecks=await evaluate(`Promise.all([...document.querySelectorAll('.nb-textnaut')].map(b=>b.nbGridCheck()))`);
+  result.notebook.gridChecks=cellChecks;
+  for(const [i,c] of cellChecks.entries())check(c.available&&c.mismatches===0,`notebook textnaut cell ${i}: backgrounds match the engine's pixels (${c.mismatches} of ${c.checked} differ)`);
   // The Foafnaut cell: click "Count" (its script), then "Demo pages" (a link of this site, opened in the cell).
   const links=await evaluate(`(()=>{const b=document.querySelector('.nb-foafnaut');b.scrollIntoView({block:'center'});const c=b.querySelector('canvas'),r=c.getBoundingClientRect();
     return (b.nbLinks??[]).map(l=>({href:l.href,x:r.left+(l.x+l.w/2)*r.width/(c.width/c.scale),y:r.top+(l.y+l.h/2)*r.height/(c.height/c.scale)}));})()`);

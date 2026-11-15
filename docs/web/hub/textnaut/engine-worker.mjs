@@ -51,6 +51,7 @@ const ops={
   textGrid:(id,input,options)=>core.textGrid(id,input,options),
   click:(id,x,y)=>core.click(id,x,y),
   linkAt:(id,x,y)=>core.linkAt(id,x,y),
+  gridCheck:id=>core.gridCheck(id),
   close:id=>core.close(id),
 };
 let queue=Promise.resolve();
