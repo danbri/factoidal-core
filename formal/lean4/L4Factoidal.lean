@@ -420,6 +420,7 @@ import L4Factoidal.Authz.Acp
 import L4Factoidal.GpuKernel.Race
 import L4Factoidal.GpuKernel.Expr
 import L4Factoidal.GpuKernel.Gather
+import L4Factoidal.GpuKernel.Resident
 import L4Factoidal.Geo.Types
 import L4Factoidal.Geo.Order
 import L4Factoidal.Geo.BBox

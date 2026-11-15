@@ -11,7 +11,11 @@ import {SurfaceLifecycle} from "./surface_lifecycle.ts";
 import {unpad,checkPixels} from "./gpu_transport.ts";
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
 import {createLayerRenderer,READBACK_COMMANDS} from "./layer_compositor.ts";
-import {createGpuGate} from "./gpu_pacing.ts";
+import {createGpuGate,sceneCost} from "./gpu_pacing.ts";
+// The gate's first guess of GPU ms per sceneCost unit, before any frame has measured one on
+// this machine: 0.8, a little under the 0.99 measured on Spinal Tap on an Apple M1 (2026-11-15),
+// so a faster GPU waits at most a little for the first heavy frame and the M1 blocks little.
+const GPU_MS_PER_UNIT=Number(Deno.env.get("FOAFNAUT_GPU_MS_PER_UNIT")??"0.8");
 
 // The plan commands that read the frame back to the CPU (layer_compositor.ts). The host
 // leaves them out for a frame that is not checked, and runs them in full under
@@ -102,15 +106,17 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
   // waits until the GPU has finished the work of the call before (the gate), so a page whose
   // frames cost the GPU more than the host's turn can not queue frames on the GPU. After a
   // halt (quit, window close) a call asks the GPU for nothing and presents nothing.
-  const gate=createGpuGate(device.queue,options.framesInFlight??1,options.onGpuDone);
+  const gate=createGpuGate(device.queue,options.framesInFlight??1,options.onGpuDone,GPU_MS_PER_UNIT);
   let halted=false;
   const notPresented=():DrawResult=>({presented:false,checked:false,pixelHash:lastHash,steps:lastSteps,prepareMs:0,drawMs:0,presentedAt:0});
   let queue:Promise<unknown>=Promise.resolve();
-  const inOrder=<T>(work:()=>Promise<T>):Promise<T|DrawResult>=>{
+  // `cost`: the submission's predicted GPU work (sceneCost), so the gate can sleep through it
+  // instead of blocking the thread in Deno's wait. A composite alone counts its pixels.
+  const inOrder=<T>(work:()=>Promise<T>,cost=0):Promise<T|DrawResult>=>{
     const run=async()=>{
       await gate.before();
       if(halted)return notPresented();
-      try{return await work();}finally{gate.after();}
+      try{return await work();}finally{gate.after(cost);}
     };
     const next=queue.then(run,run);queue=next.catch(()=>{});return next;
   };
@@ -222,16 +228,17 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
   }
   return {
     /** Draw one Lean scene. check=true also reads the window back, checks Lean's probe pixels and hashes. */
-    draw:(frame:HTMLArtifact,check:boolean):Promise<DrawResult>=>inOrder(()=>{lastLayers=undefined;return render(frame,check);}),
+    draw:(frame:HTMLArtifact,check:boolean):Promise<DrawResult>=>inOrder(()=>{lastLayers=undefined;return render(frame,check);},sceneCost(frame as never)),
     /** Draw the two layers of one Lean render and present their composite at `offset`. */
-    drawLayers:(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult>=>inOrder(()=>renderLayers(layers,width,height,offset,check)),
+    drawLayers:(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult>=>inOrder(()=>renderLayers(layers,width,height,offset,check),
+      sceneCost(layers.page as never)+sceneCost(layers.chrome as never)+width*height/1e6),
     /** Present the layers already drawn at another offset: no Lean call and no scene draw. */
     shift:(offset:number,check:boolean):Promise<DrawResult>=>inOrder(async()=>{
       if(disposed)throw new Error("Native HTML session already disposed");
       if(!lastLayers)throw new Error("shift before any layers were drawn");
       lastLayers.offset=offset;
       return present(lastLayers.width,lastLayers.height,offset,check,performance.now(),{});
-    }),
+    },lastLayers?lastLayers.width*lastLayers.height/1e6:0),
     /** Replay a turn's page GPU commands and present the page canvases (no Lean call). */
     pageGpu,
     /** The press rectangles of the next presents (Lean's `press` answer); undefined clears them. */
