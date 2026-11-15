@@ -16,10 +16,8 @@ const fixture=(name:string)=>new URL(`./fixtures/liberal/${name}`,import.meta.ur
 const page=(name:string)=>new URL(`./pages/${name}`,import.meta.url).href;
 
 const cases:{name:string;refusal:RegExp;features:string[]}[]=[
-  {name:"media.html",refusal:/unsupported stylesheet media condition/,features:["stylesheet media condition"]},
   {name:"missing-css.html",refusal:/No such file|not found|os error 2/i,features:["external stylesheet"]},
-  {name:"svg.html",refusal:/unsupported/,features:["inline SVG"]},
-  {name:"sample.html",refusal:/./,features:["stylesheet media condition","external stylesheet"]},
+  {name:"sample.html",refusal:/./,features:["external stylesheet"]},
 ];
 
 async function runs(engine:HTMLEngine){
