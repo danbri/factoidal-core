@@ -152,8 +152,8 @@ def _root_.NativeSVG.Scene.rasterAll (s : Scene) (top rows : Nat) : ByteArray :=
 /-! ## The tile edge lists
 
 The scene shader walks, for a path's fill, the edge list that `tilesOf` made for the
-pixel's tile. `rasterTiles` is `rasterSpec` with each path record of a tile tested over
-that list (`Primitive.prepareCoverageEdges`, `pathHitList`). `pathHitList_eq` states that a
+pixel's tile, and for a stroke the tile's pieces. `rasterTiles` is `rasterSpec` with each
+record of a tile tested over those lists (`Primitive.prepareCoverageTile`, `pathHitList`). `pathHitList_eq` states that a
 list gives the full scan's fill at every point whose spanning edges it keeps; that the
 margins of `Primitive.localRows` keep them for every sample of the tile rests on Float
 comparisons, so it is checked: the guards below compare the two rasters byte for byte. -/
@@ -164,21 +164,32 @@ def Grid.edgeWord (g : Grid) (t k : Nat) : Nat :=
   let total := g.words[3+g.across*g.down]!
   g.words[listBase+total+g.words[3+t]!+k]!
 
-/-- The edge list at word `w`: a count, then the edge indices; none for `allEdges`. -/
+/-- The edge list of the record at word `w`: a count, then the edge indices; none for
+`allEdges` (as the record word or as its count). -/
 def Grid.edgeList (g : Grid) (w : Nat) : Option (Array Nat) :=
   if w == allEdges then none
   else
     let n := g.words[w]!
-    some ((Array.range n).map fun j => g.words[w+1+j]!)
+    if n == allEdges then none else some ((Array.range n).map fun j => g.words[w+1+j]!)
+
+/-- The stroke piece list of the record at word `w`, after its edge part. -/
+def Grid.pieceList (g : Grid) (w : Nat) : Option (Array Nat) :=
+  if w == allEdges then none
+  else
+    let n := g.words[w]!
+    let at_ := if n == allEdges then w+1 else w+1+n
+    let m := g.words[at_]!
+    if m == allEdges then none else some ((Array.range m).map fun j => g.words[at_+1+j]!)
 
 /-- The records of tile `t`, each prepared with the tile's edge list for a path fill. -/
 def tilePrepared (g : Grid) (data : Array Float) (all : Array Item) (index : Std.HashMap Nat Nat)
     (t : Nat) : List PreparedSample :=
   ((g.rows t).zipIdx.filterMap fun (row,k) => (index.get? row).bind (all[·]?) |>.map fun (p,base) =>
     let sample := p.prepareSample data base
-    match g.edgeList (g.edgeWord t k) with
-    | some edges => {sample with coverage := p.prepareCoverageEdges data base edges}
-    | none => sample)
+    let w := g.edgeWord t k
+    match g.edgeList w,g.pieceList w with
+    | none,none => sample
+    | edges,pieces => {sample with coverage := p.prepareCoverageTile data base edges pieces})
 
 /-- `rasterSpec` with the tile edge lists of the scene shader. -/
 def _root_.NativeSVG.Scene.rasterTiles (s : Scene) (top rows : Nat) : ByteArray :=
@@ -334,10 +345,11 @@ private def zoomScene (k : String) : Option Scene := (parse ("<svg xmlns='http:/
 #guard ((zoomScene "40").map fun s => (s.rasterTiles 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
 -- The tile lists (paint boxes cut to the clips) give the bytes of every record at every
 -- pixel: the guard scene's nested svg, and a path zoomed far past its clip.
-private def clippedZoom (_ : Unit) : Option Scene := (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='72' height='40'>" ++
+private def clippedZoom (_ : Unit) : Option Scene := (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='48' height='26'>" ++
   "<svg x='4' y='4' width='22' height='22' viewBox='0 0 96 96' overflow='hidden'><g transform='translate(48 48) scale(40) translate(-48 -48)'>" ++
-  "<path d='M10 70 Q48 -20 86 70 C70 90 26 90 10 70Z' fill='#204080'/><circle cx='48' cy='48' r='0.4' fill='#d04020'/></g></svg>" ++
-  "<rect x='40' y='14' width='20' height='20' fill='teal'/></svg>") 72 40).toOption
+  "<path d='M10 70 Q48 -20 86 70 C70 90 26 90 10 70Z' fill='#204080'/><circle cx='48' cy='48' r='0.4' fill='#d04020'/>" ++
+  "<path d='M44 44 Q48 40 52 44 T60 44 L56 52 Z' fill='none' stroke='#802020' stroke-width='0.3' stroke-linejoin='round'/></g></svg>" ++
+  "<rect x='36' y='4' width='10' height='18' fill='teal'/></svg>") 48 26).toOption
 #guard ((guardScene ()).map fun s => (s.rasterSpec 0 s.height).data == (s.rasterAll 0 s.height).data) == some true
 #guard ((clippedZoom ()).map fun s => let r := (s.rasterAll 0 s.height).data;
   (s.rasterSpec 0 s.height).data == r && (s.rasterTiles 0 s.height).data == r) == some true
@@ -345,6 +357,17 @@ private def clippedZoom (_ : Unit) : Option Scene := (parse ("<svg xmlns='http:/
 -- tile that its clip meets.
 #guard ((clippedZoom ()).map fun s => let g : Grid := ⟨s.tiles⟩;
   ((List.range (g.across*g.down)).filter fun t => (g.rows t).contains 2).length) == some 1
+-- A stroke across several tiles, with round joins and miter joins: the tiles' piece lists give
+-- the reference bytes, and the tiles list different pieces.
+private def strokeScene (_ : Unit) : Option Scene := (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='64' height='24'>" ++
+  "<path d='M4 20 L12 4 L20 22 L28 5 L36 20 L44 4 L58 22' fill='none' stroke='#802020' stroke-width='3' stroke-linejoin='round'/>" ++
+  "<path d='M6 14 Q32 -6 58 14' fill='none' stroke='navy' stroke-width='2' stroke-linejoin='miter'/></svg>") 64 24).toOption
+#guard ((strokeScene ()).map fun s => (s.rasterTiles 0 s.height).data == (s.rasterAll 0 s.height).data) == some true
+#guard ((strokeScene ()).map fun s =>
+  let g : Grid := ⟨s.tiles⟩
+  let sizes := (List.range (g.across*g.down)).filterMap fun t =>
+    if (g.rows t).isEmpty then none else (g.pieceList (g.edgeWord t 0)).map (·.size)
+  decide (sizes.eraseDups.length > 1)) == some true
 -- Edge lists are made: the zoomed scene's tile words hold lists shorter than the paths.
 #guard ((zoomScene "40").map fun s =>
   let g : Grid := ⟨s.tiles⟩
