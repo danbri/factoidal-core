@@ -2167,6 +2167,7 @@ L4Factoidal_JS_eval*  # (b)(c) the JavaScript evaluator (JS/Interp.lean): depth 
 L4Factoidal_JS_*Loop  # (b)(c) JavaScript loops (whileLoop, doLoop, forLoop, forInLoop): each iteration is a self tail call; the cycle is the body's evaluation, nesting as L4Factoidal_JS_eval*
 L4Factoidal_JS_call*  # (c) JavaScript [[Call]] of closures, built-ins and bound functions: depth bounded by Heap.maxDepth (400) and the nesting of the script
 L4Factoidal_JS_construct  # (c) JavaScript [[Construct]]: as L4Factoidal_JS_call*
+L4Factoidal_JS_constructNative  # (c) [[Construct]] of a built-in constructor and GetPrototypeFromConstructor: as L4Factoidal_JS_construct
 L4Factoidal_JS_get*  # (b)(c) [[Get]] with getters (JS/Interp.lean): a getter is a call, bounded as L4Factoidal_JS_call*; the prototype walk itself is the tail loop Heap.findProp
 L4Factoidal_JS_put*  # (b)(c) [[Set]] with setters: a setter is a call, bounded as L4Factoidal_JS_call*
 L4Factoidal_JS_to*  # (c) ToPrimitive, ToNumber, ToString, ToPropertyKey: valueOf/toString are calls, bounded as L4Factoidal_JS_call*; on a primitive the depth is at most 2
@@ -2223,6 +2224,7 @@ L4Factoidal_JS_regExpExecG  # (c) RegExpExec (§22.2.7.1): the `exec` property r
 L4Factoidal_JS_regexpSymbol  # (b)(c) RegExp.prototype[@@match/@@replace/@@search/@@split/@@matchAll]: a loop over matches whose iterations are bounded by the string's length (each step advances lastIndex); exec, getters and the replacer are calls, as L4Factoidal_JS_call*
 L4Factoidal_JS_stringSymDispatch  # (c) String.prototype.match/replace/search/split/matchAll: one read of the argument's symbol method and one call, as L4Factoidal_JS_get* and L4Factoidal_JS_call*
 L4Factoidal_JS_speciesCtor  # (c) SpeciesConstructor (§7.3.22): reads of `constructor` and @@species, as L4Factoidal_JS_get*
+L4Factoidal_JS_protoFromCtor  # (c) GetPrototypeFromConstructor (§10.1.14): a read of `prototype`, as L4Factoidal_JS_get*
 L4Factoidal_JS_speciesFrom  # (c) ArraySpeciesCreate (§10.4.2.3): reads of `constructor` and @@species, then [[Construct]], as L4Factoidal_JS_get* and L4Factoidal_JS_construct
 L4Factoidal_JS_speciesFill  # (b)(c) CreateDataPropertyOrThrow per element of a bounded array (a for loop, not recursion); a proxy trap is a call, as L4Factoidal_JS_call*
 L4Factoidal_JS_extraNative  # (c) RegExp, Proxy, typed array, JSON.parse and host built-ins: ToString/ToNumber of arguments and replacer calls, as L4Factoidal_JS_to* and L4Factoidal_JS_call*
