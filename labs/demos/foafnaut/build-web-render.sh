@@ -28,8 +28,13 @@ LAUNCH=()
 [ -n "${FOAFNAUT_CC_LAUNCHER:-}" ] && LAUNCH=("$FOAFNAUT_CC_LAUNCHER")
 COMPILE_PIDS=()
 COMPILE_FAILED=0
+# Every compile command, one per line, shell-quoted: CI recompiles a sample without its cache
+# and compares the objects (factoidal-builds scripts/cache-audit.sh).
+COMPILE_LOG="$BUILD/compile-commands.txt"
+: > "$COMPILE_LOG"
 # compile_bg COMMAND...: start one compile, after waiting for the oldest when COMPILE_JOBS run.
 compile_bg(){
+  printf '%q ' "$@" >> "$COMPILE_LOG"; printf '\n' >> "$COMPILE_LOG"
   if [ "${#COMPILE_PIDS[@]}" -ge "$COMPILE_JOBS" ]; then
     wait "${COMPILE_PIDS[0]}" || COMPILE_FAILED=1
     COMPILE_PIDS=(${COMPILE_PIDS[@]+"${COMPILE_PIDS[@]:1}"})
