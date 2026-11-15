@@ -353,9 +353,9 @@ theorem moduleText_ok (r : Response) (t : String) (h : moduleText r = .ok t) :
       · simp [hc, hj] at h
 
 /-- Kind: invariant. Says: a document with no module script asks the host for nothing and
-uses no answer. Does not say: anything about its classic scripts. -/
-theorem load_none (dom : DOM.Dom) (url : String) (p : Page) (a : Array Answer) (h : scriptsOf dom = #[]) :
-    load dom url p a = .ok {} := by
+uses no answer, and keeps the modules it was given. Does not say: anything about its classic scripts. -/
+theorem load_none (dom : DOM.Dom) (url : String) (p : Page) (a : Array Answer) (m : Array Fetched) (h : scriptsOf dom = #[]) :
+    load dom url p a m = (.ok {}, m) := by
   simp [load, h]
 
 end L4Factoidal.WasmVM.Hosts.LeanJSModules
