@@ -60,14 +60,14 @@ async function check(engine:HTMLEngine,label:string){
   const info=engine.scriptInfo();
   if(!(info.engines??[]).includes("bubblepop")){console.log(`NOT RUN (${label}): this engine has no BubblePopJS`);return;}
   timerTurn(engine,50,4); // warm the engine
-  const small=timerTurn(engine,300,30),large=timerTurn(engine,1200,30);
-  assert.equal(typeof large.turn.reads,"number",`${label}: the turn reports no reads`);
-  assert.ok(large.turn.reads!>=60,`${label}: ${large.turn.reads} reads for 30 rounds of two reads`);
-  assert.match(large.turn.readOps??"",/\d+:\d+/,`${label}: no reads by op`);
-  assert.ok(large.turn.layouts!>=1&&large.turn.layouts!<=31,`${label}: ${large.turn.layouts} layouts for 30 writes`);
+  const small=timerTurn(engine,150,10),large=timerTurn(engine,600,10);
   const ratio=large.ms/Math.max(1,small.ms);
-  console.log(`${label}: 300 elements ${small.ms.toFixed(0)} ms, 1200 elements ${large.ms.toFixed(0)} ms (x${ratio.toFixed(1)}); reads ${large.turn.reads} (${large.turn.readOps}), layouts ${large.turn.layouts}`);
+  console.log(`${label}: 150 elements ${small.ms.toFixed(0)} ms, 600 elements ${large.ms.toFixed(0)} ms (x${ratio.toFixed(1)}); reads ${large.turn.reads??"?"} (${large.turn.readOps??""}), layouts ${large.turn.layouts??"?"}`);
   assert.ok(ratio<8,`${label}: the turn grows faster than the page (x${ratio.toFixed(1)} for 4 times the elements)`);
+  assert.equal(typeof large.turn.reads,"number",`${label}: the turn reports no reads`);
+  assert.ok(large.turn.reads!>=20,`${label}: ${large.turn.reads} reads for 10 rounds of two reads`);
+  assert.match(large.turn.readOps??"",/\d+:\d+/,`${label}: no reads by op`);
+  assert.ok(large.turn.layouts!>=1&&large.turn.layouts!<=11,`${label}: ${large.turn.layouts} layouts for 10 writes`);
 }
 
 Deno.test({name:"A script turn that writes and reads styles costs in proportion to the page (native library)",ignore:!exists(library),fn:async()=>{

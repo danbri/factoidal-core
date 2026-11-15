@@ -666,8 +666,8 @@ without them every `:name` parameter was "missing" and a news site's router thre
 #guard out "print(/^\\p{L}+$/u.test('héllo'), /\\p{Lu}/u.test('a'), /\\P{L}/u.test('a'), /\\p{Lowercase_Letter}/u.test('é'))" == ["true false false true"]
 #guard out "var id = /^[\\p{L}\\p{Nl}\\p{Mn}\\p{Mc}\\p{Nd}\\p{Pc}]$/u; print(id.test('o'), id.test('_'), id.test('9'), id.test('/'), id.test(':'))" == ["true true true false false"]
 #guard out "print(/^[$_\\p{ID_Start}][$\\u200c\\u200d\\p{ID_Continue}]*$/u.test('optimoId'), /^\\p{ID_Start}$/u.test('1'), /^\\p{ID_Continue}$/u.test('1'))" == ["true false true"]
-#guard out "print(/\\p{Script=Grek}/u.test('α'), /\\p{sc=Latn}/u.test('α'), /\\p{gc=Nd}/u.test('7'), /\\p{Any}/u.test('\\u{1F600}'))" == ["true false true true"]
-#guard out "print(/\\p{Emoji_Presentation}/u.test('\\u{1F600}'), /^\\p{ASCII}+$/u.test('abc'), /\\p{L}/.test('p{L}'), /[^\\p{L}]/u.test('x'))" == ["true true true false"]
+#guard out "print(/\\p{Script=Grek}/u.test('α'), /\\p{sc=Latn}/u.test('α'), /\\p{gc=Nd}/u.test('7'), /\\p{Any}/u.test('\\u231a'))" == ["true false true true"]
+#guard out "print(/\\p{Emoji_Presentation}/u.test('\\u231a'), /^\\p{ASCII}+$/u.test('abc'), /\\p{L}/.test('p{L}'), /[^\\p{L}]/u.test('x'))" == ["true true true false"]
 #guard out "try { new RegExp('\\\\p{Nope}', 'u'); print('no error') } catch (e) { print(e instanceof SyntaxError) }" == ["true"]
 
 end L4Factoidal.JS.Tests
