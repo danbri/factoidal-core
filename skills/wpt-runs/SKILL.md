@@ -1,11 +1,11 @@
 ---
 name: wpt-runs
-description: How Foafnaut's Web Platform Tests score and BubblePopJS's full Test262 score are measured, recorded and reported, and the other conformance suites with them. Full measured runs only (no sampled scores), BubblePopJS only, cloud runs on every release and four times a day, validity rules, runs.csv and per-run metadata. Use before running WPT or Test262, quoting a WPT or Test262 number, comparing with other browsers, planning WPT work, or changing the test workflows.
+description: How Foafnaut's Web Platform Tests score, its WPT reftest scores (rendering, svg/ and css/) and BubblePopJS's full Test262 score are measured, recorded and reported, and the other conformance suites with them. Full measured runs only (no sampled scores), BubblePopJS only, cloud runs on every release and four times a day, validity rules, runs.csv and per-run metadata. Use before running WPT or Test262, quoting a WPT or Test262 number, comparing with other browsers, planning WPT work, or changing the test workflows.
 ---
 
 # WPT and Test262 runs: the testing regime
 
-WPT is sections 1 to 8; Test262, the whole tc39/test262 suite on BubblePopJS, is section 9 (same
+WPT is sections 1 to 8, WPT reftests section 10; Test262, the whole tc39/test262 suite on BubblePopJS, is section 9 (same
 regime: full runs only, validity rules, the same `runs.csv`).
 
 Since 2026-11-13, decisions are made on **full measured runs**, never on samples: a sampled estimate
@@ -301,6 +301,66 @@ suite, every file, by Test262's rules. Workflow `test262.yml` ("Test262") in
   --out OUT` (one shard: `--shard k --shards n`), `test262.py score ... --no-rivals`. The core tree
   `third_party/testing/test262` is a 6,301-file subset for tier comparisons (`leanjs test262`), not a
   score.
+
+## 10. Reftests: rendering, scored apart
+
+WPT reftests compare a test page with a reference page as pictures. They are most of WPT's
+rendering tests (25,800 under `css/`, 685 under `svg/` at fa649586f3), and the headline score of
+sections 1 to 8 gives them **no weight**: wpt.fyi's summaries give a reftest no subtests, and that
+score's denominator is Chrome's subtests. So each directory's reftests are a suite of their own,
+quoted next to the WPT number, never folded into it: `wpt-reftest-svg` (svg/, first) and
+`wpt-reftest-css` (css/). Like wpt.fyi, a reftest is one test: PASS or not.
+
+- **What is run**: every `reftest` item of WPT's manifest at the WPT commit (wpt.fyi
+  `/api/manifest?sha=...`) under the directory: HTML, XHTML and standalone SVG/XML documents,
+  `==` and `!=` references, reference chains (a reference that is itself a reftest), each test's
+  fuzzy annotations and viewport size (800x600 by default). `print-reftest` items are another
+  kind and are not run.
+- **How a test is judged**: wptrunner's rules (`RefTestImplementation` in
+  `tools/wptrunner/wptrunner/executors/base.py`), step for step: references tried in order, a
+  chain followed from a reference that holds, PASS when some path reaches a reference with no
+  references of its own. Pictures as RGB; per pixel the largest channel difference;
+  `maxDifference` and `totalPixels` against the fuzzy ranges (none: identical pixels).
+  `reftest-wait` is honoured: the page's time moves in 16 ms steps until a script removes the
+  class, for at most 6 s of page time (then TIMEOUT).
+- **How a page is drawn**: core's `tests/browser-wpt/reftest-render.ts` on the release's engine
+  library: the page loaded as the window and Textnaut load it (`prepareHTML`: sheets, imports,
+  images, web fonts), scripts on BubblePopJS, one frame by the engine's CPU raster (op `render`
+  with `cpu:true`, `SVGRaster`), Noto Sans and the Hub's fallback fonts from `third_party/fonts`
+  (never the bitmap face, which is a diagnostic only: `--bitmap-font`). The pages come from a
+  server of the runner on a random port, never wptserve's 8000, so a reftest run can share the
+  machine with a WPT run.
+- **Rivals**: Chrome, Firefox, Safari and Edge on the same tests at the same WPT commit, from
+  wpt.fyi's summaries (`s` = P/F). `reftest-rivals.csv` on `wpt-scores`.
+- **Valid**: every shard present, every test has a status, ERROR + CRASH + STALL under 0.5% of
+  tests. A CRASH (the drawing process died on a page) or STALL (over 90 s on one page) is a
+  defect, as in section 6.
+- **Records** (`wpt-scores`): `runs.csv` rows with `suite=wpt-reftest-svg` (`passed`/`denominator`
+  are tests; `share_ex_encoding_pct` empty; `engine=native-cpu-raster`), `reftest-rivals.csv`,
+  `runs/<run_id>/meta.json` (totals, statuses, each rival's share, directories, changes),
+  `results.tsv` (every test: status, rivals, maxDifference, totalPixels, ms, message; `.gz` for
+  css/), `changes.md` (newly passing and newly not passing against the previous valid run; more
+  than 3 newly not passing is DROP), `directories.csv`. Pictures of the tests that do not pass
+  (test, reference, and a difference picture: changed pixels red on the faded test) are the
+  artifact `reftest-failures-<suite>-<shard>`, kept 5 days.
+- **When** (`reftests.yml`, "WPT reftests", in `danbri/factoidal-builds`, script
+  `release-tests/reftests.py`): after each "Foafnaut Linux engine" run (skipped when that commit
+  has a valid run at the same WPT commit), twice a day, and
+  `gh workflow run reftests.yml -R danbri/factoidal-builds [-f suites=svg,css] [-f release=build-<sha12>-foafnaut-linux-x86_64] [-f tools_ref=wip/x] [-f record=false]`.
+  The WPT commit is the one of the newest valid full WPT run.
+- **Locally**:
+  `python3 tests/browser-wpt/wpt-reftests.py run --manifest MANIFEST.json --wpt-root WPT --native-engine libweb-render.dylib --prefix svg/ --out OUT --chrome-summary chrome-summary.json --jobs 3`
+  (`--only /svg/painting/` for a directory; OUT/summary.md, OUT/results.json, OUT/failures/).
+  A WPT checkout of the directory and its support is enough (a sparse partial clone: `svg/`,
+  `css/reference/`, `fonts/`, `common/`, `resources/`, `images/`, `css/support/`).
+  `wpt-reftests.py compare --prev A/results.json --cur B/results.json` lists what changed.
+- **Planning**: rank failing reftests by root cause (cluster by feature: markers, patterns,
+  gradients, text, masking, filters, clipPath, stroke, nested svg and viewBox, use, images,
+  animation, scripting), fix the largest clusters, and report before and after per cluster.
+  Reftests where Chrome passes and Foafnaut does not come first. Keep the WPT number and the
+  Spinal Tap budgets from falling.
+- **On the Hub**: the Conformance page has a "Rendering (reftests)" section after WPT
+  (`passmap-data.py --hub` writes `reftests` into data.json and history.json).
 
 ## 11. Semantic-web and data-format suites
 
