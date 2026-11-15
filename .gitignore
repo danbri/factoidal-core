@@ -198,3 +198,7 @@ tests/dom/node_modules/
 /docs/web/hub/svg-webgpu/runtime/
 # WasmVM guest modules (QuickJS-NG for page scripts) installed by Builds (foafnaut-web set).
 /docs/web/hub/wasm-guests/
+
+# The Hub Conformance page data (from the hub-data branch of danbri/factoidal-builds, copied in by the Pages build)
+/docs/web/hub/conformance/data.json
+/docs/web/hub/conformance/history.json

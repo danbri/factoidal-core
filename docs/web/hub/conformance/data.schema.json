@@ -1,0 +1,83 @@
+{
+  "$comment": "Schema of the Hub Conformance page's data files, written by tests/browser-wpt/passmap-data.py --hub. Checked by tests/hub/conformance_schema.mjs (a small JSON Schema subset: type, required, properties, items, enum, minimum, maximum, minItems, pattern). The page reads data.json and history.json.",
+  "definitions": {
+    "share": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+    "count": {"type": "integer", "minimum": 0},
+    "iso": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?Z$"}
+  },
+  "data.json": {
+    "type": "object",
+    "required": ["format", "generatedAt", "wptCommit", "measuredAt", "engines", "missing", "browsers", "tot", "totEx", "strata", "milestones", "latest", "test262"],
+    "properties": {
+      "format": {"enum": ["conformance-data-v1"]},
+      "generatedAt": {"$ref": "iso"},
+      "measuredAt": {"$ref": "iso"},
+      "wptCommit": {"type": "string", "pattern": "^[0-9a-f]{10,40}$"},
+      "engines": {"type": "array", "items": {"enum": ["chrome", "firefox", "safari", "edge", "servo", "wpewebkit", "ladybird"]}},
+      "missing": {"type": "object", "additionalValues": {"type": "string"}},
+      "browsers": {"type": "object", "additionalValues": {"type": "object", "required": ["browser_version", "channel"]}},
+      "tot": {"type": "object", "required": ["u", "us"], "additionalValues": {"$ref": "count"}},
+      "totEx": {"type": "object", "required": ["u", "us"], "additionalValues": {"$ref": "count"}},
+      "strata": {"type": "array", "minItems": 1, "items": {"type": "array", "minItems": 5}},
+      "milestones": {"type": "array", "items": {"type": "array", "minItems": 2}},
+      "latest": {
+        "type": "object",
+        "required": ["run", "finished", "where", "wpt", "engine", "share", "shareEx", "passed", "denominator", "tests"],
+        "properties": {
+          "finished": {"$ref": "iso"},
+          "share": {"$ref": "pct"},
+          "shareEx": {"$ref": "pct"},
+          "passed": {"$ref": "count"},
+          "denominator": {"$ref": "count"},
+          "tests": {"$ref": "count"}
+        }
+      },
+      "test262": {
+        "type": "object",
+        "required": ["targets", "wpt", "full"],
+        "properties": {
+          "targets": {"type": "array", "minItems": 1, "items": {"type": "array", "minItems": 2}},
+          "wpt": {
+            "type": ["object", "null"],
+            "required": ["u", "us", "browsers"],
+            "properties": {"u": {"$ref": "count"}, "us": {"$ref": "count"}, "browsers": {"type": "object", "additionalValues": {"$ref": "count"}}}
+          },
+          "full": {
+            "type": ["object", "null"],
+            "required": ["latest"],
+            "properties": {
+              "latest": {
+                "type": "object",
+                "required": ["finished", "engine", "where", "passed", "total", "share", "shareEx", "excludedFeatures", "directories", "run"],
+                "properties": {
+                  "finished": {"$ref": "iso"},
+                  "passed": {"$ref": "count"},
+                  "total": {"$ref": "count"},
+                  "share": {"$ref": "share"},
+                  "shareEx": {"$ref": "share"},
+                  "excludedFeatures": {"type": "array", "items": {"type": "string"}},
+                  "directories": {"type": "array", "items": {"type": "array", "minItems": 3}}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "history.json": {
+    "type": "object",
+    "required": ["format", "generatedAt", "wpt", "test262wpt", "test262"],
+    "properties": {
+      "format": {"enum": ["conformance-history-v1"]},
+      "generatedAt": {"$ref": "iso"},
+      "wpt": {"type": "array", "items": {"type": "object", "required": ["finished", "engine", "share", "shareEx", "passed", "denominator", "run"],
+        "properties": {"finished": {"$ref": "iso"}, "share": {"$ref": "share"}, "shareEx": {"$ref": "share"}, "passed": {"$ref": "count"}, "denominator": {"$ref": "count"}}}},
+      "test262wpt": {"type": "array", "items": {"type": "object", "required": ["finished", "engine", "share", "passed", "total", "run"],
+        "properties": {"finished": {"$ref": "iso"}, "share": {"$ref": "share"}, "passed": {"$ref": "count"}, "total": {"$ref": "count"}}}},
+      "test262": {"type": "array", "items": {"type": "object", "required": ["finished", "engine", "share", "passed", "total", "run"],
+        "properties": {"finished": {"$ref": "iso"}, "share": {"$ref": "share"}, "shareEx": {"$ref": "share"}, "passed": {"$ref": "count"}, "total": {"$ref": "count"}}}}
+    }
+  }
+}

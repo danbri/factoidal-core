@@ -28,6 +28,13 @@ directory, removed at the end) and are about 10 MB.
 
   python3 tests/browser-wpt/passmap-data.py --out passmap-data.json
   python3 tests/browser-wpt/passmap-data.py --run RUN_ID --out passmap-data.json
+  python3 tests/browser-wpt/passmap-data.py --hub docs/web/hub/conformance
+
+--hub writes the Hub Conformance page's data.json (this object without the history lists)
+and history.json (the WPT, Test262 through WPT and full Test262 histories, one compact row
+per engine commit). Their schema is docs/web/hub/conformance/data.schema.json. The
+conformance-data workflow of danbri/factoidal-builds runs this and commits both files to
+that repository's branch hub-data; the Pages build copies them in.
 """
 import argparse, csv, gzip, importlib.util, io, json, os, shutil, sys, tempfile, time, urllib.request
 from collections import defaultdict
@@ -121,11 +128,14 @@ def pick_rivals(fetch, rivals, commit):
     {browser: reason} for the browsers with no run there."""
     got, missing = {}, {}
     for r in rivals:
+        if r["wpt_commit"] == commit and r["browser"] != "chrome" and r.get("status") == "unavailable":
+            missing[r["browser"]] = r.get("reason") or "no run at this WPT commit"
+            continue
         if r["wpt_commit"] == commit and r["browser"] != "chrome":
             got[r["browser"]] = {"version": r["version"].replace("Servo ", ""), "channel": r["channel"],
                                  "id": num(r["wptfyi_run_id"], int), "time": r["run_time_utc"], "summary_url": r["summary_url"],
                                  "source": "rivals.csv"}
-    want = [b for b in BROWSERS if b != "chrome" and b not in got]
+    want = [b for b in BROWSERS if b != "chrome" and b not in got and b not in missing]
     if want:
         for label in ("stable", "experimental"):
             try:
@@ -143,7 +153,7 @@ def pick_rivals(fetch, rivals, commit):
                               "summary_url": r["results_url"], "source": "wpt.fyi"}
     for b in BROWSERS:
         if b != "chrome" and b not in got:
-            missing[b] = "no run at this WPT commit"
+            missing.setdefault(b, "no run at this WPT commit")
     return got, missing
 
 
@@ -199,12 +209,57 @@ def t262_full(fetch, rows):
     return {"latest": latest, "history": hist}
 
 
+def t262_wpt_history(fetch, hist, rows):
+    """Test262 through WPT for each row of the WPT history: WPT's third_party directory
+    (only third_party/test262 has tests) from the run's meta.json, on its own WPT commit."""
+    by_id = {r["run_id"]: r for r in rows}
+    out = []
+    for h in hist:
+        r = by_id.get(h["run"])
+        try:
+            d = (fetch.json(r["meta_url"] or RAW + f"runs/{r['run_id']}/meta.json").get("directories") or {}).get("third_party")
+        except Exception as e:
+            print(f"meta.json of {h['run']} not read: {e}", file=sys.stderr)
+            d = None
+        if d and d.get("chrome"):
+            out.append({"date": h["date"], "finished": h["finished"], "engine": h["engine"], "wpt": h["wpt"],
+                        "passed": d.get("passed"), "total": d.get("chrome"), "share": round(d["passed"] / d["chrome"], 6),
+                        "where": h["where"], "run": h["run"]})
+    return out
+
+
+def write_hub(D, out_dir):
+    """The Hub's Conformance page files: data.json (the newest runs, without the history
+    lists) and history.json (one compact row per engine commit, for the charts)."""
+    os.makedirs(out_dir, exist_ok=True)
+    data = json.loads(json.dumps(D))
+    hist = {"format": "conformance-history-v1", "generatedAt": D["generatedAt"],
+            "wpt": [{k: (round(h[k], 6) if k in ("share", "shareEx") else h[k])
+                     for k in ("finished", "engine", "wpt", "where", "passed", "denominator", "share", "shareEx", "run")}
+                    for h in data.pop("history")],
+            "test262wpt": data["test262"].pop("wptHistory", []),
+            "test262": []}
+    full = data["test262"].get("full")
+    if full:
+        hist["test262"] = [{k: h[k] for k in ("finished", "engine", "where", "passed", "total", "share", "shareEx", "run")}
+                           for h in full.pop("history")]
+        full["runs"] = len(hist["test262"])
+    data["format"] = "conformance-data-v1"
+    for name, obj in (("data.json", data), ("history.json", hist)):
+        with open(os.path.join(out_dir, name), "w") as f:
+            json.dump(obj, f, separators=(",", ":"), sort_keys=False)
+            f.write("\n")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", help="write the page's D here (one JSON object)")
+    p.add_argument("--hub", help="write the Hub Conformance page files data.json and history.json into this directory")
     p.add_argument("--run", help="run_id of the WPT run to map (default: the newest valid full run)")
     p.add_argument("--cache", help="download directory, kept (default: temporary, removed)")
     a = p.parse_args()
+    if not a.out and not a.hub:
+        p.error("give --out or --hub")
     cache = a.cache or tempfile.mkdtemp(prefix="passmap-")
     os.makedirs(cache, exist_ok=True)
     try:
@@ -309,10 +364,14 @@ def build(a, fetch):
                 "own": {"passed": own262.get("passed"), "chrome": own262.get("chrome"), "names": own262.get("names"),
                         "share": own262.get("share")}},
             "full": t262_full(fetch, rows),
+            "wptHistory": t262_wpt_history(fetch, hist, wpt) if a.hub else [],
         },
     }
-    with open(a.out, "w") as f:
-        json.dump(D, f, separators=(",", ":"))
+    if a.out:
+        with open(a.out, "w") as f:
+            json.dump(D, f, separators=(",", ":"))
+    if a.hub:
+        write_hub(D, a.hub)
     w = D["test262"]["wpt"]
     print(f"run {run['run_id']} ({run['finished_utc']}, engine {run['factoidal_commit'][:9]}): "
           f"{run['share_pct']}% ({run['share_ex_encoding_pct']}% without encoding/) at WPT {run['wpt_commit'][:10]}; "
