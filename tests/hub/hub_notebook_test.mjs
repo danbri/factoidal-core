@@ -19,7 +19,7 @@ test('the cells: named data cells and an nb library cell that imports the helper
   const nb=cells[names.indexOf('nb')];
   assert.match(nb,/import\(new URL\("\.\.\/notebook\/cells\.mjs", location\.href\)\.href\)/);
   // Every anonymous cell is one call of the helper.
-  for(const c of cells.filter(c=>!analyzeCell(c).name))assert.match(c.trim(),/^nb\.(render|foafnaut|textnaut|sideBySide|timingTable)\(/);
+  for(const c of cells.filter(c=>!analyzeCell(c).name))assert.match(c.trim(),/^return nb\.(render|foafnaut|textnaut|sideBySide|timingTable)\(/);
   for(const mode of ['render','foafnaut','textnaut','sideBySide'])assert.ok(cells.some(c=>c.includes(`nb.${mode}(`)),`a cell uses nb.${mode}`);
 });
 

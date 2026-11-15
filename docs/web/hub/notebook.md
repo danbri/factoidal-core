@@ -52,7 +52,7 @@ card = `<style>
 ```
 
 ```observable-js
-nb.render(card)
+return nb.render(card)
 ```
 
 ## SVG from data
@@ -65,9 +65,9 @@ bars = [["Mon", 12], ["Tue", 19], ["Wed", 7], ["Thu", 15], ["Fri", 23]]
 ```
 
 ```observable-js
-nb.render(`<svg xmlns="http://www.w3.org/2000/svg" width="360" height="180" viewBox="0 0 360 180">
+return nb.render(`<svg xmlns="http://www.w3.org/2000/svg" width="360" height="180" viewBox="0 0 360 180">
   <rect width="360" height="180" fill="#fbfbf8"/>
-  ${bars.map(([day, n], i) => `<rect x="${20 + i * 66}" y="${160 - n * 6}" width="44" height="${n * 6}" rx="4" fill="hsl(${150 + i * 30} 55% 45%)"/>
+  ${bars.map(([day, n], i) => `<rect x="${20 + i * 66}" y="${160 - n * 6}" width="44" height="${n * 6}" rx="4" fill="${["#2f9e6b", "#2b8fb0", "#4f6fd0", "#8a5cc8", "#c0508f"][i % 5]}"/>
   <text x="${42 + i * 66}" y="176" font-size="12" text-anchor="middle" fill="#333">${day}</text>
   <text x="${42 + i * 66}" y="${154 - n * 6}" font-size="12" text-anchor="middle" fill="#333">${n}</text>`).join("")}
 </svg>`, { width: 380 })
@@ -78,7 +78,7 @@ nb.render(`<svg xmlns="http://www.w3.org/2000/svg" width="360" height="180" view
 The card again, drawn on the left and as Textnaut's text on the right.
 
 ```observable-js
-nb.sideBySide(card)
+return nb.sideBySide(card)
 ```
 
 ## A Foafnaut view with a script
@@ -104,7 +104,7 @@ counter = `<style>body{font-family:sans-serif;margin:12px}#n{font-size:28px;colo
 ```
 
 ```observable-js
-nb.foafnaut(counter, { height: 220 })
+return nb.foafnaut(counter, { height: 220 })
 ```
 
 ## A page of this site as text
@@ -113,7 +113,7 @@ The demo index of the Foafnaut browser, as Textnaut shows it. The links are
 numbered; following one opens that page as text in this cell.
 
 ```observable-js
-nb.textnaut("../foafnaut/pages/index.html", { cols: 80 })
+return nb.textnaut("../foafnaut/pages/index.html", { cols: 80 })
 ```
 
 ## What each cell cost
@@ -121,7 +121,7 @@ nb.textnaut("../foafnaut/pages/index.html", { cols: 80 })
 Every cell above, as it finished.
 
 ```observable-js
-nb.timingTable()
+return nb.timingTable()
 ```
 
 ## The library

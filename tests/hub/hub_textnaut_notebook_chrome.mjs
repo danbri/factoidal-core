@@ -81,9 +81,10 @@ try{
   t0=Date.now();
   await s('Page.navigate',{url:`${origin}/factoidal/web/hub/notebook/`});
   await until(`document.readyState==='complete'`,30000);
-  const cells=await until(`(()=>{const b=[...document.querySelectorAll('.nb-out')];return b.length>=6&&b.every(x=>x.dataset.state!=='loading')?b.length:0;})()`,120000);
+  const anyCell=await until(`document.querySelectorAll('.nb-out').length`,30000);
+  const cells=anyCell&&await until(`(()=>{const b=[...document.querySelectorAll('.nb-out')];return b.length>=6&&b.every(x=>x.dataset.state!=='loading')?b.length:0;})()`,120000);
   result.notebook={wallMs:Date.now()-t0,boxes:cells};
-  if(!cells)result.notebook.page=await evaluate(`[...document.querySelectorAll('.observable-cell')].map(e=>e.className+': '+e.innerText.slice(0,300)).join('\n')`);
+  if(!cells)result.notebook.page=await evaluate(`[...document.querySelectorAll('.observable-cell')].map(e=>e.className+': '+e.innerText.slice(0,300)).join(' | ')`);
   const states=await evaluate(`[...document.querySelectorAll('.nb-out')].map(b=>({kind:b.className,state:b.dataset.state,note:b.querySelector('.nb-note')?.textContent,time:b.querySelector('.nb-time')?.textContent,
     ink:(()=>{const c=b.querySelector('canvas');if(!c||!c.width)return null;const d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let n=0;for(let i=0;i<d.length;i+=4)if(d[i]<200||d[i+1]<200||d[i+2]<200)n++;return n;})(),
     text:b.querySelector('.textnaut-grid')?.textContent.length??null}))`);

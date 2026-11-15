@@ -265,8 +265,8 @@ export function createEngineCore(host){
   pixels per CSS pixel), autoHeight, maxHeight, scripts (run them on BubblePopJS), draw (pixels
   or not), base (the address that relative URLs and pasted HTML belong to). */
   async function open(id,input,options={}){
-    const t0=now(),start=await ready(),fresh=counters.firstOpen===undefined;
-    counters.firstOpen??=true;
+    const t0=now(),start=await ready(),fresh=counters.used===undefined;
+    counters.used??=true;
     const scale=Math.max(1,Math.min(3,options.scale??1));
     const before=frameWork();
     closeScripts(views.get(id)?.page);
@@ -305,7 +305,7 @@ export function createEngineCore(host){
 
   /** Open `input` in view `id` as Textnaut's text grid of `cols` columns. */
   async function textGrid(id,input,options={}){
-    const t0=now(),start=await ready(),fresh=counters.firstGrid===undefined;counters.firstGrid??=true;
+    const t0=now(),start=await ready(),fresh=counters.used===undefined;counters.used??=true;
     const grid=await host.grid();
     closeScripts(views.get(id)?.page);
     const page=await prepare(input,options.base??host.origin+'/');
@@ -314,7 +314,7 @@ export function createEngineCore(host){
     keep(id,view);
     const out=gridOf(view,grid);
     out.timing={...out.timing,prepareMs:page.prepareMs,...(page.scriptMs!==undefined?{scriptMs:page.scriptMs}:{}),totalMs:round(now()-t0),
-      ...(fresh&&counters.firstOpen===undefined?{engineMs:start.engineMs,fontMs:start.fontMs}:{})};
+      ...(fresh?{engineMs:start.engineMs,fontMs:start.fontMs}:{})};
     return out;
   }
   function gridOf(view,grid){
