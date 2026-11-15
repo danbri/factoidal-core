@@ -54,7 +54,7 @@ const LAYER_USAGE=()=>GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_
 export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,limits:DeviceFacts=device.limits) {
   const plans=new Map<string,RenderPlan>();
   const pipelines=new Map<string,GPURenderPipeline>();
-  const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,bindGroups:0,scenesFull:0,scenesPartial:0,scenesKept:0};
+  const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,bindGroups:0,scenesFull:0,scenesPartial:0,scenesKept:0,bandedScenes:0};
   const grow=(slot:Growing|undefined,bytes:number,usage:number):Growing=>{
     if(slot&&slot.capacity>=bytes)return slot;
     slot?.buffer.destroy();
@@ -131,7 +131,12 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     }
   }
   /** Draw one Lean scene into the slot's texture (made at the scene's size), or into `target`. */
-  async function drawScene(slot:Slot,frame:HTMLArtifact,check:boolean,target?:GPUTexture):Promise<PassResult> {
+  /** A heavy frame in bands (issue 450): `count` horizontal bands of the layer, each its own
+   * submission, `between` awaited after each (the session lets the GPU gate answer and the
+   * host's loop take input there). The scene shader's pixel does not read the target, so the
+   * bands give the bytes of one draw. */
+  type Bands={count:number;between:()=>Promise<void>};
+  async function drawScene(slot:Slot,frame:HTMLArtifact,check:boolean,target?:GPUTexture,bands?:Bands):Promise<PassResult> {
     const p=await plan(frame.width,frame.height,frame.data);
     const pipeline=await pipelineFor(p,frame.wgsl);
     if(!target){
@@ -166,6 +171,15 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     if(rects){
       stats.scenesPartial++;
       result=rects.length?await drawDamage(p,{pipeline,bindGroup:slot.bind},slot.texture!,rects,write):(write(),{steps:{},hash:""});
+    }else if(!target&&!check&&bands&&bands.count>1&&slot.texture){
+      stats.scenesFull++;stats.bandedScenes=(stats.bandedScenes??0)+1;
+      const rows=Math.ceil(frame.height/bands.count);
+      result={steps:{},hash:""};
+      for(let i=0;i*rows<frame.height;i++){
+        const y=i*rows,h=Math.min(rows,frame.height-y);
+        result=await drawDamage(p,{pipeline,bindGroup:slot.bind},slot.texture,[[0,y,frame.width,h]],i===0?write:()=>{});
+        if(y+h<frame.height)await bands.between();
+      }
     }else{stats.scenesFull++;result=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture!,check,write);}
     if(!target)slot.drawn=damage?.id;
     if(check&&result.pixels)checkPixels(frame as unknown as Parameters<typeof checkPixels>[0],result.pixels);
@@ -187,9 +201,9 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     stats,
     plan,
     /** Draw both layers of one Lean render into their textures. */
-    async drawLayers(layers:HTMLLayers,check:boolean):Promise<{chrome:PassResult;page:PassResult}> {
+    async drawLayers(layers:HTMLLayers,check:boolean,bands?:Bands):Promise<{chrome:PassResult;page:PassResult}> {
       const c=await drawScene(chrome,layers.chrome,check);
-      const g=await drawScene(page,layers.page,check);
+      const g=await drawScene(page,layers.page,check,undefined,bands);
       shown=layers;
       blitCanvases();
       return {chrome:c,page:g};

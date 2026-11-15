@@ -307,6 +307,9 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # frame at each scroll tried, on this machine's GPU. With no GPU adapter it says NOT RUN.
   check "scroll_layers_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/scroll_layers_check.ts"
+  # A heavy frame in bands of about 16 ms (issue 450) gives the bytes of one draw. NOT RUN with no GPU.
+  check "banded_draw_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi --allow-env --allow-net=127.0.0.1 "$LAB/banded_draw_check.ts"
   # Chrome pixels (issue 1268): a selected address changes only the address box, in the selection colour.
   check "chrome_pixels_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/chrome_pixels_check.ts"
