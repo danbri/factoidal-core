@@ -27,6 +27,8 @@ built on it. [Web platform](./web-platform/) has all their pages.
 
 <ul class="post-series">
   <li><a href="./foafnaut/">foafnaut</a> — the Lean browser in a page: tabs, an address bar for URLs, searches and commands, view source, XML with XSLT, drawn with WebGPU. It works at phone width.</li>
+  <li><a href="./textnaut/">Textnaut</a> — the text-mode browser in a page: the built-in engine lays out a page of this site, or HTML you type, and Textnaut shows it as a grid of characters with numbered links.</li>
+  <li><a href="./notebook/">Notebook: cells drawn by the built-in engine</a> — notebook cells whose output the engine draws: a page in a canvas, a Foafnaut view with scripts, and Textnaut's text, from one engine, with each cell's timings.</li>
   <li><a href="./web-platform/foafnaut/notes/">Foafnaut notes</a> — short dated notes on what the browser can do, newest first, with links that open each demo in Foafnaut.</li>
   <li><a href="./foafnaut2525-status/">foafnaut2525 project status</a> — where the Lean web rendering engine stands, suite by suite; the engine renders this note too.</li>
   <li><a href="./html-webgpu/">HTML and CSS in Lean</a> — editable HTML/CSS, Lean block and inline layout, shared vector geometry, WebGPU pixels and clickable source-mapped links</li>

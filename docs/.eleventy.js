@@ -51,6 +51,10 @@ module.exports = function(eleventyConfig) {
   // Every module of the Hub browser, so a new one is never left off the site (page-gpu.mjs,
   // and before it browser-state.mjs, were missing from a list of names).
   eleventyConfig.addPassthroughCopy("web/hub/foafnaut/*.mjs");
+  // The Hub's Textnaut page and the notebook's engine cells. Their grid.mjs is not copied: it is
+  // made from labs/demos/foafnaut/textnaut/grid.ts at build time (web/hub/textnaut/grid.11ty.js).
+  eleventyConfig.addPassthroughCopy("web/hub/textnaut/*.mjs");
+  eleventyConfig.addPassthroughCopy("web/hub/notebook/*.mjs");
   eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
   eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans": "web/hub/foafnaut/fonts/noto-sans" });
   // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py); the Hub fetches each only for a page that needs it.

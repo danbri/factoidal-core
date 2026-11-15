@@ -1,0 +1,64 @@
+---
+layout: false
+title: Textnaut
+permalink: /web/hub/textnaut/
+eleventyExcludeFromCollections: true
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="foafnaut-build" content="{{ buildVersion }}">
+  <title>Textnaut</title>
+  <style>
+    :root{--ink:#1d2125;--muted:#5b6670;--line:#c9ced3;--ground:#f4f5f2;--accent:#0b5cad}
+    @media (prefers-color-scheme: dark){:root{--ink:#e3e7ea;--muted:#9aa5ae;--line:#3a434b;--ground:#161a1e;--accent:#7cc4ff}}
+    html{background:var(--ground);color:var(--ink)}
+    body{margin:0 auto;max-width:72rem;padding:12px 16px 32px;font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+    header{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px}
+    h1{font-size:1.3rem;margin:0}
+    header p{margin:0;color:var(--muted)}
+    a{color:var(--accent)}
+    form{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 6px;align-items:center}
+    input,select,textarea,button{font:inherit;color:inherit;background:transparent;border:1px solid var(--line);border-radius:4px;padding:5px 8px}
+    #address{flex:1 1 18rem;min-width:0;font-family:ui-monospace,monospace}
+    button{cursor:pointer;min-height:34px}
+    details{margin:6px 0}
+    textarea{width:100%;box-sizing:border-box;min-height:9rem;font:13px/1.4 ui-monospace,monospace}
+    #stats{font:12px ui-monospace,monospace;color:var(--muted);margin:6px 0;min-height:1.3em;overflow-wrap:anywhere}
+    #note{color:var(--muted)}
+    .keys{font-size:13px;color:var(--muted)}
+    .keys kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:3px;padding:0 4px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Textnaut</h1>
+    <p>The built-in engine lays the page out; Textnaut maps its text and links to a grid of characters, as the terminal program does. <a href="../">Hub</a> · <a href="../foafnaut/">Foafnaut</a> · <a href="../notebook/">Notebook</a></p>
+  </header>
+  <form id="go">
+    <label for="address" class="visually-hidden" hidden>Address</label>
+    <input id="address" name="address" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="a page of this site, e.g. ../foafnaut/pages/index.html" aria-label="Address">
+    <button type="submit">Go</button>
+    <button type="button" id="back" title="Back (b)">Back</button>
+    <label>Columns <select id="cols"><option value="auto">fit</option><option>60</option><option>72</option><option>80</option><option>100</option><option>120</option></select></label>
+    <label><input type="checkbox" id="scripts" checked> Scripts</label>
+  </form>
+  <details id="paste">
+    <summary>Type or paste HTML</summary>
+    <textarea id="source" spellcheck="false" aria-label="HTML to lay out"><h1>Textnaut on the Hub</h1>
+<p>Type HTML here and press <b>Lay out</b> (or Control-Enter). Links get numbers:
+<a href="../foafnaut/pages/index.html">the demo pages</a>, <a href="../notebook/">the notebook</a>.</p>
+<ul><li>One cell is one character of the body text.</li><li>The engine decides every position.</li></ul></textarea>
+    <button type="button" id="layout">Lay out</button>
+  </details>
+  <p id="stats" role="status"></p>
+  <div id="view"></div>
+  <p id="note"></p>
+  <p class="keys">Keys in the grid: <kbd>j</kbd> <kbd>k</kbd> or arrows scroll; a number then <kbd>Enter</kbd> follows that link; <kbd>Tab</kbd> selects the next link and <kbd>Enter</kbd> follows it; <kbd>b</kbd> goes back; <kbd>g</kbd> goes to the address. Pages of this site only: the Hub has no proxy for other sites.</p>
+  <noscript>Textnaut needs JavaScript and WebAssembly.</noscript>
+  <script type="module" src="{{ '/web/hub/textnaut/app.mjs' | url }}?v={{ buildVersion }}"></script>
+</body>
+</html>
