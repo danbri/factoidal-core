@@ -33,7 +33,9 @@ export function sceneWork(frame,rects){
   const out={uploadBytes:(data?.length??0)*4+(tiles?.length??0)*4,drawnPixels:0,tiles:0,tileEntries:0,listed:0,segments:0,segmentsOutsideClip:0,
     partial:!!rects,maxSegmentsPerSample:0,segmentsBinned:0,segmentsRows:0,pieces:0,skipsClipped:typeof frame.wgsl==='string'&&frame.wgsl.includes('if(!clipHit){continue;}'),
     // Tile edge lists (tilesOf): each listed record has a list word after the entries.
-    edgeLists:typeof frame.wgsl==='string'&&frame.wgsl.includes('fn pathWinding(')};
+    edgeLists:typeof frame.wgsl==='string'&&frame.wgsl.includes('fn pathWinding('),
+    // Stroke piece lists after the edge part of each record (a shader with `var listed=false`).
+    pieceLists:typeof frame.wgsl==='string'&&frame.wgsl.includes('var listed=false')};
   if(!data||!tiles||tiles.length<4)return out;
   const row=i=>[data[4*i],data[4*i+1],data[4*i+2],data[4*i+3]];
   const rowCount=data.length/4;
@@ -70,7 +72,7 @@ export function sceneWork(frame,rects){
       const word=out.edgeLists?tiles[refBase+item]:ALL_EDGES;
       if(dashed===1){
         let n=dashCount;
-        if(word!==ALL_EDGES){const ne=tiles[word],pl=ne===ALL_EDGES?word+1:word+1+ne;if(tiles[pl]!==ALL_EDGES)n=Math.min(tiles[pl],dashCount);}
+        if(out.pieceLists&&word!==ALL_EDGES){const ne=tiles[word],pl=ne===ALL_EDGES?word+1:word+1+ne;if(tiles[pl]!==ALL_EDGES)n=Math.min(tiles[pl],dashCount);}
         out.pieces+=samples*n;
       }
       if(tag!==PATH&&tag!==POLYGON)continue;
