@@ -3271,16 +3271,35 @@ theorem edgesMeeting_eq (edges : Array (Float × Float)) (lo hi : Float) :
   apply Array.ext'
   simp [edgesMeeting, Array.toList_range]
 
-/-- Primitive lists for each screen tile, in paint order: tile size, tiles across, tiles
-down, one start offset for each tile and a final end offset, then the record row of each
-listed primitive, then for each listed primitive the word of its edge list (`allEdges`, or
-the index in these words of a count followed by that many edge indices), then the edge
-lists, then the paint table. A primitive is left out of a tile only when its conservative
-box does not touch the tile; there it can not change a pixel, so the image does not change.
-A path's edge list in a tile holds the edges whose ends do not both lie below or both above
-the local rows of the tile's samples (`Primitive.localRows`, `edgesMeeting`): the other
-edges change no winding number there (`pathWinding_filter`). The shader walks the list
-instead of every edge of the path. -/
+/-- A clip rectangle's box in target pixels (its corners through its transform and the page
+mapping, with the margin of `Primitive.screenBox`); `none` for a clip that `ClipRect.valid`
+refuses or a corner that is not finite. -/
+def ClipRect.screenBox (m : Mapping) (clip : ClipRect) : Option (Float × Float × Float × Float) :=
+  if !clip.valid then none else
+  let pixels := [(clip.x,clip.y),(clip.x+clip.width,clip.y),(clip.x,clip.y+clip.height),
+      (clip.x+clip.width,clip.y+clip.height)].map fun (x,y) =>
+    let w := clip.transform.apply x y
+    ((w.1-m.minX)*m.sx+m.tx,(w.2-m.minY)*m.sy+m.ty)
+  let xs := pixels.map (·.1)
+  let ys := pixels.map (·.2)
+  if m.sx <= 0 || m.sy <= 0 || (xs++ys).any (fun v => v.isNaN || v.isInf) then none
+  else some (xs.foldl min (xs.headD 0)-2,ys.foldl min (ys.headD 0)-2,
+             xs.foldl max (xs.headD 0)+2,ys.foldl max (ys.headD 0)+2)
+
+/-- The pixels a primitive can paint: its conservative box (`Primitive.screenBox`) cut to the
+box of each of its clips. A sample outside a clip's box fails that clip's test
+(`ClipRect.contains`, `clipPass`), and a record whose clip fails covers nothing there
+(`Primitive.sampleStep_clip_fail`), so a tile outside this box can leave the record out. That
+the box holds every sample the clip test accepts rests on Float arithmetic: the guards of
+`SVGRaster` compare the tiled raster with one over every record. An empty box (a primitive
+wholly clipped away) lists the primitive in no tile. -/
+def Primitive.paintBox (m : Mapping) (p : BackendPrimitive) : Option (Float × Float × Float × Float) :=
+  p.clips.foldl (fun box clip =>
+    match box,clip.screenBox m with
+    | some (x0,y0,x1,y1),some (a0,b0,a1,b1) => some (max x0 a0,max y0 b0,min x1 a1,min y1 b1)
+    | none,some cb => some cb
+    | b,none => b) (p.screenBox m)
+
 structure TileListing where
   /-- Each tile the primitive is listed in, with the index of its edge list in `lists`, or
   `allEdges`. -/
@@ -3300,7 +3319,11 @@ def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPr
   -- A transform whose local y does not depend on x (no rotation or skew of y) maps a row
   -- of tiles to one range of local y: one list for the row.
   let byRow := p.transform.inverse.b == 0
-  let (left,top,right,bottom) := match p.screenBox mapping with
+  let box := p.paintBox mapping
+  -- Wholly clipped away: no tile.
+  if let some (x0,y0,x1,y1) := box then
+    if x1 < x0 || y1 < y0 then return ⟨#[],#[]⟩
+  let (left,top,right,bottom) := match box with
     | some (x0,y0,x1,y1) => (tileIndex x0 across,tileIndex y0 down,tileIndex x1 across,tileIndex y1 down)
     | none => (0,0,across-1,down-1)
   let mut tiles : Array (Nat × Nat) := #[]
@@ -3365,6 +3388,16 @@ def tilesOfListings (width height : Nat) (compiled : List BackendPrimitive) (lis
       refs := refs.push (if ref == allEdges then allEdges else poolStart+ref)
   return #[tileSize,across,down] ++ offsets ++ entries ++ refs ++ pool ++ tail
 
+/-- Primitive lists for each screen tile, in paint order: tile size, tiles across, tiles
+down, one start offset for each tile and a final end offset, then the record row of each
+listed primitive (listed in the tiles its `Primitive.paintBox` meets), then for each listed primitive the word of its edge list (`allEdges`, or
+the index in these words of a count followed by that many edge indices), then the edge
+lists, then the paint table. A primitive is left out of a tile only when its paint box does not
+touch the tile; there it can not change a pixel, so the image does not change.
+A path's edge list in a tile holds the edges whose ends do not both lie below or both above
+the local rows of the tile's samples (`Primitive.localRows`, `edgesMeeting`): the other
+edges change no winding number there (`pathWinding_filter`). The shader walks the list
+instead of every edge of the path. -/
 def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPrimitive) : Array Nat :=
   let across := (width+tileSize-1)/tileSize
   let down := (height+tileSize-1)/tileSize
@@ -4303,7 +4336,7 @@ def compileRetained {κ : Type} (reuse : κ → κ → Reuse) (prev : Option (Re
       | none => none
     let record := fun (compiled : BackendPrimitive) =>
       (⟨key,compiled,Primitive.writeRows (ByteArray.emptyWithCapacity (compiled.storageRows*16)) compiled,
-        cursor,compiled.storageRows,compiled.paintWords.length,compiled.screenBox mapping,
+        cursor,compiled.storageRows,compiled.paintWords.length,compiled.paintBox mapping,
         compiled.tileListing mapping ((width+tileSize-1)/tileSize) ((height+tileSize-1)/tileSize)⟩ : RetainedItem κ)
     let item ← match kept with
       | some (item,.same) => pure {item with key}

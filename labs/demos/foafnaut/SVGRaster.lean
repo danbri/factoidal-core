@@ -140,6 +140,15 @@ theorem rasterPrepared_eq (s : Scene) (data : Array Float) (g : Grid) (all : Arr
   funext a b
   exact samplePrepared_eq s.mapping data _ a b
 
+/-- `rasterSpec` with every record at every pixel: no tile lists. The tiles leave a record out
+of a tile its paint box (`Primitive.paintBox`, the clips included) does not meet; the guards
+below compare the two rasters byte for byte. -/
+def _root_.NativeSVG.Scene.rasterAll (s : Scene) (top rows : Nat) : ByteArray :=
+  let data := s.data
+  let (all,_) := items s
+  ⟨((List.range rows).flatMap fun j => (List.range s.width).flatMap fun x =>
+    pixelBytes (adaptiveSample (sampleSpec s.mapping data all.toList) (data.size/4) x (top+j))).toArray⟩
+
 /-! ## The tile edge lists
 
 The scene shader walks, for a path's fill, the edge list that `tilesOf` made for the
@@ -323,6 +332,19 @@ private def zoomScene (k : String) : Option Scene := (parse ("<svg xmlns='http:/
   "<path d='M47 37 L49 37 L49.5 39 L46.5 39Z' fill='#d04020' transform='rotate(30 48 38)'/></g></svg>") 32 28).toOption
 #guard ((zoomScene "1").map fun s => (s.rasterTiles 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
 #guard ((zoomScene "40").map fun s => (s.rasterTiles 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
+-- The tile lists (paint boxes cut to the clips) give the bytes of every record at every
+-- pixel: the guard scene's nested svg, and a path zoomed far past its clip.
+private def clippedZoom (_ : Unit) : Option Scene := (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='72' height='40'>" ++
+  "<svg x='4' y='4' width='22' height='22' viewBox='0 0 96 96' overflow='hidden'><g transform='translate(48 48) scale(40) translate(-48 -48)'>" ++
+  "<path d='M10 70 Q48 -20 86 70 C70 90 26 90 10 70Z' fill='#204080'/><circle cx='48' cy='48' r='0.4' fill='#d04020'/></g></svg>" ++
+  "<rect x='40' y='14' width='20' height='20' fill='teal'/></svg>") 72 40).toOption
+#guard ((guardScene ()).map fun s => (s.rasterSpec 0 s.height).data == (s.rasterAll 0 s.height).data) == some true
+#guard ((clippedZoom ()).map fun s => let r := (s.rasterAll 0 s.height).data;
+  (s.rasterSpec 0 s.height).data == r && (s.rasterTiles 0 s.height).data == r) == some true
+-- The zoomed path (record row 2), whose own box covers every tile, is listed only in the one
+-- tile that its clip meets.
+#guard ((clippedZoom ()).map fun s => let g : Grid := ⟨s.tiles⟩;
+  ((List.range (g.across*g.down)).filter fun t => (g.rows t).contains 2).length) == some 1
 -- Edge lists are made: the zoomed scene's tile words hold lists shorter than the paths.
 #guard ((zoomScene "40").map fun s =>
   let g : Grid := ⟨s.tiles⟩
