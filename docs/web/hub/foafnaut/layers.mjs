@@ -258,6 +258,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     async composite(width,height,offset,{target,readBack=check}={}){
       ensure();await gate();
       if(!shown)throw Error('composite before any layers were drawn');
+      const started=waitForGpu?performance.now():0;
       const p=await plan(width,height,[0,0,0,0]);
       const pipeline=await pipelineFor(p,shown.layers.composite);
       place??=device.createBuffer({size:PLACE_WORDS*4,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
@@ -271,6 +272,8 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       words.set([shown.layers.top,offset,shown.layers.bandHeight,0]);
       stats.composites++;
       const pixels=await run(p,{pipeline,bindGroup:compositeBind},target??canvasTexture(width,height),readBack,()=>device.queue.writeBuffer(place,0,words));
+      if(waitForGpu){const submitted=performance.now();await device.queue.onSubmittedWorkDone();
+        lastDraw.composite={cpuMs:Math.round((submitted-started)*10)/10,gpuMs:Math.round((performance.now()-submitted)*10)/10};}
       await finish();
       return pixels;
     },

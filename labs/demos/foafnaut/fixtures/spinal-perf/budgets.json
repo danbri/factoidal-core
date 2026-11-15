@@ -1,7 +1,7 @@
 {
  "about": "Budgets of the Spinal Tap page (pages/spinal-tap-sparql.html) as a measured test, core issue 450. native: spinal_perf.ts, asserted by spinal_perf_test.ts in test.sh. hub: hub_spinal_perf.mjs (headless Chrome, the Hub). Each section has budgets ({max} or {min} on a dot path of the run's JSON) and known failures ({want_max} or {want_min} not met today, each with its issue). A budget may only tighten: spinal_perf_test.ts compares this file with the one on the merge base and fails when a max rises or a min falls, unless that entry carries a new 'accepted' text saying why (the cost is wanted). Times have a margin of about three times the measurement for slower CI runners; exact counters have none.",
  "native": {
-  "measured": "2026-11-15, Apple M1 (load average 11 to 13), macOS engine of main 3bf480d92 (build-3bf480d922cc-foafnaut-engine-darwin-arm64), 600 ticks of 16 ms",
+  "measured": "2026-11-15, Apple M1 (load average 11 to 13), macOS engine of main 3bf480d92 (build-3bf480d922cc-foafnaut-engine-darwin-arm64), 600 ticks of 16 ms; draw counts and the clip skip: engine d325ea8d4 of wip/spinal-draw (foafnaut-macos.yml branch build 43707008769)",
   "budgets": {
    "layered.first_ms": {
     "max": 400,
@@ -94,6 +94,22 @@
     "max": 60000,
     "measured": 14614.5,
     "what": "the whole native run"
+   },
+   "tick.draw.segments_m.max": {
+    "max": 2000,
+    "measured": 1867.1,
+    "was": 2853,
+    "what": "millions of path edges the scene shader walks to draw a tick's page layer (scene-work.mjs, four samples a pixel): the GPU cost of a frame, counted with no GPU. 2,853 before the shader skipped a clipped record's geometry (wip/spinal-draw, engine d325ea8d4)"
+   },
+   "tick.draw.segments_m.median": {
+    "max": 1500,
+    "measured": 1346.7,
+    "was": 1526.5
+   },
+   "tick.draw.outside_clip_m.max": {
+    "max": 1000,
+    "measured": 985.9,
+    "what": "edges of records in tiles wholly outside their clip: no longer walked by the shader, still listed in the tiles (Primitive.screenBox does not use clips)"
    }
   },
   "known_failures": {
@@ -102,6 +118,12 @@
     "measured": 1.008,
     "issue": "https://github.com/danbri/factoidal-core/issues/450",
     "what": "a second whole-page frame with the CPU probe of the unchanged document costs as much as the first (about 500 ms), although the layout is kept (frameWork.kept 1): the probe's work with the web font is done again each frame. Without the web font the probe frame is about 90 ms. When this meets want_max, spinal_perf_test.ts fails: move the entry to native with a max and update issue 450."
+   },
+   "tick.draw.segments_m.max": {
+    "want_max": 600,
+    "measured": 1867.1,
+    "issue": "https://github.com/danbri/factoidal-core/issues/450",
+    "what": "per-tile edge lists would walk about 519 million at most on this page (tick.draw.binned_m, the same count with a tile walking only the edges that cross its rows and are not wholly left of it), flat across the zoom"
    }
   }
  },
@@ -158,6 +180,20 @@
     "min": 10,
     "measured": 46,
     "what": "frames after the first on the layered path"
+   },
+   "draw_split.cpu_ms.median": {
+    "max": 60,
+    "measured": 15.2,
+    "what": "CPU ms of the page layer draw to submit (plan, writes, commands)"
+   },
+   "draw_split.gpu_ms.max": {
+    "max": 4000,
+    "measured": 1848,
+    "what": "GPU ms of the page layer draw until done (published engine, before the clip skip)"
+   },
+   "draw_split.composite_ms.median": {
+    "max": 20,
+    "measured": 2.1
    }
   },
   "known_failures": {
@@ -172,6 +208,12 @@
     "measured": 3349,
     "issue": "https://github.com/danbri/factoidal-core/issues/450",
     "what": "no frame over 1 s (a GPU command buffer of seconds risks the device)"
+   },
+   "draw_split.gpu_ms.max": {
+    "want_max": 1000,
+    "measured": 1848,
+    "issue": "https://github.com/danbri/factoidal-core/issues/450",
+    "what": "GPU ms of the page layer draw: 1,848 with the published engine, 747 to 777 with the shader of wip/spinal-draw (tried on the Hub with that shader text): expected to flip when that engine is published"
    }
   }
  }
