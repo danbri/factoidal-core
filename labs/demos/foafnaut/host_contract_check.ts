@@ -1,5 +1,5 @@
 // host_contract_check.ts: host shells checked against the host contract
-// (formal/lean4/L4Factoidal/HostContract; record docs/designissues/2026-11-15-host-contract.md).
+// (formal/lean4/L4Factoidal/HostContract; https://github.com/danbri/factoidal-core/issues/458).
 //
 // Each host shell is code that is not Lean. In test mode it records its boundary trace: one line
 // per call of the engine's C ABI (docs/web/hub/foafnaut/host-trace.mjs). This check runs one
@@ -20,7 +20,7 @@
 //
 // Known difference, not a failure: Textnaut and the Hub's Textnaut give the engine different
 // requests for the same page (another URL, other fields, the font by another call), so they share
-// no compared call. The check prints how far their state calls agree.
+// no compared call. The check prints how far their state calls agree (issue 458, Hub Textnaut).
 //
 // Needs the Wasm runtime (.build/native-html/runtime, as test.sh copies it) and an engine with the
 // op `hostContract`; prints NOT RUN otherwise. Run:

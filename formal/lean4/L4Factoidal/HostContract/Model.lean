@@ -15,7 +15,7 @@ window).
 
 `Trace.lean` states the conformance of a recorded boundary trace to a target, the checker that
 decides it, and the theorem that two hosts giving the engine the same contract-visible input see
-the same answers. Record: docs/designissues/2026-11-15-host-contract.md. -/
+the same answers. Design, inventory and next steps: https://github.com/danbri/factoidal-core/issues/458. -/
 namespace L4Factoidal.HostContract
 
 /-- The engine's C ABI symbols (`labs/demos/foafnaut/web_render_shim.c`), the same in the native
