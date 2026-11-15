@@ -42,7 +42,7 @@ summary() {
     } >> "$GITHUB_STEP_SUMMARY"
   fi
   if [ ${#FAILED[@]} != 0 ]; then
-    echo "test.sh: ${#FAILED[@]} failed:" >&2; printf '  %s\n' "${FAILED[@]}" >&2
+    echo "test.sh: ${#FAILED[@]} failed:"; printf '  %s\n' "${FAILED[@]}"
   fi
 }
 trap summary EXIT
