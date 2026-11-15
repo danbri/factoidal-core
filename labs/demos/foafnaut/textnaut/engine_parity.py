@@ -72,10 +72,10 @@ class Session:
             self.read(0.05)
             if pred(self.out[start:]): return (time.perf_counter() - t0) * 1000
         return None
-    def quiet(self, ms):
-        """Reads until no output for `ms`; returns the time of the last byte, from now, in ms."""
+    def quiet(self, ms, limit=20):
+        """Reads until no output for `ms` (at most `limit` s); returns the time of the last byte, from now, in ms."""
         t0 = time.perf_counter(); last = t0
-        while (time.perf_counter() - last) * 1000 < ms:
+        while (time.perf_counter() - last) * 1000 < ms and time.perf_counter() - t0 < limit:
             n = len(self.out); self.read(0.01)
             if len(self.out) != n: last = time.perf_counter()
         return (last - t0) * 1000
@@ -87,8 +87,11 @@ class Session:
         except OSError: pass
         for _ in range(100):
             if os.waitpid(self.pid, os.WNOHANG)[0]: return
-            time.sleep(0.02)
-        os.kill(self.pid, signal.SIGKILL); os.waitpid(self.pid, 0)
+            self.read(0.02)
+        # The launcher's Deno child too: the whole process group of the terminal's session.
+        try: os.killpg(self.pid, signal.SIGKILL)
+        except OSError: pass
+        os.waitpid(self.pid, 0)
 
 def loaded(name):
     """The top bar names the engine and does not say loading."""
@@ -107,7 +110,10 @@ def interactive(args, engine, start_page):
     try:
         first = s.until(loaded(engine), 300)
         out["first_frame"] = round((time.perf_counter() - t0) * 1000, 1) if first is not None else None
-        if first is None: return out
+        print(f"    {engine} first frame: {out['first_frame']} ms", flush=True)
+        if first is None:
+            out["output_tail"] = s.out[-400:].decode("utf-8", "replace")
+            return out
         s.quiet(300)
         # Host-only keys: one draw each.
         for key, name in ((b"j", "scroll_j"), (b"\t", "tab")):
@@ -116,6 +122,7 @@ def interactive(args, engine, start_page):
                 t = time.perf_counter(); s.send(key); s.until(lambda o: len(o) > 0, 5); times.append((time.perf_counter() - t) * 1000)
                 s.quiet(60)
             out[name] = median(times)
+            print(f"    {engine} {name}: {out[name]} ms", flush=True)
         # Follow link 1 (the next page loads and lays out on the engine), then back.
         for key, name in ((b"1\r", "follow_link"), (b"b", "back")):
             times = []
@@ -127,6 +134,7 @@ def interactive(args, engine, start_page):
                 if key == b"1\r": s.send(b"b"); s.until(loaded(engine), 120); s.quiet(100)
                 else: s.send(b"1\r"); s.until(loaded(engine), 120); s.quiet(100)
             out[name] = median([x for x in times if x == x])
+            print(f"    {engine} {name}: {out[name]} ms", flush=True)
         # A resize: the page is laid out again at the new width (after textnaut's 30 ms burst wait).
         times = []
         for rows, cols in ((40, 80), (40, 100), (40, 72)):
@@ -134,6 +142,7 @@ def interactive(args, engine, start_page):
             last = s.quiet(250)
             times.append(last)
         out["resize"] = median(times)
+        print(f"    {engine} resize: {out['resize']} ms", flush=True)
     finally:
         s.close()
     return out
@@ -190,7 +199,7 @@ def main():
             report["keys"][engine] = keys
             check(f"keys on a pseudo-terminal, {engine} engine: first frame, scroll, Tab, follow, back, resize",
                   all(keys.get(k) is not None for k in ("first_frame", "scroll_j", "tab", "follow_link", "back", "resize")), json.dumps(keys))
-            print(f"  {engine}: " + ", ".join(f"{k} {v} ms" for k, v in keys.items()), flush=True)
+            print(f"  {engine}: " + ", ".join(f"{k} {v} ms" for k, v in keys.items() if k != "output_tail"), flush=True)
         os.unlink(start)
     if args.json:
         with open(args.json, "w") as f: json.dump(report, f, indent=1)
