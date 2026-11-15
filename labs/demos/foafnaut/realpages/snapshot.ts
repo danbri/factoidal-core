@@ -147,9 +147,12 @@ for(const p of spec.pages.filter(p=>!p.url.startsWith("lab:")&&!p.snapshot&&(!on
   };
   const fo=engine?await foafnautRequests(p):{entries:[],bodies:new Map<string,Uint8Array>()};
   const seen=new Set<string>();
+  // The page itself (and its redirect hops) is always kept, whatever its size.
+  const pageURLs=new Set([p.url,...deno.map(e=>e.url)]);
   for(const e of fo.entries){
     if(seen.has(e.url))continue;seen.add(e.url);
     const d=fo.bodies.get(e.url),len=d?.length??0;
+    if(pageURLs.has(e.url)){keep(e,d);continue;}
     const ct=e.headers.find(([k])=>k.toLowerCase()==="content-type")?.[1]??"";
     const reason=/^(video|audio)\//.test(ct)?"media":len>maxFile?"over the file limit":/^image\//.test(ct)&&len>maxImage?"image over the limit":size+len>maxBytes?"over the page limit":"";
     if(reason){skipped.push({url:e.url.slice(0,300),reason,bytes:len});continue;}
