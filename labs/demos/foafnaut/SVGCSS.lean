@@ -55,8 +55,88 @@ private def declarationsClean (properties : List String) (source : String) : Exc
 def parseDeclarations (properties : List String) (source : String) : Except String (List Declaration) := do
   declarationsClean properties (← clean source)
 
-/-- Type selector lists only; source order is retained. SVG type matching is
-    case-sensitive. No namespace prefix, universal selector or combinator. -/
+/-- One compound selector of this slice (Selectors 4 §3.1): an optional type selector or
+    `*`, then any number of `#id` and `.class` selectors, with no combinator, attribute,
+    pseudo-class or namespace. -/
+structure Compound where
+  tag : Option String := none
+  ids : List String := []
+  classes : List String := []
+  deriving Repr, BEq, Inhabited
+
+/-- The pieces of a compound: the head before the first `#` or `.`, then each `#` or `.`
+    with the name after it. -/
+private def compoundPieces (cs : List Char) : List Char × List (Char × List Char) :=
+  let isMark := fun c => c == '#' || c == '.'
+  let head := cs.takeWhile (!isMark ·)
+  let rec go : Nat → List Char → List (Char × List Char)
+    | 0, _ => []
+    | _, [] => []
+    | fuel + 1, m :: rest =>
+      let name := rest.takeWhile (!isMark ·)
+      (m, name) :: go fuel (rest.drop name.length)
+  (head, go (cs.length + 1) (cs.drop head.length))
+
+/-- A selector text as a compound, or `none` when it is outside this slice. -/
+def compound? (selector : String) : Option Compound :=
+  let (head, parts) := compoundPieces selector.toList
+  let head := String.ofList head
+  let tag := if head.isEmpty || head == "*" then some none else if ident head then some (some head) else none
+  match tag with
+  | none => none
+  | some tag =>
+    if selector.isEmpty || !parts.all (fun (_, n) => ident (String.ofList n)) then none
+    else some { tag, ids := parts.filterMap (fun (m, n) => if m == '#' then some (String.ofList n) else none),
+                classes := parts.filterMap (fun (m, n) => if m == '.' then some (String.ofList n) else none) }
+
+/-- Selectors 4 §17: (ids, classes, types) of a compound. -/
+def Compound.specificity (c : Compound) : Nat × Nat × Nat := (c.ids.length, c.classes.length, if c.tag.isSome then 1 else 0)
+
+/-- Specificities compared in order: ids, then classes, then types (Selectors 4 §17). -/
+def specLT (a b : Nat × Nat × Nat) : Bool :=
+  a.1 < b.1 || (a.1 == b.1 && (a.2.1 < b.2.1 || (a.2.1 == b.2.1 && a.2.2 < b.2.2)))
+
+/-- What a selector of this slice can see of an element: its local name (case-sensitive for
+    SVG), its `id` and the words of its `class`. -/
+structure Subject where
+  tag : String
+  id : Option String := none
+  classes : List String := []
+
+/-- Whether the compound matches the element. -/
+def Compound.matches (c : Compound) (e : Subject) : Bool :=
+  c.tag.all (· == e.tag) && c.ids.all (some · == e.id) && c.classes.all e.classes.contains
+
+/-- `*` (or an empty compound) matches every element. -/
+theorem universal_matches (e : Subject) : ({} : Compound).matches e = true := by
+  simp [Compound.matches]
+
+/-- An `#id` selector matches only the element with that `id`. -/
+theorem id_matches_only (n : String) (e : Subject) (h : ({ ids := [n] } : Compound).matches e = true) :
+    e.id = some n := by
+  simp [Compound.matches] at h
+  exact h.symm
+
+/-- A `.class` selector matches only an element that has the class. -/
+theorem class_matches_only (n : String) (e : Subject) (h : ({ classes := [n] } : Compound).matches e = true) :
+    n ∈ e.classes := by
+  simpa [Compound.matches] using h
+
+/-- The specificity of the most specific selector of the list that matches, or `none`. -/
+def matchSpecificity (selectors : List String) (e : Subject) : Option (Nat × Nat × Nat) :=
+  selectors.foldl (fun best s =>
+    match compound? s with
+    | some c => if c.matches e then
+        let sp := c.specificity
+        match best with
+        | some b => if specLT b sp then some sp else some b
+        | none => some sp
+      else best
+    | none => best) none
+
+/-- Compound selector lists (type, `*`, `#id`, `.class`); source order is retained. SVG
+    type matching is case-sensitive. No namespace prefix, combinator, attribute selector or
+    pseudo-class: a sheet with one is refused. -/
 def parseSheet (properties : List String) (source : String) : Except String (List Rule) := do
   let source ← clean source
   let parts := source.splitOn "}"
@@ -66,7 +146,7 @@ def parseSheet (properties : List String) (source : String) : Except String (Lis
   for part in parts.dropLast do
     let [selector,body] := part.splitOn "{" | throw "CSS rule requires one opening brace"
     let selectors := (selector.splitOn ",").map trim
-    if selectors.isEmpty || !selectors.all ident then throw "unsupported CSS selector"
+    if selectors.isEmpty || !selectors.all (fun s => (compound? s).isSome) then throw "unsupported CSS selector"
     rules := rules.push {selectors,declarations:= ← declarationsClean properties body}
   pure rules.toList
 
@@ -74,12 +154,18 @@ def parseSheet (properties : List String) (source : String) : Except String (Lis
     This strict profile refuses malformed/unsupported declarations, including
     overridden declarations; it does not emulate CSS's ignore-invalid behavior.
     Returned declarations are unique by property. Higher priority replaces lower:
-    presentation attributes, matched author rules in source order, inline style.
-    All admitted selectors have the same type-selector specificity. -/
+    presentation attributes, matched author rules by specificity (CSS Cascade 5 §6.4) and
+    then source order, inline style. `classes` and `id` are the element's, for `.class`
+    and `#id` selectors. -/
 def cascade (validate : Declaration → Except String Unit) (tag : String)
-    (presentation : List Declaration) (rules : List Rule) (inlineStyle : List Declaration) : Except String (List Declaration) := do
+    (presentation : List Declaration) (rules : List Rule) (inlineStyle : List Declaration)
+    (classes : List String := []) (id : Option String := none) : Except String (List Declaration) := do
   for d in presentation ++ rules.flatMap (·.declarations) ++ inlineStyle do validate d
-  let applicable := rules.filter (fun r => r.selectors.contains tag)
+  let subject : Subject := {tag, id, classes}
+  -- each matched rule with the specificity of its most specific matching selector; a
+  -- stable sort keeps source order among equals
+  let matched := rules.filterMap fun r => (matchSpecificity r.selectors subject).map (·, r)
+  let applicable := (matched.mergeSort (fun a b => !specLT b.1 a.1)).map (·.2)
   let all := presentation ++ applicable.flatMap (·.declarations) ++ inlineStyle
   let mut result : List Declaration := []
   for d in all do result := d :: result.filter (fun old => old.property != d.property)

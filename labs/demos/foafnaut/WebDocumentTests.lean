@@ -782,6 +782,8 @@ private def svgMetaPage := "<!doctype html><title>S</title><p>Icon <svg width=\"
 #guard mentions (renderText svgMetaPage [liberal,asks]) "\"feature\":\"inline SVG\"" == 0
 #guard NativeSVG.inertAttribute "focusable" && NativeSVG.inertAttribute "aria-hidden" && NativeSVG.inertAttribute "data-icon" && NativeSVG.inertAttribute "alt"
 #guard !NativeSVG.inertAttribute "filter" && !NativeSVG.inertAttribute "transform" && !NativeSVG.inertAttribute "fill"
+#guard NativeSVG.inertAttribute "onload" && NativeSVG.inertAttribute "onclick" && NativeSVG.inertAttribute "onbegin"
+#guard !NativeSVG.inertAttribute "on" && !NativeSVG.inertAttribute "opacity" && !NativeSVG.inertAttribute "onLoad"
 -- A root sized in `em` (BBC News: width="7em"): the layout computed the box, the reader takes it.
 private def svgEmPage := "<!doctype html><title>S</title><p>Icon <svg width=\"2em\" height=\"1em\" viewBox=\"0 0 64 32\"><path d=\"M0 0h32v32H0z\"/></svg> here</p>"
 #guard renderText svgEmPage [] != ""
