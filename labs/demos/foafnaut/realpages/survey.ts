@@ -28,7 +28,7 @@
 // that host lacks (--shot-at-end, --liberal-report) are left out and the summary says so.
 // --lock FILE: hold an exclusive lock on FILE during each engine run (on the shared Mac,
 // /tmp/foafnaut-timing.lock, so timings do not overlap with other agents' runs).
-import {cpuShare,FETCH_FAILURE,overBudget,parseScroll,parseTextnaut,parseWatch,psSeconds,verdictOf,type Budgets} from "./metrics.ts";
+import {cpuShare,FETCH_FAILURE,logFloods,overBudget,parseScroll,parseTextnaut,parseWatch,psSeconds,verdictOf,type Budgets} from "./metrics.ts";
 import {pageSimilarity} from "./visual.ts";
 
 const here=decodeURIComponent(new URL("./",import.meta.url).pathname);
@@ -162,6 +162,7 @@ async function macPage(p:Page,row:Row,zip:string|null){
     cpu_idle_pct:cpu?.pct??null,cpu_window_s:cpu?.window_s??null,script_turns:wf.script_turns,script_turn_max_ms:wf.script_turn_max_ms,
     scripts_off:p.scripts===false?"--no-scripts":wf.scripts_off,page_errors:wf.page_errors,
     skips_count:caps.liberalReport?wf.skips.length:null,skips:caps.liberalReport?wf.skips:null,chrome_top:wf.chrome_top,
+    log_floods:wf.log_floods,log_flood_top:wf.log_flood_top,
     shot:wf.shot?(caps.shotAtEnd?"end":"first idle frame"):null,rss_peak_mb:rssPeak(watch!),wall_s:Math.round(watch!.wall*10)/10,
     ...(zip?{replay:replayOf(watch!.log)}:{})});
   if(watch!.timedOut&&watch!.firstAt===null){row.state="timeout";return;}
@@ -174,6 +175,8 @@ async function macPage(p:Page,row:Row,zip:string|null){
     Object.assign(row,{scroll_latency_p50_ms:sf.latency_p50_ms,scroll_latency_p95_ms:sf.latency_p95_ms,
       scroll_composite_p50_ms:sf.composite_p50_ms,scroll_composite_p95_ms:sf.composite_p95_ms,scroll_ratchet:sf.ratchet,scroll_exit_code:sc.rc});
     row.rss_peak_mb=Math.max(row.rss_peak_mb as number,rssPeak(sc));
+    const lf=logFloods(sc.log);
+    row.log_floods=(row.log_floods as number)+lf.log_floods;row.log_flood_top??=lf.log_flood_top;
     if(sc.signal&&!sc.timedOut){row.state="crash";row.crash_reason=`scroll run: signal ${sc.signal}`;}
     else if(sc.rc!==0&&!sc.timedOut&&!sf.ratchet&&!FETCH_FAILURE.test(sc.log)){row.state="crash";row.crash_reason="scroll run: "+(firstError(sc.log)??`exit ${sc.rc}`);}
     else if(sc.timedOut)row.scroll_timed_out=true;
@@ -217,7 +220,7 @@ async function linuxPage(p:Page,row:Row,zip:string|null){
   const tf=parseTextnaut(r!.log);
   Object.assign(row,{exit_code:r!.rc,first_frame_s:r!.firstAt===null?null:Math.round(r!.firstAt*10)/10,load_ms:tf.load_ms,first_layout_ms:tf.layout_ms,
     rows:tf.rows,links:tf.links,scripts_off:p.scripts===false?"--no-scripts":tf.scripts==="off"?"off":null,
-    cpu_s:r!.samples.length?r!.samples[r!.samples.length-1][1]:null,rss_peak_mb:rssPeak(r!),wall_s:Math.round(r!.wall*10)/10,refused:tf.refused,
+    ...logFloods(r!.log),cpu_s:r!.samples.length?r!.samples[r!.samples.length-1][1]:null,rss_peak_mb:rssPeak(r!),wall_s:Math.round(r!.wall*10)/10,refused:tf.refused,
     ...(zip?{replay:replayOf(r!.log)}:{})});
   if(r!.timedOut){row.state="timeout";return;}
   if(r!.signal){row.state="crash";row.crash_reason=`signal ${r!.signal}`;return;}

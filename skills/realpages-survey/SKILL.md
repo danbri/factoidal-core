@@ -71,6 +71,7 @@ of the page area (`--window-size=W,H-top`, iPhone user agent for `mobile` rows).
 | `scroll_latency_p50_ms`, `_p95_ms` | queued wheel event to present, 20 steps (includes script turns that hold the loop) |
 | `rss_peak_mb` | peak resident memory over both runs (ps every 250 ms) |
 | `skips` | what liberal mode skipped (System console entries), each once |
+| `log_floods` | trips of the console log gate (`native-html-log-flood` trace events, watch and scroll runs; hosts from core PR 479 on): a failure offline, as a crash is |
 | `layout_similarity` | SSIM of the two pictures shrunk to 1/16, flat windows left out (`visual.ts`): HN 0.50, Spinal Tap page 0.61, Wikipedia without its columns 0.12-0.20, a blank page 0.04 |
 | `verdict` | `crash`, `timeout` (no frame), `blank` (< 20 primitives), `unusable` (scroll p95 > 5 s or first frame > 60 s), `slow` (first frame > 10 s, scroll p95 > 1 s, idle CPU > 50% or a turn > 5 s), else `usable` |
 
@@ -96,7 +97,7 @@ Each surveyed release has the assets `realpages-<platform>-<mode>.json` and `.md
 changes). A run's job summary has the same table; its pictures are the artifact `realpages-<platform>-pictures`
 for 7 days.
 
-Regressions (`compare.ts`): a crash (fails the job offline; `--informational` live), a worse verdict, a number over 1.5 times the previous
+Regressions (`compare.ts`): a crash or a tripped log gate (fails the job offline; `--informational` live), a worse verdict, a number over 1.5 times the previous
 one and above its noise floor (first frame 1 s, layout 50 ms, GPU 10 ms, idle CPU 10 points, script turn
 100 ms, scroll 50 ms, RSS 200 MB), layout similarity down by more than 0.05. Unreachable, before or now, is
 never a regression.

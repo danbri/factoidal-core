@@ -8,6 +8,8 @@ export type WatchFacts={
   gpu_p50_ms:number|null;gpu_p95_ms:number|null;
   script_turns:number;script_turn_max_ms:number|null;script_ms_total:number;scripts_off:string|null;
   page_errors:number;skips:Skip[];shot:boolean;
+  /** Trips of the console log gate (native-html-log-flood events) and the first trip's most-said messages. */
+  log_floods:number;log_flood_top:string|null;
 };
 export type ScrollFacts={events:number|null;latency_p50_ms:number|null;latency_p95_ms:number|null;
   composite_p50_ms:number|null;composite_p95_ms:number|null;lean_frames:number|null;ratchet:boolean};
@@ -47,7 +49,16 @@ export function parseWatch(log:string):WatchFacts{
     script_ms_total:Math.round(turns.reduce((a,b)=>a+b,0)),scripts_off:off?"document HTML over 1 MiB":null,
     page_errors:text.filter(l=>l.startsWith("page error")||l.includes("Uncaught")).length,
     skips:list,shot:ev.some(e=>e.type==="native-html-shot"),
+    ...logFloods(log),
   };
+}
+
+/** Trips of the log gate in a run's output (run_html.ts and Textnaut write one
+{"type":"native-html-log-flood",lines,top} line per trip). */
+export function logFloods(log:string):{log_floods:number;log_flood_top:string|null}{
+  const trips=events(log).filter(e=>e.type==="native-html-log-flood");
+  const top=trips[0]?.top;
+  return {log_floods:trips.length,log_flood_top:top===undefined?null:JSON.stringify(top).slice(0,160)};
 }
 
 export function parseScroll(log:string):ScrollFacts{

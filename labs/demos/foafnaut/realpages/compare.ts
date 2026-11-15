@@ -8,7 +8,7 @@
 // --informational (the live survey: the network and the pages change under it): a crash is a
 // warning too, and the exit is 0. The offline survey (snapshots) is the gate.
 //
-// Regressions: a crash; a verdict worse than before (unreachable, before or now, is not one: it
+// Regressions: a crash or a tripped log gate (exit 1); a verdict worse than before (unreachable, before or now, is not one: it
 // is the network); a number over 1.5 times its previous value and more than its noise floor
 // above it; layout similarity down by more than 0.05.
 import {VERDICT_RANK,type Verdict} from "./metrics.ts";
@@ -44,6 +44,9 @@ export function findings(cur:Summary,prev?:Summary):Finding[]{
     const p=before.get(r.id);
     if(r.state==="crash"){out.push({level:"error",page:r.id,text:`crash: ${r.crash_reason??"exit"}`+(p&&p.state==="crash"?" (crashed before too)":p?" (new)":"")});continue;}
     if(r.verdict==="unreachable"){out.push({level:"note",page:r.id,text:`unreachable: ${r.unreachable_reason??""}`});continue;}
+    // A tripped log gate (a flood of console lines) is a failure, as a crash is: output that
+    // hogs the terminal and the loop is a resource fault (offline; a warning live).
+    if(typeof r.log_floods==="number"&&r.log_floods>0)out.push({level:"error",page:r.id,text:`log gate tripped ${r.log_floods} time(s)${r.log_flood_top?`: ${r.log_flood_top}`:""}`});
     if(!p||p.verdict==="unreachable")continue;
     if(VERDICT_RANK[r.verdict]>VERDICT_RANK[p.verdict])out.push({level:"warning",page:r.id,text:`verdict ${p.verdict} -> ${r.verdict}`});
     for(const [k,title,floor] of fieldsOf(cur.platform)){
@@ -84,7 +87,7 @@ export function markdown(cur:Summary,prev?:Summary):string{
 
 export const TREND_COLUMNS=["run_id","run_url","started","platform","mode","release","engine_sha256","host_commit","page","state","verdict",
   "first_frame_s","first_layout_ms","prims","gpu_p50_ms","cpu_idle_pct","script_turn_max_ms","scroll_latency_p50_ms","scroll_latency_p95_ms",
-  "rss_peak_mb","skips_count","layout_similarity","load_ms","cpu_s","crash_reason"];
+  "rss_peak_mb","skips_count","layout_similarity","load_ms","cpu_s","log_floods","crash_reason"];
 export function trendRows(cur:Summary,runId:string,runUrl:string):string[]{
   const q=(v:unknown)=>{const s=v===null||v===undefined?"":String(v);return /[",\n]/.test(s)?`"${s.replaceAll('"','""')}"`:s;};
   return cur.pages.map(r=>TREND_COLUMNS.map(c=>q(({run_id:runId,run_url:runUrl,started:cur.started,platform:cur.platform,mode:cur.mode??"live",release:cur.release,

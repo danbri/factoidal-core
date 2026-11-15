@@ -22,6 +22,7 @@ const WATCH=[
   JSON.stringify({type:"native-html-skip",source:"System",feature:"page scripts",message:"Lean HTML: scriptSession: document HTML exceeds 1MiB"}),
   "page: Uncaught TypeError: x is undefined",
   JSON.stringify({type:"native-html-shot",file:"/tmp/a.png",width:1280,height:800}),
+  JSON.stringify({type:"native-html-log-flood",t:9000,lines:60,top:[["scriptSession: no session",60]]}),
   "gpu: 1 in flight, submit to done p50 52 ms, p95 74.3 ms, max in flight 3, 14 submits",
 ].join("\n");
 
@@ -32,6 +33,7 @@ Deno.test("parseWatch reads frames, GPU, script turns and skips", ()=>{
   assert.equal(w.script_turns,2);assert.equal(w.script_turn_max_ms,6202);assert.equal(w.script_ms_total,6322);
   assert.equal(w.skips.length,1,"a skip seen twice is listed once");assert.equal(w.scripts_off,"document HTML over 1 MiB");
   assert.equal(w.page_errors,1);assert.equal(w.shot,true);
+  assert.equal(w.log_floods,1);assert.match(w.log_flood_top!,/scriptSession: no session/);
   const empty=parseWatch("Error: Lean HTML: a bound\n");
   assert.equal(empty.prims,null);assert.equal(empty.gpu_p50_ms,null);assert.equal(empty.script_turn_max_ms,null);assert.equal(empty.shot,false);
 });
@@ -93,12 +95,14 @@ Deno.test("comparison with the previous survey", ()=>{
     {id:"b",state:"ok",verdict:"usable",first_frame_s:3,first_layout_ms:10},
     {id:"c",state:"unreachable",verdict:"unreachable"},
     {id:"d",state:"ok",verdict:"usable"},
+    {id:"e",state:"ok",verdict:"usable"},
   ]);
   const cur=summary([
     {id:"a",state:"ok",verdict:"slow",first_frame_s:12,first_layout_ms:100,gpu_p50_ms:25,layout_similarity:0.4},
     {id:"b",state:"ok",verdict:"usable",first_frame_s:3,first_layout_ms:40},
     {id:"c",state:"ok",verdict:"usable",first_frame_s:2},
     {id:"d",state:"crash",verdict:"crash",crash_reason:"Error: Lean HTML: a bound"},
+    {id:"e",state:"ok",verdict:"usable",log_floods:2,log_flood_top:'[["x #",60]]'},
   ]);
   const fs=findings(cur,prev).map(f=>`${f.level} ${f.page} ${f.text}`);
   assert(fs.includes("warning a verdict usable -> slow"),fs.join("\n"));
@@ -107,10 +111,11 @@ Deno.test("comparison with the previous survey", ()=>{
   assert(fs.includes("warning a layout similarity 0.5 -> 0.4"));
   assert(!fs.some(f=>f.includes(" c ")),"unreachable before, fine now: no finding");
   assert(fs.some(f=>f.startsWith("error d crash")));
+  assert(fs.some(f=>f.startsWith("error e log gate tripped 2 time(s)")),"a log flood fails as a crash does");
   const md=markdown(cur,prev);
   assert.match(md,/\| a \| slow \(was usable\) \| 12 \(\+300%\)/);
   const rows=trendRows(cur,"1","u");
-  assert.equal(rows.length,4);assert.equal(rows[0].split(",").length,TREND_COLUMNS.length);
+  assert.equal(rows.length,5);assert.equal(rows[0].split(",").length,TREND_COLUMNS.length);
 });
 
 Deno.test("--liberal-report: each System entry once, page entries never, nothing when off", ()=>{
