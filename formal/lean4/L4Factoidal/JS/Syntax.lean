@@ -576,7 +576,7 @@ def Stmt.contOutF : Nat → Stmt → Bool
     match s with
     | .cont none => true
     | .ifS _ t e => Stmt.contOutF n t || (match e with | some e => Stmt.contOutF n e | none => false)
-    | .block ss | .blockF ss => Stmt.anyContOut n ss
+    | .block ss | .blockF ss | .blockN ss => Stmt.anyContOut n ss
     | .tryS b _ h f => Stmt.anyContOut n b ||
         (match h with | some h => Stmt.anyContOut n h | none => false) ||
         (match f with | some f => Stmt.anyContOut n f | none => false)

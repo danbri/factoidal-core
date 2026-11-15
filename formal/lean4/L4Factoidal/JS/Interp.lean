@@ -1597,10 +1597,6 @@ structure VFrame where
 /-- Compiled functions may nest this deep (they do not use the host's stack). -/
 def vmMaxDepth : Nat := 20000
 
-/-- The register machine is on. Off, every function runs in the evaluator (a differential test
-and a way to compare). -/
-def useVm : Bool := true
-
 @[inline] def vmStash (regs : Array Value) (fregs : FloatArray) (top : Nat) : M Unit :=
   modify fun h => { h with vmRegs := regs, vmF := fregs, vmTop := top }
 
@@ -2159,7 +2155,7 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
     -- The depth comes back on every exit, a throw included (a throw that a caller catches
     -- must not use up the call depth).
     -- the environment: the arguments are its first slots when the parameters are plain
-    if useVm then
+    if h.useVm then
       if let some c := fd.info.code then
         return ← tryCatch (do
             if fd.kind == .ctor false then
@@ -3384,7 +3380,7 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
       declare ctx.env name { v }
       pure .normal
     | .compiled c s =>
-      if useVm then
+      if (← get).useVm then
         let _ ← vmEnter n c ctx.env ctx.thisV ctx.thisV #[]
         pure .normal
       else evalStmt n ctx labels s
@@ -4007,7 +4003,7 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
         let fs := .resume ctx (some (.id "%ret", .declare ctx.env true)) ::
           .block ctx [.ret (some (.ident "%ret"))] :: rest
         pure (if isAwait then .awaited v fs else .yielded v fs)
-    | .block ss | .blockF ss =>
+    | .block ss | .blockF ss | .blockN ss =>
       let ctx' ← enterBlock n ctx ss
       genRun n (.block ctx' ss :: rest) (.send .undef)
     | .ifS c t e =>

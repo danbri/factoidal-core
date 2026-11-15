@@ -639,6 +639,10 @@ structure ColdHeap (H : Type) where
   /-- The host's natives: `hostCall state k args steps`, with the steps left in the
   budget (`steps`), so a host can tell how far the script has run. -/
   hostCall : H → Nat → Array HostArg → Nat → H × HostAns := fun h _ _ _ => (h, .val .undef)
+  /-- The register machine (`JS/Compile.lean`, `vmLoop`) runs the functions and top-level loops it
+  compiled. Off, every function runs in the evaluator: the reference for theorems about the
+  machine, and the other half of the on-and-off differential test. A parameter of the run. -/
+  useVm : Bool := true
 
 /-- The heap, with the state `H` of the host that embeds the engine. A page host keeps
 its DOM arena and event loop here (`WasmVM.Hosts.LeanJS`), so a native of the page
