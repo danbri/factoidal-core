@@ -73,5 +73,25 @@
     "issue": "issue 450: the CPU probe of stroked glyph outlines costs 7 times the frame"
    }
   }
+ },
+ "window": {
+  "measured": "2026-11-15, Apple M1, release engine cc73af028, off-screen window, idle_loop_check.ts (4 s after the first frame of an empty page)",
+  "budgets": {
+   "window.empty.idle.turnsPerSecond": {
+    "max": 25,
+    "measured": 14.8,
+    "what": "loop wakeups per second of an idle window over 4 s (the first 200 ms of quiet still poll): it waits in the window library up to 100 ms; 10.8 over 14 s; 92 with the old 8 ms poll"
+   },
+   "window.empty.idle.waits": {
+    "min": 10,
+    "measured": 35,
+    "what": "the idle loop waits in the window library (a window library with no wait fails this)"
+   },
+   "window.empty.idle.eventsAfterWait": {
+    "max": 0,
+    "measured": 0,
+    "what": "no native event comes to an idle off-screen window, so every wait ran to its deadline"
+   }
+  }
  }
 }

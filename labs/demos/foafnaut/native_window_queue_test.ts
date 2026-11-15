@@ -128,9 +128,47 @@ function resize() {
   if (pressed.drag || after.w !== f.w || after.h !== f.h || after.x !== f.x || after.y !== f.y)
     throw new Error(`a press in the page moved the window: ${JSON.stringify(after)}`);
 }
-if (import.meta.main) Deno.args[0] === "resize" ? resize() : Deno.args[0] === "offscreen" ? offscreen() : Deno.args[0] === "cancel" ? cancel() : flood();
+// The idle wait (run_html.ts with nothing to do): it blocks for its time when no event comes,
+// returns at once for a queued native event and leaves it for the pump, and a quiet pump with
+// no event takes nothing.
+function idle() {
+  const lib = Deno.dlopen(libraryPath(), {
+    ng_create_offscreen: { parameters: ["u32", "u32", "f64"], result: "pointer" },
+    ng_test_mouse: { parameters: ["u32", "f64", "f64"], result: "void" },
+    ng_wait_event: { parameters: ["f64"], result: "i32" },
+    ng_pump_quiet: { parameters: [], result: "i32" },
+    ng_next_event: { parameters: ["buffer"], result: "i32" },
+    ng_test_event: { parameters: ["u32", "i32", "i32"], result: "void" },
+    ng_test_post_later: { parameters: ["f64"], result: "void" },
+  });
+  const s = lib.symbols, bytes = new Uint8Array(16);
+  if (!s.ng_create_offscreen(800, 500, 2)) throw new Error("no off-screen window");
+  s.ng_pump_quiet(); while (s.ng_next_event(bytes));
+  let t = performance.now();
+  const none = s.ng_wait_event(60), waited = performance.now() - t;
+  if (none !== 0 || waited < 45) throw new Error(`an idle wait with no event returned ${none} after ${waited.toFixed(1)} ms, not 0 after 60`);
+  if (s.ng_pump_quiet() !== 0) throw new Error("a quiet pump took an event that was not there");
+  s.ng_test_mouse(5, 100, 100);
+  t = performance.now();
+  const some = s.ng_wait_event(500), woke = performance.now() - t;
+  if (some !== 1 || woke > 20) throw new Error(`an idle wait with an event queued returned ${some} after ${woke.toFixed(1)} ms`);
+  if (s.ng_pump_quiet() < 1) throw new Error("the event the wait saw was not left for the pump");
+  while (s.ng_next_event(bytes));
+  // An event that comes during the wait, from another thread (as input does), ends it then.
+  s.ng_test_post_later(30);
+  t = performance.now();
+  const late = s.ng_wait_event(1000), lateMs = performance.now() - t;
+  if (late !== 1 || lateMs < 25 || lateMs > 60) throw new Error(`an event 30 ms into an idle wait ended it after ${lateMs.toFixed(1)} ms (returned ${late})`);
+  s.ng_pump_quiet(); while (s.ng_next_event(bytes));
+  // An event already in the library's own queue (a test step's) ends the wait too.
+  s.ng_test_event(2, 1, 1);
+  t = performance.now();
+  if (s.ng_wait_event(500) !== 1 || performance.now() - t > 20) throw new Error("an idle wait slept over an event in the queue");
+}
+if (import.meta.main) Deno.args[0] === "idle" ? idle() : Deno.args[0] === "resize" ? resize() : Deno.args[0] === "offscreen" ? offscreen() : Deno.args[0] === "cancel" ? cancel() : flood();
 else for (const [name, mode] of [["native input queue keeps every click, cancel and key", "flood"],
-  ["native cancel stays distinct and ordered between clicks", "cancel"], ["off-screen window uses the same queue", "offscreen"], ["window edges and corners resize like a Mac window", "resize"]]) Deno.test(name, async () => {
+  ["native cancel stays distinct and ordered between clicks", "cancel"], ["off-screen window uses the same queue", "offscreen"], ["window edges and corners resize like a Mac window", "resize"],
+  ["an idle host waits for the next event instead of polling", "idle"]]) Deno.test(name, async () => {
   if (Deno.build.os !== "darwin") return;
   const run = await new Deno.Command(Deno.execPath(), {
     args: ["run", "--no-check", "--no-config", "--allow-read", "--allow-ffi", "--unstable-ffi", new URL(import.meta.url).pathname, mode],

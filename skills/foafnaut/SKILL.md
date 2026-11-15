@@ -292,6 +292,12 @@ Measuring:
 - `--perf-summary`: frame and input latency when the run ends.
 - `--idle-checks-only`: the normal-use pixel-check rule in a sweep.
 - `--single-frame`: the path before two-layer scroll, for comparison.
+- Idle loop: with nothing to draw and nothing in flight for 200 ms, `run_html.ts` waits in the
+  window library (`ng_wait_event`) for the next event, up to the next deadline and 100 ms at
+  most, instead of an 8 ms poll. `--poll-idle` keeps the poll, for comparison. The perf summary's
+  `idle` field counts it; `idle_loop_check.ts` (test.sh) holds the wakeups per second against
+  the `window` section of `fixtures/spinal-bisect/budgets.json`. New async work in the loop must
+  be counted in its `busy` test, or it waits up to 100 ms after an idle wait.
 - Engine op `frameWork`: counts layouts, kept layouts used, repaints on a kept layout,
   `pagesMade` and `pagesKept`.
   `frame_work_test.ts` and `frame_cost_test.ts` hold the ratchets; the model is

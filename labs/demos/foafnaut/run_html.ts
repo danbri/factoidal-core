@@ -46,7 +46,7 @@ async function main() {
   if(args.includes("--help")){
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
-  let scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
+  let pollIdle=false,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
@@ -58,6 +58,7 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    else if(arg==="--poll-idle")pollIdle=true;
     // Off screen: a PNG of the window after the 120th present of page canvases, a picture of
     // what the native engine drew (the page's layers, its canvases and the chrome).
     else if(arg==="--shot"){shotFile=args.shift();if(!shotFile)throw new Error("--shot needs a file path");}
@@ -317,7 +318,9 @@ async function main() {
   let gpuReplay=false;
   // Page requests (XMLHttpRequest, fetch): the host only moves bytes (native_net.ts). The
   // engine chose them (origin, CORS, redirects, the address of a name: Net.PageFetch).
-  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number])=>netAnswer(w);
+  // Counted, so an idle window does not wait in the window library while an answer is coming.
+  let netInFlight=0;
+  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number])=>{netInFlight++;return Promise.resolve(netAnswer(w)).finally(()=>{netInFlight--;});};
   // WebSocket connections (Net.WebSocket): the engine writes the handshake and the frames;
   // each read goes back as an answer of action `net` (status 1 with the bytes, 0 at the end).
   const sockets=new Map<string,NetSocket>();
@@ -1179,6 +1182,8 @@ async function main() {
   let lastActivity=performance.now(),queueMax=0,fatal:unknown,rendering:Promise<void>|undefined;
   let awaiting:{kind:number;at:number}[]=[],awaitingShift:{kind:number;at:number}[]=[],awaitingBand:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
   let shifting:Promise<void>|undefined;const shifts:number[]=[];
+  // The idle loop (issue 450): pumps, waits in the window library and turns with nothing to do.
+  const idleStats={pumps:0,waits:0,waitedMs:0,quietPumps:0,eventsAfterWait:0,idleTurns:0,idleMs:0};
   const latencies:number[]=[],totals:number[]=[],pumpGaps:number[]=[],pumpGapsLate:number[]=[];let lastPump:number|undefined,firstFrameAt:number|undefined;
   const percentile=(values:number[],q:number)=>{if(!values.length)return null;const sorted=[...values].sort((a,b)=>a-b);return Math.round(sorted[Math.min(sorted.length-1,Math.ceil(q*sorted.length)-1)]*10)/10;};
   // Latency starts when the window library queued the event, or at dequeue with an older library.
@@ -1195,6 +1200,8 @@ async function main() {
       slowCalls,
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
       prefetch:prefetchStats,frameCost,animationFrames,queueMax,sessionStats:session?.stats,
+      idle:{...idleStats,waitedMs:Math.round(idleStats.waitedMs),idleMs:Math.round(idleStats.idleMs),
+        turnsPerSecond:idleStats.idleMs>0?Math.round(idleStats.idleTurns/(idleStats.idleMs/1000)*10)/10:null},
       gpu:{framesInFlight,submitToDoneMsP50:percentile(session?.gpuTimes??[],0.5),submitToDoneMsP95:percentile(session?.gpuTimes??[],0.95),
         maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
       pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
@@ -1203,7 +1210,7 @@ async function main() {
         frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
     trace(line.type,line);
     // Off screen, "presented" means drawn and submitted to the texture: no compositor, no display.
-    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms, guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)`);
+    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms, guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)`);
   };
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
@@ -1549,9 +1556,38 @@ async function main() {
             followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url}) as LinkRoute);}
         }
     };
+    // Idle (issue 450): with nothing to draw, nothing in flight and no deadline near, the loop
+    // waits in the window library for the next native event, up to the next deadline and at
+    // most IDLE_WAIT_CAP_MS, instead of waking every 8 ms; input ends the wait at once. Work
+    // this does not count (a socket is never idle here) is late by at most the cap.
+    // --poll-idle keeps the 8 ms poll, for comparison.
+    const IDLE_WAIT_CAP_MS=100,IDLE_QUIET_MS=200;
+    let busyAt=performance.now(),waited=0,idleEndAt:number|undefined;
+    const idleWaitMs=(now:number,scriptWakeIn:number|null)=>{
+      // Before the first frame only a window that can not present (asleep, covered) waits.
+      if(firstFrameAt===undefined&&canPresent())return 0;
+      const busy=(dirty&&canPresent())||animationDue||!!rendering||!!shifting||shiftPending||pressPresent||!!pressed||!!holding||scriptBusy
+        ||loading||!!candidate||refusing>0||!!prefetching||graphBusy()||!!(document as Page).graph?.clock||netQueue.length>0||netInFlight>0
+        ||sockets.size>0||(worker?.inFlight??0)>0||!!sweep||(!!commands&&(commands.length>0&&now+2>=stepAt));
+      if(busy){busyAt=now;idleEndAt=undefined;return 0;}
+      // Loop turns with nothing to do, per second: the wakeups an idle window costs.
+      if(idleEndAt!==undefined){idleStats.idleTurns++;idleStats.idleMs+=now-idleEndAt;}
+      idleEndAt=now;
+      if(pollIdle||!native!.canWait()||now-busyAt<IDLE_QUIET_MS)return 0;
+      let wait=IDLE_WAIT_CAP_MS;
+      if(scriptWakeIn!==null)wait=Math.min(wait,Math.max(scriptWakeIn,gpuHoldUntil-now));
+      if(!everyFrame&&session?.frames&&!session.lastChecked&&canPresent())wait=Math.min(wait,lastActivity+IDLE_CHECK_MS-now);
+      if(commands?.length)wait=Math.min(wait,stepAt-now);
+      if(watchSeconds&&firstFrameAt!==undefined)wait=Math.min(wait,firstFrameAt+watchSeconds*1000-now);
+      return wait>=2?Math.floor(wait):0;
+    };
     while(running){
       lateArrivals();
-      const pumpStart=performance.now();if(lastPump!==undefined){pumpGaps.push(pumpStart-lastPump);if(firstFrameAt!==undefined&&lastPump>=firstFrameAt)pumpGapsLate.push(pumpStart-lastPump);if(pumpStart-lastPump>50)trace("native-html-pump-gap",{ms:ms(lastPump,pumpStart),frames:frameNumber,rendering:!!rendering});}lastPump=pumpStart;native.pump();checkHold();const pumpEnd=performance.now();
+      const pumpStart=performance.now();if(lastPump!==undefined){const gap=pumpStart-lastPump-waited;pumpGaps.push(gap);if(firstFrameAt!==undefined&&lastPump>=firstFrameAt)pumpGapsLate.push(gap);if(gap>50)trace("native-html-pump-gap",{ms:Math.round(gap*10)/10,frames:frameNumber,rendering:!!rendering});}
+      lastPump=pumpStart;idleStats.pumps++;
+      // After an idle wait no window update or flush unless an event came.
+      if(waited){idleStats.quietPumps++;if(native.pumpQuiet())idleStats.eventsAfterWait++;}else native.pump();
+      waited=0;checkHold();const pumpEnd=performance.now();
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       // Take every native event now and keep each with the time it was taken. None is dropped here.
       // The window library stamps each event when it is queued; its clock maps onto
@@ -1819,10 +1855,18 @@ async function main() {
       }
       // Wake at least every 8 ms to pump, sooner for the page's next timer or animation frame
       // (a fixed 8 ms paced 16 ms frames at about 21 ms); wake at once when a frame ends.
-      const wakeIn=scriptsOn&&script&&script.turn.nextWake!==null
-        ?script.turn.nextWake-(performance.now()-(scriptEpochs.get(script.session)??performance.now())):8;
-      const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil(wakeIn)))));
-      await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[])]);
+      const scriptWakeIn=scriptsOn&&script&&script.turn.nextWake!==null
+        ?script.turn.nextWake-(performance.now()-(scriptEpochs.get(script.session)??performance.now())):null;
+      const idleMs=running?idleWaitMs(performance.now(),scriptWakeIn):0;
+      if(idleMs){
+        const start=performance.now();native.waitEvent(idleMs);waited=performance.now()-start;
+        idleStats.waits++;idleStats.waitedMs+=waited;
+        // Let answers that came meanwhile run before the pump.
+        await new Promise(resolve=>setTimeout(resolve,0));
+      } else {
+        const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil(scriptWakeIn??8)))));
+        await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[])]);
+      }
     }
   } finally {
     running=false;controller?.abort();quitAt=performance.now();

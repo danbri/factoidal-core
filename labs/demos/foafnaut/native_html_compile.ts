@@ -21,6 +21,8 @@ export type CompileClient={
   dropLow():void;
   /** Ordinary and input calls sent and not yet answered. */
   readonly pending:number;
+  /** Every message sent to the worker and not yet answered (prefetches and fonts too). */
+  readonly inFlight:number;
   /** The engine methods that run in the worker, as promise-returning functions. */
   engine:Record<RemoteCall,(...args:unknown[])=>Promise<unknown>>;
   readonly alive:boolean;
@@ -55,6 +57,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
   return {
     get alive(){return alive;},
     get pending(){return ordinary;},
+    get inFlight(){return pending.size;},
     async prefetchLayers(source,width,height,options){
       const reply=await send({op:"call",name:"compileLayers",args:[source,width,height,options],low:true});
       if(!reply.ok){if(reply.dropped)return undefined;throw new Error(reply.error);}
