@@ -338,6 +338,9 @@ async function loadFallbackFonts(source,wait){
 // Pages that declare no encoding: the setting ('' detect) and the browser's language
 // (navigator.language), which Lean maps by HTML §13.2.3.2's table of suggested defaults.
 let encodingSetting='';const systemLocale=self.navigator?.language??'';
+// The search engine chosen in Settings (WebRoute.searchSetting): '' until the person picks one;
+// until then words typed in the address bar open the browser's own search page.
+let searchSetting='';
 function decodePage(bytes,contentType){
   if(module&&typeof module._web_document_decode_call_bin==='function'&&typeof module._malloc==='function'){
     const two=typeof module._web_document_decode2_call_bin==='function';
@@ -394,6 +397,9 @@ function settingsSource(source){
   // an engine from before the op keeps the static links.
   const eOpen='<!--foafnaut:encoding-->',eClose='<!--/foafnaut:encoding-->',ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
   if(ei>=0&&ej>ei)try{source=source.slice(0,ei+eOpen.length)+call('',{op:'encodingChoices',setting:encodingSetting,locale:systemLocale}).html+source.slice(ej);}catch{/* the static links */}
+  // The search engine section (none chosen by default); an engine from before the op keeps the static text.
+  const sOpen='<!--foafnaut:search-->',sClose='<!--/foafnaut:search-->',si=source.indexOf(sOpen),sj=source.indexOf(sClose);
+  if(si>=0&&sj>si)try{source=source.slice(0,si+sOpen.length)+call('',{op:'searchChoices',setting:searchSetting}).html+source.slice(sj);}catch{/* the static text */}
   return source;
 }
 // A text resource of this site (a linked style sheet): another origin is read only from the
@@ -997,6 +1003,18 @@ async function wasmPage(url){
   const answer=call('',{op:'wasmPage',...(argument?await wasmModule(argument):{})});
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
 }
+// foafnaut:search/WORDS (WebShell.searchPage): words typed in the address bar with no search
+// engine chosen. Lean writes it from the open tabs and the stored bookmarks and history (the
+// page's own IndexedDB or memory store); nothing is fetched to show it.
+const searchURL='foafnaut:search';
+async function searchPage(url){
+  const resources=browserState?await browserState.resources().catch(()=>undefined):undefined;
+  const open=tabs.map((tab,i)=>i===active?doc:tab.doc).filter(Boolean).map(page=>({url:page.url,title:page.title??''}));
+  let answer;
+  try{answer=call('',{op:'searchPage',argument:url.slice(searchURL.length+1),tabs:open,resources:resources??[],state:resources!==undefined,search:searchSetting});}
+  catch{answer={title:'Needs a newer engine',source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body><h1>The search page needs a newer engine</h1><p>The words were sent to no one.</p></body></html>'};}
+  return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+}
 async function statePage(url){
   if(!browserState)throw Error(`Browser state is off: ${stateReason}`);
   const answer=await browserState.page(url.slice(9));
@@ -1039,7 +1057,7 @@ function visit(address){
   // their fallback on an engine from before the route op.
   const route=router.route({...site,href:address,base:homeURL});
   if(!route)return;
-  if(route.route==='system')outsideGo(route.url,false);
+  if(route.route==='system'||route.route==='outside')outsideGo(route.url,false);
   else if(route.route==='command')shellCommand(route.name,route.argument);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url,false);
@@ -1060,7 +1078,7 @@ function consolePage(url){
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}],consoleSource:source};
 }
 function openConsole(){const source=doc;newTab();setFocus(false);consoleFrom=source;navigate(consoleURL);}
-const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
+const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url.startsWith(searchURL+'/')?searchPage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
 // The Hub's own browser pages as link targets (the start page offers "open in Foafnaut on the
 // Hub" and "in Textnaut on the Hub" for a reader in an ordinary browser): in this tab, a link to
 // this Foafnaut page with an address after # opens that address here, not a second Foafnaut in
@@ -1121,8 +1139,12 @@ function menuDone(data){
 // An address from the bar (Enter, or Paste and go): Lean routes it as typed.
 function goTo(target){
   leaveAddress();
-  const route=router.address({...site,address:target,base:doc.baseURL||doc.url});
-  if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));
+  const route=router.address({...site,address:target,base:doc.baseURL||doc.url,search:searchSetting});
+  // A typed address reaches the system only as `:open URL`; here it is the Outside page, read
+  // from nowhere, so its button is a second, explicit press (and an older engine's answer for
+  // typed words, a search engine's address, is never fetched).
+  if(route?.route==='system')show(outsidePage(route.url));
+  else if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));
 }
 function menuPress(data,how){
   if(!menuOps)return;
@@ -1335,6 +1357,13 @@ function shellCommand(name,argument){
       if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
     catch(error){doc=refusal('foafnaut:encoding/'+argument,String(error.message??error));request();}
   }
+  else if(name==='search-engine'){
+    // Lean reads the choice (an engine of its list, an address with %s, or none). A link gives
+    // this command only on the Settings page (WebRoute.settingsOnly); the bar may type it.
+    try{searchSetting=call('',{op:'searchSetting',setting:argument}).setting;browserState?.settings({search:searchSetting}).catch(()=>{});
+      if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
+    catch(error){doc=refusal('foafnaut:search-engine/'+argument,String(error.message??error));request();}
+  }
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
   else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
@@ -1367,17 +1396,20 @@ async function openState(){
     if(typeof saved.settings.scripts==='string')scriptSetting=saved.settings.scripts;
     if(typeof saved.settings.liberal==='boolean'&&!strictParam)liberal=saved.settings.liberal;
     if(typeof saved.settings.encoding==='string')encodingSetting=saved.settings.encoding;
+    if(typeof saved.settings.search==='string')try{searchSetting=call('',{op:'searchSetting',setting:saved.settings.search}).setting;}catch{searchSetting='';}
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
 }
 // Lean's route for a link or an address (link-route.mjs), done as it says. This host tests
 // no URL: a refused link shows Lean's reason and stays out of the history.
 function follow(route){
   if(route.route==='command')shellCommand(route.name,route.argument);
-  else if(route.route==='system')offSiteGo(route.url);
+  else if(route.route==='system'||route.route==='outside')offSiteGo(route.url);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url);
 }
-// A link or an address of another site (Lean's route "system"). It never leaves Foafnaut by
+// A link or an address of another site (Lean's route "outside", and "system" for the press of
+// the Outside page's button, which Lean answers only when the request's `outside` is that
+// page's address). It never leaves Foafnaut by
 // itself (owner, 2026-11-16): the page opens in the tab from the Hub's copy or from a direct
 // read the site allows (copies.mjs fetchOutside); else the tab shows outsidePage, whose one
 // button is a link to the same address. Only a press on that button, while that page is
@@ -1389,7 +1421,15 @@ function outsideGo(url,press){
   if(/^https?:/i.test(url))navigate(url,press);
   else show(outsidePage(url),press);
 }
+// The Outside page, as Lean writes it (WebShell.outsidePage); an engine from before the op
+// gets the page this file wrote before it (legacyOutsidePage).
 const outsidePage=url=>{
+  try{
+    const answer=call('',{op:'outsidePage',url,hub:true,textnaut:url.startsWith(hubTextnaut)});
+    return {url,title:answer.title,outside:url,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+  }catch{return legacyOutsidePage(url);}
+};
+const legacyOutsidePage=url=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const web=/^https?:/i.test(url),hub=url.startsWith(hubTextnaut);
   const why=hub?'<p>Textnaut has its own page on the Hub; it does not open inside this one.</p>'
@@ -1409,7 +1449,10 @@ const outsidePage=url=>{
 function legacyGo(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
   else if(answer.url?.startsWith('foafnaut:'))navigate(answer.url);
-  else if(answer.go==='system'||!answer.url.startsWith(siteOrigin))offSiteGo(answer.url);
+  // The system only by a press: an older engine's "system" (a search engine's address for
+  // typed words) is the Outside page, never fetched.
+  else if(answer.go==='system')show(outsidePage(answer.url));
+  else if(!answer.url.startsWith(siteOrigin))offSiteGo(answer.url);
   else navigate(answer.url);
 }
 function chrome(control){
@@ -1606,7 +1649,7 @@ async function start(data){
   // (a command, a refusal, another site) is handled by visit() once the tab is ready.
   let fromAddress;
   if(data.address){try{const route=router.route({...site,href:data.address,base:homeURL});
-    if(route&&!['system','command','refuse'].includes(route.route))fromAddress=route.url;}catch{}}
+    if(route&&!['system','outside','command','refuse'].includes(route.route))fromAddress=route.url;}catch{}}
   const opening=fromAddress??wanted;
   if(opening){try{first=await pageFor(opening);}catch(error){first=refusal(opening,String(error.message??error));}}
   phase('pageReady');
@@ -1848,7 +1891,7 @@ function apply(data){
     // A click begins the SVG animations whose `begin` is a click on what it hits.
     if(doc.animation?.has&&current){const a=doc.animation;a.clicks=[...a.clicks,[Math.round(performance.now()-a.epoch),data.x,data.y-current.answer.layers.top+scroll]].slice(-16);a.running=true;request();}
     const target=hit(data.x,data.y);
-    if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url}));
+    if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url,outside:doc?.outside??''}));
   }
   if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){

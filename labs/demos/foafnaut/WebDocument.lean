@@ -1079,12 +1079,37 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
   -- the hosts do with no URL test of their own. `origin` is the site the browser loads
   -- pages from ("" for every site), `pages` its folder of pages, `files` whether it reads
   -- local files, `base` the address of the page the link is on.
+  -- `outside` is the address whose Outside page the tab shows ("" for any other page), so a
+  -- link to it is that page's button; `search` is the search engine chosen in Settings.
   if op == "shellRoute" then
-    let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := request.field? "files" == some (.bool true)}
+    let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := request.field? "files" == some (.bool true),
+      outside := str request "outside"}
     let route := match request.field? "address" with
-      | some (.string address) => WebShell.routeAddress site (str request "base") address
+      | some (.string address) => WebShell.routeAddress {site with outside := ""} (str request "base") address (str request "search")
       | _ => WebRoute.routeAddress site (str request "base") (str request "href")
     return some (WebShell.routeJson route).toString
+  -- Words typed in the address bar (owner, 2026-11-16: no default search engine). The page
+  -- `foafnaut:search/WORDS`, from the stored `resources` and the open `tabs` the host passes:
+  -- no request is made to show it.
+  if op == "searchPage" then
+    let words := WebRoute.decodeQuery (str request "argument")
+    let tabs := match request.field? "tabs" with
+      | some (.array items) => items.filterMap fun t =>
+          let url := str t "url"; let title := str t "title"
+          if !url.isEmpty && WebState.matchesWords words url title then some ("Open tab", url, title) else none
+      | _ => []
+    let found := tabs.take WebState.maxFound ++ WebState.searchFoundOf words request
+    let stateOn := request.field? "state" == some (.bool true)
+    return some (JSON.Json.object [("title",.string (words ++ " (search)")),
+      ("source",.string (WebShell.searchPage words found stateOn (str request "search")))]).toString
+  if op == "searchChoices" then
+    return some (JSON.Json.object [("html",.string (WebShell.searchChoicesHTML (str request "setting")))]).toString
+  if op == "searchSetting" then
+    let setting := WebRoute.searchSetting (str request "setting")
+    return some (JSON.Json.object [("setting",.string setting),("name",.string (WebRoute.searchName setting))]).toString
+  if op == "outsidePage" then
+    return some (JSON.Json.object [("title",.string "Another site"),
+      ("source",.string (WebShell.outsidePage (str request "url") (request.field? "hub" == some (.bool true)) (request.field? "textnaut" == some (.bool true))))]).toString
   -- Back and forward swipes (WebGesture): `action` info, touch or wheel.
   if let some answer ← WebGesture.op op request then return some answer
   -- WebAssembly run by Lean's own engine, WasmVM (WebWasm; issue 1244).

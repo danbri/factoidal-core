@@ -370,17 +370,26 @@ structure Settings where
   /-- How a page that declares no encoding is read (`WHATWG.Encoding.Sniff.Fallback`):
   "" (detect, the default), "detect", "locale" or an encoding's name. -/
   encoding : String := ""
+  /-- The search engine chosen in Settings (`WebRoute.searchSetting`: an engine's id or an
+  address with `%s`); "" until the person chooses one (owner, 2026-11-16: no default). -/
+  search : String := ""
   fonts : List String := []
   fallback : List String := []
   remotePod : String := ""
   modified : Nat := 0
   deriving BEq, Repr
 
+/-- A search setting as stored: printable ASCII, at most 512 characters, else "". The engine
+reads it again with `WebRoute.searchSetting` before any use. -/
+def searchStored (v : String) : String :=
+  if v.length ≤ 512 && v.toList.all (fun c => c.toNat > 32 && c.toNat < 127) then v else ""
+
 def Settings.doc (s : Settings) : Json :=
   document "foafnaut:Settings" ([("foafnaut:theme", .string s.theme), ("foafnaut:textZoom", num s.textZoom),
     ("foafnaut:classicUI", .bool s.classicUI), ("foafnaut:liberal", .bool s.liberal)] ++
     (if s.scripts.isEmpty then [] else [("foafnaut:scripts", .string s.scripts)]) ++
     (if s.encoding.isEmpty then [] else [("foafnaut:defaultEncoding", .string s.encoding)]) ++
+    (if s.search.isEmpty then [] else [("foafnaut:searchEngine", .string s.search)]) ++
     [("foafnaut:font", .array (s.fonts.map .string)), ("foafnaut:fontFallback", .array (s.fallback.map .string))] ++
     (if s.remotePod.isEmpty then [] else [("foafnaut:remotePod", .string s.remotePod)]) ++
     [("dateModified", .string (isoOf s.modified))])
@@ -390,6 +399,7 @@ def Settings.ofDoc (j : Json) : Settings :=
     classicUI := (match j.field? "foafnaut:classicUI" with | some (.bool b) => b | _ => true),
     scripts := str j "foafnaut:scripts",
     liberal := j.field? "foafnaut:liberal" != some (.bool false), encoding := str j "foafnaut:defaultEncoding",
+    search := searchStored (str j "foafnaut:searchEngine"),
     fonts := strings j "foafnaut:font", fallback := strings j "foafnaut:fontFallback",
     remotePod := str j "foafnaut:remotePod", modified := (millisOf (str j "dateModified")).getD 0 }
 
@@ -403,6 +413,9 @@ def Settings.ofDoc (j : Json) : Settings :=
 #guard (Settings.ofDoc (Json.object [])).liberal && !(Settings.ofDoc ({liberal := false} : Settings).doc).liberal
 -- The default encoding: detect until a choice; a choice survives a round trip.
 #guard (Settings.ofDoc (Json.object [])).encoding == ""
+-- No search engine until a choice; a choice survives a round trip.
+#guard (Settings.ofDoc (Json.object [])).search == ""
+#guard (Settings.ofDoc ({search := "mojeek"} : Settings).doc).search == "mojeek"
 #guard (Settings.ofDoc ({encoding := "locale"} : Settings).doc).encoding == "locale"
 
 /-! ## The default encoding of pages that declare none (`WHATWG.Encoding.Sniff`) -/
@@ -577,6 +590,40 @@ def historyPage (vs : List Visit) (whereStored : String) : String :=
     (if newest.isEmpty then "<p>No pages visited yet.</p>" else body) ++
     s!"<p class=\"dim\">The last {newest.length} of {vs.length} visits. Stored in {escape whereStored}.</p>")
 
+/-! ## Looking in the browser's own data
+
+The search page (`WebShell.searchPage`) shows the bookmarks and history entries that match
+the words typed in the address bar. It reads only the stored resources the host passes in:
+no request is made. -/
+
+private def lowerAscii (s : String) : String := String.ofList (s.toList.map Char.toLower)
+
+/-- Every word (split at spaces, ASCII case ignored) is in the address or the title. No
+word: nothing matches. -/
+def matchesWords (words url title : String) : Bool :=
+  let ws := (lowerAscii words).splitOn " " |>.filter (!·.isEmpty)
+  let hay := lowerAscii url ++ " " ++ lowerAscii title
+  !ws.isEmpty && ws.all fun w => (hay.splitOn w).length > 1
+
+/-- At most this many entries of each kind. -/
+def maxFound : Nat := 20
+
+/-- The bookmarks, then the history entries (newest first, one per address), that match
+`words`, as (kind, url, title). -/
+def searchFound (words : String) (rs : List (String × String)) : List (String × String × String) :=
+  let docs := rs.filterMap fun (p, b) => (parse b).map (p, ·)
+  let marks := (docs.filterMap fun (p, j) => if kindOf p == .bookmark then Bookmark.ofDoc j else none).filter (!·.deleted)
+  let vs := (docs.filter (kindOf ·.1 == .history)).flatMap (visits ·.2)
+  -- Match first, then sort the matches; the kept list never passes `maxFound`, so the
+  -- check for a repeated address is bounded.
+  let newest := (vs.filter fun v => matchesWords words v.url v.title).toArray.qsort (fun a b => a.time > b.time) |>.toList
+  let seen := newest.foldl (fun (acc : List Visit) v =>
+    if acc.length ≥ maxFound || acc.any (·.url == v.url) then acc else acc ++ [v]) []
+  ((marks.filter fun b => matchesWords words b.url b.title).take maxFound |>.map fun b => ("Bookmark", b.url, b.title)) ++
+  (seen.map fun v => ("History", v.url, v.title))
+
+#guard matchesWords "Lean browser" "https://example.org/lean" "A Browser" && !matchesWords "lean x" "https://e/lean" "" && !matchesWords "  " "a" "b"
+
 /-! ## The ops -/
 
 private def pairs (j : Json) (key : String) : List (String × String) :=
@@ -585,6 +632,10 @@ private def pairs (j : Json) (key : String) : List (String × String) :=
       let p := str r "path"
       match r.field? "body" with | some (.string b) => if p.isEmpty then none else some (p, b) | _ => none
   | _ => []
+
+/-- `searchFound` for the `resources` of a request (`WebDocument`'s op `searchPage`). -/
+def searchFoundOf (words : String) (request : Json) : List (String × String × String) :=
+  searchFound words (pairs request "resources")
 
 private def pairsJson (ps : List (String × String)) (base : String) : Json :=
   .array (ps.map fun (p, b) => match writePlan base p with
@@ -652,6 +703,9 @@ def op (name : String) (request : Json) : Except String (Option String) := do
       encoding := (match request.field? "encoding" with
         | some (.string v) => encodingSetting v
         | _ => old.encoding),
+      search := (match request.field? "search" with
+        | some (.string v) => searchStored v
+        | _ => old.search),
       fonts := fonts, fallback := fallback, remotePod := str request "remotePod" old.remotePod, modified := now }
     return some (write base settingsPath s.doc.toString)
   if name == "stateSession" then
@@ -681,7 +735,7 @@ def op (name : String) (request : Json) : Except String (Option String) := do
         ("tags", .array (b.tags.map .string)), ("added", num b.added)])),
       ("visits", num vs.length),
       ("settings", match settings with
-        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("scripts", .string s.scripts), ("liberal", .bool s.liberal), ("encoding", .string s.encoding), ("fonts", .array (s.fonts.map .string)),
+        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("scripts", .string s.scripts), ("liberal", .bool s.liberal), ("encoding", .string s.encoding), ("search", .string s.search), ("fonts", .array (s.fonts.map .string)),
             ("fallback", .array (s.fallback.map .string)), ("remotePod", .string s.remotePod)]
         | none => .null),
       ("session", match session with
