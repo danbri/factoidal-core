@@ -29,6 +29,11 @@ eleventyExcludeFromCollections: true
     textarea{width:100%;box-sizing:border-box;min-height:9rem;font:13px/1.4 ui-monospace,monospace}
     #stats{font:12px ui-monospace,monospace;color:var(--muted);margin:6px 0;min-height:1.3em;overflow-wrap:anywhere}
     #note{color:var(--muted)}
+    #settings{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:6px 0}
+    #settings h2{font-size:1rem;margin:0 0 6px}
+    #settings .row{margin:4px 0}
+    #settings-button[aria-expanded="true"]{border-color:var(--accent);color:var(--accent)}
+    :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
     .keys{font-size:13px;color:var(--muted)}
     .keys kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:3px;padding:0 4px}
   </style>
@@ -40,12 +45,17 @@ eleventyExcludeFromCollections: true
   </header>
   <form id="go">
     <label for="address" class="visually-hidden" hidden>Address</label>
-    <input id="address" name="address" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="a page of this site, e.g. ../foafnaut/pages/index.html" aria-label="Address">
+    <input id="address" name="address" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="a page of this site, or a site with a Hub copy" aria-label="Address">
     <button type="submit">Go</button>
     <button type="button" id="back" title="Back (b)">Back</button>
-    <label>Columns <select id="cols"><option value="auto">fit</option><option>60</option><option>72</option><option>80</option><option>100</option><option>120</option></select></label>
-    <label><input type="checkbox" id="scripts" checked> Scripts</label>
+    <button type="button" id="settings-button" title="Settings (s)" aria-expanded="false" aria-controls="settings">&#9881;&#xFE0E; Settings</button>
   </form>
+  <section id="settings" hidden aria-label="Settings">
+    <h2>Settings</h2>
+    <div class="row"><label>Page scripts <select id="engine"><option value="bubblepop">BubblePopJS (the built-in JavaScript engine)</option><option value="off">Off</option></select></label></div>
+    <div class="row"><label>Columns <select id="cols"><option value="auto">fit the window</option><option>60</option><option>72</option><option>80</option><option>100</option><option>120</option></select></label></div>
+    <p class="keys">Engine: the built-in engine, its WebAssembly build, in this page. Textnaut in a terminal (<code>npx @foafos/textnaut</code>) runs the native build, reads any site, and takes <code>--no-scripts</code>, <code>--width COLS</code> and <code>--strict</code>. Foafnaut's settings: <a href="../foafnaut/#danbri.github.io/factoidal/web/hub/foafnaut/pages/settings.html">Foafnaut on the Hub</a>.</p>
+  </section>
   <details id="paste">
     <summary>Type or paste HTML</summary>
     <textarea id="source" spellcheck="false" aria-label="HTML to lay out"><h1>Textnaut on the Hub</h1>
@@ -57,7 +67,7 @@ eleventyExcludeFromCollections: true
   <p id="stats" role="status"></p>
   <div id="view"></div>
   <p id="note"></p>
-  <p class="keys">Keys in the grid: <kbd>j</kbd> <kbd>k</kbd> or arrows scroll; a number then <kbd>Enter</kbd> follows that link; <kbd>Tab</kbd> selects the next link and <kbd>Enter</kbd> follows it; <kbd>b</kbd> goes back; <kbd>g</kbd> goes to the address. Pages of this site only: the Hub has no proxy for other sites.</p>
+  <p class="keys">Keys in the grid: <kbd>j</kbd> <kbd>k</kbd> or arrows scroll; a number then <kbd>Enter</kbd> follows that link; <kbd>Tab</kbd> selects the next link and <kbd>Enter</kbd> follows it; <kbd>b</kbd> goes back; <kbd>g</kbd> goes to the address; <kbd>s</kbd> opens the settings. The Hub reads pages of this site, and its copies of a few openly licensed pages of other sites (listed on the <a href="../foafnaut/pages/start.html">start page</a>); other sites need Textnaut in a terminal.</p>
   <noscript>Textnaut needs JavaScript and WebAssembly.</noscript>
   <script type="module" src="{{ '/web/hub/textnaut/app.mjs' | url }}?v={{ buildVersion }}"></script>
 </body>

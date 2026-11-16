@@ -22,20 +22,25 @@ in your browser.
 
 ## Web platform
 
-foafnaut2525 is a web rendering engine written in Lean, and Foafnaut is the browser
-built on it. [Web platform](./web-platform/) has all their pages.
+Foafnaut is a web browser with its own built-in engine, BubblePopKit: it parses HTML,
+computes CSS, lays out text and boxes, runs page scripts with BubblePopJS and draws with
+WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-platform/) has all their pages.
 
 <ul class="post-series">
+  <li><a href="./foafnaut/">Foafnaut</a> — the browser in a page: tabs, an address bar for URLs, searches and commands, view source, XML with XSLT, drawn by the built-in engine with WebGPU. It works at phone width.</li>
+  <li><a href="./textnaut/">Textnaut</a> — the text-mode browser in a page: the built-in engine lays out a page and Textnaut shows it as a grid of characters with numbered links, as in a terminal. The terminal program: <code>npx @foafos/textnaut</code>.</li>
+  <li><a href="./foafnaut/pages/start.html">Start page</a> — the page Foafnaut and Textnaut open with: sites on the web to try, grouped, each with a note on how well it works today, and copies of some openly licensed pages that open inside Foafnaut on the Hub.</li>
+  <li><a href="./foafnaut/pages/index.html">Demo pages</a> — pages that show what the engine draws: scripts, WebGPU and WebGL, SVG, text, XML and XSLT. Open them in <a href="./foafnaut/">Foafnaut</a> or <a href="./textnaut/">Textnaut</a>.</li>
+  <li><a href="./foafnaut/pages/stress.html">Stress tests</a> — heavy pages kept apart, such as the Spinal Tap page and the shader gallery, with what makes each one heavy.</li>
+  <li><a href="./foafnaut/pages/settings.html">Settings</a> — the page script engine (BubblePopJS or QuickJS-NG), text size, theme and the other choices; in Foafnaut it is the gear at the right of the toolbar, or <code>:settings</code>.</li>
+  <li><a href="./notebook/">Notebook: cells drawn by the built-in engine</a> — notebook cells whose output the engine draws: a page in a canvas, a Foafnaut view with scripts, and Textnaut's text, from one engine, with each cell's timings.</li>
   <li><a href="./conformance/">Conformance</a> — how much of Test262, the JavaScript conformance suite, and of the Web Platform Tests Foafnaut passes, from full measured runs, next to other browsers, with the history of every run.</li>
   <li><a href="./specs/">Data and documents conformance</a> — RDF, SPARQL, OWL 2, SHACL, ShEx, JSON-LD, CSVW, RML, RIF, Verifiable Credentials, XML, XSLT, Schematron, JSON Schema and MathML: one row per technology family, then each specification, version and test population, with the history of every recorded run.</li>
-  <li><a href="./foafnaut/">foafnaut</a> — the Lean browser in a page: tabs, an address bar for URLs, searches and commands, view source, XML with XSLT, drawn with WebGPU. It works at phone width.</li>
-  <li><a href="./textnaut/">Textnaut</a> — the text-mode browser in a page: the built-in engine lays out a page of this site, or HTML you type, and Textnaut shows it as a grid of characters with numbered links.</li>
-  <li><a href="./notebook/">Notebook: cells drawn by the built-in engine</a> — notebook cells whose output the engine draws: a page in a canvas, a Foafnaut view with scripts, and Textnaut's text, from one engine, with each cell's timings.</li>
   <li><a href="./web-platform/foafnaut/notes/">Foafnaut notes</a> — short dated notes on what the browser can do, newest first, with links that open each demo in Foafnaut.</li>
-  <li><a href="./foafnaut2525-status/">foafnaut2525 project status</a> — where the Lean web rendering engine stands, suite by suite; the engine renders this note too.</li>
-  <li><a href="./html-webgpu/">HTML and CSS in Lean</a> — editable HTML/CSS, Lean block and inline layout, shared vector geometry, WebGPU pixels and clickable source-mapped links</li>
+  <li><a href="./foafnaut2525-status/">Project status</a> — where the engine stands, suite by suite; the engine renders this note too.</li>
+  <li><a href="./html-webgpu/">HTML and CSS in the built-in engine</a> — editable HTML/CSS, block and inline layout, shared vector geometry, WebGPU pixels and clickable source-mapped links.</li>
   <li><a href="./render-scores/">Rendering and font scores</a> — the score of each rendering and font suite by commit, and the largest failure groups: the next fixes.</li>
-  <li><a href="./render-scores/#svg-tiny-pixels">SVG Tiny 1.2 test suite results</a> — each W3C SVG Tiny 1.2 test drawn by the Lean engine and compared with its reference image.</li>
+  <li><a href="./render-scores/#svg-tiny-pixels">SVG Tiny 1.2 test suite results</a> — each W3C SVG Tiny 1.2 test drawn by the engine and compared with its reference image.</li>
 </ul>
 
 ## Pages

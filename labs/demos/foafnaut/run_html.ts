@@ -991,7 +991,7 @@ async function main() {
     else if(name==="home")navigate(home.url);
     else if(name==="graph")navigate(graphURL);
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
-    else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;browserState?.settings({theme});}
+    else if(name==="theme"){theme=argument||(theme==="dark"?"light":"dark");dirty=true;browserState?.settings({theme});}
     else if(name==="zoom")zoomCommand(argument);
     else if(name==="scripts"&&planOp){
       // The page script engine: Lean checks the name; pages opened after it use it.
