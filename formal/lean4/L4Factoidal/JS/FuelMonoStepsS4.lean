@@ -8,79 +8,94 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem doLoop_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : List String) (a2 : Stmt) (a3 : Expr) :
-    Le (doLoop (H := H) (n + 1) a0 a1 a2 a3) (doLoop (m + 1) a0 a1 a2 a3) := by
-  refine Le.unfold (doLoop.eq_def _ _ _ _ _) (doLoop.eq_def _ _ _ _ _) ?_
+theorem doLoop_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List String) (a2 : Stmt) (a3 : Expr) :
+    Le (doLoop (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (doLoop (md := t2) (m + 1) a0 a1 a2 a3) := by
+  refine Le.unfold (doLoop.eq_def (md := t1) _ _ _ _ _) (doLoop.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem forLoop_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : List String) (a2 : List String) (a3 : Option Expr) (a4 : Option Expr) (a5 : Stmt) (a6 : Bool) :
-    Le (forLoop (H := H) (n + 1) a0 a1 a2 a3 a4 a5 a6) (forLoop (m + 1) a0 a1 a2 a3 a4 a5 a6) := by
-  refine Le.unfold (forLoop.eq_def _ _ _ _ _ _ _ _) (forLoop.eq_def _ _ _ _ _ _ _ _) ?_
+theorem forLoop_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List String) (a2 : List String) (a3 : Option Expr) (a4 : Option Expr) (a5 : Stmt) (a6 : Bool) :
+    Le (forLoop (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4 a5 a6) (forLoop (md := t2) (m + 1) a0 a1 a2 a3 a4 a5 a6) := by
+  refine Le.unfold (forLoop.eq_def (md := t1) _ _ _ _ _ _ _ _) (forLoop.eq_def (md := t2) _ _ _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem copyEnv_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : List String) :
-    Le (copyEnv (H := H) (n + 1) a0 a1) (copyEnv (m + 1) a0 a1) := by
-  refine Le.unfold (copyEnv.eq_def _ _ _) (copyEnv.eq_def _ _ _) ?_
+theorem copyEnv_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List String) :
+    Le (copyEnv (H := H) (md := t1) (n + 1) a0 a1) (copyEnv (md := t2) (m + 1) a0 a1) := by
+  refine Le.unfold (copyEnv.eq_def (md := t1) _ _ _) (copyEnv.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem forInLoop_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : List String) (a2 : Option DeclKind) (a3 : Pat) (a4 : Value) (a5 : List String) (a6 : Stmt) :
-    Le (forInLoop (H := H) (n + 1) a0 a1 a2 a3 a4 a5 a6) (forInLoop (m + 1) a0 a1 a2 a3 a4 a5 a6) := by
-  refine Le.unfold (forInLoop.eq_def _ _ _ _ _ _ _ _) (forInLoop.eq_def _ _ _ _ _ _ _ _) ?_
+theorem forInLoop_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List String) (a2 : Option DeclKind) (a3 : Pat) (a4 : Value) (a5 : List String) (a6 : Stmt) :
+    Le (forInLoop (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4 a5 a6) (forInLoop (md := t2) (m + 1) a0 a1 a2 a3 a4 a5 a6) := by
+  refine Le.unfold (forInLoop.eq_def (md := t1) _ _ _ _ _ _ _ _) (forInLoop.eq_def (md := t2) _ _ _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem bindIter_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : Option DeclKind) (a2 : Pat) (a3 : Value) :
-    Le (bindIter (H := H) (n + 1) a0 a1 a2 a3) (bindIter (m + 1) a0 a1 a2 a3) := by
-  refine Le.unfold (bindIter.eq_def _ _ _ _ _) (bindIter.eq_def _ _ _ _ _) ?_
+theorem bindIter_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Option DeclKind) (a2 : Pat) (a3 : Value) :
+    Le (bindIter (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (bindIter (md := t2) (m + 1) a0 a1 a2 a3) := by
+  refine Le.unfold (bindIter.eq_def (md := t1) _ _ _ _ _) (bindIter.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem forOfLoop_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : List String) (a2 : Option DeclKind) (a3 : Pat) (a4 : Value) (a5 : Stmt) :
-    Le (forOfLoop (H := H) (n + 1) a0 a1 a2 a3 a4 a5) (forOfLoop (m + 1) a0 a1 a2 a3 a4 a5) := by
-  refine Le.unfold (forOfLoop.eq_def _ _ _ _ _ _ _) (forOfLoop.eq_def _ _ _ _ _ _ _) ?_
+theorem forOfLoop_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List String) (a2 : Option DeclKind) (a3 : Pat) (a4 : Value) (a5 : Stmt) :
+    Le (forOfLoop (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4 a5) (forOfLoop (md := t2) (m + 1) a0 a1 a2 a3 a4 a5) := by
+  refine Le.unfold (forOfLoop.eq_def (md := t1) _ _ _ _ _ _ _) (forOfLoop.eq_def (md := t2) _ _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem switchFind_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : Value) (a2 : List Case) (a3 : Nat) :
-    Le (switchFind (H := H) (n + 1) a0 a1 a2 a3) (switchFind (m + 1) a0 a1 a2 a3) := by
-  refine Le.unfold (switchFind.eq_def _ _ _ _ _) (switchFind.eq_def _ _ _ _ _) ?_
+theorem switchFind_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Value) (a2 : List Case) (a3 : Nat) :
+    Le (switchFind (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (switchFind (md := t2) (m + 1) a0 a1 a2 a3) := by
+  refine Le.unfold (switchFind.eq_def (md := t1) _ _ _ _ _) (switchFind.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem runCases_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : List Case) :
-    Le (runCases (H := H) (n + 1) a0 a1) (runCases (m + 1) a0 a1) := by
-  refine Le.unfold (runCases.eq_def _ _ _) (runCases.eq_def _ _ _) ?_
+theorem runCases_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List Case) :
+    Le (runCases (H := H) (md := t1) (n + 1) a0 a1) (runCases (md := t2) (m + 1) a0 a1) := by
+  refine Le.unfold (runCases.eq_def (md := t1) _ _ _) (runCases.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem evalDecls_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : DeclKind) (a2 : List Decl) :
-    Le (evalDecls (H := H) (n + 1) a0 a1 a2) (evalDecls (m + 1) a0 a1 a2) := by
-  refine Le.unfold (evalDecls.eq_def _ _ _ _) (evalDecls.eq_def _ _ _ _) ?_
+theorem evalDecls_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : DeclKind) (a2 : List Decl) :
+    Le (evalDecls (H := H) (md := t1) (n + 1) a0 a1 a2) (evalDecls (md := t2) (m + 1) a0 a1 a2) := by
+  refine Le.unfold (evalDecls.eq_def (md := t1) _ _ _ _) (evalDecls.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem bindPat_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : Pat) (a2 : Value) (a3 : BindMode) :
-    Le (bindPat (H := H) (n + 1) a0 a1 a2 a3) (bindPat (m + 1) a0 a1 a2 a3) := by
-  refine Le.unfold (bindPat.eq_def _ _ _ _ _) (bindPat.eq_def _ _ _ _ _) ?_
+theorem bindPat_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Pat) (a2 : Value) (a3 : BindMode) :
+    Le (bindPat (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (bindPat (md := t2) (m + 1) a0 a1 a2 a3) := by
+  refine Le.unfold (bindPat.eq_def (md := t1) _ _ _ _ _) (bindPat.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem bindProps_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : List PatProp) (a2 : Value) (a3 : BindMode) (a4 : List String) :
-    Le (bindProps (H := H) (n + 1) a0 a1 a2 a3 a4) (bindProps (m + 1) a0 a1 a2 a3 a4) := by
-  refine Le.unfold (bindProps.eq_def _ _ _ _ _ _) (bindProps.eq_def _ _ _ _ _ _) ?_
+theorem bindProps_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List PatProp) (a2 : Value) (a3 : BindMode) (a4 : List String) :
+    Le (bindProps (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4) (bindProps (md := t2) (m + 1) a0 a1 a2 a3 a4) := by
+  refine Le.unfold (bindProps.eq_def (md := t1) _ _ _ _ _ _) (bindProps.eq_def (md := t2) _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem bindElems_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : List (Option PatElem)) (a2 : Value) (a3 : BindMode) (a4 : Bool) :
-    Le (bindElems (H := H) (n + 1) a0 a1 a2 a3 a4) (bindElems (m + 1) a0 a1 a2 a3 a4) := by
-  refine Le.unfold (bindElems.eq_def _ _ _ _ _ _) (bindElems.eq_def _ _ _ _ _ _) ?_
+theorem bindElems_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List (Option PatElem)) (a2 : Value) (a3 : BindMode) (a4 : Bool) :
+    Le (bindElems (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4) (bindElems (md := t2) (m + 1) a0 a1 a2 a3 a4) := by
+  refine Le.unfold (bindElems.eq_def (md := t1) _ _ _ _ _ _) (bindElems.eq_def (md := t2) _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem copyDataProps_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Nat) (a1 : Value) (a2 : List String) :
-    Le (copyDataProps (H := H) (n + 1) a0 a1 a2) (copyDataProps (m + 1) a0 a1 a2) := by
-  refine Le.unfold (copyDataProps.eq_def _ _ _ _) (copyDataProps.eq_def _ _ _ _) ?_
+theorem copyDataProps_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : Value) (a2 : List String) :
+    Le (copyDataProps (H := H) (md := t1) (n + 1) a0 a1 a2) (copyDataProps (md := t2) (m + 1) a0 a1 a2) := by
+  refine Le.unfold (copyDataProps.eq_def (md := t1) _ _ _ _) (copyDataProps.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem getIterator_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) :
-    Le (getIterator (H := H) (n + 1) a0) (getIterator (m + 1) a0) := by
-  refine Le.unfold (getIterator.eq_def _ _) (getIterator.eq_def _ _) ?_
+theorem getIterator_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
+    Le (getIterator (H := H) (md := t1) (n + 1) a0) (getIterator (md := t2) (m + 1) a0) := by
+  refine Le.unfold (getIterator.eq_def (md := t1) _ _) (getIterator.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
-theorem iterStep_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) :
-    Le (iterStep (H := H) (n + 1) a0) (iterStep (m + 1) a0) := by
-  refine Le.unfold (iterStep.eq_def _ _) (iterStep.eq_def _ _) ?_
+theorem iterStep_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
+    Le (iterStep (H := H) (md := t1) (n + 1) a0) (iterStep (md := t2) (m + 1) a0) := by
+  refine Le.unfold (iterStep.eq_def (md := t1) _ _) (iterStep.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
 end L4Factoidal.JS.FuelMono

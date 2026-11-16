@@ -8,79 +8,94 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem deleteOrThrow_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) (a1 : String) :
-    Le (deleteOrThrow (H := H) (n + 1) a0 a1) (deleteOrThrow (m + 1) a0 a1) := by
-  refine Le.unfold (deleteOrThrow.eq_def _ _ _) (deleteOrThrow.eq_def _ _ _) ?_
+theorem deleteOrThrow_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : String) :
+    Le (deleteOrThrow (H := H) (md := t1) (n + 1) a0 a1) (deleteOrThrow (md := t2) (m + 1) a0 a1) := by
+  refine Le.unfold (deleteOrThrow.eq_def (md := t1) _ _ _) (deleteOrThrow.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem arrayGeneric_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Native) (a1 : Value) (a2 : Array Value) :
-    Le (arrayGeneric (H := H) (n + 1) a0 a1 a2) (arrayGeneric (m + 1) a0 a1 a2) := by
-  refine Le.unfold (arrayGeneric.eq_def _ _ _ _) (arrayGeneric.eq_def _ _ _ _) ?_
+theorem arrayGeneric_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Native) (a1 : Value) (a2 : Array Value) :
+    Le (arrayGeneric (H := H) (md := t1) (n + 1) a0 a1 a2) (arrayGeneric (md := t2) (m + 1) a0 a1 a2) := by
+  refine Le.unfold (arrayGeneric.eq_def (md := t1) _ _ _ _) (arrayGeneric.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem speciesFrom_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) (a1 : Nat) :
-    Le (speciesFrom (H := H) (n + 1) a0 a1) (speciesFrom (m + 1) a0 a1) := by
-  refine Le.unfold (speciesFrom.eq_def _ _ _) (speciesFrom.eq_def _ _ _) ?_
+theorem speciesFrom_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Nat) :
+    Le (speciesFrom (H := H) (md := t1) (n + 1) a0 a1) (speciesFrom (md := t2) (m + 1) a0 a1) := by
+  refine Le.unfold (speciesFrom.eq_def (md := t1) _ _ _) (speciesFrom.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem speciesFill_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) (a1 : Array Value) (a2 : Option Nat) :
-    Le (speciesFill (H := H) (n + 1) a0 a1 a2) (speciesFill (m + 1) a0 a1 a2) := by
-  refine Le.unfold (speciesFill.eq_def _ _ _ _) (speciesFill.eq_def _ _ _ _) ?_
+theorem speciesFill_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Array Value) (a2 : Option Nat) :
+    Le (speciesFill (H := H) (md := t1) (n + 1) a0 a1 a2) (speciesFill (md := t2) (m + 1) a0 a1 a2) := by
+  refine Le.unfold (speciesFill.eq_def (md := t1) _ _ _ _) (speciesFill.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem elemsOf_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) :
-    Le (elemsOf (H := H) (n + 1) a0) (elemsOf (m + 1) a0) := by
-  refine Le.unfold (elemsOf.eq_def _ _) (elemsOf.eq_def _ _) ?_
+theorem elemsOf_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
+    Le (elemsOf (H := H) (md := t1) (n + 1) a0) (elemsOf (md := t2) (m + 1) a0) := by
+  refine Le.unfold (elemsOf.eq_def (md := t1) _ _) (elemsOf.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
-theorem elemAt_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Nat) (a1 : Nat) (a2 : Bool) :
-    Le (elemAt (H := H) (n + 1) a0 a1 a2) (elemAt (m + 1) a0 a1 a2) := by
-  refine Le.unfold (elemAt.eq_def _ _ _ _) (elemAt.eq_def _ _ _ _) ?_
+theorem elemAt_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : Nat) (a2 : Bool) :
+    Le (elemAt (H := H) (md := t1) (n + 1) a0 a1 a2) (elemAt (md := t2) (m + 1) a0 a1 a2) := by
+  refine Le.unfold (elemAt.eq_def (md := t1) _ _ _ _) (elemAt.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem iterArray_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Native) (a1 : Value) (a2 : Value) (a3 : Value) (a4 : Nat) (a5 : Nat) (a6 : Array Value) :
-    Le (iterArray (H := H) (n + 1) a0 a1 a2 a3 a4 a5 a6) (iterArray (m + 1) a0 a1 a2 a3 a4 a5 a6) := by
-  refine Le.unfold (iterArray.eq_def _ _ _ _ _ _ _ _) (iterArray.eq_def _ _ _ _ _ _ _ _) ?_
+theorem iterArray_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Native) (a1 : Value) (a2 : Value) (a3 : Value) (a4 : Nat) (a5 : Nat) (a6 : Array Value) :
+    Le (iterArray (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4 a5 a6) (iterArray (md := t2) (m + 1) a0 a1 a2 a3 a4 a5 a6) := by
+  refine Le.unfold (iterArray.eq_def (md := t1) _ _ _ _ _ _ _ _) (iterArray.eq_def (md := t2) _ _ _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem reduceArray_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) (a1 : Value) (a2 : Nat) (a3 : Nat) (a4 : Value) :
-    Le (reduceArray (H := H) (n + 1) a0 a1 a2 a3 a4) (reduceArray (m + 1) a0 a1 a2 a3 a4) := by
-  refine Le.unfold (reduceArray.eq_def _ _ _ _ _ _) (reduceArray.eq_def _ _ _ _ _ _) ?_
+theorem reduceArray_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Value) (a2 : Nat) (a3 : Nat) (a4 : Value) :
+    Le (reduceArray (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4) (reduceArray (md := t2) (m + 1) a0 a1 a2 a3 a4) := by
+  refine Le.unfold (reduceArray.eq_def (md := t1) _ _ _ _ _ _) (reduceArray.eq_def (md := t2) _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem arrayLikeLength_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) :
-    Le (arrayLikeLength (H := H) (n + 1) a0) (arrayLikeLength (m + 1) a0) := by
-  refine Le.unfold (arrayLikeLength.eq_def _ _) (arrayLikeLength.eq_def _ _) ?_
+theorem arrayLikeLength_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
+    Le (arrayLikeLength (H := H) (md := t1) (n + 1) a0) (arrayLikeLength (md := t2) (m + 1) a0) := by
+  refine Le.unfold (arrayLikeLength.eq_def (md := t1) _ _) (arrayLikeLength.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
-theorem sortGt_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) (a1 : Value) (a2 : Value) :
-    Le (sortGt (H := H) (n + 1) a0 a1 a2) (sortGt (m + 1) a0 a1 a2) := by
-  refine Le.unfold (sortGt.eq_def _ _ _ _) (sortGt.eq_def _ _ _ _) ?_
+theorem sortGt_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Value) (a2 : Value) :
+    Le (sortGt (H := H) (md := t1) (n + 1) a0 a1 a2) (sortGt (md := t2) (m + 1) a0 a1 a2) := by
+  refine Le.unfold (sortGt.eq_def (md := t1) _ _ _ _) (sortGt.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem mergeSort_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) (a1 : List Value) :
-    Le (mergeSort (H := H) (n + 1) a0 a1) (mergeSort (m + 1) a0 a1) := by
-  refine Le.unfold (mergeSort.eq_def _ _ _) (mergeSort.eq_def _ _ _) ?_
+theorem mergeSort_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : List Value) :
+    Le (mergeSort (H := H) (md := t1) (n + 1) a0 a1) (mergeSort (md := t2) (m + 1) a0 a1) := by
+  refine Le.unfold (mergeSort.eq_def (md := t1) _ _ _) (mergeSort.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem merge_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) (a1 : List Value) (a2 : List Value) (a3 : Array Value) :
-    Le (merge (H := H) (n + 1) a0 a1 a2 a3) (merge (m + 1) a0 a1 a2 a3) := by
-  refine Le.unfold (merge.eq_def _ _ _ _ _) (merge.eq_def _ _ _ _ _) ?_
+theorem merge_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : List Value) (a2 : List Value) (a3 : Array Value) :
+    Le (merge (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (merge (md := t2) (m + 1) a0 a1 a2 a3) := by
+  refine Le.unfold (merge.eq_def (md := t1) _ _ _ _ _) (merge.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem toPropDesc_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) :
-    Le (toPropDesc (H := H) (n + 1) a0) (toPropDesc (m + 1) a0) := by
-  refine Le.unfold (toPropDesc.eq_def _ _) (toPropDesc.eq_def _ _) ?_
+theorem toPropDesc_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
+    Le (toPropDesc (H := H) (md := t1) (n + 1) a0) (toPropDesc (md := t2) (m + 1) a0) := by
+  refine Le.unfold (toPropDesc.eq_def (md := t1) _ _) (toPropDesc.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
-theorem defineFromDescriptor_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Nat) (a1 : String) (a2 : Value) :
-    Le (defineFromDescriptor (H := H) (n + 1) a0 a1 a2) (defineFromDescriptor (m + 1) a0 a1 a2) := by
-  refine Le.unfold (defineFromDescriptor.eq_def _ _ _ _) (defineFromDescriptor.eq_def _ _ _ _) ?_
+theorem defineFromDescriptor_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : String) (a2 : Value) :
+    Le (defineFromDescriptor (H := H) (md := t1) (n + 1) a0 a1 a2) (defineFromDescriptor (md := t2) (m + 1) a0 a1 a2) := by
+  refine Le.unfold (defineFromDescriptor.eq_def (md := t1) _ _ _ _) (defineFromDescriptor.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem jsonStr_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) (a1 : Nat) :
-    Le (jsonStr (H := H) (n + 1) a0 a1) (jsonStr (m + 1) a0 a1) := by
-  refine Le.unfold (jsonStr.eq_def _ _ _) (jsonStr.eq_def _ _ _) ?_
+theorem jsonStr_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Nat) :
+    Le (jsonStr (H := H) (md := t1) (n + 1) a0 a1) (jsonStr (md := t2) (m + 1) a0 a1) := by
+  refine Le.unfold (jsonStr.eq_def (md := t1) _ _ _) (jsonStr.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
 end L4Factoidal.JS.FuelMono

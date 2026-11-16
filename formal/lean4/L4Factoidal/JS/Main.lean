@@ -32,7 +32,7 @@ def jsFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
     n.endsWith ".js" && !n.endsWith "_FIXTURE.js"
   return fs.qsort (fun a b => a.toString < b.toString)
 
-def test262 (fresh : Heap) (root : System.FilePath) (dirs : List String) (listOut : Option String) : IO Unit := do
+def test262 [Mode] (fresh : Heap) (root : System.FilePath) (dirs : List String) (listOut : Option String) : IO Unit := do
   let base ← harnessHeap root fresh false
   let mut lines : Array String := #[]
   let mut tp := 0; let mut tf := 0; let mut ts := 0; let mut tneg := 0
@@ -64,7 +64,7 @@ def loopSrc : String :=
   "const o = []; for (let i = 0; i < 2000; i++) o.push({ k: 'k' + i, v: i }); " ++
   "return s + ' ' + JSON.stringify(o).length })())"
 
-def timeIt (name src : String) : IO Unit := do
+def timeIt [Mode] (name src : String) : IO Unit := do
   let t0 ← IO.monoNanosNow
   let (o, out) := run src
   let t1 ← IO.monoNanosNow
@@ -79,6 +79,8 @@ def main (args : List String) : IO UInt32 := do
   -- `BUBBLEPOP_VM=off`: the register machine is off for the run (the heap's `useVm`)
   let vm := (← IO.getEnv "BUBBLEPOP_VM") != some "off"
   let fresh : Heap := { freshHeap with useVm := vm }
+  -- `BUBBLEPOP_TIER1=off`: the reference run, the evaluator with tier 1 off (`Mode.ref`)
+  let md : Mode := ⟨(← IO.getEnv "BUBBLEPOP_TIER1") != some "off"⟩
   match args with
   | ["run", file] =>
     let (o, h) := runScript fresh (← IO.FS.readFile file)
@@ -119,7 +121,7 @@ def main (args : List String) : IO UInt32 := do
     timeIt "loop" loopSrc
     pure 0
   | _ =>
-    IO.eprintln "usage: [BUBBLEPOP_VM=off] leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | test262-files ROOT LIST | bench"
+    IO.eprintln "usage: [BUBBLEPOP_VM=off] [BUBBLEPOP_TIER1=off] leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | test262-files ROOT LIST | bench"
     pure 64
 
 end L4Factoidal.JS.Main
