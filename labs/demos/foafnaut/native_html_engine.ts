@@ -33,7 +33,8 @@ export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:n
 export type PressAnswer = {control:string|null;sourceNode?:number|null;href?:string;rects:number[][]};
 /** A skip of liberal mode (WebAccept.Diagnostic.json): what Lean did not draw or run, and why. */
 export type Diagnostic = {source:"System";severity:string;feature:string;where:string;action:string;message:string};
-export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact;diagnostics?:Diagnostic[]};
+/** `wantsSerif`: the page's text resolves to serif and the engine holds no serif face (serif_font.ts). */
+export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact;diagnostics?:Diagnostic[];wantsSerif?:boolean};
 export type Inspection = {
   baseURL:string;
   title:string;
@@ -118,7 +119,10 @@ a JSON head and raw sections, with no Base64. The buffer is the host's own copy.
 export type BytesBackend=(html:string,requestJSON:string,width:number,height:number)=>ArrayBuffer;
 /** A font file as bytes (`web_document_font_call_bin`, WebDocument.fontLoadBin): no Base64
 and no JSON, so the file is not copied onto the call stack. The answer is the fontLoad JSON. */
-export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean|"web")=>string;
+/** `fallback`: "serif" holds the serif face (mode 3, WebDocument.loadSerifFont), "web" a web font (2),
+true a fallback font (1), false replaces the held list (0). */
+export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean|"web"|"serif")=>string;
+const fontMode=(fallback:boolean|"web"|"serif")=>fallback==="serif"?3:fallback==="web"?2:fallback?1:0;
 /** An image as bytes (`web_document_image_call_bin`, WebDocument.imageLoadBin), held by key
 and SHA-256; undefined when the engine has no such export. The answer is the imageLoad JSON. */
 export type ImageBackend=(bytes:Uint8Array,key:string,sha256:string)=>string;
@@ -163,7 +167,7 @@ export function nativeBackends(path:string):Backends {
       finally{library.symbols.web_render_free(pointer);}
     },
     font:(bytes,family,sha256,fallback)=>{
-      const pointer=library.symbols.web_document_font_call_bin(bytes,bytes.length,cstring(family),cstring(sha256),fallback==="web"?2:fallback?1:0);
+      const pointer=library.symbols.web_document_font_call_bin(bytes,bytes.length,cstring(family),cstring(sha256),fontMode(fallback));
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return new Deno.UnsafePointerView(pointer).getCString();}
       finally{library.symbols.web_render_free(pointer);}
@@ -209,7 +213,7 @@ function wasmBackends(module:Module):Backends {
       if(!input)throw new Error("Published Lean HTML engine allocation failed");
       try{
         module.HEAPU8.set(bytes,input);
-        const pointer=module.ccall("web_document_font_call_bin","number",["number","number","string","string","number"],[input,bytes.length,family,sha256,fallback==="web"?2:fallback?1:0]);
+        const pointer=module.ccall("web_document_font_call_bin","number",["number","number","string","string","number"],[input,bytes.length,family,sha256,fontMode(fallback)]);
         if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
         try{return module.UTF8ToString(pointer);}
         finally{module.ccall("web_render_free",null,["number"],[pointer]);}
@@ -366,10 +370,12 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // Lean reads the font once and holds it; later renders draw with it.
     // fallback:true adds the font to the engine's list, after the fonts it holds;
     // otherwise the font replaces the list. The answer counts the fonts held.
-    fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string,fallback=false)=>
-      documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256,...(fallback?{fallback:true}:{})}) as FontLoaded,
+    fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string,fallback:boolean|"serif"=false)=>
+      documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256,...(fallback==="serif"?{serif:true}:fallback?{fallback:true}:{})}) as FontLoaded,
     // The same, with the file as bytes: no Base64, and no size limit from the call stack.
-    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string,fallback=false)=>{
+    // fallback:"serif" holds the serif face, which draws the text whose family resolves to
+    // serif (FontFaceRule.genericOf); a host gives it when a render answers wantsSerif.
+    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string,fallback:boolean|"serif"=false)=>{
       const result=JSON.parse(backends.font(bytes,fontFamily,fontSha256,fallback));
       if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
       return result as FontLoaded;
@@ -444,6 +450,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
         throw new Error("Unexpected published Lean HTML layers ABI");
       const layers:HTMLLayers={layers:place,page:sceneOf(result.page,width,place.bandHeight),chrome:sceneOf(result.chrome,width,Math.max(1,place.top))};
       if(Array.isArray(result.diagnostics))layers.diagnostics=result.diagnostics as Diagnostic[];
+      if(result.wantsSerif===true)layers.wantsSerif=true;
       return layers;
     },
     // Lean decides what a chrome click, a key, an address and a link mean.

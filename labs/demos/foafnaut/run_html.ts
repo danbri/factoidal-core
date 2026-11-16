@@ -22,6 +22,7 @@ import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
+import {SERIF_FAMILY,serifFontHost,serifFontPath,wantsSerif} from "./serif_font.ts";
 import type {UIEvent} from "./ui_engine.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
@@ -244,6 +245,14 @@ async function main() {
     if(answer.loaded.length||answer.failed.length)console.log(JSON.stringify({type:"native-html-fonts",t:Math.round(performance.now()),where,
       ms:Math.round((performance.now()-start)*10)/10,fonts:answer.loaded,...(answer.failed.length?{failed:answer.failed}:{}),held:answer.held.length}));
   };
+  // The serif face (serif_font.ts): read and given to the engine that lays pages out the
+  // first time a render answers wantsSerif, then the page is drawn again; never before.
+  const serif=serifFontHost(async()=>{
+    const start=performance.now(),path=serifFontPath(),where=worker?.alive?"worker":"main";
+    if(worker?.alive)await worker.serifFont(path,SERIF_FAMILY);
+    else await loadFontFile(engine,path,SERIF_FAMILY,"bytes","serif");
+    console.log(JSON.stringify({type:"native-html-serif",t:Math.round(performance.now()),where,ms:Math.round((performance.now()-start)*10)/10}));
+  });
   const useMainEngine=async(reason:string)=>{
     console.error("Native HTML: ENGINE WORKER UNAVAILABLE, so Lean runs on the main thread and the window can miss input:",reason);
     console.log(JSON.stringify({type:"native-html-worker",state:"main-thread-fallback",reason}));
@@ -252,6 +261,8 @@ async function main() {
       mainFallbacks=typeof (await loadFontFile(engine,workerFont.path,workerFont.family))?.fonts==="number";
       // The fallback fonts the worker held, so the pages open keep their scripts.
       if(mainFallbacks&&workerFonts?.length)await mainFonts.add(workerFonts);
+      // The serif face the worker held, so serif pages stay serif.
+      if(serif.started)await loadFontFile(engine,serifFontPath(),SERIF_FAMILY,"bytes","serif").catch(()=>{});
     }catch(error){if(fontFile)throw error;workerFont=undefined;}}
   };
   if(check){
@@ -1462,6 +1473,8 @@ async function main() {
       }
       // Liberal mode: what Lean skipped goes to the page's console.
       noteDiagnostics(nextDocument,nextLayers??next);
+      // Text that resolves to serif while the engine holds no serif face: give it, draw again.
+      if(wantsSerif(nextLayers??next))serif.want()?.then(ok=>{if(ok)dirty=true;});
       const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.

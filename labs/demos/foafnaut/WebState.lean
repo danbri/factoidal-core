@@ -558,7 +558,7 @@ private def escape (s : String) : String :=
 
 private def shell (title body : String) : String :=
   "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" ++ escape title ++
-  "</title><style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}" ++
+  "</title><style>body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}" ++
   "h1{margin:0 0 12px;font-size:18px;line-height:24px;color:#a0186a}h2{margin:12px 0 4px;font-size:14px;color:#a0186a}" ++
   "p{margin:0 0 4px}.dim{color:#6a7080}a{color:#1a4fa0}</style></head><body><h1>" ++ escape title ++ "</h1>" ++ body ++ "</body></html>"
 

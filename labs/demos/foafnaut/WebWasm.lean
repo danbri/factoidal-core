@@ -658,7 +658,7 @@ def millions (perSec : Nat) : String :=
   s!"{tenths / 10}.{tenths % 10} M/s"
 
 def style : String :=
-  "body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}" ++
+  "body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}" ++
   "h1{margin:0 0 4px 0;font-size:22px;line-height:28px;color:#a0186a}" ++
   "h2{margin:16px 0 6px 0;font-size:16px;line-height:22px;color:#a0186a}" ++
   "p{margin:0 0 8px 0}table{border-collapse:collapse}" ++

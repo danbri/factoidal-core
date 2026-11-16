@@ -1351,7 +1351,7 @@ def sourcePage (kind url source : String) : String :=
     then s!"<h2>Shown: the first {sourceLimit} of {source.length} characters</h2>" else ""
   let name := ((url.splitOn "/").getLast?).getD url
   "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" ++ escapeText (kind ++ ": " ++ name) ++
-  "</title><style>body{margin:12px;font-size:12px;line-height:16px;color:#203040;background:#f4f4ee}" ++
+  "</title><style>body{font-family:sans-serif;margin:12px;font-size:12px;line-height:16px;color:#203040;background:#f4f4ee}" ++
   "h1{margin:0;padding-bottom:8px;font-size:14px;line-height:20px;color:#a0186a}h2{margin:0;padding-bottom:8px;font-size:12px;color:#a0186a}p{margin:0}</style></head><body><h1>" ++
   escapeText (kind ++ " of " ++ url) ++ "</h1>" ++ cut ++
   String.join ((shown.splitOn "\n").map sourceLine) ++ "</body></html>"
