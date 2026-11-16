@@ -742,8 +742,13 @@ def step (cfg : ParseCfg) (m : Machine) : Step :=
 state; "if after a run pointer points to the EOF code point, go to the next
 step" (return url); "otherwise, increase pointer by 1 and continue". When
 the fuel ends the result is failure; `Cost.run_fuel_irrelevant` (URL/Cost.lean) shows
-that the fuel `basicParse` gives is never used up. -/
-def run (cfg : ParseCfg) : Nat → Machine → ParseResult
+that the fuel `basicParse` gives is never used up.
+
+Irreducible: the fuel `8 × (n + 2)` reduces to a successor even for an unknown input, so
+without it `whnf` of `parseUrl x` (a `match` on it, in a proof about a caller) would
+unfold round after round of the machine until it ran out of heartbeats. Proofs about
+`run` use its equations (`rw [run]`, `unfold run`). -/
+@[irreducible] def run (cfg : ParseCfg) : Nat → Machine → ParseResult
   | 0, m => .failure m.url
   | fuel + 1, m =>
     match step cfg m with
