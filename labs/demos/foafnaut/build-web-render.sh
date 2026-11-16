@@ -159,7 +159,8 @@ if [ "$MODE" = --native ]; then
     # assert: the native library ran WasmVM at half the speed of the Wasm engine
     # (fib 58 against 119 million instructions a second; WasmVM record, "In the Foafnaut
     # engine").
-    leanc -O3 -DNDEBUG -c "$source" -o "$object"
+    # No heartbeat count at each allocation (lean_no_heartbeat.h): the engine never reads it.
+    leanc -O3 -DNDEBUG -include "$LAB/lean_no_heartbeat.h" -Dlean_inc_heartbeat=foafnaut_no_heartbeat -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
   for source in "${HACL_SOURCES[@]}"; do
