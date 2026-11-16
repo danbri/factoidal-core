@@ -558,12 +558,20 @@ private inductive Stroke where
   | line (points : List (Float × Float))
   | ring (cx cy r : Float)
   | arc (cx cy r : Float) (points : List Nat)
+  /-- A filled shape: closed outlines, filled even-odd (an outline inside another is a hole). -/
+  | solid (outlines : List (List (Float × Float)))
 
+/-- The gear: one filled shape, eight teeth round a ring (the 16 points of `unitCircle`
+alternate between radius 7 and 5.2, each two points wide so a tooth has a flat top), with
+the hub as a hole. -/
 private def gear : List Stroke :=
-  -- Eight teeth at 45 degrees, from radius 5 to 6.6, round the ring and its hub.
-  let tooth := fun (cx cy : Float) => Stroke.line [(8+5*cx,8+5*cy),(8+6.6*cx,8+6.6*cy)]
-  let d := 0.7071
-  [.ring 8 8 4.6,.ring 8 8 1.9,tooth 1 0,tooth d d,tooth 0 1,tooth (-d) d,tooth (-1) 0,tooth (-d) (-d),tooth 0 (-1),tooth d (-d)]
+  let teeth := (List.range 16).flatMap fun i =>
+    match unitCircle[i]? with
+    | some (x,y) =>
+      let r := if i % 2 == 0 then 7 else 5.2
+      [(8+r*(x*0.98+y*0.2),8+r*(y*0.98-x*0.2)),(8+r*(x*0.98-y*0.2),8+r*(y*0.98+x*0.2))]
+    | none => []
+  [.solid [teeth,unitCircle.map fun (x,y) => (8+2.3*x,8+2.3*y)]]
 
 private def lineIcon : String → List Stroke
   | "back" => [.line [(3.5,8),(12.5,8)],.line [(7.5,4),(3.5,8),(7.5,12)]]
@@ -590,15 +598,21 @@ private def lineIconAt (c : Rendering.Color) (name : String) (box : Box) (side :
   let p := fun (x y : Float) => (x0+x*k,y0+y*k)
   let w := weight*k
   let around := fun (cx cy r : Float) (q : Float × Float) => p (cx+r*q.1) (cy+r*q.2)
-  (lineIcon name).flatMap fun
-    | .line points => polyline c w (points.map fun (x,y) => p x y)
-    | .ring cx cy r =>
-      match unitCircle.map (around cx cy r) with
-      | [] => []
-      | (sx,sy)::rest =>
-        [.paint {primitive := {geometry := .path [.path ⟨sx,sy⟩ (rest.map fun (a,b) => .line ⟨a,b⟩) true],style := strokeStyle c w}}]
-    | .arc cx cy r points =>
-      polyline c w (points.filterMap fun i => (unitCircle[i]?).map (around cx cy r))
+  let contour := fun (closed : Bool) (pts : List (Float × Float)) => match pts with
+    | [] => Rendering.Contour.empty closed
+    | (sx,sy)::rest => Rendering.Contour.path ⟨sx,sy⟩ (rest.map fun (a,b) => .line ⟨a,b⟩) closed
+  -- Every line of an icon in one stroked path and its filled shapes in one filled path: at
+  -- most two primitives an icon, as the engine's cost goes by primitive.
+  let strokes := (lineIcon name).filterMap fun
+    | .line points => some (contour false (points.map fun (x,y) => p x y))
+    | .ring cx cy r => some (contour true (unitCircle.map (around cx cy r)))
+    | .arc cx cy r points => some (contour false (points.filterMap fun i => (unitCircle[i]?).map (around cx cy r)))
+    | .solid _ => none
+  let fills := (lineIcon name).flatMap fun
+    | .solid outlines => outlines.map fun o => contour true (o.map fun (x,y) => p x y)
+    | _ => []
+  (if strokes.isEmpty then [] else [.paint {primitive := {geometry := .path strokes,style := strokeStyle c w}}]) ++
+  (if fills.isEmpty then [] else [.paint {primitive := {geometry := .path fills,style := {fill := .solid c,rule := .evenodd}}}])
 
 /-- A tab of the flat look: the active one a raised card in the toolbar's face, joined to it;
 the others plain, with a hairline between them. -/
