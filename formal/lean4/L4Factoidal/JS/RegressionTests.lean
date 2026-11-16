@@ -770,4 +770,19 @@ these were missing. -/
 #guard out "try { Map.prototype.get.call(new Set(), 1); print('no') } catch (e) { print(e.name) }" == ["TypeError"]
 #guard out "var dv = new DataView(new ArrayBuffer(8), 2); print(dv.byteLength, dv.byteOffset, Object.getOwnPropertyNames(dv).length, Object.prototype.toString.call(new Date(0)))" == ["6 2 0 [object Date]"]
 
+/-! ## JSON.stringify's replacer and space, String.prototype writes, @@hasInstance, RegExp source
+
+Test262 (built-ins/JSON/stringify, String/prototype, Function/prototype, RegExp, 2026-11-16):
+JSON.stringify ignored its replacer and space; String.prototype's methods could not be
+replaced by assignment; Function.prototype[@@hasInstance] was missing; `source` did not escape
+`/`; Annex B octal escapes and `\k` without named groups. -/
+
+#guard out "print(JSON.stringify({ b: 1, a: [1, { c: 2 }] }, null, 2).split('\\n').join('|'))" == ["{|  \"b\": 1,|  \"a\": [|    1,|    {|      \"c\": 2|    }|  ]|}"]
+#guard out "print(JSON.stringify({ a: 1, b: 2, c: 3 }, ['c', 'a']), JSON.stringify({ a: 1, b: 'x' }, function (k, v) { return typeof v === 'number' ? v * 2 : v; }))" == ["{\"c\":3,\"a\":1} {\"a\":2,\"b\":\"x\"}"]
+#guard out "var o = {}; o.o = o; try { JSON.stringify(o); print('no') } catch (e) { print(e.name) }" == ["TypeError"]
+#guard out "var f = String.prototype.at; String.prototype.at = function () { return 'patched'; }; print('ab'.at(0)); String.prototype.at = f; print('ab'.at(0))" == ["patched", "a"]
+#guard out "try { 'abc'.includes(/a/); print('no') } catch (e) { print(e.name) }" == ["TypeError"]
+#guard out "function F() {} print(typeof Function.prototype[Symbol.hasInstance], Function.prototype[Symbol.hasInstance].call(F, new F()), new F() instanceof F)" == ["function true true"]
+#guard out "print(new RegExp('a/b').source, String(new RegExp('[/]')), /\\1/.test('\\x01'), /[\\1]/.test('\\x01'), /\\k/.test('k'))" == ["a\\/b /[/]/ true true true"]
+
 end L4Factoidal.JS.Tests

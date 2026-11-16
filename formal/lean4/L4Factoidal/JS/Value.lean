@@ -97,6 +97,11 @@ inductive NativeX where
   closure that calls a resource's synchronous @@dispose and gives undefined. -/
   | asyncDisposableStackCtor | asyncDsDisposed | asyncDsMethod (k : Nat) | asyncDsStep (rejected : Bool)
   | asyncDsSyncWrap
+  /-- Function.prototype[@@hasInstance] (§20.2.3.6): OrdinaryHasInstance(this, V). -/
+  | fnHasInstance
+  /-- Uint8Array base64 and hex (§23.3.2): 0 fromBase64, 1 fromHex, 2 toBase64, 3 toHex,
+  4 setFromBase64, 5 setFromHex. -/
+  | u8Base64 (k : Nat)
   /-- RegExp.prototype's `[Symbol.match]` (0), `[Symbol.replace]` (1), `[Symbol.search]` (2) and
   `[Symbol.split]` (3), `[Symbol.matchAll]` (4) (§22.2.6.8, .11, .12, .14, .9). -/
   | regexpSym (k : Nat)

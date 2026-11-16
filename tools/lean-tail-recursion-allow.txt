@@ -2190,6 +2190,7 @@ L4Factoidal_JS_sortGt  # (c) SortCompare: one comparator call, as L4Factoidal_JS
 L4Factoidal_JS_switchFind  # (b) the case tests of one switch: self tail call per clause; each test as L4Factoidal_JS_eval*
 L4Factoidal_JS_runCases  # (b) the clauses of one switch: self tail call per clause
 L4Factoidal_JS_jsonStr  # (c) JSON.stringify: depth is the nesting of the value, refused past 1000 with a RangeError
+L4Factoidal_JS_jsonSer  # (c) JSON.stringify's SerializeJSONProperty: depth is the nesting of the value (its stack), refused past 1000 with a RangeError
 L4Factoidal_JS_stringOrMath  # (c) String.prototype and Math built-ins: ToString/ToNumber of arguments, as L4Factoidal_JS_to*
 L4Factoidal_JS_Obj_ownKeys  # (c) core Array.qsort over the integer keys of one object (the integer-like keys of ordinary properties only; array elements are not sorted here); to be replaced by List.mergeSort
 L4Factoidal_JS_Main_jsFiles  # (c) core Array.qsort of the Test262 file list in the leanjs runner; not in the engine
