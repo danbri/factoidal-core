@@ -1315,8 +1315,10 @@ of the column width; the column is then cut between in-flow children into as man
 as there are columns, balanced (§7.1: `column-fill: balance`), and the pieces are set side
 by side, `column-gap` apart. A child is never cut (most multi-column pages hold lists and
 sections, often with `break-inside: avoid`); a column with one tall child is that tall.
-Each piece is the column's paint under a clip of its height, moved to its place, so the
-GPU culls what is outside it. A box with neither property pays one test. -/
+The children of each piece are then laid out again in their column, so each is painted
+once (a margin at the top of a column is kept, where the standard truncates it). A
+multi-column box costs two layouts of its contents; a box with neither property pays one
+test. -/
 
 /-- §3.4: the number of columns and their width in a content box `avail` wide, from
 `column-count`, `column-width` and the gap; none for one column (not a multi-column box). -/
@@ -1334,7 +1336,7 @@ def columnPlan (count : Option Nat) (width : Option Float) (gap avail : Float) :
   if n ≤ 1 then none else some (n,max 0 ((avail+gap)/Float.ofNat n-gap))
 
 /-- The column count is at least two and at most 1000 when there is a plan: the work of
-`multicolumn` is bounded by it. -/
+a multi-column layout is bounded by it. -/
 theorem columnPlan_count (count : Option Nat) (width : Option Float) (gap avail : Float) (n : Nat) (w : Float)
     (h : columnPlan count width gap avail = some (n,w)) : 2 ≤ n ∧ n ≤ 1000 := by
   have hle : columnCountFor count width gap avail ≤ 1000 := Nat.min_le_right _ _
@@ -1344,20 +1346,25 @@ theorem columnPlan_count (count : Option Nat) (width : Option Float) (gap avail 
   · simp only [hn, if_false, Option.some.injEq, Prod.mk.injEq] at h
     omega
 
+/-- The children that begin a column after the first (greedy, §7.1), as indices of `spans`
+(the children's `(top,bottom)` offsets in order) for a column height `h`: a child that ends
+past its column's start plus `h` begins the next column, unless it is the column's first. -/
+def columnFirsts (spans : Array (Float × Float)) (h : Float) : Array Nat := Id.run do
+  let mut firsts : Array Nat := #[]
+  let mut start : Float := 0
+  for k in [0:spans.size] do
+    let (top,bottom) := spans[k]!
+    if k > 0 && bottom-start > h then
+      firsts := firsts.push k
+      start := top
+  return firsts
+
 /-- The columns that a cut at `h` makes (greedy, §7.1): the start of each column, as offsets
 from the top of the content, from the children's spans `(top,bottom)` in order. A child that
 ends past the column's start plus `h` begins the next column, unless it is the column's
 first. -/
-def columnStarts (spans : Array (Float × Float)) (h : Float) : Array Float := Id.run do
-  let mut starts : Array Float := #[0]
-  let mut start : Float := 0
-  let mut first := true
-  for (top,bottom) in spans do
-    if !first && bottom-start > h then
-      starts := starts.push top
-      start := top
-    first := false
-  return starts
+def columnStarts (spans : Array (Float × Float)) (h : Float) : Array Float :=
+  #[0] ++ (columnFirsts spans h).map fun k => (spans[k]!).1
 
 /-- The least column height (within 1/64 px) at which the children fit `count` columns, from
 the height of the content over `count` up to all of it: a bisection of 24 steps. -/
@@ -1371,38 +1378,26 @@ def balancedHeight (spans : Array (Float × Float)) (total : Float) (count : Nat
     if (columnStarts spans mid).size ≤ count then hi := mid else lo := mid
   return hi
 
-/-- The contents `single`, laid out in one column at `(x,y)`, set in columns `cw` wide and
-`gap` apart. `kids` are the container's children, whose boxes are the places it may be cut. -/
-def multicolumn (single : Result) (kids : Array Nat) (count : Nat) (cw gap x y : Float) : Result := Id.run do
-  let spans := (single.boxes.filter fun b => kids.contains b.source).map fun b => (b.y-y,b.y+b.height-y)
-  let total := single.height
-  let h := balancedHeight spans total count
-  let starts := (columnStarts spans h).extract 0 count
-  let ends := (starts.extract 1 starts.size).push total
-  let height := (starts.zip ends).foldl (fun m (a,b) => max m (b-a)) (0 : Float)
-  -- the column of a point at offset `v` from the top, and its move
-  let columnOf := fun (v : Float) => Id.run do
-    let mut i := 0
-    for k in [0:starts.size] do
-      if starts[k]! <= v then i := k
-    return i
-  let move := fun (i : Nat) => (Float.ofNat i*(cw+gap),-(starts[i]!))
-  let mut nodes : Array Node := #[]
-  if !single.nodes.isEmpty then
-    for i in [0:starts.size] do
-      let (dx,dy) := move i
-      let top := starts[i]!
-      let bottom := ends[i]!
-      -- the clip is in the container's frame: the piece's rows, with half the gap at each side
-      nodes := nodes.push (.clipped none ⟨1,0,0,1,dx,dy⟩
-        {x := x+dx-gap/2, y := y, width := cw+gap, height := bottom-top} single.nodes.toList)
-  let boxes := single.boxes.map fun b =>
-    let (dx,dy) := move (columnOf (b.y-y))
-    {b with x := b.x+dx, y := b.y+dy}
-  let runs := single.runs.map fun run =>
-    let (dx,dy) := move (columnOf (((run.glyphs[0]?).map (·.y)).getD y-y))
-    {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
-  return {single with nodes,boxes,runs,height,marginBottom := 0,floats := #[]}
+/-- The children of each column: `single` is the contents laid out in one column at `y`; the
+in-flow children with a box are the places it may be cut (`balancedHeight`, `columnStarts`).
+Each child, with the text and the boxless children before the next cut, goes to one column,
+in order. One group: nothing to cut. -/
+def columnKids (single : Result) (kids : Array Nat) (count : Nat) (y : Float) : Array (Array Nat) := Id.run do
+  -- the first box of each source: a child's own box comes before those inside it
+  let first := single.boxes.foldl (fun (m : Std.TreeMap Nat Box) b => if m.contains b.source then m else m.insert b.source b) {}
+  let mut spans : Array (Float × Float) := #[]
+  let mut at_ : Array Nat := #[]
+  for i in [0:kids.size] do
+    if let some b := first.get? kids[i]! then
+      spans := spans.push (b.y-y,b.y+b.height-y)
+      at_ := at_.push i
+  let h := balancedHeight spans single.height count
+  let cuts := ((columnFirsts spans h).extract 0 (count-1)).map (at_[·]!)
+  let mut groups : Array (Array Nat) := #[#[]]
+  for i in [0:kids.size] do
+    if cuts.contains i then groups := groups.push #[]
+    groups := groups.modify (groups.size-1) (·.push kids[i]!)
+  return groups
 
 /-- The used `column-gap` of a multi-column container: `normal` is 1em (§5.1). -/
 def columnGapPx (s : Computed) (width : Float) : Float :=
@@ -2310,10 +2305,20 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           match columnPlan s.columnCount s.columnWidth gap width with
           | none => flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
           | some (count,cw) => do
-            -- a multi-column container is the root of its own block formatting context
+            -- a multi-column container is the root of its own block formatting context: its
+            -- contents in one column first, then each column's children laid out in their place
             let single ← flow s id n.kids lead innerX innerY cw 0 #[] none
-            pure (multicolumn {single with height := max single.height (floatsHeight single.floats innerY)}
-              n.kids count cw gap innerX innerY)
+            let single := {single with height := max single.height (floatsHeight single.floats innerY), floats := #[]}
+            let groups := columnKids single n.kids count innerY
+            if groups.size ≤ 1 then pure single else do
+            let mut out : Result := {work := single.work}
+            for i in [0:groups.size] do
+              let r ← flow s id groups[i]! (if i == 0 then lead else #[]) (innerX+Float.ofNat i*(cw+gap)) innerY cw 0 #[] none
+              out := {out with nodes := out.nodes ++ r.nodes, boxes := out.boxes ++ r.boxes, runs := out.runs ++ r.runs,
+                               pending := out.pending ++ r.pending, work := out.work+r.work,
+                               height := max out.height (max r.height (floatsHeight r.floats innerY)),
+                               baseline := if i == 0 then r.baseline else out.baseline, lastBaseline := r.lastBaseline}
+            pure out
       -- CSS 2.1 §10.6.7: a box that is the root of its block formatting context (one laid
       -- out with no floats around it) is as high as its floats; one in a context with floats
       -- hands them on to the flow after it.

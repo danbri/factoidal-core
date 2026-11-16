@@ -167,6 +167,8 @@ private def paints (html : String) : Option Nat :=
 #guard Layout.columnPlan none (some 200) 10 110 == none
 #guard Layout.columnPlan (some 3) (some 40) 10 110 == some (2,50)
 #guard Layout.columnStarts #[(0,10),(10,20),(20,30)] 20 == #[0,20]
+#guard Layout.columnFirsts #[(0,10),(10,20),(20,30)] 20 == #[2]
+#guard Layout.columnFirsts #[(0,10),(10,20),(20,30)] 9 == #[1,2]
 #guard (Layout.balancedHeight #[(0,10),(10,20),(20,30)] 30 2 - 20).abs < 1/32
 #guard Layout.balancedHeight #[(0,10),(10,20),(20,30),(30,40)] 40 2 == 20
 private def cols (extra : String) : Except String (List (String × Float × Float × Float × Float)) :=
