@@ -788,6 +788,10 @@ replaced by assignment; Function.prototype[@@hasInstance] was missing; `source` 
 #guard out "class A extends Uint8Array {} var s = new A([1, 2, 3]).subarray(1); print(s instanceof A, s.length, s[0])" == ["true 2 2"]
 #guard out "class P extends Promise {} var r; var p = new P(function (x) { r = x; }); p.then(function (v) { print('late ' + v); }); r(7)" == ["late 7"]
 #guard out "print(new Uint8Array([104, 105]).toBase64(), Uint8Array.fromHex('6869').join(), Uint8Array.fromBase64('aGk=').toHex())" == ["aGk= 104,105 6869"]
+#guard out "var o = { length: 3, 0: 'c', 2: 'a' }; Array.prototype.sort.call(o); print(o[0], o[1], 1 in o, 2 in o)" == ["a c true false"]
+#guard out "try { [2, 1].sort(null); print('no') } catch (e) { print(e.name) }" == ["TypeError"]
+#guard out "var o = { length: 4, 0: 'a', 1: 'b', 2: 'c', 3: 'd' }; var r = Array.prototype.splice.call(o, 1, 2, 'x'); print(r.join(), o.length, o[0], o[1], o[2], 3 in o)" == ["b,c 3 a x d false"]
+#guard out "print(JSON.stringify(JSON.parse('{\"a\":1,\"b\":[2,3]}', function (k, v) { return typeof v === 'number' ? v * 10 : v; })))" == ["{\"a\":10,\"b\":[20,30]}"]
 -- `yield` and `await` in a class's heritage and computed keys and in an object literal's computed
 -- keys (the generator machine lifts them; it refused them before)
 #guard out "function* g() { class C { [yield 1]() { return 'm'; } static [yield 2] = 3; } return C; } var it = g(); it.next(); it.next('a'); var C = it.next('b').value; print(new C().a(), C.b)" == ["m 3"]
