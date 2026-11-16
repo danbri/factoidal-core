@@ -42,7 +42,7 @@ structure Face where
 
 /-- Formats with an sfnt in them (§4.3.1, `<font-format>`). -/
 def readableFormat (format : String) : Bool :=
-  ["truetype","opentype","collection"].contains format.toLower
+  ["truetype","opentype","collection","woff"].contains format.toLower
 
 private def unquote (s : String) : String :=
   let s := trim s

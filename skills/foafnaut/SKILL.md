@@ -482,6 +482,27 @@ Several sessions work on the owner's laptop at once.
   `main`, `wip/bpperf` (stage A) and `wip/bpperf-vm` (stage B) took 926, 267 and 81 ms for one
   loop (`for (let ...)` in a function), and six operations are quadratic on `main` only.
 
+## The Hub and other sites
+
+The Hub runs in the visitor's browser, so its reads of other sites obey that browser's
+cross-origin rules (CORS). There is no open proxy, and none is to be added: a Hub proxy may only
+ever serve URLs matched by an approved allow regex, and none is approved today. A link to another
+site never leaves Foafnaut by itself (owner, 2026-11-16). In order
+(`docs/web/hub/foafnaut/copies.mjs` `fetchOutside`, `browser-worker.mjs` `outsideGo`):
+
+1. A Hub copy (`labs/demos/foafnaut/realpages/hub-copies.json`; openly licensed pages only,
+   snapshots in factoidal-builds `third_party/realpages/*/hub-*.zip`).
+2. A direct read the site allows, without credentials. Wikimedia articles
+   (`https://LANG[.m].PROJECT.org/wiki/TITLE`) are read from
+   `https://LANG.PROJECT.org/api/rest_v1/page/html/TITLE` (`Access-Control-Allow-Origin: *`; its
+   `<base>` makes links and images resolve to the real site; `upload.wikimedia.org` and
+   `/w/load.php` allow it too). Other sites are tried as they are; on 2026-11-16 W3C TR, WHATWG,
+   RFC Editor, peps.python.org, spec.commonmark.org, danluu.com, lite.cnn.com and wttr.in
+   allowed it, and Gutenberg, NPR text, Hacker News, MDN, GOV.UK, arXiv, Python docs, SQLite,
+   LWN, Rust, Go and Lua did not. An origin that refuses is not asked again in that page.
+3. Else the tab shows the "Another site" page; only its "Open in a new browser tab" button calls
+   `window.open`. `tests/hub/hub_no_silent_open_test.mjs` and `hub_links_check.mjs` check this.
+
 ## Land work
 
 - Branch from `origin/main`: `wip/<issue>-<topic>`. Push after each step that passes.

@@ -222,6 +222,19 @@ private def markers (html extra : String) : Option (List String) := do
 #guard markers "<ul><li>A</li></ul>" "ul{list-style-type:square}" == some ["▪"]
 #guard markers "<ol><li>A</li></ol>" "ol{list-style:circle}" == some ["◦"]
 #guard markers "<ul><li>A</li></ul>" "ul{list-style:none}" == some []
+-- A shaped font (a real face, `shapedWord`) draws the bullet itself, or a fallback face does:
+-- no star, though the profile's own `admits` is for fixed fonts only and says no.
+private def shapedTest (t : String) (size : Nat) : Except String FontProvider.Word :=
+  .ok {text := t, fontSha256 := "", faceIndex := 0, family := "t", style := "", pixelSize := size,
+       unitsPerEm := 7, ascent := 7, descent := 0, lineGap := 0, advance := 6*Float.ofNat t.length,
+       glyphs := #[{index := 1, x := 0, y := 0, advance := 6*Float.ofNat t.length, clusterStart := 0,
+                    clusterEnd := t.length, geometry := []}]}
+private def shaped : FontProfile := {font with admits := (fun _ => false), shapedWord := some shapedTest}
+private def listDoc : Dom := DOM.parseHtmlDocument "<ul><li>A</li></ul>"
+private def itemOf (dom : Dom) : Nat := ((List.range dom.nodes.size).find? fun i => (dom.get i).lname == "li").getD 0
+#guard Layout.listMarker listDoc shaped .disc (itemOf listDoc) == "• "
+#guard Layout.listMarker listDoc shaped .square (itemOf listDoc) == "▪ "
+#guard Layout.listMarker listDoc font .disc (itemOf listDoc) == "* "
 -- An item with nothing in it is still one line high.
 #guard (box "<ul><li id=e></li></ul>" "" "e").map (·.2.2.2) == some 7
 

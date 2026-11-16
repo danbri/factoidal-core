@@ -6,9 +6,9 @@
 #ifndef LEANPROF_H
 #define LEANPROF_H
 #include <lean/lean.h>
-typedef struct lp_site { const char * fn; const char * kind; int tag, nobj, ssz; uint64_t n, bytes; struct lp_site * next; int reg; } lp_site;
+typedef struct lp_site { const char * fn; const char * kind; int tag, nobj, ssz; uint64_t n, bytes; struct lp_site * next; int reg; int line; } lp_site;
 void lp_register(lp_site * s);
-#define LP_S(kind_) ({ static lp_site s_ = { __func__, kind_, -1, -1, -1, 0, 0, 0, 0 }; &s_; })
+#define LP_S(kind_) ({ static lp_site s_ = { __func__, kind_, -1, -1, -1, 0, 0, 0, 0, __LINE__ }; &s_; })
 static inline void lp_hit(lp_site * s, uint64_t bytes) { if (!s->reg) lp_register(s); s->n++; s->bytes += bytes; }
 static inline uint64_t lp_al8(uint64_t x) { return (x + 7) & ~(uint64_t)7; }
 

@@ -1764,8 +1764,9 @@ private def heldBytes (h : Holds) (names : List (String × String)) : List (Stri
 /-- What Canvas 2D draws with (L4Factoidal.PageCanvas): the fonts the engine holds, the SVG
 path parser (`new Path2D(d)`), and the held images by key, decoded by Lean when a page
 draws one (the canvas keeps it decoded). -/
-def canvasEnv (h : Holds) : L4Factoidal.PageCanvas.Env :=
-  { fonts := (h.font.map (·.fonts)).getD #[],
+def canvasEnv (h : Holds) (opaqueKeys : Std.HashSet String := {}) (opaqueFull : Bool := false) : L4Factoidal.PageCanvas.Env :=
+  { imageOpaque := fun key => opaqueFull || opaqueKeys.contains key,
+    fonts := (h.font.map (·.fonts)).getD #[],
     svgPath := fun d => (NativeSVGPath.parse NativeSVG.number d).toOption,
     image := fun key => (h.images.find? (·.key == key)).bind fun img =>
       match NativeImage.decode img.bytes with
@@ -2871,6 +2872,14 @@ structure Engine where
   kept : Kept := {}
   /-- The document's subresource requests in progress (`subresource`, Net.Subresource). -/
   subs : Net.Subresource.Table := {}
+  /-- Image requests in progress whose URL is of their document's origin, by transfer id
+  (`Engine.subresource`). -/
+  subImages : List (Nat × String) := []
+  /-- Image URLs of their document's origin whose last answer was opaque (a redirect to
+  another origin): not origin-clean for a canvas (`canvasEnv`, origin isolation C2). Past
+  `maxOpaqueImages` every image is taken as not origin-clean (`opaqueFull`). -/
+  opaqueImages : Std.HashSet String := {}
+  opaqueFull : Bool := false
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -2985,7 +2994,7 @@ def subresourceJson : Net.Subresource.Out → JSON.Json
 "use-credentials"), `hostCors` and `address` as for `scriptSession start`. `answer`: `id` and
 the host's `answer` to the wire (as action `net` gives one; the body may be left out: the
 host keeps the bytes). `cancel`: `id`. The referrer is the document's URL. -/
-def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subresource.Table × String :=
+def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subresource.Table × Option Net.Subresource.Out × String :=
   match str request "action" with
   | "start" =>
     let doc := str request "documentURL"
@@ -2996,16 +3005,47 @@ def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subr
       | "use-credentials" => some true
       | _ => some false
     let (tab, o) := Net.Subresource.start tab page (str request "kind") (str request "url") doc policy cors
-    (tab, (subresourceJson o).toString)
+    (tab, some o, (subresourceJson o).toString)
   | "answer" =>
     let id := match request.field? "id" with | some (.number n) => n.toNat?.getD 0 | _ => 0
     let (_, a) := WebScripts.netAnswer ((request.field? "answer").getD .null)
     let (tab, o) := Net.Subresource.answer tab id a
-    (tab, (subresourceJson o).toString)
+    (tab, some o, (subresourceJson o).toString)
   | "cancel" =>
     let id := match request.field? "id" with | some (.number n) => n.toNat?.getD 0 | _ => 0
-    (Net.Subresource.cancel tab id, "{}")
-  | _ => (tab, "{\"error\":\"subresource: unknown action\"}")
+    (Net.Subresource.cancel tab id, none, "{}")
+  | _ => (tab, none, "{\"error\":\"subresource: unknown action\"}")
+
+/-- Most image URLs `Engine.opaqueImages` holds. -/
+def maxOpaqueImages : Nat := 4096
+
+/-- Op `subresource`, and what a canvas needs of it: an image of its document's origin whose
+answer is opaque (Fetch: a no-cors request redirected to another origin is) is recorded, so a
+canvas that draws it is not origin-clean although its URL is of the page's origin (HTML
+§4.12.5.1.14: "the image's current request's image data is CORS-cross-origin"). An image of
+another origin needs no record: its URL marks it (`Net.PageFetch.Page.imageClean`). -/
+def Engine.subresource (e : Engine) (request : JSON.Json) : Engine × String :=
+  let (subs, out, answer) := subresourceOp e.subs request
+  let live := fun (id : Nat) => subs.live.any (·.1 == id)
+  let e := { e with subs }
+  let e := match out with
+    | some (.wire id _) =>
+      let url := str request "url"
+      if str request "action" == "start" && str request "kind" == "image" &&
+          (Net.PageFetch.Page.ofUrl (str request "documentURL")).imageClean url then
+        { e with subImages := (id, url) :: e.subImages.filter (live ·.1) }
+      else e
+    | some (.done id _ _ _ hidden _) =>
+      match e.subImages.find? (·.1 == id) with
+      | some (_, url) =>
+        let e := { e with subImages := e.subImages.filter (·.1 != id) }
+        if !hidden then { e with opaqueImages := e.opaqueImages.erase url }
+        else if e.opaqueImages.size ≥ maxOpaqueImages then { e with opaqueFull := true }
+        else { e with opaqueImages := e.opaqueImages.insert url }
+      | none => e
+    | some (.fail id _) => { e with subImages := e.subImages.filter (·.1 != id) }
+    | none => e
+  (e, answer)
 
 /-- A document request, with `laidOut` as the layout of a render. `run` passes the
 kept layout (`Engine.frame`); `runUncached` passes `layOut`, so that tests compare the two. With
@@ -3019,7 +3059,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     return (← stepState fun e => let (h,r) := loadFont e.holds request; ({e with holds := h},r),#[])
   -- A document's subresource requests go through the engine's network rules, step by step.
   if str request "op" == "subresource" then
-    return (← stepState fun e => let (subs, r) := subresourceOp e.subs request; ({e with subs}, .ok r),#[])
+    return (← stepState fun e => let (e, r) := e.subresource request; (e, .ok r),#[])
   if str request "op" == "imageLoad" then
     return (← stepState fun e => let (h,r) := loadImage e.holds request; ({e with holds := h},r),#[])
   -- The ops of held images and frame work: a host asks this before it calls them (issue 1274).
@@ -3090,13 +3130,14 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   -- session is taken out of the state for the call, so that it is not shared.
   if str request "op" == "scriptSession" then
     let holds := (← get).holds
+    let (opaqueKeys, opaqueFull) := ((← get).opaqueImages, (← get).opaqueFull)
     -- Before the scripts' first layout read: the store of the page's images (`keepStoreAhead`).
     if str request "action" == "start" then
       modify fun e => {e with kept := keepStoreAhead holds e.kept html request}
     let held ← modifyGet fun e => (e.scripts,{e with scripts := {}})
     let kept := (← get).kept
     let (held,answer) ← WebScripts.opSections held "scriptSession" html request (fun r => some (measure holds r kept))
-      (fun _ => canvasEnv holds)
+      (fun _ => canvasEnv holds opaqueKeys opaqueFull)
     modify fun e => {e with scripts := held}
     match answer with
     | .ok (some a) => return a

@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.Layout
+import L4Factoidal.Rendering.Woff
 import L4Factoidal.Rendering.SfntShape
 import L4Factoidal.Rendering.SfntOutline
 import L4Factoidal.Rendering.InkBound
@@ -88,6 +89,8 @@ that the policy allows and that passes its checks (`SfntColr.read`) gives the fo
 colour glyphs; one that fails them leaves the font without colour, and its outlines
 still draw. A font with no COLR table pays nothing for this. -/
 def Font.read (bytes : ByteArray) (family sha256 : String) (faceIndex : Nat := 0) : Except String Font := do
+  -- A WOFF 1.0 file is read as the sfnt it holds (`Woff.toSfnt`); other bytes as they are.
+  let bytes ← Woff.sfntOf bytes
   let dir ← FontPolicy.readDirectory bytes faceIndex
   let decision := FontPolicy.decide FontPolicy.Policy.standard ⟨family,"",sha256⟩ dir
   unless decision.fontUsed do
