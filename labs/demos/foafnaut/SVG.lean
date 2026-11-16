@@ -16,7 +16,6 @@ import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.Rendering.FloatFormat
 import L4Factoidal.Rendering.Scene
-import L4Factoidal.Rendering.CssValues.Color
 import L4Factoidal.XML.NamespaceView
 
 /- Isolated strict SVG document reader, not SVG Tiny/full conformance.
@@ -319,27 +318,9 @@ private def systemColors : List (String × Nat × Nat × Nat) :=
    ("threedlightshadow",(212,208,200)),("threedshadow",(128,128,128)),("window",(255,255,255)),
    ("windowframe",(0,0,0)),("windowtext",(0,0,0))]
 
-/-- An opaque colour of CSS Color 4 as sRGB channels clamped to [0, 1] (out-of-gamut
-colours are clipped). `none` for an invalid colour, `currentcolor`, a colour with alpha
-below 1, or one with a missing component. -/
-private def cssOpaque? (text : String) : Option Color :=
-  match L4Factoidal.Rendering.CssValues.trimWs (L4Factoidal.Rendering.CssValues.CV.parse text) with
-  | [cv] =>
-    match L4Factoidal.Rendering.CssValues.Color.resolve {} cv with
-    | none => none
-    | some c =>
-      if c.alpha != some 1 then none else
-      match L4Factoidal.Rendering.CssValues.Color.toMixSpace .srgb c with
-      | none => none
-      | some s =>
-        let f := fun (x : Option Rat) => x.map fun v =>
-          let v := L4Factoidal.Rendering.CssValues.Color.clamp01 v
-          Float.ofInt v.num / Float.ofNat v.den
-        match f s.c1, f s.c2, f s.c3 with
-        | some r, some g, some b => some ⟨r, g, b⟩
-        | _, _, _ => none
-  | _ => none
-private def colorBase (input : String) : Except String Color := do
+/-- A colour of this reader: hex, comma `rgb()`, named and system colours. The page path
+    rewrites the rest of CSS Color 4 to hex before the reader sees it (`SVGCssColour`). -/
+private def color (input : String) : Except String Color := do
   let s := (trim input).toLower
   if s.startsWith "#" then
     let digits ← need ((s.toList.drop 1).mapM hex) "invalid hex color"
@@ -365,17 +346,6 @@ private def colorBase (input : String) : Except String Color := do
         (fun _ => systemColors.find? (fun item => item.1 == s.toLower)) with
     | some (_,r,g,b) => return rgb r g b
     | none => throw s!"unsupported color: {input}"
-/-- A colour of this reader: hex, comma `rgb()`, named and system colours here; the rest of
-    CSS Color 4 (`hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`, `color()`, the
-    space-separated `rgb()`, opaque `rgba()` and `#rrggbbaa`) through the page CSS colour
-    parser (`CssValues.Color`), as sRGB (`cssOpaque?`). Only opaque colours: this
-    reader has no colour alpha. The refusal is the reader's own when neither knows it. -/
-private def color (input : String) : Except String Color :=
-  match colorBase input with
-  | .ok c => .ok c
-  | .error e => match cssOpaque? input with
-    | some c => .ok c
-    | none => .error e
 abbrev Gradient := L4Factoidal.Rendering.Gradient
 abbrev GradientStop := L4Factoidal.Rendering.GradientStop
 abbrev GradientRecord := L4Factoidal.Rendering.GradientRecord
