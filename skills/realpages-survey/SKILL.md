@@ -19,7 +19,7 @@ or only the one that renders well enough to be measured?).
   licence, attribution) and original fixtures. Snapshots are public pages only, nothing behind a login,
   vendored as fair use for testing, each with its URL, fetch time, HTTP header fields (Set-Cookie dropped),
   licence and attribution (`manifest.json`, `PROVENANCE.txt` in the ZIP, and the README beside them). Keep
-  that directory under about 50 MB. Pictures and logs of each run stay workflow artifacts (7 days).
+  that directory under about 200 MB (raised from 50 MB on 2026-11-16). Pictures and logs of each run stay workflow artifacts (7 days).
 - **Development test inputs only; nothing derived from them ships.** The snapshots are a small set of sites
   the project owner approved for testing in development and CI. Never put them, or anything derived from
   them or from other third-party sites, into a build that runs on users' machines: no per-site or
