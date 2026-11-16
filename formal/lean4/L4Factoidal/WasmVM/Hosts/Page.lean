@@ -884,6 +884,22 @@ def Host.tickTimeline (h : Host) : Host :=
   let t := L4Factoidal.Rendering.Animation.Fix.ofInt (Int.ofNat h.loop.clock)
   if h.anim.now == t then h else { h with anim := { h.anim with now := t } }
 
+/-- The timeline when a task starts: it moves with the clock only while no animation or
+transition runs. While one runs, the page has an animation frame asked for at each frame
+(`Animation.needsFrame`), and the timeline moves at those frames ("update animations and
+send events", Web Animations 1 §4.3), so every task between two frames sees one time.
+With the script clock at BubblePopJS's own rate (`LeanJS.stepsPerMs`) the clock moves
+during a long start; moved at each task, it made each layout read of an animated page a
+new layout (a news page laid itself out again for each of its timer tasks). -/
+def Host.tickTask (h : Host) : Host :=
+  if h.anim.idle then h.tickTimeline else h
+
+/-- Kind: cost (a layout read between frames is kept). Says: while an animation runs, a
+task leaves the timeline time, so a layout kept at that time still answers
+(`Host.measured_kept`). -/
+theorem Host.tickTask_running (h : Host) (hr : h.anim.idle = false) : h.tickTask = h := by
+  simp [Host.tickTask, hr]
+
 /-- `node_query` ops 60 to 69, the Web Animations interfaces (`Rendering.Animation.Api`;
 requests and answers are JSON): 60 a new effect on element `node` (a node that is not an
 element: no target); 61 a change of effect `node`; 62 a read of effect `node`; 63 a
@@ -1644,7 +1660,7 @@ is armed again, and the currently running task is null again) before the microta
 checkpoint, as in HTML §8.1.7.3 steps 6 and 7: so a timer set from a microtask does not
 take the nesting level of the task before it. -/
 def Session.runTaskP (s : Session) (r : L4Factoidal.EventLoop.Run) : Prog Session := do
-  let s := { s with host := s.host.tickTimeline }
+  let s := { s with host := match r.kind with | .frame => s.host.tickTimeline | _ => s.host.tickTask }
   match r.kind with
   | .task =>
     match r.event with

@@ -38,7 +38,8 @@ Deno.test({name:"sliced advances give the logs, DOM and clock of one advance",ig
   for(let i=0;i<10000;i++){
     turn=engine.scriptSession("",{action:"advance",session:first.session,ms:Math.max(0,target-turn.clock),sliceSteps:300}) as Turn;
     logs.push(...turn.logs);slices++;maxSteps=Math.max(maxSteps,turn.instructions);
-    if(!(turn.nextWake!==null&&turn.nextWake<=turn.clock&&turn.clock<=target))break;
+    // the host goes on while the clock is short of its target or something is due now
+    if(!(turn.clock<target||(turn.nextWake!==null&&turn.nextWake<=turn.clock)))break;
   }
   const full=engine.scriptSession("",{action:"turn",session:first.session,full:true}) as Turn;
   engine.scriptSession("",{action:"close"});
@@ -60,8 +61,9 @@ Deno.test({name:"a loop that waits 50 ms of the script clock ends within the bud
   const first=engine.scriptSession(waiting,{action:"start",url:"http://example.test/w.html",resources:[],engine:"bubblepop",width:800,height:600}) as Turn;
   const turn=engine.scriptSession("",{action:"advance",session:first.session,ms:10}) as Turn;
   engine.scriptSession("",{action:"close"});
-  assert.deepEqual(turn.errors,[],"no step-budget halt");
-  assert.ok(turn.logs.some(l=>l.includes("spun true")),JSON.stringify(turn.logs));
+  // the timer is due at time 0: the start turn runs it
+  assert.deepEqual([...first.errors,...turn.errors],[],"no step-budget halt");
+  assert.ok([...first.logs,...turn.logs].some(l=>l.includes("spun true")),JSON.stringify([first.logs,turn.logs]));
   // 50 ms at 500 steps a ms, with the loop's own steps: far below the 5 M budget
-  assert.ok(turn.instructions<200000,`the loop ran ${turn.instructions} steps`);
+  assert.ok(first.instructions+turn.instructions<200000,`the loop ran ${first.instructions+turn.instructions} steps`);
 }});
