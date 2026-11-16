@@ -77,9 +77,10 @@
     "what": "frame ms late in the zoom over early in it: frames do not grow slower"
    },
    "rss_mb.growth_after_warmup": {
-    "max": 64,
+    "max": 128,
     "measured": 18.2,
-    "what": "RSS growth from a quarter of the ticks to the end"
+    "what": "RSS growth from a quarter of the ticks to the end",
+    "accepted": "2026-11-16: 64 was under the spread of the measurement itself, not a cost taken on. The macOS foafnaut job of build.yml measured 15.4 to 86.2 MB over 15 runs of 2026-11-15/16 on many branches (86.2 on 022ded127 and 64.6 on dcda7850b, neither with the GPU pacing change of PR 473; 26.9 on PR 490, which has it); spinal_perf.ts loads neither gpu_pacing.ts nor native_html_session.ts. On an Apple M1 with one engine, three runs each: 24.6 to 70.1 MB with PR 473's host files, 49.2 to 87.3 MB with main's. The peak (rss_mb.peak, max 1024) still bounds the total; 128 is about 1.5 times the highest growth seen."
    },
    "rss_mb.peak": {
     "max": 1024,
