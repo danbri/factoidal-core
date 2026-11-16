@@ -187,6 +187,11 @@ private def unfilter (raw : ByteArray) (start rows row step : Nat) : Except Stri
       out := out.set! at_ ((out.get! at_)+predicted.toUInt8)
   return out
 
+/-- The largest sample of a depth below 8 (1, 3 or 15), from a match: a left shift of a `Nat`
+is a call into the runtime's big-number code, and this runs for each sample. -/
+@[inline] private def depthMax (depth : Nat) : Nat :=
+  match depth with | 1 => 1 | 2 => 3 | 4 => 15 | _ => 255
+
 /-- Sample `index` of a row at byte `line`, at the depth of the image. -/
 @[inline] private def sample (raw : ByteArray) (line depth index : Nat) : Nat :=
   match depth with
@@ -195,14 +200,14 @@ private def unfilter (raw : ByteArray) (start rows row step : Nat) : Except Stri
   | _ =>
     let bit := index*depth
     let byte := (raw.get! (line+bit/8)).toNat
-    (byte >>> (8-depth-bit%8)) &&& ((1 <<< depth)-1)
+    (byte >>> (8-depth-bit%8)) &&& depthMax depth
 
 /-- A sample as eight bits. -/
 @[inline] private def eight (value depth : Nat) : Nat :=
   match depth with
   | 16 => value/256
   | 8 => value
-  | _ => value*255/((1 <<< depth)-1)
+  | _ => value*255/depthMax depth
 
 /-- §12.1: sample^(1/(gamma*2.2)) for a display exponent of 2.2. `none` when the
     file gamma is within 2 percent of 1/2.2, where a byte hardly changes. -/

@@ -81,6 +81,11 @@ private structure BitReader where
   bits : Nat := 0
   count : Nat := 0
 
+/-- 2^k for k up to 16 from a table (past it, `2 ^ k`). A left shift of a `Nat` is a call
+into the runtime's big-number code, and these run for each coefficient. -/
+private def pow2Table : Array Nat := (Array.range 17).map (2 ^ ·)
+@[inline] private def pow2 (k : Nat) : Nat := pow2Table[k]?.getD (2 ^ k)
+
 /-- One bit. A marker or the end of the data here is a refusal. -/
 @[inline] private def BitReader.bit (r : BitReader) : Except String (Nat × BitReader) := do
   if r.count > 0 then
@@ -122,7 +127,7 @@ private def BitReader.signed (r : BitReader) (size : Nat) : Except String (Int �
   if size == 0 then return (0,r)
   if size > 16 then throw "JPEG coefficient size is not valid"
   let (v,r) ← r.take size
-  let value : Int := if v < (1 <<< (size-1)) then (v : Int)-((1 <<< size : Nat) : Int)+1 else v
+  let value : Int := if v < pow2 (size-1) then (v : Int)-((pow2 size : Nat) : Int)+1 else v
   return (value,r)
 
 /-- All tables and state of an image while its scans run. -/
@@ -190,12 +195,12 @@ private def dcFirst (part : ScanPart) (slot block : Nat) (low : Nat) (c : FloatA
   let (size,r) ← cur.reader.symbol part.dc
   let (diff,r) ← r.signed size
   let dc := cur.predictors[slot]!+diff
-  return (c.set! block (Float.ofInt (dc*((1 <<< low : Nat) : Int))),{cur with reader:=r,predictors:=cur.predictors.set! slot dc})
+  return (c.set! block (Float.ofInt (dc*((pow2 low : Nat) : Int))),{cur with reader:=r,predictors:=cur.predictors.set! slot dc})
 
 /-- Progressive DC refinement: one bit. -/
 private def dcRefine (block low : Nat) (c : FloatArray) (cur : Cursor) : Except String (FloatArray × Cursor) := do
   let (b,r) ← cur.reader.bit
-  let add := Float.ofNat (b*(1 <<< low))
+  let add := Float.ofNat (b*pow2 low)
   return (c.set! block (c.get! block+add),{cur with reader:=r})
 
 /-- Progressive first AC scan (T.81 G.1.2.2). -/
@@ -216,7 +221,7 @@ private def acFirst (part : ScanPart) (block : Nat) (band : Band) (c : FloatArra
       if run < 15 then
         let (extra,next) ← r.take run
         r := next
-        eobRun := (1 <<< run)+extra-1
+        eobRun := pow2 run+extra-1
         break
       k := k+16
       continue
@@ -224,7 +229,7 @@ private def acFirst (part : ScanPart) (block : Nat) (band : Band) (c : FloatArra
     if k > 63 then throw "JPEG coefficient index is not valid"
     let (value,next) ← r.signed size
     r := next
-    c := c.set! (block+zigzag[k]!) (Float.ofInt (value*((1 <<< band.low : Nat) : Int)))
+    c := c.set! (block+zigzag[k]!) (Float.ofInt (value*((pow2 band.low : Nat) : Int)))
     k := k+1
   return (c,{cur with reader:=r,eobRun})
 
@@ -241,7 +246,7 @@ private def acFirst (part : ScanPart) (block : Nat) (band : Band) (c : FloatArra
 /-- Progressive AC refinement (T.81 G.1.2.3 and Figure G.7). -/
 private def acRefine (part : ScanPart) (block : Nat) (band : Band) (c : FloatArray) (cur : Cursor) :
     Except String (FloatArray × Cursor) := do
-  let bitValue := Float.ofNat (1 <<< band.low)
+  let bitValue := Float.ofNat (pow2 band.low)
   let mut c := c
   let mut r := cur.reader
   let mut eobRun := cur.eobRun
@@ -258,7 +263,7 @@ private def acRefine (part : ScanPart) (block : Nat) (band : Band) (c : FloatArr
         if run < 15 then
           let (extra,next) ← r.take run
           r := next
-          eobRun := (1 <<< run)+extra
+          eobRun := pow2 run+extra
           break
       else
         if size != 1 then throw "JPEG refinement size is not valid"

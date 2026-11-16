@@ -52,7 +52,8 @@ def base64 (text : ByteArray) (start : Nat) : Except String ByteArray := do
     if bits >= 8 then
       bits := bits-8
       out := out.push (value >>> bits).toUInt8
-      value := value%(1 <<< bits)
+      -- `bits` is below 8 here: the remainder keeps the low bits (no `Nat` left shift)
+      value := value%(match bits with | 0 => 1 | 1 => 2 | 2 => 4 | 3 => 8 | 4 => 16 | 5 => 32 | 6 => 64 | _ => 128)
   return out
 
 /-- RFC 2397, with the base64 form only. -/
