@@ -347,5 +347,12 @@ else
   echo "WEB_RENDER_WASM=$BUILD/engines/web-render.mjs"
 fi
 [ "$MODE" = --native ] && node "$LAB/web-render/check-budget.mjs" "$BUILD/web-render-native"
+# Size and link content of the engine (tools/binary-budget.py, issue 551): no Lean.Elab/Lean.Meta
+# code, at most 2 % above the recorded size for this platform.
+if [ "$MODE" = --native ] && [ -n "${LIBRARY:-}" ]; then
+  python3 "$ROOT/tools/binary-budget.py" check "$(basename "$LIBRARY")=$LIBRARY"
+elif [ "$MODE" = --wasm ]; then
+  python3 "$ROOT/tools/binary-budget.py" check "web-render.wasm=$BUILD/engines/web-render.wasm"
+fi
 python3 "$LAB/web-render/write-witness.py"
 printf 'WEB_RENDER_BUILD_RC=0 %s\n' "$(date -u)"
