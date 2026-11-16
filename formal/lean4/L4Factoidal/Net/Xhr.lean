@@ -98,6 +98,10 @@ structure Xhr where
   uploadComplete : Bool := false
   uploadListener : Bool := false
   response : Option Response := none
+  /-- The answer of an element's request for a classic script of another origin with no CORS
+  (an opaque answer): kept here for the engine, which runs it (`takeScript`); the realm's
+  `response` is `scriptRaw` of it, which has no bytes (origin isolation, issue 518). -/
+  kept : Option Response := none
   /-- `send` could not start (policy): the error steps wait for the page's next task. -/
   deferFail : Bool := false
   /-- A response made here (a `data:` URL): it is given at the page's next task. -/
@@ -471,10 +475,82 @@ theorem imageRaw_noninterference (r r' : Response) (hs : r.status = r'.status) (
 
 #guard (imageRaw { status := 200, statusText := "OK", url := "", headers := [("Content-Type", "image/png"), ("x-a", "1")], body := HTML.ImageSize.pngHeader 3 5 }).body.data == "3 5".toUTF8.data
 
-/-- The response an object gets: an image element's request gets `imageRaw` of it, on every
-path a response is made (the host's answer, a `data:` URL answered here, a sync fetch). -/
+/-- A status in the range 200 to 299 (Fetch "ok status"). -/
+def okStatus (n : Nat) : Bool := 200 ≤ n && n < 300
+
+/-- A classic script element's opaque response (another origin, no CORS) as the page's realm
+gets it: whether the status was ok (200, else 0) and the tainting; no status text, URL,
+fields or bytes. That is all the element needs to choose between its `load` and `error`
+events (HTML §4.12.1 "execute the script element": a failed fetch fires `error`; Fetch's
+opaque filtered response hides the rest). The bytes stay in the engine (`Xhr.kept`), which
+runs them as the script (`takeScript`): the prelude runs in the page's realm, so bytes there
+are bytes a page can read, and an opaque answer's must never be (origin isolation, issue
+518: a page that replaced `Uint8Array` or `TextDecoder` read another origin's script, for
+example a JSON answer sent with the user's cookies). -/
+def scriptRaw (r : Response) : Response :=
+  { status := if okStatus r.status then 200 else 0, statusText := "", url := "", headers := [],
+    body := ByteArray.empty, tainting := r.tainting }
+
+/-- Kind: security theorem (origin isolation, C6). Says: what a classic script element's opaque
+request gives the page's realm depends on the answer only through whether its status is ok and
+its tainting: two answers that agree on these (whatever their bytes, fields, URL or status
+text) give the same response. -/
+theorem scriptRaw_noninterference (r r' : Response) (hs : okStatus r.status = okStatus r'.status)
+    (ht : r.tainting = r'.tainting) : scriptRaw r = scriptRaw r' := by
+  simp only [scriptRaw, hs, ht]
+
+/-- Kind: security lemma. Says: `scriptRaw` gives the realm no bytes. -/
+theorem scriptRaw_body (r : Response) : (scriptRaw r).body = ByteArray.empty := rfl
+
+/-- Whether object `x`'s answer `r` is kept from the realm: an element's request for a classic
+script whose answer is opaque. -/
+def Xhr.hidesScript (x : Xhr) (r : Response) : Bool :=
+  x.raw && x.destination == "script" && r.tainting == "opaque"
+
+/-- The response an object gets: an image element's request gets `imageRaw` of it, an opaque
+classic script element's request `scriptRaw` of it, on every path a response is made (the
+host's answer, a `data:` URL answered here, a sync fetch). -/
 def Xhr.forRealm (x : Xhr) (r : Response) : Response :=
-  if x.raw && x.destination == "image" then imageRaw r else r
+  if x.raw && x.destination == "image" then imageRaw r
+  else if x.hidesScript r then scriptRaw r else r
+
+/-- What the engine keeps of answer `r` for itself: the whole answer of an opaque classic
+script, else nothing. -/
+def Xhr.keep (x : Xhr) (r : Response) : Option Response :=
+  if x.hidesScript r then some r else none
+
+/-- Object `x` with answer `r`: the realm's response (`forRealm`) and the engine's copy
+(`keep`). -/
+def Xhr.withAnswer (x : Xhr) (r : Response) : Xhr :=
+  { x with response := some (x.forRealm r), kept := x.keep r }
+
+/-- The bytes object `x` holds for answer `r` (both copies), for `held`. -/
+def Xhr.heldFor (x : Xhr) (r : Response) : Nat :=
+  (x.forRealm r).body.size + ((x.keep r).map (·.body.size)).getD 0
+
+/-- Kind: security theorem (origin isolation, C6). Says: for a classic script element's request,
+two opaque answers with the same ok-ness give the realm the same response, whatever their
+bytes, fields and URL. -/
+theorem forRealm_script_noninterference (x : Xhr) (r r' : Response) (hr : x.raw = true)
+    (hd : x.destination = "script") (ho : r.tainting = "opaque") (ho' : r'.tainting = "opaque")
+    (hs : okStatus r.status = okStatus r'.status) : x.forRealm r = x.forRealm r' := by
+  have hh : x.hidesScript r = true := by simp [Xhr.hidesScript, hr, hd, ho]
+  have hh' : x.hidesScript r' = true := by simp [Xhr.hidesScript, hr, hd, ho']
+  have hi : (x.raw && x.destination == "image") = false := by simp [hd]
+  simp only [Xhr.forRealm, hi, hh, hh', Bool.false_eq_true, if_false, if_true]
+  exact scriptRaw_noninterference r r' hs (by rw [ho, ho'])
+
+/-- Kind: security lemma. Says: the realm's response of an object with an answer is
+`forRealm` of it, and an answer the engine keeps is exactly one `forRealm` hides. -/
+theorem withAnswer_response (x : Xhr) (r : Response) :
+    (x.withAnswer r).response = some (x.forRealm r) ∧
+      ((x.withAnswer r).kept.isSome = true → x.hidesScript r = true) := by
+  refine ⟨rfl, fun h => ?_⟩
+  simp only [Xhr.withAnswer, Xhr.keep] at h
+  split at h <;> simp_all
+
+#guard (scriptRaw { status := 200, statusText := "OK", url := "https://b.example/s.js", headers := [("Content-Type", "text/javascript")], body := "secret".toUTF8, tainting := "opaque" }).body.size == 0
+#guard (scriptRaw { status := 404, statusText := "", url := "", headers := [], body := .empty, tainting := "opaque" }).status == 0
 
 /-- Sync `send` (XHR §4.5.2 step 12): the fetch happens now; on failure a `NetworkError` is
 thrown; on success the object is done with its last events. `send` has no `loadstart` in
@@ -492,14 +568,15 @@ def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
     if r.body.size > maxBody || s.held + r.body.size > maxHeld then
       (s.set h { x with state := 4, sendFlag := false, response := none, events := #[] }, .error errNetwork)
     else
-      let bodySize := r.body.size
-      let total := match headerGet r.headers "content-length" with
+      -- the sizes the events carry are the realm's response's (an opaque script's is empty)
+      let rr := x.forRealm r
+      let bodySize := rr.body.size
+      let total := match headerGet rr.headers "content-length" with
         | some v => (trimWs v).toNat?.getD 0
         | none => 0
       let evs : Array Ev := #[.setState 4, rsc, .guardDone, .fire false "load" bodySize total (total > 0),
         .fire false "loadend" bodySize total (total > 0)]
-      let r := x.forRealm r
-      ((s.set h { x with response := some r, events := evs }) |> fun s => { s with held := s.held + r.body.size }, .ok "")
+      ((s.set h { x.withAnswer r with events := evs }) |> fun s => { s with held := s.held + x.heldFor r }, .ok "")
 
 def textDefault : String := "text/plain;charset=UTF-8"
 
@@ -656,19 +733,20 @@ def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
     | .fail _ => (requestError s1 h { x with transfer := none } "error", some x.cb)
     | .deliver _ r =>
       let r := if x.raw then rawResponse t a r else r
-      let r := x.forRealm r
       -- a classic script element's answer of a type it may not run, or an opaque one that
-      -- begins with a JSON parser breaker, is a network error (`Subresource.scriptBlocked`)
+      -- begins with a JSON parser breaker, is a network error (`Subresource.scriptBlocked`);
+      -- decided here on the whole answer, before the realm's copy drops its fields and bytes
       if x.raw && x.destination == "script" && Subresource.scriptBlocked (r.tainting == "opaque") r.headers r.body then
         (requestError s1 h { x with transfer := none } "error", some x.cb) else
       -- Subresource Integrity: bytes that do not match the request's metadata never reach the page
       if !Integrity.okFor x.integrity r.tainting r.body then
         (requestError s1 h { x with transfer := none } "error", some x.cb) else
-      if r.body.size > maxBody || s.held + r.body.size > maxHeld then
+      -- the bytes held are both copies (`heldFor`): an image's realm copy is its size only
+      if x.heldFor r > maxBody || s.held + x.heldFor r > maxHeld then
         (requestError s1 h { x with transfer := none } "error", some x.cb)
       else
-        let x' := { x with transfer := none, response := some r, uploadComplete := true, events := x.events ++ responseEvents x r }
-        ((s1.set h x') |> fun s => { s with held := s.held + r.body.size }, some x.cb)
+        let x' := { x.withAnswer r with transfer := none, uploadComplete := true, events := x.events ++ responseEvents x (x.forRealm r) }
+        ((s1.set h x') |> fun s => { s with held := s.held + x.heldFor r }, some x.cb)
 
 /-- `readyState`, gated reads. -/
 def statusOf (x : Xhr) : Nat :=
@@ -689,6 +767,30 @@ def responseText (x : Xhr) : String :=
   match x.response with
   | some r => if x.state ≥ 3 then Encoding.decode r.body (textEncoding x r) else ""
   | none => ""
+
+/-- The classic script that element request `h` fetched, for the engine to run, never for the
+realm: its text (`Encoding.decode`: BOM sniff, then the charset of its `Content-Type`, else
+UTF-8, as HTML §8.1.4.2 "fetch a classic script" decodes) and whether its errors are muted (an
+opaque answer: HTML "muted errors", so the page's `error` event says only "Script error.").
+The engine's copy of an opaque answer is dropped once taken. `none` for an object that is not
+a script element's request with a response. -/
+def takeScript (s : State) (h : Nat) : State × Option (String × Bool) :=
+  match s.get? h with
+  | none => (s, none)
+  | some x =>
+    if !x.raw || x.destination != "script" then (s, none) else
+    match x.kept, x.response with
+    | some r, _ => (s.set h { x with kept := none }, some (Encoding.decode r.body (textEncoding x r), true))
+    | none, some r => (s, some (Encoding.decode r.body (textEncoding x r), r.tainting == "opaque"))
+    | none, none => (s, none)
+
+/-- Kind: security lemma. Says: a script the engine kept from the realm (an opaque answer) is
+run with its errors muted. -/
+theorem takeScript_kept_muted (s : State) (h : Nat) (x : Xhr) (r : Response) (hx : s.get? h = some x)
+    (hr : x.raw = true) (hd : x.destination = "script") (hk : x.kept = some r) :
+    ∃ src, (takeScript s h).2 = some (src, true) := by
+  refine ⟨Encoding.decode r.body (textEncoding x r), ?_⟩
+  simp [takeScript, hx, hr, hd, hk]
 
 /-- The essence of a MIME type (lowercase, parameters removed). -/
 def mimeEssence (ct : String) : String := lower (trimWs ((ct.splitOn ";").headD ""))
@@ -1040,9 +1142,8 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       | some r =>
         if !x.sendFlag || x.state != 1 then (s.set h { x with deferred := none }, okStr "") else
         if r.body.size > maxBody || s.held + r.body.size > maxHeld then (requestError s h x "error", okStr "") else
-        let r := x.forRealm r
-        ((s.set h { x with deferred := none, response := some r, uploadComplete := true, events := x.events ++ responseEvents x r })
-          |> fun s => { s with held := s.held + r.body.size }, okStr "")
+        ((s.set h { x.withAnswer r with deferred := none, uploadComplete := true, events := x.events ++ responseEvents x (x.forRealm r) })
+          |> fun s => { s with held := s.held + x.heldFor r }, okStr "")
       | none => if x.deferFail then (requestError s h x "error", okStr "") else (s, okStr "")
     | none => (s, .error errType)
   | 74 =>
