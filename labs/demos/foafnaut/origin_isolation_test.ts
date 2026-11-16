@@ -81,6 +81,25 @@ Deno.test({name:"origin isolation checks C1 to C5",ignore:!exists(library)},asyn
     return logs.filter(l=>l.includes("C1-FRAME-TEXT")||/^wrote \d+ 0$/.test(l)||/^doc [1-9]\d* text X$/.test(l));
   });
 
+  // C1b: a frame inside a frame's document parses its src against that document's base URL
+  // (HTML §4.8.5), so a frame inside another origin's document is of that origin, never the
+  // page's; before, it resolved against the page and its document ran in the page's realm.
+  await check(t,"C1b","a nested frame's src resolves against its own document, not the page",()=>{
+    const nested=(outer:string)=>{
+      let s=start(`<!doctype html><iframe src="${outer}"></iframe>`,`${A}/p.html`,{navigations:true});
+      s=call("",{action:"frame",session:s.session,node:s.navigations![0].nodeId,url:outer,source:`<iframe src="g.html"></iframe>`});
+      const navs=(s.navigations??[]).map(n=>n.url);
+      close();
+      return navs;
+    };
+    const got:string[]=[];
+    for(const [outer,want] of [[`${B}/dir/f.html`,`${B}/dir/g.html`],[`${A}/dir/f.html`,`${A}/dir/g.html`]]){
+      const navs=nested(outer);
+      if(!navs.includes(want))got.push(`frame in ${outer} asked for ${JSON.stringify(navs)}, not ${want}`);
+    }
+    return got;
+  });
+
   // C2: a canvas that has drawn an image of another origin is not origin-clean: no read-back,
   // through any path that carries the flag (HTML §4.12.5.6), and no image bytes in the realm.
   // a 2x2 PNG of one colour, rgb(200,30,40)
