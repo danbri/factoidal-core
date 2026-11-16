@@ -104,6 +104,8 @@ inductive NativeX where
   | u8Base64 (k : Nat)
   /-- The Promise constructor's steps on `this` (the object of a subclass constructor). -/
   | promiseInitOn
+  /-- Array.prototype.toLocaleString (`typed` false) and %TypedArray%.prototype.toLocaleString. -/
+  | arrayToLocaleString (typed : Bool)
   /-- RegExp.prototype's `[Symbol.match]` (0), `[Symbol.replace]` (1), `[Symbol.search]` (2) and
   `[Symbol.split]` (3), `[Symbol.matchAll]` (4) (§22.2.6.8, .11, .12, .14, .9). -/
   | regexpSym (k : Nat)

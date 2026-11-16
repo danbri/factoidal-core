@@ -8301,14 +8301,30 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         for i in [0:xs.size] do typedWriteV ty b off (at_ + i) (← typedConv n ty xs[i]!)
         pure .undef
       | .typedSubarray =>
-        -- the new view on the same buffer: TypedArraySpeciesCreate refuses a detached one
-        if isDetached (← getObj b) then throwErr .type "subarray: the buffer is detached"
+        -- §23.2.3.30: the bounds (converted first), then TypedArraySpeciesCreate(O, « buffer,
+        -- beginByteOffset, newLength ») (§23.2.4.1): the species constructor, or the type's own
         let len ← liveLen ty b off len
         let a := relIndex (toIntegerOrInf (← toNum n a0)) len
         let e ← match a1 with
           | .undef => pure len
           | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) len)
-        newTyped ty b (off + a * elemSize ty) (if e > a then e - a else 0)
+        let newLen := if e > a then e - a else 0
+        let begin := off + a * elemSize ty
+        let dflt ← ownValue (r.typedProtos.getD ty 0) "constructor"
+        let c ← speciesCtor n thisV dflt
+        if strictEq c dflt then
+          if isDetached (← getObj b) then throwErr .type "subarray: the buffer is detached"
+          if begin + newLen * elemSize ty > (bufferBytes (← getObj b)).size then
+            throwErr .range "subarray: the view is out of the buffer's bounds"
+          return ← newTyped ty b begin newLen
+        let res ← construct n c #[.obj b, .num (Float.ofNat begin), .num (Float.ofNat newLen)] c
+        -- TypedArrayCreateFromConstructor: a valid typed array of the same content type
+        let .obj rid := res | throwErr .type "subarray: the species constructor did not make a typed array"
+        let .typed rty rb roff rlen := (← getObj rid).kind
+          | throwErr .type "subarray: the species constructor did not make a typed array"
+        if !(← typedInBounds rty rb roff rlen) then throwErr .type "subarray: the new typed array is detached or out of bounds"
+        if typedIsBig rty != typedIsBig ty then throwErr .type "subarray: the new typed array has another content type"
+        pure res
       | _ =>
         -- §23.2.3.9 %TypedArray%.prototype.fill: ValidateTypedArray, the value, then the
         -- indices, then detachment
@@ -9184,6 +9200,30 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         defineOwn ro "read" (.data (.num (Float.ofNat res.read)) true true true)
         defineOwn ro "written" (.data (.num (Float.ofNat n')) true true true)
         pure (.obj ro)
+    | (.x (.arrayToLocaleString typed)) =>
+      -- §23.1.3.32 Array.prototype.toLocaleString and §23.2.3.31 %TypedArray%.prototype's
+      -- (ValidateTypedArray, its own length): each element's toLocaleString, joined with ","
+      let (o, len) ← if typed then do
+          let .obj tid := thisV | throwErr .type "not a typed array"
+          let .typed ty b off l := (← getObj tid).kind | throwErr .type "not a typed array"
+          if !(← typedInBounds ty b off l) then throwErr .type "toLocaleString: the typed array is detached or out of bounds"
+          pure (thisV, ← liveLen ty b off l)
+        else do
+          let oid ← toObj n thisV
+          pure (Value.obj oid, ← arrayLikeLength n (.obj oid))
+      let mut out := ""
+      for k in [0:len] do
+        tick
+        if k > 0 then out := out ++ ","
+        let v ← getV n o (toString k)
+        match v with
+        | .undef | .null => pure ()
+        | _ =>
+          let f ← getV n v "toLocaleString"
+          if !(← isCallable f) then throwErr .type "toLocaleString is not a function"
+          out := out ++ (← toStr n (← callV n f v #[]))
+          checkStrLen out.utf8ByteSize
+      pure (.str (Str.canonical out))
     | (.x .fnHasInstance) =>
       -- §20.2.3.6: OrdinaryHasInstance(this, V): false for a non-callable `this`; a bound
       -- function asks its target; otherwise the prototype chain of V
@@ -11207,6 +11247,9 @@ def initBuiltinsMore : M Unit := do
   let pc := r.promiseCtor
   defineOwn r.functionProto (symKey symHasInstance)
     (.data (← mkNative (.x .fnHasInstance) "[Symbol.hasInstance]" 1) false false false)
+  method r.arrayProto "toLocaleString" (.x (.arrayToLocaleString false)) 0
+  if let .obj tp ← ownValue r.typedArrayCtor "prototype" then
+    method tp "toLocaleString" (.x (.arrayToLocaleString true)) 0
   -- Uint8Array base64 and hex (§23.3.2)
   if let .obj u8 ← ownValue g "Uint8Array" then
     method u8 "fromBase64" (.x (.u8Base64 0)) 1

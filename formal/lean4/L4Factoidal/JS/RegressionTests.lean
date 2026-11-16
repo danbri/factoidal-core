@@ -784,5 +784,9 @@ replaced by assignment; Function.prototype[@@hasInstance] was missing; `source` 
 #guard out "try { 'abc'.includes(/a/); print('no') } catch (e) { print(e.name) }" == ["TypeError"]
 #guard out "function F() {} print(typeof Function.prototype[Symbol.hasInstance], Function.prototype[Symbol.hasInstance].call(F, new F()), new F() instanceof F)" == ["function true true"]
 #guard out "print(new RegExp('a/b').source, String(new RegExp('[/]')), /\\1/.test('\\x01'), /[\\1]/.test('\\x01'), /\\k/.test('k'))" == ["a\\/b /[/]/ true true true"]
+#guard out "Number.prototype.toLocaleString = function () { return 'n' + this; }; print([1, 2].toLocaleString(), new Int8Array([3]).toLocaleString())" == ["n1,n2 n3"]
+#guard out "class A extends Uint8Array {} var s = new A([1, 2, 3]).subarray(1); print(s instanceof A, s.length, s[0])" == ["true 2 2"]
+#guard out "class P extends Promise {} var r; var p = new P(function (x) { r = x; }); p.then(function (v) { print('late ' + v); }); r(7)" == ["late 7"]
+#guard out "print(new Uint8Array([104, 105]).toBase64(), Uint8Array.fromHex('6869').join(), Uint8Array.fromBase64('aGk=').toHex())" == ["aGk= 104,105 6869"]
 
 end L4Factoidal.JS.Tests
