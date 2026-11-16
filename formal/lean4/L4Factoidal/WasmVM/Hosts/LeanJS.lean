@@ -644,12 +644,18 @@ def Session.scriptMuted (s : Session) (node : Nat) : Session × Bool :=
   | some v =>
     let page := h.web.net.page
     if page.origin == "null" || page.origin.isEmpty then (s, false) else
-    let d := h.dom.ensureBases
-    let base := d.documentBase (h.dom.dom.get node).doc
-    let muted := match L4Factoidal.WHATWG.URL.parseUrl v.trimAscii.toString (some base) with
-      | some u => !(u.href.startsWith "data:" || u.origin == page.origin)
-      | none => false
-    (s.setHost { h with dom := d }, muted)
+    let v := v.trimAscii.toString
+    let mutedFor := fun (u : L4Factoidal.WHATWG.URL.Url) => !(u.href.startsWith "data:" || u.origin == page.origin)
+    -- an absolute URL needs no base: the bases stay untracked
+    match L4Factoidal.WHATWG.URL.parseUrl v none with
+    | some u => (s, mutedFor u)
+    | none =>
+      let d := h.dom.ensureBases
+      let base := d.documentBase (h.dom.dom.get node).doc
+      let muted := match L4Factoidal.WHATWG.URL.parseUrl v (some base) with
+        | some u => mutedFor u
+        | none => false
+      (s.setHost { h with dom := d }, muted)
 
 def Session.dispatchOnly (s : Session) (target : Nat) (type : String) : Session × Bool :=
   let (s, v) := s.api? "dispatch" #[.num (Float.ofNat target), .str type, .num (Float.ofNat (Page.flagsOf type))]
