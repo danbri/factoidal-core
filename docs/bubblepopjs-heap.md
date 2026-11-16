@@ -562,6 +562,9 @@ These are estimates from measured shares; each step replaces its row by a measur
 | Flat slots for stored values: environments, properties and elements (the `Value` boxes that the first two rows do not remove; part overlaps the third row) | lodash 13%, pako 23%, immutable 17% | lodash 3%, pako up to 8%, immutable 4% |
 | Thread-local lookups (runtime build) | not an allocation count | up to the 7 to 23% of section 1.2; measured for the heartbeat half alone: 2 to 3% (below) |
 
+Step 6 is the first check of this model: on marked it removed 64% of allocations, `m` is 53.5%, so
+the model gives 34%; the measured saving is 37% (section 4.1).
+
 Sum for lodash, counting each allocation once: about 16% of script time, 1.2 times; the runtime
 change then removes what is left of the 7.8% thread-local share. The bound for removing every
 allocation is `1 / (1 - m)`, 1.25 to 2.2 times. The larger factor that `CoreModel.lean` shows (8 times on a call) comes from the
@@ -585,7 +588,7 @@ native: every structure below uses `ByteArray`, `FloatArray` and scalar fields o
 | 4 | Writes: `setOwnData`, `setElem`, `defineOwn` update the object in place with no closure and no rebuilt record | `o.x = i` from 5 allocations to 1, `a[3] = i` from 7 to 1 | equal to `updateObj` with the present function |
 | 5 | Built-in call path: `sizeCost`, `charge`, `subjectCached`, `Ctx` | `Math.floor(i)` from 16 allocations to under 6 | equal results and equal step count |
 | 6 | Regular expression matcher: the character read inlined into its callers; no continuation for a sequence whose first term (a character or an assertion) fails. **Done with this record** (section 4.1) | marked allocations −64%, bytes −73%, time −37% | `matchNode_seq` in [`RegexTheorems.lean`](../formal/lean4/L4Factoidal/JS/RegexTheorems.lean): the shorter path gives the answer of the sequencing rule |
-| 7 | Parser: `peek` and `advance` without a result cell | Test262 allocations −20% | equal token stream and tree |
+| 7 | Parser: `peek`, `peekAt`, `advance`, `atP`, `atK` inlined (section 4.3) | Test262 allocations −20%, a library load −15%; time: loads −1 to −5%, Test262 unchanged | none needed: no definition changes |
 | 8 | Flat frames (`Frames`, `codes`) | no `VFrame` and list cell | `Frames.abs_push`, `Frames.abs_pop`, `vmStep_refines` |
 | 9 | Flat slots (B) for environment slots and array elements that hold numbers | a number stored in a closure variable or an array allocates nothing | `decode_encode`, `Slots.read_write` |
 | 10 | Atoms | none alone | injective table |
@@ -678,6 +681,26 @@ gave −5% on the call loop and larger gains on lodash and immutable, so the tim
 What is left of the `HeapOf` copies: `callClosure` and `vmEnter` (the call depth updates of a call
 that enters from the evaluator), 0.24 M copies on lodash. They are in the mutual block and wait with
 step 1b.
+
+### 4.3 Step 7, measured
+
+`P.peek`, `P.peekAt`, `P.advance`, `P.atP` and `P.atK` of
+[`JS/Parser.lean`](../formal/lean4/L4Factoidal/JS/Parser.lean) are `@[inline]`. Each is a few
+instructions; as calls they made one result cell of the parser's monad per token looked at. No
+definition changes, so there is nothing to prove.
+
+| | allocations before | after | bytes before | after | CPU before | after |
+|---|---|---|---|---|---|---|
+| Test262, 4,637 files of four directories | 58.20 M | 46.36 M (−20.4%) | 1,755 MB | 1,482 MB (−15.6%) | 7.19 s | 7.16 s |
+| lodash, load only | 1.081 M | 0.919 M (−14.9%) | 32.6 MB | 28.9 MB (−11.2%) | 98 ms | 97 ms |
+| acorn, immutable, pako, marked: load only | not counted | | | | 86, 72, 73, 60 ms | 84, 70, 69, 59 ms |
+
+The verdict lists of the 4,637 files are identical, and the libraries print the same lines. The
+gain in time is small: 1.4 to 4.9% on the five loads (least of nine interleaved runs), none on the
+Test262 run, on a loaded machine. The generated C of the parser grows from 2.42 MB to 3.40 MB and the
+`leanjs` binary by 0.3%. The allocation count falls by a fifth where parsing dominates; that the
+time does not follow says the parser's cost is elsewhere (the lexer's token records and identifier
+strings lead what is left).
 
 ## 5. What is not known yet
 
