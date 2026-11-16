@@ -27,10 +27,12 @@ What is decided here, and what is not:
 
 Two readings of the specification text, stated so they can be changed:
 
-* OWL 2 QL: section 3.1 lists "irreflexive properties
-  (IrreflexiveObjectProperty)" among the supported axioms; the grammar
-  of sections 3.2.5 and 6.2 omits the production. `qlAxiom` follows
-  section 3.1 and accepts it.
+* OWL 2 QL: section 3.1 (Feature Overview) lists "irreflexive
+  properties (IrreflexiveObjectProperty)" among the supported axioms;
+  the `ObjectPropertyAxiom` production of sections 3.2.5 and 6.2, which
+  is the profile specification, has no such alternative. `qlAxiom`
+  follows the production and rejects it (the W3C case
+  `New-Feature-IrreflexiveProperty-001` is annotated as outside QL).
 * `DatatypeDefinition` is in the `Axiom` production of all three
   grammars, and each profile supports a fixed list of datatypes. The
   axiom is accepted when its data range is in the profile; a use of the
@@ -45,9 +47,11 @@ constructor per production alternative, and the checker is proved to
 accept exactly that grammar: `rlSub_iff`, `rlSuper_iff`, `rlEquiv_iff`,
 `rlAxiom_iff`, and for a whole ontology `inRL_iff`. So an ontology the
 RL checker accepts has only axioms of the RL grammar, and every ontology
-of the RL grammar is accepted. EL and QL have the same statements for
-their class expressions and axioms (`elCE_iff`, `qlSub_iff`,
-`qlSuper_iff`, `elAxiom_iff`, `qlAxiom_iff`).
+of the RL grammar is accepted. EL and QL have the same statement for
+their class expressions (`elCE_iff`, `qlSub_iff`, `qlSuper_iff`), and
+for the `SubClassOf` axioms of an accepted ontology (`inEL_subClassOf`,
+`inQL_subClassOf`); their axiom checkers as a whole are tested, not
+proved against a second statement of the grammar.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -240,16 +244,16 @@ def litKey (l : WfLiteral) : String :=
 mutual
 def drKey : DataRange → String
   | .datatype dt      => "<" ++ dt.val ++ ">"
-  | .intersection drs => "DAnd(" ++ drsKey drs ++ ")"
-  | .union drs        => "DOr(" ++ drsKey drs ++ ")"
+  | .intersection drs => "DAnd(" ++ drsKey "" drs ++ ")"
+  | .union drs        => "DOr(" ++ drsKey "" drs ++ ")"
   | .complement dr    => "DNot(" ++ drKey dr ++ ")"
   | .oneOf lits       => "DOne(" ++ String.intercalate " " (lits.map litKey) ++ ")"
   | .restriction dt fs =>
       "DRes(<" ++ dt.val ++ "> " ++
         String.intercalate " " (fs.map (fun f => "<" ++ f.1.val ++ "> " ++ litKey f.2)) ++ ")"
-def drsKey : List DataRange → String
-  | []        => ""
-  | d :: rest => drKey d ++ " " ++ drsKey rest
+def drsKey (acc : String) : List DataRange → String
+  | []        => acc
+  | d :: rest => drsKey (acc ++ drKey d ++ " ") rest
 end
 
 def odrKey : Option DataRange → String
@@ -261,8 +265,8 @@ def irisKey (is : List WfIri) : String := String.intercalate " " (is.map (fun i 
 mutual
 def ceKey : ClassExpr → String
   | .cls c => "<" ++ c.val ++ ">"
-  | .intersection ces => "And(" ++ cesKey ces ++ ")"
-  | .union ces => "Or(" ++ cesKey ces ++ ")"
+  | .intersection ces => "And(" ++ cesKey "" ces ++ ")"
+  | .union ces => "Or(" ++ cesKey "" ces ++ ")"
   | .complement ce => "Not(" ++ ceKey ce ++ ")"
   | .oneOf inds => "One(" ++ String.intercalate " " (inds.map indKey) ++ ")"
   | .someValuesFrom ope ce => "Some(" ++ opeKey ope ++ " " ++ ceKey ce ++ ")"
@@ -278,9 +282,9 @@ def ceKey : ClassExpr → String
   | .dataMinCard n dp odr => "DMin(" ++ toString n ++ " <" ++ dp.val ++ "> " ++ odrKey odr ++ ")"
   | .dataMaxCard n dp odr => "DMax(" ++ toString n ++ " <" ++ dp.val ++ "> " ++ odrKey odr ++ ")"
   | .dataExactCard n dp odr => "DExact(" ++ toString n ++ " <" ++ dp.val ++ "> " ++ odrKey odr ++ ")"
-def cesKey : List ClassExpr → String
-  | []        => ""
-  | c :: rest => ceKey c ++ " " ++ cesKey rest
+def cesKey (acc : String) : List ClassExpr → String
+  | []        => acc
+  | c :: rest => cesKey (acc ++ ceKey c ++ " ") rest
 def oceKey : Option ClassExpr → String
   | none    => ""
   | some ce => ceKey ce
@@ -301,9 +305,12 @@ def supersStep (subs : List (String × String)) (ps : List String) : List String
 /-- The properties reached from `p` by zero or more
 `SubObjectPropertyOf` steps (`fuel` steps; the number of axioms bounds
 the length of a chain without a repeat). -/
-def supersOf (subs : List (String × String)) (p : String) : Nat → List String
-  | 0     => [p]
-  | n + 1 => supersStep subs (supersOf subs p n)
+def supersLoop (subs : List (String × String)) : Nat → List String → List String
+  | 0, ps     => ps
+  | n + 1, ps => supersLoop subs n (supersStep subs ps)
+
+def supersOf (subs : List (String × String)) (p : String) (fuel : Nat) : List String :=
+  supersLoop subs fuel [p]
 
 /-- The printed forms of the class expressions `Ax` imposes as a range
 restriction on `p`. -/
@@ -359,8 +366,7 @@ theorem qlSupers_iff (ces : List ClassExpr) : qlSupers ces = true ↔ ∀ c ∈ 
   | nil => simp [qlSupers]
   | cons c rest ih => simp [qlSupers, ih]
 
-/-- Section 3.2.5 and the complete grammar of section 6.2, with
-`IrreflexiveObjectProperty` as section 3.1 lists it. -/
+/-- Section 3.2.5 and the complete grammar of section 6.2. -/
 def qlAxiom : Axiom → Bool
   | .declaration _ _ _ => true
   | .subClassOf _ sub sup => qlSub sub && qlSuper sup
@@ -375,7 +381,7 @@ def qlAxiom : Axiom → Bool
   | .objectPropertyDomain _ _ ce => qlSuper ce
   | .objectPropertyRange _ _ ce => qlSuper ce
   | .objectPropertyCharacteristic _ ch _ =>
-      ch == .reflexive || ch == .irreflexive || ch == .symmetric || ch == .asymmetric
+      ch == .reflexive || ch == .symmetric || ch == .asymmetric
   | .subDataPropertyOf _ _ _ => true
   | .equivalentDataProperties _ _ => true
   | .disjointDataProperties _ _ => true

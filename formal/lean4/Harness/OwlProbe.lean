@@ -2755,7 +2755,10 @@ profile. The verdict of the built-in engine for one profile:
    (`OWL.Profiles.inEL`, `inQL`, `inRL`; `Profiles.inRL_iff` proves the RL
    checker accepts exactly the RL grammar).
 
-A graph the reverse mapping cannot read is `undecided`, never a verdict.
+A graph the reverse mapping cannot read is judged from the case's
+functional-style documents when it has them (`New-Feature-Rational-002`
+and `-003`: the RDF/XML premise ends a list with the RDF namespace IRI
+where `rdf:nil` is meant) and is otherwise `undecided`, never a verdict.
 For a case with a functional-style premise the same three checkers are
 also run on the functional-style documents as parsed (no RDF graph in
 between), and a difference between the two readings is printed as
@@ -2787,8 +2790,20 @@ def judgeProfiles (cat : Catalog) (c : Case) : Except String (List (Bool × List
         .ok (profileNames.map fun _ => (false, ["not an OWL 2 DL ontology: " ++ viols.headD ""]))
       else
         match L4Factoidal.OWL.Struct.FromRdf.ontologyOfGraph d.uMerged with
-        | .error e => .error s!"reverse mapping: {e}"
         | .ok o => .ok (profileVerdictsOf o)
+        | .error e =>
+            -- The RDF graph cannot be read as axioms. A case that also has
+            -- functional-style documents is judged from those (they are a
+            -- normative syntax of the same ontology); otherwise undecided.
+            match c.fsPremiseText.bind L4Factoidal.OWL.FS.parseOntology with
+            | none => .error s!"reverse mapping: {e}"
+            | some p =>
+                match (c.fsConclusionText <|> c.fsNonConclusionText) with
+                | none => .ok (profileVerdictsOf p)
+                | some t =>
+                    match L4Factoidal.OWL.FS.parseOntology t with
+                    | none => .error s!"reverse mapping: {e}"
+                    | some q => .ok (profileVerdictsOf { p with axioms := p.axioms ++ q.axioms })
 
 /-- The verdicts from the functional-style documents as parsed. `none`
 when the case has no functional-style premise or it is outside the

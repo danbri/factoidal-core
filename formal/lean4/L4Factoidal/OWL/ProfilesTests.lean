@@ -88,6 +88,8 @@ def both (body : String) : Option (List Bool) :=
 #guard both "TransitiveObjectProperty(:p)" == some [true, false, true]
 #guard both "ReflexiveObjectProperty(:p)" == some [true, true, false]
 #guard both "SymmetricObjectProperty(:p)" == some [false, true, true]
+-- Irreflexive: the QL production has no such alternative (section 3.2.5).
+#guard both "IrreflexiveObjectProperty(:p)" == some [false, false, true]
 #guard both "FunctionalObjectProperty(:p)" == some [false, false, true]
 #guard both "FunctionalDataProperty(:d)" == some [true, false, true]
 -- Equality of individuals: not QL.

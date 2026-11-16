@@ -20,6 +20,10 @@ profiles, `OWL.Profiles`) can be asked of an RDF/XML document.
 * Axioms (Tables 16 and 17): one axiom per main triple, and the nodes
   typed `owl:AllDisjointClasses`, `owl:AllDisjointProperties`,
   `owl:AllDifferent` and `owl:NegativePropertyAssertion`.
+* `owl:intersectionOf` and `owl:unionOf` of a one-element sequence are
+  read as the element (`oneOrMany`).
+* Class expressions and data ranges nested more than 512 deep are not
+  read (`maxNesting`): the recursion has a fixed bound on any input.
 * Annotations are not read. The ontology header, annotation assertions,
   annotation property axioms and the `owl:Axiom` / `owl:Annotation`
   reification nodes give no axiom. A caller that needs annotations must
@@ -113,18 +117,18 @@ def Ctx.hasType (c : Ctx) (s : Subject) (ty : String) : Bool :=
 
 /-- The elements of an RDF collection (Table 3); `none` when it is not
 closed by `rdf:nil` within the fuel. -/
-def Ctx.list (c : Ctx) : Nat → Term → Option (List Term)
-  | 0, _ => none
-  | n + 1, t =>
+def Ctx.list (c : Ctx) : Nat → Term → Array Term → Option (List Term)
+  | 0, _, _ => none
+  | n + 1, t, acc =>
       match t with
-      | .iri i => if i.val == nsRdf ++ "nil" then some [] else none
+      | .iri i => if i.val == nsRdf ++ "nil" then some acc.toList else none
       | .bnode b =>
           match c.first (.bnode b) (nsRdf ++ "first"), c.first (.bnode b) (nsRdf ++ "rest") with
-          | some h, some r => (c.list n r).map (h :: ·)
+          | some h, some r => c.list n r (acc.push h)
           | _, _ => none
       | _ => none
 
-def Ctx.listOf (c : Ctx) (t : Term) : Option (List Term) := c.list (c.bySubj.size + 1) t
+def Ctx.listOf (c : Ctx) (t : Term) : Option (List Term) := c.list (c.bySubj.size + 1) t #[]
 
 def litOf : Term → Option WfLiteral
   | .literal l => some l
@@ -167,6 +171,23 @@ def Ctx.facet (c : Ctx) : Term → Option (WfIri × WfLiteral)
       | _ => none
   | _ => none
 
+/-- An intersection or union read from a sequence. Tables 12 and 13 map
+`owl:intersectionOf` and `owl:unionOf` for a sequence of two or more
+elements, and the structural specification has no intersection or union
+of one operand. A sequence of ONE element is read as that element: the
+only expression of the structural specification with the same extension.
+(The W3C cases `WebOnt-disjointWith-003` to `-009` and `WebOnt-I5.26-*`
+write `owl:intersectionOf ( A )` and are annotated as OWL 2 DL.) -/
+def oneOrMany {α : Type} (mk : List α → α) : List α → α
+  | [x] => x
+  | xs  => mk xs
+
+/-- The deepest nesting of class expressions and data ranges the reader
+follows. An expression nested deeper is not read (the triple that holds
+it is the reader's error), so the recursion below uses at most this many
+stack frames whatever the graph. -/
+def maxNesting : Nat := 512
+
 /-- Table 12: data ranges. -/
 def Ctx.dr (c : Ctx) : Nat → Term → Option DataRange
   | 0, _ => none
@@ -176,10 +197,10 @@ def Ctx.dr (c : Ctx) : Nat → Term → Option DataRange
       | .bnode b =>
           let s : Subject := .bnode b
           match c.first s (nsOwl ++ "intersectionOf") with
-          | some l => do return .intersection (← (← c.listOf l).mapM (c.dr n))
+          | some l => do return oneOrMany DataRange.intersection (← (← c.listOf l).mapM (c.dr n))
           | none =>
           match c.first s (nsOwl ++ "unionOf") with
-          | some l => do return .union (← (← c.listOf l).mapM (c.dr n))
+          | some l => do return oneOrMany DataRange.union (← (← c.listOf l).mapM (c.dr n))
           | none =>
           match c.first s (nsOwl ++ "datatypeComplementOf") with
           | some d => do return .complement (← c.dr n d)
@@ -207,12 +228,12 @@ def Ctx.ceMarkers (c : Ctx) : Nat → Subject → Option ClassExpr
         | .iri i => some (.cls i)
         | .bnode b => c.ceMarkers n (.bnode b)
         | _ => none
-      let fuel := c.bySubj.size + 1
+      let fuel := maxNesting
       match c.first s (nsOwl ++ "intersectionOf") with
-      | some l => do return .intersection (← (← c.listOf l).mapM ce)
+      | some l => do return oneOrMany ClassExpr.intersection (← (← c.listOf l).mapM ce)
       | none =>
       match c.first s (nsOwl ++ "unionOf") with
-      | some l => do return .union (← (← c.listOf l).mapM ce)
+      | some l => do return oneOrMany ClassExpr.union (← (← c.listOf l).mapM ce)
       | none =>
       match c.first s (nsOwl ++ "complementOf") with
       | some x => do return .complement (← ce x)
@@ -301,7 +322,7 @@ def Ctx.ceMarkers (c : Ctx) : Nat → Subject → Option ClassExpr
             | some (some e) => some e
             | _ => none
 
-def Ctx.fuel (c : Ctx) : Nat := c.bySubj.size + 2
+def Ctx.fuel (_c : Ctx) : Nat := maxNesting
 
 /-- The class expression at a term: a class IRI, or the markers of a
 blank node. -/
@@ -531,7 +552,7 @@ def Ctx.tripleAxioms (c : Ctx) (units : Std.HashSet Subject) (t : Triple) :
   else .error s!"a predicate that is no declared property: {showTripleShort t}"
 
 /-- The nodes of `unitTypes`. -/
-def Ctx.units (c : Ctx) (g : Graph) : Std.HashSet Subject :=
+def Ctx.units (_c : Ctx) (g : Graph) : Std.HashSet Subject :=
   g.foldl (fun u t =>
     if t.p.val == rdfTypeS then
       match t.o with
