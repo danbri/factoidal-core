@@ -280,6 +280,13 @@ never generalised as data. -/
 def isMonadicType (t : Lean.Expr) : MetaM Bool :=
   forallTelescope t fun _ b => pure (b.isAppOf ``JSM || b.isAppOf ``EStateM)
 
+open Lean Meta in
+/-- The declarations of the local context, in order, as an array. (A `for` over the context
+itself is a recursion over its tree in the compiled tactic, which the tail-recursion gate
+counts; over an array it is a loop.) -/
+def lctxDecls : MetaM (Array LocalDecl) := do
+  (← getLCtx).getFVarIds.mapM (·.getDecl)
+
 open Lean Meta Elab Tactic in
 /-- `split` cannot case on a discriminant that is a let-bound local (after `extract_lets`, the
 `do` block's own `let x := …` of data). Both sides share that local, so its value is not needed:
@@ -290,7 +297,7 @@ elab "fuel_gen_lets" : tactic => do
   g.withContext do
     let t ← instantiateMVars (← g.getType)
     let mut args : Array GeneralizeArg := #[]
-    for d in (← getLCtx) do
+    for d in (← lctxDecls) do
       if d.isImplementationDetail then continue
       if d.value?.isNone then continue
       if (← whnfR d.type).isForall then continue
@@ -326,34 +333,43 @@ def fuelCasesCore (bigOnly : Bool) : TacticM Unit := do
     -- against the literals 6 and 7): elsewhere casing a number one successor at a time over a
     -- match of many literals multiplied the goals (`split` takes those matches)
     let allowNat := m.discrs.size ≥ 1 && (← whnfR (← inferType m.discrs[0]!)).isConstOf ``Native
-    let rec firstOpen (fuel : Nat) (d0 : Lean.Expr) : MetaM (Option Lean.Expr) := do
-      -- a chain of successors costs no depth
-      let mut d := d0
-      if allowNat then
-        for _ in [0:4096] do
-          if d.isAppOfArity ``Nat.succ 1 then d := d.appArg! else break
-      if d.hasLooseBVars then return none
-      -- never a string, character or machine number (literal patterns that cases cannot
-      -- reach); a natural number is cased one successor at a time, which ends past the largest
-      -- literal of the match (`dsimp only` then reduces it)
-      let ty ← whnfR (← inferType d)
-      -- (a number that is the discriminant itself, a plain local, is cased anywhere: its match
-      -- has literal patterns and ends at the largest)
-      if !allowNat && ty.isConstOf ``Nat && !(fuel == 8 && d.isFVar) then return none
-      if ty.isConstOf ``Int || ty.isConstOf ``String || ty.isConstOf ``Char
-          || ty.isConstOf ``Float || ty.isConstOf ``UInt8 || ty.isConstOf ``UInt16
-          || ty.isConstOf ``UInt32 || ty.isConstOf ``UInt64 then return none
-      if !(← isConstructorApp d) then return some d
-      match fuel with
-      | 0 => return none
-      | k + 1 =>
-        for a in d.getAppArgs do
+    -- depth first, to depth 8, with the terms still to visit on a stack (no recursion in the
+    -- compiled tactic)
+    let firstOpen (d0 : Lean.Expr) : MetaM (Option Lean.Expr) := do
+      let mut stack : Array (Lean.Expr × Nat) := #[(d0, 8)]
+      let mut found : Option Lean.Expr := none
+      for _ in [0:100000] do
+        if found.isSome || stack.isEmpty then break
+        let (d1, fuel) := stack.back!
+        stack := stack.pop
+        -- a chain of successors costs no depth
+        let mut d := d1
+        if allowNat then
+          for _ in [0:4096] do
+            if d.isAppOfArity ``Nat.succ 1 then d := d.appArg! else break
+        if d.hasLooseBVars then continue
+        -- never a string, character or machine number (literal patterns that cases cannot
+        -- reach); a natural number is cased one successor at a time, which ends past the largest
+        -- literal of the match (`dsimp only` then reduces it)
+        let ty ← whnfR (← inferType d)
+        -- (a number that is the discriminant itself, a plain local, is cased anywhere: its match
+        -- has literal patterns and ends at the largest)
+        if !allowNat && ty.isConstOf ``Nat && !(fuel == 8 && d.isFVar) then continue
+        if ty.isConstOf ``Int || ty.isConstOf ``String || ty.isConstOf ``Char
+            || ty.isConstOf ``Float || ty.isConstOf ``UInt8 || ty.isConstOf ``UInt16
+            || ty.isConstOf ``UInt32 || ty.isConstOf ``UInt64 then continue
+        if !(← isConstructorApp d) then
+          found := some d
+          continue
+        if fuel == 0 then continue
+        -- its arguments, first to last: the first on top of the stack
+        for a in d.getAppArgs.reverse do
           if (← inferType a).isSort then continue
-          if let some e ← firstOpen k a then return some e
-        return none
+          stack := stack.push (a, fuel - 1)
+      return found
     let mut pick : Option Lean.Expr := none
     for d in m.discrs do
-      if let some e ← firstOpen 8 d then
+      if let some e ← firstOpen d then
         pick := some e
         break
     let some d := pick | throwError "fuel_cases: every discriminant is a constructor"
@@ -414,7 +430,7 @@ elab "fuel_jp_pairs" : tactic => do
     let t ← instantiateMVars (← g.getType)
     let args := t.getAppArgs
     unless t.isAppOf ``Le && args.size ≥ 4 do throwError "fuel_jp_pairs: not a Le goal"
-    let lctx ← getLCtx
+    let lctx ← lctxDecls
     -- function-typed let-bound locals, in context order
     let mut lets : Array LocalDecl := #[]
     for d in lctx do
@@ -483,7 +499,7 @@ elab "fuel_hyp" : tactic => do
     -- a built-in's call into the evaluator, `core.f a…` (`CoreFn.f`, reducible), is `core (.f a…)`
     let x ← if x0.getAppFn.isFVar then pure x0 else whnfR x0
     unless x.getAppFn.isFVar do throwError "fuel_hyp: no local head"
-    for d in (← getLCtx) do
+    for d in (← lctxDecls) do
       if d.isImplementationDetail then continue
       let ty ← instantiateMVars d.type
       unless ty.getForallBody.isAppOf ``Le do continue
