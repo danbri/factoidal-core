@@ -14,7 +14,7 @@ open L4Factoidal.JS
 
 variable {H : Type}
 
-set_option maxHeartbeats 8000000
+set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
 theorem natives_iterEach_mono {c1 c2 : CoreFn H} (hc : ∀ op, Le (c1 op) (c2 op)) (it : Value)

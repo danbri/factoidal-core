@@ -5,7 +5,7 @@ import L4Factoidal.JS.FuelMonoStepsS9
 namespace L4Factoidal.JS.FuelMono
 open L4Factoidal.JS
 
-set_option maxHeartbeats 4000000
+set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
 theorem vmLoop_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Code) (a1 : Nat) (a2 : Nat) (a3 : Nat) (a4 : List VFrame) (a5 : Array Value) (a6 : FloatArray) :

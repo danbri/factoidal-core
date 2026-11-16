@@ -8919,7 +8919,9 @@ termination_by structural n _ _ => n
 does is ignored (the original throw wins, step 5), then the completion goes on; a halt goes on
 at once, with no call. It never returns normally. -/
 def iterCloseAbrupt : Nat → Value → Abrupt → M Unit
-  | 0, _, a => throw a
+  -- out of fuel like every function of the block (throwing `a` here, with no call, made a run
+  -- end differently at fuel 0 than at fuel 1: not monotone in the fuel, `JS/FuelMono.lean`)
+  | 0, _, _ => throw (.halt "fuel")
   | n + 1, it, a => do
     if let .throw _ := a then
       let _ ← catchJS (iterClose n it) (fun _ => pure ())

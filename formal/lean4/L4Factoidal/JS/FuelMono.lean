@@ -141,6 +141,21 @@ theorem Le.map {x1 x2 : JSM H α} (f : α → β) (hx : Le x1 x2) : Le (f <$> x1
   · rw [← h]
     exact Or.inr rfl
 
+/-- `if` on the same condition on both sides, without `split` (which rewrites the whole goal
+with the condition afterwards: over a built-in's body that rewrite ran out of steps). -/
+theorem Le.ite {c : Prop} [Decidable c] {t1 t2 e1 e2 : JSM H α} (ht : c → Le t1 t2)
+    (he : ¬c → Le e1 e2) : Le (if c then t1 else e1) (if c then t2 else e2) := by
+  by_cases h : c
+  · simp only [if_pos h]; exact ht h
+  · simp only [if_neg h]; exact he h
+
+theorem Le.dite {c : Prop} [Decidable c] {t1 t2 : c → JSM H α} {e1 e2 : ¬c → JSM H α}
+    (ht : ∀ h, Le (t1 h) (t2 h)) (he : ∀ h, Le (e1 h) (e2 h)) :
+    Le (if h : c then t1 h else e1 h) (if h : c then t2 h else e2 h) := by
+  by_cases h : c
+  · simp only [dif_pos h]; exact ht h
+  · simp only [dif_neg h]; exact he h
+
 /-- `discard x` (`Functor.mapConst ()`, for `EStateM` the map of a constant function). -/
 theorem Le.discard {x1 x2 : JSM H α} (hx : Le x1 x2) : Le (discard x1) (discard x2) :=
   Le.map (fun _ => PUnit.unit) hx
@@ -191,6 +206,16 @@ theorem Le.foldlM_array {xs : Array α} {b : β} {f1 f2 : β → α → JSM H β
     (hf : ∀ b a, Le (f1 b a) (f2 b a)) : Le (xs.foldlM f1 b) (xs.foldlM f2 b) := by
   rw [← Array.foldlM_toList, ← Array.foldlM_toList]
   exact Le.foldlM_list hf
+
+theorem Le.filterM_array {xs : Array α} {p1 p2 : α → JSM H Bool}
+    (hp : ∀ a, Le (p1 a) (p2 a)) : Le (xs.filterM p1) (xs.filterM p2) := by
+  unfold Array.filterM
+  exact Le.foldlM_array fun acc a => Le.bind (hp a) fun _ => Le.refl _
+
+theorem Le.filterMapM_array {xs : Array α} {f1 f2 : α → JSM H (Option β)}
+    (hf : ∀ a, Le (f1 a) (f2 a)) : Le (xs.filterMapM f1) (xs.filterMapM f2) := by
+  unfold Array.filterMapM
+  exact Le.foldlM_array fun acc a => Le.bind (hf a) fun _ => Le.refl _
 
 theorem Le.filterMapM_list {xs : List α} {f1 f2 : α → JSM H (Option β)}
     (hf : ∀ a, Le (f1 a) (f2 a)) : Le (xs.filterMapM f1) (xs.filterMapM f2) := by
@@ -476,10 +501,45 @@ elab "fuel_call" ih:ident : tactic => do
     let xs := x.getAppArgs
     unless xs.size ≥ 2 do throwError "fuel_call: no arguments"
     let pf := mkAppN (mkAppN (mkConst field) ihT.getAppArgs) (#[ihE] ++ xs.extract 2 xs.size)
-    if ← withReducible (isDefEq (← inferType pf) t) then
+    -- default transparency: in `coreRun` the answer's type is `CoreOp.Res op`, which reduces to
+    -- the function's result type
+    if ← isDefEq (← inferType pf) t then
       g.assign pf
       replaceMainGoal []
     else throwError "fuel_call: field does not fit"
+
+open Lean Meta Elab Tactic in
+/-- Run a step with its own heartbeat budget (in thousands, as `maxHeartbeats`); past it the step
+fails as an ordinary error, so the walk's `first` goes on to the next rule. (A heartbeat timeout
+is a runtime exception, which `first` does not catch.) -/
+elab "fuel_capped " n:num t:tactic : tactic => do
+  let st ← saveState
+  tryCatchRuntimeEx
+    (withTheReader Core.Context (fun c => { c with maxHeartbeats := n.getNat * 1000 }) <|
+      withCurrHeartbeats (evalTactic t))
+    (fun _ => do
+      st.restore
+      throwError "fuel_capped: over budget")
+
+open Lean Meta Elab Tactic in
+/-- A match whose discriminants are constructors now (after `fuel_cases`), on both sides: take
+the alternative by the matcher's own reduction, without `dsimp`, which walks the whole term (a
+built-in's `match id with` has hundreds of alternatives, and is reduced once per built-in). -/
+elab "fuel_match_reduce" : tactic => do
+  let g ← getMainGoal
+  g.withContext do
+    let t ← instantiateMVars (← g.getType)
+    let args := t.getAppArgs
+    unless t.isAppOf ``Le && args.size ≥ 4 do throwError "fuel_match_reduce: not a Le goal"
+    let red (e : Lean.Expr) : MetaM Lean.Expr := do
+      -- default transparency for the discriminants: a literal pattern over a natural number
+      -- (`iterEager 3`) is decided by `Nat.decEq`, which reducible transparency does not open
+      match ← withTransparency .default (reduceMatcher? e) with
+      | ReduceMatcherResult.reduced e2 => return e2.headBeta
+      | _ => throwError "fuel_match_reduce: no reducible match"
+    let x' ← red args[2]!
+    let y' ← red args[3]!
+    replaceMainGoal [← g.replaceTargetDefEq (mkAppN t.getAppFn ((args.set! 2 x').set! 3 y'))]
 
 syntax "fuel_mono_pre" : tactic
 macro_rules
@@ -503,6 +563,9 @@ macro_rules
       | with_reducible apply Le.foldlM_list
       | with_reducible apply Le.foldlM_array
       | with_reducible apply Le.filterMapM_list
+      | with_reducible apply Le.filterM_array
+      | with_reducible apply Le.inRealm
+      | with_reducible apply Le.filterMapM_array
       | with_reducible apply Le.map
       | apply Le.discard
       | (intro _)
@@ -513,13 +576,19 @@ macro_rules
       | with_reducible apply natives_extraNative_mono
       | with_reducible apply natives_callNative_mono
       | fuel_jp
+      | fuel_match_reduce
+      | with_reducible apply Le.ite
+      | with_reducible apply Le.dite
+      | fuel_capped 3000 split
       | fuel_cases_big
-      | split
-      | (dsimp (config := { zeta := false }) only)
+      | fuel_capped 1000 (dsimp (config := { zeta := false }) only)
       | fuel_gen_lets
       | fuel_cases
-      | dsimp only
-      | (apply Le.of_out; intro _; set_option maxHeartbeats 400000 in exact ⟨_, rfl⟩))
+      | fuel_capped 1000 dsimp only
+      | (apply Le.of_out; intro _; set_option maxHeartbeats 400000 in exact ⟨_, rfl⟩)
+      -- last: `split` with a large budget, for a big match no other rule takes (a literal
+      -- pattern over a natural number that is past every literal)
+      | fuel_capped 60000 split)
 
 
 open Lean Meta Elab Tactic in
@@ -558,5 +627,11 @@ elab "fuel_walk" ih:(ppSpace ident)? : tactic => withEnableInfoTree false do
         left := left.push g
         todo := rest
   setGoals left.toList
+
+/-- A call that runs in another realm (`inRealm`: switch, run, switch back on a throw too). -/
+theorem Le.inRealm (k : Nat) {x1 x2 : JSM H α} (hx : Le x1 x2) :
+    Le (L4Factoidal.JS.inRealm k x1) (L4Factoidal.JS.inRealm k x2) := by
+  unfold L4Factoidal.JS.inRealm
+  fuel_walk
 
 end L4Factoidal.JS.FuelMono

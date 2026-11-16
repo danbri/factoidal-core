@@ -5,7 +5,7 @@ import L4Factoidal.JS.FuelMonoStepsBGenUnwind
 namespace L4Factoidal.JS.FuelMono
 open L4Factoidal.JS
 
-set_option maxHeartbeats 4000000
+set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
 theorem callBody_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : FunDef) (a1 : Nat) (a2 : Value) (a3 : Value) (a4 : Value) (a5 : Value) (a6 : Value) (a7 : Value) (a8 : Array Value) (a9 : Nat) (a10 : FunInfo) :

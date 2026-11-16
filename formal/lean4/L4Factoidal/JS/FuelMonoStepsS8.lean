@@ -5,7 +5,7 @@ import L4Factoidal.JS.FuelMonoStepsS7
 namespace L4Factoidal.JS.FuelMono
 open L4Factoidal.JS
 
-set_option maxHeartbeats 4000000
+set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
 theorem regexExec_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Value) (a1 : String) :

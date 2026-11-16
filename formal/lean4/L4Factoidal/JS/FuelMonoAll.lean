@@ -102,7 +102,10 @@ theorem IH_zero {H : Type} (m : Nat) : IH H 0 m where
   h_vmLoop := fun a0 a1 a2 a3 a4 a5 a6 => Le.unfold (vmLoop.eq_def _ _ _ _ _ _ _ _) rfl (Le.fuel _)
   h_vmEnter := fun a0 a1 a2 a3 a4 => Le.unfold (vmEnter.eq_def _ _ _ _ _ _) rfl (Le.fuel _)
   h_genericPush := fun a0 a1 => Le.unfold (genericPush.eq_def _ _ _) rfl (Le.fuel _)
+  h_arraySpliceGeneric := fun a0 a1 => Le.unfold (arraySpliceGeneric.eq_def _ _ _) rfl (Le.fuel _)
+  h_deleteProp := fun a0 a1 => Le.unfold (deleteProp.eq_def _ _ _) rfl (Le.fuel _)
   h_deleteOrThrow := fun a0 a1 => Le.unfold (deleteOrThrow.eq_def _ _ _) rfl (Le.fuel _)
+  h_jsonRevive := fun a0 a1 a2 a3 a4 => Le.unfold (jsonRevive.eq_def _ _ _ _ _ _) rfl (Le.fuel _)
   h_arrayGeneric := fun a0 a1 a2 => Le.unfold (arrayGeneric.eq_def _ _ _ _) rfl (Le.fuel _)
   h_speciesFrom := fun a0 a1 => Le.unfold (speciesFrom.eq_def _ _ _) rfl (Le.fuel _)
   h_speciesFill := fun a0 a1 a2 => Le.unfold (speciesFill.eq_def _ _ _ _) rfl (Le.fuel _)
@@ -232,7 +235,10 @@ theorem IH_all {H : Type} : (n m : Nat) → n ≤ m → IH H n m
       h_vmLoop := vmLoop_step n m ih,
       h_vmEnter := vmEnter_step n m ih,
       h_genericPush := genericPush_step n m ih,
+      h_arraySpliceGeneric := arraySpliceGeneric_step n m ih,
+      h_deleteProp := deleteProp_step n m ih,
       h_deleteOrThrow := deleteOrThrow_step n m ih,
+      h_jsonRevive := jsonRevive_step n m ih,
       h_arrayGeneric := arrayGeneric_step n m ih,
       h_speciesFrom := speciesFrom_step n m ih,
       h_speciesFill := speciesFill_step n m ih,

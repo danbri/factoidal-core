@@ -11,7 +11,7 @@ fuel monotonicity of the whole block, for every heap (the register machine on or
 namespace L4Factoidal.JS.FuelMono
 open L4Factoidal.JS
 
-set_option maxHeartbeats 4000000
+set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
 /-- Every function of the block that takes fuel, at fuel `n` against fuel `m`. -/
@@ -113,7 +113,10 @@ structure IH (H : Type) (n m : Nat) : Prop where
   h_vmLoop : ∀ (a0 : Code) (a1 : Nat) (a2 : Nat) (a3 : Nat) (a4 : List VFrame) (a5 : Array Value) (a6 : FloatArray), Le (vmLoop (H := H) n a0 a1 a2 a3 a4 a5 a6) (vmLoop m a0 a1 a2 a3 a4 a5 a6)
   h_vmEnter : ∀ (a0 : Code) (a1 : Nat) (a2 : Value) (a3 : Value) (a4 : Array Value), Le (vmEnter (H := H) n a0 a1 a2 a3 a4) (vmEnter m a0 a1 a2 a3 a4)
   h_genericPush : ∀ (a0 : Value) (a1 : Array Value), Le (genericPush (H := H) n a0 a1) (genericPush m a0 a1)
+  h_arraySpliceGeneric : ∀ (a0 : Value) (a1 : Array Value), Le (arraySpliceGeneric (H := H) n a0 a1) (arraySpliceGeneric m a0 a1)
+  h_deleteProp : ∀ (a0 : Value) (a1 : String), Le (deleteProp (H := H) n a0 a1) (deleteProp m a0 a1)
   h_deleteOrThrow : ∀ (a0 : Value) (a1 : String), Le (deleteOrThrow (H := H) n a0 a1) (deleteOrThrow m a0 a1)
+  h_jsonRevive : ∀ (a0 : Array (Nat × String × String × Value)) (a1 : Value) (a2 : Value) (a3 : String) (a4 : Nat), Le (jsonRevive (H := H) n a0 a1 a2 a3 a4) (jsonRevive m a0 a1 a2 a3 a4)
   h_arrayGeneric : ∀ (a0 : Native) (a1 : Value) (a2 : Array Value), Le (arrayGeneric (H := H) n a0 a1 a2) (arrayGeneric m a0 a1 a2)
   h_speciesFrom : ∀ (a0 : Value) (a1 : Nat), Le (speciesFrom (H := H) n a0 a1) (speciesFrom m a0 a1)
   h_speciesFill : ∀ (a0 : Value) (a1 : Array Value) (a2 : Option Nat), Le (speciesFill (H := H) n a0 a1 a2) (speciesFill m a0 a1 a2)
