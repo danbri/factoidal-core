@@ -1098,8 +1098,9 @@
       "source_paths": [
         "formal/lean4/L4Factoidal/WasmVM/Binary/**",
         "formal/lean4/L4Factoidal/WasmVM/Spec/**",
-        "formal/lean4/L4Factoidal/WasmVM/Valid/**",
-        "formal/lean4/L4Factoidal/WasmVM/Exec/**"
+        "formal/lean4/L4Factoidal/WasmVM/Exec/**",
+        "formal/lean4/L4Factoidal/WasmVM/Spec.lean",
+        "formal/lean4/L4Factoidal/WasmVM/Valid.lean"
       ],
       "target_zones": [
         "browser",
