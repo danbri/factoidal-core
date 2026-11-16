@@ -150,6 +150,13 @@ gh workflow run build.yml --repo danbri/factoidal-builds -f core_ref=<40-hex PR 
 gh run watch <run id> --repo danbri/factoidal-builds --exit-status
 ```
 
+Since 2026-11-16 a dispatch of a commit that is not on core main runs the
+Linux jobs only (macOS runner starvation held merges for hours); the run's
+conclusion is the merge verdict, together with `tools/premerge.sh` and the
+change's theorems. Add `-f macos=true` when the change is macOS-specific
+(the native window, `libweb-render.dylib`). macOS runs for every main
+commit and nightly; see `skills/ci-runner`.
+
 Take `<40-hex PR head>` from `gh pr view N --json headRefOid` or
 `git rev-parse`; never type it. The queue keeps one pending run (see
 `skills/subagent-prompting`, "Agents do not dispatch factoidal-builds
