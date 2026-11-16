@@ -174,9 +174,10 @@ export const INPUT_FIRST_MS=50,TIMER_HOLD_MAX_MS=250;
 /** Input first, the rule of every host: whether a due timer turn waits, because input is
 waiting for its frame (`waiting`) or came in the last INPUT_FIRST_MS (`inputAt`), unless the
 turn has already waited TIMER_HOLD_MAX_MS (`heldSince`, undefined when it has not waited). */
+/** @param {{now:number,inputAt:number,waiting?:boolean,heldSince?:number}} o */
 export function inputFirst({now,inputAt,waiting,heldSince}) {
   if(heldSince!==undefined&&now-heldSince>=TIMER_HOLD_MAX_MS)return false;
-  return waiting||now-inputAt<INPUT_FIRST_MS;
+  return !!waiting||now-inputAt<INPUT_FIRST_MS;
 }
 
 /** How long after the last scroll event a change of the page waits (ms), and the most it
@@ -190,6 +191,7 @@ shows, and makes the bands of, the page as it is on screen, so a scroll never wa
 layout of the new page; the change is drawn when the scroll pauses, or after
 SCROLL_HOLD_MAX_MS. Just after a page is first shown (`shownAt`) a change waits SCROLL_QUIET_MS
 too: a reader who scrolls at once scrolls the page as shown, not behind its next layout. */
+/** @param {{now:number,scrollAt:number,changedAt?:number,shownAt?:number}} o */
 export function scrollFirst({now,scrollAt,changedAt,shownAt}) {
   if(changedAt!==undefined&&now-changedAt>=SCROLL_HOLD_MAX_MS)return false;
   return now-scrollAt<SCROLL_QUIET_MS||(shownAt!==undefined&&now-shownAt<SCROLL_QUIET_MS);
