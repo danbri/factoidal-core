@@ -489,6 +489,8 @@ Several sessions work on the owner's laptop at once.
 
 ## Records
 
+- [Frozen document base URLs](../../docs/designissues/2026-11-16-frozen-base-url.md): live script DOM cache, mutation hooks, URL reflection and its proof/test boundary.
+
 - [Frame pipeline](../../docs/designissues/2026-11-07-foafnaut-frame-pipeline.md), the design
   and measurements of frames, scroll and press.
 - [Page scripts](../../docs/designissues/2026-11-08-page-scripts.md),

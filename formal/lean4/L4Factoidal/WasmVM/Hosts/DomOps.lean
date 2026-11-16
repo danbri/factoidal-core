@@ -716,14 +716,36 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     let n ← nodeArg d (num xs 0)
     return if selContainsNode (← get) n (num xs 1 == 1) then "1" else "0"
   | 160 =>
-    -- a reflected IDL attribute's getter (`DOM.Reflect.get`): "row" U+0000 the document's URL
+    -- A reflected IDL attribute's row. Legacy callers append a URL; URL reflection
+    -- now uses the node document's state instead of that caller-supplied value.
     let n ← nodeArg d id
     let (row, base) := match q.splitOn "\x00" with
       | [row, base] => (row, base)
       | _ => (q, "")
     match row.toNat?.bind (L4Factoidal.DOM.Reflect.table[·]?) with
-    | some r => return L4Factoidal.DOM.Reflect.get d n r base
+    | some r =>
+      match r.kind with
+      | .url docDefault =>
+        let st := (← get).ensureBases.resolveBaseEncoding
+        set st
+        let doc := (d.get n).doc
+        let c := st.baseContext doc
+        let v := L4Factoidal.DOM.Reflect.attr d n r.content
+        if r.iface == "HTMLBaseElement" && r.content == "href" then
+          return BaseURL.baseHref c v
+        if docDefault && (v.isNone || v == some "") then return c.url
+        let base := st.documentBase doc
+        match v with
+        | none => return ""
+        | some text => return ((BaseURL.parse text base c.encoding).map (·.href)).getD text
+      | _ => return L4Factoidal.DOM.Reflect.get d n r base
     | none => throw (-2)
+  | 164 =>
+    -- Node.baseURI, including disconnected nodes, uses the node document.
+    let n ← nodeArg d id
+    let st := (← get).ensureBases
+    set st
+    return st.documentBase (if (d.get n).type == .document then n else (d.get n).doc)
   | 161 =>
     -- its setter (`DOM.Reflect.set`): "row" U+0000 the converted value
     match q.splitOn "\x00" with
@@ -988,7 +1010,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     let r := L4Factoidal.HTML.SessionHistory.answer q
     if r.startsWith "K" then
       let u := ((r.drop 1).toString.splitOn "\x03").headD ""
-      if !u.isEmpty then modify fun st => { st with url := u }
+      if !u.isEmpty then modify fun st => { st.ensureBases with url := u }
     return r
   -- 198: whether `navigator.registerProtocolHandler` or `unregisterProtocolHandler` may go on
   -- (`HTML.ProtocolHandler.answer`): `q` is the document's URL, U+0000, scheme, U+0000, URL
