@@ -37,12 +37,15 @@ const view=createGridView($('view'),{
 
 // The Hub's own browser pages as link targets (the start page offers both for a reader in an
 // ordinary browser): a link to this Textnaut page with an address after # opens that address
-// here; a link to the Hub's Foafnaut page opens in a new tab.
+// here; a link to the Hub's Foafnaut page offers, in the note, a link that opens it in a new tab.
 function hubPage(url){
   let u;try{u=new URL(url);}catch{return false;}
   const page=u.origin+u.pathname.replace(/index\.html$/,'');
   if(page===new URL('./',location.href).href&&u.hash.length>1){visit({url:new URL(decodeURIComponent(u.hash.slice(1)),location.href).href},true);return true;}
-  if(page===new URL('../foafnaut/',location.href).href){window.open(url,'_blank','noopener');return true;}
+  // Foafnaut has its own page: never opened by itself; the note offers a link that says where it goes.
+  if(page===new URL('../foafnaut/',location.href).href){
+    const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.textContent='Open Foafnaut in a new browser tab \u2197';
+    note.replaceChildren('That link goes to Foafnaut, which has its own page: ',a);return true;}
   return false;
 }
 

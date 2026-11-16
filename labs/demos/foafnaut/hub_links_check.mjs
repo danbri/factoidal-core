@@ -4,8 +4,8 @@
 // (b) a fresh local engine build (.build/web-render/engines, or --runtime DIR).
 //
 // For each link: it goes where the link rules say, in the tab; none is handed to the host
-// browser (only a link to another origin than the stand-in is, which on Pages is this site);
-// none is refused. Back after it returns to the index, and after foafnaut:graph forward
+// browser; none is refused. A link to another origin opens in the tab (a Hub copy or a read
+// the site allows) or shows the "Another site" page, whose button alone opens a host tab. Back after it returns to the index, and after foafnaut:graph forward
 // returns to the graph (history_roundtrip). The published engine predates the shellRoute op,
 // so (a) checks the fallback rules of link-route.mjs and (b) Lean's.
 //
@@ -125,7 +125,25 @@ try{
       else outcome={kind:'navigated',url:after.frame.url,title:after.title};
       results[outcome.kind]++;
       console.log(JSON.stringify({run:run.name,href,...outcome}));
-      if(elsewhere){if(outcome.kind!=='host'||outcome.url!==target)fail(run.name,href,'another origin than the stand-in should go to the host browser',JSON.stringify(outcome));continue;}
+      // Another origin than the stand-in (2026-11-16): a press never leaves Foafnaut by itself.
+      // The tab shows the page (a Hub copy, or a read the site allows) or the "Another site" page;
+      // only a press on that page's "Open in a new browser tab" button reaches window.open.
+      if(elsewhere){
+        if(outcome.kind==='host'){fail(run.name,href,'left Foafnaut on a plain press (window.open)',JSON.stringify(outcome));continue;}
+        if(outcome.kind!=='navigated'||outcome.url!==target){fail(run.name,href,'another origin should open in the tab or as its "Another site" page',JSON.stringify(outcome));continue;}
+        if(/Another site/.test(after.title)){
+          const button=after.frame.links?.find(l=>l[1]===target);
+          if(!button){fail(run.name,href,'the "Another site" page has no button to open it');continue;}
+          const before=after.opened.length;
+          await page.click(Math.round(button[2]+button[4]/2),Math.round(button[3]+button[5]/2));
+          const pressed=await page.until(s=>s.opened.length>before,20000);
+          if(pressed?.opened?.at(-1)!==target)fail(run.name,href,'the button did not open the address in a new tab',JSON.stringify(pressed?.opened));
+          else console.log(JSON.stringify({run:run.name,href,kind:'outside-button',url:target}));
+        }
+        await page.key('ArrowLeft','ArrowLeft',37);
+        if(!atIndex(await page.until(atIndex,20000)??{}))fail(run.name,href,'back did not return to the index');
+        continue;
+      }
       if(outcome.kind==='host')fail(run.name,href,'was handed to the host browser');
       else if(outcome.kind==='refused')fail(run.name,href,'was refused',outcome.title);
       else if(outcome.kind!=='navigated'||outcome.url!==target)fail(run.name,href,'went to',JSON.stringify(outcome),'not',target);

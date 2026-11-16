@@ -37,7 +37,9 @@ const copyBar=document.getElementById('copy');
 function copyLine(copy,url){
   if(!copyBar)return;
   if(!copy){copyBar.hidden=true;copyBar.replaceChildren();return;}
-  const link=(href,text)=>{const a=document.createElement('a');a.href=href;a.textContent=text;a.target='_blank';a.rel='noopener';return a;};
+  // These links are outside the browser drawn in the canvas: each says it opens a new tab.
+  const link=(href,text)=>{const a=document.createElement('a');a.href=href;a.textContent=text+' \u2197';a.target='_blank';a.rel='noopener';
+    a.title='Opens in a new browser tab, outside Foafnaut';a.setAttribute('aria-label',`${text} (opens in a new browser tab)`);return a;};
   const close=document.createElement('button');close.type='button';close.textContent='\u00d7';close.setAttribute('aria-label','Hide this line');
   close.addEventListener('click',()=>{copyBar.hidden=true;});
   const parts=['Hub copy of ',link(copy.url??url,copy.title||url),`, fetched ${String(copy.fetched??'').slice(0,10)}. ${copy.attribution??''}. Licence: `];
@@ -115,7 +117,8 @@ worker.onmessage=({data})=>{
   // Copy and cut in the address bar: Lean chose the text; the key press still counts as a user action.
   if(data.type==='clipboard')navigator.clipboard?.writeText(data.text).catch(()=>{note.hidden=false;note.textContent='The browser did not allow writing to the clipboard.';});
   if(data.type==='focus'){focused=data.focused;if(focused)keys.focus({preventScroll:true});else keys.blur();}
-  // A link to another site opens in a host tab. The worker answers after the tap has ended,
+  // The worker sends this only after a press on the "Open in a new browser tab" button of its
+  // "Another site" page (browser-worker.mjs outsideGo): a link never leaves by itself. The worker answers after the tap has ended,
   // so a browser that only opens tabs during a tap (iPhone Safari) blocks window.open; the
   // note then offers the address as a link, and tapping that is a tap of its own.
   if(data.type==='open'){

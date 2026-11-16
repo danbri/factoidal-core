@@ -36,3 +36,39 @@ export async function fetchCopy(url){
 
 /** Every page with a copy: `[{id, url, title, licence, attribution, fetched}]`. */
 export async function copyList(){return (await load()).copies??[];}
+
+// Reading another site directly (2026-11-16). A page on the Hub may read another site when
+// that site allows it with CORS (Access-Control-Allow-Origin): that is the host browser's
+// own rule, not a proxy, and no credentials are sent. Wikimedia sites allow it on their REST
+// API: an article address (https://LANG.wikipedia.org/wiki/TITLE, the mobile host LANG.m...,
+// and the other Wikimedia projects) is read from /api/rest_v1/page/html/TITLE, whose HTML has
+// <base href="//LANG.wikipedia.org/wiki/">, so its links and images resolve to the real site.
+// Other sites are tried as they are (some allow it: W3C, WHATWG, RFC Editor, PEPs, CommonMark,
+// CNN lite, wttr.in on 2026-11-16); an origin that refuses once is not asked again in this page.
+const wikimedia=/^([a-z0-9-]+)(?:\.m)?\.(wikipedia|wiktionary|wikisource|wikibooks|wikiquote|wikivoyage|wikinews|wikiversity)\.org$/;
+/** The Wikimedia REST address of an article address, or undefined. */
+export function wikimediaRest(url){
+  let u;try{u=new URL(url);}catch{return undefined;}
+  const m=wikimedia.exec(u.hostname);
+  if(u.protocol!=='https:'||!m||!u.pathname.startsWith('/wiki/')||u.pathname.length<=6)return undefined;
+  return `https://${m[1]}.${m[2]}.org/api/rest_v1/page/html/${u.pathname.slice(6)}`;
+}
+/** The article address a Wikimedia address stands for: the desktop host, no query. */
+const wikimediaArticle=url=>{const u=new URL(url),m=wikimedia.exec(u.hostname);return `https://${m[1]}.${m[2]}.org${u.pathname}`;};
+const refused=new Set();
+/** The bytes of `url` of another site: the Hub's copy, else a direct read the site allows (CORS).
+`{url, bytes, contentType, copy?, via}`; undefined when neither works. */
+export async function fetchOutside(url){
+  const copy=await fetchCopy(url);
+  if(copy)return {...copy,via:'copy'};
+  let u;try{u=new URL(url);}catch{return undefined;}
+  if(u.protocol!=='https:'&&u.protocol!=='http:')return undefined;
+  const rest=wikimediaRest(url),target=rest??url,origin=new URL(target).origin;
+  if(refused.has(origin))return undefined;
+  try{
+    const response=await fetch(target,{mode:'cors',credentials:'omit',referrerPolicy:'no-referrer'});
+    if(!response.ok)return undefined;
+    return {url:rest?wikimediaArticle(url):(response.url||url),bytes:new Uint8Array(await response.arrayBuffer()),
+      contentType:response.headers.get('content-type')??'',via:rest?'wikimedia-api':'cors'};
+  }catch{refused.add(origin);return undefined;}
+}
