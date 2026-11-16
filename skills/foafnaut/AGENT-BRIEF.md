@@ -67,6 +67,13 @@ standards conformance.
   comes about 35 minutes after dispatch, the whole run about 1.5 h, more when macOS runners are busy. Check the queue
   first, batch changes into few builds, never cancel another agent's run, and log each dispatch. Caches, cold builds
   and timing records: [`ci-caching.md`](ci-caching.md).
+- **Merge rule** (owner, 2026-11-16): a PR merges when the **Linux jobs** of its `build.yml` run are green (dispatch
+  `core_ref=<40-hex PR head>`: a commit not on main runs Linux jobs only, and the run's conclusion is then the Linux
+  verdict), `tools/premerge.sh` passes, and the change carries its theorems. The macOS jobs (`lean-macos`, the
+  `foafnaut` bundle with the native `test.sh`, `foafnaut-macos.yml`) are not a merge requirement: they run for every
+  main commit, nightly on main and on request (`-f macos=true`). A nightly macOS failure on main (issue labelled
+  `nightly` in factoidal-builds) is fixed or reverted the next morning. Runner, nightly and the overnight Mac runner:
+  [`ci-runner`](../ci-runner/SKILL.md).
 - WPT: follow [`wpt-runs`](../wpt-runs/SKILL.md). Full measured runs only, BubblePopJS, one WPT run per machine (the
   runner refuses a taken port 8000; wait, never kill). Report subtests before and after, plus a regression check.
 - Coordination lives in `/Users/danbri/working/foafnaut/fncg` (it survives reboots): `coordination.log` (append-only;
