@@ -77,10 +77,27 @@ test('full Test262 runs: share, share without excluded features, failing directo
   const dirs = html.slice(html.indexOf('most failing tests'));
   assert.ok(dirs.indexOf('built-ins/Temporal') < dirs.indexOf('built-ins/RegExp'));
   assert.match(dirs, /<b>3,880<\/b>/);
-  assert.equal((html.match(/<svg class="chart"/g) || []).length, 3);
+  assert.equal((html.match(/<svg class="chart"/g) || []).length, 4, 'full Test262, through WPT, WPT, svg reftests');
   assert.match(html, /Full Test262 over time/);
   // The headline number is the largest on the page: the hero card is the full suite.
   assert.match(html, /<div class="card hero"><h3>Full Test262<\/h3>/);
+});
+
+test('reftests: a Rendering section after WPT, with Chrome on the same tests and the history', () => {
+  const [D, H] = load('full-test262');
+  const html = pageHTML(D, H, {now: NOW, width: 760});
+  const wpt = html.indexOf('id="wpt"'), ref = html.indexOf('id="reftests"');
+  assert.ok(wpt > 0 && ref > wpt, 'Rendering (reftests) after WPT');
+  assert.match(html, /<h2 id="refh">Rendering \(reftests\)<\/h2>/);
+  assert.match(html, /<b>43\.8%<\/b><span>300 of 685 reftests in svg\/ pass/);
+  assert.match(html, /Chrome<small>157\.0\.8103\.78, 563<\/small>/);
+  assert.match(html, /Edge \(no stable run on wpt\.fyi at this WPT commit\)/);
+  assert.match(html, /270 tests that Chrome passes do not pass here/);
+  assert.match(html, /svg\/ reftests over time/);
+  // with no reftest run the section says so
+  const html2 = pageHTML(...load('no-full-test262'), {now: NOW, width: 360});
+  assert.match(html2, /No reftest run recorded yet/);
+  assert.ok(balanced(html2));
 });
 
 test('a run older than 12 hours gets a staleness note', () => {

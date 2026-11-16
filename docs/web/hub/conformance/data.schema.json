@@ -44,6 +44,22 @@
                 "stale": {"type": "boolean"}}}}}}}
         }
       },
+      "reftests": {
+        "type": "object",
+        "additionalValues": {
+          "type": "object",
+          "required": ["suite", "prefix", "latest", "browsers", "missing"],
+          "properties": {
+            "latest": {
+              "type": "object",
+              "required": ["run", "finished", "engine", "where", "wpt", "passed", "total", "share", "directories"],
+              "properties": {"finished": {"$ref": "iso"}, "passed": {"$ref": "count"}, "total": {"$ref": "count"}, "share": {"$ref": "share"},
+                "directories": {"type": "array", "items": {"type": "array", "minItems": 3}}}
+            },
+            "browsers": {"type": "object", "additionalValues": {"type": "object", "required": ["version", "passed", "share"]}}
+          }
+        }
+      },
       "test262": {
         "type": "object",
         "required": ["targets", "wpt", "full"],
@@ -88,7 +104,9 @@
       "test262wpt": {"type": "array", "items": {"type": "object", "required": ["finished", "engine", "share", "passed", "total", "run"],
         "properties": {"finished": {"$ref": "iso"}, "share": {"$ref": "share"}, "passed": {"$ref": "count"}, "total": {"$ref": "count"}}}},
       "test262": {"type": "array", "items": {"type": "object", "required": ["finished", "engine", "share", "passed", "total", "run"],
-        "properties": {"finished": {"$ref": "iso"}, "share": {"$ref": "share"}, "shareEx": {"$ref": "share"}, "passed": {"$ref": "count"}, "total": {"$ref": "count"}}}}
+        "properties": {"finished": {"$ref": "iso"}, "share": {"$ref": "share"}, "shareEx": {"$ref": "share"}, "passed": {"$ref": "count"}, "total": {"$ref": "count"}}}},
+      "reftests": {"type": "object", "additionalValues": {"type": "array", "items": {"type": "object", "required": ["finished", "engine", "share", "passed", "total", "run"],
+        "properties": {"finished": {"$ref": "iso"}, "share": {"$ref": "share"}, "passed": {"$ref": "count"}, "total": {"$ref": "count"}}}}}
     }
   }
 }

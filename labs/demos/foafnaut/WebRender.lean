@@ -2,6 +2,7 @@ import WebRenderSVG
 import SVGRaster
 import SVGText
 import SVGForgiving
+import SVGCssColour
 import Font
 import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.Links
@@ -447,6 +448,9 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,source) ← documentNamespaceTree dom
+  -- CSS Color 4 colours the reader does not read, as `#rrggbb` (`SVGCssColour`); the tree's
+  -- shape is unchanged, so source paths still point at the same elements
+  let source := NativeSVGCssColour.tree 256 source
   let (tree,_,glyphs,madeWords) := NativeSVGText.lowerDocumentGlyphsIn words fonts source
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   -- Each image decodes once for the document, not once for each SVG root. The keys are

@@ -318,6 +318,8 @@ private def systemColors : List (String × Nat × Nat × Nat) :=
    ("threedlightshadow",(212,208,200)),("threedshadow",(128,128,128)),("window",(255,255,255)),
    ("windowframe",(0,0,0)),("windowtext",(0,0,0))]
 
+/-- A colour of this reader: hex, comma `rgb()`, named and system colours. The page path
+    rewrites the rest of CSS Color 4 to hex before the reader sees it (`SVGCssColour`). -/
 private def color (input : String) : Except String Color := do
   let s := (trim input).toLower
   if s.startsWith "#" then
@@ -409,7 +411,14 @@ attribute and which pages write on an `svg` as they would on an `img`: lean-lang
 its whole `svg`: every icon of gov.uk (`focusable`), of developer.mozilla.org (`class`) and of
 BBC News (`class`, `focusable`, `aria-hidden`). -/
 def inertAttribute (name : String) : Bool :=
-  name.startsWith "aria-" || name.startsWith "data-" || ["focusable","role","tabindex","lang","class","alt"].contains name
+  name.startsWith "aria-" || name.startsWith "data-" || ["focusable","role","tabindex","lang","class","alt"].contains name ||
+  eventHandler name
+where
+  /-- An event handler content attribute (HTML §8.1.8.1; SVG 2 §15.10: `onload`, `onclick`,
+  `onbegin`, ...): the page's scripts read it, and it draws nothing. Before 2026-11-15 an
+  `onload` on an `svg` refused the whole drawing (11 WPT reftests drew a blank page). -/
+  eventHandler (name : String) : Bool :=
+    name.length > 2 && name.startsWith "on" && name.toList.all fun c => c.isLower
 
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
@@ -420,23 +429,41 @@ private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extr
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
 private def cssProperties := (common.filter (· != "id")) ++ ["opacity","overflow"]
-private def sheetProperties := cssProperties ++ ["width","height"]
+/-- SVG 2 §9.2 geometry properties of this reader's shapes: presentation attributes that a
+    style sheet or `style` may set. Each is checked where it applies (the element's own
+    attribute list), so a rule naming `r` for every element does not refuse a `rect`. -/
+private def geometryProperties := ["cx","cy","r","rx","ry","x","y"]
+private def sheetProperties := cssProperties ++ ["width","height"] ++ geometryProperties
 private def displaySuppressed (attrs : List NamespaceAttribute) : Bool :=
   (attr attrs "display").any (fun value => (trim value).toLower == "none")
 private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
   {name:={namespace_:=none,localPart:=d.property},value:=d.value}
 private def applyCSSWith (validate : NativeSVGCSS.Declaration → Except String Unit) (rules : List NativeSVGCSS.Rule)
     (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) := do
+  -- a geometry property cascades only on an element that has it as an attribute
+  let geometry := match tag with
+    | "rect" => ["x","y","rx","ry"]
+    | "circle" => ["cx","cy","r"]
+    | "ellipse" => ["cx","cy","rx","ry"]
+    | _ => []
+  let cascaded := fun (name : String) => cssProperties.contains name || geometry.contains name
   let presentation := attrs.filterMap fun a =>
-    if a.name.namespace_.isNone && cssProperties.contains a.name.localPart then
+    if a.name.namespace_.isNone && cascaded a.name.localPart then
       some ({property:=a.name.localPart,value:=a.value} : NativeSVGCSS.Declaration) else none
   let inlineStyle ← NativeSVGCSS.parseDeclarations sheetProperties ((attr attrs "style").getD "")
   let ignoredDimension := fun (d : NativeSVGCSS.Declaration) =>
     (["use","symbol"].contains tag || (tag == "svg" && nested)) && ["width","height"].contains d.property
-  let inlineStyle := inlineStyle.filter (!ignoredDimension ·)
-  let rules := rules.map fun rule => {rule with declarations:=rule.declarations.filter (!ignoredDimension ·)}
-  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle
-  pure (attrs.filter (fun a => !(a.name.namespace_.isNone && (cssProperties.contains a.name.localPart || a.name.localPart=="style"))) ++ winning.map cssAttribute)
+  -- a geometry property of another element (`r` on a `rect`) does not apply here
+  let otherGeometry := fun (d : NativeSVGCSS.Declaration) => geometryProperties.contains d.property && !geometry.contains d.property
+  let inlineStyle := inlineStyle.filter (fun d => !ignoredDimension d && !otherGeometry d)
+  let rules := rules.map fun rule => {rule with declarations:=rule.declarations.filter (fun d => !ignoredDimension d && !otherGeometry d)}
+  -- the words of `class`, split at ASCII white space (DOM §4.9 "ordered set parser")
+  let classes := (((attr attrs "class").getD "").map fun c => if c.isWhitespace then ' ' else c).splitOn " " |>.filter (!·.isEmpty)
+  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle classes (attr attrs "id")
+  -- `rx: auto` and `ry: auto` (SVG 2 §10.2, §10.4): as if the attribute were absent, so the
+  -- radius takes the other one
+  let winning := winning.filter fun d => !(["rx","ry"].contains d.property && (trim d.value).toLower == "auto")
+  pure (attrs.filter (fun a => !(a.name.namespace_.isNone && (cascaded a.name.localPart || a.name.localPart=="style"))) ++ winning.map cssAttribute)
 
 /-- Document data that a paint reference needs. -/
 private structure PaintContext where
@@ -727,6 +754,9 @@ private def applyCSS (lengths : LengthContext) (paints : PaintContext) (rules : 
     else if d.property == "overflow" then
       if !["hidden","visible","scroll","auto"].contains (trim d.value) then throw "unsupported overflow"
     else if ["width","height"].contains d.property then throw "unsupported CSS geometry property"
+    else if geometryProperties.contains d.property then
+      if ["rx","ry"].contains d.property && (trim d.value).toLower == "auto" then pure ()
+      else let _ ← relativeLength d.value 1; pure ()
     else let _ ← readStyle lengths paints [cssAttribute d] {}; pure ()
   applyCSSWith validate rules tag attrs nested
 
@@ -1209,9 +1239,11 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
       return some (.path (← NativeSVGPath.parse number (arcOutline x y r r)))
     return some (.circle x y r)
   else if tag == "ellipse" then
-    if (attr attrs "rx").isNone || (attr attrs "ry").isNone then throw "ellipse requires explicit numeric rx and ry; auto radii unsupported"
+    if (attr attrs "rx").isNone && (attr attrs "ry").isNone then throw "ellipse requires explicit numeric rx and ry; auto radii unsupported"
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"
-    let rx ← geometryNumber lengths attrs "rx"; let ry ← geometryNumber lengths attrs "ry"
+    -- SVG 2 §10.4: an `auto` (absent) radius is the other one
+    let rx ← geometryNumber lengths attrs (if (attr attrs "rx").isNone then "ry" else "rx")
+    let ry ← geometryNumber lengths attrs (if (attr attrs "ry").isNone then "rx" else "ry")
     if rx < 0 || ry < 0 then throw "negative ellipse radius"
     if rx == 0 || ry == 0 then return none
     if strokeEnabled style then

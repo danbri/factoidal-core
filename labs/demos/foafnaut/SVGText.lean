@@ -451,11 +451,24 @@ def startOffsetOf (source : Option String) (total : Float) : Float :=
     let s := s.trimAscii.toString
     if s.endsWith "%" then float (some (s.dropEnd 1).toString) 0/100*total else float (some s) 0
 
+/-- The `path` attribute of a `textPath` as it is drawn (SVG 2 §11.8.1, and §9.5.4 for path
+    data in error): the longest run of its leading whole tokens that is path data, so the
+    path is drawn up to its first error. `none` when no command parses (empty, white space
+    only, an error at the start, or more than 512 tokens): the `href` is used instead. -/
+def pathDataPrefix (data : String) : Option String :=
+  let toks := (data.map (fun c => if c.isWhitespace || c == ',' then ' ' else c)).splitOn " " |>.filter (· != "")
+  if toks.isEmpty || toks.length > 512 then none else
+  (List.range toks.length).reverse.findSome? fun k =>
+    let s := " ".intercalate (toks.take (k+1))
+    match NativeSVGPath.parse NativeSVG.number s with
+    | .ok (_ :: _) => some s
+    | _ => none
+
 /-- The vertices of the path of a `textPath`, in the user space of the text: the
     path's own `transform` applies (SVG 1.1 §10.13.1). `side="right"` reverses the
-    path (SVG 2 §11.8.1). -/
+    path (SVG 2 §11.8.1). A `path` attribute with no usable data gives way to `href`. -/
 def pathVertices (lookup : String → Option NamespaceNode) (ref : PathRef) : Except String (List Vertex) := do
-  let (data,transform) ← match ref.data,ref.href with
+  let (data,transform) ← match ref.data.bind pathDataPrefix,ref.href with
     | some d,_ => pure (d,"")
     | none,some h =>
       let h := h.trimAscii.toString

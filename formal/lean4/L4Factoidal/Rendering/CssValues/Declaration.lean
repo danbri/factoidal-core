@@ -316,11 +316,19 @@ def Block.set (b : Block) (property value priority : String) (ctx : String := ""
 /-- The property names of the block in order (`item`, `length`). -/
 def Block.names (b : Block) : List String := b.map (·.name)
 
+/-- Shorthands a declaration block is never serialised with: `size`, `min-size` and
+`max-size` (CSS Sizing 4 drafts) are not shorthands of the browsers pages are written for, so
+`width` and `height` stay as written. Before 2026-11-15 a script's `el.style.background = ...`
+on an element whose style had equal `width` and `height` wrote back `size: 100px` and the
+element lost both (the layout reads no `size`; a WPT reftest found it). -/
+def notSerialisedShorthands : List String := ["size", "min-size", "max-size"]
+
 /-- For each longhand, the shorthands with a generic shape that have it among their
-longhands: most longhands first; legacy aliases left out. Built once (a lazy constant). -/
+longhands: most longhands first; legacy aliases and `notSerialisedShorthands` left out.
+Built once (a lazy constant). -/
 def shorthandIndex : Thunk (Std.HashMap String (List Property)) := Thunk.mk fun _ =>
   let rows := Data.properties.toList.filterMap fun (n, _, _, _, ls) =>
-    if ls == "" || (aliasMap.get.contains n) then none
+    if ls == "" || (aliasMap.get.contains n) || notSerialisedShorthands.contains n then none
     else
       match lookup n with
       | some row => if recombinable row then some row else none
@@ -429,6 +437,8 @@ def styleOp (q : String) : String :=
 #guard styleOp "font-face:set\x00font-family: x\x00unicode-range\x00u+efg\x00" == "\x01"
 #guard styleOp "set\x00\x00unicode-range\x00u+0-1\x00" == "\x01"
 #guard (Block.parse "color: red; color: blue").text == "color: blue;"
+-- width and height stay longhands (Chrome): no `size` shorthand in cssText
+#guard (Block.parse "width: 100px; height: 100px; background: blue").text == "width: 100px; height: 100px; background: blue;"
 #guard (Block.parse "color: red; nonsense: 1; width: -1px; height: 2px").text == "color: red; height: 2px;"
 #guard (Block.parse "color: red !important").text == "color: red !important;"
 #guard (Block.parse "background-image: url(\"a;b:c\"); top: 0").text == "background-image: url(\"a;b:c\"); top: 0px;"

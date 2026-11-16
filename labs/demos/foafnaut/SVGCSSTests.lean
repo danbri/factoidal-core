@@ -20,6 +20,20 @@ private def result (sheet inlineStyle : String) : Except String (List Declaratio
 #guard !(result "circle { fill: invalid }" "").isOk
 #guard !(result "rect {fill: blue !important}" "").isOk
 #guard !(result "rect:hover {fill: blue}" "").isOk
+-- `#id` and `.class` selectors (Selectors 4 §3.1), by specificity then source order
+private def resultOf (sheet : String) (classes : List String) (id : Option String) : Except String (List Declaration) := do
+  cascade validate "rect" [{property:="fill",value:="red"}] (← parseSheet props sheet) [] classes id
+#guard resultOf "#t {fill: green} rect {fill: blue}" [] (some "t") == .ok [{property:="fill",value:="green"}]
+#guard resultOf ".a {fill: green} rect {fill: blue}" ["a","b"] none == .ok [{property:="fill",value:="green"}]
+#guard resultOf ".a {fill: green} .b {fill: blue}" ["a","b"] none == .ok [{property:="fill",value:="blue"}]
+#guard resultOf "rect.a#t {fill: green} #t {fill: blue}" ["a"] (some "t") == .ok [{property:="fill",value:="green"}]
+#guard resultOf "#t {fill: green}" [] (some "u") == .ok [{property:="fill",value:="red"}]
+#guard resultOf "circle.a {fill: green}" ["a"] none == .ok [{property:="fill",value:="red"}]
+#guard resultOf "* {fill: green}" [] none == .ok [{property:="fill",value:="green"}]
+#guard !(resultOf ".a.b:hover {fill: green}" ["a"] none).isOk
+#guard !(resultOf "[x] {fill: green}" ["a"] none).isOk
+#guard !(resultOf ". {fill: green}" ["a"] none).isOk
+#guard !(resultOf "rect# {fill: green}" ["a"] none).isOk
 #guard !(result "g rect {fill: blue}" "").isOk
 #guard !(result "re/**/ct {fill: blue}" "").isOk
 #guard !(result "rect {unknown: blue}" "").isOk
