@@ -22,6 +22,8 @@ export function wrap(text: string, width: number, indent = 0): string[] {
 export type HelpAction = { action: "close" | "exit" | "launch" | "none"; saver?: string; message?: string };
 
 export class HelpView {
+  /** The settings this run uses, shown first: the engine build and whether page scripts run. */
+  settings: { engine: string; scripts: boolean; strict: boolean } | undefined;
   selected = 0;
   top = 0;
   typed = "";
@@ -54,12 +56,19 @@ export class HelpView {
     const w = Math.max(20, width - 2), out: Line[] = [];
     const add = (kind: Line["kind"], text: string, indent = 0, saver?: number) => { for (const l of wrap(text, w, indent)) out.push({ kind, text: l, saver }); };
     const row = (keys: string, what: string) => add("plain", `${keys.padEnd(22)} ${what}`, 23);
+    if (this.settings) {
+      add("heading", "Settings (s opens this screen)");
+      row("Engine", `the built-in engine, ${this.settings.engine} build; --wasm or --engine FILE chooses another, textnaut --install-native installs the native one`);
+      row("Page scripts", `${this.settings.scripts ? "BubblePopJS, the built-in JavaScript engine" : "off"}; --no-scripts turns them off`);
+      row("Pages", `${this.settings.strict ? "strict: a page with an unsupported feature is refused" : "liberal: a page is drawn without what the engine skips"}; --strict refuses`);
+      out.push({ kind: "plain", text: "" });
+    }
     add("heading", "Keys in the browser");
     row("Up Down j k", "scroll a line; Page Up, Page Down or Space scroll a page; Home and End");
     row("[n] then Enter", "follow link number n: type its number (shown beside the link), then press Enter");
     row("Tab, Shift-Tab", "select the next or previous link; Enter or Right follows it");
     row("b or Left", "back to the previous page");
-    row("? or h", "this help; q, b or ? closes it");
+    row("? or h, s", "this help, with the settings first; q, b or ? closes it");
     row("q or Ctrl-C", "quit");
     out.push({ kind: "plain", text: "" });
     add("heading", "Screensavers: Up Down or a number, then Enter, to start one");

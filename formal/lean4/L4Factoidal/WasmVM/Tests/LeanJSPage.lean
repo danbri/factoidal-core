@@ -45,3 +45,29 @@ def afterClick : Except String LeanJS.Session := do
   | .error _ => false
 
 end L4Factoidal.WasmVM.Tests.LeanJSPage
+
+namespace L4Factoidal.WasmVM.Tests.LeanJSPage
+/-- Original page regression: detached anchors/areas and reflected src/href are read
+again after script changes the base; a second document has its own base. -/
+private def baseURLPage : Except String (List String) := do
+  let base ← Hosts.LeanJS.prepareSource
+  let dom := DOM.parseHtmlDocument "<base href='/first/'><body></body>"
+  let script := "const b=document.querySelector('base'); const a=document.createElement('a'); a.href='item';" ++
+    "const area=document.createElement('area'); area.href='map'; const img=document.createElement('img'); img.src='pic';" ++
+    "const link=document.createElement('link'); link.href='sheet';" ++
+    "b.href='https://cdn.test/next/'; console.log([a.href,area.href,img.src,link.href].join('|'));" ++
+    "b.remove(); console.log(a.href);" ++
+    "const d=document.implementation.createHTMLDocument('other'); const db=d.createElement('base');" ++
+    "db.href='https://owner.test/'; d.head.appendChild(db); const da=d.createElement('a'); da.href='own'; console.log(da.href);"
+  let s := Hosts.LeanJS.start base dom "https://example.test/dir/page" #[(0, script)]
+  if !s.errors.isEmpty then throw (";".intercalate s.errors.toList)
+  let child := Hosts.LeanJS.start base (DOM.parseHtmlDocument "<base href='sub/'>") "about:srcdoc"
+    #[(0, "const a=document.createElement('a'); a.href='x'; console.log(a.href);")]
+    (aboutBase := some "https://creator.test/path/")
+  if !child.errors.isEmpty then throw (";".intercalate child.errors.toList)
+  return s.logs.toList ++ child.logs.toList
+
+#guard baseURLPage == .ok [
+  "https://cdn.test/next/item|https://cdn.test/next/map|https://cdn.test/next/pic|https://cdn.test/next/sheet",
+  "https://example.test/dir/item", "https://owner.test/own", "https://creator.test/path/sub/x"]
+end L4Factoidal.WasmVM.Tests.LeanJSPage
