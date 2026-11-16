@@ -51,3 +51,9 @@ recorded below when the complete report and skills are checked.
 The supplied worktree's shared Git metadata refused `index.lock` creation. Commits and pushes use the
 separate small checkout `/tmp/codex-zones/landing`, with source objects read from the supplied repository;
 the protected Git metadata is unchanged. The supplied worktree retains copies of the finished files.
+
+Final verification: `bash tools/premerge.sh` on `7d2d37940` passed all five default checks in 26.5 s:
+generators/native network, host Deno type checks, FOUNDATION gates, inventory directory consistency and
+Wasm-engine import checks. No optional Lean or engine-build flags were used. This result line is a
+documentation-only follow-up to that checked commit; browser runtime timings remain unchanged by design
+and were not measured.
