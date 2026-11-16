@@ -34,6 +34,7 @@ import SVG
 import SVGRaster
 import SVGText
 import SVGForgiving
+import SVGCssColour
 import WebRenderSVG
 import WebRender
 import WebHit
