@@ -37,6 +37,8 @@ standards conformance.
   a defined refusal at the bound, and a crash in a test run is fixed before the subtests around it
   (`skills/local-lean-rules` section 11).
 - Say exactly what is proved, and what is only tested.
+- Engine work checks the [theorem pipeline](../theorem-pipeline/SKILL.md): state the theorem first,
+  link its item issue, and report theorem names, `#print axioms`, assumptions and tests.
 - Text in scripts you cannot read (Arabic, Indic, Thai, CJK, Mongolian, emoji sequences, mixed scripts) is checked
   by machines against independent references, never by eye; where suites are too coarse, write small cases of our
   own: [`i18n-layout-testing`](../i18n-layout-testing/SKILL.md).

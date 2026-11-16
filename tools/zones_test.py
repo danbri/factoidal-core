@@ -65,6 +65,18 @@ import.meta.url;
                          [('a','b'),('b','c'),('c','a'),('d','a')]), [['a','b','c']])
         self.assertEqual(zones.strongly_connected(['a','b'], [('a','b')]), [])
 
+    def test_probe_does_not_invent_a_path_through_a_zone(self):
+        files=[dict(path=p,zone=z) for p,z in [('a','a'),('b1','b'),('b2','b'),('c','c')]]
+        edges=[dict(source='a',target='b1'),dict(source='b2',target='c')]
+        probes=[dict(name='a to c',source_zones=['a'],target_zones=['c'])]
+        self.assertEqual(zones.boundary_probes(files,edges,probes)[0]['status'],'no-resolved-path')
+        edges.append(dict(source='b1',target='b2'))
+        self.assertEqual(zones.boundary_probes(files,edges,probes)[0]['witness'],['a','b1','b2','c'])
+
+    def test_probe_empty_selection_is_not_a_pass(self):
+        probes=[dict(name='missing',source_zones=['missing'],target_zones=['network'])]
+        self.assertEqual(zones.boundary_probes([],[],probes)[0]['status'],'empty-selection')
+
 
 class RepositoryTests(unittest.TestCase):
     @classmethod
@@ -115,6 +127,13 @@ class RepositoryTests(unittest.TestCase):
         self.assertTrue(any(i['kind']=='lean' for i in cross))
         self.assertTrue(any(i['kind']=='import' for i in cross))
         self.assertTrue(any(i['status']=='computed' for i in self.report['other_imports']))
+
+    def test_curated_module_links_exist(self):
+        for item in self.config['candidate_theorems'] + self.config['review_notes']:
+            for module in item['modules']:
+                self.assertTrue((zones.ROOT/module).is_file(),module)
+        for probe in self.report['boundary_probes']:
+            self.assertGreater(probe['source_files'],0,probe['name'])
 
     def test_cli_writes_both_formats_without_a_build(self):
         with tempfile.TemporaryDirectory(prefix='zones-test-') as tmp:

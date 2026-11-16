@@ -7,7 +7,7 @@ Imports are lexical evidence, not a call graph or a proof of effect confinement.
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from fnmatch import fnmatchcase
 import hashlib
 import json
@@ -305,6 +305,33 @@ def strongly_connected(nodes, edges):
     return sorted(groups)
 
 
+def boundary_probes(files, imports, probes):
+    """Shortest witness through resolved file imports, with no zone-level shortcuts."""
+    by_path = {f['path']: f for f in files}
+    graph = defaultdict(set)
+    for edge in imports:
+        graph[edge['source']].add(edge['target'])
+    result = []
+    for probe in probes:
+        starts = sorted(f['path'] for f in files if
+            f['zone'] in probe.get('source_zones', [f['zone']]) and
+            matches(f['path'], probe.get('source_paths', ['*'])))
+        queue = deque((s, [s]) for s in starts)
+        seen, witness = set(), []
+        while queue:
+            path, chain = queue.popleft()
+            if path in seen:
+                continue
+            seen.add(path)
+            if len(chain) > 1 and by_path[path]['zone'] in probe['target_zones']:
+                witness = chain
+                break
+            queue.extend((target, chain + [target]) for target in sorted(graph[path]) if target not in seen)
+        result.append(dict(probe, source_files=len(starts), witness=witness,
+                           status='empty-selection' if not starts else 'crossing-found' if witness else 'no-resolved-path'))
+    return result
+
+
 def analyse(root, config):
     validate_config(config)
     paths = inventory(root, config['roots'])
@@ -398,6 +425,9 @@ def analyse(root, config):
         cycles=strongly_connected([z['id'] for z in sizes], pairs),
         reciprocal_pairs=[list((a, b)) for a, b in sorted(pairs) if a < b and (b, a) in pairs],
         leaks=leaks, other_imports=other, unmapped_files=unmapped, ambiguous_files=ambiguous,
+        taxonomy_notes=config.get('taxonomy_notes', []), review_notes=config.get('review_notes', []),
+        candidate_theorems=config.get('candidate_theorems', []),
+        boundary_probes=boundary_probes(files, imports, config.get('boundary_probes', [])),
         missing_files=missing, symlink_files=[f['path'] for f in files if f['symlink']],
         stale_unmapped_files=sorted(set(declared_unmapped) - set(unmapped)),
         undeclared_unmapped_files=sorted(set(unmapped) - set(declared_unmapped)),
@@ -413,6 +443,8 @@ def render_markdown(report, link_prefix='../'):
     t = report['totals']
     lines = ['# Code-zone dependency report', '',
         f'Source HEAD: `{report["source_commit"]}`; inventory SHA-256: `{report["inventory_sha256"]}`.', '',
+        'HEAD identifies the base commit; the inventory hash includes working edits. Regenerate with '
+        '`python3 tools/zones.py --check --markdown docs/zones.md --json /tmp/zones.json`.', '',
         f'{t["files"]:,} files; {t["source_files"]:,} source files; {t["lean_modules"]:,} Lean modules; '
         f'{t["source_lines"]:,} source lines ({t["lines"]:,} text lines including support files).', '',
         'Inventory: tracked plus non-ignored untracked files in ' + ', '.join(f'`{r}/`' for r in report['roots']) + '.', '',
@@ -426,6 +458,25 @@ def render_markdown(report, link_prefix='../'):
         '|---|---|---:|---:|---:|---:|---:|---:|']
     for z in report['sizes']:
         lines.append(f'| `{z["id"]}` — {z["name"]} | {z["definition"]} | {z["files"]:,} | {z["source_files"]:,} | {z["source_lines"]:,} | {z["lines"]:,} | {z["lean_modules"]} | {z["binary_files"]} |')
+    lines += [''] + ['- ' + note for note in report['taxonomy_notes']]
+    lines += ['', '## Reviewed crossings and candidate theorems', '',
+        'Prior measurement: [issue 452, part 2](https://github.com/danbri/factoidal-core/issues/452). '
+        'That survey counted top-level Lean subtrees; this report uses semantic zones and includes hosts, tests and tooling. '
+        'The two sets of counts have different denominators.', '']
+    for note in report['review_notes']:
+        lines.append('- ' + note['statement'] + ' ' + ', '.join(file_link(p, link_prefix) for p in note['modules']) + '.')
+    lines += ['', 'Candidates below are statements to develop through the '
+        '[theorem pipeline](../skills/theorem-pipeline/SKILL.md) and '
+        '[issue 513](https://github.com/danbri/factoidal-core/issues/513). '
+        'No new Lean theorem or axiom check is claimed by this report.', '',
+        '| Candidate statement | Modules | Obligation |', '|---|---|---|']
+    for item in report['candidate_theorems']:
+        lines.append('| ' + item['statement'] + ' | ' + ', '.join(file_link(p, link_prefix) for p in item['modules']) + ' | ' + item['obligation'] + ' |')
+    lines += ['', '### Structural probes', '',
+        'These traverse resolved file imports, not the aggregated zone graph. Missing/generated imports and runtime effects remain outside the evidence.', '']
+    for probe in report['boundary_probes']:
+        lines.append(f'- {probe["name"]}: **{probe["status"]}**, {probe["source_files"]} selected files.' +
+                     (' Witness: ' + ' → '.join(file_link(p, link_prefix) for p in probe['witness']) + '.' if probe['witness'] else ''))
     ids = [z['id'] for z in report['sizes']]
     matrix = {(e['source'], e['target']): e['count'] for e in report['edges']}
     lines += ['', '## Dependency matrix', '', 'Rows import columns. `·` is zero; within-zone imports are omitted.', '',

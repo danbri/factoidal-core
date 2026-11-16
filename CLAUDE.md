@@ -1635,6 +1635,10 @@ session.
   browser with its own engine: code map, build, test, run and measure, the
   shared-machine rules, traps with their cost, how to land. Handoff:
   `docs/designissues/2026-11-09-foafnaut-handoff.md`.
+- [`code-zones`](skills/code-zones/SKILL.md) — tag source files, inspect the dependency matrix and
+  module crossings, and propose cross-zone theorems.
+- [`theorem-pipeline`](skills/theorem-pipeline/SKILL.md) — the standing theorem list: statement first,
+  an issue per item, engine-work checks, theorem names and axiom reports.
 - [`capability-planner`](skills/capability-planner/SKILL.md) — the
   capability-aware, cost-based planner across SPARQL, SQL, REST, MCP,
   WebMCP, files, LLMs and Shardborough: the six questions, capabilities with

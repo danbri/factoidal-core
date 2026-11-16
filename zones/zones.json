@@ -869,17 +869,6 @@
       "reason": "DOM may parse URLs; request execution belongs at the browser/Fetch boundary."
     },
     {
-      "id": "rdf-dom-adapter",
-      "sources": [
-        "rdf"
-      ],
-      "target": "dom",
-      "source_paths": [
-        "formal/lean4/L4Factoidal/WebAnnotation/Dom*.lean"
-      ],
-      "reason": "RDF-to-DOM access should be confined to a named adapter."
-    },
-    {
       "id": "data-retrieval-policy",
       "sources": [
         "rdf",
@@ -958,5 +947,168 @@
       "reason": "Named graph service/serialisation adapters and URL comparison theorems."
     }
   ],
-  "unmapped_files": []
+  "unmapped_files": [],
+  "taxonomy_notes": [
+    "Primary zones describe responsibility, not directory layout. No source files move. WasmVM/Hosts belongs to Browser; VM execution stays in WASM.",
+    "Style includes CSS in Rendering and SVGCSS in the lab. Rendering keeps layout, paint, scene, fonts and Unicode; Graphics keeps raster/vector algorithms, GPU, codecs and ML.",
+    "JSON-LD, CSVW and YAML readers belong to JSON. RDF includes graph storage and planners. XPath functions and shared regex live in XML; secondary shared-foundation tags show their wider use.",
+    "Browser includes package entry points, general tools, dataflow infrastructure and shared primitives. An import into this zone need not execute browser code. Future taxonomy changes may separate shared foundations; review module crossings before doing so.",
+    "Host transport code stays in Browser even when it moves graphics or network bytes. Tests and fixtures stay counted with their primary responsibility. Some test and proof filenames have secondary tags; these tags are not a complete test classifier.",
+    "Rules use case-sensitive fnmatch on full repository-relative paths; * crosses /. They are unordered unions with explicit exclusions. Exactly one rule must match every inventory file. No fallback exists for a new core Lean subtree."
+  ],
+  "review_notes": [
+    {
+      "statement": "Rendering → Network: font shaping reuses the URL subtree’s Unicode mark data. Consider a shared Unicode data module; this import is not evidence of a fetch.",
+      "modules": [
+        "formal/lean4/L4Factoidal/Rendering/SfntGpos.lean",
+        "formal/lean4/L4Factoidal/WHATWG/URL/IdnaData.lean"
+      ]
+    },
+    {
+      "statement": "Graphics → RDF: SVG number formatting calls TDB2 javaDoubleString; SVG references also use the RDF syntax IRI resolver. These utilities can acquire a narrower home without duplicating their semantics.",
+      "modules": [
+        "labs/demos/foafnaut/SVG.lean",
+        "formal/lean4/L4Factoidal/Tdb2/Format.lean",
+        "labs/demos/foafnaut/SVGReferences.lean",
+        "formal/lean4/L4Factoidal/Syntax/IriResolve.lean"
+      ]
+    },
+    {
+      "statement": "XML → HTML: the XPath HTML reader imports HTML.Tests. Separate its reusable definitions from test registration before treating this as a language-only interface.",
+      "modules": [
+        "formal/lean4/L4Factoidal/XPath4/Html.lean",
+        "formal/lean4/L4Factoidal/HTML/Tests.lean"
+      ]
+    },
+    {
+      "statement": "Network → JS: URLPattern uses JS regular-expression parsing. Review the regex interface rather than assuming URL processing needs the whole interpreter.",
+      "modules": [
+        "formal/lean4/L4Factoidal/WHATWG/URLPattern.lean",
+        "formal/lean4/L4Factoidal/JS/Regex.lean"
+      ]
+    },
+    {
+      "statement": "RDF/LWS → Browser: dataflow adapters and package entry points cause integration crossings. The report flags these for interface review; it does not infer DOM access from the Browser label.",
+      "modules": [
+        "formal/lean4/L4Factoidal/SPARQL/StoreEndpoint.lean",
+        "formal/lean4/L4Factoidal/Dataflow/Store.lean",
+        "formal/lean4/L4Factoidal/LWS/DatasetViewRead.lean",
+        "npm/factoidal/lws/dataset.mjs"
+      ]
+    },
+    {
+      "statement": "WASM → DOM/Rendering: the direct crossings are benchmark and test modules. Keep those measurements, while stating VM-core independence over the execution/validation modules.",
+      "modules": [
+        "formal/lean4/L4Factoidal/WasmVM/Bench/Page.lean",
+        "formal/lean4/L4Factoidal/WasmVM/Tests/LeanJSPage.lean",
+        "formal/lean4/L4Factoidal/WasmVM/Bench/ShapeOracle.lean"
+      ]
+    }
+  ],
+  "candidate_theorems": [
+    {
+      "statement": "JSON-LD and GRDDL retrieval returns content only after Fetch policy permits the request and every redirect.",
+      "modules": [
+        "formal/lean4/L4Factoidal/JSONLD/Loader.lean",
+        "formal/lean4/L4Factoidal/JSONLD/Context.lean",
+        "formal/lean4/L4Factoidal/GRDDL/Agent.lean",
+        "formal/lean4/L4Factoidal/Net/FetchRules.lean",
+        "formal/lean4/L4Factoidal/Net/PageFetch.lean"
+      ],
+      "obligation": "Proposed. Model a policy-carrying loader adapter and its trace. Current loaders are supplied parameters; absence of imports does not constrain their construction."
+    },
+    {
+      "statement": "Style computation has no network effects; its source import closure contains no Network module.",
+      "modules": [
+        "formal/lean4/L4Factoidal/Rendering/Style.lean",
+        "formal/lean4/L4Factoidal/Rendering/CssSheet.lean",
+        "labs/demos/foafnaut/SVGCSS.lean"
+      ],
+      "obligation": "The structural part is probed below. A semantic theorem needs an explicit effect model, including resource requests produced for a caller."
+    },
+    {
+      "statement": "RDF graph/query results are independent of DOM state; DOM presentation is confined to a named browser adapter.",
+      "modules": [
+        "formal/lean4/L4Factoidal/RDF/Graph.lean",
+        "formal/lean4/L4Factoidal/SPARQL/Algebra.lean",
+        "formal/lean4/L4Factoidal/Rendering/RdfView.lean",
+        "labs/demos/foafnaut/WebRenderRDF.lean"
+      ],
+      "obligation": "Proposed over specified graph/query operations. Name the adapter and observable projection; the whole RDF zone also includes tests and service adapters."
+    },
+    {
+      "statement": "HTML tree conversion preserves node order, text and namespace interpretation at the DOM boundary.",
+      "modules": [
+        "formal/lean4/L4Factoidal/HTML/TreeBuilder.lean",
+        "formal/lean4/L4Factoidal/DOM/OfHtml.lean",
+        "formal/lean4/L4Factoidal/DOM/Arena.lean"
+      ],
+      "obligation": "Proposed with explicit handling of declarative shadow roots and HTML repair; this does not require DOM and HTML to be merged."
+    },
+    {
+      "statement": "VM execution is independent of the browser host for equal module, store, fuel and host-call results.",
+      "modules": [
+        "formal/lean4/L4Factoidal/WasmVM/Exec/Run.lean",
+        "formal/lean4/L4Factoidal/WasmVM/Exec/Store.lean",
+        "formal/lean4/L4Factoidal/WasmVM/Hosts/Page.lean"
+      ],
+      "obligation": "Proposed. Parameterise host effects and relate traces; the structural probe selects Binary, Spec, Valid and Exec only."
+    },
+    {
+      "statement": "Incremental style, layout and paint produce the same observable scene as a full recomputation.",
+      "modules": [
+        "labs/demos/foafnaut/WebDocument.lean",
+        "labs/demos/foafnaut/WebRepaint.lean",
+        "formal/lean4/L4Factoidal/Rendering/Layout.lean",
+        "formal/lean4/L4Factoidal/Rendering/Scene.lean"
+      ],
+      "obligation": "Pipeline item 2. State cache validity, floating-point equality and the observation before proving each shortcut."
+    },
+    {
+      "statement": "All hosts give the same answers for the same contract-visible input, with query non-mutation and answer determinism discharged for the concrete engine.",
+      "modules": [
+        "formal/lean4/L4Factoidal/HostContract/Trace.lean",
+        "labs/demos/foafnaut/WebHostContract.lean",
+        "labs/demos/foafnaut/WebDocument.lean"
+      ],
+      "obligation": "Pipeline item 8. Instantiate and discharge A1/A2; the existing abstract theorem retains those assumptions."
+    }
+  ],
+  "boundary_probes": [
+    {
+      "name": "Style reaches Network",
+      "source_zones": [
+        "style"
+      ],
+      "target_zones": [
+        "network"
+      ]
+    },
+    {
+      "name": "RDF zone reaches DOM",
+      "source_zones": [
+        "rdf"
+      ],
+      "target_zones": [
+        "dom"
+      ]
+    },
+    {
+      "name": "WASM core reaches browser domains",
+      "source_paths": [
+        "formal/lean4/L4Factoidal/WasmVM/Binary/**",
+        "formal/lean4/L4Factoidal/WasmVM/Spec/**",
+        "formal/lean4/L4Factoidal/WasmVM/Valid/**",
+        "formal/lean4/L4Factoidal/WasmVM/Exec/**"
+      ],
+      "target_zones": [
+        "browser",
+        "dom",
+        "html",
+        "style",
+        "rendering",
+        "network"
+      ]
+    }
+  ]
 }
