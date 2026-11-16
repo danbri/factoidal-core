@@ -3785,6 +3785,11 @@ def superCall : Nat → Ctx → Array Value → M Value
                     else pure ro.kind
                   | k => pure k
                 modifyObj tid fun o => { o with kind, props := ro.props, keys := ro.keys }
+      | .native .promiseCtor =>
+        -- a subclass of Promise: `this` becomes the promise itself, so the resolving functions
+        -- the executor gets settle the object the subclass constructor returns (a copy of
+        -- another promise would never settle)
+        let _ ← callNative n (.x .promiseInitOn) ctx.thisV args ctx.newTarget
       | .native _ | .bound .. =>
         let r ← construct n parent args ctx.newTarget
         if let .obj tid := ctx.thisV then
@@ -5517,6 +5522,19 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | some a => throw a
       | none => pure ()
       pure (.obj pid)
+    | (.x .promiseInitOn) =>
+      -- the Promise constructor's steps on an object a subclass constructor made (`this`)
+      if !(← isCallable a0) then throwErr .type "Promise resolver is not a function"
+      let .obj pid := thisV | throwErr .type "Promise constructor: no object"
+      modifyObj pid fun o => { o with kind := .promise 0 .undef #[] false }
+      let res ← anonFn .promiseResolveFn #[.obj pid] 1
+      let rej ← anonFn .promiseRejectFn #[.obj pid] 1
+      let x ← catchJS (do let _ ← callV n a0 .undef #[res, rej]; pure none) (fun a => pure (some a))
+      match x with
+      | some (.throw e) => let _ ← callV n rej .undef #[e]
+      | some a => throw a
+      | none => pure ()
+      pure thisV
     | .promiseResolveFn | .promiseRejectFn =>
       match a0 with
       | .obj pid =>
