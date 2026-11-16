@@ -16,8 +16,12 @@ namespace NativeImage
 open L4Factoidal
 open L4Factoidal.Rendering (Bitmap)
 
-/-- Limit on the pixels of one image: the paint table holds one word for each pixel. -/
-def maxImagePixels : Nat := 1048576
+/-- Limit on the pixels of one decoded image: 4 Mpx, 16 MiB of RGBA. It was 1 Mpx, the
+paint table's size, and a photograph of 1500 by 1500 showed its alt text. An image is not
+drawn whole when it is larger than the table: a document's images are held reduced to fit
+its budget (`NativeImage.factorFor`, `maxDocumentPixels`), and the store checks the budget
+for each one (`Store.addBytes`). -/
+def maxImagePixels : Nat := 4194304
 /-- Limit on the encoded size of one image. -/
 def maxImageBytes : Nat := 8388608
 
@@ -183,6 +187,11 @@ private def unfilter (raw : ByteArray) (start rows row step : Nat) : Except Stri
       out := out.set! at_ ((out.get! at_)+predicted.toUInt8)
   return out
 
+/-- The largest sample of a depth below 8 (1, 3 or 15), from a match: a left shift of a `Nat`
+is a call into the runtime's big-number code, and this runs for each sample. -/
+@[inline] private def depthMax (depth : Nat) : Nat :=
+  match depth with | 1 => 1 | 2 => 3 | 4 => 15 | _ => 255
+
 /-- Sample `index` of a row at byte `line`, at the depth of the image. -/
 @[inline] private def sample (raw : ByteArray) (line depth index : Nat) : Nat :=
   match depth with
@@ -191,14 +200,14 @@ private def unfilter (raw : ByteArray) (start rows row step : Nat) : Except Stri
   | _ =>
     let bit := index*depth
     let byte := (raw.get! (line+bit/8)).toNat
-    (byte >>> (8-depth-bit%8)) &&& ((1 <<< depth)-1)
+    (byte >>> (8-depth-bit%8)) &&& depthMax depth
 
 /-- A sample as eight bits. -/
 @[inline] private def eight (value depth : Nat) : Nat :=
   match depth with
   | 16 => value/256
   | 8 => value
-  | _ => value*255/((1 <<< depth)-1)
+  | _ => value*255/depthMax depth
 
 /-- §12.1: sample^(1/(gamma*2.2)) for a display exponent of 2.2. `none` when the
     file gamma is within 2 percent of 1/2.2, where a byte hardly changes. -/

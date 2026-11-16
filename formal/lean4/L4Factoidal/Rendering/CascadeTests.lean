@@ -356,4 +356,30 @@ private def matching (html sel : String) (tags : List String) : List Bool :=
 #guard matching "<input type=radio name=a><input type=radio name=a><input type=radio name=b checked><input type=radio name=b><progress></progress><progress value=1></progress>"
   ":indeterminate" ["input", "progress"] == [true, true, false, false, true, false]
 
+-- `linear-gradient()` backgrounds (CSS Images 3 §3.1): the direction and the stops.
+private def gradientOf (args : String) : Option (Float × Option (Int × Int) × Nat) :=
+  (CSS.parseLinearGradient args).toOption.map fun g => (g.angle,g.corner,g.stops.length)
+#guard gradientOf "#fed, #fff" == some (180,none,2)
+#guard gradientOf "to right, red, blue" == some (90,none,2)
+#guard gradientOf "to top, red, blue 50%, white" == some (0,none,3)
+#guard gradientOf "45deg, red 10%, blue" == some (45,none,2)
+#guard gradientOf "0.5turn, red, blue" == some (180,none,2)
+#guard gradientOf "to top right, red, rgb(0, 0, 255)" == some (180,some (1,-1),2)
+#guard gradientOf "red 0 50%, blue" == some (180,none,3)
+#guard gradientOf "red" == none
+#guard gradientOf "to nowhere, red, blue" == none
+#guard CSS.gradientArgs "linear-gradient(#fed, #fff)" == some "#fed, #fff"
+#guard CSS.gradientArgs "url(a.png), linear-gradient(to right, rgb(1,2,3), red) no-repeat" == some "to right, rgb(1,2,3), red"
+#guard CSS.gradientArgs "repeating-linear-gradient(red, blue)" == none
+-- The `background` shorthand gives the image too; a later colour-only shorthand clears it.
+private def gradientAt (html css : String) : Option Bool := do
+  let dom := DOM.parseHtmlDocument html
+  let styles ← (do CSS.computeAll dom (← CSS.parse css)).toOption
+  let id ← (List.range dom.nodes.size).find? fun i => (dom.get i).lname == "div"
+  pure (styles[id]!).backgroundGradient.isSome
+#guard gradientAt "<div></div>" "div{background:linear-gradient(#fed,#fff)}" == some true
+#guard gradientAt "<div></div>" "div{background-image:linear-gradient(red,blue)}" == some true
+#guard gradientAt "<div></div>" "div{background:linear-gradient(#fed,#fff)} div{background:#eee}" == some false
+#guard gradientAt "<div></div>" "div{background-color:red}" == some false
+
 end L4Factoidal.Rendering.CascadeTests

@@ -26,6 +26,8 @@ open L4Factoidal.Rendering FontFaceRule
 #guard sourceURL "url(a.ttf)" == some "a.ttf"
 #guard sourceURL "url(\"a b.otf\") format(\"opentype\")" == some "a b.otf"
 #guard sourceURL "url(a.woff2) format(\"woff2\")" == none
+-- WOFF 1.0 is read (`Woff.toSfnt`): a rule that offers only it gets its face.
+#guard sourceURL "url('https://example.org/s/1/A.woff') format('woff')" == some "https://example.org/s/1/A.woff"
 #guard sourceURL "local(Foo)" == none
 #guard sourceURL "url(a.ttf) format(truetype)" == some "a.ttf"
 

@@ -187,7 +187,9 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
       | .auto => is.width
       | .content => .auto
     let natural := (keywordWidth keyword minContent maxContent (box.width-edges)).getD maxContent
-    cores := cores.push {base := LU.ofPx (basis.getD natural), lo := LU.ofPx (max 0 lo), hi := hi.map LU.ofPx,
+    -- a base from the content is rounded up (`LU.ofPxCeil`), so the item holds its content
+    let base := match basis with | some v => LU.ofPx v | none => LU.ofPxCeil natural
+    cores := cores.push {base, lo := LU.ofPx (max 0 lo), hi := hi.map LU.ofPx,
                          grow := flexFactor is.flex.grow, shrink := flexFactor is.flex.shrink, edges := LU.ofPx edges}
     styles := styles.push is
   let n := items.size

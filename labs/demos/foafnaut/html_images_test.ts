@@ -5,7 +5,7 @@
 // the same boxes. Run with --allow-read --allow-ffi.
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.ts";
-import {imageAllowed,prepareHTML} from "./native_html_document.ts";
+import {imageAllowed,MAX_PAGE_IMAGE_BYTES,pageImageLimit,prepareHTML} from "./native_html_document.ts";
 
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
 const noLibrary=(()=>{try{Deno.statSync(library);return false;}catch{return true;}})();
@@ -47,6 +47,20 @@ async function images(engine:HTMLEngine) {
   return boxes;
 }
 
+Deno.test("the image bytes of a page: the engine's held limit, else the Base64 one",async()=>{
+  // An engine from before held images gets Base64, at most 6 MiB of bytes for a page.
+  assert.equal(await pageImageLimit(undefined),MAX_PAGE_IMAGE_BYTES);
+  assert.equal(await pageImageLimit({imageInfo:()=>undefined}),MAX_PAGE_IMAGE_BYTES);
+  // An engine that holds images says how many bytes (32 MiB): a page of photographs past 6 MiB
+  // is no longer cut to alt text there. A worker engine answers
+  // with a promise.
+  const holder=(maxBytes:unknown)=>({imageInfo:()=>Promise.resolve({ops:["imageLoad"],maxBytes}),imageLoad:()=>{}});
+  assert.equal(await pageImageLimit(holder(33554432)),33554432);
+  // Never above 64 MiB, and a nonsense answer falls back.
+  assert.equal(await pageImageLimit(holder(1e12)),64*1048576);
+  assert.equal(await pageImageLimit(holder("x")),MAX_PAGE_IMAGE_BYTES);
+  assert.equal(await pageImageLimit({imageInfo:()=>{throw new Error("old");},imageLoad:()=>{}}),MAX_PAGE_IMAGE_BYTES);
+});
 Deno.test("img: only the page's own origin, with no proxy",()=>{
   assert(imageAllowed("https://a.example/x.png","https://a.example/page.html"));
   assert(!imageAllowed("https://b.example/x.png","https://a.example/page.html"));
