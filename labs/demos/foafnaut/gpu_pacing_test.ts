@@ -246,3 +246,25 @@ Deno.test("sceneCostIn: the whole frame is sceneCost; bands add up to it; an emp
   // A rectangle inside tile 0 alone: its pixels times (1 + the edges of tile 0's records).
   assert(Math.abs(sceneCostIn(frame,[[2,2,4,4]])-16*(11+1)/1e6)<1e-12);
 });
+
+Deno.test("gate: light submissions (composites of a scroll) do not wear the rate down", async()=>{
+  const queue=blockingQueue(1);
+  const gate=createGpuGate(queue,1,undefined,0,undefined,{answersAtReturn:true});
+  gate.turn();
+  queue.doneAt=performance.now()+60;
+  gate.after(100);gate.turn();
+  const rate=gate.stats.msPerUnit;
+  assert(rate>0.5);
+  // Twenty composites, each done before its ask.
+  for(let i=0;i<20;i++){
+    gate.after(1.6);
+    for(let k=0;k<50&&gate.inFlight;k++){await sleep(2);gate.turn();}
+    assert.equal(gate.inFlight,0);
+  }
+  assert.equal(gate.stats.msPerUnit,rate);
+  // The next heavy frame is still slept through: its ask is due about 66 ms after it, not at once.
+  gate.after(100);
+  const due=gate.dueIn();
+  assert(due!==null&&due>40,`heavy work after a scroll is due in ${due} ms`);
+  queue.doneAt=0;await gate.idle();
+});

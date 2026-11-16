@@ -118,8 +118,11 @@ export function sceneCostIn(frame:{width?:number;height?:number;data?:ArrayLike<
  *    when the GPU is done, so start to end over cost is the rate). An ask that did not block
  *    says only that the prediction was long enough: the rate falls by 10%, and from the third
  *    such ask in a row by 25%, then by half (a prediction several times too long, as after a
- *    change of page, is not paid for by twenty frames). With no cost known, the prediction is
- *    the last measured GPU time, with the same falls;
+ *    change of page, is not paid for by twenty frames). Only asks about `MIN_UNITS` of work
+ *    or more teach the rate: a run of composites (a scroll: a unit or two each, done before
+ *    any ask) must not wear the rate down so that the next heavy frame is asked about at once
+ *    and blocks the thread for all of its GPU time. With no cost known, the prediction is the
+ *    last measured GPU time of such work, with the same falls;
  *  - before any ask has measured a rate, `defaultMsPerUnit` (the caller's prior for this
  *    machine; 0: ask at once) gives the first prediction of heavy work;
  *  - `answersAtReturn` (a queue whose ask blocks until the work is done, as Deno's): the
@@ -136,7 +139,7 @@ export function sceneCostIn(frame:{width?:number;height?:number;data?:ArrayLike<
 export type PipeEvent="submit"|"ask"|"answer";
 export type GateOptions={answersAtReturn?:boolean;debug?:(record:Record<string,unknown>)=>void};
 export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,defaultMsPerUnit=0,onPipe?:(event:PipeEvent)=>void,options:GateOptions={}) {
-  const LIGHT_MS=50,LIGHT_BOUND=3,MARGIN=1.1,EARLY_MS=5,MEASURED_MS=1,ANSWER_MS=25,FALLS=[0.9,0.9,0.75,0.5],HEAVY_UNITS=100,FALLBACK_MS=50,LAG_MS=50,LAG_MISSES=3,MAX_MS=5000;
+  const LIGHT_MS=50,LIGHT_BOUND=3,MARGIN=1.1,EARLY_MS=5,MEASURED_MS=1,ANSWER_MS=25,FALLS=[0.9,0.9,0.75,0.5],HEAVY_UNITS=100,MIN_UNITS=4,FALLBACK_MS=50,LAG_MS=50,LAG_MISSES=3,MAX_MS=5000;
   const debug=options.debug;
   let submitted=0,answered=0,estimateMs=0,rate=0,lastCost=0,lastDoneAt=0,earlyRun=0;
   let atReturn=!!options.answersAtReturn,lagMisses=0,turns=0;
@@ -155,25 +158,30 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
   const costUpTo=(seq:number)=>{let c=0;for(const [k,v] of costOf)if(k<=seq)c+=v;return c;};
   // The GPU time of `cost` units at the measured rate, or (no rate yet) of heavy work at the
   // machine prior; 0 when neither says.
-  const msFor=(cost:number)=>cost>0&&rate>0?Math.min(MAX_MS,cost*rate):cost>=HEAVY_UNITS&&rate===0&&estimateMs===0&&defaultMsPerUnit>0?Math.min(MAX_MS,cost*defaultMsPerUnit):0;
+  const msFor=(cost:number)=>cost>0&&rate>0?Math.min(MAX_MS,cost*rate):cost>=HEAVY_UNITS&&rate===0&&defaultMsPerUnit>0?Math.min(MAX_MS,cost*defaultMsPerUnit):0;
   // The predicted GPU time of what is in flight up to `seq`: its cost at the rate (with the
-  // margin once a rate is measured), or with no cost known the last measured time.
+  // margin once a rate is measured; before that, heavy work at the prior and light work 0:
+  // asked about at once), or with no cost known the last measured time of such work.
   const predict=(seq:number)=>{
     const cost=costUpTo(seq);
-    if(cost>0&&rate>0)return msFor(cost)*MARGIN;
-    const prior=msFor(cost);
-    return prior>0?prior:estimateMs;
+    if(cost<=0)return estimateMs;
+    return rate>0?msFor(cost)*MARGIN:msFor(cost);
   };
   // The answer for the ask `p`: the GPU was done at `done`; `measured` when the ask blocked, so
   // `done` is when the GPU finished (else it had finished some time before).
   const settle=(p:NonNullable<typeof pending>,done:number,measured:boolean)=>{
     const busy=Math.max(0,done-p.started);
-    if(measured){
-      stats.blockedAsks++;earlyRun=0;
-      estimateMs=busy;if(p.cost>0){rate=busy/p.cost;lastCost=p.cost;}
-    }else{
-      const fall=FALLS[Math.min(earlyRun,FALLS.length-1)];earlyRun++;
-      estimateMs*=fall;rate*=fall;
+    // What the ask teaches: work with a cost of MIN_UNITS or more, the rate; work with no cost
+    // known, the time of such work; light work, nothing.
+    if(measured)stats.blockedAsks++;
+    if(p.cost>=MIN_UNITS||p.cost<=0){
+      if(measured){
+        earlyRun=0;
+        if(p.cost>0){rate=busy/p.cost;lastCost=p.cost;}else estimateMs=busy;
+      }else{
+        const fall=FALLS[Math.min(earlyRun,FALLS.length-1)];earlyRun++;
+        if(p.cost>0)rate*=fall;else estimateMs*=fall;
+      }
     }
     const gpuMs=measured?busy:Math.min(busy,p.predicted/MARGIN);
     recent.push(gpuMs);if(recent.length>240)recent.shift();
