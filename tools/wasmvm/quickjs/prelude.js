@@ -2939,8 +2939,25 @@
       } };
 `;
   // ==== end canvas2d section ====
-  // A 2D canvas whose width or height is set starts again (HTML §4.12.5: the bitmap and the context's state are reset).
-  const sized = (el, name, v) => { el.setAttribute(name, String(v >>> 0)); if (gpuContexts.get(nodeId(el))?.kind === '2d') c2d().resized(el); };
+  // HTML §4.12.5: whenever a 2D canvas's width or height content attribute is set, removed,
+  // changed or set again to the value it has, by any path (the reflected properties of
+  // DOM.Reflect, setAttribute, removeAttribute, an Attr's value), its bitmap is cleared and its
+  // context's state reset: an init command (PageCanvas Cmd.init, which also gives the bitmap
+  // a new origin-clean flag). The attribute natives are wrapped when a canvas first gets a 2D
+  // context; a page without one pays nothing.
+  let canvasWatching = false;
+  const canvasWatch = () => {
+    if (canvasWatching) return;
+    canvasWatching = true;
+    const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
+    const hit = (id, name) => {
+      const k = String(name), local = k.includes('\u0000') ? (k.startsWith('\u0000') ? k.slice(1) : '') : k.toLowerCase();
+      if ((local === 'width' || local === 'height') && gpuContexts.get(id)?.kind === '2d') c2d().resized(wrap(id));
+    };
+    n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0) hit(id, name); return r; };
+    n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0) hit(id, name); return r; };
+  };
+  const sized = (el, name, v) => { el.setAttribute(name, String(v >>> 0)); };
   Object.defineProperties(named.HTMLCanvasElement.prototype, {
     width: { get() { return canvasSize(this, 'width', 300); }, set(v) { sized(this, 'width', v); }, configurable: true },
     height: { get() { return canvasSize(this, 'height', 150); }, set(v) { sized(this, 'height', v); }, configurable: true },
@@ -2957,7 +2974,7 @@
       const id = nodeId(this), held = gpuContexts.get(id);
       if (held && held.kind !== 'blank') return held.kind === kind ? held.context : null;
       let context = null;
-      if (kind === '2d') context = c2d().context(this, arguments[1]);
+      if (kind === '2d') { context = c2d().context(this, arguments[1]); canvasWatch(); }
       else if (kind === 'webgpu') context = new GPUCanvasContext(this);
       else if (kind === 'webgl2') context = glContextFor(this, 2, arguments[1]);
       else if (kind === 'webgl' || kind === 'experimental-webgl') context = glContextFor(this, 1, arguments[1]);
