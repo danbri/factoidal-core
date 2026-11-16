@@ -54,7 +54,7 @@ if(!bench){
   // Where both take the same rule, the moved geometry rounds to float32 a little differently
   // in the band than in one frame: a few edge pixels differ. More than this is a failure.
   const ROUNDING_PIXELS=32;
-  let compared=0,failed=0,expected=0;
+  let compared=0,failed=0,expected=0,chromeExpected=0;
   for(const frameScroll of [0,Math.min(limit,1200)]){
     const layers=engine.compileLayers(doc.source,W,H,options(frameScroll,true));
     await renderer.drawLayers(layers,true);
@@ -72,16 +72,27 @@ if(!bench){
       const pixels=new Set<number>();
       for(let i=0;i<want.pixels!.length;i++){const d=Math.abs(want.pixels![i]-got.pixels![i]);if(d){differ++;worst=Math.max(worst,d);pixels.add(i>>2);}}
       const rule=(rows:number)=>rows<=REFINE_ROWS;
+      // The chrome rows (above place.top) come from the chrome layer, which is small and so always
+      // takes the 16-sample rule; in one frame they take the frame's rule. A chrome with sloped or
+      // curved edges (the flat look's round fields and icons) then differs at those edges when the
+      // frame is past REFINE_ROWS: issue 1269 again, counted apart. A chrome of whole-pixel
+      // rectangles (classic) has no such edges and matches either way.
+      const width=W;
+      const chromePixels=[...pixels].filter(i=>Math.floor(i/width)<place.top).length;
+      const pagePixels=pixels.size-chromePixels;
       const sameRule=rule(one.data.length/4)===rule(layers.page.data.length/4);
-      const verdict=sameRule?(pixels.size<=ROUNDING_PIXELS?"pass":"fail"):(pixels.size<=ROUNDING_PIXELS?"stale-expected-failure":"expected-failure-1269");
-      if(verdict==="fail"||verdict==="stale-expected-failure")failed++;
+      const chromeSameRule=rule(one.data.length/4)===rule(layers.chrome.data.length/4);
+      const verdict=sameRule?(pagePixels<=ROUNDING_PIXELS?"pass":"fail"):(pagePixels<=ROUNDING_PIXELS?"stale-expected-failure":"expected-failure-1269");
+      const chromeVerdict=chromeSameRule?(chromePixels<=ROUNDING_PIXELS?"pass":"fail"):(chromePixels?"expected-failure-1269":"pass");
+      if(verdict==="fail"||verdict==="stale-expected-failure"||chromeVerdict==="fail")failed++;
       if(verdict==="expected-failure-1269")expected++;
-      console.log(JSON.stringify({type:"scroll-layers-compare",frameScroll,bandTop:place.bandTop,scroll,offset,verdict,sameBytes:want.hash===got.hash&&differ===0,
+      if(chromeVerdict==="expected-failure-1269")chromeExpected++;
+      console.log(JSON.stringify({type:"scroll-layers-compare",frameScroll,bandTop:place.bandTop,scroll,offset,verdict,chromeVerdict,chromePixels,pagePixels,sameBytes:want.hash===got.hash&&differ===0,
         frameHash:want.hash,compositeHash:got.hash,differentPixels:pixels.size,largestDifference:worst,
         rows:{frame:one.data.length/4,page:layers.page.data.length/4,chrome:layers.chrome.data.length/4}}));
     }
   }
-  console.log(`scroll layers: ${compared-failed-expected} pass, ${failed} fail, ${expected} expected failures (https://github.com/danbri/factoidal/issues/1269) (out of ${compared} scrolls)`);
+  console.log(`scroll layers: ${compared-failed-expected} pass, ${failed} fail, ${expected} expected failures (https://github.com/danbri/factoidal/issues/1269) (out of ${compared} scrolls); chrome edges by the other sampling rule (1269): ${chromeExpected}`);
   if(!compared||compared===expected||failed)Deno.exitCode=1;
 
   // Press (issue 1268). (1) The composite with Lean's press rectangles of a link: the pixels in
