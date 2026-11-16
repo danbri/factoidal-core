@@ -20,31 +20,40 @@ heap, so it covers the machine off (the reference) and on. Equal results include
 so equal steps left: a host call (`hostCall`, which receives the steps left) sees the same
 count at either fuel.
 
-## State of the proof (2026-11-15)
+## State of the proof (2026-11-16)
 
-`JS/FuelMonoSteps.lean` is written by `tools/fuelmono-gen.py` from `JS/Interp.lean`: the
-induction hypothesis `IH H n m` over the 116 functions of the block that take fuel, and one
-step lemma per function (its body at `n + 1` against `m + 1`, from `IH H n m`), proved by the
-walk below with no hand-written proof. Proved today: 75 of the 116 steps, in 31 s (peak
-3.1 GB). Not proved:
+On main after PR #506 (the built-in dispatchers moved out of the block), the block has 126
+functions that take fuel, `coreRun` (the dispatcher the built-ins call) among them.
+`tools/fuelmono-gen.py --split` writes `JS/FuelMonoIH.lean` (the induction hypothesis), one module
+per group of step lemmas (`JS/FuelMonoSteps*.lean`; each imports the one before, so a build
+checks one group per Lean process) and `JS/FuelMonoAll.lean` (`IH_zero`, `IH_all`, corollaries).
+`tools/fuelmono-natives-parts.py` writes the built-ins' lemmas in parts (`JS/FuelMonoNatives_*`).
+None of these modules is in `L4Factoidal.JS`: CI does not build them yet.
 
-- 21 bodies with local functions (`do` join points `__do_jp`, local helpers such as `field`,
-  `keyOf`): the two sides bind different closures (one calls at `n`, the other at `m`), and the
-  walk stops at `Le (jpL x) (jpR x)`. Inlining them (zeta-delta) duplicates bodies and ran out
-  of memory (7 GB in 90 s on `binop`). Needed: a tactic that pairs the two let-bound closures
-  and proves `∀ x, Le (jpL x) (jpR x)` once by walking their bodies.
-- The 20 largest bodies (40 to 2,079 lines: `evalExpr`, `evalStmt`, `vmLoop`, the generator
-  machine, `callNative`, `extraNative`, `moreNative`): not tried after the first full run,
-  which with the earlier walk reached 17 GB. Their equation lemmas alone take 25 s
-  (`evalExpr.eq_2`), 111 s (`extraNative`) and 573 s (`callNative`).
+Checked (2026-11-16, Mac, one Lean process per module, footprint under 6 GB), no hand-written
+proof, the walk `fuel_walk`:
 
-So `IH_all` (monotonicity of the whole block) is not proved yet. The rules and the steps that
-are proved use only `propext`, `Classical.choice` and `Quot.sound`.
+- `natives_iterEach_mono`, `natives_extraNative_mono` (`JS/FuelMonoNatives.lean`, 60 to 170 s,
+  under 0.7 GB);
+- the steps of 117 of the 126 functions (groups S1 to S9 and `vmLoop`, 5 to 53 s each, under
+  0.5 GB), with the two lemmas below assumed (a local check, never committed);
+- the other 9 (`evalExpr`, `evalStmt`, `genRun`, `genEnter`, `genUnwind`, `regexpSymbol`,
+  `stringOrMath`, `callBody`, `defineOwnProp`) passed with the rule set one revision earlier,
+  except `evalExpr`, which passed on the block before the move (23 s) and was still running after
+  30 minutes under the latest rules (capped `split` and `dsimp` attempts on many goals).
 
-Fuel monotonicity was false before `catchJS`: a `for`-`of` whose body throws, over an iterator
+Not proved: `natives_moreNative_mono` and `natives_callNative_mono` (bodies of 2,078 and 1,487
+lines). In four parts each (issue #531), a part takes about 25 minutes and 5.6 GB, most of it
+after the tactic (building and checking one large proof term); part 0 of `moreNative` left one
+goal (a match on a number with literal patterns, which `fuel_cases` now takes; not rechecked).
+So `IH_all` is not proved. Next: split those two functions in the source into smaller
+definitions, each with a small lemma (issue #531), and restore `evalExpr`'s speed.
+
+Fuel monotonicity was false twice, both fixed: before `catchJS`: a `for`-`of` whose body throws, over an iterator
 whose `return` nests calls, ended `ok [caught]` at fuels 18 to 59 and `ok [closed, caught]`
 above (IteratorClose dropped the out-of-fuel halt of `return`). `drop_not_out` below is the
-shape of that handler.
+shape of that handler. And `iterCloseAbrupt` at fuel 0 threw its completion instead of running
+out of fuel (ended differently at fuel 0 than at fuel 1).
 -/
 
 namespace L4Factoidal.JS.FuelMono
@@ -312,12 +321,24 @@ def fuelCasesCore (bigOnly : Bool) : TacticM Unit := do
     -- only a discriminant that is not yet a constructor (else `dsimp only` reduces the match)
     -- a discriminant that is not a constructor yet; inside a constructor (`match (a, b) with`),
     -- its first argument that is not one
-    let rec firstOpen (fuel : Nat) (d : Lean.Expr) : MetaM (Option Lean.Expr) := do
+    -- natural numbers are cased only inside a built-in's `match id with` (`iterEager (n+7)`
+    -- against the literals 6 and 7): elsewhere casing a number one successor at a time over a
+    -- match of many literals multiplied the goals (`split` takes those matches)
+    let allowNat := m.discrs.size ≥ 1 && (← whnfR (← inferType m.discrs[0]!)).isConstOf ``Native
+    let rec firstOpen (fuel : Nat) (d0 : Lean.Expr) : MetaM (Option Lean.Expr) := do
+      -- a chain of successors costs no depth
+      let mut d := d0
+      if allowNat then
+        for _ in [0:4096] do
+          if d.isAppOfArity ``Nat.succ 1 then d := d.appArg! else break
       if d.hasLooseBVars then return none
       -- never a string, character or machine number (literal patterns that cases cannot
       -- reach); a natural number is cased one successor at a time, which ends past the largest
       -- literal of the match (`dsimp only` then reduces it)
       let ty ← whnfR (← inferType d)
+      -- (a number that is the discriminant itself, a plain local, is cased anywhere: its match
+      -- has literal patterns and ends at the largest)
+      if !allowNat && ty.isConstOf ``Nat && !(fuel == 8 && d.isFVar) then return none
       if ty.isConstOf ``Int || ty.isConstOf ``String || ty.isConstOf ``Char
           || ty.isConstOf ``Float || ty.isConstOf ``UInt8 || ty.isConstOf ``UInt16
           || ty.isConstOf ``UInt32 || ty.isConstOf ``UInt64 then return none
@@ -541,9 +562,34 @@ elab "fuel_match_reduce" : tactic => do
     let y' ← red args[3]!
     replaceMainGoal [← g.replaceTargetDefEq (mkAppN t.getAppFn ((args.set! 2 x').set! 3 y'))]
 
+/-- A rule a later module adds to the walk (`JS/FuelMonoNativeParts.lean`: an arm of another
+part of a built-in's lemma); fails by default. -/
+syntax "fuel_mono_extra" : tactic
+macro_rules
+  | `(tactic| fuel_mono_extra) => `(tactic| fail "no extra rule")
+
+open Lean Meta Elab Tactic in
+/-- Rules proved after the walk is defined (`Le.inRealm` below, the built-ins' lemmas in
+`JS/FuelMonoNatives*.lean`): looked up by name when the walk runs. A name in a macro is resolved
+where the macro is defined, before these exist. -/
+elab "fuel_late_lemmas" : tactic => do
+  let names := [`L4Factoidal.JS.FuelMono.Le.inRealm,
+    `L4Factoidal.JS.FuelMono.natives_iterEach_mono, `L4Factoidal.JS.FuelMono.natives_moreNative_mono,
+    `L4Factoidal.JS.FuelMono.natives_extraNative_mono, `L4Factoidal.JS.FuelMono.natives_callNative_mono]
+  let env ← getEnv
+  let st ← saveState
+  for nm in names do
+    unless env.contains nm do continue
+    try
+      evalTactic (← `(tactic| with_reducible apply $(mkIdent nm)))
+      return
+    catch _ => st.restore
+  throwError "fuel_late_lemmas: none applies"
+
 syntax "fuel_mono_pre" : tactic
 macro_rules
   | `(tactic| fuel_mono_pre) => `(tactic| first
+      | fuel_mono_extra
       | with_reducible (cases ‹_ + 1 = Nat.succ _›)
       | fuel_refl
       | with_reducible exact Le.fuel _
@@ -564,17 +610,13 @@ macro_rules
       | with_reducible apply Le.foldlM_array
       | with_reducible apply Le.filterMapM_list
       | with_reducible apply Le.filterM_array
-      | with_reducible apply Le.inRealm
       | with_reducible apply Le.filterMapM_array
       | with_reducible apply Le.map
       | apply Le.discard
       | (intro _)
       | (lift_lets; extract_lets; try fuel_jp_pairs)
       | fuel_hyp
-      | with_reducible apply natives_iterEach_mono
-      | with_reducible apply natives_moreNative_mono
-      | with_reducible apply natives_extraNative_mono
-      | with_reducible apply natives_callNative_mono
+      | fuel_late_lemmas
       | fuel_jp
       | fuel_match_reduce
       | with_reducible apply Le.ite
@@ -585,10 +627,7 @@ macro_rules
       | fuel_gen_lets
       | fuel_cases
       | fuel_capped 1000 dsimp only
-      | (apply Le.of_out; intro _; set_option maxHeartbeats 400000 in exact ⟨_, rfl⟩)
-      -- last: `split` with a large budget, for a big match no other rule takes (a literal
-      -- pattern over a natural number that is past every literal)
-      | fuel_capped 60000 split)
+      | (apply Le.of_out; intro _; set_option maxHeartbeats 400000 in exact ⟨_, rfl⟩))
 
 
 open Lean Meta Elab Tactic in
