@@ -12,7 +12,7 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
-import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf} from './page-load.mjs';
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf,turnSliceSteps} from './page-load.mjs';
 import {gateConsole} from './log-gate.mjs';
 // The worker's console lines go through the log gate (log-gate.mjs): a flood is summarised and named.
 const logGate=gateConsole(console,{name:'foafnaut'});
@@ -911,7 +911,9 @@ function scriptTimers(){
   // 100 ms an advance towards the timer (issue 450).
   const due=Math.max(script.turn.clock,script.turn.nextWake);
   if(elapsed-due>100){script.epoch+=elapsed-due-100;elapsed=due+100;}
-  try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
+  // A slice of at most turnSliceSteps steps (page-load.mjs): the rest is due at once, after the
+  // input messages that came meanwhile.
+  try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock)),sliceSteps:turnSliceSteps}));}
   catch(error){scriptFailed(doc,error,'timers');script.turn.nextWake=null;}
   const next=script.turn.nextWake;
   return next===null||next===undefined?16:next-(performance.now()-script.epoch);

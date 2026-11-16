@@ -16430,7 +16430,10 @@
   // The event handler content attributes of the elements of a subtree (a page's, or a clone's:
   // a clone's attributes are set by Lean, not through setAttribute).
   const scanHandlers = (root, inclusive) => {
-    for (const k of inclusive && info(root, 0) === 1 ? [root, ...elementsOf(root)] : elementsOf(root)) {
+    // only the elements with an attribute named `on…` (node_query 168, in tree order), not every element
+    const found = n.query(root, 168, inclusive ? '1' : '');
+    if (typeof found !== 'string' || found === '') return;
+    for (const k of found.split(' ').map(Number)) {
       // HTML, SVG and MathML elements have event handler content attributes
       if (!htmlEl(k)) { const ns = str(k, 2); if (ns !== 'http://www.w3.org/2000/svg' && ns !== 'http://www.w3.org/1998/Math/MathML') continue; }
       const a = str(k, 6) ?? ''; const xs = a === '' ? [] : a.split('\u0000');
