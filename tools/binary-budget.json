@@ -1,5 +1,5 @@
 {
-  "about": "Recorded sizes in bytes of the shipped engine binaries, checked by tools/binary-budget.py (issue 551). A binary may be at most `tolerance` above its budget. Start of the ratchet: the size table of issue 551 (main 2ff4472d2 + PR 540, macOS arm64; Wasm from the same build). Lower a budget with `tools/binary-budget.py check --update`; raise one only by hand, in a reviewed change that says why.",
+  "about": "Recorded sizes in bytes of the shipped engine binaries, checked by tools/binary-budget.py (issue 551). A binary may be at most `tolerance` above its budget. Start of the ratchet: the size table of issue 551 (main 2ff4472d2 + PR 540, macOS arm64; Wasm from the same build). Lower a budget with `tools/binary-budget.py check --update`; raise one only by hand, in a reviewed change that says why. leanjs darwin-arm64 raised 11,420,160 -> 11,868,032 B (+3.9%) at the merge of main 8d3af851b: PRs merged since (550 undo log in JS/UndoLog and the evaluator, 547/549, 537) grew it; measured on the merged state.",
   "tolerance": 0.02,
   "budgets": {
     "any": {
@@ -7,7 +7,7 @@
       "web-render.wasm.br": 5925520
     },
     "darwin-arm64": {
-      "leanjs": 11420160,
+      "leanjs": 11868032,
       "libweb-render.dylib": 72332320,
       "bubblepop-test262": 31294992
     }
