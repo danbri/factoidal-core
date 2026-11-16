@@ -340,3 +340,54 @@ suites job, on the same triggers as WPT, and are recorded in `runs.csv` (one row
   populations.
 - A check of the workflow without recording: `gh workflow run release-tests.yml -R
   danbri/factoidal-builds --ref BRANCH -f suites=w3c -f force=true -f record=false`.
+
+### 11.1 The Data and documents page and its records
+
+The Hub page `docs/web/hub/specs/` ("Data and documents conformance",
+https://danbri.github.io/factoidal/web/hub/specs/) shows these suites: one row per technology family
+with its headline, then specification and version, then suite (population, test type), then
+sub-manifests and history. Its views: families, every specification and version as one table, and
+what needs attention (invalid, partial, stale, runners with no recorded rows).
+
+- **Mapping, never renaming.** `tests/browser-wpt/spec-suites.json` says what each suite id of
+  `runs.csv` measures: `family`, `spec`, `specUrl`, `version`, `technology`, `testType`,
+  `population`, `manifest`, `source` (with `kind`: official, subset, authored), `engine`, and
+  `headline` (counted in the family headline; false for a population inside another headline
+  suite, such as `l4-rdf12entail` inside `l4w3c-rdf12`). Lean suites that carry on an F* suite say
+  `continues`; every F* suite says `supersededBy`, `coveredBy` or `replacedBy`. History keeps its
+  ids. Families whose populations overlap (OWL 2) are `additive: false`: no summed count.
+- **Normalised record** (`tests/browser-wpt/specs-data.py`, schema
+  `docs/web/hub/specs/data.schema.json`), one per runs.csv row: suite, family, spec, version,
+  technology, testType, population, manifest, source, sourceKind, engine, platform, commit, run,
+  finished, trigger, total, passed, failed, decided, undecided, status, reason, stale, staleReason,
+  current, headline, workflow. **status**: `valid` (valid and every test decided), `partial`
+  (valid, fewer decided than the population; reason gives the count), `invalid` (runs.csv
+  valid=false; reason is its invalid_reason; the newest valid run is kept as `lastValid`).
+  **stale**: every F* row (runners stopped 2026-11-15), and a Lean suite with no row for 36 hours
+  before the newest Lean row. Headlines count current, not stale, headline suites; invalid runs
+  are never counted.
+- **Sub-manifests.** `release-tests.py` keeps l4w3c's score line of each included manifest in
+  `meta.json` `parts`; the mapping's `parts` rules classify them (SPARQL Query, Update, result
+  formats, protocol, federation, entailment, service description, Graph Store; RDF N-Triples,
+  N-Quads, Turtle, TriG, RDF/XML, semantics), so SPARQL 1.1 and 1.2 split by specification.
+- **Files** (branch `hub-data` of danbri/factoidal-builds, `specs/`, written by its "Conformance
+  data" workflow; copied into the site by danbri/factoidal "Deploy to GitHub Pages"):
+  `data.json` (current record per suite, family headlines, sources, measurements not yet
+  recorded, unmapped ids), `history.json` (every row per suite as `[finished, commit, passed,
+  decided, total, status]`, and each additive family's headline per recording run) and
+  `records.csv` (every record, flat). Ad hoc questions: any CSV tool over `records.csv`, for
+  example `duckdb -c "select family, spec, version, max(finished) from 'records.csv' where
+  status <> 'valid' group by all"`.
+- **Adding a suite**: (1) its runner and row in release-tests (`SUITES`, `SEMWEB_ROWS` or the OWL
+  populations), with the full official population as the denominator; (2) an entry in
+  `spec-suites.json` with every field above, `continues` if it carries on an older id, and a
+  `parts` key if it is an l4w3c umbrella manifest; (3) `node --test tests/hub/specs_test.mjs`
+  (checks the mapping) and `python3 tests/browser-wpt/specs_data_test.py`. A suite id in runs.csv
+  that the mapping lacks is listed in `data.json` `unmapped` and on the page's "Needs attention"
+  view. Runners with numbers but no recorded rows (the QT4 runners `l4qt4`, `l4xslt4`) go in
+  `unrecorded`, with the write-up and date, and are never shown as a score.
+- **Tooling.** Charts are the Conformance page's own SVG line chart; d3 and Observable Plot (ISC,
+  vendored in `third_party/observable`) are there if a view needs more. No server-side
+  dashboards: Grafana is AGPL-3.0 (relicensed 2021-04-20, grafana/grafana 8db3eb90ae) and needs
+  a server; Perses and Superset (Apache-2.0) need servers too. DuckDB-Wasm (MIT) for in-page
+  queries is a later option behind a click, since it loads a multi-megabyte Wasm module.

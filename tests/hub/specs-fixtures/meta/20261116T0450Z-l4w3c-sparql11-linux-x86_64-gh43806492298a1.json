@@ -1,0 +1,240 @@
+{
+ "format": "factoidal-release-test-run-v1",
+ "note": "Test fixture: illustrative sub-manifest counts (not a recorded run's parts).",
+ "parts": [
+  {
+   "label": "add",
+   "pass": 9,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 9
+  },
+  {
+   "label": "aggregates",
+   "pass": 33,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 33
+  },
+  {
+   "label": "basic-update",
+   "pass": 23,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 23
+  },
+  {
+   "label": "bind",
+   "pass": 10,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 10
+  },
+  {
+   "label": "bindings",
+   "pass": 11,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 11
+  },
+  {
+   "label": "cast",
+   "pass": 6,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 6
+  },
+  {
+   "label": "construct",
+   "pass": 7,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 7
+  },
+  {
+   "label": "csv-tsv-res",
+   "pass": 6,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 6
+  },
+  {
+   "label": "delete",
+   "pass": 19,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 19
+  },
+  {
+   "label": "drop",
+   "pass": 4,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 4
+  },
+  {
+   "label": "entailment",
+   "pass": 66,
+   "fail": 0,
+   "skip": 4,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 70
+  },
+  {
+   "label": "exists",
+   "pass": 6,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 6
+  },
+  {
+   "label": "functions",
+   "pass": 75,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 75
+  },
+  {
+   "label": "grouping",
+   "pass": 6,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 6
+  },
+  {
+   "label": "json-res",
+   "pass": 4,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 4
+  },
+  {
+   "label": "negation",
+   "pass": 12,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 12
+  },
+  {
+   "label": "project-expression",
+   "pass": 7,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 7
+  },
+  {
+   "label": "property-path",
+   "pass": 33,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 33
+  },
+  {
+   "label": "service",
+   "pass": 7,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 7
+  },
+  {
+   "label": "subquery",
+   "pass": 14,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 14
+  },
+  {
+   "label": "syntax-query",
+   "pass": 231,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 231
+  },
+  {
+   "label": "syntax-fed",
+   "pass": 3,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 3
+  },
+  {
+   "label": "syntax-update-1",
+   "pass": 54,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 54
+  },
+  {
+   "label": "protocol",
+   "pass": 0,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 0
+  },
+  {
+   "label": "service-description",
+   "pass": 0,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 0
+  },
+  {
+   "label": "aggregates",
+   "pass": 0,
+   "fail": 0,
+   "skip": 0,
+   "unsupported": 0,
+   "xfail": 0,
+   "total": 0
+  }
+ ]
+}

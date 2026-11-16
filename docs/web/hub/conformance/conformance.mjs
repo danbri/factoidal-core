@@ -181,7 +181,8 @@ export function semwebHTML(D, {now}) {
   let h = '<section class="suite semweb" id="semweb" aria-labelledby="swh"><h2 id="swh">Semantic web and data formats</h2>' +
     '<p class="muted">The W3C and other conformance suites of the data formats and reasoners in the built-in engine, one row per suite; OWL 2 by population. ' +
     `Rows marked stale come from the F* implementation, whose automatic runs stopped on ${esc(S.fstarStopped)}: they are its last numbers, not current ones. ` +
-    'Total is the whole suite or population; decided is the share the engine gave a verdict on (pass or fail).</p>';
+    'Total is the whole suite or population; decided is the share the engine gave a verdict on (pass or fail).</p>' +
+    '<p>By technology family, specification, version and test population, with each suite\'s history: <a href="../specs/">Data and documents conformance</a>.</p>';
   for (const g of S.groups) {
     h += `<div class="card"><h3>${esc(g.name)}</h3>` + (g.note ? `<p class="muted">${esc(g.note)}</p>` : '') +
       '<div class="tw"><table class="num-table sw"><thead><tr><th>Suite or population</th><th>Passed</th><th>Total</th><th>Share</th><th>Decided</th><th>Engine</th><th>Last run (UTC)</th><th>F* last</th><th>Status</th></tr></thead><tbody>' +

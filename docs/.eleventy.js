@@ -60,6 +60,11 @@ module.exports = function(eleventyConfig) {
   // danbri/factoidal-builds (they are not in this repository).
   eleventyConfig.addPassthroughCopy("web/hub/conformance/*.mjs");
   eleventyConfig.addPassthroughCopy("web/hub/conformance/*.json");
+  // The Data and documents page (web/hub/specs/): its modules, its schema, and data.json,
+  // history.json and records.csv, which the Pages build copies in from hub-data (specs/).
+  eleventyConfig.addPassthroughCopy("web/hub/specs/*.mjs");
+  eleventyConfig.addPassthroughCopy("web/hub/specs/*.json");
+  eleventyConfig.addPassthroughCopy("web/hub/specs/*.csv");
   eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
   eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans": "web/hub/foafnaut/fonts/noto-sans" });
   // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py); the Hub fetches each only for a page that needs it.
