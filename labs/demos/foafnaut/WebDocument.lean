@@ -1615,7 +1615,7 @@ web fonts as before: a host that never gives the serif face lays every page out 
 theorem familyFontsWith_none (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String) :
     familyFontsWith #[] faces fonts held value = familyFonts faces fonts held value := by
-  first | rfl | simp [familyFontsWith]
+  first | rfl | simp [familyFontsWith] | (unfold familyFontsWith; simp [Array.isEmpty])
 
 /-- Kind: property. Says: a family value that does not resolve to `serif` (`sans-serif`,
 `monospace`, a held or installed sans-serif family first) gets the same fonts whether or not
