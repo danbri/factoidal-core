@@ -243,6 +243,101 @@
    "lang": "en",
    "licence": "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); code BSD-3-Clause",
    "attribution": "The Go Authors, Effective Go, go.dev"
+  },
+  {
+   "id": "hub-se-frankenstein-1",
+   "url": "https://standardebooks.org/ebooks/mary-shelley/frankenstein/text/chapter-1",
+   "title": "Frankenstein, chapter 1 (Standard Ebooks)",
+   "lang": "en",
+   "licence": "CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/); the text is in the public domain",
+   "attribution": "Mary Shelley, Frankenstein; Standard Ebooks"
+  },
+  {
+   "id": "hub-wikibooks-pancake",
+   "url": "https://en.wikibooks.org/wiki/Cookbook:Pancake",
+   "title": "Wikibooks Cookbook: Pancake",
+   "lang": "en",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikibooks contributors, \"Cookbook:Pancake\", en.wikibooks.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wikiquote-lovelace",
+   "url": "https://en.wikiquote.org/wiki/Ada_Lovelace",
+   "title": "Wikiquote: Ada Lovelace",
+   "lang": "en",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikiquote contributors, \"Ada Lovelace\", en.wikiquote.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-ws-de-erlkoenig",
+   "url": "https://de.wikisource.org/wiki/Erlk%C3%B6nig",
+   "title": "Wikisource (Deutsch): Erlkönig",
+   "lang": "de",
+   "licence": "text public domain; Wikisource pages CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out",
+   "attribution": "Johann Wolfgang von Goethe, Erlkönig; Wikisource contributors, de.wikisource.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-ws-fr-dormeur",
+   "url": "https://fr.wikisource.org/wiki/Le_Dormeur_du_val",
+   "title": "Wikisource (français) : Le Dormeur du val",
+   "lang": "fr",
+   "licence": "text public domain; Wikisource pages CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out",
+   "attribution": "Arthur Rimbaud, Le Dormeur du val; Wikisource contributors, fr.wikisource.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-ws-zh-jingyesi",
+   "url": "https://zh.wikisource.org/wiki/%E9%9D%9C%E5%A4%9C%E6%80%9D",
+   "title": "維基文庫：靜夜思",
+   "lang": "zh",
+   "licence": "text public domain; Wikisource pages CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out",
+   "attribution": "李白《靜夜思》; Wikisource contributors, zh.wikisource.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-gutenberg-de-faust",
+   "url": "https://www.gutenberg.org/cache/epub/2229/pg2229-images.html",
+   "title": "Faust (Project Gutenberg, Deutsch)",
+   "lang": "de",
+   "licence": "public domain in the USA; the Project Gutenberg License header of the eBook is kept unchanged (https://www.gutenberg.org/policy/license.html)",
+   "attribution": "Johann Wolfgang von Goethe, Faust; Project Gutenberg eBook 2229"
+  },
+  {
+   "id": "hub-gutenberg-fr-candide",
+   "url": "https://www.gutenberg.org/cache/epub/4650/pg4650-images.html",
+   "title": "Candide (Project Gutenberg, français)",
+   "lang": "fr",
+   "licence": "public domain in the USA; the Project Gutenberg License header of the eBook is kept unchanged (https://www.gutenberg.org/policy/license.html)",
+   "attribution": "Voltaire, Candide; Project Gutenberg eBook 4650"
+  },
+  {
+   "id": "hub-pep8",
+   "url": "https://peps.python.org/pep-0008/",
+   "title": "PEP 8: Style Guide for Python Code",
+   "lang": "en",
+   "licence": "public domain (the PEP says so); site of the Python Software Foundation",
+   "attribution": "Guido van Rossum, Barry Warsaw, Alyssa Coghlan, PEP 8"
+  },
+  {
+   "id": "hub-sqlite-select",
+   "url": "https://www.sqlite.org/lang_select.html",
+   "title": "SQLite: SELECT",
+   "lang": "en",
+   "licence": "public domain (https://www.sqlite.org/copyright.html)",
+   "attribution": "SQLite documentation, sqlite.org"
   }
  ]
 }
