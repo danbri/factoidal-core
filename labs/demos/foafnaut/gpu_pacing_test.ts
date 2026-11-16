@@ -268,3 +268,87 @@ Deno.test("gate: light submissions (composites of a scroll) do not wear the rate
   assert(due!==null&&due>40,`heavy work after a scroll is due in ${due} ms`);
   queue.doneAt=0;await gate.idle();
 });
+
+Deno.test("gate: work with no cost known keeps its own estimate and leaves the rate alone", async()=>{
+  const queue=blockingQueue(1);
+  const gate=createGpuGate(queue,1,undefined,0,undefined,{answersAtReturn:true});
+  gate.turn();
+  assert.equal(gate.dueIn(),null);
+  // A scene of 100 units, 50 ms on the GPU: the rate.
+  queue.doneAt=performance.now()+50;
+  gate.after(100);gate.turn();
+  const rate=gate.stats.msPerUnit;
+  assert(rate>0.4&&rate<0.7,`rate ${rate}`);
+  await sleep(3);
+  // A submission with no cost (a host draw) that takes 30 ms: its time is learnt, not a rate.
+  queue.doneAt=performance.now()+30;
+  gate.after();gate.turn();
+  assert.equal(gate.inFlight,0);
+  assert.equal(gate.stats.msPerUnit,rate);
+  assert(gate.stats.estimateMs>=28&&gate.stats.estimateMs<45,`estimate ${gate.stats.estimateMs}`);
+  await sleep(3);
+  // The next such submission is slept through by that estimate; costed work keeps the rate.
+  gate.after();
+  const due=gate.dueIn();
+  assert(due!==null&&due>20&&due<=45,`no-cost work due in ${due} ms`);
+  queue.doneAt=0;await gate.idle();
+  await sleep(3);
+  gate.after(100);
+  const heavy=gate.dueIn();
+  assert(heavy!==null&&heavy>40,`costed work due in ${heavy} ms`);
+  await gate.idle();
+});
+
+Deno.test("gate: a light ask that blocks does not set the rate", async()=>{
+  const queue=blockingQueue(1);
+  const gate=createGpuGate(queue,1,undefined,0,undefined,{answersAtReturn:true});
+  gate.turn();
+  queue.doneAt=performance.now()+40;
+  gate.after(100);gate.turn();
+  const rate=gate.stats.msPerUnit;
+  await sleep(3);
+  // Two units that hold the GPU 20 ms (behind other work): a rate from it would be 25 times too high.
+  queue.doneAt=performance.now()+20;
+  gate.after(2);
+  for(let k=0;k<50&&gate.inFlight;k++){await sleep(1);gate.turn();}
+  assert.equal(gate.inFlight,0);
+  assert.equal(gate.stats.msPerUnit,rate);
+  assert(gate.stats.blockedAsks>=2);
+});
+
+Deno.test("gate: before any measurement the machine prior predicts heavy work; light work is asked at once", async()=>{
+  const queue=blockingQueue(1);
+  const gate=createGpuGate(queue,1,undefined,0.5,undefined,{answersAtReturn:true});
+  gate.turn();
+  gate.after(200);
+  const heavy=gate.dueIn();
+  // 200 units at 0.5 ms each, no margin before a rate is measured.
+  assert(heavy!==null&&heavy>90&&heavy<=100,`heavy work before any rate due in ${heavy} ms`);
+  await gate.idle();
+  const fresh=createGpuGate(blockingQueue(1),1,undefined,0.5,undefined,{answersAtReturn:true});
+  fresh.turn();fresh.after(2);
+  assert.equal(fresh.dueIn(),0);
+  fresh.turn();
+  assert.equal(fresh.inFlight,0);
+});
+
+Deno.test("gate: a heavy frame predicted right is asked about when the GPU is done, so the thread hardly blocks", async()=>{
+  const queue=blockingQueue(1);
+  const gate=createGpuGate(queue,1,undefined,0,undefined,{answersAtReturn:true});
+  gate.turn();
+  // Learn the rate: 100 units, 60 ms (this ask blocks for all of it).
+  queue.doneAt=performance.now()+60;
+  gate.after(100);gate.turn();
+  const learnt=gate.stats.blockedMs;
+  assert(learnt>=50,`the first ask blocked ${learnt} ms`);
+  await sleep(3);
+  // The same frame again: the loop keeps turning (pumping input) until the ask is due.
+  queue.doneAt=performance.now()+60;
+  gate.after(100);
+  let turns=0;
+  for(let k=0;k<200&&gate.inFlight;k++){await sleep(2);gate.turn();turns++;}
+  assert.equal(gate.inFlight,0);
+  assert(turns>=10,`the loop turned ${turns} times while the GPU worked`);
+  const blocked=gate.stats.blockedMs-learnt;
+  assert(blocked<10,`the second ask blocked the thread ${blocked} ms`);
+});
