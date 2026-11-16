@@ -2,6 +2,7 @@ import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Lexer
 import L4Factoidal.JS.Number
 import L4Factoidal.JS.Parser
+import L4Factoidal.JS.UndoLog
 import L4Factoidal.JS.Value
 import L4Factoidal.JS.Interp
 import L4Factoidal.JS.Snapshot

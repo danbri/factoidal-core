@@ -1044,49 +1044,63 @@ each action keeps the session before it (`Net.Xhr.State.mayBlock`). Other pages 
 def mentionsXhr (scripts : Array (Nat × String)) : Bool :=
   scripts.any fun (_, src) => (src.splitOn "XMLHttpRequest").length > 1
 
-/-- The most heap entries (objects and environments) of a page for which a periodic action
-(a timer or network turn, an advance, a pointer move) keeps the session before it. Keeping it
-makes the action's first write copy the heap's object and environment arrays, and its end
-free the old ones: work in proportion to the heap, at every turn, whatever the turn does (a
-news page with a timer every 70 ms paid 33 ms a turn for six script steps). -/
-def undoHeapLimit : Nat := 250000
+/-- Whether an action keeps an undo, to undo a run that asks for a sync request
+(`netSyncAnswer`): when the page has made an XHR or its scripts name `XMLHttpRequest`, for every
+action at every heap size. The undo costs what the action writes, not the heap (`undoShell`,
+`undoBegin`, `undoBack`; `JS.UndoLog`). -/
+def keepsUndo (wants : Bool) : Bool := wants
 
-/-- The actions of one deliberate input of the user: a click, a key, an `actions` request.
-They are rare (a person makes them), so they keep the undo at any heap size. -/
-def discreteAction (action : String) : Bool :=
-  action == "click" || action == "key" || action == "actions"
-
-/-- Whether an action keeps the session before it, to undo a run that asks for a sync
-request (`netSyncAnswer`). `wants`: the page has made an XHR or its scripts name
-`XMLHttpRequest`. `heap`: the entries of its heap. Past `undoHeapLimit` a periodic action
-does not keep it, and a sync request made in it is refused as on a page that never named
-`XMLHttpRequest` (NotSupportedError, `Net.Xhr`, `syncOk` false). -/
-def keepsUndo (action : String) (wants : Bool) (heap : Nat) : Bool :=
-  wants && (discreteAction action || decide (heap ≤ undoHeapLimit))
-
-/-- Cost: a periodic action that keeps the undo has a heap within the limit, so the copy at
-its first write is of at most `undoHeapLimit` entries. Does not say: what the copy costs in
-time (that is the runtime's; `undo_snapshot_test.ts` measures it). -/
-theorem keepsUndo_bounded (action : String) (wants : Bool) (heap : Nat)
-    (kept : keepsUndo action wants heap = true) (periodic : discreteAction action = false) :
-    heap ≤ undoHeapLimit := by
-  simp [keepsUndo, periodic] at kept
-  exact kept.2
+/-- A sync request may be made from any action of such a page, a timer's and a network
+callback's as a click's, whatever the size of its heap (there is no heap limit). -/
+theorem keepsUndo_wanted : keepsUndo true = true := rfl
 
 /-- A page that never named `XMLHttpRequest` and made none keeps nothing, as before. -/
-theorem keepsUndo_unwanted (action : String) (heap : Nat) : keepsUndo action false heap = false := by
-  simp [keepsUndo]
+theorem keepsUndo_unwanted : keepsUndo false = false := rfl
 
-/-- Within the limit the rule is the one before it: every action of a page that may make a
-sync request keeps the undo. -/
-theorem keepsUndo_small (action : String) (wants : Bool) (heap : Nat) (small : heap ≤ undoHeapLimit) :
-    keepsUndo action wants heap = wants := by
-  simp [keepsUndo, small]
+/-- The session from before an action, without the heap's object and environment arrays
+(`JS.HeapOf.undoShell`). With the undo logs of the running session it is the whole session
+from before (`undoBack`). It holds no reference to the arrays, so the action's writes change
+them in place: no copy of the heap at the first write, no free of it at the end. -/
+def undoShell (s : LeanJS.Session) : LeanJS.Session := { s with heap := s.heap.undoShell }
 
-/-- A click, a key or an `actions` request keeps the undo at any heap size. -/
-theorem keepsUndo_discrete (action : String) (wants : Bool) (heap : Nat) (d : discreteAction action = true) :
-    keepsUndo action wants heap = wants := by
-  simp [keepsUndo, d]
+/-- The running session of an action that may be undone: its heap logs the old value of each
+object and environment the action writes, once (`JS.HeapOf.undoBegin`). -/
+def undoBegin (s : LeanJS.Session) : LeanJS.Session := { s with heap := s.heap.undoBegin }
+
+/-- Undo an action: the session from before it, from its `undoShell` and the session at its end
+(`JS.HeapOf.undoTo`, `JS.UndoLog.restore_of_inv`). -/
+def undoBack (shell now : LeanJS.Session) : LeanJS.Session :=
+  let h := now.heap
+  { shell with heap := shell.heap.undoTo h }
+
+/-- An action that is not undone: its logs are dropped. -/
+def undoEnd (s : LeanJS.Session) : LeanJS.Session := { s with heap := s.heap.undoEnd }
+
+/-- Undo keeps every field of the session from before the action but the heap's two arrays,
+which come from the logs. -/
+theorem undoBack_fields (s now : LeanJS.Session) :
+    (undoBack (undoShell s) now).api = s.api ∧ (undoBack (undoShell s) now).limits = s.limits ∧
+    (undoBack (undoShell s) now).trusted = s.trusted ∧
+    (undoBack (undoShell s) now).heap.toColdHeap = { s.heap.toColdHeap with undoObjs := {}, undoEnvs := {} } ∧
+    (undoBack (undoShell s) now).heap.objs = now.heap.undoObjs.restore now.heap.objs ∧
+    (undoBack (undoShell s) now).heap.envs = now.heap.undoEnvs.restore now.heap.envs := by
+  simp [undoBack, undoShell, JS.HeapOf.undoTo, JS.HeapOf.undoShell]
+
+/-- Undo with logs that hold (`JS.UndoLog.Inv`, kept by every write of the heap and set up by
+`undoBegin`) gives back the heap's arrays from before the action, every cell. -/
+theorem undoBack_arrays (s now : LeanJS.Session)
+    (ho : JS.UndoLog.Inv s.heap.objs now.heap.undoObjs now.heap.objs)
+    (he : JS.UndoLog.Inv s.heap.envs now.heap.undoEnvs now.heap.envs) :
+    (undoBack (undoShell s) now).heap.objs = s.heap.objs ∧ (undoBack (undoShell s) now).heap.envs = s.heap.envs := by
+  have := undoBack_fields s now
+  exact ⟨this.2.2.2.2.1.trans (ho.back), this.2.2.2.2.2.trans (he.back)⟩
+
+/-- The logs of `undoBegin` hold at the start of the action. -/
+theorem undoBegin_inv (s : LeanJS.Session) :
+    JS.UndoLog.Inv s.heap.objs (undoBegin s).heap.undoObjs (undoBegin s).heap.objs ∧
+    JS.UndoLog.Inv s.heap.envs (undoBegin s).heap.undoEnvs (undoBegin s).heap.envs := by
+  simp only [undoBegin, JS.HeapOf.undoBegin]
+  exact ⟨JS.UndoLog.inv_start _, JS.UndoLog.inv_start _⟩
 
 /-- One request to the host, as JSON. -/
 def wireJson (w : Net.PageFetch.Wire) : JSON.Json :=
@@ -1213,6 +1227,10 @@ frames' sessions are kept. A page with workers adds `workers` (how many run) and
 (`frameEntropy`). -/
 def leanTurn (held : Held) (id : Nat) (before : Before) (a : LeanJSWorkers.Agents) (marks : Marks) (full : Bool) (ns : Nat)
     (fEnt : Nat → ByteArray) : Held × Except String String :=
+  -- the action is done: its undo logs, if it kept them, are dropped (`undoEnd`)
+  let page := a.page
+  let a := { a with page := default }
+  let a := { a with page := undoEnd page }
   let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => LeanJS.loadFrame s el src scripts) a.page
   let (s, frames, scan) := match held.leanBase with
     | some base => pumpFrames (leanFrameOps base s.limits fEnt) s held.leanFrames held.frameScan
@@ -1352,13 +1370,15 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
   let before := Before.ofLean s
   -- Undo needs the session as it was. It is kept only for a page that has made an XHR before
   -- this action or whose scripts name XMLHttpRequest (`mentionsXhr`), and a start, whose undo
-  -- is the base realm: holding it would copy the page's heap array at the action's first
-  -- write, and other pages must not pay that. The workers are `held.leanWorkers`, kept as
+  -- is the base realm; other pages pay nothing. The workers are `held.leanWorkers`, kept as
   -- they were when the run is undone.
-  -- A periodic action of a page with a large heap does not keep it either (`keepsUndo`,
-  -- `keepsUndo_bounded`): the copy would be paid at every timer turn.
-  let keepIt := keepsUndo action (s.host.web.net.xhrs.size > 0 || s.host.web.net.mayBlock) (s.heap.objs.size + s.heap.envs.size)
-  let snap := if keepIt then some s else none
+  -- The undo is not a copy of the session: the session without the heap's arrays
+  -- (`undoShell`), and logs of the cells the action writes (`undoBegin`), so an action costs
+  -- what it writes at any heap size, and a sync request is answered from any action (a
+  -- timer's and a network callback's too; the heap limit of before is gone).
+  let keepIt := keepsUndo (s.host.web.net.xhrs.size > 0 || s.host.web.net.mayBlock)
+  let snap := if keepIt then some (undoShell s) else none
+  let s := if keepIt then undoBegin s else s
   let s0 := s.setHost { s.host with web := setSync s.host.web keepIt held.syncCache }
   -- each worker's entropy is fresh from the machine's generator, as each page's is
   let b ← turnBytes
@@ -1367,9 +1387,9 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
   let run := fun (f : LeanJSWorkers.Agents → LeanJSWorkers.Agents) => do
     let (a', ns) ← WebWasm.timed fun _ => f a
     match a'.page.host.web.net.syncWanted, snap with
-    | some w, some old => return ({ held with leanSession := some (id, old, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
+    | some w, some old => return ({ held with leanSession := some (id, undoBack old a'.page, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
     | _, _ => return leanTurn { held with syncCache := #[], moduleMemo := #[], pendingSync := none } id before a' marks full ns fEnt
-  let keep := fun (msg : String) => pure (f := M) ({ held with leanSession := some (id, s, marks) }, Except.error msg)
+  let keep := fun (msg : String) => pure (f := M) ({ held with leanSession := some (id, undoEnd s, marks) }, Except.error msg)
   match action with
   | "click" =>
     match natField request "node" with
@@ -1444,7 +1464,7 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
       let (a', ns) ← WebWasm.timed fun _ => let s := a.page
         LeanJSWorkers.pump { a with page := LeanJS.loadFrame (s.setHost { s.host with dom := (s.host.dom.noteFrameEncoding node enc).noteFramePolicy node (str request "referrerPolicy") }) node src scripts xml responseUrl }
       match a'.page.host.web.net.syncWanted, snap with
-      | some w, some old => return ({ held with leanSession := some (id, old, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
+      | some w, some old => return ({ held with leanSession := some (id, undoBack old a'.page, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
       | _, _ =>
         -- a document of another origin: a session of its own (`crossFrameSessions`)
         let frames := crossFrameSessions held.leanBase a'.page fEnt held.leanFrames node src

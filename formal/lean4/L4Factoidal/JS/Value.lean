@@ -1,5 +1,6 @@
 import Std.Data.HashMap
 import Std.Data.HashSet
+import L4Factoidal.JS.UndoLog
 import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Number
 import L4Factoidal.JS.Regex
@@ -700,6 +701,12 @@ structure ColdHeap (H : Type) where
   compiled. Off, every function runs in the evaluator: the reference for theorems about the
   machine, and the other half of the on-and-off differential test. A parameter of the run. -/
   useVm : Bool := true
+  /-- The undo logs of the object and environment arrays (`UndoLog`), kept while an action of a
+  page that may make a sync request runs, so that the action can be undone (`undoTo`) without a
+  copy of the heap: each write of a cell that was there when the action began logs its old value
+  once (`noteObj`, `noteEnv`). Off (`base` 0) otherwise, where a write pays one comparison. -/
+  undoObjs : UndoLog Obj := {}
+  undoEnvs : UndoLog Env := {}
 
 /-- The heap, with the state `H` of the host that embeds the engine. A page host keeps
 its DOM arena and event loop here (`WasmVM.Hosts.LeanJS`), so a native of the page
@@ -727,6 +734,51 @@ structure HeapOf (H : Type) extends ColdHeap H where
   maxDepth : UInt32 := 400
 
 instance : Inhabited (HeapOf H) := ⟨{}⟩
+
+/-- Before a write of object `id` of `objs` (the object array, taken out of `h`): log its old
+value when an undo log is kept (`ColdHeap.undoObjs`). The log is taken out of the heap while it
+grows, so it is changed in place. -/
+@[inline] def HeapOf.noteObj (h : HeapOf H) (objs : Array Obj) (id : Nat) : HeapOf H × Array Obj :=
+  if id < h.undoObjs.base then
+    let L := h.undoObjs
+    let h := { h with undoObjs := {} }
+    let (L, objs) := L.noteAt objs id
+    ({ h with undoObjs := L }, objs)
+  else (h, objs)
+
+/-- Before a write of environment `e` of `envs` (taken out of `h`): as `noteObj`. -/
+@[inline] def HeapOf.noteEnv (h : HeapOf H) (envs : Array Env) (e : Nat) : HeapOf H × Array Env :=
+  if e < h.undoEnvs.base then
+    let L := h.undoEnvs
+    let h := { h with undoEnvs := {} }
+    let (L, envs) := L.noteAt envs e
+    ({ h with undoEnvs := L }, envs)
+  else (h, envs)
+
+/-- Begin an action that may be undone: from here each write of an object or environment that
+exists now logs its old value once. -/
+def HeapOf.undoBegin (h : HeapOf H) : HeapOf H :=
+  { h with undoObjs := UndoLog.start h.objs.size, undoEnvs := UndoLog.start h.envs.size }
+
+/-- End the action: the logs are dropped (what they held, the old values of the cells the
+action wrote, is freed). Nothing to do when no log is kept. -/
+def HeapOf.undoEnd (h : HeapOf H) : HeapOf H :=
+  if h.undoObjs.base == 0 && h.undoEnvs.base == 0 then h else { h with undoObjs := {}, undoEnvs := {} }
+
+/-- The heap from before an action, without its object and environment arrays: with the logs of
+the action (`undoTo`) it is the whole heap from before. The arrays stay with the running heap
+only, so its writes change them in place. -/
+def HeapOf.undoShell (h : HeapOf H) : HeapOf H := { h with objs := #[], envs := #[] }
+
+/-- Undo an action: `shell` (`undoShell` of the heap from before it) with the arrays of `now`
+(the heap at the end of the action, with the logs from `undoBegin`) put back as they were
+(`UndoLog.restore_of_inv`). Costs the cells the action wrote and added. -/
+def HeapOf.undoTo (shell now : HeapOf H) : HeapOf H :=
+  let objs := now.objs
+  let envs := now.envs
+  let lo := now.undoObjs
+  let le := now.undoEnvs
+  { shell with objs := lo.restore objs, envs := le.restore envs, undoObjs := {}, undoEnvs := {} }
 
 /-- The heap is over its size: more objects, or more environment records, than `maxObjs`. -/
 @[inline] def HeapOf.full (h : HeapOf H) : Bool := h.objs.size > h.maxObjs || h.envs.size > h.maxObjs

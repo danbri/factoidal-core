@@ -47,6 +47,7 @@ local notation "M" => JSM H
   modify fun h =>
     let objs := h.objs
     let h := { h with objs := #[] }
+    let (h, objs) := h.noteObj objs id
     { h with objs := objs.modify id f }
 
 /-- Object `id` and the array with a placeholder in its place. Not inlined: the compiler
@@ -62,6 +63,7 @@ def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
   modifyGet fun h =>
     let objs := h.objs
     let h := { h with objs := #[] }
+    let (h, objs) := h.noteObj objs id
     if id < objs.size then
       let (o, objs) := takeAt objs id
       let (a, o) := f o
@@ -124,7 +126,10 @@ def switchRealm (k : Nat) : M Unit := modify fun h =>
   let realms := h.realms.set! h.curRealm saved
   let next := realms[k]!
   let realms := realms.set! k { next with env0 := {} }
-  { h with realms, realm := next.realm, envs := h.envs.set! 0 next.env0, curRealm := k }
+  let envs := h.envs
+  let h := { h with envs := #[] }
+  let (h, envs) := h.noteEnv envs 0
+  { h with realms, realm := next.realm, envs := envs.set! 0 next.env0, curRealm := k }
 
 /-- Run `act` in realm `k`, then go back to the realm that ran before, on a throw too. -/
 @[inline] def inRealm {α} (k : Nat) (act : M α) : M α := do
@@ -149,7 +154,9 @@ made it. -/
     let envs := h.envs
     let h := { h with envs := #[] }
     match h.envFree.back? with
-    | some e => (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
+    | some e =>
+      let (h, envs) := h.noteEnv envs e
+      (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
     | none => (envs.size, { h with envs := envs.push en })
 
 @[inline] def newEnv (parent : Nat) : M Nat := pushEnv { parent }
@@ -159,6 +166,7 @@ made it. -/
   modify fun h =>
     let envs := h.envs
     let h := { h with envs := #[] }
+    let (h, envs) := h.noteEnv envs e
     { h with envs := envs.set! e default, envFree := h.envFree.push e }
 
 /-- Change an environment in place: the array and the record are taken out while `f` runs. -/
@@ -166,6 +174,7 @@ made it. -/
   modify fun h =>
     let envs := h.envs
     let h := { h with envs := #[] }
+    let (h, envs) := h.noteEnv envs e
     { h with envs := envs.modify e f }
 
 @[inline] def declare (env : Nat) (name : String) (b : Binding) : M Unit :=
@@ -12335,8 +12344,11 @@ def addRealm (h : HeapOf H) : Nat × HeapOf H :=
   let back := h.curRealm
   let k := h.realms.size
   let saved : SavedRealm := { (h.realms.getD back {}) with realm := h.realm, env0 := h.envs[0]! }
+  let envs := h.envs
+  let h := { h with envs := #[] }
+  let (h, envs) := h.noteEnv envs 0
   let h := { h with realms := (h.realms.set! back saved).push {}, realm := {},
-                    envs := h.envs.set! 0 {}, curRealm := k }
+                    envs := envs.set! 0 {}, curRealm := k }
   let h := match (initRealm : M Unit).run h with | .ok _ h => h | .error _ h => h
   match (switchRealm back : M Unit).run h with
   | .ok _ h => (k, h)
