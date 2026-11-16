@@ -54,6 +54,34 @@ Every result records:
 - The item issue and PR, the next obligation, and an updated pipeline state. Keep a partial lemma marked
   partial progress; it does not close an end-to-end statement.
 
+## Standing proofs that CI checks: fuel monotonicity of BubblePopJS
+
+`IH_all` and `evalStmts_fuel_mono`, `callV_fuel_mono`, `evalExpr_fuel_mono`
+(`formal/lean4/L4Factoidal/JS/FuelMonoAll.lean`) state that every fuel-taking function of the evaluator's
+mutual block, and every built-in family, gives at fuel `m ≥ n` the result it gave at `n` unless it ran out of
+fuel at `n`. The theorems about faster tiers stand on it. It is a chain of 59 generated modules, not part of
+`lake build`:
+
+```bash
+~/working/foafnaut-tools/leanlock.sh "$PWD/formal/lean4" lake build JSFuelMono   # about 11 min, under 2 GB a module
+```
+
+The job `js-fuel-mono` of factoidal-builds `build.yml` runs it for every build, beside the `lean` job, and
+its failure fails the run: it is part of the Linux merge gate (`resolve`, `lean`, `js-fuel-mono`, `lean-wasm`,
+`foafnaut-engines`, `foafnaut-host-tests`, `web-gates`). So a change to `JS/Interp.lean` (a function of the
+block, `vmLoop` included, or a built-in) keeps it green:
+
+- A changed body usually needs nothing: the step lemma is re-proved by the walking tactic.
+- A new or renamed built-in arm: `python3 tools/fuelmono-natives.py formal/lean4/L4Factoidal/JS/Interp.lean
+  formal/lean4/L4Factoidal/JS`.
+- A new or renamed function of the block: add its name to a group in `tools/fuelmono-groups.txt`, then
+  `python3 tools/fuelmono-gen.py formal/lean4/L4Factoidal/JS/Interp.lean --split formal/lean4/L4Factoidal/JS
+  tools/fuelmono-groups.txt`. Commit the regenerated modules with the change.
+- A step that still fails is either a real loss of monotonicity (a handler that swallows a halt: use
+  `catchJS`; a result at fuel 0 other than out of fuel) or code the walk has no rule for (add the rule to
+  `JS/FuelMono.lean`). Lessons that kept the modules under 2 GB: `delta`, not `unfold`; info trees off in the
+  walk; the induction hypothesis's field built from the call's name; one group per Lean process.
+
 The starting list covers origin isolation; incremental/full equivalence; interpreter fuel and JIT
 equivalence; URL parsing; Fetch/CORS policy; bounded responsiveness; Wasm/spec equivalence; and host-contract
 assumptions A1/A2. Consult the live issue for changes and child issues rather than copying its progress counts.
