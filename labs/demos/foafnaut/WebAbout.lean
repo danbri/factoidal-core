@@ -149,7 +149,7 @@ def releaseURL (e : Engine) : Option String :=
 private def row (k v : String) : String := s!"<tr><th>{escape k}</th><td>{v}</td></tr>"
 
 private def style : String :=
-  "body{margin:24px;font-size:15px;line-height:22px;color:#203040;background:white}" ++
+  "body{font-family:sans-serif;margin:24px;font-size:15px;line-height:22px;color:#203040;background:white}" ++
   "h1{margin:0 0 12px;font-size:24px;line-height:32px;color:#184078}" ++
   "h2{margin:24px 0 8px;font-size:18px;line-height:26px;color:#184078}" ++
   "th{text-align:left;white-space:nowrap;padding:4px 18px 4px 0;font-weight:normal;color:#5b6876;vertical-align:top}" ++

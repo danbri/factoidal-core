@@ -72,7 +72,7 @@ def page (request : JSON.Json) : String × String := Id.run do
   let title := s!"Console ({system} System, {entries.length-system} page)"
   let pageTitle := str request "title"
   let head := "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" ++ title ++ "</title><style>" ++
-    "body{margin:16px;font-size:14px;line-height:20px;color:#202830;background:#f6f6f2}" ++
+    "body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#202830;background:#f6f6f2}" ++
     "h1{margin:0 0 6px;font-size:20px;line-height:28px;color:#184078}p{margin:0;padding-top:2px}" ++
     ".dim{color:#5a6270}.entry{margin:6px 0 0;padding:4px 8px;border:1px solid #c8ccd4;background:#ffffff}" ++
     ".error{border:2px solid #b02020;background:#fff0f0}.warning{border:2px solid #b08a1e;background:#fff8dc}" ++
