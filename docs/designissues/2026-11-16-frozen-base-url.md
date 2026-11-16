@@ -17,19 +17,33 @@ CSP base-uri selects the fallback, without trying a later base. HTMLBaseElement.
 has its separate getter: resolve against fallback, including an absent href.
 
 `Hosts.Dom.State.bases` stores the selected element, raw href and frozen URL per
-document. `change`/`commit` and `addCommand` maintain it at successful script
-mutations. An href write, including a write of the same text, re-freezes the first
-base. Insertions, removals, adoption and subtree replacement revisit tree order;
-re-insertion of the selected element re-freezes it. A document URL/history change
-alone keeps the frozen value. Initial parser bases are discovered before the first
-mutation or history change. Newly allocated nodes are inspected once; unrelated
-attribute/character-data writes do not walk existing base trees.
+document. Tracking starts at the first use of a document base: a URL getter (query
+160), `baseURI` (query 164), a history change of the page's URL (op 197, the only one),
+or the creation of a frame's document. That use looks at every node once. Before it,
+mutations do no base work (`changedBases_untracked`, `prepareBases_untracked`), so a
+page that reads no URL pays nothing. Starting late gives the same frozen bases: a frozen
+URL can differ from freezing the current first base's href against the current document
+URL only after the URL has changed, and every change of the page's URL starts tracking
+first; href writes re-freeze, and tree changes select again, in any case.
 
-When the host supplies an encoding, the base code uses it directly. Otherwise
-it captures the existing encoding inference before the first mutation or URL
-query. This prevents script changes to meta elements or text from changing the
-encoding used by later base URLs. An unknown encoding therefore adds one prescan
-before the first mutation, including on a page without a base element.
+Once tracking has started, `change`/`commit` and `addCommand` maintain the state at
+successful script mutations. An href write, including a write of the same text,
+re-freezes the first base. A selection is redone (a tree walk per document with a base)
+only when a change can alter it (`BaseURL.State.affected`): a base made connected to a
+document, a moved subtree that holds a base, a selected base no longer connected (a
+removal names the removed node), an href change of a base, or a change whose moved nodes
+are not known (frame documents, shadow roots). Inserting or removing subtrees with no
+base, and removing a base that is not selected, keep the tree order of the connected
+bases, so they keep the selection. Re-insertion of the selected element re-freezes it.
+A document URL/history change alone keeps the frozen value. Newly allocated nodes are
+inspected once.
+
+When the host supplies an encoding, the base code uses it directly. Otherwise it
+captures the existing encoding inference at the first use of a base, over the nodes the
+parser made (`BaseURL.State.parsed`, the arena size at the session's start), so text and
+attributes a script adds before that use do not change it, and later script changes to
+meta elements or text cannot change it either. The prescan reads the page's text only
+when a meta declares an encoding other than UTF-8 (`DocumentEncoding.ofNodes_eq`).
 
 Frames capture their creator document's base when their blank/srcdoc document is
 created. The captured base survives a parent base change and frame removal.
@@ -81,75 +95,57 @@ measured gain. Also relevant: `html/infrastructure/urls/dynamic-changes-to-base-
 `html/semantics/document-metadata/the-base-element/base-{data,javascript}.html`,
 and blank/srcdoc/synthetic-document base tests. No WPT score is claimed here.
 
-### Completed checks
+### Checks
 
-- 46 original `#guard` checks in `WasmVM/Tests/BaseURL.lean` passed. One guard
-  iterates over every URL-reflection table row. The fixtures also check shadow
-  exclusion, inherited CSP's self URL, encoding stability across script changes,
-  and preservation of the old frame mapping when an attachment is refused.
-- The complete `WasmVM/Tests/LeanJSPage.lean` single-file check passed, including
-  the new script-to-prelude-to-DOM test for anchors, areas, images, links,
-  synthetic documents and a separate inherited srcdoc session.
-- Capped single-file compilation passed for the changed DOM/HTML modules and
-  Dom, WebApi, PageWasm, DomOps, Page, PageEvents, LeanJS, PageAot, LeanJSRealm,
-  LeanJSWorkers, WebRenderScript and WebScripts. The final Dom/DomOps/test check
-  and page-level regression were repeated after the last functional changes.
-- The four new theorems' actual `#print axioms` output contains only `propext`,
-  `Classical.choice` and `Quot.sound`.
-- `node --check tools/wasmvm/quickjs/prelude.js` and `git diff --check` passed.
-  The hygiene audit found zero banned declarations and 163 partial definitions,
-  unchanged from its baseline. That audit did not itself inspect imported axioms.
-- `bash tools/premerge.sh` passed 5/5 on HEAD. As the script warns, that invocation
-  excludes uncommitted edits. A temporary copy of the same script then overlaid
-  all current changed/new sources into its disposable checkout before running
-  the same checks: 5/5 passed in 29.1 seconds. These are web/foundation checks,
-  not a full Lean build or WPT run.
-- `tools/lean-unbuilt-modules.py --gate` still fails for three pre-existing
-  unreachable modules: `DOM.XPath.Theorems`, `JS.FuelMonoSteps`, and
-  `Rendering.ImportTree`. The new modules are reachable from the build roots.
+- `WasmVM/Tests/BaseURL.lean`: 58 `#guard` checks at the DOM command and query boundary,
+  among them one over every URL-reflection table row, shadow and template exclusion, CSP
+  `base-uri`, encodings, frames, the gated selection (removal of an ancestor of the selected
+  base, `textContent` removing every base, a detached base inserted first, removal of a base
+  not selected, 50 appends), and pages that read no URL staying untracked through mutations
+  while a later first use still finds the bases they added.
+- `WasmVM/Tests/LeanJSPage.lean`: the script-level regression (anchors, areas, images,
+  links, a synthetic document, an inherited srcdoc session).
+- Theorems, axioms `propext`, `Classical.choice`, `Quot.sound` only: `BaseURL.select_none`,
+  `selected_no_base`, `value_no_base`, `fallback_document`, `update_idle`;
+  `Hosts.Dom.State.changedBases_idle`, `prepareBases_idle`, `changedBases_untracked`,
+  `prepareBases_untracked`; `DocumentEncoding.ofNodes_eq`. The cost theorems say which work
+  is skipped, not how long the remaining test takes.
+- Single-file compiles of the changed modules and their dependants (BaseURL,
+  DocumentEncoding, Dom, WebApi, PageWasm, DomOps, Page, PageEvents, LeanJS, PageAot,
+  LeanJSRealm, LeanJSWorkers, both test files) on the branch rebased on main `0b1e2a908`,
+  against a copy of another worktree's build. `tools/premerge.sh` 5/0. The cloud build is the
+  full integration check.
+- Branch WPT check of the first version (`d027eb2`, before lazy tracking): `url/` 12,356 of
+  12,437 subtests (+588), `html/infrastructure/` +61, `html/semantics/` +3, `sample:40`
+  no change outside `third_party/test262` (+2); 0 tests worse, 26 better.
 
-### Timings and remaining performance work
+### Timings
 
-The bounded bytecode microbenchmark constructs a document with 1,000 `i`
-elements and performs 10,000 ordinary class writes per sample. It runs five
-interleaved before/after processes, ten samples per process per case, under the
-timing lock. The before Dom source matches baseline
-`6e2d790036d442ea2081a18b7cec485ee0f79d8c`; both sides use the same read-only
-dependency oleans. Values are milliseconds per 10,000 writes, 50 samples per row.
+Bytecode microbenchmark (`lean --run`, the module interpreted, not the native engine): a
+page of 1,000 `i` elements; 10,000 class writes, or 2,000 element creations each appended
+(4,000 changes), per sample; the first change of 200 fresh pages per sample. Main
+(`6e2d790`'s `Dom.lean`) against this branch, built on the same dependency oleans; five
+measured runs of each, interleaved, after one warm-up run each, under the timing lock, on
+mains power, load average 2.8 to 4.3. Milliseconds, pooled p50, with the range of the
+per-run medians. The page reads no URL unless the row says tracked.
 
-| Case | Version | p50 | p95 | Maximum | CV |
-|---|---|---:|---:|---:|---:|
-| No base | Before | 293.63 | 333.23 | 345.12 | 0.117 |
-| No base | After | 334.23 | 386.86 | 447.37 | 0.110 |
-| One base | Before | 281.08 | 353.68 | 398.79 | 0.156 |
-| One base | After | 353.70 | 457.70 | 637.90 | 0.216 |
+| Case | Base element | Main | This branch |
+|---|---|---:|---:|
+| First change of a page (x200) | no | 5.1 (4.6–5.2) | 5.3 (4.9–5.7) |
+| 10,000 writes | no | 173.1 (166.3–181.4) | 176.7 (169.8–189.3) |
+| 10,000 writes | yes | 170.0 (164.2–182.2) | 176.2 (168.4–189.5) |
+| 4,000 append changes | no | 40.0 (38.4–41.9) | 40.0 (39.1–44.6) |
+| 4,000 append changes | yes | 39.3 (35.0–41.5) | 42.0 (38.9–44.0) |
+| Tracked: 10,000 writes | no | | 177.4 (174.2–190.3) |
+| Tracked: 10,000 writes | yes | | 191.3 (183.8–204.5) |
+| Tracked: 4,000 append changes | no | | 46.8 (45.6–49.6) |
+| Tracked: 4,000 append changes | yes | | 65.4 (61.7–70.0) |
+| Tracked: first change, after the first use (x200) | no | | 930.4 (907.3–1008.0) |
 
-The no-base median increases 13.8%; the one-base median increases 25.8%.
-The zero-cost requirement for pages without bases is not yet met by this
-measurement. Ordinary writes avoid URL parsing and document-tree walks after
-initial discovery, but the state-maintenance overhead still needs work. These
-are shared-machine bytecode timings, not native browser measurements; no p99 is
-reported for fewer than 100 samples. Native timing and WPT gains remain unmeasured.
-
-### Publication and shared-machine blockers
-
-No commit, push, PR or cloud build was created. The sandbox rejected both
-`FETCH_HEAD` and `index.lock` writes under the worktree's Git metadata with
-`Operation not permitted`, despite that shared Git directory appearing in the
-declared writable roots. Source edits remain intact on `wip/base-href`.
-
-Further Lean checks stopped after the coordination log reported that leanlock's
-process checks cannot see other sessions from this sandbox and consequently prune
-their queue tickets. The last attempted additional run failed before starting
-Lean because its first leanlock argument was wrong; its unvalidated inline
-experiment was reverted. No queue/lock repair or signalling of other processes
-was attempted. Resume compilation only from an environment where the shared lock
-can inspect process liveness correctly.
-
-The source patch, validation logs, timing samples and publication hand-back are
-preserved under `/Users/danbri/working/foafnaut/fncg/basehref-20261116/`.
-Resume with performance work and a fresh source build, then commit as Dan Brickley,
-push only `wip/base-href`, run premerge on the committed source, open the requested
-PR, and dispatch `build.yml` in `danbri/factoidal-builds` with the full core SHA.
-Do not merge. The live-script implementation does not yet replace the stateless
-resource/render helpers described above, or add missing response CSP plumbing.
+Every untracked row's ranges overlap main's: no difference is shown at this resolution.
+The tracked rows are the cost a page pays once it uses a base URL; the first use of a base
+looks at every node, about 4.6 ms per 1,000-node page interpreted. Two faults of the first
+version of this change were found by these runs and fixed: appends on a page with a base
+walked the whole document per change (3,648 ms for 4,000 changes, quadratic), and the
+frozen-base update inside the command record kept the command list shared, so every
+`push` copied it (+71% on appends with no base). No native timing has been taken.
