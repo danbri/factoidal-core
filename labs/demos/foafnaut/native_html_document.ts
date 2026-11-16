@@ -74,8 +74,8 @@ export const MAX_IMAGE_BYTES=4*1048576, MAX_PAGE_IMAGE_BYTES=6*1048576;
 1292) takes each as bytes, not Base64, and says how many it holds (`maxBytes`,
 WebDocument.maxHeldImageBytes, 32 MiB); its pixels have their own bound there
 (NativeImage.maxDocumentPixels: large images are held reduced). So the page's limit is the
-engine's word, never above 64 MiB; else the Base64 limit. Before, a page of eleven photographs
-(9.7 MB) lost its last four to alt text at 6 MiB. */
+engine's word, never above 64 MiB; else the Base64 limit. Before, a page whose images passed
+6 MiB showed the rest as alt text. */
 export async function pageImageLimit(engine?:unknown):Promise<number> {
   const holder=engine as ImageHolder|undefined;
   if(!holder||typeof holder.imageInfo!=="function"||typeof holder.imageLoad!=="function")return MAX_PAGE_IMAGE_BYTES;

@@ -220,7 +220,7 @@
     900,
     1200
    ],
-   "shows": "constructs of small hand-written sites (naturetelemetry.com, infobomb.org, a 2007 W3C home page) as original fixtures: a four-column 1fr grid of images with width:100%, linear-gradient backgrounds, column-width and column-count, list bullets, a flex row with space-between, generic font families",
+   "shows": "constructs common on small hand-written sites, as original fixtures: a four-column 1fr grid of images with width:100%, linear-gradient backgrounds, column-width and column-count, list bullets, a flex row with space-between, generic font families",
    "doesNotShow": "the sites themselves (vendored as snapshots in factoidal-builds for the survey), web fonts, a serif face (the engine has none yet)"
   },
   {

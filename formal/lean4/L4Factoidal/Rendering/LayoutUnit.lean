@@ -19,7 +19,7 @@ def ofPx (x : Float) : Int :=
 /-- A content size in px as layout units, rounded up: a box given the max-content width of
 its contents holds them on one line (as other engines snap intrinsic sizes up). The nearest
 unit could be up to half a unit short, and the last word of the line then wrapped (a flex
-row of icon links on infobomb.org). -/
+item sized by its content). -/
 def ofPxCeil (x : Float) : Int :=
   if x.isNaN then 0
   else if x < 0 then -Int.ofNat ((-x * 64).floor.toUInt64.toNat)

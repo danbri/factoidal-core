@@ -51,8 +51,8 @@ Deno.test("the image bytes of a page: the engine's held limit, else the Base64 o
   // An engine from before held images gets Base64, at most 6 MiB of bytes for a page.
   assert.equal(await pageImageLimit(undefined),MAX_PAGE_IMAGE_BYTES);
   assert.equal(await pageImageLimit({imageInfo:()=>undefined}),MAX_PAGE_IMAGE_BYTES);
-  // An engine that holds images says how many bytes (32 MiB): a page of eleven photographs
-  // (9.7 MB, naturetelemetry.com) is no longer cut to alt text at 6 MiB. A worker engine answers
+  // An engine that holds images says how many bytes (32 MiB): a page of photographs past 6 MiB
+  // is no longer cut to alt text there. A worker engine answers
   // with a promise.
   const holder=(maxBytes:unknown)=>({imageInfo:()=>Promise.resolve({ops:["imageLoad"],maxBytes}),imageLoad:()=>{}});
   assert.equal(await pageImageLimit(holder(33554432)),33554432);

@@ -8,8 +8,8 @@ OpenType) whose tables are each compressed with zlib, behind a 44-byte header an
 directory of 20 bytes for each table. `toSfnt` gives back the sfnt that the font reader
 (`SfntProfile.Font.read`, with the font safety policy) reads: its offset table, its table
 records sorted by tag as the WOFF directory has them, and each table at a four-byte
-boundary. Many font services still serve WOFF 1.0 alone (a page's headline face showed in
-the fallback font before). WOFF2 (Brotli and transformed tables) is not read here.
+boundary. WOFF 1.0 is still a common web font format; a face offered only as WOFF 1.0 was
+not read before. WOFF2 (Brotli and transformed tables) is not read here.
 
 Font bytes are hostile input. Every size is checked against the input and against
 `maxSfntBytes` before anything is made; each table is inflated to exactly the length the
