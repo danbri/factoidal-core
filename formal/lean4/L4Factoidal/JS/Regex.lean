@@ -60,7 +60,8 @@ inductive ClassItem where
   | inter (items : List ClassItem)
   /-- `A -- B -- …` (`v`). -/
   | diff (items : List ClassItem)
-  deriving Inhabited, Repr
+  -- no `Repr`: deriving it for a nested inductive makes a `partial def` (LabHygiene counts them)
+  deriving Inhabited
 
 inductive Node where
   | empty
@@ -81,7 +82,7 @@ inductive Node where
   | alt (rs : List Node)
   /-- A quantified atom: the captures `first + 1 .. first + count` are inside it. -/
   | rep (r : Node) (min : Nat) (max : Option Nat) (greedy : Bool) (first count : Nat)
-  deriving Inhabited, Repr
+  deriving Inhabited
 
 structure Flags where
   global : Bool := false

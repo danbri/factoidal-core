@@ -790,6 +790,17 @@ def nativeFn (id : Native) : M Value := do
   let r ← realm
   pure (.obj (← alloc { proto := .obj r.functionProto, kind := .native id }))
 
+/-- A built-in function closure (CreateBuiltinFunction, §10.3.4): the native with bound
+arguments, and own `length` then `name` (the empty string), as the specification's anonymous
+built-in functions have (resolving functions, element functions, executors). -/
+def builtinFn (id : Native) (args : Array Value) (len : Nat) : M Value := do
+  let r ← realm
+  let f ← nativeFn id
+  let o ← alloc { proto := .obj r.functionProto, kind := .bound f .undef args }
+  defineOwn o "length" (.data (.num (Float.ofNat len)) false false true)
+  defineOwn o "name" (.data (.str "") false false true)
+  pure (.obj o)
+
 /-- Array.prototype.flat's FlattenIntoArray (§23.1.3.13.1) on dense arrays. -/
 def flattenArr (d : Nat) (vs : Array Value) : Nat → M (Array Value)
   | 0 => pure vs
@@ -4159,6 +4170,25 @@ def asyncStep : Nat → Nat → GInput → M Unit
     | _ => pure ()
 termination_by structural n _ _ => n
 
+/-- NewPromiseCapability (§27.2.1.5): the promise and its resolving functions. The intrinsic
+%Promise% is made directly; any other constructor is called with an executor. -/
+def newCapability : Nat → Value → M (Value × Value × Value)
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, c => do
+    let r ← realm
+    if strictEq c (.obj r.promiseCtor) then
+      let pid ← newPromise
+      let res ← builtinFn .promiseResolveFn #[.obj pid] 1
+      let rej ← builtinFn .promiseRejectFn #[.obj pid] 1
+      pure (.obj pid, res, rej)
+    else
+      let o ← callNative n (.x .promiseWithResolvers) c #[] none
+      let p ← getV n o "promise"
+      let res ← getV n o "resolve"
+      let rej ← getV n o "reject"
+      pure (p, res, rej)
+termination_by structural n _ => n
+
 /-- PromiseResolve (§27.2.4.7.1) with the intrinsic Promise. -/
 def promiseResolve : Nat → Value → M Nat
   | 0, _ => throw (.halt "fuel")
@@ -5145,11 +5175,11 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let pid ← newPromise
       let pp ← getV n nt "prototype"
       if pp.isObj then modifyObj pid fun o => { o with proto := pp }
-      let res ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj pid] }
-      let rej ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj pid] }
-      let x ← tryCatch (do let _ ← callV n a0 .undef #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
+      let res ← builtinFn .promiseResolveFn #[.obj pid] 1
+      let rej ← builtinFn .promiseRejectFn #[.obj pid] 1
+      let x ← tryCatch (do let _ ← callV n a0 .undef #[res, rej]; pure none) (fun a => pure (some a))
       match x with
-      | some (.throw e) => let _ ← callV n (.obj rej) .undef #[e]
+      | some (.throw e) => let _ ← callV n rej .undef #[e]
       | some a => throw a
       | none => pure ()
       pure (.obj pid)
@@ -5169,54 +5199,90 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           | .promise .. => pure p
           | _ => throwErr .type "Promise.prototype.then called on an incompatible receiver"
         | _ => throwErr .type "Promise.prototype.then called on an incompatible receiver"
-      let d ← newPromise
+      -- SpeciesConstructor(promise, %Promise%), then NewPromiseCapability (§27.2.5.4)
+      let c ← speciesCtor n thisV (.obj r.promiseCtor)
       let onF := if ← isCallable a0 then a0 else .undef
       let onR := if ← isCallable a1 then a1 else .undef
-      performThen n pid onF onR (.obj d)
-      pure (.obj d)
+      if strictEq c (.obj r.promiseCtor) then
+        let d ← newPromise
+        performThen n pid onF onR (.obj d)
+        pure (.obj d)
+      else
+        let (p, res, rej) ← newCapability n c
+        -- a capability record: the reaction job calls its functions
+        let rec_ ← alloc { proto := .null }
+        setHidden rec_ "res" res
+        setHidden rec_ "rej" rej
+        performThen n pid onF onR (.obj rec_)
+        pure p
     | .promiseCatch =>
       let th ← getV n thisV "then"
       if !(← isCallable th) then throwErr .type "then is not a function"
       callV n th thisV #[.undef, a0]
     | .promiseFinally =>
+      -- §27.2.5.3: SpeciesConstructor, then Invoke(promise, "then", « thenFinally, catchFinally »)
+      if !thisV.isObj then throwErr .type "Promise.prototype.finally called on a non-object"
+      let c ← speciesCtor n thisV (.obj r.promiseCtor)
       let th ← getV n thisV "then"
+      if !(← isCallable a0) then
+        if !(← isCallable th) then throwErr .type "then is not a function"
+        return ← callV n th thisV #[a0, a0]
+      let f ← builtinFn .promiseFinallyF #[a0, c] 1
+      let g ← builtinFn .promiseFinallyR #[a0, c] 1
       if !(← isCallable th) then throwErr .type "then is not a function"
-      if !(← isCallable a0) then return ← callV n th thisV #[a0, a0]
-      let f ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseFinallyF) .undef #[a0] }
-      let g ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseFinallyR) .undef #[a0] }
-      callV n th thisV #[.obj f, .obj g]
+      callV n th thisV #[f, g]
     | .promiseFinallyF | .promiseFinallyR =>
+      -- bound: onFinally, C; the argument: the value or the reason
       let res ← callV n a0 .undef #[]
-      let p ← promiseResolve n res
-      let kf ← nativeFn (if id_ == .promiseFinallyF then .promiseValueThunk else .promiseThrower)
-      let k ← alloc { proto := .obj r.functionProto, kind := .bound kf .undef #[a1] }
-      let d ← newPromise
-      performThen n p (.obj k) .undef (.obj d)
-      pure (.obj d)
+      let p ← callNative n .promiseResolveStatic a1 #[res] none
+      let k ← builtinFn (if id_ == .promiseFinallyF then .promiseValueThunk else .promiseThrower) #[argD args 2] 0
+      callV n (← getV n p "then") p #[k]
     | .promiseValueThunk => pure a0
     | .promiseThrower => throw (.throw a0)
-    | .promiseResolveStatic => pure (.obj (← promiseResolve n a0))
+    | .promiseResolveStatic =>
+      if !thisV.isObj then throwErr .type "Promise.resolve called on a non-object"
+      if strictEq thisV (.obj r.promiseCtor) then return .obj (← promiseResolve n a0)
+      -- PromiseResolve(C, x) (§27.2.4.7.1)
+      if let .obj xid := a0 then
+        if let .promise .. := (← getObj xid).kind then
+          if strictEq (← getV n a0 "constructor") thisV then return a0
+      let (p, res, _) ← newCapability n thisV
+      let _ ← callV n res .undef #[a0]
+      pure p
     | .promiseRejectStatic =>
-      let p ← newPromise
-      rejectPromise n p a0
-      pure (.obj p)
+      if !thisV.isObj then throwErr .type "Promise.reject called on a non-object"
+      if strictEq thisV (.obj r.promiseCtor) then
+        let p ← newPromise
+        rejectPromise n p a0
+        return .obj p
+      let (p, _, rej) ← newCapability n thisV
+      let _ ← callV n rej .undef #[a0]
+      pure p
     | .promiseReactionJob =>
       -- args: handler, derived promise, argument, rejected?
       let handler := a0
       let derived := a1
       let arg := argD args 2
       let rejected := toBool (argD args 3)
+      -- the derived promise, or a capability record of another constructor's promise
+      let settle (ok : Bool) (v : Value) : M Unit := do
+        match derived with
+        | .obj d =>
+          match (← getObj d).kind with
+          | .promise .. => if ok then resolvePromise n d v else rejectPromise n d v
+          | _ =>
+            let f := match (← getObj d).getOwn (if ok then "res" else "rej") with
+              | some (.data f ..) => f
+              | _ => .undef
+            let _ ← callV n f .undef #[v]
+        | _ => pure ()
       if ← isCallable handler then
         let x ← tryCatch (do pure (Except.ok (← callV n handler .undef #[arg]))) (fun a => pure (Except.error a))
-        match derived, x with
-        | .obj d, .ok v => resolvePromise n d v
-        | .obj d, .error (.throw e) => rejectPromise n d e
-        | _, .error (.halt w) => throw (.halt w)
-        | _, _ => pure ()
-      else
-        match derived with
-        | .obj d => if rejected then rejectPromise n d arg else resolvePromise n d arg
-        | _ => pure ()
+        match x with
+        | .ok v => settle true v
+        | .error (.throw e) => settle false e
+        | .error a => throw a
+      else settle (!rejected) arg
       pure .undef
     | .promiseThenableJob =>
       match a0 with
@@ -5226,73 +5292,125 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         -- with the thenable, so a pair that read that flag could never settle the promise
         -- (`new Promise(r => r(otherPromise))` stayed pending for ever, before 2026-11-14).
         let record ← alloc { proto := .null }
-        let res ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x (.promiseThenableFn false))) .undef #[.obj pid, .obj record] }
-        let rej ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x (.promiseThenableFn true))) .undef #[.obj pid, .obj record] }
-        let x ← tryCatch (do let _ ← callV n (argD args 2) a1 #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
+        let res ← builtinFn (.x (.promiseThenableFn false)) #[.obj pid, .obj record] 1
+        let rej ← builtinFn (.x (.promiseThenableFn true)) #[.obj pid, .obj record] 1
+        let x ← tryCatch (do let _ ← callV n (argD args 2) a1 #[res, rej]; pure none) (fun a => pure (some a))
         match x with
-        | some (.throw e) => let _ ← callV n (.obj rej) .undef #[e]
+        | some (.throw e) => let _ ← callV n rej .undef #[e]
         | some a => throw a
         | none => pure ()
         pure .undef
       | _ => pure .undef
-    | .promiseAll =>
-      let res ← newPromise
-      let x ← tryCatch (do
-          let it ← getIterator n a0
-          let items ← iterToArray n it #[]
-          let vals ← newArray (Array.replicate items.size .undef)
-          let counter ← newObject
-          setHidden counter "n" (.num (Float.ofNat items.size + 1))
-          for i in [0:items.size] do
-            let p ← promiseResolve n items[i]!
-            let elF ← nativeFn .promiseAllElement
-            let elArgs : Array Value := #[.obj res, vals, .obj counter, .num (Float.ofNat i)]
-            let el ← alloc { proto := .obj r.functionProto, kind := .bound elF .undef elArgs }
-            let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj res] }
-            performThen n p (.obj el) (.obj rj) .undef
-          let _ ← callNative n .promiseAllElement .undef #[.obj res, vals, .obj counter, .num (-1), .undef] none
-          pure none)
-        (fun a => pure (some a))
-      match x with
-      | some (.throw e) => rejectPromise n res e
-      | some a => throw a
-      | none => pure ()
-      pure (.obj res)
+    | .promiseAll => callNative n (.x (.promiseCombinator 2)) thisV args none
     | (.x (.promiseCombinator k)) =>
-      let res ← newPromise
-      let x ← tryCatch (do
+      -- k: 0 race, 1 allSettled, 2 all, 3 any (§27.2.4.1, .2, .3, .5); 4 allKeyed, 5
+      -- allSettledKeyed (the await-dictionary proposal). NewPromiseCapability(this), then
+      -- GetPromiseResolve(this); for each element Call(promiseResolve, C, « value ») and
+      -- Invoke(nextPromise, "then", …). An abrupt completion rejects the capability's promise
+      -- (IfAbruptRejectPromise), closing the iterator unless the iterator itself failed.
+      let c := thisV
+      let (pv, capRes, capRej) ← newCapability n c
+      let st ← alloc { proto := .null }
+      -- the values (or errors) as a null-prototype record: no Array.prototype setter sees them
+      let vals ← alloc { proto := .null }
+      setHidden st "v" (.obj vals)
+      setHidden st "len" (.num 0)
+      setHidden st "n" (.num 1)
+      setHidden st "k" (.num (Float.ofNat k))
+      setHidden st "res" capRes
+      setHidden st "rej" capRej
+      -- one element: its index; the element functions share one [[AlreadyCalled]] record
+      let element (pr : Value) (i : Nat) (v : Value) : M Unit := do
+        if k != 0 then
+          defineOwn vals (toString i) (.data .undef true true true)
+          setHidden st "len" (.num (Float.ofNat (i + 1)))
+        let next ← callV n pr c #[v]
+        let (onF, onR) ← if k == 0 then pure (capRes, capRej) else do
+          let flag ← alloc { proto := .null }
+          let el (kind : Nat) : M Value := builtinFn (.x (.promiseSettleElement kind)) #[.obj st, .num (Float.ofNat i), .obj flag] 1
+          match k with
+          | 1 => pure (← el 1, ← el 2)
+          | 2 => pure (← el 0, capRej)
+          | 3 => pure (capRes, ← el 3)
+          | 4 => pure (← el 4, capRej)
+          | _ => pure (← el 5, ← el 6)
+        if k != 0 then
+          setHidden st "n" (.num ((← toNum n (← getV n (.obj st) "n")) + 1))
+        let _ ← callV n (← getV n next "then") next #[onF, onR]
+      let run : M Unit := do
+        -- GetPromiseResolve (§27.2.4.1.1)
+        let pr ← getV n c "resolve"
+        if !(← isCallable pr) then throwErr .type "Promise resolve is not a function"
+        if k ≥ 4 then
+          let .obj oid := a0 | throwErr .type "Promise.allKeyed called on a non-object"
+          let mut keys : Array Value := #[]
+          for key in ← ownKeysOf n oid do
+            match ← ownDesc n oid key with
+            | some d =>
+              if d.enumerable then
+                let v ← getV n a0 key
+                keys := keys.push (keyValue key)
+                element pr (keys.size - 1) v
+            | none => pure ()
+          setHidden st "keys" (← newArray keys)
+        else
           let it ← getIterator n a0
-          let items ← iterToArray n it #[]
-          let vals ← newArray (Array.replicate items.size .undef)
-          let counter ← newObject
-          setHidden counter "n" (.num (Float.ofNat items.size + 1))
-          for i in [0:items.size] do
-            let p ← promiseResolve n items[i]!
-            if k == 0 then
-              let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
-              let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj res] }
-              performThen n p (.obj rs) (.obj rj) .undef
-            else
-              let elArgs : Array Value := #[.obj res, vals, .obj counter, .num (Float.ofNat i)]
-              let onF ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn ((.x (.promiseSettleElement 0)))) .undef elArgs }
-              let onR ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn ((.x (.promiseSettleElement 1)))) .undef elArgs }
-              performThen n p (.obj onF) (.obj onR) .undef
-          if k != 0 then
-            let _ ← callNative n .promiseAllElement .undef #[.obj res, vals, .obj counter, .num (-1), .undef] none
-          pure none)
-        (fun a => pure (some a))
-      match x with
-      | some (.throw e) => rejectPromise n res e
+          let mut i := 0
+          for _ in [0:2147483647] do
+            -- an abrupt step of the iterator itself: no IteratorClose
+            let some v ← iterStep n it | break
+            tryCatch (element pr i v) fun e => do
+              tryCatch (iterClose n it) fun _ => pure ()
+              throw e
+            i := i + 1
+        -- the loop's own count: remaining − 1, and the result when nothing is pending
+        if k != 0 then
+          let _ ← callNative n (.x (.promiseSettleElement 7)) .undef #[.obj st, .num (-1), .undef, .undef] none
+      match ← tryCatch (do run; pure none) (fun a => pure (some a)) with
+      | some (.throw e) => let _ ← callV n capRej .undef #[e]; return pv
       | some a => throw a
       | none => pure ()
-      pure (.obj res)
-    | (.x (.promiseSettleElement rejected)) =>
-      -- args: result promise, values, counter, index, value: the value becomes
-      -- { status, value } or { status, reason } (§27.2.4.2.2, §27.2.4.2.3)
-      let o ← newObject
-      defineOwn o "status" (.data (.str (if rejected == 1 then "rejected" else "fulfilled")) true true true)
-      defineOwn o (if rejected == 1 then "reason" else "value") (.data (argD args 4) true true true)
-      callNative n .promiseAllElement .undef #[a0, a1, argD args 2, argD args 3, .obj o] none
+      pure pv
+    | (.x (.promiseSettleElement kind)) =>
+      -- an element function of a combinator (args: state, index, [[AlreadyCalled]] record,
+      -- value): 0 all, 1 2 allSettled fulfilled / rejected, 3 any, 4 allKeyed, 5 6
+      -- allSettledKeyed; 7 the combinator's own decrement after its loop
+      let .obj st := a0 | pure .undef
+      if kind != 7 then
+        let .obj flag := argD args 2 | return .undef
+        if ((← getObj flag).getOwn "c").isSome then return .undef
+        setHidden flag "c" (.bool true)
+        let idx := match a1 with | .num i => i.toUInt64.toNat | _ => 0
+        let x := argD args 3
+        let v ← if kind == 1 || kind == 2 || kind == 5 || kind == 6 then do
+            let o ← newObject
+            let rej := kind == 2 || kind == 6
+            defineOwn o "status" (.data (.str (if rej then "rejected" else "fulfilled")) true true true)
+            defineOwn o (if rej then "reason" else "value") (.data x true true true)
+            pure (Value.obj o)
+          else pure x
+        if let .obj vs := ← getV n (.obj st) "v" then defineOwn vs (toString idx) (.data v true true true)
+      let left := (← toNum n (← getV n (.obj st) "n")) - 1
+      setHidden st "n" (.num left)
+      if left != 0 then return .undef
+      let k := (← toNum n (← getV n (.obj st) "k")).toUInt64.toNat
+      let len := (← toNum n (← getV n (.obj st) "len")).toUInt64.toNat
+      let vrec ← getV n (.obj st) "v"
+      let vals ← (List.range len).toArray.mapM fun i => getV n vrec (toString i)
+      if k == 3 then
+        let e ← alloc { proto := .obj r.aggregateErrorProto, kind := .error }
+        setHidden e "message" (.str "All promises were rejected")
+        setHidden e "errors" (← newArray vals)
+        let _ ← callV n (← getV n (.obj st) "rej") .undef #[.obj e]
+      else if k ≥ 4 then
+        let o ← alloc { proto := .null }
+        let keys ← elemsOf n (← getV n (.obj st) "keys")
+        for i in [0:keys.size] do
+          defineOwn o (← toKey n keys[i]!) (.data (vals.getD i .undef) true true true)
+        let _ ← callV n (← getV n (.obj st) "res") .undef #[.obj o]
+      else
+        let _ ← callV n (← getV n (.obj st) "res") .undef #[← newArray vals]
+      pure .undef
     | .promiseAllElement =>
       -- args: result promise, values, counter, index, value
       let idx := match argD args 3 with | .num i => i | _ => -1
@@ -8399,13 +8517,18 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
     | (.x .promiseTry) =>
       -- §27.2.4.8 Promise.try: NewPromiseCapability(this), then the callback's completion
       if !thisV.isObj then throwErr .type "Promise.try called on a non-object"
-      let cap ← callNative n (.x .promiseWithResolvers) thisV #[] none
+      let (p, res, rej) ← newCapability n thisV
       let x ← tryCatch (do pure (Except.ok (← callV n a0 .undef (args.extract 1 args.size)))) (fun e => pure (Except.error e))
       match x with
-      | .ok v => let _ ← callV n (← getV n cap "resolve") .undef #[v]
-      | .error (.throw e) => let _ ← callV n (← getV n cap "reject") .undef #[e]
+      | .ok v =>
+        -- a promise of this constructor is returned as it is (PromiseResolve)
+        if let .obj xid := v then
+          if let .promise .. := (← getObj xid).kind then
+            if strictEq (← getV n v "constructor") thisV then return v
+        let _ ← callV n res .undef #[v]
+      | .error (.throw e) => let _ ← callV n rej .undef #[e]
       | .error a => throw a
-      getV n cap "promise"
+      pure p
     | (.x (.regexpSym k)) => regexpSymbol n k thisV args
     | (.x .speciesGetter) => pure thisV
     | (.x .regexpEscape) =>
@@ -9265,28 +9388,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let errs ← iterToArray n (← getIterator n a0) #[]
       setHidden o "errors" (← newArray errs)
       pure (.obj o)
-    | (.x .promiseAny) =>
-      let res ← newPromise
-      let x ← tryCatch (do
-          let it ← getIterator n a0
-          let items ← iterToArray n it #[]
-          let errs ← newArray (Array.replicate items.size .undef)
-          let counter ← newObject
-          setHidden counter "n" (.num (Float.ofNat items.size + 1))
-          for i in [0:items.size] do
-            let p ← promiseResolve n items[i]!
-            let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
-            let elArgs : Array Value := #[.obj res, errs, .obj counter, .num (Float.ofNat i)]
-            let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x .promiseAnyReject)) .undef elArgs }
-            performThen n p (.obj rs) (.obj rj) .undef
-          let _ ← callNative n (.x .promiseAnyReject) .undef #[.obj res, errs, .obj counter, .num (-1), .undef] none
-          pure none)
-        (fun a => pure (some a))
-      match x with
-      | some (.throw e) => rejectPromise n res e
-      | some a => throw a
-      | none => pure ()
-      pure (.obj res)
+    | (.x .promiseAny) => callNative n (.x (.promiseCombinator 3)) thisV args none
     | (.x .promiseAnyReject) =>
       -- args: result promise, errors, counter, index, reason
       let idx := match argD args 3 with | .num i => i | _ => -1
@@ -9545,9 +9647,8 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       -- §27.2.4.8 Promise.withResolvers: NewPromiseCapability(this) (§27.2.1.5)
       if !(← isConstructor thisV) then throwErr .type "Promise.withResolvers: this is not a constructor"
       let cap ← alloc { proto := .null }
-      let execFn ← nativeFn (.x .capabilityExecutor)
-      let exec ← alloc { proto := .obj r.functionProto, kind := .bound execFn .undef #[.obj cap] }
-      let p ← construct n thisV #[.obj exec] thisV
+      let exec ← builtinFn (.x .capabilityExecutor) #[.obj cap] 2
+      let p ← construct n thisV #[exec] thisV
       let field (k : String) : M Value := do
         match (← getObj cap).getOwn k with
         | some (.data v ..) => pure v
@@ -10328,6 +10429,8 @@ def initRealm : M Unit := do
     method pc "race" ((.x (.promiseCombinator 0))) 1
     method pc "allSettled" ((.x (.promiseCombinator 1))) 1
     method pc "any" (.x .promiseAny) 1
+    method pc "allKeyed" (.x (.promiseCombinator 4)) 1
+    method pc "allSettledKeyed" (.x (.promiseCombinator 5)) 1
     method pc "withResolvers" (.x .promiseWithResolvers) 0
     method pc "try" (.x .promiseTry) 1
   method promiseProto "then" .promiseThen 2

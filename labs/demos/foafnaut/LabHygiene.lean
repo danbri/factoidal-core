@@ -172,7 +172,7 @@ Each takes its precondition as a proof and is realised by one HACL* call in
 primitive cannot be bound without an `@[extern]`, so this number can only stay at 22 by not
 having RSA or SHA-3. -/
 def baseline : Counts :=
-  ⟨⟨50, 3, 3, 1, 0, 5⟩, ⟨369, 0, 0, 153, 27, 1⟩⟩
+  ⟨⟨50, 3, 3, 1, 0, 5⟩, ⟨369, 0, 0, 152, 27, 1⟩⟩
 
 /-- Fails to compile when a count rises above `baseline`, or when either part read fewer
 modules than the baseline says (an empty walk does not pass). -/
