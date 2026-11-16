@@ -8,6 +8,8 @@
 # Run a script with LEANPROF_OUT=FILE.tsv to get the counts; read them with leancount.py and opcount.py.
 # The optimisation level (-O1, LEANPROF_OPT to change) does not change the counts: they are taken in the C source.
 # About 9 minutes on an M1 at 3 jobs; the evaluator's file takes most of it.
+# LEANPROF_PLAIN=1: no counting, -O3, binary OUT_DIR/leanjs-plain: the same C as the counting build, for timings
+# and profiles that go with its counts (and to try one regenerated .c file without a full `lake build`).
 set -euo pipefail
 B=$(cd "$1" && pwd); O=$2; J=${3:-3}; HERE=$(cd "$(dirname "$0")" && pwd)
 L=$(lean --print-prefix)
@@ -19,6 +21,11 @@ cat > "$O/one.sh" <<ONE
 # so those prototype lines are dropped (lean.h declares them).
 src="$B/ir/\$1.c"; obj="$O/o/\$(echo "\$1" | tr / _).o"
 [ "\$obj" -nt "\$src" ] && [ "\$obj" -nt "$HERE/leanprof.h" ] && exit 0
+if [ -n "${LEANPROF_PLAIN:-}" ]; then
+  "$L/bin/clang" -c -o "\$obj" "\$src" -I "$L/include" -ffp-contract=off -fvisibility=hidden -Wno-unused-command-line-argument \\
+    --sysroot "$L" -nostdinc -isystem "$L/include/clang" -O3 -DNDEBUG -DLEAN_EXPORTING
+  exit
+fi
 grep -v -E "^[A-Za-z_][A-Za-z0-9_ ]*[ *]+($names)\\(.*\\);\\\$" "\$src" | "$L/bin/clang" -x c -c -o "\$obj" - -include "$HERE/leanprof.h" \\
   -I "$L/include" -ffp-contract=off -fvisibility=hidden -Wno-unused-command-line-argument --sysroot "$L" -nostdinc \\
   -isystem "$L/include/clang" ${LEANPROF_OPT:--O1} -DNDEBUG -DLEAN_EXPORTING
@@ -26,9 +33,10 @@ ONE
 chmod +x "$O/one.sh"
 tr ' ' '\n' < "$B/bin/leanjs.rsp" | tr -d '"' | grep '\.c\.o\.export$' | sed 's#.*/build/ir/##; s#\.c\.o\.export$##' > "$O/modules.txt"
 xargs -P "$J" -n 1 "$O/one.sh" < "$O/modules.txt"
-cc -c -O1 -o "$O/leanprof.o" "$HERE/leanprof.c"
+bin=leanjs-count; extra="$O/leanprof.o"
+if [ -n "${LEANPROF_PLAIN:-}" ]; then bin=leanjs-plain; extra=; else cc -c -O1 -o "$O/leanprof.o" "$HERE/leanprof.c"; fi
 libs=$(tr ' ' '\n' < "$B/bin/leanjs.rsp" | tr -d '"' | grep '\.a$' | sed "s#.*/build/lib/#$B/lib/#" | tr '\n' ' ')
 objs=$(sed "s#/#_#g; s#^#$O/o/#; s#\$#.o#" "$O/modules.txt" | tr '\n' ' ')
-MACOSX_DEPLOYMENT_TARGET=99.0 "$L/bin/clang" -o "$O/leanjs-count" $objs "$O/leanprof.o" $libs -L "$L/lib/lean" --sysroot "$L" -L "$L/lib" \
+MACOSX_DEPLOYMENT_TARGET=99.0 "$L/bin/clang" -o "$O/$bin" $objs $extra $libs -L "$L/lib/lean" --sysroot "$L" -L "$L/lib" \
   -L "$L/lib/libc" -fuse-ld=lld -lleancpp -lInit -lStd -lLean -lleanrt -lc++ -lLake -lgmp -luv -lssl -lcrypto -Wl,-dead_strip
-echo "$O/leanjs-count"
+echo "$O/$bin"
