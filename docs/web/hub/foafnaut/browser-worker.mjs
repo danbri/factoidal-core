@@ -905,8 +905,12 @@ function scriptTimers(){
   if(elapsed<script.turn.nextWake)return script.turn.nextWake-elapsed;
   // A page whose callbacks take longer than real time would fall further behind at each
   // advance (each one running every frame it missed): the virtual clock moves at most
-  // 100 ms past the page's own clock per advance, and the epoch slips by the rest.
-  if(elapsed-script.turn.clock>100){script.epoch+=elapsed-script.turn.clock-100;elapsed=script.turn.clock+100;}
+  // 100 ms past the page's next wake per advance, and the epoch slips by the rest. A page that
+  // only waited for its timer is not behind. Measured from the page's own clock (as before),
+  // the Spinal Tap page's 600 ms timer took about 1.5 s of real time, its clock stepping
+  // 100 ms an advance towards the timer (issue 450).
+  const due=Math.max(script.turn.clock,script.turn.nextWake);
+  if(elapsed-due>100){script.epoch+=elapsed-due-100;elapsed=due+100;}
   try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
   catch(error){scriptFailed(doc,error,'timers');script.turn.nextWake=null;}
   const next=script.turn.nextWake;
@@ -1614,10 +1618,19 @@ function schedulePrint(delay){
   delay??=printViewStale()?PRINT_VIEW_IDLE_MS:PRINT_IDLE_MS;
   printTimer=setTimeout(printStep,printWanted?0:delay);
 }
+/** True while the page animates: Lean's animation clock runs, or its scripts wake again
+ * within the idle time (requestAnimationFrame, a short timer). Such a page is not idle, so the
+ * print pages are not made ahead: each step is a whole-page draw and a readback, and on the
+ * Spinal Tap page one held the zoom for 1.6 s (issue 450). An explicit print goes on. */
+function pageAnimating(){
+  if(doc?.animation?.running)return true;
+  const script=doc?.script,wake=script?.turn?.nextWake;
+  return typeof wake==='number'&&wake-(performance.now()-script.epoch)<PRINT_IDLE_MS;
+}
 /** One step of the print work: the view image, the page breaks, or one page. */
 async function printStep(){
   if(printBusy||!ready||!doc)return;
-  if(!printWanted&&(drawing||dirty||shiftPending||pendingMove||pendingScroll)){schedulePrint();return;}
+  if(!printWanted&&(drawing||dirty||shiftPending||pendingMove||pendingScroll||pageAnimating())){schedulePrint();return;}
   if(!printFits(printJob)){
     printJob={doc,source:doc.source,commands:doc.commands,percent,scale,theme,pages:[],breaks:undefined,total:0,done:false,viewOnly:false};
     printPost();

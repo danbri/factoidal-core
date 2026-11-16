@@ -25,6 +25,9 @@ import {spawn,execFileSync} from 'node:child_process';import {fileURLToPath} fro
 import {checkBudgets,knownFailures} from './spinal_budgets.mjs';
 const args=process.argv.slice(2),opt=(n,d)=>{const i=args.indexOf(n);return i<0?d:args[i+1];},flag=n=>args.includes(n);
 const SECONDS=Number(opt('--seconds',45)),OUT=opt('--out'),ADAPTER=opt('--adapter','auto'),LIVE_ONLY=flag('--live');
+// --profile FILE: a CPU profile (Profiler, 1 ms samples) of each worker for the whole run, written
+// as {sessions:[{url,profile}]}: what a worker does in a gap between frames.
+const PROFILE=opt('--profile');
 const hubDir=fileURLToPath(new URL('../../../docs/web/hub/foafnaut/',import.meta.url));
 const pagesDir=fileURLToPath(new URL('./pages/',import.meta.url));
 const runtimeDir=opt('--runtime');
@@ -79,7 +82,7 @@ async function session(adapterMode){
     let ws;for(let i=0;i<300&&!ws;i++){try{ws=(await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl;}catch{await sleep(100);}}
     if(!ws)throw Error('Chrome did not start: no answer on /json/version after 30 s');
     socket=new WebSocket(ws);await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
-    let id=0;const waiting=new Map(),workers=new Set(),messages=[];
+    let id=0;const waiting=new Map(),workers=new Set(),messages=[],profiled=[];
     const send=(method,params={},sessionId)=>new Promise((r,j)=>{const i=++id;waiting.set(i,[r,j]);socket.send(JSON.stringify({id:i,method,params,sessionId}));});
     const t0=Date.now();
     socket.onmessage=({data})=>{const m=JSON.parse(data);
@@ -87,6 +90,9 @@ async function session(adapterMode){
       const from=workers.has(m.sessionId)?'worker':'page';
       if(m.method==='Target.attachedToTarget'&&m.params.targetInfo.type.includes('worker')){
         workers.add(m.params.sessionId);
+        if(PROFILE){profiled.push({sid:m.params.sessionId,url:m.params.targetInfo.url});
+          send('Profiler.enable',{},m.params.sessionId).then(()=>send('Profiler.setSamplingInterval',{interval:1000},m.params.sessionId))
+            .then(()=>send('Profiler.start',{},m.params.sessionId)).catch(()=>{});}
         send('Runtime.enable',{},m.params.sessionId).catch(()=>{});
         send('Runtime.runIfWaitingForDebugger',{},m.params.sessionId).catch(()=>{});
       }
@@ -130,6 +136,13 @@ async function session(adapterMode){
       }
     }
     out.seconds=SECONDS;out.workers=workers.size;
+    if(PROFILE){
+      // The page's clock at the run's start, for lining frames up with profile samples (us).
+      const pageNow=await evaluate('performance.timeOrigin+performance.now()').catch(()=>null);
+      const sessions=[];
+      for(const {sid,url} of profiled){const r=await send('Profiler.stop',{},sid).catch(()=>undefined);if(r?.profile)sessions.push({url,profile:r.profile});}
+      fs.writeFileSync(PROFILE,JSON.stringify({pageNowMs:pageNow,frames:frames.map(f=>({t:f.t,path:f.path,layoutMs:f.layoutMs,drawMs:f.drawMs})),sessions}));
+    }
     const pageFrames=frames.filter(f=>String(f.url??'').endsWith(PAGE));
     const first=pageFrames[0];
     // Frames after the first one of the page: the animation's frames (the zoom starts 0.6 s in).
