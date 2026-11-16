@@ -61,3 +61,8 @@ test('fetchOutside: copy first, then a direct read, an origin that refuses is no
     assert.equal(await fetchOutside('mailto:x@example.org'),undefined);
   }finally{globalThis.fetch=real;}
 });
+
+test('no Nunjucks comment opener in the Hub app templates (CSS "{#id" broke the 2026-11-16 deploy)', () => {
+  for(const f of ['docs/web/hub/foafnaut/index.njk','docs/web/hub/textnaut/index.njk'])
+    assert.doesNotMatch(read(f),/\{#/,f);
+});
