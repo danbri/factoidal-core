@@ -90,6 +90,9 @@ standards conformance.
   any build, and stop and report below 4 GiB free. A full disk rebooted the Mac on 2026-11-15.
 - After a session ends, an agent stops, or the Mac reboots: check disk and save unpushed work first
   ([`cleanup-and-recovery`](../cleanup-and-recovery/SKILL.md); `tools/disk-audit.sh`, `tools/branch-audit.py`).
+- Background waits (watcher loops, `pgrep -f`, `until grep -q`, CI polling) must end: wait on a PID, never a
+  `pgrep -f` pattern that is also in the watcher's own command line; add a deadline; stop your own watchers when done
+  ([`background-watchers`](../background-watchers/SKILL.md)).
 - Codex workers: the recipe and brief rules are in [`codex-claude-interop`](../codex-claude-interop/SKILL.md).
 - Releases are never replaced: a published release stays as it is (packaged Textnaut pins its bytes). Publish a new one.
 - Don't sit idle. Commit early and often.
