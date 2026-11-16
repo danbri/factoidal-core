@@ -726,7 +726,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     | some r =>
       match r.kind with
       | .url docDefault =>
-        let st := (← get).prepareBases.resolveBaseEncoding
+        let st := (← get).ensureBases.resolveBaseEncoding
         set st
         let doc := (d.get n).doc
         let c := st.baseContext doc
@@ -743,7 +743,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 164 =>
     -- Node.baseURI, including disconnected nodes, uses the node document.
     let n ← nodeArg d id
-    let st := (← get).prepareBases
+    let st := (← get).ensureBases
     set st
     return st.documentBase (if (d.get n).type == .document then n else (d.get n).doc)
   | 161 =>
@@ -1010,7 +1010,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     let r := L4Factoidal.HTML.SessionHistory.answer q
     if r.startsWith "K" then
       let u := ((r.drop 1).toString.splitOn "\x03").headD ""
-      if !u.isEmpty then modify fun st => { st.prepareBases with url := u }
+      if !u.isEmpty then modify fun st => { st.ensureBases with url := u }
     return r
   -- 198: whether `navigator.registerProtocolHandler` or `unregisterProtocolHandler` may go on
   -- (`HTML.ProtocolHandler.answer`): `q` is the document's URL, U+0000, scheme, U+0000, URL

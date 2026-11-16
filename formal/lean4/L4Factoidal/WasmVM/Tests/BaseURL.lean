@@ -57,7 +57,8 @@ private def two := base one.1 (some "https://second.test/")
 
 -- Frozen bases survive a history URL change, including when no getter preceded it.
 private def relative := base page (some "assets/")
-private def history := { relative.1 with url := "https://example.test/new/page.html" }
+-- (as `DomOps` op 197, the only change of the page's URL: the bases are tracked first)
+private def history := { relative.1.ensureBases with url := "https://example.test/new/page.html" }
 #guard query history 0 164 == "https://example.test/dir/assets/"
 #guard query (run history (.setAttribute relative.2 "href" "assets/")) 0 164 == "https://example.test/new/assets/"
 #guard query (run history (.appendChild (node history "head") relative.2)) 0 164 == "https://example.test/new/assets/"
@@ -134,9 +135,27 @@ private def shadowed := Id.run do
   return run s (.appendChild root b)
 #guard (shadowed.dom.get shadowPage.dom.size).shadowInit.isSome
 #guard query shadowed 0 164 == page.url
-private def encodedPage : State := { page with dom := parseHtmlDocument "<meta charset=windows-1252><body></body>" }
+private def manyAppendsUntracked := Id.run do
+  let mut s := page
+  for _ in [0:20] do
+    let n := s.dom.size
+    s := run s (.createElement "base" n)
+    s := run s (.setAttribute n "href" "https://x.test/")
+    s := run s (.appendChild (node page "body") n)
+  return s
+#guard query manyAppendsUntracked 0 164 == "https://x.test/"
+private def encodedDom := parseHtmlDocument "<meta charset=windows-1252><body></body>"
+-- (as a session's start: the parser's nodes are those below the arena's size then)
+private def encodedPage : State := { page with dom := encodedDom, bases := { parsed := some encodedDom.size } }
 #guard query (base encodedPage (some "?c=é")).1 0 164 == "https://example.test/dir/page.html?c=%E9"
-private def changedEncodingText := run encodedPage (.setTextContent (node encodedPage "body") "é")
+-- The encoding is captured at the first use of a base (here a `baseURI` read); later
+-- script changes to the text do not change it.
+private def used := (domOp encodedPage 0 164 "").1
+#guard used.bases.live
+private def changedEncodingText := run used (.setTextContent (node encodedPage "body") "é")
+-- A page that uses no base pays nothing at mutations: its bases stay untracked.
+#guard !(run encodedPage (.setTextContent (node encodedPage "body") "é")).bases.live
+#guard !manyAppendsUntracked.bases.live
 #guard query (base changedEncodingText (some "?c=é")).1 0 164 == "https://example.test/dir/page.html?c=%E9"
 private def refusedFrame := attachDocument { framed with commandLimit := 0 } framed.frames[0]!.1 "<base href='/new/'>"
 #guard refusedFrame.2.isNone && refusedFrame.1.frames == framed.frames && refusedFrame.1.dom.size == framed.dom.size

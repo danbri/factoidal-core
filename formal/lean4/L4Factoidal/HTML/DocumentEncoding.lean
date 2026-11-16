@@ -73,6 +73,12 @@ declaration, the encoding is UTF-8. A byte-level decode of the page by its decla
 def documentEncoding (d : L4Factoidal.DOM.Dom) : Encoding.Encoding :=
   ofNodes d (d.treeOrder 0 false)
 
+/-- `documentEncoding` over the nodes below `parsed` only (those the parser made). -/
+def parsedEncoding (d : L4Factoidal.DOM.Dom) (parsed : Option Nat) : Encoding.Encoding :=
+  match parsed with
+  | none => documentEncoding d
+  | some n => ofNodes d ((d.treeOrder 0 false).filter (· < n))
+
 /-- Kind: equivalence. Says: looking at the text only for a non-UTF-8 declaration gives
 the same answer as the rule "UTF-8 unless the page is ASCII, then the declaration". Does
 not say: that the hosts decode the bytes by it. -/

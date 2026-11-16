@@ -86,6 +86,16 @@ def select (d : Dom) (doc : NodeId) (c : Context) (old : Option Frozen) (change 
   | none => return { doc, node, href, url := freeze c href }
 
 structure State where
+  /-- Whether the bases are tracked: from the first use of a document base (a URL getter,
+  `baseURI`, a history change, a frame's creation). Before it, mutations do no base work:
+  the first use looks at every node (`Hosts.Dom.State.ensureBases`), which gives the same
+  frozen bases, since only that use's kinds of event fix a base against a URL that may
+  change later. -/
+  live : Bool := false
+  /-- The arena's size when the page's document was parsed (set at a session's start): the
+  encoding prescan reads only the nodes the parser made, so text and attributes a script
+  adds before the first use of a base do not change the encoding. None: every node. -/
+  parsed : Option Nat := none
   /-- Arena nodes already inspected for newly allocated base elements. -/
   seen : Nat := 0
   candidates : Array NodeId := #[]
@@ -93,7 +103,7 @@ structure State where
   /-- Creator bases survive removal of the frame and later parent base changes. -/
   about : Array (NodeId × String) := #[]
   /-- The page document's encoding for base and reflected URLs: the embedder's, else
-  captured before the first mutation (`Hosts.Dom.State.prepareBases`). -/
+  captured at the first use of a base (`Hosts.Dom.State.ensureBases`). -/
   encoding : Option Encoding.Encoding := none
   /-- The page document's CSP policies (`base-uri`). -/
   policies : List L4Factoidal.Net.CspPolicy.Policy := []

@@ -763,6 +763,7 @@ def startBegin (base : Session) (dom : Arena) (url : String) (lim : Page.Limits 
   let domHost : Page.DomHost := {
     dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url,
     bases := {
+      parsed := some dom.size
       about := aboutBase.toArray.map fun u => (0, u)
       aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
       encoding := L4Factoidal.WHATWG.Encoding.getEncoding lim.encoding

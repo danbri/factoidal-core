@@ -985,7 +985,7 @@ def pumpFrames {σ : Type} (ops : FrameOps σ) (parent : σ) (frames : Array (Na
         let scripts := ((scriptSources dom (.object [])).toOption.map (·.1)).getD #[]
         let inherited := ((h.dom.frames.find? (·.1 == el)).bind fun frame =>
           (h.dom.bases.about.find? (·.1 == frame.2)).map (·.2)).getD
-            (h.dom.prepareBases.documentBase (d.get el).doc)
+            (h.dom.ensureBases.documentBase (d.get el).doc)
         let context := h.dom.baseContext (d.get el).doc
         if let some c := ops.start el dom scripts (f.origin, Dom.pageOrigin h.dom) inherited (context.policyURL.getD context.url) then
           frames := frames.push (el, c)

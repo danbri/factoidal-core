@@ -2112,6 +2112,7 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
   let d0 := { s.host.dom with
     url
     bases := {
+      parsed := some s.host.dom.dom.size
       about := aboutBase.toArray.map fun u => (0, u)
       aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
       encoding := L4Factoidal.WHATWG.Encoding.getEncoding s.limits.encoding
@@ -2121,7 +2122,7 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
   let d0 := Id.run do
     let mut d0 := d0
     for (el, doc) in framed do
-      d0 := d0.prepareBases
+      d0 := d0.ensureBases
       let parent := (d0.dom.get el).doc
       let context := d0.baseContext parent
       let inherited := d0.documentBase parent
