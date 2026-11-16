@@ -408,7 +408,7 @@ lean_lib ClosureChecks where
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
     `Harness.Sbm11Export, `Harness.Sbm11MemGenCheck, `Harness.Sbm11PackSpecCheck,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
-    `Harness.ProofObligations, `Harness.WorkerPool, `Harness.DomDump] : Array Lean.Name).map Glob.one
+    `Harness.ProofObligations, `Harness.WorkerPool, `Harness.DomDump, `Harness.ShaclProbe] : Array Lean.Name).map Glob.one
   ++ #[Glob.submodules `Harness.Unicode]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI

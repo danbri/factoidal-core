@@ -7,4 +7,4 @@ expression suite) can import it. Usage is as before: `lake exe l4shacl [manifest
 -/
 import Harness.ShaclProbe
 
-def main (args : List String) : IO UInt32 := ShaclProbe.main args
+def main (args : List String) : IO UInt32 := ShaclProbe.run args
