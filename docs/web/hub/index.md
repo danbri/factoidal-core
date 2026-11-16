@@ -27,6 +27,7 @@ built on it. [Web platform](./web-platform/) has all their pages.
 
 <ul class="post-series">
   <li><a href="./conformance/">Conformance</a> — how much of Test262, the JavaScript conformance suite, and of the Web Platform Tests Foafnaut passes, from full measured runs, next to other browsers, with the history of every run.</li>
+  <li><a href="./specs/">Data and documents conformance</a> — RDF, SPARQL, OWL 2, SHACL, ShEx, JSON-LD, CSVW, RML, RIF, Verifiable Credentials, XML, XSLT, Schematron, JSON Schema and MathML: one row per technology family, then each specification, version and test population, with the history of every recorded run.</li>
   <li><a href="./foafnaut/">foafnaut</a> — the Lean browser in a page: tabs, an address bar for URLs, searches and commands, view source, XML with XSLT, drawn with WebGPU. It works at phone width.</li>
   <li><a href="./textnaut/">Textnaut</a> — the text-mode browser in a page: the built-in engine lays out a page of this site, or HTML you type, and Textnaut shows it as a grid of characters with numbered links.</li>
   <li><a href="./notebook/">Notebook: cells drawn by the built-in engine</a> — notebook cells whose output the engine draws: a page in a canvas, a Foafnaut view with scripts, and Textnaut's text, from one engine, with each cell's timings.</li>
