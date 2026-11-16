@@ -10652,10 +10652,9 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | .error a => throw a
       | .ok (spec, ty) =>
         if args.size ≥ 3 then
-          -- `import.source(x)`: GetModuleSource of a Source Text Module Record throws a
-          -- SyntaxError... of the module's own; this host gives a JavaScript module no source
-          -- phase object, which the proposal leaves to the host: a TypeError
-          rejectPromise n pid (← mkError .type "import.source(): this module has no source phase representation")
+          -- `import.source(x)` (the source phase imports proposal): every module this host loads
+          -- is a Source Text Module Record, whose GetModuleSource throws a SyntaxError
+          rejectPromise n pid (← mkError .syntax "import.source(): a JavaScript module has no source phase representation")
         else
         match (← get).importQueue with
         | some q => modify fun h => { h with importQueue := some (q.push (Str.toHost spec, ty, pid)) }
