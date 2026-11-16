@@ -156,6 +156,7 @@ def searchSetting (v : String) : String :=
 
 /-- The template of a setting, if a search engine is chosen. -/
 def searchTemplate (setting : String) : Option String :=
+  if setting.isEmpty then none else
   match searchEngines.find? (·.id == setting) with
   | some e => some e.template
   | none => if validTemplate setting then some setting else none
@@ -187,10 +188,13 @@ private def hexValue (c : Char) : Option Nat :=
 itself. Tail-recursive: a typed line can be long. -/
 def decodeBytes : List Char → List UInt8 → List UInt8
   | [], acc => acc.reverse
-  | '%' :: a :: b :: rest, acc =>
-    match hexValue a, hexValue b with
-    | some x, some y => decodeBytes rest ((x*16+y).toUInt8 :: acc)
-    | _, _ => decodeBytes (a :: b :: rest) (37 :: acc)
+  | '%' :: rest, acc =>
+    match rest with
+    | a :: b :: more =>
+      match hexValue a, hexValue b with
+      | some x, some y => decodeBytes more ((x*16+y).toUInt8 :: acc)
+      | _, _ => decodeBytes rest (37 :: acc)
+    | _ => decodeBytes rest (37 :: acc)
   | '+' :: rest, acc => decodeBytes rest (32 :: acc)
   | c :: rest, acc => decodeBytes rest ((String.singleton c).toUTF8.toList.reverse ++ acc)
 
@@ -623,10 +627,17 @@ theorem outsideOrPress_system (site : Site) (url u : String) (h : outsideOrPress
     u = url ∧ site.outside = url ∧ site.outside ≠ "" := by
   unfold outsideOrPress at h
   by_cases hc : (!site.outside.isEmpty && site.outside == url) = true
-  · simp only [hc, if_true, Route.system.injEq] at h
-    simp only [Bool.and_eq_true, Bool.not_eq_true', String.isEmpty_eq_false_iff, beq_iff_eq] at hc
-    exact ⟨h.symm, hc.2, hc.1⟩
-  · simp [hc] at h
+  · rw [if_pos hc] at h
+    injection h with h
+    rw [Bool.and_eq_true] at hc
+    obtain ⟨h1, h2⟩ := hc
+    have heq : site.outside = url := by simpa using h2
+    refine ⟨h.symm, heq, ?_⟩
+    intro h0
+    rw [h0] at h1
+    exact absurd h1 (by decide)
+  · rw [if_neg hc] at h
+    cases h
 
 /-- A link hands an address to the system only when the tab shows the browser's own
 Outside page for that very address (`site.outside`), so the link is that page's button;
@@ -651,7 +662,8 @@ theorem system_only_pressed (site : Site) (base href u : String) (h : route site
         · simp [ho] at h
         · simp only [ho, Bool.false_eq_true, if_false] at h
           obtain ⟨hu, hout, hne⟩ := outsideOrPress_system _ _ _ h
-          refine ⟨hu ▸ hout, hu ▸ hout ▸ hne, Or.inl ⟨w, ht, hu, by simpa using hs, ?_⟩⟩
+          subst hu
+          refine ⟨hout, by rw [← hout]; exact hne, Or.inl ⟨w, ht, rfl, by simpa using hs, ?_⟩⟩
           simp only [otherSite, hs, ho]; rfl
     | file url =>
       simp only [decide] at h
@@ -662,7 +674,7 @@ theorem system_only_pressed (site : Site) (base href u : String) (h : route site
       · simp only [hs, if_true] at h
         obtain ⟨hu, hout, hne⟩ := outsideOrPress_system _ _ _ h
         subst hu
-        exact ⟨hout, hout ▸ hne, Or.inr ⟨scheme, ht, hs⟩⟩
+        exact ⟨hout, by rw [← hout]; exact hne, Or.inr ⟨scheme, ht, hs⟩⟩
       · simp only [hs, Bool.false_eq_true, if_false] at h
         split at h
         · simp at h
@@ -674,17 +686,18 @@ is a page first, and a press on that page's button. -/
 theorem no_system_unpressed (site : Site) (base href u : String) (h : site.outside = "") :
     route site base href ≠ .system u := by
   intro hr
-  have := (system_only_pressed site base href u hr).1
+  have hout := (system_only_pressed site base href u hr).1
   have hne := (system_only_pressed site base href u hr).2.1
-  exact hne (this ▸ h)
+  exact hne (by rw [← hout]; exact h)
 
 /-- The native browser loads every web site itself: a web address of any host loads in the
 tab, and is never handed to the system. -/
 theorem native_web_navigates (site : Site) (base href : String) (w : Web)
     (h : analyze base href = .ok (.web w)) (ho : site.origin = "") :
     route site base href = .navigate w.url := by
-  have hs : sameSite site w = false := by simp [sameSite, ho]
-  simp [route, h, decide, hs, ho]
+  have he : site.origin.isEmpty = true := by rw [ho]; decide
+  have hs : sameSite site w = false := by simp [sameSite, he]
+  simp [route, h, decide, hs, he]
 
 /-- A link on a page other than Settings never chooses the search engine. -/
 theorem settings_only_from_settings (site : Site) (base href argument : String)

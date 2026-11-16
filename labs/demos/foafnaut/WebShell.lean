@@ -1259,21 +1259,26 @@ def Go.json : Go → JSON.Json
 /-! ### Theorems: words typed in the bar go to no one -/
 
 theorem link_not_system (href u : String) : link href ≠ .system u := by
-  unfold link command
-  split
-  · split <;> (try split) <;> simp
-  · simp
+  intro h
+  unfold link at h
+  split at h
+  · split at h
+    all_goals (try simp only [command] at h)
+    all_goals (try split at h)
+    all_goals simp at h
+  · simp at h
 
 /-- Text in the bar that is not a `:command` never goes to the system. -/
 theorem submit_not_system (input u : String) (h : (input.trimAscii.toString).startsWith ":" = false) :
     submit input ≠ .system u := by
-  unfold submit
-  simp only [h, Bool.false_eq_true, if_false]
-  split
-  · exact link_not_system _ _
-  · split
-    · exact link_not_system _ _
-    · simp
+  intro hs
+  unfold submit at hs
+  simp only [h, Bool.false_eq_true, if_false] at hs
+  split at hs
+  · exact link_not_system _ _ hs
+  · split at hs
+    · exact link_not_system _ _ hs
+    · simp at hs
 
 /-- A typed address reaches the system only by `:open URL`. -/
 theorem routeAddress_system_only_open (site : WebRoute.Site) (base input search u : String)
@@ -1300,11 +1305,10 @@ page: a `foafnaut:` address, so no request carries them anywhere. -/
 theorem words_stay_local (site : WebRoute.Site) (base input search words : String)
     (hs : WebRoute.searchTemplate search = none)
     (hw : submit (input.trimAscii.toString) = .search words)
-    (hp : ((input.trimAscii.toString).toList.take 9).map Char.toLower ≠ WebRoute.foafnautPrefix)
-    (ha : (input.trimAscii.toString).toList.map Char.toLower ≠ "about:foafnaut".toList) :
+    (hp : ((((input.trimAscii.toString).toList.take 9).map Char.toLower == WebRoute.foafnautPrefix) ||
+      ((input.trimAscii.toString).toList.map Char.toLower == "about:foafnaut".toList)) = false) :
     routeAddress site base input search = .page "search" (WebRoute.searchPageURL words) := by
-  unfold routeAddress
-  simp only [hp, ha, beq_iff_eq, decide_false, Bool.or_false, Bool.false_eq_true, if_false, hw, searchRoute, hs]
+  simp only [routeAddress, hp, Bool.false_eq_true, if_false, hw, searchRoute, hs]
 
 /-- No setting means no search engine: words never go into an outbound address. -/
 theorem no_engine_by_default (site : WebRoute.Site) (base words : String) :
