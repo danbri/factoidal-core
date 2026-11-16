@@ -12,7 +12,7 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
-import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone} from './page-load.mjs';
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf} from './page-load.mjs';
 import {gateConsole} from './log-gate.mjs';
 // The worker's console lines go through the log gate (log-gate.mjs): a flood is summarised and named.
 const logGate=gateConsole(console,{name:'foafnaut'});
@@ -1164,10 +1164,9 @@ function focusAddress(){
   setFocus(true);request();
 }
 function leaveAddress(){setFocus(false);field=showURL(doc.url);request();}
-function scrollLimit(){
-  const bottom=Math.max(0,...(frame?.webRender.boxes??[]).map(box=>box[2]+box[4]));
-  return Math.max(0,bottom-height+60*scale);
-}
+// The engine's limit for the layers on screen when the answer has layers (page-load.mjs, shared
+// with the window); before, the Hub never read it.
+function scrollLimit(){return scrollLimitOf(current?.doc===doc?current.answer?.layers:undefined,frame?.webRender.boxes,height,scale);}
 // The request for a frame of this page at a scroll; its signature leaves the scroll out, so
 // a band made at one scroll is known to be for the same state at another.
 // zoomUnit: Lean lays the page out in CSS pixels (the window over the pixel ratio) and draws

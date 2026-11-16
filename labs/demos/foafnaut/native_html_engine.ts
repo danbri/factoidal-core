@@ -4,6 +4,7 @@ import {allFinite} from "./finite_floats.ts";
 // This ignored runtime is installed only after checking the Builds manifest.
 // @ts-ignore generated release module
 import createModule from "./.build/native-html/runtime/web-render.mjs";
+import {traceBackends} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
 /** The answer of findInPage: matches, the current one from 0, and its rectangles [x,y,w,h] in page rows. */
@@ -296,9 +297,24 @@ function linksText(links:unknown[]):string {
   if(text===undefined){text=JSON.stringify(links);linkTexts.set(links,text);}
   return text;
 }
+/** Test mode: with FOAFNAUT_HOST_TRACE set to a file, every engine call adds one JSON line to it
+(docs/web/hub/foafnaut/host-trace.mjs; checked by host_contract_check.ts against the host contract).
+Unset, or with no permission to read the environment (the compiled app), the backends are returned
+as they are and nothing is recorded. */
+function hostTrace(backends:Backends):Backends {
+  let path:string|undefined;
+  try{path=Deno.env.get("FOAFNAUT_HOST_TRACE");}catch{return backends;}
+  if(!path)return backends;
+  const file=path,encode=new TextEncoder();
+  let warned=false;
+  return traceBackends(backends,(line:unknown)=>{
+    try{Deno.writeFileSync(file,encode.encode(JSON.stringify(line)+"\n"),{append:true});}
+    catch(error){if(!warned){warned=true;console.error(`host trace: not written to ${file}: ${error}`);}}
+  }) as Backends;
+}
 export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="bytes") {
   const module = await createModule() as unknown as Module;
-  const backends=nativeEngine?nativeBackends(nativeEngine):wasmBackends(module);
+  const backends=hostTrace(nativeEngine?nativeBackends(nativeEngine):wasmBackends(module));
   const backend=backends.text;
   function call(name:string,types:string[],args:unknown[]) {
     const pointer=module.ccall(name,"number",types,args);
