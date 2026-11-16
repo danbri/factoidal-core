@@ -63,8 +63,10 @@ standards conformance.
   and check one theorem group per process. On 2026-11-15 one proof file of 116 theorems reached 17 GB and filled swap
   and disk until the Mac rebooted. Tools that may start a build quietly (for example `tools/dataflow-inventory.py`)
   count as Lean builds: take the lock.
-- Cloud builds (`danbri/factoidal-builds`, `build.yml`, `core_ref=<branch>`) take about 1.5 h. Check the queue first,
-  batch changes into few builds, never cancel another agent's run, and log each dispatch.
+- Cloud builds (`danbri/factoidal-builds`, `build.yml`, `core_ref=<branch>`): the first test result (`foafnaut-host-tests`)
+  comes about 35 minutes after dispatch, the whole run about 1.5 h, more when macOS runners are busy. Check the queue
+  first, batch changes into few builds, never cancel another agent's run, and log each dispatch. Caches, cold builds
+  and timing records: [`ci-caching.md`](ci-caching.md).
 - WPT: follow [`wpt-runs`](../wpt-runs/SKILL.md). Full measured runs only, BubblePopJS, one WPT run per machine (the
   runner refuses a taken port 8000; wait, never kill). Report subtests before and after, plus a regression check.
 - Coordination lives in `/Users/danbri/working/foafnaut/fncg` (it survives reboots): `coordination.log` (append-only;
