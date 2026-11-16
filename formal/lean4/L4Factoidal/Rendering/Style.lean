@@ -2520,6 +2520,44 @@ origin (`userAgentRules`) is below the author origin. Inheritance is applied fir
 `matched` are the rules that match the element, in sheet order (`matchedRules`). In one
 list position with the origin, a shadow tree's normal declarations lose to the document's
 and its important ones win (CSS Cascade 4 §6.1 "context"), above the style attribute. -/
+/-- The elements the user agent sheet isolates (HTML §15.3.5, "Bidirectional text"). -/
+def isolatedTags : List String :=
+  ["address","blockquote","center","div","figure","figcaption","footer","form","header","hr",
+   "legend","listing","main","p","plaintext","pre","summary","xmp","article","aside","h1","h2",
+   "h3","h4","h5","h6","hgroup","nav","section","search","table","caption","colgroup","col",
+   "thead","tbody","tfoot","tr","td","th","dir","dd","dl","dt","menu","ol","ul","li","bdi","output"]
+
+/-- The `unicode-bidi` of the user agent sheet (HTML §15.3.5) for an HTML element `tag` with the
+`dir` attribute `dir` (ASCII lower case, "" when absent) and, for an `input`, the `type`
+attribute `type` (lower case): `bdo` is `isolate-override`; an `input` of type search, tel,
+url or email, a `textarea` and a `pre` with `dir=auto` are `plaintext`; the listed elements and
+an element with a valid `dir` are `isolate`; else none (the initial `normal`). -/
+def uaUnicodeBidi (tag dir type : String) : Option UnicodeBidi :=
+  if tag == "bdo" then some .isolateOverride
+  else if dir == "auto" && (tag == "textarea" || tag == "pre" ||
+      (tag == "input" && ["search","tel","url","email"].contains type)) then some .plaintext
+  else if ["rtl","ltr","auto"].contains dir || isolatedTags.contains tag then some .isolate
+  else none
+
+/-- Kind: property. Says: `bdo` is `isolate-override`, whatever its `dir`. -/
+theorem uaUnicodeBidi_bdo (dir type : String) : uaUnicodeBidi "bdo" dir type = some .isolateOverride := by
+  simp [uaUnicodeBidi]
+
+/-- Kind: property. Says: an element with `dir=ltr` or `dir=rtl` is isolated, unless it is a `bdo`
+(which overrides as well). -/
+theorem uaUnicodeBidi_dir (tag dir type : String) (hd : dir = "ltr" ∨ dir = "rtl") (ht : tag ≠ "bdo") :
+    uaUnicodeBidi tag dir type = some .isolate := by
+  rcases hd with rfl | rfl <;> simp [uaUnicodeBidi, ht]
+
+#guard uaUnicodeBidi "div" "" "" == some .isolate
+#guard uaUnicodeBidi "span" "" "" == none
+#guard uaUnicodeBidi "span" "invalid" "" == none
+#guard uaUnicodeBidi "input" "auto" "email" == some .plaintext
+#guard uaUnicodeBidi "input" "auto" "text" == some .isolate
+#guard uaUnicodeBidi "input" "" "email" == none
+#guard uaUnicodeBidi "textarea" "auto" "" == some .plaintext
+#guard uaUnicodeBidi "pre" "" "" == some .isolate
+
 def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Computed) : Except String Computed := do
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
@@ -2580,9 +2618,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     else if dirAttr == "ltr" then initial := {initial with direction := .ltr}
     else if dirAttr == "auto" || (n.lname == "bdi" && !hasAttribute n "dir") then
       initial := {initial with direction := autoDirection dom id}
-    if n.lname == "bdo" then initial := {initial with unicodeBidi := .isolateOverride}
-    else if ["rtl","ltr","auto"].contains dirAttr || n.lname == "bdi" then
-      initial := {initial with unicodeBidi := .isolate}
+    if let some b := uaUnicodeBidi n.lname dirAttr (attrValue n "type").toLower then
+      initial := {initial with unicodeBidi := b}
   let preHint := initial
   if n.ns == some DOM.htmlNS || n.ns.isNone then
     initial := bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))
