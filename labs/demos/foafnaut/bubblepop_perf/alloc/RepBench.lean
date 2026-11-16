@@ -61,6 +61,7 @@ def loopC (n : Nat) (r : ByteArray) (slow : Nat) : ByteArray × Nat :=
 
 inductive V where
   | undef | fl | obj (i : Nat)
+  deriving Inhabited
 
 def loopR (n : Nat) (regs : Array V) (f : FloatArray) : Array V × FloatArray :=
   match n with
@@ -92,6 +93,8 @@ def moveR (n : Nat) (regs : Array V) : Array V :=
 def timeIt (name : String) (f : Unit → UInt64) : IO Unit := do
   let t0 ← IO.monoNanosNow
   let r := f ()
+  -- the clock is read after the work: the test forces the result first
+  if r == 0x0BADC0DE0BADC0DE then IO.println ""
   let t1 ← IO.monoNanosNow
   IO.println s!"{name}: {(t1 - t0) / 1000000} ms (check {r})"
 
@@ -106,7 +109,7 @@ def main (args : List String) : IO Unit := do
   let b0 : RegsB := { tag := (ba.extract 0 16).set! 4 5, num := (fb.set! 1 0.5).set! 2 1.25, ref := wr32 (ba.extract 0 64) 4 0x1234 }
   timeIt "B add  (tag bytes + FloatArray + 32-bit refs)" fun _ => Float.toBits ((loopB n b0).num.get! 1)
   timeIt "B move" fun _ => (rd32 (moveB n b0).ref 3).toUInt64
-  let c0 := wr32 (wr32 (ba.extract 0 64) 1 1) 2 ((7 <<< 1) ||| 1)
+  let c0 := wr32 (wr32 (ba.extract 0 64) 1 1) 2 (((7 : UInt32) <<< 1) ||| 1)
   timeIt "C add  (32-bit tagged words, int31 inline)" fun _ => let (r, s) := loopC n c0 0; (rd32 r 1).toUInt64 + s.toUInt64
   let r0 : Array V := (Array.replicate 16 V.undef |>.set! 1 .fl |>.set! 2 .fl |>.set! 4 (.obj 0x1234))
   timeIt "R add  (Array of boxed inductive + FloatArray: today)" fun _ => let (_, f) := loopR n r0 ((fb.set! 1 0.5).set! 2 1.25); Float.toBits (f.get! 1)

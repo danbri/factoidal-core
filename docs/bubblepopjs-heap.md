@@ -79,7 +79,8 @@ Findings:
    `_tlv_get_addr` twice: once from `lean_inc_heartbeat`, which `lean_alloc_small_object` calls, and
    once from `mi_malloc_small` (both callers are named in the profiles). The engine library pays more
    than the command line binary. This cost is in the runtime build, not in the engine's Lean code,
-   and each allocation removed takes its lookups with it.
+   and each allocation removed takes its lookups with it. The profiled release is older than the
+   change on `main` that drops the heartbeat call from the native engine (section 4).
 3. **The BBC page spends 27.7% of script time copying the object array.** `newArray` pushes onto
    `HeapOf.objs` while a second reference to the heap is alive (the copy kept for a synchronous
    `XMLHttpRequest`), so each push copies the array. This is the defect that
@@ -201,7 +202,7 @@ fraction more costly than an integer.
 
 ### 2.1 Rules that the measurements and Lean impose
 
-- **Flat storage is `ByteArray` and `FloatArray` only.** An `Array UInt64` holds one heap cell per
+- **Flat scalar storage is `ByteArray` and `FloatArray` only.** An `Array UInt64` holds one heap cell per
   element; an `Array UInt32` does too on wasm32. A `UInt64`, `UInt32`, `UInt8` or `Float` is a plain
   machine value in a local, a parameter, a result and a structure field, on both targets.
 - **A tagged word cannot pass through `Float`.** `Float.ofBits` and `Float.toBits` go through the
@@ -231,30 +232,46 @@ Three candidates for a slot (a register, an environment slot, a property value, 
 | Fits linear memory for later compilation to Wasm | yes, one word | yes, three regions | yes |
 | Memory | 8 | 13 | 4, plus number cells |
 
-**Decision: B for the heap that Lean runs, with A specified as the image for linear memory.**
-
-- B is the representation the register machine already half has (`vmRegs : Array Value` with the
-  marker `Value.fl`, and `vmF : FloatArray`). Replacing the `Array Value` half by a tag array and a
-  reference array removes the remaining pointer per slot, every reference-count operation on a
-  register move, and the boxes for object handles and booleans, and it changes no number path.
-- A costs a runtime call in each direction for every number read and written by arithmetic, and
-  eight byte accesses where B has one. It also owes the canonical-NaN proof for every producer of
-  words. Its advantage, one word a slot, matters when the heap is laid out in Wasm linear memory for
-  ahead-of-time code; `encodeW` below is that layout, proved against the same `Value`, so the later
-  step does not need a new specification.
-- C saves memory and makes integer arithmetic cheap, but it allocates for the numbers that are
-  common in graphics code, needs the collector first, and the measured integer share comes from a
-  corpus without such code.
-
 The microbenchmark [`alloc/RepBench.lean`](../labs/demos/foafnaut/bubblepop_perf/alloc/RepBench.lean)
-(standalone, `Init` only) times an add of two number registers and a move of a reference for A, B, C
-and the present registers. It has not been run yet (it waits for the shared Lean build lock); its
-figures are added here before step 9 and can move the choice between A and B for registers.
+(standalone, `Init` only, native arm64, 100 million iterations, two runs) times the two commonest
+register instructions on each candidate and on the present registers (an `Array` of a boxed
+inductive with a `fl` marker, plus a `FloatArray`):
+
+| | add two number registers | move a reference |
+|---|---|---|
+| Present registers | 9.1 to 9.8 ns | 5.3 to 5.7 ns |
+| B, the three arrays in one record | 15.8 to 16.3 ns | 8.7 to 8.8 ns |
+| C, integers only | 12.1 to 12.3 ns | not measured |
+| A, word in a `ByteArray` | 33.0 to 33.5 ns | 11.0 to 11.2 ns |
+
+- **A is 3.5 times slower than the present registers on an add and 2 times on a move.** Each word
+  access is eight checked byte accesses, and each number is a runtime call in each direction.
+- **The present registers are the fastest.** A move of a boxed reference costs two count updates on
+  an object that one thread owns, which is cheaper than four checked byte loads and stores. B pays for
+  a third array and for the record that holds the arrays (the generated code tests `isShared` on the
+  record at each update; threading the arrays as separate arguments, as `vmLoop` does, removes that).
+- So flat storage is not a gain for registers. Its gain is where a value is *stored*: a number
+  written to a property, an element or an environment slot costs an allocation today (section 1.4:
+  16 bytes, and on macOS two thread-local lookups), and none in B.
+
+**Decision.**
+
+- **Registers stay as they are** (`Array Value` with the `fl` marker, and a `FloatArray`). The boxes
+  made at their edges (a boolean result, a returned number, the callee's `this`) are removed by
+  local changes (steps 1 and 2 of the plan), not by a new representation.
+- **Stored slots use B**: property values, array elements and environment slots, in the object
+  model of section 2.3. B needs no runtime call for a number, has no NaN obligation in Lean, and
+  needs no collector before it can land.
+- **A is specified as the image for Wasm linear memory**, where one word a slot matters and a word
+  access is one load in compiled Wasm. `encodeW` below is that layout, proved against the same
+  `Value`, so the later step does not need a new specification.
+- **C is not taken**: it allocates for the numbers that graphics code uses, needs the collector
+  first, and the measured integer share comes from a corpus without such code.
 
 Lean representation:
 
 ```lean
-/-- The tag of a slot. `Value.fl` has no tag: it was the marker of the split registers. -/
+/-- The tag of a slot. `Value.fl` has no tag: it is only the registers' marker. -/
 def Tag.undef : UInt8 := 0   -- null 1, false 2, true 3, num 4, str 5, obj 6, sym 7, big 8, hole 9
 
 /-- Slots in flat storage. Slot `i` is `tag[i]`, `num[i]` and the four bytes `ref[4*i ..]`. -/
@@ -430,44 +447,39 @@ raises the epoch.
 A cache is not assumed to be a gain. quickjs-ng removed its caches after measuring a loss; step 9
 of the plan lands only with a before-and-after timing on the library corpus and on real pages.
 
-### 2.5 Registers and frames in storage with one owner
+### 2.5 Frames in flat storage; the register file keeps one owner
 
-The machine state is one record, threaded through the loop as `regs` and `fregs` are now and kept
-in the heap between runs:
+The register file stays `Array Value` and `FloatArray` (section 2.2). What changes around it:
 
 ```lean
-structure Machine where
-  regs : Slots          -- the register file
-  frames : ByteArray    -- one fixed-width record a call: code id, return pc, base, environment, result register
+structure Frames where
+  bytes : ByteArray     -- one fixed-width record a call: code id, return pc, base, environment, result register
   depth : UInt32
 ```
 
-- A call writes 20 bytes at the top of `frames`; today it allocates a `VFrame` (56 bytes) and a list
-  cell (24 bytes). The code of a frame is an index into `codes : Array Code`, filled when a function
-  is compiled, not a pointer.
-- A register move copies a tag, a number or four bytes; no reference count changes.
-- An instruction's fast path is a pure function from the machine and the heap's flat parts to the
-  same, with no `M` result; it leaves the loop only to call an operation that can throw or run user
-  code. This is the shape of [`CoreModel.lean`](../labs/demos/foafnaut/bubblepop_perf/lean/CoreModel.lean),
-  which runs a call in 17 ns where the machine takes 145 ns.
-- Strings: a register that holds a string holds a handle into `Tables.strs`. Until the collector of
-  section 2.6 lands, string slots of registers and environments stay in a side `Array Value`, so that
-  the runtime's counts still free dead strings. In-place append (`s += t`) needs the string to have
-  one owner; the side array keeps that property (the register is cleared before the append, as now).
+- A call writes 20 bytes at the top of `Frames.bytes`; today it allocates a `VFrame` (56 bytes) and
+  a list cell (24 bytes). The code of a frame is an index into `codes : Array Code`, filled when a
+  function is compiled, not a pointer.
+- The registers, the frames and the heap's arrays each have one owner across an instruction: no
+  `let h ← get` may stay alive across a write to the heap (the `HeapOf` copy of section 1.4).
+- An instruction's fast path returns a scalar or the arrays themselves, with no `M` result, tuple or
+  `Option`; it enters `M` only to call an operation that can throw or run user code. This is the
+  shape of [`CoreModel.lean`](../labs/demos/foafnaut/bubblepop_perf/lean/CoreModel.lean), which runs
+  a call in 17 ns where the machine takes 145 ns.
 
-Theorem: the frame stack and register file refine the present `List VFrame` and
-`Array Value × FloatArray`:
+Theorem: the frame stack refines the present `List VFrame`:
 
 ```lean
-def Machine.absFrames (codes : Array Code) (m : Machine) : List VFrame
-def Machine.absRegs (T : Tables) (m : Machine) : Array Value × FloatArray
-theorem vmStep_refines : -- one instruction of the flat machine, read back, is one instruction of `vmLoop`
-    absState (flatStep n code pc m h) = vmLoopStep n code pc (absState (m, h))
+def Frames.abs (codes : Array Code) (f : Frames) : List VFrame
+theorem Frames.abs_push : (f.push c pc bp env dst).abs codes = { code := codes[c]!, pc, bp, env, dst, depth := f.depth + 1 } :: f.abs codes
+theorem Frames.abs_pop (h : 0 < f.depth) : ∃ fr, f.abs codes = fr :: (f.pop).abs codes
+theorem vmStep_refines : -- one instruction of the machine with flat frames, read back, is one instruction of `vmLoop`
+    absState (flatStep n code pc fr regs fregs h) = vmLoopStep n code pc (absState (fr, regs, fregs, h))
 ```
 
-and by induction on fuel the flat loop equals `vmLoop`; with the compiler theorem and fuel
-monotonicity of the evaluator (in progress under the tracking issue, not repeated here) that gives
-equality with the evaluator when the machine is off.
+and by induction on fuel the loop with flat frames equals `vmLoop`; with the compiler theorem and
+fuel monotonicity of the evaluator (in progress under the tracking issue, not repeated here) that
+gives equality with the evaluator when the machine is off.
 
 ### 2.6 Memory: a mark and sweep that does not move, over handle arrays
 
@@ -547,8 +559,8 @@ These are estimates from measured shares; each step replaces its row by a measur
 | Property and element writes without a new `Obj` record and closure | immutable 13%, pako 7.5% | immutable 3%, pako 3% |
 | Regular expression matcher without `Option`, tuple and closure per character | marked 88%, acorn 19% | marked up to 47%, acorn 5% |
 | Flat frames | lodash 11%, immutable 4% | lodash 2.5% |
-| Flat slots in registers, environments, properties and elements (all `Value` boxes; the first two rows remove part of them) | lodash 34%, pako 26%, immutable 24% | 6 to 10% on those three |
-| Thread-local lookups (runtime build) | not an allocation count | 7 to 23% of script time, all workloads on macOS |
+| Flat slots for stored values: environments, properties and elements (the `Value` boxes that the first two rows do not remove; part overlaps the third row) | lodash 13%, pako 23%, immutable 17% | lodash 3%, pako up to 8%, immutable 4% |
+| Thread-local lookups (runtime build) | not an allocation count | up to the 7 to 23% of section 1.2; measured for the heartbeat half alone: 2 to 3% (below) |
 
 Sum for lodash, counting each allocation once: about 16% of script time, 1.2 times; the runtime
 change then removes what is left of the 7.8% thread-local share. The bound for removing every
@@ -572,10 +584,10 @@ native: every structure below uses `ByteArray`, `FloatArray` and scalar fields o
 | 3 | `toNum`, `toInt32` and the bit operators with a pure first case for numbers | `s = i & 255` from 8 allocations to 1 | the fast function equals the monadic one |
 | 4 | Writes: `setOwnData`, `setElem`, `defineOwn` update the object in place with no closure and no rebuilt record | `o.x = i` from 5 allocations to 1, `a[3] = i` from 7 to 1 | equal to `updateObj` with the present function |
 | 5 | Built-in call path: `sizeCost`, `charge`, `subjectCached`, `Ctx` | `Math.floor(i)` from 16 allocations to under 6 | equal results and equal step count |
-| 6 | Regular expression matcher: positions and characters as scalars, no continuation closures on the common nodes | marked allocations −80% | equal to the present matcher on every input ([`RegexTheorems.lean`](../formal/lean4/L4Factoidal/JS/RegexTheorems.lean) extended) |
+| 6 | Regular expression matcher: the character read inlined into its callers; no continuation for a sequence whose first term (a character or an assertion) fails. **Done with this record** (section 4.1) | marked allocations −64%, bytes −73%, time −37% | `matchNode_seq` in [`RegexTheorems.lean`](../formal/lean4/L4Factoidal/JS/RegexTheorems.lean): the shorter path gives the answer of the sequencing rule |
 | 7 | Parser: `peek` and `advance` without a result cell | Test262 allocations −20% | equal token stream and tree |
-| 8 | Flat frames (`Machine.frames`, `codes`) | no `VFrame` and list cell | `absFrames` refinement |
-| 9 | Flat slots for registers (tags and references; strings in the side array), then for environments | no `Value.obj` boxes, no counts on moves | `decode_encode`, `Slots.read_write`, `vmStep_refines` |
+| 8 | Flat frames (`Frames`, `codes`) | no `VFrame` and list cell | `Frames.abs_push`, `Frames.abs_pop`, `vmStep_refines` |
+| 9 | Flat slots (B) for environment slots and array elements that hold numbers | a number stored in a closure variable or an array allocates nothing | `decode_encode`, `Slots.read_write` |
 | 10 | Atoms | none alone | injective table |
 | 11 | Shapes and flat object slots, dictionaries as fallback | property read with no string comparison; object literal from 16 allocations to under 4 | `HeapRefines`, `abs_*` |
 | 12 | Inline caches, own and write first, then proto, absent and add | timed on corpus and pages; kept only if faster | `cachedGet_eq`, `cachedSet_eq`, `icInv_step` |
@@ -584,12 +596,54 @@ native: every structure below uses `ByteArray`, `FloatArray` and scalar fields o
 
 Steps 1 to 5 edit functions of the evaluator's mutual block or the built-in dispatchers, which the
 fuel-monotonicity proof covers arm by arm; they are sequenced with that work so that neither
-invalidates the other. Steps 6 and 7 are in files of their own.
+invalidates the other. Steps 6 and 7 are in files of their own, which is why step 6 went first: the
+matcher is the largest source by mean on the library corpus (21.4% of allocations, against 20.3% for
+the register machine), though not on the pages measured.
+
+### 4.1 Step 6, measured
+
+Two changes in [`JS/Regex.lean`](../formal/lean4/L4Factoidal/JS/Regex.lean):
+
+- `readAt` and `step1` are `@[inline]`. Every caller matches on their answer at once, so the
+  compiler removes the `Option` and the pair: a character read allocates nothing. No definition
+  changed, so the existing theorems (`readAt_fwd`, `readAt_back`, `step1_fwd`, `step1_back`) still
+  state what the matcher reads.
+- In a forward sequence whose first term is a single character or an assertion (`^`, `$`, `\b`),
+  `matchNode` tests the term before it makes the continuation for the rest. A pattern that starts
+  with `^` and is tried at every later start position made one closure (71 bytes) per position
+  before. `matchNode_seq` proves the shorter path equal to the general rule for every first term and
+  every fuel (axioms: `propext`, `Quot.sound`).
+
+| | allocations before | after | bytes before | after | CPU ms before | after |
+|---|---|---|---|---|---|---|
+| marked | 14.54 M | 5.20 M (−64.2%) | 479 MB | 127 MB (−73.4%) | 283 | 179 (−37%) |
+| acorn | 26.81 M | 23.09 M (−13.9%) | 737 MB | 591 MB (−19.8%) | 823 | 791 (−3.9%) |
+| lodash | 12.38 M | 12.38 M | 349 MB | 349 MB | 410 | 413 |
+| immutable | 23.46 M | 23.46 M | 644 MB | 644 MB | 749 | 746 |
+| pako | 59.15 M | 59.15 M | 1,458 MB | 1,458 MB | 1,692 | 1,644 |
+
+CPU time is user plus system, least of nine interleaved runs, on two `leanjs` binaries made from
+the same generated C apart from `Regex.c` (`build-count.sh` with `LEANPROF_PLAIN=1`); the last three
+rows changed no code that they run, so their differences (+0.9% to −2.8%) are the noise of the
+method on a shared machine. The five libraries print the same result line before and after.
+Test262, 3,082 files (`built-ins/RegExp` without the generated `property-escapes` files, the six
+`String.prototype` methods that take a pattern, `language/literals/regexp`, and two directories that
+use no pattern): the same verdict for every file (3,011 pass, 71 fail on both), 25.8 s to 23.7 s of
+CPU.
+
+What is left in the matcher on marked: one `St` record (24 bytes) per start position (3.0 M), which
+needs either a first-character test before the record is made or a search that skips start positions
+an anchored pattern cannot match. A recursion in place of the `for` loop of `exec` was tried and
+proved equal to the loop; it removed no allocation and was not kept.
 
 Separate, in the runtime build and not in this plan's proofs: the two thread-local lookups per
 allocation on macOS (finding 2). The Linux engine already links the runtime with initial-exec
-thread-local storage. The same treatment for macOS, or a runtime built without the heartbeat
-counter, is worth 7 to 23% of script time by the profiles and changes no Lean code.
+thread-local storage. One of the two is gone from the native engine on `main` since `fd53dac77`
+(`lean_no_heartbeat.h`: the compiled code counts no heartbeat), after the release that was profiled
+here. Measured for `leanjs` the same way: the generated C compiled with `lean_inc_heartbeat` replaced
+by an empty function runs the five libraries in 0.969 to 0.983 of the time (CPU, least of five
+interleaved runs). The allocator's own lookup (`mi_malloc_small`) remains on macOS; removing it
+needs a runtime built for it and is not measured.
 
 Also separate: the DOM bridge (`callImport`, `Page.i32v`, `Dom.ret`, `serveNative`) is the second
 owner of memory-management time on the Wikipedia page. Its values cross as byte buffers and boxed
@@ -603,3 +657,6 @@ integers; it needs its own measurement with the same instruments.
   but sizes and the cost of a thread-local lookup differ.
 - The operand distribution has no graphics workload.
 - The page profiles cover five pages and the first 22 to 75 seconds of each run on a loaded machine.
+- B for stored slots is chosen from the cost of the allocation it avoids; it is not yet timed against
+  today's `Array Value` slots with boxed numbers. Step 9 starts with that measurement, on
+  `RepBench.lean` extended with a stored-number case.

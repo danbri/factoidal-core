@@ -8,6 +8,8 @@ What is proved here (and only this):
   (forward: the end stays at most the size; backward: never before index 0);
 - `step1_fwd`, `step1_back`: a single character matcher moves the position strictly forward
   (and not past the end) or strictly backward, so a repetition of one makes progress;
+- `matchNode_seq`: the matcher's shorter path for a sequence that starts with a single character or
+  an assertion (`^`, `$`, `\b`) gives the answer of the general sequencing rule;
 - `applyMods_nil`: a modifier group that changes nothing keeps the flags;
 - `CSet.mem_inter_strs`, `CSet.mem_diff_strs`: the strings of `&&` and `--` of the `v` flag
   are the intersection and difference of the strings (§22.2.2.9 CompileToCharSet).
@@ -69,6 +71,21 @@ theorem step1_back (cs : Array Char) (fl : Flags) (n : Node) (pos q : Nat)
     · simp only [Option.some.injEq, if_true] at h; omega
     · simp at h
   · simp at h
+
+/-- Sequencing, forward (§22.2.2.3, Alternative :: Alternative Term): match the first term with
+the rest of the sequence as its continuation. `matchNode` has a shorter path for a first term
+that is a single character or an assertion (`^`, `$`, `\b`): it makes no continuation unless the
+term matches. This is the proof that the shorter path gives the answer of the rule, for every
+first term and every fuel. -/
+theorem matchNode_seq (cs : Array Char) (fuel : Nat) (fl : Flags) (r : Node) (rs : List Node) (st : St)
+    (k : St → Option St) :
+    matchNode cs (fuel + 1) fl false (.seq (r :: rs)) st k =
+      matchNode cs fuel fl false r st (fun st' => matchNode cs fuel fl false (.seq rs) st' k) := by
+  cases r <;> first
+    | rfl
+    | (cases fuel with
+       | zero => simp [matchNode] <;> split <;> rfl
+       | succ n => simp [matchNode])
 
 theorem applyMods_nil (fl : Flags) : applyMods fl [] [] = fl := by
   cases fl; simp [applyMods]
