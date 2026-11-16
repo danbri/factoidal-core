@@ -196,8 +196,6 @@ structure State where
   url : String := ""
   /-- Frozen document bases, maintained at DOM mutations. -/
   bases : BaseURL.State := {}
-  baseEncoding : Option L4Factoidal.WHATWG.Encoding.Encoding := none
-  basePolicies : List L4Factoidal.Net.CspPolicy.Policy := []
   /-- Each `iframe` element's frame (`HTML.Frames.frameOf`) as it was when its browsing
   context was made: its sandboxing flags and its document's origin. -/
   frameInfo : Array (Nat × L4Factoidal.HTML.Frames.Frame) := #[]
@@ -223,8 +221,6 @@ structure State where
   the embedder gave it (`noteFramePolicy`): the policy of that document's requests
   (`HTML.ReferrerSource.answer`, `DomOps` op 173). -/
   framePolicies : Array (Nat × String) := #[]
-  /-- Policy lists inherited by about documents at their creation. -/
-  aboutPolicies : Array (Nat × String × List L4Factoidal.Net.CspPolicy.Policy) := #[]
   /-- The editing state of the page's document between commands (`DOM.Editing`): the CSS
   styling flag, the default paragraph separator, design mode, and the state and value
   overrides of the active range. -/
@@ -444,26 +440,30 @@ def State.baseContext (s : State) (doc : Nat) : BaseURL.Context :=
   { url := if doc == 0 then (if s.url.isEmpty then "about:blank" else s.url)
       else ((s.docURLs.find? (·.1 == doc)).map (·.2)).getD "about:blank",
     aboutBase := (s.bases.about.find? (·.1 == doc)).map (·.2),
-    encoding := if doc == 0 then s.baseEncoding.getD .utf_8 else
+    encoding := if doc == 0 then s.bases.encoding.getD .utf_8 else
       ((s.frames.find? (·.2 == doc)).bind fun f =>
         (s.frameEncodings.find? (·.1 == f.1)).bind fun e =>
           L4Factoidal.WHATWG.Encoding.getEncoding e.2).getD .utf_8,
-    policies := if doc == 0 then s.basePolicies else
-      ((s.aboutPolicies.find? (·.1 == doc)).map (·.2.2)).getD [],
-    policyURL := (s.aboutPolicies.find? (·.1 == doc)).map (·.2.1) }
+    policies := if doc == 0 then s.bases.policies else
+      ((s.bases.aboutPolicies.find? (·.1 == doc)).map (·.2.2)).getD [],
+    policyURL := (s.bases.aboutPolicies.find? (·.1 == doc)).map (·.2.1) }
 
 /-- Capture an unknown encoding before the first mutation or URL query. -/
 def State.resolveBaseEncoding (s : State) : State :=
-  if s.baseEncoding.isSome then s else
-    { s with baseEncoding := some (L4Factoidal.HTML.DocumentEncoding.documentEncoding s.dom) }
+  if s.bases.encoding.isSome then s else
+    { s with bases := { s.bases with encoding := some (L4Factoidal.HTML.DocumentEncoding.documentEncoding s.dom) } }
+
+/-- The slow path of `prepareBases`: look at the nodes made since the last look. -/
+@[noinline] def State.prepareBasesSlow (s : State) : State :=
+  let s := if s.bases.seen == 0 then s.resolveBaseEncoding else s
+  { s with bases := BaseURL.update s.bases s.dom s.baseContext }
 
 /-- Discover parser-created bases before mutation. When the embedder did not supply
 an encoding, infer it before the first mutation so later script changes to meta/text
-cannot change it. Known encodings require no prescan. -/
-def State.prepareBases (s : State) : State :=
-  if s.bases.seen == s.dom.size then s else
-  let s := if s.bases.seen == 0 then s.resolveBaseEncoding else s
-  { s with bases := BaseURL.update s.bases s.dom s.baseContext }
+cannot change it. Known encodings require no prescan. Once every node has been looked
+at (after the first change of a page), this is one comparison, inlined into the caller. -/
+@[inline] def State.prepareBases (s : State) : State :=
+  if s.bases.seen == s.dom.size then s else s.prepareBasesSlow
 
 def State.documentBase (s : State) (doc : Nat) : String :=
   BaseURL.value s.bases doc (s.baseContext doc)
@@ -481,15 +481,34 @@ def Command.baseChange (d : Dom) : Command → BaseURL.Change
   | .removeChild .. | .frameDocument .. | .attachShadow .. => .tree #[]
   | _ => .none
 
-/-- Use the new arena but retain the pre-change frozen state. -/
-def State.changedBases (s : State) (c : Command) (d : Dom) : BaseURL.State :=
-  if s.bases.seen == d.size && s.bases.candidates.isEmpty then s.bases else
+/-- The slow path of `changedBases`: a page with a base element, or a change that made nodes. -/
+@[noinline] def State.changedBasesSlow (s : State) (c : Command) (d : Dom) : BaseURL.State :=
   let event := c.baseChange d
   if s.bases.seen == d.size then
     match event with
     | .none => s.bases
     | _ => BaseURL.update s.bases d s.baseContext event
   else BaseURL.update s.bases d s.baseContext event
+
+/-- The frozen bases after command `c` made the arena `d`, keeping the frozen state from
+before the change. A page with no base element whose change made no node pays one
+comparison and one emptiness test, inlined into the caller (`changedBases_idle`). -/
+@[inline] def State.changedBases (s : State) (c : Command) (d : Dom) : BaseURL.State :=
+  if s.bases.seen == d.size && s.bases.candidates.isEmpty then s.bases else s.changedBasesSlow c d
+
+/-- Kind: cost. Says: on a page with no base element, a change that makes no node leaves
+the frozen bases as they were, without looking at the command or the arena. Does not say:
+anything about the time of the comparison itself, or of the other parts of a change. -/
+theorem changedBases_idle (s : State) (c : Command) (d : Dom)
+    (hs : s.bases.seen = d.size) (hc : s.bases.candidates = #[]) :
+    s.changedBases c d = s.bases := by
+  simp [State.changedBases, hs, hc]
+
+/-- Kind: cost. Says: once every node has been looked at, `prepareBases` changes nothing.
+Does not say: when that holds (after the first change; `changedBases` keeps it). -/
+theorem prepareBases_idle (s : State) (h : s.bases.seen = s.dom.size) :
+    s.prepareBases = s := by
+  simp [State.prepareBases, h]
 
 /-- Record command `c`, whose result is the arena `d`. A write of an attribute or of
 character data whose last write since the last reading command (`Command.reads`) is
@@ -1103,10 +1122,11 @@ def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
           else if s.hostLoads then ((frameSrc d k).map (frameURL s)).getD "" else ""
         let inherited := s.documentBase (s.dom.get k).doc
         let withBase := { s with
-          bases := { s.bases with about := s.bases.about.push (doc, inherited) }
-          aboutPolicies := s.aboutPolicies.push (doc,
-            (s.baseContext (s.dom.get k).doc).policyURL.getD (s.baseContext (s.dom.get k).doc).url,
-            (s.baseContext (s.dom.get k).doc).policies) }
+          bases := { s.bases with
+            about := s.bases.about.push (doc, inherited)
+            aboutPolicies := s.bases.aboutPolicies.push (doc,
+              (s.baseContext (s.dom.get k).doc).policyURL.getD (s.baseContext (s.dom.get k).doc).url,
+              (s.baseContext (s.dom.get k).doc).policies) } }
         match addCommand withBase (.frameDocument k "" false doc) d with
         | (s', .values #[.i32 0]) =>
           s := { s' with frames := s'.frames.push (k, doc), frameInfo := s'.frameInfo.push (k, info),
@@ -1199,11 +1219,12 @@ def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false
   let withBase := { s with
     docURLs := s.docURLs.push (root, url)
     frames := (s.frames.filter (·.1 != el)).push (el, root)
-    bases := { s.bases with about := s.bases.about.push (root, inherited) }
-    aboutPolicies := if navURL.isNone then
-      s.aboutPolicies.push (root,
-        (s.baseContext (s.dom.get el).doc).policyURL.getD (s.baseContext (s.dom.get el).doc).url,
-        (s.baseContext (s.dom.get el).doc).policies) else s.aboutPolicies }
+    bases := { s.bases with
+      about := s.bases.about.push (root, inherited)
+      aboutPolicies := if navURL.isNone then
+        s.bases.aboutPolicies.push (root,
+          (s.baseContext (s.dom.get el).doc).policyURL.getD (s.baseContext (s.dom.get el).doc).url,
+          (s.baseContext (s.dom.get el).doc).policies) else s.bases.aboutPolicies } }
   let beforeAttach := s
   match addCommand withBase (.frameDocument el source xml root) d with
   | (s, .values #[.i32 0]) =>

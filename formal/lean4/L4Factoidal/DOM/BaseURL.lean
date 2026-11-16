@@ -92,6 +92,13 @@ structure State where
   frozen : Array Frozen := #[]
   /-- Creator bases survive removal of the frame and later parent base changes. -/
   about : Array (NodeId × String) := #[]
+  /-- The page document's encoding for base and reflected URLs: the embedder's, else
+  captured before the first mutation (`Hosts.Dom.State.prepareBases`). -/
+  encoding : Option Encoding.Encoding := none
+  /-- The page document's CSP policies (`base-uri`). -/
+  policies : List L4Factoidal.Net.CspPolicy.Policy := []
+  /-- Per about document: the creator's URL for CSP and its policies, captured at creation. -/
+  aboutPolicies : Array (NodeId × String × List L4Factoidal.Net.CspPolicy.Policy) := #[]
   deriving Inhabited
 
 /-- Refresh after an operation. With no bases, no document-tree walk or URL parse runs.
@@ -122,6 +129,13 @@ def update (s : State) (d : Dom) (context : NodeId → Context) (change : Change
     if let some f := select d doc (context doc) (s.frozen.find? (·.doc == doc)) change then
       frozen := frozen.push f
   return { s with frozen }
+
+/-- Kind: cost. Says: with no base element seen and no node made since the last look,
+`update` answers its state unchanged, whatever the change, without a tree walk or a URL
+parse. Does not say: that the host calls it only then (`Hosts.Dom.State.changedBases`). -/
+theorem update_idle (s : State) (d : Dom) (context : NodeId → Context) (change : Change)
+    (hs : s.seen = d.size) (hc : s.candidates = #[]) : update s d context change = s := by
+  simp [update, hs, hc]
 
 /-- Constant-time in the document size once mutations have maintained `frozen`. -/
 def value (s : State) (doc : NodeId) (c : Context) : String :=
@@ -164,4 +178,5 @@ theorem fallback_document (c : Context)
 #print axioms selected_no_base
 #print axioms value_no_base
 #print axioms fallback_document
+#print axioms update_idle
 end L4Factoidal.DOM.BaseURL

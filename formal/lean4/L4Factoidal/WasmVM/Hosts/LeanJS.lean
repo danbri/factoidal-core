@@ -762,10 +762,12 @@ def startBegin (base : Session) (dom : Arena) (url : String) (lim : Page.Limits 
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage lim.gpuReplay
   let domHost : Page.DomHost := {
     dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url,
-    bases := { about := aboutBase.toArray.map fun u => (0, u) }
-    aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
-    baseEncoding := L4Factoidal.WHATWG.Encoding.getEncoding lim.encoding,
-    basePolicies := L4Factoidal.Net.Xhr.cspOf lim.csp lim.cspReportOnly lim.cspMeta, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
+    bases := {
+      about := aboutBase.toArray.map fun u => (0, u)
+      aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
+      encoding := L4Factoidal.WHATWG.Encoding.getEncoding lim.encoding
+      policies := L4Factoidal.Net.Xhr.cspOf lim.csp lim.cspReportOnly lim.cspMeta }
+    selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
   -- the page's own iframes get browsing contexts before its scripts run (as `Page.Session.startP`)
   let domHost := if domHost.framing && dom.nodes.any Hosts.Dom.frameOwner then
     let d1 := Hosts.Dom.connectFrames domHost #[0]
