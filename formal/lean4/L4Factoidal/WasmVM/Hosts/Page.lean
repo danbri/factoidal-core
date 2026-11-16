@@ -1223,6 +1223,9 @@ def captureOp (h : Host) (node : Nat) (q : String) : Host × String :=
 def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st : StoreOf M) :
     Host × StoreOf M × HostResult :=
   if mo != Hosts.Dom.moduleName then (h, st, .values #[]) else
+  -- origin isolation (issue 518, check C1): a node argument of a document this realm may not
+  -- reach (another origin's frame) is no node; one test of an empty array without frames
+  if !Hosts.Dom.argsReachable h.dom nm (Hosts.Dom.arg args) then (h, st, Hosts.Dom.ret (-2)) else
   let a := Hosts.Dom.arg args
   match nm with
   | "gpu_command" =>
@@ -1388,6 +1391,19 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     let (dom, st, r) := Hosts.Dom.serve mem nm args ds st
     let h := { h with dom, reads }
     ((if readOnlyImports.contains nm then h else h.afterWrite listens neutral), st, r)
+
+/-- Kind: security theorem (origin isolation, issue 518, check C1; lemma L14, first cut).
+Says: a `foafnaut_dom` import, from any script engine and with any arguments, that names a
+node of a document this realm may not reach (`Hosts.Dom.argsReachable`: the node arguments
+`Hosts.Dom.nodeArgs` lists) changes neither the host state nor the guest's memory and answers
+-2. Does not say: that `nodeArgs` lists every argument that names a node (by reading of the
+imports; `node_query` ops 100 to 199 check theirs in `DomOps.nodeArg`), nor anything of
+`web_api` operations or of the node numbers an import answers. -/
+theorem serveExtra_confined (mem : Nat) (nm : String) (args : Array Value) (h : Host) (st : StoreOf M)
+    (hr : Hosts.Dom.argsReachable h.dom nm (Hosts.Dom.arg args) = false) :
+    serveExtra mem Hosts.Dom.moduleName nm args h st = (h, st, Hosts.Dom.ret (-2)) := by
+  unfold serveExtra
+  simp only [bne_self_eq_false, Bool.false_eq_true, ↓reduceIte, hr, Bool.not_false]
 
 /-- Host id `id` (an import index) with its binding. -/
 def serve (mem : Nat) (bs : Array Wasi.Binding) (id : Nat) (args : Array Value) (h : Host) (st : StoreOf M) :
@@ -2053,7 +2069,7 @@ def Session.attachFrame (s : Session) (el : Nat) (doc : Option Arena) : Session 
   let mut h := { h with navigations := navs }
   if let some d := doc then
     let (dom, root) := h.dom.graft d
-    h := { h with dom, frames := (h.frames.filter (·.1 != el)).push (el, root) }
+    h := Hosts.Dom.noteFrameDoc { h with dom, frames := (h.frames.filter (·.1 != el)).push (el, root) } el root
   let s := { s with host := { s.host with dom := h } }
   return s.setLoop (s.loop.queueTask .networking 0 (some { type := "load", target := el }))
 
@@ -2178,6 +2194,8 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
       let dh := { s.host.dom with frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2) }
       pure { s with host := { s.host with dom := dh, reads, time, web } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage lim.gpuReplay } } }
+  -- the documents the embedder gave for frames are recorded for `Hosts.Dom.nodeReachable`
+  let s := { s with host := { s.host with dom := framed.foldl (fun d (el, root) => Hosts.Dom.noteFrameDoc d el root) s.host.dom } }
   return (s.startP url scripts framed aboutBase aboutPolicyURL).runLocal
 
 /-! ## What a turn did -/

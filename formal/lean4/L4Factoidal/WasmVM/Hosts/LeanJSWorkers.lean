@@ -177,6 +177,32 @@ theorem scriptAccepted_nosniff (status : Nat) (contentType options : String)
 /-- The origin of a URL, serialized ("null" for none). -/
 def originOfUrl (u : String) : String := ((WHATWG.URL.parseUrl u).map (·.origin)).getD "null"
 
+/-- HTML §10.2.6.3 (the `Worker` constructor): a worker's script URL has its owner's origin,
+or is a `data:` or `blob:` URL. The prelude refuses the others at once with a `SecurityError`;
+this is the engine's own check, which the page's realm cannot change (origin isolation, check
+C4 of issue 518: a page that replaced `URL.prototype.origin` got past the prelude's). An
+owner with an opaque origin (`"null"`) gets no worker from the network: no URL's origin is
+equal to an opaque one (`originOfUrl` serializes a URL with no tuple origin as `"null"` too,
+so the `"null"` owner is refused explicitly). -/
+def workerUrlAllowed (owner url : String) : Bool :=
+  url.startsWith "data:" || url.startsWith "blob:" || (owner != "null" && originOfUrl url == owner)
+
+/-- Kind: security theorem (origin isolation). Says: a script URL the engine allows for a
+worker is a `data:` or `blob:` URL or has the owner's (tuple) origin. -/
+theorem workerUrlAllowed_origin (owner url : String) (h : workerUrlAllowed owner url = true) :
+    url.startsWith "data:" = true ∨ url.startsWith "blob:" = true ∨ (owner ≠ "null" ∧ originOfUrl url = owner) := by
+  simp only [workerUrlAllowed, Bool.or_eq_true, Bool.and_eq_true, bne_iff_ne, ne_eq, beq_iff_eq] at h
+  rcases h with (h | h) | h
+  · exact .inl h
+  · exact .inr (.inl h)
+  · exact .inr (.inr h)
+
+#guard workerUrlAllowed "http://a.test" "http://a.test/w.js"
+#guard !workerUrlAllowed "http://a.test" "http://b.test/w.js"
+#guard !workerUrlAllowed "http://a.test" "https://a.test/w.js"
+#guard workerUrlAllowed "http://a.test" "data:text/javascript,0" && workerUrlAllowed "null" "blob:null/1"
+#guard !workerUrlAllowed "null" "http://a.test/w.js" && !workerUrlAllowed "null" "about:blank"
+
 /-- An embedder's answer to a fetch (`{id, status, url, contentType, source}`, and
 `contentTypeOptions`, the response's `X-Content-Type-Options` field): the URL it was asked
 for and the script, or `none` for a network error (status 0, a status that is not ok, or a
@@ -444,6 +470,31 @@ def errorHeader (message file : String) (line col : Nat) : String :=
 /-- Stop a worker: no task of it runs again; its heap is let go. -/
 def Worker.stop (w : Worker) : Worker := { w with phase := .closed, s := default, waiting := #[] }
 
+/-- A new worker `id` for script `url`, asked by an owner of origin `owner`: none when the
+workers are `full` or the URL is not one the owner may start a worker from
+(`workerUrlAllowed`); else the worker waits for its script, which is asked of the embedder. -/
+def Workers.create (w : Workers) (full : Bool) (owner : String) (id : Nat) (url name : String) : Option Workers :=
+  if full || !workerUrlAllowed owner url then none else
+  some ({ w with list := w.list.push { id, url, name, s := default }, mains := w.mains.push url }.request url)
+
+/-- Kind: security theorem (origin isolation, check C4 of issue 518). Says: a worker the
+engine makes has a script URL its owner may start a worker from (`workerUrlAllowed`), and the
+URL is the only main script added. Does not say: that `pageAsks` makes workers only through
+`Workers.create` (it does, by reading of the code), nor anything of `importScripts`, whose
+scripts may come from any origin (HTML §10.3.4.1). -/
+theorem Workers.create_allowed (w w' : Workers) (full : Bool) (owner : String) (id : Nat) (url name : String)
+    (h : w.create full owner id url name = some w') :
+    workerUrlAllowed owner url = true ∧ w'.mains = w.mains.push url := by
+  unfold Workers.create at h
+  by_cases hc : (full || !workerUrlAllowed owner url) = true
+  · rw [if_pos hc] at h; cases h
+  · rw [if_neg hc] at h
+    cases h
+    simp only [Bool.or_eq_true, Bool.not_eq_true', not_or, Bool.not_eq_false] at hc
+    refine ⟨hc.2, ?_⟩
+    unfold Workers.request
+    split <;> rfl
+
 /-- The page's asks: new workers (each waits for its script), messages, terminate. -/
 def pageAsks (a : Agents) : Agents := Id.run do
   let wk := a.page.wk
@@ -453,11 +504,9 @@ def pageAsks (a : Agents) : Agents := Id.run do
   for op in wk.ops do
     match op with
     | .create id url name =>
-      if w.list.size ≥ maxWorkers || a.base.isNone then
-        page := deliver page { worker := id, kind := "loaderror" }
-      else
-        w := { w with list := w.list.push { id, url, name, s := default }, mains := w.mains.push url }
-        w := w.request url
+      match w.create (w.list.size ≥ maxWorkers || a.base.isNone) a.page.host.web.net.page.origin id url name with
+      | none => page := deliver page { worker := id, kind := "loaderror" }
+      | some w' => w := w'
     | .post id data =>
       match w.list.findIdx? (·.id == id) with
       | some i =>

@@ -22,32 +22,33 @@ count at either fuel.
 
 ## State of the proof (2026-11-16)
 
-On main after PR #506 (the built-in dispatchers moved out of the block), the block has 126
-functions that take fuel, `coreRun` (the dispatcher the built-ins call) among them.
-`tools/fuelmono-gen.py --split` writes `JS/FuelMonoIH.lean` (the induction hypothesis), one module
-per group of step lemmas (`JS/FuelMonoSteps*.lean`; each imports the one before, so a build
-checks one group per Lean process) and `JS/FuelMonoAll.lean` (`IH_zero`, `IH_all`, corollaries).
-`tools/fuelmono-natives-parts.py` writes the built-ins' lemmas in parts (`JS/FuelMonoNatives_*`).
-None of these modules is in `L4Factoidal.JS`: CI does not build them yet.
+Proved: `IH_all` (`JS/FuelMonoAll.lean`), fuel monotonicity of every function of the block that
+takes fuel (126, `coreRun`, the dispatcher the built-ins call, among them), and its corollaries
+`evalStmts_fuel_mono`, `callV_fuel_mono`, `evalExpr_fuel_mono`. No proof is written by hand: each
+is the walk `fuel_walk` below over a body.
 
-Checked (2026-11-16, Mac, one Lean process per module, footprint under 6 GB), no hand-written
-proof, the walk `fuel_walk`:
+- The built-ins (`JS/FuelMonoNatives.lean`, `JS/FuelMonoNatives_*.lean`, written by
+  `tools/fuelmono-natives.py`): one lemma per definition of namespace `Natives`. `callNative` and
+  `moreNative` are split by family of built-ins in the source (`tools/natives-split.py`, issue
+  531); the lemma of each dispatcher follows from those of its families. As single definitions
+  of 1,487 and 2,078 lines their lemmas did not fit in 6 GB (a quarter of one: 25 minutes and
+  5.6 GB).
+- The block (`tools/fuelmono-gen.py --split`, groups in `tools/fuelmono-groups.txt`):
+  `JS/FuelMonoIH.lean` (the induction hypothesis), one module per group of step lemmas
+  (`JS/FuelMonoSteps*.lean`) and `JS/FuelMonoAll.lean` (`IH_zero`, `IH_all`, the corollaries).
 
-- `natives_iterEach_mono`, `natives_extraNative_mono` (`JS/FuelMonoNatives.lean`, 60 to 170 s,
-  under 0.7 GB);
-- the steps of 117 of the 126 functions (groups S1 to S9 and `vmLoop`, 5 to 53 s each, under
-  0.5 GB), with the two lemmas below assumed (a local check, never committed);
-- the other 9 (`evalExpr`, `evalStmt`, `genRun`, `genEnter`, `genUnwind`, `regexpSymbol`,
-  `stringOrMath`, `callBody`, `defineOwnProp`) passed with the rule set one revision earlier,
-  except `evalExpr`, which passed on the block before the move (23 s) and was still running after
-  30 minutes under the latest rules (capped `split` and `dsimp` attempts on many goals).
+Each module imports the one before, so a build checks them one at a time, one Lean process
+each. On the Mac (2026-11-16) a module takes 2 to 150 s and under 2 GB of memory; the whole
+chain about a quarter of an hour. `lake build JSFuelMono` builds it (not a default target).
 
-Not proved: `natives_moreNative_mono` and `natives_callNative_mono` (bodies of 2,078 and 1,487
-lines). In four parts each (issue #531), a part takes about 25 minutes and 5.6 GB, most of it
-after the tactic (building and checking one large proof term); part 0 of `moreNative` left one
-goal (a match on a number with literal patterns, which `fuel_cases` now takes; not rechecked).
-So `IH_all` is not proved. Next: split those two functions in the source into smaller
-definitions, each with a small lemma (issue #531), and restore `evalExpr`'s speed.
+What kept the cost down, for whoever extends it: the walk runs with info trees off; a call
+closes by the induction hypothesis's field, built directly; `fuel_refl` unifies two sides only
+when they mention the same locals; a definition is opened with `delta`, never `unfold` (which
+first makes equation lemmas by splitting every match of the body: minutes and gigabytes for a
+family of built-ins); `split` has a small budget, raised by name for the one function that needs
+it (`evalExpr`); and a long built-in is cut where its checks end (`Natives.setMethodRun`: 16,000
+steps and 3.9 GB as one arm, 20 s apart). `FUEL_WALK_STATS=<file>` makes the walk report its
+rules' counts and times, slow steps and the goals no rule applies to.
 
 Fuel monotonicity was false twice, both fixed: before `catchJS`: a `for`-`of` whose body throws, over an iterator
 whose `return` nests calls, ended `ok [caught]` at fuels 18 to 59 and `ok [closed, caught]`
@@ -387,14 +388,13 @@ elab "fuel_refl" : tactic => do
     let y := args[args.size - 1]!
     unless x == y do
       -- the two sides differ: worth a (reducible) unification only when they mention the same
-      -- natural-number locals, i.e. no call at fuel `n` on one side against `m` on the other;
-      -- else it fails anyway, after walking both terms (quadratic over a walk)
-      let natFVars (e : Lean.Expr) : MetaM (Array FVarId) := do
-        let fs := (Lean.collectFVars {} e).fvarIds
-        fs.filterM fun f => do return (← whnfR (← f.getType)).isConstOf ``Nat
-      let fx ← natFVars x
-      let fy ← natFVars y
-      unless fx.all (fy.contains ·) && fy.all (fx.contains ·) do throwError "fuel_refl: fuels differ"
+      -- locals. A call at fuel `n` on one side against `m` on the other, a built-in's two
+      -- dispatchers, or a pair of join points, and it fails anyway, after walking both terms
+      -- (quadratic over a walk, gigabytes on a body of a hundred lines)
+      let sx := Lean.collectFVars {} x
+      let sy := Lean.collectFVars {} y
+      unless sx.fvarIds.all (sy.fvarSet.contains ·) && sy.fvarIds.all (sx.fvarSet.contains ·) do
+        throwError "fuel_refl: the sides mention different locals"
       unless ← withReducible (isDefEq x y) do throwError "fuel_refl: sides differ"
     g.assign (mkAppN (mkConst ``Le.refl (t.getAppFn.constLevels!)) #[args[0]!, args[1]!, x])
     replaceMainGoal []
@@ -562,20 +562,20 @@ elab "fuel_match_reduce" : tactic => do
     let y' ← red args[3]!
     replaceMainGoal [← g.replaceTargetDefEq (mkAppN t.getAppFn ((args.set! 2 x').set! 3 y'))]
 
-/-- A rule a later module adds to the walk (`JS/FuelMonoNativeParts.lean`: an arm of another
-part of a built-in's lemma); fails by default. -/
-syntax "fuel_mono_extra" : tactic
-macro_rules
-  | `(tactic| fuel_mono_extra) => `(tactic| fail "no extra rule")
-
 open Lean Meta Elab Tactic in
 /-- Rules proved after the walk is defined (`Le.inRealm` below, the built-ins' lemmas in
 `JS/FuelMonoNatives*.lean`): looked up by name when the walk runs. A name in a macro is resolved
 where the macro is defined, before these exist. -/
 elab "fuel_late_lemmas" : tactic => do
-  let names := [`L4Factoidal.JS.FuelMono.Le.inRealm,
-    `L4Factoidal.JS.FuelMono.natives_iterEach_mono, `L4Factoidal.JS.FuelMono.natives_moreNative_mono,
-    `L4Factoidal.JS.FuelMono.natives_extraNative_mono, `L4Factoidal.JS.FuelMono.natives_callNative_mono]
+  let g ← getMainGoal
+  let t ← instantiateMVars (← g.getType)
+  let args := t.getAppArgs
+  let mut names := [`L4Factoidal.JS.FuelMono.Le.inRealm]
+  -- a built-in `Natives.f core …`: its lemma is `natives_f_mono`
+  if t.isAppOf ``Le && args.size ≥ 4 then
+    if let some (.str p f) := args[2]!.getAppFn.constName? then
+      if p == `L4Factoidal.JS.Natives then
+        names := [Name.mkStr `L4Factoidal.JS.FuelMono ("natives_" ++ f ++ "_mono")]
   let env ← getEnv
   let st ← saveState
   for nm in names do
@@ -589,7 +589,6 @@ elab "fuel_late_lemmas" : tactic => do
 syntax "fuel_mono_pre" : tactic
 macro_rules
   | `(tactic| fuel_mono_pre) => `(tactic| first
-      | fuel_mono_extra
       | with_reducible (cases ‹_ + 1 = Nat.succ _›)
       | fuel_refl
       | with_reducible exact Le.fuel _
@@ -598,53 +597,67 @@ macro_rules
       | with_reducible apply Le.tryCatch
       | (show Out _; set_option maxHeartbeats 400000 in exact ⟨_, rfl⟩))
 
-syntax "fuel_mono_post" : tactic
-macro_rules
-  | `(tactic| fuel_mono_post) => `(tactic| first
-      | with_reducible apply Le.forIn_range
-      | with_reducible apply Le.forIn_list
-      | with_reducible apply Le.forIn_array
-      | with_reducible apply Le.mapM_list
-      | with_reducible apply Le.mapM_array
-      | with_reducible apply Le.foldlM_list
-      | with_reducible apply Le.foldlM_array
-      | with_reducible apply Le.filterMapM_list
-      | with_reducible apply Le.filterM_array
-      | with_reducible apply Le.filterMapM_array
-      | with_reducible apply Le.map
-      | apply Le.discard
-      | (intro _)
-      | (lift_lets; extract_lets; try fuel_jp_pairs)
-      | fuel_hyp
-      | fuel_late_lemmas
-      | fuel_jp
-      | fuel_match_reduce
-      | with_reducible apply Le.ite
-      | with_reducible apply Le.dite
-      | fuel_capped 3000 split
-      | fuel_cases_big
-      | fuel_capped 1000 (dsimp (config := { zeta := false }) only)
-      | fuel_gen_lets
-      | fuel_cases
-      | fuel_capped 1000 dsimp only
-      | (apply Le.of_out; intro _; set_option maxHeartbeats 400000 in exact ⟨_, rfl⟩))
-
-
 open Lean Meta Elab Tactic in
 /-- The walk: `fuel_mono_pre`, then `fuel_call ih` (when an induction hypothesis is named), then
-`fuel_mono_post`, on every goal and the goals each step makes, until none applies (as
+the rules listed below, on every goal and the goals each step makes, until none applies (as
 `repeat'`). It runs with info trees off: the elaborator otherwise keeps the goals of every one of
 the thousands of steps for an editor to show, which took gigabytes on the large bodies
-(`extraNative`: 2.2 GB after 4,000 steps with them, 0.4 GB without). -/
-elab "fuel_walk" ih:(ppSpace ident)? : tactic => withEnableInfoTree false do
+(`extraNative`: 2.2 GB after 4,000 steps with them, 0.4 GB without).
+
+With the environment variable `FUEL_WALK_STATS` set to a file's path, it appends there, as it
+goes, and reports at the end, rule by rule (`fuel_mono_pre`,
+the call, then the rules after it in order), the steps taken and the time spent (successes and
+failures), and the goals left. -/
+elab "fuel_walk" cap:(ppSpace num)? ih:(ppSpace ident)? : tactic => withEnableInfoTree false do
+  -- the budget of a `split` (thousands of heartbeats): small by default, since `split` gives up
+  -- slowly on the matches it cannot take; a function whose match needs it (`evalExpr`: literal
+  -- strings in nested patterns, which no case analysis reaches) names a larger one
+  let splitCap := Syntax.mkNumLit (toString (cap.map (·.getNat) |>.getD 3000))
   let pre ← `(tactic| fuel_mono_pre)
-  let post ← `(tactic| fuel_mono_post)
   let call? ← match ih with
     | some i => some <$> `(tactic| fuel_call $i)
     | none => pure none
-  let tacs := #[pre] ++ (match call? with | some c => #[c] | none => #[]) ++ #[post]
+  -- the rules after a call, in order (the first that applies is taken)
+  let post : Array (TSyntax `tactic) := #[
+    ← `(tactic| with_reducible apply Le.forIn_range),
+    ← `(tactic| with_reducible apply Le.forIn_list),
+    ← `(tactic| with_reducible apply Le.forIn_array),
+    ← `(tactic| with_reducible apply Le.mapM_list),
+    ← `(tactic| with_reducible apply Le.mapM_array),
+    ← `(tactic| with_reducible apply Le.foldlM_list),
+    ← `(tactic| with_reducible apply Le.foldlM_array),
+    ← `(tactic| with_reducible apply Le.filterMapM_list),
+    ← `(tactic| with_reducible apply Le.filterM_array),
+    ← `(tactic| with_reducible apply Le.filterMapM_array),
+    ← `(tactic| with_reducible apply Le.map),
+    ← `(tactic| apply Le.discard),
+    ← `(tactic| intro _),
+    ← `(tactic| (lift_lets; extract_lets; try fuel_jp_pairs)),
+    ← `(tactic| fuel_hyp),
+    ← `(tactic| fuel_late_lemmas),
+    ← `(tactic| fuel_jp),
+    ← `(tactic| fuel_match_reduce),
+    ← `(tactic| with_reducible apply Le.ite),
+    ← `(tactic| with_reducible apply Le.dite),
+    ← `(tactic| fuel_capped $splitCap split),
+    ← `(tactic| fuel_cases_big),
+    ← `(tactic| fuel_capped 1000 (dsimp (config := { zeta := false }) only)),
+    ← `(tactic| fuel_gen_lets),
+    ← `(tactic| fuel_cases),
+    ← `(tactic| fuel_capped 1000 dsimp only),
+    ← `(tactic| (apply Le.of_out; intro _; set_option maxHeartbeats 400000 in exact ⟨_, rfl⟩))]
+  let tacs := #[pre] ++ (match call? with | some c => #[c] | none => #[]) ++ post
+  -- (a file: Lean keeps a tactic's standard streams until its command ends)
+  let statsFile ← IO.getEnv "FUEL_WALK_STATS"
+  let stats := statsFile.isSome
+  let say (s : String) : IO Unit :=
+    IO.FS.withFile (statsFile.getD "/dev/null") .append fun h => h.putStrLn s
+  let mut okN : Array Nat := Array.replicate tacs.size 0
+  let mut ms : Array Nat := Array.replicate tacs.size 0
   let mut todo := (← getGoals)
   let mut left : Array MVarId := #[]
+  let mut dumps := 0
+  if stats then say "fuel_walk: start"
   while true do
     match todo with
     | [] => break
@@ -653,18 +666,38 @@ elab "fuel_walk" ih:(ppSpace ident)? : tactic => withEnableInfoTree false do
         todo := rest
         continue
       let mut next : Option (List MVarId) := none
-      for tac in tacs do
+      for i in [0:tacs.size] do
         if next.isSome then continue
         setGoals [g]
+        let t0 ← IO.monoMsNow
         try
-          evalTactic tac
+          evalTactic tacs[i]!
           next := some (← getGoals)
+          okN := okN.modify i (· + 1)
         catch _ => pure ()
+        let dt := (← IO.monoMsNow) - t0
+        ms := ms.modify i (· + dt)
+        if stats && dt ≥ 300 then
+          say s!"fuel_walk: rule {i} took {dt} ms ({if next.isSome then "applied" else "failed"}) after {okN.foldl (· + ·) 0} steps"
+          if dumps < 6 then
+            dumps := dumps + 1
+            let txt := toString (← g.withContext (Meta.ppExpr (← instantiateMVars (← g.getType))))
+            say s!"fuel_walk: its goal: {txt.take 6000}"
+      if stats then
+        let total := okN.foldl (· + ·) 0
+        if total % 500 == 0 then
+          say s!"fuel_walk: {total} steps {okN}, ms {ms}, goals waiting {todo.length}"
       match next with
       | some gs => todo := gs ++ rest
       | none =>
+        if stats && dumps < 6 then
+          dumps := dumps + 1
+          let txt := toString (← g.withContext (Meta.ppGoal g))
+          say s!"fuel_walk: no rule applies to: {txt.take 5000}"
         left := left.push g
         todo := rest
+  if stats then
+    logInfo m!"fuel_walk: steps {okN}, ms {ms}, goals left {left.size}"
   setGoals left.toList
 
 /-- A call that runs in another realm (`inRealm`: switch, run, switch back on a throw too). -/
@@ -672,5 +705,17 @@ theorem Le.inRealm (k : Nat) {x1 x2 : JSM H α} (hx : Le x1 x2) :
     Le (L4Factoidal.JS.inRealm k x1) (L4Factoidal.JS.inRealm k x2) := by
   unfold L4Factoidal.JS.inRealm
   fuel_walk
+
+/-- At fuel 0 `iterCloseAbrupt` is out of fuel, as every function of the block is. It threw its
+completion there (with no call), so a run could end differently at fuel 0 than at fuel 1. -/
+theorem iterCloseAbrupt_zero (it : Value) (a : Abrupt) :
+    iterCloseAbrupt (H := H) 0 it a = throw (.halt "fuel") :=
+  (iterCloseAbrupt.eq_def 0 it a).trans rfl
+
+/-- So, at fuel 0, it is below itself at every fuel. -/
+theorem iterCloseAbrupt_zero_le (m : Nat) (it : Value) (a : Abrupt) :
+    Le (iterCloseAbrupt (H := H) 0 it a) (iterCloseAbrupt m it a) := by
+  rw [iterCloseAbrupt_zero]
+  exact Le.fuel _
 
 end L4Factoidal.JS.FuelMono

@@ -1,9 +1,10 @@
-import L4Factoidal.JS.FuelMonoStepsBDefineOwnProp
+import L4Factoidal.JS.FuelMonoStepsBEvalExpr
 
 namespace L4Factoidal.JS.FuelMono
 open L4Factoidal.JS
 
-/-- Out of fuel at 0: every function of the block but `iterResult`, which uses no fuel. -/
+/-- Out of fuel at 0: every function of the block but `iterResult`, which uses no fuel
+(`vmLoop` puts the registers back in the heap first). -/
 theorem IH_zero {H : Type} (m : Nat) : IH H 0 m where
   h_getV := fun a0 a1 => Le.unfold (getV.eq_def _ _ _) rfl (Le.fuel _)
   h_getProto := fun a0 a1 a2 => Le.unfold (getProto.eq_def _ _ _ _) rfl (Le.fuel _)
@@ -99,7 +100,7 @@ theorem IH_zero {H : Type} (m : Nat) : IH H 0 m where
   h_vmGlobalMiss := fun a0 a1 a2 a3 => Le.unfold (vmGlobalMiss.eq_def _ _ _ _ _) rfl (Le.fuel _)
   h_vmUnary := fun a0 a1 => Le.unfold (vmUnary.eq_def _ _ _) rfl (Le.fuel _)
   h_vmGetIndex := fun a0 a1 => Le.unfold (vmGetIndex.eq_def _ _ _) rfl (Le.fuel _)
-  h_vmLoop := fun a0 a1 a2 a3 a4 a5 a6 => Le.unfold (vmLoop.eq_def _ _ _ _ _ _ _ _) rfl (Le.fuel _)
+  h_vmLoop := fun a0 a1 a2 a3 a4 a5 a6 => Le.unfold (vmLoop.eq_def _ _ _ _ _ _ _ _) rfl (Le.of_out fun _ => ⟨_, rfl⟩)
   h_vmEnter := fun a0 a1 a2 a3 a4 => Le.unfold (vmEnter.eq_def _ _ _ _ _ _) rfl (Le.fuel _)
   h_genericPush := fun a0 a1 => Le.unfold (genericPush.eq_def _ _ _) rfl (Le.fuel _)
   h_arraySpliceGeneric := fun a0 a1 => Le.unfold (arraySpliceGeneric.eq_def _ _ _) rfl (Le.fuel _)
@@ -286,5 +287,10 @@ theorem evalExpr_fuel_mono {H : Type} {n m : Nat} (h : n ≤ m) (ctx : Ctx) (e :
     (s : HeapOf H) (hn : ¬ Out (evalExpr n ctx e s)) :
     evalExpr m ctx e s = evalExpr n ctx e s :=
   ((IH_all n m h).h_evalExpr ctx e).eq_of_not_out s hn
+
+#print axioms IH_all
+#print axioms evalStmts_fuel_mono
+#print axioms callV_fuel_mono
+#print axioms evalExpr_fuel_mono
 
 end L4Factoidal.JS.FuelMono

@@ -144,11 +144,74 @@ def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except St
   | _,_,_ => return (max 0 (width.getD 300),max 0 (height.getD 150))
 
 
+/-- The offsets of colour stops on a gradient line `length` px long (CSS Images 3 §3.5.1):
+a percentage is of the line, a length of px; with none, the first is 0, the last 1, and
+those between are spaced evenly between their neighbours that have one. An offset before an
+earlier one is moved up to it (`Scene.normalizeStops` does the same). -/
+def stopOffsets (length : Float) (stops : List (Option (Float × Bool))) : List Float := Id.run do
+  let given := stops.toArray.map fun p => p.map fun (v,percent) => if percent then v else if length > 0 then v/length else 0
+  let n := given.size
+  if n == 0 then return []
+  let mut out := given
+  if out[0]!.isNone then out := out.set! 0 (some 0)
+  if out[n-1]!.isNone then out := out.set! (n-1) (some 1)
+  -- each run of stops with no position, between two that have one
+  let mut i := 1
+  for _ in [0:n] do
+    if i ≥ n then break
+    if out[i]!.isSome then i := i+1; continue
+    let start := i-1
+    let mut stop := i
+    for _ in [0:n] do
+      if stop < n && out[stop]!.isNone then stop := stop+1
+    let a := (out[start]!).getD 0
+    let b := (out[stop]!).getD 1
+    for k in [i:stop] do
+      out := out.set! k (some (a+(b-a)*Float.ofNat (k-start)/Float.ofNat (stop-start)))
+    i := stop+1
+  let mut last := 0
+  let mut result : List Float := []
+  for o in out do
+    let v := max last (o.getD last)
+    result := result ++ [v]
+    last := v
+  return result
+
+/-- The paint of a `linear-gradient()` over a box at `(x,y)`, `w` by `h` (CSS Images 3
+§3.1.1): the line through the box's centre in the gradient's direction, as long as the
+box's extent along it, so that the corners take the first and last colours. -/
+def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
+  let (dx,dy) := match g.corner with
+    | some (cx,cy) =>
+      -- §3.1.1: perpendicular to the diagonal between the two corners beside the named one
+      let vx := (if cx < 0 then -h else if cx > 0 then h else 0)
+      let vy := (if cy < 0 then -w else if cy > 0 then w else 0)
+      let n := Float.sqrt (vx*vx+vy*vy)
+      if n > 0 then (vx/n,vy/n) else (0,1)
+    | none =>
+      -- the four sides exactly (sin and cos of a multiple of 90 degrees are not exact in Float)
+      let turn := g.angle-360*(g.angle/360).floor
+      if turn == 0 then (0,-1) else if turn == 90 then (1,0) else if turn == 180 then (0,1)
+      else if turn == 270 then (-1,0) else
+      let a := g.angle*3.141592653589793/180
+      (Float.sin a,-Float.cos a)
+  let length := (w*dx).abs+(h*dy).abs
+  let cx := x+w/2
+  let cy := y+h/2
+  let offsets := stopOffsets length (g.stops.map (·.2.2))
+  let stops := (g.stops.zip offsets).map fun ((c,opacity,_),offset) => ({offset,color := c,opacity} : GradientStop)
+  .gradient {shape := .linear (cx-dx*length/2) (cy-dy*length/2) (cx+dx*length/2) (cy+dy*length/2),
+             boundingBoxUnits := false,stops}
+
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  match s.background with
-  | none => #[]
-  | some c => if !s.visible || w <= 0 || h <= 0 then #[] else
-    #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  if !s.visible || w <= 0 || h <= 0 then #[] else
+  let colour := match s.background with
+    | none => #[]
+    | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  -- CSS Backgrounds 3 §3.2: the image over the colour
+  match s.backgroundGradient with
+  | none => colour
+  | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
 
 /-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
 agent): the colour moved 60% of the way to white, and 60% of the colour. -/
@@ -1189,7 +1252,7 @@ def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Ex
 bullet: the one that `list-style-type` names, or by default the disc, circle or square of
 a list nested one, two or more deep (HTML §15.3.7). A font with no glyph for the bullet
 (`FontProfile.admits`) gets a star. -/
-private def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Nat) : String := Id.run do
+def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Nat) : String := Id.run do
   if style == .none then return ""
   let some parent := (dom.get id).parent | return "* "
   if style != .number && !(style == .auto && (dom.get parent).lname == "ol") then
@@ -1205,7 +1268,9 @@ private def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) 
       | .circle => '◦'
       | .square => '▪'
       | _ => if depth >= 3 then '▪' else if depth == 2 then '◦' else '•'
-    return if font.admits bullet.toNat then s!"{bullet} " else "* "
+    -- A shaped font draws the bullet, or a fallback face does (`SfntProfile`); only a
+    -- fixed font without it shows `*`.
+    return if font.admits bullet.toNat || font.shapedWord.isSome then s!"{bullet} " else "* "
   let mut number := 1
   for kid in (dom.get parent).kids do
     if kid == id then break
@@ -1242,6 +1307,104 @@ inductive Task where
 
 /-- The right edge of what a line layout placed, from its left edge `0`. -/
 private def lineExtent (r : Result) : Float := r.boxes.foldl (fun m b => max m (b.x+b.width)) 0
+
+/-! ### Multi-column layout (CSS Multi-column Layout 1)
+
+A block container with `column-count` or `column-width` lays its contents out in one column
+of the column width; the column is then cut between in-flow children into as many pieces
+as there are columns, balanced (§7.1: `column-fill: balance`), and the pieces are set side
+by side, `column-gap` apart. A child is never cut (most multi-column pages hold lists and
+sections, often with `break-inside: avoid`); a column with one tall child is that tall.
+The children of each piece are then laid out again in their column, so each is painted
+once (a margin at the top of a column is kept, where the standard truncates it). A
+multi-column box costs two layouts of its contents; a box with neither property pays one
+test. -/
+
+/-- §3.4: the number of columns and their width in a content box `avail` wide, from
+`column-count`, `column-width` and the gap; none for one column (not a multi-column box). -/
+def columnCountFor (count : Option Nat) (width : Option Float) (gap avail : Float) : Nat :=
+  let fit := fun (w : Float) => if w+gap <= 0 then 1 else max 1 ((avail+gap)/(w+gap)).floor.toUInt64.toNat
+  let n : Nat := match count,width with
+    | some c,none => c
+    | none,some w => fit w
+    | some c,some w => min c (fit w)
+    | none,none => 1
+  min n 1000
+
+def columnPlan (count : Option Nat) (width : Option Float) (gap avail : Float) : Option (Nat × Float) :=
+  let n := columnCountFor count width gap avail
+  if n ≤ 1 then none else some (n,max 0 ((avail+gap)/Float.ofNat n-gap))
+
+/-- The column count is at least two and at most 1000 when there is a plan: the work of
+a multi-column layout is bounded by it. -/
+theorem columnPlan_count (count : Option Nat) (width : Option Float) (gap avail : Float) (n : Nat) (w : Float)
+    (h : columnPlan count width gap avail = some (n,w)) : 2 ≤ n ∧ n ≤ 1000 := by
+  have hle : columnCountFor count width gap avail ≤ 1000 := Nat.min_le_right _ _
+  unfold columnPlan at h
+  by_cases hn : columnCountFor count width gap avail ≤ 1
+  · simp [hn] at h
+  · simp only [hn, if_false, Option.some.injEq, Prod.mk.injEq] at h
+    omega
+
+/-- The children that begin a column after the first (greedy, §7.1), as indices of `spans`
+(the children's `(top,bottom)` offsets in order) for a column height `h`: a child that ends
+past its column's start plus `h` begins the next column, unless it is the column's first. -/
+def columnFirsts (spans : Array (Float × Float)) (h : Float) : Array Nat := Id.run do
+  let mut firsts : Array Nat := #[]
+  let mut start : Float := 0
+  for k in [0:spans.size] do
+    let (top,bottom) := spans[k]!
+    if k > 0 && bottom-start > h then
+      firsts := firsts.push k
+      start := top
+  return firsts
+
+/-- The columns that a cut at `h` makes (greedy, §7.1): the start of each column, as offsets
+from the top of the content, from the children's spans `(top,bottom)` in order. A child that
+ends past the column's start plus `h` begins the next column, unless it is the column's
+first. -/
+def columnStarts (spans : Array (Float × Float)) (h : Float) : Array Float :=
+  #[0] ++ (columnFirsts spans h).map fun k => (spans[k]!).1
+
+/-- The least column height (within 1/64 px) at which the children fit `count` columns, from
+the height of the content over `count` up to all of it: a bisection of 24 steps. -/
+def balancedHeight (spans : Array (Float × Float)) (total : Float) (count : Nat) : Float := Id.run do
+  let mut lo := total/Float.ofNat (max 1 count)
+  let mut hi := total
+  if (columnStarts spans lo).size ≤ count then return lo
+  for _ in [0:24] do
+    if hi-lo < 1/64 then break
+    let mid := (lo+hi)/2
+    if (columnStarts spans mid).size ≤ count then hi := mid else lo := mid
+  return hi
+
+/-- The children of each column: `single` is the contents laid out in one column at `y`; the
+in-flow children with a box are the places it may be cut (`balancedHeight`, `columnStarts`).
+Each child, with the text and the boxless children before the next cut, goes to one column,
+in order. One group: nothing to cut. -/
+def columnKids (single : Result) (kids : Array Nat) (count : Nat) (y : Float) : Array (Array Nat) := Id.run do
+  -- the first box of each source: a child's own box comes before those inside it
+  let first := single.boxes.foldl (fun (m : Std.TreeMap Nat Box) b => if m.contains b.source then m else m.insert b.source b) {}
+  let mut spans : Array (Float × Float) := #[]
+  let mut at_ : Array Nat := #[]
+  for i in [0:kids.size] do
+    if let some b := first.get? kids[i]! then
+      spans := spans.push (b.y-y,b.y+b.height-y)
+      at_ := at_.push i
+  let h := balancedHeight spans single.height count
+  let cuts := ((columnFirsts spans h).extract 0 (count-1)).map (at_[·]!)
+  let mut groups : Array (Array Nat) := #[#[]]
+  for i in [0:kids.size] do
+    if cuts.contains i then groups := groups.push #[]
+    groups := groups.modify (groups.size-1) (·.push kids[i]!)
+  return groups
+
+/-- The used `column-gap` of a multi-column container: `normal` is 1em (§5.1). -/
+def columnGapPx (s : Computed) (width : Float) : Float :=
+  match s.align.columnGap with
+  | .px v => max 0 v
+  | .percent p => max 0 (p*width)
+  | _ => s.fontSize
 
 /-- A result moved down by `dy`: its paint in a translated group, its boxes and glyphs moved. -/
 private def Result.shiftY (r : Result) (dy : Float) : Result :=
@@ -1408,6 +1571,32 @@ theorem intrinsicLimits_min (s : Computed) (w m : Float) (lo : s.minWidth = .px 
   simp only [lo]
   exact ⟨_, rfl⟩
 
+/-- A `width` or `max-width` that is a percentage (CSS Sizing 3 §5.2.2). -/
+def compressibleWidth (s : Computed) : Bool :=
+  (match s.width with | .percent _ => true | _ => false) || (match s.maxWidth with | .percent _ => true | _ => false)
+
+/-- CSS Sizing 3 §5.2.2: a replaced element whose `width` or `max-width` is a percentage is
+compressible. Its percentage is of a width that depends on its own, so its min-content
+contribution is its size against zero: its `min-width` when that is a length, else 0, with
+its edges. In a line (an `img` inside a block, as most pages have it) the atom of the
+picture is that wide for the min-content width; its max-content width keeps its natural
+size. Any other item is as it was. -/
+def compressInline : Inline → Inline
+  | .replaced id s ow oh nodes =>
+    if compressibleWidth s then .replaced id s (min ow (intrinsicLimits s 0+horizontalEdges s)) oh nodes
+    else .replaced id s ow oh nodes
+  | other => other
+
+/-- A replaced atom whose `width` and `max-width` are not percentages is not changed. -/
+theorem compressInline_fixed (id : Nat) (s : Computed) (ow oh : Float) (nodes : List Node)
+    (h : compressibleWidth s = false) :
+    compressInline (.replaced id s ow oh nodes) = .replaced id s ow oh nodes := by
+  simp [compressInline, h]
+
+/-- Words, spaces and every item that is not a replaced atom are not changed. -/
+theorem compressInline_word (id : Nat) (s : Computed) (text : String) (start : Nat) :
+    compressInline (.word id s text start) = .word id s text start := rfl
+
 /-- Min-content and max-content widths (CSS Sizing 3 §5), margins included for a box.
 Text is measured with `inlineLayout` itself: with no room, every break opportunity is
 taken (min-content); with unbounded room, none is (max-content). A table's widths are
@@ -1419,7 +1608,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
   | fuel+1, task => do
     let inlineWidths (items : Array Inline) : Except String (Float × Float) := do
       if items.isEmpty then return (0,0)
-      let narrow ← inlineLayout font (← atomize font items 0) 0 0 0
+      let narrow ← inlineLayout font (← atomize font (items.map compressInline) 0) 0 0 0
       let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9
       return (lineExtent narrow,lineExtent wide)
     let flowWidths (container : Nat) (kids : Array Nat) (lead : Array Inline) : Except String (Float × Float) := do
@@ -2109,7 +2298,27 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         else if s.display.isGrid then
           gridLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, source := some id, measure}
-        else flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
+        else if s.columnCount.isNone && s.columnWidth.isNone then
+          flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
+        else
+          let gap := columnGapPx s width
+          match columnPlan s.columnCount s.columnWidth gap width with
+          | none => flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
+          | some (count,cw) => do
+            -- a multi-column container is the root of its own block formatting context: its
+            -- contents in one column first, then each column's children laid out in their place
+            let single ← flow s id n.kids lead innerX innerY cw 0 #[] none
+            let single := {single with height := max single.height (floatsHeight single.floats innerY), floats := #[]}
+            let groups := columnKids single n.kids count innerY
+            if groups.size ≤ 1 then pure single else do
+            let mut out : Result := {work := single.work}
+            for i in [0:groups.size] do
+              let r ← flow s id groups[i]! (if i == 0 then lead else #[]) (innerX+Float.ofNat i*(cw+gap)) innerY cw 0 #[] none
+              out := {out with nodes := out.nodes ++ r.nodes, boxes := out.boxes ++ r.boxes, runs := out.runs ++ r.runs,
+                               pending := out.pending ++ r.pending, work := out.work+r.work,
+                               height := max out.height (max r.height (floatsHeight r.floats innerY)),
+                               baseline := if i == 0 then r.baseline else out.baseline, lastBaseline := r.lastBaseline}
+            pure out
       -- CSS 2.1 §10.6.7: a box that is the root of its block formatting context (one laid
       -- out with no floats around it) is as high as its floats; one in a context with floats
       -- hands them on to the flow after it.

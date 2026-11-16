@@ -266,9 +266,10 @@ bash sweeps.sh [--only NAME]... [--wasm-only]
   start check of `build-executables.sh`. Run `test.sh` and `sweeps.sh` locally before you land an
   engine or window change.
 - `build.yml` also runs `test.sh --skip-build` in the job `foafnaut-host-tests` (Linux) as soon as
-  `foafnaut-engines` is done, on its Wasm engines: about 45 minutes after dispatch, not after the
-  macOS bundle (2.5 hours). Checks that need `web-render-native`, `libweb-render.dylib` or macOS
-  print `NOT RUN` there and still run in the macOS bundle job.
+  `foafnaut-engines` is done, on its Wasm engines: about 35 minutes after dispatch, not after the
+  macOS bundle. Checks that need `web-render-native`, `libweb-render.dylib` or macOS
+  print `NOT RUN` there and still run in the macOS bundle job. Jobs, caches, cold builds and the
+  per-run timing record: [`ci-caching.md`](ci-caching.md).
 - Hub checks, from the repository root, Chrome needed: `node labs/demos/foafnaut/hub_links_check.mjs`
   (before every Pages deploy; `--only published`, `--runtime DIR`), and the other
   `LAB/hub_*_check.mjs` files. See `docs/web/hub/README.md`.
@@ -372,6 +373,11 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   --branch v0.18.0 https://github.com/quickjs-ng/quickjs`, then `cc -O2 -D_GNU_SOURCE
   -funsigned-char -I. quickjs.c libregexp.c libunicode.c dtoa.c quickjs-libc.c qjs.c
   gen/repl.c gen/standalone.c -lm -lpthread -ldl -o qjs`) and `node --jitless`.
+- What BubblePopJS allocates, by constructor shape and by function, its reference-count operations and
+  copied bytes, with no Lean build: `labs/demos/foafnaut/bubblepop_perf/alloc/build-count.sh` makes a
+  counting `leanjs` from the generated C; `leancount.py` and `opcount.py` read the counts (per run, per
+  JavaScript operation); `sampleprof.py` reads a macOS `sample` profile by memory-management class.
+  Baseline and method: `docs/bubblepopjs-heap.md`.
 - Literals and conversions that the generated C evaluates at each call:
   `python3 tools/lean-literal-parse-audit.py` (a `Nat` literal of 2^32 or more read from text),
   `--float-literals` (a `Float` literal left in a function body, with its case) and
