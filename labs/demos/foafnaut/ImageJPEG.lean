@@ -15,11 +15,11 @@ namespace NativeImage
 
 open L4Factoidal.Rendering (Bitmap)
 
-/-- Limit on the coefficients of one image, over its components. Sampling factors
-    pad a component to whole MCUs, so a narrow image needs more than its pixels: the
-    worst case under `maxImagePixels` is 1 by 65535 at 4 by 4 sampling, which is
-    this number (32*65536*3). The store takes 8 bytes for each coefficient. -/
-def maxJpegCoefficients : Nat := 6291456
+/-- Limit on the coefficients of one image, over its components: 64 MiB of store, 8 bytes
+    each. A 4 Mpx photograph at 2 by 2 chroma sampling (most cameras) needs 6.3 million with
+    its MCU padding; a narrow image, whose sampling pads it to whole MCUs, can ask for more
+    than its pixels, and past this number it is refused before the store is made. -/
+def maxJpegCoefficients : Nat := 8388608
 /-- Limit on the scans of one image. A progressive scan visits every block. -/
 def maxJpegScans : Nat := 64
 
@@ -487,6 +487,15 @@ private def componentPlane (c : FloatArray) (comp : Component) (quant : Array Fl
           plane := plane.set! ((by_*8+y)*stride+bx*8+x) (sum+128).round.toUInt8
   return plane
 
+/-! The YCbCr to RGB factors of JFIF §7, as constants of the module. Written as literals in
+the loop over pixels they were made again for each pixel: a decimal literal is
+`Float.ofScientific`, which works on big numbers, and a 1000 by 1000 photograph took 7 s to
+assemble, most of it there (sampled 2026-11-16). As constants they are made once. -/
+@[noinline] private def crToR : Float := 1.402
+@[noinline] private def cbToG : Float := 0.344136
+@[noinline] private def crToG : Float := 0.714136
+@[noinline] private def cbToB : Float := 1.772
+
 /-- Upsample by repetition and convert to RGB (JFIF §7, Adobe APP14). -/
 private def assemble (s : State) : Bitmap := Id.run do
   let f := s.frame
@@ -495,6 +504,7 @@ private def assemble (s : State) : Bitmap := Id.run do
   let ids := f.components.map (·.id)
   let rgb := s.adobeTransform == some 0 || ids == #[82,71,66]
   let grey := f.components.size == 1
+  let (kr,kgb,kgr,kb) := (crToR,cbToG,crToG,cbToB)
   for y in [0:f.height] do
     for x in [0:f.width] do
       let value := fun (i : Nat) =>
@@ -508,7 +518,7 @@ private def assemble (s : State) : Bitmap := Id.run do
           let luma := value 0
           let cb := value 1-128
           let cr := value 2-128
-          (luma+1.402*cr,luma-0.344136*cb-0.714136*cr,luma+1.772*cb)
+          (luma+kr*cr,luma-kgb*cb-kgr*cr,luma+kb*cb)
       out := (((out.set! at_ r.round.toUInt8).set! (at_+1) g.round.toUInt8).set! (at_+2) b.round.toUInt8).set! (at_+3) 255
   return {width:=f.width,height:=f.height,rgba:=out}
 

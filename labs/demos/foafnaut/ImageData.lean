@@ -257,6 +257,20 @@ def Store.addBytes (store : Store) (used : Nat) (href : String) (bytes : ByteArr
         | some (w,h) => store.insert (naturalKey href) (.ok (store.size,{width := w, height := h, rgba := ByteArray.empty}))
       (store,used+size)
 
+/-- The pixels a store holds stay within the document's budget: adding an image never takes
+them past `maxDocumentPixels`, whatever the image and the factor. With the limit of one
+decoded image above the budget, this is what bounds the pictures a page holds. -/
+theorem Store.addBytes_within (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat)
+    (vector : VectorReader) (h : used ≤ maxDocumentPixels) :
+    (store.addBytes used href bytes k vector).2 ≤ maxDocumentPixels := by
+  unfold Store.addBytes
+  split
+  · exact h
+  · dsimp only
+    split
+    · exact h
+    · rename_i hle; exact Nat.le_of_not_lt hle
+
 /-- Add one `data:` reference, held at factor `k`. -/
 def Store.addData (store : Store) (used : Nat) (href : String) (k : Nat := 1)
     (vector : VectorReader := fun _ => none) : Store × Nat :=

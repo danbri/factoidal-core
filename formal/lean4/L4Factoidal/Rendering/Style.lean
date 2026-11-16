@@ -93,6 +93,17 @@ inductive UnicodeBidi where | normal | embed | isolate | bidiOverride | isolateO
 /-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
 inductive BorderStyle where | none | solid | inset | outset
   deriving Repr, BEq
+/-- A `linear-gradient()` background image (CSS Images 3 §3.1): the direction as an angle in
+degrees (0 is up, 90 is right; `to bottom`, the default, is 180), or a corner (`to top
+right`: x and y each -1, 0 or 1), whose angle depends on the box; and the colour stops, each
+a colour, its opacity and its position when it has one (px, or a fraction of the line when
+`percent`). -/
+structure BackgroundGradient where
+  angle : Float := 180
+  corner : Option (Int × Int) := none
+  stops : List (Color × Float × Option (Float × Bool)) := []
+  deriving Repr
+
 structure Computed where
   display : Display := .inline
   width : Length := .auto
@@ -101,6 +112,9 @@ structure Computed where
   padding : Edges := {}
   color : Color := ⟨0,0,0⟩
   background : Option Color := none
+  /-- `background-image: linear-gradient(...)`, painted over the colour; other images are
+  not drawn. -/
+  backgroundGradient : Option BackgroundGradient := none
   fontSize : Float := 16
   fontFamily : String := "monospace"
   lineHeight : Float := 19.2
@@ -495,6 +509,24 @@ def fontLonghands (value : String) (important : Bool) : List Declaration :=
       (ls.lookup n).map fun v => (⟨n, v, important⟩ : Declaration)
   | none => []
 
+/-- The text inside the first `linear-gradient(` ... `)` of a value, to its matching
+parenthesis; none when the value has none. -/
+def gradientArgs (value : String) : Option String := do
+  let lower := value.toLower
+  let parts := lower.splitOn "linear-gradient("
+  -- `repeating-linear-gradient` is not read: its stops repeat
+  if parts.length < 2 || (parts.head!.endsWith "repeating-") then none
+  let rest := (parts.drop 1).foldl (fun acc p => if acc.isEmpty then p else acc ++ "linear-gradient(" ++ p) ""
+  let mut depth := 1
+  let mut out := ""
+  for c in rest.toList do
+    if c == '(' then depth := depth+1
+    if c == ')' then
+      depth := depth-1
+      if depth == 0 then return out
+    out := out.push c
+  none
+
 /-- The declarations of this profile for declarations as written (`SheetReader.Decl`):
 side shorthands as their longhands (`expandSides`), `background` as the colour, the layout
 shorthands (`flex`, `flex-flow`, `gap`, `place-*`) as their longhands, so the cascade
@@ -505,7 +537,10 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     let whole : Declaration := ⟨key,d.value,d.important⟩
     -- `background` is also its colour, `background-color`, which this profile reads (`apply`,
     -- `tableDeclaration`); the shorthand stays for getComputedStyle's other longhands
-    if key == "background" then (⟨"background-color",d.value,d.important⟩ : Declaration) :: whole :: acc else
+    -- and its image, `none` unless it is a `linear-gradient()` (the one image drawn)
+    if key == "background" then
+      let image := if (gradientArgs d.value).isSome then d.value else "none"
+      (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
@@ -953,6 +988,67 @@ private def limit (source : String) : Except String Length := do
   | .px n => if n < 0 then throw "negative CSS size limit" else return .px n
   | .percent n => if n < 0 then throw "negative CSS size limit" else return .percent n
   | other => return other
+/-- Text split at `sep` outside parentheses, each piece trimmed, empty pieces kept. -/
+private def topLevelSplit (sep : Char) (inner : String) : List String := Id.run do
+  let mut depth := 0
+  let mut cur := ""
+  let mut out : Array String := #[]
+  for c in inner.toList do
+    if c == '(' then depth := depth+1
+    if c == ')' then depth := depth-1
+    if c == sep && depth == 0 then
+      out := out.push (trim cur)
+      cur := ""
+    else cur := cur.push c
+  return (out.push (trim cur)).toList
+/-- The arguments of a function at its top level, split at commas outside parentheses. -/
+private def topLevelArgs (inner : String) : List String := topLevelSplit ',' inner
+
+/-- CSS Images 3 §3.1.1: a `linear-gradient()` from its arguments. The direction is an
+angle (`deg`, `grad`, `rad`, `turn`) or `to` a side or corner; each stop a colour with
+at most two positions (px or %). Two stops at least. -/
+def parseLinearGradient (args : String) : Except String BackgroundGradient := do
+  let parts := topLevelArgs args
+  let some first := parts.head? | throw "linear-gradient has no arguments"
+  let words := (first.splitOn " ").filter (· != "")
+  let angleOf := fun (w : String) => do
+    let unit := fun (u : String) (k : Float) => if w.endsWith u then some ((number (w.dropEnd u.length).toString).toOption.map (·*k)) else none
+    match unit "deg" 1 <|> unit "grad" 0.9 <|> unit "turn" 360 <|> unit "rad" (180/3.141592653589793) with
+    | some (some a) => some a
+    | _ => if w == "0" then some 0 else none
+  let (angle,corner,stopParts) ←
+    if words.head? == some "to" then
+      let x : Int := if words.contains "left" then -1 else if words.contains "right" then 1 else 0
+      let y : Int := if words.contains "top" then -1 else if words.contains "bottom" then 1 else 0
+      if words.length < 2 || words.length > 3 || (x == 0 && y == 0) then throw "linear-gradient direction is not valid"
+      if x != 0 && y != 0 then pure (180,some (x,y),parts.drop 1)
+      else pure (if y == -1 then 0 else if x == 1 then 90 else if y == 1 then 180 else 270,none,parts.drop 1)
+    else match words with
+      | [w] => match angleOf w with
+        | some a => pure (a,none,parts.drop 1)
+        | none => pure (180,none,parts)
+      | _ => pure (180,none,parts)
+  let mut stops : List (Color × Float × Option (Float × Bool)) := []
+  for part in stopParts do
+    -- the colour is the part before its positions (a colour function keeps its spaces)
+    let pieces := (topLevelSplit ' ' part).filter (· != "")
+    let colourText := pieces.head?.getD ""
+    let positions := pieces.drop 1
+    let (c,opacity) ← if colourText.toLower == "transparent" then pure (⟨0,0,0⟩,0)
+      else match color colourText with
+        | .ok c => pure (c,1)
+        | .error _ => throw s!"linear-gradient stop is not a colour: {colourText}"
+    let position := fun (p : String) : Except String (Float × Bool) =>
+      if p.endsWith "%" then do pure ((← number (p.dropEnd 1).toString)/100,true)
+      else do pure (← pixels p,false)
+    match positions with
+    | [] => stops := stops ++ [(c,opacity,none)]
+    | [p] => stops := stops ++ [(c,opacity,some (← position p))]
+    | [p,q] => stops := stops ++ [(c,opacity,some (← position p)),(c,opacity,some (← position q))]
+    | _ => throw "linear-gradient stop has more than two positions"
+  if stops.length < 2 then throw "linear-gradient needs two colour stops"
+  return {angle,corner,stops}
+
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" =>
@@ -1039,6 +1135,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "background" | "background-color" =>
     let bg ← if d.value == "transparent" then pure none else some <$> color d.value
     return {s with background := bg}
+  | "background-image" =>
+    if (trim d.value).toLower == "none" then return {s with backgroundGradient := none}
+    let some args := gradientArgs d.value | throw "background-image: only linear-gradient() is drawn"
+    return {s with backgroundGradient := some (← parseLinearGradient args)}
   | "font-size" =>
     let v ← pixels d.value
     if v <= 0 then throw "font-size must be positive"
@@ -1433,6 +1533,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
+  | "background-image" => some {s with backgroundGradient := source.backgroundGradient}
   | "font-size" =>
     some {s with fontSize := source.fontSize, lineHeight := lineHeightOf source.fontSize s.lineHeightFactor s.lineHeight}
   | "font-family" => some {s with fontFamily := source.fontFamily}

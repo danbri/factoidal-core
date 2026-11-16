@@ -16,8 +16,12 @@ namespace NativeImage
 open L4Factoidal
 open L4Factoidal.Rendering (Bitmap)
 
-/-- Limit on the pixels of one image: the paint table holds one word for each pixel. -/
-def maxImagePixels : Nat := 1048576
+/-- Limit on the pixels of one decoded image: 4 Mpx, 16 MiB of RGBA. It was 1 Mpx, the
+paint table's size, and a photograph of 1500 by 1500 showed its alt text. An image is not
+drawn whole when it is larger than the table: a document's images are held reduced to fit
+its budget (`NativeImage.factorFor`, `maxDocumentPixels`), and the store checks the budget
+for each one (`Store.addBytes`). -/
+def maxImagePixels : Nat := 4194304
 /-- Limit on the encoded size of one image. -/
 def maxImageBytes : Nat := 8388608
 

@@ -26,6 +26,8 @@ open L4Factoidal.Rendering FontFaceRule
 #guard sourceURL "url(a.ttf)" == some "a.ttf"
 #guard sourceURL "url(\"a b.otf\") format(\"opentype\")" == some "a b.otf"
 #guard sourceURL "url(a.woff2) format(\"woff2\")" == none
+-- WOFF 1.0 is read (`Woff.toSfnt`): a service that offers only it (cdnfonts) gets its face.
+#guard sourceURL "url('https://fonts.cdnfonts.com/s/1/A.woff') format('woff')" == some "https://fonts.cdnfonts.com/s/1/A.woff"
 #guard sourceURL "local(Foo)" == none
 #guard sourceURL "url(a.ttf) format(truetype)" == some "a.ttf"
 

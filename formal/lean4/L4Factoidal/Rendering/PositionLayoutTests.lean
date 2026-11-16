@@ -222,6 +222,15 @@ private def markers (html extra : String) : Option (List String) := do
 #guard markers "<ul><li>A</li></ul>" "ul{list-style-type:square}" == some ["▪"]
 #guard markers "<ol><li>A</li></ol>" "ol{list-style:circle}" == some ["◦"]
 #guard markers "<ul><li>A</li></ul>" "ul{list-style:none}" == some []
+-- A shaped font (a real face, `shapedWord`) draws the bullet itself, or a fallback face does:
+-- no star, though the profile's own `admits` is for fixed fonts only and says no.
+private def shaped : FontProfile := {font with admits := fun _ => false,
+  shapedWord := some fun text size => .ok {text,fontSha256 := "",faceIndex := 0,family := "t",style := "",
+    pixelSize := size,unitsPerEm := 7,ascent := 7,descent := 0,lineGap := 0,glyphs := #[],advance := 6*Float.ofNat text.length}}
+private def shapedMarkers (html : String) : Option (List String) := do
+  let (scene,_) ← (Layout.render (DOM.parseHtmlDocument html) (← (CSS.parse css).toOption) shaped noSVG 200 200).toOption
+  pure ((scene.glyphRuns.toList.map (·.text)).filter fun t => t != "A")
+#guard shapedMarkers "<ul><li>A<ul><li>A</li></ul></li></ul>" == some ["•","◦"]
 -- An item with nothing in it is still one line high.
 #guard (box "<ul><li id=e></li></ul>" "" "e").map (·.2.2.2) == some 7
 

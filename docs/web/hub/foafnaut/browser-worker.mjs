@@ -488,7 +488,17 @@ async function tabIcon(url){
 // An engine that answers imageInfo holds images (WebDocument, issue 1292): each is sent once,
 // as bytes when the engine has web_document_image_call_bin, and renders name it in
 // heldImages, so a frame's request does not carry the image. Others get `images`.
-const maxImageBytes=4194304,maxPageImageBytes=6291456;
+// A page's images: 6 MiB as Base64; an engine that holds images takes what it says it holds
+// (imageInfo maxBytes, 32 MiB), never above 64 MiB (large images are held reduced there).
+const maxImageBytes=4194304,maxBase64PageImageBytes=6291456;
+let engineImageBytes;
+function maxPageImageBytes(){
+  if(engineImageBytes===undefined){
+    try{const n=holdsImages()?Number(call('',{op:'imageInfo'}).maxBytes):NaN;engineImageBytes=Number.isFinite(n)&&n>0?Math.min(n,67108864):maxBase64PageImageBytes;}
+    catch{engineImageBytes=maxBase64PageImageBytes;}
+  }
+  return engineImageBytes;
+}
 let engineHoldsImages;
 function holdsImages(){
   if(engineHoldsImages===undefined){try{engineHoldsImages=(call('',{op:'imageInfo'}).ops??[]).includes('imageLoad');}catch{engineHoldsImages=false;}}
@@ -535,7 +545,7 @@ async function pageImageBytes(wanted){
       const response=await fetch(target);if(!response.ok)continue;
       if(Number(response.headers.get('content-length')??0)>maxImageBytes){response.body?.cancel();continue;}
       const bytes=new Uint8Array(await response.arrayBuffer());
-      if(bytes.length>maxImageBytes||total+bytes.length>maxPageImageBytes)continue;
+      if(bytes.length>maxImageBytes||total+bytes.length>maxPageImageBytes())continue;
       total+=bytes.length;
       images.push({key,bytes});
     }catch{}

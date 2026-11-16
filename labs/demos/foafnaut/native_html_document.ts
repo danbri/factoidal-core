@@ -67,9 +67,23 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
   sourceBound(source);
   return {url:finalURL,source,bytes:bytes.length,raw:bytes,contentType,contentTypeOptions,...(decoded?{encoding:decoded.encoding}:{})};
 }
-/** Limits on image bytes: each image, and all images of a page (Lean takes at most
-8 MiB of Base64 text for a page, which is 6 MiB of bytes). */
+/** Limits on image bytes: each image, and all images of a page sent as Base64 (Lean takes
+at most 8 MiB of Base64 text for a page, which is 6 MiB of bytes). */
 export const MAX_IMAGE_BYTES=4*1048576, MAX_PAGE_IMAGE_BYTES=6*1048576;
+/** The limit on the image bytes of a page. An engine that holds images (`imageInfo`, issue
+1292) takes each as bytes, not Base64, and says how many it holds (`maxBytes`,
+WebDocument.maxHeldImageBytes, 32 MiB); its pixels have their own bound there
+(NativeImage.maxDocumentPixels: large images are held reduced). So the page's limit is the
+engine's word, never above 64 MiB; else the Base64 limit. Before, a page of eleven photographs
+(9.7 MB) lost its last four to alt text at 6 MiB. */
+export async function pageImageLimit(engine?:unknown):Promise<number> {
+  const holder=engine as ImageHolder|undefined;
+  if(!holder||typeof holder.imageInfo!=="function"||typeof holder.imageLoad!=="function")return MAX_PAGE_IMAGE_BYTES;
+  try{
+    const max=Number((await holder.imageInfo() as {maxBytes?:unknown}|undefined)?.maxBytes);
+    return Number.isFinite(max)&&max>0?Math.min(max,64*1048576):MAX_PAGE_IMAGE_BYTES;
+  }catch{return MAX_PAGE_IMAGE_BYTES;}
+}
 /** Limit on the bytes of a tab icon (WebDocument.maxIconBytes). */
 export const MAX_ICON_BYTES=65536;
 /** The rule for a host with an engine from before the op `subresource`, and for local
@@ -218,11 +232,11 @@ export async function fetchImageBytes(wanted:{key:string;url:string}[],documentU
     }
   };
   await Promise.all(Array.from({length:Math.min(6,wanted.length)},worker));
-  const images:{key:string;bytes:Uint8Array}[]=[];let total=0;
+  const images:{key:string;bytes:Uint8Array}[]=[];let total=0;const limit=await pageImageLimit(engine);
   for(const [index,{key,url}] of wanted.entries()) {
     const got=read[index];
     if("reason" in got){failed?.(url,got.reason);continue;}
-    if(total+got.bytes.length>MAX_PAGE_IMAGE_BYTES){failed?.(url,"past the limit on the image bytes of a page");continue;}
+    if(total+got.bytes.length>limit){failed?.(url,"past the limit on the image bytes of a page");continue;}
     total+=got.bytes.length;
     images.push({key,bytes:got.bytes});
   }

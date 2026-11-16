@@ -125,6 +125,38 @@ private def text (html : String) : Except String (List String) :=
 -- Measured in a table: the image's width.
 #guard (boxes "<table style='border-spacing:0'><tr><td id='c' style='padding:0'><img src='a.png'></td></tr></table>").map (·.head?.map (·.2.2.2.1)) == .ok (some 40)
 
+-- A picture whose `width` is a percentage is compressible (CSS Sizing 3 §5.2.2): inside a grid
+-- item its min-content contribution is 0, so `1fr 1fr` columns stay equal (30 and 30 in 60)
+-- and the picture fills its column; with its natural 40 px the first column took 40.
+private def gridHtml (img : String) : String :=
+  s!"<div style='display:grid;grid-template-columns:1fr 1fr;width:60px'><div id='a'>{img}</div><div id='b'>x</div></div>"
+private def across (html : String) : Except String (List (String × Float × Float)) :=
+  (boxes html).map (·.filterMap fun (id,x,_,w,_) => if id == "a" then none else some (id,x,w))
+#guard across (gridHtml "<img id='i' src='a.png' style='width:100%'>") == .ok [("i",0,30),("b",30,30)]
+#guard across (gridHtml "<img id='i' src='a.png' style='max-width:100%'>") == .ok [("i",0,30),("b",30,30)]
+-- A px width is not compressible: the first column takes the picture's 40 px.
+#guard across (gridHtml "<img id='i' src='a.png' style='width:40px'>") == .ok [("i",0,40),("b",40,20)]
+-- A `min-width` that is a length is the least the picture asks.
+#guard across (gridHtml "<img id='i' src='a.png' style='width:100%;min-width:36px'>") == .ok [("i",0,36),("b",36,24)]
+-- In the max-content width the picture keeps its natural size.
+#guard (boxes "<div id='f' style='float:left'><img src='a.png' style='width:100%'></div>").map (·.head?.map (·.2.2.2.1)) == .ok (some 40)
+
+-- A `linear-gradient()` background is one rectangle with a gradient over the colour, its line
+-- through the box's centre: `to right` across the width, from the left edge to the right one.
+private def gradientLine (html : String) : Option (Float × Float × Float × Float × List Float) := do
+  let (scene,_) ← (render html "").toOption
+  (scene.tree.flatMap (·.lower identity [])).findSome? fun item => match item.primitive.style.fill with
+    | .gradient g => match g.shape with
+      | .linear a b c d => some (a,b,c,d,g.stops.map (·.offset))
+      | _ => none
+    | _ => none
+#guard gradientLine "<div style='width:100px;height:20px;background:linear-gradient(to right,red,blue)'></div>" ==
+  some (0,10,100,10,[0,1])
+#guard gradientLine "<div style='width:100px;height:20px;background:linear-gradient(red,white,blue 75%)'></div>" ==
+  some (50,0,50,20,[0,0.375,0.75])
+#guard Layout.stopOffsets 200 [some (0.25,true),none,some (100,false)] == [0.25,0.375,0.5]
+#guard Layout.stopOffsets 100 [some (0.5,true),some (0.2,true)] == [0.5,0.5]
+
 -- `pre` keeps spaces and tabs (CSS Text 3 §4.1.1): the glyph x of each word.
 private def wordsAt (html : String) : Except String (List (String × Float)) :=
   (render html "").map fun r => r.1.glyphRuns.toList.map fun run => (run.text,(run.glyphs[0]?.map (·.x)).getD 0)

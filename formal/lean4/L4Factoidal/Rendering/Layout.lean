@@ -144,11 +144,70 @@ def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except St
   | _,_,_ => return (max 0 (width.getD 300),max 0 (height.getD 150))
 
 
+/-- The offsets of colour stops on a gradient line `length` px long (CSS Images 3 §3.5.1):
+a percentage is of the line, a length of px; with none, the first is 0, the last 1, and
+those between are spaced evenly between their neighbours that have one. An offset before an
+earlier one is moved up to it (`Scene.normalizeStops` does the same). -/
+def stopOffsets (length : Float) (stops : List (Option (Float × Bool))) : List Float := Id.run do
+  let given := stops.toArray.map fun p => p.map fun (v,percent) => if percent then v else if length > 0 then v/length else 0
+  let n := given.size
+  if n == 0 then return []
+  let mut out := given
+  if out[0]!.isNone then out := out.set! 0 (some 0)
+  if out[n-1]!.isNone then out := out.set! (n-1) (some 1)
+  -- each run of stops with no position, between two that have one
+  let mut i := 1
+  for _ in [0:n] do
+    if i ≥ n then break
+    if out[i]!.isSome then i := i+1; continue
+    let start := i-1
+    let mut stop := i
+    for _ in [0:n] do
+      if stop < n && out[stop]!.isNone then stop := stop+1
+    let a := (out[start]!).getD 0
+    let b := (out[stop]!).getD 1
+    for k in [i:stop] do
+      out := out.set! k (some (a+(b-a)*Float.ofNat (k-start)/Float.ofNat (stop-start)))
+    i := stop+1
+  let mut last := 0
+  let mut result : List Float := []
+  for o in out do
+    let v := max last (o.getD last)
+    result := result ++ [v]
+    last := v
+  return result
+
+/-- The paint of a `linear-gradient()` over a box at `(x,y)`, `w` by `h` (CSS Images 3
+§3.1.1): the line through the box's centre in the gradient's direction, as long as the
+box's extent along it, so that the corners take the first and last colours. -/
+def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
+  let (dx,dy) := match g.corner with
+    | some (cx,cy) =>
+      -- §3.1.1: perpendicular to the diagonal between the two corners beside the named one
+      let vx := (if cx < 0 then -h else if cx > 0 then h else 0)
+      let vy := (if cy < 0 then -w else if cy > 0 then w else 0)
+      let n := Float.sqrt (vx*vx+vy*vy)
+      if n > 0 then (vx/n,vy/n) else (0,1)
+    | none =>
+      let a := g.angle*3.141592653589793/180
+      (Float.sin a,-Float.cos a)
+  let length := (w*dx).abs+(h*dy).abs
+  let cx := x+w/2
+  let cy := y+h/2
+  let offsets := stopOffsets length (g.stops.map (·.2.2))
+  let stops := (g.stops.zip offsets).map fun ((c,opacity,_),offset) => ({offset,color := c,opacity} : GradientStop)
+  .gradient {shape := .linear (cx-dx*length/2) (cy-dy*length/2) (cx+dx*length/2) (cy+dy*length/2),
+             boundingBoxUnits := false,stops}
+
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  match s.background with
-  | none => #[]
-  | some c => if !s.visible || w <= 0 || h <= 0 then #[] else
-    #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  if !s.visible || w <= 0 || h <= 0 then #[] else
+  let colour := match s.background with
+    | none => #[]
+    | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  -- CSS Backgrounds 3 §3.2: the image over the colour
+  match s.backgroundGradient with
+  | none => colour
+  | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
 
 /-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
 agent): the colour moved 60% of the way to white, and 60% of the colour. -/
@@ -1205,7 +1264,9 @@ private def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) 
       | .circle => '◦'
       | .square => '▪'
       | _ => if depth >= 3 then '▪' else if depth == 2 then '◦' else '•'
-    return if font.admits bullet.toNat then s!"{bullet} " else "* "
+    -- A shaped font draws the bullet, or a fallback face does (`SfntProfile`); only a
+    -- fixed font without it shows `*`.
+    return if font.admits bullet.toNat || font.shapedWord.isSome then s!"{bullet} " else "* "
   let mut number := 1
   for kid in (dom.get parent).kids do
     if kid == id then break
@@ -1408,6 +1469,32 @@ theorem intrinsicLimits_min (s : Computed) (w m : Float) (lo : s.minWidth = .px 
   simp only [lo]
   exact ⟨_, rfl⟩
 
+/-- CSS Sizing 3 §5.2.2: a replaced element whose `width` or `max-width` is a percentage is
+compressible. Its percentage is of a width that depends on its own, so its min-content
+contribution is its size against zero: its `min-width` when that is a length, else 0, with
+its edges. In a line (an `img` inside a block, as most pages have it) the atom of the
+picture is that wide for the min-content width; its max-content width keeps its natural
+size. Any other item is as it was. -/
+def compressInline : Inline → Inline
+  | .replaced id s ow oh nodes =>
+    match s.width,s.maxWidth with
+    | .percent _,_ | _,.percent _ =>
+      let edges := horizontalEdges s
+      .replaced id s (min ow (intrinsicLimits s 0+edges)) oh nodes
+    | _,_ => .replaced id s ow oh nodes
+  | other => other
+
+/-- A replaced atom whose `width` and `max-width` are not percentages is not changed. -/
+theorem compressInline_fixed (id : Nat) (s : Computed) (ow oh : Float) (nodes : List Node)
+    (hw : ∀ p, s.width ≠ .percent p) (hm : ∀ p, s.maxWidth ≠ .percent p) :
+    compressInline (.replaced id s ow oh nodes) = .replaced id s ow oh nodes := by
+  unfold compressInline
+  cases h1 : s.width <;> cases h2 : s.maxWidth <;> first | rfl | exact absurd h1 (hw _) | exact absurd h2 (hm _)
+
+/-- Words, spaces and every item that is not a replaced atom are not changed. -/
+theorem compressInline_word (id : Nat) (s : Computed) (text : String) (start : Nat) :
+    compressInline (.word id s text start) = .word id s text start := rfl
+
 /-- Min-content and max-content widths (CSS Sizing 3 §5), margins included for a box.
 Text is measured with `inlineLayout` itself: with no room, every break opportunity is
 taken (min-content); with unbounded room, none is (max-content). A table's widths are
@@ -1419,7 +1506,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
   | fuel+1, task => do
     let inlineWidths (items : Array Inline) : Except String (Float × Float) := do
       if items.isEmpty then return (0,0)
-      let narrow ← inlineLayout font (← atomize font items 0) 0 0 0
+      let narrow ← inlineLayout font (← atomize font (items.map compressInline) 0) 0 0 0
       let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9
       return (lineExtent narrow,lineExtent wide)
     let flowWidths (container : Nat) (kids : Array Nat) (lead : Array Inline) : Except String (Float × Float) := do
