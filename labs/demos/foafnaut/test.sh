@@ -179,7 +179,8 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # A start that waits for sync answers goes on from the script that waited (LeanJS.start_eq_from).
   check "start_resume_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
     --allow-read --allow-ffi --allow-env "$LAB/start_resume_test.ts"
-  # the undo of a sync request is bounded by the heap (WebScripts.keepsUndo): a timer turn of a large page costs what it does
+  # the undo of a sync request costs what the action writes, not the heap (WebScripts.undoShell, JS.UndoLog):
+  # a timer turn of a large page costs what it does, and its sync request is answered
   check "undo_snapshot_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
     --allow-read --allow-ffi --allow-env "$LAB/undo_snapshot_test.ts"
   # Inline SVG deep in the HTML is drawn or dropped, never a refusal of the page
