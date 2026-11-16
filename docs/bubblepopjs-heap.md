@@ -562,6 +562,9 @@ These are estimates from measured shares; each step replaces its row by a measur
 | Flat slots for stored values: environments, properties and elements (the `Value` boxes that the first two rows do not remove; part overlaps the third row) | lodash 13%, pako 23%, immutable 17% | lodash 3%, pako up to 8%, immutable 4% |
 | Thread-local lookups (runtime build) | not an allocation count | up to the 7 to 23% of section 1.2; measured for the heartbeat half alone: 2 to 3% (below) |
 
+Step 6 is the first check of this model: on marked it removed 64% of allocations, `m` is 53.5%, so
+the model gives 34%; the measured saving is 37% (section 4.1).
+
 Sum for lodash, counting each allocation once: about 16% of script time, 1.2 times; the runtime
 change then removes what is left of the 7.8% thread-local share. The bound for removing every
 allocation is `1 / (1 - m)`, 1.25 to 2.2 times. The larger factor that `CoreModel.lean` shows (8 times on a call) comes from the
