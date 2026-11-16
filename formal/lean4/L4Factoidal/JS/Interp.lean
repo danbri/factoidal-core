@@ -4,6 +4,7 @@ import L4Factoidal.JS.Parser
 import L4Factoidal.JS.Resolve
 import L4Factoidal.JS.Date
 import L4Factoidal.JS.NumFmt
+import L4Factoidal.JS.Base64
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JS.JsonText
 import L4Factoidal.WHATWG.URLPattern
@@ -1719,7 +1720,9 @@ def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
       match (List.range (r.size - i)).find? (fun k => r[i + 2 + k]? == some '>') with
       | some k =>
         let name := String.ofList (r.extract (i + 2) (i + 2 + k)).toList
-        match names.find? (·.1 == name) with
+        -- of groups that share the name, the one that took part in the match
+        let gs := names.filter (·.1 == name)
+        match gs.find? (fun (_, g) => (caps[g-1]?.join).isSome) with
         | some (_, g) => out := out ++ (caps[g-1]?.join).getD ""
         | none => pure ()
         i := i + 3 + k
@@ -2014,10 +2017,9 @@ def putV : Nat → Value → String → Value → Bool → M Unit
         throwErr .type s!"Cannot write private member #{(key.drop 1).toString} to an object whose class did not declare it"
       match o.getOwn key with
       | some (.data _ w e c) =>
-        if w then
-          match o.kind with
-          | .prim (.str _) => if strict then throwErr .type s!"Cannot assign to read only property '{key}'"
-          | _ => defineOwn id key (.data val true e c)
+        -- (a String object's indices and length are reported read-only by `getOwn`; its other
+        -- own properties, String.prototype's methods among them, are ordinary)
+        if w then defineOwn id key (.data val true e c)
         else if strict then throwErr .type s!"Cannot assign to read only property '{key}' of object"
       | some (.acc _ s _ _) =>
         if s.isObj then let _ ← callV n s target #[val]
@@ -2208,6 +2210,11 @@ def instOf : Nat → Value → Value → M Bool
       let hi ← getV n c (symKey symHasInstance)
       match hi with
       | .undef | .null => pure ()
+      | .obj fid =>
+        -- Function.prototype[@@hasInstance] is OrdinaryHasInstance, done here without a call
+        match (← getObj fid).kind with
+        | .native (.x .fnHasInstance) => if !co.kind.callable then return false
+        | _ => return toBool (← callV n hi c #[v])
       | f => return toBool (← callV n f c #[v])
       if !co.kind.callable then throwErr .type "Right-hand side of 'instanceof' is not callable"
       match co.kind with
@@ -3075,7 +3082,20 @@ def evalExpr : Nat → Ctx → Expr → M Value
         | .ident x =>
           let h ← get
           match h.findEnv x 100000 ctx.env with
-          | some _ => pure (.bool false)
+          | some e =>
+            -- an object environment record of `with` (§9.1.1.2.7 DeleteBinding): the
+            -- binding object's [[Delete]]
+            let env := h.envs.getD e default
+            match env.withObj with
+            | some o =>
+              if env.has x then pure (.bool false) else
+              match (h.obj o).getOwn x with
+              | none => pure (.bool true)
+              | some p =>
+                let arrayLen := match (h.obj o).kind with | .array _ => x == "length" | _ => false
+                if p.configurable && !arrayLen then deleteOwn o x; pure (.bool true)
+                else pure (.bool false)
+            | none => pure (.bool false)
           | none =>
             let g := h.realm.globalObj
             match (h.obj g).getOwn x with
@@ -3820,6 +3840,11 @@ def superCall : Nat → Ctx → Array Value → M Value
                     else pure ro.kind
                   | k => pure k
                 modifyObj tid fun o => { o with kind, props := ro.props, keys := ro.keys }
+      | .native .promiseCtor =>
+        -- a subclass of Promise: `this` becomes the promise itself, so the resolving functions
+        -- the executor gets settle the object the subclass constructor returns (a copy of
+        -- another promise would never settle)
+        let _ ← callNative n (.x .promiseInitOn) ctx.thisV args ctx.newTarget
       | .native _ | .bound .. =>
         let r ← construct n parent args ctx.newTarget
         if let .obj tid := ctx.thisV then
@@ -4925,19 +4950,38 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       callV n thisV a0 argv
     | .functionProtoBind =>
       if !(← isCallable thisV) then throwErr .type "Bind must be called on a function"
-      let o ← alloc { proto := .obj r.functionProto, kind := .bound thisV a0 (args.extract 1 args.size) }
+      -- §20.2.3.2: BoundFunctionCreate (the target's prototype), then `length` from an own
+      -- `length` that is a Number (ToIntegerOrInfinity, minus the bound arguments, at least 0),
+      -- then `name` ("bound " and a String name, else "")
+      let tproto ← match thisV with
+        | .obj tid => match (← getObj tid).kind with
+          | .proxy .. => callNative n .objectGetPrototypeOf .undef #[thisV] none
+          | _ => pure (← getObj tid).proto
+        | _ => pure (.obj r.functionProto)
+      let o ← alloc { proto := tproto, kind := .bound thisV a0 (args.extract 1 args.size) }
+      let argCount := Float.ofNat (args.size - 1 |>.min args.size)
+      let hasLen ← match thisV with
+        | .obj tid => do pure ((← ownDesc n tid "length").isSome)
+        | _ => pure false
+      let l ← if hasLen then do
+          match ← getV n thisV "length" with
+          | .num x =>
+            if x == inf then pure inf
+            else if x == -inf then pure 0
+            else let k := toIntegerOrInf x - argCount; pure (if k < 0 then 0 else k)
+          | _ => pure 0
+        else pure 0
+      defineOwn o "length" (.data (.num l) false false true)
       let nm ← getV n thisV "name"
       let nm := match nm with | .str s => s | _ => ""
       defineOwn o "name" (.data (.str ("bound " ++ nm)) false false true)
-      let len ← getV n thisV "length"
-      let l := match len with | .num x => x | _ => 0
-      let l := l - Float.ofNat (args.size - 1 |>.min args.size)
-      defineOwn o "length" (.data (.num (if l < 0 then 0 else l)) false false true)
       pure (.obj o)
     | .functionProtoToString =>
       match thisV with
       | .obj id => match (← getObj id).kind with
-        | .closure f .. => pure (.str s!"function {f.name.getD ""}() {"{"} [code] }")
+        -- the engine keeps no source text of functions (§20.2.3.5 step 2 wants it): the
+        -- NativeFunction form instead, which Test262's assertToStringOrNativeFunction accepts
+        | .closure f .. => pure (.str s!"function {f.name.getD ""}() {"{"} [native code] }")
         | .native _ | .bound .. => pure (.str "function () { [native code] }")
         -- a callable Proxy (§20.2.3.5 step 3): a NativeFunction string
         | .proxy .. =>
@@ -5297,7 +5341,47 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let msg ← match msg with | .undef => pure "" | v => toStr n v
       pure (.str (if nm.isEmpty then msg else if msg.isEmpty then nm else nm ++ ": " ++ msg))
     | .throwTypeError => throwErr .type "'caller', 'callee', and 'arguments' properties may not be accessed"
-    | .jsonStringify => jsonStr n a0 0
+    | .jsonStringify =>
+      -- §25.5.2.1 JSON.stringify(value, replacer, space)
+      let mut plist : Option (Array String) := none
+      let mut repl := Value.undef
+      if a1.isObj then
+        if ← isCallable a1 then repl := a1
+        else if ← isArrayDeep 100000 a1 then
+          let len ← arrayLikeLength n a1
+          let mut ks : Array String := #[]
+          for i in [0:len] do
+            tick
+            let v ← getV n a1 (toString i)
+            let item ← match v with
+              | .str t => pure (some t)
+              | .num x => pure (some (numToString x))
+              | .obj vid => do
+                match (← getObj vid).kind with
+                | .prim (.str _) | .prim (.num _) => pure (some (← toStr n v))
+                | _ => pure none
+              | _ => pure none
+            if let some t := item then
+              if !ks.contains (strKey t) then ks := ks.push (strKey t)
+          plist := some ks
+      let mut space := argD args 2
+      if let .obj sid := space then
+        match (← getObj sid).kind with
+        | .prim (.num _) => space := .num (← toNum n space)
+        | .prim (.str _) => space := .str (← toStr n space)
+        | _ => pure ()
+      let gap := match space with
+        | .num x =>
+          let k := toIntegerOrInf x
+          let k := if k > 10 then 10 else k
+          if k ≥ 1 then String.ofList (List.replicate k.toUInt64.toNat ' ') else ""
+        | .str t => Str.sliceUnits t 0 (min 10 (Str.jsLength t))
+        | _ => ""
+      let wrapper ← newObject
+      defineOwn wrapper "" (.data a0 true true true)
+      match ← jsonSer n repl plist gap "" #[] (.obj wrapper) "" with
+      | some t => pure (.str (Str.canonical t))
+      | none => pure .undef
     | .eval =>
       match a0 with
       | .str _ => directEval n { env := 0, thisV := .obj r.globalObj, strict := false } a0
@@ -5512,6 +5596,19 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | some a => throw a
       | none => pure ()
       pure (.obj pid)
+    | (.x .promiseInitOn) =>
+      -- the Promise constructor's steps on an object a subclass constructor made (`this`)
+      if !(← isCallable a0) then throwErr .type "Promise resolver is not a function"
+      let .obj pid := thisV | throwErr .type "Promise constructor: no object"
+      modifyObj pid fun o => { o with kind := .promise 0 .undef #[] false }
+      let res ← anonFn .promiseResolveFn #[.obj pid] 1
+      let rej ← anonFn .promiseRejectFn #[.obj pid] 1
+      let x ← catchJS (do let _ ← callV n a0 .undef #[res, rej]; pure none) (fun a => pure (some a))
+      match x with
+      | some (.throw e) => let _ ← callV n rej .undef #[e]
+      | some a => throw a
+      | none => pure ()
+      pure thisV
     | .promiseResolveFn | .promiseRejectFn =>
       match a0 with
       | .obj pid =>
@@ -7468,6 +7565,77 @@ def defineFromDescriptor : Nat → Nat → String → Value → M Unit
       else throwErr .type s!"Cannot define property {k}, object is not extensible"
 termination_by structural n _ _ _ => n
 
+/-- SerializeJSONProperty (§25.5.2.2) with JSON.stringify's state: the replacer function
+(`undefined` when none), the property list (when the replacer is an array), the gap, the indent
+and the stack of the objects being serialized. `none` is undefined (the property is left out). -/
+def jsonSer : Nat → Value → Option (Array String) → String → String → Array Nat → Value → String → M (Option String)
+  | 0, _, _, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, repl, plist, gap, indent, stack, holder, key => do
+    if stack.size > 1000 then throwErr .range "Maximum call stack size exceeded"
+    let quote (s : String) : String :=
+      "\"" ++ s.foldl (fun acc c => acc ++ match c with
+        | '"' => "\\\"" | '\\' => "\\\\" | '\n' => "\\n" | '\r' => "\\r" | '\t' => "\\t"
+        | '\x08' => "\\b" | '\x0c' => "\\f"
+        | c => if c.toNat < 32 then "\\u" ++ String.ofList ((Nat.toDigits 16 c.toNat).leftpad 4 '0') else String.singleton c) ""
+        |> jsonLone |> (· ++ "\"")
+    let mut value ← getV n holder key
+    match value with
+    | .obj _ | .big _ =>
+      let tj ← getV n value "toJSON"
+      if ← isCallable tj then value ← callV n tj value #[keyStrV key]
+    | _ => pure ()
+    if ← isCallable repl then value ← callV n repl holder #[keyStrV key, value]
+    -- a Number, String, Boolean or BigInt object stands for its primitive
+    if let .obj vid := value then
+      match (← getObj vid).kind with
+      | .prim (.num _) => if !(hiddenFlag (← getObj vid) dateKey) then value := .num (← toNum n value)
+      | .prim (.str _) => value := .str (← toStr n value)
+      | .prim (.bool b) => value := .bool b
+      | .prim (.big b) => value := .big b
+      | _ => pure ()
+    match value with
+    | .null => return some "null"
+    | .bool b => return some (if b then "true" else "false")
+    | .str s => return some (quote s)
+    | .num x => return some (if x.isFinite then numToString x else "null")
+    | .big _ => throwErr .type "Do not know how to serialize a BigInt"
+    | .obj vid =>
+      if ← isCallable value then return none
+      if stack.contains vid then throwErr .type "Converting circular structure to JSON"
+      let stack := stack.push vid
+      let inner := indent ++ gap
+      let close (parts : Array String) (op cl : String) : String :=
+        if parts.isEmpty then op ++ cl
+        else if gap.isEmpty then op ++ ",".intercalate parts.toList ++ cl
+        else op ++ "\n" ++ inner ++ (",\n" ++ inner).intercalate parts.toList ++ "\n" ++ indent ++ cl
+      if ← isArrayDeep 100000 value then
+        -- SerializeJSONArray (§25.5.2.6)
+        let len ← arrayLikeLength n value
+        let mut parts : Array String := #[]
+        for i in [0:len] do
+          tick
+          parts := parts.push ((← jsonSer n repl plist gap inner stack value (toString i)).getD "null")
+        return some (close parts "[" "]")
+      -- SerializeJSONObject (§25.5.2.5): the property list, or the own enumerable string keys
+      let keys ← match plist with
+        | some ks => pure ks
+        | none => do
+          let mut ks : Array String := #[]
+          for k in ← ownKeysOf n vid do
+            if isSymKey k || isPrivKey k then continue
+            match ← ownDesc n vid k with
+            | some p => if p.enumerable then ks := ks.push k
+            | none => pure ()
+          pure ks
+      let mut parts : Array String := #[]
+      for k in keys do
+        tick
+        if let some s ← jsonSer n repl plist gap inner stack value k then
+          parts := parts.push (quote (keyStr k) ++ ":" ++ (if gap.isEmpty then "" else " ") ++ s)
+      return some (close parts "{" "}")
+    | _ => return none
+termination_by structural n _ _ _ _ _ _ _ => n
+
 /-- JSON.stringify (§25.5.2) without `replacer` and `space`. -/
 def jsonStr : Nat → Value → Nat → M Value
   | 0, _, _ => throw (.halt "fuel")
@@ -7881,7 +8049,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
     | .regexpToString =>
       match thisV with
       | .obj oid => match (← getObj oid).kind with
-        | .regexp _ src f => pure (.str ("/" ++ src ++ "/" ++ f))
+        | .regexp _ src f => pure (.str ("/" ++ Re.escapeSource src ++ "/" ++ f))
         | _ => pure (.str ("/" ++ (← toStr n (← getV n thisV "source")) ++ "/" ++ (← toStr n (← getV n thisV "flags"))))
       | _ => throwErr .type "RegExp.prototype.toString called on a non-object"
     | .regexpGetter 1 =>
@@ -7897,7 +8065,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       | .obj oid => match (← getObj oid).kind with
         | .regexp re src f =>
           pure (match which with
-            | 0 => .str src
+            | 0 => .str (Re.escapeSource src)
             -- §22.2.6.4 get flags: in the order "dgimsuvy"
             | 1 => .str (String.ofList ("dgimsuvy".toList.filter fun c => f.contains c))
             | 2 => .bool re.flags.global | 3 => .bool re.flags.icase
@@ -7971,7 +8139,10 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
             let capVals := capStrs.map fun c => match c with | some t => Value.str t | none => .undef
             let groups ← if re.names.isEmpty then pure #[] else do
               let o ← alloc { proto := .null }
-              for (nm, k) in re.names do defineOwn o nm (.data (capVals.getD (k - 1) .undef) true true true)
+              for (nm, k) in re.names do
+                let v := capVals.getD (k - 1) .undef
+                if !(v matches .undef) || ((← getObj o).getOwn nm).isNone then
+                  defineOwn o nm (.data v true true true)
               pure #[Value.obj o]
             toStr n (← callV n a1 .undef (#[.str matched] ++ capVals ++ #[.num (Float.ofNat a), .str s] ++ groups))
           else match substitution replStr matched a cs capStrs re.names with
@@ -8204,14 +8375,30 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         for i in [0:xs.size] do typedWriteV ty b off (at_ + i) (← typedConv n ty xs[i]!)
         pure .undef
       | .typedSubarray =>
-        -- the new view on the same buffer: TypedArraySpeciesCreate refuses a detached one
-        if isDetached (← getObj b) then throwErr .type "subarray: the buffer is detached"
+        -- §23.2.3.30: the bounds (converted first), then TypedArraySpeciesCreate(O, « buffer,
+        -- beginByteOffset, newLength ») (§23.2.4.1): the species constructor, or the type's own
         let len ← liveLen ty b off len
         let a := relIndex (toIntegerOrInf (← toNum n a0)) len
         let e ← match a1 with
           | .undef => pure len
           | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) len)
-        newTyped ty b (off + a * elemSize ty) (if e > a then e - a else 0)
+        let newLen := if e > a then e - a else 0
+        let begin := off + a * elemSize ty
+        let dflt ← ownValue (r.typedProtos.getD ty 0) "constructor"
+        let c ← speciesCtor n thisV dflt
+        if strictEq c dflt then
+          if isDetached (← getObj b) then throwErr .type "subarray: the buffer is detached"
+          if begin + newLen * elemSize ty > (bufferBytes (← getObj b)).size then
+            throwErr .range "subarray: the view is out of the buffer's bounds"
+          return ← newTyped ty b begin newLen
+        let res ← construct n c #[.obj b, .num (Float.ofNat begin), .num (Float.ofNat newLen)] c
+        -- TypedArrayCreateFromConstructor: a valid typed array of the same content type
+        let .obj rid := res | throwErr .type "subarray: the species constructor did not make a typed array"
+        let .typed rty rb roff rlen := (← getObj rid).kind
+          | throwErr .type "subarray: the species constructor did not make a typed array"
+        if !(← typedInBounds rty rb roff rlen) then throwErr .type "subarray: the new typed array is detached or out of bounds"
+        if typedIsBig rty != typedIsBig ty then throwErr .type "subarray: the new typed array has another content type"
+        pure res
       | _ =>
         -- §23.2.3.9 %TypedArray%.prototype.fill: ValidateTypedArray, the value, then the
         -- indices, then detachment
@@ -8408,12 +8595,30 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
           let start := if np.isNaN then len else clampPos np len
           pure (.num (match lastIndexOfFrom s p start with | some i => Float.ofNat i | none => -1))
         | .stringIncludes =>
+          -- IsRegExp(searchString) is a TypeError (§22.1.3.8 step 3 and the others)
+          if let .obj _ := a0 then
+            let isRx ← match ← getV n a0 (symKey 8) with
+              | .undef => isRegExpV a0
+              | m => pure (toBool m)
+            if isRx then throwErr .type "First argument to String.prototype.includes/startsWith/endsWith must not be a regular expression"
           let p ← toStr n a0
           pure (.bool (indexOfFrom s p (clampPos (← toNum n a1) len)).isSome)
         | .stringStartsWith =>
+          -- IsRegExp(searchString) is a TypeError (§22.1.3.8 step 3 and the others)
+          if let .obj _ := a0 then
+            let isRx ← match ← getV n a0 (symKey 8) with
+              | .undef => isRegExpV a0
+              | m => pure (toBool m)
+            if isRx then throwErr .type "First argument to String.prototype.includes/startsWith/endsWith must not be a regular expression"
           let p ← toStr n a0
           pure (.bool (unitsAt s p (clampPos (← toNum n a1) len)))
         | .stringEndsWith =>
+          -- IsRegExp(searchString) is a TypeError (§22.1.3.8 step 3 and the others)
+          if let .obj _ := a0 then
+            let isRx ← match ← getV n a0 (symKey 8) with
+              | .undef => isRegExpV a0
+              | m => pure (toBool m)
+            if isRx then throwErr .type "First argument to String.prototype.includes/startsWith/endsWith must not be a regular expression"
           let p ← toStr n a0
           let e ← match a1 with | .undef => pure len | v => do pure (clampPos (← toNum n v) len)
           let m := Str.jsLength p
@@ -8989,6 +9194,129 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       match o.getOwn adsKey, o.getOwn dsStateKey with
       | some _, some (.data (.bool b) ..) => pure (.bool b)
       | _, _ => throwErr .type "get AsyncDisposableStack.prototype.disposed: the receiver is not an AsyncDisposableStack"
+    | (.x (.u8Base64 k)) =>
+      -- Uint8Array base64 and hex (§23.3.2): 0 fromBase64, 1 fromHex, 2 toBase64, 3 toHex,
+      -- 4 setFromBase64, 5 setFromHex; the algorithms are JS.Base64's
+      -- GetOptionsObject, then alphabet and lastChunkHandling (strings, not converted)
+      let optsOf (v : Value) : M Value := do
+        match v with
+        | .undef => pure .undef
+        | .obj _ => pure v
+        | _ => throwErr .type "Uint8Array base64: the options are not an object"
+      let getOpt (o : Value) (key : String) : M Value := do
+        match o with | .obj _ => getV n o key | _ => pure .undef
+      let alphabetOf (o : Value) : M Bool := do
+        match ← getOpt o "alphabet" with
+        | .undef | .str "base64" => pure false
+        | .str "base64url" => pure true
+        | _ => throwErr .type "Uint8Array base64: alphabet is not \"base64\" or \"base64url\""
+      let lchOf (o : Value) : M Nat := do
+        match ← getOpt o "lastChunkHandling" with
+        | .undef | .str "loose" => pure 0
+        | .str "strict" => pure 1
+        | .str "stop-before-partial" => pure 2
+        | _ => throwErr .type "Uint8Array.fromBase64: lastChunkHandling is not loose, strict or stop-before-partial"
+      -- ValidateUint8Array on `this`, and the view's bytes (a TypeError when detached)
+      let thisU8 : M (Nat × Nat × Nat) := do
+        let .obj tid := thisV | throwErr .type "not a Uint8Array"
+        let .typed ty b off len := (← getObj tid).kind | throwErr .type "not a Uint8Array"
+        if ty != 1 then throwErr .type "not a Uint8Array"
+        if !(← typedInBounds ty b off len) then throwErr .type "Uint8Array: the buffer is detached or out of bounds"
+        pure (b, off, ← liveLen ty b off len)
+      let checkType : M Unit := do
+        let .obj tid := thisV | throwErr .type "not a Uint8Array"
+        let .typed ty .. := (← getObj tid).kind | throwErr .type "not a Uint8Array"
+        if ty != 1 then throwErr .type "not a Uint8Array"
+      let charsOfStr (v : Value) : M (Array Char) := do
+        match v with
+        | .str t => pure (Str.unitChars t)
+        | _ => throwErr .type "Uint8Array base64: the input is not a string"
+      match k with
+      | 0 | 1 =>
+        let cs ← charsOfStr a0
+        let res ← if k == 0 then do
+            let o ← optsOf a1
+            let url ← alphabetOf o
+            let lch ← lchOf o
+            pure (Base64.fromBase64 cs url lch 9007199254740991)
+          else pure (Base64.fromHex cs 9007199254740991)
+        if res.err then throwErr .syntax "Uint8Array: the base64 or hex text is not valid"
+        let buf ← newBuffer (ByteArray.mk res.bytes)
+        let .obj bid := buf | pure .undef
+        newTyped 1 bid 0 res.bytes.size
+      | 2 | 3 =>
+        checkType
+        let o ← if k == 2 then optsOf a0 else pure .undef
+        let url ← if k == 2 then alphabetOf o else pure false
+        let pad ← if k == 2 then do pure !(toBool (← getOpt o "omitPadding")) else pure true
+        let (b, off, len) ← thisU8
+        let bytes := (bufferBytes (← getObj b)).extract off (off + len)
+        pure (.str (if k == 2 then Base64.toBase64 bytes url pad else Base64.toHex bytes))
+      | _ =>
+        checkType
+        let cs ← charsOfStr a0
+        let (url, lch) ← if k == 4 then do
+            let o ← optsOf a1
+            let url ← alphabetOf o
+            pure (url, ← lchOf o)
+          else pure (false, 0)
+        -- after the options (which may detach or shrink the buffer): the view's length
+        let (b, off, len) ← thisU8
+        let res := if k == 4 then Base64.fromBase64 cs url lch len else Base64.fromHex cs len
+        let n' := min res.bytes.size len
+        modifyObj b fun bo => match bo.kind with
+          | .buffer bytes =>
+            let bo := { bo with kind := .buffer ByteArray.empty }
+            { bo with kind := .buffer ((ByteArray.mk (res.bytes.extract 0 n')).copySlice 0 bytes off n') }
+          | _ => bo
+        if res.err then throwErr .syntax "Uint8Array: the base64 or hex text is not valid"
+        let ro ← newObject
+        defineOwn ro "read" (.data (.num (Float.ofNat res.read)) true true true)
+        defineOwn ro "written" (.data (.num (Float.ofNat n')) true true true)
+        pure (.obj ro)
+    | (.x (.arrayToLocaleString typed)) =>
+      -- §23.1.3.32 Array.prototype.toLocaleString and §23.2.3.31 %TypedArray%.prototype's
+      -- (ValidateTypedArray, its own length): each element's toLocaleString, joined with ","
+      let (o, len) ← if typed then do
+          let .obj tid := thisV | throwErr .type "not a typed array"
+          let .typed ty b off l := (← getObj tid).kind | throwErr .type "not a typed array"
+          if !(← typedInBounds ty b off l) then throwErr .type "toLocaleString: the typed array is detached or out of bounds"
+          pure (thisV, ← liveLen ty b off l)
+        else do
+          let oid ← toObj n thisV
+          pure (Value.obj oid, ← arrayLikeLength n (.obj oid))
+      let mut out := ""
+      for k in [0:len] do
+        tick
+        if k > 0 then out := out ++ ","
+        let v ← getV n o (toString k)
+        match v with
+        | .undef | .null => pure ()
+        | _ =>
+          let f ← getV n v "toLocaleString"
+          if !(← isCallable f) then throwErr .type "toLocaleString is not a function"
+          out := out ++ (← toStr n (← callV n f v #[]))
+          checkStrLen out.utf8ByteSize
+      pure (.str (Str.canonical out))
+    | (.x .fnHasInstance) =>
+      -- §20.2.3.6: OrdinaryHasInstance(this, V): false for a non-callable `this`; a bound
+      -- function asks its target; otherwise the prototype chain of V
+      if !(← isCallable thisV) then return .bool false
+      if let .obj cid := thisV then
+        if let .bound t _ _ := (← getObj cid).kind then return .bool (← instOf n a0 t)
+      if !a0.isObj then return .bool false
+      let p ← getV n thisV "prototype"
+      let .obj pid := p | throwErr .type "Function has non-object prototype in instanceof check"
+      let mut cur := a0
+      for _ in [0:100000] do
+        let .obj o := cur | return .bool false
+        let next ← match (← getObj o).kind with
+          | .proxy .. => callNative n .objectGetPrototypeOf .undef #[cur] none
+          | _ => pure (← getObj o).proto
+        match next with
+        | .obj q => if q == pid then return .bool true else cur := next
+        | _ => return .bool false
+      pure (.bool false)
     | (.x .asyncDsSyncWrap) =>
       -- a resource with only @@dispose: called on the value, its result dropped
       let _ ← callV n a0 thisV #[]
@@ -10983,13 +11311,27 @@ def initDisposal (g errorProto : Nat) : M Unit := do
   defineOwn adsProto (symKey symToStringTag) (.data (.str "AsyncDisposableStack") false false true)
 
 /-- More of the realm, apart so that `initRealm` stays within the elaborator's depth:
-Promise.allKeyed and allSettledKeyed, DataView.prototype's accessors, RegExp.prototype.compile,
+Function.prototype[@@hasInstance], Promise.allKeyed and allSettledKeyed, DataView.prototype's accessors, RegExp.prototype.compile,
 the HTML methods of String.prototype, the @@toStringTag of Math and JSON, and
 Array.prototype[@@unscopables]. -/
 def initBuiltinsMore : M Unit := do
   let r ← realm
   let g := r.globalObj
   let pc := r.promiseCtor
+  defineOwn r.functionProto (symKey symHasInstance)
+    (.data (← mkNative (.x .fnHasInstance) "[Symbol.hasInstance]" 1) false false false)
+  method r.arrayProto "toLocaleString" (.x (.arrayToLocaleString false)) 0
+  if let .obj tp ← ownValue r.typedArrayCtor "prototype" then
+    method tp "toLocaleString" (.x (.arrayToLocaleString true)) 0
+  -- Uint8Array base64 and hex (§23.3.2)
+  if let .obj u8 ← ownValue g "Uint8Array" then
+    method u8 "fromBase64" (.x (.u8Base64 0)) 1
+    method u8 "fromHex" (.x (.u8Base64 1)) 1
+  if let some u8p := r.typedProtos[1]? then
+    method u8p "toBase64" (.x (.u8Base64 2)) 0
+    method u8p "toHex" (.x (.u8Base64 3)) 0
+    method u8p "setFromBase64" (.x (.u8Base64 4)) 1
+    method u8p "setFromHex" (.x (.u8Base64 5)) 1
   method pc "allKeyed" (.x (.promiseKeyed false)) 1
   method pc "allSettledKeyed" (.x (.promiseKeyed true)) 1
   for (nm, w) in [("buffer", 0), ("byteLength", 1), ("byteOffset", 2)] do

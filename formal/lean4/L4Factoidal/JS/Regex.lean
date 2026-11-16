@@ -124,6 +124,8 @@ structure PS where
   sets : Bool := false
   /-- The `i` flag (class sets are case folded as they are read). -/
   icase : Bool := false
+  /-- The pattern has a named group (then `\k` is always a named reference, §22.2.1.1). -/
+  named : Bool := false
 
 abbrev P := StateT PS (Except String)
 
@@ -330,7 +332,7 @@ def charEscape (uni : Bool) (i : Nat) : Option (Char × Nat) :=
     if uni && cs[i+1]? == some '{' then
       let close := (List.range 8).find? fun k => cs[i + 2 + k]? == some '}'
       match close with
-      | some k => match hexDigits cs (i + 2) k with
+      | some k => if k == 0 then none else match hexDigits cs (i + 2) k with
         | some v => if v ≤ 0x10FFFF then some (Str.unitChar v, i + 3 + k) else none
         | none => none
       | none => some ('u', i + 1)
@@ -347,6 +349,23 @@ def charEscape (uni : Bool) (i : Nat) : Option (Char × Nat) :=
       | none => some ('u', i + 1)
   | some c => some (c, i + 1)
   | none => none
+
+/-- The Annex B reading of `\` and decimal digits that are not a back reference
+(LegacyOctalEscapeSequence, else the digit itself): the characters they stand for. -/
+def legacyDigits (ds : List Char) : List Char :=
+  match ds with
+  | d :: rest =>
+    if d == '8' || d == '9' then d :: rest else
+    -- up to three octal digits, at most 0o377
+    let oct (c : Char) : Bool := '0' ≤ c && c ≤ '7'
+    let take := if d ≤ '3' then 3 else 2
+    let digits := (ds.take take).takeWhile oct
+    let v := digits.foldl (fun a c => a * 8 + (c.toNat - 48)) 0
+    Char.ofNat v :: ds.drop digits.length
+  | [] => []
+
+#guard legacyDigits "1".toList = [Char.ofNat 1] && legacyDigits "8".toList = ['8']
+#guard legacyDigits "377".toList = [Char.ofNat 255] && legacyDigits "400".toList = [Char.ofNat 32, '0']
 
 /-- IdentityEscape with `u` or `v` (§22.2.1): a SyntaxCharacter or `/`. -/
 def identityOk (e : Char) : Bool := "^$\\.*+?()[]{}|/".contains e
@@ -394,6 +413,12 @@ def classItems : Nat → List ClassItem → P (List ClassItem)
           | none =>
             if e == 'b' then bump 2; return .inl (some (Char.ofNat 8))
             else if e == '-' then bump 2; return .inl (some '-')
+            else if !uni && e.isDigit && !(e == '0' && (cs[i+2]?.map Char.isDigit) != some true) then
+              -- Annex B ClassEscape: a legacy octal escape (`\1` is U+0001), `\8` and `\9` themselves
+              let ds := ((List.range 3).filterMap fun k => cs[i + 1 + k]?).takeWhile Char.isDigit
+              match legacyDigits ds with
+              | c :: rest => modify (fun s => { s with pos := i + 1 + (ds.length - rest.length) }); return .inl (some c)
+              | [] => bump 2; return .inl (some e)
             else match charEscape cs uni (i + 1) with
               | some (ch, j) =>
                 if uni && j == i + 2 && ch == e && !identityOk e then
@@ -732,12 +757,18 @@ def term : Nat → P Node
     if c == '\\' && cs[i+1]? == some 'b' then bump 2; return .wordB false
     if c == '\\' && cs[i+1]? == some 'B' then bump 2; return .wordB true
     let firstGroup := (← get).groups
+    let uniT := (← get).unicode
     let atom ← atomP fuel
     let j := (← get).pos
     match quantAt cs j with
     | some (lo, hi, greedy, k) =>
       match atom with
       | .look true _ _ => throw "SyntaxError: Invalid regular expression: nothing to repeat"
+      | .look false _ _ =>
+        -- a lookahead is quantifiable only without `u` or `v` (Annex B QuantifiableAssertion)
+        if uniT then throw "SyntaxError: Invalid regular expression: nothing to repeat"
+        modify fun s => { s with pos := k }
+        return .rep atom lo hi greedy firstGroup
       | .bol | .eol | .wordB _ => throw "SyntaxError: Invalid regular expression: nothing to repeat"
       | _ =>
         if let some h := hi then
@@ -756,6 +787,7 @@ def atomP : Nat → P Node
     let some c ← peekC cs | throw "SyntaxError: Invalid regular expression: unexpected end"
     let uni := (← get).unicode
     let ic := (← get).icase
+    let named := (← get).named
     match c with
     | '.' => bump; return .any
     | '[' =>
@@ -843,11 +875,15 @@ def atomP : Nat → P Node
             match decimal cs (i + 1) with
             | some (v, j) => modify (fun s => { s with pos := j }); return .backref v
             | none => bump 2; return .char e
-          else if e == 'k' && cs[i+2]? == some '<' then
+          else if e == 'k' && (uni || named) then
+            -- `\k` is a back reference by name with `u`/`v` or when the pattern has named
+            -- groups; otherwise (Annex B) the identity escape `k`
+            if cs[i+2]? != some '<' then throw "SyntaxError: Invalid regular expression: invalid named reference"
             bump 3
             return .named (← groupName cs)
           else match charEscape cs uni (i + 1) with
             | some (ch, j) =>
+              if uni && j ≤ i + 1 then throw "SyntaxError: Invalid regular expression: invalid escape"
               -- with `u` or `v` an identity escape is only of a syntax character or `/`
               if uni && j == i + 2 && ch == e && !identityOk e then
                 throw "SyntaxError: Invalid regular expression: invalid escape"
@@ -864,8 +900,39 @@ end
 
 end
 
+/-- Whether a pattern (its characters) has a named group `(?<name>`. -/
+def hasNamedGroup (cs : Array Char) : Bool := Id.run do
+  let mut esc := false
+  let mut cls := false
+  for i in [0:cs.size] do
+    let c := cs[i]!
+    if esc then
+      esc := false
+    else if c == '\\' then
+      esc := true
+    else if cls then
+      cls := c != ']'
+    else if c == '[' then
+      cls := true
+    else if c == '(' && cs[i+1]? == some '?' && cs[i+2]? == some '<' &&
+        cs[i+3]? != some '=' && cs[i+3]? != some '!' then
+      return true
+  return false
+
+#guard hasNamedGroup "(?<a>x)".toList.toArray && !hasNamedGroup "(?<=a)\\(?<b>".toList.toArray
+
+/-- The back reference numbers and names of a parsed pattern. -/
+def refsOf : Nat → Node → List Nat × List String
+  | 0, _ => ([], [])
+  | fuel + 1, n => match n with
+    | .backref k => ([k], [])
+    | .named nm => ([], [nm])
+    | .group _ r | .look _ _ r | .mods _ _ r | .rep r .. => refsOf fuel r
+    | .seq rs | .alt rs => rs.foldl (fun (a, b) r => let (c, d) := refsOf fuel r; (a ++ c, b ++ d)) ([], [])
+    | _ => ([], [])
+
 /-- Back references by name to their numbers; a number past the groups is the
-character escape of Annex B (an octal-like `\8` is the character `8`). -/
+legacy escape of Annex B (`\1` with no group is U+0001, `\8` the character `8`). -/
 def resolve (names : Array (String × Nat)) (groups : Nat) : Nat → Node → Node
   | 0, n => n
   | fuel + 1, n => match n with
@@ -873,7 +940,12 @@ def resolve (names : Array (String × Nat)) (groups : Nat) : Nat → Node → No
       | [] => .empty
       | [(_, k)] => .backref k
       | ps => .backrefAny (ps.map (·.2))
-    | .backref k => if k > groups then .char (Char.ofNat (48 + k % 10)) else .backref k
+    | .backref k =>
+      if k > groups then
+        match legacyDigits (toString k).toList with
+        | [c] => .char c
+        | cs => .seq (cs.map Node.char)
+      else .backref k
     | .group idx r => .group idx (resolve names groups fuel r)
     | .look b neg r => .look b neg (resolve names groups fuel r)
     | .seq rs => .seq (rs.map (resolve names groups fuel))
@@ -905,6 +977,30 @@ def namesIn (nameOf : Nat → Option String) : Nat → Node → Except String (L
       pure (acc ++ ns.filter (!acc.contains ·))
     | _ => .ok []
 
+/-- EscapeRegExpPattern (§22.2.6.13.1): the source text of a RegExp, written so that `/source/`
+reads back as the same pattern: a `/` outside a class and line terminators escaped. -/
+def escapeSource (src : String) : String := Id.run do
+  let mut out := ""
+  let mut esc := false
+  let mut cls := false
+  for c in src.toList do
+    let lt := c == '\n' || c == '\r' || c.toNat == 0x2028 || c.toNat == 0x2029
+    let name := if c == '\n' then "n" else if c == '\r' then "r"
+      else if c.toNat == 0x2028 then "u2028" else "u2029"
+    if esc then
+      out := out ++ (if lt then name else String.singleton c)
+      esc := false
+    else if lt then out := out ++ "\\" ++ name
+    else if c == '\\' then out := out.push c; esc := true
+    else if c == '/' && !cls then out := out ++ "\\/"
+    else
+      if c == '[' then cls := true else if c == ']' then cls := false
+      out := out.push c
+  return out
+
+#guard escapeSource "a/b" = "a\\/b" && escapeSource "[/]" = "[/]" && escapeSource "\\/" = "\\/"
+#guard escapeSource "a\nb" = "a\\nb"
+
 /-- Compile a pattern with its flags (§22.2.3.4 RegExpInitialize): an error message
 that starts with `SyntaxError:` when the pattern or the flags are not valid. -/
 def compile (pattern flags : String) : Except String Compiled := do
@@ -912,10 +1008,17 @@ def compile (pattern flags : String) : Except String Compiled := do
   -- Without u or v the pattern is code units (a supplementary character is its two
   -- surrogates); with them, code points (§22.2.3.4 steps 9 and 10).
   let cs := if fl.unicode then pattern.toList.toArray else Str.unitChars pattern
-  let (node, st) ← (disjunction cs (4 * cs.size + 16)).run { unicode := fl.unicode, sets := fl.unicodeSets, icase := fl.icase }
+  let (node, st) ← (disjunction cs (4 * cs.size + 16)).run { unicode := fl.unicode, sets := fl.unicodeSets, icase := fl.icase, named := hasNamedGroup cs }
   if st.pos < cs.size then
     throw (if cs[st.pos]! == ')' then "SyntaxError: Invalid regular expression: unmatched ')'"
       else "SyntaxError: Invalid regular expression")
+  -- early errors: with `u`/`v` a back reference past the groups, and with `u`/`v` or named
+  -- groups a `\k<name>` of no group (§22.2.1.1)
+  let refs := refsOf (cs.size + 2) node
+  if fl.unicode && refs.1.any (· > st.groups) then
+    throw "SyntaxError: Invalid regular expression: invalid back reference"
+  if (fl.unicode || !st.names.isEmpty) && refs.2.any (fun nm => !st.names.any (·.1 == nm)) then
+    throw "SyntaxError: Invalid regular expression: invalid named reference"
   let nameOf (k : Nat) : Option String := (st.names.find? (·.2 == k)).map (·.1)
   if st.names.size > 1 then
     let _ ← namesIn nameOf (cs.size + 2) node
