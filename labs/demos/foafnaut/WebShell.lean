@@ -521,22 +521,30 @@ Flat faces, a rounded address field with a focus ring, and line icons as vector 
 
 private def fl (n : Nat) : Float := Float.ofNat n
 
-/-- A filled circle. -/
+/-- 16 points of the unit circle, from angle 0 (right) clockwise on screen. Circles of the
+chrome are these polygons: the chrome is drawn again on each change of the fold, and a
+16-sided polygon costs the engine far less than a curve to flatten. -/
+private def unitCircle : List (Float × Float) :=
+  (List.range 16).map fun i => let a := Float.ofNat i*0.39269908169872414; (Float.cos a,Float.sin a)
+
+/-- A filled circle, as a 16-sided polygon. -/
 private def disk (c : Rendering.Color) (cx cy r : Float) : Rendering.Node :=
-  .paint {primitive := {geometry := .circle cx cy r,style := {fill := .solid c}}}
+  .paint {primitive := {geometry := .polygon (unitCircle.map fun (x,y) => ⟨cx+r*x,cy+r*y⟩),style := {fill := .solid c}}}
 
 /-- A filled rectangle with corners of radius `r` (at most half the shorter side): two
 rectangles and four circles. Opaque colours only, as the overlaps paint twice. -/
 private def rounded (c : Rendering.Color) (x y w h r : Nat) : List Rendering.Node :=
   let r := min r (min w h/2)
   if r == 0 then [paint c x y w h] else
+  -- A pill (the corners meet): one rectangle and the two end circles.
+  if 2*r ≥ h then [paint c (x+r) y (w-2*r) h,disk c (fl (x+r)) (fl y+fl h/2) (fl h/2),disk c (fl (x+w-r)) (fl y+fl h/2) (fl h/2)] else
   [paint c (x+r) y (w-2*r) h,paint c x (y+r) w (h-2*r),
    disk c (fl (x+r)) (fl (y+r)) (fl r),disk c (fl (x+w-r)) (fl (y+r)) (fl r),
    disk c (fl (x+r)) (fl (y+h-r)) (fl r),disk c (fl (x+w-r)) (fl (y+h-r)) (fl r)]
 
-/-- A stroke with round caps and joins. -/
+/-- A stroke with square caps and mitred joins: no round piece for the engine to flatten. -/
 private def strokeStyle (c : Rendering.Color) (w : Float) : Rendering.Style :=
-  {fill := .none,stroke := .solid c,strokeWidth := w,lineCap := .round,lineJoin := .round}
+  {fill := .none,stroke := .solid c,strokeWidth := w,lineCap := .square,lineJoin := .miter}
 
 /-- An open line through `points`. -/
 private def polyline (c : Rendering.Color) (w : Float) : List (Float × Float) → List Rendering.Node
@@ -544,13 +552,12 @@ private def polyline (c : Rendering.Color) (w : Float) : List (Float × Float) �
   | (x,y)::rest =>
     [.paint {primitive := {geometry := .path [.path ⟨x,y⟩ (rest.map fun (a,b) => .line ⟨a,b⟩) false],style := strokeStyle c w}}]
 
-/-- One line icon on the 16-unit grid, as strokes in grid units: polylines, rings (centre
-and radius) and arcs (start, radius, large-arc and sweep flags, end). -/
+/-- One line icon on the 16-unit grid, as strokes in grid units: polylines, rings (centre and
+radius, a closed 16-sided line) and arcs (centre, radius and the `unitCircle` points, in order). -/
 private inductive Stroke where
   | line (points : List (Float × Float))
   | ring (cx cy r : Float)
-  | arc (x0 y0 r : Float) (large sweep : Bool) (x1 y1 : Float)
-  | dot (cx cy r : Float)
+  | arc (cx cy r : Float) (points : List Nat)
 
 private def gear : List Stroke :=
   -- Eight teeth at 45 degrees, from radius 5 to 6.6, round the ring and its hub.
@@ -561,7 +568,8 @@ private def gear : List Stroke :=
 private def lineIcon : String → List Stroke
   | "back" => [.line [(3.5,8),(12.5,8)],.line [(7.5,4),(3.5,8),(7.5,12)]]
   | "forward" => [.line [(3.5,8),(12.5,8)],.line [(8.5,4),(12.5,8),(8.5,12)]]
-  | "reload" => [.arc 12.2 6 4.6 true false 12.2 10,.line [(12.6,2.6),(12.2,6),(8.8,5.7)]]
+  -- Three quarters of a circle from the upper right, back over the top, with the arrow at its start.
+  | "reload" => [.arc 8 8 4.8 [14,13,12,11,10,9,8,7,6,5,4,3,2],.line [(11.4,1.6),(11.4,4.6),(14.4,4.6)]]
   | "stop" => [.line [(4.5,4.5),(11.5,11.5)],.line [(11.5,4.5),(4.5,11.5)]]
   | "home" => [.line [(2.5,8),(8,3),(13.5,8)],.line [(4.5,6.5),(4.5,13),(11.5,13),(11.5,6.5)],.line [(7,13),(7,9.5),(9,9.5),(9,13)]]
   | "settings" => gear
@@ -581,15 +589,16 @@ private def lineIconAt (c : Rendering.Color) (name : String) (box : Box) (side :
   let y0 := fl box.y+(fl box.h-fl side)/2
   let p := fun (x y : Float) => (x0+x*k,y0+y*k)
   let w := weight*k
+  let around := fun (cx cy r : Float) (q : Float × Float) => p (cx+r*q.1) (cy+r*q.2)
   (lineIcon name).flatMap fun
     | .line points => polyline c w (points.map fun (x,y) => p x y)
     | .ring cx cy r =>
-      [.paint {primitive := {geometry := .circle (x0+cx*k) (y0+cy*k) (r*k),style := strokeStyle c w}}]
-    | .dot cx cy r => [disk c (x0+cx*k) (y0+cy*k) (r*k)]
-    | .arc ax ay r large sweep bx by_ =>
-      let (sx,sy) := p ax ay
-      let (ex,ey) := p bx by_
-      [.paint {primitive := {geometry := .path [.path ⟨sx,sy⟩ [.arc (r*k) (r*k) 0 large sweep ⟨ex,ey⟩] false],style := strokeStyle c w}}]
+      match unitCircle.map (around cx cy r) with
+      | [] => []
+      | (sx,sy)::rest =>
+        [.paint {primitive := {geometry := .path [.path ⟨sx,sy⟩ (rest.map fun (a,b) => .line ⟨a,b⟩) true],style := strokeStyle c w}}]
+    | .arc cx cy r points =>
+      polyline c w (points.filterMap fun i => (unitCircle[i]?).map (around cx cy r))
 
 /-- A tab of the flat look: the active one a raised card in the toolbar's face, joined to it;
 the others plain, with a hairline between them. -/
@@ -898,7 +907,9 @@ def nodes (s : Shell) (width : Nat) : List Rendering.Node :=
   let p := min 100 s.collapse
   let lift := fullHeight s width-height s width
   let slide : Rendering.Transform := ⟨1,0,0,1,0,-(Float.ofNat lift)⟩
-  [paint t.base 0 0 width (height s width),.group none slide (controlNodes {s with collapse := 0} (fade t (2*p)) width)] ++
+  -- From half way the controls have faded into the face (`fade` at 100%): not drawn.
+  [paint t.base 0 0 width (height s width)] ++
+    (if p < 50 then [.group none slide (controlNodes {s with collapse := 0} (fade t (2*p)) width)] else []) ++
     domainNodes s t width p ++ edgeNodes s t width ++ swipeNodes s t width
 
 /-- The page's part of the window: rows from the chrome's bottom to the window's. -/
