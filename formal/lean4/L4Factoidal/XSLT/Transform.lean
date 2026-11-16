@@ -1237,11 +1237,12 @@ def isStylesheetRoot (root : Node) : Bool :=
 
 /-- Run a stylesheet against a source document. `docs` is what
     `document(uri)` may return, keyed by the URI as the stylesheet
-    writes it. -/
-def transform (style : Document) (src : Document)
-    (docs : List (String × Doc) := [])
-    (imports : List (String × Node) := [])
-    (srcUri : Option String := none) : Outcome :=
+    writes it; `srcUri` is the source document's own URI, so that
+    `document(uri)` naming it returns the source. -/
+def transformAt (style : Document) (src : Document)
+    (docs : List (String × Doc))
+    (imports : List (String × Node))
+    (srcUri : Option String) : Outcome :=
   if !style.namespaceWellFormed || !src.namespaceWellFormed ||
       !(docs.all (fun (_, d) => checkChildren "1.1" initialScope d)) ||
       !(imports.all (fun (_, n) => isNamespaceWellFormed "1.1" n)) then
@@ -1293,5 +1294,18 @@ def transform (style : Document) (src : Document)
             match applyTo rt 4096 [] [] "" [] (.doc d) 1 1 with
             | none    => .refused "an expression or instruction did not evaluate"
             | some rs => .produced (serialize rs)
+
+/-- Run a stylesheet against a source document whose URI is not known.
+    Kept with its four parameters so that compiled callers built before
+    `transformAt` keep their calling convention (a changed arity of an
+    exported function traps in WebAssembly links). -/
+def transform (style : Document) (src : Document)
+    (docs : List (String × Doc) := [])
+    (imports : List (String × Node) := []) : Outcome :=
+  transformAt style src docs imports none
+
+theorem transform_eq_transformAt (style src : Document) (docs : List (String × Doc))
+    (imports : List (String × Node)) :
+    transform style src docs imports = transformAt style src docs imports none := rfl
 
 end L4Factoidal.XSLT

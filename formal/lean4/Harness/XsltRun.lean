@@ -265,7 +265,7 @@ def main (args : List String) : IO UInt32 := do
                     IO.println s!"ERROR {cat}/{name}: the source is not well-formed XML: {e.message} at {e.position}"
                     t := { t with errors := t.errors + 1 }
                 | .ok style, .ok source =>
-                    match transform style source extra [] srcUri with
+                    match transformAt style source extra [] srcUri with
                     | .refused why =>
                         -- A refusal that names nothing is hard to act on.
                         -- When the stylesheet asks for a document the
