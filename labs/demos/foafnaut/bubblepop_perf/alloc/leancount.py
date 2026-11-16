@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read the TSV files of a counting build (leanprof.h): allocations, reference-count operations and
-copied bytes, by kind, by constructor shape and by C function.
+copied bytes, by kind, by constructor shape and by C function. The eighth column of a TSV row is the line of
+the call site in the generated .c file (ir/<Module>.c of the build), to find which source construct allocates.
   leancount.py RUN.tsv [--base BASE.tsv] [--top N] [--scale K]   (counts of RUN less BASE, divided by K)"""
 import collections, csv, re, sys
 SHAPES = {(3,0,8):'Value.num', (2,0,1):'Value.bool', (4,1,0):'Value.str', (5,1,0):'Value.obj', (6,1,0):'Value.sym',
