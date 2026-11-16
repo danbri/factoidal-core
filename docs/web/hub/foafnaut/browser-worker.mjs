@@ -12,8 +12,9 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
-import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf} from './page-load.mjs';
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf,turnSliceSteps} from './page-load.mjs';
 import {gateConsole} from './log-gate.mjs';
+import {fetchOutside} from './copies.mjs';
 // The worker's console lines go through the log gate (log-gate.mjs): a flood is summarised and named.
 const logGate=gateConsole(console,{name:'foafnaut'});
 let browserState,stateReason='starting';
@@ -76,6 +77,8 @@ let firstFrameSeen;const firstFrame=new Promise(resolve=>{firstFrameSeen=resolve
 // order it arrived; only moves and scrolls are merged.
 let ready=false,currentStamp,pendingStamp,pendingMove,pendingScroll,flushPort;
 const early=[];
+// systemDark: the host page's prefers-color-scheme; the default theme follows it (WebShell.themeOf).
+let systemDark=false;
 let width=800,height=600,scale=1,theme='next',percent=200,pages=1,pinchBase,pinchMax=1000;
 // The folding chrome (owner, 2026-11-08). With the classic UI (the default) the chrome is
 // always full. Off, a scroll down first folds the chrome, up to the strip with the domain,
@@ -154,7 +157,7 @@ function call(source,options,w=1,h=1,counted=true){
   finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
 const shell=()=>({tabs:tabs.map((tab,i)=>{const page=i===active?doc:tab.doc;return {title:page?.title??'',...(page?.icon?{icon:page.icon}:{})};}),active,...field,focused,
-  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,
+  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,...(systemDark?{dark:true}:{}),pages,scroll,
   ...(folding()?{collapsible:true,collapse:foldPercent()}:{}),...(swipeHint?{swipe:swipeHint}:{}),...scriptMarker()});
 /** This engine draws a folding chrome: it answers shellInfo with the op chromeLayer. */
 // The text size of the settings page (WebSelection.textZoom, op textZoom): Lean answers the
@@ -272,13 +275,13 @@ function fontLoad(bytes,family,sha,fallback=false){
   if(!fontBytesTakeFallback||typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
     let text='';
     for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
+    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='serif'?{serif:true}:fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
   }
   const input=module._malloc(Math.max(1,bytes.length));
   if(!input)throw Error('Lean engine allocation failed');
   try{
     module.HEAPU8.set(bytes,input);
-    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='web'?2:fallback?1:0]);
+    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='serif'?3:fallback==='web'?2:fallback?1:0]);
     if(!pointer)throw Error('Lean engine allocation failed');
     try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
     finally{module.ccall('web_render_free',null,['number'],[pointer]);}
@@ -301,6 +304,25 @@ async function loadFont(){
     // fallback argument: on 2026-11-07 the published engine did both (issue 1274).
     if(typeof primary?.fonts==='number')fontBytesTakeFallback=true;
   }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));}
+}
+// The serif face (labs/demos/foafnaut/serif_font.ts): `serif` and the initial font-family
+// draw with Liberation Serif, as browsers draw them with a Times-like face. Lean decides which
+// text is serif. The file is fetched at boot beside the engine (fetchEarly, below) and goes into
+// Lean (fontLoad mode 3) as soon as the engine holds Noto Sans, so the first layout of a serif
+// page already has it and is final. A render that answered wantsSerif before the face was in
+// (a slow fetch) is drawn again when it is.
+const serifFont='./fonts/liberation-serif/LiberationSerif-Regular.ttf';
+fetchEarly(new URL(serifFont,import.meta.url).href,'bytes');
+let serifLoading,serifWanted=false;
+function wantSerif(){serifWanted=true;giveSerif();}
+function giveSerif(){
+  if(serifLoading)return;
+  const start=performance.now();
+  serifLoading=fontFile(serifFont).then(({bytes,sha})=>{
+    fontLoad(bytes,'Liberation Serif',sha,'serif');
+    console.info(`foafnaut: serif face in ${Math.round(performance.now()-start)} ms`);
+    if(serifWanted)request();
+  }).catch(error=>console.warn('foafnaut: no serif face, serif text stays in Noto Sans:',String(error?.message??error)));
 }
 // The fallback fonts a page needs, into the engine. Those that come within `wait` ms go in
 // before the page is laid out; the rest go in together when they have all come, and the
@@ -335,6 +357,9 @@ async function loadFallbackFonts(source,wait){
 // Pages that declare no encoding: the setting ('' detect) and the browser's language
 // (navigator.language), which Lean maps by HTML §13.2.3.2's table of suggested defaults.
 let encodingSetting='';const systemLocale=self.navigator?.language??'';
+// The search engine chosen in Settings (WebRoute.searchSetting): '' until the person picks one;
+// until then words typed in the address bar open the browser's own search page.
+let searchSetting='';
 function decodePage(bytes,contentType){
   if(module&&typeof module._web_document_decode_call_bin==='function'&&typeof module._malloc==='function'){
     const two=typeof module._web_document_decode2_call_bin==='function';
@@ -355,9 +380,10 @@ async function fetchText(url,page=false){
   // A page fetched early is used once; a reload fetches it again.
   let got;
   if(preloaded.has(url)){const page=preloaded.get(url);preloaded.delete(url);try{got=await page;}catch{/* fetch it again */}}
+  if(!got&&offSite(url)){got=await fetchOutside(url);if(!got)throw Object.assign(Error('another site that this page may not read'),{outside:true});}
   if(!got){const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
     got={url:response.url||url,bytes:new Uint8Array(await response.arrayBuffer()),contentType:response.headers.get('content-type')??''};}
-  return {url:got.url,...(page?decodePage(got.bytes,got.contentType):{source:textDecoder.decode(got.bytes)})};
+  return {url:got.url,...(got.copy?{copy:got.copy}:{}),...(page?decodePage(got.bytes,got.contentType):{source:textDecoder.decode(got.bytes)})};
 }
 // The settings page has the checkbox of the classic UI where it says <!--foafnaut:classic-ui-->,
 // in the state of now. Lean draws it as it draws the rest of the page.
@@ -390,10 +416,23 @@ function settingsSource(source){
   // an engine from before the op keeps the static links.
   const eOpen='<!--foafnaut:encoding-->',eClose='<!--/foafnaut:encoding-->',ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
   if(ei>=0&&ej>ei)try{source=source.slice(0,ei+eOpen.length)+call('',{op:'encodingChoices',setting:encodingSetting,locale:systemLocale}).html+source.slice(ej);}catch{/* the static links */}
+  // The search engine section (none chosen by default); an engine from before the op keeps the static text.
+  const sOpen='<!--foafnaut:search-->',sClose='<!--/foafnaut:search-->',si=source.indexOf(sOpen),sj=source.indexOf(sClose);
+  if(si>=0&&sj>si)try{source=source.slice(0,si+sOpen.length)+call('',{op:'searchChoices',setting:searchSetting}).html+source.slice(sj);}catch{/* the static text */}
   return source;
 }
-// A text resource of this site (a linked style sheet): another origin is not read.
-const siteText=url=>{if(new URL(url).origin!==siteOrigin)throw Error('not of this site');return fetchText(url);};
+// A text resource of this site (a linked style sheet): another origin is read only from the
+// Hub's copies (copies.mjs), which fetchText does.
+const siteText=url=>fetchText(url);
+// An address of another site: the Hub has only its copies of it (copies.mjs).
+const offSite=url=>{try{const u=new URL(url);return /^https?:$/.test(u.protocol)&&u.origin!==siteOrigin;}catch{return false;}};
+/** The bytes of an image, font or icon at `url`: this site's, or a Hub copy's; else undefined. */
+async function resourceBytes(url,limit){
+  if(offSite(url))return (await fetchOutside(url))?.bytes;
+  const response=await fetch(url);if(!response.ok)return undefined;
+  if(limit&&Number(response.headers.get('content-length')??0)>limit){response.body?.cancel();return undefined;}
+  return new Uint8Array(await response.arrayBuffer());
+}
 async function prepare(url){
   const page=await fetchText(url,true);
   if(url===settingsURL)page.source=settingsSource(page.source);
@@ -422,7 +461,7 @@ async function prepare(url){
     (sheetURL,reason)=>console.warn('foafnaut: imported style sheet not read:',sheetURL,reason));
   for(const r of imported)sources.push({kind:'Style sheet',url:r.url,source:r.source});
   const webFonts=await pageWebFonts(page,sheets.resources);
-  const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
+  const next={url:page.url,...(page.copy?{copy:page.copy}:{}),title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
     ...(sheets.resources.length?{resources:sheets.resources}:{}),...(sheets.resourceFailures.length?{resourceFailures:sheets.resourceFailures}:{}),
     ...(imported.length?{imported}:{})};
   if(Array.isArray(facts.diagnostics))addEntries(next,facts.diagnostics);
@@ -448,9 +487,7 @@ async function pageWebFonts(page,resources=[]){
     const known=loaded.get(src);
     if(known!==undefined){if(known)break;continue;}
     try{
-      if(new URL(src).origin!==siteOrigin)throw Error('not of this site');
-      const response=await fetch(src);if(!response.ok)throw Error(`HTTP ${response.status}`);
-      const bytes=new Uint8Array(await response.arrayBuffer());
+      const bytes=await resourceBytes(src);if(!bytes)throw Error('not read (another site, or no answer)');
       if(bytes.length>maxFontBytes||total+bytes.length>maxPageFontBytes)throw Error('too large');
       const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
       fontLoad(bytes,'',sha,'web');
@@ -475,9 +512,8 @@ function hasIcons(){
 }
 async function tabIcon(url){
   try{
-    if(!hasIcons()||new URL(url).origin!==siteOrigin)return;
-    const response=await fetch(url);if(!response.ok)return;
-    const bytes=new Uint8Array(await response.arrayBuffer());if(bytes.length>65536)return;
+    if(!hasIcons())return;
+    const bytes=await resourceBytes(url,65536);if(!bytes||bytes.length>65536)return;
     return call('',{op:'iconPrepare',base64:toBase64(bytes),scale:Math.max(2,scale)});
   }catch(error){console.warn('foafnaut: tab icon left out:',url,String(error.message??error));}
 }
@@ -488,7 +524,17 @@ async function tabIcon(url){
 // An engine that answers imageInfo holds images (WebDocument, issue 1292): each is sent once,
 // as bytes when the engine has web_document_image_call_bin, and renders name it in
 // heldImages, so a frame's request does not carry the image. Others get `images`.
-const maxImageBytes=4194304,maxPageImageBytes=6291456;
+// A page's images: 6 MiB as Base64; an engine that holds images takes what it says it holds
+// (imageInfo maxBytes, 32 MiB), never above 64 MiB (large images are held reduced there).
+const maxImageBytes=4194304,maxBase64PageImageBytes=6291456;
+let engineImageBytes;
+function maxPageImageBytes(){
+  if(engineImageBytes===undefined){
+    try{const n=holdsImages()?Number(call('',{op:'imageInfo'}).maxBytes):NaN;engineImageBytes=Number.isFinite(n)&&n>0?Math.min(n,67108864):maxBase64PageImageBytes;}
+    catch{engineImageBytes=maxBase64PageImageBytes;}
+  }
+  return engineImageBytes;
+}
 let engineHoldsImages;
 function holdsImages(){
   if(engineHoldsImages===undefined){try{engineHoldsImages=(call('',{op:'imageInfo'}).ops??[]).includes('imageLoad');}catch{engineHoldsImages=false;}}
@@ -531,11 +577,8 @@ async function pageImageBytes(wanted){
   const images=[];let total=0;
   for(const {key,url} of wanted??[]){
     try{
-      const target=new URL(url);if(target.origin!==siteOrigin)continue;
-      const response=await fetch(target);if(!response.ok)continue;
-      if(Number(response.headers.get('content-length')??0)>maxImageBytes){response.body?.cancel();continue;}
-      const bytes=new Uint8Array(await response.arrayBuffer());
-      if(bytes.length>maxImageBytes||total+bytes.length>maxPageImageBytes)continue;
+      const bytes=await resourceBytes(new URL(url).href,maxImageBytes);if(!bytes)continue;
+      if(bytes.length>maxImageBytes||total+bytes.length>maxPageImageBytes())continue;
       total+=bytes.length;
       images.push({key,bytes});
     }catch{}
@@ -911,7 +954,9 @@ function scriptTimers(){
   // 100 ms an advance towards the timer (issue 450).
   const due=Math.max(script.turn.clock,script.turn.nextWake);
   if(elapsed-due>100){script.epoch+=elapsed-due-100;elapsed=due+100;}
-  try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
+  // A slice of at most turnSliceSteps steps (page-load.mjs): the rest is due at once, after the
+  // input messages that came meanwhile.
+  try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock)),sliceSteps:turnSliceSteps}));}
   catch(error){scriptFailed(doc,error,'timers');script.turn.nextWake=null;}
   const next=script.turn.nextWake;
   return next===null||next===undefined?16:next-(performance.now()-script.epoch);
@@ -957,7 +1002,7 @@ function hasWasm(){
   return engineWasm;
 }
 const wasmNeedsEngine=url=>({url,title:'Needs a newer engine',sources:[],source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title>'+
-  '<style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#a0186a}p{margin:0 0 8px 0}</style></head><body>'+
+  '<style>body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#a0186a}p{margin:0 0 8px 0}</style></head><body>'+
   '<h1>WebAssembly in Lean needs a newer engine</h1><p>This page runs WebAssembly modules with WasmVM, the WebAssembly engine written in Lean, inside the Foafnaut engine.</p>'+
   '<p>The engine this page loaded is older and does not have it. The next engine release carries it.</p></body></html>'});
 async function wasmModule(argument){
@@ -977,6 +1022,18 @@ async function wasmPage(url){
   const answer=call('',{op:'wasmPage',...(argument?await wasmModule(argument):{})});
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
 }
+// foafnaut:search/WORDS (WebShell.searchPage): words typed in the address bar with no search
+// engine chosen. Lean writes it from the open tabs and the stored bookmarks and history (the
+// page's own IndexedDB or memory store); nothing is fetched to show it.
+const searchURL='foafnaut:search';
+async function searchPage(url){
+  const resources=browserState?await browserState.resources().catch(()=>undefined):undefined;
+  const open=tabs.map((tab,i)=>i===active?doc:tab.doc).filter(Boolean).map(page=>({url:page.url,title:page.title??''}));
+  let answer;
+  try{answer=call('',{op:'searchPage',argument:url.slice(searchURL.length+1),tabs:open,resources:resources??[],state:resources!==undefined,search:searchSetting});}
+  catch{answer={title:'Needs a newer engine',source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body><h1>The search page needs a newer engine</h1><p>The words were sent to no one.</p></body></html>'};}
+  return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+}
 async function statePage(url){
   if(!browserState)throw Error(`Browser state is off: ${stateReason}`);
   const answer=await browserState.page(url.slice(9));
@@ -994,7 +1051,7 @@ function hasSparql(){
   return engineSparql;
 }
 const sparqlNeedsEngine=url=>({url,title:'Needs a newer engine',sources:[],source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title>'+
-  '<style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#184078}p{margin:0 0 8px 0}</style></head><body>'+
+  '<style>body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#184078}p{margin:0 0 8px 0}</style></head><body>'+
   '<h1>The SPARQL planner page needs a newer engine</h1><p>This page draws how Factoidal plans and runs a SPARQL query, from the Lean engine.</p>'+
   '<p>The engine this page loaded is older and does not have it. The next engine release carries it.</p></body></html>'});
 function sparqlPage(url){
@@ -1007,7 +1064,7 @@ function show(next,remember=true){
   if(remember&&doc&&!next.title?.startsWith('Page refused'))browserState?.visit(next.url,next.title??'',doc.url).catch(()=>{});
   doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;folded=0;
   if(remember){history=push(history.history,next.url);pages++;}
-  post({type:'location',url:next.url,home:next.url===homeURL,push:remember});
+  post({type:'location',url:next.url,home:next.url===homeURL,push:remember,copy:next.copy});
   request();
   startPendingScripts(next);
 }
@@ -1019,7 +1076,7 @@ function visit(address){
   // their fallback on an engine from before the route op.
   const route=router.route({...site,href:address,base:homeURL});
   if(!route)return;
-  if(route.route==='system')show(refusal(route.url,'This address is not on this site. Type it in the address bar to open it.'),false);
+  if(route.route==='system'||route.route==='outside')outsideGo(route.url,false);
   else if(route.route==='command')shellCommand(route.name,route.argument);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url,false);
@@ -1040,11 +1097,27 @@ function consolePage(url){
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}],consoleSource:source};
 }
 function openConsole(){const source=doc;newTab();setFocus(false);consoleFrom=source;navigate(consoleURL);}
-const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
+const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url.startsWith(searchURL+'/')?searchPage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
+// The Hub's own browser pages as link targets (the start page offers "open in Foafnaut on the
+// Hub" and "in Textnaut on the Hub" for a reader in an ordinary browser): in this tab, a link to
+// this Foafnaut page with an address after # opens that address here, not a second Foafnaut in
+// the page; a link to the Hub's Textnaut page opens in a host tab. Only these two pages.
+const hubSelf=new URL('./',import.meta.url).href,hubTextnaut=new URL('../textnaut/',import.meta.url).href;
+function hubPage(url){
+  let u;try{u=new URL(url);}catch{return false;}
+  const page=u.origin+u.pathname.replace(/index\.html$/,'');
+  if(page===hubSelf&&u.hash.length>1){
+    const text=u.hash.slice(1).replace(/%23/gi,'#').replace(/%25(?=2[35])/gi,'%');
+    visit(/^(foafnaut:|https?:\/\/)/.test(text)?text:'https://'+text);return true;
+  }
+  if(page===hubTextnaut){if(doc?.outside===url)post({type:'open',url});else show(outsidePage(url));return true;}
+  return false;
+}
 async function navigate(url,remember=true){
+  if(hubPage(url))return;
   const mine=++serial;loading=true;request();
   const stamp=currentStamp;
-  let next;try{next=await pageFor(url);}catch(error){next=refusal(url,String(error.message??error));}
+  let next;try{next=await pageFor(url);}catch(error){next=error?.outside?outsidePage(url):refusal(url,String(error.message??error));}
   if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}
     if(next.start){const frame=next.start;delete next.start;graphFrame(next,frame);}}
 }
@@ -1085,8 +1158,12 @@ function menuDone(data){
 // An address from the bar (Enter, or Paste and go): Lean routes it as typed.
 function goTo(target){
   leaveAddress();
-  const route=router.address({...site,address:target,base:doc.baseURL||doc.url});
-  if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));
+  const route=router.address({...site,address:target,base:doc.baseURL||doc.url,search:searchSetting});
+  // A typed address reaches the system only as `:open URL`; here it is the Outside page, read
+  // from nowhere, so its button is a second, explicit press (and an older engine's answer for
+  // typed words, a search engine's address, is never fetched).
+  if(route?.route==='system')show(outsidePage(route.url));
+  else if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));
 }
 function menuPress(data,how){
   if(!menuOps)return;
@@ -1273,7 +1350,7 @@ function shellCommand(name,argument){
   else if(name==='new')newTab();else if(name==='close')closeTab(active);
   else if(name==='home')navigate(homeURL);else if(name==='source')viewSource();
   else if(name==='graph')navigate(graphURL);
-  else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();browserState?.settings({theme}).catch(()=>{});}
+  else if(name==='theme'){theme=argument||(theme==='dark'||(theme==='next'&&systemDark)?'light':'dark');request();browserState?.settings({theme}).catch(()=>{});}
   else if(name==='classic'){
     // The settings checkbox: foafnaut:classic/on, /off, or a toggle with no argument.
     classicUI=argument==='on'?true:argument==='off'?false:!classicUI;folded=0;
@@ -1298,6 +1375,13 @@ function shellCommand(name,argument){
     try{encodingSetting=call('',{op:'encodingSetting',setting:argument}).setting;browserState?.settings({encoding:encodingSetting}).catch(()=>{});
       if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
     catch(error){doc=refusal('foafnaut:encoding/'+argument,String(error.message??error));request();}
+  }
+  else if(name==='search-engine'){
+    // Lean reads the choice (an engine of its list, an address with %s, or none). A link gives
+    // this command only on the Settings page (WebRoute.settingsOnly); the bar may type it.
+    try{searchSetting=call('',{op:'searchSetting',setting:argument}).setting;browserState?.settings({search:searchSetting}).catch(()=>{});
+      if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
+    catch(error){doc=refusal('foafnaut:search-engine/'+argument,String(error.message??error));request();}
   }
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
@@ -1331,21 +1415,63 @@ async function openState(){
     if(typeof saved.settings.scripts==='string')scriptSetting=saved.settings.scripts;
     if(typeof saved.settings.liberal==='boolean'&&!strictParam)liberal=saved.settings.liberal;
     if(typeof saved.settings.encoding==='string')encodingSetting=saved.settings.encoding;
+    if(typeof saved.settings.search==='string')try{searchSetting=call('',{op:'searchSetting',setting:saved.settings.search}).setting;}catch{searchSetting='';}
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
 }
 // Lean's route for a link or an address (link-route.mjs), done as it says. This host tests
 // no URL: a refused link shows Lean's reason and stays out of the history.
 function follow(route){
   if(route.route==='command')shellCommand(route.name,route.argument);
-  else if(route.route==='system')post({type:'open',url:route.url});
+  else if(route.route==='system'||route.route==='outside')offSiteGo(route.url);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url);
 }
+// A link or an address of another site (Lean's route "outside", and "system" for the press of
+// the Outside page's button, which Lean answers only when the request's `outside` is that
+// page's address). It never leaves Foafnaut by
+// itself (owner, 2026-11-16): the page opens in the tab from the Hub's copy or from a direct
+// read the site allows (copies.mjs fetchOutside); else the tab shows outsidePage, whose one
+// button is a link to the same address. Only a press on that button, while that page is
+// shown, hands the address to the host browser (browser.mjs, window.open). Mail and phone
+// links (mailto:, tel:, sms:) get the same page.
+function offSiteGo(url){outsideGo(url,true);}
+function outsideGo(url,press){
+  if(press&&doc?.outside===url){post({type:'open',url});return;}
+  if(/^https?:/i.test(url))navigate(url,press);
+  else show(outsidePage(url),press);
+}
+// The Outside page, as Lean writes it (WebShell.outsidePage); an engine from before the op
+// gets the page this file wrote before it (legacyOutsidePage).
+const outsidePage=url=>{
+  try{
+    const answer=call('',{op:'outsidePage',url,hub:true,textnaut:url.startsWith(hubTextnaut)});
+    return {url,title:answer.title,outside:url,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+  }catch{return legacyOutsidePage(url);}
+};
+const legacyOutsidePage=url=>{
+  const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const web=/^https?:/i.test(url),hub=url.startsWith(hubTextnaut);
+  const why=hub?'<p>Textnaut has its own page on the Hub; it does not open inside this one.</p>'
+    :web?'<p>The browser this page runs in lets a page read another site only when that site allows it (cross-origin rules, CORS), and this one does not. The Hub keeps copies of some openly licensed pages, but not of this one. The Foafnaut app on a computer, and Textnaut in a terminal, read it directly.</p>'
+    :'<p>This address belongs to another program (mail, phone or messages), which this page can not open by itself.</p>';
+  const source='<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Another site</title>'+
+    '<style>body{margin:24px;font-family:system-ui,sans-serif;font-size:16px;line-height:24px;color:#1f2328;background:#f7f8fb}'+
+    'h1{margin:0 0 12px;font-size:22px;line-height:30px;color:#184078}p{margin:0 0 12px;max-width:640px}.url{font-family:monospace;overflow-wrap:anywhere;color:#3b4652}'+
+    '.go{display:inline-block;margin-top:8px;padding:10px 18px;border-radius:20px;background:#0b57d0;color:#ffffff;font-weight:bold;text-decoration:none}</style></head><body>'+
+    `<h1>${hub?'Textnaut opens in its own page':web?'This site can not be read from inside the Hub page':'This link opens another program'}</h1>`+
+    `<p class="url">${text(url)}</p>${why}`+
+    `<p><a class="go" href="${text(url)}">Open in a new browser tab</a></p>`+
+    '<p>Back (the arrow, or Command-Left) returns to the page before.</p></body></html>';
+  return {url,title:'Another site',outside:url,source,sources:[{kind:'Generated page',url,source}]};
+};
 // An address typed in the bar, with an engine from before the route op (issue 1274).
 function legacyGo(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
   else if(answer.url?.startsWith('foafnaut:'))navigate(answer.url);
-  else if(answer.go==='system'||!answer.url.startsWith(siteOrigin))post({type:'open',url:answer.url});
+  // The system only by a press: an older engine's "system" (a search engine's address for
+  // typed words) is the Outside page, never fetched.
+  else if(answer.go==='system')show(outsidePage(answer.url));
+  else if(!answer.url.startsWith(siteOrigin))offSiteGo(answer.url);
   else navigate(answer.url);
 }
 function chrome(control){
@@ -1385,6 +1511,7 @@ async function draw(){
       else{
         next=render(doc.source,wantLayers?{...options,layers:true}:options,width,height);
         noteDiagnostics(doc,next);
+        if(next?.wantsSerif===true)wantSerif();
         // An engine with no layers answers one frame: this page then draws frames as before.
         if(wantLayers){layers=L.layersOf(next);layered=!!layers;}
       }
@@ -1508,6 +1635,7 @@ async function startEngine(createModule){
       done(instance,compiled);},fail);return {};}})]);
 }
 async function start(data){
+  systemDark=data.dark===true;
   ({width,height,scale}=data);
   // Page text in CSS pixels, as a browser has it: the canvas is in device pixels, so the
   // starting text zoom follows the pixel ratio: twice a usual browser's text (200 on a 1x
@@ -1534,6 +1662,7 @@ async function start(data){
   createSession=transport.createOffscreenSession;renderOffscreen=transport.render;hashPixels=transport.hashPixels;
   if(data.canvas&&typeof transport.createSurfaceSession==='function'){surfaceCanvas=data.canvas;createSurface=transport.createSurfaceSession;}
   await loadFont();phase('fontReady');
+  giveSerif();
   home=await prepare(homeURL);
   // A page asked for in the address is the first frame: the demo index is not drawn first.
   let first=home;
@@ -1541,7 +1670,7 @@ async function start(data){
   // (a command, a refusal, another site) is handled by visit() once the tab is ready.
   let fromAddress;
   if(data.address){try{const route=router.route({...site,href:data.address,base:homeURL});
-    if(route&&!['system','command','refuse'].includes(route.route))fromAddress=route.url;}catch{}}
+    if(route&&!['system','outside','command','refuse'].includes(route.route))fromAddress=route.url;}catch{}}
   const opening=fromAddress??wanted;
   if(opening){try{first=await pageFor(opening);}catch(error){first=refusal(opening,String(error.message??error));}}
   phase('pageReady');
@@ -1731,6 +1860,7 @@ function handle(data){
   try{apply(data);}finally{currentStamp=undefined;}
 }
 function apply(data){
+  if(data.type==='dark'){systemDark=data.dark===true;request();return;}
   if(data.type==='visit'){visit(data.address);return;}
   if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);scriptResize();request();}
   if(data.type==='scroll'){closeMenu();scrollBy(data.amount);}
@@ -1782,7 +1912,7 @@ function apply(data){
     // A click begins the SVG animations whose `begin` is a click on what it hits.
     if(doc.animation?.has&&current){const a=doc.animation;a.clicks=[...a.clicks,[Math.round(performance.now()-a.epoch),data.x,data.y-current.answer.layers.top+scroll]].slice(-16);a.running=true;request();}
     const target=hit(data.x,data.y);
-    if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url}));
+    if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url,outside:doc?.outside??''}));
   }
   if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){

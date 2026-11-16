@@ -327,9 +327,17 @@ lean_lib LeanJSHost where
 -- The JavaScript engine written in Lean (docs/designissues/2026-11-08-lean-js-engine.md):
 -- parser, evaluator and built-ins. Its own library; only Lean core, Std and the XSD/XPath
 -- number code. `lake exe leanjs` runs a script, Test262 files, or the benchmarks.
+-- `L4Factoidal.JS.FuelMono` holds the proof tactics (it imports Lean.Elab.Tactic): a root of its
+-- own, built by default, never imported by `L4Factoidal.JS`, so no executable links Lean's
+-- elaborator (leanjs was 110.9 MB with it, 11 MB without; issue 551, tools/binary-budget.py).
 @[default_target] lean_lib JS where
-  roots := #[`L4Factoidal.JS]
+  roots := #[`L4Factoidal.JS, `L4Factoidal.JS.FuelMono]
 lean_exe leanjs where root := `L4Factoidal.JS.Main
+-- Fuel monotonicity of the evaluator's mutual block (`IH_all`, JS/FuelMonoAll.lean): a chain of
+-- generated proof modules, checked one at a time (about a quarter of an hour, under 2 GB each).
+-- Not a default target: `lake build JSFuelMono`.
+lean_lib JSFuelMono where
+  roots := #[`L4Factoidal.JS.FuelMonoAll]
 -- Test262 files on the page realm (BubblePopJS with prelude.js, as Foafnaut runs page scripts):
 -- the full Test262 run of danbri/factoidal-builds (test262.yml).
 lean_exe «bubblepop-test262» where root := `L4Factoidal.WasmVM.Hosts.Test262Page

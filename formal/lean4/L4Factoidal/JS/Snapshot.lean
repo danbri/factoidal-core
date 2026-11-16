@@ -99,7 +99,7 @@ def runtimeNatives : Array Native :=
   #[.asyncResume, .promiseThenableJob, .promiseReactionJob, .agenResume, .promiseResolveFn,
     .promiseRejectFn, .promiseFinallyF, .promiseFinallyR, .promiseValueThunk, .promiseThrower,
     .promiseAllElement, (.x (.promiseSettleElement 0)), (.x (.promiseSettleElement 1)), (.x .proxyRevoke), (.x .promiseAnyReject),
-    (.x .cloneSerialize), (.x .cloneDeserialize), (.x .classicScript),
+    (.x .cloneSerialize), (.x .cloneDeserialize), (.x .classicScript), (.x .classicScriptHost),
     (.x (.asyncFromSync 3)), (.x (.asyncFromSync 4)), (.x (.asyncFromSync 5)),
     (.x (.promiseThenableFn false)), (.x (.promiseThenableFn true)), (.x .namedGetterSet), (.x .urlPattern), (.x .streams), (.x .temporal),
     (.x .capabilityExecutor), (.x .adoptClosure), (.x (.asyncDsStep false)), (.x (.asyncDsStep true)),

@@ -273,22 +273,31 @@ theorem sheetIn_eq (kept : Kept) (valid : kept.Valid) (source : String) :
 layout (realperf). `shapeKept` is `SfntProfile.shapeFresh`; its implementation keeps
 what it made, by `SfntProfile.fontsKey`, text, size and direction (at most 16,384, then
 the table starts again). It is called from inside `Rendering.Layout`, so it is not yet
-a field of the engine's state (issue 390). -/
+a field of the engine's state (issue 390). With a `primary` font it is
+`SfntProfile.shapeFreshWith primary` (the words of web fonts and of the serif face, drawn
+in the primary font's units), else `SfntProfile.shapeFresh`. -/
 initialize shapedKept : IO.Ref (Std.HashMap (String × String × Nat × Option Bool) (Except String Rendering.FontProvider.Word)) ← IO.mkRef {}
 
-private unsafe def shapeKeptImpl (key : String) (fonts : Array Rendering.SfntProfile.Font) (text : String) (px : Nat)
+private unsafe def shapeKeptImpl (key : String) (primary : Option Rendering.SfntProfile.Font)
+    (fonts : Array Rendering.SfntProfile.Font) (text : String) (px : Nat)
     (rtl : Option Bool) : Except String Rendering.FontProvider.Word :=
   unsafeBaseIO do
     let k := (key,text,px,rtl)
     if let some w := (← shapedKept.get)[k]? then return w
-    let w := Rendering.SfntProfile.shapeFresh fonts text px rtl
+    let w := match primary with
+      | some p => Rendering.SfntProfile.shapeFreshWith p fonts text px rtl
+      | none => Rendering.SfntProfile.shapeFresh fonts text px rtl
     shapedKept.modify fun m => (if m.size ≥ 16384 then {} else m).insert k w
     return w
 
-/-- `SfntProfile.shapeFresh fonts`, kept; `key` is `SfntProfile.fontsKey fonts`. -/
+/-- `SfntProfile.shapeFresh fonts` (with `primary`, `SfntProfile.shapeFreshWith primary fonts`),
+kept; `key` names `primary` and `fonts` (`SfntProfile.fontsKey`), and no other pair. -/
 @[implemented_by shapeKeptImpl, noinline]
-def shapeKept (_key : String) (fonts : Array Rendering.SfntProfile.Font) (text : String) (px : Nat) (rtl : Option Bool) :
-    Except String Rendering.FontProvider.Word := Rendering.SfntProfile.shapeFresh fonts text px rtl
+def shapeKept (_key : String) (primary : Option Rendering.SfntProfile.Font) (fonts : Array Rendering.SfntProfile.Font)
+    (text : String) (px : Nat) (rtl : Option Bool) : Except String Rendering.FontProvider.Word :=
+  match primary with
+  | some p => Rendering.SfntProfile.shapeFreshWith p fonts text px rtl
+  | none => Rendering.SfntProfile.shapeFresh fonts text px rtl
 
 /-- The document tree: the XML syntax for a `.xht`, `.xhtml` or `.svg` URL (HTML §14,
 `DOM.parseXmlDocument`, `DOM.isXmlPath`), else the HTML syntax (HTML §13). -/
@@ -1079,12 +1088,36 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
   -- the hosts do with no URL test of their own. `origin` is the site the browser loads
   -- pages from ("" for every site), `pages` its folder of pages, `files` whether it reads
   -- local files, `base` the address of the page the link is on.
+  -- `outside` is the address whose Outside page the tab shows ("" for any other page), so a
+  -- link to it is that page's button; `search` is the search engine chosen in Settings.
   if op == "shellRoute" then
-    let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := request.field? "files" == some (.bool true)}
+    let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := (request.field? "files" == some (.bool true)),outside := str request "outside"}
     let route := match request.field? "address" with
-      | some (.string address) => WebShell.routeAddress site (str request "base") address
+      | some (.string address) => WebShell.routeAddress {site with outside := ""} (str request "base") address (str request "search")
       | _ => WebRoute.routeAddress site (str request "base") (str request "href")
     return some (WebShell.routeJson route).toString
+  -- Words typed in the address bar (owner, 2026-11-16: no default search engine). The page
+  -- `foafnaut:search/WORDS`, from the stored `resources` and the open `tabs` the host passes:
+  -- no request is made to show it.
+  if op == "searchPage" then
+    let words := WebRoute.decodeQuery (str request "argument")
+    let tabs := match request.field? "tabs" with
+      | some (.array items) => items.filterMap fun t =>
+          let url := str t "url"; let title := str t "title"
+          if !url.isEmpty && WebState.matchesWords words url title then some ("Open tab", url, title) else none
+      | _ => []
+    let found := tabs.take WebState.maxFound ++ WebState.searchFoundOf words request
+    let stateOn := request.field? "state" == some (.bool true)
+    return some (JSON.Json.object [("title",.string (words ++ " (search)")),
+      ("source",.string (WebShell.searchPage words found stateOn (str request "search")))]).toString
+  if op == "searchChoices" then
+    return some (JSON.Json.object [("html",.string (WebShell.searchChoicesHTML (str request "setting")))]).toString
+  if op == "searchSetting" then
+    let setting := WebRoute.searchSetting (str request "setting")
+    return some (JSON.Json.object [("setting",.string setting),("name",.string (WebRoute.searchName setting))]).toString
+  if op == "outsidePage" then
+    return some (JSON.Json.object [("title",.string "Another site"),
+      ("source",.string (WebShell.outsidePage (str request "url") (request.field? "hub" == some (.bool true)) (request.field? "textnaut" == some (.bool true))))]).toString
   -- Back and forward swipes (WebGesture): `action` info, touch or wheel.
   if let some answer ← WebGesture.op op request then return some answer
   -- WebAssembly run by Lean's own engine, WasmVM (WebWasm; issue 1244).
@@ -1488,6 +1521,12 @@ structure Holds where
   /-- Web fonts (`@font-face`) by SHA-256, oldest first. -/
   webFonts : Array Rendering.SfntProfile.Font := #[]
   images : List HeldImage := []
+  /-- The serif face (`FontFaceRule.genericOf`), when the host gave it (`fontLoad` mode 3,
+  `loadSerifFont`). The window and the Hub give it before the first page, so a serif page is
+  laid out once (`serifWanted_held`); a layout draws with it only on a page whose cascade has
+  serif text (`layOutDOMIn`), so a page with none lays out as with no face held. A host that
+  has not given it learns from `Laid.wantsSerif`. -/
+  serif : Array Rendering.SfntProfile.Font := #[]
 
 instance : Inhabited Holds := ⟨{}⟩
 
@@ -1517,6 +1556,21 @@ private def loadWebFont (h : Holds) (bytes : ByteArray) (sha256 : String) : Hold
       if more.size > maxWebFonts then more.extract 1 more.size else more
     ({h with webFonts := held}, .ok (JSON.Json.object [("webFont",.string sha256),
       ("glyphs",.number (toString font.face.numGlyphs)),("held",.number (toString held.size))]).toString)
+
+/-- Hold the serif face (`fontLoad` mode 3): the policy refuses it or it replaces the one
+held. Layouts draw with it the text whose family list resolves to `serif`
+(`FontFaceRule.genericOf`). -/
+private def loadSerifFont (h : Holds) (bytes : ByteArray) (family sha256 : String) : Holds × Except String String :=
+  match Rendering.SfntProfile.Font.read bytes family sha256 with
+  | .error e => (h, .error e)
+  | .ok font =>
+    ({h with serif := #[font]}, .ok (JSON.Json.object [("serif",.string font.family),
+      ("glyphs",.number (toString font.face.numGlyphs))]).toString)
+
+/-- The held fonts that a layout depends on, by family and SHA-256, in order (the `fonts`
+of `LayoutKey`): the page fonts (`HeldFont.names`), then the serif face, if held. -/
+def Holds.fontNames (h : Holds) : List (String × String) :=
+  (h.font.map HeldFont.names).getD [] ++ h.serif.toList.map fun f => ("serif:" ++ f.family,f.sha256)
 
 /-- The faces of `faces` with their held fonts, by the `webFonts` of the request: the
 font of the first source URL of each face that the request names with a held SHA-256,
@@ -1572,6 +1626,122 @@ def familyFonts (faces : Array Rendering.FontFaceRule.Face) (fonts : Array (Opti
     if Rendering.FontFaceRule.endsSearch held family then break
   return out
 
+/-- The fonts of a `font-family` value before the held fonts: its web fonts
+(`familyFonts`), then the serif face when the value resolves to `serif`
+(`FontFaceRule.genericOfValue`) and one is held. -/
+def familyFontsWith (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String) :
+    Array Rendering.SfntProfile.Font :=
+  if serif.isEmpty then familyFonts faces fonts held value
+  else if Rendering.FontFaceRule.genericOfValue held value = .serif then familyFonts faces fonts held value ++ serif
+  else familyFonts faces fonts held value
+
+/-- Kind: property. Says: with no serif face held, the fonts of every family value are the
+web fonts as before: a host that never gives the serif face lays every page out as before. -/
+theorem familyFontsWith_none (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String) :
+    familyFontsWith #[] faces fonts held value = familyFonts faces fonts held value := by
+  have h0 : (#[] : Array Rendering.SfntProfile.Font).isEmpty = true := rfl
+  unfold familyFontsWith
+  rw [if_pos h0]
+
+/-- Kind: property. Says: a family value that does not resolve to `serif` (`sans-serif`,
+`monospace`, a held or installed sans-serif family first) gets the same fonts whether or not
+the serif face is held: explicit families are not taken over. -/
+theorem familyFontsWith_first (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
+    (h : Rendering.FontFaceRule.genericOfValue held value = .first) :
+    familyFontsWith serif faces fonts held value = familyFonts faces fonts held value := by
+  unfold familyFontsWith
+  by_cases he : serif.isEmpty = true
+  · rw [if_pos he]
+  · rw [if_neg he, if_neg (by rw [h]; decide)]
+
+/-- Kind: property. Says: a family value that resolves to `serif` draws with the serif face
+after its web fonts and before the held fonts, when one is held. -/
+theorem familyFontsWith_serif (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
+    (hs : serif.isEmpty = false) (h : Rendering.FontFaceRule.genericOfValue held value = .serif) :
+    familyFontsWith serif faces fonts held value = familyFonts faces fonts held value ++ serif := by
+  unfold familyFontsWith
+  rw [if_neg (by rw [hs]; decide), if_pos h]
+
+/-- Whether the drawn text of `dom` has a family value that resolves to `serif`
+(`FontFaceRule.genericOfValue`), by the computed styles of its text nodes: a host that
+holds no serif face gives it when a layout says so (`Laid.wantsSerif`). Each distinct value
+is resolved once; the text of `SfntProfile.unrenderedText` elements is not drawn. -/
+def textWantsSerif (held : List String) (dom : DOM.Dom) (styles : Array Rendering.CSS.Computed) : Bool := Id.run do
+  let mut seen : Std.TreeMap String Unit := {}
+  -- Text nodes in a row mostly share their value: the last one is checked first.
+  let mut last := "\x00"
+  for id in [:dom.size] do
+    let n := dom.get id
+    if n.type != .text then continue
+    let value := (styles[id]?.map (·.fontFamily)).getD ""
+    if value == last || n.data.all Char.isWhitespace || seen.contains value then continue
+    if Rendering.FontFaceRule.genericOfValue held value == .serif then
+      if !Rendering.SfntProfile.inUnrendered dom id then return true
+    else
+      seen := seen.insert value ()
+      last := value
+  return false
+
+/-- Whether the text of a page's cascade (`Generated.styled`: the tree with its generated
+content, and the styles) resolves to `serif`, before any layout; false when the cascade
+refused (the layout then refuses with it). -/
+def madeWantsSerif (held : List String) (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) : Bool :=
+  match made with
+  | .ok (d,styles) => textWantsSerif held (Rendering.Generated.flattenContents d styles) styles
+  | .error _ => false
+
+/-- The layout of `dom` with a cascade already made for it (`made`, from
+`Generated.styled`): what `Layout.renderWithStyles` does after its own cascade. -/
+def drawMade (dom : DOM.Dom) (made : DOM.Dom × Array Rendering.CSS.Computed) (font : Rendering.Layout.FontProfile)
+    (embedding : Rendering.Layout.Embedding) (width rows : Nat) (pictures : Rendering.Layout.Pictures) :
+    Except String ((Rendering.Scene × Array Rendering.Layout.Box) × Array Rendering.CSS.Computed) := do
+  let drawn ← Rendering.Layout.renderStyled (Rendering.Generated.flattenContents made.1 made.2) made.2 font embedding width rows pictures
+  return ((drawn.1,drawn.2.filter (·.source < dom.size)),made.2.extract 0 dom.size)
+
+/-- Kind: correctness of the shared cascade. Says: the layout of a page whose cascade is made
+first (`layOutDOMIn`, so that the fonts can know whether the page has serif text) is the
+layout `Layout.renderWithStyles` makes with its own cascade: making the cascade before the
+fonts changes no layout. -/
+theorem renderWithStyles_made (dom : DOM.Dom) (rules : List Rendering.CSS.Rule) (font : Rendering.Layout.FontProfile)
+    (embedding : Rendering.Layout.Embedding) (width rows : Nat) (textScale : Float) (state : Rendering.CSS.ElementState)
+    (pictures : Rendering.Layout.Pictures) (treeScope : Option Rendering.CSS.TreeScope) :
+    Rendering.Layout.renderWithStyles dom rules font embedding width rows textScale state pictures treeScope =
+      (Rendering.Generated.styled treeScope dom rules textScale state).bind
+        (fun m => drawMade dom m font embedding width rows pictures) := by
+  unfold Rendering.Layout.renderWithStyles drawMade
+  cases Rendering.Generated.styled treeScope dom rules textScale state <;> rfl
+
+/-- Whether a layout asks the host for the serif face (`Laid.wantsSerif`): only when none is
+held, a page font is held, and the page has serif text (`text`, worked out only then). -/
+def serifWanted (serif : Array Rendering.SfntProfile.Font) (loaded : Bool) (text : Unit → Bool) : Bool :=
+  serif.isEmpty && loaded && text ()
+
+/-- Kind: property. Says: a layout made with the serif face held never asks for it, so a host
+that gives the face before the first layout of a page (run_html.ts, the Hub worker) never
+draws that page a second time for it: its first layout is final. -/
+theorem serifWanted_held (serif : Array Rendering.SfntProfile.Font) (loaded : Bool) (text : Unit → Bool)
+    (h : serif.isEmpty = false) : serifWanted serif loaded text = false := by
+  simp [serifWanted, h]
+
+/-- Kind: property. Says: a page with no serif text never asks for the serif face, held or
+not: its text never costs a font load. -/
+theorem serifWanted_noText (serif : Array Rendering.SfntProfile.Font) (loaded : Bool) (text : Unit → Bool)
+    (h : text () = false) : serifWanted serif loaded text = false := by
+  simp [serifWanted, h]
+
+/-- Kind: property. Says: the family lookup a layout uses when the page has no serif text
+(`layOutDOMIn` passes no serif face then) gives every family value that does not resolve to
+`serif` the fonts it gets with the face held: on such text the face changes nothing. -/
+theorem familyFontsWith_noSerif (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
+    (h : Rendering.FontFaceRule.genericOfValue held value = .first) :
+    familyFontsWith #[] faces fonts held value = familyFontsWith serif faces fonts held value := by
+  rw [familyFontsWith_none, familyFontsWith_first serif faces fonts held value h]
+
 /-- Read the bytes of a font file once. Later renders use it until another load
 changes the list. With `fallback`, the font goes at the end of the held list (a font
 with the same SHA-256 is not added twice); otherwise it replaces the list. Either
@@ -1595,6 +1765,7 @@ private def loadFont (h : Holds) (request : JSON.Json) : Holds × Except String 
   | none => (h, .error "font file: invalid base64")
   | some bytes =>
   if request.field? "webFont" == some (.bool true) then loadWebFont h bytes (str request "fontSha256" "unnamed") else
+  if request.field? "serif" == some (.bool true) then loadSerifFont h bytes (str request "fontFamily" "serif") (str request "fontSha256" "unnamed") else
   loadFontBytes h bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed")
     (request.field? "fallback" == some (.bool true))
 
@@ -1675,8 +1846,9 @@ private def heldBytes (h : Holds) (names : List (String × String)) : List (Stri
 /-- What Canvas 2D draws with (L4Factoidal.PageCanvas): the fonts the engine holds, the SVG
 path parser (`new Path2D(d)`), and the held images by key, decoded by Lean when a page
 draws one (the canvas keeps it decoded). -/
-def canvasEnv (h : Holds) : L4Factoidal.PageCanvas.Env :=
-  { fonts := (h.font.map (·.fonts)).getD #[],
+def canvasEnv (h : Holds) (opaqueKeys : Std.HashSet String := {}) (opaqueFull : Bool := false) : L4Factoidal.PageCanvas.Env :=
+  { imageOpaque := fun key => opaqueFull || opaqueKeys.contains key,
+    fonts := (h.font.map (·.fonts)).getD #[],
     svgPath := fun d => (NativeSVGPath.parse NativeSVG.number d).toOption,
     image := fun key => (h.images.find? (·.key == key)).bind fun img =>
       match NativeImage.decode img.bytes with
@@ -1756,6 +1928,9 @@ structure Laid where
   /-- What this layout made that the engine's `Kept` did not have; the engine adds it and
   keeps the layout without it. -/
   made : Made := {}
+  /-- Text of the page resolves to `serif` and the engine holds no serif face
+  (`textWantsSerif`): the answer says `wantsSerif`, and a host gives the face. -/
+  wantsSerif : Bool := false
 
 /-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
 of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
@@ -1934,12 +2109,6 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let loaded := pageFonts h.font (faceFonts.filterMap id)
   let memo := loaded.map fun held => Rendering.SfntProfile.remember held.fonts held.memo (Rendering.SfntProfile.wordsOf dom)
   let heldFamilies := ((h.font.map (·.fonts)).getD #[]).toList.map (·.family.toLower)
-  let font ← match loaded,memo with
-    | some held,some words =>
-      Rendering.SfntProfile.profile held.fonts words
-        (shapeKept (Rendering.SfntProfile.fontsKey held.fonts) held.fonts)
-        (if faceFonts.all Option.isNone then fun _ => #[] else familyFonts faces faceFonts heldFamilies)
-    | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.
   let svgFonts := (h.font.map (·.fonts)).getD #[] ++ faceFonts.filterMap id
@@ -1957,10 +2126,32 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   modify (·.merge {store := madeStore,words := madeWords})
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
+  -- The cascade of the page, made before the fonts: the layout of `dom` below draws with it
+  -- (`renderWithStyles_made`), so it is made once, and it says whether any text resolves to
+  -- `serif` (`textWantsSerif`) before the first layout.
+  let made := Rendering.Generated.styled treeScope dom rules textScale state
+  -- With the serif face held, the family lookup goes in only for a page that has serif text;
+  -- a page with none lays out as with no face held (`familyFontsWith_first`), with no lookup
+  -- for each word. A host that gives the face before the first page (run_html.ts, the Hub)
+  -- so lays a serif page out once, with its final face.
+  let serifText := !h.serif.isEmpty && loaded.isSome && madeWantsSerif heldFamilies made
+  -- The serif face draws the text whose family resolves to `serif` (`familyFontsWith`); the
+  -- words of web fonts and of the serif face are kept across layouts, as the others are.
+  let font ← match loaded,memo with
+    | some held,some words =>
+      let heldKey := Rendering.SfntProfile.fontsKey held.fonts
+      Rendering.SfntProfile.profile held.fonts words
+        (shapeKept heldKey none held.fonts)
+        (if faceFonts.all Option.isNone && !serifText then fun _ => #[]
+         else familyFontsWith (if serifText then h.serif else #[]) faces faceFonts heldFamilies)
+        (held.fonts[0]?.map fun primary web =>
+          shapeKept ("with|" ++ Rendering.SfntProfile.fontsKey web ++ "|" ++ heldKey) (some primary) (web ++ held.fonts))
+    | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   -- The layout with the styles it was made with (`Layout.renderWithStyles`): the one cascade
   -- of a layout also answers the SVG refusals below and `Laid.styles` (each cascaded the
-  -- document again before).
+  -- document again before). The page's own tree takes the cascade made above.
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.renderWithStyles d rules font e width rows textScale state pictures treeScope
+  let drawPage := fun (e : Rendering.Layout.Embedding) => made.bind fun m => drawMade dom m font e width rows pictures
   -- Inline SVG is a skip point, checked so that liberal mode lays the page out once
   -- (2026-11-09: BBC News took three layouts). In the layout: the embedding draws a refused
   -- `svg` as nothing (`quiet`). After it: each `svg` root that was laid out is read again at
@@ -1970,10 +2161,10 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     | .ok nodes => .ok nodes
     | .error _ => .ok []
   let (first,used,d3,dom) ← match m with
-    | .strict => pure (draw dom embedding,embedding,([] : List WebAccept.Diagnostic),dom)
+    | .strict => pure (drawPage embedding,embedding,([] : List WebAccept.Diagnostic),dom)
     | .liberal => do
       let roots := svgRoots dom
-      let result := draw dom quiet
+      let result := drawPage quiet
       let refused := match result with
         | .ok ((_,boxes),styles) => if roots.isEmpty then [] else svgRefusals embedding styles boxes roots dom.size
         | .error _ => []
@@ -2006,13 +2197,17 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let hoverRules := rules.any fun rule => rule.selectors.any fun sel =>
     sel.parts.any (·.pseudo.contains .hover) || sel.slotted.any (·.pseudo.contains .hover)
   let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules,words := memo}
+  -- A page whose text resolves to `serif` while the engine holds no serif face says so; a
+  -- host with a page font then gives the face and draws again. Others pay nothing more.
+  let wantsSerif := serifWanted h.serif loaded.isSome fun _ => textWantsSerif heldFamilies dom styles
   return ({laid with dom := dom}
     |> fun l => {l with rules := rules}
     |> fun l => {l with textScale := textScale}
     |> fun l => {l with state := state}
     |> fun l => {l with treeScope := treeScope}
     |> fun l => {l with styles := Thunk.pure (.ok styles)}
-    |> fun l => {l with paint := paint},d1 ++ d2 ++ d0 ++ d3 ++ d4)
+    |> fun l => {l with paint := paint}
+    |> fun l => {l with wantsSerif := wantsSerif},d1 ++ d2 ++ d0 ++ d3 ++ d4)
 
 /-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
 in the mode of the request (`WebAccept.accept`). A script session's layout reads
@@ -2769,6 +2964,14 @@ structure Engine where
   kept : Kept := {}
   /-- The document's subresource requests in progress (`subresource`, Net.Subresource). -/
   subs : Net.Subresource.Table := {}
+  /-- Image requests in progress whose URL is of their document's origin, by transfer id
+  (`Engine.subresource`). -/
+  subImages : List (Nat × String) := []
+  /-- Image URLs of their document's origin whose last answer was opaque (a redirect to
+  another origin): not origin-clean for a canvas (`canvasEnv`, origin isolation C2). Past
+  `maxOpaqueImages` every image is taken as not origin-clean (`opaqueFull`). -/
+  opaqueImages : Std.HashSet String := {}
+  opaqueFull : Bool := false
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -2845,6 +3048,13 @@ def withDiagnostics (request : JSON.Json) (laid : Laid) (answer : String × Arra
   if request.field? "diagnostics" != some (.bool true) || laid.diagnostics.isEmpty || !text.endsWith "}" then answer
   else ((text.dropEnd 1).toString ++ ",\"diagnostics\":" ++ (WebAccept.diagnosticsJSON laid.diagnostics).toString ++ "}",sections)
 
+/-- A render answer of a layout whose text wants the serif face the engine does not hold
+(`Laid.wantsSerif`) says `"wantsSerif":true` at the end of its JSON head; others are as before. -/
+def withWants (laid : Laid) (answer : String × Array ByteArray) : String × Array ByteArray :=
+  let (text,sections) := answer
+  if !laid.wantsSerif || !text.endsWith "}" then answer
+  else ((text.dropEnd 1).toString ++ ",\"wantsSerif\":true}",sections)
+
 /-- An operation of the engine: it reads and changes the engine's state, and reads the
 machine through `M` (`BaseIO` in the engine, `Id` in tests: time 0, no random bytes). -/
 abbrev DocM (M : Type → Type) := ExceptT String (StateT Engine M)
@@ -2876,7 +3086,7 @@ def subresourceJson : Net.Subresource.Out → JSON.Json
 "use-credentials"), `hostCors` and `address` as for `scriptSession start`. `answer`: `id` and
 the host's `answer` to the wire (as action `net` gives one; the body may be left out: the
 host keeps the bytes). `cancel`: `id`. The referrer is the document's URL. -/
-def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subresource.Table × String :=
+def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subresource.Table × Option Net.Subresource.Out × String :=
   match str request "action" with
   | "start" =>
     let doc := str request "documentURL"
@@ -2887,16 +3097,47 @@ def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subr
       | "use-credentials" => some true
       | _ => some false
     let (tab, o) := Net.Subresource.start tab page (str request "kind") (str request "url") doc policy cors
-    (tab, (subresourceJson o).toString)
+    (tab, some o, (subresourceJson o).toString)
   | "answer" =>
     let id := match request.field? "id" with | some (.number n) => n.toNat?.getD 0 | _ => 0
     let (_, a) := WebScripts.netAnswer ((request.field? "answer").getD .null)
     let (tab, o) := Net.Subresource.answer tab id a
-    (tab, (subresourceJson o).toString)
+    (tab, some o, (subresourceJson o).toString)
   | "cancel" =>
     let id := match request.field? "id" with | some (.number n) => n.toNat?.getD 0 | _ => 0
-    (Net.Subresource.cancel tab id, "{}")
-  | _ => (tab, "{\"error\":\"subresource: unknown action\"}")
+    (Net.Subresource.cancel tab id, none, "{}")
+  | _ => (tab, none, "{\"error\":\"subresource: unknown action\"}")
+
+/-- Most image URLs `Engine.opaqueImages` holds. -/
+def maxOpaqueImages : Nat := 4096
+
+/-- Op `subresource`, and what a canvas needs of it: an image of its document's origin whose
+answer is opaque (Fetch: a no-cors request redirected to another origin is) is recorded, so a
+canvas that draws it is not origin-clean although its URL is of the page's origin (HTML
+§4.12.5.1.14: "the image's current request's image data is CORS-cross-origin"). An image of
+another origin needs no record: its URL marks it (`Net.PageFetch.Page.imageClean`). -/
+def Engine.subresource (e : Engine) (request : JSON.Json) : Engine × String :=
+  let (subs, out, answer) := subresourceOp e.subs request
+  let live := fun (id : Nat) => subs.live.any (·.1 == id)
+  let e := { e with subs }
+  let e := match out with
+    | some (.wire id _) =>
+      let url := str request "url"
+      if str request "action" == "start" && str request "kind" == "image" &&
+          (Net.PageFetch.Page.ofUrl (str request "documentURL")).imageClean url then
+        { e with subImages := (id, url) :: e.subImages.filter (live ·.1) }
+      else e
+    | some (.done id _ _ _ hidden _) =>
+      match e.subImages.find? (·.1 == id) with
+      | some (_, url) =>
+        let e := { e with subImages := e.subImages.filter (·.1 != id) }
+        if !hidden then { e with opaqueImages := e.opaqueImages.erase url }
+        else if e.opaqueImages.size ≥ maxOpaqueImages then { e with opaqueFull := true }
+        else { e with opaqueImages := e.opaqueImages.insert url }
+      | none => e
+    | some (.fail id _) => { e with subImages := e.subImages.filter (·.1 != id) }
+    | none => e
+  (e, answer)
 
 /-- A document request, with `laidOut` as the layout of a render. `run` passes the
 kept layout (`Engine.frame`); `runUncached` passes `layOut`, so that tests compare the two. With
@@ -2910,7 +3151,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     return (← stepState fun e => let (h,r) := loadFont e.holds request; ({e with holds := h},r),#[])
   -- A document's subresource requests go through the engine's network rules, step by step.
   if str request "op" == "subresource" then
-    return (← stepState fun e => let (subs, r) := subresourceOp e.subs request; ({e with subs}, .ok r),#[])
+    return (← stepState fun e => let (e, r) := e.subresource request; (e, .ok r),#[])
   if str request "op" == "imageLoad" then
     return (← stepState fun e => let (h,r) := loadImage e.holds request; ({e with holds := h},r),#[])
   -- The ops of held images and frame work: a host asks this before it calls them (issue 1274).
@@ -2981,13 +3222,14 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   -- session is taken out of the state for the call, so that it is not shared.
   if str request "op" == "scriptSession" then
     let holds := (← get).holds
+    let (opaqueKeys, opaqueFull) := ((← get).opaqueImages, (← get).opaqueFull)
     -- Before the scripts' first layout read: the store of the page's images (`keepStoreAhead`).
     if str request "action" == "start" then
       modify fun e => {e with kept := keepStoreAhead holds e.kept html request}
     let held ← modifyGet fun e => (e.scripts,{e with scripts := {}})
     let kept := (← get).kept
     let (held,answer) ← WebScripts.opSections held "scriptSession" html request (fun r => some (measure holds r kept))
-      (fun _ => canvasEnv holds)
+      (fun _ => canvasEnv holds opaqueKeys opaqueFull)
     modify fun e => {e with scripts := held}
     match answer with
     | .ok (some a) => return a
@@ -3030,7 +3272,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   -- folding chrome lays nothing out again.
   let top := (shell.map (fun value => WebShell.height value width)).getD 0
   let holds := (← get).holds
-  let fonts := (holds.font.map HeldFont.names).getD []
+  let fonts := holds.fontNames
   -- A script's `transform` values are not in the key (`WebPaint.slotKey`): the frame
   -- paints them on the kept layout. When a slot's element can not be painted alone,
   -- the layout takes the values (the key with them).
@@ -3142,13 +3384,13 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     return ← WebRender.artifactWith page boxes face live form checks tree
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
-      return withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
+      return withWants laid <| withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
         (request.field? "retained" != some (.bool false)) (!splash.isEmpty))
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
-  return withDiagnostics request laid (← WebRender.artifactWith (WebPaint.cull (match shell with
+  return withWants laid <| withDiagnostics request laid (← WebRender.artifactWith (WebPaint.cull (match shell with
     | some value => WebShell.compose value page width height
     | none => page)) boxes face live form checks tree)
 
@@ -3264,8 +3506,8 @@ def engineNew (_ : Unit) : Engine := {}
 
 /-- `fontLoad` with the font file as bytes, with no Base64 and no JSON around it.
 A host copies the file into engine memory, so a font is not limited by the call stack,
-which holds string arguments in Wasm. `fallback` is 2 for a web font (`loadWebFont`), 1 to add the font to the held
-list, 0 to replace the list. The answer is the `fontLoad` answer. The guest module of page
+which holds string arguments in Wasm. `fallback` is 3 for the serif face (`loadSerifFont`), 2 for a web font (`loadWebFont`), 1 to
+add the font to the held list, 0 to replace the list. The answer is the `fontLoad` answer. The guest module of page
 scripts comes the same way, as bytes (WebScripts). -/
 @[export web_document_font_load_bin]
 def fontLoadBin (e : Engine) (bytes : ByteArray) (family sha256 : String) (fallback : UInt32) : Engine × String :=
@@ -3277,7 +3519,8 @@ def fontLoadBin (e : Engine) (bytes : ByteArray) (family sha256 : String) (fallb
     else
       let holds := e.holds
       let e := {e with holds := {}}
-      let (holds,r) := if fallback == 2 then loadWebFont holds bytes sha256
+      let (holds,r) := if fallback == 3 then loadSerifFont holds bytes family sha256
+        else if fallback == 2 then loadWebFont holds bytes sha256
         else loadFontBytes holds bytes family sha256 (fallback != 0)
       ({e with holds},r)
   (e,match loaded with | .ok value => value | .error message => WebRender.errorJSON message)

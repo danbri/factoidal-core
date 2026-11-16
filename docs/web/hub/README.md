@@ -662,6 +662,29 @@ tools/hub-quick-ship.sh --no-eleventy
    `gh workflow run 243250067 -R danbri/factoidal --ref claude/main`. When `HEAD` is
    not on `origin/main` yet, it says to push first.
 
+### Hub copies: other sites on the Hub, from openly licensed copies
+
+The Hub has no fetch proxy, and other sites do not allow the page to read them (CORS), so
+Foafnaut and Textnaut on the Hub read only this site. A few openly licensed pages are shown
+from copies instead: `labs/demos/foafnaut/realpages/hub-copies.json` lists them (URL,
+licence, attribution, and hosts left out, such as Wikimedia images with licences of their
+own). Their snapshots are in danbri/factoidal-builds `third_party/realpages/<site>/hub-*.zip`
+(made by `realpages/snapshot.ts --pages hub-copies.json`), never in this repository. The
+Pages workflow runs `tools/hub-copies.mjs`, which unpacks the newest zip of each page into
+`web/hub/foafnaut/copies/` as `.bin` files (served as `application/octet-stream`, so no copy
+runs as a page of this site) and an `index.json` from address to file and Content-Type.
+
+`foafnaut/copies.mjs` answers an address of another site from that index; the Foafnaut worker
+and Textnaut's engine worker ask it only for an address of another site, so a visit that stays
+on this site fetches nothing more. A link to a copied page opens in the tab, under its own
+address, with a line under the canvas that names the page's authors, licence and fetch date;
+other links of another site still open in a new tab. `tests/hub/hub_copies_test.mjs` checks the
+tool and the module on a made-up snapshot. To add a page: add it to `hub-copies.json`, make its
+snapshot from this checkout with `deno run -A labs/demos/foafnaut/realpages/snapshot.ts --pages
+labs/demos/foafnaut/realpages/hub-copies.json --only ID --max-mb 4 --max-image-kb 200 --out
+BUILDS/third_party/realpages` (BUILDS a factoidal-builds checkout), add its row to that README,
+and merge it there.
+
 ### Foafnaut notes: one Markdown file a note
 
 [Foafnaut notes](../web-platform/foafnaut/notes/) are short dated posts about the

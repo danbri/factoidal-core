@@ -358,11 +358,66 @@ These came out of the inventory. Each is a question with a cheap test; none is a
   cross-origin frame; from a script, call the imports directly with node numbers above the page's own.
 - C2. **Canvas read-back.** No origin-clean flag was found by text search in `PageCanvas/` or in the prelude's
   `getImageData`. If an opaque image can be drawn to a canvas, can its pixels be read?
+  Result (issue 524): yes, and more. A canvas that drew another origin's image answered its pixels to
+  `getImageData`, `toDataURL`, `toBlob`, `convertToBlob`, through other canvases, patterns, `ImageBitmap`s and
+  `OffscreenCanvas`, and to WebGL `texImage2D` (whose prelude reads the pixels back). Separately, an image
+  element's request put the image's bytes, of any origin, into the page's realm (the prelude read the natural
+  size from them), where a page that replaced `Uint8Array` read them. Fixed in the engine: `PageCanvas.Taint`
+  (origin-clean flags of canvases, bitmaps and patterns, kept by `Run.stepT`), `Store.refuses` and the refusals of
+  `Wire.call` and `Wire.callWords` (the prelude maps them to `SecurityError`), `Net.PageFetch.Page.imageClean`
+  (an image is clean when `data:` or of the page's origin), the record of opaque answers to same-origin image
+  URLs (a redirect to another origin) in the lab's `Engine.subresource`, and `Net.Xhr.imageRaw` (an image
+  element's request gives the realm the natural size, never the bytes). Theorems in `PageCanvas/Theorems.lean`
+  (section 3) and `Net.Xhr.imageRaw_noninterference`; the checks C2, C2b, C2c and C2d of
+  `origin_isolation_test.ts` must pass. Still open: the bytes of a classic script of another origin reach the
+  realm the same way (`Xhr.raw` for destination `script`), and a `VideoFrame`'s pixels come from the media host
+  into the realm with no origin-clean flag.
 - C3. **Failure text.** Does the failure a page gets for a refused cross-origin answer carry anything of the
   answer (a status, a field)?
 - C4. **Rules only in `prelude.js`.** The same-origin test for `new Worker(url)` and the refusal of
   `document.domain` are in the prelude. Is each also enforced by a Lean import?
 - C5. `window.name` across a navigation, and what `getComputedStyle` answers for a `:visited` link.
+
+- C1b (2026-11-16). **A nested frame's URL.** A frame's `src` was parsed against the page's URL, not
+  against its own node document (HTML §4.8.5), so a frame inside another origin's frame document asked
+  the embedder for a document of the page's origin, which then ran in the page's realm and could walk
+  the other origin's frame nodes. Fixed by `Hosts.Dom.frameBase` (pull request
+  [549](https://github.com/danbri/factoidal-core/pull/549)); `origin_isolation_test.ts` C1b.
+- C6 (2026-11-16). **Classic scripts of another origin.** Their bytes reached the page's realm (the
+  prelude decoded them). Fixed by `Net.Xhr.scriptRaw` and `takeScript` and the native `runFetched`
+  (pull request [547](https://github.com/danbri/factoidal-core/pull/547)); errors are muted.
+
+### Follow-up: network for a cross-origin frame's own session
+
+A frame of another origin whose scripts may run gets a script session of its own
+(`WebScripts.crossFrameSessions`), started with `network := false` and `hostLoads := false`: nothing
+in the embedder answers that session's requests or loads its frames. So such a frame cannot fetch,
+make an `XMLHttpRequest`, load a nested frame or post to a server. WPT shows it:
+`html/semantics/embedded-content/the-iframe-element/cross_origin_parentage.sub.html` subtest 2 needs
+the grandchild (in a frame of another origin) to post to `stash.py`. Before pull request 529 that
+subtest passed only by the C1b fault (the grandchild ran in the page's realm).
+
+What the work needs:
+
+1. A `Net.Xhr.State` per frame session, with that frame's `PageFetch.Page` (its origin, address and
+   secure flag; `Page.forFrame`, as `Page.forWorker`), its own cookie jar view (the same jar, by
+   host) and its own `held` bound.
+2. The turn's `netRequests` and `navigations` tagged with the session they belong to (a frame's
+   iframe element number), and the embedder's answers routed back by that tag (`action net` and
+   `action frame` with a `frame` field). The routing is engine state, so a theorem can say that an
+   answer reaches only the session that asked (`HTML.FrameSessions.exchange` extended by network
+   events; the `HttpConnections` Veil model already states this for connections).
+3. Limits: a bound on the number of frame sessions with network (today `maxFrameSessions`), on
+   requests in flight per session, and the nesting depth of frames.
+4. Theorems: a frame session's requests carry its own origin (`Page.forFrame_origin`), and an
+   operation of one session's `Net.Xhr` state never changes another's (`op_page` of the workers
+   record, generalised to sessions).
+5. Checks: a new origin isolation check that a cross-origin frame's fetch has its own origin in the
+   `Origin` field and that its answer never appears in the page's realm; the WPT subtest above as the
+   end-to-end test.
+
+Cost: about 6 to 10 hours of agent time and one cloud build; the page pays nothing while it has no
+cross-origin frame with scripts.
 
 ## 5. Lemmas, by module, ranked by cost
 

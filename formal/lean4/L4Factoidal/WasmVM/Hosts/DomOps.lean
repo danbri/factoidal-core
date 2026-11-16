@@ -104,8 +104,22 @@ def newRange (r : Rng) : Op Nat := do
   set { s with live }
   return k
 
-def nodeArg (d : Dom) (k : Int) : Op Nat :=
-  if k < 0 || k.toNat ≥ d.size then throw (-2) else pure k.toNat
+def nodeArg (d : Dom) (k : Int) : Op Nat := fun s =>
+  -- origin isolation (issue 518, C1): a node of a frame document this realm may not reach
+  -- is no node (`nodeReachable`; one test of an empty array without frames)
+  if k < 0 || k.toNat ≥ d.size || !nodeReachable s k.toNat then .error (-2) else .ok (k.toNat, s)
+
+/-- Kind: security theorem (origin isolation, C1). Says: a node number an op takes through
+`nodeArg` is one this realm may reach. -/
+theorem nodeArg_reachable (d : Dom) (k : Int) (s s' : State) (n : Nat)
+    (h : (nodeArg d k).run s = .ok (n, s')) : nodeReachable s n = true := by
+  by_cases hc : (k < 0 || k.toNat ≥ d.size || !nodeReachable s k.toNat) = true
+  · simp only [StateT.run, nodeArg, hc, ↓reduceIte, reduceCtorEq] at h
+  · simp only [StateT.run, nodeArg, hc, Bool.false_eq_true, ↓reduceIte, Except.ok.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, -⟩ := h
+    cases hr : nodeReachable s k.toNat with
+    | true => rfl
+    | false => simp [hr] at hc
 
 /-- The numbers of an op's string argument, separated by spaces. -/
 def nums (q : String) : Array Int := ((q.splitOn " ").filterMap String.toInt?).toArray
@@ -448,6 +462,15 @@ def sanitizeM (root : Nat) (safe : Bool) (c : L4Factoidal.HTML.Sanitizer.Config)
     for k in (d.get root).kids do
       exec (.removeChild root k)
 
+/-- A name of the form `on` and one or more lower-case ASCII letters (the prelude's
+`/^on[a-z]+$/`): the names an event handler content attribute can have. -/
+def eventHandlerLike (name : String) : Bool :=
+  let cs := name.toList
+  cs.length ≥ 3 && cs.take 2 == ['o', 'n'] && (cs.drop 2).all fun c => 'a' ≤ c && c ≤ 'z'
+
+#guard eventHandlerLike "onclick" && eventHandlerLike "onx" && !eventHandlerLike "on" &&
+  !eventHandlerLike "onClick" && !eventHandlerLike "xon" && !eventHandlerLike "on-x" && !eventHandlerLike "one1"
+
 /-- Op `op` of `node_query` from 100, on the node or range number `id`, with argument `q`.
 
 Ranges: 100 a new range of document `id` (its number); 101 the range: "startNode
@@ -509,7 +532,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   let d ← dom
   match op with
   | 100 =>
-    if id ≥ d.size || (d.get id).type != .document then throw (-2)
+    if id ≥ d.size || (d.get id).type != .document || !nodeReachable (← get) id then throw (-2)
     return toString (← newRange ⟨⟨id, 0⟩, ⟨id, 0⟩⟩)
   | 101 => let r ← getRange id; return s!"{bpText r.start} {bpText r.stop}"
   | 102 =>
@@ -707,14 +730,36 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     let n ← nodeArg d (num xs 0)
     return if selContainsNode (← get) n (num xs 1 == 1) then "1" else "0"
   | 160 =>
-    -- a reflected IDL attribute's getter (`DOM.Reflect.get`): "row" U+0000 the document's URL
+    -- A reflected IDL attribute's row. Legacy callers append a URL; URL reflection
+    -- now uses the node document's state instead of that caller-supplied value.
     let n ← nodeArg d id
     let (row, base) := match q.splitOn "\x00" with
       | [row, base] => (row, base)
       | _ => (q, "")
     match row.toNat?.bind (L4Factoidal.DOM.Reflect.table[·]?) with
-    | some r => return L4Factoidal.DOM.Reflect.get d n r base
+    | some r =>
+      match r.kind with
+      | .url docDefault =>
+        let st := (← get).ensureBases.resolveBaseEncoding
+        set st
+        let doc := (d.get n).doc
+        let c := st.baseContext doc
+        let v := L4Factoidal.DOM.Reflect.attr d n r.content
+        if r.iface == "HTMLBaseElement" && r.content == "href" then
+          return BaseURL.baseHref c v
+        if docDefault && (v.isNone || v == some "") then return c.url
+        let base := st.documentBase doc
+        match v with
+        | none => return ""
+        | some text => return ((BaseURL.parse text base c.encoding).map (·.href)).getD text
+      | _ => return L4Factoidal.DOM.Reflect.get d n r base
     | none => throw (-2)
+  | 164 =>
+    -- Node.baseURI, including disconnected nodes, uses the node document.
+    let n ← nodeArg d id
+    let st := (← get).ensureBases
+    set st
+    return st.documentBase (if (d.get n).type == .document then n else (d.get n).doc)
   | 161 =>
     -- its setter (`DOM.Reflect.set`): "row" U+0000 the converted value
     match q.splitOn "\x00" with
@@ -892,10 +937,21 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       return (e.getD .utf_8).name
     | none => throw (-2)
   -- ==== end of encoding100 ====
+  -- 168: the elements of the subtree of node `id` (with `id` itself when `q` is "1") that have
+  -- an attribute named `on` and lower-case letters (`eventHandlerLike`: the event handler content
+  -- attributes, HTML §8.1.8.1, are among them), in tree order. The prelude's scan for handlers
+  -- at the start of a page reads these, not every element: on a documentation page of 10,000
+  -- elements the scan made three calls for each element, about 1.6 s of its start.
+  | 168 =>
+    if id ≥ d.size then throw (-2)
+    let xs := (d.treeOrder id (q == "1")).filter fun k =>
+      let x := d.get k
+      x.type == .element && x.attrs.any fun a => eventHandlerLike a.qname
+    return " ".intercalate (xs.toList.map toString)
   -- ==== domhtml (ops 180 to 199): decisions of DOM and HTML features, read-only ====
   -- 180: named access on the Window object (HTML §7.3.3, `DOM.Named.answer`): the value of
   -- the named property `q` of the Window of document `id`
-  | 180 => return L4Factoidal.DOM.Named.answer d id q
+  | 180 => if !nodeReachable (← get) id then throw (-2) else return L4Factoidal.DOM.Named.answer d id q
   -- 181: whether `q` is a valid custom element name (HTML §4.13.3, `DOM.CustomElements.validName`)
   | 181 => return if L4Factoidal.DOM.CustomElements.validName q then "1" else "0"
   -- 182: the elements a tree change at node `id` reaches, in shadow-including tree order
@@ -968,7 +1024,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     let r := L4Factoidal.HTML.SessionHistory.answer q
     if r.startsWith "K" then
       let u := ((r.drop 1).toString.splitOn "\x03").headD ""
-      if !u.isEmpty then modify fun st => { st with url := u }
+      if !u.isEmpty then modify fun st => { st.ensureBases with url := u }
     return r
   -- 198: whether `navigator.registerProtocolHandler` or `unregisterProtocolHandler` may go on
   -- (`HTML.ProtocolHandler.answer`): `q` is the document's URL, U+0000, scheme, U+0000, URL

@@ -119,13 +119,16 @@ def internToks (toks : Array Token) : Array Token :=
 
 namespace P
 
-def peek : P Token := do let s ← get; pure (s.toks.getD s.pos default)
-def peekAt (k : Nat) : P Token := do let s ← get; pure (s.toks.getD (s.pos + k) default)
-def advance : P Unit := modify fun s => { s with pos := s.pos + 1 }
+/-! `peek`, `peekAt`, `advance`, `atP` and `atK` are inlined: each is a few instructions, and a call
+that is not inlined makes a result cell of the monad for every token looked at (a fifth of what a
+Test262 run allocated, `docs/bubblepopjs-heap.md`, step 7). -/
+@[inline] def peek : P Token := do let s ← get; pure (s.toks.getD s.pos default)
+@[inline] def peekAt (k : Nat) : P Token := do let s ← get; pure (s.toks.getD (s.pos + k) default)
+@[inline] def advance : P Unit := modify fun s => { s with pos := s.pos + 1 }
 def isP (t : Token) (p : String) : Bool := t.kind == .punct && t.text == p
 def isK (t : Token) (k : String) : Bool := t.kind == .kw && t.text == k
-def atP (p : String) : P Bool := do pure (isP (← peek) p)
-def atK (k : String) : P Bool := do pure (isK (← peek) k)
+@[inline] def atP (p : String) : P Bool := do pure (isP (← peek) p)
+@[inline] def atK (k : String) : P Bool := do pure (isK (← peek) k)
 
 def describe (t : Token) : String :=
   match t.kind with

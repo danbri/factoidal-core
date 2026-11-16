@@ -133,6 +133,7 @@ npm/factoidal/node_modules/
 /bin/*/*.byte
 /.factoidal-builds/
 /docs/test-results/*
+!/docs/test-results/index.md
 !/docs/test-results/closure-bench-baseline.json
 !/docs/test-results/perf-quadstore-baseline.json
 !/docs/test-results/perf-quadstore-baseline.fragment.html

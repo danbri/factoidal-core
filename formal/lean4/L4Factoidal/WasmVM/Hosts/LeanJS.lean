@@ -39,6 +39,17 @@ or a loop iteration; 5 M of them take about as long natively as the 4 G instruct
 loops until the budget ends). -/
 def runBudget : Nat := 5000000
 
+/-- The rate of the script clock (`Page.ScriptClock.instructionsPerMs`) for BubblePopJS when
+the host names none: steps for one millisecond of script time. It is about the native
+engine's own rate on everyday pages (440 to 650 steps a millisecond on an Apple M1,
+2026-11-15), so `performance.now()` and `Date.now()` move with the work done. The rate of
+QuickJS in WasmVM (100000 instructions a millisecond) made a step two hundred times too
+short: a time-sliced loop (`while (performance.now() < end)`, as script loaders that work
+in 50 ms slices do) ran 5 M steps, about ten seconds, until `runBudget` halted it. With
+this rate it stops within `(d + 1) · stepsPerMs` steps of a deadline `d` ms ahead
+(`Page.ScriptClock.ms_after`). Tests and the WPT runner name their own rate. -/
+def stepsPerMs : Nat := 500
+
 /-! ## Dedicated workers: what a realm asks of them (`Hosts.LeanJSWorkers`) -/
 
 /-- An ask of a realm's scripts about workers, in the order made. A page creates, posts to
@@ -149,7 +160,8 @@ theorem WorkerHost.take_head (wh : WorkerHost) (h : wh.head ≤ wh.inbox.size) :
 - both: 3 `take()` answers the next event's head (JSON: `w` worker, `k` kind, `h` header)
   or ""; 4 answers its bytes;
 - worker: 1 `post(0, bytes)` to the page; 10 `close()`; 11 `error(message, file, line,
-  col)`; 12 `importScript(url)` answers the source, -1 when the embedder has not fetched
+  col)`; 12 `importScript(url)` answers 0 when the embedder has the script (the source is
+  never answered: `runFetched(url)` runs it), -1 when the embedder has not fetched
   it yet (the run is undone: `missing`), -2 when the fetch failed. -/
 def serveWorker (wh : WorkerHost) (args : Array JS.HostArg) : WorkerHost × JS.HostAns :=
   let a := fun (i : Nat) => args.getD i (.val .undef)
@@ -177,7 +189,8 @@ def serveWorker (wh : WorkerHost) (args : Array JS.HostArg) : WorkerHost × JS.H
   | 12 =>
     let url := text 1
     match wh.scripts.find? (·.1 == url) with
-    | some (_, some src) => (wh, .val (.str (JS.Str.ofHost src)))
+    -- the source stays in the engine: `runFetched(url)` runs it (`serveScript`)
+    | some (_, some _) => (wh, .val (.num 0))
     | some (_, none) => (wh, .val (.num (-2)))
     | none => ({ wh with missing := wh.missing <|> some url }, .val (.num (-1)))
   | _ => (wh, .err "worker: no such op")
@@ -396,6 +409,47 @@ def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.Host
      | .error m => (h, .err m))
   | _ => (h, .err "foafnaut_dom: no such native")
 
+/-- A worker's imported script runs with muted errors unless it is of the worker's own origin
+(or a `data:` or `blob:` URL): HTML "fetch a classic worker-imported script" (a no-cors
+request; a CORS-cross-origin answer has muted errors). -/
+def importMuted (p : L4Factoidal.Net.PageFetch.Page) (url : String) : Bool :=
+  !(url.startsWith "blob:" || p.imageClean url)
+
+/-- The source of a classic script for the engine to run (`JS.hostScriptId`,
+`Native.classicScriptHost`, the prelude's `n.runFetched`), answered as `HostAns.script`, which
+never becomes a value of the realm: for a number, the script element request with that handle
+(`Net.Xhr.takeScript`); for a string, a worker's imported script of that URL (the embedder
+fetched it). -/
+def serveScriptSrc (h : Host) (wk : WorkerHost) (key : JS.HostArg) : Host × Option (String × Bool) :=
+  match key with
+  | .val (.num x) =>
+    let (net, got) := L4Factoidal.Net.Xhr.takeScript h.web.net x.toUInt64.toNat
+    ({ h with web := { h.web with net } }, got)
+  | .val (.str u) =>
+    let url := JS.Str.toHost u
+    (h, (wk.scripts.find? (·.1 == url)).bind fun e => e.2.map fun src => (src, importMuted h.web.net.page url))
+  | _ => (h, none)
+
+/-- A script's source as the host's answer: `HostAns.script`, else a refusal. -/
+def scriptAns : Option (String × Bool) → JS.HostAns
+  | some (src, muted) => .script src muted
+  | none => .err "no script"
+
+/-- The host's answer to a request for a script's source (`serveScriptSrc`, as `scriptAns`). -/
+def serveScript (h : Host) (wk : WorkerHost) (key : JS.HostArg) : Host × JS.HostAns :=
+  ((serveScriptSrc h wk key).1, scriptAns (serveScriptSrc h wk key).2)
+
+/-- Kind: security lemma (origin isolation, C6). Says: the host's answer to a request for a
+script's source is a `HostAns.script` (which the evaluator never makes a value: `hostAnswer`)
+or a refusal; it is never a value or bytes. -/
+theorem serveScript_answer (h : Host) (wk : WorkerHost) (key : JS.HostArg) :
+    (∃ src muted, (serveScript h wk key).2 = .script src muted) ∨ (serveScript h wk key).2 = .err "no script" := by
+  show (∃ src muted, scriptAns (serveScriptSrc h wk key).2 = .script src muted) ∨
+    scriptAns (serveScriptSrc h wk key).2 = .err "no script"
+  cases (serveScriptSrc h wk key).2 with
+  | none => exact Or.inr rfl
+  | some p => exact Or.inl ⟨p.1, p.2, rfl⟩
+
 /-- The host's natives with the script clock: the instructions run so far are the steps of
 the session before this run and the steps of this run (`runBudget` less the steps left),
 as `Page.Session.run` counts the instructions of a run at each host call. -/
@@ -403,6 +457,10 @@ def hostCall (lh : LHost) (k : Nat) (args : Array JS.HostArg) (left : Nat) : LHo
   if k == 29 then
     let ⟨page, base, wasm0, wk, budget⟩ := lh
     let (wk, ans) := serveWorker wk args
+    (⟨page, base, wasm0, wk, budget⟩, ans)
+  else if k == JS.hostScriptId then
+    let ⟨page, base, wasm0, wk, budget⟩ := lh
+    let (page, ans) := serveScript page wk (args.getD 0 (.val .undef))
     (⟨page, base, wasm0, wk, budget⟩, ans)
   else
   let base := lh.base
@@ -566,6 +624,43 @@ def Session.eval (s : Session) (src : String) : Session :=
   | .syntaxError m => s.reportNew true m
   | o => s.fail ((failure o).getD "")
 
+/-- Run a classic script whose errors are muted (HTML "muted errors": an external script of
+another origin, fetched without CORS): an exception, or a script that does not parse, is
+reported to the page as "Script error." with no URL, position or error value (the prelude's
+`reportMuted`), never with what it threw. The embedder's record keeps the message. -/
+def Session.evalMuted (s : Session) (src : String) : Session :=
+  let (s, o, _) := s.run fun h => let (o, h) := JS.evalScript h src; ((o, .undef), h)
+  match o with
+  | .ok => s
+  | .threw _ m => (s.api? "reportMuted" #[]).1.fail m
+  | .syntaxError m => (s.api? "reportMuted" #[]).1.fail ("SyntaxError: " ++ m)
+  | o => s.fail ((failure o).getD "")
+
+/-- Whether the classic script element `node` that the embedder fetched has muted errors: its
+`src`, resolved against its document's base URL, is of a tuple origin other than the page's
+(not `data:`). The embedder followed any redirect; one to another origin is not seen here. A
+page of an opaque origin (`file:`, `about:`) mutes none. Inline scripts never are. The bases
+are tracked from the first external script on (`ensureBases`). -/
+def Session.scriptMuted (s : Session) (node : Nat) : Session × Bool :=
+  let h := s.host
+  match Hosts.Dom.attrValue? h.dom.dom node "src" with
+  | none => (s, false)
+  | some v =>
+    let page := h.web.net.page
+    if page.origin == "null" || page.origin.isEmpty then (s, false) else
+    let v := v.trimAscii.toString
+    let mutedFor := fun (u : L4Factoidal.WHATWG.URL.Url) => !(u.href.startsWith "data:" || u.origin == page.origin)
+    -- an absolute URL needs no base: the bases stay untracked
+    match L4Factoidal.WHATWG.URL.parseUrl v none with
+    | some u => (s, mutedFor u)
+    | none =>
+      let d := h.dom.ensureBases
+      let base := d.documentBase (h.dom.dom.get node).doc
+      let muted := match L4Factoidal.WHATWG.URL.parseUrl v (some base) with
+        | some u => mutedFor u
+        | none => false
+      (s.setHost { h with dom := d }, muted)
+
 def Session.dispatchOnly (s : Session) (target : Nat) (type : String) : Session × Bool :=
   let (s, v) := s.api? "dispatch" #[.num (Float.ofNat target), .str type, .num (Float.ofNat (Page.flagsOf type))]
   ({ s with tasks := s.tasks + 1 }, match v with | .str "prevented" => true | _ => false)
@@ -694,6 +789,8 @@ def prepareSource (lim : Page.Limits := {}) : Except String Session := do
   -- of the engine, not of the host, since they walk the heap
   let heap := JS.addNatives heap nobj #[("serialize", .x .cloneSerialize, 2), ("deserialize", .x .cloneDeserialize, 1),
     ("runScript", .x .classicScript, 1),
+    -- a classic script whose source the engine holds and the realm never sees (`serveScript`)
+    ("runFetched", .x .classicScriptHost, 1),
     -- the global object's slot for the page's named properties (`JS.namedGetterKey`)
     ("setNamedGetter", .x .namedGetterSet, 1),
     -- the URL Pattern Standard (`WHATWG.URLPattern`), for the prelude's URLPattern class
@@ -741,18 +838,23 @@ about 540 KB, some 55 % of it. Safari's worker stack was not measured (record
 2026-11-08-lean-js-engine.md, section 17). -/
 def callDepth : Nat := if System.Platform.numBits == 32 then 100 else 400
 
-/-- Start a page on the prepared realm (as `Page.start` and `Page.Session.startP`): the
-content event handler attributes, the URL, the classic scripts in document order (each with
-the current script set and a microtask checkpoint after it), the module scripts of `mods`
-(`Session.runModule`), `DOMContentLoaded`, the
-window's `load` event as a task, and the tasks due at time 0. `origins`: a sandboxed
-frame's own session (`HTML.FrameSessions`), with its own origin and its parent's. -/
-def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Page.Limits := {})
+/-- A start before its classic scripts: the session of the page on the prepared realm, its
+arena, the script clock and the network state, the `start` and `url` calls of the page
+objects. -/
+def startBegin (base : Session) (dom : Arena) (url : String) (lim : Page.Limits := {})
     (reads : Reads := {}) (time : ScriptClock := {})
     (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
-    (mods : LeanJSModules.Loaded := {}) : Session := Id.run do
+    (aboutBase : Option String := none) (aboutPolicyURL : Option String := none) : Session := Id.run do
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage lim.gpuReplay
-  let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
+  let domHost : Page.DomHost := {
+    dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url,
+    bases := {
+      parsed := some dom.size
+      about := aboutBase.toArray.map fun u => (0, u)
+      aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
+      encoding := L4Factoidal.WHATWG.Encoding.getEncoding lim.encoding
+      policies := L4Factoidal.Net.Xhr.cspOf lim.csp lim.cspReportOnly lim.cspMeta }
+    selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
   -- the page's own iframes get browsing contexts before its scripts run (as `Page.Session.startP`)
   let domHost := if domHost.framing && dom.nodes.any Hosts.Dom.frameOwner then
     let d1 := Hosts.Dom.connectFrames domHost #[0]
@@ -769,11 +871,22 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, net := { enabled := lim.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url lim.hostCors lim.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader lim.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf lim.csp lim.cspReportOnly lim.cspMeta, violations := lim.cspViolations, syncOk := lim.syncOk, syncAnswers := lim.syncAnswers, mayBlock := lim.mayBlock } } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1
-  for (node, src) in scripts do
-    s := (s.api? "script" #[.num (Float.ofNat node)]).1
-    s := s.eval src
-    s := engine.checkpoint s
-  s := (s.api? "script" #[.num (-1)]).1
+  return s
+
+/-- One classic script of a start: the current script set, the script, a checkpoint. -/
+def startScript (s : Session) (node : Nat) (src : String) : Session :=
+  let (s, muted) := s.scriptMuted node
+  let s := (s.api? "script" #[.num (Float.ofNat node)]).1
+  engine.checkpoint (if muted then s.evalMuted src else s.eval src)
+
+/-- The classic scripts `scripts` of a start, in order. -/
+def startScripts (s : Session) (scripts : List (Nat × String)) : Session :=
+  scripts.foldl (fun s p => startScript s p.1 p.2) s
+
+/-- After the classic scripts: the module scripts of `mods`, `DOMContentLoaded`, the window's
+`load` event as a task, and the tasks due at time 0. -/
+def startFinish (s : Session) (mods : LeanJSModules.Loaded := {}) : Session := Id.run do
+  let mut s := (s.api? "script" #[.num (-1)]).1
   -- module scripts, deferred: after the classic scripts, in document order, before
   -- `DOMContentLoaded` (`document.currentScript` is null for them)
   let mut lives : JS.ModLives := #[]
@@ -787,6 +900,98 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   else
     s := engine.setLoop s ((engine.loop s).queueTask .domManipulation 0 (some { type := "load", target := Page.windowId }))
   return (engine.advance s 0).1
+
+/-- Start a page on the prepared realm (as `Page.start` and `Page.Session.startP`): the
+content event handler attributes, the URL, the classic scripts in document order (each with
+the current script set and a microtask checkpoint after it), the module scripts of `mods`
+(`Session.runModule`), `DOMContentLoaded`, the
+window's `load` event as a task, and the tasks due at time 0. `origins`: a sandboxed
+frame's own session (`HTML.FrameSessions`), with its own origin and its parent's. -/
+def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Page.Limits := {})
+    (reads : Reads := {}) (time : ScriptClock := {})
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
+    (mods : LeanJSModules.Loaded := {}) (aboutBase : Option String := none) (aboutPolicyURL : Option String := none) : Session :=
+  startFinish (startScripts (startBegin base dom url lim reads time origins aboutBase aboutPolicyURL) scripts.toList) mods
+
+/-! ### A start that waits for a sync answer goes on from the script that waited
+
+A classic script that makes a sync request whose answer the host has not given yet sets
+`syncWanted`; the host answers and the start is made again with the answer
+(`Net.Xhr.syncFetch`: the answers are read in order, `syncUsed`). Made again from the
+beginning, every script before that one runs again: on a news page with 130 such answers the
+start ran about thirty times. `startUntil` stops at the first script that waits and keeps
+the session as it was before that script; the start goes on from there (`startFrom`), with
+the answers that came. The scripts before it read only the answers they read before (the
+first answer they did not have would have made them wait), so they would give the same
+session again; that is not proved here. What is proved: going on from a script, through
+the same steps, is the start (`startScripts_split`, `start_eq_from`). -/
+
+/-- The classic scripts from the start of `scripts`, stopping after the first one that waits
+for a sync answer: the session, and the session before that script with the scripts from it
+(none when no script waited). Only for a page that may make sync requests (`mayBlock`): the
+kept session holds the heap as it was, so the next script's first write copies it. -/
+def startUntil (s : Session) : List (Nat × String) → Session × Option (Session × List (Nat × String))
+  | [] => (s, none)
+  | (node, src) :: rest =>
+    let s' := startScript s node src
+    if s'.host.web.net.syncWanted.isSome then (s', some (s, (node, src) :: rest))
+    else startUntil s' rest
+
+/-- Kind: equivalence. Says: the scripts of a start are the scripts before any point and then
+the scripts from it. -/
+theorem startScripts_split (s : Session) (pre post : List (Nat × String)) :
+    startScripts s (pre ++ post) = startScripts (startScripts s pre) post := by
+  simp [startScripts, List.foldl_append]
+
+/-- Kind: equivalence. Says: when `startUntil` runs to the end with no script waiting, it is
+the classic scripts of the start. -/
+theorem startUntil_none (s : Session) :
+    ∀ (scripts : List (Nat × String)) (s' : Session), startUntil s scripts = (s', none) → s' = startScripts s scripts := by
+  intro scripts
+  induction scripts generalizing s with
+  | nil => intro s' h; simp [startUntil] at h; simp [startScripts, h]
+  | cons hd rest ih =>
+    intro s' h
+    obtain ⟨node, src⟩ := hd
+    simp only [startUntil] at h
+    split at h
+    · simp at h
+    · have := ih _ _ h
+      simp only [startScripts, List.foldl_cons] at this ⊢
+      exact this
+
+/-- Kind: equivalence. Says: when `startUntil` stops, the point it keeps is on the way of the
+start: the session it keeps is the scripts before the point, and the scripts it keeps are the
+rest, so going on from it through the same steps is the start. -/
+theorem startUntil_some (s : Session) :
+    ∀ (scripts : List (Nat × String)) (s' k : Session) (rest : List (Nat × String)),
+      startUntil s scripts = (s', some (k, rest)) →
+        ∃ pre, scripts = pre ++ rest ∧ k = startScripts s pre := by
+  intro scripts
+  induction scripts generalizing s with
+  | nil => intro s' k rest h; simp [startUntil] at h
+  | cons hd tl ih =>
+    intro s' k rest h
+    obtain ⟨node, src⟩ := hd
+    simp only [startUntil] at h
+    split at h
+    · simp only [Prod.mk.injEq, Option.some.injEq] at h
+      obtain ⟨-, rfl, rfl⟩ := h
+      exact ⟨[], by simp, by simp [startScripts]⟩
+    · obtain ⟨pre, h1, h2⟩ := ih _ _ _ _ h
+      exact ⟨(node, src) :: pre, by simp [h1], by simp [h2, startScripts, List.foldl_cons]⟩
+
+/-- Kind: equivalence. Says: the start is the start from any point that `startUntil` keeps:
+from the kept session, the kept scripts and the rest of the start. -/
+theorem start_eq_from (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String))
+    (lim : Page.Limits) (reads : Reads) (time : ScriptClock)
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin))
+    (mods : LeanJSModules.Loaded) (s' k : Session) (rest : List (Nat × String))
+    (h : startUntil (startBegin base dom url lim reads time origins) scripts.toList = (s', some (k, rest))) :
+    start base dom url scripts lim reads time origins mods = startFinish (startScripts k rest) mods := by
+  obtain ⟨pre, h1, h2⟩ := startUntil_some _ _ _ _ _ h
+  unfold start
+  rw [h1, startScripts_split, ← h2]
 
 /-- A frame's navigation ends with document `source` (as `Page.Session.loadFrameP`): it
 joins the arena, its classic scripts run in the page's realm with the current script set
@@ -803,8 +1008,9 @@ def loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat �
   let mut s := s.setHost { s.host with dom }
   if let some root := root then
     for (node, src) in scripts do
-      s := (s.api? "script" #[.num (Float.ofNat (node + root))]).1
-      s := s.eval src
+      let (s', muted) := s.scriptMuted (node + root)
+      s := (s'.api? "script" #[.num (Float.ofNat (node + root))]).1
+      s := if muted then s.evalMuted src else s.eval src
       s := engine.checkpoint s
     s := (s.api? "script" #[.num (-1)]).1
   s := engine.setLoop s ((engine.loop s).queueTask .networking 0 (some { type := "load", target := el }))

@@ -298,6 +298,7 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
     const history = [firstURL];
     let helpOpen = false;
     const help = new HelpView();
+    help.settings = { engine: run.name, scripts: options.scripts, strict: !options.liberal };
     let index = 0, previous: string[] = [];
     let token = 0, abort: AbortController | undefined;
     const bars = () => screen.rows >= 3;
@@ -334,7 +335,7 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
         const shown = total ? Math.min(top + bodyRows(), total) / total : 1;
         const meterWidth = 12, filled = Math.round(shown * meterWidth);
         const meter = blocks ? "\u2588".repeat(filled) + "\u2591".repeat(meterWidth - filled) : "#".repeat(filled) + "-".repeat(meterWidth - filled);
-        const hints = message || (typed ? `go to link ${typed} then Enter` : "? help | [n] Enter follow | Tab next | b back | q quit ");
+        const hints = message || (typed ? `go to link ${typed} then Enter` : "? help | s settings | [n] Enter follow | Tab next | b back | q quit ");
         lines.push(barRow([{ text: ` ${meter} ${Math.round(shown * 100)}% `, bold: true }], hints, screen.columns, caps.level, 160));
       }
       let changed = "";
@@ -426,7 +427,7 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
           continue;
         }
         if (key === "q" || key === "\x03") return;
-        if (key === "?" || key === "h") { helpOpen = true; typed = ""; clear = true; previous = []; continue; }
+        if (key === "?" || key === "h" || key === "s") { if (key === "s") help.top = 0; helpOpen = true; typed = ""; clear = true; previous = []; continue; }
         if (/^[0-9]$/.test(key)) { typed += key; continue; }
         message = "";
         if (key === "\r" || key === "\n" || key === "right") {

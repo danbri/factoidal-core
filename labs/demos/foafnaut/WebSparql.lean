@@ -794,7 +794,7 @@ def rowsTable (vars : List VarName) (rows : List Binding) (total : Nat) : String
     cell ((mu.lookup v).map termShort |>.getD "")) ++ "</tr>") ++ "</table>"
 
 def style : String :=
-  "body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}" ++
+  "body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}" ++
   "h1{margin:0 0 4px 0;font-size:22px;line-height:28px;color:#184078}" ++
   "h2{margin:16px 0 6px 0;font-size:16px;line-height:22px;color:#184078}" ++
   "h3{margin:10px 0 4px 0;font-size:14px;line-height:20px;color:#184078}" ++

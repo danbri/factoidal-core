@@ -1,22 +1,53 @@
 // The Hub's Textnaut page: an address (a page of this site) or typed HTML, laid out by the shared
 // engine (engine.mjs) and shown as Textnaut's grid (grid-view.mjs). The page's history is a list
 // of what was shown; Back returns to the one before. ?page=NAME.html opens a Foafnaut demo page,
-// #ADDRESS opens an address of this site.
+// #ADDRESS opens an address of this site or of a Hub copy (copies.mjs); with neither, the start page.
 import * as engine from './engine.mjs';
 import {createGridView,gridStyle} from './grid-view.mjs';
+import {copyOf} from '../foafnaut/copies.mjs';
 
 gridStyle();
 const $=id=>document.getElementById(id);
-const address=$('address'),stats=$('stats'),note=$('note'),cols=$('cols'),scripts=$('scripts'),source=$('source');
+const address=$('address'),stats=$('stats'),note=$('note'),cols=$('cols'),engineChoice=$('engine'),source=$('source');
+const settingsPanel=$('settings'),settingsButton=$('settings-button');
+// Settings are kept in this browser only (localStorage); a private window starts with the defaults.
+const saved=(()=>{try{return JSON.parse(localStorage.getItem('textnaut-settings')??'{}');}catch{return {};}})();
+if(saved.engine==='off'||saved.engine==='bubblepop')engineChoice.value=saved.engine;
+if([...cols.options].some(o=>o.value===saved.cols))cols.value=saved.cols;
+function keep(){try{localStorage.setItem('textnaut-settings',JSON.stringify({engine:engineChoice.value,cols:cols.value}));}catch{/* not kept */}}
+function toggleSettings(open=settingsPanel.hidden){
+  settingsPanel.hidden=!open;settingsButton.setAttribute('aria-expanded',String(open));
+  if(open)engineChoice.focus();
+}
+settingsButton.addEventListener('click',()=>toggleSettings());
+document.addEventListener('keydown',event=>{
+  if(event.key!=='s'||event.ctrlKey||event.metaKey||event.altKey)return;
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName??''))return;
+  event.preventDefault();toggleSettings();
+});
 const pagesBase=new URL('../foafnaut/pages/',location.href).href;
 const history=[];
 let shown=0;
 
 const view=createGridView($('view'),{
-  follow:url=>visit({url},true),
+  follow:url=>hubPage(url)||visit({url},true),
   back,
   address:()=>{address.focus();address.select();},
 });
+
+// The Hub's own browser pages as link targets (the start page offers both for a reader in an
+// ordinary browser): a link to this Textnaut page with an address after # opens that address
+// here; a link to the Hub's Foafnaut page offers, in the note, a link that opens it in a new tab.
+function hubPage(url){
+  let u;try{u=new URL(url);}catch{return false;}
+  const page=u.origin+u.pathname.replace(/index\.html$/,'');
+  if(page===new URL('./',location.href).href&&u.hash.length>1){visit({url:new URL(decodeURIComponent(u.hash.slice(1)),location.href).href},true);return true;}
+  // Foafnaut has its own page: never opened by itself; the note offers a link that says where it goes.
+  if(page===new URL('../foafnaut/',location.href).href){
+    const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.textContent='Open Foafnaut in a new browser tab \u2197';
+    note.replaceChildren('That link goes to Foafnaut, which has its own page: ',a);return true;}
+  return false;
+}
 
 /** Columns that fit the view: the grid's font is 14 px monospace, about 8.4 px a character. */
 function columns(){
@@ -43,7 +74,7 @@ async function visit(input,push){
   stats.textContent=engine.engineState().started?'Laying the page out…':'Starting the built-in engine…';
   note.textContent='';
   try{
-    const out=await engine.textGrid('textnaut',input.url??{html:input.html,url:location.href},{cols:columns(),base:location.href,scripts:scripts.checked});
+    const out=await engine.textGrid('textnaut',input.url??{html:input.html,url:location.href},{cols:columns(),base:location.href,scripts:engineChoice.value!=='off'});
     if(shownNow!==shown)return;
     view.show(out.grid);
     stats.textContent=timingLine(out);
@@ -54,6 +85,11 @@ async function visit(input,push){
     window.textnautGridCheck=()=>engine.gridCheck('textnaut');
     window.textnautShown={url:out.url,title:out.title,timing:out.timing,counters:out.counters,text:out.text,targets:out.grid.targets};
     if(out.scripts?.errors?.length)note.textContent=`Page script errors: ${out.scripts.errors.slice(0,3).join(' | ')}`;
+    // A page shown from the Hub's copy: who wrote it, its licence, when it was fetched.
+    if(out.url&&new URL(out.url).origin!==location.origin){
+      const found=await copyOf(out.url).catch(()=>undefined);
+      if(shownNow===shown&&found?.copy){const c=found.copy;note.textContent=`Hub copy of ${c.url}, fetched ${String(c.fetched??'').slice(0,10)}. ${c.attribution}. Licence: ${c.licence}.`+(note.textContent?' '+note.textContent:'');}
+    }
     view.element.focus({preventScroll:true});
   }catch(error){
     if(shownNow!==shown)return;
@@ -72,11 +108,12 @@ $('go').addEventListener('submit',event=>{event.preventDefault();const a=address
 $('back').addEventListener('click',back);
 $('layout').addEventListener('click',()=>visit({html:source.value},true));
 source.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();visit({html:source.value},true);}});
-cols.addEventListener('change',()=>{if(history.length)visit(history[history.length-1],false);});
+cols.addEventListener('change',()=>{keep();if(history.length)visit(history[history.length-1],false);});
+engineChoice.addEventListener('change',()=>{keep();if(history.length)visit(history[history.length-1],false);});
 
 const query=new URLSearchParams(location.search);
 const page=query.get('page');
 const fromHash=location.hash.length>1?decodeURIComponent(location.hash.slice(1)):'';
 if(page&&/^[a-z0-9-]+\.html$/.test(page))visit({url:pagesBase+page},true);
 else if(fromHash)visit({url:new URL(fromHash,location.href).href},true);
-else visit({url:pagesBase+'index.html'},true);
+else visit({url:pagesBase+'start.html'},true);

@@ -64,6 +64,10 @@ private def refused (r : Except String Rendering.Bitmap) (text : String) : Bool 
 #guard refused (decodePNG (rgbPng.extract 0 30)) "PNG"
 #guard refused (decodePNG (signature ++ ihdr 100000 100000 8 6 ++ chunk "IEND" .empty)) "exceeds"
 #guard refused (decodePNG (signature ++ ihdr 4294967295 4294967295 16 6 ++ chunk "IEND" .empty)) "exceeds"
+-- 4 Mpx is the limit of one image (a 2048 by 2048 header passes it and fails later, for no
+-- data); one row more is refused.
+#guard !(refused (decodePNG (signature ++ ihdr 2048 2048 8 6 ++ chunk "IEND" .empty)) "exceeds")
+#guard refused (decodePNG (signature ++ ihdr 2048 2049 8 6 ++ chunk "IEND" .empty)) "exceeds"
 #guard refused (decodePNG (signature ++ ihdr 0 1 8 6)) "no pixels"
 #guard refused (decodePNG (signature ++ ihdr 1 1 3 2)) "bit depth"
 #guard refused (decodePNG (signature ++ chunk "IEND" .empty)) "IHDR"
@@ -101,6 +105,9 @@ private def sof (width height : Nat) (marker : UInt8 := 0xC0) : ByteArray :=
   ByteArray.mk #[0xFF,0xD8,0xFF,marker,0,17,8,(height/256).toUInt8,(height%256).toUInt8,(width/256).toUInt8,(width%256).toUInt8,
     3,1,0x11,0,2,0x11,0,3,0x11,0,0xFF,0xD9]
 #guard refused (decodeJPEG (sof 65535 65535)) "exceeds"
+-- A photograph of 1653 by 1653 (2.7 Mpx) passes the frame check; 2049 by 2048 does not.
+#guard refused (decodeJPEG (sof 1653 1653)) "no scan"
+#guard refused (decodeJPEG (sof 2049 2048)) "exceeds"
 #guard refused (decodeJPEG (sof 0 9)) "no pixels"
 #guard refused (decodeJPEG (sof 8 8 0xC9)) "not supported"
 #guard refused (decodeJPEG (sof 8 8)) "no scan"

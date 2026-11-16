@@ -15,7 +15,7 @@ PAGES = os.path.join(ROOT, 'labs/demos/foafnaut/pages')
 manifest = json.load(open(os.path.join(PAGES, 'manifest.json'), encoding='utf-8'))
 # The tab icon of the built-in pages (HTML §4.6.7.8): the FOAF graph of the app icon.
 ICON = '<link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">'
-STYLE = ('body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}'
+STYLE = ('body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}'
          'h1{margin:0;font-size:21px;line-height:28px;color:#184078}p{margin:0;padding-top:6px}svg{display:block}')
 
 

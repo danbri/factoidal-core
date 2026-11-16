@@ -112,7 +112,8 @@ def ops : List OpSpec :=
     ⟨"graphPage", .query, []⟩, ⟨"sparqlPage", .query, []⟩, ⟨"sparqlInfo", .query, []⟩,
     ⟨"sparqlExplain", .query, []⟩, ⟨"wasmPage", .query, []⟩, ⟨"wasmInfo", .query, []⟩,
     ⟨"wasmSpecSample", .query, []⟩, ⟨"scriptPlan", .query, []⟩, ⟨"scriptChoices", .query, []⟩,
-    ⟨"encodingChoices", .query, []⟩,
+    ⟨"encodingChoices", .query, []⟩, ⟨"searchPage", .query, []⟩, ⟨"searchChoices", .query, []⟩,
+    ⟨"searchSetting", .query, []⟩, ⟨"outsidePage", .query, []⟩,
     -- the browser's own controls (WebShell): answers from the request
     ⟨"shellText", .query, []⟩, ⟨"shellKey", .query, [.keyboard]⟩, ⟨"shellEdit", .query, [.keyboard]⟩,
     ⟨"shellHit", .query, [.pointer]⟩, ⟨"shellActions", .query, []⟩, ⟨"shellSubmit", .query, []⟩,
@@ -132,7 +133,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 64
+#guard opNames.length == 68
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state

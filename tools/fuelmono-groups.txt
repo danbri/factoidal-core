@@ -1,0 +1,21 @@
+# Groups of step lemmas for tools/fuelmono-gen.py --split: "Tag: names". One module
+# (JS/FuelMonoSteps<Tag>.lean) and one Lean process per group, checked in this order.
+S1: getV,getProto,proxyTrap,hasProp,getRecv,ownKeysOf,ownDesc,putV,toPrim,tryMethods,toNum,toBigInt,typedConv,toStr,toKey
+S2: toObj,looseEq,lessThan,instOf,binop,callV,callClosure,bindParams,evalNamed,initFields,protoFromCtor,constructNative,construct,evalBody,enterBlock
+S3: declareLexical,evalStmts,evalBlock,assignName,lookupLocal,assignLocal,namedGlobal,lookup,putTarget,evalRef,getRef,evalArgs,evalArg,evalProps,whileLoop
+S4: doLoop,forLoop,copyEnv,forInLoop,bindIter,forOfLoop,switchFind,runCases,evalDecls,bindPat,bindProps,bindElems,copyDataProps,getIterator,iterStep
+S5: iterClose,iterToArray,iterCloseAbrupt,getSuper,superCall,evalClass,defineMembers,directEval,evalCompletion,genEval,genUnsupported,genLift,asyncStep,promiseResolve,resolvePromise
+S6: rejectPromise,settlePromise,performThen,runJobs,iterResult,agenDrain,agenAwait,agenRun,coreRun,callNative,vmGlobalMiss,vmUnary,vmGetIndex,vmEnter,genericPush
+S7: deleteOrThrow,arrayGeneric,speciesFrom,speciesFill,elemsOf,elemAt,iterArray,reduceArray,arrayLikeLength,sortGt,mergeSort,merge,toPropDesc,defineFromDescriptor,jsonStr
+S8: regexExec,regExpExecG,speciesCtor,matchArray,stringSymDispatch,extraNative,moreNative
+S9: jsonSer,arraySpliceGeneric,deleteProp,jsonRevive
+BVmLoop: vmLoop
+BGenEnter: genEnter
+BRegexpSymbol: regexpSymbol
+BEvalStmt: evalStmt
+BStringOrMath: stringOrMath
+BGenRun: genRun
+BGenUnwind: genUnwind
+BCallBody: callBody
+BDefineOwnProp: defineOwnProp
+BEvalExpr: evalExpr

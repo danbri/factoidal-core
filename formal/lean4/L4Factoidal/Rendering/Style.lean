@@ -93,6 +93,17 @@ inductive UnicodeBidi where | normal | embed | isolate | bidiOverride | isolateO
 /-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
 inductive BorderStyle where | none | solid | inset | outset
   deriving Repr, BEq
+/-- A `linear-gradient()` background image (CSS Images 3 §3.1): the direction as an angle in
+degrees (0 is up, 90 is right; `to bottom`, the default, is 180), or a corner (`to top
+right`: x and y each -1, 0 or 1), whose angle depends on the box; and the colour stops, each
+a colour, its opacity and its position when it has one (px, or a fraction of the line when
+`percent`). -/
+structure BackgroundGradient where
+  angle : Float := 180
+  corner : Option (Int × Int) := none
+  stops : List (Color × Float × Option (Float × Bool)) := []
+  deriving Repr
+
 structure Computed where
   display : Display := .inline
   width : Length := .auto
@@ -101,8 +112,18 @@ structure Computed where
   padding : Edges := {}
   color : Color := ⟨0,0,0⟩
   background : Option Color := none
+  /-- `background-image: linear-gradient(...)`, painted over the colour; other images are
+  not drawn. -/
+  backgroundGradient : Option BackgroundGradient := none
+  /-- `column-count` and `column-width` (px) of a multi-column container (CSS Multi-column
+  Layout 1 §3); none is `auto`. With both `auto` the box is not a multi-column container. -/
+  columnCount : Option Nat := none
+  columnWidth : Option Float := none
   fontSize : Float := 16
-  fontFamily : String := "monospace"
+  /-- CSS Fonts 4 §2.1: the initial value is the user agent's; as in browsers, `serif`
+  (`FontFaceRule.genericOf`: drawn with the serif face when the engine holds one, else with
+  its first font, as before). -/
+  fontFamily : String := "serif"
   lineHeight : Float := 19.2
   lineHeightFactor : Option Float := some 1.2
   visible : Bool := true
@@ -495,6 +516,24 @@ def fontLonghands (value : String) (important : Bool) : List Declaration :=
       (ls.lookup n).map fun v => (⟨n, v, important⟩ : Declaration)
   | none => []
 
+/-- The text inside the first `linear-gradient(` ... `)` of a value, to its matching
+parenthesis; none when the value has none. -/
+def gradientArgs (value : String) : Option String := do
+  let lower := value.toLower
+  let parts := lower.splitOn "linear-gradient("
+  -- `repeating-linear-gradient` is not read: its stops repeat
+  if parts.length < 2 || (parts.head!.endsWith "repeating-") then none
+  let rest := (parts.drop 1).foldl (fun acc p => if acc.isEmpty then p else acc ++ "linear-gradient(" ++ p) ""
+  let mut depth := 1
+  let mut out := ""
+  for c in rest.toList do
+    if c == '(' then depth := depth+1
+    if c == ')' then
+      depth := depth-1
+      if depth == 0 then return out
+    out := out.push c
+  none
+
 /-- The declarations of this profile for declarations as written (`SheetReader.Decl`):
 side shorthands as their longhands (`expandSides`), `background` as the colour, the layout
 shorthands (`flex`, `flex-flow`, `gap`, `place-*`) as their longhands, so the cascade
@@ -505,7 +544,10 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     let whole : Declaration := ⟨key,d.value,d.important⟩
     -- `background` is also its colour, `background-color`, which this profile reads (`apply`,
     -- `tableDeclaration`); the shorthand stays for getComputedStyle's other longhands
-    if key == "background" then (⟨"background-color",d.value,d.important⟩ : Declaration) :: whole :: acc else
+    -- and its image, `none` unless it is a `linear-gradient()` (the one image drawn)
+    if key == "background" then
+      let image := if (gradientArgs d.value).isSome then d.value else "none"
+      (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
@@ -953,6 +995,71 @@ private def limit (source : String) : Except String Length := do
   | .px n => if n < 0 then throw "negative CSS size limit" else return .px n
   | .percent n => if n < 0 then throw "negative CSS size limit" else return .percent n
   | other => return other
+/-- Text split at `sep` outside parentheses, each piece trimmed, empty pieces kept. -/
+private def topLevelSplit (sep : Char) (inner : String) : List String := Id.run do
+  let mut depth := 0
+  let mut cur := ""
+  let mut out : Array String := #[]
+  for c in inner.toList do
+    if c == '(' then depth := depth+1
+    if c == ')' then depth := depth-1
+    if c == sep && depth == 0 then
+      out := out.push (trim cur)
+      cur := ""
+    else cur := cur.push c
+  return (out.push (trim cur)).toList
+/-- The arguments of a function at its top level, split at commas outside parentheses. -/
+private def topLevelArgs (inner : String) : List String := topLevelSplit ',' inner
+
+/-- A colour stop's position: a percentage of the gradient line, or px. -/
+private def stopPosition (p : String) : Except String (Float × Bool) :=
+  if p.endsWith "%" then do pure ((← number (p.dropEnd 1).toString)/100,true)
+  else do pure (← pixels p,false)
+
+/-- CSS Images 3 §3.1.1: a `linear-gradient()` from its arguments. The direction is an
+angle (`deg`, `grad`, `rad`, `turn`) or `to` a side or corner; each stop a colour with
+at most two positions (px or %). Two stops at least. -/
+def parseLinearGradient (args : String) : Except String BackgroundGradient := do
+  let parts := topLevelArgs args
+  let some first := parts.head? | throw "linear-gradient has no arguments"
+  let words := (first.splitOn " ").filter (· != "")
+  let angleOf := fun (w : String) => do
+    let unit := fun (u : String) (k : Float) => if w.endsWith u then some ((number (w.dropEnd u.length).toString).toOption.map (·*k)) else none
+    match unit "deg" 1 <|> unit "grad" 0.9 <|> unit "turn" 360 <|> unit "rad" (180/3.141592653589793) with
+    | some (some a) => some a
+    | _ => if w == "0" then some 0 else none
+  let dir : Float × Option (Int × Int) × List String ←
+    if words.head? == some "to" then
+      let x : Int := if words.contains "left" then -1 else if words.contains "right" then 1 else 0
+      let y : Int := if words.contains "top" then -1 else if words.contains "bottom" then 1 else 0
+      if words.length < 2 || words.length > 3 || (x == 0 && y == 0) then throw "linear-gradient direction is not valid"
+      if x != 0 && y != 0 then pure (180,some (x,y),parts.drop 1)
+      else pure (if y == -1 then 0 else if x == 1 then 90 else if y == 1 then 180 else 270,none,parts.drop 1)
+    else match words with
+      | [w] => match angleOf w with
+        | some a => pure (a,none,parts.drop 1)
+        | none => pure (180,none,parts)
+      | _ => pure (180,none,parts)
+  let (angle,corner,stopParts) := dir
+  let mut stops : List (Color × Float × Option (Float × Bool)) := []
+  for part in stopParts do
+    -- the colour is the part before its positions (a colour function keeps its spaces)
+    let pieces := (topLevelSplit ' ' part).filter (· != "")
+    let colourText := pieces.head?.getD ""
+    let positions := pieces.drop 1
+    let co : Color × Float ← if colourText.toLower == "transparent" then pure (⟨0,0,0⟩,0)
+      else match color colourText with
+        | .ok c => pure (c,1)
+        | .error _ => throw s!"linear-gradient stop is not a colour: {colourText}"
+    let (c,opacity) := co
+    match positions with
+    | [] => stops := stops ++ [(c,opacity,none)]
+    | [p] => stops := stops ++ [(c,opacity,some (← stopPosition p))]
+    | [p,q] => stops := stops ++ [(c,opacity,some (← stopPosition p)),(c,opacity,some (← stopPosition q))]
+    | _ => throw "linear-gradient stop has more than two positions"
+  if stops.length < 2 then throw "linear-gradient needs two colour stops"
+  return {angle,corner,stops}
+
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" =>
@@ -1039,6 +1146,36 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "background" | "background-color" =>
     let bg ← if d.value == "transparent" then pure none else some <$> color d.value
     return {s with background := bg}
+  | "column-count" =>
+    let v := (trim d.value).toLower
+    if v == "auto" then return {s with columnCount := none}
+    let some n := v.toNat? | throw "column-count must be auto or a whole number"
+    if n == 0 then throw "column-count must be at least 1"
+    return {s with columnCount := some (min n 1000)}
+  | "column-width" =>
+    let v := (trim d.value).toLower
+    if v == "auto" then return {s with columnWidth := none}
+    match tableLength s.fontSize "column-width" v with
+    | some (.px w) => if w < 0 then throw "column-width must not be negative" else return {s with columnWidth := some w}
+    | _ => throw "column-width must be auto or a length"
+  | "columns" =>
+    -- CSS Multi-column Layout 1 §3.3: a width and a count, in either order, `auto` for either
+    let words := ((trim d.value).toLower.splitOn " ").filter (· != "")
+    if words.isEmpty || words.length > 2 then throw "columns takes one or two values"
+    let mut count : Option Nat := none
+    let mut width : Option Float := none
+    for w in words do
+      if w == "auto" then continue
+      match w.toNat? with
+      | some n => if n == 0 then throw "column-count must be at least 1" else count := some (min n 1000)
+      | none => match tableLength s.fontSize "column-width" w with
+        | some (.px x) => width := some (max 0 x)
+        | _ => throw "columns: not a count or a length"
+    return {s with columnCount := count, columnWidth := width}
+  | "background-image" =>
+    if (trim d.value).toLower == "none" then return {s with backgroundGradient := none}
+    let some args := gradientArgs d.value | throw "background-image: only linear-gradient() is drawn"
+    return {s with backgroundGradient := some (← parseLinearGradient args)}
   | "font-size" =>
     let v ← pixels d.value
     if v <= 0 then throw "font-size must be positive"
@@ -1224,8 +1361,8 @@ def percentOf (text : String) : Option Float :=
 property table reads it: lengths in px, colours as hex, `display` as the nearest box this
 profile lays out, border styles it does not draw as `solid`. `s` is the style so far (its
 font size is the element's, or the parent's for `font-size` itself). -/
-def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
-  let value := fun (v : String) => some { d with value := v }
+def tableValue (s : Computed) (d : Declaration) : Option String :=
+  let value := fun (v : String) => some v
   let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
   match d.property with
   | "color" | "border-color" => (colorHex d.value).bind fun h => if h == "transparent" then none else value h
@@ -1285,7 +1422,7 @@ def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
     | none => none
   | "border-width" =>
     (tableComputed s.fontSize "border-width" d.value).map fun t =>
-      { d with value := " ".intercalate ((words t).map fun w => (CssValues.lineWidthKeyword w).getD w) }
+      " ".intercalate ((words t).map fun w => (CssValues.lineWidthKeyword w).getD w)
   | "display" =>
     match (CssValues.specified "display" d.value) with
     | none => none
@@ -1317,15 +1454,99 @@ def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
     -- a keyword property: the table's canonical form (lower case)
     (CssValues.specified d.property d.value).bind fun t => if t == d.value then none else value t
 
+/-- The declaration with the value the table gives (`tableValue`): the same property. -/
+def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
+  (tableValue s d).map fun v => { d with value := v }
+
+theorem tableDeclaration_property (s : Computed) (d d' : Declaration) (h : tableDeclaration s d = some d') :
+    d'.property = d.property := by
+  unfold tableDeclaration at h
+  cases hv : tableValue s d with
+  | none => simp [hv] at h
+  | some v => simp only [hv, Option.map_some, Option.some.injEq] at h; rw [← h]
+
+/-- The properties `apply` names in its own arms. -/
+def ownProperties : List String :=
+  ["display","width","height","margin","padding","margin-top","margin-right","margin-bottom","margin-left",
+   "text-align","direction","unicode-bidi","padding-top","padding-right","padding-bottom","padding-left",
+   "color","background","background-color","font-size","line-height","white-space","white-space-collapse",
+   "visibility","overflow","text-decoration","text-decoration-line","border-style",
+   "border-top-width","border-right-width","border-bottom-width","border-left-width",
+   "border-top-style","border-right-style","border-bottom-style","border-left-style",
+   "border-top-color","border-right-color","border-bottom-color","border-left-color",
+   "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
+   "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
+   "font-family","background-image","column-count","column-width","columns"]
+
+/-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
+alignment, position and grid readers take, `content`, and the prefixed names those readers
+map to a standard one (`-webkit-`, `-moz-`, `grid-`). For any other property `apply`
+refuses every value (`apply_other`). -/
+def appliedName (p : String) : Bool :=
+  p.startsWith "-webkit-" || p.startsWith "-moz-" || p.startsWith "grid-" || p == "content" ||
+    ownProperties.contains p || flexProperties.contains p || alignProperties.contains p ||
+    positionProperties.contains p || gridProperties.contains p
+
+/-- Kind: equivalence (the guard of a fast path). Says: `apply` refuses a declaration of a
+property that `appliedName` does not name, whatever its value and the style. -/
+theorem apply_other (s : Computed) (d : Declaration) (h : appliedName d.property = false) :
+    ∃ e, apply s d = .error e := by
+  simp only [appliedName, Bool.or_eq_false_iff] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨hw, hm⟩, hg⟩, hc⟩, hown⟩, hflex⟩, halign⟩, hpos⟩, hgrid⟩ := h
+  have h1 : FlexStyle.set s.fontSize s.flex d.property d.value = none := by
+    unfold FlexStyle.set
+    simp only [hw, Bool.false_eq_true, if_false]
+    rw [if_pos (by simpa using hflex)]
+  have h2 : AlignStyle.set s.fontSize s.align d.property d.value = none := by
+    unfold AlignStyle.set
+    simp only [hw, hg, Bool.or_false, Bool.false_eq_true, if_false]
+    rw [if_pos (by simpa using halign)]
+  have h3 : PositionStyle.set s.fontSize s.pos d.property d.value = none := by
+    unfold PositionStyle.set
+    simp only [hw, hm, Bool.or_false, Bool.false_eq_true, if_false, hc]
+    rw [if_pos (by simpa using hpos)]
+  have h4 : GridStyle.set s.fontSize s.grid d.property d.value = none := by
+    unfold GridStyle.set
+    rw [if_pos (by simpa using hgrid)]
+  unfold apply
+  split
+  all_goals first
+    | (rename_i heq; simp [heq, ownProperties] at hown; done)
+    | (simp only [h1, h2, h3, h4]; exact ⟨_, rfl⟩)
+
 /-- A value or property this profile can not use leaves the style as it was: after the
 second reading through the property table (`tableDeclaration`). -/
-private def applyOrKeep (s : Computed) (d : Declaration) : Computed :=
+private def applyOrKeepSlow (s : Computed) (d : Declaration) : Computed :=
   match apply s d with
   | .ok r => r
   | .error _ =>
     match tableDeclaration s d with
     | some d' => (apply s d').toOption.getD s
     | none => s
+
+/-- `applyOrKeepSlow` with no reading at all for a property that `apply` never reads
+(`appliedName`): on a documentation page with modern sheets the table's reading of such
+declarations was a fifth of each layout. The same style (`applyOrKeep_eq`). -/
+private def applyOrKeep (s : Computed) (d : Declaration) : Computed :=
+  if appliedName d.property then applyOrKeepSlow s d else s
+
+/-- Kind: equivalence (the fast path changes no style). -/
+private theorem applyOrKeep_eq (s : Computed) (d : Declaration) : applyOrKeep s d = applyOrKeepSlow s d := by
+  unfold applyOrKeep
+  split
+  · rfl
+  · rename_i h
+    have h : appliedName d.property = false := by simpa using h
+    obtain ⟨e, he⟩ := apply_other s d h
+    unfold applyOrKeepSlow
+    rw [he]
+    cases ht : tableDeclaration s d with
+    | none => rfl
+    | some d' =>
+      have hp := tableDeclaration_property s d d' ht
+      obtain ⟨e', he'⟩ := apply_other s d' (by rw [hp]; exact h)
+      simp only [he']
+      rfl
 
 /-! ### CSS-wide keywords (CSS Cascade 4 §7.3) -/
 
@@ -1349,6 +1570,9 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
+  | "background-image" => some {s with backgroundGradient := source.backgroundGradient}
+  | "column-count" => some {s with columnCount := source.columnCount}
+  | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
     some {s with fontSize := source.fontSize, lineHeight := lineHeightOf source.fontSize s.lineHeightFactor s.lineHeight}
   | "font-family" => some {s with fontFamily := source.fontFamily}
@@ -1462,6 +1686,11 @@ private def startMargin (tag : String) (size : Float) : Edges :=
   else if tag == "blockquote" then ⟨gap,40,gap,40⟩
   else if tag == "dd" then ⟨0,0,0,40⟩
   else {}
+
+/-- HTML §15.3.4 (the user agent's rules `pre, listing, xmp, plaintext, code, kbd, samp, tt
+{ font-family: monospace }`): elements that start in the monospace family, so that with
+`serif` the initial family their text keeps the face it had. Author CSS wins. -/
+def monospaceTags : List String := ["pre","listing","xmp","plaintext","code","kbd","samp","tt"]
 
 private def headingScale : String → Float
   | "h1" => 2 | "h2" => 1.5 | "h3" => 1.17 | "h5" => 0.83 | "h6" => 0.67 | _ => 1
@@ -2328,7 +2557,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     fontWeight, inheritedWeight := parent.fontWeight,
     oblique := parent.oblique || (html && FontSynthesis.italicTags.contains n.lname),
     color := parent.color,
-    clipOverflow := svgViewport && svgOverflow != "visible", fontSize, fontFamily := parent.fontFamily,
+    clipOverflow := svgViewport && svgOverflow != "visible", fontSize,
+    fontFamily := if html && monospaceTags.contains n.lname then "monospace" else parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
     lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
     preformatted := parent.preformatted || ["pre","listing","xmp","plaintext"].contains n.lname,
@@ -2472,7 +2702,8 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
   let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
   if n.type == .element && !svgDescendant then computedFrom dom id (matchesOf id) parent else pure {parent with
     display := .inline, width := .auto, height := .auto,
-    margin := {}, padding := {}, background := none, clipOverflow := false,
+    margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
+    columnCount := none, columnWidth := none,
     borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},

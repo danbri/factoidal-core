@@ -85,7 +85,8 @@ def callback (s : σ) (cb : Nat) (target : Int) (arg : Nat) : σ :=
 
 /-- Run what the event loop gave (as `Page.Session.runTaskP`). -/
 def runTask (s : σ) (r : L4Factoidal.EventLoop.Run) : σ :=
-  let s := e.setHost s (e.host s).tickTimeline
+  -- the timeline moves at frames while an animation runs (`Host.tickTask`)
+  let s := e.setHost s (match r.kind with | .frame => (e.host s).tickTimeline | _ => (e.host s).tickTask)
   match r.kind with
   | .task =>
     match r.event with
@@ -117,6 +118,46 @@ def advance (s : σ) (target : Nat) (maxTasks : Nat := 100000) : σ × Bool :=
   let slot := L4Factoidal.EventLoop.frameSlot (e.loop s).clock target (e.lastFrame s)
   let (s, frames, out) := (e.driver.advanceGo target maxTasks slot s 0 : Id _)
   (e.setLastFrame s (if frames == 0 then e.lastFrame s else slot), out)
+
+/-- The event loop's host as a pure driver: `driver` is it in `Id` (`ofDriver_advanceGo`). -/
+def pureDriver : L4Factoidal.EventLoop.Driver σ := ⟨e.loop, e.setLoop, fun s r => e.runTask s r⟩
+
+/-- `advance` in slices: before each step of the loop `stop` is asked of the session (a host's
+budget for one turn), and when it holds the advance ends there, between two tasks; the
+answer's last part says so, and the host asks again for what is still due, after it has
+taken its input. Each slice goes on from where the last stopped
+(`EventLoop.Driver.advanceGoStop_resume`), so the page sees what one advance would have
+shown it; with a `stop` that never holds it is `advance` (`advanceUntil_never`). -/
+def advanceUntil (s : σ) (target : Nat) (stop : σ → Bool) (maxTasks : Nat := 100000) : σ × Bool × Bool :=
+  let slot := L4Factoidal.EventLoop.frameSlot (e.loop s).clock target (e.lastFrame s)
+  let (s, frames, out, rest) := e.pureDriver.advanceGoStop stop target maxTasks slot s 0
+  (e.setLastFrame s (if frames == 0 then e.lastFrame s else slot), out, rest.isSome)
+
+/-- Kind: equivalence (a host that does not slice sees no change). Says: with a `stop` that
+never holds, `advanceUntil` is `advance` and does not stop. -/
+theorem advanceUntil_never (s : σ) (target maxTasks : Nat) :
+    e.advanceUntil s target (fun _ => false) maxTasks =
+      ((e.advance s target maxTasks).1, (e.advance s target maxTasks).2, false) := by
+  have hd : (e.driver.advanceGo target maxTasks
+      (L4Factoidal.EventLoop.frameSlot (e.loop s).clock target (e.lastFrame s)) s 0 : Id _) =
+      e.pureDriver.advanceGo target maxTasks
+        (L4Factoidal.EventLoop.frameSlot (e.loop s).clock target (e.lastFrame s)) s 0 :=
+    DriverM.ofDriver_advanceGo e.pureDriver target _ _ _ _
+  have hn := e.pureDriver.advanceGoStop_never_stops target maxTasks
+    (L4Factoidal.EventLoop.frameSlot (e.loop s).clock target (e.lastFrame s)) s 0
+  have he := e.pureDriver.advanceGoStop_never target maxTasks
+    (L4Factoidal.EventLoop.frameSlot (e.loop s).clock target (e.lastFrame s)) s 0
+  unfold advanceUntil advance
+  dsimp only
+  rw [hd, he]
+  revert hn
+  generalize e.pureDriver.advanceGoStop (fun _ => false) target maxTasks
+    (L4Factoidal.EventLoop.frameSlot (e.loop s).clock target (e.lastFrame s)) s 0 = r
+  obtain ⟨s', f', o, x⟩ := r
+  intro hn
+  simp only at hn
+  subst hn
+  rfl
 
 def quiet (s : σ) : Bool := (e.loop s).idle && (e.loop s).timers.isEmpty && (e.loop s).frames.isEmpty
 

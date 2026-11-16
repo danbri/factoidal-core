@@ -5,8 +5,10 @@ import WebSelection
 import L4Factoidal.Rendering.Smil
 
 /-! The browser's own face: tabs, the address bar and its buttons, drawn into the
-same scene as the page, so one WebGPU pass draws the window. All of it is pixel
-art from the engine's bitmap font: NeXT bevels, arcade lettering.
+same scene as the page, so one WebGPU pass draws the window. The default look is flat
+(owner, 2026-11-16: the old toolbar looked "like 1993"): light or dark faces, a rounded
+address field with a focus ring, and line icons drawn as vector strokes. The older looks stay
+as themes: "classic" (NeXT bevels) and "arcade". Lettering is the engine's bitmap font.
 
 The host keeps the `Shell` value between calls and sends it back. It makes no
 decision here: Lean says what a click, a key or an address means. -/
@@ -83,6 +85,9 @@ structure Shell where
   /-- Matches on the page (`WebSelection.findMatches`), and the current one from 1 (0: none). -/
   findCount : Nat := 0
   findCurrent : Nat := 0
+  /-- The system asks for dark colours (`prefers-color-scheme: dark`, as the host reports it).
+  The theme "next" (the default setting) then draws dark. -/
+  dark : Bool := false
   deriving Repr, BEq
 
 private structure Theme where
@@ -100,16 +105,34 @@ private structure Theme where
   selected : Rendering.Color
   /-- Selected address text: the `::selection` colours of the theme (CSS Pseudo-Elements 4 §3.1). -/
   selectedInk : Rendering.Color
+  /-- The flat look: no bevels, rounded fields, vector line icons (`flatControlNodes`). -/
+  flat : Bool
 
 private def hex (r g b : Nat) : Rendering.Color := ⟨Float.ofNat r/255,Float.ofNat g/255,Float.ofNat b/255⟩
 /-- The selection colours of the NeXT theme: those of the page (`WebSelection.highlight`). -/
 def selectionBackground : Rendering.Color := WebSelection.selectionBackground
 def selectionText : Rendering.Color := WebSelection.selectionText
 private def next : Theme :=
-  ⟨hex 170 170 170,hex 255 255 255,hex 85 85 85,hex 0 0 0,hex 255 255 255,hex 0 0 0,hex 128 128 128,hex 32 32 32,hex 224 32 138,hex 255 196 0,selectionBackground,selectionText⟩
+  ⟨hex 170 170 170,hex 255 255 255,hex 85 85 85,hex 0 0 0,hex 255 255 255,hex 0 0 0,hex 128 128 128,hex 32 32 32,hex 224 32 138,hex 255 196 0,selectionBackground,selectionText,false⟩
 private def arcade : Theme :=
-  ⟨hex 34 38 54,hex 84 92 128,hex 10 12 20,hex 216 240 255,hex 10 12 20,hex 120 255 170,hex 20 23 34,hex 150 160 200,hex 57 255 136,hex 255 196 0,hex 57 255 136,hex 10 12 20⟩
-private def themeOf (s : Shell) : Theme := if s.theme == "arcade" then arcade else next
+  ⟨hex 34 38 54,hex 84 92 128,hex 10 12 20,hex 216 240 255,hex 10 12 20,hex 120 255 170,hex 20 23 34,hex 150 160 200,hex 57 255 136,hex 255 196 0,hex 57 255 136,hex 10 12 20,false⟩
+/-! The flat looks. Fields as in `Theme`: `base` the toolbar and the active tab, `light` the
+pressed circle behind a control, `dark` the hairline under the chrome, `well` the address
+field, `back` the tab strip, `muted` inactive text and disabled icons, `accent` the focus ring,
+the caret and the loading bar, `coin` the small marks of the tab strip. -/
+private def light : Theme :=
+  ⟨hex 250 251 252,hex 222 227 233,hex 210 215 222,hex 31 35 40,hex 236 239 243,hex 31 35 40,hex 226 230 235,hex 104 112 124,hex 11 87 208,hex 104 112 124,selectionBackground,selectionText,true⟩
+private def darkTheme : Theme :=
+  ⟨hex 41 44 50,hex 66 71 80,hex 22 24 28,hex 230 233 238,hex 26 28 33,hex 230 233 238,hex 30 32 37,hex 152 161 172,hex 138 180 248,hex 152 161 172,selectionBackground,selectionText,true⟩
+/-- The theme of a setting: "light", "dark", "classic" (NeXT grey), "arcade"; anything else,
+"next" (the default setting) among them, follows the system: dark when the host says so. -/
+private def themeOf (s : Shell) : Theme :=
+  match s.theme with
+  | "arcade" => arcade
+  | "classic" => next
+  | "light" => light
+  | "dark" => darkTheme
+  | _ => if s.dark then darkTheme else light
 
 /-! ### Measures, in backing pixels -/
 
@@ -490,9 +513,243 @@ private def findNodes (s : Shell) (t : Theme) (box : Box) : List Rendering.Node 
   bevel s t t.well false box.x box.y box.w box.h ++ text t.accent "?" (box.x+8*u) textY size ++ body ++ cursor ++
     text t.dark label (box.x+box.w-min (box.x+box.w) (8*u+labelW)) textY size
 
+/-! ### The flat look
+
+Flat faces, a rounded address field with a focus ring, and line icons as vector strokes on a
+16-unit grid. The boxes, and so every hit test, press box and height, are the classic ones
+(`boxes`): only the paint differs. -/
+
+private def fl (n : Nat) : Float := Float.ofNat n
+
+/-- 16 points of the unit circle, from angle 0 (right) clockwise on screen. Circles of the
+chrome are these polygons: the chrome is drawn again on each change of the fold, and a
+16-sided polygon costs the engine far less than a curve to flatten. -/
+private def unitCircle : List (Float × Float) :=
+  (List.range 16).map fun i => let a := Float.ofNat i*0.39269908169872414; (Float.cos a,Float.sin a)
+
+/-- A filled circle, as a 16-sided polygon. -/
+private def disk (c : Rendering.Color) (cx cy r : Float) : Rendering.Node :=
+  .paint {primitive := {geometry := .polygon (unitCircle.map fun (x,y) => ⟨cx+r*x,cy+r*y⟩),style := {fill := .solid c}}}
+
+/-- A filled rectangle with corners of radius `r` (at most half the shorter side): two
+rectangles and four circles. Opaque colours only, as the overlaps paint twice. -/
+private def rounded (c : Rendering.Color) (x y w h r : Nat) : List Rendering.Node :=
+  let r := min r (min w h/2)
+  if r == 0 then [paint c x y w h] else
+  -- A pill (the corners meet): one rectangle and the two end circles.
+  if 2*r ≥ h then [paint c (x+r) y (w-2*r) h,disk c (fl (x+r)) (fl y+fl h/2) (fl h/2),disk c (fl (x+w-r)) (fl y+fl h/2) (fl h/2)] else
+  [paint c (x+r) y (w-2*r) h,paint c x (y+r) w (h-2*r),
+   disk c (fl (x+r)) (fl (y+r)) (fl r),disk c (fl (x+w-r)) (fl (y+r)) (fl r),
+   disk c (fl (x+r)) (fl (y+h-r)) (fl r),disk c (fl (x+w-r)) (fl (y+h-r)) (fl r)]
+
+/-- A stroke with square caps and mitred joins: no round piece for the engine to flatten. -/
+private def strokeStyle (c : Rendering.Color) (w : Float) : Rendering.Style :=
+  {fill := .none,stroke := .solid c,strokeWidth := w,lineCap := .square,lineJoin := .miter}
+
+/-- An open line through `points`. -/
+private def polyline (c : Rendering.Color) (w : Float) : List (Float × Float) → List Rendering.Node
+  | [] => []
+  | (x,y)::rest =>
+    [.paint {primitive := {geometry := .path [.path ⟨x,y⟩ (rest.map fun (a,b) => .line ⟨a,b⟩) false],style := strokeStyle c w}}]
+
+/-- One line icon on the 16-unit grid, as strokes in grid units: polylines, rings (centre and
+radius, a closed 16-sided line) and arcs (centre, radius and the `unitCircle` points, in order). -/
+private inductive Stroke where
+  | line (points : List (Float × Float))
+  | ring (cx cy r : Float)
+  | arc (cx cy r : Float) (points : List Nat)
+  /-- A filled shape: closed outlines, filled even-odd (an outline inside another is a hole). -/
+  | solid (outlines : List (List (Float × Float)))
+
+/-- The gear: one filled shape, eight teeth round a ring (the 16 points of `unitCircle`
+alternate between radius 7 and 5.2, each two points wide so a tooth has a flat top), with
+the hub as a hole. -/
+private def gear : List Stroke :=
+  let teeth := (List.range 16).flatMap fun i =>
+    match unitCircle[i]? with
+    | some (x,y) =>
+      let r := if i % 2 == 0 then 7 else 5.2
+      [(8+r*(x*0.98+y*0.2),8+r*(y*0.98-x*0.2)),(8+r*(x*0.98-y*0.2),8+r*(y*0.98+x*0.2))]
+    | none => []
+  [.solid [teeth,unitCircle.map fun (x,y) => (8+2.3*x,8+2.3*y)]]
+
+private def lineIcon : String → List Stroke
+  | "back" => [.line [(3.5,8),(12.5,8)],.line [(7.5,4),(3.5,8),(7.5,12)]]
+  | "forward" => [.line [(3.5,8),(12.5,8)],.line [(8.5,4),(12.5,8),(8.5,12)]]
+  -- Three quarters of a circle from the upper right, back over the top, with the arrow at its start.
+  | "reload" => [.arc 8 8 4.8 [14,13,12,11,10,9,8,7,6,5,4,3,2],.line [(11.4,1.6),(11.4,4.6),(14.4,4.6)]]
+  | "stop" => [.line [(4.5,4.5),(11.5,11.5)],.line [(11.5,4.5),(4.5,11.5)]]
+  | "home" => [.line [(2.5,8),(8,3),(13.5,8)],.line [(4.5,6.5),(4.5,13),(11.5,13),(11.5,6.5)],.line [(7,13),(7,9.5),(9,9.5),(9,13)]]
+  | "settings" => gear
+  | "source" => [.line [(5.5,4.5),(2,8),(5.5,11.5)],.line [(10.5,4.5),(14,8),(10.5,11.5)],.line [(9,3.5),(7,12.5)]]
+  | "newTab" => [.line [(8,3.5),(8,12.5)],.line [(3.5,8),(12.5,8)]]
+  | "close" => [.line [(5,5),(11,11)],.line [(11,5),(5,11)]]
+  | "search" => [.ring 7 7 4,.line [(10,10),(13.5,13.5)]]
+  | "tabs" => [.line [(3,3),(13,3),(13,13),(3,13),(3,3)]]
+  | _ => []
+
+/-- Icon `name` in colour `c`, `side` backing pixels square, centred in `box`; the strokes are
+`weight` grid units wide. -/
+private def lineIconAt (c : Rendering.Color) (name : String) (box : Box) (side : Nat) (weight : Float := 1.8) :
+    List Rendering.Node :=
+  let k := fl side/16
+  let x0 := fl box.x+(fl box.w-fl side)/2
+  let y0 := fl box.y+(fl box.h-fl side)/2
+  let p := fun (x y : Float) => (x0+x*k,y0+y*k)
+  let w := weight*k
+  let around := fun (cx cy r : Float) (q : Float × Float) => p (cx+r*q.1) (cy+r*q.2)
+  let contour := fun (closed : Bool) (pts : List (Float × Float)) => match pts with
+    | [] => Rendering.Contour.empty closed
+    | (sx,sy)::rest => Rendering.Contour.path ⟨sx,sy⟩ (rest.map fun (a,b) => .line ⟨a,b⟩) closed
+  -- A line is not stroked (stroking is the costly part of the chrome): each segment is a filled
+  -- quadrilateral `w` wide, lengthened by half of `w` at both ends so joins have no gaps. Every
+  -- quadrilateral winds the same way, so with the nonzero rule their overlaps stay filled.
+  let h := w/2
+  let quad := fun (a b : Float × Float) =>
+    let dx := b.1-a.1
+    let dy := b.2-a.2
+    let len := Float.sqrt (dx*dx+dy*dy)
+    if len == 0 then [] else
+    let ux := dx/len*h
+    let uy := dy/len*h
+    let (ax,ay) := (a.1-ux,a.2-uy)
+    let (bx,by_) := (b.1+ux,b.2+uy)
+    [contour true [(ax-uy,ay+ux),(bx-uy,by_+ux),(bx+uy,by_-ux),(ax+uy,ay-ux)]]
+  let segments := fun (closed : Bool) (pts : List (Float × Float)) =>
+    let next := pts.drop 1 ++ (if closed then pts.take 1 else [])
+    (pts.zip next).flatMap fun (a,b) => quad a b
+  -- One filled path for an icon's lines and one for its solid shapes: at most two primitives.
+  let lines := (lineIcon name).flatMap fun
+    | .line points => segments false (points.map fun (x,y) => p x y)
+    | .ring cx cy r => segments true (unitCircle.map (around cx cy r))
+    | .arc cx cy r points => segments false (points.filterMap fun i => (unitCircle[i]?).map (around cx cy r))
+    | .solid _ => []
+  let fills := (lineIcon name).flatMap fun
+    | .solid outlines => outlines.map fun o => contour true (o.map fun (x,y) => p x y)
+    | _ => []
+  (if lines.isEmpty then [] else [.paint {primitive := {geometry := .path lines,style := {fill := .solid c,rule := .nonzero}}}]) ++
+  (if fills.isEmpty then [] else [.paint {primitive := {geometry := .path fills,style := {fill := .solid c,rule := .evenodd}}}])
+
+/-- A tab of the flat look: the active one a raised card in the toolbar's face, joined to it;
+the others plain, with a hairline between them. -/
+private def flatTab (s : Shell) (t : Theme) (box : Box) (index : Nat) : List Rendering.Node :=
+  let u := unit s
+  let active := index == s.active
+  let title := ((s.tabs[index]?).map (·.title)).getD ""
+  let icon := (s.tabs[index]?).bind (·.icon)
+  let iconSide := 16*u
+  let shift := if icon.isSome then iconSide+6*u else 0
+  let iconPaint := match icon with
+    | some i => iconNodes i index (box.x+9*u) (box.y+(box.h-min box.h iconSide)/2+u) iconSide
+    | none => []
+  let title := if title.isEmpty then "New tab" else title
+  let room := box.w-(if s.tabs.size > 1 then 34*u else 18*u)-min (box.w/2) shift
+  let card := if active then rounded t.base box.x (box.y+u) box.w (box.h+8*u) (8*u) else
+    [paint t.dark (box.x+box.w-u) (box.y+6*u) u (box.h-min box.h (10*u))]
+  card ++ iconPaint ++
+    text (if active then t.ink else t.muted) (fit s title room) (box.x+9*u+shift) (box.y+(box.h-7*dot s)/2+2*u) (dot s)
+
+/-- The address field of the flat look: a pill in the field colour, ringed in the accent while
+it has the focus; a search mark, then the text, the selection and a thin caret. The text
+columns are those of the classic field (`addressNodes`), so a press lands on the same letter. -/
+private def flatAddress (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :=
+  let u := unit s
+  let size := dot s
+  let textX := box.x+22*u
+  let textY := box.y+(box.h-7*size)/2
+  let room := box.w-28*u
+  let shown := fitEnd s s.address room
+  let column := fun (i : Nat) => min shown.length (i+shown.length-s.address.length)
+  let lo := column (min s.anchor s.cursor)
+  let hi := column (max s.anchor s.cursor)
+  let selecting := s.focused && hi > lo
+  let piece := fun (c : Rendering.Color) (a b : Nat) =>
+    text c (String.ofList ((shown.toList.drop a).take (b-a))) (textX+a*charWidth s) textY size
+  let body := if s.address.isEmpty && !s.focused
+    then text t.muted (fit s "Search or type a URL" room) textX textY size
+    else if selecting then piece t.wellInk 0 lo ++ piece t.selectedInk lo hi ++ piece t.wellInk hi shown.length
+    else text t.wellInk shown textX textY size
+  let marked := if selecting
+    then [paint t.selected (textX+lo*charWidth s-u) (textY-u) ((hi-lo)*charWidth s) (7*size+2*u)] else []
+  let cursor := if s.focused && hi == lo then [paint t.accent (textX+column s.cursor*charWidth s) (textY-2*u) (max 1 (3*u/2)) (7*size+4*u)] else []
+  let r := box.h/2
+  let field := if s.focused
+    then rounded t.accent (box.x-2*u) (box.y-2*u) (box.w+4*u) (box.h+4*u) (r+2*u) ++ rounded t.base box.x box.y box.w box.h r
+    else rounded t.well box.x box.y box.w box.h r
+  let mark := lineIconAt t.muted "search" {name := "search",x := box.x+5*u,y := box.y,w := 14*u,h := box.h} (12*u) 1.8
+  field ++ mark ++ marked ++ cursor ++ body
+
+/-- The find field of the flat look: a pill like the address field, with the count at its right. -/
+private def flatFind (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :=
+  let u := unit s
+  let size := dot s
+  let textX := box.x+22*u
+  let textY := box.y+(box.h-7*size)/2
+  let label := findLabel s
+  let labelW := label.length*charWidth s
+  let room := box.w-min box.w (30*u+labelW)
+  let shown := fitEnd s s.find room
+  let body := if s.find.isEmpty && !s.findFocused then text t.muted (fit s "Find in page" room) textX textY size
+    else text t.wellInk shown textX textY size
+  let cursor := if s.findFocused then [paint t.accent (textX+shown.length*charWidth s) (textY-2*u) (max 1 (3*u/2)) (7*size+4*u)] else []
+  let r := box.h/2
+  let field := if s.findFocused
+    then rounded t.accent (box.x-2*u) (box.y-2*u) (box.w+4*u) (box.h+4*u) (r+2*u) ++ rounded t.base box.x box.y box.w box.h r
+    else rounded t.well box.x box.y box.w box.h r
+  field ++ lineIconAt t.muted "search" {name := "search",x := box.x+5*u,y := box.y,w := 14*u,h := box.h} (12*u) 1.8 ++ body ++ cursor ++
+    text t.muted label (box.x+box.w-min (box.x+box.w) (10*u+labelW)) textY size
+
+/-- The controls of the full chrome in a flat theme: the tab strip, the toolbar, round
+buttons that show a circle while pressed, and the settings button always in a circle of the
+field colour, so it is easy to find. -/
+private def flatControlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node := Id.run do
+  let u := unit s
+  let row := tabRow s width
+  let mut out := [paint t.back 0 0 width row,paint t.base 0 row width (navRow s)]
+  let down := fun (name : String) => s.pressed == name && pressable s name
+  let circle := fun (c : Rendering.Color) (box : Box) => disk c (fl box.x+fl box.w/2) (fl box.y+fl box.h/2) (fl (min box.w box.h)/2)
+  let iconSide := 20*u
+  for box in boxes s width do
+    match box.name.splitOn ":" with
+    | ["tab",i] => out := out ++ flatTab s t box (i.toNat?.getD 0)
+    | ["close",_] =>
+      out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.muted "close" box (12*u) 1.8
+    | ["newTab"] => out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.ink "newTab" box (14*u)
+    | ["address"] => out := out ++ flatAddress s t box
+    | ["find"] => out := out ++ flatFind s t box
+    | ["copyAddress"] | ["pasteGo"] =>
+      let size := menuSize s width
+      let label := menuLabel box.name
+      out := out ++ rounded (if down box.name then t.light else t.well) box.x box.y box.w box.h (box.h/2) ++
+        text t.ink label (box.x+(box.w-min box.w (label.length*6*size-size))/2) (box.y+(box.h-7*size)/2) size
+    | ["tabs"] =>
+      out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.ink "tabs" box iconSide ++
+        text t.ink (toString s.tabs.size) (box.x+(box.w-5*dot s)/2) (box.y+(box.h-7*dot s)/2) (dot s)
+    | ["settings"] =>
+      out := out ++ [circle (if down box.name then t.light else t.well) box] ++ lineIconAt t.ink "settings" box iconSide 1.6
+    | [name] =>
+      let enabled := (name != "back" || s.canBack) && (name != "forward" || s.canForward)
+      let shape := if name == "reload" && s.loading then "stop" else name
+      out := out ++ (if down box.name then [circle t.light box] else []) ++
+        lineIconAt (if enabled then t.ink else t.muted) shape box iconSide
+    | _ => pure ()
+  if !narrow s width then
+    let label := toString s.pages
+    let x := width-(label.length*charWidth s)-16*u
+    let y := (row-7*dot s)/2+u
+    out := out ++ [disk t.coin (fl (x-6*u)) (fl y+fl (7*dot s)/2) (fl (2*u))] ++ text t.coin label x y (dot s)
+    if !s.script.isEmpty then
+      out := out ++ text t.coin s.script (x-14*u-(s.script.length+1)*charWidth s) y (dot s)
+  return out
+
 /-- The bar under the chrome: a thin accent line, or a level bar while loading. -/
 private def edgeNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node := Id.run do
   let y := height s width-edge s
+  -- Flat: a hairline under the toolbar's face; while loading, an accent bar over it.
+  if t.flat then
+    let u := unit s
+    let bar := if s.loading then [paint t.accent 0 (y+edge s-2*u) (width*2/5) (2*u)] else []
+    return [paint t.base 0 y width (edge s-u),paint t.dark 0 (y+edge s-u) width u] ++ bar
   if !s.loading then return [paint t.dark 0 y width (unit s),paint t.accent 0 (y+unit s) width (edge s-unit s)]
   let block := 12*unit s
   let mut out := [paint t.dark 0 y width (edge s)]
@@ -517,8 +774,11 @@ private def swipeNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.No
   let done := percent >= 100
   let lineY := height s width-edge s
   let fill := width*percent/100
-  (if s.collapse == 0 then [paint (if done then t.accent else t.ink) x y size size] ++
-    iconAt s (if done then t.ink else t.base) (if back then "back" else "forward") box else []) ++
+  (if s.collapse == 0 then
+    (if t.flat then rounded (if done then t.accent else t.ink) x y size size (size/2) ++
+      lineIconAt t.base (if back then "back" else "forward") box (18*u)
+    else [paint (if done then t.accent else t.ink) x y size size] ++
+      iconAt s (if done then t.ink else t.base) (if back then "back" else "forward") box) else []) ++
     [paint t.ink (if back then 0 else width-fill) lineY fill (edge s)]
 
 /-- The controls of the full chrome in theme `t`, with no edge. -/
@@ -577,7 +837,7 @@ private def mix (c to : Rendering.Color) (p : Nat) : Rendering.Color :=
 /-- The theme with every colour faded `p` percent into the chrome's face. -/
 private def fade (t : Theme) (p : Nat) : Theme :=
   let m := fun c => mix c t.base p
-  ⟨t.base,m t.light,m t.dark,m t.ink,m t.well,m t.wellInk,m t.back,m t.muted,m t.accent,m t.coin,m t.selected,m t.selectedInk⟩
+  ⟨t.base,m t.light,m t.dark,m t.ink,m t.well,m t.wellInk,m t.back,m t.muted,m t.accent,m t.coin,m t.selected,m t.selectedInk,t.flat⟩
 
 /-- The site part of an address: the host of `scheme://host/...`; other addresses
 (`foafnaut:graph`) whole. -/
@@ -671,11 +931,15 @@ fold, the chrome is shorter (`height`), and the domain shrinks to the middle of 
 and fades in over the second half. -/
 def nodes (s : Shell) (width : Nat) : List Rendering.Node :=
   let t := themeOf s
+  let controlNodes := fun (s : Shell) (t : Theme) (width : Nat) =>
+    if t.flat then flatControlNodes s t width else controlNodes s t width
   if s.collapse == 0 then controlNodes s t width ++ edgeNodes s t width ++ swipeNodes s t width else
   let p := min 100 s.collapse
   let lift := fullHeight s width-height s width
   let slide : Rendering.Transform := ⟨1,0,0,1,0,-(Float.ofNat lift)⟩
-  [paint t.base 0 0 width (height s width),.group none slide (controlNodes {s with collapse := 0} (fade t (2*p)) width)] ++
+  -- From half way the controls have faded into the face (`fade` at 100%): not drawn.
+  [paint t.base 0 0 width (height s width)] ++
+    (if p < 50 then [.group none slide (controlNodes {s with collapse := 0} (fade t (2*p)) width)] else []) ++
     domainNodes s t width p ++ edgeNodes s t width ++ swipeNodes s t width
 
 /-- The page's part of the window: rows from the chrome's bottom to the window's. -/
@@ -898,18 +1162,14 @@ def addressCommands : List String := ["copy","selectAll","cut","paste","undo","r
 
 /-! ### What an address and a link mean -/
 
-/-- Pages this engine can not draw yet go to the host's default browser (WebRoute). -/
-def externalHosts := WebRoute.externalHosts
-
-private def hostOf (url : String) : String :=
-  match url.splitOn "://" with
-  | [_,rest] => ((rest.splitOn "/").headD "").toLower
-  | _ => ""
-
 inductive Go where
   | page (url : String)
+  /-- `:open URL`, typed: the person asks for the system to open the address. -/
   | system (url : String)
   | command (name : String) (argument : String)
+  /-- Words that are not an address. They go to no one: the browser's own search page
+  shows them, unless a search engine was chosen in Settings (`routeAddress`). -/
+  | search (words : String)
   deriving Repr, BEq
 
 /-- The FOAF graph is a page of the browser, so it goes into the session history of the
@@ -920,25 +1180,19 @@ def graphURL : String := "foafnaut:graph"
 def command (name argument : String) : Go :=
   if name == "graph" && argument.isEmpty then .page graphURL else .command name argument
 
+/-- An href: a `foafnaut:` command, or a page. No host goes to the system (WebRoute). -/
 def link (href : String) : Go :=
   if href.startsWith "foafnaut:" then
     match ((href.drop 9).toString.splitOn "/") with
     | [name,argument] => command name argument
     | [name] => command name ""
     | _ => .command "help" ""
-  else if externalHosts.contains (hostOf href) then .system href
   else .page href
 
-private def encodeQuery (value : String) : String :=
-  String.join (value.toUTF8.toList.map fun b =>
-    let c := Char.ofNat b.toNat
-    if c.isAlphanum || c == '-' || c == '_' || c == '.' then c.toString
-    else if c == ' ' then "+"
-    else
-      let digit := fun (n : Nat) => "0123456789ABCDEF".toList[n]!
-      String.ofList ['%',digit (b.toNat/16),digit (b.toNat%16)])
+private def encodeQuery := WebRoute.encodeQuery
 
-/-- The bar reads a `:command`, a URL, or a search. -/
+/-- The bar reads a `:command`, a URL, or words. There is no default search engine (owner,
+2026-11-16): words are `.search`, which sends nothing anywhere by itself. -/
 def submit (input : String) : Go :=
   let value := input.trimAscii.toString
   if value.startsWith ":" then
@@ -952,18 +1206,37 @@ def submit (input : String) : Go :=
     | [] => .command "help" ""
   else if (value.splitOn "://").length > 1 || value.startsWith "file:" || value.startsWith "about:" then link value
   else if !value.contains ' ' && value.contains '.' then link ("https://" ++ value)
-  else .system ("https://duckduckgo.com/?q=" ++ encodeQuery value)
+  else .search value
+
+/-- An address typed in the bar is not the press of a button on a page: a route to the
+system becomes the Outside page. -/
+def typedRoute : WebRoute.Route → WebRoute.Route
+  | .system u => .outside u
+  | r => r
+
+/-- Words typed in the bar. With no search engine chosen, the browser's own search page
+(`WebRoute.searchPageURL`), which nothing outside the browser sees. With one chosen in
+Settings, its address for the words, routed as any typed address: in the tab when the
+browser can read it, else the Outside page; never the system by itself. -/
+def searchRoute (site : WebRoute.Site) (base search words : String) : WebRoute.Route :=
+  match WebRoute.searchTemplate search with
+  | some template => typedRoute (WebRoute.route site base (WebRoute.expandSearch template words))
+  | none => .page "search" (WebRoute.searchPageURL words)
 
 /-- Where an address typed in the bar goes (WebRoute): a URL as a link would, a
-`:command` as `foafnaut:command/argument`, and a search or `:open URL` to the system. -/
-def routeAddress (site : WebRoute.Site) (base input : String) : WebRoute.Route :=
+`:command` as `foafnaut:command/argument`, words by `searchRoute` with the search engine
+`search` chosen in Settings ("" for none), and `:open URL` to the system: the one typed
+command that asks for it. -/
+def routeAddress (site : WebRoute.Site) (base input : String) (search : String := "") : WebRoute.Route :=
   let value := input.trimAscii.toString
-  if (value.toList.take 9).map Char.toLower == WebRoute.foafnautPrefix || value.toList.map Char.toLower == "about:foafnaut".toList then WebRoute.routeAddress site base value else
+  if (value.toList.take 9).map Char.toLower == WebRoute.foafnautPrefix || value.toList.map Char.toLower == "about:foafnaut".toList then typedRoute (WebRoute.routeAddress site base value) else
   match submit value with
-  | .page url => WebRoute.route site base url
-  | .command name argument => WebRoute.commandRoute site name argument
+  | .page url => typedRoute (WebRoute.route site base url)
+  | .command name argument => typedRoute (WebRoute.commandRoute site name argument)
+  | .search words => searchRoute site base search words
   | .system url => match WebRoute.route site base url with
     | .navigate address => .system address
+    | .outside address => .system address
     | other => other
 
 /-- The answer of the op `shellRoute` (docs/web/hub/foafnaut/link-route.mjs). -/
@@ -971,14 +1244,87 @@ def routeJson : WebRoute.Route → JSON.Json
   | .page name url => .object [("route",.string "page"),("name",.string name),("url",.string url)]
   | .graph => .object [("route",.string "graph"),("url",.string WebRoute.graphURL)]
   | .navigate url => .object [("route",.string "navigate"),("url",.string url)]
+  | .outside url => .object [("route",.string "outside"),("url",.string url)]
   | .system url => .object [("route",.string "system"),("url",.string url)]
   | .command name argument => .object [("route",.string "command"),("name",.string name),("argument",.string argument)]
   | .refuse url reason => .object [("route",.string "refuse"),("url",.string url),("reason",.string reason)]
 
+/-- The answer of the older op `shellSubmit`: words are the browser's search page. -/
 def Go.json : Go → JSON.Json
   | .page url => .object [("go",.string "page"),("url",.string url)]
   | .system url => .object [("go",.string "system"),("url",.string url)]
   | .command name argument => .object [("go",.string "command"),("name",.string name),("argument",.string argument)]
+  | .search words => .object [("go",.string "page"),("url",.string (WebRoute.searchPageURL words))]
+
+/-! ### Theorems: words typed in the bar go to no one -/
+
+theorem link_not_system (href u : String) : link href ≠ .system u := by
+  intro h
+  unfold link at h
+  split at h
+  · split at h
+    all_goals (try simp only [command] at h)
+    all_goals (try split at h)
+    all_goals simp at h
+  · simp at h
+
+/-- Text in the bar that is not a `:command` never goes to the system. -/
+theorem submit_not_system (input u : String) (h : (input.trimAscii.toString).startsWith ":" = false) :
+    submit input ≠ .system u := by
+  intro hs
+  unfold submit at hs
+  simp only [h, Bool.false_eq_true, if_false] at hs
+  split at hs
+  · exact link_not_system _ _ hs
+  · split at hs
+    · exact link_not_system _ _ hs
+    · simp at hs
+
+/-- A typed address reaches the system only by `:open URL`. -/
+theorem routeAddress_system_only_open (site : WebRoute.Site) (base input search u : String)
+    (h : routeAddress site base input search = .system u) :
+    ∃ url, submit (input.trimAscii.toString) = .system url := by
+  have typed : ∀ r, typedRoute r ≠ .system u := by
+    intro r; cases r <;> simp [typedRoute]
+  unfold routeAddress at h
+  dsimp only at h
+  split at h
+  · exact absurd h (typed _)
+  · split at h
+    · exact absurd h (typed _)
+    · exact absurd h (typed _)
+    · rename_i words _
+      unfold searchRoute at h
+      split at h
+      · exact absurd h (typed _)
+      · simp at h
+    · rename_i url hs
+      exact ⟨url, hs⟩
+
+/-- With no search engine chosen, words typed in the bar open the browser's own search
+page: a `foafnaut:` address, so no request carries them anywhere. -/
+theorem words_stay_local (site : WebRoute.Site) (base input search words : String)
+    (hs : WebRoute.searchTemplate search = none)
+    (hw : submit (input.trimAscii.toString) = .search words)
+    (hp : ((((input.trimAscii.toString).toList.take 9).map Char.toLower == WebRoute.foafnautPrefix) ||
+      ((input.trimAscii.toString).toList.map Char.toLower == "about:foafnaut".toList)) = false) :
+    routeAddress site base input search = .page "search" (WebRoute.searchPageURL words) := by
+  simp only [routeAddress, hp, Bool.false_eq_true, if_false, hw, searchRoute, hs]
+
+/-- No setting means no search engine: words never go into an outbound address. -/
+theorem no_engine_by_default (site : WebRoute.Site) (base words : String) :
+    searchRoute site base "" words = .page "search" (WebRoute.searchPageURL words) := by
+  simp [searchRoute, WebRoute.no_default_search]
+
+/-- The words reach a web address only through the template of the engine chosen. -/
+theorem words_only_to_chosen (site : WebRoute.Site) (base search words : String) (r : WebRoute.Route)
+    (h : searchRoute site base search words = r) (hl : ∀ n u, r ≠ .page n u) :
+    ∃ template, WebRoute.searchTemplate search = some template ∧
+      r = typedRoute (WebRoute.route site base (WebRoute.expandSearch template words)) := by
+  unfold searchRoute at h
+  split at h
+  · rename_i template ht; exact ⟨template, ht, h.symm⟩
+  · exact absurd h.symm (hl _ _)
 
 /-! ### View source -/
 
@@ -1005,10 +1351,108 @@ def sourcePage (kind url source : String) : String :=
     then s!"<h2>Shown: the first {sourceLimit} of {source.length} characters</h2>" else ""
   let name := ((url.splitOn "/").getLast?).getD url
   "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" ++ escapeText (kind ++ ": " ++ name) ++
-  "</title><style>body{margin:12px;font-size:12px;line-height:16px;color:#203040;background:#f4f4ee}" ++
+  "</title><style>body{font-family:sans-serif;margin:12px;font-size:12px;line-height:16px;color:#203040;background:#f4f4ee}" ++
   "h1{margin:0;padding-bottom:8px;font-size:14px;line-height:20px;color:#a0186a}h2{margin:0;padding-bottom:8px;font-size:12px;color:#a0186a}p{margin:0}</style></head><body><h1>" ++
   escapeText (kind ++ " of " ++ url) ++ "</h1>" ++ cut ++
   String.join ((shown.splitOn "\n").map sourceLine) ++ "</body></html>"
+
+/-! ### The browser's own pages for words and for other programs
+
+Written here, by the browser (AGENT-BRIEF: the browser's own words are Lean). -/
+
+/-- Text for HTML: `&`, `<`, `>` and `"` escaped; controls dropped; other characters kept. -/
+def htmlText (value : String) : String :=
+  String.join (value.toList.map fun c =>
+    if c == '&' then "&amp;" else if c == '<' then "&lt;" else if c == '>' then "&gt;" else if c == '"' then "&quot;"
+    else if c.toNat < 32 || c.toNat == 127 then "" else c.toString)
+
+def ownPageStyle : String :=
+  "<style>body{margin:24px;font-family:system-ui,sans-serif;font-size:16px;line-height:24px;color:#1f2328;background:#f7f8fb}" ++
+  "h1{margin:0 0 12px;font-size:22px;line-height:30px;color:#184078}h2{margin:20px 0 8px;font-size:18px;line-height:26px;color:#184078}" ++
+  "p{margin:0 0 12px;max-width:640px}.url{font-family:monospace;overflow-wrap:anywhere;color:#3b4652}.dim{color:#5d666c}" ++
+  ".go{display:inline-block;margin-top:8px;padding:10px 18px;border-radius:20px;background:#0b57d0;color:#ffffff;font-weight:bold;text-decoration:none}</style>"
+
+/-- The English Wikipedia article address for the words (the Hub reads it in the tab
+through the Wikimedia REST API, which allows it; the native browser reads it directly). -/
+def wikipediaURL (words : String) : String := "https://en.wikipedia.org/wiki/" ++ WebRoute.encodeTitle words
+
+/-- The page `foafnaut:search/WORDS`: what was typed, and the choices. `found` is (kind,
+url, title) from the browser's own data (`WebState.searchFound` and the open tabs);
+`stateOn` says whether history and bookmarks are kept in this window; `search` is the
+search engine chosen in Settings. Nothing on this page is fetched to show it; each link
+is a choice the person makes. -/
+def searchPage (words : String) (found : List (String × String × String)) (stateOn : Bool) (search : String) : String :=
+  let shown := htmlText words
+  let item := fun (e : String × String × String) =>
+    let (kind, url, title) := e
+    s!"<p><a href=\"{htmlText url}\">{htmlText (if title.isEmpty then url else title)}</a> <span class=\"dim\">{kind}</span><br><span class=\"url\">{htmlText url}</span></p>"
+  let local_ :=
+    if !found.isEmpty then String.join (found.map item)
+    else if stateOn then "<p>Nothing in your open tabs, bookmarks or history matches.</p>"
+    else "<p>Nothing in your open tabs matches. History and bookmarks are not kept in this window.</p>"
+  let engine := match WebRoute.searchTemplate search with
+    | some template =>
+      s!"<p><a class=\"go\" href=\"{htmlText (WebRoute.expandSearch template words)}\">Search with {htmlText (WebRoute.searchName search)}</a></p>" ++
+      "<p>The search engine you chose in <a href=\"foafnaut:settings\">Settings</a> gets the words when you press the button.</p>"
+    | none =>
+      "<p>No search engine is chosen, so the words were sent to no one. " ++
+      "<a href=\"foafnaut:settings\">Choose a search engine in Settings</a>; until you do, words typed in the address bar open this page.</p>"
+  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" ++ shown ++ " (search)</title>" ++ ownPageStyle ++ "</head><body>" ++
+  s!"<h1>You typed: {shown}</h1>" ++
+  "<p>This page was made inside Foafnaut. The words have not left this browser.</p>" ++
+  "<h2>In this browser</h2>" ++ local_ ++
+  "<h2>Look it up</h2>" ++
+  s!"<p><a class=\"go\" href=\"{htmlText (wikipediaURL words)}\">Look it up on Wikipedia</a></p>" ++
+  "<p>Opens the English Wikipedia article with this title, read inside Foafnaut. Wikipedia gets the words when you press the button.</p>" ++
+  "<h2>Search the web</h2>" ++ engine ++ "</body></html>"
+
+/-- The Settings section (`<!--foafnaut:search-->`): the choice now, a button for each
+engine and for none, and how to give an engine of one's own. None is chosen by default and
+the list is in alphabetical order. -/
+def searchChoicesHTML (setting : String) : String :=
+  let chosen := WebRoute.searchSetting setting
+  let button := fun (id label : String) =>
+    let cls := if id == chosen || (id == "none" && chosen.isEmpty) then " class=\"chosen\"" else ""
+    s!"<a{cls} href=\"foafnaut:search-engine/{id}\">{htmlText label}</a>"
+  s!"<h2 class=\"size\">Search engine: {htmlText (WebRoute.searchName chosen)}</h2>" ++
+  "<p>Words typed in the address bar that are not an address go to no one until you choose a search engine here. " ++
+  "Until then they open a page of this browser that looks in your open tabs, bookmarks and history, and offers Wikipedia. " ++
+  "Once you choose one, the words you type go to it and to no one else.</p>" ++
+  "<p class=\"presets\">" ++ button "none" "None" ++ " " ++
+  " ".intercalate (WebRoute.searchEngines.map fun e => button e.id e.name) ++ "</p>" ++
+  "<p>Your own: type :search-engine and an address with %s where the words go, for example " ++
+  "<span class=\"url\">:search-engine https://example.org/search?q=%s</span></p>"
+
+/-- The Outside page for an address that leaves the browser only by a press: a web
+address the tab can not read (the Hub: the site does not allow it), Textnaut's own Hub
+page, or another program's address (`mailto:`, `tel:`, `sms:`). Its one button is a link to
+the same address; while this page is shown, that link is the press (`WebRoute.Site.outside`)
+and the host hands the address to the system. -/
+def outsidePage (url : String) (hub textnaut : Bool) : String :=
+  let web := url.startsWith "http://" || url.startsWith "https://"
+  let (heading, why, button) :=
+    if textnaut then ("Textnaut opens in its own page",
+      "<p>Textnaut has its own page on the Hub; it does not open inside this one.</p>", "Open in a new browser tab")
+    else if web && hub then ("This site can not be read from inside the Hub page",
+      "<p>The browser this page runs in lets a page read another site only when that site allows it (cross-origin rules, CORS), and this one does not. " ++
+      "The Hub keeps copies of some openly licensed pages, but not of this one. The Foafnaut app on a computer, and Textnaut in a terminal, read it directly.</p>",
+      "Open in a new browser tab")
+    else if web then ("This address opens in your default browser",
+      "<p>Foafnaut opens it in your default browser only if you press the button.</p>", "Open in your browser")
+    else ("This link opens another program",
+      "<p>This address belongs to another program (mail, phone or messages). Foafnaut opens it only if you press the button.</p>",
+      if url.startsWith "mailto:" then "Open in your mail app" else if url.startsWith "tel:" then "Open in your phone app" else "Open in your messages app")
+  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Another site</title>" ++ ownPageStyle ++ "</head><body>" ++
+  s!"<h1>{heading}</h1><p class=\"url\">{htmlText url}</p>{why}" ++
+  s!"<p><a class=\"go\" href=\"{htmlText url}\">{button}</a></p>" ++
+  "<p>Back (the arrow, or Command-Left) returns to the page before.</p></body></html>"
+
+#guard ((searchPage "a <b>" [] true "").splitOn "&lt;b&gt;").length == 3
+#guard ((searchPage "lean browser" [] true "").splitOn "duckduckgo").length == 1
+#guard ((searchPage "lean browser" [] true "").splitOn "https://en.wikipedia.org/wiki/lean_browser").length == 2
+#guard ((searchChoicesHTML "").splitOn "class=\"chosen\" href=\"foafnaut:search-engine/none\"").length == 2
+#guard ((searchChoicesHTML "mojeek").splitOn "class=\"chosen\"").length == 2
+#guard ((outsidePage "mailto:a@example.org" false false).splitOn "Open in your mail app").length == 2
 
 /-! ### Editing the find text -/
 
@@ -1079,6 +1523,7 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     anchor := min (nat j "anchor" cursor) address.length,undo := step "undo",redo := step "redo",typing := flag j "typing",
     focused := flag j "focused",canBack := flag j "canBack",canForward := flag j "canForward",
     loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",script := str j "script" "",
+    dark := flag j "dark",
     scroll := nat j "scroll", pressed := str j "pressed",
     collapse := min 100 (nat j "collapse"), collapsible := flag j "collapsible",
     swipe := match j.field? "swipe" with
@@ -1098,8 +1543,9 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 
 #guard submit "http://example.org/" == .page "http://example.org/"
 #guard submit "example.org" == .page "https://example.org"
-#guard submit "github.com/danbri" == .system "https://github.com/danbri"
-#guard submit "lean browser" == .system "https://duckduckgo.com/?q=lean+browser"
+#guard submit "github.com/danbri" == .page "https://github.com/danbri"
+#guard submit "lean browser" == .search "lean browser"
+#guard (submit "lean browser").json.toString == "{\"go\":\"page\",\"url\":\"foafnaut:search/lean+browser\"}"
 #guard submit ":zoom 150" == .command "zoom" "150"
 #guard submit ":source" == .command "source" ""
 #guard submit ":sparql SELECT ?s WHERE { ?s a <x:y> }" == .command "sparql" "q=SELECT+%3Fs+WHERE+%7B+%3Fs+a+%3Cx%3Ay%3E+%7D"
@@ -1107,7 +1553,7 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 #guard (sourcePage "Source" "file:///a.html" "<p>\n  x</p>").contains '&'
 #guard ((sourcePage "Source" "a" (String.ofList (List.replicate 8001 'x'))).splitOn "first 8000").length == 2
 #guard submit ":open https://x.org" == .system "https://x.org"
-#guard link "https://github.com/danbri/factoidal-core" == .system "https://github.com/danbri/factoidal-core"
+#guard link "https://github.com/danbri/factoidal-core" == .page "https://github.com/danbri/factoidal-core"
 #guard link "foafnaut:theme/arcade" == .command "theme" "arcade"
 #guard link "status.html" == .page "status.html"
 -- The graph is a page: a link or `:graph` loads it in the tab and pushes it on the history.
@@ -1120,7 +1566,17 @@ private def hubSite : WebRoute.Site := {origin := "https://x.org",pages := "http
 #guard routeAddress hubSite "https://x.org/p/index.html" ":settings" == .page "settings" "https://x.org/p/settings.html"
 #guard routeAddress hubSite "https://x.org/p/index.html" ":zoom 150" == .command "zoom" "150"
 #guard routeAddress hubSite "https://x.org/p/index.html" "x.org/p/a.html" == .navigate "https://x.org/p/a.html"
-#guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" == .system "https://duckduckgo.com/?q=lean+browser"
+-- Words: the browser's own search page, with no search engine chosen; the chosen one's address otherwise.
+#guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" == .page "search" "foafnaut:search/lean+browser"
+#guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" "none" == .page "search" "foafnaut:search/lean+browser"
+#guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" "mojeek" == .outside "https://www.mojeek.com/search?q=lean+browser"
+#guard routeAddress {} "file:///p/index.html" "lean browser" "mojeek" == .navigate "https://www.mojeek.com/search?q=lean+browser"
+#guard routeAddress {} "file:///p/index.html" "lean browser" "https://example.org/s?q=%s" == .navigate "https://example.org/s?q=lean+browser"
+#guard routeAddress {hubSite with outside := "https://www.mojeek.com/search?q=a"} "https://www.mojeek.com/search?q=a" "a" "mojeek" == .outside "https://www.mojeek.com/search?q=a"
+-- Hosts the old list sent out: the tab (native) or the Outside page (Hub).
+#guard routeAddress {} "file:///p/index.html" "github.com/danbri" == .navigate "https://github.com/danbri"
+#guard routeAddress hubSite "https://x.org/p/index.html" "github.com/danbri" == .outside "https://github.com/danbri"
+#guard routeAddress hubSite "https://x.org/p/index.html" ":search-engine mojeek" == .command "search-engine" "mojeek"
 #guard routeAddress hubSite "https://x.org/p/index.html" ":open https://x.org/a" == .system "https://x.org/a"
 #guard routeAddress hubSite "https://x.org/p/index.html" ":open foafnaut:graph" == .graph
 -- A struct literal sets the anchor too: `anchor := 0` would select from the start.
@@ -1221,5 +1677,29 @@ private def phone : Shell := {menuOpen with scale := 3}
 #guard !(menuOpen.typed "x").menu && !(menuOpen.key 123).menu && !(menuOpen.edit "selectAll").1.menu
 #guard (menuOpen.edit "pasteGo" "  example.org/b\n").2 == some "example.org/b" && (menuOpen.edit "pasteGo" "\n").2 == none
 #guard (Shell.ofJson menuOpen.editJson).menu && pressable menuOpen "pasteGo" && !pressable opened "pasteGo"
+
+-- The flat look (2026-11-16) is the default; "classic" keeps the NeXT bevels. The system's dark
+-- mode turns the default dark; an explicit "light" or "dark" setting wins over it.
+#guard reprStr (nodes {dark := true} 1000) != reprStr (nodes {} 1000)
+#guard reprStr (nodes {theme := "dark"} 1000) == reprStr (nodes {dark := true} 1000)
+#guard reprStr (nodes {theme := "light",dark := true} 1000) == reprStr (nodes {} 1000)
+#guard reprStr (nodes {theme := "classic"} 1000) != reprStr (nodes {} 1000)
+#guard (Shell.ofJson (.object [("dark",.bool true)])).dark && !(Shell.ofJson (.object [])).dark
+-- Loading draws the accent bar in the flat look too, and a pressed control a circle.
+#guard reprStr (nodes {loading := true} 1000) != reprStr (nodes {} 1000)
+#guard reprStr (nodes {pressed := "settings"} 1000) != reprStr (nodes {} 1000)
+
+/-- Kind: cost theorem. Says: the look (theme and the system's dark mode) changes no chrome
+height, so a theme change or a switch to dark lays nothing out again. -/
+theorem fullHeight_look (s : Shell) (theme : String) (dark : Bool) (width : Nat) :
+    fullHeight {s with theme,dark} width = fullHeight s width := rfl
+
+theorem height_look (s : Shell) (theme : String) (dark : Bool) (width : Nat) :
+    height {s with theme,dark} width = height s width := rfl
+
+/-- Kind: behaviour theorem. Says: the look changes no hit test: a press lands on the same
+control in every theme, light or dark. -/
+theorem hit_look (s : Shell) (theme : String) (dark : Bool) (width x y : Nat) :
+    hit {s with theme,dark} width x y = hit s width x y := rfl
 
 end WebShell

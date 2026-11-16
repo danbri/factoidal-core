@@ -1,0 +1,61 @@
+allocations 5204266  bytes 127431517  rc ops 47775830  copies 70063  copied bytes 2487790
+-- allocations by shape (count, % of allocations, bytes)
+       3761904  72.3%     90285696  pair / EStateM.Result.ok
+        615206  11.8%      9843296  Option.some / Kind.array
+        118524   2.3%      3792768  PropMap or 3-tuple
+        111146   2.1%      6278528  closure
+         74110   1.4%      1185760  Value.num
+         67115   1.3%      1073840  ctor(11, 1, 0)
+         65391   1.3%      1046256  ctor(12, 1, 0)
+         51207   1.0%       819312  box-float
+         47957   0.9%      1302456  array-copy
+         31994   0.6%      1791664  Env
+         31826   0.6%      1149672  array-new
+         28212   0.5%       677088  List.cons / Result.error
+         19556   0.4%      1720928  HeapOf
+         18439   0.4%       885072  Obj
+-- allocations by function
+       3192753  61.3%     75764432  __private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop
+        285250   5.5%      8208952  JS_Re_matchNode
+        183978   3.5%      2943648  JS_Re_oneChar
+        102510   2.0%      2050584  JS_toNum
+         97216   1.9%      2213120  JS_evalExpr
+         90749   1.7%      1702824  JS_Re_peekC
+         85491   1.6%      2305456  JS_vmLoop
+         58587   1.1%      1220848  __private_Init_Data_Array_Basic_0__Array_foldlMUnsafe_fold
+         50289   1.0%      1012024  JS_subjectCached
+         49539   1.0%       792624  Std_DHashMap_Internal_AssocList_get_x3f
+         48032   0.9%      1152768  JS_sizeCost
+         43268   0.8%      1730720  JS_assignLocal
+         41082   0.8%       985968  JS_regexpOf
+         39737   0.8%       953688  JS_charge
+-- rc ops by function
+      27603415  57.8%  JS_Re_matchNode
+      12404227  26.0%  __private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop
+       1390199   2.9%  JS_evalExpr
+        716058   1.5%  JS_vmLoop
+        364093   0.8%  Text_CaseMap_upperBound
+        320862   0.7%  JS_Obj_getOwn
+        277451   0.6%  JS_Natives_callNative
+        256931   0.5%  JS_callClosure
+        225048   0.5%  JS_regexExec
+        216340   0.5%  JS_assignLocal
+        212754   0.4%  JS_Re_oneChar
+        195473   0.4%  JS_evalArgs
+        193886   0.4%  JS_charge
+        170824   0.4%  JS_HeapOf_fastGet
+-- top sites (function, shape)
+       3076421  59.1%  __private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop pair / EStateM.Result.ok
+        183978   3.5%  JS_Re_oneChar                            Option.some / Kind.array
+        111891   2.1%  __private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop Option.some / Kind.array
+         87245   1.7%  JS_Re_matchNode                          Option.some / Kind.array
+         74476   1.4%  JS_evalExpr                              pair / EStateM.Result.ok
+         65367   1.3%  JS_Re_matchNode                          ctor(12, 1, 0)
+         59394   1.1%  JS_Re_peekC                              Option.some / Kind.array
+         55135   1.1%  JS_Re_matchNode                          ctor(11, 1, 0)
+         52456   1.0%  JS_Re_matchNode                          closure
+         51303   1.0%  JS_toNum                                 pair / EStateM.Result.ok
+         51207   1.0%  JS_toNum                                 box-float
+         49539   1.0%  Std_DHashMap_Internal_AssocList_get_x3f  Option.some / Kind.array
+         48032   0.9%  JS_sizeCost                              pair / EStateM.Result.ok
+         41082   0.8%  JS_regexpOf                              pair / EStateM.Result.ok

@@ -50,6 +50,8 @@ async function get(p){
     return {status:200,type:'text/javascript',body:Buffer.from(text)};
   }
   if(p.startsWith(hub)&&p.endsWith('.mjs')&&(f=local(hubDir,p.slice(hub.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
+  // Bundled fonts from this checkout (as docs/.eleventy.js copies them), so a font not yet on the live Hub is served.
+  if(p.startsWith(hub+'fonts/')&&(f=local(path.join(root,'third_party/fonts/'),p.slice(hub.length+6))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
   if(p.startsWith(rt)&&(f=local(engineDir,p.slice(rt.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
   if(p===guests+'qjs-wasmvm.wasm')return {status:200,type:'application/wasm',body:fs.readFileSync(path.join(engineDir,'qjs-wasmvm.wasm'))};
   return liveFetch(p);

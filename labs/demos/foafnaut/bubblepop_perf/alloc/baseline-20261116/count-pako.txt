@@ -1,0 +1,61 @@
+allocations 59149685  bytes 1458111721  rc ops 245823877  copies 272295  copied bytes 8686137
+-- allocations by shape (count, % of allocations, bytes)
+      21747632  36.8%    521943168  pair / EStateM.Result.ok
+       9999538  16.9%    159992608  Value.num
+       7713684  13.0%    246837888  PropMap or 3-tuple
+       6891889  11.7%    110270224  Option.some / Kind.array
+       4643480   7.9%     74295680  box-float
+       2118546   3.6%     84246160  closure
+       1521706   2.6%    133910128  HeapOf
+       1178552   2.0%     18856832  ctor(13, 1, 0)
+        725150   1.2%     29409416  array-new
+        617741   1.0%     34593496  Env
+        493669   0.8%      7898704  Value.bool
+        440321   0.7%     10567704  PropV.data
+        399500   0.7%      9588000  ctor(10, 2, 0)
+        138470   0.2%      3325072  array-copy
+-- allocations by function
+       9286962  15.7%    185739248  JS_toNum
+       8209612  13.9%    218923072  JS_arrayIndex_x3f
+       4636875   7.8%     86058872  JS_vmLoop
+       4398645   7.4%     92180248  JS_evalExpr
+       3535545   6.0%    150849920  JS_typedWriteV
+       3466406   5.9%     55462496  Std_DHashMap_Internal_AssocList_get_x3f
+       2874901   4.9%     88490744  JS_setOwnData
+       2742270   4.6%     65814480  JS_liveLen
+       2515525   4.3%     78287664  JS_getV
+       1994614   3.4%     47870736  JS_takeAt
+       1555652   2.6%     49780864  JS_setElem
+       1503008   2.5%     24048128  JS_typedReadByteFast
+       1393322   2.4%     22293152  JS_intV
+       1380089   2.3%     31517288  JS_binop
+-- rc ops by function
+      60071003  24.4%  JS_evalExpr
+      38062377  15.5%  JS_vmLoop
+      15109367   6.1%  JS_getV
+      12963665   5.3%  JS_typedWriteV
+      11892925   4.8%  JS_putV
+       9950920   4.0%  JS_HeapOf_obj
+       8519391   3.5%  JS_binop
+       8209646   3.3%  JS_arrayIndex_x3f
+       8087499   3.3%  JS_lookupLocal
+       5983842   2.4%  JS_updateObj
+       5846071   2.4%  JS_setOwnData
+       5484540   2.2%  JS_liveLen
+       5326405   2.2%  JS_assignLocal
+       4697153   1.9%  JS_bufferBytes
+-- top sites (function, shape)
+       5473080   9.3%  JS_arrayIndex_x3f                        PropMap or 3-tuple
+       4643482   7.9%  JS_toNum                                 pair / EStateM.Result.ok
+       4643480   7.9%  JS_toNum                                 box-float
+       3699424   6.3%  JS_vmLoop                                Value.num
+       3466406   5.9%  Std_DHashMap_Internal_AssocList_get_x3f  Option.some / Kind.array
+       2742270   4.6%  JS_liveLen                               pair / EStateM.Result.ok
+       2736532   4.6%  JS_arrayIndex_x3f                        Option.some / Kind.array
+       2725241   4.6%  JS_evalExpr                              pair / EStateM.Result.ok
+       2239383   3.8%  JS_getV                                  PropMap or 3-tuple
+       1994614   3.4%  JS_takeAt                                pair / EStateM.Result.ok
+       1503008   2.5%  JS_typedReadByteFast                     Value.num
+       1455930   2.5%  JS_evalExpr                              Value.num
+       1393322   2.4%  JS_intV                                  Value.num
+       1218320   2.1%  JS_setOwnData                            pair / EStateM.Result.ok
