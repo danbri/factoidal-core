@@ -14,8 +14,9 @@ const here=new URL(".",import.meta.url).pathname;
 const library=Deno.env.get("FOAFNAUT_ENGINE")??`${here}.build/web-render/engines/libweb-render.dylib`;
 const exists=(p:string)=>{try{return Deno.statSync(p).isFile;}catch{return false;}};
 
-/** Checks that fail today; each has an engine fix to come (issue 518). */
-const OPEN=new Set<string>(Deno.env.get("ORIGIN_ISOLATION_OPEN")?.split(",").filter(Boolean)??["C1","C2","C4"]);
+/** Checks that fail on this tree's engine; each has an engine fix to come (C2: issue 524).
+An engine from before the C1 and C4 fixes (release 1b2fc90d578e) needs ORIGIN_ISOLATION_OPEN=C1,C2,C4. */
+const OPEN=new Set<string>(Deno.env.get("ORIGIN_ISOLATION_OPEN")?.split(",").filter(Boolean)??["C2"]);
 
 type Turn={session:number;logs:string[];errors:string[];navigations?:{nodeId:number;url:string}[];
   netRequests?:{id:number;method:string;url:string;resolve?:boolean}[];fetches?:{id:number;url:string;kind:string}[]};
