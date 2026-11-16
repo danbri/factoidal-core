@@ -1571,6 +1571,8 @@ def hostAnswer (args : Array Value) : HostAns → M Value
   | .ints xs => newArray (xs.map fun i => .num (Float.ofInt i))
   | .err m => throwErr .type m
   | .bytes b => newBuffer b
+  -- a script's source is for `classicScriptHost` alone: it never becomes a value
+  | .script _ _ => pure .undef
   | .detach i => do
     if let some (.obj id) := args[i]? then
       if let .buffer _ := (← getObj id).kind then
@@ -1608,6 +1610,23 @@ def callHost (k : Nat) (args : Array Value) : M Value := do
     modify fun h => { h with host := some st }
     hostAnswer args ans
 
+
+/-- The number of `HeapOf.hostCall` that answers a classic script's source for the engine to run
+(`HostAns.script`; `Native.classicScriptHost`). No native the realm holds has this number. -/
+def hostScriptId : Nat := 1000001
+
+/-- The source the host holds for `key` and whether its errors are muted (`none`: the host
+has none). The answer stays here: it is not made a value of the realm. -/
+def hostScript (key : Value) : M (Option (String × Bool)) := do
+  let (st, call, left) ← modifyGet fun h => ((h.host, h.hostCall, h.steps.toNat), { h with host := none })
+  match st with
+  | none => pure none
+  | some st =>
+    let (st, ans) := call st hostScriptId #[.val key] left
+    modify fun h => { h with host := some st }
+    match ans with
+    | .script src muted => pure (some (src, muted))
+    | _ => pure none
 
 /-- The host's clock in ns (0 with no host). -/
 def hostNowNs : M Float := do
@@ -4389,61 +4408,74 @@ def moreNativeClone (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
       match v with
       | some v => pure v
       | none => throwErr .type "DataCloneError: the message could not be deserialized"
-    | (.x .classicScript) =>
-      -- GlobalDeclarationInstantiation (§16.1.7) and the statements, as `runScriptM` (which
-      -- comes after this function), with no microtask checkpoint.
-      let src ← core.toStr a0
-      match parseScript src false with
-      | .error e => throwErr .syntax e
-      | .ok sc =>
-        let g := r.globalObj
-        let ctx : Ctx := { env := 0, thisV := .obj g, strict := sc.strict }
-        -- GlobalDeclarationInstantiation's checks (§16.1.7 steps 3 to 10), all before any binding
-        -- is made: a lexical name that a var, a lexical binding or a non-configurable global
-        -- property has is a SyntaxError; a function the global object cannot take
-        -- (CanDeclareGlobalFunction) or a var it cannot take (CanDeclareGlobalVar) a TypeError
-        let go ← getObj g
-        let funNames := sc.body.filterMap fun st => match st with | .funDecl x _ => some x | _ => none
-        let lexNames := sc.body.flatMap fun st => match st with
-          | .decl .letK ds | .decl .constK ds => ds.flatMap (·.names)
-          | .classDecl x _ => [x]
-          | _ => []
-        for x in lexNames do
-          if (← getBinding 0 x).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
-          if sc.vars.contains x || funNames.contains x then throwErr .syntax s!"Identifier '{x}' has already been declared"
-          if let some p := go.getOwn x then
-            if !p.configurable then throwErr .syntax s!"Identifier '{x}' has already been declared"
-        for x in sc.vars ++ funNames do
-          if (← getBinding 0 x).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
-        for f in funNames do
-          match go.getOwn f with
-          | none => if !go.extensible then throwErr .type s!"Cannot declare global function '{f}'"
-          | some p =>
-            if !p.configurable then
-              match p with
-              | .data _ true true _ => pure ()
-              | _ => throwErr .type s!"Cannot redefine global function '{f}'"
-        for v in sc.vars do
-          if !funNames.contains v && (go.getOwn v).isNone && !go.extensible then
-            throwErr .type s!"Cannot declare global variable '{v}'"
-        for v in sc.vars do
-          if ((← getObj g).getOwn v).isNone then defineOwn g v (.data .undef true true false)
-        for st in sc.body do
-          if let .funDecl name f := st then
-            defineOwn g name (.data (← makeClosure ctx f) true true false)
-        for st in sc.body do
-          match st with
-          | .decl .letK ds | .decl .constK ds =>
-            for d in ds do
-              for x in d.names do
-                if ((← getBinding 0 x)).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
-                declare 0 x { v := .undef, mutable := (match st with | .decl .letK _ => true | _ => false), init := false }
-          | .classDecl x _ =>
-            if ((← getBinding 0 x)).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
-            declare 0 x { v := .undef, init := false }
-          | _ => pure ()
-        let _ ← core.evalStmts ctx sc.body
-        pure .undef
+    | (.x .classicScript) | (.x .classicScriptHost) =>
+      -- the source: the argument, or (`classicScriptHost`) the host's, which never becomes a
+      -- value of the realm (a script of another origin: origin isolation, issue 518)
+      let (src, muted, fromHost) ← match id with
+        | .x .classicScriptHost => do
+          match ← hostScript a0 with
+          | some (src, muted) => pure (src, muted, true)
+          | none => throwErr .type "runFetched: the host holds no script for this key"
+        | _ => pure (← core.toStr a0, false, false)
+      -- muted errors (HTML "report an exception"): any exception of the script ends it and the
+      -- caller learns only that it threw (1), never the exception
+      let mute (act : M Value) : M Value :=
+        if muted then catchJS (do let _ ← act; pure (.num 0)) fun _ => pure (.num 1)
+        else if fromHost then (do let _ ← act; pure (.num 0)) else act
+      mute do
+        -- GlobalDeclarationInstantiation (§16.1.7) and the statements, as `runScriptM` (which
+        -- comes after this function), with no microtask checkpoint.
+        match parseScript src false with
+        | .error e => throwErr .syntax e
+        | .ok sc =>
+          let g := r.globalObj
+          let ctx : Ctx := { env := 0, thisV := .obj g, strict := sc.strict }
+          -- GlobalDeclarationInstantiation's checks (§16.1.7 steps 3 to 10), all before any binding
+          -- is made: a lexical name that a var, a lexical binding or a non-configurable global
+          -- property has is a SyntaxError; a function the global object cannot take
+          -- (CanDeclareGlobalFunction) or a var it cannot take (CanDeclareGlobalVar) a TypeError
+          let go ← getObj g
+          let funNames := sc.body.filterMap fun st => match st with | .funDecl x _ => some x | _ => none
+          let lexNames := sc.body.flatMap fun st => match st with
+            | .decl .letK ds | .decl .constK ds => ds.flatMap (·.names)
+            | .classDecl x _ => [x]
+            | _ => []
+          for x in lexNames do
+            if (← getBinding 0 x).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
+            if sc.vars.contains x || funNames.contains x then throwErr .syntax s!"Identifier '{x}' has already been declared"
+            if let some p := go.getOwn x then
+              if !p.configurable then throwErr .syntax s!"Identifier '{x}' has already been declared"
+          for x in sc.vars ++ funNames do
+            if (← getBinding 0 x).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
+          for f in funNames do
+            match go.getOwn f with
+            | none => if !go.extensible then throwErr .type s!"Cannot declare global function '{f}'"
+            | some p =>
+              if !p.configurable then
+                match p with
+                | .data _ true true _ => pure ()
+                | _ => throwErr .type s!"Cannot redefine global function '{f}'"
+          for v in sc.vars do
+            if !funNames.contains v && (go.getOwn v).isNone && !go.extensible then
+              throwErr .type s!"Cannot declare global variable '{v}'"
+          for v in sc.vars do
+            if ((← getObj g).getOwn v).isNone then defineOwn g v (.data .undef true true false)
+          for st in sc.body do
+            if let .funDecl name f := st then
+              defineOwn g name (.data (← makeClosure ctx f) true true false)
+          for st in sc.body do
+            match st with
+            | .decl .letK ds | .decl .constK ds =>
+              for d in ds do
+                for x in d.names do
+                  if ((← getBinding 0 x)).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
+                  declare 0 x { v := .undef, mutable := (match st with | .decl .letK _ => true | _ => false), init := false }
+            | .classDecl x _ =>
+              if ((← getBinding 0 x)).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
+              declare 0 x { v := .undef, init := false }
+            | _ => pure ()
+          let _ ← core.evalStmts ctx sc.body
+          pure .undef
     | _ => throwErr .type "not a function"
 
 /-- Built-ins of `moreNative`: streams and URLPattern. `r` is the realm `moreNative` read. -/
@@ -4860,6 +4892,7 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
     | (.x .cloneSerialize) => moreNativeClone core r id thisV args newTarget
     | (.x .cloneDeserialize) => moreNativeClone core r id thisV args newTarget
     | (.x .classicScript) => moreNativeClone core r id thisV args newTarget
+    | (.x .classicScriptHost) => moreNativeClone core r id thisV args newTarget
     | (.x (.setMethod _)) => moreNativeSet core r id thisV args newTarget
     | (.x .proxyRevocable) => moreNativeObject core r id thisV args newTarget
     | (.x .proxyRevoke) => moreNativeObject core r id thisV args newTarget

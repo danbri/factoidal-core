@@ -538,6 +538,18 @@
     } finally { reporting = false; }
   };
 
+  // A script with muted errors (another origin, no CORS) threw: the event says only that
+  // (HTML "report an exception": "Script error.", no URL, line or column, error null).
+  const reportMuted = () => {
+    if (reporting) { n.log('Uncaught (in error handler) Script error.'); return; }
+    reporting = true;
+    try {
+      const event = new ErrorEvent('error', { message: 'Script error.', error: null, cancelable: true, filename: '', lineno: 0, colno: 0 });
+      state(event).trusted = true;
+      if (dispatch(windowOfScript(), event)) { if (uncaughtHook) uncaughtHook('Script error.', null); else n.log('Uncaught Script error.'); }
+    } finally { reporting = false; }
+  };
+
   // ---- dispatch (DOM §2.9), with the order from Lean -------------------------------
   const invokeListener = (r, event, s) => {
     if (r.removed) return;
@@ -2939,8 +2951,25 @@
       } };
 `;
   // ==== end canvas2d section ====
-  // A 2D canvas whose width or height is set starts again (HTML §4.12.5: the bitmap and the context's state are reset).
-  const sized = (el, name, v) => { el.setAttribute(name, String(v >>> 0)); if (gpuContexts.get(nodeId(el))?.kind === '2d') c2d().resized(el); };
+  // HTML §4.12.5: whenever a 2D canvas's width or height content attribute is set, removed,
+  // changed or set again to the value it has, by any path (the reflected properties of
+  // DOM.Reflect, setAttribute, removeAttribute, an Attr's value), its bitmap is cleared and its
+  // context's state reset: an init command (PageCanvas Cmd.init, which also gives the bitmap
+  // a new origin-clean flag). The attribute natives are wrapped when a canvas first gets a 2D
+  // context; a page without one pays nothing.
+  let canvasWatching = false;
+  const canvasWatch = () => {
+    if (canvasWatching) return;
+    canvasWatching = true;
+    const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
+    const hit = (id, name) => {
+      const k = String(name), local = k.includes('\u0000') ? (k.startsWith('\u0000') ? k.slice(1) : '') : k.toLowerCase();
+      if ((local === 'width' || local === 'height') && gpuContexts.get(id)?.kind === '2d') c2d().resized(wrap(id));
+    };
+    n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0) hit(id, name); return r; };
+    n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0) hit(id, name); return r; };
+  };
+  const sized = (el, name, v) => { el.setAttribute(name, String(v >>> 0)); };
   Object.defineProperties(named.HTMLCanvasElement.prototype, {
     width: { get() { return canvasSize(this, 'width', 300); }, set(v) { sized(this, 'width', v); }, configurable: true },
     height: { get() { return canvasSize(this, 'height', 150); }, set(v) { sized(this, 'height', v); }, configurable: true },
@@ -2957,7 +2986,7 @@
       const id = nodeId(this), held = gpuContexts.get(id);
       if (held && held.kind !== 'blank') return held.kind === kind ? held.context : null;
       let context = null;
-      if (kind === '2d') context = c2d().context(this, arguments[1]);
+      if (kind === '2d') { context = c2d().context(this, arguments[1]); canvasWatch(); }
       else if (kind === 'webgpu') context = new GPUCanvasContext(this);
       else if (kind === 'webgl2') context = glContextFor(this, 2, arguments[1]);
       else if (kind === 'webgl' || kind === 'experimental-webgl') context = glContextFor(this, 1, arguments[1]);
@@ -6612,7 +6641,9 @@
     apiCall(165, [s.h, d.destination, '1']);
     if (d.referrerPolicy) apiCall(98, [s.h, 'about:client', d.referrerPolicy, '', '']);
     x.responseType = 'arraybuffer';
-    x.onload = () => resolve({ status: x.status, type: x.getResponseHeader('Content-Type') ?? '',
+    // `h`: the request's handle; for a classic script of another origin the engine keeps the
+    // bytes and runs them by it (`n.runFetched`, Net.Xhr.takeScript): `bytes` is then empty
+    x.onload = () => resolve({ status: x.status, type: x.getResponseHeader('Content-Type') ?? '', h: s.h,
       bytes: x.response instanceof ArrayBuffer ? new Uint8Array(x.response) : new Uint8Array(0) });
     x.onerror = x.onabort = x.ontimeout = () => resolve(null);
     try { x.send(); } catch { resolve(null); }
@@ -16390,11 +16421,13 @@
         return r;
       });
       for (const a of abs) {
-        const src = n.worker(12, a);
+        const got = n.worker(12, a);
         // -1: the embedder fetches it now; Lean undoes this run and runs it again then.
-        if (src === -1) throw new DOMException(`importScripts: '${a}' is being fetched.`, 'NetworkError');
-        if (typeof src !== 'string') throw new DOMException(`Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '${a}' failed to load.`, 'NetworkError');
-        n0.runScript(src);
+        if (got === -1) throw new DOMException(`importScripts: '${a}' is being fetched.`, 'NetworkError');
+        if (got !== 0) throw new DOMException(`Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '${a}' failed to load.`, 'NetworkError');
+        // the engine runs it from its own copy (the source never enters this realm); a script of
+        // another origin that threw is a NetworkError (HTML "run a classic script", muted errors)
+        if (n0.runFetched(a) === 1) throw new DOMException(`Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '${a}' failed to load.`, 'NetworkError');
       }
     });
     if (!isService) getter(DP, 'name', () => name);
@@ -17311,12 +17344,17 @@
     const runText = typeof n0.runScript === 'function' ? src => n0.runScript(src) : src => (0, eval)(src);
     // The script runs with its element's node document as `document` (a frame's document
     // for a script inserted there), as the engine does for the scripts of a parsed frame.
-    const execute = (el, text) => {
+    const execute = (el, text, h) => {
       const before = currentScript, beforeDocument = scriptDocument;
       const d = info(nodeId(el), 7);
       currentScript = el;
       scriptDocument = d > 0 ? wrap(d) : null;
-      try { runText(text); } catch (e) { report(e); } finally { currentScript = before; scriptDocument = beforeDocument; }
+      try {
+        // the engine runs the fetched script by its request's handle: the realm never holds the
+        // source of a script of another origin, and its errors are muted (answer 1)
+        if (h !== undefined && typeof n0.runFetched === 'function') { if (n0.runFetched(h) === 1) reportMuted(); }
+        else runText(text);
+      } catch (e) { report(e); } finally { currentScript = before; scriptDocument = beforeDocument; }
     };
     const fire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
     // Scripting is enabled only in a document with a browsing context: the page's (0), or
@@ -17353,7 +17391,9 @@
         .then(r => {
           if (!scripting(id)) return;
           if (r === undefined || r === null || r.status < 200 || r.status > 299) { fire(el, 'error'); return; }
-          execute(el, new TextDecoder().decode(r.bytes)); fire(el, 'load');
+          if (r.h !== undefined && typeof n0.runFetched === 'function') execute(el, '', r.h);
+          else execute(el, new TextDecoder().decode(r.bytes));
+          fire(el, 'load');
         });
     };
     const after = r => { if (r === 0 && fresh.size) for (const id of [...fresh]) prepare(id); return r; };
@@ -18149,6 +18189,8 @@
       return dispatch(wrapTarget(target), e) ? '' : 'prevented';
     },
     report(e) { report(e); },
+    // an exception of a script with muted errors (another origin): "Script error." only
+    reportMuted() { reportMuted(); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
     start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); imgStart(); noteEmptyScripts(); },

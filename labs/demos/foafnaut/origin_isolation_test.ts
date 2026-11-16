@@ -1,4 +1,4 @@
-// Origin isolation, checks C1 to C5 (issue 518, docs/designissues/2026-11-16-origin-isolation.md).
+// Origin isolation, checks C1 to C6 (issue 518, docs/designissues/2026-11-16-origin-isolation.md).
 // Each check fails when the leak it names exists. A check listed in OPEN is a known fault: it is
 // reported and does not fail the run, and it fails once it passes, so that it leaves the list.
 // The fixtures are original: two invented origins and marker strings, no page content.
@@ -16,7 +16,8 @@ const exists=(p:string)=>{try{return Deno.statSync(p).isFile;}catch{return false
 
 /** Checks that fail on this tree's engine; each has an engine fix to come (none now).
 An engine from before the C1, C2 and C4 fixes (release 1b2fc90d578e) needs
-ORIGIN_ISOLATION_OPEN=C1,C2,C2b,C2c,C2d,C4. */
+ORIGIN_ISOLATION_OPEN=C1,C2,C2b,C2c,C2d,C4,C6; one from before the C6 fix (release e7604a84f6d4) needs
+ORIGIN_ISOLATION_OPEN=C6. */
 const OPEN=new Set<string>(Deno.env.get("ORIGIN_ISOLATION_OPEN")?.split(",").filter(Boolean)??[]);
 
 type Turn={session:number;logs:string[];errors:string[];navigations?:{nodeId:number;url:string}[];
@@ -53,7 +54,7 @@ async function check(t:Deno.TestContext,name:string,what:string,leak:()=>string[
   });
 }
 
-Deno.test({name:"origin isolation checks C1 to C5",ignore:!exists(library)},async t=>{
+Deno.test({name:"origin isolation checks C1 to C6",ignore:!exists(library)},async t=>{
   const call=engine(library);
   const start=(html:string,url:string,extra:Record<string,unknown>={})=>call(html,{action:"start",url,resources:[],engine:"bubblepop",...extra});
   const settle=(s:number)=>call("",{action:"settle",session:s,budgetMs:1000});
@@ -79,6 +80,25 @@ Deno.test({name:"origin isolation checks C1 to C5",ignore:!exists(library)},asyn
     close();
     assert.ok(logs.some(l=>l.endsWith(" text C1-PAGE-TEXT")),`the probe ran: ${logs.slice(0,4)}`);
     return logs.filter(l=>l.includes("C1-FRAME-TEXT")||/^wrote \d+ 0$/.test(l)||/^doc [1-9]\d* text X$/.test(l));
+  });
+
+  // C1b: a frame inside a frame's document parses its src against that document's base URL
+  // (HTML §4.8.5), so a frame inside another origin's document is of that origin, never the
+  // page's; before, it resolved against the page and its document ran in the page's realm.
+  await check(t,"C1b","a nested frame's src resolves against its own document, not the page",()=>{
+    const nested=(outer:string)=>{
+      let s=start(`<!doctype html><iframe src="${outer}"></iframe>`,`${A}/p.html`,{navigations:true});
+      s=call("",{action:"frame",session:s.session,node:s.navigations![0].nodeId,url:outer,source:`<iframe src="g.html"></iframe>`});
+      const navs=(s.navigations??[]).map(n=>n.url);
+      close();
+      return navs;
+    };
+    const got:string[]=[];
+    for(const [outer,want] of [[`${B}/dir/f.html`,`${B}/dir/g.html`],[`${A}/dir/f.html`,`${A}/dir/g.html`]]){
+      const navs=nested(outer);
+      if(!navs.includes(want))got.push(`frame in ${outer} asked for ${JSON.stringify(navs)}, not ${want}`);
+    }
+    return got;
   });
 
   // C2: a canvas that has drawn an image of another origin is not origin-clean: no read-back,
@@ -170,6 +190,33 @@ Deno.test({name:"origin isolation checks C1 to C5",ignore:!exists(library)},asyn
     return [...got.filter(l=>!refused.includes(l)),...refused.filter(r=>!got.includes(r)).map(r=>`missing: ${r}`)];
   });
 
+  await check(t,"C2e","a VideoFrame made from a source that is not origin-clean is refused; one from a clean source is made",()=>{
+    // WebCodecs §9.4.2 ("Initialize Frame From Other Frame", the image case): a source that is not
+    // origin-clean throws SecurityError. The frame's pixels come from the engine's read-back of the
+    // source (refused for a marked one), so no other origin's pixels reach the frame's bytes. No path
+    // makes a VideoFrame of a video element yet (TypeError), so none carries a video's pixels.
+    hold(`${A}/own.png`);hold(`${B}/secret.png`);
+    const got=run(`<!doctype html><canvas id=c width=2 height=2></canvas><canvas id=o width=2 height=2></canvas>
+      <img id=i src="${B}/secret.png"><img id=m src="${A}/own.png"><video id=vid></video><script>
+      const v=(w,f)=>{try{const fr=f();console.log(w+' '+fr.codedWidth+'x'+fr.codedHeight);fr.close()}catch(e){console.log(w+' '+e.name)}};
+      c.getContext('2d').drawImage(i,0,0);
+      o.getContext('2d').drawImage(m,0,0);
+      v('canvas',()=>new VideoFrame(c,{timestamp:0}));
+      v('image',()=>new VideoFrame(i,{timestamp:0}));
+      v('own',()=>new VideoFrame(o,{timestamp:0}));
+      v('ownimage',()=>new VideoFrame(m,{timestamp:0}));
+      v('video',()=>new VideoFrame(vid,{timestamp:0}));
+      const oc=new OffscreenCanvas(2,2);oc.getContext('2d').drawImage(i,0,0);
+      v('offscreen',()=>new VideoFrame(oc,{timestamp:0}));
+      createImageBitmap(i).then(b=>v('bitmap',()=>new VideoFrame(b,{timestamp:0})),e=>console.log('bitmap '+e.name));
+      </script>`);
+    const want=["canvas SecurityError","image SecurityError","own 2x2","ownimage 2x2","offscreen SecurityError","bitmap SecurityError"];
+    // a video element is not a source this engine reads yet: refused, never read
+    const leaks=got.filter(l=>!want.includes(l)&&l!=="video TypeError"&&l!=="video SecurityError");
+    leaks.push(...want.filter(w=>!got.includes(w)).map(w=>`missing: ${w}`));
+    return leaks;
+  });
+
   // C3: a cross-origin answer that fails the CORS check gives the page the same failure,
   // whatever the answer held (two runs).
   await check(t,"C3","a refused cross-origin answer gives a failure that does not depend on the answer",()=>{
@@ -232,6 +279,54 @@ Deno.test({name:"origin isolation checks C1 to C5",ignore:!exists(library)},asyn
     close();
     assert.ok(logs.includes("domain SecurityError"),`the setter refuses: ${logs}`);
     return logs.filter(l=>l.startsWith("contentDocument")&&l!=="contentDocument null");
+  });
+
+  // C6: a classic script of another origin (no CORS) runs, but its bytes never enter the page's
+  // realm, and its errors are muted (HTML "report an exception": "Script error.", no URL, line or
+  // error). The page replaces Uint8Array and TextDecoder.prototype.decode, which a prelude that
+  // held the bytes would call, and logs what they see.
+  const scriptRun=(src:string,body:string)=>{
+    let s=start(`<!doctype html><script>
+      const U=Uint8Array;
+      globalThis.Uint8Array=class extends U{constructor(...a){super(...a);try{const t=Array.from(this,c=>String.fromCharCode(c)).join('');if(t.includes('C6'))console.log('bytes '+t)}catch(e){}}};
+      const dec=TextDecoder.prototype.decode;
+      TextDecoder.prototype.decode=function(...a){const r=dec.apply(this,a);if(String(r).includes('C6'))console.log('decode '+r);return r};
+      onerror=(m,f,l,c,e)=>{console.log('err ['+m+'] ['+f+'] ['+l+'] ['+(e===null?'null':e&&e.message)+']')};
+      const s=document.createElement('script');s.src='${src}';s.onload=()=>console.log('load');s.onerror=()=>console.log('error');
+      document.head.append(s);</script>`,`${A}/p.html`,{network:true});
+    const logs=[...s.logs];
+    for(let round=0;round<4&&s.netRequests?.length;round++){
+      s=call("",{action:"net",session:s.session,results:s.netRequests.map(w=>w.resolve?{id:w.id,addresses:["93.184.216.34"]}:
+        {id:w.id,status:200,statusText:"OK",headers:[["content-type","text/javascript"],["x-c6","C6-FIELD"]],bodyBase64:btoa(body)})});
+      logs.push(...s.logs);
+    }
+    logs.push(...settle(s.session).logs);
+    close();
+    return logs;
+  };
+  await check(t,"C6","a classic script of another origin: no bytes in the realm, errors muted",()=>{
+    // a credentialed JSON-like answer that does not parse as a script, and one that runs and throws
+    const json=scriptRun(`${B}/c6.json.js`,`{"token":"C6-SECRET-JSON"}`);
+    const thrown=scriptRun(`${B}/c6.js`,`console.log('ran');throw new Error('C6-THROWN')`);
+    const muted="err [Script error.] [] [0] [null]";
+    // the script of the page's own origin keeps its error (not muted)
+    const own=scriptRun(`${A}/own.js`,`throw new Error('own error')`);
+    assert.ok(own.some(l=>l.startsWith("err [")&&l.includes("own error")),`an own-origin script's error is not muted: ${own}`);
+    assert.ok(thrown.includes("ran")&&thrown.includes("load"),`the script of another origin still runs: ${thrown}`);
+    // a parsed <script src> of another origin (the embedder fetched it): its errors are muted too
+    const parsed=(src:string,body:string)=>{
+      const s=start(`<!doctype html><script>onerror=(m,f,l,c,e)=>{console.log('err ['+m+'] ['+f+'] ['+l+'] ['+(e===null?'null':e&&e.message)+']')}</script><script src="${src}"></script>`,
+        `${A}/p.html`,{resources:[...Array(12).keys()].map(nodeId=>({nodeId,source:body}))});
+      const logs=[...s.logs];close();return logs;
+    };
+    const parsedB=parsed(`${B}/p.js`,`throw new Error('C6-PARSED')`);
+    const parsedA=parsed(`${A}/p.js`,`throw new Error('own parsed')`);
+    assert.ok(parsedA.some(l=>l.startsWith("err [")&&l.includes("own parsed")),`an own-origin parsed script's error is not muted: ${parsedA}`);
+    const leaks=[...json,...thrown,...parsedB].filter(l=>l.includes("C6"));
+    if(!json.includes(muted))leaks.push(`no muted error for the answer that does not parse: ${json}`);
+    if(!thrown.includes(muted))leaks.push(`no muted error for the script that threw: ${thrown}`);
+    if(!parsedB.includes(muted))leaks.push(`no muted error for the parsed script of another origin: ${parsedB}`);
+    return leaks;
   });
 
   // C5: what one origin leaves for the next page, and the history of links.

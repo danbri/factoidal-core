@@ -25,7 +25,9 @@ export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string}
   |{id:number;op:"dropLow"}
   // The fallback fonts a page needs (native_html_fonts.ts): chosen and read here, as bytes,
   // into this engine, before the calls sent after it.
-  |{id:number;op:"pageFonts";source:string};
+  |{id:number;op:"pageFonts";source:string}
+  // The serif face (serif_font.ts), into this engine, before the calls sent after it.
+  |{id:number;op:"serifFont";path:string;family:string};
 export type WorkerReply={id:number;ok:true;value?:unknown;ms:number}|{id:number;ok:false;error:string;dropped?:boolean};
 
 let engine:Promise<HTMLEngine>|undefined;
@@ -44,6 +46,12 @@ const handle=async(request:WorkerRequest)=>{
       if(request.font&&typeof (await loadFontFile(e,request.font.path,request.font.family))?.fonts==="number")
         fallbackFonts=fallbackFontHost(fonts=>loadFallbackFonts(e,fonts));
       scope.postMessage({id:request.id,ok:true,ms:performance.now()-start} satisfies WorkerReply);
+      return;
+    }
+    if(request.op==="serifFont"){
+      if(!engine)throw new Error("engine worker was not initialised");
+      const value=await loadFontFile(await engine,request.path,request.family,"bytes","serif");
+      scope.postMessage({id:request.id,ok:true,value,ms:performance.now()-start} satisfies WorkerReply);
       return;
     }
     if(request.op==="pageFonts"){

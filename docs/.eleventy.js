@@ -67,10 +67,11 @@ module.exports = function(eleventyConfig) {
   eleventyConfig.addPassthroughCopy("web/hub/specs/*.csv");
   eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
   eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans": "web/hub/foafnaut/fonts/noto-sans" });
-  // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py); the Hub fetches each only for a page that needs it.
+  // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py) and the serif face (serif_font.ts); the Hub
+  // fetches each only for a page that needs it.
   for (const dir of ["noto-sans-armenian", "noto-sans-georgian", "noto-sans-ethiopic", "noto-sans-hebrew", "noto-sans-arabic",
     "noto-sans-devanagari", "noto-sans-bengali", "noto-sans-tamil", "noto-sans-thai", "noto-sans-math", "noto-sans-cjk",
-    "noto-color-emoji", "noto-emoji", "fruktur"]) {
+    "noto-color-emoji", "noto-emoji", "fruktur", "liberation-serif"]) {
     eleventyConfig.addPassthroughCopy({ [`../third_party/fonts/${dir}`]: `web/hub/foafnaut/fonts/${dir}` });
   }
   eleventyConfig.addPassthroughCopy({

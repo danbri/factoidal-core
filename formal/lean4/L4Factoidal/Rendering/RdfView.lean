@@ -62,7 +62,7 @@ refuses an oversized graph instead of silently displaying a prefix. -/
 def toDOM (graph : Graph) (filter : Filter := {}) : Except String Dom := do
   if graph.length > 256 then throw "unsupported RDF view exceeding 256 triples"
   let selected := select filter graph
-  let seed := DOM.parseHtmlDocument "<!doctype html><html><head><style>body{margin:8px;font-size:12px;line-height:16px} .triple{padding:4px;background:#f0f4f8} .heading{font-size:16px;line-height:20px;padding-bottom:8px}</style></head><body></body></html>"
+  let seed := DOM.parseHtmlDocument "<!doctype html><html><head><style>body{font-family:sans-serif;margin:8px;font-size:12px;line-height:16px} .triple{padding:4px;background:#f0f4f8} .heading{font-size:16px;line-height:20px;padding-bottom:8px}</style></head><body></body></html>"
   let some body := (seed.nodes.toList.zipIdx).find? (fun (n,_) => Dom.isHtmlElement n "body")
     | throw "RDF DOM template has no body"
   let mut dom := seed

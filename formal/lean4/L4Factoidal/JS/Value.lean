@@ -151,6 +151,12 @@ inductive NativeX where
   `runScriptM`), for `importScripts` (HTML §10.3.4.2 "import scripts into worker global
   scope"); its exceptions reach the caller. -/
   | classicScript
+  /-- `n.runFetched(key)`: run, as `classicScript` does, a classic script whose source the host
+  holds and never gives the realm (`HostAns.script`): an element's request for a script of
+  another origin, or a worker's imported script. Its exceptions reach the caller, unless the
+  host says its errors are muted: then any exception ends the script and the answer is 1
+  (HTML "muted errors": the page learns only that it threw); else 0. -/
+  | classicScriptHost
   /-- `get Error.prototype.stack` (`false`) and `set Error.prototype.stack` (`true`): the
   accessor of the Error Stack Accessor proposal (test262 feature `error-stack-accessor`). -/
   | errorStack (setter : Bool)
@@ -641,6 +647,10 @@ inductive HostAns where
   /-- Detach the ArrayBuffer that was argument `arg` (§25.1.3.5 DetachArrayBuffer: its
   bytes become empty and its `byteLength` 0); answers `undefined`. -/
   | detach (arg : Nat)
+  /-- A classic script's source for the engine to run, and whether its errors are muted
+  (`Native.classicScriptHost`). As a value it is `undefined`: the source never becomes a value
+  of the realm. -/
+  | script (src : String) (muted : Bool)
   deriving Inhabited
 
 /-- An argument of a host's native: a value, or the bytes of an ArrayBuffer or of a typed
