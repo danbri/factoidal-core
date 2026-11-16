@@ -1266,6 +1266,7 @@ import L4Factoidal.WHATWG.URL.IdnaData
 import L4Factoidal.WHATWG.URL.Idna
 import L4Factoidal.WHATWG.URL.Host
 import L4Factoidal.WHATWG.URL.Parser
+import L4Factoidal.WHATWG.URL.Cost
 import L4Factoidal.WHATWG.URL.Theorems
 import L4Factoidal.WHATWG.URLPattern
 import L4Factoidal.WHATWG.URLPatternTests
