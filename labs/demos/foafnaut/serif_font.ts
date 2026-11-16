@@ -1,10 +1,12 @@
 // The serif face (owner decision 2026-11-16): `serif`, and the initial font-family, draw
 // with Liberation Serif (third_party/fonts/liberation-serif, OFL 1.1, metric-compatible
 // with Times New Roman), as browsers draw them with a Times-like face. Lean decides which
-// text is serif (FontFaceRule.genericOf); a render whose text wants the face while the
-// engine holds none answers `wantsSerif` (WebDocument.withWants). The host then reads the
-// file, once a session, gives it to the engine that lays pages out (fontLoad mode 3) and
-// draws again. A session whose pages never resolve to serif reads no serif byte.
+// text is serif (FontFaceRule.genericOf). The window (run_html.ts) gives the face to the
+// engine that lays pages out (fontLoad mode 3) once a session, before the first page, so the
+// first layout of a serif page is final (WebDocument.serifWanted_held); the engine uses it
+// only for a page whose cascade has serif text, so other pages lay out as before. A render
+// whose text wants the face while the engine holds none (the load failed) answers
+// `wantsSerif` (WebDocument.withWants).
 
 /** The family the engine holds the face by. */
 export const SERIF_FAMILY="Liberation Serif";

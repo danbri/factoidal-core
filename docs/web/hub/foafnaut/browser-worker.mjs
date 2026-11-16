@@ -307,18 +307,21 @@ async function loadFont(){
 }
 // The serif face (labs/demos/foafnaut/serif_font.ts): `serif` and the initial font-family
 // draw with Liberation Serif, as browsers draw them with a Times-like face. Lean decides which
-// text is serif; the first render whose text wants the face while the engine holds none
-// answers wantsSerif, and the face is fetched then, given to Lean (fontLoad mode 3) and the page
-// drawn again. A session whose pages never resolve to serif fetches no serif byte.
+// text is serif. The file is fetched at boot beside the engine (fetchEarly, below) and goes into
+// Lean (fontLoad mode 3) as soon as the engine holds Noto Sans, so the first layout of a serif
+// page already has it and is final. A render that answered wantsSerif before the face was in
+// (a slow fetch) is drawn again when it is.
 const serifFont='./fonts/liberation-serif/LiberationSerif-Regular.ttf';
-let serifLoading;
-function wantSerif(){
+fetchEarly(new URL(serifFont,import.meta.url).href,'bytes');
+let serifLoading,serifWanted=false;
+function wantSerif(){serifWanted=true;giveSerif();}
+function giveSerif(){
   if(serifLoading)return;
   const start=performance.now();
   serifLoading=fontFile(serifFont).then(({bytes,sha})=>{
     fontLoad(bytes,'Liberation Serif',sha,'serif');
     console.info(`foafnaut: serif face in ${Math.round(performance.now()-start)} ms`);
-    request();
+    if(serifWanted)request();
   }).catch(error=>console.warn('foafnaut: no serif face, serif text stays in Noto Sans:',String(error?.message??error)));
 }
 // The fallback fonts a page needs, into the engine. Those that come within `wait` ms go in
@@ -1659,6 +1662,7 @@ async function start(data){
   createSession=transport.createOffscreenSession;renderOffscreen=transport.render;hashPixels=transport.hashPixels;
   if(data.canvas&&typeof transport.createSurfaceSession==='function'){surfaceCanvas=data.canvas;createSurface=transport.createSurfaceSession;}
   await loadFont();phase('fontReady');
+  giveSerif();
   home=await prepare(homeURL);
   // A page asked for in the address is the first frame: the demo index is not drawn first.
   let first=home;

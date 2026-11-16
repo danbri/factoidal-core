@@ -245,8 +245,8 @@ async function main() {
     if(answer.loaded.length||answer.failed.length)console.log(JSON.stringify({type:"native-html-fonts",t:Math.round(performance.now()),where,
       ms:Math.round((performance.now()-start)*10)/10,fonts:answer.loaded,...(answer.failed.length?{failed:answer.failed}:{}),held:answer.held.length}));
   };
-  // The serif face (serif_font.ts): read and given to the engine that lays pages out the
-  // first time a render answers wantsSerif, then the page is drawn again; never before.
+  // The serif face (serif_font.ts): read and given, once a session, to the engine that lays
+  // pages out, before the first page (below).
   const serif=serifFontHost(async()=>{
     const start=performance.now(),path=serifFontPath(),where=worker?.alive?"worker":"main";
     if(worker?.alive)await worker.serifFont(path,SERIF_FAMILY);
@@ -282,6 +282,12 @@ async function main() {
   }
   // With the bitmap face (safe mode) a page gets no fallback fonts.
   if(workerFont)setFontHost(pageFonts);
+  // The serif face goes in now, ahead of the first page. The worker takes calls in order, so
+  // the first layout of a serif page already has the face and is final (no second layout).
+  // Cost: one 394 KB file read and the engine's policy read of it (under 1 ms warm), once a
+  // session; a page whose text never resolves to serif draws as before. A render that still
+  // answers wantsSerif (a failed load) does not start another (serifFontHost).
+  if(workerFont){const loading=serif.want();if(!worker?.alive)await loading;}
   // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
