@@ -396,12 +396,8 @@ def place (st : DState H) (v : Value) : DState H := Id.run do
           match o.kind with
           | .typed ty _ off len => { o with kind := .typed ty buf off len }
           | .dataView _ off len =>
-            -- a DataView's `byteLength`, `byteOffset` and `buffer` are own properties here
-            -- (as the evaluator's constructor makes them)
-            let o := { o with kind := .dataView buf off len }
-            let o := ownData o "byteLength" (.num (Float.ofNat len))
-            let o := ownData o "byteOffset" (.num (Float.ofNat off))
-            ownData o "buffer" (.obj buf)
+            -- `byteLength`, `byteOffset` and `buffer` are accessors of DataView.prototype
+            { o with kind := .dataView buf off len }
           | _ => o
         v := .obj obj
   return ⟨heap, memory, frames, at_, result⟩
