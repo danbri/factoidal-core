@@ -1976,4 +1976,127 @@ private def originOf' (t : Transfer) : Option String := (planWire t).bind fun w 
 #guard match onAnswer { sameT' with redirectManual := true } ({ status := 200, headers := [("X-S", "1")] } : Answer) with
   | .deliver _ r => r.status == 200 && r.tainting == "basic" | _ => false
 
+/-! ## Fetch release, two-run form (origin isolation, lemma L6; issue 518)
+
+What of a host's answer may reach the page, as one function (`released`), and the theorem that
+the page's view of `onAnswer` depends on the answer only through it. A failure's reason is not
+part of the page's view: `Net.Xhr` gives a script a network error and no reason
+(`Step.seen`). -/
+
+/-- The step as the page's realm and the rest of the engine see it: a failure without its
+reason (`Net.Xhr.op` answers every `.fail` with a network error). -/
+def Step.seen : Step → Step
+  | .fail _ => .fail ""
+  | s => s
+
+/-- What of answer `a` to transfer `t` (in its main phase) may reach the page, on a native host
+(`hostCors = false`): for a request of mode "cors" that is not same-origin, nothing when the
+answer is a network error, outside the policy or fails the CORS check (Fetch §4.9), else the
+answer (the page then reads it through `responseOf`, the CORS filtered response). For a
+same-origin or "no-cors" request this function names the whole answer: those are other
+lemmas (`responseOf_opaque` for "no-cors"). -/
+def released (t : Transfer) (a : Answer) : Option Answer :=
+  if t.page.hostCors || t.same || t.noCors then some a
+  else if a.status == 0 || !finalAllowed t a || !corsOk t a then none
+  else some a
+
+/-- Kind: lemma. Says: what `released` gives is the answer itself. -/
+theorem released_some (t : Transfer) (a b : Answer) (h : released t a = some b) : b = a := by
+  unfold released at h
+  by_cases h0 : (t.page.hostCors || t.same || t.noCors) = true
+  · simp only [h0, ↓reduceIte, Option.some.injEq] at h; exact h.symm
+  · simp only [h0, Bool.false_eq_true, ↓reduceIte] at h
+    by_cases h1 : (a.status == 0 || !finalAllowed t a || !corsOk t a) = true
+    · simp [h1] at h
+    · simp only [h1, Bool.false_eq_true, ↓reduceIte, Option.some.injEq] at h; exact h.symm
+
+/-- Kind: lemma. Says: an answer `released` withholds gives a failure. -/
+theorem onAnswer_unreleased (t : Transfer) (a : Answer) (hp : t.phase = .main) (h : released t a = none) :
+    ∃ why, onAnswer t a = .fail why := by
+  unfold released at h
+  by_cases h0 : (t.page.hostCors || t.same || t.noCors) = true
+  · simp [h0] at h
+  · simp only [h0, Bool.false_eq_true, ↓reduceIte] at h
+    simp only [Bool.or_eq_true, not_or, Bool.not_eq_true] at h0
+    obtain ⟨⟨hh, hs⟩, hn⟩ := h0
+    by_cases h1 : (a.status == 0 || !finalAllowed t a || !corsOk t a) = true
+    · unfold onAnswer
+      simp only [hp]
+      by_cases hz : (a.status == 0) = true
+      · exact ⟨"network error", by simp [hz]⟩
+      · by_cases hf : finalAllowed t a = true
+        · have hc : corsOk t a = false := by
+            simp only [Bool.or_eq_true, hz, hf, Bool.not_true, Bool.false_eq_true, or_false, false_or,
+              Bool.not_eq_true'] at h1
+            exact h1
+          exact ⟨"CORS refused", by simp [hz, hf, hh, hs, hn, hc]⟩
+        · exact ⟨"refused by policy", by simp [hz, hf]⟩
+    · simp [h1] at h
+
+/-- Kind: security theorem (origin isolation, lemma L6: Fetch release, two-run form). Says: for
+a request of mode "cors" that is not same-origin, on a native host, two answers that
+`released` cannot tell apart give steps the page cannot tell apart: when the CORS check
+fails (or the answer is a network error or outside the policy) the page sees the same
+failure whatever the answer held (its status, reason, fields, body, final URL), and only an
+answer that passes the check reaches it, through `responseOf`. Does not say: anything of
+the time an answer takes, of same-origin or "no-cors" requests (their own lemmas), or of the
+Hub (`hostCors`, where the outer browser checks CORS). -/
+theorem onAnswer_released (t : Transfer) (a₁ a₂ : Answer) (hp : t.phase = .main)
+    (h : released t a₁ = released t a₂) : (onAnswer t a₁).seen = (onAnswer t a₂).seen := by
+  cases h₁ : released t a₁ with
+  | none =>
+    obtain ⟨w₁, e₁⟩ := onAnswer_unreleased t a₁ hp h₁
+    obtain ⟨w₂, e₂⟩ := onAnswer_unreleased t a₂ hp (h ▸ h₁)
+    rw [e₁, e₂]; rfl
+  | some b =>
+    have hb₂ : released t a₂ = some b := by rw [← h, h₁]
+    rw [← released_some t a₁ b h₁, ← released_some t a₂ b hb₂]
+
+/-- Kind: security theorem (origin isolation, lemma L6, the preflight). Says: the step after a
+preflight's answer depends on the answer only through whether it allows the request
+(`preflightOk`): the main request that follows is the same, and a refusal is the same
+failure, whatever else the answer held. -/
+theorem onAnswer_preflight_released (t : Transfer) (a₁ a₂ : Answer) (hp : t.phase = .preflight)
+    (h : preflightOk t a₁ = preflightOk t a₂) : (onAnswer t a₁).seen = (onAnswer t a₂).seen := by
+  have ok_status : ∀ a, preflightOk t a = true → (a.status == 0) = false := by
+    intro a ha
+    cases hz : (a.status == 0) with
+    | false => rfl
+    | true =>
+      have hz' : a.status = 0 := by simpa using hz
+      exfalso
+      revert ha
+      unfold preflightOk
+      simp [hz']
+  unfold onAnswer
+  simp only [hp]
+  cases hk : preflightOk t a₁ with
+  | true =>
+    have hk₂ : preflightOk t a₂ = true := h ▸ hk
+    simp [ok_status a₁ hk, ok_status a₂ hk₂, hk₂]
+  | false =>
+    have hk₂ : preflightOk t a₂ = false := h ▸ hk
+    by_cases z₁ : (a₁.status == 0) = true <;> by_cases z₂ : (a₂.status == 0) = true <;>
+      simp [z₁, z₂, hk₂, Step.seen]
+
+/-- Kind: security theorem (lemma L6, the statement of the design record). Says: a response
+body of another origin reaches a script of a request in mode "cors" only when the CORS check
+passed: a delivered response's answer is one `released` gives. -/
+theorem deliver_released (t t' : Transfer) (a : Answer) (r : Response) (hp : t.phase = .main)
+    (h : onAnswer t a = .deliver t' r) : released t a = some a := by
+  cases hr : released t a with
+  | some b => rw [released_some t a b hr]
+  | none =>
+    obtain ⟨w, e⟩ := onAnswer_unreleased t a hp hr
+    rw [e] at h; cases h
+
+-- Two answers that fail the CORS check, different in every field, give the page the same step.
+private def l6T : Transfer := { base with url := "https://b.example/d", pin := some ("b.example", "93.184.216.34") }
+private def l6A₁ : Answer := { status := 200, statusText := "OK", headers := [("X-Secret", "one")], body := "one".toUTF8 }
+private def l6A₂ : Answer := { status := 404, statusText := "Gone", headers := [("X-Secret", "two-two")], body := "two-two".toUTF8 }
+#guard (released l6T l6A₁).isNone && (released l6T l6A₂).isNone
+#guard match (onAnswer l6T l6A₁).seen, (onAnswer l6T l6A₂).seen with | .fail x, .fail y => x == "" && y == "" | _, _ => false
+#guard match onAnswer l6T { l6A₁ with headers := [("Access-Control-Allow-Origin", "*")] } with
+  | .deliver _ r => r.body.size == 3 | _ => false
+
 end L4Factoidal.Net.PageFetch
