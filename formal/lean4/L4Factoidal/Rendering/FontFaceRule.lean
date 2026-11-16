@@ -266,7 +266,8 @@ theorem genericOf_nil (held : List String) : genericOf held [] = .serif := rfl
 Times, ...) resolves to the serif face, whatever follows and whatever fonts are held. -/
 theorem genericOf_serifName (held rest : List String) (family : String)
     (hs : serifNames.contains family.toLower = true) : genericOf held (family :: rest) = .serif := by
-  first | simp [genericOf, hs] | (unfold genericOf; simp [hs])
+  have hm : family.toLower ∈ serifNames := by simpa using hs
+  simp [genericOf, hm]
 
 /-- Kind: property. Says: a list whose first family ends the search and is not a serif name
 (`sans-serif`, `monospace`, a font the engine holds, an installed sans-serif or monospace
@@ -276,7 +277,11 @@ theorem genericOf_first (held rest : List String) (family : String)
     (hs : serifNames.contains family.toLower = false)
     (he : endsSearch held family.toLower = true ∨ firstFontNames.contains family.toLower = true) :
     genericOf held (family :: rest) = .first := by
-  rcases he with h | h <;> first | simp [genericOf, hs, h] | (unfold genericOf; simp [hs, h])
+  have hn : family.toLower ∉ serifNames := by simpa using hs
+  rcases he with h | h
+  · simp [genericOf, hn, h]
+  · have hm : family.toLower ∈ firstFontNames := by simpa using h
+    simp [genericOf, hn, hm]
 
 /-- Kind: property. Says: a family the engine can not draw is passed over: the list
 resolves as the rest of it does (CSS Fonts 4 §5). -/
@@ -284,7 +289,9 @@ theorem genericOf_skip (held rest : List String) (family : String)
     (hs : serifNames.contains family.toLower = false) (he : endsSearch held family.toLower = false)
     (hf : firstFontNames.contains family.toLower = false) :
     genericOf held (family :: rest) = genericOf held rest := by
-  first | simp [genericOf, hs, he, hf] | (unfold genericOf; simp [hs, he, hf])
+  have hn : family.toLower ∉ serifNames := by simpa using hs
+  have hfn : family.toLower ∉ firstFontNames := by simpa using hf
+  simp [genericOf, hn, he, hfn]
 
 #guard genericOfValue [] "serif" == .serif
 #guard genericOfValue [] "Times New Roman, serif" == .serif

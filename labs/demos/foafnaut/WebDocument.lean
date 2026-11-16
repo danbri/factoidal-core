@@ -1606,16 +1606,17 @@ def familyFonts (faces : Array Rendering.FontFaceRule.Face) (fonts : Array (Opti
 def familyFontsWith (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String) :
     Array Rendering.SfntProfile.Font :=
-  let web := familyFonts faces fonts held value
-  if serif.isEmpty then web
-  else if Rendering.FontFaceRule.genericOfValue held value = .serif then web ++ serif else web
+  if serif.isEmpty then familyFonts faces fonts held value
+  else if Rendering.FontFaceRule.genericOfValue held value = .serif then familyFonts faces fonts held value ++ serif
+  else familyFonts faces fonts held value
 
 /-- Kind: property. Says: with no serif face held, the fonts of every family value are the
 web fonts as before: a host that never gives the serif face lays every page out as before. -/
 theorem familyFontsWith_none (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String) :
     familyFontsWith #[] faces fonts held value = familyFonts faces fonts held value := by
-  first | rfl | simp [familyFontsWith] | (unfold familyFontsWith; simp [Array.isEmpty])
+  unfold familyFontsWith
+  rw [if_pos rfl]
 
 /-- Kind: property. Says: a family value that does not resolve to `serif` (`sans-serif`,
 `monospace`, a held or installed sans-serif family first) gets the same fonts whether or not
@@ -1624,7 +1625,10 @@ theorem familyFontsWith_first (serif : Array Rendering.SfntProfile.Font) (faces 
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
     (h : Rendering.FontFaceRule.genericOfValue held value = .first) :
     familyFontsWith serif faces fonts held value = familyFonts faces fonts held value := by
-  first | simp [familyFontsWith, h] | (unfold familyFontsWith; split <;> simp [h])
+  unfold familyFontsWith
+  by_cases he : serif.isEmpty = true
+  · rw [if_pos he]
+  · rw [if_neg he, if_neg (by rw [h]; decide)]
 
 /-- Kind: property. Says: a family value that resolves to `serif` draws with the serif face
 after its web fonts and before the held fonts, when one is held. -/
@@ -1632,7 +1636,8 @@ theorem familyFontsWith_serif (serif : Array Rendering.SfntProfile.Font) (faces 
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
     (hs : serif.isEmpty = false) (h : Rendering.FontFaceRule.genericOfValue held value = .serif) :
     familyFontsWith serif faces fonts held value = familyFonts faces fonts held value ++ serif := by
-  first | simp [familyFontsWith, hs, h] | (unfold familyFontsWith; simp [hs, h])
+  unfold familyFontsWith
+  rw [if_neg (by rw [hs]; decide), if_pos h]
 
 /-- Whether the drawn text of `dom` has a family value that resolves to `serif`
 (`FontFaceRule.genericOfValue`), by the computed styles of its text nodes: a host that
