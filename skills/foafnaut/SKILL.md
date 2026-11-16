@@ -426,6 +426,12 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- A proof module that imports `Lean.Elab.*` or `Lean.Meta.*` (tactics, `elab`, `MetaM`) must not be in the
+  import closure of an executable or engine. 2026-11-16: `L4Factoidal.JS` imported `JS/FuelMono` (tactics),
+  so `leanjs` linked Lean's elaborator and grew from 11 MB to 111 MB unnoticed (issue 551). Make such a
+  module a lib root of its own; `tools/binary-budget.py` (premerge, build-web-render.sh, the CI lean job)
+  fails on the import, on Lean-library symbols in the binary, and on growth over 2 % of
+  `tools/binary-budget.json`.
 - A compiled host needs every permission its source uses. 2026-11-08: `deno compile`
   had no `--allow-env`, `run_html.ts` read `HOME`, and the app died at start while all
   source tests passed. Fixed by `--allow-env=HOME` and the start check of
