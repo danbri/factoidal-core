@@ -489,7 +489,7 @@ async function main() {
   };
   // A turn of a page's script session: its logs, and a new frame only when the DOM changed
   // (no DOM change, no layout; the commands are part of the layout key).
-  let scriptBusy=false;
+  let scriptBusy=false,scriptDone:Promise<unknown>|undefined;
   // The last scroll, key or press (a STAMPED event) and since when a due timer turn waits for input.
   let inputAt=-Infinity,timerHeldSince:number|undefined;
   // Scroll first (page-load.mjs scrollFirst): while the user scrolls, a change of the page by its
@@ -1647,7 +1647,7 @@ async function main() {
     // most IDLE_WAIT_CAP_MS, instead of waking every 8 ms; input ends the wait at once. Work
     // this does not count (a socket is never idle here) is late by at most the cap.
     // --poll-idle keeps the 8 ms poll, for comparison.
-    const IDLE_WAIT_CAP_MS=100,IDLE_QUIET_MS=200;
+    const IDLE_WAIT_CAP_MS=100,IDLE_QUIET_MS=200,TIMER_WAIT_CAP_MS=34;
     let busyAt=performance.now(),waited=0,idleEndAt:number|undefined;
     const idleWaitMs=(now:number,scriptWakeIn:number|null)=>{
       // Before the first frame only a window that can not present (asleep, covered) waits.
@@ -1659,8 +1659,14 @@ async function main() {
       // Loop turns with nothing to do, per second: the wakeups an idle window costs.
       if(idleEndAt!==undefined){idleStats.idleTurns++;idleStats.idleMs+=now-idleEndAt;}
       idleEndAt=now;
-      if(pollIdle||!native!.canWait()||now-busyAt<IDLE_QUIET_MS)return 0;
-      let wait=IDLE_WAIT_CAP_MS;
+      if(pollIdle||!native!.canWait())return 0;
+      // Inside the quiet time the loop waits only for the page's own next timer, and for at most
+      // TIMER_WAIT_CAP_MS: a page with a 16 ms timer (60 turns a second, for ever) is never quiet
+      // for 200 ms, and the loop pumped every few ms between its turns (a news page: 15% of a core
+      // with nothing on screen changing). Input ends this wait at once, as it ends the long one.
+      const quiet=now-busyAt>=IDLE_QUIET_MS;
+      if(!quiet&&(scriptWakeIn===null||scriptWakeIn<2))return 0;
+      let wait=quiet?IDLE_WAIT_CAP_MS:TIMER_WAIT_CAP_MS;
       if(scriptWakeIn!==null)wait=Math.min(wait,Math.max(scriptWakeIn,gpuHoldUntil-now));
       if(!everyFrame&&session?.frames&&!session.lastChecked&&canPresent())wait=Math.min(wait,lastActivity+IDLE_CHECK_MS-now);
       if(commands?.length)wait=Math.min(wait,stepAt-now);
@@ -1941,7 +1947,7 @@ async function main() {
         if(elapsed>=script.turn.nextWake&&held)timerHeldSince??=now;
         else if(elapsed>=script.turn.nextWake){
           const page=document;scriptBusy=true;timerHeldSince=undefined;
-          (scriptCall("scriptSession","",{action:"advance",session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock)),sliceSteps:turnSliceSteps}) as Promise<ScriptTurn>)
+          scriptDone=(scriptCall("scriptSession","",{action:"advance",session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock)),sliceSteps:turnSliceSteps}) as Promise<ScriptTurn>)
             .then(turn=>scriptTurn(page,turn,"timers"))
             .catch(error=>scriptFailed(page,error,"timers"))
             .finally(()=>{scriptBusy=false;});
@@ -1966,8 +1972,11 @@ async function main() {
         // Let answers that came meanwhile run before the pump.
         await new Promise(resolve=>setTimeout(resolve,0));
       } else {
-        const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil(scriptWakeIn??8)))));
-        await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[])]);
+        // A timer that can not run now (a turn or a frame is in flight) is not napped for 1 ms at
+        // a time: the end of the turn or of the frame ends the nap.
+        const inFlight=scriptBusy||!!rendering;
+        const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil((inFlight?null:scriptWakeIn)??8)))));
+        await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[]),...(scriptBusy&&scriptDone?[scriptDone]:[])]);
       }
     }
   } finally {

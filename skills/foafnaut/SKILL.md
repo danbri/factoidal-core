@@ -304,6 +304,8 @@ Measuring:
   `idle` field counts it; `idle_loop_check.ts` (test.sh) holds the wakeups per second against
   the `window` section of `fixtures/spinal-bisect/budgets.json`. New async work in the loop must
   be counted in its `busy` test, or it waits up to 100 ms after an idle wait.
+  Inside those 200 ms the loop waits only for the page's own next timer, for at most 34 ms
+  (`TIMER_WAIT_CAP_MS`): a page with a 16 ms timer is never quiet, and pumped between its turns.
 - Engine op `frameWork`: counts layouts, kept layouts used, repaints on a kept layout,
   `pagesMade` and `pagesKept`.
   `frame_work_test.ts` and `frame_cost_test.ts` hold the ratchets; the model is
