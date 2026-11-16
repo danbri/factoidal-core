@@ -14,7 +14,7 @@ import {createRouter} from './link-route.mjs';
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
 import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf,turnSliceSteps} from './page-load.mjs';
 import {gateConsole} from './log-gate.mjs';
-import {copyOf,fetchCopy} from './copies.mjs';
+import {fetchOutside} from './copies.mjs';
 // The worker's console lines go through the log gate (log-gate.mjs): a flood is summarised and named.
 const logGate=gateConsole(console,{name:'foafnaut'});
 let browserState,stateReason='starting';
@@ -358,7 +358,7 @@ async function fetchText(url,page=false){
   // A page fetched early is used once; a reload fetches it again.
   let got;
   if(preloaded.has(url)){const page=preloaded.get(url);preloaded.delete(url);try{got=await page;}catch{/* fetch it again */}}
-  if(!got&&offSite(url)){got=await fetchCopy(url);if(!got)throw Error('another site: the Hub reads only this site and its copies of a few openly licensed pages');}
+  if(!got&&offSite(url)){got=await fetchOutside(url);if(!got)throw Object.assign(Error('another site that this page may not read'),{outside:true});}
   if(!got){const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
     got={url:response.url||url,bytes:new Uint8Array(await response.arrayBuffer()),contentType:response.headers.get('content-type')??''};}
   return {url:got.url,...(got.copy?{copy:got.copy}:{}),...(page?decodePage(got.bytes,got.contentType):{source:textDecoder.decode(got.bytes)})};
@@ -403,7 +403,7 @@ const siteText=url=>fetchText(url);
 const offSite=url=>{try{const u=new URL(url);return /^https?:$/.test(u.protocol)&&u.origin!==siteOrigin;}catch{return false;}};
 /** The bytes of an image, font or icon at `url`: this site's, or a Hub copy's; else undefined. */
 async function resourceBytes(url,limit){
-  if(offSite(url))return (await fetchCopy(url))?.bytes;
+  if(offSite(url))return (await fetchOutside(url))?.bytes;
   const response=await fetch(url);if(!response.ok)return undefined;
   if(limit&&Number(response.headers.get('content-length')??0)>limit){response.body?.cancel();return undefined;}
   return new Uint8Array(await response.arrayBuffer());
@@ -1039,7 +1039,7 @@ function visit(address){
   // their fallback on an engine from before the route op.
   const route=router.route({...site,href:address,base:homeURL});
   if(!route)return;
-  if(route.route==='system')copyOf(route.url).then(found=>found?navigate(route.url,false):show(refusal(route.url,'This address is not on this site, and the Hub has no copy of it. Type it in the address bar to open it in a new tab.'),false));
+  if(route.route==='system')outsideGo(route.url,false);
   else if(route.route==='command')shellCommand(route.name,route.argument);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url,false);
@@ -1073,14 +1073,14 @@ function hubPage(url){
     const text=u.hash.slice(1).replace(/%23/gi,'#').replace(/%25(?=2[35])/gi,'%');
     visit(/^(foafnaut:|https?:\/\/)/.test(text)?text:'https://'+text);return true;
   }
-  if(page===hubTextnaut){post({type:'open',url});return true;}
+  if(page===hubTextnaut){if(doc?.outside===url)post({type:'open',url});else show(outsidePage(url));return true;}
   return false;
 }
 async function navigate(url,remember=true){
   if(hubPage(url))return;
   const mine=++serial;loading=true;request();
   const stamp=currentStamp;
-  let next;try{next=await pageFor(url);}catch(error){next=refusal(url,String(error.message??error));}
+  let next;try{next=await pageFor(url);}catch(error){next=error?.outside?outsidePage(url):refusal(url,String(error.message??error));}
   if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}
     if(next.start){const frame=next.start;delete next.start;graphFrame(next,frame);}}
 }
@@ -1377,11 +1377,34 @@ function follow(route){
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url);
 }
-// A link or an address of another site: in the tab when the Hub has a copy of the page
-// (copies.mjs), else in a host tab, as before.
-function offSiteGo(url){
-  copyOf(url).then(found=>found?navigate(url):post({type:'open',url}),()=>post({type:'open',url}));
+// A link or an address of another site (Lean's route "system"). It never leaves Foafnaut by
+// itself (owner, 2026-11-16): the page opens in the tab from the Hub's copy or from a direct
+// read the site allows (copies.mjs fetchOutside); else the tab shows outsidePage, whose one
+// button is a link to the same address. Only a press on that button, while that page is
+// shown, hands the address to the host browser (browser.mjs, window.open). Mail and phone
+// links (mailto:, tel:, sms:) get the same page.
+function offSiteGo(url){outsideGo(url,true);}
+function outsideGo(url,press){
+  if(press&&doc?.outside===url){post({type:'open',url});return;}
+  if(/^https?:/i.test(url))navigate(url,press);
+  else show(outsidePage(url),press);
 }
+const outsidePage=url=>{
+  const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const web=/^https?:/i.test(url),hub=url.startsWith(hubTextnaut);
+  const why=hub?'<p>Textnaut has its own page on the Hub; it does not open inside this one.</p>'
+    :web?'<p>The browser this page runs in lets a page read another site only when that site allows it (cross-origin rules, CORS), and this one does not. The Hub keeps copies of some openly licensed pages, but not of this one. The Foafnaut app on a computer, and Textnaut in a terminal, read it directly.</p>'
+    :'<p>This address belongs to another program (mail, phone or messages), which this page can not open by itself.</p>';
+  const source='<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Another site</title>'+
+    '<style>body{margin:24px;font-family:system-ui,sans-serif;font-size:16px;line-height:24px;color:#1f2328;background:#f7f8fb}'+
+    'h1{margin:0 0 12px;font-size:22px;line-height:30px;color:#184078}p{margin:0 0 12px;max-width:640px}.url{font-family:monospace;overflow-wrap:anywhere;color:#3b4652}'+
+    '.go{display:inline-block;margin-top:8px;padding:10px 18px;border-radius:20px;background:#0b57d0;color:#ffffff;font-weight:bold;text-decoration:none}</style></head><body>'+
+    `<h1>${hub?'Textnaut opens in its own page':web?'This site can not be read from inside the Hub page':'This link opens another program'}</h1>`+
+    `<p class="url">${text(url)}</p>${why}`+
+    `<p><a class="go" href="${text(url)}">Open in a new browser tab</a></p>`+
+    '<p>Back (the arrow, or Command-Left) returns to the page before.</p></body></html>';
+  return {url,title:'Another site',outside:url,source,sources:[{kind:'Generated page',url,source}]};
+};
 // An address typed in the bar, with an engine from before the route op (issue 1274).
 function legacyGo(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
