@@ -2072,7 +2072,11 @@
       const ID = globalThis.ImageData;
       if (typeof ID === 'function' && v instanceof ID) return { w: v.width, h: v.height, bytes: new Uint8Array(v.data.buffer, v.data.byteOffset, v.data.byteLength) };
       return codecsHost.pixelsOf ? codecsHost.pixelsOf(v) : null;
-    } catch (e) { return null; }
+    } catch (e) {
+      // WebGL §5.14.8: a source that is not origin-clean is a SecurityError (the engine gave no pixels)
+      if (e instanceof DOMException && e.name === 'SecurityError') throw e;
+      return null;
+    }
   };
   const glTexFields = (args, fields) => {
     const src = args.length === 6 ? args[5] : args.length === 9 ? args[8] : undefined;
@@ -2390,9 +2394,11 @@
       flush();
       const r = n.gpu(201, JSON.stringify(ss), pack(nums, [], 0));
       if (typeof r !== 'string') throw new DOMException('Canvas 2D: import error ' + r, 'InvalidStateError');
-      if (r.charCodeAt(0) === 2) throw new DOMException(r.slice(1), 'InvalidStateError');
+      // the engine refuses a read-back of a canvas that is not origin-clean (HTML §4.12.5.6)
+      if (r.charCodeAt(0) === 2) throw new DOMException(r.slice(1), r.startsWith('SecurityError', 1) ? 'SecurityError' : 'InvalidStateError');
       return r.slice(1);
     };
+    const tainted = what => new DOMException("Failed to execute '" + what + "': The canvas has been tainted by cross-origin data.", 'SecurityError');
     const nums = r => r === '' ? [] : r.split(' ').map(Number);
     const need = (got, k, name) => { if (got < k) throw new TypeError("Failed to execute '" + (name) + "': " + (k) + ' arguments required, but only ' + (got) + ' present.'); };
     const dbl = (x, name) => { x = +x; if (!Number.isFinite(x)) throw new TypeError("Failed to execute '" + (name) + "': the provided double value is non-finite."); return x; };
@@ -2698,6 +2704,7 @@
       flush();
       // The pixels as bytes (op 202, an ArrayBuffer), copied into the data at once.
       const bytes = n.gpuBytes(202, '[]', pack([2, s.id, sx, sy, sw, sh], [], 0));
+      if (bytes === -32) throw tainted('getImageData');
       if (!(bytes instanceof ArrayBuffer)) throw new DOMException('Canvas 2D: getImageData failed', 'InvalidStateError');
       img.data.set(toSpace(new Uint8Array(bytes), 'srgb', space));
       return img;
@@ -2916,6 +2923,7 @@
       flush();
       const bytes = n.gpuBytes(202, '[]', pack([2, id, 0, 0, w, h], [], 0));
       q.push(2, id, 0, 0, 0); selected = id; later();
+      if (bytes === -32) throw new DOMException('The image is not origin-clean.', 'SecurityError');
       if (!(bytes instanceof ArrayBuffer)) throw new DOMException('The image could not be read.', 'InvalidStateError');
       return { w, h, bytes: new Uint8Array(bytes) };
     };
@@ -6658,7 +6666,8 @@
       if (imgStates.get(id)?.gen !== gen) return;
       if (r === undefined) { st.complete = true; imgUndelay(id); return; }
       let size = '';
-      if (r !== null && r.status >= 200 && r.status < 300) { const a = apiCall(166, [r.bytes]); if (typeof a === 'string') size = a; }
+      // the engine answers an image's natural size, never its bytes (Net.Xhr.imageRaw)
+      if (r !== null && r.status >= 200 && r.status < 300) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
       if (size === '') { settle(false); return; }
       const [w, h] = size.split(' ').map(Number);
       st.w = w; st.h = h;

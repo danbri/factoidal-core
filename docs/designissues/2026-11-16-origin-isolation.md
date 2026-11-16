@@ -358,6 +358,20 @@ These came out of the inventory. Each is a question with a cheap test; none is a
   cross-origin frame; from a script, call the imports directly with node numbers above the page's own.
 - C2. **Canvas read-back.** No origin-clean flag was found by text search in `PageCanvas/` or in the prelude's
   `getImageData`. If an opaque image can be drawn to a canvas, can its pixels be read?
+  Result (issue 524): yes, and more. A canvas that drew another origin's image answered its pixels to
+  `getImageData`, `toDataURL`, `toBlob`, `convertToBlob`, through other canvases, patterns, `ImageBitmap`s and
+  `OffscreenCanvas`, and to WebGL `texImage2D` (whose prelude reads the pixels back). Separately, an image
+  element's request put the image's bytes, of any origin, into the page's realm (the prelude read the natural
+  size from them), where a page that replaced `Uint8Array` read them. Fixed in the engine: `PageCanvas.Taint`
+  (origin-clean flags of canvases, bitmaps and patterns, kept by `Run.stepT`), `Store.refuses` and the refusals of
+  `Wire.call` and `Wire.callWords` (the prelude maps them to `SecurityError`), `Net.PageFetch.Page.imageClean`
+  (an image is clean when `data:` or of the page's origin), the record of opaque answers to same-origin image
+  URLs (a redirect to another origin) in the lab's `Engine.subresource`, and `Net.Xhr.imageRaw` (an image
+  element's request gives the realm the natural size, never the bytes). Theorems in `PageCanvas/Theorems.lean`
+  (section 3) and `Net.Xhr.imageRaw_noninterference`; the checks C2, C2b, C2c and C2d of
+  `origin_isolation_test.ts` must pass. Still open: the bytes of a classic script of another origin reach the
+  realm the same way (`Xhr.raw` for destination `script`), and a `VideoFrame`'s pixels come from the media host
+  into the realm with no origin-clean flag.
 - C3. **Failure text.** Does the failure a page gets for a refused cross-origin answer carry anything of the
   answer (a status, a field)?
 - C4. **Rules only in `prelude.js`.** The same-origin test for `new Worker(url)` and the refusal of
