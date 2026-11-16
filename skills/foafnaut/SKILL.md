@@ -373,6 +373,11 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   --branch v0.18.0 https://github.com/quickjs-ng/quickjs`, then `cc -O2 -D_GNU_SOURCE
   -funsigned-char -I. quickjs.c libregexp.c libunicode.c dtoa.c quickjs-libc.c qjs.c
   gen/repl.c gen/standalone.c -lm -lpthread -ldl -o qjs`) and `node --jitless`.
+- What BubblePopJS allocates, by constructor shape and by function, its reference-count operations and
+  copied bytes, with no Lean build: `labs/demos/foafnaut/bubblepop_perf/alloc/build-count.sh` makes a
+  counting `leanjs` from the generated C; `leancount.py` and `opcount.py` read the counts (per run, per
+  JavaScript operation); `sampleprof.py` reads a macOS `sample` profile by memory-management class.
+  Baseline and method: `docs/bubblepopjs-heap.md`.
 - Literals and conversions that the generated C evaluates at each call:
   `python3 tools/lean-literal-parse-audit.py` (a `Nat` literal of 2^32 or more read from text),
   `--float-literals` (a `Float` literal left in a function body, with its case) and
