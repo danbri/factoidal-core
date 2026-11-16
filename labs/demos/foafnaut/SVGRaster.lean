@@ -50,6 +50,11 @@ every sample of pixel `(x,y)` lies in `[x,x+1)×[y,y+1)`, so its `u32` coordinat
 def tileRow (g : Grid) (y : Nat) : Nat := min (y / g.size) (g.down-1)
 def tileColumn (g : Grid) (x : Nat) : Nat := min (x / g.size) (g.across-1)
 def tile (g : Grid) (x y : Nat) : Nat := g.tileRow y * g.across + g.tileColumn x
+/-- `samplePixel`'s row band of the tile, `min((u32(p.y)-tileY*size)/cellSize,cellsPerSide-1)`,
+and its cell, `band*cellsPerSide+min((u32(p.x)-tileX*size)/cellSize,cellsPerSide-1)`. -/
+def band (g : Grid) (y : Nat) : Nat := min ((y - g.tileRow y * g.size) / cellSize) (cellsPerSide-1)
+def cell (g : Grid) (x y : Nat) : Nat :=
+  g.band y * cellsPerSide + min ((x - g.tileColumn x * g.size) / cellSize) (cellsPerSide-1)
 /-- The record rows that tile `t` lists, in paint order: `tiles[listBase+item]` for
 `item` from `tiles[3+t]` to `tiles[4+t]`. -/
 def rows (g : Grid) (t : Nat) : List Nat :=
@@ -164,30 +169,44 @@ def Grid.edgeWord (g : Grid) (t k : Nat) : Nat :=
   let total := g.words[3+g.across*g.down]!
   g.words[listBase+total+g.words[3+t]!+k]!
 
-/-- The edge list of the record at word `w`: a count, then the edge indices; none for
-`allEdges` (as the record word or as its count). -/
-def Grid.edgeList (g : Grid) (w : Nat) : Option (Array Nat) :=
-  if w == allEdges then none
-  else
-    let n := g.words[w]!
-    if n == allEdges then none else some ((Array.range n).map fun j => g.words[w+1+j]!)
+/-- The list of cell form (`cellMark`) at word `w` with `parts` lists: the list of part `k`. -/
+def Grid.cellPart (g : Grid) (w parts k : Nat) : Array Nat :=
+  let s := g.words[w+1+k]!
+  (Array.range (g.words[w+2+k]!-s)).map fun j => g.words[w+2+parts+s+j]!
 
-/-- The stroke piece list of the record at word `w`, after its edge part. -/
-def Grid.pieceList (g : Grid) (w : Nat) : Option (Array Nat) :=
+/-- The edge list of the record at word `w` for the samples of row band `band`: a count, then
+the edge indices, or in cell form the band's list; none for `allEdges` (as the record word or
+as its count). -/
+def Grid.edgeList (g : Grid) (w band : Nat) : Option (Array Nat) :=
   if w == allEdges then none
   else
     let n := g.words[w]!
-    let at_ := if n == allEdges then w+1 else w+1+n
+    if n == allEdges then none
+    else if n == cellMark then some (g.cellPart w cellsPerSide band)
+    else some ((Array.range n).map fun j => g.words[w+1+j]!)
+
+/-- The stroke piece list of the record at word `w` for the samples of cell `cell`, after its
+edge part. -/
+def Grid.pieceList (g : Grid) (w cell : Nat) : Option (Array Nat) :=
+  if w == allEdges then none
+  else
+    let n := g.words[w]!
+    let at_ := if n == allEdges then w+1
+      else if n == cellMark then w+2+cellsPerSide+g.words[w+1+cellsPerSide]!
+      else w+1+n
     let m := g.words[at_]!
-    if m == allEdges then none else some ((Array.range m).map fun j => g.words[at_+1+j]!)
+    if m == allEdges then none
+    else if m == cellMark then some (g.cellPart at_ (cellsPerSide*cellsPerSide) cell)
+    else some ((Array.range m).map fun j => g.words[at_+1+j]!)
 
-/-- The records of tile `t`, each prepared with the tile's edge list for a path fill. -/
+/-- The records of tile `t`, each prepared with the edge list of row band `band` for a path
+fill and the piece list of cell `cell` for a stroke. -/
 def tilePrepared (g : Grid) (data : Array Float) (all : Array Item) (index : Std.HashMap Nat Nat)
-    (t : Nat) : List PreparedSample :=
+    (t band cell : Nat) : List PreparedSample :=
   ((g.rows t).zipIdx.filterMap fun (row,k) => (index.get? row).bind (all[·]?) |>.map fun (p,base) =>
     let sample := p.prepareSample data base
     let w := g.edgeWord t k
-    match g.edgeList w,g.pieceList w with
+    match g.edgeList w band,g.pieceList w cell with
     | none,none => sample
     | edges,pieces => {sample with coverage := p.prepareCoverageTile data base edges pieces})
 
@@ -197,7 +216,8 @@ def _root_.NativeSVG.Scene.rasterTiles (s : Scene) (top rows : Nat) : ByteArray 
   let g : Grid := ⟨s.tiles⟩
   let (all,index) := items s
   ⟨((List.range rows).flatMap fun j => (List.range s.width).flatMap fun x =>
-    pixelBytes (pixelPrepared s (data.size/4) (tilePrepared g data all index (g.tile x (top+j))) x (top+j))).toArray⟩
+    pixelBytes (pixelPrepared s (data.size/4)
+      (tilePrepared g data all index (g.tile x (top+j)) (g.band (top+j)) (g.cell x (top+j))) x (top+j))).toArray⟩
 
 /-! ## The fast form -/
 
@@ -366,13 +386,28 @@ private def strokeScene (_ : Unit) : Option Scene := (parse ("<svg xmlns='http:/
 #guard ((strokeScene ()).map fun s =>
   let g : Grid := ⟨s.tiles⟩
   let sizes := (List.range (g.across*g.down)).filterMap fun t =>
-    if (g.rows t).isEmpty then none else (g.pieceList (g.edgeWord t 0)).map (·.size)
+    if (g.rows t).isEmpty then none
+    else some ((List.range (cellsPerSide*cellsPerSide)).foldl (fun n c => n+((g.pieceList (g.edgeWord t 0) c).map (·.size)).getD 0) 0)
   decide (sizes.eraseDups.length > 1)) == some true
 -- Edge lists are made: the zoomed scene's tile words hold lists shorter than the paths.
 #guard ((zoomScene "40").map fun s =>
   let g : Grid := ⟨s.tiles⟩
   (List.range (g.across*g.down)).any fun t => (List.range (g.rows t).length).any fun k =>
-    match g.edgeList (g.edgeWord t k) with | some e => e.size < 8 | none => false) == some true
+    (List.range cellsPerSide).any fun b => match g.edgeList (g.edgeWord t k) b with | some e => e.size < 8 | none => false) == some true
+
+-- The tile words written by counting (`tilesOfListingsRows`) are those of the first form, with
+-- a list of pairs for each tile (`tilesOfListingsRef`), on every scene above.
+private def refTiles (s : Scene) : Array Nat :=
+  tilesOfListingsRef s.width s.height s.compiled
+    (s.compiled.toArray.map (Primitive.tileListing s.mapping ((s.width+tileSize-1)/tileSize) ((s.height+tileSize-1)/tileSize)))
+#guard [guardScene (),zoomScene "1",zoomScene "40",clippedZoom (),strokeScene ()].all fun o =>
+  (o.map fun s => refTiles s == s.tiles) == some true
+-- Cells list fewer pieces than their tile: on the stroke scene some tile's cells list
+-- different numbers of pieces.
+#guard ((strokeScene ()).map fun s =>
+  let g : Grid := ⟨s.tiles⟩
+  (List.range (g.across*g.down)).any fun t => !(g.rows t).isEmpty &&
+    ((List.range (cellsPerSide*cellsPerSide)).map fun c => ((g.pieceList (g.edgeWord t 0) c).map (·.size)).getD 0).eraseDups.length > 1) == some true
 
 #print axioms samplePrepared_eq
 #print axioms rasterPrepared_eq

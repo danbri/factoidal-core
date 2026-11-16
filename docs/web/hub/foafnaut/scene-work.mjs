@@ -14,7 +14,9 @@
 //   tile edge lists (its shader has `fn pathWinding(`) walks only the tile's list of a path;
 // - `pieces`: stroke pieces tested (a stroke is drawn as a union of strips, disks and
 //   triangles; the tile's piece list when the scene has one, else every piece; an upper
-//   bound, as the shader stops at the first piece that holds the sample);
+//   bound, as the shader stops at the first piece that holds the sample). A tile's list in
+//   cell form (CELL_MARK: SVG.lean tileCells, edgeBands) is walked per cell of a 4x4 grid of
+//   the tile for pieces, per row band for edges;
 // - `segmentsBinned`: what `segments` would be if each tile walked only the edges of a record
 //   that can change the winding number differently across that tile (an edge whose rows meet
 //   the tile's and that is not wholly left of it, less an edge wholly right of it that spans
@@ -24,7 +26,7 @@
 // and whole tiles are judged by their corners, so they are estimates of the shader's loop
 // trips, exact for the record lists and the drawn area. Also: `uploadBytes` (storage floats and
 // tile words written each draw), `drawnPixels`, `tiles`, `tileEntries`.
-const ALL_EDGES=4294967295,SAMPLES=4,FIXED_ROWS=5,DASH_ROWS=5,CLIP_ROWS=3,AFFINE_ROWS=2,PATH=6,POLYGON=5;
+const ALL_EDGES=4294967295,CELL_MARK=4294967294,CELLS=4,SAMPLES=4,FIXED_ROWS=5,DASH_ROWS=5,CLIP_ROWS=3,AFFINE_ROWS=2,PATH=6,POLYGON=5;
 
 /** Work of drawing `frame` (an artifact: width, height, data, tiles, damage) over `rects`
 (damage rectangles [x,y,w,h]; undefined for a full draw). */
@@ -57,6 +59,10 @@ export function sceneWork(frame,rects){
   for(let t=0;t<across*down;t++){
     const tx=(t%across)*size,ty=Math.floor(t/across)*size;
     const px=drawn(tx,ty,Math.min(width,tx+size),Math.min(height,ty+size));
+    // Pixels drawn in each row band and each cell of the tile (cell form lists).
+    const cs=size/CELLS,cellPx=[],bandPx=[];
+    for(let cy=0;cy<CELLS;cy++){let b=0;for(let cx=0;cx<CELLS;cx++){
+      const x0=tx+cx*cs,y0=ty+cy*cs,n=x0<width&&y0<height?drawn(x0,y0,Math.min(width,x0+cs),Math.min(height,y0+cs)):0;cellPx.push(n);b+=n;}bandPx.push(b);}
     if(!px)continue;
     out.drawnPixels+=px;
     const samples=px*SAMPLES;
@@ -71,9 +77,11 @@ export function sceneWork(frame,rects){
       const [,,dashCount,dashed]=row(base+4);
       const word=out.edgeLists?tiles[refBase+item]:ALL_EDGES;
       if(dashed===1){
-        let n=dashCount;
-        if(out.pieceLists&&word!==ALL_EDGES){const ne=tiles[word],pl=ne===ALL_EDGES?word+1:word+1+ne;if(tiles[pl]!==ALL_EDGES)n=Math.min(tiles[pl],dashCount);}
-        out.pieces+=samples*n;
+        let n=dashCount,cells;
+        if(out.pieceLists&&word!==ALL_EDGES){const ne=tiles[word],pl=ne===ALL_EDGES?word+1:ne===CELL_MARK?word+2+CELLS+tiles[word+1+CELLS]:word+1+ne;
+          if(tiles[pl]===CELL_MARK)cells=pl;else if(tiles[pl]!==ALL_EDGES)n=Math.min(tiles[pl],dashCount);}
+        if(cells!==undefined)for(let c=0;c<CELLS*CELLS;c++)out.pieces+=cellPx[c]*SAMPLES*Math.min(tiles[cells+2+c]-tiles[cells+1+c],dashCount);
+        else out.pieces+=samples*n;
       }
       if(tag!==PATH&&tag!==POLYGON)continue;
       const shapeRows=tag===PATH?count:Math.ceil(count/2),clipCount=Math.floor(w/4);
@@ -93,8 +101,13 @@ export function sceneWork(frame,rects){
       }
       if(outside){out.segmentsOutsideClip+=samples*count;if(out.skipsClipped)continue;}
       // A path's fill walks the tile's edge list when the scene has them.
-      const walked=tag!==PATH||word===ALL_EDGES||tiles[word]===ALL_EDGES?count:Math.min(tiles[word],count);
-      out.segments+=samples*walked;perSample+=walked;
+      if(tag===PATH&&word!==ALL_EDGES&&tiles[word]===CELL_MARK){
+        let most=0;for(let b=0;b<CELLS;b++){const n=Math.min(tiles[word+2+b]-tiles[word+1+b],count);out.segments+=bandPx[b]*SAMPLES*n;most=Math.max(most,n);}
+        perSample+=most;
+      }else{
+        const walked=tag!==PATH||word===ALL_EDGES||tiles[word]===ALL_EDGES?count:Math.min(tiles[word],count);
+        out.segments+=samples*walked;perSample+=walked;
+      }
       // The edges this tile would keep (tile box in the record's space).
       const X0=Math.min(...xs),X1=Math.max(...xs),Y0=Math.min(...ys),Y1=Math.max(...ys);
       let kept=0,rows=0;
