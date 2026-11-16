@@ -378,6 +378,47 @@ These came out of the inventory. Each is a question with a cheap test; none is a
   `document.domain` are in the prelude. Is each also enforced by a Lean import?
 - C5. `window.name` across a navigation, and what `getComputedStyle` answers for a `:visited` link.
 
+- C1b (2026-11-16). **A nested frame's URL.** A frame's `src` was parsed against the page's URL, not
+  against its own node document (HTML §4.8.5), so a frame inside another origin's frame document asked
+  the embedder for a document of the page's origin, which then ran in the page's realm and could walk
+  the other origin's frame nodes. Fixed by `Hosts.Dom.frameBase` (pull request
+  [549](https://github.com/danbri/factoidal-core/pull/549)); `origin_isolation_test.ts` C1b.
+- C6 (2026-11-16). **Classic scripts of another origin.** Their bytes reached the page's realm (the
+  prelude decoded them). Fixed by `Net.Xhr.scriptRaw` and `takeScript` and the native `runFetched`
+  (pull request [547](https://github.com/danbri/factoidal-core/pull/547)); errors are muted.
+
+### Follow-up: network for a cross-origin frame's own session
+
+A frame of another origin whose scripts may run gets a script session of its own
+(`WebScripts.crossFrameSessions`), started with `network := false` and `hostLoads := false`: nothing
+in the embedder answers that session's requests or loads its frames. So such a frame cannot fetch,
+make an `XMLHttpRequest`, load a nested frame or post to a server. WPT shows it:
+`html/semantics/embedded-content/the-iframe-element/cross_origin_parentage.sub.html` subtest 2 needs
+the grandchild (in a frame of another origin) to post to `stash.py`. Before pull request 529 that
+subtest passed only by the C1b fault (the grandchild ran in the page's realm).
+
+What the work needs:
+
+1. A `Net.Xhr.State` per frame session, with that frame's `PageFetch.Page` (its origin, address and
+   secure flag; `Page.forFrame`, as `Page.forWorker`), its own cookie jar view (the same jar, by
+   host) and its own `held` bound.
+2. The turn's `netRequests` and `navigations` tagged with the session they belong to (a frame's
+   iframe element number), and the embedder's answers routed back by that tag (`action net` and
+   `action frame` with a `frame` field). The routing is engine state, so a theorem can say that an
+   answer reaches only the session that asked (`HTML.FrameSessions.exchange` extended by network
+   events; the `HttpConnections` Veil model already states this for connections).
+3. Limits: a bound on the number of frame sessions with network (today `maxFrameSessions`), on
+   requests in flight per session, and the nesting depth of frames.
+4. Theorems: a frame session's requests carry its own origin (`Page.forFrame_origin`), and an
+   operation of one session's `Net.Xhr` state never changes another's (`op_page` of the workers
+   record, generalised to sessions).
+5. Checks: a new origin isolation check that a cross-origin frame's fetch has its own origin in the
+   `Origin` field and that its answer never appears in the page's realm; the WPT subtest above as the
+   end-to-end test.
+
+Cost: about 6 to 10 hours of agent time and one cloud build; the page pays nothing while it has no
+cross-origin frame with scripts.
+
 ## 5. Lemmas, by module, ranked by cost
 
 Rows are in order of cost, cheapest first. Cost is agent time (wall clock of one agent), plus Lean build waits

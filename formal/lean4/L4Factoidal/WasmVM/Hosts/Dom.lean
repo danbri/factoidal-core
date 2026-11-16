@@ -650,10 +650,21 @@ def textContentSet (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M)
       if s.live.idle then (s, ret 0) else ({ s with live := (Command.setTextContent n v).live s.dom s.live }, ret 0)
     else change s (.setTextContent n v) fun d => changed (.setTextContent n v) (d.setTextContent n v)
 
-/-- A frame's `src` value parsed against the page's URL (HTML §4.8.5 "process the iframe
-attributes": "parse a URL"), as its href; the value itself when it does not parse. -/
-def frameURL (s : State) (v : String) : String :=
-  match L4Factoidal.WHATWG.URL.parseUrl v (if s.url.isEmpty then none else some s.url) with
+/-- The base URL a frame element's `src` is parsed against: its node document's base URL
+(HTML §4.8.5 "process the iframe attributes": "parse a URL given src, relative to element's
+node document"), else the page's URL. A frame inside a frame's document (of the same or of
+another origin) resolves against that document, not against the page: before, the `src`
+`g.html` of a frame in `http://b.test/f.html` became the page's `http://a.test/g.html`, and
+that document of the page's origin ran in the page's realm. -/
+def frameBase (s : State) (el : Nat) : String :=
+  let b := s.documentBase (s.dom.get el).doc
+  if b.isEmpty then s.url else b
+
+/-- A frame's `src` value parsed against `frameBase`, as its href; the value itself when it
+does not parse. -/
+def frameURL (s : State) (el : Nat) (v : String) : String :=
+  let base := frameBase s el
+  match L4Factoidal.WHATWG.URL.parseUrl v (if base.isEmpty then none else some base) with
   | some u => u.href
   | none => v
 
@@ -682,7 +693,7 @@ def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
       | (s, r) =>
         -- HTML §4.8.5: setting `src` of an iframe with a browsing context navigates it.
         if frameOwner (s.dom.get n) && Dom.asciiLower name == "src" && s.frames.any (·.1 == n) then
-          ({ s with navigations := s.navigations.push (n, if s.hostLoads && !v.trimAscii.toString.isEmpty then frameURL s v else "") }, r)
+          ({ s with navigations := s.navigations.push (n, if s.hostLoads && !v.trimAscii.toString.isEmpty then frameURL s n v else "") }, r)
         else (s, r)
 
 def createElement (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
@@ -734,14 +745,13 @@ def pageOrigin (s : State) : L4Factoidal.HTML.Frames.Origin := s.selfOrigin.getD
 open L4Factoidal.HTML.Frames in
 /-- The frame of `iframe` element `el` whose container document has `parent`: the one kept
 when its browsing context was made, else `frameOf` its attributes now (its `src` resolved
-against the page's URL). A sandboxed origin's identity is `el` + 10^9: one per element. -/
+against its node document's base URL, `frameURL`). A sandboxed origin's identity is `el` +
+10^9: one per element. -/
 def frameFor (s : State) (parent : L4Factoidal.HTML.Frames.Frame) (el : Nat) : L4Factoidal.HTML.Frames.Frame :=
   match s.frameInfo.find? (·.1 == el) with
   | some (_, f) => f
   | none =>
-    let src := (attrValue? s.dom el "src").map fun v => match L4Factoidal.WHATWG.URL.parseUrl v (if s.url.isEmpty then none else some s.url) with
-      | some u => u.href
-      | none => v
+    let src := (attrValue? s.dom el "src").map (frameURL s el)
     frameOf parent.flags parent.origin (attrValue? s.dom el "sandbox") (attrValue? s.dom el "srcdoc") src (1000000000 + el)
 
 open L4Factoidal.HTML.Frames in
@@ -1231,7 +1241,7 @@ def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
         -- HTML §4.8.5 "process the iframe attributes": `srcdoc` first (Lean loads it),
         -- then a `src` URL (the embedder's, when it loads URLs), else `about:blank`.
         let nav := if Dom.isHtmlElement (d.get k) "iframe" && (attrValue? d k "srcdoc").isSome then "about:srcdoc"
-          else if s.hostLoads then ((frameSrc d k).map (frameURL s)).getD "" else ""
+          else if s.hostLoads then ((frameSrc d k).map (frameURL s k)).getD "" else ""
         let inherited := s.documentBase (s.dom.get k).doc
         let withBase := { s with
           bases := { s.bases with
