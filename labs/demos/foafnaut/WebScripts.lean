@@ -1040,6 +1040,50 @@ each action keeps the session before it (`Net.Xhr.State.mayBlock`). Other pages 
 def mentionsXhr (scripts : Array (Nat × String)) : Bool :=
   scripts.any fun (_, src) => (src.splitOn "XMLHttpRequest").length > 1
 
+/-- The most heap entries (objects and environments) of a page for which a periodic action
+(a timer or network turn, an advance, a pointer move) keeps the session before it. Keeping it
+makes the action's first write copy the heap's object and environment arrays, and its end
+free the old ones: work in proportion to the heap, at every turn, whatever the turn does (a
+news page with a timer every 70 ms paid 33 ms a turn for six script steps). -/
+def undoHeapLimit : Nat := 250000
+
+/-- The actions of one deliberate input of the user: a click, a key, an `actions` request.
+They are rare (a person makes them), so they keep the undo at any heap size. -/
+def discreteAction (action : String) : Bool :=
+  action == "click" || action == "key" || action == "actions"
+
+/-- Whether an action keeps the session before it, to undo a run that asks for a sync
+request (`netSyncAnswer`). `wants`: the page has made an XHR or its scripts name
+`XMLHttpRequest`. `heap`: the entries of its heap. Past `undoHeapLimit` a periodic action
+does not keep it, and a sync request made in it is refused as on a page that never named
+`XMLHttpRequest` (NotSupportedError, `Net.Xhr`, `syncOk` false). -/
+def keepsUndo (action : String) (wants : Bool) (heap : Nat) : Bool :=
+  wants && (discreteAction action || decide (heap ≤ undoHeapLimit))
+
+/-- Cost: a periodic action that keeps the undo has a heap within the limit, so the copy at
+its first write is of at most `undoHeapLimit` entries. Does not say: what the copy costs in
+time (that is the runtime's; `undo_snapshot_test.ts` measures it). -/
+theorem keepsUndo_bounded (action : String) (wants : Bool) (heap : Nat)
+    (kept : keepsUndo action wants heap = true) (periodic : discreteAction action = false) :
+    heap ≤ undoHeapLimit := by
+  simp [keepsUndo, periodic] at kept
+  exact kept.2
+
+/-- A page that never named `XMLHttpRequest` and made none keeps nothing, as before. -/
+theorem keepsUndo_unwanted (action : String) (heap : Nat) : keepsUndo action false heap = false := by
+  simp [keepsUndo]
+
+/-- Within the limit the rule is the one before it: every action of a page that may make a
+sync request keeps the undo. -/
+theorem keepsUndo_small (action : String) (wants : Bool) (heap : Nat) (small : heap ≤ undoHeapLimit) :
+    keepsUndo action wants heap = wants := by
+  simp [keepsUndo, small]
+
+/-- A click, a key or an `actions` request keeps the undo at any heap size. -/
+theorem keepsUndo_discrete (action : String) (wants : Bool) (heap : Nat) (d : discreteAction action = true) :
+    keepsUndo action wants heap = wants := by
+  simp [keepsUndo, d]
+
 /-- One request to the host, as JSON. -/
 def wireJson (w : Net.PageFetch.Wire) : JSON.Json :=
   .object ([("id", num w.id), ("method", .string w.method), ("url", .string w.url),
@@ -1307,7 +1351,9 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
   -- is the base realm: holding it would copy the page's heap array at the action's first
   -- write, and other pages must not pay that. The workers are `held.leanWorkers`, kept as
   -- they were when the run is undone.
-  let keepIt := s.host.web.net.xhrs.size > 0 || s.host.web.net.mayBlock
+  -- A periodic action of a page with a large heap does not keep it either (`keepsUndo`,
+  -- `keepsUndo_bounded`): the copy would be paid at every timer turn.
+  let keepIt := keepsUndo action (s.host.web.net.xhrs.size > 0 || s.host.web.net.mayBlock) (s.heap.objs.size + s.heap.envs.size)
   let snap := if keepIt then some s else none
   let s0 := s.setHost { s.host with web := setSync s.host.web keepIt held.syncCache }
   -- each worker's entropy is fresh from the machine's generator, as each page's is
