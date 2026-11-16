@@ -120,6 +120,18 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       failed=true;throw error;
     }
   }
+  // An answer with no damage (the chrome layer) whose bytes are those the slot's texture was
+  // drawn from: the scene shader's pixels are a function of the scene's words, so the texture
+  // already holds it. Exact comparison of every word, no hash: nothing is decided here.
+  const words=a=>a instanceof Float32Array?new Uint32Array(a.buffer,a.byteOffset,a.length):a instanceof Uint32Array?a:a;
+  function sameWords(a,b){
+    if(!a||!b||a.length!==b.length)return a===b;
+    const x=words(a),y=words(b);
+    if(x instanceof Uint32Array&&y instanceof Uint32Array){for(let i=0;i<x.length;i++)if(x[i]!==y[i])return false;return true;}
+    for(let i=0;i<a.length;i++)if(!Object.is(a[i],b[i]))return false;
+    return true;
+  }
+  const sameScene=(a,b)=>!!a&&!!b&&a.width===b.width&&a.height===b.height&&a.wgsl===b.wgsl&&sameWords(a.data,b.data)&&sameWords(a.tiles,b.tiles);
   // Draw one Lean scene into the slot's texture (made at the scene's size), or into the texture
   // that targetOf gives. That is asked for only after every await: a canvas texture lasts
   // until the browser presents it.
@@ -147,12 +159,13 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
         slot.texture?.destroy();stats.layerTextures++;
         slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,
           usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC});
-        slot.size=size;slot.drawn=undefined;
+        slot.size=size;slot.drawn=undefined;slot.drawnFrame=undefined;
       }
     }
     // Lean's damage (WebPaint.retainedAnswer): the texture holds the answer it names.
     const damage=frame.damage;
     if(!target&&!checking&&damage&&slot.drawn===damage.id){stats.scenesKept=(stats.scenesKept??0)+1;if(waitForGpu)slot.work={kept:true};return undefined;}
+    if(!target&&!checking&&!damage&&slot.drawnFrame&&sameScene(slot.drawnFrame,frame)){stats.scenesSame=(stats.scenesSame??0)+1;if(waitForGpu)slot.work={kept:true};return undefined;}
     const tileWords=frame.tiles,uniformBytes=p.uniform.bytes,tileBytes=tileWords?Math.max(16,tileWords.length*4):0;
     const before=[slot.uniform?.buffer,slot.tiles?.buffer];
     slot.uniform=grow(slot.uniform,uniformBytes,bufferUsage(p.uniform.usage));
@@ -191,7 +204,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       pixels=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture,checking,write);
       if(checking&&pixels)checkPixels(frame,pixels);
     }
-    if(!target)slot.drawn=damage?.id;
+    if(!target){slot.drawn=damage?.id;slot.drawnFrame=damage?undefined:frame;}
     return pixels;
   }
   const chrome={name:'chrome'},page={name:'page'},single={name:'single'};
