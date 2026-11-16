@@ -17,6 +17,38 @@ cd "$PROJECT"
 export LEAN_NUM_THREADS=2
 export EMCC_CORES=2
 export BINARYEN_CORES=2
+# C compiles of the generated Lean IR and HACL* are independent, so they run COMPILE_JOBS
+# at a time (default: the core count, at most 4; COMPILE_JOBS=1 is the old serial order).
+# Objects are linked in the same order as before, whatever order they finish in.
+# FOAFNAUT_CC_LAUNCHER (for example ccache) goes in front of the native C compiler; for
+# Wasm, Emscripten's own EM_COMPILER_WRAPPER does the same.
+CPUS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+COMPILE_JOBS=${COMPILE_JOBS:-$(( CPUS < 4 ? CPUS : 4 ))}
+LAUNCH=()
+[ -n "${FOAFNAUT_CC_LAUNCHER:-}" ] && LAUNCH=("$FOAFNAUT_CC_LAUNCHER")
+COMPILE_PIDS=()
+COMPILE_FAILED=0
+# Every compile command, one per line, shell-quoted: CI recompiles a sample without its cache
+# and compares the objects (factoidal-builds scripts/cache-audit.sh).
+COMPILE_LOG="$BUILD/compile-commands.txt"
+: > "$COMPILE_LOG"
+# compile_bg COMMAND...: start one compile, after waiting for the oldest when COMPILE_JOBS run.
+compile_bg(){
+  printf '%q ' "$@" >> "$COMPILE_LOG"; printf '\n' >> "$COMPILE_LOG"
+  if [ "${#COMPILE_PIDS[@]}" -ge "$COMPILE_JOBS" ]; then
+    wait "${COMPILE_PIDS[0]}" || COMPILE_FAILED=1
+    COMPILE_PIDS=(${COMPILE_PIDS[@]+"${COMPILE_PIDS[@]:1}"})
+  fi
+  "$@" &
+  COMPILE_PIDS+=($!)
+}
+# compile_wait: wait for every started compile; any failure stops the build.
+compile_wait(){
+  local pid
+  for pid in ${COMPILE_PIDS[@]+"${COMPILE_PIDS[@]}"}; do wait "$pid" || COMPILE_FAILED=1; done
+  COMPILE_PIDS=()
+  [ "$COMPILE_FAILED" = 0 ] || { echo 'A C compile failed (its error is above); build refused' >&2; exit 1; }
+}
 if [ "$MODE" = --wasm ]; then
 export EM_CACHE="$BUILD/emscripten-cache"
 if [ ! -s "$EM_CACHE/sysroot_install.stamp" ]; then
@@ -42,7 +74,7 @@ lake build bubblepop-realm
 # (+598 KB, +140 KB gzipped, 2026-11-09 figures): the first page does not lex and run prelude.js.
 REALM_SOURCE="$PRELUDE"
 .lake/build/bin/bubblepop-realm L4Factoidal/WasmVM/Hosts/LeanJSRealmData.lean "$REALM_SOURCE"
-CORE=(L4Factoidal.Codec.Inflate L4Factoidal.DOM.OfXml L4Factoidal.Rendering.Layout L4Factoidal.Rendering.SfntProfile L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView L4Factoidal.Rendering.FontRequests L4Factoidal.Unicode.BidiData L4Factoidal.Unicode.Bidi L4Factoidal.XSLT.Transform L4Factoidal.XSLT4.Transform L4Factoidal.UI.PolicyProtocol L4Factoidal.UI.Presentation L4Factoidal.UI.Geometry L4Factoidal.UI.LayoutPolicy L4Factoidal.Syntax.Turtle L4Factoidal.JSON.Parser L4Factoidal.JSON.Serialize L4Factoidal.WasmVM.Api L4Factoidal.WasmVM.Bench.Engine L4Factoidal.WasmVM.Tests.Proposals L4Factoidal.WasmVM.Wasi L4Factoidal.WasmVM.Hosts.Page L4Factoidal.WasmVM.Hosts.PageAot L4Factoidal.WHATWG.Encoding.Sniff L4Factoidal.WasmVM.Hosts.LeanJS L4Factoidal.WasmVM.Hosts.LeanJSRealm L4Factoidal.WasmVM.Hosts.LeanJSWorkers L4Factoidal.EventLoop.Model L4Factoidal.EventLoop.Dispatch L4Factoidal.SPARQL.Query L4Factoidal.SPARQL.Parser L4Factoidal.SPARQL.StorePlan L4Factoidal.Planner.Kinds.Memory L4Factoidal.Planner.FromQuery L4Factoidal.RDF.Pretty L4Factoidal.FrameCost.Band L4Factoidal.FrameCost.Lru L4Factoidal.Rendering.ComputedValues L4Factoidal.Rendering.FontFaceRule L4Factoidal.Rendering.Smil L4Factoidal.Rendering.ClipTheorems L4Factoidal.Rendering.InkBound L4Factoidal.HTML.CspSource L4Factoidal.Net.Subresource L4Factoidal.Rendering.GridResolved L4Factoidal.Rendering.ImportTree L4Factoidal.HostContract.Trace)
+CORE=(L4Factoidal.Par.Chunked L4Factoidal.Codec.Inflate L4Factoidal.DOM.OfXml L4Factoidal.Rendering.Layout L4Factoidal.Rendering.SfntProfile L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView L4Factoidal.Rendering.FontRequests L4Factoidal.Unicode.BidiData L4Factoidal.Unicode.Bidi L4Factoidal.XSLT.Transform L4Factoidal.XSLT4.Transform L4Factoidal.UI.PolicyProtocol L4Factoidal.UI.Presentation L4Factoidal.UI.Geometry L4Factoidal.UI.LayoutPolicy L4Factoidal.Syntax.Turtle L4Factoidal.JSON.Parser L4Factoidal.JSON.Serialize L4Factoidal.WasmVM.Api L4Factoidal.WasmVM.Bench.Engine L4Factoidal.WasmVM.Tests.Proposals L4Factoidal.WasmVM.Wasi L4Factoidal.WasmVM.Hosts.Page L4Factoidal.WasmVM.Hosts.PageAot L4Factoidal.WHATWG.Encoding.Sniff L4Factoidal.WasmVM.Hosts.LeanJS L4Factoidal.WasmVM.Hosts.LeanJSRealm L4Factoidal.WasmVM.Hosts.LeanJSWorkers L4Factoidal.EventLoop.Model L4Factoidal.EventLoop.Dispatch L4Factoidal.SPARQL.Query L4Factoidal.SPARQL.Parser L4Factoidal.SPARQL.StorePlan L4Factoidal.Planner.Kinds.Memory L4Factoidal.Planner.FromQuery L4Factoidal.RDF.Pretty L4Factoidal.FrameCost.Band L4Factoidal.FrameCost.Lru L4Factoidal.Rendering.ComputedValues L4Factoidal.Rendering.FontFaceRule L4Factoidal.Rendering.Smil L4Factoidal.Rendering.ClipTheorems L4Factoidal.Rendering.InkBound L4Factoidal.HTML.CspSource L4Factoidal.Net.Subresource L4Factoidal.Rendering.GridResolved L4Factoidal.Rendering.ImportTree L4Factoidal.HostContract.Trace)
 lake build "${CORE[@]}" L4Factoidal.Rendering.Tests L4Factoidal.Rendering.CascadeTests L4Factoidal.Rendering.TableLayoutTests L4Factoidal.Rendering.FlexLayoutTests L4Factoidal.Rendering.PositionLayoutTests L4Factoidal.Rendering.GridLayoutTests L4Factoidal.Rendering.ReplacedTests L4Factoidal.Rendering.RdfViewTests L4Factoidal.Rendering.FontLayoutTests L4Factoidal.Rendering.FontFaceTests L4Factoidal.Rendering.FontProviderTests L4Factoidal.Rendering.FontDataTests L4Factoidal.Rendering.FontFaceRuleTests L4Factoidal.Rendering.SfntMarkTheorems L4Factoidal.Rendering.SmilTests L4Factoidal.Rendering.InkBoundTests L4Factoidal.WasmVM.Tests.LeanJSRealm L4Factoidal.WasmVM.Tests.LeanJSWorkers L4Factoidal.DOM.XPath.Theorems L4Factoidal.FrameCost.Cull
 export LEAN_PATH="$BUILD/olean:$PROJECT/.lake/build/lib/lean"
 LAB_MODULES=(Graphics GraphicsPrepared Font SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke ImagePNG ImageJPEG ImageGIF ImageData SVG SVGRaster SVGText SVGForgiving SVGCssColour WebRenderSVG WebRender WebHit WebRenderRDF WebRenderFont WebRenderFontRequests WebRenderScript WebSelection WebHistory WebRoute WebGesture WebShell WebPrint Geometry SceneSVG FoafGraph FoafNaut WebGraph WebXslt WebWasmSample WebWasm WebEventLoop WebScripts WebState WebSparql WebRepaint WebAccept WebConsole WebPaint WebBuild WebAbout WebHostContract WebDocument RenderPlan)
@@ -122,7 +154,7 @@ def visit(module):
             sys.exit(f'{source}: import {imported}: the Wasm engine links only Std.Data, Std.Classes, Std.Do and the Std.Time modules of build-wasm.sh; import the module you use')
         visit(imported)
     order.append(str(project/'.lake/build/ir'/Path(*module.split('.')).with_suffix('.c')))
-for module in ['L4Factoidal.Codec.Inflate','L4Factoidal.DOM.OfXml','L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.SfntProfile','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve','L4Factoidal.Rendering.RdfView','L4Factoidal.Rendering.FontRequests','L4Factoidal.Unicode.BidiData','L4Factoidal.Unicode.Bidi','L4Factoidal.XSLT.Transform','L4Factoidal.XSLT4.Transform','L4Factoidal.UI.PolicyProtocol','L4Factoidal.UI.Presentation','L4Factoidal.UI.Geometry','L4Factoidal.UI.LayoutPolicy','L4Factoidal.Syntax.Turtle','L4Factoidal.JSON.Parser','L4Factoidal.JSON.Serialize','L4Factoidal.WasmVM.Api','L4Factoidal.WasmVM.Bench.Engine','L4Factoidal.WasmVM.Tests.Proposals','L4Factoidal.WasmVM.Wasi','L4Factoidal.WasmVM.Hosts.Page','L4Factoidal.WasmVM.Hosts.PageAot','L4Factoidal.WHATWG.Encoding.Sniff','L4Factoidal.WasmVM.Hosts.LeanJS','L4Factoidal.WasmVM.Hosts.LeanJSRealm','L4Factoidal.WasmVM.Hosts.LeanJSWorkers','L4Factoidal.EventLoop.Model','L4Factoidal.EventLoop.Dispatch','L4Factoidal.SPARQL.Query','L4Factoidal.SPARQL.Parser','L4Factoidal.SPARQL.StorePlan','L4Factoidal.Planner.Kinds.Memory','L4Factoidal.Planner.FromQuery','L4Factoidal.RDF.Pretty','L4Factoidal.FrameCost.Band','L4Factoidal.FrameCost.Lru','L4Factoidal.Rendering.ComputedValues','L4Factoidal.Rendering.FontFaceRule','L4Factoidal.Rendering.Smil','L4Factoidal.Rendering.ClipTheorems','L4Factoidal.Rendering.InkBound','L4Factoidal.HTML.CspSource','L4Factoidal.Net.Subresource','L4Factoidal.Rendering.GridResolved','L4Factoidal.Rendering.ImportTree','L4Factoidal.HostContract.Trace']: visit(module)
+for module in ['L4Factoidal.Par.Chunked','L4Factoidal.Codec.Inflate','L4Factoidal.DOM.OfXml','L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.SfntProfile','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve','L4Factoidal.Rendering.RdfView','L4Factoidal.Rendering.FontRequests','L4Factoidal.Unicode.BidiData','L4Factoidal.Unicode.Bidi','L4Factoidal.XSLT.Transform','L4Factoidal.XSLT4.Transform','L4Factoidal.UI.PolicyProtocol','L4Factoidal.UI.Presentation','L4Factoidal.UI.Geometry','L4Factoidal.UI.LayoutPolicy','L4Factoidal.Syntax.Turtle','L4Factoidal.JSON.Parser','L4Factoidal.JSON.Serialize','L4Factoidal.WasmVM.Api','L4Factoidal.WasmVM.Bench.Engine','L4Factoidal.WasmVM.Tests.Proposals','L4Factoidal.WasmVM.Wasi','L4Factoidal.WasmVM.Hosts.Page','L4Factoidal.WasmVM.Hosts.PageAot','L4Factoidal.WHATWG.Encoding.Sniff','L4Factoidal.WasmVM.Hosts.LeanJS','L4Factoidal.WasmVM.Hosts.LeanJSRealm','L4Factoidal.WasmVM.Hosts.LeanJSWorkers','L4Factoidal.EventLoop.Model','L4Factoidal.EventLoop.Dispatch','L4Factoidal.SPARQL.Query','L4Factoidal.SPARQL.Parser','L4Factoidal.SPARQL.StorePlan','L4Factoidal.Planner.Kinds.Memory','L4Factoidal.Planner.FromQuery','L4Factoidal.RDF.Pretty','L4Factoidal.FrameCost.Band','L4Factoidal.FrameCost.Lru','L4Factoidal.Rendering.ComputedValues','L4Factoidal.Rendering.FontFaceRule','L4Factoidal.Rendering.Smil','L4Factoidal.Rendering.ClipTheorems','L4Factoidal.Rendering.InkBound','L4Factoidal.HTML.CspSource','L4Factoidal.Net.Subresource','L4Factoidal.Rendering.GridResolved','L4Factoidal.Rendering.ImportTree','L4Factoidal.HostContract.Trace']: visit(module)
 Path(sys.argv[2]).write_text('\n'.join(order)+'\n')
 PY
 SOURCES=()
@@ -162,7 +194,7 @@ if [ "$MODE" = --native ]; then
     # (fib 58 against 119 million instructions a second; WasmVM record, "In the Foafnaut
     # engine").
     # No heartbeat count at each allocation (lean_no_heartbeat.h): the engine never reads it.
-    leanc -O3 -DNDEBUG -include "$LAB/lean_no_heartbeat.h" -Dlean_inc_heartbeat=foafnaut_no_heartbeat -c "$source" -o "$object"
+    compile_bg ${LAUNCH[@]+"${LAUNCH[@]}"} leanc -O3 -DNDEBUG -include "$LAB/lean_no_heartbeat.h" -Dlean_inc_heartbeat=foafnaut_no_heartbeat -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
   for source in "${HACL_SOURCES[@]}"; do
@@ -171,9 +203,10 @@ if [ "$MODE" = --native ]; then
     # -fPIC: these objects also go into the Linux shared library, and Hacl_RSAPSS.c and
     # Hacl_Hash_SHA3.c name `stderr` (KaRaMeL's error print), which a shared object must reach
     # through the GOT ("relocation R_X86_64_PC32 cannot be used against symbol 'stderr'").
-    "${CC:-cc}" -O3 -DNDEBUG -fPIC -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
+    compile_bg ${LAUNCH[@]+"${LAUNCH[@]}"} "${CC:-cc}" -O3 -DNDEBUG -fPIC -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
+  compile_wait
   LEANLIB="$TOOLCHAIN/lib/lean"
   # Native macOS builds link Lean's runtime without GNU MP (issue 393): see
   # build-leanrt-no-gmp.sh. The Linux library does too (below); the Linux web-render-native
@@ -274,7 +307,7 @@ else
     name=${NAMES[$i]%%=*}
     object="$BUILD/obj-wasm/$name.o"
     printf 'WASM %s %s\n' "$name" "$(date -u)"
-    emcc "${FLAGS[@]}" -c "${COMPILE[$i]}" -o "$object"
+    compile_bg emcc "${FLAGS[@]}" -c "${COMPILE[$i]}" -o "$object"
     OBJECTS+=("$object")
   done
   # The runtime cache's Init and Std objects with such literals, compiled again from its C
@@ -296,9 +329,10 @@ else
   for source in "${HACL_SOURCES[@]}"; do
     object="$BUILD/obj-wasm/hacl_$(basename "$source" .c).o"
     printf 'WASM %s %s\n' "$(basename "$source" .c)" "$(date -u)"
-    emcc "${FLAGS[@]}" -I "$HACL/include" -c "$source" -o "$object"
+    compile_bg emcc "${FLAGS[@]}" -I "$HACL/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
+  compile_wait
   # Link at -O3 (wasm-opt -O3): 3.8 % less over gzip (6.20 -> 5.97 MB) for everyone who loads the Hub,
   # the same time to first frame and a few percent less stack per call (2026-11-09).
   em++ -O3 -DNDEBUG -fwasm-exceptions --no-entry "${OBJECTS[@]}" "${CORE_OBJECTS[@]}" "$RUNTIME/rt-obj/"*.o \

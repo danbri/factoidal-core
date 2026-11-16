@@ -1,0 +1,61 @@
+allocations 12378592  bytes 348656885  rc ops 70682720  copies 225475  copied bytes 8206965
+-- allocations by shape (count, % of allocations, bytes)
+       3867817  31.2%     92827608  pair / EStateM.Result.ok
+       1532485  12.4%     24519760  Value.num
+       1266433  10.2%     20262928  Value.bool
+        901765   7.3%     79355320  HeapOf
+        896348   7.2%     14341568  Option.some / Kind.array
+        847568   6.8%     13561088  Value.obj
+        708853   5.7%     39695768  Env
+        659381   5.3%     15825144  List.cons / Result.error
+        368636   3.0%      5898176  Value.str
+        188409   1.5%      6029088  PropMap or 3-tuple
+        186995   1.5%      2991920  box-float
+        168924   1.4%      8108352  Obj
+        135493   1.1%      5141624  closure
+        134928   1.1%      3247488  array-copy
+-- allocations by function
+       6772403  54.7%    199833528  JS_vmLoop
+        836538   6.8%     14835856  JS_binop
+        623053   5.0%     14921136  JS_looseEq
+        373990   3.0%      7479800  JS_toNum
+        356525   2.9%      8556600  JS_typeOf
+        356523   2.9%      5704368  JS_vmUnary
+        250492   2.0%     13441848  JS_callClosure
+        231503   1.9%     12137912  JS_vmEnter
+        184182   1.5%      5893824  JS_setElem
+        143579   1.2%      5981672  JS_Obj_putOwn
+        138165   1.1%      4422752  JS_PropMap_insert
+        117137   0.9%      2811288  JS_vmFill
+         99137   0.8%      1916216  JS_evalExpr
+         99116   0.8%      2775248  JS_getV
+-- rc ops by function
+      51130357  72.3%  JS_vmLoop
+       3365348   4.8%  JS_callClosure
+       1522781   2.2%  JS_vmEnter
+       1480554   2.1%  JS_evalExpr
+       1406515   2.0%  JS_HeapOf_obj
+       1021205   1.4%  JS_looseEq
+        691416   1.0%  JS_lookupLocal
+        681104   1.0%  JS_evalProps
+        667235   0.9%  JS_Obj_getOwn
+        571910   0.8%  JS_callV
+        566144   0.8%  JS_HeapOf_fastGet
+        514284   0.7%  JS_merge
+        504315   0.7%  JS_Natives_callNative
+        481574   0.7%  JS_Obj_putOwn
+-- top sites (function, shape)
+       1435897  11.6%  JS_vmLoop                                pair / EStateM.Result.ok
+       1383055  11.2%  JS_vmLoop                                Value.num
+        659380   5.3%  JS_vmLoop                                List.cons / Result.error
+        659380   5.3%  JS_vmLoop                                Env
+        659380   5.3%  JS_vmLoop                                HeapOf
+        659380   5.3%  JS_vmLoop                                Option.some / Kind.array
+        641775   5.2%  JS_vmLoop                                Value.obj
+        631977   5.1%  JS_vmLoop                                Value.bool
+        619121   5.0%  JS_binop                                 Value.bool
+        619036   5.0%  JS_looseEq                               pair / EStateM.Result.ok
+        356525   2.9%  JS_typeOf                                pair / EStateM.Result.ok
+        356523   2.9%  JS_vmUnary                               Value.str
+        186995   1.5%  JS_toNum                                 pair / EStateM.Result.ok
+        186995   1.5%  JS_toNum                                 box-float
