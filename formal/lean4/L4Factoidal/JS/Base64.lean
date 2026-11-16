@@ -23,6 +23,13 @@ def val (c : Char) : Option Nat :=
 /-- ASCII whitespace (U+0009, U+000A, U+000C, U+000D, U+0020). -/
 def isWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c.toNat == 12 || c == '\r'
 
+/-- The index of the first character at or after `i` that is not ASCII whitespace. -/
+def skipWs (s : Array Char) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [i:s.size] do
+    if j < s.size && isWs s[j]! then j := j + 1 else break
+  return j
+
 /-- The outcome of FromBase64 or FromHex: characters read, the bytes, and whether it ended in
 an error (a SyntaxError). -/
 structure Res where
@@ -52,7 +59,7 @@ def fromBase64 (s : Array Char) (url : Bool) (lch : Nat) (maxLength : Nat) : Res
   let mut chunk : Array Nat := #[]
   let mut i := 0
   for _ in [0:len + 2] do
-    while i < len && isWs s[i]! do i := i + 1
+    i := skipWs s i
     if i == len then
       if chunk.size > 0 then
         if lch == 2 then return { read, bytes, err := false }
@@ -65,14 +72,14 @@ def fromBase64 (s : Array Char) (url : Bool) (lch : Nat) (maxLength : Nat) : Res
     i := i + 1
     if c == '=' then
       if chunk.size < 2 then return { read, bytes, err := true }
-      while i < len && isWs s[i]! do i := i + 1
+      i := skipWs s i
       if chunk.size == 2 then
         if i == len then
           if lch == 2 then return { read, bytes, err := false }
           return { read, bytes, err := true }
         if s[i]! == '=' then
           i := i + 1
-          while i < len && isWs s[i]! do i := i + 1
+          i := skipWs s i
       if i < len then return { read, bytes, err := true }
       match decodeChunk chunk (lch == 1) with
       | some bs => return { read := len, bytes := bytes ++ bs, err := false }

@@ -906,12 +906,17 @@ def hasNamedGroup (cs : Array Char) : Bool := Id.run do
   let mut cls := false
   for i in [0:cs.size] do
     let c := cs[i]!
-    if esc then esc := false; continue
-    if c == '\\' then esc := true
-    else if cls then (if c == ']' then cls := false)
-    else if c == '[' then cls := true
+    if esc then
+      esc := false
+    else if c == '\\' then
+      esc := true
+    else if cls then
+      cls := c != ']'
+    else if c == '[' then
+      cls := true
     else if c == '(' && cs[i+1]? == some '?' && cs[i+2]? == some '<' &&
-        cs[i+3]? != some '=' && cs[i+3]? != some '!' then return true
+        cs[i+3]? != some '=' && cs[i+3]? != some '!' then
+      return true
   return false
 
 #guard hasNamedGroup "(?<a>x)".toList.toArray && !hasNamedGroup "(?<=a)\\(?<b>".toList.toArray
