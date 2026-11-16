@@ -42,7 +42,7 @@ per engine commit). Their schema is docs/web/hub/conformance/data.schema.json. T
 conformance-data workflow of danbri/factoidal-builds runs this and commits both files to
 that repository's branch hub-data; the Pages build copies them in.
 """
-import argparse, csv, gzip, importlib.util, io, json, os, shutil, sys, tempfile, time, urllib.request
+import argparse, csv, gzip, importlib.util, io, json, os, re, shutil, sys, tempfile, time, urllib.request
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -427,6 +427,25 @@ def semweb(fetch, rows):
     return {"fstarStopped": FSTAR_STOPPED, "groups": groups}
 
 
+NOT_COUNTED_MAX = 12
+
+
+def not_counted(rows):
+    """Full WPT and Test262 runs recorded invalid (never a score), newest first, with the
+    reason: partial runs (some shards missing), runs with no results, and the rest."""
+    bad = [r for r in rows if r["suite"] in ("wpt", "test262") and r.get("kind", "full") == "full" and r["valid"] != "true"]
+    out = []
+    for r in sorted(bad, key=lambda r: r["finished_utc"] or r["started_utc"] or "", reverse=True)[:NOT_COUNTED_MAX]:
+        reason = r.get("invalid_reason") or "reason not recorded"
+        run_n, total = num(r.get("names_run"), int), num(r.get("names_total"), int)
+        kind = reason.split(" run:", 1)[0] if re.match(r"(partial|none) run:", reason) else (
+            "none" if not run_n else ("partial" if total and run_n < total else "invalid"))
+        out.append({"run": r["run_id"], "suite": r["suite"], "finished": r["finished_utc"] or r["started_utc"],
+                    "where": where(r), "engine": (r["factoidal_commit"] or "")[:9], "completeness": kind,
+                    "namesRun": run_n, "namesTotal": total, "reason": reason[:600], "workflow": r.get("workflow_run_url", "")})
+    return out
+
+
 def write_hub(D, out_dir):
     """The Hub's Conformance page files: data.json (the newest runs, without the history
     lists) and history.json (one compact row per engine commit, for the charts)."""
@@ -568,6 +587,7 @@ def build(a, fetch):
         },
         "semweb": semweb(fetch, rows),
         "reftests": reftests(fetch, rows),
+        "notCounted": not_counted(rows),
     }
     if a.out:
         with open(a.out, "w") as f:
