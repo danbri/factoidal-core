@@ -42,6 +42,9 @@ standards conformance.
 
 - A page that doesn't use a feature pays nothing for it. Give before/after timings in every hand-back.
 - Hot paths get cost tests that fail if they turn quadratic.
+- Speed is judged as a person feels it: report p50, p95, p99, max and the spread over runs, never only a mean, and
+  treat a worse tail as a regression. Metrics, targets and workflows:
+  [`perceived-performance`](../perceived-performance/SKILL.md).
 
 ## Working on the shared Mac
 
