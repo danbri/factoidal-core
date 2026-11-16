@@ -475,7 +475,7 @@ def Expr.hasYieldF : Nat → Expr → Bool
     | .func _ | .regex _ _ => false
     | .classE (.mk _ h _ ms) =>
       -- the heritage and the computed keys run where the class is (§15.7.14); the bodies do not
-      (match h with | some x => Expr.hasYieldF n x | none => false) || Member.anyKeyYield n ms
+      (match h with | some x => Expr.hasYieldF n x | none => false) || Member.anyYield n ms
     | .chain a | .optBase a | .optCallee a => Expr.hasYieldF n a
     | .array es | .template _ es | .superCall es | .tagged _ _ _ es => Expr.anyYield n es
     | .object ps => PropDef.anyYield n ps
@@ -491,13 +491,13 @@ def Expr.anyYield : Nat → List Expr → Bool
   | _ + 1, [] => false
   | n + 1, e :: es => Expr.hasYieldF n e || Expr.anyYield n es
 
-def Member.anyKeyYield : Nat → List Member → Bool
+def Member.anyYield : Nat → List Member → Bool
   | 0, _ => true
   | _ + 1, [] => false
   | n + 1, m :: ms =>
     (match m with
       | .mk _ _ (.computed k) _ => Expr.hasYieldF n k
-      | _ => false) || Member.anyKeyYield n ms
+      | _ => false) || Member.anyYield n ms
 
 def PropDef.anyYield : Nat → List PropDef → Bool
   | 0, _ => true
