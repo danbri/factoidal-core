@@ -2231,6 +2231,7 @@ L4Factoidal_JS_speciesCtor  # (c) SpeciesConstructor (§7.3.22): reads of `const
 L4Factoidal_JS_protoFromCtor  # (c) GetPrototypeFromConstructor (§10.1.14): a read of `prototype`, as L4Factoidal_JS_get*
 L4Factoidal_JS_speciesFrom  # (c) ArraySpeciesCreate (§10.4.2.3): reads of `constructor` and @@species, then [[Construct]], as L4Factoidal_JS_get* and L4Factoidal_JS_construct
 L4Factoidal_JS_speciesFill  # (b)(c) CreateDataPropertyOrThrow per element of a bounded array (a for loop, not recursion); a proxy trap is a call, as L4Factoidal_JS_call*
+L4Factoidal_JS_coreRun  # (c) the evaluator answering a built-in's request (CoreOp) at fuel n: a cycle through the mutual block and Natives.*, depth bounded by the interpreter's call depth (Heap.maxDepth) as L4Factoidal_JS_moreNative
 L4Factoidal_JS_extraNative  # (c) RegExp, Proxy, typed array, JSON.parse and host built-ins: ToString/ToNumber of arguments and replacer calls, as L4Factoidal_JS_to* and L4Factoidal_JS_call*
 L4Factoidal_JS_jsonToValue  # (b) JSON.parse: depth is the nesting of the JSON text (its parser bounds it); fuel 100000
 L4Factoidal_JS_iter*  # (c) the iteration protocol (GetIterator, IteratorStep, IteratorClose, collecting to an array): next/return are calls, as L4Factoidal_JS_call*; collecting is a self tail call
