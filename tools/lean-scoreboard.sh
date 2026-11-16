@@ -265,9 +265,11 @@ LONG_JOBS="l4qt4-xpath l4qt4-xquery l4xslt4 l4xsd11"
 defjob l4qt4-xpath l4qt4 parse_qt4_total none \
   "XPath 4.0 and Functions and Operators 4.0 (qt4tests)" "" \
   "--root third_party/testing/qt4tests --isolate 60"
+# The XQuery run reads all fourteen families of the catalog (the runner's default in XQuery
+# mode is eight), so each specification has a row of its own ("family F").
 defjob l4qt4-xquery l4qt4 parse_qt4_total none \
   "XQuery 4.0 (qt4tests)" "" \
-  "--root third_party/testing/qt4tests --lang xquery --isolate 60"
+  "--root third_party/testing/qt4tests --lang xquery --isolate 60 --family prod --family op --family fn --family map --family array --family math --family app --family misc --family ser --family upd --family ft --family bin --family file --family xs"
 defjob l4xslt4 l4xslt4 parse_qt4_total none \
   "XSLT 4.0 (xslt40-test)" "" \
   "--root third_party/testing/xslt40-test --isolate 60"
@@ -858,6 +860,14 @@ parse_qt4_total() {
   note="other = unsupported: a dependency this processor does not satisfy (another language version, an optional feature it does not have); never a pass"
   [ -n "$ex" ] && note="$note; $ex more excluded as defective test data, outside the total"
   row_sl "$CUR_AREA" "" '^TOTAL: [0-9]+ pass' last "$note"
+  # One more row per family (l4qt4: "== families ==") or test directory (l4xslt4:
+  # "== directories =="), labelled "family F": the populations of one specification each
+  # (F&O, Serialization, Update, Full Text, EXPath, xs, ...), measured in the same run.
+  local fam
+  for fam in $(awk '/^== (families|directories) ==$/ {on=1; next} /^TOTAL: / {on=0}
+                   on && /^[A-Za-z0-9_.-]+: [0-9]+ pass/ {sub(/:.*/, ""); print}' "$CUR_LOG"); do
+    row_sl "$CUR_AREA" "family $fam" "^$fam: [0-9]+ pass" last "$note"
+  done
 }
 
 # l4xsd11: "XSD 1.1 (w3c/xsdtests): schema ...; instance ...; total N pass, M fail, K unsupported (out of T); A not applicable".
