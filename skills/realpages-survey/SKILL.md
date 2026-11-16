@@ -20,6 +20,12 @@ or only the one that renders well enough to be measured?).
   vendored as fair use for testing, each with its URL, fetch time, HTTP header fields (Set-Cookie dropped),
   licence and attribution (`manifest.json`, `PROVENANCE.txt` in the ZIP, and the README beside them). Keep
   that directory under about 50 MB. Pictures and logs of each run stay workflow artifacts (7 days).
+- **Development test inputs only; nothing derived from them ships.** The snapshots are a small set of sites
+  the project owner approved for testing in development and CI. Never put them, or anything derived from
+  them or from other third-party sites, into a build that runs on users' machines: no per-site or
+  per-script profiles, shape or type hints, bytecode caches, Bloom or other filters, and no defaults tuned to
+  one site. Shipping site-derived data is a separate owner decision (see issue #532, guarded execution hints:
+  phase 1 learns locally in the user's browser, partitioned per site, and ships nothing).
 - **The host is the release's own commit.** `run_html.ts` and Textnaut change with the engine; a newer host
   on an older engine measures the host, not the release (on 2026-11-15 the host of main drew the Spinal Tap
   page at 41 ms GPU per frame on engine cc73af028, against 337 ms with cc73af028's own host). The host
