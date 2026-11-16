@@ -417,7 +417,9 @@ Each of these gets its own issue when work starts, linked from the pipeline tabl
 ## What was checked
 
 - The generic theorem of section 4 (`Unwinding`, `run_invisible`, `noninterference`, with an invariant kept by
-  steps) is a standalone Lean file with no imports. CHECK_RESULT
+  steps) is a standalone Lean file with no imports, not yet in the tree (its text is in the issue for this item).
+  `lean` v4.33.1 accepts it with no error and no `sorry`; `#print axioms noninterference` gives `propext` and
+  `Quot.sound` only. One linter warning (an unused simp argument).
 - Every DOI above was resolved against Crossref on 2026-11-16 and its title and authors compared.
 - Theorem names in section 2 were read from the source at `0ccd896a0`. Their statements were read for
   `Net/PageFetch` (CORS and opaque responses), `Net/Storage`, `HTML/FrameSessions` and `HTML/Frames`; for the other
