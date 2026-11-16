@@ -1,0 +1,96 @@
+{
+  "format": "factoidal-svg-webgpu-runtime-v1",
+  "kind": "release",
+  "sourceCommit": "0e4f29e01f1f66e2fff25609803946448a031ae3",
+  "files": [
+    {
+      "path": "svg_engine.mjs",
+      "bytes": 5705,
+      "sha256": "47c90ced9a527e9764803fc4a5678c7494280472d738c04b90e04cdf3482f108"
+    },
+    {
+      "path": "gpu_transport.mjs",
+      "bytes": 15350,
+      "sha256": "bc61bb667ad299a24615c42c3713b10bbec3c776cef8065762102b94b8215efa"
+    },
+    {
+      "path": "render_plan.mjs",
+      "bytes": 7998,
+      "sha256": "719679f13c0ef53a4f5ec77306c82c9bc27bf65b7922fcdce44e2a96c164c7d3"
+    },
+    {
+      "path": "engines/svg-engine.mjs",
+      "bytes": 91001,
+      "sha256": "4716f7b83cb27c462d3223f2761e00e3177bfa5b017204699fc281665d6f3607"
+    },
+    {
+      "path": "engines/svg-engine.wasm",
+      "bytes": 3153617,
+      "sha256": "64f6a494f55e86b60ee30c6ceace8a297681bdafa0433927b46eaafd1b0520f9"
+    },
+    {
+      "path": "engines/render-plan.mjs",
+      "bytes": 90573,
+      "sha256": "3cb074106cf5c70f6da739e3faf2fe09268e859de1fd9989e465a80f3d19c135"
+    },
+    {
+      "path": "engines/render-plan.wasm",
+      "bytes": 1441904,
+      "sha256": "8abd74625114b4d082985976dbe3c6765b25261a87269eab94b6b5d8c8c95571"
+    }
+  ],
+  "evidence": {
+    "qualification": "Fresh Lean/WASM build and named source tests passed in the recorded workflow run; this records build/source identity, not SVG conformance or GPU correctness.",
+    "sourceInventorySha256": "b2c09ff1efe588e09105a025a27ad9db4fd16ebc766a0eb9b7adec6d02780e07",
+    "sourceInventoryEntries": 61,
+    "sourceInputs": [
+      {
+        "path": "labs/demos/foafnaut/build-engines.sh",
+        "bytes": 12263,
+        "sha256": "f2ee48daa21b74ff42dbf3ee168a88e039cf4ccf74385a85b4163ed5f6be51f5"
+      },
+      {
+        "path": "labs/demos/foafnaut/svg_shim.c",
+        "bytes": 1539,
+        "sha256": "78ac627c186ab2b3c3b1ee581ad54ab9a2a50465da77e46aea75b1b30114ea55"
+      },
+      {
+        "path": "labs/demos/foafnaut/render_plan_shim.c",
+        "bytes": 1240,
+        "sha256": "a437403d98d0775e2603bd51b3bc344af51d5d0f46acf300f78a5c06235f0c92"
+      },
+      {
+        "path": "labs/demos/foafnaut/toolchain-versions.env",
+        "bytes": 146,
+        "sha256": "36c461985f49f2695fcd643bfe1bad1b35100feb5efd42d57ef0081a1def9096"
+      },
+      {
+        "path": "formal/lean4/lean-toolchain",
+        "bytes": 25,
+        "sha256": "3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
+      },
+      {
+        "path": "labs/demos/foafnaut/svg_engine.ts",
+        "bytes": 5683,
+        "sha256": "dc0ca23d61afdaf94cb0c5b86649907b4abbf3ac10b279a7cb82021efa86396e"
+      },
+      {
+        "path": "labs/demos/foafnaut/gpu_transport.ts",
+        "bytes": 15317,
+        "sha256": "5c476bc16dafacbea9e5f4c857512bace9976912c19138dfd5f7762120c8c204"
+      },
+      {
+        "path": "labs/demos/foafnaut/render_plan.ts",
+        "bytes": 7975,
+        "sha256": "3e996d2dc149b1ee0773330b0644fd901d3a79c10df43601c0022859cf194294"
+      }
+    ],
+    "toolVersions": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)\nemcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 6.0.8 (aeb67926e7de656da38bc807d83050af93578758)\nCopyright (C) 2026 the Emscripten authors (see AUTHORS.txt)\nThis is free and open source software under the MIT license.\nThere is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\ndeno 2.9.4 (stable, release, x86_64-unknown-linux-gnu)\nv8 15.0.245.2-rusty\ntypescript 6.0.3\n",
+    "packagingNode": "v22.23.4",
+    "nativeScene": {
+      "role": "compatibility marker, not build provenance",
+      "sha256": "74c558b8379209000888a84c6c0379c0715c4c963706b43191e13610a455a547"
+    },
+    "releaseBuildRun": "https://github.com/danbri/factoidal-builds/actions/runs/42463057804"
+  }
+}
