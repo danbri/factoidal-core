@@ -28,6 +28,21 @@ const addressOf=hash=>{
   return !text||/^(foafnaut:|https?:\/\/)/.test(text)?text:'https://'+text;
 };
 const hubAddress=()=>location.hash.length>1?addressOf(location.hash.slice(1)):'';
+// The licence line of a page the Hub shows from its copy (copies.mjs): attribution, licence,
+// when it was fetched, and the original address. Plain text and links made here; no markup
+// from the copy record is read as HTML.
+const copyBar=document.getElementById('copy');
+function copyLine(copy,url){
+  if(!copyBar)return;
+  if(!copy){copyBar.hidden=true;copyBar.replaceChildren();return;}
+  const link=(href,text)=>{const a=document.createElement('a');a.href=href;a.textContent=text;a.target='_blank';a.rel='noopener';return a;};
+  const close=document.createElement('button');close.type='button';close.textContent='\u00d7';close.setAttribute('aria-label','Hide this line');
+  close.addEventListener('click',()=>{copyBar.hidden=true;});
+  const parts=['Hub copy of ',link(copy.url??url,copy.title||url),`, fetched ${String(copy.fetched??'').slice(0,10)}. ${copy.attribution??''}. Licence: `];
+  const licence=/\((https?:[^)\s]+)\)/.exec(copy.licence??'');
+  parts.push(licence?link(licence[1],(copy.licence??'').replace(licence[0],'').trim()):(copy.licence??''),'.');
+  copyBar.replaceChildren(...parts,close);copyBar.hidden=false;
+}
 const query=new URLSearchParams(location.search),checkParam=query.get('check'),showStats=query.get('stats')==='1'||checkParam!==null;
 // A sandboxed guest has an opaque origin and can not start a worker. The loop then
 // runs here; it needs no extra capability.
@@ -89,6 +104,7 @@ worker.onmessage=({data})=>{
       if(data.push&&!fromHost)history.pushState(pageState,'',want);else history.replaceState(pageState,'',want);
     }
     fromHost=false;
+    copyLine(data.copy,data.url);
   }
   if(data.type==='keys')keyTable=data.table;
   // When each loading step ended (epoch ms): the engine compiled and started, the font, the page, the first frame.
