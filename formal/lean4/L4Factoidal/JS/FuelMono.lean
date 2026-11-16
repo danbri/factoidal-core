@@ -234,4 +234,16 @@ macro_rules
       | split
       | (dsimp (config := { zeta := false }) only))
 
+/-- At fuel 0 `iterCloseAbrupt` is out of fuel, as every function of the block is. It threw its
+completion there (with no call), so a run could end differently at fuel 0 than at fuel 1. -/
+theorem iterCloseAbrupt_zero (it : Value) (a : Abrupt) :
+    iterCloseAbrupt (H := H) 0 it a = throw (.halt "fuel") :=
+  (iterCloseAbrupt.eq_def 0 it a).trans rfl
+
+/-- So, at fuel 0, it is below itself at every fuel. -/
+theorem iterCloseAbrupt_zero_le (m : Nat) (it : Value) (a : Abrupt) :
+    Le (iterCloseAbrupt (H := H) 0 it a) (iterCloseAbrupt m it a) := by
+  rw [iterCloseAbrupt_zero]
+  exact Le.fuel _
+
 end L4Factoidal.JS.FuelMono
