@@ -132,6 +132,8 @@ export function createBrowserState({call,store,now=()=>Date.now(),log=(_record)=
     settings:changes=>record('stateSettings',changes),
     session:(tabs,active)=>record('stateSession',{tabs,active}),
     async read(){return await call('stateRead',{resources:await store.list()});},
+    /** The stored resources as they are, for the browser's search page (op searchPage). */
+    async resources(){return await store.list();},
     async page(page){return await call('statePage',{page,resources:await store.list(),where:store.where});},
     /** Push local changes and pull remote ones, merged by Lean. */
     async sync(remote){

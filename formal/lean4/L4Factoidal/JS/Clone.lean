@@ -335,6 +335,7 @@ def alloc (h : HeapOf H) (o : Obj) : Nat × HeapOf H :=
 @[inline] def modObj (h : HeapOf H) (obj : Nat) (f : Obj → Obj) : HeapOf H :=
   let objs := h.objs
   let h := { h with objs := #[] }
+  let (h, objs) := h.noteObj objs obj
   { h with objs := objs.modify obj f }
 
 /-- A non-enumerable, non-writable, configurable own data property. -/

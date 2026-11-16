@@ -160,7 +160,8 @@ theorem WorkerHost.take_head (wh : WorkerHost) (h : wh.head ≤ wh.inbox.size) :
 - both: 3 `take()` answers the next event's head (JSON: `w` worker, `k` kind, `h` header)
   or ""; 4 answers its bytes;
 - worker: 1 `post(0, bytes)` to the page; 10 `close()`; 11 `error(message, file, line,
-  col)`; 12 `importScript(url)` answers the source, -1 when the embedder has not fetched
+  col)`; 12 `importScript(url)` answers 0 when the embedder has the script (the source is
+  never answered: `runFetched(url)` runs it), -1 when the embedder has not fetched
   it yet (the run is undone: `missing`), -2 when the fetch failed. -/
 def serveWorker (wh : WorkerHost) (args : Array JS.HostArg) : WorkerHost × JS.HostAns :=
   let a := fun (i : Nat) => args.getD i (.val .undef)
@@ -188,7 +189,8 @@ def serveWorker (wh : WorkerHost) (args : Array JS.HostArg) : WorkerHost × JS.H
   | 12 =>
     let url := text 1
     match wh.scripts.find? (·.1 == url) with
-    | some (_, some src) => (wh, .val (.str (JS.Str.ofHost src)))
+    -- the source stays in the engine: `runFetched(url)` runs it (`serveScript`)
+    | some (_, some _) => (wh, .val (.num 0))
     | some (_, none) => (wh, .val (.num (-2)))
     | none => ({ wh with missing := wh.missing <|> some url }, .val (.num (-1)))
   | _ => (wh, .err "worker: no such op")
@@ -407,6 +409,47 @@ def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.Host
      | .error m => (h, .err m))
   | _ => (h, .err "foafnaut_dom: no such native")
 
+/-- A worker's imported script runs with muted errors unless it is of the worker's own origin
+(or a `data:` or `blob:` URL): HTML "fetch a classic worker-imported script" (a no-cors
+request; a CORS-cross-origin answer has muted errors). -/
+def importMuted (p : L4Factoidal.Net.PageFetch.Page) (url : String) : Bool :=
+  !(url.startsWith "blob:" || p.imageClean url)
+
+/-- The source of a classic script for the engine to run (`JS.hostScriptId`,
+`Native.classicScriptHost`, the prelude's `n.runFetched`), answered as `HostAns.script`, which
+never becomes a value of the realm: for a number, the script element request with that handle
+(`Net.Xhr.takeScript`); for a string, a worker's imported script of that URL (the embedder
+fetched it). -/
+def serveScriptSrc (h : Host) (wk : WorkerHost) (key : JS.HostArg) : Host × Option (String × Bool) :=
+  match key with
+  | .val (.num x) =>
+    let (net, got) := L4Factoidal.Net.Xhr.takeScript h.web.net x.toUInt64.toNat
+    ({ h with web := { h.web with net } }, got)
+  | .val (.str u) =>
+    let url := JS.Str.toHost u
+    (h, (wk.scripts.find? (·.1 == url)).bind fun e => e.2.map fun src => (src, importMuted h.web.net.page url))
+  | _ => (h, none)
+
+/-- A script's source as the host's answer: `HostAns.script`, else a refusal. -/
+def scriptAns : Option (String × Bool) → JS.HostAns
+  | some (src, muted) => .script src muted
+  | none => .err "no script"
+
+/-- The host's answer to a request for a script's source (`serveScriptSrc`, as `scriptAns`). -/
+def serveScript (h : Host) (wk : WorkerHost) (key : JS.HostArg) : Host × JS.HostAns :=
+  ((serveScriptSrc h wk key).1, scriptAns (serveScriptSrc h wk key).2)
+
+/-- Kind: security lemma (origin isolation, C6). Says: the host's answer to a request for a
+script's source is a `HostAns.script` (which the evaluator never makes a value: `hostAnswer`)
+or a refusal; it is never a value or bytes. -/
+theorem serveScript_answer (h : Host) (wk : WorkerHost) (key : JS.HostArg) :
+    (∃ src muted, (serveScript h wk key).2 = .script src muted) ∨ (serveScript h wk key).2 = .err "no script" := by
+  show (∃ src muted, scriptAns (serveScriptSrc h wk key).2 = .script src muted) ∨
+    scriptAns (serveScriptSrc h wk key).2 = .err "no script"
+  cases (serveScriptSrc h wk key).2 with
+  | none => exact Or.inr rfl
+  | some p => exact Or.inl ⟨p.1, p.2, rfl⟩
+
 /-- The host's natives with the script clock: the instructions run so far are the steps of
 the session before this run and the steps of this run (`runBudget` less the steps left),
 as `Page.Session.run` counts the instructions of a run at each host call. -/
@@ -414,6 +457,10 @@ def hostCall (lh : LHost) (k : Nat) (args : Array JS.HostArg) (left : Nat) : LHo
   if k == 29 then
     let ⟨page, base, wasm0, wk, budget⟩ := lh
     let (wk, ans) := serveWorker wk args
+    (⟨page, base, wasm0, wk, budget⟩, ans)
+  else if k == JS.hostScriptId then
+    let ⟨page, base, wasm0, wk, budget⟩ := lh
+    let (page, ans) := serveScript page wk (args.getD 0 (.val .undef))
     (⟨page, base, wasm0, wk, budget⟩, ans)
   else
   let base := lh.base
@@ -577,6 +624,43 @@ def Session.eval (s : Session) (src : String) : Session :=
   | .syntaxError m => s.reportNew true m
   | o => s.fail ((failure o).getD "")
 
+/-- Run a classic script whose errors are muted (HTML "muted errors": an external script of
+another origin, fetched without CORS): an exception, or a script that does not parse, is
+reported to the page as "Script error." with no URL, position or error value (the prelude's
+`reportMuted`), never with what it threw. The embedder's record keeps the message. -/
+def Session.evalMuted (s : Session) (src : String) : Session :=
+  let (s, o, _) := s.run fun h => let (o, h) := JS.evalScript h src; ((o, .undef), h)
+  match o with
+  | .ok => s
+  | .threw _ m => (s.api? "reportMuted" #[]).1.fail m
+  | .syntaxError m => (s.api? "reportMuted" #[]).1.fail ("SyntaxError: " ++ m)
+  | o => s.fail ((failure o).getD "")
+
+/-- Whether the classic script element `node` that the embedder fetched has muted errors: its
+`src`, resolved against its document's base URL, is of a tuple origin other than the page's
+(not `data:`). The embedder followed any redirect; one to another origin is not seen here. A
+page of an opaque origin (`file:`, `about:`) mutes none. Inline scripts never are. The bases
+are tracked from the first external script on (`ensureBases`). -/
+def Session.scriptMuted (s : Session) (node : Nat) : Session × Bool :=
+  let h := s.host
+  match Hosts.Dom.attrValue? h.dom.dom node "src" with
+  | none => (s, false)
+  | some v =>
+    let page := h.web.net.page
+    if page.origin == "null" || page.origin.isEmpty then (s, false) else
+    let v := v.trimAscii.toString
+    let mutedFor := fun (u : L4Factoidal.WHATWG.URL.Url) => !(u.href.startsWith "data:" || u.origin == page.origin)
+    -- an absolute URL needs no base: the bases stay untracked
+    match L4Factoidal.WHATWG.URL.parseUrl v none with
+    | some u => (s, mutedFor u)
+    | none =>
+      let d := h.dom.ensureBases
+      let base := d.documentBase (h.dom.dom.get node).doc
+      let muted := match L4Factoidal.WHATWG.URL.parseUrl v (some base) with
+        | some u => mutedFor u
+        | none => false
+      (s.setHost { h with dom := d }, muted)
+
 def Session.dispatchOnly (s : Session) (target : Nat) (type : String) : Session × Bool :=
   let (s, v) := s.api? "dispatch" #[.num (Float.ofNat target), .str type, .num (Float.ofNat (Page.flagsOf type))]
   ({ s with tasks := s.tasks + 1 }, match v with | .str "prevented" => true | _ => false)
@@ -705,6 +789,8 @@ def prepareSource (lim : Page.Limits := {}) : Except String Session := do
   -- of the engine, not of the host, since they walk the heap
   let heap := JS.addNatives heap nobj #[("serialize", .x .cloneSerialize, 2), ("deserialize", .x .cloneDeserialize, 1),
     ("runScript", .x .classicScript, 1),
+    -- a classic script whose source the engine holds and the realm never sees (`serveScript`)
+    ("runFetched", .x .classicScriptHost, 1),
     -- the global object's slot for the page's named properties (`JS.namedGetterKey`)
     ("setNamedGetter", .x .namedGetterSet, 1),
     -- the URL Pattern Standard (`WHATWG.URLPattern`), for the prelude's URLPattern class
@@ -789,7 +875,9 @@ def startBegin (base : Session) (dom : Arena) (url : String) (lim : Page.Limits 
 
 /-- One classic script of a start: the current script set, the script, a checkpoint. -/
 def startScript (s : Session) (node : Nat) (src : String) : Session :=
-  engine.checkpoint ((((s.api? "script" #[.num (Float.ofNat node)]).1).eval src))
+  let (s, muted) := s.scriptMuted node
+  let s := (s.api? "script" #[.num (Float.ofNat node)]).1
+  engine.checkpoint (if muted then s.evalMuted src else s.eval src)
 
 /-- The classic scripts `scripts` of a start, in order. -/
 def startScripts (s : Session) (scripts : List (Nat × String)) : Session :=
@@ -920,8 +1008,9 @@ def loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat �
   let mut s := s.setHost { s.host with dom }
   if let some root := root then
     for (node, src) in scripts do
-      s := (s.api? "script" #[.num (Float.ofNat (node + root))]).1
-      s := s.eval src
+      let (s', muted) := s.scriptMuted (node + root)
+      s := (s'.api? "script" #[.num (Float.ofNat (node + root))]).1
+      s := if muted then s.evalMuted src else s.eval src
       s := engine.checkpoint s
     s := (s.api? "script" #[.num (-1)]).1
   s := engine.setLoop s ((engine.loop s).queueTask .networking 0 (some { type := "load", target := el }))

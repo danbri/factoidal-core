@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Settings</title><style>body{margin:16px;font-size:14px;line-height:20px;color:#102030;background:white}h1{margin:0;font-size:22px;line-height:30px;color:#184078}h2{margin:0;padding-top:16px;font-size:17px;line-height:26px;color:#184078}p{margin:0;padding-top:6px}.check{padding-top:10px;font-size:18px;line-height:40px}.box{display:inline-block;width:32px;height:32px;border:3px solid #184078;background:white;vertical-align:middle}.tick{display:block;margin:6px;width:20px;height:20px;background:#184078}.boxon{background:#184078;border-color:#184078}.size{padding-top:8px;font-size:20px;line-height:30px;font-weight:bold;color:#000000}.sample{padding-top:4px;font-size:16px;line-height:24px;color:#000000}.steps{padding-top:12px}.steps a,.presets a{display:inline-block;margin:0 12px 12px 0;padding:0 18px;border:4px solid #0b2a66;font-weight:bold;text-decoration:none}.steps a{font-size:18px;line-height:36px;background:#0b2a66;color:#ffffff}.presets a{font-size:15px;line-height:32px;background:#ffffff;color:#0b2a66}.presets a.chosen{background:#0b2a66;color:#ffffff}.engine{margin-top:10px;pad
+<html lang="en"><head><meta charset="utf-8"><title>Settings</title><style>body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#102030;background:white}h1{margin:0;font-size:22px;line-height:30px;color:#184078}h2{margin:0;padding-top:16px;font-size:17px;line-height:26px;color:#184078}p{margin:0;padding-top:6px}.check{padding-top:10px;font-size:18px;line-height:40px}.box{display:inline-block;width:32px;height:32px;border:3px solid #184078;background:white;vertical-align:middle}.tick{display:block;margin:6px;width:20px;height:20px;background:#184078}.boxon{background:#184078;border-color:#184078}.size{padding-top:8px;font-size:20px;line-height:30px;font-weight:bold;color:#000000}.sample{padding-top:4px;font-size:16px;line-height:24px;color:#000000}.steps{padding-top:12px}.steps a,.presets a{display:inline-block;margin:0 12px 12px 0;padding:0 18px;border:4px solid #0b2a66;font-weight:bold;text-decoration:none}.steps a{font-size:18px;line-height:36px;background:#0b2a66;color:#ffffff}.presets a{font-size:15px;line-height:32px;background:#ffffff;color:#0b2a66}.presets a.chosen{background:#0b2a66;color:#ffffff}.engine{margin-top:10px;pad
 <h1>Settings</h1>
 <p class="k">Open this page with the gear at the right of the toolbar, :settings in the address bar, or foafnaut:settings.</p>
 <div class="engine">
@@ -27,8 +27,12 @@
 <!--foafnaut:encoding-->
 <p class="presets"><a href="foafnaut:encoding/detect">Detect (UTF-8 when valid)</a> <a href="foafnaut:encoding/locale">From system language</a> <a href="foafnaut:encoding/windows-1252">windows-1252</a> <a href="foafnaut:encoding/UTF-8">UTF-8</a></p>
 <!--/foafnaut:encoding-->
+<h2>Search</h2>
+<!--foafnaut:search-->
+<p>Words typed in the address bar that are not an address go to no one: they open a page of this browser. This engine is older and has no search engine setting.</p>
+<!--/foafnaut:search-->
 <h2>The address bar</h2>
-<p>Type a URL, or words to search, or a command.</p>
+<p>Type a URL, words, or a command. Words open a page of this browser, or go to the search engine you chose above.</p>
 <p>- :settings opens this page</p>
 <p>- :back and :forward</p>
 <p>- :reload</p>
@@ -39,9 +43,7 @@
 <p>- :zoom 150, :zoom up and :zoom down</p>
 <p>- :theme dark, :theme light</p>
 <p>- :console shows what the page logged and what this browser skipped</p>
-<p>- :open https://example.org opens your system browser</p>
-<p>The browser keeps these settings: a reload or a new window starts with them.</p>
- skipped</p>
+<p>- :search-engine and a name from the Search list, none, or an address with %s where the words go</p>
 <p>- :open https://example.org opens your system browser</p>
 <p>The browser keeps these settings: a reload or a new window starts with them.</p>
 </main></body></html>

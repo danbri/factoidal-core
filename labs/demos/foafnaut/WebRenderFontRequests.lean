@@ -21,8 +21,10 @@ def collectDOMWithRules (dom : DOM.Dom) (rules : List Rendering.CSS.Rule) (textS
       -- BidiData indices: R=1, AL=2, AN=6, directional formats=14..22.
       if bidi == 1 || bidi == 2 || bidi == 6 || bidi >= 14 then
         throw "unsupported font text: bidi paragraph layout required"
+  -- `serif` is the initial family (`CSS.Computed.fontFamily`): text that names no family is
+  -- in the bitmap face here, as it was when the initial family was `monospace`.
   let bitmap := fun (request : Rendering.FontRequests.Request) =>
-    ["monospace","ascii-bitmap"].contains request.family.toLower
+    ["monospace","serif","ascii-bitmap"].contains request.family.toLower
   if requests.all bitmap then return #[]
   if requests.any bitmap then throw "unsupported mixed bitmap and supplied font families"
   return requests

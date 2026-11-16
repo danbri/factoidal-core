@@ -713,6 +713,14 @@ def shapeFresh (fonts : Array Font) (text : String) (px : Nat) (rtl : Option Boo
   let word ← wordIn fonts text px rtl
   return {(if px < flatBelow then flatWord word else word) with pixelSize := px}
 
+/-- A word of `fonts` in the units and metrics of `primary` (`wordWith`) at `px` pixels, in
+direction `rtl`, as the profile hands it to layout: the words of web fonts and of the serif
+face (`profile`, `familyWord`), whose first font is not the primary one. -/
+def shapeFreshWith (primary : Font) (fonts : Array Font) (text : String) (px : Nat) (rtl : Option Bool) :
+    Except String FontProvider.Word := do
+  let word ← wordWith primary fonts text px rtl
+  return {(if px < flatBelow then flatWord word else word) with pixelSize := px}
+
 /-- What names `fonts` in the kept table: each font's SHA-256, family, face and size in
 bytes (a host that names fonts with no real SHA-256, as the CLI does, still keeps two
 fonts apart). -/
@@ -724,7 +732,8 @@ def fontsKey (fonts : Array Font) : String :=
 The profile is named by the first font of `fonts`; the others draw what it lacks. -/
 def profile (fonts : Array Font) (memo : Memo)
     (shape : String → Nat → Option Bool → Except String FontProvider.Word := shapeFresh fonts)
-    (webFonts : String → Array Font := fun _ => #[]) :
+    (webFonts : String → Array Font := fun _ => #[])
+    (familyShape : Option (Array Font → String → Nat → Option Bool → Except String FontProvider.Word) := none) :
     Except String Layout.FontProfile := do
   let some f := fonts[0]? | throw "font profile: no font"
   let space ← match memo.get? " " with
@@ -741,12 +750,13 @@ def profile (fonts : Array Font) (memo : Memo)
     descent := space.descent,outline := fun _ => [],admits := fun _ => false,cssFamilies := [f.family],
     fontSha256 := some f.sha256,faceIndex := f.faceIndex,scalable := true,
     shapedWord := some shapedWord,shapedWordDir := some shapedWordDir,
-    -- Web fonts first, then the held fonts; the units and metrics stay the primary
-    -- font's. Words of web fonts are not in the memo.
+    -- Web fonts (and the serif face) first, then the held fonts; the units and metrics stay
+    -- the primary font's. Words of web fonts are not in the memo: `familyShape web`, when
+    -- given, must give what `shapeFreshWith f (web ++ fonts)` gives (a host keeps them).
     familyWord := fun family =>
       let web := webFonts family
-      if web.isEmpty then none else some fun text px rtl => do
-        let word ← wordWith f (web ++ fonts) text px rtl
-        return {(if px < flatBelow then flatWord word else word) with pixelSize := px}}
+      if web.isEmpty then none else some (match familyShape with
+        | some shape => shape web
+        | none => shapeFreshWith f (web ++ fonts))}
 
 end L4Factoidal.Rendering.SfntProfile

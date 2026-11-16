@@ -275,13 +275,13 @@ function fontLoad(bytes,family,sha,fallback=false){
   if(!fontBytesTakeFallback||typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
     let text='';
     for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
+    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='serif'?{serif:true}:fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
   }
   const input=module._malloc(Math.max(1,bytes.length));
   if(!input)throw Error('Lean engine allocation failed');
   try{
     module.HEAPU8.set(bytes,input);
-    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='web'?2:fallback?1:0]);
+    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='serif'?3:fallback==='web'?2:fallback?1:0]);
     if(!pointer)throw Error('Lean engine allocation failed');
     try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
     finally{module.ccall('web_render_free',null,['number'],[pointer]);}
@@ -304,6 +304,22 @@ async function loadFont(){
     // fallback argument: on 2026-11-07 the published engine did both (issue 1274).
     if(typeof primary?.fonts==='number')fontBytesTakeFallback=true;
   }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));}
+}
+// The serif face (labs/demos/foafnaut/serif_font.ts): `serif` and the initial font-family
+// draw with Liberation Serif, as browsers draw them with a Times-like face. Lean decides which
+// text is serif; the first render whose text wants the face while the engine holds none
+// answers wantsSerif, and the face is fetched then, given to Lean (fontLoad mode 3) and the page
+// drawn again. A session whose pages never resolve to serif fetches no serif byte.
+const serifFont='./fonts/liberation-serif/LiberationSerif-Regular.ttf';
+let serifLoading;
+function wantSerif(){
+  if(serifLoading)return;
+  const start=performance.now();
+  serifLoading=fontFile(serifFont).then(({bytes,sha})=>{
+    fontLoad(bytes,'Liberation Serif',sha,'serif');
+    console.info(`foafnaut: serif face in ${Math.round(performance.now()-start)} ms`);
+    request();
+  }).catch(error=>console.warn('foafnaut: no serif face, serif text stays in Noto Sans:',String(error?.message??error)));
 }
 // The fallback fonts a page needs, into the engine. Those that come within `wait` ms go in
 // before the page is laid out; the rest go in together when they have all come, and the
@@ -338,6 +354,9 @@ async function loadFallbackFonts(source,wait){
 // Pages that declare no encoding: the setting ('' detect) and the browser's language
 // (navigator.language), which Lean maps by HTML §13.2.3.2's table of suggested defaults.
 let encodingSetting='';const systemLocale=self.navigator?.language??'';
+// The search engine chosen in Settings (WebRoute.searchSetting): '' until the person picks one;
+// until then words typed in the address bar open the browser's own search page.
+let searchSetting='';
 function decodePage(bytes,contentType){
   if(module&&typeof module._web_document_decode_call_bin==='function'&&typeof module._malloc==='function'){
     const two=typeof module._web_document_decode2_call_bin==='function';
@@ -394,6 +413,9 @@ function settingsSource(source){
   // an engine from before the op keeps the static links.
   const eOpen='<!--foafnaut:encoding-->',eClose='<!--/foafnaut:encoding-->',ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
   if(ei>=0&&ej>ei)try{source=source.slice(0,ei+eOpen.length)+call('',{op:'encodingChoices',setting:encodingSetting,locale:systemLocale}).html+source.slice(ej);}catch{/* the static links */}
+  // The search engine section (none chosen by default); an engine from before the op keeps the static text.
+  const sOpen='<!--foafnaut:search-->',sClose='<!--/foafnaut:search-->',si=source.indexOf(sOpen),sj=source.indexOf(sClose);
+  if(si>=0&&sj>si)try{source=source.slice(0,si+sOpen.length)+call('',{op:'searchChoices',setting:searchSetting}).html+source.slice(sj);}catch{/* the static text */}
   return source;
 }
 // A text resource of this site (a linked style sheet): another origin is read only from the
@@ -977,7 +999,7 @@ function hasWasm(){
   return engineWasm;
 }
 const wasmNeedsEngine=url=>({url,title:'Needs a newer engine',sources:[],source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title>'+
-  '<style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#a0186a}p{margin:0 0 8px 0}</style></head><body>'+
+  '<style>body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#a0186a}p{margin:0 0 8px 0}</style></head><body>'+
   '<h1>WebAssembly in Lean needs a newer engine</h1><p>This page runs WebAssembly modules with WasmVM, the WebAssembly engine written in Lean, inside the Foafnaut engine.</p>'+
   '<p>The engine this page loaded is older and does not have it. The next engine release carries it.</p></body></html>'});
 async function wasmModule(argument){
@@ -997,6 +1019,18 @@ async function wasmPage(url){
   const answer=call('',{op:'wasmPage',...(argument?await wasmModule(argument):{})});
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
 }
+// foafnaut:search/WORDS (WebShell.searchPage): words typed in the address bar with no search
+// engine chosen. Lean writes it from the open tabs and the stored bookmarks and history (the
+// page's own IndexedDB or memory store); nothing is fetched to show it.
+const searchURL='foafnaut:search';
+async function searchPage(url){
+  const resources=browserState?await browserState.resources().catch(()=>undefined):undefined;
+  const open=tabs.map((tab,i)=>i===active?doc:tab.doc).filter(Boolean).map(page=>({url:page.url,title:page.title??''}));
+  let answer;
+  try{answer=call('',{op:'searchPage',argument:url.slice(searchURL.length+1),tabs:open,resources:resources??[],state:resources!==undefined,search:searchSetting});}
+  catch{answer={title:'Needs a newer engine',source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body><h1>The search page needs a newer engine</h1><p>The words were sent to no one.</p></body></html>'};}
+  return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+}
 async function statePage(url){
   if(!browserState)throw Error(`Browser state is off: ${stateReason}`);
   const answer=await browserState.page(url.slice(9));
@@ -1014,7 +1048,7 @@ function hasSparql(){
   return engineSparql;
 }
 const sparqlNeedsEngine=url=>({url,title:'Needs a newer engine',sources:[],source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title>'+
-  '<style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#184078}p{margin:0 0 8px 0}</style></head><body>'+
+  '<style>body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#184078}p{margin:0 0 8px 0}</style></head><body>'+
   '<h1>The SPARQL planner page needs a newer engine</h1><p>This page draws how Factoidal plans and runs a SPARQL query, from the Lean engine.</p>'+
   '<p>The engine this page loaded is older and does not have it. The next engine release carries it.</p></body></html>'});
 function sparqlPage(url){
@@ -1039,7 +1073,7 @@ function visit(address){
   // their fallback on an engine from before the route op.
   const route=router.route({...site,href:address,base:homeURL});
   if(!route)return;
-  if(route.route==='system')outsideGo(route.url,false);
+  if(route.route==='system'||route.route==='outside')outsideGo(route.url,false);
   else if(route.route==='command')shellCommand(route.name,route.argument);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url,false);
@@ -1060,7 +1094,7 @@ function consolePage(url){
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}],consoleSource:source};
 }
 function openConsole(){const source=doc;newTab();setFocus(false);consoleFrom=source;navigate(consoleURL);}
-const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
+const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url.startsWith(searchURL+'/')?searchPage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
 // The Hub's own browser pages as link targets (the start page offers "open in Foafnaut on the
 // Hub" and "in Textnaut on the Hub" for a reader in an ordinary browser): in this tab, a link to
 // this Foafnaut page with an address after # opens that address here, not a second Foafnaut in
@@ -1121,8 +1155,12 @@ function menuDone(data){
 // An address from the bar (Enter, or Paste and go): Lean routes it as typed.
 function goTo(target){
   leaveAddress();
-  const route=router.address({...site,address:target,base:doc.baseURL||doc.url});
-  if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));
+  const route=router.address({...site,address:target,base:doc.baseURL||doc.url,search:searchSetting});
+  // A typed address reaches the system only as `:open URL`; here it is the Outside page, read
+  // from nowhere, so its button is a second, explicit press (and an older engine's answer for
+  // typed words, a search engine's address, is never fetched).
+  if(route?.route==='system')show(outsidePage(route.url));
+  else if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));
 }
 function menuPress(data,how){
   if(!menuOps)return;
@@ -1335,6 +1373,13 @@ function shellCommand(name,argument){
       if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
     catch(error){doc=refusal('foafnaut:encoding/'+argument,String(error.message??error));request();}
   }
+  else if(name==='search-engine'){
+    // Lean reads the choice (an engine of its list, an address with %s, or none). A link gives
+    // this command only on the Settings page (WebRoute.settingsOnly); the bar may type it.
+    try{searchSetting=call('',{op:'searchSetting',setting:argument}).setting;browserState?.settings({search:searchSetting}).catch(()=>{});
+      if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
+    catch(error){doc=refusal('foafnaut:search-engine/'+argument,String(error.message??error));request();}
+  }
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
   else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
@@ -1367,17 +1412,20 @@ async function openState(){
     if(typeof saved.settings.scripts==='string')scriptSetting=saved.settings.scripts;
     if(typeof saved.settings.liberal==='boolean'&&!strictParam)liberal=saved.settings.liberal;
     if(typeof saved.settings.encoding==='string')encodingSetting=saved.settings.encoding;
+    if(typeof saved.settings.search==='string')try{searchSetting=call('',{op:'searchSetting',setting:saved.settings.search}).setting;}catch{searchSetting='';}
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
 }
 // Lean's route for a link or an address (link-route.mjs), done as it says. This host tests
 // no URL: a refused link shows Lean's reason and stays out of the history.
 function follow(route){
   if(route.route==='command')shellCommand(route.name,route.argument);
-  else if(route.route==='system')offSiteGo(route.url);
+  else if(route.route==='system'||route.route==='outside')offSiteGo(route.url);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url);
 }
-// A link or an address of another site (Lean's route "system"). It never leaves Foafnaut by
+// A link or an address of another site (Lean's route "outside", and "system" for the press of
+// the Outside page's button, which Lean answers only when the request's `outside` is that
+// page's address). It never leaves Foafnaut by
 // itself (owner, 2026-11-16): the page opens in the tab from the Hub's copy or from a direct
 // read the site allows (copies.mjs fetchOutside); else the tab shows outsidePage, whose one
 // button is a link to the same address. Only a press on that button, while that page is
@@ -1389,7 +1437,15 @@ function outsideGo(url,press){
   if(/^https?:/i.test(url))navigate(url,press);
   else show(outsidePage(url),press);
 }
+// The Outside page, as Lean writes it (WebShell.outsidePage); an engine from before the op
+// gets the page this file wrote before it (legacyOutsidePage).
 const outsidePage=url=>{
+  try{
+    const answer=call('',{op:'outsidePage',url,hub:true,textnaut:url.startsWith(hubTextnaut)});
+    return {url,title:answer.title,outside:url,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+  }catch{return legacyOutsidePage(url);}
+};
+const legacyOutsidePage=url=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const web=/^https?:/i.test(url),hub=url.startsWith(hubTextnaut);
   const why=hub?'<p>Textnaut has its own page on the Hub; it does not open inside this one.</p>'
@@ -1409,7 +1465,10 @@ const outsidePage=url=>{
 function legacyGo(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
   else if(answer.url?.startsWith('foafnaut:'))navigate(answer.url);
-  else if(answer.go==='system'||!answer.url.startsWith(siteOrigin))offSiteGo(answer.url);
+  // The system only by a press: an older engine's "system" (a search engine's address for
+  // typed words) is the Outside page, never fetched.
+  else if(answer.go==='system')show(outsidePage(answer.url));
+  else if(!answer.url.startsWith(siteOrigin))offSiteGo(answer.url);
   else navigate(answer.url);
 }
 function chrome(control){
@@ -1449,6 +1508,7 @@ async function draw(){
       else{
         next=render(doc.source,wantLayers?{...options,layers:true}:options,width,height);
         noteDiagnostics(doc,next);
+        if(next?.wantsSerif===true)wantSerif();
         // An engine with no layers answers one frame: this page then draws frames as before.
         if(wantLayers){layers=L.layersOf(next);layered=!!layers;}
       }
@@ -1606,7 +1666,7 @@ async function start(data){
   // (a command, a refusal, another site) is handled by visit() once the tab is ready.
   let fromAddress;
   if(data.address){try{const route=router.route({...site,href:data.address,base:homeURL});
-    if(route&&!['system','command','refuse'].includes(route.route))fromAddress=route.url;}catch{}}
+    if(route&&!['system','outside','command','refuse'].includes(route.route))fromAddress=route.url;}catch{}}
   const opening=fromAddress??wanted;
   if(opening){try{first=await pageFor(opening);}catch(error){first=refusal(opening,String(error.message??error));}}
   phase('pageReady');
@@ -1848,7 +1908,7 @@ function apply(data){
     // A click begins the SVG animations whose `begin` is a click on what it hits.
     if(doc.animation?.has&&current){const a=doc.animation;a.clicks=[...a.clicks,[Math.round(performance.now()-a.epoch),data.x,data.y-current.answer.layers.top+scroll]].slice(-16);a.running=true;request();}
     const target=hit(data.x,data.y);
-    if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url}));
+    if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url,outside:doc?.outside??''}));
   }
   if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){
