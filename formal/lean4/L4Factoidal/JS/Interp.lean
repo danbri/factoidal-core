@@ -1229,8 +1229,10 @@ def jsonSources : Nat → Nat → String → L4Factoidal.JSON.Json → Value →
       match j, o.kind with
       | .array xs, .array es =>
         let mut out := #[]
-        for i in [0:min xs.length es.size] do
-          out := out ++ (← jsonSources fuel vid (toString i) xs[i]! es[i]!)
+        let mut i := 0
+        for x in xs do
+          if h : i < es.size then out := out ++ (← jsonSources fuel vid (toString i) x es[i])
+          i := i + 1
         pure out
       | .object kvs, _ =>
         let mut out := #[]
