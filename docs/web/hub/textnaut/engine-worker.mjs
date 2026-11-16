@@ -3,6 +3,7 @@
 // view (engine.mjs creates this worker then), so a page that never asks loads nothing.
 // Requests are answered one at a time, in order: the engine and the GPU session are one each.
 import {createEngineCore} from './engine-core.mjs';
+import {fetchCopy} from '../foafnaut/copies.mjs';
 
 const runtimeBase=new URL('../html-webgpu/runtime/',import.meta.url);
 // The engine module compiles while it downloads (as the Foafnaut Hub page's worker does).
@@ -36,7 +37,14 @@ const core=createEngineCore({
   compiled,
   origin:self.location.origin,
   fontURL:new URL('../foafnaut/fonts/noto-sans/NotoSans-Regular.ttf',import.meta.url).href,
+  copies:true,
   async fetchBytes(url){
+    // Another site: only from the Hub's copies of a few openly licensed pages (copies.mjs).
+    if(new URL(url).origin!==self.location.origin){
+      const copy=await fetchCopy(url);
+      if(!copy)throw Error(`${new URL(url).origin} is another site: the Hub reads only this site and its copies of a few openly licensed pages (open it in Textnaut or Foafnaut on your computer)`);
+      return copy;
+    }
     const response=await fetch(url,{credentials:'same-origin'});
     if(!response.ok)throw Error(`HTTP ${response.status} for ${url}`);
     return {url:response.url||url,bytes:new Uint8Array(await response.arrayBuffer()),contentType:response.headers.get('content-type')??''};

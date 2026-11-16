@@ -371,6 +371,95 @@ def advanceGo (target : Nat) : Nat → Option Nat → σ → Nat → σ × Nat �
       else if fired.isEmpty ∧ target ≤ l.clock then (s, frames, false)
       else advanceGo target fuel slot s frames
 
+/-- `advanceGo` cut into slices: before each step it asks `stop` of the state (a host's
+budget for one turn, so that input is taken between slices) and, when it holds, ends with
+what is left to do: the fuel and the frame slot (`some (fuel, slot)`). Every stop is
+between two tasks, after a task's microtask checkpoint, where HTML lets a user agent
+render and take input. With a `stop` that never holds it is `advanceGo`
+(`advanceGoStop_never`); going on from a stop with `advanceGo` gives what `advanceGo`
+gives with no stop (`advanceGoStop_resume`, `advanceGoStop_done`). -/
+def advanceGoStop (stop : σ → Bool) (target : Nat) :
+    Nat → Option Nat → σ → Nat → σ × Nat × Bool × Option (Nat × Option Nat)
+  | 0, _, s, frames => (s, frames, true, none)
+  | fuel + 1, slot, s, frames =>
+    if stop s then (s, frames, false, some (fuel + 1, slot)) else
+    let (l, r) := (d.loop s).step
+    let s := d.setLoop s l
+    match r with
+    | some r => advanceGoStop stop target fuel slot (d.run s r) frames
+    | none =>
+      let goal := match slot with | some f => min f target | none => target
+      let (l, fired) := (d.loop s).advanceTo goal
+      let s := d.setLoop s l
+      if fired.isEmpty ∧ slot = some l.clock then
+        if l.frames.isEmpty then advanceGoStop stop target fuel none s frames
+        else advanceGoStop stop target fuel none (d.frame s) (frames + 1)
+      else if fired.isEmpty ∧ target ≤ l.clock then (s, frames, false, none)
+      else advanceGoStop stop target fuel slot s frames
+
+/-- Kind: equivalence (slicing changes no result). Says: the loop with no stop is the sliced
+loop followed, when it stopped, by the loop with no stop from where it stopped, with the
+fuel and the frame slot it left: the same state, frame count and answer. -/
+theorem advanceGo_eq_stop (stop : σ → Bool) (target : Nat) :
+    ∀ (fuel : Nat) (slot : Option Nat) (s : σ) (frames : Nat),
+      d.advanceGo target fuel slot s frames =
+        match d.advanceGoStop stop target fuel slot s frames with
+        | (s', f', o, none) => (s', f', o)
+        | (s', f', _, some (n, sl)) => d.advanceGo target n sl s' f' := by
+  intro fuel
+  induction fuel with
+  | zero => intro slot s frames; rfl
+  | succ fuel ih =>
+    intro slot s frames
+    by_cases hs : stop s = true
+    · simp only [advanceGoStop, hs, if_true]
+    · simp only [advanceGoStop, hs, Bool.false_eq_true, if_false, advanceGo]
+      repeat' split
+      all_goals first | rfl | exact ih _ _ _ | (rw [ih]; rename_i h; rw [h]) | (rename_i h; cases h; rfl) | (rename_i h; cases h)
+
+/-- Kind: equivalence. Says: when the sliced loop stops, going on from where it stopped with
+`advanceGo` gives what `advanceGo` gives with no stop. -/
+theorem advanceGoStop_resume (stop : σ → Bool) (target fuel : Nat) (slot : Option Nat) (s : σ) (frames : Nat)
+    (s' : σ) (frames' : Nat) (o : Bool) (n : Nat) (slot' : Option Nat)
+    (h : d.advanceGoStop stop target fuel slot s frames = (s', frames', o, some (n, slot'))) :
+    d.advanceGo target fuel slot s frames = d.advanceGo target n slot' s' frames' := by
+  rw [d.advanceGo_eq_stop stop, h]
+
+/-- Kind: equivalence. Says: a sliced loop that ends with no stop (it reached its target, or
+its fuel ran out) gives what the loop with no stop gives. -/
+theorem advanceGoStop_done (stop : σ → Bool) (target fuel : Nat) (slot : Option Nat) (s : σ) (frames : Nat)
+    (s' : σ) (frames' : Nat) (o : Bool)
+    (h : d.advanceGoStop stop target fuel slot s frames = (s', frames', o, none)) :
+    d.advanceGo target fuel slot s frames = (s', frames', o) := by
+  rw [d.advanceGo_eq_stop stop, h]
+
+/-- With a `stop` that never holds, the sliced loop never stops. -/
+theorem advanceGoStop_never_stops (target : Nat) :
+    ∀ (fuel : Nat) (slot : Option Nat) (s : σ) (frames : Nat),
+      (d.advanceGoStop (fun _ => false) target fuel slot s frames).2.2.2 = none := by
+  intro fuel
+  induction fuel with
+  | zero => intro slot s frames; rfl
+  | succ fuel ih =>
+    intro slot s frames
+    simp only [advanceGoStop, Bool.false_eq_true, if_false]
+    repeat' split
+    all_goals first | rfl | exact ih _ _ _ | (clear ih; simp_all)
+
+/-- Kind: equivalence (no change for a host that does not slice). Says: with a `stop` that
+never holds, the sliced loop is `advanceGo`. -/
+theorem advanceGoStop_never (target fuel : Nat) (slot : Option Nat) (s : σ) (frames : Nat) :
+    d.advanceGo target fuel slot s frames =
+      let r := d.advanceGoStop (fun _ => false) target fuel slot s frames; (r.1, r.2.1, r.2.2.1) := by
+  have hn := d.advanceGoStop_never_stops target fuel slot s frames
+  revert hn
+  generalize hr : d.advanceGoStop (fun _ => false) target fuel slot s frames = r
+  obtain ⟨s', f', o, x⟩ := r
+  intro hn
+  simp only at hn
+  subst hn
+  exact d.advanceGoStop_done _ target fuel slot s frames s' f' o hr
+
 end Driver
 
 end L4Factoidal.EventLoop

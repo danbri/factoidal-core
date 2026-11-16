@@ -1,0 +1,343 @@
+{
+ "note": "Pages the Hub shows from copies (docs/web/hub/foafnaut/copies.mjs): openly licensed public pages only, each with its licence and attribution, which the Hub shows under the page. Snapshots by snapshot.ts --pages THIS_FILE, vendored in danbri/factoidal-builds third_party/realpages/<site>/<id>-<YYYYMMDD>.zip; tools/hub-copies.mjs unpacks the newest of each into the site at deploy. drop: hosts whose responses are left out of the copy (Wikimedia images have licences of their own, some of them not free). Not part of the survey (pages.json).",
+ "defaults": {
+  "viewport": "1280x800",
+  "licence": "see each page"
+ },
+ "pages": [
+  {
+   "id": "hub-wp-www",
+   "url": "https://en.wikipedia.org/wiki/World_Wide_Web",
+   "title": "Wikipedia: World Wide Web",
+   "lang": "en",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"World Wide Web\", en.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wp-www-m",
+   "url": "https://en.wikipedia.org/wiki/World_Wide_Web?useskin=minerva",
+   "title": "Wikipedia, mobile skin: World Wide Web",
+   "lang": "en",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"World Wide Web\", en.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-simple-www",
+   "url": "https://simple.wikipedia.org/wiki/World_Wide_Web",
+   "title": "Simple English Wikipedia: World Wide Web",
+   "lang": "en",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"World Wide Web\", simple.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wiktionary-browser",
+   "url": "https://en.wiktionary.org/wiki/browser",
+   "title": "Wiktionary: browser",
+   "lang": "en",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wiktionary contributors, \"browser\", en.wiktionary.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-gutenberg-11",
+   "url": "https://www.gutenberg.org/cache/epub/11/pg11-images.html",
+   "title": "Alice's Adventures in Wonderland (Project Gutenberg eBook)",
+   "lang": "en",
+   "licence": "public domain in the USA; the Project Gutenberg License header of the eBook is kept unchanged (https://www.gutenberg.org/policy/license.html)",
+   "attribution": "Lewis Carroll, Alice's Adventures in Wonderland; Project Gutenberg eBook 11"
+  },
+  {
+   "id": "hub-python-tutorial",
+   "url": "https://docs.python.org/3/tutorial/index.html",
+   "title": "The Python Tutorial",
+   "lang": "en",
+   "licence": "PSF License Agreement for the Python documentation (https://docs.python.org/3/license.html)",
+   "attribution": "Python Software Foundation, The Python Tutorial, docs.python.org"
+  },
+  {
+   "id": "hub-rust-book",
+   "url": "https://doc.rust-lang.org/book/title-page.html",
+   "title": "The Rust Programming Language",
+   "lang": "en",
+   "licence": "MIT or Apache-2.0 (https://github.com/rust-lang/book/blob/main/LICENSE-MIT)",
+   "attribution": "Steve Klabnik, Carol Nichols and the Rust community, The Rust Programming Language"
+  },
+  {
+   "id": "hub-whatwg-intro",
+   "url": "https://html.spec.whatwg.org/multipage/introduction.html",
+   "title": "HTML Standard: Introduction",
+   "lang": "en",
+   "licence": "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)",
+   "attribution": "WHATWG (Apple, Google, Mozilla, Microsoft), HTML Living Standard"
+  },
+  {
+   "id": "hub-wcag22",
+   "url": "https://www.w3.org/TR/WCAG22/",
+   "title": "Web Content Accessibility Guidelines (WCAG) 2.2",
+   "lang": "en",
+   "licence": "W3C Document License (https://www.w3.org/copyright/document-license-2023/)",
+   "attribution": "W3C, Web Content Accessibility Guidelines (WCAG) 2.2, https://www.w3.org/TR/WCAG22/"
+  },
+  {
+   "id": "hub-mdn-html",
+   "url": "https://developer.mozilla.org/en-US/docs/Web/HTML",
+   "title": "MDN Web Docs: HTML",
+   "lang": "en",
+   "licence": "prose CC BY-SA 2.5 (https://creativecommons.org/licenses/by-sa/2.5/), code samples CC0",
+   "attribution": "Mozilla Contributors, MDN Web Docs, \"HTML\""
+  },
+  {
+   "id": "hub-osm-wiki",
+   "url": "https://wiki.openstreetmap.org/wiki/Main_Page",
+   "title": "OpenStreetMap Wiki",
+   "lang": "en",
+   "licence": "CC BY-SA 2.0 (https://creativecommons.org/licenses/by-sa/2.0/)",
+   "attribution": "OpenStreetMap Wiki contributors, \"Main Page\", wiki.openstreetmap.org"
+  },
+  {
+   "id": "hub-wp-de",
+   "url": "https://de.wikipedia.org/wiki/World_Wide_Web",
+   "title": "Wikipedia (Deutsch): World Wide Web",
+   "lang": "de",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"World Wide Web\", de.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wp-fr",
+   "url": "https://fr.wikipedia.org/wiki/World_Wide_Web",
+   "title": "Wikipédia (français) : World Wide Web",
+   "lang": "fr",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"World Wide Web\", fr.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wp-ja",
+   "url": "https://ja.wikipedia.org/wiki/World_Wide_Web",
+   "title": "ウィキペディア（日本語）: World Wide Web",
+   "lang": "ja",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"World Wide Web\", ja.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wp-zh",
+   "url": "https://zh.wikipedia.org/wiki/%E4%B8%87%E7%BB%B4%E7%BD%91",
+   "title": "维基百科（中文）：万维网",
+   "lang": "zh",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"万维网\", zh.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wp-ar",
+   "url": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%B4%D8%A8%D9%83%D8%A9_%D8%A7%D9%84%D8%B9%D9%86%D9%83%D8%A8%D9%88%D8%AA%D9%8A%D8%A9_%D8%A7%D9%84%D8%B9%D8%A7%D9%84%D9%85%D9%8A%D8%A9",
+   "title": "ويكيبيديا (العربية): الشبكة العنكبوتية العالمية",
+   "lang": "ar",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"الشبكة العنكبوتية العالمية\", ar.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wp-hi",
+   "url": "https://hi.wikipedia.org/wiki/%E0%A4%B5%E0%A4%B0%E0%A5%8D%E0%A4%B2%E0%A5%8D%E0%A4%A1_%E0%A4%B5%E0%A4%BE%E0%A4%87%E0%A4%A1_%E0%A4%B5%E0%A5%87%E0%A4%AC",
+   "title": "विकिपीडिया (हिन्दी): वर्ल्ड वाइड वेब",
+   "lang": "hi",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"वर्ल्ड वाइड वेब\", hi.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wp-ru",
+   "url": "https://ru.wikipedia.org/wiki/%D0%92%D1%81%D0%B5%D0%BC%D0%B8%D1%80%D0%BD%D0%B0%D1%8F_%D0%BF%D0%B0%D1%83%D1%82%D0%B8%D0%BD%D0%B0",
+   "title": "Википедия (русский): Всемирная паутина",
+   "lang": "ru",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"Всемирная паутина\", ru.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wp-ko",
+   "url": "https://ko.wikipedia.org/wiki/%EC%9B%94%EB%93%9C_%EC%99%80%EC%9D%B4%EB%93%9C_%EC%9B%B9",
+   "title": "위키백과 (한국어): 월드 와이드 웹",
+   "lang": "ko",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikipedia contributors, \"월드 와이드 웹\", ko.wikipedia.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wikisource-raven",
+   "url": "https://en.wikisource.org/wiki/The_Raven_(Poe)",
+   "title": "Wikisource: The Raven (Poe)",
+   "lang": "en",
+   "licence": "text public domain; Wikisource pages CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out",
+   "attribution": "Edgar Allan Poe, The Raven; Wikisource contributors, en.wikisource.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-aozora-kokoro",
+   "url": "https://www.aozora.gr.jp/cards/000148/files/773_14560.html",
+   "title": "青空文庫: こころ (夏目漱石)",
+   "lang": "ja",
+   "licence": "public domain text (Aozora Bunko terms: https://www.aozora.gr.jp/guide/kijyunn.html)",
+   "attribution": "夏目漱石『こころ』; 青空文庫 (Aozora Bunko)"
+  },
+  {
+   "id": "hub-rfc9110",
+   "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+   "title": "RFC 9110: HTTP Semantics",
+   "lang": "en",
+   "licence": "IETF Trust Legal Provisions: an RFC may be copied in full without change (https://trustee.ietf.org/documents/trust-legal-provisions/)",
+   "attribution": "R. Fielding, M. Nottingham, J. Reschke (eds.), RFC 9110, IETF"
+  },
+  {
+   "id": "hub-rdf12-concepts",
+   "url": "https://www.w3.org/TR/rdf12-concepts/",
+   "title": "RDF 1.2 Concepts and Abstract Data Model",
+   "lang": "en",
+   "licence": "W3C Document License (https://www.w3.org/copyright/document-license-2023/)",
+   "attribution": "W3C, RDF 1.2 Concepts and Abstract Data Model, https://www.w3.org/TR/rdf12-concepts/"
+  },
+  {
+   "id": "hub-postgres-tutorial",
+   "url": "https://www.postgresql.org/docs/current/tutorial-sql-intro.html",
+   "title": "PostgreSQL tutorial: the SQL language",
+   "lang": "en",
+   "licence": "PostgreSQL Licence (https://www.postgresql.org/about/licence/)",
+   "attribution": "The PostgreSQL Global Development Group, PostgreSQL documentation"
+  },
+  {
+   "id": "hub-effective-go",
+   "url": "https://go.dev/doc/effective_go",
+   "title": "Effective Go",
+   "lang": "en",
+   "licence": "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); code BSD-3-Clause",
+   "attribution": "The Go Authors, Effective Go, go.dev"
+  },
+  {
+   "id": "hub-se-frankenstein-1",
+   "url": "https://standardebooks.org/ebooks/mary-shelley/frankenstein/text/chapter-1",
+   "title": "Frankenstein, chapter 1 (Standard Ebooks)",
+   "lang": "en",
+   "licence": "CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/); the text is in the public domain",
+   "attribution": "Mary Shelley, Frankenstein; Standard Ebooks"
+  },
+  {
+   "id": "hub-wikibooks-pancake",
+   "url": "https://en.wikibooks.org/wiki/Cookbook:Pancake",
+   "title": "Wikibooks Cookbook: Pancake",
+   "lang": "en",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikibooks contributors, \"Cookbook:Pancake\", en.wikibooks.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-wikiquote-lovelace",
+   "url": "https://en.wikiquote.org/wiki/Ada_Lovelace",
+   "title": "Wikiquote: Ada Lovelace",
+   "lang": "en",
+   "licence": "text CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out of the Hub copy; skin and scripts of the Wikimedia Foundation (MediaWiki, GPL-2.0+)",
+   "attribution": "Wikiquote contributors, \"Ada Lovelace\", en.wikiquote.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-ws-de-erlkoenig",
+   "url": "https://de.wikisource.org/wiki/Erlk%C3%B6nig",
+   "title": "Wikisource (Deutsch): Erlkönig",
+   "lang": "de",
+   "licence": "text public domain; Wikisource pages CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out",
+   "attribution": "Johann Wolfgang von Goethe, Erlkönig; Wikisource contributors, de.wikisource.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-ws-fr-dormeur",
+   "url": "https://fr.wikisource.org/wiki/Le_Dormeur_du_val",
+   "title": "Wikisource (français) : Le Dormeur du val",
+   "lang": "fr",
+   "licence": "text public domain; Wikisource pages CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out",
+   "attribution": "Arthur Rimbaud, Le Dormeur du val; Wikisource contributors, fr.wikisource.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-ws-zh-jingyesi",
+   "url": "https://zh.wikisource.org/wiki/%E9%9D%9C%E5%A4%9C%E6%80%9D",
+   "title": "維基文庫：靜夜思",
+   "lang": "zh",
+   "licence": "text public domain; Wikisource pages CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); images left out",
+   "attribution": "李白《靜夜思》; Wikisource contributors, zh.wikisource.org",
+   "drop": [
+    "upload.wikimedia.org"
+   ]
+  },
+  {
+   "id": "hub-gutenberg-de-faust",
+   "url": "https://www.gutenberg.org/cache/epub/2229/pg2229-images.html",
+   "title": "Faust (Project Gutenberg, Deutsch)",
+   "lang": "de",
+   "licence": "public domain in the USA; the Project Gutenberg License header of the eBook is kept unchanged (https://www.gutenberg.org/policy/license.html)",
+   "attribution": "Johann Wolfgang von Goethe, Faust; Project Gutenberg eBook 2229"
+  },
+  {
+   "id": "hub-gutenberg-fr-candide",
+   "url": "https://www.gutenberg.org/cache/epub/4650/pg4650-images.html",
+   "title": "Candide (Project Gutenberg, français)",
+   "lang": "fr",
+   "licence": "public domain in the USA; the Project Gutenberg License header of the eBook is kept unchanged (https://www.gutenberg.org/policy/license.html)",
+   "attribution": "Voltaire, Candide; Project Gutenberg eBook 4650"
+  },
+  {
+   "id": "hub-pep8",
+   "url": "https://peps.python.org/pep-0008/",
+   "title": "PEP 8: Style Guide for Python Code",
+   "lang": "en",
+   "licence": "public domain (the PEP says so); site of the Python Software Foundation",
+   "attribution": "Guido van Rossum, Barry Warsaw, Alyssa Coghlan, PEP 8"
+  },
+  {
+   "id": "hub-sqlite-select",
+   "url": "https://www.sqlite.org/lang_select.html",
+   "title": "SQLite: SELECT",
+   "lang": "en",
+   "licence": "public domain (https://www.sqlite.org/copyright.html)",
+   "attribution": "SQLite documentation, sqlite.org"
+  }
+ ]
+}

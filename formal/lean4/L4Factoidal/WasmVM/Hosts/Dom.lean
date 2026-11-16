@@ -35,6 +35,8 @@ the only memory a DOM import can change is at most `capacity` bytes at that buff
 -/
 import L4Factoidal.WasmVM.Api
 import L4Factoidal.DOM.Arena
+import L4Factoidal.DOM.BaseURL
+import L4Factoidal.HTML.DocumentEncoding
 import L4Factoidal.PageGpu.Wire
 import L4Factoidal.PageCanvas.Wire
 import L4Factoidal.DOM.Selectors
@@ -192,6 +194,8 @@ structure State where
   pre : Option Pre := none
   /-- The document's URL (the base of a frame's `src`, and the page's origin). -/
   url : String := ""
+  /-- Frozen document bases, maintained at DOM mutations. -/
+  bases : BaseURL.State := {}
   /-- Each `iframe` element's frame (`HTML.Frames.frameOf`) as it was when its browsing
   context was made: its sandboxing flags and its document's origin. -/
   frameInfo : Array (Nat × L4Factoidal.HTML.Frames.Frame) := #[]
@@ -431,6 +435,101 @@ def Command.live (d : Dom) (lv : L4Factoidal.DOM.Live.Live) (c : Command) : L4Fa
   if lv.iters.isEmpty then c.liveFast d lv else c.liveExact d lv
 
 
+/-- Context for the node document, including an inherited about base captured at creation. -/
+def State.baseContext (s : State) (doc : Nat) : BaseURL.Context :=
+  { url := if doc == 0 then (if s.url.isEmpty then "about:blank" else s.url)
+      else ((s.docURLs.find? (·.1 == doc)).map (·.2)).getD "about:blank",
+    aboutBase := (s.bases.about.find? (·.1 == doc)).map (·.2),
+    encoding := if doc == 0 then s.bases.encoding.getD .utf_8 else
+      ((s.frames.find? (·.2 == doc)).bind fun f =>
+        (s.frameEncodings.find? (·.1 == f.1)).bind fun e =>
+          L4Factoidal.WHATWG.Encoding.getEncoding e.2).getD .utf_8,
+    policies := if doc == 0 then s.bases.policies else
+      ((s.bases.aboutPolicies.find? (·.1 == doc)).map (·.2.2)).getD [],
+    policyURL := (s.bases.aboutPolicies.find? (·.1 == doc)).map (·.2.1) }
+
+/-- Capture an unknown encoding before the first mutation or URL query. -/
+def State.resolveBaseEncoding (s : State) : State :=
+  if s.bases.encoding.isSome then s else
+    { s with bases := { s.bases with encoding := some (L4Factoidal.HTML.DocumentEncoding.parsedEncoding s.dom s.bases.parsed) } }
+
+/-- The slow path of `ensureBases`: at the first use, capture the encoding (when the
+embedder gave none) and look at every node; later, at the nodes made since the last look. -/
+@[noinline] def State.ensureBasesSlow (s : State) : State :=
+  let s := if s.bases.live then s else s.resolveBaseEncoding
+  let b := BaseURL.update s.bases s.dom s.baseContext
+  { s with bases := { b with live := true } }
+
+/-- The bases, tracked from now on: for a use of a document base (a URL getter, `baseURI`,
+a history change, a frame's creation). A page that never uses one never pays for it. -/
+@[inline] def State.ensureBases (s : State) : State :=
+  if s.bases.live && s.bases.seen == s.dom.size then s else s.ensureBasesSlow
+
+/-- Before a mutation: nothing while the bases are not tracked, and one comparison once every
+node has been looked at; inlined into the caller. -/
+@[inline] def State.prepareBases (s : State) : State :=
+  if !s.bases.live || s.bases.seen == s.dom.size then s else s.ensureBasesSlow
+
+def State.documentBase (s : State) (doc : Nat) : String :=
+  BaseURL.value s.bases doc (s.baseContext doc)
+
+/-- Only tree changes and href writes can change a frozen base. -/
+def Command.baseChange (d : Dom) : Command → BaseURL.Change
+  | .setAttribute n name _ | .removeAttribute n name =>
+    if !Dom.isHtmlElement (d.get n) "base" then .none else
+    if (if (d.get (d.get n).doc).htmlDoc then Dom.asciiLower name else name) == "href"
+      then .href n else .none
+  | .setAttributeNS n ns name _ | .removeAttributeNS n ns name =>
+    if ns.isEmpty && name == "href" then .href n else .none
+  | .appendChild _ n | .insertBefore _ n _ | .replaceChild _ n _ | .adoptNode n _ => .tree #[n]
+  -- a removal names the removed node; whether it was a selected base is read from the
+  -- frozen state (`BaseURL.State.affected`)
+  | .setTextContent n _ => if Dom.isCharacterData (d.get n) then .none else .tree #[n]
+  | .removeChild _ n => .tree #[n]
+  | .frameDocument .. | .attachShadow .. => .tree #[]
+  | _ => .none
+
+/-- The slow path of `changedBases`: a page with a base element, or a change that made nodes. -/
+@[noinline] def State.changedBasesSlow (s : State) (c : Command) (d : Dom) : BaseURL.State :=
+  let event := c.baseChange d
+  if s.bases.seen == d.size then
+    match event with
+    | .none => s.bases
+    | _ => BaseURL.update s.bases d s.baseContext event
+  else BaseURL.update s.bases d s.baseContext event
+
+/-- The frozen bases after command `c` made the arena `d`, keeping the frozen state from
+before the change. A page with no base element whose change made no node pays one
+comparison and one emptiness test, inlined into the caller (`changedBases_idle`). -/
+@[inline] def State.changedBases (s : State) (c : Command) (d : Dom) : BaseURL.State :=
+  if !s.bases.live || (s.bases.seen == d.size && s.bases.candidates.isEmpty) then s.bases
+  else s.changedBasesSlow c d
+
+/-- Kind: cost. Says: while the bases are not tracked, a change leaves them as they were,
+without looking at the command or the arena. Does not say: anything about the time of the
+test itself. -/
+theorem changedBases_untracked (s : State) (c : Command) (d : Dom) (h : s.bases.live = false) :
+    s.changedBases c d = s.bases := by
+  simp [State.changedBases, h]
+
+/-- Kind: cost. Says: while the bases are not tracked, `prepareBases` changes nothing. -/
+theorem prepareBases_untracked (s : State) (h : s.bases.live = false) : s.prepareBases = s := by
+  simp [State.prepareBases, h]
+
+/-- Kind: cost. Says: on a page with no base element, a change that makes no node leaves
+the frozen bases as they were, without looking at the command or the arena. Does not say:
+anything about the time of the comparison itself, or of the other parts of a change. -/
+theorem changedBases_idle (s : State) (c : Command) (d : Dom)
+    (hs : s.bases.seen = d.size) (hc : s.bases.candidates = #[]) :
+    s.changedBases c d = s.bases := by
+  simp [State.changedBases, hs, hc]
+
+/-- Kind: cost. Says: once every node has been looked at, `prepareBases` changes nothing.
+Does not say: when that holds (after the first change; `changedBases` keeps it). -/
+theorem prepareBases_idle (s : State) (h : s.bases.seen = s.dom.size) :
+    s.prepareBases = s := by
+  simp [State.prepareBases, h]
+
 /-- Record command `c`, whose result is the arena `d`. A write of an attribute or of
 character data whose last write since the last reading command (`Command.reads`) is
 of the same kind (`Command.sameWrite`) takes that write's place in the list: no
@@ -439,6 +538,9 @@ attributes in the order of their first write. So a page that animates attributes
 a list bounded by its DOM, and the command bound (`maxCommands`) counts distinct writes. -/
 def addCommand (s : State) (c : Command) (d : Dom) : State × HostResult :=
   if d.size > maxNodes then (s, ret (-5)) else
+  let s := s.prepareBases
+  -- computed before the record below takes `s` apart, so that its arrays stay unshared
+  let bases := s.changedBases c d
   -- a page with no live range and no NodeIterator runs no live step
   let live := fun (s : State) => if s.live.idle then s.live else c.live s.dom s.live
   let key := c.writeKey s.dom
@@ -447,13 +549,13 @@ def addCommand (s : State) (c : Command) (d : Dom) : State × HostResult :=
     | some p => p.sameWrite c
     | none => false
   match prior with
-  | some i => ({ s with live := live s, dom := d, commands := s.commands.set! i c, changes := s.changes + 1 }, ret 0)
+  | some i => ({ s with live := live s, bases, dom := d, commands := s.commands.set! i c, changes := s.changes + 1 }, ret 0)
   | none =>
     if s.commands.size ≥ s.commandLimit then (s, ret (-5)) else
     let writes := if c.reads then {} else match key with
       | some k => s.writes.insert k s.commands.size
       | none => s.writes
-    ({ s with live := live s, dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret 0)
+    ({ s with live := live s, bases, dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret 0)
 
 /-- A node argument: -1 (any value of 2^31 or more) is none. -/
 def optNode (v : Nat) : Option Nat := if v ≥ 2147483648 then none else some v
@@ -477,13 +579,16 @@ def priorOf (s : State) (c : Command) (key : Option (Nat × String)) : Option Na
 (`s.pre`), answering `r`: as `addCommand`. -/
 def commit (s : State) (c : Command) (d : Dom) (r : Int) : State × HostResult :=
   let p := s.pre.getD {}
+  -- before the records below take `s` apart: inside them `s` would stay shared and every
+  -- `push` would copy the command list
+  let bases := s.changedBases c d
   match p.prior with
-  | some i => ({ s with pre := none, live := p.live, dom := d, commands := s.commands.set! i c, changes := s.changes + 1 }, ret r)
+  | some i => ({ s with pre := none, live := p.live, bases, dom := d, commands := s.commands.set! i c, changes := s.changes + 1 }, ret r)
   | none =>
     let writes := if c.reads then {} else match p.key with
       | some k => s.writes.insert k s.commands.size
       | none => s.writes
-    ({ s with pre := none, live := p.live, dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret r)
+    ({ s with pre := none, live := p.live, bases, dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret r)
 
 /-- Run the change `f` of a command like `c0` on the arena, in place: what recording reads
 of the arena before the change is read first (into `s.pre`), and the budgets are checked;
@@ -491,6 +596,7 @@ then the arena leaves the state, so that `f` holds the only reference and `Array
 it in place (no copy of the arena per change). `f` answers the command made and the
 answer, `none` for no change, or a DOM error with the arena as it was. -/
 def change (s : State) (c0 : Command) (f : Dom → Dom × Except DomError (Option (Command × Int))) : State × HostResult :=
+  let s := s.prepareBases
   let key := c0.writeKey s.dom
   let prior := priorOf s c0 key
   if s.dom.size > maxNodes || (prior.isNone && s.commands.size ≥ s.commandLimit) then (s, ret (-5)) else
@@ -975,7 +1081,9 @@ def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
       (match made.2 with
        | .values #[.i32 v] =>
          if v.toNat < 2147483648 then
-           ({ made.1 with docURLs := made.1.docURLs.push (v.toNat, made.1.url) }, made.2)
+           let st := { made.1 with docURLs := made.1.docURLs.push (v.toNat, made.1.url) }
+           let bases := if st.bases.live then BaseURL.update st.bases st.dom st.baseContext (.tree #[v.toNat]) else st.bases
+           ({ st with bases }, made.2)
          else made
        | _ => made)
     else made
@@ -1030,6 +1138,8 @@ def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
     if (s.dom.get root).type != .document || !(root == 0 || s.frames.any (·.2 == root)) then continue
     for k in s.dom.treeOrder top do
       if frameOwner (s.dom.get k) && !(s.frames.any (·.1 == k)) then
+        -- a frame's document takes its creator's base: the bases are tracked from here
+        s := s.ensureBases
         let (d, doc) := s.dom.graft aboutBlank
         -- the frame's flags and origin as they are now (HTML §4.8.5: kept until it navigates)
         let info := frameFor s (docFrame s root) k
@@ -1037,7 +1147,14 @@ def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
         -- then a `src` URL (the embedder's, when it loads URLs), else `about:blank`.
         let nav := if Dom.isHtmlElement (d.get k) "iframe" && (attrValue? d k "srcdoc").isSome then "about:srcdoc"
           else if s.hostLoads then ((frameSrc d k).map (frameURL s)).getD "" else ""
-        match addCommand s (.frameDocument k "" false doc) d with
+        let inherited := s.documentBase (s.dom.get k).doc
+        let withBase := { s with
+          bases := { s.bases with
+            about := s.bases.about.push (doc, inherited)
+            aboutPolicies := s.bases.aboutPolicies.push (doc,
+              (s.baseContext (s.dom.get k).doc).policyURL.getD (s.baseContext (s.dom.get k).doc).url,
+              (s.baseContext (s.dom.get k).doc).policies) } }
+        match addCommand withBase (.frameDocument k "" false doc) d with
         | (s', .values #[.i32 0]) =>
           s := { s' with frames := s'.frames.push (k, doc), frameInfo := s'.frameInfo.push (k, info),
                          navigations := s'.navigations.push (k, nav) }
@@ -1122,15 +1239,28 @@ def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false
     | n, _ => n
   let s := { s with navigations := s.navigations.filter (·.1 != el) }
   if !isNode s.dom el then (s, none) else
+  let s := s.ensureBases
+  let inherited := s.documentBase (s.dom.get el).doc
   let (d, root) := s.dom.graft (frameArena source xml)
-  match addCommand s (.frameDocument el source xml root) d with
+  let url := navURL.getD (if (attrValue? s.dom el "srcdoc").isSome then "about:srcdoc" else "about:blank")
+  let withBase := { s with
+    docURLs := s.docURLs.push (root, url)
+    frames := (s.frames.filter (·.1 != el)).push (el, root)
+    bases := { s.bases with
+      about := s.bases.about.push (root, inherited)
+      aboutPolicies := if navURL.isNone then
+        s.bases.aboutPolicies.push (root,
+          (s.baseContext (s.dom.get el).doc).policyURL.getD (s.baseContext (s.dom.get el).doc).url,
+          (s.baseContext (s.dom.get el).doc).policies) else s.bases.aboutPolicies } }
+  let beforeAttach := s
+  match addCommand withBase (.frameDocument el source xml root) d with
   | (s, .values #[.i32 0]) =>
     let s := { s with frames := (s.frames.filter (·.1 != el)).push (el, root) }
     let s := match navURL with
       | none => s
       | some u => navigatedTo s el root u
     (connectFrames s #[root], some root)
-  | (s, _) => (s, none)
+  | (_, _) => (beforeAttach, none)
 
 /-- `document.open`, `write` and `close` on the document of a frame (HTML §8.4.3): the frame
 of element `el` gets the document that the HTML parser makes of `markup` (`attachDocument`: a

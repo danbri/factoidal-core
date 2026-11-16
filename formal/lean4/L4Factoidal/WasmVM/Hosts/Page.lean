@@ -133,6 +133,30 @@ theorem ScriptClock.ms_mark (c : ScriptClock) (h : c.steps - c.markSteps < max 1
     c.ms = c.markClock := by
   simp [ScriptClock.ms, Nat.div_eq_of_lt h]
 
+/-- Kind: cost (a bound on a loop that waits for the clock). Says: `k` milliseconds' worth
+of instructions (`k · instructionsPerMs`) run past any point after the mark move script
+time by exactly `k` ms. So a script that runs until the clock reads a deadline `d` ms
+ahead (a time-sliced loop, `while (performance.now() < end)`) stops within
+`(d + 1) · instructionsPerMs` instructions of its first reading; the rate decides how
+much work that is. Does not say: how long an instruction takes on a machine. -/
+theorem ScriptClock.ms_after (c : ScriptClock) (k : Nat) (h : c.markSteps ≤ c.steps) :
+    ({ c with steps := c.steps + k * max 1 c.instructionsPerMs } : ScriptClock).ms = c.ms + k := by
+  simp only [ScriptClock.ms]
+  have hr : 0 < max 1 c.instructionsPerMs := Nat.lt_of_lt_of_le Nat.one_pos (Nat.le_max_left _ _)
+  rw [show c.steps + k * max 1 c.instructionsPerMs - c.markSteps
+      = (c.steps - c.markSteps) + k * max 1 c.instructionsPerMs by omega,
+    Nat.add_mul_div_right _ _ hr]
+  omega
+
+/-- Kind: cost. Says: a reading after `k · instructionsPerMs` more instructions is at least
+`k` ms past script time before them, whatever the loop's clock and the last reading:
+a clock-waiting loop sees its deadline. -/
+theorem ScriptClock.reading_after (c : ScriptClock) (clock k : Nat) (h : c.markSteps ≤ c.steps) :
+    (c.ms + k) * 1000000 ≤
+      ({ c with steps := c.steps + k * max 1 c.instructionsPerMs } : ScriptClock).reading clock := by
+  rw [ScriptClock.reading, ScriptClock.ms_after c k h]
+  exact Nat.le_trans (Nat.mul_le_mul_right _ (Nat.le_max_right _ _)) (Nat.le_max_right _ _)
+
 /-! ### Pointer input and layout reads -/
 
 /-- A press, a pointer move waiting for its frame, and the event being dispatched. -/
@@ -781,6 +805,17 @@ def Host.measured (h : Host) : Host × Option Answers :=
     if v == h.reads.version && (h.anim.idle || h.reads.keptNow == h.anim.now) then (h, some f) else h.measureNow
   | none => h.measureNow
 
+/-- Kind: cost (a forced layout is made once). Says: a layout read when the kept layout is of
+the arena's current version (nothing was written since it was made) and of the current time
+(or no animation runs) makes no layout: the host is as it was (so `reads.layouts` too) and
+the answers are the kept ones. -/
+theorem Host.measured_kept (h : Host) (f : Answers) (hk : h.reads.kept = some (h.reads.version, f))
+    (ht : h.anim.idle = true ∨ h.reads.keptNow = h.anim.now) : h.measured = (h, some f) := by
+  unfold Host.measured
+  rw [hk]
+  rcases ht with ht | ht <;> simp [ht]
+
+
 /-- The event types of CSS Animations 1 §5 and CSS Transitions 1 §6, with the prefixed
 types of Compatibility §3.3. -/
 def animationEventTypes : List String :=
@@ -848,6 +883,22 @@ that of the last "update animations and send events"). -/
 def Host.tickTimeline (h : Host) : Host :=
   let t := L4Factoidal.Rendering.Animation.Fix.ofInt (Int.ofNat h.loop.clock)
   if h.anim.now == t then h else { h with anim := { h.anim with now := t } }
+
+/-- The timeline when a task starts: it moves with the clock only while no animation or
+transition runs. While one runs, the page has an animation frame asked for at each frame
+(`Animation.needsFrame`), and the timeline moves at those frames ("update animations and
+send events", Web Animations 1 §4.3), so every task between two frames sees one time.
+With the script clock at BubblePopJS's own rate (`LeanJS.stepsPerMs`) the clock moves
+during a long start; moved at each task, it made each layout read of an animated page a
+new layout (a news page laid itself out again for each of its timer tasks). -/
+def Host.tickTask (h : Host) : Host :=
+  if h.anim.idle then h.tickTimeline else h
+
+/-- Kind: cost (a layout read between frames is kept). Says: while an animation runs, a
+task leaves the timeline time, so a layout kept at that time still answers
+(`Host.measured_kept`). -/
+theorem Host.tickTask_running (h : Host) (hr : h.anim.idle = false) : h.tickTask = h := by
+  simp [Host.tickTask, hr]
 
 /-- `node_query` ops 60 to 69, the Web Animations interfaces (`Rendering.Animation.Api`;
 requests and answers are JSON): 60 a new effect on element `node` (a node that is not an
@@ -1609,7 +1660,7 @@ is armed again, and the currently running task is null again) before the microta
 checkpoint, as in HTML §8.1.7.3 steps 6 and 7: so a timer set from a microtask does not
 take the nesting level of the task before it. -/
 def Session.runTaskP (s : Session) (r : L4Factoidal.EventLoop.Run) : Prog Session := do
-  let s := { s with host := s.host.tickTimeline }
+  let s := { s with host := match r.kind with | .frame => s.host.tickTimeline | _ => s.host.tickTask }
   match r.kind with
   | .task =>
     match r.event with
@@ -2052,14 +2103,35 @@ def graftFrames (dom : Arena) (frames : Array (Nat × Arena)) : Arena × Array (
 
 /-- The page's scripts, `DOMContentLoaded`, the frames' and the window's `load` events,
 and the tasks due at time 0, on a session that holds the page's arena. -/
-def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)) (framed : Array (Nat × Nat)) :
+def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)) (framed : Array (Nat × Nat))
+    (aboutBase : Option String := none) (aboutPolicyURL : Option String := none) :
     Prog Session := do
   -- The page's own `iframe` elements get their browsing contexts before its scripts run
   -- (HTML §4.8.5); a page with none pays one look at its nodes. Their initial about:blank
   -- documents are there before any script runs, and that load is not an event scripts see.
-  let d0 := { s.host.dom with url }
+  let d0 := { s.host.dom with
+    url
+    bases := {
+      parsed := some s.host.dom.dom.size
+      about := aboutBase.toArray.map fun u => (0, u)
+      aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
+      encoding := L4Factoidal.WHATWG.Encoding.getEncoding s.limits.encoding
+      policies := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta } }
   let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors s.limits.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader s.limits.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta, violations := s.limits.cspViolations, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers, mayBlock := s.limits.mayBlock } }
   let s := { s with host := { s.host with web } }
+  let d0 := Id.run do
+    let mut d0 := d0
+    for (el, doc) in framed do
+      d0 := d0.ensureBases
+      let parent := (d0.dom.get el).doc
+      let context := d0.baseContext parent
+      let inherited := d0.documentBase parent
+      d0 := { d0 with
+        bases := { d0.bases with
+          about := d0.bases.about.push (doc, inherited)
+          aboutPolicies := d0.bases.aboutPolicies.push (doc, context.policyURL.getD context.url, context.policies) } }
+      d0 := { d0 with bases := DOM.BaseURL.update d0.bases d0.dom d0.baseContext (.tree #[doc]) }
+    return d0
   let d0 := if d0.framing && d0.dom.nodes.any Hosts.Dom.frameOwner then
     let d1 := Hosts.Dom.connectFrames d0 #[0]
     { d1 with navigations := d1.navigations.filter (!·.2.isEmpty) } else d0
@@ -2092,7 +2164,8 @@ frames share the page's script realm. `origins`: this is a sandboxed frame's own
 (`HTML.FrameSessions`), with its own origin and its parent's. -/
 def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Limits := {})
     (frames : Array (Nat × Arena) := #[]) (reads : Reads := {}) (time : ScriptClock := {})
-    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none) : Except String Session := do
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
+    (aboutBase : Option String := none) (aboutPolicyURL : Option String := none) : Except String Session := do
   let (dom, framed) := graftFrames dom frames
   let s : Session ← match m.base with
     | some b =>
@@ -2105,7 +2178,7 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
       let dh := { s.host.dom with frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2) }
       pure { s with host := { s.host with dom := dh, reads, time, web } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage lim.gpuReplay } } }
-  return (s.startP url scripts framed).runLocal
+  return (s.startP url scripts framed aboutBase aboutPolicyURL).runLocal
 
 /-! ## What a turn did -/
 
