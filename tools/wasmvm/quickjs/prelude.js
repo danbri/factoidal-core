@@ -2757,7 +2757,7 @@
         willReadFrequently: t.willReadFrequently, toneMapping: { mode: t.toneMapping.mode } };
     });
     define(P, 'isContextLost', function () { self(this); return false; });
-    define(P, 'drawFocusIfNeeded', function () { self(this); });
+    define(P, 'drawFocusIfNeeded', function (a) { self(this); need(arguments.length, 1, 'drawFocusIfNeeded'); });
 
     class Path2D {
       constructor(path) {
@@ -2774,6 +2774,23 @@
       }
     }
     pathMethods(Path2D.prototype, p => q.push(50, p[K].id), () => { q.push(50, 0); later(); });
+    // WebIDL (§3.7.3 "length", §3.7.6 "name" of an operation): each method's name is its
+    // identifier and its length the fewest arguments of its overloads, as the IDL of HTML
+    // §4.12.5.1 declares them (the functions above are written for speed, not for their shape).
+    const arity = { save: 0, restore: 0, reset: 0, isContextLost: 0, getContextAttributes: 0, scale: 2, rotate: 1,
+      translate: 2, transform: 6, getTransform: 0, setTransform: 0, resetTransform: 0, createLinearGradient: 4,
+      createRadialGradient: 6, createConicGradient: 3, createPattern: 2, clearRect: 4, fillRect: 4, strokeRect: 4,
+      beginPath: 0, fill: 0, stroke: 0, clip: 0, isPointInPath: 2, isPointInStroke: 2, drawFocusIfNeeded: 1,
+      fillText: 3, strokeText: 3, measureText: 1, drawImage: 3, createImageData: 1, getImageData: 4, putImageData: 3,
+      setLineDash: 1, getLineDash: 0, closePath: 0, moveTo: 2, lineTo: 2, quadraticCurveTo: 4, bezierCurveTo: 6,
+      arcTo: 5, rect: 4, roundRect: 4, arc: 5, ellipse: 7, addPath: 1 };
+    for (const proto of [P, Path2D.prototype])
+      for (const k of Object.getOwnPropertyNames(proto)) {
+        const f = Object.getOwnPropertyDescriptor(proto, k).value;
+        if (typeof f !== 'function' || k === 'constructor' || !(k in arity)) continue;
+        Object.defineProperty(f, 'name', { value: k, configurable: true });
+        Object.defineProperty(f, 'length', { value: arity[k], configurable: true });
+      }
 
     class OffscreenCanvasRenderingContext2D { constructor() { throw new TypeError('Illegal constructor'); } }
     for (const k of Reflect.ownKeys(P)) if (k !== 'constructor') Object.defineProperty(OffscreenCanvasRenderingContext2D.prototype, k, Object.getOwnPropertyDescriptor(P, k));
