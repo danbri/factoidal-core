@@ -8,6 +8,13 @@ needs an answer) it sends them in one batch, which `Wire.decode` turns into a li
 rasterised by Lean into the canvas bitmap (premultiplied RGBA, `Raster.composite`), so
 the bitmap is always current: `getImageData` reads it and draws nothing again.
 
+Origin-clean flags (HTML §4.12.5.6, issue 524): `Taint` holds the canvases, image bitmaps and
+patterns that are not origin-clean. A draw from a source that is not origin-clean (an image
+of another origin, or a canvas, bitmap or pattern that is not origin-clean) marks the canvas
+it draws on; `getImageData`, `toDataURL`, `toBlob` and `convertToBlob` of a marked canvas are
+refused with a `SecurityError`, whatever its pixels (`Store.refuses`). The marks are kept
+here, by the engine, not by the page's prelude, which runs in the page's realm.
+
 Theorems (`Theorems.lean`): every command keeps a canvas's bitmap at `width × height × 4`
 bytes; every draw visits only pixels inside the canvas (`Raster.boxOf_within`), and a
 pixel outside the clip region keeps its value (`Raster.blendPixel_outside_clip`); the
@@ -17,6 +24,7 @@ host gets pixels of exactly the canvas's size; `save`/`restore` is a stack
 import L4Factoidal.PageCanvas.Text
 import L4Factoidal.PageCanvas.Png
 import L4Factoidal.JS.Number
+import Std.Data.HashSet
 
 namespace L4Factoidal.PageCanvas
 open L4Factoidal.Rendering
@@ -29,6 +37,13 @@ structure Env where
   svgPath : String → Option (List Rendering.Contour) := fun _ => none
   image : String → Option Bitmap := fun _ => none
   decode : ByteArray → Option Bitmap := fun _ => none
+  /-- An image by key (its URL) is origin-clean for the page (HTML §4.12.5.1.14: its data
+  is not CORS-cross-origin). The session that owns the canvases sets it from the page's
+  origin (`Net.PageFetch.Page.imageClean`); with none set only a `data:` image is. -/
+  imageClean : String → Bool := fun key => key.startsWith "data:"
+  /-- An image by key whose answer was opaque although its URL is of the page's origin (a
+  redirect to another origin): not origin-clean. The engine that fetched it records it. -/
+  imageOpaque : String → Bool := fun _ => false
 
 instance : Inhabited Env := ⟨{}⟩
 
@@ -62,6 +77,14 @@ theorem Canvas.make_size (w h : Nat) (e : Bool) :
   unfold Canvas.make
   split <;> exact Array.size_replicate
 
+/-- The canvases (by id), image bitmaps and patterns whose origin-clean flag is false (HTML
+§4.12.5.6). Every other one is origin-clean. -/
+structure Taint where
+  canvases : Std.HashSet Nat := {}
+  bitmaps : Std.HashSet Nat := {}
+  patterns : Std.HashSet Nat := {}
+  deriving Inhabited
+
 /-- The canvases and objects of a page. -/
 structure Store where
   canvases : Std.HashMap Nat Canvas := {}
@@ -75,6 +98,8 @@ structure Store where
   textures : Std.HashMap Nat (Nat × Nat) := {}
   /-- Images of the page decoded for drawing, by URL key (decoded once). -/
   images : Std.HashMap String Bitmap := {}
+  /-- What is not origin-clean (HTML §4.12.5.6). -/
+  taint : Taint := {}
   deriving Inhabited
 
 /-- One command of a batch: the display list of a canvas. -/
@@ -124,6 +149,8 @@ structure Run where
   /-- Where path commands go: 0 the context's path, else a `Path2D`. -/
   target : Nat := 0
   errors : Array String := #[]
+  /-- The store's `taint` while the batch runs (kept here, so that its update is in place). -/
+  taint : Taint := {}
 
 def Run.put (r : Run) : Run :=
   match r.cur with
@@ -812,9 +839,85 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
     | some f => r.withCur fun c r => ({ c with stack := c.stack.set f }, r)
     | none => r
 
+/-! ### Origin-clean flags (HTML §4.12.5.6) -/
+
+/-- An image source is not origin-clean (HTML §4.12.5.1.14, "is not origin-clean"): 1 a canvas
+or `OffscreenCanvas`, 2 an `ImageBitmap`, each by its own flag; 3 an image by key, when its
+URL is not one the page may read (`Env.imageClean`). Bytes the page gave (4, 5) are clean. -/
+def Taint.unclean (t : Taint) (env : Env) (kind src : Nat) (key : String) : Bool :=
+  match kind with
+  | 1 => t.canvases.contains src
+  | 2 => t.bitmaps.contains src
+  | 3 => !env.imageClean key || env.imageOpaque key
+  | _ => false
+
+/-- Ids of a set kept to those of live objects, once it holds `maxObjects` (an object that
+is gone has no pixels to protect: a new one of its id gets its own flag when it is made). -/
+def keepLive {α} (ids : Std.HashSet Nat) (live : Std.HashMap Nat α) : Std.HashSet Nat :=
+  if ids.size < maxObjects then ids else ids.filter live.contains
+
+/-- The canvas whose bitmap a command clears with its origin-clean flag (HTML §4.12.5.6): new
+bitmap dimensions (`init`: the width or height set, "the bitmap is cleared and its origin-clean
+flag is reset"), `reset()` of the current canvas, and its release (it is gone). -/
+def Taint.cleared (cur : Option (Nat × Canvas)) : Cmd → Option Nat
+  | .init id .. => some id
+  | .reset => cur.map (·.1)
+  | .release k id => if k == 5 then some id else none
+  | _ => none
+
+/-- The current canvas's style for fills (`fill`) or strokes is a pattern that is not origin-clean. -/
+def Taint.patternIn (t : Taint) (cur : Option (Nat × Canvas)) (fill : Bool) : Bool :=
+  match cur with
+  | some (_, c) =>
+    match (if fill then c.stack.cur.fill else c.stack.cur.stroke) with
+    | .pattern p => t.patterns.contains p
+    | _ => false
+  | none => false
+
+/-- A command marks the canvas it draws on (HTML §4.12.5.1): `drawImage` of a source that is
+not origin-clean; `fillStyle` or `strokeStyle` set to a pattern that is not; a fill or stroke
+with one (whatever id the style named when it was set). -/
+def Taint.marks (t : Taint) (env : Env) (cur : Option (Nat × Canvas)) : Cmd → Bool
+  | .drawImage kind src key .. => t.unclean env kind src key
+  | .fillObj k id | .strokeObj k id => k == 2 && t.patterns.contains id
+  | .fill .. | .fillRect .. | .fillText .. => t.patternIn cur true
+  | .stroke .. | .strokeRect .. | .strokeText .. => t.patternIn cur false
+  | _ => false
+
+/-- The flags of image bitmaps and patterns after a command: an `ImageBitmap` made from a
+source that is not origin-clean is not; a released one is gone. (Patterns are marked when made,
+by the query `createPattern`, `Store.answer`.) -/
+def Taint.objects (t : Taint) (env : Env) (bitmaps : Std.HashMap Nat Bitmap) : Cmd → Std.HashSet Nat × Std.HashSet Nat
+  | .bitmapNew id kind src key .. =>
+    if t.unclean env kind src key then ((keepLive t.bitmaps bitmaps).insert id, t.patterns) else (t.bitmaps, t.patterns)
+  | .release k id =>
+    if k == 2 then (t.bitmaps, t.patterns.erase id) else if k == 4 then (t.bitmaps.erase id, t.patterns) else (t.bitmaps, t.patterns)
+  | _ => (t.bitmaps, t.patterns)
+
+/-- `cs` without the canvas `o` names. -/
+def clearIn (cs : Std.HashSet Nat) : Option Nat → Std.HashSet Nat
+  | some i => cs.erase i
+  | none => cs
+
+/-- `cs` with the current canvas, when `b`. -/
+def markIn (cs : Std.HashSet Nat) (cur : Option (Nat × Canvas)) (b : Bool) : Std.HashSet Nat :=
+  if b then (match cur with | some (j, _) => cs.insert j | none => cs) else cs
+
+/-- The flags after one command, which draws on the current canvas `cur`. -/
+def Taint.step (t : Taint) (env : Env) (cur : Option (Nat × Canvas)) (bitmaps : Std.HashMap Nat Bitmap) (cmd : Cmd) : Taint :=
+  let (b, p) := t.objects env bitmaps cmd
+  { canvases := markIn (clearIn t.canvases (Taint.cleared cur cmd)) cur (t.marks env cur cmd), bitmaps := b, patterns := p }
+
+/-- One command with its flags: the flags are taken from the run before the command (whose
+current canvas is the one it draws on), and the command applied. -/
+def Run.stepT (r : Run) (cmd : Cmd) : Run :=
+  let t := r.taint.step r.env r.cur r.store.bitmaps cmd
+  { r.step cmd with taint := t }
+
 /-- Run a display list on the page's canvases. -/
 def Store.run (s : Store) (env : Env) (cmds : Array Cmd) : Store :=
-  let s := (cmds.foldl Run.step { store := s, env }).put.store
+  let r := (cmds.foldl Run.stepT { store := s, env, taint := s.taint }).put
+  let s := { r.store with taint := r.taint }
   { s with canvases := s.canvases.map fun _ c => c.fix }
 
 /-! ### Queries -/
@@ -927,7 +1030,15 @@ inductive Query where
   | pattern (id kind src : Nat) (key : String) (repetition : String)
   | size (kind src : Nat) (key : String)
 
+/-- A query that reads a canvas's pixels back (`getImageData`; `toDataURL`, `toBlob` and
+`convertToBlob` encode them) of a canvas that is not origin-clean: refused (HTML §4.12.5.1.16,
+§4.12.5: "SecurityError"). -/
+def Store.refuses (s : Store) : Query → Bool
+  | .imageData id .. | .dataURL id _ => s.taint.canvases.contains id
+  | _ => false
+
 def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
+  if s.refuses q then (s, "") else
   let canvas := fun (id : Nat) => s.canvases.get? id
   match q with
   | .attr id name => (s, ((canvas id).bind fun c => attr c.stack.cur name).getD "")
@@ -1000,6 +1111,10 @@ def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
     | some col, some g => ({ s with gradients := s.gradients.insert id { g with stops := g.stops.push ⟨offset, col⟩ } }, "")
     | some _, none => (s, "")
   | .pattern id kind src key rep =>
+    -- HTML §4.12.5.1.10 createPattern: "If image is not origin-clean, then mark pattern as
+    -- not origin-clean" (the flag of the source when the pattern is made).
+    let s := if s.taint.unclean env kind src key then
+        { s with taint := { s.taint with patterns := (keepLive s.taint.patterns s.patterns).insert id } } else s
     let repetition : Option Repeat := match rep with
       | "" | "repeat" => some {} | "repeat-x" => some { y := false } | "repeat-y" => some { x := false }
       | "no-repeat" => some { x := false, y := false } | _ => none

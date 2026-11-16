@@ -14,9 +14,10 @@ const here=new URL(".",import.meta.url).pathname;
 const library=Deno.env.get("FOAFNAUT_ENGINE")??`${here}.build/web-render/engines/libweb-render.dylib`;
 const exists=(p:string)=>{try{return Deno.statSync(p).isFile;}catch{return false;}};
 
-/** Checks that fail on this tree's engine; each has an engine fix to come (C2: issue 524).
-An engine from before the C1 and C4 fixes (release 1b2fc90d578e) needs ORIGIN_ISOLATION_OPEN=C1,C2,C4. */
-const OPEN=new Set<string>(Deno.env.get("ORIGIN_ISOLATION_OPEN")?.split(",").filter(Boolean)??["C2"]);
+/** Checks that fail on this tree's engine; each has an engine fix to come (none now).
+An engine from before the C1, C2 and C4 fixes (release 1b2fc90d578e) needs
+ORIGIN_ISOLATION_OPEN=C1,C2,C2b,C2c,C2d,C4. */
+const OPEN=new Set<string>(Deno.env.get("ORIGIN_ISOLATION_OPEN")?.split(",").filter(Boolean)??[]);
 
 type Turn={session:number;logs:string[];errors:string[];navigations?:{nodeId:number;url:string}[];
   netRequests?:{id:number;method:string;url:string;resolve?:boolean}[];fetches?:{id:number;url:string;kind:string}[]};
@@ -27,7 +28,7 @@ function engine(path:string):Call{
     web_render_free:{parameters:["pointer"],result:"void"}} as const);
   const c=(t:string)=>new TextEncoder().encode(t+"\0");
   return (html,request)=>{
-    const p=lib.symbols.web_document_call(c(html),c(JSON.stringify({op:"scriptSession",...request})),1,1);
+    const p=lib.symbols.web_document_call(c(html),c(JSON.stringify(request.op?request:{op:"scriptSession",...request})),1,1);
     if(!p)throw new Error("engine allocation failed");
     try{
       const r=JSON.parse(new Deno.UnsafePointerView(p).getCString());
@@ -80,21 +81,93 @@ Deno.test({name:"origin isolation checks C1 to C5",ignore:!exists(library)},asyn
     return logs.filter(l=>l.includes("C1-FRAME-TEXT")||/^wrote \d+ 0$/.test(l)||/^doc [1-9]\d* text X$/.test(l));
   });
 
-  // C2: a canvas that has drawn an image of another origin is not origin-clean: no read-back.
-  await check(t,"C2","getImageData and toDataURL refuse a canvas with another origin's image",()=>{
-    // a 2x2 PNG of one colour, rgb(200,30,40)
-    const png=Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGM4IafxH4QZYAwASIgINVKfBLYAAAAASUVORK5CYII="),c=>c.charCodeAt(0));
-    const read=(src:string)=>{
-      call("",{op:"imageLoad",key:src,sha256:"c2-"+src,imageBase64:b64(png)});
-      const s=start(`<!doctype html><canvas id=c width=2 height=2></canvas><img id=i src="${src}"><script>
-        const x=c.getContext('2d');x.drawImage(i,0,0);
-        try{console.log('pixel '+Array.from(x.getImageData(0,0,1,1).data).join(','))}catch(e){console.log('getImageData '+e.name)}
-        try{console.log('dataURL '+c.toDataURL().slice(0,22))}catch(e){console.log('toDataURL '+e.name)}</script>`,`${A}/p.html`);
-      close();
-      return s.logs;
+  // C2: a canvas that has drawn an image of another origin is not origin-clean: no read-back,
+  // through any path that carries the flag (HTML §4.12.5.6), and no image bytes in the realm.
+  // a 2x2 PNG of one colour, rgb(200,30,40)
+  const pngB64="iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGM4IafxH4QZYAwASIgINVKfBLYAAAAASUVORK5CYII=";
+  const png=Uint8Array.from(atob(pngB64),c=>c.charCodeAt(0));
+  const hold=(key:string)=>call("",{op:"imageLoad",key,sha256:"c2-"+key,imageBase64:b64(png)});
+  const run=(html:string)=>{const s=start(html,`${A}/p.html`);const logs=[...s.logs];logs.push(...settle(s.session).logs);close();return logs;};
+  // the read-backs of canvas c, each logged as its pixels or the exception's name
+  const reads=`
+    const tryLog=(w,f)=>{try{console.log(w+' '+f())}catch(e){console.log(w+' '+e.name)}};
+    tryLog('getImageData',()=>Array.from(c.getContext('2d').getImageData(0,0,1,1).data).join(','));
+    tryLog('toDataURL',()=>c.toDataURL().slice(0,22));
+    tryLog('toBlob',()=>{c.toBlob(()=>{});return 'called'});`;
+  const refused=["getImageData SecurityError","toDataURL SecurityError","toBlob SecurityError"];
+  await check(t,"C2","getImageData, toDataURL and toBlob refuse a canvas with another origin's image",()=>{
+    const read=(src:string,extra="")=>{
+      hold(src);
+      return run(`<!doctype html><canvas id=c width=2 height=2></canvas><img id=i src="${src}"><script>${extra}
+        c.getContext('2d').drawImage(i,0,0);${reads}</script>`);
     };
-    assert.deepEqual(read(`${A}/own.png`),["pixel 200,30,40,255","dataURL data:image/png;base64,"],"an image of the page's origin is read back");
-    return read(`${B}/secret.png`).filter(l=>!["getImageData SecurityError","toDataURL SecurityError"].includes(l));
+    assert.deepEqual(read(`${A}/own.png`),["getImageData 200,30,40,255","toDataURL data:image/png;base64,","toBlob called"],"an image of the page's origin is read back");
+    // the engine decides, not the prelude: what the page says of origins changes nothing
+    const spoof=`Object.defineProperty(URL.prototype,'origin',{get(){return '${A}'},configurable:true});
+      try{Object.defineProperty(location,'origin',{get(){return '${B}'},configurable:true})}catch(e){}`;
+    const leaks=(got:string[])=>[...got.filter(l=>!refused.includes(l)),...refused.filter(r=>!got.includes(r)).map(r=>`missing: ${r}`)];
+    return [...leaks(read(`${B}/secret.png`)),...leaks(read(`${B}/secret2.png`,spoof))];
+  });
+  await check(t,"C2c","the flag goes with the pixels: canvases, patterns, ImageBitmaps, OffscreenCanvas; it stays until new dimensions",()=>{
+    hold(`${B}/secret.png`);
+    const logs=run(`<!doctype html><canvas id=d width=2 height=2></canvas><canvas id=c width=2 height=2></canvas><img id=i src="${B}/secret.png"><script>
+      const x=d.getContext('2d');x.drawImage(i,0,0);
+      const log=(w,f)=>{try{console.log(w+' '+f())}catch(e){console.log(w+' '+e.name)}};
+      const fresh=()=>{const e=document.createElement('canvas');e.width=2;e.height=2;return e};
+      const px=e=>Array.from(e.getContext('2d').getImageData(0,0,1,1).data).join(',');
+      { const e=fresh();e.getContext('2d').drawImage(d,0,0);log('canvas',()=>px(e)); }
+      { const e=fresh(),g=e.getContext('2d'),p=g.createPattern(d,'repeat');g.fillStyle=p;log('fillStyle',()=>px(e)); }
+      { const e=fresh(),g=e.getContext('2d');g.strokeStyle=g.createPattern(i,'repeat');log('strokeStyle',()=>px(e)); }
+      { const o=new OffscreenCanvas(2,2),g=o.getContext('2d');g.drawImage(i,0,0);log('offscreen',()=>Array.from(g.getImageData(0,0,1,1).data).join(','));
+        o.convertToBlob().then(()=>console.log('convertToBlob ok'),e=>console.log('convertToBlob '+e.name));
+        const b=o.transferToImageBitmap(),e=fresh();e.getContext('2d').drawImage(b,0,0);log('transferToImageBitmap',()=>px(e)); }
+      createImageBitmap(d).then(b=>{const e=fresh();e.getContext('2d').drawImage(b,0,0);log('createImageBitmap',()=>px(e))});
+      { const e=fresh(),g=e.getContext('2d');g.drawImage(i,0,0);g.clearRect(0,0,2,2);g.putImageData(new ImageData(2,2),0,0);log('cleared',()=>px(e));
+        e.width=3;log('resized',()=>px(e)); }
+      </script>`);
+    const want=["canvas SecurityError","fillStyle SecurityError","strokeStyle SecurityError","offscreen SecurityError",
+      "transferToImageBitmap SecurityError","cleared SecurityError","convertToBlob SecurityError","createImageBitmap SecurityError"];
+    // new dimensions clear the bitmap and the flag (HTML §4.12.5.6); an engine that keeps both
+    // (setting width does not resize the bitmap yet) must keep refusing: either is safe
+    const resized=logs.filter(l=>l.startsWith("resized ")&&l!=="resized 0,0,0,0"&&l!=="resized SecurityError");
+    return [...logs.filter(l=>!want.includes(l)&&!l.startsWith("resized ")),...resized,...want.filter(w=>!logs.includes(w)).map(w=>`missing: ${w}`)];
+  });
+  await check(t,"C2b","an image element's request gives the page's realm no image bytes, of any origin",()=>{
+    // a page that replaced Uint8Array saw every buffer the prelude wrapped, the image's bytes too
+    let s=start(`<!doctype html><script>
+      const U=Uint8Array;
+      globalThis.Uint8Array=class extends U{constructor(...a){super(...a);
+        if(a[0] instanceof ArrayBuffer&&a[0].byteLength>=8){const v=new U(a[0]);if(v[0]===137&&v[1]===80)console.log('PNG bytes '+a[0].byteLength)}}};
+      </script><img id=i src="${B}/secret.png"><img id=d src="data:image/png;base64,${pngB64}"><img id=x src="data:image/png;base64,iVBO00PDR0BADBEEF00KGg"><script>
+      i.onload=()=>console.log('load '+i.naturalWidth+' '+i.naturalHeight);
+      d.onload=()=>console.log('data '+d.naturalWidth+' '+d.naturalHeight);x.onload=()=>console.log('corrupt loaded');x.onerror=()=>console.log('corrupt error')</script>`,`${A}/p.html`,{network:true});
+    const logs=[...s.logs];
+    for(let round=0;round<4&&s.netRequests?.length;round++){
+      s=call("",{action:"net",session:s.session,results:s.netRequests.map(w=>w.resolve?{id:w.id,addresses:["93.184.216.34"]}:
+        {id:w.id,status:200,statusText:"OK",headers:[["content-type","image/png"]],bodyBase64:pngB64})});
+      logs.push(...s.logs);
+    }
+    logs.push(...settle(s.session).logs);
+    close();
+    const ok=["load 2 2","data 2 2","corrupt error"];
+    assert.ok(ok.every(l=>logs.includes(l)),`the images load, a corrupt one fails: ${logs}`);
+    return logs.filter(l=>!ok.includes(l));
+  });
+  await check(t,"C2d","an image of the page's origin that redirected to another origin is not origin-clean",()=>{
+    // the engine's subresource op makes the request; the answer is a redirect to another origin
+    const key=`${A}/redirect.png`;
+    let out=call("",{op:"subresource",action:"start",kind:"image",url:key,documentURL:`${A}/p.html`,referrerPolicy:"",crossorigin:""}) as Record<string,any>;
+    for(let i=0;i<6&&out.wire;i++){
+      const w=out.wire;
+      const answer=w.resolve?{addresses:["93.184.216.34"]}:w.url===key?{status:302,headers:[["location",`${B}/secret.png`]]}:
+        {status:200,headers:[["content-type","image/png"]],bodyBase64:pngB64,url:w.url};
+      out=call("",{op:"subresource",action:"answer",id:out.id,answer}) as Record<string,any>;
+    }
+    assert.ok(out.done?.opaque===true,`the answer is opaque: ${JSON.stringify(out)}`);
+    hold(key);
+    const got=run(`<!doctype html><canvas id=c width=2 height=2></canvas><img id=i src="${key}"><script>
+      c.getContext('2d').drawImage(i,0,0);${reads}</script>`);
+    return [...got.filter(l=>!refused.includes(l)),...refused.filter(r=>!got.includes(r)).map(r=>`missing: ${r}`)];
   });
 
   // C3: a cross-origin answer that fails the CORS check gives the page the same failure,
