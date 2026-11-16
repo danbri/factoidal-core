@@ -4181,6 +4181,36 @@ def moreNativeSet (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (a
       setMethodRun core r k sid es a0 has keys otherSize
     | _ => throwErr .type "not a function"
 
+/-- Is the Symbol `sid` a value of the GlobalSymbolRegistry `reg` (a symbol `Symbol.for` made)? -/
+def symRegistered (reg : Obj) (sid : Nat) : Bool :=
+  reg.keys.any fun k => match reg.props.get? k with
+    | some (.data (.sym j) ..) => j == sid
+    | _ => false
+
+/-- CanBeHeldWeakly (§9.13), given the GlobalSymbolRegistry `reg` if there is one: an object,
+or a Symbol that `Symbol.for` did not make. -/
+def holdableIn (reg : Option Obj) : Value → Bool
+  | .obj _ => true
+  | .sym sid => match reg with
+    | some o => !symRegistered o sid
+    | none => true
+  | _ => false
+
+/-- CanBeHeldWeakly (§9.13): a key of a WeakMap or WeakSet, the target of a WeakRef, the target
+or unregister token of a FinalizationRegistry. An object asks nothing of the heap; a Symbol looks
+in the registry, which hangs on realm 0's global object (as `Symbol.for` puts it there). -/
+def canBeHeldWeakly (v : Value) : M Bool := do
+  match v with
+  | .obj _ => pure true
+  | .sym _ =>
+    let h ← get
+    let g := if h.curRealm == 0 then h.realm.globalObj else (h.realms.getD 0 {}).realm.globalObj
+    let reg ← match (← getObj g).props.get? symbolRegistryKey with
+      | some (.data (.obj id) ..) => pure (some (← getObj id))
+      | _ => pure none
+    pure (holdableIn reg v)
+  | _ => pure false
+
 /-- Built-ins of `moreNative`: WeakRef, FinalizationRegistry, `groupBy` and the Map upsert methods. `r` is the realm `moreNative` read. -/
 def moreNativeWeak (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
     let a0 := argD args 0
@@ -4216,7 +4246,7 @@ def moreNativeWeak (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (
       let nt ← match newTarget with
         | some nt => pure nt
         | none => throwErr .type "Constructor WeakRef requires 'new'"
-      if !a0.isObj then throwErr .type "WeakRef: the target must be an object"
+      if !(← canBeHeldWeakly a0) then throwErr .type "WeakRef: the target cannot be held weakly"
       let pp ← core.getV nt "prototype"
       let proto ← if pp.isObj then pure pp else core.getV (← core.getV (.obj (← funRealm nt).globalObj) "WeakRef") "prototype"
       let o ← alloc { proto }
@@ -4251,17 +4281,19 @@ def moreNativeWeak (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (
       let held ← match (← getObj tokens).kind with | .array es => pure es | _ => pure #[]
       if k == 0 then
         -- register(target, heldValue, unregisterToken)
-        if !a0.isObj then throwErr .type "FinalizationRegistry.register: the target must be an object"
+        if !(← canBeHeldWeakly a0) then throwErr .type "FinalizationRegistry.register: the target cannot be held weakly"
         if sameValue a0 a1 then throwErr .type "FinalizationRegistry.register: the target and the held value are the same"
         let tok := argD args 2
         match tok with
         | .undef => pure ()
-        | .obj _ => modifyObj tokens fun o => { o with kind := .array (held.push tok) }
-        | _ => throwErr .type "FinalizationRegistry.register: the unregister token must be an object"
+        | _ =>
+          if !(← canBeHeldWeakly tok) then
+            throwErr .type "FinalizationRegistry.register: the unregister token cannot be held weakly"
+          modifyObj tokens fun o => { o with kind := .array (held.push tok) }
         pure .undef
       else
         -- unregister(unregisterToken): were there cells with the token
-        if !a0.isObj then throwErr .type "FinalizationRegistry.unregister: the token must be an object"
+        if !(← canBeHeldWeakly a0) then throwErr .type "FinalizationRegistry.unregister: the token cannot be held weakly"
         let rest := held.filter fun v => !sameValue v a0
         modifyObj tokens fun o => { o with kind := .array rest }
         pure (.bool (rest.size < held.size))
@@ -4274,7 +4306,7 @@ def moreNativeWeak (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (
       -- Map's method needs a Map (kind 0), WeakMap's a WeakMap (kind 2)
       if ck != (if weak then 2 else 0) then throwErr .type "method called on incompatible receiver"
       if computed && !(← isCallable a1) then throwErr .type "getOrInsertComputed: the callback is not a function"
-      if weak && !a0.isObj then throwErr .type "Invalid value used as weak collection key"
+      if weak && !(← canBeHeldWeakly a0) then throwErr .type "Invalid value used as weak collection key"
       if toBool (← core.callNative .mapHas thisV #[a0] none) then core.callNative .mapGet thisV #[a0] none
       else
         let key := match a0 with | .num x => if x == 0 then Value.num 0 else a0 | _ => a0
@@ -7182,7 +7214,7 @@ def callNativeMap (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (a
         | .coll _ _ idx => pure (.bool (collFind idx key).isSome)
         | _ => pure (.bool false)
       | .mapSet | .setAdd =>
-        if weak && !key.isObj then throwErr .type "Invalid value used as weak collection key"
+        if weak && !(← canBeHeldWeakly key) then throwErr .type "Invalid value used as weak collection key"
         let v := if id_ == .setAdd then key else a1
         modifyObj cid (collPut key v)
         pure thisV

@@ -21,6 +21,13 @@ import L4Factoidal.JS.Interp
 - `strKey_not_priv`, `strKey_not_sym`, `keyStr_strKey`, `strKey_injective`,
   `strKey_ne_privKey`: the property key of a String value is never a private name's or a
   Symbol's key, is injective, and is undone by `keyStr`.
+- `mixesCoalesce_iff`, `lexVarClash_iff`, `legacyEscapeIn_noBackslash`: the parser's early
+  errors for `??` beside `&&`/`||` (§13.13), for a name of a lexical `for` head or catch
+  parameter that the body also declares with `var` (§14.7, §14.15), and the strict-mode test for
+  legacy escapes, which never flags a string literal without a backslash (§12.9.4.1).
+- `holdableIn_obj`, `holdableIn_registered`, `holdableIn_unregistered`, `holdableIn_prim`:
+  CanBeHeldWeakly (§9.13) holds of every object and of every Symbol that the registry does not
+  hold, and of no registered Symbol and no other primitive.
 - `switchRealm_one_realm`, `switchRealm_unknown`, `tagFn_realm0`: with one realm (every page)
   the realm machinery leaves the heap as it was; an unknown realm is never entered.
 
@@ -625,5 +632,71 @@ the heap as it was), so the map of function realms stays empty in a page. -/
 theorem tagFn_realm0 {H : Type} (h : HeapOf H) (id : Nat) (h0 : h.curRealm = 0) :
     (tagFn id : JSM H Unit).run h = .ok () h := by
   simp [tagFn, h0, EStateM.run, modify, modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet]
+
+/-! ### Parser early errors -/
+
+theorem mixesCoalesce_iff (l o : LogOp) :
+    mixesCoalesce l (some o) = true ↔ ((l = .coalesce) ≠ (o = .coalesce)) := by
+  cases l <;> cases o <;> decide
+
+theorem mixesCoalesce_none (l : LogOp) : mixesCoalesce l none = false := rfl
+
+theorem lexVarClash_iff (lex : List String) (vars : Array String) (before : Nat) :
+    lexVarClash lex vars before = true ↔ ∃ x ∈ (vars.extract before vars.size).toList, x ∈ lex := by
+  unfold lexVarClash
+  constructor
+  · intro h
+    simp only [Bool.and_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true] at h
+    obtain ⟨_, h⟩ := h
+    obtain ⟨x, hx, hc⟩ := Array.any_eq_true'.mp h
+    exact ⟨x, Array.mem_toList_iff.mpr hx, by simpa using hc⟩
+  · rintro ⟨x, hx, hl⟩
+    have hne : lex.isEmpty = false := by
+      cases lex with
+      | nil => simp at hl
+      | cons _ _ => rfl
+    simp only [hne, Bool.not_false, Bool.true_and]
+    exact Array.any_eq_true'.mpr ⟨x, Array.mem_toList_iff.mp hx, by simpa using hl⟩
+
+/-- A string literal whose raw text has no backslash is never a legacy-escape literal. -/
+theorem legacyEscapeIn_noBackslash (cs : Array Char) (j : Nat) :
+    ∀ (fuel i : Nat), (∀ k, i ≤ k → k < j → cs[k]! ≠ '\\') → legacyEscapeIn cs j fuel i = false := by
+  intro fuel
+  induction fuel with
+  | zero => intro i _; rfl
+  | succ f ih =>
+    intro i h
+    unfold legacyEscapeIn
+    by_cases hj : i + 1 ≥ j
+    · simp [hj]
+    · have hne : cs[i]! ≠ '\\' := h i (Nat.le_refl _) (by omega)
+      simp only [hj, if_false, bne_iff_ne, ne_eq, hne, not_false_eq_true, if_true]
+      exact ih (i + 1) (fun k hk hkj => h k (by omega) hkj)
+
+/-! ### CanBeHeldWeakly (§9.13) -/
+
+section Weak
+open Natives
+
+theorem holdableIn_obj (reg : Option Obj) (i : Nat) : holdableIn reg (.obj i) = true := rfl
+
+theorem holdableIn_registered (o : Obj) (sid : Nat) (h : symRegistered o sid = true) :
+    holdableIn (some o) (.sym sid) = false := by
+  simp [holdableIn, h]
+
+theorem holdableIn_unregistered (reg : Option Obj) (sid : Nat)
+    (h : ∀ o, reg = some o → symRegistered o sid = false) : holdableIn reg (.sym sid) = true := by
+  cases reg with
+  | none => rfl
+  | some o => simp [holdableIn, h o rfl]
+
+theorem holdableIn_prim (reg : Option Obj) (v : Value) (hv : ∀ i, v ≠ .obj i) (hs : ∀ s, v ≠ .sym s) :
+    holdableIn reg v = false := by
+  cases v with
+  | obj i => exact absurd rfl (hv i)
+  | sym s => exact absurd rfl (hs s)
+  | _ => rfl
+
+end Weak
 
 end L4Factoidal.JS
