@@ -448,6 +448,15 @@ def sanitizeM (root : Nat) (safe : Bool) (c : L4Factoidal.HTML.Sanitizer.Config)
     for k in (d.get root).kids do
       exec (.removeChild root k)
 
+/-- A name of the form `on` and one or more lower-case ASCII letters (the prelude's
+`/^on[a-z]+$/`): the names an event handler content attribute can have. -/
+def eventHandlerLike (name : String) : Bool :=
+  let cs := name.toList
+  cs.length ≥ 3 && cs.take 2 == ['o', 'n'] && (cs.drop 2).all fun c => 'a' ≤ c && c ≤ 'z'
+
+#guard eventHandlerLike "onclick" && eventHandlerLike "onx" && !eventHandlerLike "on" &&
+  !eventHandlerLike "onClick" && !eventHandlerLike "xon" && !eventHandlerLike "on-x" && !eventHandlerLike "one1"
+
 /-- Op `op` of `node_query` from 100, on the node or range number `id`, with argument `q`.
 
 Ranges: 100 a new range of document `id` (its number); 101 the range: "startNode
@@ -892,6 +901,17 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       return (e.getD .utf_8).name
     | none => throw (-2)
   -- ==== end of encoding100 ====
+  -- 168: the elements of the subtree of node `id` (with `id` itself when `q` is "1") that have
+  -- an attribute named `on` and lower-case letters (`eventHandlerLike`: the event handler content
+  -- attributes, HTML §8.1.8.1, are among them), in tree order. The prelude's scan for handlers
+  -- at the start of a page reads these, not every element: on a documentation page of 10,000
+  -- elements the scan made three calls for each element, about 1.6 s of its start.
+  | 168 =>
+    if id ≥ d.size then throw (-2)
+    let xs := (d.treeOrder id (q == "1")).filter fun k =>
+      let x := d.get k
+      x.type == .element && x.attrs.any fun a => eventHandlerLike a.qname
+    return " ".intercalate (xs.toList.map toString)
   -- ==== domhtml (ops 180 to 199): decisions of DOM and HTML features, read-only ====
   -- 180: named access on the Window object (HTML §7.3.3, `DOM.Named.answer`): the value of
   -- the named property `q` of the Window of document `id`
