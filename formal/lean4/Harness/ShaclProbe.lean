@@ -413,5 +413,3 @@ def main (args : List String) : IO UInt32 := do
   return (if total.fail > 0 then 1 else 0)
 
 end ShaclProbe
-
-def main (args : List String) : IO UInt32 := ShaclProbe.main args
