@@ -788,5 +788,10 @@ replaced by assignment; Function.prototype[@@hasInstance] was missing; `source` 
 #guard out "class A extends Uint8Array {} var s = new A([1, 2, 3]).subarray(1); print(s instanceof A, s.length, s[0])" == ["true 2 2"]
 #guard out "class P extends Promise {} var r; var p = new P(function (x) { r = x; }); p.then(function (v) { print('late ' + v); }); r(7)" == ["late 7"]
 #guard out "print(new Uint8Array([104, 105]).toBase64(), Uint8Array.fromHex('6869').join(), Uint8Array.fromBase64('aGk=').toHex())" == ["aGk= 104,105 6869"]
+-- `yield` and `await` in a class's heritage and computed keys and in an object literal's computed
+-- keys (the generator machine lifts them; it refused them before)
+#guard out "function* g() { class C { [yield 1]() { return 'm'; } static [yield 2] = 3; } return C; } var it = g(); it.next(); it.next('a'); var C = it.next('b').value; print(new C().a(), C.b)" == ["m 3"]
+#guard out "function* g() { var o = { [yield 1]: yield 2, k: 0 }; return Object.keys(o).join() + ' ' + o.x; } var it = g(); it.next(); it.next('x'); print(it.next(5).value)" == ["x,k 5"]
+#guard out "async function f() { class D extends (await Promise.resolve(Array)) {} return new D(1, 2).length; } f().then(function (v) { print(v); })" == ["2"]
 
 end L4Factoidal.JS.Tests

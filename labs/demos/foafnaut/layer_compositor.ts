@@ -40,9 +40,28 @@ type Growing={buffer:GPUBuffer;capacity:number};
 /** What Lean says changed since the answer `base` (`WebPaint.retainedAnswer`): `rects` in the
  * scene's pixels. A host whose texture holds answer `base` can draw those pixels alone. */
 type Damage={id:number;base:number|null;rects:number[][]|null};
+/** The same scene words: width, height, shader text, storage data and tile words, each word
+compared exactly (a float by its bits). */
+type Words=ArrayLike<number>;
+function sameWords(a:Words|undefined,b:Words|undefined):boolean {
+  if(!a||!b||a.length!==b.length)return a===b;
+  if(a instanceof Float32Array&&b instanceof Float32Array){
+    const x=new Uint32Array(a.buffer,a.byteOffset,a.length),y=new Uint32Array(b.buffer,b.byteOffset,b.length);
+    for(let i=0;i<x.length;i++)if(x[i]!==y[i])return false;
+    return true;
+  }
+  for(let i=0;i<a.length;i++)if(!Object.is(a[i],b[i]))return false;
+  return true;
+}
+export function sameScene(a:HTMLArtifact,b:HTMLArtifact):boolean {
+  return a.width===b.width&&a.height===b.height&&a.wgsl===b.wgsl&&sameWords(a.data as Words,b.data as Words)&&
+    sameWords((a as unknown as {tiles?:Words}).tiles,(b as unknown as {tiles?:Words}).tiles);
+}
 type Slot={uniform?:Growing;tiles?:Growing;bind?:GPUBindGroup;bindKey:string;texture?:GPUTexture;size:string;
   /** The Lean answer `damage.id` drawn in `texture`. */
-  drawn?:number};
+  drawn?:number;
+  /** The answer with no damage (the chrome layer) the texture was drawn from. */
+  drawnFrame?:HTMLArtifact};
 export type PassResult={steps:Record<string,number>;pixels?:Uint8Array;hash:string};
 
 // The composite uniform: one word-of-four for the place and the rectangle count, then the
@@ -54,7 +73,7 @@ const LAYER_USAGE=()=>GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_
 export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,limits:DeviceFacts=device.limits) {
   const plans=new Map<string,RenderPlan>();
   const pipelines=new Map<string,GPURenderPipeline>();
-  const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,bindGroups:0,scenesFull:0,scenesPartial:0,scenesKept:0,bandedScenes:0};
+  const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,bindGroups:0,scenesFull:0,scenesPartial:0,scenesKept:0,scenesSame:0,bandedScenes:0};
   const grow=(slot:Growing|undefined,bytes:number,usage:number):Growing=>{
     if(slot&&slot.capacity>=bytes)return slot;
     slot?.buffer.destroy();
@@ -143,12 +162,15 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       const size=`${frame.width}x${frame.height}`;
       if(!slot.texture||slot.size!==size){
         slot.texture?.destroy();stats.layerTextures++;
-        slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});slot.size=size;slot.drawn=undefined;
+        slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});slot.size=size;slot.drawn=undefined;slot.drawnFrame=undefined;
       }
     }
     const damage=(frame as unknown as {damage?:Damage}).damage;
     // The same answer already in the slot's texture: nothing to do.
     if(!target&&!check&&damage&&slot.drawn===damage.id){stats.scenesKept++;return {steps:{},hash:""};}
+    // An answer with no damage (the chrome layer) whose words are those the texture was drawn
+    // from: the scene shader's pixels are a function of those words. Exact comparison, no hash.
+    if(!target&&!check&&!damage&&slot.drawnFrame&&sameScene(slot.drawnFrame,frame)){stats.scenesSame++;return {steps:{},hash:""};}
     const tileWords=frame.tiles;
     const uniformBytes=p.uniform.bytes,tileBytes=tileWords?Math.max(16,tileWords.length*4):0;
     const before=[slot.uniform?.buffer,slot.tiles?.buffer];
@@ -181,7 +203,7 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
         if(y+h<frame.height)await bands.between();
       }
     }else{stats.scenesFull++;result=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture!,check,write);}
-    if(!target)slot.drawn=damage?.id;
+    if(!target){slot.drawn=damage?.id;slot.drawnFrame=damage?undefined:frame;}
     if(check&&result.pixels)checkPixels(frame as unknown as Parameters<typeof checkPixels>[0],result.pixels);
     return result;
   }

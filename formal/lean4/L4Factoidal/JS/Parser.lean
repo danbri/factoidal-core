@@ -2038,9 +2038,14 @@ def parseModule (src : String) : Except String ModuleSyntax :=
   | .error e => .error e
   | .ok toks =>
     let toks := internToks toks
-    let st : PState := { toks, strict := true, src := cs, module := true, inAsync := true, tla := true }
+    -- module code has no super and no new.target (§16.2.1.1, as global code, §16.1.1)
+    let st : PState := { toks, strict := true, src := cs, module := true, inAsync := true, tla := true,
+                         superCall := false, superProp := false, newTargetOk := false }
     match (ModuleParse.items (parseFuel (cs.size + 1)) {}).run st with
-    | .ok a st' => ModuleParse.finish a st'.vars.toList st'.usesMeta st'.usesTLA st'.realVars.toList
+    | .ok a st' =>
+      -- AllPrivateIdentifiersValid (§16.2.1.1): no private name outside a class
+      if !st'.privRefs.isEmpty then .error "SyntaxError: a private name is used outside a class" else
+      ModuleParse.finish a st'.vars.toList st'.usesMeta st'.usesTLA st'.realVars.toList
     | .error e _ => .error e
 
 end L4Factoidal.JS
