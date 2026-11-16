@@ -129,17 +129,20 @@ try{
       // The tab shows the page (a Hub copy, or a read the site allows) or the "Another site" page;
       // only a press on that page's "Open in a new browser tab" button reaches window.open.
       if(elsewhere){
-        if(outcome.kind==='host'){fail(run.name,href,'left Foafnaut on a plain press (window.open)',JSON.stringify(outcome));continue;}
-        if(outcome.kind!=='navigated'||outcome.url!==target){fail(run.name,href,'another origin should open in the tab or as its "Another site" page',JSON.stringify(outcome));continue;}
-        if(/Another site/.test(after.title)){
+        if(outcome.kind==='host')fail(run.name,href,'left Foafnaut on a plain press (window.open)',JSON.stringify(outcome));
+        else if(outcome.kind!=='navigated'||outcome.url!==target)fail(run.name,href,'another origin should open in the tab or as its "Another site" page',JSON.stringify(outcome));
+        else if(/Another site/.test(after.title)){
           const button=after.frame.links?.find(l=>l[1]===target);
-          if(!button){fail(run.name,href,'the "Another site" page has no button to open it');continue;}
-          const before=after.opened.length;
-          await page.click(Math.round(button[2]+button[4]/2),Math.round(button[3]+button[5]/2));
-          const pressed=await page.until(s=>s.opened.length>before,20000);
-          if(pressed?.opened?.at(-1)!==target)fail(run.name,href,'the button did not open the address in a new tab',JSON.stringify(pressed?.opened));
-          else console.log(JSON.stringify({run:run.name,href,kind:'outside-button',url:target}));
+          if(!button)fail(run.name,href,'the "Another site" page has no button to open it');
+          else{
+            const before=after.opened.length;
+            await page.click(Math.round(button[2]+button[4]/2),Math.round(button[3]+button[5]/2));
+            const pressed=await page.until(s=>s.opened.length>before,20000);
+            if(pressed?.opened?.at(-1)!==target)fail(run.name,href,'the button did not open the address in a new tab',JSON.stringify(pressed?.opened));
+            else console.log(JSON.stringify({run:run.name,href,kind:'outside-button',url:target}));
+          }
         }
+        // Back to the index whatever happened, so the links after this one can be pressed.
         await page.key('ArrowLeft','ArrowLeft',37);
         if(!atIndex(await page.until(atIndex,20000)??{}))fail(run.name,href,'back did not return to the index');
         continue;

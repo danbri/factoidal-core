@@ -59,6 +59,14 @@ const refused=new Set();
 /** The bytes of `url` of another site: the Hub's copy, else a direct read the site allows (CORS).
 `{url, bytes, contentType, copy?, via}`; undefined when neither works. */
 export async function fetchOutside(url){
+  // The answer keeps the address's fragment: the page is shown at it, as in any browser.
+  const hash=(()=>{try{return new URL(url).hash;}catch{return '';}})();
+  const got=await fetchOutsideBytes(url);
+  if(!got||!hash)return got;
+  const u=new URL(got.url);if(!u.hash)u.hash=hash;
+  return {...got,url:u.href};
+}
+async function fetchOutsideBytes(url){
   const copy=await fetchCopy(url);
   if(copy)return {...copy,via:'copy'};
   let u;try{u=new URL(url);}catch{return undefined;}
