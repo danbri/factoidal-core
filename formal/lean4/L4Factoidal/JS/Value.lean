@@ -78,6 +78,25 @@ inductive NativeX where
   | iteratorDispose | adoptClosure
   /-- `Error.isError` (§20.5.2.1), `Promise.try` (§27.2.4.8), `RegExp.escape` (§22.2.5.1). -/
   | errorIsError | promiseTry | regexpEscape
+  /-- `RegExp.prototype.compile` (Annex B.2.4.1). -/
+  | regexpCompile
+  /-- `Promise.allKeyed` (`settled` false) and `Promise.allSettledKeyed` (proposal-await-dictionary). -/
+  | promiseKeyed (settled : Bool)
+  /-- The HTML methods of String.prototype (Annex B.2.2.2 to B.2.2.14), by their place in
+  `htmlMethods`. -/
+  | stringHtml (k : Nat)
+  /-- DataView.prototype's `buffer` (0), `byteLength` (1), `byteOffset` (2) accessors (§25.3.4). -/
+  | dataViewGetter (which : Nat)
+  /-- A method of Map.prototype (kind 0), Set.prototype (1), WeakMap.prototype (2) or
+  WeakSet.prototype (3): the receiver must be a collection of that kind (§24: RequireInternalSlot
+  [[MapData]], [[SetData]], [[WeakMapData]], [[WeakSetData]]); `op` indexes `collOps`. -/
+  | collMethod (kind op : Nat)
+  /-- AsyncDisposableStack (explicit resource management): the constructor, the `disposed`
+  getter, the methods (0 disposeAsync, 1 use, 2 adopt, 3 defer, 4 move), a step of
+  DisposeResources after an Await (`rejected`: the awaited promise was rejected), and the
+  closure that calls a resource's synchronous @@dispose and gives undefined. -/
+  | asyncDisposableStackCtor | asyncDsDisposed | asyncDsMethod (k : Nat) | asyncDsStep (rejected : Bool)
+  | asyncDsSyncWrap
   /-- RegExp.prototype's `[Symbol.match]` (0), `[Symbol.replace]` (1), `[Symbol.search]` (2) and
   `[Symbol.split]` (3), `[Symbol.matchAll]` (4) (§22.2.6.8, .11, .12, .14, .9). -/
   | regexpSym (k : Nat)
@@ -819,6 +838,8 @@ def encodeForRegExpEscape (c : Char) : String :=
       [0x20, 0xA0, 0x1680, 0x202F, 0x205F, 0x3000, 0xFEFF, 0x2028, 0x2029].contains n ||
       (0x2000 ≤ n && n ≤ 0x200A) then
     if n ≤ 0xFF then "\\x" ++ hexLower n 2 else "\\u" ++ hexLower n 4
+  -- a lone surrogate (held as U+10F000 + its offset, `Str.loneChar`) as its \uXXXX escape
+  else if 0x10F000 ≤ n && n < 0x10F800 then "\\u" ++ hexLower (n - 0x10F000 + 0xD800) 4
   else String.singleton c
 
 /-- RegExp.escape (§22.2.5.1): a leading ASCII letter or digit becomes `\xNN` (so the result

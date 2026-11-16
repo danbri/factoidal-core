@@ -716,5 +716,58 @@ iterator's own fails. -/
 -- `for-in` with `await` in its body or in its object, in an async function (the generator
 -- machine had no `for-in`: "yield in this position is not supported")
 #guard out "async function f() { var o = { a: 1, b: 2 }, s = ''; for (var k in o) { s += k + (await o[k]); } for (var j in await o) s += j; return s; } f().then(function (v) { print(v); })" == ["a1b2ab"]
+/-! ## RegExp: Unicode properties, code points with `u`, modifiers, `v` class sets, `d`
+
+Test262 (built-ins/RegExp, 2026-11-15) found these: Script_Extensions, Script long names, the
+binary properties and the newer General_Category values were SyntaxErrors or missing code
+points; with `u` a supplementary character was two units to the matcher; modifier groups,
+the `v` flag's class sets, match indices (`d`) and duplicate group names were not there. -/
+
+#guard out "print(/\\p{Script_Extensions=Latin}/u.test('\\u00b7'), /\\p{Script=Latin}/u.test('\\u00b7'), /\\p{scx=Hira}/u.test('\\u30fc'))" == ["true false true"]
+#guard out "print(/\\p{Alphabetic}/u.test('a'), /\\p{Math}/u.test('+'), /\\p{Extended_Pictographic}/u.test('\\u{1F600}'), /\\p{Assigned}/u.test('\\u0378'))" == ["true true true false"]
+#guard out "try { new RegExp('\\\\p{ASCII=Y}', 'u'); print('no') } catch (e) { print(e.name) }" == ["SyntaxError"]
+#guard out "print(/^.$/u.test('\\u{1F600}'), /^.$/.test('\\u{1F600}'), /^\\p{Script=Toto}$/u.test('\\u{1E290}'), '\\u{1F600}x'.match(/./gu).length)" == ["true false true 2"]
+#guard out "print(/\\udf06/u.exec('\\ud834\\udf06'), /^[\\u{1F600}-\\u{1F64F}]$/u.test('\\u{1F610}'))" == ["null true"]
+#guard out "print(/(?i:a)b/.test('Ab'), /(?i:a)b/.test('AB'), /(?-i:a)b/i.test('aB'), /(?-i:a)b/i.test('AB'))" == ["true false true false"]
+#guard out "try { new RegExp('(?ii:a)'); print('no') } catch (e) { print(e.name) }" == ["SyntaxError"]
+#guard out "print(/\\u212a/iu.test('k'), /\\u212a/i.test('k'), /\\w/iu.test('\\u017f'), /[a-z]/i.test('\\u212a'))" == ["true false true false"]
+#guard out "print(/(?<=(b+))c/.exec('abbbbbbc')[1], /(?<=(\\d+)(\\d+))$/.exec('1053').slice(1).join())" == ["bbbbbb 1,053"]
+#guard out "var m = /a(?<z>b)?/d.exec('xab'); print(m.indices[0].join(), m.indices[1].join(), m.indices.groups.z.join())" == ["1,3 2,3 2,3"]
+#guard out "var m = /(?<y>a)|(?<y>b)/.exec('b'); print(m.groups.y)" == ["b"]
+#guard out "try { new RegExp('(?<y>a)(?<y>b)'); print('no') } catch (e) { print(e.name) }" == ["SyntaxError"]
+#guard out "print(/^[\\w--\\d]+$/v.test('ab_'), /^[\\w--\\d]+$/v.test('a1'), /^[[a-z]&&[aeiou]]+$/v.test('aei'), /[\\q{abc|d}]/v.exec('xabc')[0])" == ["true false true abc"]
+#guard out "print(/^\\p{RGI_Emoji}$/v.test('\\u{1F468}\\u200d\\u2764\\ufe0f\\u200d\\u{1F468}'), /^[^a]$/vi.test('A'))" == ["true false"]
+#guard out "try { new RegExp('[(]', 'v'); print('no') } catch (e) { print(e.name) }" == ["SyntaxError"]
+#guard out "var r = /a/g; r.lastIndex = 3; r.compile('b', 'i'); print(r.source, r.flags, r.lastIndex, r.test('B'))" == ["b i 0 true"]
+
+/-! ## Promise combinators and Array methods on any object
+
+Test262 (built-ins/Promise and built-ins/Array, 2026-11-15): the combinators ignored their
+`this` constructor and drained the iterator before the first `then`, so an iterator that never
+ends filled the heap; `then` ignored the species constructor; pop, shift, unshift and reverse
+did nothing on an object that is not a plain Array, and concat ignored @@isConcatSpreadable. -/
+
+#guard out "var log = []; function C(ex) { log.push('C'); return new Promise(ex); } C.resolve = function (v) { log.push('r'); return Promise.resolve(v); }; Promise.all.call(C, [1, 2]); print(log.join())" == ["C,r,r"]
+#guard out "var it = { [Symbol.iterator]() { return this; }, next() { return { done: false, value: 1 }; }, return() { print('closed'); return {}; } }; var P = function (ex) { return new Promise(ex); }; P.resolve = function () { throw new Error('x'); }; Promise.race.call(P, it).catch(function (e) { print(e.message); })" == ["closed", "x"]
+#guard out "Promise.allSettled([Promise.reject(1), 2]).then(function (r) { print(r.map(function (x) { return x.status; }).join()); })" == ["rejected,fulfilled"]
+#guard out "Promise.any([Promise.reject(1), Promise.reject(2)]).catch(function (e) { print(e.constructor.name, e.errors.join()); })" == ["AggregateError 1,2"]
+#guard out "var n = 0; class Q extends Promise { constructor(ex) { n++; super(ex); } } var q = Q.resolve(1); q.then(function () {}); print(n, q.then(function () {}) instanceof Q)" == ["2 true"]
+#guard out "new Promise(function (res, rej) { print(res.length, res.name === '', Object.getOwnPropertyNames(res).join()); })" == ["1 true length,name"]
+#guard out "var o = { length: 2, 0: 'a', 1: 'b' }; print(Array.prototype.pop.call(o), o.length, Array.prototype.shift.call(o), o.length, Array.prototype.unshift.call(o, 'x', 'y'), o[0], o[1])" == ["b 1 a 0 2 x y"]
+#guard out "Array.prototype[1] = 'p'; var a = [0, , 2]; print(a.shift(), a[0]); delete Array.prototype[1]" == ["0 p"]
+#guard out "try { Array.prototype.pop.call(Object.freeze([1])); print('no') } catch (e) { print(e.name) }" == ["TypeError"]
+#guard out "var s = { length: 2, 0: 'x', 1: 'y', [Symbol.isConcatSpreadable]: true }; var a = [1]; a[Symbol.isConcatSpreadable] = false; print(JSON.stringify([].concat(s, a, 'z')))" == ["[\"x\",\"y\",[1],\"z\"]"]
+
+/-! ## AsyncDisposableStack, Iterator includes/join/chunks/windows, Annex B String HTML
+
+Test262 (built-ins/AsyncDisposableStack, Iterator/prototype, annexB/built-ins/String, 2026-11-15):
+these were missing. -/
+
+#guard out "var s = new AsyncDisposableStack(); var log = []; s.defer(function () { log.push('a'); }); s.use({ [Symbol.dispose]() { log.push('b'); } }); s.disposeAsync().then(function () { print(log.join(), s.disposed); })" == ["b,a true"]
+#guard out "var s = new AsyncDisposableStack(); s.defer(function () { throw 1; }); s.defer(function () { throw 2; }); s.disposeAsync().catch(function (e) { print(e.constructor.name, e.error, e.suppressed); })" == ["SuppressedError 1 2"]
+#guard out "function* g() { yield 1; yield 2; yield 3; yield 4; yield 5; } print(JSON.stringify(Array.from(g().chunks(2))), JSON.stringify(Array.from(g().windows(4))), g().includes(3), g().join('-'))" == ["[[1,2],[3,4],[5]] [[1,2,3,4],[2,3,4,5]] true 1-2-3-4-5"]
+#guard out "print('x'.anchor('a\"b'), 'y'.bold(), 'z'.link('u'))" == ["<a name=\"a&quot;b\">x</a> <b>y</b> <a href=\"u\">z</a>"]
+#guard out "try { Map.prototype.get.call(new Set(), 1); print('no') } catch (e) { print(e.name) }" == ["TypeError"]
+#guard out "var dv = new DataView(new ArrayBuffer(8), 2); print(dv.byteLength, dv.byteOffset, Object.getOwnPropertyNames(dv).length, Object.prototype.toString.call(new Date(0)))" == ["6 2 0 [object Date]"]
 
 end L4Factoidal.JS.Tests

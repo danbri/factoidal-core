@@ -173,16 +173,14 @@ def modifiersValid (pat : String) : Bool := Id.run do
 #guard !modifiersValid "(?i-i:a)" && !modifiersValid "(?g:a)" && !modifiersValid "(?i)" && modifiersValid "\\(?x"
 
 /-- A regular expression literal: its pattern and flags are checked as the source is parsed
-(early errors, §13.2.7.2), with the evaluator's compiler. A pattern it cannot take only for
-want of a feature (the `v` flag's set syntax, a well-formed modifier group) or a size limit is
-left to the evaluation, which reports it there as before. -/
+(early errors, §13.2.7.2), with the evaluator's compiler. A pattern it cannot take only for a
+size limit is left to the evaluation, which reports it there as before. -/
 def regexLiteral (body flags : String) : P Expr := do
   match Re.compile body flags with
   | .ok _ => pure (.regex body flags)
   | .error e =>
     let limit := e.endsWith "too deep" || e.endsWith "too long"
-    let feature := flags.contains 'v' || (e.endsWith "invalid group" && modifiersValid body)
-    if limit || feature then pure (.regex body flags)
+    if limit then pure (.regex body flags)
     else fail (if e.startsWith "SyntaxError: " then (e.drop 13).toString else e)
 
 def expectP (p : String) : P Unit := do

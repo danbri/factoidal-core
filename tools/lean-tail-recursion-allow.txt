@@ -2211,6 +2211,8 @@ L4Factoidal_JS_Re_term  # (b) as L4Factoidal_JS_Re_disjunction
 L4Factoidal_JS_Re_atomP  # (b) as L4Factoidal_JS_Re_disjunction
 L4Factoidal_JS_Re_resolve  # (b) named back references resolved over the parsed pattern: depth is its group nesting
 L4Factoidal_JS_Re_groupCount  # (b) the capture count of a quantified atom: depth is its group nesting
+L4Factoidal_JS_Re_classSet  # (b) a class set of the `v` flag (JS/Regex.lean): depth is the nesting of `[` in the pattern; fuel pattern length + 1
+L4Factoidal_JS_Re_namesIn  # (b) the duplicate group name check over the parsed pattern: depth is its group nesting
 L4Factoidal_JS_Re_matchNode  # (b) the backtracking matcher (§22.2.2 continuations): depth is the pattern's nesting plus one level per repetition of a quantified group or sequence element matched so far; a repetition of one character matcher (.*, [a-z]+) is a loop, so the common long runs do not nest; fuel 64 * input length + 4096
 L4Factoidal_JS_proxyTrap  # (c) a Proxy handler's trap: one [[Get]] on the handler, as L4Factoidal_JS_get*
 L4Factoidal_JS_hasProp  # (c) HasProperty: a `has` trap is a call, as L4Factoidal_JS_call*; a proxy of a proxy adds one level per proxy
