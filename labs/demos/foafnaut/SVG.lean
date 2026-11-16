@@ -4705,6 +4705,10 @@ theorem retainItemBare_listed {κ : Type} (mapping : Mapping) (width height curs
   · cases render () with
     | error e => rfl
     | ok p =>
+      show Except.map _ (compilePrimitive mapping cursor p >>= fun compiled =>
+          pure (retainedBare mapping cursor key compiled,true,false)) =
+        (compilePrimitive mapping cursor p >>= fun compiled =>
+          pure (retainedRecord mapping width height cursor key compiled,true,false))
       cases compilePrimitive mapping cursor p with
       | error e => rfl
       | ok compiled => rfl
