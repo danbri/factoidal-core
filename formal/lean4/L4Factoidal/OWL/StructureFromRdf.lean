@@ -335,6 +335,12 @@ def Ctx.drOf (c : Ctx) (t : Term) : Option DataRange := c.dr c.fuel t
 
 /-! ## Axioms -/
 
+/-- The predicates of a property restriction (Tables 13 to 15). -/
+def restrictionPreds : List String :=
+  [nsOwl ++ "onProperty", nsOwl ++ "onProperties", nsOwl ++ "someValuesFrom",
+   nsOwl ++ "allValuesFrom", nsOwl ++ "hasValue", nsOwl ++ "hasSelf", nsOwl ++ "onClass",
+   nsOwl ++ "onDataRange"] ++ cardPreds
+
 /-- Predicates that are part of an expression, a sequence or a
 reification node, never a main triple. -/
 def structuralPreds : List String :=
@@ -486,6 +492,13 @@ def Ctx.tripleAxioms (c : Ctx) (units : Std.HashSet Subject) (t : Triple) :
         | _ => false) then pure []
     else c.typeAxioms t
   else if units.contains t.s then pure []
+  else if restrictionPreds.contains p then
+    -- Tables 13 to 15: a restriction is a blank node. On an IRI these
+    -- triples are no expression of the structural specification, and
+    -- passing over them would read an ontology that says less.
+    match t.s with
+    | .bnode _ => pure []
+    | .iri _ => .error s!"a restriction on an IRI: {showTripleShort t}"
   else if structuralPreds.contains p || p.startsWith nsXsd then pure []
   else if owl "intersectionOf" || owl "unionOf" || owl "complementOf" || owl "oneOf" then
     match t.s with
