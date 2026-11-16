@@ -150,6 +150,8 @@ HTMLElement headingOffset . ul 0
 HTMLElement headingReset . b
 HTMLElement accessKey . s
 HTMLElement tabIndex . ti
+SVGElement,MathMLElement autofocus . b
+SVGElement,MathMLElement tabIndex . ti
 HTMLElement draggable . dg
 HTMLElement enterKeyHint . e - - enter,done,go,next,previous,search,send
 HTMLElement inputMode . e - - none,text,tel,url,email,numeric,decimal,search
@@ -801,6 +803,9 @@ theorem clampTo_idem (lo hi k : Nat) (h : lo ≤ hi) : clampTo lo hi (clampTo lo
 #guard enumGet [("anonymous", "anonymous"), ("", "anonymous")] none (some "anonymous") (some "") == some "anonymous"
 -- the table reads: every row parses
 #guard table.size > 200
+-- HTMLOrSVGElement (HTML §3.2.6) is on SVG and MathML elements too (MathML Core §2.1.3)
+#guard (rowsOf "MathMLElement").splitOn "\x00" |>.any (·.endsWith " tabIndex i tabindex")
+#guard (rowsOf "SVGElement").splitOn "\x00" |>.any (·.endsWith " autofocus b autofocus")
 #guard (tableText.splitOn "\n").all fun line =>
   match (line.splitOn " ").filter (· != "") with
   | _ :: _ :: _ :: rest => (parseKind rest).isSome
