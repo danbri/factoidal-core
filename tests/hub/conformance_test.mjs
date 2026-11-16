@@ -164,3 +164,26 @@ test('semantic web and data formats: one row per suite, OWL by population, F* ro
   assert.match(pageHTML(D, H, {now: NOW}), /id="semweb"/);
   assert.doesNotMatch(pageHTML(D0, H, {now: NOW}), /id="semweb"/, 'no section without data');
 });
+
+test('runs not counted: listed with their reason, never with a share', async () => {
+  const {notCountedHTML} = await import('../../docs/web/hub/conformance/conformance.mjs');
+  const schema = JSON.parse(fs.readFileSync(path.join(HERE, '..', '..', 'docs', 'web', 'hub', 'conformance', 'data.schema.json'), 'utf8'));
+  const [D, H] = load('full-test262');
+  assert.equal(notCountedHTML(D), '', 'no section without such runs');
+  D.notCounted = [
+    {run: '20261116T0226Z-wpt-linux-x86_64-gh1a1', suite: 'wpt', finished: '2026-11-16T02:29:19Z', where: 'Linux x86-64', engine: 'be8f7503e',
+     completeness: 'none', namesRun: 0, namesTotal: 94695, workflow: 'https://github.com/danbri/factoidal-builds/actions/runs/1',
+     reason: 'none run: 0 of 12 shards gave results, 0 of 94695 names; shards 0, 1 missing: start check: Module not found <x>'},
+    {run: 'r2', suite: 'test262', finished: '2026-11-16T03:00:00Z', where: 'Linux x86-64', engine: 'abc', completeness: 'partial',
+     namesRun: 40000, namesTotal: 53795, reason: 'partial run: 7 of 8 shards gave results; shard 3: no artifact'}];
+  assert.deepEqual(validate(D, schema['data.json'], schema.definitions), []);
+  const html = notCountedHTML(D);
+  assert.ok(balanced(html), 'tags nest');
+  assert.match(html, /Runs not counted/);
+  assert.match(html, /No results<\/a>/);
+  assert.match(html, /Partial/);
+  assert.match(html, /0 of 94,695/);
+  assert.match(html, /Module not found &lt;x&gt;/);
+  assert.doesNotMatch(html, /%/, 'no share for a run that is not a score');
+  assert.ok(pageHTML(D, H, {now: NOW, width: 360}).includes('id="not-counted"'));
+});

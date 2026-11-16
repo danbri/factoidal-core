@@ -33,6 +33,14 @@
           "tests": {"$ref": "count"}
         }
       },
+      "notCounted": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["run", "suite", "finished", "completeness", "reason"],
+          "properties": {"suite": {"enum": ["wpt", "test262"]}, "completeness": {"enum": ["partial", "none", "invalid"]}, "reason": {"type": "string"}}
+        }
+      },
       "semweb": {
         "type": "object",
         "required": ["fstarStopped", "groups"],

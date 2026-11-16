@@ -233,6 +233,21 @@ export function reftestsHTML(D, H, {now, width}) {
   return h + '</section>';
 }
 
+/** Full runs recorded invalid, with the reason: never a score, shown so that a gap in the
+history is explained. Partial runs count missing names as not passed, so no share is shown. */
+export function notCountedHTML(D) {
+  const N = D.notCounted || [];
+  if (!N.length) return '';
+  const kind = {partial: 'Partial', none: 'No results', invalid: 'Invalid'};
+  return '<section class="suite" id="not-counted" aria-labelledby="nch"><h2 id="nch">Runs not counted</h2>' +
+    '<div class="card"><p class="muted">Recorded full runs that are not scores: some shards gave no results, or a validity rule failed. No share is shown for them. Newest first.</p>' +
+    '<div class="tw"><table><thead><tr><th>Finished (UTC)</th><th>Suite</th><th>Engine</th><th>Where</th><th>Run</th><th>Names</th><th>Reason</th></tr></thead><tbody>' +
+    N.map(r => `<tr><td>${esc((r.finished || '').replace('T', ' ').slice(0, 16))}</td><td>${r.suite === 'wpt' ? 'WPT' : 'Test262'}</td><td>${esc(r.engine)}</td><td>${esc(r.where)}</td>` +
+      `<td>${r.workflow ? `<a href="${esc(r.workflow)}">${esc(kind[r.completeness] || r.completeness)}</a>` : esc(kind[r.completeness] || r.completeness)}</td>` +
+      `<td>${r.namesTotal ? `${(r.namesRun || 0).toLocaleString('en-GB')} of ${r.namesTotal.toLocaleString('en-GB')}` : ''}</td><td>${esc(r.reason)}</td></tr>`).join('') +
+    '</tbody></table></div></div></section>';
+}
+
 /** The whole page body below the title, except the parts mount() fills (treemap, directory table). */
 export function pageHTML(D, H, {now = Date.now(), width = 760} = {}) {
   const newest = [D.latest.finished, D.test262.full?.latest?.finished].filter(Boolean).sort().pop();
@@ -246,7 +261,7 @@ export function pageHTML(D, H, {now = Date.now(), width = 760} = {}) {
     '<p><b>Reftests.</b> WPT reftests are pages compared with reference pages as pictures. The WPT share counts none of them; the reftest suites (svg/, then css/) are their own numbers, each test PASS or not, with the browsers on wpt.fyi on the same tests at the same WPT commit.</p>' +
     '<p><b>Other browsers.</b> wpt.fyi runs at the same WPT commit only; runs of other commits are never used in their place, and a run that reports fewer than 95% of Chrome\'s tests is not shown.' + (Object.keys(D.missing || {}).length ? ' Not shown: ' + Object.entries(D.missing).map(([b, w]) => esc(NAMES[b] || b) + ' (' + esc(w) + ')').join(', ') + '.' : '') + '</p>' +
     '<p><b>Source.</b> The data files <a href="data.json">data.json</a> and <a href="history.json">history.json</a> are written by tests/browser-wpt/passmap-data.py from the wpt-scores branch of danbri/factoidal-builds, and kept with their history on its <a href="https://github.com/danbri/factoidal-builds/commits/hub-data">hub-data</a> branch.</p></section>';
-  return head + test262HTML(D, H, {now, width}) + wptHTML(D, H, {now, width}) + reftestsHTML(D, H, {now, width}) + semwebHTML(D, {now}) + notes;
+  return head + test262HTML(D, H, {now, width}) + wptHTML(D, H, {now, width}) + reftestsHTML(D, H, {now, width}) + semwebHTML(D, {now}) + notCountedHTML(D) + notes;
 }
 
 /** Strata rows as objects. */

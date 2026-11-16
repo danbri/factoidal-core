@@ -38,7 +38,42 @@ A run is shown or quoted as a score only if all of these hold:
 - its wptserve stayed up for the whole run;
 - the engine commit and release (or local build) are recorded.
 
-Invalid runs are kept, with `valid=false` and the reason, and never plotted or quoted. A rival run that
+Invalid runs are kept, with `valid=false` and the reason, and never plotted or quoted.
+
+### When shards or whole runs produce nothing
+
+Infrastructure failures are never turned into test failures that lower a score. The rules:
+
+- **Every run is recorded**, valid or not: a `runs.csv` row and `runs/<run_id>/meta.json`.
+- **Per shard** (`meta.json` `shard_table`, one row per planned shard, present or not): shard index,
+  status (`complete`, `partial`, `no-results`, `missing`), names planned and run, tool exit, start
+  and finish times, wall seconds, runner (OS, machine, CPUs, image), start-check tries, the cause
+  in words, and the last lines of its log. `shards_missing_reasons` gives each missing shard's
+  reason: its own error, "no artifact" (the job failed, was cancelled or its runner was lost), or
+  no shard-meta. The job summary lists every shard that is not complete, and each missing shard
+  is a GitHub error annotation on the run.
+- **Completeness** (`meta.json` `completeness`): `complete`, `partial` (some shards or names have
+  no results) or `none`. The first validity reason says it: "partial run: 7 of 12 shards gave
+  results, ...". A partial run's share counts the missing names as not passed, so it is never a
+  score and the Hub shows no share for it.
+- **Bounded retries**: a shard tries its one-test start check up to 3 times before giving up
+  (`--start-tries`). When a run ends with some, not all, shard jobs failed,
+  `release-tests-retry.yml` re-runs its failed jobs once (attempt 2, recorded under its own run id
+  `...a2`; attempt 1 stays recorded as partial). No third attempt. A run where every shard failed
+  is a setup fault and is not retried: its record names the cause shard by shard.
+- **Headline**: only complete valid runs (`valid=true`, `kind=full`). The Hub's Conformance page
+  lists the newest runs that are not counted ("Runs not counted": suite, engine, platform,
+  completeness, names run, reason, link to the workflow run), so a gap in the history is
+  explained.
+- The same applies to full Test262 runs (`test262.py score`) and WPT reftests (`reftests.py
+  score`): per-shard reasons, completeness, the same retry workflow. The real-page survey is not
+  a sharded full run; it adopts the pattern if it becomes one.
+- Known bound: in a valid run, names with test-server failures (under 0.5%) count as not passed.
+  They are listed (`server_failures`) and retried once in the shard first.
+- A setup fault seen on 2026-11-16: the shard jobs' sparse checkout lacked
+  `docs/web/hub/foafnaut`, which the engine host imports; every shard of three runs gave no
+  results. When the engine host imports from a new directory, add it to the sparse checkout of
+  the WPT jobs in `release-tests.yml` and `branch-wpt.yml` (a test in factoidal-builds checks it). A rival run that
 reports only part of WPT (Ladybird on wpt.fyi: 35,966 of 94,406 names) is left out of comparisons.
 
 ## 3. When runs happen (cloud, `danbri/factoidal-builds`)
