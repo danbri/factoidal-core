@@ -1695,6 +1695,8 @@ session.
   scroll latency, memory, skips, crashes and layout similarity against Chrome; run it locally,
   add a page, read `realpages/trend.csv`. Offline on snapshots vendored in factoidal-builds
   (`third_party/realpages`; the gate) and live (drift); no page is committed to core.
+- [`perceived-performance`](skills/perceived-performance/SKILL.md) — how fast Foafnaut feels: graded evidence,
+  metrics mapped to perception, targets, and workflows for goals on tails and spread, not means.
 - [`node-crypto-haclstar-vc-wasm-build`](skills/node-crypto-haclstar-vc-wasm-build/SKILL.md)
   — the concrete build: VC Data-Integrity crypto running off-native
   (Node + browser) via HACL\*'s official wasm (#286). Three realisation
