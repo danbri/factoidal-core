@@ -25,6 +25,7 @@ with WebGPU. Textnaut is the same engine in a text terminal. The pages below are
   <li><a href="{{ '/web/hub/foafnaut/pages/settings.html' | url }}">Settings</a> — the page script engine, text size, theme and the other choices (the gear in Foafnaut's toolbar, or <code>:settings</code>).</li>
   <li><a href="{{ '/web/hub/notebook/' | url }}">Notebook: cells drawn by the built-in engine</a> — a page in a canvas, a Foafnaut view with scripts, and Textnaut's text, from one engine, with each cell's timings.</li>
   <li><a href="{{ '/web/hub/conformance/' | url }}">Conformance</a> — Test262 and the Web Platform Tests from full measured runs, next to other browsers, with the history of every run.</li>
+  <li><a href="{{ '/web/hub/specs/' | url }}">Data and documents conformance</a> — the W3C data and document standards (RDF, SPARQL, OWL 2, SHACL, XML, XSLT and more) the same code passes, suite by suite.</li>
   <li><a href="./foafnaut/notes/">Foafnaut notes</a> — short dated notes on what the browser can do, newest first, with links that open each demo in Foafnaut. The same notes make its Atom feed.</li>
   <li><a href="./foafnaut/">About Foafnaut</a> — what the browser is, where to start, and the latest notes.</li>
   <li><a href="{{ '/web/hub/foafnaut2525-status/' | url }}">Project status</a> — where the engine stands, suite by suite; the engine renders this note too.</li>
