@@ -7642,6 +7642,103 @@ number operands of the common operations are combined with no call. -/
 
 end Tier1
 
+-- Helpers of the block that call none of its functions: defined before it, so that they do not
+-- take the run's `Mode` (a section variable of the block would be added to each).
+/-- Environment `e` is the scope of the own name `x` of a function expression (§15.2.5; made by
+`makeClosure`): one binding, whose value is the closure that has `e` as its environment. That
+binding is immutable and not strict (CreateImmutableBinding(name, false)): an assignment to it
+from code that is not strict does nothing, and from strict code it throws a TypeError
+(§9.1.1.1.5 SetMutableBinding). A `const` binding throws for both. -/
+def fnNameScope (h : HeapOf H) (e : Nat) (x : String) : Bool :=
+  let env := h.envs.getD e default
+  if env.names.size != 1 || env.names[0]! != x then false else
+  match env.vals.getD 0 .undef with
+  | .obj id =>
+    match (h.obj id).kind with
+    | .closure f fenv .. => fenv == e && f.name == some x
+    | _ => false
+  | _ => false
+
+/-- Slot `idx` (`hops` up) lets go of the string `p`, if it holds that string: the only
+other reference is the caller's, so an append works in place (`s += x` is linear). -/
+def dropSlotStr (ctx : Ctx) (hops idx : Nat) (p : String) : M Unit := do
+  let h ← get
+  let e := h.envUp hops ctx.env
+  match (h.envs.getD e default).vals[idx]? with
+  | some (.str y) => if y == p then setSlot e idx .undef
+  | _ => pure ()
+
+/-- The binding of the name `x` lets go of the string `p`, if it holds it (a name not
+resolved to a slot: top-level code, a `with`): as `dropSlotStr`. -/
+def dropNameStr (ctx : Ctx) (x : String) (p : String) : M Unit := do
+  let h ← get
+  match h.findEnv x 100000 ctx.env with
+  | some e =>
+    let env := h.envs.getD e default
+    if env.withObj.isSome then pure () else
+    let i := env.slotN x
+    match env.vals[i]? with
+    | some (.str y) => if y == p then setSlot e i .undef
+    | _ => pure ()
+  | none =>
+    let g := h.realm.globalObj
+    match (h.obj g).props.get? x with
+    | some (.data (.str y) true _ _) =>
+      if y == p then let _ ← setOwnData g x .undef
+    | _ => pure ()
+
+/-- What a loop does with the completion of its body (LoopContinues, §14.7.1.2). -/
+def loopNext (labels : List String) : Compl → Option Compl
+  | .normal => none
+  | .cont none => none
+  | .cont (some l) => if labels.contains l then none else some (.cont (some l))
+  | .brk none => some .normal
+  | .brk (some l) => if labels.contains l then some .normal else some (.brk (some l))
+  | .ret v => some (.ret v)
+
+/-- A global name read through the cache: the value, or `Value.hole` when the general path
+must look (not a plain writable data property, or a lexical binding may shadow it). -/
+def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
+  match h.findEnv x 100000 env with
+  | some _ => .hole
+  | none =>
+    let g := h.obj h.realm.globalObj
+    let slot := h.globalCache[site]!
+    match g.props.ks[slot]?, g.props.vs[slot]? with
+    | some k, some (.data v ..) => if k == x then v else .hole
+    | _, _ => .hole
+
+/-- Assign a global name through the cache: only when no lexical binding shadows it and the
+cached slot holds this name as a plain writable data property; `false` otherwise. -/
+def vmGlobalSet (env : Nat) (x : String) (site : Nat) (v : Value) : M Bool := do
+  let h ← get
+  if (h.findEnv x 100000 env).isSome then return false
+  let gid := h.realm.globalObj
+  let slot := h.globalCache[site]!
+  let g := h.obj gid
+  match g.props.ks[slot]?, g.props.vs[slot]? with
+  | some k, some (.data _ true e c) =>
+    if k == x then
+      updateObj gid fun o =>
+        (true, { o with props := { o.props with vs := o.props.vs.set! slot (.data v true e c) } })
+    else pure false
+  | _, _ => pure false
+
+/-- Assign a variable `hops` above the closure environment, when the slot holds that name
+and the binding is initialised and mutable; `false` otherwise. -/
+def vmSetUp (env hops idx : Nat) (x : String) (v : Value) : M Bool := do
+  let h ← get
+  let e := h.envUp hops env
+  let en := h.envs.getD e default
+  match en.names[idx]?, en.vals[idx]? with
+  | some y, some old =>
+    if y == x && en.mutableAt idx then
+      match old with
+      | .hole => pure false
+      | _ => setSlot e idx v; pure true
+    else pure false
+  | _, _ => pure false
+
 -- The evaluator's functions take the run's `Mode` (which tiers are on).
 section Block
 variable [md : Mode]
@@ -8488,21 +8585,6 @@ def evalBlock : Nat → Ctx → List Stmt → M Compl
     evalStmts n ctx ss
 termination_by structural n _ _ => n
 
-/-- Environment `e` is the scope of the own name `x` of a function expression (§15.2.5; made by
-`makeClosure`): one binding, whose value is the closure that has `e` as its environment. That
-binding is immutable and not strict (CreateImmutableBinding(name, false)): an assignment to it
-from code that is not strict does nothing, and from strict code it throws a TypeError
-(§9.1.1.1.5 SetMutableBinding). A `const` binding throws for both. -/
-def fnNameScope (h : HeapOf H) (e : Nat) (x : String) : Bool :=
-  let env := h.envs.getD e default
-  if env.names.size != 1 || env.names[0]! != x then false else
-  match env.vals.getD 0 .undef with
-  | .obj id =>
-    match (h.obj id).kind with
-    | .closure f fenv .. => fenv == e && f.name == some x
-    | _ => false
-  | _ => false
-
 /-- InitializeReferencedBinding / PutValue for a name (§9.1.1.1.5, §6.2.5.6). -/
 def assignName : Nat → Ctx → String → Value → M Unit
   | 0, _, _, _ => throw (.halt "fuel")
@@ -8547,34 +8629,6 @@ def lookupLocal : Nat → Ctx → String → Nat → Nat → M Value
       else lookup n ctx x
     | _, _ => lookup n ctx x
 termination_by structural n _ _ _ _ => n
-
-/-- Slot `idx` (`hops` up) lets go of the string `p`, if it holds that string: the only
-other reference is the caller's, so an append works in place (`s += x` is linear). -/
-def dropSlotStr (ctx : Ctx) (hops idx : Nat) (p : String) : M Unit := do
-  let h ← get
-  let e := h.envUp hops ctx.env
-  match (h.envs.getD e default).vals[idx]? with
-  | some (.str y) => if y == p then setSlot e idx .undef
-  | _ => pure ()
-
-/-- The binding of the name `x` lets go of the string `p`, if it holds it (a name not
-resolved to a slot: top-level code, a `with`): as `dropSlotStr`. -/
-def dropNameStr (ctx : Ctx) (x : String) (p : String) : M Unit := do
-  let h ← get
-  match h.findEnv x 100000 ctx.env with
-  | some e =>
-    let env := h.envs.getD e default
-    if env.withObj.isSome then pure () else
-    let i := env.slotN x
-    match env.vals[i]? with
-    | some (.str y) => if y == p then setSlot e i .undef
-    | _ => pure ()
-  | none =>
-    let g := h.realm.globalObj
-    match (h.obj g).props.get? x with
-    | some (.data (.str y) true _ _) =>
-      if y == p then let _ ← setOwnData g x .undef
-    | _ => pure ()
 
 /-- Assign a resolved name; the plain assignment when the hint does not hold. -/
 def assignLocal : Nat → Ctx → String → Nat → Nat → Value → M Unit
@@ -9102,15 +9156,6 @@ def evalExpr : Nat → Ctx → Expr → M Value
       | .null, _ => throwErr .type "Cannot read properties of null"
       | _, _ => getV n b (← toKey n kv)
 
-/-- What a loop does with the completion of its body (LoopContinues, §14.7.1.2). -/
-def loopNext (labels : List String) : Compl → Option Compl
-  | .normal => none
-  | .cont none => none
-  | .cont (some l) => if labels.contains l then none else some (.cont (some l))
-  | .brk none => some .normal
-  | .brk (some l) => if labels.contains l then some .normal else some (.brk (some l))
-  | .ret v => some (.ret v)
-termination_by structural n _ _ => n
 
 def whileLoop : Nat → Ctx → List String → Expr → Stmt → M Compl
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -10505,49 +10550,6 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
   | n + 1, a0, a1, a2, a3 => Natives.callNative (coreRun n) a0 a1 a2 a3
 termination_by structural n _ _ _ _ => n
 
-
-/-- A global name read through the cache: the value, or `Value.hole` when the general path
-must look (not a plain writable data property, or a lexical binding may shadow it). -/
-def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
-  match h.findEnv x 100000 env with
-  | some _ => .hole
-  | none =>
-    let g := h.obj h.realm.globalObj
-    let slot := h.globalCache[site]!
-    match g.props.ks[slot]?, g.props.vs[slot]? with
-    | some k, some (.data v ..) => if k == x then v else .hole
-    | _, _ => .hole
-
-/-- Assign a global name through the cache: only when no lexical binding shadows it and the
-cached slot holds this name as a plain writable data property; `false` otherwise. -/
-def vmGlobalSet (env : Nat) (x : String) (site : Nat) (v : Value) : M Bool := do
-  let h ← get
-  if (h.findEnv x 100000 env).isSome then return false
-  let gid := h.realm.globalObj
-  let slot := h.globalCache[site]!
-  let g := h.obj gid
-  match g.props.ks[slot]?, g.props.vs[slot]? with
-  | some k, some (.data _ true e c) =>
-    if k == x then
-      updateObj gid fun o =>
-        (true, { o with props := { o.props with vs := o.props.vs.set! slot (.data v true e c) } })
-    else pure false
-  | _, _ => pure false
-
-/-- Assign a variable `hops` above the closure environment, when the slot holds that name
-and the binding is initialised and mutable; `false` otherwise. -/
-def vmSetUp (env hops idx : Nat) (x : String) (v : Value) : M Bool := do
-  let h ← get
-  let e := h.envUp hops env
-  let en := h.envs.getD e default
-  match en.names[idx]?, en.vals[idx]? with
-  | some y, some old =>
-    if y == x && en.mutableAt idx then
-      match old with
-      | .hole => pure false
-      | _ => setSlot e idx v; pure true
-    else pure false
-  | _, _ => pure false
 
 /-- The slow path of a global name: the lookup, and the cache learns the slot. -/
 def vmGlobalMiss : Nat → Nat → String → Nat → Bool → M Value
