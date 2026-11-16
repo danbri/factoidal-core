@@ -7,6 +7,7 @@
 // A scroll inside the band only runs the composite plan again with a new offset.
 import {requestRenderPlan,bufferUsage,commandInterpreter,type RenderPlan,type DeviceFacts} from "./render_plan.ts";
 import {unpad,checkPixels} from "./gpu_transport.ts";
+import {sceneCost,sceneCostIn} from "./gpu_pacing.ts";
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
 // Page canvases drawn by page scripts: Lean-validated GPU commands (L4Factoidal.PageGpu,
 // docs/designissues/2026-11-08-page-gpu.md), the same replay as the Hub's.
@@ -68,7 +69,7 @@ type Slot={uniform?:Growing;tiles?:Growing;bind?:GPUBindGroup;bindKey:string;tex
   drawn?:number;
   /** The answer with no damage (the chrome layer) the texture was drawn from. */
   drawnFrame?:HTMLArtifact};
-export type PassResult={steps:Record<string,number>;pixels?:Uint8Array;hash:string};
+export type PassResult={steps:Record<string,number>;pixels?:Uint8Array;hash:string;units?:number};
 
 // The composite uniform: one word-of-four for the place and the rectangle count, then the
 // rectangles (WebDocument.compositeShader: array<vec4u,maxPressRects+2>).
@@ -162,7 +163,7 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
    * submission, `between` awaited after each (the session lets the GPU gate answer and the
    * host's loop take input there). The scene shader's pixel does not read the target, so the
    * bands give the bytes of one draw. */
-  type Bands={count:number;between:()=>Promise<void>};
+  type Bands={count:number;between:(units:number)=>Promise<void>};
   async function drawScene(slot:Slot,frame:HTMLArtifact,check:boolean,target?:GPUTexture,bands?:Bands):Promise<PassResult> {
     const p=await plan(frame.width,frame.height,frame.data);
     const pipeline=await pipelineFor(p,frame.wgsl);
@@ -175,10 +176,10 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     }
     const damage=(frame as unknown as {damage?:Damage}).damage;
     // The same answer already in the slot's texture: nothing to do.
-    if(!target&&!check&&damage&&slot.drawn===damage.id){stats.scenesKept++;return {steps:{},hash:""};}
+    if(!target&&!check&&damage&&slot.drawn===damage.id){stats.scenesKept++;return {steps:{},hash:"",units:0};}
     // An answer with no damage (the chrome layer) whose words are those the texture was drawn
     // from: the scene shader's pixels are a function of those words. Exact comparison, no hash.
-    if(!target&&!check&&!damage&&slot.drawnFrame&&sameScene(slot.drawnFrame,frame)){stats.scenesSame++;return {steps:{},hash:""};}
+    if(!target&&!check&&!damage&&slot.drawnFrame&&sameScene(slot.drawnFrame,frame)){stats.scenesSame++;return {steps:{},hash:"",units:0};}
     const tileWords=frame.tiles;
     const uniformBytes=p.uniform.bytes,tileBytes=tileWords?Math.max(16,tileWords.length*4):0;
     const before=[slot.uniform?.buffer,slot.tiles?.buffer];
@@ -197,9 +198,11 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     // The texture holds answer `damage.base` (scene shader pixels do not read the target): draw
     // only what changed. Off the frame path (`check`, or another target), the whole scene.
     const rects=!target&&!check&&damage?.rects&&damage.base!==null&&slot.drawn===damage.base&&slot.texture?damage.rects:undefined;
-    let result:PassResult;
+    // `units`: the GPU work of this call's last submission (gpu_pacing.ts sceneCost of what was
+    // drawn: the rectangles, the last band, or the whole scene), for the session's GPU gate.
+    let result:PassResult,units=0;
     if(rects){
-      stats.scenesPartial++;
+      stats.scenesPartial++;units=rects.length?sceneCostIn(frame as never,rects):0;
       result=rects.length?await drawDamage(p,{pipeline,bindGroup:slot.bind},slot.texture!,rects,write):(write(),{steps:{},hash:""});
     }else if(!target&&!check&&bands&&bands.count>1&&slot.texture){
       stats.scenesFull++;stats.bandedScenes=(stats.bandedScenes??0)+1;
@@ -208,12 +211,13 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       for(let i=0;i*rows<frame.height;i++){
         const y=i*rows,h=Math.min(rows,frame.height-y);
         result=await drawDamage(p,{pipeline,bindGroup:slot.bind},slot.texture,[[0,y,frame.width,h]],i===0?write:()=>{});
-        if(y+h<frame.height)await bands.between();
+        units=sceneCostIn(frame as never,[[0,y,frame.width,h]]);
+        if(y+h<frame.height)await bands.between(units);
       }
-    }else{stats.scenesFull++;result=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture!,check,write);}
+    }else{stats.scenesFull++;units=sceneCost(frame as never);result=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture!,check,write);}
     if(!target){slot.drawn=damage?.id;slot.drawnFrame=damage?undefined:frame;}
     if(check&&result.pixels)checkPixels(frame as unknown as Parameters<typeof checkPixels>[0],result.pixels);
-    return result;
+    return {...result,units};
   }
   const chrome:Slot={bindKey:"",size:""},page:Slot={bindKey:"",size:""},single:Slot={bindKey:"",size:""};
   // deno-lint-ignore no-explicit-any
@@ -231,12 +235,12 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     stats,
     plan,
     /** Draw both layers of one Lean render into their textures. */
-    async drawLayers(layers:HTMLLayers,check:boolean,bands?:Bands):Promise<{chrome:PassResult;page:PassResult}> {
+    async drawLayers(layers:HTMLLayers,check:boolean,bands?:Bands):Promise<{chrome:PassResult;page:PassResult;units:number}> {
       const c=await drawScene(chrome,layers.chrome,check);
       const g=await drawScene(page,layers.page,check,undefined,bands);
       shown=layers;
       blitCanvases();
-      return {chrome:c,page:g};
+      return {chrome:c,page:g,units:(c.units??0)+(g.units??0)};
     },
     /** Replay page GPU commands (Lean's host commands of page session `p`), in order. */
     async replayGpu(p:number,commands:unknown[]):Promise<unknown[]>{return await (pageGpu??=createPageGpu(device)).replay(p,commands);},

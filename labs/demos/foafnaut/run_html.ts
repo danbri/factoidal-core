@@ -50,7 +50,7 @@ async function main() {
   let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -63,6 +63,7 @@ async function main() {
     // The main thread's pipeline events (pump, submit, ask, answer), one a line, for
     // pipeline_trace_check.ts and L4Factoidal/HostPipeline/Model.lean.
     else if(arg==="--pipe-trace")pipeTraceFile=args.shift();
+    else if(arg==="--gate-trace")gateTraceFile=args.shift();
     else if(arg==="--log-all")logAll=true;
     else if(arg==="--fail-on-flood")failOnFlood=true;
     else if(arg==="--poll-idle")pollIdle=true;
@@ -1285,6 +1286,10 @@ async function main() {
   // The pipeline trace (--pipe-trace): events of the main thread, and the most blocking GPU
   // waits seen between two pumps (HostPipeline.Model: at most one).
   const pipeEvents:string[]=[];let waitsSincePump=0,maxWaitsBetweenPumps=0,lastPipe="";
+  // The gate trace (--gate-trace FILE): one JSON line per GPU submission, ask (when due, when
+  // asked, how long it blocked, when answered), wait of a frame for the gate, band count of a
+  // frame, and pump: what a frame waited for.
+  const gateDebugOn=!!gateTraceFile,gateDebugLog:Record<string,unknown>[]=[];
   const pipeNote=(event:string)=>{
     if(event==="pump"){waitsSincePump=0;if(lastPipe==="pump")return;}
     else if(event==="ask"){waitsSincePump++;maxWaitsBetweenPumps=Math.max(maxWaitsBetweenPumps,waitsSincePump);}
@@ -1336,7 +1341,7 @@ async function main() {
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
     // One session for the window's life. It keeps the pipeline and buffers (issue 1268).
     session=await createHTMLWindowSession(device,target,native,{framesInFlight,
-      onPipe:event=>{pipeNote(event);},
+      onPipe:event=>{pipeNote(event);},...(gateDebugOn?{gateDebug:(record:Record<string,unknown>)=>{if(gateDebugLog.length<200000)gateDebugLog.push(record);}}:{}),
       // GPU readbacks (mapAsync) go back to Lean, which resolves the page's promise in a task.
       onGpuReads:(p,results)=>{
         (scriptCall("scriptSession","",{action:"gpuRead",session:p,results}) as Promise<ScriptTurn>)
@@ -1693,7 +1698,7 @@ async function main() {
       if(waited){idleStats.quietPumps++;if(native.pumpQuiet())idleStats.eventsAfterWait++;}else native.pump();
       waited=0;checkHold();const pumpEnd=performance.now();
       // Input taken: the GPU gate may start one wait now (gpu_pacing.ts `turn`).
-      pipeNote("pump");session?.gpuTurn();
+      pipeNote("pump");if(gateDebugOn&&gateDebugLog.length<200000)gateDebugLog.push({ev:"pump",start:pumpStart,end:pumpEnd});session?.gpuTurn();
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       // Take every native event now and keep each with the time it was taken. None is dropped here.
       // The window library stamps each event when it is queued; its clock maps onto
@@ -1987,14 +1992,17 @@ async function main() {
         await new Promise(resolve=>setTimeout(resolve,0));
       } else {
         // A timer that can not run now (a turn or a frame is in flight) is not napped for 1 ms at
-        // a time: the end of the turn or of the frame ends the nap.
+        // a time: the end of the turn or of the frame ends the nap. The GPU gate's next ask starts
+        // from a turn: turn when it is due, not up to 8 ms later.
         const inFlight=scriptBusy||!!rendering;
-        const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil((inFlight?null:scriptWakeIn)??8)))));
+        const gpuDueIn=session?.gpuDueIn()??null;
+        const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil((inFlight?null:scriptWakeIn)??8),gpuDueIn===null?8:Math.ceil(gpuDueIn)))));
         await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[]),...(scriptBusy&&scriptDone?[scriptDone]:[])]);
       }
     }
   } finally {
     running=false;controller?.abort();quitAt=performance.now();
+    if(gateTraceFile){try{Deno.writeTextFileSync(gateTraceFile,gateDebugLog.map(r=>JSON.stringify(r)).join("\n")+"\n");}catch(error){console.error("Native HTML: gate trace not written:",String(error));}}
     if(pipeTraceFile){try{Deno.writeTextFileSync(pipeTraceFile,pipeEvents.join("\n")+"\n");}catch(error){console.error("Native HTML: pipeline trace not written:",String(error));}}
     // --shot-at-end: the picture of the last frame, once a frame in progress has ended.
     if(shotAtEnd&&shotFile&&session?.frames){

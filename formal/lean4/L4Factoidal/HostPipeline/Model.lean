@@ -29,6 +29,9 @@ Proved, for every bound:
   took input (`waits ≤ 1`): input never waits behind more than one GPU wait, and that wait
   covers at most `bound` frames.
 - `no_deadlock`: every reachable state has a next step (`pump`, `gpuFinish` or `answer`).
+- `answer_frees`, `submit_after_answer`: the end of a blocking wait frees every submission, and
+  a ready frame is submitted in the next step: the host need not wait for anything after the
+  answer (it counts the answer when the call returns).
 - `drain`: from every reachable state, a state in which all input has been taken and the main
   thread is not blocked is reached in at most `gpuLeft + 2` steps (the GPU's remaining
   submissions, the answer, one pump): the progress property, under fairness of the GPU and the
@@ -187,6 +190,37 @@ theorem drain (c : Config) (s : State) :
     have st3 : step c s2 .pump = some { s2 with queued := 0, waits := 0 } := by simp [s2, step]
     refine ⟨{ s2 with queued := 0, waits := 0 }, s.gpuLeft + 2, ?_, by omega, rfl, rfl⟩
     exact h1.trans (.cons .answer st2 (.cons .pump st3 (.refl _)))
+
+/-! ## The answer frees the pipeline
+
+The host counts its submissions as answered at the end of the blocking wait (`answer`: when
+`onSubmittedWorkDone` returns), not at a later event (Deno answers the promise of that call
+about 11 ms after the call returned; a frame that waited for the promise was held that long
+for nothing). In the model that is what `answer` already is; these say that nothing more is
+needed between the end of a wait and the next submission. -/
+
+/-- The end of a blocking wait leaves nothing in flight, nothing on the GPU, and the main
+thread free; it starts no new wait. -/
+theorem answer_frees (c : Config) {s t : State} (h : step c s .answer = some t) :
+    t.inFlight = 0 ∧ t.gpuLeft = 0 ∧ t.blocked = false ∧ t.waits = s.waits := by
+  simp only [step] at h
+  split at h
+  · rename_i hg
+    simp only [Bool.and_eq_true, beq_iff_eq] at hg
+    cases h
+    exact ⟨rfl, hg.2, rfl, rfl⟩
+  · cases h
+
+/-- A frame that is ready when a wait ends can be submitted in the very next step (no pump and
+no other event between), and is then the only one in flight: the next frame's GPU work does
+not wait for anything after the answer. -/
+theorem submit_after_answer (c : Config) (hb : 0 < c.bound) {s t : State}
+    (h : step c s .answer = some t) (hr : t.ready = true) :
+    ∃ u, step c t .submit = some u ∧ u.inFlight = 1 ∧ u.blocked = false := by
+  obtain ⟨h1, _, h3, _⟩ := answer_frees c h
+  have hlt : ¬ c.bound ≤ t.inFlight := by omega
+  exact ⟨{ t with ready := false, inFlight := t.inFlight + 1, gpuLeft := t.gpuLeft + 1 },
+    by simp [step, h3, hr, hlt], by simp [h1], h3⟩
 
 /-! ## The host before this rule
 
@@ -362,5 +396,8 @@ def maxEvents : Nat := 1000000
 #guard check ⟨3⟩ [.submit, .askBegin, .askEnd, .submit, .askBegin] == [.secondWait 4]
 #guard check ⟨3⟩ [.submit, .askBegin, .pump] == [.pumpWhileBlocked 2]
 #guard check ⟨3⟩ [.submit, .askBegin, .askEnd, .pump, .submit, .askBegin, .askEnd] == []
+-- Submissions right after the end of a wait, up to the bound, with no pump between.
+#guard check ⟨3⟩ [.pump, .submit, .submit, .submit, .askBegin, .askEnd, .submit, .submit, .submit, .pump, .askBegin, .askEnd] == []
+#guard check ⟨3⟩ [.pump, .submit, .askBegin, .askEnd, .submit, .submit, .submit, .submit] == [.overBound 7 3]
 
 end L4Factoidal.HostPipeline

@@ -65,36 +65,85 @@ export function sceneCost(frame:{width?:number;height?:number;data?:ArrayLike<nu
   return units/1e6;
 }
 
+/** `sceneCost` of the part of a scene inside `rects` ([x,y,w,h] in pixels): what a partial
+ * draw (Lean's damage rectangles) or one band of a banded draw gives the GPU. Each tile counts
+ * the pixels of it that the rectangles cover (rectangles are taken as disjoint; an overlap
+ * counts twice, as it is drawn twice). */
+export function sceneCostIn(frame:{width?:number;height?:number;data?:ArrayLike<number>;tiles?:ArrayLike<number>}|undefined,rects:ArrayLike<ArrayLike<number>>):number {
+  const data=frame?.data,tiles=frame?.tiles;
+  if(!data||!tiles||tiles.length<4||!frame?.width||!frame?.height)return 0;
+  const size=tiles[0],across=tiles[1],down=tiles[2],listBase=4+across*down,rows=data.length/4;
+  const edgesOf=new Map<number,number>();
+  let units=0;
+  for(let r=0;r<rects.length;r++){
+    const x0=Math.max(0,rects[r][0]),y0=Math.max(0,rects[r][1]),x1=Math.min(frame.width,rects[r][0]+rects[r][2]),y1=Math.min(frame.height,rects[r][1]+rects[r][3]);
+    if(x1<=x0||y1<=y0||!size)continue;
+    for(let ty=Math.floor(y0/size);ty<down&&ty*size<y1;ty++)for(let tx=Math.floor(x0/size);tx<across&&tx*size<x1;tx++){
+      const px=(Math.min(x1,(tx+1)*size)-Math.max(x0,tx*size))*(Math.min(y1,(ty+1)*size)-Math.max(y0,ty*size));
+      if(px<=0)continue;
+      const t=ty*across+tx;
+      let edges=edgesOf.get(t);
+      if(edges===undefined){
+        edges=0;
+        for(let item=tiles[3+t];item<tiles[4+t];item++){
+          const base=tiles[listBase+item];
+          if(base+2>rows)break;
+          const tag=data[4*(base+1)],count=data[4*(base+1)+1];
+          edges+=1+(tag===6||tag===5?count:0);
+        }
+        edgesOf.set(t,edges);
+      }
+      units+=px*edges;
+    }
+  }
+  return units/1e6;
+}
+
 /** At most `limit` GPU submissions in flight; 0 is no bound and no tracking (the host before
  * this gate, for measurement only). `before` is awaited before new GPU work, `after` called
- * when that work is submitted, with its cost (`sceneCost`, 0 when not known).
+ * when that work is submitted, with its cost (`sceneCost` of what was submitted: the whole
+ * scene, the damage rectangles of a partial draw, or one band; 0 when not known).
  *
  * Deno's onSubmittedWorkDone blocks the calling thread until the GPU is done (measured
  * 2026-11-15, Deno 2.9.4: an ask during 380 ms of GPU work returns after 380 ms and holds a
  * 2 ms timer for all of it; mapAsync of a fence buffer is the same), and an ask after the work
- * is done costs 0.1 ms on the thread and answers about 10 ms later. So the main thread (the
+ * is done costs 0.1 ms on the thread and its promise answers about 11 ms later (Deno sleeps
+ * 10 ms after its blocking poll before it looks at the callback). So the main thread (the
  * window's event pump) is free only if the gate asks after the GPU is done. Hence:
  *  - one ask at a time, about the newest submission; its answer covers every one before it;
  *  - before it asks, the gate sleeps (a timer: the loop keeps pumping) for the predicted GPU
  *    time of what is in flight, so the thread blocks only when the prediction was short;
  *  - the prediction is the cost of the submissions not yet answered for times a rate in ms per
- *    unit learned from asks that blocked (those end when the GPU is done, so they measure it),
- *    times 1.1. An ask that answers within 25 ms after the sleep means the work was done
- *    during it: the rate falls by 10%. With no cost known, the prediction is the last GPU time
- *    (the gate before costs, with the same 10% fall instead of 30%);
+ *    unit, times 1.1. The rate is measured by every ask that blocked 1 ms or more (it ends
+ *    when the GPU is done, so start to end over cost is the rate). An ask that did not block
+ *    says only that the prediction was long enough: the rate falls by 10%, and from the third
+ *    such ask in a row by 25%, then by half (a prediction several times too long, as after a
+ *    change of page, is not paid for by twenty frames). With no cost known, the prediction is
+ *    the last measured GPU time, with the same falls;
  *  - before any ask has measured a rate, `defaultMsPerUnit` (the caller's prior for this
- *    machine; 0: ask at once) gives the first prediction;
+ *    machine; 0: ask at once) gives the first prediction of heavy work;
+ *  - `answersAtReturn` (a queue whose ask blocks until the work is done, as Deno's): the
+ *    submissions count as answered when the ask returns, not when its promise answers 11 ms
+ *    later: the next frame's work does not wait for the promise (HostPipeline.Model: `answer`
+ *    is the end of the blocking wait and frees every submission; `submit_after_answer`). The
+ *    promise is still awaited before the next ask, and checked: if it answers more than 50 ms
+ *    after the return while the loop was turning, three times, the queue does not block as
+ *    assumed and answers are taken from the promise from then on;
  *  - light work (prediction under 50 ms, so at most about 150 ms queued) may have 3
- *    submissions not yet answered for, so the 10 ms answer does not hold a 16 ms frame; heavy
- *    work has `limit`. (Measured on the shader gallery: with 3, frame spacing is that of no
- *    gate; with 1 or 2, one frame in five was over 25 ms.) */
+ *    submissions not yet answered for, so a wait for the answer does not hold a 16 ms frame;
+ *    heavy work has `limit`. (Measured on the shader gallery: with 3, frame spacing is that of
+ *    no gate; with 1 or 2, one frame in five was over 25 ms.) */
 export type PipeEvent="submit"|"ask"|"answer";
-export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,defaultMsPerUnit=0,onPipe?:(event:PipeEvent)=>void) {
-  const LIGHT_MS=50,LIGHT_BOUND=3,MARGIN=1.1,EARLY_MS=5,ANSWER_MS=25,FALL=0.9,HEAVY_UNITS=100,FALLBACK_MS=50;
-  let submitted=0,answered=0,estimateMs=0,lastCost=0,lastDoneAt=0;
-  // `pending`: the next ask, planned and not started; `asking`: an ask started, its answer not in.
+export type GateOptions={answersAtReturn?:boolean;debug?:(record:Record<string,unknown>)=>void};
+export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,defaultMsPerUnit=0,onPipe?:(event:PipeEvent)=>void,options:GateOptions={}) {
+  const LIGHT_MS=50,LIGHT_BOUND=3,MARGIN=1.1,EARLY_MS=5,MEASURED_MS=1,ANSWER_MS=25,FALLS=[0.9,0.9,0.75,0.5],HEAVY_UNITS=100,FALLBACK_MS=50,LAG_MS=50,LAG_MISSES=3,MAX_MS=5000;
+  const debug=options.debug;
+  let submitted=0,answered=0,estimateMs=0,rate=0,lastCost=0,lastDoneAt=0,earlyRun=0;
+  let atReturn=!!options.answersAtReturn,lagMisses=0,turns=0;
+  // `pending`: the next ask, planned and not started; `asking`: an ask started, its promise not in.
   let pending:{seq:number;started:number;predicted:number;cost:number;sleep:number;due:number;timer:ReturnType<typeof setTimeout>}|undefined;
   let asking:Promise<void>|undefined;
+  let startVia="timer";
   // Driven (`turn`): asks start only from the host loop's turn, right after it took input, so
   // at most one blocking wait comes between two pumps (HostPipeline.Model `waits ≤ 1`).
   let driven=false;
@@ -102,45 +151,75 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
   const wake=()=>{for(const w of waiters.splice(0))w();};
   const submittedAt=new Map<number,number>(),costOf=new Map<number,number>();
   const recent:number[]=[];
-  const stats={submits:0,waits:0,waitMs:0,maxInFlight:0,blockedMs:0,maxBlockedMs:0,blockedAsks:0,asks:0,turnAsks:0,fallbackAsks:0};
+  const stats={submits:0,waits:0,waitMs:0,maxInFlight:0,blockedMs:0,maxBlockedMs:0,blockedAsks:0,asks:0,turnAsks:0,fallbackAsks:0,returnAnswers:0,lateTurnMs:0};
   const costUpTo=(seq:number)=>{let c=0;for(const [k,v] of costOf)if(k<=seq)c+=v;return c;};
-  // The predicted GPU time of what is in flight up to `seq`: the last measured time scaled by
-  // cost (at most 4 times either way), or with no measurement yet a heavy scene's cost times the
-  // machine prior (at most 5 s), or the last measured time.
+  // The GPU time of `cost` units at the measured rate, or (no rate yet) of heavy work at the
+  // machine prior; 0 when neither says.
+  const msFor=(cost:number)=>cost>0&&rate>0?Math.min(MAX_MS,cost*rate):cost>=HEAVY_UNITS&&rate===0&&estimateMs===0&&defaultMsPerUnit>0?Math.min(MAX_MS,cost*defaultMsPerUnit):0;
+  // The predicted GPU time of what is in flight up to `seq`: its cost at the rate (with the
+  // margin once a rate is measured), or with no cost known the last measured time.
   const predict=(seq:number)=>{
     const cost=costUpTo(seq);
-    if(cost>0&&lastCost>0&&estimateMs>0)return Math.min(4*estimateMs,Math.max(estimateMs/4,estimateMs*cost/lastCost))*MARGIN;
-    if(estimateMs===0&&cost>=HEAVY_UNITS&&defaultMsPerUnit>0)return Math.min(5000,cost*defaultMsPerUnit);
-    return estimateMs;
+    if(cost>0&&rate>0)return msFor(cost)*MARGIN;
+    const prior=msFor(cost);
+    return prior>0?prior:estimateMs;
+  };
+  // The answer for the ask `p`: the GPU was done at `done`; `measured` when the ask blocked, so
+  // `done` is when the GPU finished (else it had finished some time before).
+  const settle=(p:NonNullable<typeof pending>,done:number,measured:boolean)=>{
+    const busy=Math.max(0,done-p.started);
+    if(measured){
+      stats.blockedAsks++;earlyRun=0;
+      estimateMs=busy;if(p.cost>0){rate=busy/p.cost;lastCost=p.cost;}
+    }else{
+      const fall=FALLS[Math.min(earlyRun,FALLS.length-1)];earlyRun++;
+      estimateMs*=fall;rate*=fall;
+    }
+    const gpuMs=measured?busy:Math.min(busy,p.predicted/MARGIN);
+    recent.push(gpuMs);if(recent.length>240)recent.shift();
+    for(const k of [...submittedAt.keys()])if(k<=p.seq){submittedAt.delete(k);costOf.delete(k);}
+    answered=Math.max(answered,p.seq);lastDoneAt=done;
+    onDone?.(gpuMs);
   };
   // Start the planned ask. Deno's onSubmittedWorkDone blocks inside the call until the GPU is
-  // done (measured: the call returns after the GPU work, the promise about 10 ms later), so the
+  // done (measured: the call returns after the GPU work, the promise about 11 ms later), so the
   // call's own time is the time the thread was blocked.
   const start=()=>{
     const p=pending;if(!p)return;pending=undefined;clearTimeout(p.timer);
+    const via=startVia;startVia="timer";
     stats.asks++;onPipe?.("ask");
     const asked=performance.now();
+    if(p.sleep>0)stats.lateTurnMs+=Math.max(0,asked-p.due);
     let answer:Promise<unknown>;
     try{answer=queue.onSubmittedWorkDone();}catch(error){answer=Promise.reject(error);}
-    const blocked=performance.now()-asked;onPipe?.("answer");
+    const returned=performance.now(),blocked=returned-asked;onPipe?.("answer");
     stats.blockedMs+=blocked;stats.maxBlockedMs=Math.max(stats.maxBlockedMs,blocked);
+    const before=estimateMs,covered=p.seq-answered,turnsAtReturn=turns;
+    const settledAtReturn=atReturn;
+    if(settledAtReturn){
+      // The work is done: the next frame need not wait for the promise.
+      stats.returnAnswers++;settle(p,returned,blocked>=MEASURED_MS);wake();
+    }
     asking=answer.then(()=>{
+        const now=performance.now();
+        if(settledAtReturn){
+          // The check of `answersAtReturn`: the promise of a blocking ask answers soon after.
+          if(now-returned>LAG_MS&&turns-turnsAtReturn>=2){if(++lagMisses>=LAG_MISSES)atReturn=false;}
+          debug?.({ev:"ask",seq:p.seq,via,started:p.started,due:p.due,predicted:p.predicted,cost:p.cost,asked,blocked,answeredAt:returned,promiseAt:now,early:blocked<MEASURED_MS,estimateBefore:before,rate,covered});
+          return;
+        }
         // Done: the end of a blocking call, or the answer for a queue that does not block.
-        const now=performance.now(),done=blocked>=1?asked+blocked:now;
-        const early=p.sleep>0&&blocked<EARLY_MS&&now-asked<ANSWER_MS;
-        if(!early)stats.blockedAsks++;
-        const busy=Math.max(0,done-p.started);
-        // A blocking ask measures the GPU (the wait ended when it was done); an early one only
-        // says the prediction was long enough, so the estimate falls a little.
-        const ms=early?estimateMs*FALL:busy;
-        estimateMs=ms;if(!early&&p.cost>0)lastCost=p.cost;
-        const gpuMs=early?Math.min(busy,p.predicted/MARGIN):busy;
-        recent.push(gpuMs);if(recent.length>240)recent.shift();
-        for(const k of [...submittedAt.keys()])if(k<=p.seq){submittedAt.delete(k);costOf.delete(k);}
-        answered=Math.max(answered,p.seq);lastDoneAt=done;
-        onDone?.(gpuMs);
+        const blocking=blocked>=MEASURED_MS,done=blocking?returned:now;
+        const early=!blocking&&p.sleep>0&&blocked<EARLY_MS&&now-asked<ANSWER_MS;
+        settle(p,done,!early);
+        debug?.({ev:"ask",seq:p.seq,via,started:p.started,due:p.due,predicted:p.predicted,cost:p.cost,asked,blocked,answeredAt:now,promiseAt:now,early,estimateBefore:before,rate,covered});
       },()=>{answered=Math.max(answered,p.seq);})
-      .finally(()=>{asking=undefined;wake();if(submitted>answered)plan(submitted);});
+      .finally(()=>{
+        // The next ask (planned while this promise was not in, or not yet) is planned from now.
+        asking=undefined;wake();
+        if(pending){clearTimeout(pending.timer);pending=undefined;}
+        if(submitted>answered)plan(submitted);
+      });
   };
   // Plan an ask about submission `seq` at the predicted end of the GPU work in flight. Not
   // driven: a timer starts it (light work at once, as before). Driven: the loop's turn starts it
@@ -152,7 +231,7 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
     const started=Math.max(first,lastDoneAt);
     const cost=costUpTo(seq),predicted=predict(seq),sleep=driven||predicted>=LIGHT_MS?predicted:0;
     const due=started+sleep;
-    const timer=setTimeout(()=>{if(pending?.seq===seq){if(driven)stats.fallbackAsks++;start();}},Math.max(0,due+(driven?FALLBACK_MS:0)-performance.now()));
+    const timer=setTimeout(()=>{if(pending?.seq===seq&&!asking){if(driven){stats.fallbackAsks++;startVia="fallback";}start();}},Math.max(0,due+(driven?FALLBACK_MS:0)-performance.now()));
     pending={seq,started,predicted,cost,sleep,due,timer};
   };
   return {
@@ -163,6 +242,7 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
       const begin=performance.now();stats.waits++;
       while(submitted-answered>=bound())await new Promise<void>(resolve=>waiters.push(resolve));
       stats.waitMs+=performance.now()-begin;
+      debug?.({ev:"wait",begin,end:performance.now(),inFlight:submitted-answered});
     },
     /** `settled`: the caller has already waited for this work (a readback): it is answered. */
     after(cost=0,settled=false):void {
@@ -175,11 +255,12 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
         wake();return;
       }
       submitted++;submittedAt.set(submitted,performance.now());if(cost>0)costOf.set(submitted,cost);
-      onPipe?.("submit");
+      onPipe?.("submit");debug?.({ev:"submit",seq:submitted,t:performance.now(),cost,inFlight:submitted-answered,predicted:predict(submitted)});
       stats.maxInFlight=Math.max(stats.maxInFlight,submitted-answered);
       // A planned ask is planned again to cover this submission too (its predicted end moves).
-      if(pending){clearTimeout(pending.timer);pending=undefined;plan(submitted);}
-      else if(!asking)plan(submitted);
+      // While an ask's promise is not in, the next ask is planned and starts after it.
+      if(pending){clearTimeout(pending.timer);pending=undefined;}
+      plan(submitted);
     },
     /** Resolves when every submission so far is answered (asks as usual). */
     async quiet():Promise<void> {
@@ -198,23 +279,33 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
     /** The host loop's turn, right after it took input: from the first call on, asks start
      * only here (or from the fallback timer), at most one a turn. */
     turn():void {
+      turns++;
       for(const go of turnWaiters.splice(0))go();
       if(limit<=0)return;
       if(!driven){driven=true;if(pending){const seq=pending.seq;clearTimeout(pending.timer);pending=undefined;plan(seq);}}
-      if(pending&&!asking&&performance.now()>=pending.due){stats.turnAsks++;start();}
+      if(pending&&!asking&&performance.now()>=pending.due){stats.turnAsks++;startVia="turn";start();}
     },
+    /** Ms until the planned ask is due (0: due now, at the next turn); null with none planned.
+     * The host's loop turns no later than this, so a due ask does not wait out a nap. */
+    dueIn():number|null {return pending?Math.max(0,pending.due-performance.now()):null;},
+    /** The GPU time of `cost` units at the measured rate; 0 before any measurement. */
+    msFor(cost:number):number {return cost>0&&rate>0?Math.min(MAX_MS,cost*rate):0;},
     /** Wait for every submission so far (a quit: nothing new is submitted after this). */
     async idle():Promise<void> {
       if(limit<=0){if(stats.submits)await queue.onSubmittedWorkDone();return;}
       driven=false;
-      if(pending&&!asking)start();
-      while(submitted>answered)await new Promise<void>(resolve=>waiters.push(resolve));
+      while(submitted>answered){
+        if(asking)await asking;
+        else if(pending)start();
+        else plan(submitted);
+      }
     },
     /** Submissions not yet answered for (at most; some may be done). */
     get inFlight(){return submitted-answered;},
     /** Submit to done of recent answers, ms. With heavy work this is about the GPU time. */
     get recent(){return recent.slice();},
-    get stats(){return {...stats,lastCost:Math.round(lastCost),estimateMs:Math.round(estimateMs),waitMs:Math.round(stats.waitMs*10)/10,blockedMs:Math.round(stats.blockedMs*10)/10,maxBlockedMs:Math.round(stats.maxBlockedMs*10)/10,inFlight:submitted-answered,driven};},
+    get stats(){return {...stats,lastCost:Math.round(lastCost),estimateMs:Math.round(estimateMs),msPerUnit:Math.round(rate*1000)/1000,waitMs:Math.round(stats.waitMs*10)/10,blockedMs:Math.round(stats.blockedMs*10)/10,maxBlockedMs:Math.round(stats.maxBlockedMs*10)/10,
+      lateTurnMs:Math.round(stats.lateTurnMs*10)/10,inFlight:submitted-answered,driven,answersAtReturn:atReturn};},
   };
 }
 export type GpuGate=ReturnType<typeof createGpuGate>;
