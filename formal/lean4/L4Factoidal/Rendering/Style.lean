@@ -102,7 +102,10 @@ structure Computed where
   color : Color := ⟨0,0,0⟩
   background : Option Color := none
   fontSize : Float := 16
-  fontFamily : String := "monospace"
+  /-- CSS Fonts 4 §2.1: the initial value is the user agent's; as in browsers, `serif`
+  (`FontFaceRule.genericOf`: drawn with the serif face when the engine holds one, else with
+  its first font, as before). -/
+  fontFamily : String := "serif"
   lineHeight : Float := 19.2
   lineHeightFactor : Option Float := some 1.2
   visible : Bool := true
@@ -1547,6 +1550,11 @@ private def startMargin (tag : String) (size : Float) : Edges :=
   else if tag == "dd" then ⟨0,0,0,40⟩
   else {}
 
+/-- HTML §15.3.4 (the user agent's rules `pre, listing, xmp, plaintext, code, kbd, samp, tt
+{ font-family: monospace }`): elements that start in the monospace family, so that with
+`serif` the initial family their text keeps the face it had. Author CSS wins. -/
+def monospaceTags : List String := ["pre","listing","xmp","plaintext","code","kbd","samp","tt"]
+
 private def headingScale : String → Float
   | "h1" => 2 | "h2" => 1.5 | "h3" => 1.17 | "h5" => 0.83 | "h6" => 0.67 | _ => 1
 
@@ -2412,7 +2420,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     fontWeight, inheritedWeight := parent.fontWeight,
     oblique := parent.oblique || (html && FontSynthesis.italicTags.contains n.lname),
     color := parent.color,
-    clipOverflow := svgViewport && svgOverflow != "visible", fontSize, fontFamily := parent.fontFamily,
+    clipOverflow := svgViewport && svgOverflow != "visible", fontSize,
+    fontFamily := if html && monospaceTags.contains n.lname then "monospace" else parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
     lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
     preformatted := parent.preformatted || ["pre","listing","xmp","plaintext"].contains n.lname,

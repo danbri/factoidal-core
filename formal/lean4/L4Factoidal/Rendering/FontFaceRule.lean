@@ -203,6 +203,100 @@ def endsSearch (held : List String) (family : String) : Bool :=
     "ui-monospace","ui-rounded","math","emoji","fangsong"].contains family.toLower ||
   held.contains family.toLower
 
+/-! ### The serif face and the initial family
+
+CSS Fonts 4 §2.1 leaves the initial `font-family` to the user agent; Chrome, Firefox and
+Safari draw it with a serif face (Times), and so does this engine (`CSS.Computed.fontFamily`
+is `serif`). The engine holds one serif face when a host gives it one
+(`WebDocument.Holds.serif`: Liberation Serif, `third_party/fonts/liberation-serif`), and
+draws the text whose family list resolves to `serif` with it; any other text, and all text
+when no serif face is held, is drawn as before, with the engine's first font.
+
+A family list resolves to `serif` (`genericOf`) when the first of its families that the
+engine can draw is `serif`, `ui-serif` or a serif family that systems install, or when none
+of its families can be drawn (the user agent's default face, as in browsers). A family that
+ends the search otherwise (another generic family, a font the engine holds, a sans-serif or
+monospace family that systems install) keeps the first font. The lists of installed
+families are the substitutions systems make for families they lack (fontconfig's aliases:
+Times New Roman to Liberation Serif, Arial to Liberation Sans); they name no site. -/
+
+/-- Families drawn with the serif face: the generic families and serif families that
+systems install (lower case). -/
+def serifNames : List String :=
+  ["serif","ui-serif","times","times new roman","liberation serif","tinos","georgia","noto serif",
+    "dejavu serif","cambria","palatino","palatino linotype","book antiqua","garamond","baskerville"]
+
+/-- Sans-serif and monospace families that systems install (lower case): each ends the
+search with the engine's first font, as `sans-serif` does. -/
+def firstFontNames : List String :=
+  ["arial","helvetica","helvetica neue","verdana","tahoma","trebuchet ms","segoe ui","roboto",
+    "-apple-system","blinkmacsystemfont","liberation sans","arimo","dejavu sans","open sans",
+    "lucida grande","lucida sans unicode","geneva","calibri","ubuntu","cantarell","noto sans",
+    "courier","courier new","menlo","monaco","consolas","liberation mono","cousine",
+    "dejavu sans mono","sfmono-regular","sf mono"]
+
+/-- What a family list resolves to among the faces the engine has of its own. -/
+inductive Generic where
+  /-- The serif face, when the engine holds one. -/
+  | serif
+  /-- The engine's first font (and its fallback fonts), as before. -/
+  | first
+  deriving Repr, BEq, DecidableEq
+
+/-- The generic face of the family list `families` (CSS Fonts 4 §5: the first family that
+can be drawn wins). `held` lists the families of the fonts the engine holds, lower case.
+Web fonts (`@font-face`) come before this: a family that names one draws with it first
+(`WebDocument.familyFonts`), and its missing characters fall back to the face named here. -/
+def genericOf (held : List String) : List String → Generic
+  | [] => .serif
+  | family :: rest =>
+    if serifNames.contains family.toLower then .serif
+    else if endsSearch held family.toLower || firstFontNames.contains family.toLower then .first
+    else genericOf held rest
+
+/-- The generic face of a `Computed.fontFamily` value. -/
+def genericOfValue (held : List String) (value : String) : Generic :=
+  genericOf held (CSS.familyList value)
+
+/-- Kind: property. Says: a family list that names no family the engine can draw resolves
+to the serif face, the user agent's default, as browsers do. -/
+theorem genericOf_nil (held : List String) : genericOf held [] = .serif := rfl
+
+/-- Kind: property. Says: a list whose first family is a serif name (`serif`, `ui-serif`,
+Times, ...) resolves to the serif face, whatever follows and whatever fonts are held. -/
+theorem genericOf_serifName (held rest : List String) (family : String)
+    (hs : serifNames.contains family.toLower = true) : genericOf held (family :: rest) = .serif := by
+  first | simp [genericOf, hs] | (unfold genericOf; simp [hs])
+
+/-- Kind: property. Says: a list whose first family ends the search and is not a serif name
+(`sans-serif`, `monospace`, a font the engine holds, an installed sans-serif or monospace
+family) keeps the engine's first font: an explicit family is not taken over by the serif
+face, and such text is drawn as before. -/
+theorem genericOf_first (held rest : List String) (family : String)
+    (hs : serifNames.contains family.toLower = false)
+    (he : endsSearch held family.toLower = true ∨ firstFontNames.contains family.toLower = true) :
+    genericOf held (family :: rest) = .first := by
+  rcases he with h | h <;> first | simp [genericOf, hs, h] | (unfold genericOf; simp [hs, h])
+
+/-- Kind: property. Says: a family the engine can not draw is passed over: the list
+resolves as the rest of it does (CSS Fonts 4 §5). -/
+theorem genericOf_skip (held rest : List String) (family : String)
+    (hs : serifNames.contains family.toLower = false) (he : endsSearch held family.toLower = false)
+    (hf : firstFontNames.contains family.toLower = false) :
+    genericOf held (family :: rest) = genericOf held rest := by
+  first | simp [genericOf, hs, he, hf] | (unfold genericOf; simp [hs, he, hf])
+
+#guard genericOfValue [] "serif" == .serif
+#guard genericOfValue [] "Times New Roman, serif" == .serif
+#guard genericOfValue [] "Arial, Helvetica, sans-serif" == .first
+#guard genericOfValue [] "sans-serif" == .first
+#guard genericOfValue [] "Lato" == .serif
+#guard genericOfValue [] "Lato, sans-serif" == .first
+#guard genericOfValue ["noto sans"] "Noto Sans, serif" == .first
+#guard genericOfValue [] "monospace" == .first
+#guard genericOfValue [] "system-ui" == .first
+#guard genericOfValue [] "Georgia, Times, serif" == .serif
+
 /-- The face that draws character `c` in an element of family list `families`: the
 first family with a selected face whose range holds `c`. `none` when a generic or
 held family comes first, or when no face holds it. -/

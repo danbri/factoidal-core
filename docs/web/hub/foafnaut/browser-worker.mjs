@@ -275,13 +275,13 @@ function fontLoad(bytes,family,sha,fallback=false){
   if(!fontBytesTakeFallback||typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
     let text='';
     for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
+    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='serif'?{serif:true}:fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
   }
   const input=module._malloc(Math.max(1,bytes.length));
   if(!input)throw Error('Lean engine allocation failed');
   try{
     module.HEAPU8.set(bytes,input);
-    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='web'?2:fallback?1:0]);
+    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='serif'?3:fallback==='web'?2:fallback?1:0]);
     if(!pointer)throw Error('Lean engine allocation failed');
     try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
     finally{module.ccall('web_render_free',null,['number'],[pointer]);}
@@ -304,6 +304,22 @@ async function loadFont(){
     // fallback argument: on 2026-11-07 the published engine did both (issue 1274).
     if(typeof primary?.fonts==='number')fontBytesTakeFallback=true;
   }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));}
+}
+// The serif face (labs/demos/foafnaut/serif_font.ts): `serif` and the initial font-family
+// draw with Liberation Serif, as browsers draw them with a Times-like face. Lean decides which
+// text is serif; the first render whose text wants the face while the engine holds none
+// answers wantsSerif, and the face is fetched then, given to Lean (fontLoad mode 3) and the page
+// drawn again. A session whose pages never resolve to serif fetches no serif byte.
+const serifFont='./fonts/liberation-serif/LiberationSerif-Regular.ttf';
+let serifLoading;
+function wantSerif(){
+  if(serifLoading)return;
+  const start=performance.now();
+  serifLoading=fontFile(serifFont).then(({bytes,sha})=>{
+    fontLoad(bytes,'Liberation Serif',sha,'serif');
+    console.info(`foafnaut: serif face in ${Math.round(performance.now()-start)} ms`);
+    request();
+  }).catch(error=>console.warn('foafnaut: no serif face, serif text stays in Noto Sans:',String(error?.message??error)));
 }
 // The fallback fonts a page needs, into the engine. Those that come within `wait` ms go in
 // before the page is laid out; the rest go in together when they have all come, and the
@@ -967,7 +983,7 @@ function hasWasm(){
   return engineWasm;
 }
 const wasmNeedsEngine=url=>({url,title:'Needs a newer engine',sources:[],source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title>'+
-  '<style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#a0186a}p{margin:0 0 8px 0}</style></head><body>'+
+  '<style>body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#a0186a}p{margin:0 0 8px 0}</style></head><body>'+
   '<h1>WebAssembly in Lean needs a newer engine</h1><p>This page runs WebAssembly modules with WasmVM, the WebAssembly engine written in Lean, inside the Foafnaut engine.</p>'+
   '<p>The engine this page loaded is older and does not have it. The next engine release carries it.</p></body></html>'});
 async function wasmModule(argument){
@@ -1004,7 +1020,7 @@ function hasSparql(){
   return engineSparql;
 }
 const sparqlNeedsEngine=url=>({url,title:'Needs a newer engine',sources:[],source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title>'+
-  '<style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#184078}p{margin:0 0 8px 0}</style></head><body>'+
+  '<style>body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#184078}p{margin:0 0 8px 0}</style></head><body>'+
   '<h1>The SPARQL planner page needs a newer engine</h1><p>This page draws how Factoidal plans and runs a SPARQL query, from the Lean engine.</p>'+
   '<p>The engine this page loaded is older and does not have it. The next engine release carries it.</p></body></html>'});
 function sparqlPage(url){
@@ -1416,6 +1432,7 @@ async function draw(){
       else{
         next=render(doc.source,wantLayers?{...options,layers:true}:options,width,height);
         noteDiagnostics(doc,next);
+        if(next?.wantsSerif===true)wantSerif();
         // An engine with no layers answers one frame: this page then draws frames as before.
         if(wantLayers){layers=L.layersOf(next);layered=!!layers;}
       }
