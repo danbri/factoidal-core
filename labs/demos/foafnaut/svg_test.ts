@@ -110,8 +110,11 @@ Deno.test("SVG ellipse fill and polygon nonzero/evenodd winding are implemented 
  equal(e.sample(ellipse,20,20),[255,0,0]);equal(e.sample(ellipse,20,26),[255,255,255]);
  const polygon=(rule:string)=>wrap(`<polygon points="5,5 25,5 25,25 5,25 5,5 25,5 25,25 5,25" fill-rule="${rule}"/>`);
  equal(e.sample(polygon('nonzero'),10,10),[0,0,0]);equal(e.sample(polygon('evenodd'),10,10),[255,255,255]);
- rejects(()=>e.compile(wrap('<ellipse rx="auto" ry="5"/>')),"SVG profile:");
- rejects(()=>e.compile(wrap('<ellipse rx="5"/>')),"explicit numeric rx and ry");
+ // SVG 2 §10.4: rx="auto" is the other radius (geometry properties, 2026-11-15)
+ equal(e.compile(wrap('<ellipse cx="10" cy="10" rx="auto" ry="5"/>')).primitiveCount,1);
+ // a missing ry is auto: the other radius (SVG 2 §10.4); with neither, the ellipse is refused
+ equal(e.compile(wrap('<ellipse cx="10" cy="10" rx="5"/>')).primitiveCount,1);
+ rejects(()=>e.compile(wrap('<ellipse cx="10" cy="10"/>')),"explicit numeric rx and ry");
  // A stroked ellipse draws as a path of two arcs.
  if(e.compile(wrap('<ellipse rx="5" ry="5" stroke="black"/>')).primitiveCount!==1)throw new Error("stroked ellipse");
  assert(e.compile(wrap('<polygon points="0 0 10 0 10 10" stroke="black"/>')).primitiveCount===1,"Polygon stroke admission");
@@ -122,7 +125,9 @@ Deno.test("SVG zero dimensions and invalid radii disable painting; other negativ
  equal(a.primitiveCount,0);equal(e.sample(wrap(''),10,10),[255,255,255]);
  for(const shape of ['<rect width="-1" height="5"/>','<ellipse rx="-1" ry="4"/>'])rejects(()=>e.compile(wrap(shape)),"negative");
  for(const r of ['-1','-1%']){const xml=wrap(`<rect width="8" height="8" fill="blue"/><circle cx="4" cy="4" r="${r}" fill="red"/>`);equal(e.compile(xml).primitiveCount,1);equal(e.sample(xml,4,4),[0,0,255]);}
- rejects(()=>e.compile(wrap('<circle r="-1" style="r:4"/>')),'unsupported CSS property: r');
+ // SVG 2 §9.2: r is a geometry property, so a style r overrides the attribute
+ const styled=wrap('<circle cx="10" cy="10" r="-1" style="r:4"/>');
+ equal(e.compile(styled).primitiveCount,1);equal(e.sample(styled,10,10),[0,0,0]);
  equal(e.compile(wrap('<rect width="0" height="20" transform="translate(1)"/>')).primitiveCount,0);
  rejects(()=>e.compile(wrap('<rect width="0" height="20" transform="perspective(1)"/>')),"unsupported transform");
 });
