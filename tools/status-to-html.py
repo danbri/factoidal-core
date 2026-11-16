@@ -9,7 +9,7 @@ ASCII. --check exits 1 when OUTPUT differs. The output has no script.
 """
 import html, re, sys
 
-STYLE = ('body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}'
+STYLE = ('body{font-family:sans-serif;margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}'
          'main{width:640px}h1{margin:0;font-size:21px;line-height:28px;color:#184078}'
          'h2{margin:0;padding-top:14px;font-size:16px;line-height:24px;color:#184078}'
          'p{margin:0;padding-top:6px}')
