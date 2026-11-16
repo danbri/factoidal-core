@@ -39,7 +39,7 @@ theorem le_attempt {α β : Type} {fast : JSM H (Option β)} {c : β → JSM H �
       ((∀ b s', fast s = .ok (some b) s' → g s = c b s') ∧
        (∀ s', fast s = .ok none s' → s' = s) ∧ (∀ e s', fast s ≠ .error e s'))) :
     Le g (Tier1.attempt fast c g) := by
-  show ∀ s, Out (g s) ∨ g s = Tier1.attempt fast c g s
+  unfold Le
   intro s
   rcases h s with ho | ⟨h1, h2, h3⟩
   · exact Or.inl ho
