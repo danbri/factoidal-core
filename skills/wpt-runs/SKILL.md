@@ -422,8 +422,11 @@ suites job, on the same triggers as WPT, and are recorded in `runs.csv` (one row
   EntailmentTest, ConsistencyTest, InconsistencyTest under the Direct Semantics (`--dl`: RL
   closure, materialisation, tableau refuter) and under the RDF-Based Semantics (`--rdf-based`),
   `l4-owl2-<type>-<direct|rdfbased>`; ProfileIdentificationTest per profile EL, QL, RL
-  (`l4-owl2-profile-*`: no built-in recogniser, so `valid=false` with that reason and the
-  official size 418); species (`l4-owl2-species-all|dl|full-only`). The denominator is always
+  (`l4-owl2-profile-*`, 418 cases each, since 2026-11-16: the probe's `--profile-id` mode, which
+  is the OWL 2 DL species verdict and then the profile's grammar, `OWL/Profiles.lean`, over the
+  axioms read back from the RDF graph, `OWL/StructureFromRdf.lean`; a graph the reader cannot
+  place is `undecided` and counted as other; a core commit whose probe lacks the mode gives
+  `valid=false` with that reason); species (`l4-owl2-species-all|dl|full-only`). The denominator is always
   the population's full official count; `names_run` = units decided (pass + fail); meta.json
   has the split by status (Approved, Proposed, Extracredit, none).
 - A row is valid when the scoreboard gave it status `ok` with tests found, or (OWL) the probe

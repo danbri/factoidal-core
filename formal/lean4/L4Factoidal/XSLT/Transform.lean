@@ -689,6 +689,9 @@ structure Rt where
   /-- What `document(uri)` may return. Supplied by the caller — see
       `XPath.Ctx.docs`. -/
   docs    : List (String × Doc) := []
+  /-- The URI of the source document, for `document(uri)` naming it —
+      see `XPath.Ctx.docUri`. -/
+  srcUri  : Option String := none
 deriving Inhabited
 
 /-- The document an item belongs to, by its document number — the
@@ -712,7 +715,7 @@ def selectTemplate (rt : Rt) (mode : String) (it : Item) : Option Tmpl :=
       | some (some ls) => ls.contains it.loc
       | _              => false
     else
-      match patternLocsIn { doc := rt.doc, self? := rt.self?, docs := rt.docs,
+      match patternLocsIn { doc := rt.doc, self? := rt.self?, docs := rt.docs, docUri := rt.srcUri,
                             item := .doc (rt.docOf it) it.loc.doc, nsctx := t.nsctx } t.pat with
       | some ls => ls.contains it.loc
       | none    => false
@@ -1077,7 +1080,7 @@ partial def evalIn (rt : Rt) (vars : List (String × Value))
     : Option Value :=
   evalText { doc := rt.doc, item := it, pos := pos, size := size,
              vars := rt.globals ++ vars, nsctx := nsctx, self? := rt.self?,
-             docs := rt.docs } e
+             docs := rt.docs, docUri := rt.srcUri } e
 
 /-- Expand an attribute value template. -/
 partial def expandAvt (rt : Rt) (vars : List (String × Value))
@@ -1237,7 +1240,8 @@ def isStylesheetRoot (root : Node) : Bool :=
     writes it. -/
 def transform (style : Document) (src : Document)
     (docs : List (String × Doc) := [])
-    (imports : List (String × Node) := []) : Outcome :=
+    (imports : List (String × Node) := [])
+    (srcUri : Option String := none) : Outcome :=
   if !style.namespaceWellFormed || !src.namespaceWellFormed ||
       !(docs.all (fun (_, d) => checkChildren "1.1" initialScope d)) ||
       !(imports.all (fun (_, n) => isNamespaceWellFormed "1.1" n)) then
@@ -1277,7 +1281,7 @@ def transform (style : Document) (src : Document)
         .refused ("unreadable match pattern(s): " ++ String.intercalate ", " unread)
       else
         let rt0 : Rt := { st := st, doc := d, locs := locs, self? := some styleDoc,
-                          docs := docs }
+                          docs := docs, srcUri := srcUri }
         -- Top-level variables are evaluated against the DOCUMENT
         -- node, in declaration order, each seeing the ones before it.
         match st.globals.foldlM (fun (acc : List (String × Value)) (nm, b, ns) =>
