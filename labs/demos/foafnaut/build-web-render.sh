@@ -17,6 +17,38 @@ cd "$PROJECT"
 export LEAN_NUM_THREADS=2
 export EMCC_CORES=2
 export BINARYEN_CORES=2
+# C compiles of the generated Lean IR and HACL* are independent, so they run COMPILE_JOBS
+# at a time (default: the core count, at most 4; COMPILE_JOBS=1 is the old serial order).
+# Objects are linked in the same order as before, whatever order they finish in.
+# FOAFNAUT_CC_LAUNCHER (for example ccache) goes in front of the native C compiler; for
+# Wasm, Emscripten's own EM_COMPILER_WRAPPER does the same.
+CPUS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+COMPILE_JOBS=${COMPILE_JOBS:-$(( CPUS < 4 ? CPUS : 4 ))}
+LAUNCH=()
+[ -n "${FOAFNAUT_CC_LAUNCHER:-}" ] && LAUNCH=("$FOAFNAUT_CC_LAUNCHER")
+COMPILE_PIDS=()
+COMPILE_FAILED=0
+# Every compile command, one per line, shell-quoted: CI recompiles a sample without its cache
+# and compares the objects (factoidal-builds scripts/cache-audit.sh).
+COMPILE_LOG="$BUILD/compile-commands.txt"
+: > "$COMPILE_LOG"
+# compile_bg COMMAND...: start one compile, after waiting for the oldest when COMPILE_JOBS run.
+compile_bg(){
+  printf '%q ' "$@" >> "$COMPILE_LOG"; printf '\n' >> "$COMPILE_LOG"
+  if [ "${#COMPILE_PIDS[@]}" -ge "$COMPILE_JOBS" ]; then
+    wait "${COMPILE_PIDS[0]}" || COMPILE_FAILED=1
+    COMPILE_PIDS=(${COMPILE_PIDS[@]+"${COMPILE_PIDS[@]:1}"})
+  fi
+  "$@" &
+  COMPILE_PIDS+=($!)
+}
+# compile_wait: wait for every started compile; any failure stops the build.
+compile_wait(){
+  local pid
+  for pid in ${COMPILE_PIDS[@]+"${COMPILE_PIDS[@]}"}; do wait "$pid" || COMPILE_FAILED=1; done
+  COMPILE_PIDS=()
+  [ "$COMPILE_FAILED" = 0 ] || { echo 'A C compile failed (its error is above); build refused' >&2; exit 1; }
+}
 if [ "$MODE" = --wasm ]; then
 export EM_CACHE="$BUILD/emscripten-cache"
 if [ ! -s "$EM_CACHE/sysroot_install.stamp" ]; then
@@ -162,7 +194,7 @@ if [ "$MODE" = --native ]; then
     # (fib 58 against 119 million instructions a second; WasmVM record, "In the Foafnaut
     # engine").
     # No heartbeat count at each allocation (lean_no_heartbeat.h): the engine never reads it.
-    leanc -O3 -DNDEBUG -include "$LAB/lean_no_heartbeat.h" -Dlean_inc_heartbeat=foafnaut_no_heartbeat -c "$source" -o "$object"
+    compile_bg ${LAUNCH[@]+"${LAUNCH[@]}"} leanc -O3 -DNDEBUG -include "$LAB/lean_no_heartbeat.h" -Dlean_inc_heartbeat=foafnaut_no_heartbeat -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
   for source in "${HACL_SOURCES[@]}"; do
@@ -171,9 +203,10 @@ if [ "$MODE" = --native ]; then
     # -fPIC: these objects also go into the Linux shared library, and Hacl_RSAPSS.c and
     # Hacl_Hash_SHA3.c name `stderr` (KaRaMeL's error print), which a shared object must reach
     # through the GOT ("relocation R_X86_64_PC32 cannot be used against symbol 'stderr'").
-    "${CC:-cc}" -O3 -DNDEBUG -fPIC -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
+    compile_bg ${LAUNCH[@]+"${LAUNCH[@]}"} "${CC:-cc}" -O3 -DNDEBUG -fPIC -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
+  compile_wait
   LEANLIB="$TOOLCHAIN/lib/lean"
   # Native macOS builds link Lean's runtime without GNU MP (issue 393): see
   # build-leanrt-no-gmp.sh. The Linux library does too (below); the Linux web-render-native
@@ -274,7 +307,7 @@ else
     name=${NAMES[$i]%%=*}
     object="$BUILD/obj-wasm/$name.o"
     printf 'WASM %s %s\n' "$name" "$(date -u)"
-    emcc "${FLAGS[@]}" -c "${COMPILE[$i]}" -o "$object"
+    compile_bg emcc "${FLAGS[@]}" -c "${COMPILE[$i]}" -o "$object"
     OBJECTS+=("$object")
   done
   # The runtime cache's Init and Std objects with such literals, compiled again from its C
@@ -296,9 +329,10 @@ else
   for source in "${HACL_SOURCES[@]}"; do
     object="$BUILD/obj-wasm/hacl_$(basename "$source" .c).o"
     printf 'WASM %s %s\n' "$(basename "$source" .c)" "$(date -u)"
-    emcc "${FLAGS[@]}" -I "$HACL/include" -c "$source" -o "$object"
+    compile_bg emcc "${FLAGS[@]}" -I "$HACL/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
+  compile_wait
   # Link at -O3 (wasm-opt -O3): 3.8 % less over gzip (6.20 -> 5.97 MB) for everyone who loads the Hub,
   # the same time to first frame and a few percent less stack per call (2026-11-09).
   em++ -O3 -DNDEBUG -fwasm-exceptions --no-entry "${OBJECTS[@]}" "${CORE_OBJECTS[@]}" "$RUNTIME/rt-obj/"*.o \
