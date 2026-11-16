@@ -477,8 +477,11 @@ def Command.baseChange (d : Dom) : Command → BaseURL.Change
   | .setAttributeNS n ns name _ | .removeAttributeNS n ns name =>
     if ns.isEmpty && name == "href" then .href n else .none
   | .appendChild _ n | .insertBefore _ n _ | .replaceChild _ n _ | .adoptNode n _ => .tree #[n]
-  | .setTextContent n _ => if Dom.isCharacterData (d.get n) then .none else .tree #[]
-  | .removeChild .. | .frameDocument .. | .attachShadow .. => .tree #[]
+  -- a removal names the removed node; whether it was a selected base is read from the
+  -- frozen state (`BaseURL.State.affected`)
+  | .setTextContent n _ => if Dom.isCharacterData (d.get n) then .none else .tree #[n]
+  | .removeChild _ n => .tree #[n]
+  | .frameDocument .. | .attachShadow .. => .tree #[]
   | _ => .none
 
 /-- The slow path of `changedBases`: a page with a base element, or a change that made nodes. -/

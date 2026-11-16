@@ -140,4 +140,38 @@ private def changedEncodingText := run encodedPage (.setTextContent (node encode
 #guard query (base changedEncodingText (some "?c=é")).1 0 164 == "https://example.test/dir/page.html?c=%E9"
 private def refusedFrame := attachDocument { framed with commandLimit := 0 } framed.frames[0]!.1 "<base href='/new/'>"
 #guard refusedFrame.2.isNone && refusedFrame.1.frames == framed.frames && refusedFrame.1.dom.size == framed.dom.size
+-- Gated re-selection (`BaseURL.State.affected`): removals name the removed node, and a
+-- change that moves no base keeps the selection without a tree walk.
+private def wrapped : State :=
+  { page with dom := parseHtmlDocument "<body><div id='w'><base href='https://inner.test/'></div><base href='https://outer.test/'><p id='p'></p></body>" }
+private def wrapper := (wrapped.dom.getElementById 0 "w").getD 0
+private def para := (wrapped.dom.getElementById 0 "p").getD 0
+#guard query wrapped 0 164 == "https://inner.test/"
+-- removing an ancestor of the selected base selects the next one
+#guard query (run wrapped (.removeChild (node wrapped "body") wrapper)) 0 164 == "https://outer.test/"
+-- textContent on the body removes both bases
+#guard query (run wrapped (.setTextContent (node wrapped "body") "x")) 0 164 == page.url
+-- moving a base-free node keeps the selection; appending many nodes keeps it
+private def manyAppends := Id.run do
+  let mut s := wrapped
+  for _ in [0:50] do
+    let n := s.dom.size
+    s := run s (.createElement "i" n)
+    s := run s (.appendChild para n)
+  return s
+#guard query manyAppends 0 164 == "https://inner.test/"
+-- a base made detached changes nothing until it is inserted before the selected one
+private def early := Id.run do
+  let n := wrapped.dom.size
+  let mut s := run wrapped (.createElement "base" n)
+  s := run s (.setAttribute n "href" "https://early.test/")
+  return (s, n)
+#guard query early.1 0 164 == "https://inner.test/"
+#guard query (run early.1 (.insertBefore (node early.1 "body") early.2 (some wrapper))) 0 164 == "https://early.test/"
+-- removing a base that is not selected keeps the selected one
+private def outer := ((wrapped.dom.treeOrder 0).filter (fun n => Dom.isHtmlElement (wrapped.dom.get n) "base"))[1]!
+private def noOuter := run wrapped (.removeChild (node wrapped "body") outer)
+#guard query noOuter 0 164 == "https://inner.test/"
+-- (and the removal took place: without the wrapper too, the fallback)
+#guard query (run noOuter (.removeChild (node wrapped "body") wrapper)) 0 164 == page.url
 end L4Factoidal.WasmVM.Tests.BaseURL

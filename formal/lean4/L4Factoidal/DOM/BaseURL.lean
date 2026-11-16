@@ -101,6 +101,23 @@ structure State where
   aboutPolicies : Array (NodeId × String × List L4Factoidal.Net.CspPolicy.Policy) := #[]
   deriving Inhabited
 
+/-- Whether a change can alter a document's selected base, so that `update` must select
+again (a tree walk per document with a base). Tree order among the connected bases is
+kept by inserting or removing subtrees that hold no base, and by removing a base that is
+not selected; so a selection is redone only for a base made connected to a document
+(`fresh`), a moved subtree (`moved`, after the change) that holds a base, a selected base
+no longer connected to its document, an href change of a base, or a change whose moved
+nodes are not known (`.tree #[]`). Each test walks parents only: O(bases × moved × depth). -/
+def State.affected (s : State) (d : Dom) (fresh : Array NodeId) (change : Change) : Bool :=
+  fresh.any (fun n => (d.get (d.root n)).type == .document) ||
+  match change with
+  | .none => false
+  | .href n => Dom.isHtmlElement (d.get n) "base"
+  | .tree moved =>
+    moved.isEmpty ||
+    s.candidates.any (fun c => moved.any fun m => d.isInclusiveAncestor m c) ||
+    s.frozen.any (fun f => d.root f.node != f.doc)
+
 /-- Refresh after an operation. With no bases, no document-tree walk or URL parse runs.
 Unrelated attribute and text writes do not revisit existing base elements. -/
 def update (s : State) (d : Dom) (context : NodeId → Context) (change : Change := .none) : State := Id.run do
@@ -112,14 +129,10 @@ def update (s : State) (d : Dom) (context : NodeId → Context) (change : Change
   let mut candidates := s.candidates
   for n in [s.seen:d.size] do
     if Dom.isHtmlElement (d.get n) "base" then candidates := candidates.push n
-  let added := candidates.size != s.candidates.size
+  let fresh := candidates.extract s.candidates.size candidates.size
   let s := { s with seen := d.size, candidates }
   if candidates.isEmpty then return s
-  if !added then
-    match change with
-    | .none => return s
-    | .href n => if !Dom.isHtmlElement (d.get n) "base" then return s
-    | .tree _ => pure ()
+  if !s.affected d fresh change then return s
   let mut docs := s.frozen.map (·.doc)
   for n in candidates do
     let doc := (d.get n).doc
