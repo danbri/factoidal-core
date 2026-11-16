@@ -124,7 +124,7 @@ def sfntOf (b : ByteArray) : Except String ByteArray :=
 theorem sfntOf_other (b : ByteArray) (h : isWoff b = false) : sfntOf b = .ok b := by
   simp [sfntOf, h]
 
-/-- The search fields: a power of two not above the count (for a count of at least 1). -/
+-- The search fields: a power of two not above the count (for a count of at least 1).
 #guard searchPower 1 == (1,0) && searchPower 2 == (2,1) && searchPower 13 == (8,3) && searchPower 16 == (16,4)
 #guard pad4 0 == 0 && pad4 1 == 4 && pad4 4 == 4 && pad4 5 == 8
 
@@ -140,24 +140,28 @@ private def woffOf (flavor : Nat) (tables : List (Nat × ByteArray × ByteArray)
     body := body ++ stored
     for _ in [0:pad4 stored.size-stored.size] do body := body.push 0
     offset := offset+pad4 stored.size
-  let head := push32 (push32 (push32 (push16 (push16 (push32 (push32 (push32 ByteArray.empty 0x774F4646) flavor) offset) n) 0) 0) 0) 0
+  -- signature, flavour, length, table count, reserved, sfnt size, major and minor version
+  let head := push32 (push32 (push16 (push16 (push32 (push32 (push32 ByteArray.empty 0x774F4646) flavor) offset) n) 0) 0) 0
   -- version, metadata and private fields: zero
   let head := push32 (push32 (push32 (push32 (push32 head 0) 0) 0) 0) 0
   return head ++ dir ++ body
--- A zlib stream of "abcabcabc" with stored deflate blocks (`Codec.deflateStored`), header 78 01.
-private def zlibStored (b : ByteArray) : ByteArray := (ByteArray.mk #[0x78,0x01]) ++ Codec.deflateStored b ++ ByteArray.mk #[0,0,0,0]
+-- "abc" twenty times as a zlib stream (14 bytes, made with zlib level 9).
+private def abc60 : ByteArray := ByteArray.mk #[120,218,75,76,74,78,36,23,1,0,188,190,22,249]
+private def abc60Whole : ByteArray := (String.join (List.replicate 20 "abc")).toUTF8
 private def sample : ByteArray := woffOf 0x00010000
-  [(0x636D6170,"abc".toUTF8,"abc".toUTF8),(0x676C7966,"abcabcabcabc".toUTF8,zlibStored "abcabcabcabc".toUTF8)]
+  [(0x636D6170,"abc".toUTF8,"abc".toUTF8),(0x676C7966,abc60Whole,abc60)]
 #guard isWoff sample && (woffOf 0 []).size == 44
 #guard match toSfnt sample with
-  | .ok s => s.size == 12+32+4+12 && u32 s 0 == 0x00010000 && u16 s 4 == 2 && u32 s 12 == 0x636D6170 &&
-      u32 s 20 == 44 && u32 s 24 == 3 && u32 s 36 == 48 && u32 s 40 == 12 &&
-      (s.extract 44 47).toList == "abc".toUTF8.toList && s.get! 47 == 0 && (s.extract 48 60).toList == "abcabcabcabc".toUTF8.toList
+  | .ok s => s.size == 12+32+4+60 && u32 s 0 == 0x00010000 && u16 s 4 == 2 && u32 s 12 == 0x636D6170 &&
+      u32 s 20 == 44 && u32 s 24 == 3 && u32 s 36 == 48 && u32 s 40 == 60 &&
+      (s.extract 44 47).toList == "abc".toUTF8.toList && s.get! 47 == 0 && (s.extract 48 108).toList == abc60Whole.toList
   | .error _ => false
 -- Hostile input: unsorted tags, a table past the end, a table larger compressed, no tables.
 #guard (toSfnt (woffOf 0 [(2,"a".toUTF8,"a".toUTF8),(1,"b".toUTF8,"b".toUTF8)])).toOption.isNone
 #guard (toSfnt ((woffOf 0 [(1,"abcd".toUTF8,"abcd".toUTF8)]).extract 0 66)).toOption.isNone
 #guard (toSfnt (woffOf 0 [(1,"ab".toUTF8,"abcd".toUTF8)])).toOption.isNone
+-- A compressed table that inflates to another length than its directory says.
+#guard (toSfnt (woffOf 0 [(1,(String.join (List.replicate 21 "abc")).toUTF8,abc60)])).toOption.isNone
 #guard (toSfnt (woffOf 0 [])).toOption.isNone
 #guard (sfntOf "true".toUTF8).toOption.map (·.toList) == some "true".toUTF8.toList
 

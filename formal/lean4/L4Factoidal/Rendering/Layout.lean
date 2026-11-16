@@ -189,6 +189,10 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
       let n := Float.sqrt (vx*vx+vy*vy)
       if n > 0 then (vx/n,vy/n) else (0,1)
     | none =>
+      -- the four sides exactly (sin and cos of a multiple of 90 degrees are not exact in Float)
+      let turn := g.angle-360*(g.angle/360).floor
+      if turn == 0 then (0,-1) else if turn == 90 then (1,0) else if turn == 180 then (0,1)
+      else if turn == 270 then (-1,0) else
       let a := g.angle*3.141592653589793/180
       (Float.sin a,-Float.cos a)
   let length := (w*dx).abs+(h*dy).abs
@@ -1304,6 +1308,109 @@ inductive Task where
 /-- The right edge of what a line layout placed, from its left edge `0`. -/
 private def lineExtent (r : Result) : Float := r.boxes.foldl (fun m b => max m (b.x+b.width)) 0
 
+/-! ### Multi-column layout (CSS Multi-column Layout 1)
+
+A block container with `column-count` or `column-width` lays its contents out in one column
+of the column width; the column is then cut between in-flow children into as many pieces
+as there are columns, balanced (§7.1: `column-fill: balance`), and the pieces are set side
+by side, `column-gap` apart. A child is never cut (most multi-column pages hold lists and
+sections, often with `break-inside: avoid`); a column with one tall child is that tall.
+Each piece is the column's paint under a clip of its height, moved to its place, so the
+GPU culls what is outside it. A box with neither property pays one test. -/
+
+/-- §3.4: the number of columns and their width in a content box `avail` wide, from
+`column-count`, `column-width` and the gap; none for one column (not a multi-column box). -/
+def columnCountFor (count : Option Nat) (width : Option Float) (gap avail : Float) : Nat :=
+  let fit := fun (w : Float) => if w+gap <= 0 then 1 else max 1 ((avail+gap)/(w+gap)).floor.toUInt64.toNat
+  let n : Nat := match count,width with
+    | some c,none => c
+    | none,some w => fit w
+    | some c,some w => min c (fit w)
+    | none,none => 1
+  min n 1000
+
+def columnPlan (count : Option Nat) (width : Option Float) (gap avail : Float) : Option (Nat × Float) :=
+  let n := columnCountFor count width gap avail
+  if n ≤ 1 then none else some (n,max 0 ((avail+gap)/Float.ofNat n-gap))
+
+/-- The column count is at least two and at most 1000 when there is a plan: the work of
+`multicolumn` is bounded by it. -/
+theorem columnPlan_count (count : Option Nat) (width : Option Float) (gap avail : Float) (n : Nat) (w : Float)
+    (h : columnPlan count width gap avail = some (n,w)) : 2 ≤ n ∧ n ≤ 1000 := by
+  have hle : columnCountFor count width gap avail ≤ 1000 := Nat.min_le_right _ _
+  unfold columnPlan at h
+  by_cases hn : columnCountFor count width gap avail ≤ 1
+  · simp [hn] at h
+  · simp only [hn, if_false, Option.some.injEq, Prod.mk.injEq] at h
+    omega
+
+/-- The columns that a cut at `h` makes (greedy, §7.1): the start of each column, as offsets
+from the top of the content, from the children's spans `(top,bottom)` in order. A child that
+ends past the column's start plus `h` begins the next column, unless it is the column's
+first. -/
+def columnStarts (spans : Array (Float × Float)) (h : Float) : Array Float := Id.run do
+  let mut starts : Array Float := #[0]
+  let mut start : Float := 0
+  let mut first := true
+  for (top,bottom) in spans do
+    if !first && bottom-start > h then
+      starts := starts.push top
+      start := top
+    first := false
+  return starts
+
+/-- The least column height (within 1/64 px) at which the children fit `count` columns, from
+the height of the content over `count` up to all of it: a bisection of 24 steps. -/
+def balancedHeight (spans : Array (Float × Float)) (total : Float) (count : Nat) : Float := Id.run do
+  let mut lo := total/Float.ofNat (max 1 count)
+  let mut hi := total
+  if (columnStarts spans lo).size ≤ count then return lo
+  for _ in [0:24] do
+    if hi-lo < 1/64 then break
+    let mid := (lo+hi)/2
+    if (columnStarts spans mid).size ≤ count then hi := mid else lo := mid
+  return hi
+
+/-- The contents `single`, laid out in one column at `(x,y)`, set in columns `cw` wide and
+`gap` apart. `kids` are the container's children, whose boxes are the places it may be cut. -/
+def multicolumn (single : Result) (kids : Array Nat) (count : Nat) (cw gap x y : Float) : Result := Id.run do
+  let spans := (single.boxes.filter fun b => kids.contains b.source).map fun b => (b.y-y,b.y+b.height-y)
+  let total := single.height
+  let h := balancedHeight spans total count
+  let starts := (columnStarts spans h).extract 0 count
+  let ends := (starts.extract 1 starts.size).push total
+  let height := (starts.zip ends).foldl (fun m (a,b) => max m (b-a)) (0 : Float)
+  -- the column of a point at offset `v` from the top, and its move
+  let columnOf := fun (v : Float) => Id.run do
+    let mut i := 0
+    for k in [0:starts.size] do
+      if starts[k]! <= v then i := k
+    return i
+  let move := fun (i : Nat) => (Float.ofNat i*(cw+gap),-(starts[i]!))
+  let mut nodes : Array Node := #[]
+  if !single.nodes.isEmpty then
+    for i in [0:starts.size] do
+      let (dx,dy) := move i
+      let top := starts[i]!
+      let bottom := ends[i]!
+      -- the clip is in the container's frame: the piece's rows, with half the gap at each side
+      nodes := nodes.push (.clipped none ⟨1,0,0,1,dx,dy⟩
+        {x := x+dx-gap/2, y := y, width := cw+gap, height := bottom-top} single.nodes.toList)
+  let boxes := single.boxes.map fun b =>
+    let (dx,dy) := move (columnOf (b.y-y))
+    {b with x := b.x+dx, y := b.y+dy}
+  let runs := single.runs.map fun run =>
+    let (dx,dy) := move (columnOf (((run.glyphs[0]?).map (·.y)).getD y-y))
+    {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
+  return {single with nodes,boxes,runs,height,marginBottom := 0,floats := #[]}
+
+/-- The used `column-gap` of a multi-column container: `normal` is 1em (§5.1). -/
+def columnGapPx (s : Computed) (width : Float) : Float :=
+  match s.align.columnGap with
+  | .px v => max 0 v
+  | .percent p => max 0 (p*width)
+  | _ => s.fontSize
+
 /-- A result moved down by `dy`: its paint in a translated group, its boxes and glyphs moved. -/
 private def Result.shiftY (r : Result) (dy : Float) : Result :=
   if dy == 0 then r else
@@ -1469,6 +1576,10 @@ theorem intrinsicLimits_min (s : Computed) (w m : Float) (lo : s.minWidth = .px 
   simp only [lo]
   exact ⟨_, rfl⟩
 
+/-- A `width` or `max-width` that is a percentage (CSS Sizing 3 §5.2.2). -/
+def compressibleWidth (s : Computed) : Bool :=
+  (match s.width with | .percent _ => true | _ => false) || (match s.maxWidth with | .percent _ => true | _ => false)
+
 /-- CSS Sizing 3 §5.2.2: a replaced element whose `width` or `max-width` is a percentage is
 compressible. Its percentage is of a width that depends on its own, so its min-content
 contribution is its size against zero: its `min-width` when that is a length, else 0, with
@@ -1477,19 +1588,15 @@ picture is that wide for the min-content width; its max-content width keeps its 
 size. Any other item is as it was. -/
 def compressInline : Inline → Inline
   | .replaced id s ow oh nodes =>
-    match s.width,s.maxWidth with
-    | .percent _,_ | _,.percent _ =>
-      let edges := horizontalEdges s
-      .replaced id s (min ow (intrinsicLimits s 0+edges)) oh nodes
-    | _,_ => .replaced id s ow oh nodes
+    if compressibleWidth s then .replaced id s (min ow (intrinsicLimits s 0+horizontalEdges s)) oh nodes
+    else .replaced id s ow oh nodes
   | other => other
 
 /-- A replaced atom whose `width` and `max-width` are not percentages is not changed. -/
 theorem compressInline_fixed (id : Nat) (s : Computed) (ow oh : Float) (nodes : List Node)
-    (hw : ∀ p, s.width ≠ .percent p) (hm : ∀ p, s.maxWidth ≠ .percent p) :
+    (h : compressibleWidth s = false) :
     compressInline (.replaced id s ow oh nodes) = .replaced id s ow oh nodes := by
-  unfold compressInline
-  cases h1 : s.width <;> cases h2 : s.maxWidth <;> first | rfl | exact absurd h1 (hw _) | exact absurd h2 (hm _)
+  simp [compressInline, h]
 
 /-- Words, spaces and every item that is not a replaced atom are not changed. -/
 theorem compressInline_word (id : Nat) (s : Computed) (text : String) (start : Nat) :
@@ -2196,7 +2303,17 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         else if s.display.isGrid then
           gridLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, source := some id, measure}
-        else flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
+        else if s.columnCount.isNone && s.columnWidth.isNone then
+          flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
+        else
+          let gap := columnGapPx s width
+          match columnPlan s.columnCount s.columnWidth gap width with
+          | none => flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
+          | some (count,cw) => do
+            -- a multi-column container is the root of its own block formatting context
+            let single ← flow s id n.kids lead innerX innerY cw 0 #[] none
+            pure (multicolumn {single with height := max single.height (floatsHeight single.floats innerY)}
+              n.kids count cw gap innerX innerY)
       -- CSS 2.1 §10.6.7: a box that is the root of its block formatting context (one laid
       -- out with no floats around it) is as high as its floats; one in a context with floats
       -- hands them on to the flow after it.

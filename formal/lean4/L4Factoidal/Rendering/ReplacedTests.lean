@@ -141,21 +141,41 @@ private def across (html : String) : Except String (List (String × Float × Flo
 -- In the max-content width the picture keeps its natural size.
 #guard (boxes "<div id='f' style='float:left'><img src='a.png' style='width:100%'></div>").map (·.head?.map (·.2.2.2.1)) == .ok (some 40)
 
--- A `linear-gradient()` background is one rectangle with a gradient over the colour, its line
--- through the box's centre: `to right` across the width, from the left edge to the right one.
-private def gradientLine (html : String) : Option (Float × Float × Float × Float × List Float) := do
-  let (scene,_) ← (render html "").toOption
-  (scene.tree.flatMap (·.lower identity [])).findSome? fun item => match item.primitive.style.fill with
-    | .gradient g => match g.shape with
-      | .linear a b c d => some (a,b,c,d,g.stops.map (·.offset))
-      | _ => none
+-- A `linear-gradient()` background: its line through the box's centre, as long as the box's
+-- extent along it; `to right` across the width, the default down the height.
+private def lineOf (g : String) (w h : Float) : Option (Float × Float × Float × Float × List Float) := do
+  let bg ← (CSS.parseLinearGradient g).toOption
+  match Layout.gradientPaint bg 0 0 w h with
+  | .gradient p => match p.shape with
+    | .linear a b c d => some (a,b,c,d,p.stops.map (·.offset))
     | _ => none
-#guard gradientLine "<div style='width:100px;height:20px;background:linear-gradient(to right,red,blue)'></div>" ==
-  some (0,10,100,10,[0,1])
-#guard gradientLine "<div style='width:100px;height:20px;background:linear-gradient(red,white,blue 75%)'></div>" ==
-  some (50,0,50,20,[0,0.375,0.75])
+  | _ => none
+#guard lineOf "to right,red,blue" 100 20 == some (0,10,100,10,[0,1])
+#guard lineOf "red,white,blue 75%" 100 20 == some (50,0,50,20,[0,0.375,0.75])
+-- A box with a gradient background paints two rectangles when it has a colour too: the colour,
+-- then the image over it.
+private def paints (html : String) : Option Nat :=
+  ((render html "").toOption.map fun r => (r.1.tree.flatMap (·.lower identity [])).length)
+#guard paints "<div style='width:100px;height:20px;background:#eee linear-gradient(red,blue)'></div>" == some 2
+#guard paints "<div style='width:100px;height:20px;background:#eee'></div>" == some 1
 #guard Layout.stopOffsets 200 [some (0.25,true),none,some (100,false)] == [0.25,0.375,0.5]
 #guard Layout.stopOffsets 100 [some (0.5,true),some (0.2,true)] == [0.5,0.5]
+
+-- Multi-column containers (CSS Multi-column Layout 1): balanced columns, cut between children.
+#guard Layout.columnPlan (some 2) none 10 110 == some (2,50)
+#guard Layout.columnPlan none (some 40) 10 110 == some (2,50)
+#guard Layout.columnPlan none (some 200) 10 110 == none
+#guard Layout.columnPlan (some 3) (some 40) 10 110 == some (2,50)
+#guard Layout.columnStarts #[(0,10),(10,20),(20,30)] 20 == #[0,20]
+#guard (Layout.balancedHeight #[(0,10),(10,20),(20,30)] 30 2 - 20).abs < 1/32
+#guard Layout.balancedHeight #[(0,10),(10,20),(20,30),(30,40)] 40 2 == 20
+private def cols (extra : String) : Except String (List (String × Float × Float × Float × Float)) :=
+  boxes ("<div id='m' style='column-count:2;column-gap:10px;width:110px" ++ extra ++ "'>" ++
+    "<p id='a' style='margin:0;height:20px'></p><p id='b' style='margin:0;height:20px'></p><p id='c' style='margin:0;height:10px'></p></div>")
+#guard cols "" == .ok [("m",0,0,110,30),("a",0,0,50,20),("b",60,0,50,20),("c",60,20,50,10)]
+-- `columns` gives both; one column is no multi-column box.
+#guard cols ";column-count:auto;columns:40px 4" == .ok [("m",0,0,110,30),("a",0,0,50,20),("b",60,0,50,20),("c",60,20,50,10)]
+#guard cols ";column-count:1" == .ok [("m",0,0,110,50),("a",0,0,110,20),("b",0,20,110,20),("c",0,40,110,10)]
 
 -- `pre` keeps spaces and tabs (CSS Text 3 §4.1.1): the glyph x of each word.
 private def wordsAt (html : String) : Except String (List (String × Float)) :=

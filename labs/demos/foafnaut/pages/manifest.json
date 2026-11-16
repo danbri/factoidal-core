@@ -213,6 +213,17 @@
    "doesNotShow": "srcset, picture, lazy loading, images from other sites, and object-position other than the centre"
   },
   {
+   "page": "realpage-constructs.html",
+   "title": "Constructs of small real pages",
+   "handwritten": true,
+   "size": [
+    900,
+    1200
+   ],
+   "shows": "constructs of small hand-written sites (naturetelemetry.com, infobomb.org, a 2007 W3C home page) as original fixtures: a four-column 1fr grid of images with width:100%, linear-gradient backgrounds, column-width and column-count, list bullets, a flex row with space-between, generic font families",
+   "doesNotShow": "the sites themselves (vendored as snapshots in factoidal-builds for the survey), web fonts, a serif face (the engine has none yet)"
+  },
+  {
    "page": "showcase-image-formats.html",
    "title": "Image formats",
    "showcase": true,

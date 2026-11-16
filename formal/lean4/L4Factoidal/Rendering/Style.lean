@@ -115,6 +115,10 @@ structure Computed where
   /-- `background-image: linear-gradient(...)`, painted over the colour; other images are
   not drawn. -/
   backgroundGradient : Option BackgroundGradient := none
+  /-- `column-count` and `column-width` (px) of a multi-column container (CSS Multi-column
+  Layout 1 §3); none is `auto`. With both `auto` the box is not a multi-column container. -/
+  columnCount : Option Nat := none
+  columnWidth : Option Float := none
   fontSize : Float := 16
   fontFamily : String := "monospace"
   lineHeight : Float := 19.2
@@ -1004,6 +1008,11 @@ private def topLevelSplit (sep : Char) (inner : String) : List String := Id.run 
 /-- The arguments of a function at its top level, split at commas outside parentheses. -/
 private def topLevelArgs (inner : String) : List String := topLevelSplit ',' inner
 
+/-- A colour stop's position: a percentage of the gradient line, or px. -/
+private def stopPosition (p : String) : Except String (Float × Bool) :=
+  if p.endsWith "%" then do pure ((← number (p.dropEnd 1).toString)/100,true)
+  else do pure (← pixels p,false)
+
 /-- CSS Images 3 §3.1.1: a `linear-gradient()` from its arguments. The direction is an
 angle (`deg`, `grad`, `rad`, `turn`) or `to` a side or corner; each stop a colour with
 at most two positions (px or %). Two stops at least. -/
@@ -1016,7 +1025,7 @@ def parseLinearGradient (args : String) : Except String BackgroundGradient := do
     match unit "deg" 1 <|> unit "grad" 0.9 <|> unit "turn" 360 <|> unit "rad" (180/3.141592653589793) with
     | some (some a) => some a
     | _ => if w == "0" then some 0 else none
-  let (angle,corner,stopParts) ←
+  let dir : Float × Option (Int × Int) × List String ←
     if words.head? == some "to" then
       let x : Int := if words.contains "left" then -1 else if words.contains "right" then 1 else 0
       let y : Int := if words.contains "top" then -1 else if words.contains "bottom" then 1 else 0
@@ -1028,23 +1037,22 @@ def parseLinearGradient (args : String) : Except String BackgroundGradient := do
         | some a => pure (a,none,parts.drop 1)
         | none => pure (180,none,parts)
       | _ => pure (180,none,parts)
+  let (angle,corner,stopParts) := dir
   let mut stops : List (Color × Float × Option (Float × Bool)) := []
   for part in stopParts do
     -- the colour is the part before its positions (a colour function keeps its spaces)
     let pieces := (topLevelSplit ' ' part).filter (· != "")
     let colourText := pieces.head?.getD ""
     let positions := pieces.drop 1
-    let (c,opacity) ← if colourText.toLower == "transparent" then pure (⟨0,0,0⟩,0)
+    let co : Color × Float ← if colourText.toLower == "transparent" then pure (⟨0,0,0⟩,0)
       else match color colourText with
         | .ok c => pure (c,1)
         | .error _ => throw s!"linear-gradient stop is not a colour: {colourText}"
-    let position := fun (p : String) : Except String (Float × Bool) =>
-      if p.endsWith "%" then do pure ((← number (p.dropEnd 1).toString)/100,true)
-      else do pure (← pixels p,false)
+    let (c,opacity) := co
     match positions with
     | [] => stops := stops ++ [(c,opacity,none)]
-    | [p] => stops := stops ++ [(c,opacity,some (← position p))]
-    | [p,q] => stops := stops ++ [(c,opacity,some (← position p)),(c,opacity,some (← position q))]
+    | [p] => stops := stops ++ [(c,opacity,some (← stopPosition p))]
+    | [p,q] => stops := stops ++ [(c,opacity,some (← stopPosition p)),(c,opacity,some (← stopPosition q))]
     | _ => throw "linear-gradient stop has more than two positions"
   if stops.length < 2 then throw "linear-gradient needs two colour stops"
   return {angle,corner,stops}
@@ -1135,6 +1143,32 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "background" | "background-color" =>
     let bg ← if d.value == "transparent" then pure none else some <$> color d.value
     return {s with background := bg}
+  | "column-count" =>
+    let v := (trim d.value).toLower
+    if v == "auto" then return {s with columnCount := none}
+    let some n := v.toNat? | throw "column-count must be auto or a whole number"
+    if n == 0 then throw "column-count must be at least 1"
+    return {s with columnCount := some (min n 1000)}
+  | "column-width" =>
+    let v := (trim d.value).toLower
+    if v == "auto" then return {s with columnWidth := none}
+    match tableLength s.fontSize "column-width" v with
+    | some (.px w) => if w < 0 then throw "column-width must not be negative" else return {s with columnWidth := some w}
+    | _ => throw "column-width must be auto or a length"
+  | "columns" =>
+    -- CSS Multi-column Layout 1 §3.3: a width and a count, in either order, `auto` for either
+    let words := ((trim d.value).toLower.splitOn " ").filter (· != "")
+    if words.isEmpty || words.length > 2 then throw "columns takes one or two values"
+    let mut count : Option Nat := none
+    let mut width : Option Float := none
+    for w in words do
+      if w == "auto" then continue
+      match w.toNat? with
+      | some n => if n == 0 then throw "column-count must be at least 1" else count := some (min n 1000)
+      | none => match tableLength s.fontSize "column-width" w with
+        | some (.px x) => width := some (max 0 x)
+        | _ => throw "columns: not a count or a length"
+    return {s with columnCount := count, columnWidth := width}
   | "background-image" =>
     if (trim d.value).toLower == "none" then return {s with backgroundGradient := none}
     let some args := gradientArgs d.value | throw "background-image: only linear-gradient() is drawn"
@@ -1534,6 +1568,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
   | "background-image" => some {s with backgroundGradient := source.backgroundGradient}
+  | "column-count" => some {s with columnCount := source.columnCount}
+  | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
     some {s with fontSize := source.fontSize, lineHeight := lineHeightOf source.fontSize s.lineHeightFactor s.lineHeight}
   | "font-family" => some {s with fontFamily := source.fontFamily}
@@ -2657,7 +2693,8 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
   let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
   if n.type == .element && !svgDescendant then computedFrom dom id (matchesOf id) parent else pure {parent with
     display := .inline, width := .auto, height := .auto,
-    margin := {}, padding := {}, background := none, clipOverflow := false,
+    margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
+    columnCount := none, columnWidth := none,
     borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},

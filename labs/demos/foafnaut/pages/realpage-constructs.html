@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Constructs of small real pages</title>
+<style>
+body{margin:0;background:#e8e8e8;font-family:sans-serif;line-height:1.4}
+.page{max-width:56rem;margin:0 auto;background:#fff}
+.head{background:linear-gradient(#fed,#fff);padding:1rem 1.5rem}
+.head h1{margin:0}
+.band{height:24px;background:linear-gradient(to right,#063,#6c9 50%,#fff)}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;padding:16px;background:#006945;color:#fff}
+.grid img{width:100%}
+.main{column-width:20rem;column-gap:2rem;padding:1rem 1.5rem}
+.main section{break-inside:avoid;border-top:1px solid #ccc}
+.two{column-count:2}
+.foot ul{display:flex;flex-direction:row;place-content:space-between;margin:.5em 0;padding:0 1.5rem;font-size:145%;list-style:none}
+.foot img{vertical-align:text-top}
+.serif{font-family:serif}
+</style>
+</head>
+<body>
+<div class="page">
+<div class="head">
+<h1>Constructs of small real pages</h1>
+<p>Each part below is a construct that a small hand-written site uses, drawn as a browser draws it.
+This header has a <code>linear-gradient</code> background from peach to white.</p>
+</div>
+<div class="band"></div>
+<div class="grid">
+<div><img src="images-landscape.png" alt="landscape one"><p>Four equal columns: an image with <code>width:100%</code> asks for no width of its own.</p></div>
+<div><img src="images-landscape.png" alt="landscape two"><p>Second column.</p></div>
+<div><img src="images-landscape.png" alt="landscape three"><p>Third column.</p></div>
+<div><img src="images-landscape.png" alt="landscape four"><p>Fourth column.</p></div>
+</div>
+<div class="main">
+<section><h2>Columns</h2><p>This box has <code>column-width:20rem</code>: as many columns of at least that width as fit, balanced, and never cut inside a section.</p></section>
+<section><h2>A list</h2><ul><li>A bullet is a disc</li><li>in a font that has it</li><li>or a fallback face</li></ul></section>
+<section><h2>Two columns</h2><ul class="two"><li>One</li><li>Two</li><li>Three</li><li>Four</li><li>Five</li><li>Six</li></ul></section>
+<section><h2>Generic families</h2><p class="serif">This paragraph asks for <code>serif</code>.</p><p>This one for <code>sans-serif</code>.</p></section>
+</div>
+<div class="foot">
+<ul><li><a href="#e"><img src="images-badge.png" alt="badge"> Email</a></li><li><a href="#l"><img src="images-badge.png" alt="badge"> LinkedIn</a></li></ul>
+</div>
+</div>
+</body>
+</html>

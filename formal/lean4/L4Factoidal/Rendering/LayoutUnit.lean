@@ -16,6 +16,17 @@ def ofPx (x : Float) : Int :=
   else if x < 0 then -Int.ofNat ((-x * 64).round.toUInt64.toNat)
   else Int.ofNat ((x * 64).round.toUInt64.toNat)
 
+/-- A content size in px as layout units, rounded up: a box given the max-content width of
+its contents holds them on one line (as other engines snap intrinsic sizes up). The nearest
+unit could be up to half a unit short, and the last word of the line then wrapped (a flex
+row of icon links on infobomb.org). -/
+def ofPxCeil (x : Float) : Int :=
+  if x.isNaN then 0
+  else if x < 0 then -Int.ofNat ((-x * 64).floor.toUInt64.toNat)
+  else Int.ofNat ((x * 64).ceil.toUInt64.toNat)
+
+#guard ofPxCeil 1.001 == 65 && ofPx 1.001 == 64 && ofPxCeil 2 == 128 && ofPxCeil (-1.001) == -64 && ofPxCeil 0 == 0
+
 /-- Layout units as px. -/
 def toPx (u : Int) : Float := Float.ofInt u / 64
 
