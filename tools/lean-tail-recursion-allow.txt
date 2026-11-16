@@ -2190,7 +2190,12 @@ L4Factoidal_JS_sortGt  # (c) SortCompare: one comparator call, as L4Factoidal_JS
 L4Factoidal_JS_switchFind  # (b) the case tests of one switch: self tail call per clause; each test as L4Factoidal_JS_eval*
 L4Factoidal_JS_runCases  # (b) the clauses of one switch: self tail call per clause
 L4Factoidal_JS_jsonStr  # (c) JSON.stringify: depth is the nesting of the value, refused past 1000 with a RangeError
+<<<<<<< HEAD
 L4Factoidal_JS_jsonSer  # (c) JSON.stringify's SerializeJSONProperty: depth is the nesting of the value (its stack), refused past 1000 with a RangeError
+=======
+L4Factoidal_JS_deleteOrThrow  # (c) DeletePropertyOrThrow (JS/Interp.lean): recurses only through a Proxy without a deleteProperty trap to its target, so the depth is the length of a Proxy chain (bounded by the evaluator's fuel); the cycle is the mutual block's calls of a trap
+L4Factoidal_JS_arrayGeneric  # (c) Array.prototype pop/shift/unshift/reverse on any object (JS/Interp.lean): loops over indices; the cycle is the mutual block's [[Get]]/[[Set]]/HasProperty/deleteOrThrow calls, each fuel-bounded as L4Factoidal_JS_get* and L4Factoidal_JS_put*
+>>>>>>> origin/main
 L4Factoidal_JS_stringOrMath  # (c) String.prototype and Math built-ins: ToString/ToNumber of arguments, as L4Factoidal_JS_to*
 L4Factoidal_JS_Obj_ownKeys  # (c) core Array.qsort over the integer keys of one object (the integer-like keys of ordinary properties only; array elements are not sorted here); to be replaced by List.mergeSort
 L4Factoidal_JS_Main_jsFiles  # (c) core Array.qsort of the Test262 file list in the leanjs runner; not in the engine
@@ -2214,6 +2219,7 @@ L4Factoidal_JS_Re_resolve  # (b) named back references resolved over the parsed 
 L4Factoidal_JS_Re_groupCount  # (b) the capture count of a quantified atom: depth is its group nesting
 L4Factoidal_JS_Re_classSet  # (b) a class set of the `v` flag (JS/Regex.lean): depth is the nesting of `[` in the pattern; fuel pattern length + 1
 L4Factoidal_JS_Re_namesIn  # (b) the duplicate group name check over the parsed pattern: depth is its group nesting
+L4Factoidal_JS_Re_refsOf  # (b) the back references of the parsed pattern (early errors): depth is its group nesting
 L4Factoidal_JS_Re_matchNode  # (b) the backtracking matcher (§22.2.2 continuations): depth is the pattern's nesting plus one level per repetition of a quantified group or sequence element matched so far; a repetition of one character matcher (.*, [a-z]+) is a loop, so the common long runs do not nest; fuel 64 * input length + 4096
 L4Factoidal_JS_proxyTrap  # (c) a Proxy handler's trap: one [[Get]] on the handler, as L4Factoidal_JS_get*
 L4Factoidal_JS_hasProp  # (c) HasProperty: a `has` trap is a call, as L4Factoidal_JS_call*; a proxy of a proxy adds one level per proxy

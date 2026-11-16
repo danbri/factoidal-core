@@ -216,3 +216,15 @@ export const rawOverFetch=fetchLike=>async url=>{
   return {status:response.status,url:response.url||url,contentType:response.headers.get('content-type')??'',
     contentTypeOptions:response.headers.get('x-content-type-options')??'',source:await response.text()};
 };
+
+/** How far a page scrolls: the engine's limit for the layers on screen (`layers.scrollLimit`,
+WebDocument.scrollLimit, with `scrollLimit_reaches`: the view then ends at the last page row).
+An answer without layers (a single frame, an older engine) ends at the bottom of the lowest box
+plus 60 CSS pixels. The window and the Hub used to decide this each for itself, and the Hub
+never read the engine's limit. `boxes` are the frame's `webRender.boxes` (`[node, x, y, w, h]`
+rows: y at 2, height at 4). */
+export function scrollLimitOf(layers,boxes,view,scale) {
+  if(typeof layers?.scrollLimit==='number')return layers.scrollLimit;
+  const bottom=Math.max(0,...(boxes??[]).map(box=>box[2]+box[4]));
+  return Math.max(0,bottom-view+Math.round(60*scale));
+}

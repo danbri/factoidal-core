@@ -1351,3 +1351,4 @@ import L4Factoidal.Dataflow.FailureConditions
 import L4Factoidal.Dataflow.ConditionalTests
 import L4Factoidal.SPARQL.ResultsXmlAdmission
 import L4Factoidal.SPARQL.ResultsXmlRoutingTests
+import L4Factoidal.HostContract.Trace

@@ -81,7 +81,9 @@ async function get(p){
   if(m)return {status:200,type:'application/octet-stream',body:drawn[Number(m[1])][m[2]]};
   if(p.startsWith(hub)&&p.endsWith('.mjs')&&fs.existsSync(path.join(hubDir,p.slice(hub.length))))return {status:200,type:'text/javascript',body:fs.readFileSync(path.join(hubDir,p.slice(hub.length)))};
   // The render plan host is this checkout's render_plan.ts, as Builds installs it.
-  if(p===rt+'render-plan-host.mjs')return {status:200,type:'text/javascript',body:Buffer.from(stripTypeScriptTypes(fs.readFileSync(path.join(lab,'render_plan.ts'),'utf8')).replace('./.build/engines/render-plan.mjs','./render-plan.mjs'))};
+  if(p===rt+'render-plan-host.mjs')return {status:200,type:'text/javascript',body:Buffer.from(stripTypeScriptTypes(fs.readFileSync(path.join(lab,'render_plan.ts'),'utf8')).replace('./.build/engines/render-plan.mjs','./render-plan.mjs').replace('./finite_floats.ts','./finite-floats.mjs'))};
+  // render_plan.ts imports finite_floats.ts (3e6745f19): served as the release packaging names it.
+  if(p===rt+'finite-floats.mjs')return {status:200,type:'text/javascript',body:Buffer.from(stripTypeScriptTypes(fs.readFileSync(path.join(lab,'finite_floats.ts'),'utf8')))};
   if(runtimeDir&&p.startsWith(rt)&&fs.existsSync(path.join(runtimeDir,p.slice(rt.length)))){
     const f=path.join(runtimeDir,p.slice(rt.length));
     return {status:200,type:f.endsWith('.wasm')?'application/wasm':'text/javascript',body:fs.readFileSync(f)};

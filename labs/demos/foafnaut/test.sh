@@ -246,6 +246,12 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     check "host_parity_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
       --allow-read --allow-write --allow-net --allow-run --allow-env --allow-ffi "$LAB/host_parity_test.ts"
   fi
+  # Host contract (formal/lean4/L4Factoidal/HostContract): Textnaut on the native library and on the
+  # Wasm build, and the Hub's Textnaut host in Node, record their boundary traces; the engine's op
+  # hostContract checks each against its target and the traces against each other. NOT RUN with no
+  # Wasm runtime or with an engine older than the op.
+  check "host_contract_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none -A --unstable-ffi \
+    "$LAB/host_contract_check.ts"
   # Page scripts run by Lean (WebScripts.lean): QuickJS-NG in WasmVM on the Lean DOM, clicks and
   # timers through the Lean event loop, Wasm and native. Only when the guest module exists
   # (tools/wasmvm/build-quickjs.sh, or fetch-builds --set foafnaut-web): it is not committed.
