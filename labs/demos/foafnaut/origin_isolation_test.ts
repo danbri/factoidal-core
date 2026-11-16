@@ -171,6 +171,33 @@ Deno.test({name:"origin isolation checks C1 to C6",ignore:!exists(library)},asyn
     return [...got.filter(l=>!refused.includes(l)),...refused.filter(r=>!got.includes(r)).map(r=>`missing: ${r}`)];
   });
 
+  await check(t,"C2e","a VideoFrame made from a source that is not origin-clean is refused; one from a clean source is made",()=>{
+    // WebCodecs §9.4.2 ("Initialize Frame From Other Frame", the image case): a source that is not
+    // origin-clean throws SecurityError. The frame's pixels come from the engine's read-back of the
+    // source (refused for a marked one), so no other origin's pixels reach the frame's bytes. No path
+    // makes a VideoFrame of a video element yet (TypeError), so none carries a video's pixels.
+    hold(`${A}/own.png`);hold(`${B}/secret.png`);
+    const got=run(`<!doctype html><canvas id=c width=2 height=2></canvas><canvas id=o width=2 height=2></canvas>
+      <img id=i src="${B}/secret.png"><img id=m src="${A}/own.png"><video id=vid></video><script>
+      const v=(w,f)=>{try{const fr=f();console.log(w+' '+fr.codedWidth+'x'+fr.codedHeight);fr.close()}catch(e){console.log(w+' '+e.name)}};
+      c.getContext('2d').drawImage(i,0,0);
+      o.getContext('2d').drawImage(m,0,0);
+      v('canvas',()=>new VideoFrame(c,{timestamp:0}));
+      v('image',()=>new VideoFrame(i,{timestamp:0}));
+      v('own',()=>new VideoFrame(o,{timestamp:0}));
+      v('ownimage',()=>new VideoFrame(m,{timestamp:0}));
+      v('video',()=>new VideoFrame(vid,{timestamp:0}));
+      const oc=new OffscreenCanvas(2,2);oc.getContext('2d').drawImage(i,0,0);
+      v('offscreen',()=>new VideoFrame(oc,{timestamp:0}));
+      createImageBitmap(i).then(b=>v('bitmap',()=>new VideoFrame(b,{timestamp:0})),e=>console.log('bitmap '+e.name));
+      </script>`);
+    const want=["canvas SecurityError","image SecurityError","own 2x2","ownimage 2x2","offscreen SecurityError","bitmap SecurityError"];
+    // a video element is not a source this engine reads yet: refused, never read
+    const leaks=got.filter(l=>!want.includes(l)&&l!=="video TypeError"&&l!=="video SecurityError");
+    leaks.push(...want.filter(w=>!got.includes(w)).map(w=>`missing: ${w}`));
+    return leaks;
+  });
+
   // C3: a cross-origin answer that fails the CORS check gives the page the same failure,
   // whatever the answer held (two runs).
   await check(t,"C3","a refused cross-origin answer gives a failure that does not depend on the answer",()=>{
