@@ -5022,6 +5022,12 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | none => newArray part
       | some a => speciesFill n a part (some count)
     | .arraySplice =>
+      let fastOk ← match thisV with
+        | .obj id => do
+          let ob ← getObj id
+          pure (match ob.kind with | .array es => ob.extensible && !es.any (·.isHole) | _ => false)
+        | _ => pure false
+      if !fastOk then return ← arraySpliceGeneric n thisV args
       match thisV with
       | .obj id => match (← getObj id).kind with
         | .array es =>
@@ -5201,16 +5207,39 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | some acc => reduceArray n a0 (.obj oid) len k acc
         | none => throwErr .type "Reduce of empty array with no initial value"
     | .arraySort =>
-      match thisV with
-      | .obj id => match (← getObj id).kind with
-        | .array es =>
-          let present := es.filter fun v => !v.isHole
-          let sorted ← mergeSort n a0 present.toList
-          let holes := es.size - present.size
-          modifyObj id fun o => { o with kind := .array (sorted.toArray ++ Array.replicate holes .hole) }
-          pure thisV
-        | _ => pure thisV
-      | _ => pure thisV
+      -- §23.1.3.30: the comparator is undefined or callable; SortIndexedProperties takes the
+      -- present elements, sorts them, writes them back from 0 and deletes the rest
+      if !(a0 matches .undef) && !(← isCallable a0) then
+        throwErr .type "The comparison function must be either a function or undefined"
+      let oid ← toObj n thisV
+      let o := Value.obj oid
+      let fastEs ← match (← getObj oid).kind with
+        | .array es => pure (if es.any (·.isHole) then none else some es)
+        | _ => pure none
+      let (items, len) ← match fastEs with
+        | some es => pure (es, es.size)
+        | none => do
+          let len ← arrayLikeLength n o
+          let mut items : Array Value := #[]
+          for k in [0:len] do
+            tick
+            if ← hasProp n oid (toString k) then items := items.push (← getV n o (toString k))
+          pure (items, len)
+      let sorted := (← mergeSort n a0 items.toList).toArray
+      -- write back into the object as it is now (the comparator may have changed it)
+      let wrote ← updateObj oid fun ob =>
+        match ob.kind with
+        | .array cur =>
+          if sorted.size == len && cur.size ≥ len && ob.extensible then
+            (true, { ob with kind := .array (sorted ++ cur.extract len cur.size) })
+          else (false, ob)
+        | _ => (false, ob)
+      if !wrote then
+        for j in [0:sorted.size] do putV n o (toString j) sorted[j]! true
+        for k in [sorted.size:len] do
+          tick
+          deleteOrThrow n o (toString k)
+      pure o
     | .stringCtor =>
       let s ← match a0, newTarget with
         | .sym id, none => pure ("Symbol(" ++ (← get).syms.getD id "" ++ ")")
@@ -7116,27 +7145,111 @@ def genericPush : Nat → Value → Array Value → M Value
     pure (.num (Float.ofNat (l + args.size)))
 termination_by structural n _ _ => n
 
+/-- Array.prototype.splice (§23.1.3.31) on any object, step by step. -/
+def arraySpliceGeneric : Nat → Value → Array Value → M Value
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, thisV, args => do
+    let oid ← toObj n thisV
+    let o := Value.obj oid
+    let len ← arrayLikeLength n o
+    let start := relIndex (← toNum n (argD args 0)) len
+    let itemCount := args.size - (min args.size 2)
+    let skip ← if args.size == 0 then pure 0
+      else if args.size == 1 then pure (len - start)
+      else do
+        let dc := toIntegerOrInf (← toNum n (argD args 1))
+        pure (if dc ≤ 0 then 0 else min dc.toUInt64.toNat (len - start))
+    if len + itemCount - skip > 9007199254740991 then throwErr .type "Splicing past the largest array length"
+    -- ArraySpeciesCreate(O, actualSkipCount): an Array past 2^32 - 1 is a RangeError
+    let sp ← speciesFrom n o skip
+    if sp.isNone && skip > 4294967295 then throwErr .range "Invalid array length"
+    let mut removed : Array Value := #[]
+    for k in [0:skip] do
+      tick
+      let from_ := toString (start + k)
+      removed := removed.push (if ← hasProp n oid from_ then ← getV n o from_ else .hole)
+    let a ← match sp with
+      | none => newArray removed
+      | some a => speciesFill n a removed (some skip)
+    if sp.isNone then putV n a "length" (.num (Float.ofNat skip)) true
+    if itemCount < skip then
+      for k in [start:len - skip] do
+        tick
+        let from_ := toString (k + skip)
+        let to := toString (k + itemCount)
+        if ← hasProp n oid from_ then putV n o to (← getV n o from_) true
+        else deleteOrThrow n o to
+      for j in [0:skip - itemCount] do
+        tick
+        deleteOrThrow n o (toString (len - 1 - j))
+    else if itemCount > skip then
+      for j in [0:len - skip - start] do
+        tick
+        let k := len - skip - j
+        let from_ := toString (k + skip - 1)
+        let to := toString (k + itemCount - 1)
+        if ← hasProp n oid from_ then putV n o to (← getV n o from_) true
+        else deleteOrThrow n o to
+    for i in [0:itemCount] do putV n o (toString (start + i)) args[i + 2]! true
+    putV n o "length" (.num (Float.ofNat (len - skip + itemCount))) true
+    pure a
+termination_by structural n _ _ => n
+
+/-- [[Delete]] (§10.1.10, §10.5.10 for a Proxy): whether the property is gone. -/
+def deleteProp : Nat → Value → String → M Bool
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, v, key => do
+    let .obj id := v | pure true
+    let o ← getObj id
+    if let .proxy pt hnd := o.kind then
+      match ← proxyTrap n hnd "deleteProperty" with
+      | some f => return toBool (← callV n f hnd #[pt, keyValue key])
+      | none => return ← deleteProp n pt key
+    match o.getOwn key with
+    | none => pure true
+    | some p =>
+      let arrayLen := match o.kind with | .array _ => key == "length" | _ => false
+      if p.configurable && !arrayLen then deleteOwn id key; pure true
+      else pure false
+termination_by structural n _ _ => n
+
 /-- DeletePropertyOrThrow (§7.3.10): [[Delete]], a TypeError when it answers false (a
 non-configurable property, a Proxy trap that says false). -/
 def deleteOrThrow : Nat → Value → String → M Unit
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, v, key => do
-    let .obj id := v | pure ()
-    let o ← getObj id
-    if let .proxy pt hnd := o.kind then
-      match ← proxyTrap n hnd "deleteProperty" with
-      | some f =>
-        if !toBool (← callV n f hnd #[pt, keyValue key]) then
-          throwErr .type s!"'deleteProperty' on proxy: trap returned falsish for property '{key}'"
-      | none => deleteOrThrow n pt key
-      return
-    match o.getOwn key with
-    | none => pure ()
-    | some p =>
-      let arrayLen := match o.kind with | .array _ => key == "length" | _ => false
-      if p.configurable && !arrayLen then deleteOwn id key
-      else throwErr .type s!"Cannot delete property '{key}'"
+    if !(← deleteProp n v key) then throwErr .type s!"Cannot delete property '{key}'"
 termination_by structural n _ _ => n
+
+/-- InternalizeJSONProperty (§25.5.1.1): the reviver called bottom-up on every property of
+the parsed value, a result of undefined deleting it. `depth` bounds the nesting. -/
+def jsonRevive : Nat → Value → Value → String → Nat → M Value
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, reviver, holder, name, depth => do
+    if depth > 10000 then throwErr .range "Maximum call stack size exceeded"
+    let val ← getV n holder name
+    if let .obj vid := val then
+      let keys ← if ← isArrayDeep 100000 val then do
+          let len ← arrayLikeLength n val
+          pure ((List.range len).toArray.map toString)
+        else do
+          let mut ks : Array String := #[]
+          for k in ← ownKeysOf n vid do
+            if isSymKey k || isPrivKey k then continue
+            match ← ownDesc n vid k with
+            | some p => if p.enumerable then ks := ks.push k
+            | none => pure ()
+          pure ks
+      for k in keys do
+        tick
+        let nv ← jsonRevive n reviver val k (depth + 1)
+        match nv with
+        | .undef => let _ ← deleteProp n val k
+        | _ => let _ ← defineOwnProp n vid k { value := some nv, writable := some true, enumerable := some true, configurable := some true }
+    -- the third argument (the context of proposal-json-parse-with-source): an object
+    let ctxObj ← newObject
+    callV n reviver holder #[keyStrV name, val, ctxObj]
+termination_by structural n _ _ _ _ => n
 
 /-- Array.prototype pop (§23.1.3.22), shift (§23.1.3.27), unshift (§23.1.3.34) and reverse
 (§23.1.3.25) on any object, step by step: the path for what is not a plain Array with all of
@@ -8139,7 +8252,13 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       -- strict parser refuses) is a string of that unit (`jsonParseText`: the strict parse
       -- first, the escaped reading only when it fails; `jsonParseText_strict`).
       match jsonParseText s with
-      | .ok (j, _) => jsonToValue 100000 j
+      | .ok (j, _) =>
+        let v ← jsonToValue 100000 j
+        if !(← isCallable a1) then return v
+        -- §25.5.1 step 6: the reviver, from a root object { "": value }
+        let root ← newObject
+        defineOwn root "" (.data v true true true)
+        jsonRevive n a1 (.obj root) "" 0
       | .error e => throwErr .syntax s!"Unexpected token in JSON at position {e.pos}"
     | .bufferCtor =>
       needNew "ArrayBuffer"

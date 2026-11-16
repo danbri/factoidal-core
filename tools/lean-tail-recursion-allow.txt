@@ -2193,6 +2193,7 @@ L4Factoidal_JS_jsonStr  # (c) JSON.stringify: depth is the nesting of the value,
 L4Factoidal_JS_jsonSer  # (c) JSON.stringify's SerializeJSONProperty: depth is the nesting of the value (its stack), refused past 1000 with a RangeError
 L4Factoidal_JS_deleteOrThrow  # (c) DeletePropertyOrThrow (JS/Interp.lean): recurses only through a Proxy without a deleteProperty trap to its target, so the depth is the length of a Proxy chain (bounded by the evaluator's fuel); the cycle is the mutual block's calls of a trap
 L4Factoidal_JS_arrayGeneric  # (c) Array.prototype pop/shift/unshift/reverse on any object (JS/Interp.lean): loops over indices; the cycle is the mutual block's [[Get]]/[[Set]]/HasProperty/deleteOrThrow calls, each fuel-bounded as L4Factoidal_JS_get* and L4Factoidal_JS_put*
+L4Factoidal_JS_jsonRevive  # (c) JSON.parse's InternalizeJSONProperty: depth is the nesting of the parsed value, refused past 10000 with a RangeError
 L4Factoidal_JS_stringOrMath  # (c) String.prototype and Math built-ins: ToString/ToNumber of arguments, as L4Factoidal_JS_to*
 L4Factoidal_JS_Obj_ownKeys  # (c) core Array.qsort over the integer keys of one object (the integer-like keys of ordinary properties only; array elements are not sorted here); to be replaced by List.mergeSort
 L4Factoidal_JS_Main_jsFiles  # (c) core Array.qsort of the Test262 file list in the leanjs runner; not in the engine
