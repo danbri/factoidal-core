@@ -22,6 +22,7 @@ import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
+import {SERIF_FAMILY,serifFontHost,serifFontPath,wantsSerif} from "./serif_font.ts";
 import type {UIEvent} from "./ui_engine.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
@@ -50,7 +51,7 @@ async function main() {
   let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -60,6 +61,10 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    // The main thread's pipeline events (pump, submit, ask, answer), one a line, for
+    // pipeline_trace_check.ts and L4Factoidal/HostPipeline/Model.lean.
+    else if(arg==="--pipe-trace")pipeTraceFile=args.shift();
+    else if(arg==="--gate-trace")gateTraceFile=args.shift();
     else if(arg==="--log-all")logAll=true;
     else if(arg==="--fail-on-flood")failOnFlood=true;
     else if(arg==="--poll-idle")pollIdle=true;
@@ -240,6 +245,14 @@ async function main() {
     if(answer.loaded.length||answer.failed.length)console.log(JSON.stringify({type:"native-html-fonts",t:Math.round(performance.now()),where,
       ms:Math.round((performance.now()-start)*10)/10,fonts:answer.loaded,...(answer.failed.length?{failed:answer.failed}:{}),held:answer.held.length}));
   };
+  // The serif face (serif_font.ts): read and given, once a session, to the engine that lays
+  // pages out, before the first page (below).
+  const serif=serifFontHost(async()=>{
+    const start=performance.now(),path=serifFontPath(),where=worker?.alive?"worker":"main";
+    if(worker?.alive)await worker.serifFont(path,SERIF_FAMILY);
+    else await loadFontFile(engine,path,SERIF_FAMILY,"bytes","serif");
+    console.log(JSON.stringify({type:"native-html-serif",t:Math.round(performance.now()),where,ms:Math.round((performance.now()-start)*10)/10}));
+  });
   const useMainEngine=async(reason:string)=>{
     console.error("Native HTML: ENGINE WORKER UNAVAILABLE, so Lean runs on the main thread and the window can miss input:",reason);
     console.log(JSON.stringify({type:"native-html-worker",state:"main-thread-fallback",reason}));
@@ -248,6 +261,8 @@ async function main() {
       mainFallbacks=typeof (await loadFontFile(engine,workerFont.path,workerFont.family))?.fonts==="number";
       // The fallback fonts the worker held, so the pages open keep their scripts.
       if(mainFallbacks&&workerFonts?.length)await mainFonts.add(workerFonts);
+      // The serif face the worker held, so serif pages stay serif.
+      if(serif.started)await loadFontFile(engine,serifFontPath(),SERIF_FAMILY,"bytes","serif").catch(()=>{});
     }catch(error){if(fontFile)throw error;workerFont=undefined;}}
   };
   if(check){
@@ -267,6 +282,12 @@ async function main() {
   }
   // With the bitmap face (safe mode) a page gets no fallback fonts.
   if(workerFont)setFontHost(pageFonts);
+  // The serif face goes in now, ahead of the first page. The worker takes calls in order, so
+  // the first layout of a serif page already has the face and is final (no second layout).
+  // Cost: one 394 KB file read and the engine's policy read of it (under 1 ms warm), once a
+  // session; a page whose text never resolves to serif draws as before. A render that still
+  // answers wantsSerif (a failed load) does not start another (serifFontHost).
+  if(workerFont){const loading=serif.want();if(!worker?.alive)await loading;}
   // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
@@ -323,6 +344,9 @@ async function main() {
   // language is Deno's navigator.language (from LANG / LC_ALL); Lean maps it by HTML
   // §13.2.3.2's table of suggested defaults (WHATWG.Encoding.Sniff.localeEncoding).
   let encodingSetting="";const systemLocale=navigator.language??"";
+  // The search engine chosen in Settings (WebRoute.searchSetting): "" until the person picks
+  // one, and then words typed in the address bar open the browser's own search page.
+  let searchSetting="";
   setPageDecoding({fallback:encodingSetting,locale:systemLocale});
   // A window shows a page that runs no script before its images are in and draws it again with
   // them. Runs that compare frames or replay input (checks, sweeps, commands, printing) wait.
@@ -806,6 +830,27 @@ async function main() {
     consoleSources.set(page,source);
     return page;
   };
+  // foafnaut:search/WORDS (WebShell.searchPage): words typed in the address bar, with no search
+  // engine chosen. Lean writes it from the open tabs and the stored bookmarks and history,
+  // which are read from the local store; nothing is fetched from anywhere to show it.
+  const searchURL="foafnaut:search";
+  const searchPage=async(target:string)=>{
+    const resources=browserState?await browserState.resources().catch(()=>undefined):undefined;
+    const open=tabs.map((_,i)=>tabPage(i)!).map(page=>({url:page.url,title:page.title??""}));
+    const answer=engine.searchPage({argument:target.slice(searchURL.length+1),tabs:open,resources:resources??[],state:resources!==undefined,search:searchSetting});
+    return await prepareHTML(lean,target,undefined,answer.source);
+  };
+  // The Outside page (WebShell.outsidePage) of a mail, phone or messages address: one button,
+  // and only a press of it (Lean's route "system" for that page) opens the other program.
+  const outsideDocs=new WeakMap<object,string>();
+  const isOtherProgram=(target:string)=>/^(mailto|tel|sms):/i.test(target);
+  const outsidePage=async(target:string)=>{
+    const answer=engine.outsidePage(target);
+    if(!answer)throw new Error("this engine has no Outside page, so the address was not opened");
+    const page=await prepareHTML(lean,target,undefined,answer.source);
+    outsideDocs.set(page,target);
+    return page;
+  };
   // Option-Command-J and View > Console: the console of the page shown, in a new tab.
   const openConsole=()=>{const source=document;newTab();leaveAddress();consoleFrom=source;navigate(consoleURL);};
   // The system pointer for a window point: Lean answers from the chrome, the graph model or the
@@ -973,6 +1018,10 @@ async function main() {
     const eOpen="<!--foafnaut:encoding-->",eClose="<!--/foafnaut:encoding-->",ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
     const choices=ei>=0&&ej>ei?await lean.encodingChoices(encodingSetting,systemLocale):undefined;
     if(choices)source=source.slice(0,ei+eOpen.length)+choices+source.slice(ej);
+    // The search engine section, as Lean makes it for the setting (none chosen by default).
+    const sOpen="<!--foafnaut:search-->",sClose="<!--/foafnaut:search-->",si=source.indexOf(sOpen),sj=source.indexOf(sClose);
+    const searchChoices=si>=0&&sj>si?engine.searchChoices(searchSetting):undefined;
+    if(searchChoices)source=source.slice(0,si+sOpen.length)+searchChoices+source.slice(sj);
     const size=textZoom();
     // A ticked box is filled (boxon), as WebRenderScript.choicesHTML does for the script rows.
     const box=`<span class="box${liberal?" boxon":""}"></span>`;
@@ -1016,6 +1065,15 @@ async function main() {
         if(document.url===settingsURL)navigate(settingsURL,false);else dirty=true;
       }).catch(error=>refuse(`foafnaut:encoding/${argument}`,error));
     }
+    else if(name==="search-engine"){
+      // Lean reads the choice (an engine of its list, an address with %s, or none); a link
+      // gives this command only on the Settings page (WebRoute.settingsOnly).
+      const chosen=engine.searchSetting(argument);
+      if(!chosen){refuse(`foafnaut:search-engine/${argument}`,"this engine has no search engine setting");return;}
+      searchSetting=chosen.setting;browserState?.settings({search:searchSetting});
+      trace("native-html-search-setting",{setting:searchSetting===""?"none":searchSetting});
+      if(document.url===settingsURL)navigate(settingsURL,false);else dirty=true;
+    }
     else if(STATE_COMMANDS.includes(name)){
       if(!browserState){refuse(`foafnaut:${name}`,"Browser state is off (--no-state, a sweep or a check)");return;}
       browserState.command(name,argument,{url:document.url,title:document.title??""}).then(page=>{if(page)navigate(page);}).catch(error=>refuse(`foafnaut:${name}`,error));
@@ -1053,8 +1111,9 @@ async function main() {
     if(ended)wheelSum=undefined;
     if(answer.navigate)windowCommand(answer.direction==="back"?6:7);
   };
-  // Lean chose to hand this URL to the system browser. Off screen it is traced and not opened,
-  // so a sweep never opens a browser window on the person's screen.
+  // Lean chose to hand this URL to the system: the press of the Outside page's button, or
+  // `:open URL` typed. Off screen it is traced and not opened, so a sweep never opens a
+  // browser window on the person's screen.
   const openSystem=(target:string)=>{
     if(offscreen){trace("native-html-system-url",{url:target,opened:false,why:"offscreen"});return;}
     try{native!.openURL(target);}catch(error){refuse(target,error);}
@@ -1064,12 +1123,15 @@ async function main() {
     if(route.route==="command")shellCommand(route.name,route.argument);
     else if(route.route==="system")openSystem(route.url);
     else if(route.route==="refuse")refuse(route.url,route.reason);
+    // The Outside page (mail, phone, messages): shown in the tab, nothing opened.
+    else if(route.route==="outside")navigate(route.url);
     // A page link loads only with --follow-links; the browser's own pages always do.
     else if(route.route!=="navigate"||follow)navigate(route.url);
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
     trace("native-html-go",answer);
-    if(answer.go==="system")openSystem(answer.url);
+    // An engine from before the route op: nothing leaves the browser on its word alone.
+    if(answer.go==="system")refuse(answer.url,"an older engine asked to open this address outside the browser; it was not opened");
     else if(answer.go==="page")navigate(answer.url);
     else shellCommand(answer.name,answer.argument);
   };
@@ -1111,7 +1173,7 @@ async function main() {
   // An address from the bar (Return, or Paste and go): Lean routes it as typed.
   const goTo=(target:string)=>{
     leaveAddress();
-    const route=router.address({...site,address:target,base:document.baseURL||document.url}) as LinkRoute|undefined;
+    const route=router.address({...site,address:target,base:document.baseURL||document.url,search:searchSetting}) as LinkRoute|undefined;
     if(route)followRoute(route);else go(engine.shellSubmit(target));
   };
   // A long press of the mouse (WebGesture hold): asked once when Lean's time has passed with
@@ -1230,7 +1292,7 @@ async function main() {
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -1269,7 +1331,7 @@ async function main() {
       idle:{...idleStats,waitedMs:Math.round(idleStats.waitedMs),idleMs:Math.round(idleStats.idleMs),
         turnsPerSecond:idleStats.idleMs>0?Math.round(idleStats.idleTurns/(idleStats.idleMs/1000)*10)/10:null},
       gpu:{framesInFlight,submitToDoneMsP50:percentile(session?.gpuTimes??[],0.5),submitToDoneMsP95:percentile(session?.gpuTimes??[],0.95),
-        maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
+        maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,maxBlockedMs:session?.stats.gpu.maxBlockedMs??0,maxWaitsBetweenPumps,turnAsks:session?.stats.gpu.turnAsks??0,fallbackAsks:session?.stats.gpu.fallbackAsks??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
       logGate:logGate.stats(),pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
@@ -1277,7 +1339,19 @@ async function main() {
     
     trace(line.type,line);
     // Off screen, "presented" means drawn and submitted to the texture: no compositor, no display.
-    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms, guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)\nlog: ${line.logGate.lines} lines, ${line.logGate.written} written, ${line.logGate.suppressed} held back in ${line.logGate.trips} flood${line.logGate.trips===1?"":"s"}, ${line.logGate.collapsed} repeats collapsed${line.logGate.top[0]?`; most said ${JSON.stringify(line.logGate.top[0].message)} ×${line.logGate.top[0].count}`:""}`);
+    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms (longest ${line.gpu.maxBlockedMs} ms, most waits between pumps ${line.gpu.maxWaitsBetweenPumps}), guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)\nlog: ${line.logGate.lines} lines, ${line.logGate.written} written, ${line.logGate.suppressed} held back in ${line.logGate.trips} flood${line.logGate.trips===1?"":"s"}, ${line.logGate.collapsed} repeats collapsed${line.logGate.top[0]?`; most said ${JSON.stringify(line.logGate.top[0].message)} ×${line.logGate.top[0].count}`:""}`);
+  };
+  // The pipeline trace (--pipe-trace): events of the main thread, and the most blocking GPU
+  // waits seen between two pumps (HostPipeline.Model: at most one).
+  const pipeEvents:string[]=[];let waitsSincePump=0,maxWaitsBetweenPumps=0,lastPipe="";
+  // The gate trace (--gate-trace FILE): one JSON line per GPU submission, ask (when due, when
+  // asked, how long it blocked, when answered), wait of a frame for the gate, band count of a
+  // frame, and pump: what a frame waited for.
+  const gateDebugOn=!!gateTraceFile,gateDebugLog:Record<string,unknown>[]=[];
+  const pipeNote=(event:string)=>{
+    if(event==="pump"){waitsSincePump=0;if(lastPipe==="pump")return;}
+    else if(event==="ask"){waitsSincePump++;maxWaitsBetweenPumps=Math.max(maxWaitsBetweenPumps,waitsSincePump);}
+    lastPipe=event;if(pipeTraceFile&&pipeEvents.length<1000000)pipeEvents.push(event);
   };
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
@@ -1312,7 +1386,8 @@ async function main() {
         if(typeof saved.settings.scripts==="string")scriptSetting=saved.settings.scripts;
         if(!cliLiberal&&!cliStrict&&typeof saved.settings.liberal==="boolean"&&saved.settings.liberal!==liberal){
           liberal=saved.settings.liberal;if(liberal&&document.title==="Page refused")navigate(document.url,false);}
-        if(typeof saved.settings.encoding==="string"){encodingSetting=saved.settings.encoding;setPageDecoding({fallback:encodingSetting});}}
+        if(typeof saved.settings.encoding==="string"){encodingSetting=saved.settings.encoding;setPageDecoding({fallback:encodingSetting});}
+        if(typeof saved.settings.search==="string")searchSetting=engine.searchSetting(saved.settings.search)?.setting??"";}
       if(restoreSession)(saved.session?.tabs??[]).forEach((tab:{url:string},index:number)=>{if(index>0)newTab();navigate(tab.url);});
     }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
@@ -1325,6 +1400,7 @@ async function main() {
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
     // One session for the window's life. It keeps the pipeline and buffers (issue 1268).
     session=await createHTMLWindowSession(device,target,native,{framesInFlight,
+      onPipe:event=>{pipeNote(event);},...(gateDebugOn?{gateDebug:(record:Record<string,unknown>)=>{if(gateDebugLog.length<200000)gateDebugLog.push(record);}}:{}),
       // GPU readbacks (mapAsync) go back to Lean, which resolves the page's promise in a task.
       onGpuReads:(p,results)=>{
         (scriptCall("scriptSession","",{action:"gpuRead",session:p,results}) as Promise<ScriptTurn>)
@@ -1403,6 +1479,8 @@ async function main() {
       }
       // Liberal mode: what Lean skipped goes to the page's console.
       noteDiagnostics(nextDocument,nextLayers??next);
+      // Text that resolves to serif while the engine holds no serif face: give it, draw again.
+      if(wantsSerif(nextLayers??next))serif.want()?.then(ok=>{if(ok)dirty=true;});
       const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.
@@ -1639,7 +1717,7 @@ async function main() {
           }
           const target=engine.hit(frame,released[0],pageRow(released[1]));
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
-            followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url}) as LinkRoute);}
+            followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url,outside:outsideDocs.get(document)??""}) as LinkRoute);}
         }
     };
     // Idle (issue 450): with nothing to draw, nothing in flight and no deadline near, the loop
@@ -1656,6 +1734,11 @@ async function main() {
         ||loading||!!candidate||refusing>0||!!prefetching||graphBusy()||!!(document as Page).graph?.clock||netQueue.length>0||netInFlight>0
         ||sockets.size>0||(worker?.inFlight??0)>0||!!sweep||(!!commands&&(commands.length>0&&now+2>=stepAt));
       if(busy){busyAt=now;idleEndAt=undefined;return 0;}
+      // GPU work not yet answered for: the gate asks only from a turn and its answer is a timer,
+      // and the window's wait blocks the thread, so the loop does not wait past the ask's due time
+      // nor at all while an ask's answer is outstanding (a frame waits for it).
+      const gpuDue=session?.gpuDueIn()??null;
+      if((session?.gpuInFlight??0)>0&&(gpuDue===null||gpuDue<2)){busyAt=now;idleEndAt=undefined;return 0;}
       // Loop turns with nothing to do, per second: the wakeups an idle window costs.
       if(idleEndAt!==undefined){idleStats.idleTurns++;idleStats.idleMs+=now-idleEndAt;}
       idleEndAt=now;
@@ -1668,6 +1751,7 @@ async function main() {
       if(!quiet&&(scriptWakeIn===null||scriptWakeIn<2))return 0;
       let wait=quiet?IDLE_WAIT_CAP_MS:TIMER_WAIT_CAP_MS;
       if(scriptWakeIn!==null)wait=Math.min(wait,Math.max(scriptWakeIn,gpuHoldUntil-now));
+      if(gpuDue!==null)wait=Math.min(wait,gpuDue);
       if(!everyFrame&&session?.frames&&!session.lastChecked&&canPresent())wait=Math.min(wait,lastActivity+IDLE_CHECK_MS-now);
       if(commands?.length)wait=Math.min(wait,stepAt-now);
       if(watchSeconds&&firstFrameAt!==undefined)wait=Math.min(wait,firstFrameAt+watchSeconds*1000-now);
@@ -1680,6 +1764,8 @@ async function main() {
       // After an idle wait no window update or flush unless an event came.
       if(waited){idleStats.quietPumps++;if(native.pumpQuiet())idleStats.eventsAfterWait++;}else native.pump();
       waited=0;checkHold();const pumpEnd=performance.now();
+      // Input taken: the GPU gate may start one wait now (gpu_pacing.ts `turn`).
+      pipeNote("pump");if(gateDebugOn&&gateDebugLog.length<200000)gateDebugLog.push({ev:"pump",start:pumpStart,end:pumpEnd});session?.gpuTurn();
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       // Take every native event now and keep each with the time it was taken. None is dropped here.
       // The window library stamps each event when it is queued; its clock maps onto
@@ -1973,14 +2059,18 @@ async function main() {
         await new Promise(resolve=>setTimeout(resolve,0));
       } else {
         // A timer that can not run now (a turn or a frame is in flight) is not napped for 1 ms at
-        // a time: the end of the turn or of the frame ends the nap.
+        // a time: the end of the turn or of the frame ends the nap. The GPU gate's next ask starts
+        // from a turn: turn when it is due, not up to 8 ms later.
         const inFlight=scriptBusy||!!rendering;
-        const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil((inFlight?null:scriptWakeIn)??8)))));
+        const gpuDueIn=session?.gpuDueIn()??null;
+        const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil((inFlight?null:scriptWakeIn)??8),gpuDueIn===null?8:Math.ceil(gpuDueIn)))));
         await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[]),...(scriptBusy&&scriptDone?[scriptDone]:[])]);
       }
     }
   } finally {
     running=false;controller?.abort();quitAt=performance.now();
+    if(gateTraceFile){try{Deno.writeTextFileSync(gateTraceFile,gateDebugLog.map(r=>JSON.stringify(r)).join("\n")+"\n");}catch(error){console.error("Native HTML: gate trace not written:",String(error));}}
+    if(pipeTraceFile){try{Deno.writeTextFileSync(pipeTraceFile,pipeEvents.join("\n")+"\n");}catch(error){console.error("Native HTML: pipeline trace not written:",String(error));}}
     // --shot-at-end: the picture of the last frame, once a frame in progress has ended.
     if(shotAtEnd&&shotFile&&session?.frames){
       try{await rendering;await shifting;await takeShot();}catch(error){console.error("Native HTML: shot at end failed:",String(error));}

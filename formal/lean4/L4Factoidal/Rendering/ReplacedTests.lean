@@ -125,6 +125,60 @@ private def text (html : String) : Except String (List String) :=
 -- Measured in a table: the image's width.
 #guard (boxes "<table style='border-spacing:0'><tr><td id='c' style='padding:0'><img src='a.png'></td></tr></table>").map (·.head?.map (·.2.2.2.1)) == .ok (some 40)
 
+-- A picture whose `width` is a percentage is compressible (CSS Sizing 3 §5.2.2): inside a grid
+-- item its min-content contribution is 0, so `1fr 1fr` columns stay equal (30 and 30 in 60)
+-- and the picture fills its column; with its natural 40 px the first column took 40.
+private def gridHtml (img : String) : String :=
+  s!"<div style='display:grid;grid-template-columns:1fr 1fr;width:60px'><div id='a'>{img}</div><div id='b'>x</div></div>"
+private def across (html : String) : Except String (List (String × Float × Float)) :=
+  (boxes html).map (·.filterMap fun (id,x,_,w,_) => if id == "a" then none else some (id,x,w))
+#guard across (gridHtml "<img id='i' src='a.png' style='width:100%'>") == .ok [("i",0,30),("b",30,30)]
+#guard across (gridHtml "<img id='i' src='a.png' style='max-width:100%'>") == .ok [("i",0,30),("b",30,30)]
+-- A px width is not compressible: the first column takes the picture's 40 px.
+#guard across (gridHtml "<img id='i' src='a.png' style='width:40px'>") == .ok [("i",0,40),("b",40,20)]
+-- A `min-width` that is a length is the least the picture asks.
+#guard across (gridHtml "<img id='i' src='a.png' style='width:100%;min-width:36px'>") == .ok [("i",0,36),("b",36,24)]
+-- In the max-content width the picture keeps its natural size.
+#guard (boxes "<div id='f' style='float:left'><img src='a.png' style='width:100%'></div>").map (·.head?.map (·.2.2.2.1)) == .ok (some 40)
+
+-- A `linear-gradient()` background: its line through the box's centre, as long as the box's
+-- extent along it; `to right` across the width, the default down the height.
+private def lineOf (g : String) (w h : Float) : Option (Float × Float × Float × Float × List Float) := do
+  let bg ← (CSS.parseLinearGradient g).toOption
+  match Layout.gradientPaint bg 0 0 w h with
+  | .gradient p => match p.shape with
+    | .linear a b c d => some (a,b,c,d,p.stops.map (·.offset))
+    | _ => none
+  | _ => none
+#guard lineOf "to right,red,blue" 100 20 == some (0,10,100,10,[0,1])
+#guard lineOf "red,white,blue 75%" 100 20 == some (50,0,50,20,[0,0.375,0.75])
+-- A box with a gradient background paints two rectangles when it has a colour too: the colour,
+-- then the image over it.
+private def paints (html : String) : Option Nat :=
+  ((render html "").toOption.map fun r => (r.1.tree.flatMap (·.lower identity [])).length)
+#guard paints "<div style='width:100px;height:20px;background:#eee linear-gradient(red,blue)'></div>" == some 2
+#guard paints "<div style='width:100px;height:20px;background:#eee'></div>" == some 1
+#guard Layout.stopOffsets 200 [some (0.25,true),none,some (100,false)] == [0.25,0.375,0.5]
+#guard Layout.stopOffsets 100 [some (0.5,true),some (0.2,true)] == [0.5,0.5]
+
+-- Multi-column containers (CSS Multi-column Layout 1): balanced columns, cut between children.
+#guard Layout.columnPlan (some 2) none 10 110 == some (2,50)
+#guard Layout.columnPlan none (some 40) 10 110 == some (2,50)
+#guard Layout.columnPlan none (some 200) 10 110 == none
+#guard Layout.columnPlan (some 3) (some 40) 10 110 == some (2,50)
+#guard Layout.columnStarts #[(0,10),(10,20),(20,30)] 20 == #[0,20]
+#guard Layout.columnFirsts #[(0,10),(10,20),(20,30)] 20 == #[2]
+#guard Layout.columnFirsts #[(0,10),(10,20),(20,30)] 9 == #[1,2]
+#guard (Layout.balancedHeight #[(0,10),(10,20),(20,30)] 30 2 - 20).abs < 1/32
+#guard Layout.balancedHeight #[(0,10),(10,20),(20,30),(30,40)] 40 2 == 20
+private def cols (extra : String) : Except String (List (String × Float × Float × Float × Float)) :=
+  boxes ("<div id='m' style='column-count:2;column-gap:10px;width:110px" ++ extra ++ "'>" ++
+    "<p id='a' style='margin:0;height:20px'></p><p id='b' style='margin:0;height:20px'></p><p id='c' style='margin:0;height:10px'></p></div>")
+#guard cols "" == .ok [("m",0,0,110,30),("a",0,0,50,20),("b",60,0,50,20),("c",60,20,50,10)]
+-- `columns` gives both; one column is no multi-column box.
+#guard cols ";column-count:auto;columns:40px 4" == .ok [("m",0,0,110,30),("a",0,0,50,20),("b",60,0,50,20),("c",60,20,50,10)]
+#guard cols ";column-count:1" == .ok [("m",0,0,110,50),("a",0,0,110,20),("b",0,20,110,20),("c",0,40,110,10)]
+
 -- `pre` keeps spaces and tabs (CSS Text 3 §4.1.1): the glyph x of each word.
 private def wordsAt (html : String) : Except String (List (String × Float)) :=
   (render html "").map fun r => r.1.glyphRuns.toList.map fun run => (run.text,(run.glyphs[0]?.map (·.x)).getD 0)

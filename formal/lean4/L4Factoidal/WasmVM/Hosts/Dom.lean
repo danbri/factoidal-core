@@ -169,6 +169,10 @@ structure State where
   logLimit : Nat := 1024
   /-- The nested browsing contexts: an `iframe` element and its content document. -/
   frames : Array (Nat × Nat) := #[]
+  /-- Every document that joined the arena as a frame's document (`noteFrameDoc`), with
+  whether this realm may reach it (`frameAccessible` of its frame when it joined). A document
+  a frame no longer shows stays here, so it stays out of reach (`nodeReachable`). -/
+  frameDocs : Array (Nat × Bool) := #[]
   /-- The page's GPU objects (`L4Factoidal.PageGpu`), and the host commands Lean emitted
   that the host has not taken yet (a turn of `scriptSession` takes them). -/
   gpu : L4Factoidal.PageGpu.State := {}
@@ -646,10 +650,21 @@ def textContentSet (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M)
       if s.live.idle then (s, ret 0) else ({ s with live := (Command.setTextContent n v).live s.dom s.live }, ret 0)
     else change s (.setTextContent n v) fun d => changed (.setTextContent n v) (d.setTextContent n v)
 
-/-- A frame's `src` value parsed against the page's URL (HTML §4.8.5 "process the iframe
-attributes": "parse a URL"), as its href; the value itself when it does not parse. -/
-def frameURL (s : State) (v : String) : String :=
-  match L4Factoidal.WHATWG.URL.parseUrl v (if s.url.isEmpty then none else some s.url) with
+/-- The base URL a frame element's `src` is parsed against: its node document's base URL
+(HTML §4.8.5 "process the iframe attributes": "parse a URL given src, relative to element's
+node document"), else the page's URL. A frame inside a frame's document (of the same or of
+another origin) resolves against that document, not against the page: before, the `src`
+`g.html` of a frame in `http://b.test/f.html` became the page's `http://a.test/g.html`, and
+that document of the page's origin ran in the page's realm. -/
+def frameBase (s : State) (el : Nat) : String :=
+  let b := s.documentBase (s.dom.get el).doc
+  if b.isEmpty then s.url else b
+
+/-- A frame's `src` value parsed against `frameBase`, as its href; the value itself when it
+does not parse. -/
+def frameURL (s : State) (el : Nat) (v : String) : String :=
+  let base := frameBase s el
+  match L4Factoidal.WHATWG.URL.parseUrl v (if base.isEmpty then none else some base) with
   | some u => u.href
   | none => v
 
@@ -678,7 +693,7 @@ def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
       | (s, r) =>
         -- HTML §4.8.5: setting `src` of an iframe with a browsing context navigates it.
         if frameOwner (s.dom.get n) && Dom.asciiLower name == "src" && s.frames.any (·.1 == n) then
-          ({ s with navigations := s.navigations.push (n, if s.hostLoads && !v.trimAscii.toString.isEmpty then frameURL s v else "") }, r)
+          ({ s with navigations := s.navigations.push (n, if s.hostLoads && !v.trimAscii.toString.isEmpty then frameURL s n v else "") }, r)
         else (s, r)
 
 def createElement (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
@@ -730,14 +745,13 @@ def pageOrigin (s : State) : L4Factoidal.HTML.Frames.Origin := s.selfOrigin.getD
 open L4Factoidal.HTML.Frames in
 /-- The frame of `iframe` element `el` whose container document has `parent`: the one kept
 when its browsing context was made, else `frameOf` its attributes now (its `src` resolved
-against the page's URL). A sandboxed origin's identity is `el` + 10^9: one per element. -/
+against its node document's base URL, `frameURL`). A sandboxed origin's identity is `el` +
+10^9: one per element. -/
 def frameFor (s : State) (parent : L4Factoidal.HTML.Frames.Frame) (el : Nat) : L4Factoidal.HTML.Frames.Frame :=
   match s.frameInfo.find? (·.1 == el) with
   | some (_, f) => f
   | none =>
-    let src := (attrValue? s.dom el "src").map fun v => match L4Factoidal.WHATWG.URL.parseUrl v (if s.url.isEmpty then none else some s.url) with
-      | some u => u.href
-      | none => v
+    let src := (attrValue? s.dom el "src").map (frameURL s el)
     frameOf parent.flags parent.origin (attrValue? s.dom el "sandbox") (attrValue? s.dom el "srcdoc") src (1000000000 + el)
 
 open L4Factoidal.HTML.Frames in
@@ -761,6 +775,87 @@ same origin (`HTML.Frames.mayAccess`); a sandboxed frame without `allow-same-ori
 opaque origin and is never reached (`HTML.Frames.sandboxed_no_access`). -/
 def frameAccessible (s : State) (el : Nat) : Bool :=
   L4Factoidal.HTML.Frames.mayAccess (pageOrigin s) (elementFrame s el).origin
+
+/-! ## Origin isolation: the nodes this realm may name (issue 518, check C1, lemma L14) -/
+
+/-- The document of node `n`: `n` itself for a document node, else its node document. -/
+def nodeDoc (d : Dom) (n : Nat) : Nat := if (d.get n).type == .document then n else (d.get n).doc
+
+/-- Document `doc` joined the arena as the document of `iframe` `el`: it is recorded with
+whether this realm may reach it (`frameAccessible`, with the origin of the navigation). -/
+def noteFrameDoc (s : State) (el doc : Nat) : State :=
+  { s with frameDocs := s.frameDocs.push (doc, frameAccessible s el) }
+
+/-- Node `n` is one this realm may name: not a node (the import answers for that itself), or
+a node whose document never was a frame's, or was one of a frame this realm could reach when
+the document joined. Every number is, when no frame document ever joined the arena (one test
+of an empty array). A frame's document is in the page's arena, and node numbers can be
+counted: this, not the node a script was handed, is what keeps another origin's document
+out of reach. -/
+def nodeReachable (s : State) (n : Nat) : Bool :=
+  s.frameDocs.isEmpty || !isNode s.dom n ||
+    (match s.frameDocs.find? (·.1 == nodeDoc s.dom n) with
+     | some (_, ok) => ok
+     | none => true)
+
+/-- Kind: cost theorem. Says: a page that never had a frame document pays nothing: every
+number is reachable. -/
+theorem nodeReachable_unframed (s : State) (n : Nat) (h : s.frameDocs = #[]) : nodeReachable s n = true := by
+  simp [nodeReachable, h]
+
+/-- Kind: security theorem (origin isolation, C1). Says: a node of a document that joined the
+arena as the document of a frame this realm may not reach is not reachable. Does not say:
+that every frame document is recorded (`noteFrameDoc` is called where `Dom.graft` makes one:
+`connectFrames`, `attachDocument`, `Page.Session.attachFrame`, `Page.start`; by reading of
+the code). -/
+theorem nodeReachable_foreign (s : State) (n doc : Nat) (hn : isNode s.dom n = true)
+    (h : s.frameDocs.find? (·.1 == nodeDoc s.dom n) = some (doc, false)) : nodeReachable s n = false := by
+  have he : s.frameDocs.isEmpty = false := by
+    cases hs : s.frameDocs.isEmpty with
+    | false => rfl
+    | true => simp [Array.isEmpty_iff.mp hs] at h
+  simp [nodeReachable, he, hn, h]
+
+/-- The arguments of `foafnaut_dom` import `nm` (arguments `a`) that name nodes. `node_query`
+ops 3, 4 and 12 name none; 27 and 31 answer for any number; 32 and 34 name another window's
+document for `postMessage`, which crosses origins on purpose; 41 is `matchMedia`; 100 to 199
+name ranges and iterators, and their nodes are checked where they are read
+(`DomOps.nodeArg`). Of `tree_op`, `b` names a node in ops 1, 3, 4, 5 and 23. `create_node`
+names a document in its kind (`kind / 16`). -/
+def nodeArgs (nm : String) (a : Nat → Nat) : List Nat :=
+  match nm with
+  | "node_info" => if a 1 == 27 then [] else [a 0]
+  | "node_string" | "node_children" | "text_content_get" | "text_content_set" | "get_attribute"
+  | "set_attribute" | "remove_attribute" | "tag_name" | "clone_node" | "add_event_listener"
+  | "listen" | "dispatch_plan" => [a 0]
+  | "append_child" | "remove_child" => [a 0, a 1]
+  | "insert_before" | "replace_child" => [a 0, a 1, a 2]
+  | "tree_op" => if [1, 3, 4, 5, 23].contains (a 2) then [a 0, a 1] else [a 0]
+  | "create_node" => [a 0 / 16]
+  | "node_query" =>
+    let op := a 1
+    if [3, 4, 12, 27, 31, 32, 34, 41].contains op || (op ≥ 100 && op < 200) then [] else [a 0]
+  | _ => []
+
+/-- Every node argument of import `nm` is reachable (`nodeReachable`); one test of an empty
+array on a page that never had a frame document. -/
+def argsReachable (s : State) (nm : String) (a : Nat → Nat) : Bool :=
+  s.frameDocs.isEmpty || (nodeArgs nm a).all (nodeReachable s)
+
+theorem argsReachable_unframed (s : State) (nm : String) (a : Nat → Nat) (h : s.frameDocs = #[]) :
+    argsReachable s nm a = true := by
+  simp [argsReachable, h]
+
+/-- Kind: security theorem (origin isolation, C1). Says: when `argsReachable` holds, every
+node a listed argument names is reachable. -/
+theorem argsReachable_args (s : State) (nm : String) (a : Nat → Nat) (h : argsReachable s nm a = true)
+    (n : Nat) (hn : n ∈ nodeArgs nm a) : nodeReachable s n = true := by
+  unfold argsReachable at h
+  cases he : s.frameDocs.isEmpty with
+  | true => simp [nodeReachable, he]
+  | false =>
+    rw [he, Bool.false_or, List.all_eq_true] at h
+    exact h n hn
 
 /-- The scripts of the document of `iframe` `el` run in the page's realm: its document is
 one the page may reach (the same origin) and its scripts may run. A sandboxed frame's
@@ -1146,7 +1241,7 @@ def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
         -- HTML §4.8.5 "process the iframe attributes": `srcdoc` first (Lean loads it),
         -- then a `src` URL (the embedder's, when it loads URLs), else `about:blank`.
         let nav := if Dom.isHtmlElement (d.get k) "iframe" && (attrValue? d k "srcdoc").isSome then "about:srcdoc"
-          else if s.hostLoads then ((frameSrc d k).map (frameURL s)).getD "" else ""
+          else if s.hostLoads then ((frameSrc d k).map (frameURL s k)).getD "" else ""
         let inherited := s.documentBase (s.dom.get k).doc
         let withBase := { s with
           bases := { s.bases with
@@ -1156,8 +1251,9 @@ def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
               (s.baseContext (s.dom.get k).doc).policies) } }
         match addCommand withBase (.frameDocument k "" false doc) d with
         | (s', .values #[.i32 0]) =>
-          s := { s' with frames := s'.frames.push (k, doc), frameInfo := s'.frameInfo.push (k, info),
-                         navigations := s'.navigations.push (k, nav) }
+          let s'' := { s' with frames := s'.frames.push (k, doc), frameInfo := s'.frameInfo.push (k, info),
+                               navigations := s'.navigations.push (k, nav) }
+          s := noteFrameDoc s'' k doc
         | _ => pure ()
   return s
 
@@ -1259,7 +1355,7 @@ def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false
     let s := match navURL with
       | none => s
       | some u => navigatedTo s el root u
-    (connectFrames s #[root], some root)
+    (connectFrames (noteFrameDoc s el root) #[root], some root)
   | (_, _) => (beforeAttach, none)
 
 /-- `document.open`, `write` and `close` on the document of a frame (HTML §8.4.3): the frame

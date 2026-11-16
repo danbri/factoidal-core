@@ -240,7 +240,13 @@ How to take the existing numbers:
 - Proved costs: `formal/lean4/L4Factoidal/FrameCost/Theorems.lean` with `frame_cost_test.ts` and
   `frame_work_test.ts`. A theorem that an input class does no layout is stronger than any percentile; prefer one
   where the property is structural.
-- Pipeline order (not times): `--pipe-trace` on branch `wip/par`, checked against the Lean pipeline model.
+- Pipeline order (not times): `run_html.ts --pipe-trace FILE` (pumps, GPU submissions, blocking GPU waits),
+  checked against the Lean pipeline model by `pipeline_trace_check.ts` (`HostPipeline/Model.lean`).
+- What a frame waited for: `run_html.ts --gate-trace FILE`, one JSON line per GPU submission (its cost and
+  predicted GPU time), ask (when due, when asked, how long the call blocked the main thread), wait of a frame
+  for the GPU gate, band count of a frame, and pump. A frame that is slow with a fast engine is read here:
+  asks long after their due time (the loop turned late), predictions several times the measured GPU time (the
+  gate slept too long), or long blocks (the prediction was short).
 
 What an end point means here. Window latencies start at the enqueue stamp taken in `native_window.m`
 (`from:"queued"`) or at dequeue, and end when `present()` returns. They leave out the device and OS before the

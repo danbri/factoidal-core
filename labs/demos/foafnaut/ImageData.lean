@@ -52,7 +52,8 @@ def base64 (text : ByteArray) (start : Nat) : Except String ByteArray := do
     if bits >= 8 then
       bits := bits-8
       out := out.push (value >>> bits).toUInt8
-      value := value%(1 <<< bits)
+      -- `bits` is below 8 here: the remainder keeps the low bits (no `Nat` left shift)
+      value := value%(match bits with | 0 => 1 | 1 => 2 | 2 => 4 | 3 => 8 | 4 => 16 | 5 => 32 | 6 => 64 | _ => 128)
   return out
 
 /-- RFC 2397, with the base64 form only. -/
@@ -256,6 +257,20 @@ def Store.addBytes (store : Store) (used : Nat) (href : String) (bytes : ByteArr
         | none => store
         | some (w,h) => store.insert (naturalKey href) (.ok (store.size,{width := w, height := h, rgba := ByteArray.empty}))
       (store,used+size)
+
+/-- The pixels a store holds stay within the document's budget: adding an image never takes
+them past `maxDocumentPixels`, whatever the image and the factor. With the limit of one
+decoded image above the budget, this is what bounds the pictures a page holds. -/
+theorem Store.addBytes_within (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat)
+    (vector : VectorReader) (h : used ≤ maxDocumentPixels) :
+    (store.addBytes used href bytes k vector).2 ≤ maxDocumentPixels := by
+  unfold Store.addBytes
+  split
+  · exact h
+  · dsimp only
+    split
+    · exact h
+    · rename_i hle; exact Nat.le_of_not_lt hle
 
 /-- Add one `data:` reference, held at factor `k`. -/
 def Store.addData (store : Store) (used : Nat) (href : String) (k : Nat := 1)

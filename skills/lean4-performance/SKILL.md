@@ -1359,6 +1359,17 @@ fits a machine word goes through the big number runtime.
   `Float.ofScientific` call outside start-up code, with `slow case` or `fast case`. For a
   fold, start from the first element. For a bound, use a named constant.
 
+- **`a <<< k` on `Nat` is a runtime call into the big number code, for small numbers too**
+  (paid for 2026-11-16). In Lean 4.33.1 `lean_nat_shiftl` is an exported function, not inline,
+  and reaches `mpz::mul2k`; `lean_nat_shiftr`, `*`, `/` and `%` are inline with a scalar fast
+  path. Sampled (macOS `sample`) on the native engine: `mul2k` and `lean_nat_shiftl` were a
+  tenth of inflating a 2.5 MB PNG (`Codec.readBits`, `decodeSym`). Repair on a hot path: `* 2`,
+  a weight that doubles, or a small table (`ImageJPEG.pow2`, `ImagePNG.depthMax`); shifts on
+  `UInt8` to `UInt64` are machine shifts.
+- **A decimal literal in a per-pixel loop is a `Float.ofScientific` at each pixel**, as above:
+  `ImageJPEG.assemble` had `1.402` and three more in its colour conversion, and a 1000 by 1000
+  photograph took 7.7 s (0.21 s with the four as `@[noinline]` module constants, 2026-11-16).
+
 ## A definition with no argument runs when the program starts (paid for 2026-11-09)
 
 This skill says above that top-level constants are evaluated when the module is initialised.

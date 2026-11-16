@@ -94,6 +94,28 @@ let frames=0;function f(){c.clearRect(0,0,40,20);c.fillStyle='#0a0';c.fillRect(f
   assert.equal(gpu.find(c=>c.k==="canvas")!.node,pixels[0].g![1]-1073741824);
   engine.scriptSession("",{action:"close"});
 
+  // 3b. New bitmap dimensions (HTML §4.12.5): setting a 2D canvas's width or height, by the
+  // property, setAttribute (even to the same value) or removeAttribute, clears its bitmap and
+  // resets its context's state; the other dimension and an OffscreenCanvas likewise.
+  const sizes=`<!doctype html><canvas id=e width=20 height=10></canvas><script>
+const el=document.getElementById('e'),c=el.getContext('2d');
+const px=()=>Array.from(c.getImageData(5,5,1,1).data).join(',');
+const dirty=()=>{c.fillStyle='#f00';c.strokeStyle='#0f0';c.globalAlpha=0.5;c.lineWidth=3;c.translate(2,2);c.fillRect(-2,-2,20,10);};
+dirty();console.log('drawn '+px());
+el.width=20;console.log('property '+px()+' '+c.fillStyle+' '+c.strokeStyle+' '+c.globalAlpha+' '+c.lineWidth+' '+c.getTransform().e);
+dirty();el.setAttribute('width','20');console.log('setAttribute '+px()+' '+c.fillStyle+' '+c.globalAlpha);
+dirty();el.setAttribute('height','10');console.log('height '+px()+' '+c.fillStyle);
+dirty();el.removeAttribute('height');console.log('removeAttribute '+px()+' '+el.height+' '+c.fillStyle);
+dirty();el.setAttribute('class','x');console.log('other '+px());
+const o=new OffscreenCanvas(4,4),oc=o.getContext('2d');oc.fillStyle='#f00';oc.fillRect(0,0,4,4);o.width=4;
+console.log('offscreen '+Array.from(oc.getImageData(1,1,1,1).data).join(',')+' '+oc.fillStyle);
+</script>`;
+  turn=start(kind,sizes,"file:///sizes.html");
+  for(const e of turn.errors)console.log(`${kind} sizes error:`,e);
+  assert.deepEqual(turn.logs,["drawn 255,0,0,128","property 0,0,0,0 #000000 #000000 1 1 0","setAttribute 0,0,0,0 #000000 1",
+    "height 0,0,0,0 #000000","removeAttribute 0,0,0,0 150 #000000","other 255,0,0,128","offscreen 0,0,0,0 #000000"],`${kind}: new dimensions reset the canvas`);
+  engine.scriptSession("",{action:"close"});
+
   // 4. Cost: 1,000 commands in one frame (500 fillRect and 500 fillStyle), and the chart demo.
   const heavy=`<!doctype html><canvas id=c width=300 height=150></canvas><script>
 const c=document.getElementById('c').getContext('2d');let n=0;

@@ -26,6 +26,7 @@
 #     dataflow inventory directory line: the directories under formal/lean4/L4Factoidal
 #       against docs/dataflow-inventory.md (the part of the drift test that needs no Lean)
 #     Std in the Wasm engine: build-web-render.sh's import walk, without the build
+#     Lean compiler imports in shipped binaries: tools/binary-budget.py imports (issue 551)
 # --with-lean: in this checkout (working tree, not HEAD), under leanlock.sh:
 #     lake build (every target, as the CI lean job), the tail-recursion gate,
 #     tests/dataflow/run.sh (the full inventory drift test and the gates)
@@ -207,6 +208,15 @@ std_in_wasm() {
   python3 -I - "$TREE/formal/lean4" /dev/null <<<"$walk" && echo "no Std import outside the Wasm runtime's Std in the engine's modules"
 }
 
+# tools/binary-budget.py imports: no Lean module outside Lean.Data (tactics: Lean.Elab, Lean.Meta)
+# in the import closure of a shipped binary (leanjs, bubblepop-test262, the web-render engines);
+# issue 551, where a proof module's `import Lean.Elab.Tactic` made leanjs ten times larger.
+lean_in_binaries() {
+  local tool="$TREE/tools/binary-budget.py"
+  [ -f "$tool" ] || tool="$ROOT/tools/binary-budget.py"
+  python3 -I "$tool" imports "$TREE/formal/lean4"
+}
+
 T0=$(now)
 if touches '^(labs/|docs/web/|tools/|third_party/data/)'; then
   check "test.sh: generators and native_net (no engine)" testsh_checks native_coordinates_test.c status-to-html.py \
@@ -222,6 +232,9 @@ else skip "dataflow inventory directory line"; fi
 if touches '^(formal/lean4/|labs/demos/foafnaut/build-web-render.sh)'; then
   check "Std imports in the Wasm engine's modules" std_in_wasm
 else skip "Std imports in the Wasm engine"; fi
+if touches '^(formal/lean4/|labs/demos/foafnaut/|tools/binary-budget)'; then
+  check "Lean compiler imports in shipped binaries" lean_in_binaries
+else skip "Lean compiler imports in shipped binaries"; fi
 
 if [ "$WITH_LEAN" = 1 ]; then
   LEANLOCK=${LEANLOCK:-$HOME/working/foafnaut-tools/leanlock.sh}

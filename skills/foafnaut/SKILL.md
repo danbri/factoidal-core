@@ -266,9 +266,10 @@ bash sweeps.sh [--only NAME]... [--wasm-only]
   start check of `build-executables.sh`. Run `test.sh` and `sweeps.sh` locally before you land an
   engine or window change.
 - `build.yml` also runs `test.sh --skip-build` in the job `foafnaut-host-tests` (Linux) as soon as
-  `foafnaut-engines` is done, on its Wasm engines: about 45 minutes after dispatch, not after the
-  macOS bundle (2.5 hours). Checks that need `web-render-native`, `libweb-render.dylib` or macOS
-  print `NOT RUN` there and still run in the macOS bundle job.
+  `foafnaut-engines` is done, on its Wasm engines: about 35 minutes after dispatch, not after the
+  macOS bundle. Checks that need `web-render-native`, `libweb-render.dylib` or macOS
+  print `NOT RUN` there and still run in the macOS bundle job. Jobs, caches, cold builds and the
+  per-run timing record: [`ci-caching.md`](ci-caching.md).
 - Hub checks, from the repository root, Chrome needed: `node labs/demos/foafnaut/hub_links_check.mjs`
   (before every Pages deploy; `--only published`, `--runtime DIR`), and the other
   `LAB/hub_*_check.mjs` files. See `docs/web/hub/README.md`.
@@ -372,6 +373,11 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   --branch v0.18.0 https://github.com/quickjs-ng/quickjs`, then `cc -O2 -D_GNU_SOURCE
   -funsigned-char -I. quickjs.c libregexp.c libunicode.c dtoa.c quickjs-libc.c qjs.c
   gen/repl.c gen/standalone.c -lm -lpthread -ldl -o qjs`) and `node --jitless`.
+- What BubblePopJS allocates, by constructor shape and by function, its reference-count operations and
+  copied bytes, with no Lean build: `labs/demos/foafnaut/bubblepop_perf/alloc/build-count.sh` makes a
+  counting `leanjs` from the generated C; `leancount.py` and `opcount.py` read the counts (per run, per
+  JavaScript operation); `sampleprof.py` reads a macOS `sample` profile by memory-management class.
+  Baseline and method: `docs/bubblepopjs-heap.md`.
 - Literals and conversions that the generated C evaluates at each call:
   `python3 tools/lean-literal-parse-audit.py` (a `Nat` literal of 2^32 or more read from text),
   `--float-literals` (a `Float` literal left in a function body, with its case) and
@@ -420,6 +426,12 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- A proof module that imports `Lean.Elab.*` or `Lean.Meta.*` (tactics, `elab`, `MetaM`) must not be in the
+  import closure of an executable or engine. 2026-11-16: `L4Factoidal.JS` imported `JS/FuelMono` (tactics),
+  so `leanjs` linked Lean's elaborator and grew from 11 MB to 111 MB unnoticed (issue 551). Make such a
+  module a lib root of its own; `tools/binary-budget.py` (premerge, build-web-render.sh, the CI lean job)
+  fails on the import, on Lean-library symbols in the binary, and on growth over 2 % of
+  `tools/binary-budget.json`.
 - A compiled host needs every permission its source uses. 2026-11-08: `deno compile`
   had no `--allow-env`, `run_html.ts` read `HOME`, and the app died at start while all
   source tests passed. Fixed by `--allow-env=HOME` and the start check of
@@ -475,6 +487,27 @@ Several sessions work on the owner's laptop at once.
 - A speed result for BubblePopJS names the branch and commit it was measured on. On 2026-11-09
   `main`, `wip/bpperf` (stage A) and `wip/bpperf-vm` (stage B) took 926, 267 and 81 ms for one
   loop (`for (let ...)` in a function), and six operations are quadratic on `main` only.
+
+## The Hub and other sites
+
+The Hub runs in the visitor's browser, so its reads of other sites obey that browser's
+cross-origin rules (CORS). There is no open proxy, and none is to be added: a Hub proxy may only
+ever serve URLs matched by an approved allow regex, and none is approved today. A link to another
+site never leaves Foafnaut by itself (owner, 2026-11-16). In order
+(`docs/web/hub/foafnaut/copies.mjs` `fetchOutside`, `browser-worker.mjs` `outsideGo`):
+
+1. A Hub copy (`labs/demos/foafnaut/realpages/hub-copies.json`; openly licensed pages only,
+   snapshots in factoidal-builds `third_party/realpages/*/hub-*.zip`).
+2. A direct read the site allows, without credentials. Wikimedia articles
+   (`https://LANG[.m].PROJECT.org/wiki/TITLE`) are read from
+   `https://LANG.PROJECT.org/api/rest_v1/page/html/TITLE` (`Access-Control-Allow-Origin: *`; its
+   `<base>` makes links and images resolve to the real site; `upload.wikimedia.org` and
+   `/w/load.php` allow it too). Other sites are tried as they are; on 2026-11-16 W3C TR, WHATWG,
+   RFC Editor, peps.python.org, spec.commonmark.org, danluu.com, lite.cnn.com and wttr.in
+   allowed it, and Gutenberg, NPR text, Hacker News, MDN, GOV.UK, arXiv, Python docs, SQLite,
+   LWN, Rust, Go and Lua did not. An origin that refuses is not asked again in that page.
+3. Else the tab shows the "Another site" page; only its "Open in a new browser tab" button calls
+   `window.open`. `tests/hub/hub_no_silent_open_test.mjs` and `hub_links_check.mjs` check this.
 
 ## Land work
 

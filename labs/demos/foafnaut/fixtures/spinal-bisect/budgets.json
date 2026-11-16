@@ -99,5 +99,30 @@
     "what": "no native event comes to an idle off-screen window, so every wait ran to its deadline"
    }
   }
+ },
+ "pipeline": {
+  "measured": "2026-11-16, Apple M1, release engine 1b2fc90d5, off-screen window, pipeline_trace_check.ts (Spinal Tap watched for 10 s); frame p95 34 to 41 ms and blocked 285 to 330 ms over 8 runs of 20 s",
+  "budgets": {
+   "pipeline.spinal.costlessSubmits": {
+    "max": 0,
+    "measured": 0,
+    "what": "GPU submissions of the watch with no cost given to the gate: a band or a partial draw without its cost is slept through for the whole frame's GPU time before its ask (frames of 500 to 870 ms on 2026-11-16)"
+   },
+   "pipeline.spinal.submits": {
+    "min": 50,
+    "measured": 284,
+    "what": "the watch drew: the count above is over real submissions"
+   },
+   "pipeline.spinal.frameMsP95": {
+    "max": 313,
+    "measured": 38,
+    "what": "frame time (request to present) p95 of the watch; the ceiling is the p95 before the gate was driven by the loop (313 ms, engine 04740693f), not a target: about eight times the measurement"
+   },
+   "pipeline.spinal.gpuBlockedMs": {
+    "max": 1500,
+    "measured": 285,
+    "what": "main thread blocked inside GPU waits over the 10 s watch; asks that start before the GPU is done (the gate before 2026-11-16) block 4,300 to 5,000 ms in 20 s"
+   }
+  }
  }
 }

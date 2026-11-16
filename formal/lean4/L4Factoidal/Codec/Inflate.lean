@@ -43,11 +43,15 @@ def readBit : BitM Nat := do
     pure ((s.data.get! i).toNat >>> (s.pos % 8) % 2)
   else throw "unexpected end of compressed data"
 
-/-- `n` bits as a number, first bit least significant. -/
+/-- `n` bits as a number, first bit least significant. Each bit is added with its weight: a
+`<<<` on `Nat` is a call into the runtime's big-number code (`lean_nat_shiftl` is not inline,
+`lean_nat_shiftr` and `*` are), which took a tenth of the time of inflating a PNG. -/
 def readBits (n : Nat) : BitM Nat := do
   let mut v := 0
-  for i in [0:n] do
-    v := v ||| ((← readBit) <<< i)
+  let mut weight := 1
+  for _ in [0:n] do
+    v := v + (← readBit) * weight
+    weight := weight * 2
   pure v
 
 /-- Skip to the next byte boundary. -/
@@ -86,8 +90,8 @@ def decodeSym (h : Huff) : BitM Nat := do
     if code < first + count then
       return h.symbol[index + (code - first)]!
     index := index + count
-    first := (first + count) <<< 1
-    code := code <<< 1
+    first := (first + count) * 2
+    code := code * 2
   throw "invalid Huffman code"
 
 private def lengthBase : Array Nat :=
