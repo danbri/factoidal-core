@@ -1133,8 +1133,11 @@ variable (cs : Array Char)
 
 /-- The character read at `pos` going forward (`back` false) or the one before `pos` going
 backward, and how many code units it is: with `u` or `v` a surrogate pair is one character
-(§22.2.2: the pattern is matched against the list of code points). -/
-def readAt (uni back : Bool) (pos : Nat) : Option (Char × Nat) :=
+(§22.2.2: the pattern is matched against the list of code points).
+
+Inlined: every caller matches on the answer at once, so the compiler removes the `some` and the
+pair, and a character read allocates nothing (`docs/bubblepopjs-heap.md`, step 6). -/
+@[inline] def readAt (uni back : Bool) (pos : Nat) : Option (Char × Nat) :=
   if !back then
     if h : pos < cs.size then
       let c := cs[pos]
@@ -1166,8 +1169,8 @@ def atWordBoundary (fl : Flags) (pos : Nat) : Bool :=
 unit is `cpOf` (a lone surrogate's character stands for the unit). -/
 def cpRead (c : Char) (w : Nat) : Nat := if w == 2 then c.toNat else cpOf c
 
-/-- One step of a single character matcher from `pos`: the position after it. -/
-def step1 (fl : Flags) (back : Bool) (n : Node) (pos : Nat) : Option Nat :=
+/-- One step of a single character matcher from `pos`: the position after it. Inlined, as `readAt`. -/
+@[inline] def step1 (fl : Flags) (back : Bool) (n : Node) (pos : Nat) : Option Nat :=
   match readAt cs fl.unicode back pos with
   | some (c, w) => if oneChar fl n c (cpRead c w) == some true then some (if back then pos - w else pos + w) else none
   | none => none
@@ -1263,7 +1266,26 @@ def matchNode : Nat → Flags → Bool → Node → St → (St → Option St) �
         match rs.getLast? with
         | none => matchNode fuel fl back r st k
         | some l => matchNode fuel fl back l st fun st' => matchNode fuel fl back (.seq (r :: rs.dropLast)) st' k
-      else matchNode fuel fl back r st fun st' => matchNode fuel fl back (.seq rs) st' k
+      else
+        match r with
+        | .char _ | .any | .cls .. | .vset _ =>
+          -- a single character first: the continuation for the rest is made only when it
+          -- matches, so a start position that fails on its first character makes no closure
+          -- (`matchNode_seq` in `RegexTheorems.lean`: the same answer as the general rule below)
+          match step1 cs fl back r st.pos with
+          | some p => matchNode fuel fl back (.seq rs) { st with pos := p } k
+          | none => none
+        -- an assertion first (`^`, `$`, `\b`): the same, so a pattern anchored with `^` that is
+        -- tried at a later start position fails with no closure made
+        | .bol =>
+          if st.pos == 0 || (fl.multiline && isLineTerm cs[st.pos - 1]!) then matchNode fuel fl back (.seq rs) st k
+          else none
+        | .eol =>
+          if st.pos == cs.size || (fl.multiline && st.pos < cs.size && isLineTerm cs[st.pos]!) then
+            matchNode fuel fl back (.seq rs) st k
+          else none
+        | .wordB neg => if atWordBoundary cs fl st.pos != neg then matchNode fuel fl back (.seq rs) st k else none
+        | _ => matchNode fuel fl back r st fun st' => matchNode fuel fl back (.seq rs) st' k
     | .alt [] => none
     | .alt (r :: rs) =>
       match matchNode fuel fl back r st k with
