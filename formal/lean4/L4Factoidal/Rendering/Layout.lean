@@ -1252,7 +1252,7 @@ def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Ex
 bullet: the one that `list-style-type` names, or by default the disc, circle or square of
 a list nested one, two or more deep (HTML §15.3.7). A font with no glyph for the bullet
 (`FontProfile.admits`) gets a star. -/
-private def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Nat) : String := Id.run do
+def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Nat) : String := Id.run do
   if style == .none then return ""
   let some parent := (dom.get id).parent | return "* "
   if style != .number && !(style == .auto && (dom.get parent).lname == "ol") then

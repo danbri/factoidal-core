@@ -230,10 +230,11 @@ private def shapedTest (t : String) (size : Nat) : Except String FontProvider.Wo
        glyphs := #[{index := 1, x := 0, y := 0, advance := 6*Float.ofNat t.length, clusterStart := 0,
                     clusterEnd := t.length, geometry := []}]}
 private def shaped : FontProfile := {font with admits := (fun _ => false), shapedWord := some shapedTest}
-private def shapedMarkers (html : String) : Option (List String) := do
-  let (scene,_) ← (Layout.render (DOM.parseHtmlDocument html) (← (CSS.parse css).toOption) shaped noSVG 200 200).toOption
-  pure ((scene.glyphRuns.toList.map (·.text)).filter fun t => t != "A")
-#guard shapedMarkers "<ul><li>A<ul><li>A</li></ul></li></ul>" == some ["•","◦"]
+private def listDoc : Dom := DOM.parseHtmlDocument "<ul><li>A</li></ul>"
+private def itemOf (dom : Dom) : Nat := ((List.range dom.nodes.size).find? fun i => (dom.get i).lname == "li").getD 0
+#guard Layout.listMarker listDoc shaped .disc (itemOf listDoc) == "• "
+#guard Layout.listMarker listDoc shaped .square (itemOf listDoc) == "▪ "
+#guard Layout.listMarker listDoc font .disc (itemOf listDoc) == "* "
 -- An item with nothing in it is still one line high.
 #guard (box "<ul><li id=e></li></ul>" "" "e").map (·.2.2.2) == some 7
 
