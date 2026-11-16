@@ -582,13 +582,13 @@ native: every structure below uses `ByteArray`, `FloatArray` and scalar fields o
 | # | Step | Target to show | Theorem |
 |---|---|---|---|
 | 0 | This record, the instruments, and `RepBench.lean` | baseline | none |
-| 1 | Register machine call path: the callee test as a function that returns scalars and reads the heap once; the step decrement with no live second reference; `ret` moves a number without boxing; a constant `Value.obj` for the global `this` | a compiled call from 8 allocations and 264 bytes to 2 and 80; lodash allocations −27% | the `call` and `ret` arms satisfy the same step equations as before (stated as lemmas on `vmLoop`) |
+| 1 | Register machine call path. **1a, done (section 4.2):** the step decrement of a call in a function of its own, so that the `HeapOf` record is updated in place. **1b, open:** the callee test as a function that returns scalars; `ret` moves a number without boxing; a constant `Value.obj` for the global `this` | 1a: a compiled call from 8 allocations and 264 bytes to 7 and 176. 1b: to 2 and 80; lodash allocations −27% in all | 1a: `HeapOf.decStep_eq`. 1b: the `call` and `ret` arms satisfy the same step equations as before (stated as lemmas on `vmLoop`) |
 | 2 | `Value.ofBool`: the two boolean values as constants | comparisons allocate nothing | `Value.ofBool b = .bool b` |
 | 3 | `toNum`, `toInt32` and the bit operators with a pure first case for numbers | `s = i & 255` from 8 allocations to 1 | the fast function equals the monadic one |
 | 4 | Writes: `setOwnData`, `setElem`, `defineOwn` update the object in place with no closure and no rebuilt record | `o.x = i` from 5 allocations to 1, `a[3] = i` from 7 to 1 | equal to `updateObj` with the present function |
 | 5 | Built-in call path: `sizeCost`, `charge`, `subjectCached`, `Ctx` | `Math.floor(i)` from 16 allocations to under 6 | equal results and equal step count |
 | 6 | Regular expression matcher: the character read inlined into its callers; no continuation for a sequence whose first term (a character or an assertion) fails. **Done with this record** (section 4.1) | marked allocations −64%, bytes −73%, time −37% | `matchNode_seq` in [`RegexTheorems.lean`](../formal/lean4/L4Factoidal/JS/RegexTheorems.lean): the shorter path gives the answer of the sequencing rule |
-| 7 | Parser: `peek`, `peekAt`, `advance`, `atP`, `atK` inlined (section 4.2) | Test262 allocations −20%, a library load −15%; time: loads −1 to −5%, Test262 unchanged | none needed: no definition changes |
+| 7 | Parser: `peek`, `peekAt`, `advance`, `atP`, `atK` inlined (section 4.3) | Test262 allocations −20%, a library load −15%; time: loads −1 to −5%, Test262 unchanged | none needed: no definition changes |
 | 8 | Flat frames (`Frames`, `codes`) | no `VFrame` and list cell | `Frames.abs_push`, `Frames.abs_pop`, `vmStep_refines` |
 | 9 | Flat slots (B) for environment slots and array elements that hold numbers | a number stored in a closure variable or an array allocates nothing | `decode_encode`, `Slots.read_write` |
 | 10 | Atoms | none alone | injective table |
@@ -652,7 +652,37 @@ Also separate: the DOM bridge (`callImport`, `Page.i32v`, `Dom.ret`, `serveNativ
 owner of memory-management time on the Wikipedia page. Its values cross as byte buffers and boxed
 integers; it needs its own measurement with the same instruments.
 
-### 4.2 Step 7, measured
+### 4.2 Step 1a, measured
+
+The counting build records the line of each allocation in the generated C. For a compiled call it
+shows where the 88-byte `HeapOf` record of section 1.4 is made: at `tickCall`'s
+`{ h with steps := h.steps - 1 }`, inlined into `vmLoop`. There the compiler has passed the record's
+fields to a join point before the update, so it does not see a record it may reuse and builds a new
+one (five count increments, then the allocation) on every call. `tick`, at loop heads, has a shape
+that it does reuse.
+
+The change: the update is `HeapOf.decStep`, a function of its own that is not inlined. Inside it the
+record is the function's argument at its last use, so it is updated in place when nothing else holds
+it. `tickCall` keeps its `do` block and calls it. `HeapOf.decStep_eq` (by `rfl`, a `simp` lemma)
+states that it is the record update, so the meaning of `tickCall` is unchanged. `tickCall` is
+defined before the evaluator's mutual block; no function of the block changes.
+
+| | allocations before | after | bytes before | after | count operations before | after | CPU ms before | after |
+|---|---|---|---|---|---|---|---|---|
+| one compiled call (loop of `s = g1(i)`) | 8 | 7 | 264 | 176 | 71 | 53 | 761 (3 M calls) | 650 (−14.5%) |
+| lodash, whole run | 13.30 M | 12.64 M (−5.0%) | 377.6 MB | 319.4 MB (−15.4%) | 73.5 M | 60.8 M (−17.2%) | 431 | 416 (−3.3%) |
+| immutable, whole run | 24.04 M | 23.55 M (−2.1%) | 663.7 MB | 619.9 MB (−6.6%) | 138.0 M | 127.9 M (−7.3%) | 775 | 745 (−3.8%) |
+| acorn, pako, marked | not counted | | | | | | 788, 1,709, 183 | 782, 1,688, 182 |
+
+CPU time is the least of nine interleaved runs on a machine with other work; a second run of seven
+gave −5% on the call loop and larger gains on lodash and immutable, so the time figures are
+±5%; the counts are exact. The five libraries print the same lines.
+
+What is left of the `HeapOf` copies: `callClosure` and `vmEnter` (the call depth updates of a call
+that enters from the evaluator), 0.24 M copies on lodash. They are in the mutual block and wait with
+step 1b.
+
+### 4.3 Step 7, measured
 
 `P.peek`, `P.peekAt`, `P.advance`, `P.atP` and `P.atK` of
 [`JS/Parser.lean`](../formal/lean4/L4Factoidal/JS/Parser.lean) are `@[inline]`. Each is a few

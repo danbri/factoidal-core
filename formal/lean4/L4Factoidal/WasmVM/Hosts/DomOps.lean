@@ -104,8 +104,22 @@ def newRange (r : Rng) : Op Nat := do
   set { s with live }
   return k
 
-def nodeArg (d : Dom) (k : Int) : Op Nat :=
-  if k < 0 || k.toNat ≥ d.size then throw (-2) else pure k.toNat
+def nodeArg (d : Dom) (k : Int) : Op Nat := fun s =>
+  -- origin isolation (issue 518, C1): a node of a frame document this realm may not reach
+  -- is no node (`nodeReachable`; one test of an empty array without frames)
+  if k < 0 || k.toNat ≥ d.size || !nodeReachable s k.toNat then .error (-2) else .ok (k.toNat, s)
+
+/-- Kind: security theorem (origin isolation, C1). Says: a node number an op takes through
+`nodeArg` is one this realm may reach. -/
+theorem nodeArg_reachable (d : Dom) (k : Int) (s s' : State) (n : Nat)
+    (h : (nodeArg d k).run s = .ok (n, s')) : nodeReachable s n = true := by
+  by_cases hc : (k < 0 || k.toNat ≥ d.size || !nodeReachable s k.toNat) = true
+  · simp only [StateT.run, nodeArg, hc, ↓reduceIte, reduceCtorEq] at h
+  · simp only [StateT.run, nodeArg, hc, Bool.false_eq_true, ↓reduceIte, Except.ok.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, -⟩ := h
+    cases hr : nodeReachable s k.toNat with
+    | true => rfl
+    | false => simp [hr] at hc
 
 /-- The numbers of an op's string argument, separated by spaces. -/
 def nums (q : String) : Array Int := ((q.splitOn " ").filterMap String.toInt?).toArray
@@ -518,7 +532,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   let d ← dom
   match op with
   | 100 =>
-    if id ≥ d.size || (d.get id).type != .document then throw (-2)
+    if id ≥ d.size || (d.get id).type != .document || !nodeReachable (← get) id then throw (-2)
     return toString (← newRange ⟨⟨id, 0⟩, ⟨id, 0⟩⟩)
   | 101 => let r ← getRange id; return s!"{bpText r.start} {bpText r.stop}"
   | 102 =>
@@ -937,7 +951,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   -- ==== domhtml (ops 180 to 199): decisions of DOM and HTML features, read-only ====
   -- 180: named access on the Window object (HTML §7.3.3, `DOM.Named.answer`): the value of
   -- the named property `q` of the Window of document `id`
-  | 180 => return L4Factoidal.DOM.Named.answer d id q
+  | 180 => if !nodeReachable (← get) id then throw (-2) else return L4Factoidal.DOM.Named.answer d id q
   -- 181: whether `q` is a valid custom element name (HTML §4.13.3, `DOM.CustomElements.validName`)
   | 181 => return if L4Factoidal.DOM.CustomElements.validName q then "1" else "0"
   -- 182: the elements a tree change at node `id` reaches, in shadow-including tree order

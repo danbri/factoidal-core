@@ -123,7 +123,11 @@ for r in rel:
 for _, tag, sha in sorted(rows, reverse=True):
     print(tag, sha)
 PY
-  TAG=""; SHA=""
+  # Of the releases whose commit is HEAD or an ancestor of it, the nearest to HEAD: the fewest
+  # commits of HEAD it lacks (git rev-list --count C..HEAD). Not the newest published: a branch
+  # merged late can publish an older commit after a newer one (2026-11-16: 1ad66797e, without
+  # PR 516, was published after 0137191ed, with it, and the Hub got the older engine).
+  TAG=""; SHA=""; BEST=""
   while read -r t s; do
     if [ -n "$WANT_COMMIT" ]; then
       case "$WANT_COMMIT" in "$s"*|"${s:0:${#WANT_COMMIT}}") ;; *) continue ;; esac
@@ -131,7 +135,8 @@ PY
     fi
     full=$(git -C "$REPO_ROOT" rev-parse -q --verify "$s^{commit}" 2>/dev/null || true)
     if [ -n "$full" ] && git -C "$REPO_ROOT" merge-base --is-ancestor "$full" HEAD 2>/dev/null; then
-      TAG=$t; SHA=$s; break
+      lacks=$(git -C "$REPO_ROOT" rev-list --count "$full..HEAD")
+      if [ -z "$BEST" ] || [ "$lacks" -lt "$BEST" ]; then TAG=$t; SHA=$s; BEST=$lacks; fi
     fi
   done < "$TMP/cands-$S"
   if [ -z "$TAG" ] && [ "$ALLOW_UNRELATED" = 1 ]; then

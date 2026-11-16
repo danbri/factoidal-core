@@ -200,6 +200,15 @@ that makes objects stops at `maxObjs` and not when the machine is out of memory.
   if h.steps % 1024 == 0 && h.full then throw (.halt heapFullMsg)
   set { h with steps := h.steps - 1 }
 
+/-- One step less in the budget. Not inlined: here the record is the function's own argument at its
+last use, so the compiler updates it in place when nothing else holds it. Inlined into the
+evaluator's large functions, the same update was compiled as a new record at every call (88 bytes;
+`docs/bubblepopjs-heap.md`, section 1.4). -/
+@[noinline] def HeapOf.decStep (h : HeapOf H) : HeapOf H := { h with steps := h.steps - 1 }
+
+/-- `decStep` is the record update it stands for. -/
+@[simp] theorem HeapOf.decStep_eq (h : HeapOf H) : h.decStep = { h with steps := h.steps - 1 } := rfl
+
 /-- The step of a function call. It looks at the size of the heap every time: a run of few
 steps (an event handler, a timer callback) starts with a call, so on a full heap no run gets
 further than its first call, however short the runs are. -/
@@ -207,7 +216,7 @@ further than its first call, however short the runs are. -/
   let h ← get
   if h.steps == 0 then throw (.halt "step budget exhausted")
   if h.full then throw (.halt heapFullMsg)
-  set { h with steps := h.steps - 1 }
+  set h.decStep
 
 /-- Take `k` steps at once: the work of a built-in that loops inside Lean (over a string,
 an array or a buffer) is counted, so a script stops at its budget however it spends it. -/
@@ -1889,7 +1898,15 @@ through one dispatcher, `CoreFn`: a request (`CoreOp`, one constructor per funct
 they use) and its answer (`CoreOp.Res`). Out of the block they are plain definitions, so Lean
 makes no structural-recursion equation lemmas for them (those of the block took minutes and
 gigabytes), and a property of the block is proved for them once, from the same property of the
-dispatcher (`JS/FuelMono.lean`). Inside the block, `coreRun n` answers requests at fuel `n`. -/
+dispatcher (`JS/FuelMono.lean`). Inside the block, `coreRun n` answers requests at fuel `n`.
+
+`callNative` and `moreNative` are each a `match id with` over calls of one definition per family
+of built-ins (`callNativeObjectStatic`, `moreNativeTyped`, ...: `tools/natives-split.py`), so
+that a property is proved family by family (a few hundred lines each; the two as single
+definitions of 1,500 and 2,100 lines were beyond a 6 GB proof check). A new built-in is an arm
+in its family's definition and an arm of the dispatcher that calls the family; a new family is a
+definition before the dispatcher, with the same parameters, and `tools/fuelmono-natives.py`
+writes its fuel-monotonicity lemma (`JS/FuelMonoNatives_*.lean`). -/
 
 /-- A call from a built-in into the evaluator. -/
 inductive CoreOp (H : Type) where
@@ -2096,13 +2113,10 @@ def iterEach (core : CoreFn H) (it : Value) (f : (Value → M Unit)) : M Unit :=
         | none => pure ()
     throw (.halt "iteration limit")
 
-/-- ArrayBuffer `resize` and `transfer` and its accessors, SharedArrayBuffer, %TypedArray%
-(the constructor, `from`, `of`, the accessors and the methods that answer typed arrays),
-Atomics without waiting, and `String.prototype.isWellFormed`/`toWellFormed`. -/
-def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+/-- Built-ins of `moreNative`: ArrayBuffer `resize`, `transfer` and accessors, the DataView accessors, SharedArrayBuffer, and Atomics without waiting. `r` is the realm `moreNative` read. -/
+def moreNativeBuffers (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
     let a0 := argD args 0
     let a1 := argD args 1
-    let r ← realm
     let thisBuf (shared : Bool) (what : String) : M (Nat × Obj) := do
       match thisV with
       | .obj oid =>
@@ -2113,37 +2127,6 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
           else throwErr .type s!"{what} called on incompatible receiver"
         | _ => throwErr .type s!"{what} called on incompatible receiver"
       | _ => throwErr .type s!"{what} called on incompatible receiver"
-    let thisTyped (what : String) : M (Nat × Nat × Nat × Nat) := do
-      match thisV with
-      | .obj oid => match (← getObj oid).kind with
-        | .typed ty b off len => pure (ty, b, off, len)
-        | _ => throwErr .type s!"{what}: this is not a typed array"
-      | _ => throwErr .type s!"{what}: this is not a typed array"
-    -- a DisposableStack receiver: its object and whether it is disposed
-    let thisStack (what : String) : M (Nat × Bool) := do
-      match thisV with
-      | .obj sid =>
-        let o ← getObj sid
-        match o.getOwn dsStateKey with
-        | some (.data (.bool b) ..) => pure (sid, b)
-        | _ => throwErr .type s!"{what}: the receiver is not a DisposableStack"
-      | _ => throwErr .type s!"{what}: the receiver is not a DisposableStack"
-    -- ValidateTypedArray (§23.2.4.4): a typed array whose view is inside a live buffer
-    let validTyped (what : String) : M (Nat × Nat × Nat × Nat) := do
-      let (ty, b, off, len) ← thisTyped what
-      if !(← typedInBounds ty b off len) then
-        throwErr .type s!"{what}: the typed array is detached or out of bounds"
-      pure (ty, b, off, len)
-    -- a new typed array of type `ty` holding these (already converted) values
-    let fresh (ty : Nat) (xs : Array Value) : M Value := do
-      let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * elemSize ty) 0))
-      let .obj bid := buf | pure buf
-      for i in [0:xs.size] do typedWriteV ty bid 0 i xs[i]!
-      newTyped ty bid 0 xs.size
-    let valuesOf (ty b off len : Nat) : M (Array Value) := do
-      let len ← liveLen ty b off len
-      let bytes := bufferBytes (← getObj b)
-      pure ((List.range len).toArray.map fun i => typedRead ty bytes (off + i * elemSize ty))
     let maxOption : M (Option Float) := do
       match a1 with
       | .obj _ => match ← core.getV a1 "maxByteLength" with
@@ -2251,6 +2234,78 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       let sid ← alloc { proto := .obj r.sharedBufferProto, kind := .buffer (bytes.extract a (max a b)) }
       defineOwn sid bufSharedKey (.data (.bool true) true false false)
       pure (.obj sid)
+    | (.x (.atomics op)) =>
+      if op == 4 then
+        let k := toIntegerOrInf (← core.toNum a0)
+        return .bool (k == 1 || k == 2 || k == 4 || k == 8)
+      -- ValidateIntegerTypedArray (§25.4.3.1), ValidateAtomicAccess (§25.4.3.2)
+      let (ty, b, off, len) ← match a0 with
+        | .obj oid => match (← getObj oid).kind with
+          | .typed ty b off len => pure (ty, b, off, len)
+          | _ => throwErr .type "Atomics operation on an object that is not a typed array"
+        | _ => throwErr .type "Atomics operation on a value that is not a typed array"
+      let okTy := if op == 10 then ty == 5 || ty == 9 else [0, 1, 3, 4, 5, 6, 9, 10].contains ty
+      if !okTy then throwErr .type "Atomics operation on a typed array of the wrong element type"
+      if isDetached (← getObj b) then throwErr .type "Atomics operation on a detached ArrayBuffer"
+      let idx := toIntegerOrInf (← core.toNum a1)
+      if idx < 0 || idx > 9007199254740991 then throwErr .range "Invalid atomic access index"
+      if idx ≥ Float.ofNat (← liveLen ty b off len) then throwErr .range "Invalid atomic access index"
+      let i := idx.toUInt64.toNat
+      let at_ := off + i * elemSize ty
+      let read : M Value := do pure (typedRead ty (bufferBytes (← getObj b)) at_)
+      if op == 10 then
+        -- notify: no agent waits here
+        let _ ← core.toNum (argD args 2)
+        return .num 0
+      if op == 5 then return ← read
+      let v ← core.typedConv ty (argD args 2)
+      if op == 7 then
+        let v := match v with | .num x => .num (let k := toIntegerOrInf x; if k == 0 then 0 else k) | v => v
+        typedWriteV ty b off i v
+        return v
+      let asInt : Value → Int := fun x => match x with
+        | .big i => i
+        | .num x => toInt32Wide x
+        | _ => 0
+      let mk : Int → Value := fun i => if typedIsBig ty then .big i else .num (Float.ofInt i)
+      let raw : Value → ByteArray := fun x => match x with
+        | .big i => bigBytes i
+        | .num x => typedBytes ty x
+        | _ => ByteArray.empty
+      let old ← read
+      let o := asInt old
+      let x := asInt v
+      let newV? : Option Value ← match op with
+        | 0 => pure (some (mk (o + x)))
+        | 1 => pure (some (mk (bigBits Nat.land o x)))
+        | 2 => do
+          let rep ← core.typedConv ty (argD args 3)
+          pure (if (raw v).data == (raw old).data then some rep else none)
+        | 3 => pure (some v)
+        | 6 => pure (some (mk (bigBits Nat.lor o x)))
+        | 8 => pure (some (mk (o - x)))
+        | _ => pure (some (mk (bigBits Nat.xor o x)))
+      if let some nv := newV? then typedWriteV ty b off i nv
+      pure old
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: %TypedArray%: the constructor, `from`, `of`, the accessors, the methods with Array.prototype's steps, `toLocaleString`, and the Uint8Array base64 and hex methods. `r` is the realm `moreNative` read. -/
+def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let thisTyped (what : String) : M (Nat × Nat × Nat × Nat) := do
+      match thisV with
+      | .obj oid => match (← getObj oid).kind with
+        | .typed ty b off len => pure (ty, b, off, len)
+        | _ => throwErr .type s!"{what}: this is not a typed array"
+      | _ => throwErr .type s!"{what}: this is not a typed array"
+    -- ValidateTypedArray (§23.2.4.4): a typed array whose view is inside a live buffer
+    let validTyped (what : String) : M (Nat × Nat × Nat × Nat) := do
+      let (ty, b, off, len) ← thisTyped what
+      if !(← typedInBounds ty b off len) then
+        throwErr .type s!"{what}: the typed array is detached or out of bounds"
+      pure (ty, b, off, len)
+    match id with
     | (.x .typedArrayCtor) => throwErr .type "Abstract class TypedArray not directly constructable"
     | (.x .typedOf) | (.x .typedFrom) =>
       -- §23.2.2.1 %TypedArray%.from, §23.2.2.2 %TypedArray%.of: `this` makes the array
@@ -2309,6 +2364,139 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       match (← getObj tp).getOwn (typedGenericKey nm.1) with
       | some (.data f ..) => core.callV f thisV args
       | _ => throwErr .type s!"%TypedArray%.prototype.{nm.1} is missing"
+    | (.x (.u8Base64 k)) =>
+      -- Uint8Array base64 and hex (§23.3.2): 0 fromBase64, 1 fromHex, 2 toBase64, 3 toHex,
+      -- 4 setFromBase64, 5 setFromHex; the algorithms are JS.Base64's
+      -- GetOptionsObject, then alphabet and lastChunkHandling (strings, not converted)
+      let optsOf (v : Value) : M Value := do
+        match v with
+        | .undef => pure .undef
+        | .obj _ => pure v
+        | _ => throwErr .type "Uint8Array base64: the options are not an object"
+      let getOpt (o : Value) (key : String) : M Value := do
+        match o with | .obj _ => core.getV o key | _ => pure .undef
+      let alphabetOf (o : Value) : M Bool := do
+        match ← getOpt o "alphabet" with
+        | .undef | .str "base64" => pure false
+        | .str "base64url" => pure true
+        | _ => throwErr .type "Uint8Array base64: alphabet is not \"base64\" or \"base64url\""
+      let lchOf (o : Value) : M Nat := do
+        match ← getOpt o "lastChunkHandling" with
+        | .undef | .str "loose" => pure 0
+        | .str "strict" => pure 1
+        | .str "stop-before-partial" => pure 2
+        | _ => throwErr .type "Uint8Array.fromBase64: lastChunkHandling is not loose, strict or stop-before-partial"
+      -- ValidateUint8Array on `this`, and the view's bytes (a TypeError when detached)
+      let thisU8 : M (Nat × Nat × Nat) := do
+        let .obj tid := thisV | throwErr .type "not a Uint8Array"
+        let .typed ty b off len := (← getObj tid).kind | throwErr .type "not a Uint8Array"
+        if ty != 1 then throwErr .type "not a Uint8Array"
+        if !(← typedInBounds ty b off len) then throwErr .type "Uint8Array: the buffer is detached or out of bounds"
+        pure (b, off, ← liveLen ty b off len)
+      let checkType : M Unit := do
+        let .obj tid := thisV | throwErr .type "not a Uint8Array"
+        let .typed ty .. := (← getObj tid).kind | throwErr .type "not a Uint8Array"
+        if ty != 1 then throwErr .type "not a Uint8Array"
+      let charsOfStr (v : Value) : M (Array Char) := do
+        match v with
+        | .str t => pure (Str.unitChars t)
+        | _ => throwErr .type "Uint8Array base64: the input is not a string"
+      match k with
+      | 0 | 1 =>
+        let cs ← charsOfStr a0
+        let res ← if k == 0 then do
+            let o ← optsOf a1
+            let url ← alphabetOf o
+            let lch ← lchOf o
+            pure (Base64.fromBase64 cs url lch 9007199254740991)
+          else pure (Base64.fromHex cs 9007199254740991)
+        if res.err then throwErr .syntax "Uint8Array: the base64 or hex text is not valid"
+        let buf ← newBuffer (ByteArray.mk res.bytes)
+        let .obj bid := buf | pure .undef
+        newTyped 1 bid 0 res.bytes.size
+      | 2 | 3 =>
+        checkType
+        let o ← if k == 2 then optsOf a0 else pure .undef
+        let url ← if k == 2 then alphabetOf o else pure false
+        let pad ← if k == 2 then do pure !(toBool (← getOpt o "omitPadding")) else pure true
+        let (b, off, len) ← thisU8
+        let bytes := (bufferBytes (← getObj b)).extract off (off + len)
+        pure (.str (if k == 2 then Base64.toBase64 bytes url pad else Base64.toHex bytes))
+      | _ =>
+        checkType
+        let cs ← charsOfStr a0
+        let (url, lch) ← if k == 4 then do
+            let o ← optsOf a1
+            let url ← alphabetOf o
+            pure (url, ← lchOf o)
+          else pure (false, 0)
+        -- after the options (which may detach or shrink the buffer): the view's length
+        let (b, off, len) ← thisU8
+        let res := if k == 4 then Base64.fromBase64 cs url lch len else Base64.fromHex cs len
+        let n' := min res.bytes.size len
+        modifyObj b fun bo => match bo.kind with
+          | .buffer bytes =>
+            let bo := { bo with kind := .buffer ByteArray.empty }
+            { bo with kind := .buffer ((ByteArray.mk (res.bytes.extract 0 n')).copySlice 0 bytes off n') }
+          | _ => bo
+        if res.err then throwErr .syntax "Uint8Array: the base64 or hex text is not valid"
+        let ro ← newObject
+        defineOwn ro "read" (.data (.num (Float.ofNat res.read)) true true true)
+        defineOwn ro "written" (.data (.num (Float.ofNat n')) true true true)
+        pure (.obj ro)
+    | (.x (.arrayToLocaleString typed)) =>
+      -- §23.1.3.32 Array.prototype.toLocaleString and §23.2.3.31 %TypedArray%.prototype's
+      -- (ValidateTypedArray, its own length): each element's toLocaleString, joined with ","
+      let (o, len) ← if typed then do
+          let .obj tid := thisV | throwErr .type "not a typed array"
+          let .typed ty b off l := (← getObj tid).kind | throwErr .type "not a typed array"
+          if !(← typedInBounds ty b off l) then throwErr .type "toLocaleString: the typed array is detached or out of bounds"
+          pure (thisV, ← liveLen ty b off l)
+        else do
+          let oid ← core.toObj thisV
+          pure (Value.obj oid, ← core.arrayLikeLength (.obj oid))
+      let mut out := ""
+      for k in [0:len] do
+        tick
+        if k > 0 then out := out ++ ","
+        let v ← core.getV o (toString k)
+        match v with
+        | .undef | .null => pure ()
+        | _ =>
+          let f ← core.getV v "toLocaleString"
+          if !(← isCallable f) then throwErr .type "toLocaleString is not a function"
+          out := out ++ (← core.toStr (← core.callV f v #[]))
+          checkStrLen out.utf8ByteSize
+      pure (.str (Str.canonical out))
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: the %TypedArray%.prototype methods that answer a typed array or work on its bytes. `r` is the realm `moreNative` read. -/
+def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let thisTyped (what : String) : M (Nat × Nat × Nat × Nat) := do
+      match thisV with
+      | .obj oid => match (← getObj oid).kind with
+        | .typed ty b off len => pure (ty, b, off, len)
+        | _ => throwErr .type s!"{what}: this is not a typed array"
+      | _ => throwErr .type s!"{what}: this is not a typed array"
+    -- ValidateTypedArray (§23.2.4.4): a typed array whose view is inside a live buffer
+    let validTyped (what : String) : M (Nat × Nat × Nat × Nat) := do
+      let (ty, b, off, len) ← thisTyped what
+      if !(← typedInBounds ty b off len) then
+        throwErr .type s!"{what}: the typed array is detached or out of bounds"
+      pure (ty, b, off, len)
+    -- a new typed array of type `ty` holding these (already converted) values
+    let fresh (ty : Nat) (xs : Array Value) : M Value := do
+      let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * elemSize ty) 0))
+      let .obj bid := buf | pure buf
+      for i in [0:xs.size] do typedWriteV ty bid 0 i xs[i]!
+      newTyped ty bid 0 xs.size
+    let valuesOf (ty b off len : Nat) : M (Array Value) := do
+      let len ← liveLen ty b off len
+      let bytes := bufferBytes (← getObj b)
+      pure ((List.range len).toArray.map fun i => typedRead ty bytes (off + i * elemSize ty))
+    match id with
     | (.x (.typedMethod which)) =>
       let (ty, b, off, len) ← validTyped "TypedArray method"
       let xs ← valuesOf ty b off len
@@ -2455,65 +2643,22 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
           let i := last - 1 - j
           acc ← core.callV a0 .undef #[acc, xs[i]!, .num (Float.ofNat i), thisV]
         pure acc
-    | (.x (.atomics op)) =>
-      if op == 4 then
-        let k := toIntegerOrInf (← core.toNum a0)
-        return .bool (k == 1 || k == 2 || k == 4 || k == 8)
-      -- ValidateIntegerTypedArray (§25.4.3.1), ValidateAtomicAccess (§25.4.3.2)
-      let (ty, b, off, len) ← match a0 with
-        | .obj oid => match (← getObj oid).kind with
-          | .typed ty b off len => pure (ty, b, off, len)
-          | _ => throwErr .type "Atomics operation on an object that is not a typed array"
-        | _ => throwErr .type "Atomics operation on a value that is not a typed array"
-      let okTy := if op == 10 then ty == 5 || ty == 9 else [0, 1, 3, 4, 5, 6, 9, 10].contains ty
-      if !okTy then throwErr .type "Atomics operation on a typed array of the wrong element type"
-      if isDetached (← getObj b) then throwErr .type "Atomics operation on a detached ArrayBuffer"
-      let idx := toIntegerOrInf (← core.toNum a1)
-      if idx < 0 || idx > 9007199254740991 then throwErr .range "Invalid atomic access index"
-      if idx ≥ Float.ofNat (← liveLen ty b off len) then throwErr .range "Invalid atomic access index"
-      let i := idx.toUInt64.toNat
-      let at_ := off + i * elemSize ty
-      let read : M Value := do pure (typedRead ty (bufferBytes (← getObj b)) at_)
-      if op == 10 then
-        -- notify: no agent waits here
-        let _ ← core.toNum (argD args 2)
-        return .num 0
-      if op == 5 then return ← read
-      let v ← core.typedConv ty (argD args 2)
-      if op == 7 then
-        let v := match v with | .num x => .num (let k := toIntegerOrInf x; if k == 0 then 0 else k) | v => v
-        typedWriteV ty b off i v
-        return v
-      let asInt : Value → Int := fun x => match x with
-        | .big i => i
-        | .num x => toInt32Wide x
-        | _ => 0
-      let mk : Int → Value := fun i => if typedIsBig ty then .big i else .num (Float.ofInt i)
-      let raw : Value → ByteArray := fun x => match x with
-        | .big i => bigBytes i
-        | .num x => typedBytes ty x
-        | _ => ByteArray.empty
-      let old ← read
-      let o := asInt old
-      let x := asInt v
-      let newV? : Option Value ← match op with
-        | 0 => pure (some (mk (o + x)))
-        | 1 => pure (some (mk (bigBits Nat.land o x)))
-        | 2 => do
-          let rep ← core.typedConv ty (argD args 3)
-          pure (if (raw v).data == (raw old).data then some rep else none)
-        | 3 => pure (some v)
-        | 6 => pure (some (mk (bigBits Nat.lor o x)))
-        | 8 => pure (some (mk (o - x)))
-        | _ => pure (some (mk (bigBits Nat.xor o x)))
-      if let some nv := newV? then typedWriteV ty b off i nv
-      pure old
-    | (.x .iteratorCtor) =>
-      -- §27.1.3.1 Iterator: abstract; a subclass may construct
-      let some nt := newTarget | throwErr .type "Constructor Iterator requires 'new'"
-      if strictEq nt (← core.getV (.obj r.globalObj) "Iterator") then throwErr .type "Abstract class Iterator not directly constructable"
-      let p ← core.getV nt "prototype"
-      pure (.obj (← alloc { proto := (← protoOr p nt (·.iterProto)) }))
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: SuppressedError, DisposableStack and `Iterator.prototype[@@dispose]`. `r` is the realm `moreNative` read. -/
+def moreNativeDisposable (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    -- a DisposableStack receiver: its object and whether it is disposed
+    let thisStack (what : String) : M (Nat × Bool) := do
+      match thisV with
+      | .obj sid =>
+        let o ← getObj sid
+        match o.getOwn dsStateKey with
+        | some (.data (.bool b) ..) => pure (sid, b)
+        | _ => throwErr .type s!"{what}: the receiver is not a DisposableStack"
+      | _ => throwErr .type s!"{what}: the receiver is not a DisposableStack"
+    match id with
     | (.x .suppressedErrorCtor) =>
       -- SuppressedError(error, suppressed, message)
       let proto ← match newTarget with
@@ -2601,6 +2746,22 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
         setHidden sid dsStateKey (.bool true)
         pure (.obj o)
     | (.x .adoptClosure) => core.callV a1 .undef #[a0]
+    | (.x .iteratorDispose) =>
+      -- %IteratorPrototype%[@@dispose]: GetMethod(this, "return"), then call it
+      let ret ← core.getV thisV "return"
+      match ret with
+      | .undef | .null => pure .undef
+      | f =>
+        if !(← isCallable f) then throwErr .type "Iterator.prototype[Symbol.dispose]: return is not callable"
+        let _ ← core.callV f thisV #[]
+        pure .undef
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: AsyncDisposableStack. `r` is the realm `moreNative` read. -/
+def moreNativeAsyncDisposable (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | (.x .asyncDisposableStackCtor) =>
       let some nt := newTarget | throwErr .type "Constructor AsyncDisposableStack requires 'new'"
       let p ← core.getV nt "prototype"
@@ -2616,129 +2777,6 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       match o.getOwn adsKey, o.getOwn dsStateKey with
       | some _, some (.data (.bool b) ..) => pure (.bool b)
       | _, _ => throwErr .type "get AsyncDisposableStack.prototype.disposed: the receiver is not an AsyncDisposableStack"
-    | (.x (.u8Base64 k)) =>
-      -- Uint8Array base64 and hex (§23.3.2): 0 fromBase64, 1 fromHex, 2 toBase64, 3 toHex,
-      -- 4 setFromBase64, 5 setFromHex; the algorithms are JS.Base64's
-      -- GetOptionsObject, then alphabet and lastChunkHandling (strings, not converted)
-      let optsOf (v : Value) : M Value := do
-        match v with
-        | .undef => pure .undef
-        | .obj _ => pure v
-        | _ => throwErr .type "Uint8Array base64: the options are not an object"
-      let getOpt (o : Value) (key : String) : M Value := do
-        match o with | .obj _ => core.getV o key | _ => pure .undef
-      let alphabetOf (o : Value) : M Bool := do
-        match ← getOpt o "alphabet" with
-        | .undef | .str "base64" => pure false
-        | .str "base64url" => pure true
-        | _ => throwErr .type "Uint8Array base64: alphabet is not \"base64\" or \"base64url\""
-      let lchOf (o : Value) : M Nat := do
-        match ← getOpt o "lastChunkHandling" with
-        | .undef | .str "loose" => pure 0
-        | .str "strict" => pure 1
-        | .str "stop-before-partial" => pure 2
-        | _ => throwErr .type "Uint8Array.fromBase64: lastChunkHandling is not loose, strict or stop-before-partial"
-      -- ValidateUint8Array on `this`, and the view's bytes (a TypeError when detached)
-      let thisU8 : M (Nat × Nat × Nat) := do
-        let .obj tid := thisV | throwErr .type "not a Uint8Array"
-        let .typed ty b off len := (← getObj tid).kind | throwErr .type "not a Uint8Array"
-        if ty != 1 then throwErr .type "not a Uint8Array"
-        if !(← typedInBounds ty b off len) then throwErr .type "Uint8Array: the buffer is detached or out of bounds"
-        pure (b, off, ← liveLen ty b off len)
-      let checkType : M Unit := do
-        let .obj tid := thisV | throwErr .type "not a Uint8Array"
-        let .typed ty .. := (← getObj tid).kind | throwErr .type "not a Uint8Array"
-        if ty != 1 then throwErr .type "not a Uint8Array"
-      let charsOfStr (v : Value) : M (Array Char) := do
-        match v with
-        | .str t => pure (Str.unitChars t)
-        | _ => throwErr .type "Uint8Array base64: the input is not a string"
-      match k with
-      | 0 | 1 =>
-        let cs ← charsOfStr a0
-        let res ← if k == 0 then do
-            let o ← optsOf a1
-            let url ← alphabetOf o
-            let lch ← lchOf o
-            pure (Base64.fromBase64 cs url lch 9007199254740991)
-          else pure (Base64.fromHex cs 9007199254740991)
-        if res.err then throwErr .syntax "Uint8Array: the base64 or hex text is not valid"
-        let buf ← newBuffer (ByteArray.mk res.bytes)
-        let .obj bid := buf | pure .undef
-        newTyped 1 bid 0 res.bytes.size
-      | 2 | 3 =>
-        checkType
-        let o ← if k == 2 then optsOf a0 else pure .undef
-        let url ← if k == 2 then alphabetOf o else pure false
-        let pad ← if k == 2 then do pure !(toBool (← getOpt o "omitPadding")) else pure true
-        let (b, off, len) ← thisU8
-        let bytes := (bufferBytes (← getObj b)).extract off (off + len)
-        pure (.str (if k == 2 then Base64.toBase64 bytes url pad else Base64.toHex bytes))
-      | _ =>
-        checkType
-        let cs ← charsOfStr a0
-        let (url, lch) ← if k == 4 then do
-            let o ← optsOf a1
-            let url ← alphabetOf o
-            pure (url, ← lchOf o)
-          else pure (false, 0)
-        -- after the options (which may detach or shrink the buffer): the view's length
-        let (b, off, len) ← thisU8
-        let res := if k == 4 then Base64.fromBase64 cs url lch len else Base64.fromHex cs len
-        let n' := min res.bytes.size len
-        modifyObj b fun bo => match bo.kind with
-          | .buffer bytes =>
-            let bo := { bo with kind := .buffer ByteArray.empty }
-            { bo with kind := .buffer ((ByteArray.mk (res.bytes.extract 0 n')).copySlice 0 bytes off n') }
-          | _ => bo
-        if res.err then throwErr .syntax "Uint8Array: the base64 or hex text is not valid"
-        let ro ← newObject
-        defineOwn ro "read" (.data (.num (Float.ofNat res.read)) true true true)
-        defineOwn ro "written" (.data (.num (Float.ofNat n')) true true true)
-        pure (.obj ro)
-    | (.x (.arrayToLocaleString typed)) =>
-      -- §23.1.3.32 Array.prototype.toLocaleString and §23.2.3.31 %TypedArray%.prototype's
-      -- (ValidateTypedArray, its own length): each element's toLocaleString, joined with ","
-      let (o, len) ← if typed then do
-          let .obj tid := thisV | throwErr .type "not a typed array"
-          let .typed ty b off l := (← getObj tid).kind | throwErr .type "not a typed array"
-          if !(← typedInBounds ty b off l) then throwErr .type "toLocaleString: the typed array is detached or out of bounds"
-          pure (thisV, ← liveLen ty b off l)
-        else do
-          let oid ← core.toObj thisV
-          pure (Value.obj oid, ← core.arrayLikeLength (.obj oid))
-      let mut out := ""
-      for k in [0:len] do
-        tick
-        if k > 0 then out := out ++ ","
-        let v ← core.getV o (toString k)
-        match v with
-        | .undef | .null => pure ()
-        | _ =>
-          let f ← core.getV v "toLocaleString"
-          if !(← isCallable f) then throwErr .type "toLocaleString is not a function"
-          out := out ++ (← core.toStr (← core.callV f v #[]))
-          checkStrLen out.utf8ByteSize
-      pure (.str (Str.canonical out))
-    | (.x .fnHasInstance) =>
-      -- §20.2.3.6: OrdinaryHasInstance(this, V): false for a non-callable `this`; a bound
-      -- function asks its target; otherwise the prototype chain of V
-      if !(← isCallable thisV) then return .bool false
-      if let .obj cid := thisV then
-        if let .bound t _ _ := (← getObj cid).kind then return .bool (← core.instOf a0 t)
-      if !a0.isObj then return .bool false
-      let p ← core.getV thisV "prototype"
-      let .obj pid := p | throwErr .type "Function has non-object prototype in instanceof check"
-      let mut cur := a0
-      for _ in [0:100000] do
-        let .obj o := cur | return .bool false
-        let next ← match (← getObj o).kind with
-          | .proxy .. => core.callNative .objectGetPrototypeOf .undef #[cur] none
-          | _ => pure (← getObj o).proto
-        match next with
-        | .obj q => if q == pid then return .bool true else cur := next
-        | _ => return .bool false
-      pure (.bool false)
     | (.x .asyncDsSyncWrap) =>
       -- a resource with only @@dispose: called on the value, its result dropped
       let _ ← core.callV a0 thisV #[]
@@ -2876,144 +2914,111 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       | some (.data e ..) => let _ ← core.callV rej .undef #[e]
       | _ => let _ ← core.callV res .undef #[.undef]
       pure .undef
-    | (.x .iteratorDispose) =>
-      -- %IteratorPrototype%[@@dispose]: GetMethod(this, "return"), then call it
-      let ret ← core.getV thisV "return"
-      match ret with
-      | .undef | .null => pure .undef
-      | f =>
-        if !(← isCallable f) then throwErr .type "Iterator.prototype[Symbol.dispose]: return is not callable"
-        let _ ← core.callV f thisV #[]
-        pure .undef
-    | (.x .temporal) =>
-      -- `n.temporal(op, ...)`: 0 regulate (y, m, d, reject) → [y, m, d] | null; 1 date facts
-      -- (y, m, d) → [dayOfWeek, dayOfYear, weekOfYear, yearOfWeek, daysInMonth, daysInYear,
-      -- inLeapYear]; 2 add (y, m, d, years, months, weeks, days, reject) → [y, m, d] | null;
-      -- 3 until (y1, m1, d1, y2, m2, d2, largest) → [years, months, weeks, days]; 4 epoch days;
-      -- 5 date of epoch days; 6 date-time string, 7 time string → parts | null; 8 duration
-      -- string → ten fields | null; 9 date string; 10 time string (h, mi, s, ns, precision);
-      -- 11 round (x, increment, mode) → BigInt; 12 balance time (ns) → [days, h, mi, s, ms, us,
-      -- ns]; 13 date-time within limits (y, m, d, time ns); 14 compare dates; 15 a time zone
-      -- identifier → [0 UTC | 1 offset, offset ns] | null; 16 an offset string (ns, full)
-      let int (i : Nat) : Int := match argD args i with
-        | .num x => if x.isFinite then truncInt x else 0
-        | .big b => b
-        | _ => 0
-      let nat (i : Nat) : Nat := (int i).toNat
-      let num (x : Int) : Value := .num (Float.ofInt x)
-      let arr (xs : List Value) : M Value := newArray xs.toArray
-      let date3 (r : Int × Nat × Nat) : M Value := arr [num r.1, num r.2.1, num r.2.2]
-      let parts (p : Temporal.DateTimeParts) : M Value :=
-        arr [num p.year, num p.month, num p.day, .bool p.hasDate, .bool p.hasTime, num p.hour,
-             num p.minute, num p.second, num p.fracNs, num p.offsetKind, .big p.offsetNs,
-             .str p.timeZone, .str p.calendar]
-      let str (i : Nat) : M String := do match argD args i with
-        | .str s => pure s
-        | _ => throwErr .type "Temporal: a string was expected"
-      match int 0 with
-      | 0 => match Temporal.regulateDate (int 1) (int 2) (int 3) (toBool (argD args 4)) with
-        | some r => date3 r
-        | none => pure .null
-      | 1 =>
-        let (y, m, d) := (int 1, nat 2, nat 3)
-        let (w, wy) := Temporal.weekOfYear y m d
-        arr [num (Temporal.dayOfWeek y m d), num (Temporal.dayOfYear y m d), num w, num wy,
-             num (Temporal.daysInMonth y m), num (Temporal.daysInYear y), .bool (Temporal.isLeapYear y)]
-      | 2 => match Temporal.addDate (int 1) (nat 2) (nat 3) (int 4) (int 5) (int 6) (int 7) (toBool (argD args 8)) with
-        | some r => date3 r
-        | none => pure .null
-      | 3 =>
-        let (a, b, c, d) := Temporal.dateUntil (int 1, nat 2, nat 3) (int 4, nat 5, nat 6) (nat 7)
-        arr [num a, num b, num c, num d]
-      | 4 => pure (num (Temporal.epochDays (int 1) (nat 2) (nat 3)))
-      | 5 => date3 (Temporal.fromEpochDays (int 1))
-      | 6 => match Temporal.parseDateTime (← str 1) with
-        | some p => parts p
-        | none => pure .null
-      | 7 => match Temporal.parseTimeString (← str 1) with
-        | some p => parts p
-        | none => pure .null
-      | 8 => match Temporal.parseDuration (← str 1) with
-        | some xs => arr (xs.toList.map num)
-        | none => pure .null
-      | 9 => pure (.str (Temporal.formatDate (int 1) (nat 2) (nat 3)))
-      | 10 =>
-        let prec : Option Int := match argD args 5 with | .undef => none | _ => some (int 5)
-        pure (.str (Temporal.formatTime (nat 1) (nat 2) (nat 3) (nat 4) prec))
-      | 11 => pure (.big (Temporal.roundIncrement (int 1) (nat 2) (nat 3)))
-      | 12 =>
-        let (dd, h, mi, s, ms, us, ns) := Temporal.balanceTime (int 1)
-        arr [num dd, num h, num mi, num s, num ms, num us, num ns]
-      | 13 => pure (.bool (Temporal.dateTimeWithinLimits (int 1) (nat 2) (nat 3) (int 4)))
-      | 14 => pure (num (Temporal.compareDate (int 1, nat 2, nat 3) (int 4, nat 5, nat 6)))
-      | 15 => match Temporal.parseTimeZoneId (← str 1) with
-        | some (k, ns) => arr [num k, .big ns]
-        | none => pure .null
-      | 16 => pure (.str (Temporal.formatOffset (int 1) (toBool (argD args 2))))
-      | _ => throwErr .type "temporal: unknown operation"
-    | (.x .errorIsError) =>
-      match a0 with
-      | .obj id => pure (.bool (match (← getObj id).kind with | .error => true | _ => false))
-      | _ => pure (.bool false)
-    | (.x .promiseTry) =>
-      -- §27.2.4.8 Promise.try: the callback's completion; a normal one is PromiseResolve(C, v)
-      -- (a promise of C is not wrapped again), an abrupt one rejects a new capability
-      if !thisV.isObj then throwErr .type "Promise.try called on a non-object"
-      let x ← catchJS (do pure (Except.ok (← core.callV a0 .undef (args.extract 1 args.size)))) (fun e => pure (Except.error e))
-      match x with
-      | .ok v => core.callNative .promiseResolveStatic thisV #[v] none
-      | .error (.throw e) =>
-        let cap ← core.callNative (.x .promiseWithResolvers) thisV #[] none
-        let _ ← core.callV (← core.getV cap "reject") .undef #[e]
-        core.getV cap "promise"
-      | .error a => throw a
-    | (.x (.regexpSym k)) => core.regexpSymbol k thisV args
-    | (.x .speciesGetter) => pure thisV
-    | (.x (.collMethod kind op)) =>
-      match thisV with
-      | .obj c =>
-        match (← getObj c).kind with
-        | .coll k _ _ =>
-          if k != kind then throwErr .type "Collection method called on a collection of another kind"
-        | _ => throwErr .type "Collection method called on an incompatible receiver"
-      | _ => throwErr .type "Collection method called on an incompatible receiver"
-      core.callNative (collOps.getD op .mapHas) thisV args newTarget
-    | (.x (.stringHtml k)) =>
-      -- CreateHTML (Annex B.2.2.2.1): RequireObjectCoercible(this), ToString, then the
-      -- attribute's value with each " as &quot;
-      let (_, tag, attr) := htmlMethods.getD k ("", "", "")
-      match thisV with
-      | .undef | .null => throwErr .type "String.prototype HTML method called on null or undefined"
-      | _ => pure ()
-      let str ← core.toStr thisV
-      let open_ ← if attr.isEmpty then pure ("<" ++ tag) else do
-        let v ← core.toStr a0
-        pure ("<" ++ tag ++ " " ++ attr ++ "=\"" ++ v.replace "\"" "&quot;" ++ "\"")
-      pure (.str (Str.canonical (open_ ++ ">" ++ str ++ "</" ++ tag ++ ">")))
-    | (.x .regexpCompile) =>
-      -- Annex B.2.4.1: a RegExp object made again from a pattern and flags (or from another
-      -- RegExp's source and flags), lastIndex set to 0
-      let .obj oid := thisV | throwErr .type "RegExp.prototype.compile called on an incompatible receiver"
-      let .regexp .. := (← getObj oid).kind | throwErr .type "RegExp.prototype.compile called on an incompatible receiver"
-      if hiddenFlag (← getObj oid) regexpNoLegacyKey then throwErr .type "RegExp.prototype.compile called on a RegExp subclass instance"
-      let (p, f) ← match a0 with
-        | .obj pid => match (← getObj pid).kind with
-          | .regexp _ src fl =>
-            if !(a1 matches .undef) then throwErr .type "Cannot supply flags when constructing one RegExp from another"
-            pure (src, fl)
-          | _ => pure ((← core.toStr a0), ← (match a1 with | .undef => pure "" | v => core.toStr v))
-        | .undef => pure ("", ← (match a1 with | .undef => pure "" | v => core.toStr v))
-        | _ => pure ((← core.toStr a0), ← (match a1 with | .undef => pure "" | v => core.toStr v))
-      match Re.compile p f with
-      | .error e => throwErr .syntax (if e.startsWith "SyntaxError: " then (e.drop 13).toString else e)
-      | .ok re =>
-        modifyObj oid fun o => { o with kind := .regexp re p f }
-        core.putV thisV "lastIndex" (.num 0) true
-        pure thisV
-    | (.x .regexpEscape) =>
-      match a0 with
-      | .str s => pure (.str (regexpEscapeStr s.toList))
-      | _ => throwErr .type "RegExp.escape requires a string"
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: the Iterator constructor, `Iterator.concat`, `Iterator.from` and the lazy iterator helpers. `r` is the realm `moreNative` read. -/
+def moreNativeIterator (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
+    | (.x .iteratorCtor) =>
+      -- §27.1.3.1 Iterator: abstract; a subclass may construct
+      let some nt := newTarget | throwErr .type "Constructor Iterator requires 'new'"
+      if strictEq nt (← core.getV (.obj r.globalObj) "Iterator") then throwErr .type "Abstract class Iterator not directly constructable"
+      let p ← core.getV nt "prototype"
+      pure (.obj (← alloc { proto := (← protoOr p nt (·.iterProto)) }))
+    | (.x .iteratorConcat) =>
+      -- §27.1.3.2.2 Iterator.concat: every argument an object with a callable @@iterator, checked
+      -- first; the iterators are made one at a time as the result is read
+      let mut items : Array Value := #[]
+      for a in args do
+        if !a.isObj then throwErr .type "Iterator.concat: an argument is not an object"
+        let m ← core.getV a (symKey symIterator)
+        if !(← isCallable m) then throwErr .type "Iterator.concat: an argument is not iterable"
+        items := (items.push a).push m
+      let arr ← newArray items
+      let h ← alloc { proto := .obj r.iterHelperProto }
+      defineOwn h helperIt (.data arr true false false)
+      defineOwn h helperNextKey (.data .undef true false false)
+      defineOwn h helperKind (.data (.num 6) true false false)
+      defineOwn h helperFn (.data .undef true false false)
+      defineOwn h helperCount (.data (.num 0) true false false)
+      defineOwn h helperInner (.data .undef true false false)
+      pure (.obj h)
+    | (.x .iteratorFrom) =>
+      -- §27.1.3.2.1 Iterator.from: GetIteratorFlattenable, then wrap unless it inherits Iterator.prototype
+      let it ← match a0 with
+        | .str _ => core.getIterator a0
+        | .obj _ => do
+          let m ← core.getV a0 (symKey symIterator)
+          match m with
+          | .undef | .null => pure a0
+          | f =>
+            if !(← isCallable f) then throwErr .type "Iterator.from: @@iterator is not callable"
+            let it ← core.callV f a0 #[]
+            if !it.isObj then throwErr .type "Iterator.from: the iterator is not an object"
+            pure it
+        | _ => throwErr .type "Iterator.from called on a non-object"
+      let next ← core.getV it "next"
+      if ← core.instOf it (← core.getV (.obj r.globalObj) "Iterator") then return it
+      let w ← alloc { proto := .obj r.wrapIterProto }
+      defineOwn w helperIt (.data it true false false)
+      defineOwn w helperNextKey (.data next true false false)
+      defineOwn w helperKind (.data (.num 5) true false false)
+      pure (.obj w)
+    | (.x (.iterLazy k)) =>
+      -- §27.1.4.{5,4,12,3,6}: GetIteratorDirect, the argument checked, a helper made
+      if !thisV.isObj then throwErr .type "Iterator.prototype method called on a non-object"
+      -- chunks (8) and windows (9) (proposal-iterator-chunking): the size a Number, integral,
+      -- from 1 to 2^32 - 1, not converted; windows' `undersized` "only-full" or "allow-partial";
+      -- an invalid argument closes the iterator (its own error wins)
+      let closeWith (e : Abrupt) : M Unit := do
+        catchJS (core.iterClose thisV) fun b => match b with | .halt w => throw (.halt w) | _ => pure ()
+        throw e
+      let mut allowPartial := false
+      if k ≥ 8 then
+        match a0 with
+        | .num x =>
+          if x.isNaN || !x.isFinite || toIntegerOrInf x != x then
+            closeWith (.throw (← mkError .type "Iterator helper size is not an integral number"))
+          if x < 1 || x > 4294967295 then closeWith (.throw (← mkError .range "Iterator helper size is out of range"))
+        | _ => closeWith (.throw (← mkError .type "Iterator helper size is not a number"))
+        if k == 9 then
+          match a1 with
+          | .undef | .str "only-full" => pure ()
+          | .str "allow-partial" => allowPartial := true
+          | _ => closeWith (.throw (← mkError .type "Iterator.prototype.windows: undersized is not \"only-full\" or \"allow-partial\""))
+      let lim ← if k ≥ 8 then pure a0 else if k == 2 || k == 3 then do
+          let x ← core.toNum a0
+          if x.isNaN then
+            core.iterClose thisV
+            throwErr .range "Iterator helper limit is NaN"
+          let x := toIntegerOrInf x
+          if x < 0 then
+            core.iterClose thisV
+            throwErr .range "Iterator helper limit is negative"
+          pure (Value.num x)
+        else do
+          if !(← isCallable a0) then
+            core.iterClose thisV
+            throwErr .type "Iterator helper callback is not a function"
+          pure a0
+      let next ← core.getV thisV "next"
+      let h ← alloc { proto := .obj r.iterHelperProto }
+      defineOwn h helperIt (.data thisV true false false)
+      defineOwn h helperNextKey (.data next true false false)
+      defineOwn h helperKind (.data (.num (Float.ofNat k)) true false false)
+      defineOwn h helperFn (.data lim true false false)
+      defineOwn h helperCount (.data (.num (if allowPartial then 1 else 0)) true false false)
+      defineOwn h helperInner (.data .undef true false false)
+      pure (.obj h)
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: `Iterator.zip` and `Iterator.zipKeyed`. `r` is the realm `moreNative` read. -/
+def moreNativeIteratorZip (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | (.x (.iteratorZip keyed)) =>
       -- §27.1.3.2.3 Iterator.zip, §27.1.3.2.4 Iterator.zipKeyed
       let what := if keyed then "Iterator.zipKeyed" else "Iterator.zip"
@@ -3121,91 +3126,13 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       defineOwn h zipKeysKey (.data keysArr true false false)
       defineOwn h zipOpenKey (.data (.num (Float.ofNat count)) true false false)
       pure (.obj h)
-    | (.x .iteratorConcat) =>
-      -- §27.1.3.2.2 Iterator.concat: every argument an object with a callable @@iterator, checked
-      -- first; the iterators are made one at a time as the result is read
-      let mut items : Array Value := #[]
-      for a in args do
-        if !a.isObj then throwErr .type "Iterator.concat: an argument is not an object"
-        let m ← core.getV a (symKey symIterator)
-        if !(← isCallable m) then throwErr .type "Iterator.concat: an argument is not iterable"
-        items := (items.push a).push m
-      let arr ← newArray items
-      let h ← alloc { proto := .obj r.iterHelperProto }
-      defineOwn h helperIt (.data arr true false false)
-      defineOwn h helperNextKey (.data .undef true false false)
-      defineOwn h helperKind (.data (.num 6) true false false)
-      defineOwn h helperFn (.data .undef true false false)
-      defineOwn h helperCount (.data (.num 0) true false false)
-      defineOwn h helperInner (.data .undef true false false)
-      pure (.obj h)
-    | (.x .iteratorFrom) =>
-      -- §27.1.3.2.1 Iterator.from: GetIteratorFlattenable, then wrap unless it inherits Iterator.prototype
-      let it ← match a0 with
-        | .str _ => core.getIterator a0
-        | .obj _ => do
-          let m ← core.getV a0 (symKey symIterator)
-          match m with
-          | .undef | .null => pure a0
-          | f =>
-            if !(← isCallable f) then throwErr .type "Iterator.from: @@iterator is not callable"
-            let it ← core.callV f a0 #[]
-            if !it.isObj then throwErr .type "Iterator.from: the iterator is not an object"
-            pure it
-        | _ => throwErr .type "Iterator.from called on a non-object"
-      let next ← core.getV it "next"
-      if ← core.instOf it (← core.getV (.obj r.globalObj) "Iterator") then return it
-      let w ← alloc { proto := .obj r.wrapIterProto }
-      defineOwn w helperIt (.data it true false false)
-      defineOwn w helperNextKey (.data next true false false)
-      defineOwn w helperKind (.data (.num 5) true false false)
-      pure (.obj w)
-    | (.x (.iterLazy k)) =>
-      -- §27.1.4.{5,4,12,3,6}: GetIteratorDirect, the argument checked, a helper made
-      if !thisV.isObj then throwErr .type "Iterator.prototype method called on a non-object"
-      -- chunks (8) and windows (9) (proposal-iterator-chunking): the size a Number, integral,
-      -- from 1 to 2^32 - 1, not converted; windows' `undersized` "only-full" or "allow-partial";
-      -- an invalid argument closes the iterator (its own error wins)
-      let closeWith (e : Abrupt) : M Unit := do
-        catchJS (core.iterClose thisV) fun b => match b with | .halt w => throw (.halt w) | _ => pure ()
-        throw e
-      let mut allowPartial := false
-      if k ≥ 8 then
-        match a0 with
-        | .num x =>
-          if x.isNaN || !x.isFinite || toIntegerOrInf x != x then
-            closeWith (.throw (← mkError .type "Iterator helper size is not an integral number"))
-          if x < 1 || x > 4294967295 then closeWith (.throw (← mkError .range "Iterator helper size is out of range"))
-        | _ => closeWith (.throw (← mkError .type "Iterator helper size is not a number"))
-        if k == 9 then
-          match a1 with
-          | .undef | .str "only-full" => pure ()
-          | .str "allow-partial" => allowPartial := true
-          | _ => closeWith (.throw (← mkError .type "Iterator.prototype.windows: undersized is not \"only-full\" or \"allow-partial\""))
-      let lim ← if k ≥ 8 then pure a0 else if k == 2 || k == 3 then do
-          let x ← core.toNum a0
-          if x.isNaN then
-            core.iterClose thisV
-            throwErr .range "Iterator helper limit is NaN"
-          let x := toIntegerOrInf x
-          if x < 0 then
-            core.iterClose thisV
-            throwErr .range "Iterator helper limit is negative"
-          pure (Value.num x)
-        else do
-          if !(← isCallable a0) then
-            core.iterClose thisV
-            throwErr .type "Iterator helper callback is not a function"
-          pure a0
-      let next ← core.getV thisV "next"
-      let h ← alloc { proto := .obj r.iterHelperProto }
-      defineOwn h helperIt (.data thisV true false false)
-      defineOwn h helperNextKey (.data next true false false)
-      defineOwn h helperKind (.data (.num (Float.ofNat k)) true false false)
-      defineOwn h helperFn (.data lim true false false)
-      defineOwn h helperCount (.data (.num (if allowPartial then 1 else 0)) true false false)
-      defineOwn h helperInner (.data .undef true false false)
-      pure (.obj h)
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: the iterator helpers that run the iterator to its end (`reduce`, `toArray`, `forEach`, `some`, `every`, `find`). `r` is the realm `moreNative` read. -/
+def moreNativeIterEager (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | (.x (.iterEager 6)) | (.x (.iterEager 7)) =>
       -- Iterator.prototype.includes (proposal-iterator-includes) and .join
       -- (proposal-iterator-join): eager, the iterator closed on an argument error and on a match
@@ -3302,6 +3229,11 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       | 3 => pure (.bool false)
       | 4 => pure (.bool true)
       | _ => pure .undef
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: `next` and `return` of the iterator helper objects. `r` is the realm `moreNative` read. -/
+def moreNativeIterHelper (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    match id with
     | (.x .helperNext) | (.x .helperReturn) =>
       let some (hid, o) ← (match thisV with
           | .obj i => do
@@ -3597,6 +3529,441 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       match out with
       | some v => pure v
       | none => finish
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: Function, Error and Object additions (`@@hasInstance`, `Error.isError`, `stack`, AggregateError, `Object.hasOwn`, `__proto__`, `Proxy.revocable`, the Function constructors) and the host's realm hooks. `r` is the realm `moreNative` read. -/
+def moreNativeObject (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
+    | (.x .fnHasInstance) =>
+      -- §20.2.3.6: OrdinaryHasInstance(this, V): false for a non-callable `this`; a bound
+      -- function asks its target; otherwise the prototype chain of V
+      if !(← isCallable thisV) then return .bool false
+      if let .obj cid := thisV then
+        if let .bound t _ _ := (← getObj cid).kind then return .bool (← core.instOf a0 t)
+      if !a0.isObj then return .bool false
+      let p ← core.getV thisV "prototype"
+      let .obj pid := p | throwErr .type "Function has non-object prototype in instanceof check"
+      let mut cur := a0
+      for _ in [0:100000] do
+        let .obj o := cur | return .bool false
+        let next ← match (← getObj o).kind with
+          | .proxy .. => core.callNative .objectGetPrototypeOf .undef #[cur] none
+          | _ => pure (← getObj o).proto
+        match next with
+        | .obj q => if q == pid then return .bool true else cur := next
+        | _ => return .bool false
+      pure (.bool false)
+    | (.x .errorIsError) =>
+      match a0 with
+      | .obj id => pure (.bool (match (← getObj id).kind with | .error => true | _ => false))
+      | _ => pure (.bool false)
+    | (.x .speciesGetter) => pure thisV
+    | (.x .proxyRevocable) =>
+      if !a0.isObj || !a1.isObj then throwErr .type "Cannot create proxy with a non-object as target or handler"
+      let p ← alloc { proto := .null, kind := .proxy a0 a1, extensible := true }
+      let rv ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x .proxyRevoke)) .undef #[.obj p] }
+      defineOwn rv "length" (.data (.num 0) false false true)
+      defineOwn rv "name" (.data (.str "") false false true)
+      let o ← newObject
+      defineOwn o "proxy" (.data (.obj p) true true true)
+      defineOwn o "revoke" (.data (.obj rv) true true true)
+      pure (.obj o)
+    | (.x .proxyRevoke) =>
+      if let .obj p := a0 then
+        modifyObj p fun o => match o.kind with
+          | .proxy t _ => { o with kind := .proxy t .null }
+          | _ => o
+      pure .undef
+    | (.x .objectHasOwn) =>
+      let id ← core.toObj a0
+      let k ← core.toKey a1
+      pure (.bool (← core.ownDesc id k).isSome)
+    | (.x (.errorStack false)) =>
+      -- get Error.prototype.stack (Error Stack Accessor proposal): a string for an object
+      -- with [[ErrorData]]. The string lists the call frames, as in SpiderMonkey, JSC and
+      -- QuickJS (not the V8 form, which starts with the message). This engine keeps no record
+      -- of call sites, so the list is empty: "" (a script that tests `e.stack` sees none).
+      match thisV with
+      | .obj oid =>
+        match (← getObj oid).kind with
+        | .error => pure (.str "")
+        | _ => pure .undef
+      | _ => throwErr .type "Error.prototype.stack getter called on a non-object"
+    | (.x (.errorStack true)) =>
+      -- set Error.prototype.stack (v): SetterThatIgnoresPrototypeProperties(this,
+      -- %Error.prototype%, "stack", v).
+      let oid ← match thisV with
+        | .obj oid => pure oid
+        | _ => throwErr .type "Error.prototype.stack setter called on a non-object"
+      match a0 with
+      | .str _ => pure ()
+      | _ => throwErr .type "Error.prototype.stack setter: the value is not a string"
+      if oid == r.errorProtos.getD 0 r.objectProto then
+        throwErr .type "Cannot set Error.prototype.stack on Error.prototype"
+      match ← core.ownDesc oid "stack" with
+      | some _ => core.putV thisV "stack" a0 true
+      | none =>
+        let o ← getObj oid
+        match o.kind with
+        | .proxy t hnd =>
+          match ← core.proxyTrap hnd "defineProperty" with
+          | some f =>
+            let d ← newObject
+            defineOwn d "value" (.data a0 true true true)
+            defineOwn d "writable" (.data (.bool true) true true true)
+            defineOwn d "enumerable" (.data (.bool true) true true true)
+            defineOwn d "configurable" (.data (.bool true) true true true)
+            if !toBool (← core.callV f hnd #[t, .str "stack", .obj d]) then
+              throwErr .type "'defineProperty' on proxy: trap returned falsish for property 'stack'"
+          | none =>
+            match t with
+            | .obj tid =>
+              if !(← getObj tid).extensible then throwErr .type "Cannot define property stack, object is not extensible"
+              defineOwn tid "stack" (.data a0 true true true)
+            | _ => throwErr .type "Cannot perform 'defineProperty' on a proxy that has been revoked"
+        | _ =>
+          if !o.extensible then throwErr .type "Cannot define property stack, object is not extensible"
+          defineOwn oid "stack" (.data a0 true true true)
+      pure .undef
+    | (.x .aggregateErrorCtor) =>
+      let proto ← match newTarget with
+        | some nt => do
+          let p ← core.getV nt "prototype"
+          protoOr p nt (·.aggregateErrorProto)
+        | none => pure (.obj r.aggregateErrorProto)
+      let o ← alloc { proto, kind := .error }
+      match a1 with
+      | .undef => pure ()
+      | v => setHidden o "message" (.str (← core.toStr v))
+      -- InstallErrorCause (§20.5.8.1)
+      if let .obj opts := argD args 2 then
+        if ← core.hasProp opts "cause" then setHidden o "cause" (← core.getV (.obj opts) "cause")
+      let errs ← core.iterToArray (← core.getIterator a0) #[]
+      setHidden o "errors" (← newArray errs)
+      pure (.obj o)
+    | (.x .namedGetterSet) =>
+      -- the host's function for the named properties of the global object (`namedGlobal`)
+      defineOwn r.globalObj namedGetterKey (.data a0 false false false)
+      pure .undef
+    | (.x (.protoAccessor false)) =>
+      -- get Object.prototype.__proto__ (B.2.2.1.1)
+      let id ← core.toObj thisV
+      core.callNative .objectGetPrototypeOf .undef #[.obj id] none
+    | (.x (.protoAccessor true)) =>
+      -- set Object.prototype.__proto__ (B.2.2.1.2)
+      match thisV with
+      | .undef | .null => throwErr .type "Object.prototype.__proto__ called on null or undefined"
+      | .obj id =>
+        match a0 with
+        | .obj _ | .null =>
+          if toBool (← core.callNative (.reflect 2) .undef #[.obj id, a0] none) then pure .undef
+          else throwErr .type "Object.prototype.__proto__: the prototype of this object cannot be changed"
+        | _ => pure .undef
+      | _ => pure .undef
+    | (.x (.dynFunction k)) =>
+      -- CreateDynamicFunction (§20.2.1.1.1) for the generator, async and async generator kinds
+      let strs ← args.toList.mapM (core.toStr)
+      let (ps, body) := match strs.reverse with
+        | [] => ([], "")
+        | b :: rest => (rest.reverse, b)
+      let kw := match k with | 1 => "function*" | 2 => "async function" | _ => "async function*"
+      match (parseScript (dynFunctionSource kw ps body) false).map Resolve.script with
+      | .error e => throwErr .syntax ((e.drop 13).toString)
+      | .ok { body := [.expr e], .. } =>
+        core.evalExpr { env := 0, thisV := .obj r.globalObj, strict := false } e
+      | .ok _ => throwErr .syntax "invalid function body"
+    | (.x .realmTake) =>
+      -- a test host's `$262.createRealm()`: the next realm the host made (`addRealm`)
+      let h ← get
+      match h.spareRealms[0]? with
+      | none => throwErr .type "$262.createRealm: the host has no realm left to give"
+      | some k =>
+        set { h with spareRealms := h.spareRealms.extract 1 h.spareRealms.size }
+        pure (h.realms.getD k {}).host
+    | (.x .gcNoop) => pure .undef
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: Temporal and the Date methods. `r` is the realm `moreNative` read. -/
+def moreNativeDate (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    match id with
+    | (.x .temporal) =>
+      -- `n.temporal(op, ...)`: 0 regulate (y, m, d, reject) → [y, m, d] | null; 1 date facts
+      -- (y, m, d) → [dayOfWeek, dayOfYear, weekOfYear, yearOfWeek, daysInMonth, daysInYear,
+      -- inLeapYear]; 2 add (y, m, d, years, months, weeks, days, reject) → [y, m, d] | null;
+      -- 3 until (y1, m1, d1, y2, m2, d2, largest) → [years, months, weeks, days]; 4 epoch days;
+      -- 5 date of epoch days; 6 date-time string, 7 time string → parts | null; 8 duration
+      -- string → ten fields | null; 9 date string; 10 time string (h, mi, s, ns, precision);
+      -- 11 round (x, increment, mode) → BigInt; 12 balance time (ns) → [days, h, mi, s, ms, us,
+      -- ns]; 13 date-time within limits (y, m, d, time ns); 14 compare dates; 15 a time zone
+      -- identifier → [0 UTC | 1 offset, offset ns] | null; 16 an offset string (ns, full)
+      let int (i : Nat) : Int := match argD args i with
+        | .num x => if x.isFinite then truncInt x else 0
+        | .big b => b
+        | _ => 0
+      let nat (i : Nat) : Nat := (int i).toNat
+      let num (x : Int) : Value := .num (Float.ofInt x)
+      let arr (xs : List Value) : M Value := newArray xs.toArray
+      let date3 (r : Int × Nat × Nat) : M Value := arr [num r.1, num r.2.1, num r.2.2]
+      let parts (p : Temporal.DateTimeParts) : M Value :=
+        arr [num p.year, num p.month, num p.day, .bool p.hasDate, .bool p.hasTime, num p.hour,
+             num p.minute, num p.second, num p.fracNs, num p.offsetKind, .big p.offsetNs,
+             .str p.timeZone, .str p.calendar]
+      let str (i : Nat) : M String := do match argD args i with
+        | .str s => pure s
+        | _ => throwErr .type "Temporal: a string was expected"
+      match int 0 with
+      | 0 => match Temporal.regulateDate (int 1) (int 2) (int 3) (toBool (argD args 4)) with
+        | some r => date3 r
+        | none => pure .null
+      | 1 =>
+        let (y, m, d) := (int 1, nat 2, nat 3)
+        let (w, wy) := Temporal.weekOfYear y m d
+        arr [num (Temporal.dayOfWeek y m d), num (Temporal.dayOfYear y m d), num w, num wy,
+             num (Temporal.daysInMonth y m), num (Temporal.daysInYear y), .bool (Temporal.isLeapYear y)]
+      | 2 => match Temporal.addDate (int 1) (nat 2) (nat 3) (int 4) (int 5) (int 6) (int 7) (toBool (argD args 8)) with
+        | some r => date3 r
+        | none => pure .null
+      | 3 =>
+        let (a, b, c, d) := Temporal.dateUntil (int 1, nat 2, nat 3) (int 4, nat 5, nat 6) (nat 7)
+        arr [num a, num b, num c, num d]
+      | 4 => pure (num (Temporal.epochDays (int 1) (nat 2) (nat 3)))
+      | 5 => date3 (Temporal.fromEpochDays (int 1))
+      | 6 => match Temporal.parseDateTime (← str 1) with
+        | some p => parts p
+        | none => pure .null
+      | 7 => match Temporal.parseTimeString (← str 1) with
+        | some p => parts p
+        | none => pure .null
+      | 8 => match Temporal.parseDuration (← str 1) with
+        | some xs => arr (xs.toList.map num)
+        | none => pure .null
+      | 9 => pure (.str (Temporal.formatDate (int 1) (nat 2) (nat 3)))
+      | 10 =>
+        let prec : Option Int := match argD args 5 with | .undef => none | _ => some (int 5)
+        pure (.str (Temporal.formatTime (nat 1) (nat 2) (nat 3) (nat 4) prec))
+      | 11 => pure (.big (Temporal.roundIncrement (int 1) (nat 2) (nat 3)))
+      | 12 =>
+        let (dd, h, mi, s, ms, us, ns) := Temporal.balanceTime (int 1)
+        arr [num dd, num h, num mi, num s, num ms, num us, num ns]
+      | 13 => pure (.bool (Temporal.dateTimeWithinLimits (int 1) (nat 2) (nat 3) (int 4)))
+      | 14 => pure (num (Temporal.compareDate (int 1, nat 2, nat 3) (int 4, nat 5, nat 6)))
+      | 15 => match Temporal.parseTimeZoneId (← str 1) with
+        | some (k, ns) => arr [num k, .big ns]
+        | none => pure .null
+      | 16 => pure (.str (Temporal.formatOffset (int 1) (toBool (argD args 2))))
+      | _ => throwErr .type "temporal: unknown operation"
+    | (.x .dateUTC) =>
+      let mut xs : Array Float := #[]
+      for i in [0:min 7 args.size] do xs := xs.push (← core.toNum args[i]!)
+      pure (.num (Date.timeClip (dateOfParts xs)))
+    | (.x .dateParse) => pure (.num (Date.parse (← core.toStr a0)))
+    | (.x (.dateMethod k)) =>
+      if k == 32 then
+        -- toJSON (§21.4.4.37)
+        let o ← core.toObj thisV
+        let tv ← core.toPrim (.obj o) "number"
+        if let .num x := tv then
+          if !x.isFinite then return .null
+        let f ← core.getV (.obj o) "toISOString"
+        if !(← isCallable f) then throwErr .type "toISOString is not a function"
+        return ← core.callV f (.obj o) #[]
+      if k == 39 then
+        -- @@toPrimitive (§21.4.4.45)
+        if !thisV.isObj then throwErr .type "Date.prototype[Symbol.toPrimitive] called on a non-object"
+        match a0 with
+        | .str "string" | .str "default" => return ← core.tryMethods thisV ["toString", "valueOf"]
+        | .str "number" => return ← core.tryMethods thisV ["valueOf", "toString"]
+        | _ => throwErr .type "Invalid hint"
+      let some t ← thisDate? thisV | throwErr .type "this is not a Date object."
+      let oid := match thisV with | .obj i => i | _ => 0
+      let p := Date.parts t
+      if k < 20 then
+        if t.isNaN then return .num t
+        return .num (match k with
+          | 0 => Float.ofNat p.date | 1 => Float.ofNat p.weekDay | 2 => Float.ofInt p.year
+          | 3 => Float.ofNat p.hours | 4 => Float.ofNat p.ms | 5 => Float.ofNat p.minutes
+          | 6 => Float.ofNat p.month | 7 => Float.ofNat p.seconds | 8 => 0
+          | _ => Float.ofInt (p.year - 1900))
+      if k < 30 then
+        let set (v : Float) : M Value := do
+          modifyObj oid fun o => { o with kind := .prim (.num v) }
+          pure (.num v)
+        if k == 27 then return ← set (Date.timeClip (← core.toNum a0))
+        if k == 28 then
+          -- setYear (Annex B.2.3.2)
+          let y ← core.toNum a0
+          if y.isNaN then return ← set y
+          let yi := toIntegerOrInf y
+          let yr := if 0 ≤ yi && yi ≤ 99 then 1900 + yi else y
+          let t := if t.isNaN then 0 else t
+          let q := Date.parts t
+          return ← set (Date.timeClip (Date.makeDate (Date.makeDay yr (Float.ofNat q.month) (Float.ofNat q.date))
+            (Float.ofInt ((Date.toInt t).emod Date.msPerDay))))
+        -- the arguments replace parts from `first` on, at most `most` of them (§21.4.4.20 to §21.4.4.28)
+        let (first, most) := match k with
+          | 20 => (2, 1) | 21 => (0, 3) | 22 => (3, 4) | 23 => (6, 1) | 24 => (4, 3) | 25 => (1, 2) | _ => (5, 2)
+        let mut given : Array Float := #[]
+        for i in [0:min most (max 1 args.size)] do given := given.push (← core.toNum (argD args i))
+        if t.isNaN && k != 21 then return .num t
+        let q := Date.parts (if t.isNaN then 0 else t)
+        let mut cs : Array Float := #[Float.ofInt q.year, Float.ofNat q.month, Float.ofNat q.date, Float.ofNat q.hours,
+          Float.ofNat q.minutes, Float.ofNat q.seconds, Float.ofNat q.ms]
+        for i in [0:given.size] do cs := cs.set! (first + i) given[i]!
+        return ← set (Date.timeClip (Date.makeDate (Date.makeDay cs[0]! cs[1]! cs[2]!)
+          (Date.makeTime cs[3]! cs[4]! cs[5]! cs[6]!)))
+      if t.isNaN then
+        if k == 31 then throwErr .range "Invalid time value"
+        return .str "Invalid Date"
+      pure (.str (match k with
+        | 30 | 33 => Date.dateString t
+        | 31 => Date.isoString t
+        | 35 | 37 => Date.timeString t
+        | 38 => Date.utcString t
+        | _ => Date.toStr t))
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: `Promise.try`, `Promise.withResolvers`, the capability executor, thenable functions and `import()`. `r` is the realm `moreNative` read. -/
+def moreNativePromise (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
+    | (.x .promiseTry) =>
+      -- §27.2.4.8 Promise.try: the callback's completion; a normal one is PromiseResolve(C, v)
+      -- (a promise of C is not wrapped again), an abrupt one rejects a new capability
+      if !thisV.isObj then throwErr .type "Promise.try called on a non-object"
+      let x ← catchJS (do pure (Except.ok (← core.callV a0 .undef (args.extract 1 args.size)))) (fun e => pure (Except.error e))
+      match x with
+      | .ok v => core.callNative .promiseResolveStatic thisV #[v] none
+      | .error (.throw e) =>
+        let cap ← core.callNative (.x .promiseWithResolvers) thisV #[] none
+        let _ ← core.callV (← core.getV cap "reject") .undef #[e]
+        core.getV cap "promise"
+      | .error a => throw a
+    | (.x .promiseWithResolvers) =>
+      -- §27.2.4.8 Promise.withResolvers: NewPromiseCapability(this) (§27.2.1.5)
+      if !(← isConstructor thisV) then throwErr .type "Promise.withResolvers: this is not a constructor"
+      let cap ← alloc { proto := .null }
+      let exec ← anonFn (.x .capabilityExecutor) #[.obj cap] 2
+      let p ← core.construct thisV #[exec] thisV
+      let field (k : String) : M Value := do
+        match (← getObj cap).getOwn k with
+        | some (.data v ..) => pure v
+        | _ => pure .undef
+      let res ← field "resolve"
+      let rej ← field "reject"
+      if !(← isCallable res) || !(← isCallable rej) then
+        throwErr .type "Promise.withResolvers: the constructor did not give callable resolving functions"
+      let o ← newObject
+      defineOwn o "promise" (.data p true true true)
+      defineOwn o "resolve" (.data res true true true)
+      defineOwn o "reject" (.data rej true true true)
+      pure (.obj o)
+    | (.x .capabilityExecutor) =>
+      -- GetCapabilitiesExecutor (§27.2.1.5 step 4): the record, then resolve and reject
+      match a0 with
+      | .obj cap =>
+        let o ← getObj cap
+        let isSet (k : String) : Bool := match o.getOwn k with
+          | some (.data .undef ..) | none => false
+          | _ => true
+        if isSet "resolve" || isSet "reject" then throwErr .type "Promise executor has already been invoked"
+        defineOwn cap "resolve" (.data a1 true true true)
+        defineOwn cap "reject" (.data (argD args 2) true true true)
+        pure .undef
+      | _ => pure .undef
+    | (.x .dynImport) =>
+      -- EvaluateImportCall (§13.3.10.1): the specifier as a string, then the options' `with`
+      -- object, whose values must be strings (steps 7 to 10); an abrupt step rejects the promise.
+      let pid ← newPromise
+      let x ← catchJS (do
+          let spec ← core.toStr a0
+          let mut ty := ""
+          match a1 with
+          | .undef => pure ()
+          | .obj _ =>
+            match ← core.getV a1 "with" with
+            | .undef => pure ()
+            | .obj wid =>
+              for k in ← core.ownKeysOf wid do
+                if isSymKey k || isPrivKey k then continue
+                let some d ← core.ownDesc wid k | continue
+                if !d.enumerable then continue
+                match ← core.getV (.obj wid) k with
+                | .str v => if k == "type" then ty := Str.toHost v
+                | _ => throwErr .type "import(): the value of an import attribute must be a string"
+            | _ => throwErr .type "import(): the 'with' option must be an object"
+          | _ => throwErr .type "import(): the second argument must be an object"
+          pure (Except.ok (spec, ty)))
+        (fun a => pure (Except.error a))
+      match x with
+      | .error (.throw e) => core.rejectPromise pid e
+      | .error a => throw a
+      | .ok (spec, ty) =>
+        if args.size ≥ 3 then
+          -- `import.source(x)` (the source phase imports proposal): every module this host loads
+          -- is a Source Text Module Record, whose GetModuleSource throws a SyntaxError
+          core.rejectPromise pid (← mkError .syntax "import.source(): a JavaScript module has no source phase representation")
+        else
+        match (← get).importQueue with
+        | some q => modify fun h => { h with importQueue := some (q.push (Str.toHost spec, ty, pid)) }
+        | none => core.rejectPromise pid (← mkError .type "import() is not supported in this script")
+      pure (.obj pid)
+    | (.x (.promiseThenableFn reject)) =>
+      -- bound arguments: the promise and the pair's [[AlreadyResolved]] record
+      match a0, a1 with
+      | .obj pid, .obj record =>
+        if !(← getObj record).props.contains "done" then
+          setHidden record "done" (.bool true)
+          if reject then core.rejectPromise pid (argD args 2) else core.resolvePromise pid (argD args 2)
+        pure .undef
+      | _, _ => pure .undef
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: String, RegExp, Number and Symbol additions (the HTML methods, `compile`, `RegExp.escape`, `toExponential`, `toPrecision`, `localeCompare`, `String.raw`, `Symbol.for`, `isWellFormed`). `r` is the realm `moreNative` read. -/
+def moreNativeString (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
+    | (.x (.regexpSym k)) => core.regexpSymbol k thisV args
+    | (.x (.stringHtml k)) =>
+      -- CreateHTML (Annex B.2.2.2.1): RequireObjectCoercible(this), ToString, then the
+      -- attribute's value with each " as &quot;
+      let (_, tag, attr) := htmlMethods.getD k ("", "", "")
+      match thisV with
+      | .undef | .null => throwErr .type "String.prototype HTML method called on null or undefined"
+      | _ => pure ()
+      let str ← core.toStr thisV
+      let open_ ← if attr.isEmpty then pure ("<" ++ tag) else do
+        let v ← core.toStr a0
+        pure ("<" ++ tag ++ " " ++ attr ++ "=\"" ++ v.replace "\"" "&quot;" ++ "\"")
+      pure (.str (Str.canonical (open_ ++ ">" ++ str ++ "</" ++ tag ++ ">")))
+    | (.x .regexpCompile) =>
+      -- Annex B.2.4.1: a RegExp object made again from a pattern and flags (or from another
+      -- RegExp's source and flags), lastIndex set to 0
+      let .obj oid := thisV | throwErr .type "RegExp.prototype.compile called on an incompatible receiver"
+      let .regexp .. := (← getObj oid).kind | throwErr .type "RegExp.prototype.compile called on an incompatible receiver"
+      if hiddenFlag (← getObj oid) regexpNoLegacyKey then throwErr .type "RegExp.prototype.compile called on a RegExp subclass instance"
+      let (p, f) ← match a0 with
+        | .obj pid => match (← getObj pid).kind with
+          | .regexp _ src fl =>
+            if !(a1 matches .undef) then throwErr .type "Cannot supply flags when constructing one RegExp from another"
+            pure (src, fl)
+          | _ => pure ((← core.toStr a0), ← (match a1 with | .undef => pure "" | v => core.toStr v))
+        | .undef => pure ("", ← (match a1 with | .undef => pure "" | v => core.toStr v))
+        | _ => pure ((← core.toStr a0), ← (match a1 with | .undef => pure "" | v => core.toStr v))
+      match Re.compile p f with
+      | .error e => throwErr .syntax (if e.startsWith "SyntaxError: " then (e.drop 13).toString else e)
+      | .ok re =>
+        modifyObj oid fun o => { o with kind := .regexp re p f }
+        core.putV thisV "lastIndex" (.num 0) true
+        pure thisV
+    | (.x .regexpEscape) =>
+      match a0 with
+      | .str s => pure (.str (regexpEscapeStr s.toList))
+      | _ => throwErr .type "RegExp.escape requires a string"
     | (.x .numberToExponential) | (.x .numberToPrecision) =>
       if (← thisDate? thisV).isSome then throwErr .type "Number.prototype method requires that 'this' be a Number"
       let x ← match ← thisPrim thisV with
@@ -3615,6 +3982,369 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       else
         if f < 1 || f > 100 then throwErr .range "toPrecision() argument must be between 1 and 100"
         pure (.str (NumFmt.precision neg num den f.toUInt64.toNat))
+    | (.x .stringLocaleCompare) =>
+      match ← thisPrim thisV with
+      | .undef | .null => throwErr .type "String.prototype.localeCompare called on null or undefined"
+      | _ => pure ()
+      let s ← core.toStr (← thisPrim thisV)
+      let t ← core.toStr a0
+      let a := Str.units s
+      let b := Str.units t
+      pure (.num (if a == b then 0 else if decide (a < b) then -1 else 1))
+    | (.x .symbolFor) | (.x .symbolKeyFor) =>
+      -- the GlobalSymbolRegistry is one for all realms (§20.4.2.2): it hangs on realm 0's global
+      let h ← get
+      let gReg := if h.curRealm == 0 then r.globalObj else (h.realms.getD 0 {}).realm.globalObj
+      let reg ← match (← getObj gReg).props.get? symbolRegistryKey with
+        | some (.data (.obj id) ..) => pure id
+        | _ => do
+          let id ← alloc { proto := .null }
+          setHidden gReg symbolRegistryKey (.obj id)
+          pure id
+      if id == (.x .symbolFor) then
+        let key ← core.toStr a0
+        match (← getObj reg).props.get? (strKey key) with
+        | some (.data v ..) => pure v
+        | _ =>
+          let sid ← modifyGet fun h => (h.syms.size, { h with syms := h.syms.push key })
+          defineOwn reg (strKey key) (.data (.sym sid) true true true)
+          pure (.sym sid)
+      else
+        match a0 with
+        | .sym sid =>
+          let o ← getObj reg
+          pure (match o.keys.find? (fun k => match o.props.get? k with
+              | some (.data (.sym j) ..) => j == sid | _ => false) with
+            | some k => .str (keyStr k)
+            | none => .undef)
+        | _ => throwErr .type "Symbol.keyFor: the argument is not a symbol"
+    | (.x .stringRaw) =>
+      let cooked ← core.toObj a0
+      let raw ← core.toObj (← core.getV (.obj cooked) "raw")
+      let len := toIntegerOrInf (← core.toNum (← core.getV (.obj raw) "length"))
+      let count := if len ≤ 0 then 0 else len.toUInt64.toNat
+      charge (count / 8)
+      let mut out := ""
+      for i in [0:count] do
+        out := Str.jsAppend out (← core.toStr (← core.getV (.obj raw) (toString i)))
+        if i + 1 < count && i + 1 < args.size then
+          out := Str.jsAppend out (← core.toStr (argD args (i + 1)))
+      pure (.str out)
+    | (.x .stringIsWellFormed) | (.x .stringToWellFormed) =>
+      let tp ← thisPrim thisV
+      match tp with
+      | .undef | .null => throwErr .type "String.prototype method called on null or undefined"
+      | _ => pure ()
+      let s ← core.toStr tp
+      if id == (.x .stringIsWellFormed) then pure (.bool (Str.isWellFormed s)) else pure (.str (Str.toWellFormed s))
+    | _ => throwErr .type "not a function"
+
+/-- The Set methods of two sets (§24.2.4 to §24.2.4.20: 0 `union`, 1 `intersection`, 2 `difference`, 3 `symmetricDifference`, 4 `isSubsetOf`, 5 `isSupersetOf`, else `isDisjointFrom`), after the receiver `sid` (entries `es`) and the argument's set record (`a0`, its `size`, `has` and `keys`) are read. -/
+def setMethodRun (core : CoreFn H) (r : Realm) (k : Nat) (sid : Nat) (es : Array (Option (Value × Value))) (a0 : Value) (has : Value) (keys : Value) (otherSize : Float) : M Value := do
+    let mine : Array Value := es.filterMap (·.map (·.1))
+    let inThis (v : Value) : M Bool := do
+      match (← getObj sid).kind with
+      | .coll _ _ idx => pure (collFind idx v).isSome
+      | _ => pure false
+    let canon (v : Value) : Value := match v with | .num x => if x == 0 then .num 0 else v | _ => v
+    let otherKeys : M (Value × Value) := do
+      let it ← core.callV keys a0 #[]
+      if !it.isObj then throwErr .type "Set method: keys() did not return an object"
+      pure (it, ← core.getV it "next")
+    let stepKeys (it next : Value) : M (Option Value) := do
+      let r ← core.callV next it #[]
+      if !r.isObj then throwErr .type "Iterator result is not an object"
+      if toBool (← core.getV r "done") then pure none else pure (some (canon (← core.getV r "value")))
+    let otherHas (v : Value) : M Bool := do pure (toBool (← core.callV has a0 #[v]))
+    let thisSize := Float.ofNat mine.size
+    let mkSet (vs : Array Value) : M Value := do
+      let mut o : Obj := { proto := (← getObj sid).proto, kind := .coll 1 #[] {} }
+      for v in vs do o := collPut v v o
+      -- %Set.prototype%, not the receiver's
+      let sc ← core.getV (.obj r.globalObj) "Set"
+      let sp ← core.getV sc "prototype"
+      pure (.obj (← alloc { o with proto := if sp.isObj then sp else o.proto }))
+    match k with
+    | 0 | 3 =>
+      let (it, next) ← otherKeys
+      let mut out := mine
+      let mut removed : Array Value := #[]
+      for _ in [0:1000000000] do
+        let some v ← stepKeys it next | break
+        if k == 0 then out := out.push v
+        else if (← inThis v) then removed := removed.push v
+        else if !(out.any (sameValueZero · v)) then out := out.push v
+      mkSet (if k == 3 then out.filter (fun x => !(removed.any (sameValueZero · x))) else out)
+    | 1 | 2 =>
+      if thisSize ≤ otherSize then
+        let mut out := #[]
+        for v in mine do
+          let h ← otherHas v
+          if (k == 1 && h) || (k == 2 && !h) then out := out.push v
+        mkSet out
+      else
+        let (it, next) ← otherKeys
+        let mut hit : Array Value := #[]
+        for _ in [0:1000000000] do
+          let some v ← stepKeys it next | break
+          if (← inThis v) then hit := hit.push v
+        if k == 1 then mkSet (mine.filter fun x => hit.any (sameValueZero · x))
+        else mkSet (mine.filter fun x => !(hit.any (sameValueZero · x)))
+    | 4 =>
+      if thisSize > otherSize then return .bool false
+      for v in mine do
+        if !(← otherHas v) then return .bool false
+      pure (.bool true)
+    | 5 =>
+      if thisSize < otherSize then return .bool false
+      let (it, next) ← otherKeys
+      for _ in [0:1000000000] do
+        let some v ← stepKeys it next | break
+        if !(← inThis v) then
+          core.iterClose it
+          return .bool false
+      pure (.bool true)
+    | _ =>
+      if thisSize ≤ otherSize then
+        for v in mine do
+          if (← otherHas v) then return .bool false
+        pure (.bool true)
+      else
+        let (it, next) ← otherKeys
+        for _ in [0:1000000000] do
+          let some v ← stepKeys it next | break
+          if (← inThis v) then
+            core.iterClose it
+            return .bool false
+        pure (.bool true)
+
+/-- Built-ins of `moreNative`: the Set methods of two sets and the collection methods shared by Map, Set and their weak kinds. `r` is the realm `moreNative` read. -/
+def moreNativeSet (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    match id with
+    | (.x (.collMethod kind op)) =>
+      match thisV with
+      | .obj c =>
+        match (← getObj c).kind with
+        | .coll k _ _ =>
+          if k != kind then throwErr .type "Collection method called on a collection of another kind"
+        | _ => throwErr .type "Collection method called on an incompatible receiver"
+      | _ => throwErr .type "Collection method called on an incompatible receiver"
+      core.callNative (collOps.getD op .mapHas) thisV args newTarget
+    | (.x (.setMethod k)) =>
+      -- the receiver: a Set (§24.2.4, RequireInternalSlot [[SetData]])
+      let (sid, es) ← match thisV with
+        | .obj i => do
+          match (← getObj i).kind with
+          | .coll 1 es _ => pure (i, es)
+          | _ => throwErr .type "Set.prototype method called on an object that is not a Set"
+        | _ => throwErr .type "Set.prototype method called on a value that is not a Set"
+      -- GetSetRecord (§24.2.1.2)
+      if !a0.isObj then throwErr .type "Set method: the argument is not an object"
+      let rawSize ← core.getV a0 "size"
+      let numSize ← core.toNum rawSize
+      if numSize.isNaN then throwErr .type "Set method: the argument's size is not a number"
+      let otherSize := toIntegerOrInf numSize
+      if otherSize < 0 then throwErr .range "Set method: the argument's size is negative"
+      let has ← core.getV a0 "has"
+      if !(← isCallable has) then throwErr .type "Set method: the argument's has is not a function"
+      let keys ← core.getV a0 "keys"
+      if !(← isCallable keys) then throwErr .type "Set method: the argument's keys is not a function"
+      setMethodRun core r k sid es a0 has keys otherSize
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: WeakRef, FinalizationRegistry, `groupBy` and the Map upsert methods. `r` is the realm `moreNative` read. -/
+def moreNativeWeak (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
+    | (.x (.groupBy isMap)) =>
+      -- GroupBy (§7.3.35): the items of an iterable, by key (property key or SameValueZero)
+      if !(← isCallable a1) then throwErr .type "groupBy: the callback is not a function"
+      let items ← core.iterToArray (← core.getIterator a0) #[]
+      let mut keys : Array Value := #[]
+      let mut groups : Array (Array Value) := #[]
+      for i in [0:items.size] do
+        let kv ← core.callV a1 .undef #[items[i]!, .num (Float.ofNat i)]
+        let key ← if isMap then pure (match kv with | .num x => if x == 0 then .num 0 else kv | _ => kv)
+          else do pure (keyValue (← core.toKey kv))
+        match keys.findIdx? (sameValue · key) with
+        | some j => groups := groups.modify j (·.push items[i]!)
+        | none =>
+          keys := keys.push key
+          groups := groups.push #[items[i]!]
+      if isMap then
+        let mut o : Obj := { kind := .coll 0 #[] {} }
+        for j in [0:keys.size] do o := collPut keys[j]! (← newArray groups[j]!) o
+        let mc ← core.getV (.obj r.globalObj) "Map"
+        let mp ← core.getV mc "prototype"
+        pure (.obj (← alloc { o with proto := mp }))
+      else
+        let res ← alloc { proto := .null }
+        for j in [0:keys.size] do
+          defineOwn res (← core.toKey keys[j]!) (.data (← newArray groups[j]!) true true true)
+        pure (.obj res)
+    | (.x .weakRefCtor) =>
+      let nt ← match newTarget with
+        | some nt => pure nt
+        | none => throwErr .type "Constructor WeakRef requires 'new'"
+      if !a0.isObj then throwErr .type "WeakRef: the target must be an object"
+      let pp ← core.getV nt "prototype"
+      let proto ← if pp.isObj then pure pp else core.getV (← core.getV (.obj (← funRealm nt).globalObj) "WeakRef") "prototype"
+      let o ← alloc { proto }
+      setHidden o weakRefTargetKey a0
+      pure (.obj o)
+    | (.x .weakRefDeref) =>
+      match thisV with
+      | .obj oid =>
+        match (← getObj oid).props.get? weakRefTargetKey with
+        | some (.data v ..) => pure v
+        | _ => throwErr .type "WeakRef.prototype.deref called on an incompatible receiver"
+      | _ => throwErr .type "WeakRef.prototype.deref called on an incompatible receiver"
+    | (.x .finRegCtor) =>
+      let nt ← match newTarget with
+        | some nt => pure nt
+        | none => throwErr .type "Constructor FinalizationRegistry requires 'new'"
+      if !(← isCallable a0) then throwErr .type "FinalizationRegistry: the cleanup callback is not a function"
+      let pp ← core.getV nt "prototype"
+      let proto ← if pp.isObj then pure pp else core.getV (← core.getV (.obj (← funRealm nt).globalObj) "FinalizationRegistry") "prototype"
+      let o ← alloc { proto }
+      setHidden o finRegCallbackKey a0
+      setHidden o finRegTokensKey (← newArray #[])
+      pure (.obj o)
+    | (.x (.finRegMethod k)) =>
+      let (oid, tokens) ← match thisV with
+        | .obj oid =>
+          match (← getObj oid).props.get? finRegTokensKey with
+          | some (.data (.obj t) ..) => pure (oid, t)
+          | _ => throwErr .type "FinalizationRegistry method called on an incompatible receiver"
+        | _ => throwErr .type "FinalizationRegistry method called on an incompatible receiver"
+      let _ := oid
+      let held ← match (← getObj tokens).kind with | .array es => pure es | _ => pure #[]
+      if k == 0 then
+        -- register(target, heldValue, unregisterToken)
+        if !a0.isObj then throwErr .type "FinalizationRegistry.register: the target must be an object"
+        if sameValue a0 a1 then throwErr .type "FinalizationRegistry.register: the target and the held value are the same"
+        let tok := argD args 2
+        match tok with
+        | .undef => pure ()
+        | .obj _ => modifyObj tokens fun o => { o with kind := .array (held.push tok) }
+        | _ => throwErr .type "FinalizationRegistry.register: the unregister token must be an object"
+        pure .undef
+      else
+        -- unregister(unregisterToken): were there cells with the token
+        if !a0.isObj then throwErr .type "FinalizationRegistry.unregister: the token must be an object"
+        let rest := held.filter fun v => !sameValue v a0
+        modifyObj tokens fun o => { o with kind := .array rest }
+        pure (.bool (rest.size < held.size))
+    | (.x (.mapUpsert computed weak)) =>
+      let ck : Nat ← match thisV with
+        | .obj c => match (← getObj c).kind with
+          | .coll k _ _ => pure k
+          | _ => throwErr .type "method called on incompatible receiver"
+        | _ => throwErr .type "method called on incompatible receiver"
+      -- Map's method needs a Map (kind 0), WeakMap's a WeakMap (kind 2)
+      if ck != (if weak then 2 else 0) then throwErr .type "method called on incompatible receiver"
+      if computed && !(← isCallable a1) then throwErr .type "getOrInsertComputed: the callback is not a function"
+      if weak && !a0.isObj then throwErr .type "Invalid value used as weak collection key"
+      if toBool (← core.callNative .mapHas thisV #[a0] none) then core.callNative .mapGet thisV #[a0] none
+      else
+        let key := match a0 with | .num x => if x == 0 then Value.num 0 else a0 | _ => a0
+        let v ← if computed then core.callV a1 .undef #[key] else pure a1
+        let _ ← core.callNative .mapSet thisV #[a0, v] none
+        pure v
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: the Array methods that copy (`toReversed`, `toSorted`, `toSpliced`, `with`) and their kin. `r` is the realm `moreNative` read. -/
+def moreNativeArray (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
+    | (.x (.arrayMethod k)) =>
+      -- generic over array-likes: ToObject(this), LengthOfArrayLike (§23.1.3)
+      let oid ← core.toObj thisV
+      let o := Value.obj oid
+      let lenF := toIntegerOrInf (← core.toNum (← core.getV o "length"))
+      let len := if lenF ≤ 0 then 0 else if lenF > 9007199254740991 then 9007199254740991 else lenF.toUInt64.toNat
+      let rel (v : Value) (dflt : Nat) : M Nat := do
+        match v with
+        | .undef => pure dflt
+        | v => pure (relIndex (toIntegerOrInf (← core.toNum v)) len)
+      let valuesUpTo (m : Nat) : M (Array Value) := do
+        let mut out := Array.emptyWithCapacity m
+        for i in [0:m] do out := out.push (← core.getV o (toString i))
+        pure out
+      match k with
+      | 0 =>
+        let to ← rel a0 0
+        let from_ ← rel a1 0
+        let fin ← rel (argD args 2) len
+        let count := min (fin - from_) (len - to)
+        if count > 10000000 then throwErr .range "copyWithin: too many elements"
+        -- §23.1.3.4 steps 13-14: backwards when the ranges overlap that way
+        let back := from_ < to && to < from_ + count
+        for j in [0:count] do
+          let i := if back then count - 1 - j else j
+          let fk := toString (from_ + i)
+          let tk := toString (to + i)
+          if (← core.hasProp oid fk) then core.putV o tk (← core.getV o fk) true
+          else deleteOwn oid tk
+        pure o
+      | 1 =>
+        if !(← isCallable a0) then throwErr .type "reduceRight: the callback is not a function"
+        if len > 10000000 then throwErr .range "reduceRight: too many elements"
+        let mut acc := a1
+        let mut got : Bool := args.size ≥ 2
+        for j in [0:len] do
+          let i := len - 1 - j
+          if (← core.hasProp oid (toString i)) then
+            let v ← core.getV o (toString i)
+            if got then acc ← core.callV a0 .undef #[acc, v, .num (Float.ofNat i), o]
+            else
+              acc := v
+              got := true
+        if !got then throwErr .type "Reduce of empty array with no initial value"
+        pure acc
+      | 2 =>
+        if len > 4294967295 then throwErr .range "Invalid array length"
+        newArray (← valuesUpTo len).reverse
+      | 3 =>
+        match a0 with
+        | .undef => pure ()
+        | f => if !(← isCallable f) then throwErr .type "The comparison function must be either a function or undefined"
+        if len > 4294967295 then throwErr .range "Invalid array length"
+        newArray (← core.mergeSort a0 (← valuesUpTo len).toList).toArray
+      | 4 =>
+        let st ← rel a0 0
+        let skip ← if args.size == 0 then pure 0 else if args.size == 1 then pure (len - st) else do
+          let d := toIntegerOrInf (← core.toNum a1)
+          pure (if d < 0 then 0 else min d.toUInt64.toNat (len - st))
+        let items := args.extract (min 2 args.size) args.size
+        let newLen := len + items.size - skip
+        if Float.ofNat newLen > 9007199254740991 then throwErr .type "toSpliced: the length is too large"
+        if newLen > 4294967295 then throwErr .range "Invalid array length"
+        let mut out := Array.emptyWithCapacity newLen
+        for i in [0:st] do out := out.push (← core.getV o (toString i))
+        out := out ++ items
+        for i in [st + skip:len] do out := out.push (← core.getV o (toString i))
+        newArray out
+      | _ =>
+        let r := toIntegerOrInf (← core.toNum a0)
+        let i := if r ≥ 0 then r else Float.ofNat len + r
+        if i ≥ Float.ofNat len || i < 0 then throwErr .range "Invalid index for Array.prototype.with"
+        if len > 4294967295 then throwErr .range "Invalid array length"
+        -- §23.1.3.39: every index but the replaced one is read
+        let at_ := i.toUInt64.toNat
+        let mut vs := Array.emptyWithCapacity len
+        for j in [0:len] do vs := vs.push (← if j == at_ then pure a1 else core.getV o (toString j))
+        newArray vs
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: structured clone and classic scripts, for workers. `r` is the realm `moreNative` read. -/
+def moreNativeClone (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     -- ==== workers: the structured clone of HTML §2.7 over the heap (JS.Clone) ====
     | (.x .cloneSerialize) =>
       -- `n.serialize(value, transfer)`: the bytes as a new ArrayBuffer; the transferred
@@ -3705,478 +4435,13 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
           | _ => pure ()
         let _ ← core.evalStmts ctx sc.body
         pure .undef
-    -- ==== end workers ====
-    | (.x (.setMethod k)) =>
-      -- the receiver: a Set (§24.2.4, RequireInternalSlot [[SetData]])
-      let (sid, es) ← match thisV with
-        | .obj i => do
-          match (← getObj i).kind with
-          | .coll 1 es _ => pure (i, es)
-          | _ => throwErr .type "Set.prototype method called on an object that is not a Set"
-        | _ => throwErr .type "Set.prototype method called on a value that is not a Set"
-      -- GetSetRecord (§24.2.1.2)
-      if !a0.isObj then throwErr .type "Set method: the argument is not an object"
-      let rawSize ← core.getV a0 "size"
-      let numSize ← core.toNum rawSize
-      if numSize.isNaN then throwErr .type "Set method: the argument's size is not a number"
-      let otherSize := toIntegerOrInf numSize
-      if otherSize < 0 then throwErr .range "Set method: the argument's size is negative"
-      let has ← core.getV a0 "has"
-      if !(← isCallable has) then throwErr .type "Set method: the argument's has is not a function"
-      let keys ← core.getV a0 "keys"
-      if !(← isCallable keys) then throwErr .type "Set method: the argument's keys is not a function"
-      let mine : Array Value := es.filterMap (·.map (·.1))
-      let inThis (v : Value) : M Bool := do
-        match (← getObj sid).kind with
-        | .coll _ _ idx => pure (collFind idx v).isSome
-        | _ => pure false
-      let canon (v : Value) : Value := match v with | .num x => if x == 0 then .num 0 else v | _ => v
-      let otherKeys : M (Value × Value) := do
-        let it ← core.callV keys a0 #[]
-        if !it.isObj then throwErr .type "Set method: keys() did not return an object"
-        pure (it, ← core.getV it "next")
-      let stepKeys (it next : Value) : M (Option Value) := do
-        let r ← core.callV next it #[]
-        if !r.isObj then throwErr .type "Iterator result is not an object"
-        if toBool (← core.getV r "done") then pure none else pure (some (canon (← core.getV r "value")))
-      let otherHas (v : Value) : M Bool := do pure (toBool (← core.callV has a0 #[v]))
-      let thisSize := Float.ofNat mine.size
-      let mkSet (vs : Array Value) : M Value := do
-        let mut o : Obj := { proto := (← getObj sid).proto, kind := .coll 1 #[] {} }
-        for v in vs do o := collPut v v o
-        -- %Set.prototype%, not the receiver's
-        let sc ← core.getV (.obj r.globalObj) "Set"
-        let sp ← core.getV sc "prototype"
-        pure (.obj (← alloc { o with proto := if sp.isObj then sp else o.proto }))
-      match k with
-      | 0 | 3 =>
-        let (it, next) ← otherKeys
-        let mut out := mine
-        let mut removed : Array Value := #[]
-        for _ in [0:1000000000] do
-          let some v ← stepKeys it next | break
-          if k == 0 then out := out.push v
-          else if (← inThis v) then removed := removed.push v
-          else if !(out.any (sameValueZero · v)) then out := out.push v
-        mkSet (if k == 3 then out.filter (fun x => !(removed.any (sameValueZero · x))) else out)
-      | 1 | 2 =>
-        if thisSize ≤ otherSize then
-          let mut out := #[]
-          for v in mine do
-            let h ← otherHas v
-            if (k == 1 && h) || (k == 2 && !h) then out := out.push v
-          mkSet out
-        else
-          let (it, next) ← otherKeys
-          let mut hit : Array Value := #[]
-          for _ in [0:1000000000] do
-            let some v ← stepKeys it next | break
-            if (← inThis v) then hit := hit.push v
-          if k == 1 then mkSet (mine.filter fun x => hit.any (sameValueZero · x))
-          else mkSet (mine.filter fun x => !(hit.any (sameValueZero · x)))
-      | 4 =>
-        if thisSize > otherSize then return .bool false
-        for v in mine do
-          if !(← otherHas v) then return .bool false
-        pure (.bool true)
-      | 5 =>
-        if thisSize < otherSize then return .bool false
-        let (it, next) ← otherKeys
-        for _ in [0:1000000000] do
-          let some v ← stepKeys it next | break
-          if !(← inThis v) then
-            core.iterClose it
-            return .bool false
-        pure (.bool true)
-      | _ =>
-        if thisSize ≤ otherSize then
-          for v in mine do
-            if (← otherHas v) then return .bool false
-          pure (.bool true)
-        else
-          let (it, next) ← otherKeys
-          for _ in [0:1000000000] do
-            let some v ← stepKeys it next | break
-            if (← inThis v) then
-              core.iterClose it
-              return .bool false
-          pure (.bool true)
-    | (.x .proxyRevocable) =>
-      if !a0.isObj || !a1.isObj then throwErr .type "Cannot create proxy with a non-object as target or handler"
-      let p ← alloc { proto := .null, kind := .proxy a0 a1, extensible := true }
-      let rv ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x .proxyRevoke)) .undef #[.obj p] }
-      defineOwn rv "length" (.data (.num 0) false false true)
-      defineOwn rv "name" (.data (.str "") false false true)
-      let o ← newObject
-      defineOwn o "proxy" (.data (.obj p) true true true)
-      defineOwn o "revoke" (.data (.obj rv) true true true)
-      pure (.obj o)
-    | (.x .proxyRevoke) =>
-      if let .obj p := a0 then
-        modifyObj p fun o => match o.kind with
-          | .proxy t _ => { o with kind := .proxy t .null }
-          | _ => o
-      pure .undef
-    | (.x (.arrayMethod k)) =>
-      -- generic over array-likes: ToObject(this), LengthOfArrayLike (§23.1.3)
-      let oid ← core.toObj thisV
-      let o := Value.obj oid
-      let lenF := toIntegerOrInf (← core.toNum (← core.getV o "length"))
-      let len := if lenF ≤ 0 then 0 else if lenF > 9007199254740991 then 9007199254740991 else lenF.toUInt64.toNat
-      let rel (v : Value) (dflt : Nat) : M Nat := do
-        match v with
-        | .undef => pure dflt
-        | v => pure (relIndex (toIntegerOrInf (← core.toNum v)) len)
-      let valuesUpTo (m : Nat) : M (Array Value) := do
-        let mut out := Array.emptyWithCapacity m
-        for i in [0:m] do out := out.push (← core.getV o (toString i))
-        pure out
-      match k with
-      | 0 =>
-        let to ← rel a0 0
-        let from_ ← rel a1 0
-        let fin ← rel (argD args 2) len
-        let count := min (fin - from_) (len - to)
-        if count > 10000000 then throwErr .range "copyWithin: too many elements"
-        -- §23.1.3.4 steps 13-14: backwards when the ranges overlap that way
-        let back := from_ < to && to < from_ + count
-        for j in [0:count] do
-          let i := if back then count - 1 - j else j
-          let fk := toString (from_ + i)
-          let tk := toString (to + i)
-          if (← core.hasProp oid fk) then core.putV o tk (← core.getV o fk) true
-          else deleteOwn oid tk
-        pure o
-      | 1 =>
-        if !(← isCallable a0) then throwErr .type "reduceRight: the callback is not a function"
-        if len > 10000000 then throwErr .range "reduceRight: too many elements"
-        let mut acc := a1
-        let mut got : Bool := args.size ≥ 2
-        for j in [0:len] do
-          let i := len - 1 - j
-          if (← core.hasProp oid (toString i)) then
-            let v ← core.getV o (toString i)
-            if got then acc ← core.callV a0 .undef #[acc, v, .num (Float.ofNat i), o]
-            else
-              acc := v
-              got := true
-        if !got then throwErr .type "Reduce of empty array with no initial value"
-        pure acc
-      | 2 =>
-        if len > 4294967295 then throwErr .range "Invalid array length"
-        newArray (← valuesUpTo len).reverse
-      | 3 =>
-        match a0 with
-        | .undef => pure ()
-        | f => if !(← isCallable f) then throwErr .type "The comparison function must be either a function or undefined"
-        if len > 4294967295 then throwErr .range "Invalid array length"
-        newArray (← core.mergeSort a0 (← valuesUpTo len).toList).toArray
-      | 4 =>
-        let st ← rel a0 0
-        let skip ← if args.size == 0 then pure 0 else if args.size == 1 then pure (len - st) else do
-          let d := toIntegerOrInf (← core.toNum a1)
-          pure (if d < 0 then 0 else min d.toUInt64.toNat (len - st))
-        let items := args.extract (min 2 args.size) args.size
-        let newLen := len + items.size - skip
-        if Float.ofNat newLen > 9007199254740991 then throwErr .type "toSpliced: the length is too large"
-        if newLen > 4294967295 then throwErr .range "Invalid array length"
-        let mut out := Array.emptyWithCapacity newLen
-        for i in [0:st] do out := out.push (← core.getV o (toString i))
-        out := out ++ items
-        for i in [st + skip:len] do out := out.push (← core.getV o (toString i))
-        newArray out
-      | _ =>
-        let r := toIntegerOrInf (← core.toNum a0)
-        let i := if r ≥ 0 then r else Float.ofNat len + r
-        if i ≥ Float.ofNat len || i < 0 then throwErr .range "Invalid index for Array.prototype.with"
-        if len > 4294967295 then throwErr .range "Invalid array length"
-        -- §23.1.3.39: every index but the replaced one is read
-        let at_ := i.toUInt64.toNat
-        let mut vs := Array.emptyWithCapacity len
-        for j in [0:len] do vs := vs.push (← if j == at_ then pure a1 else core.getV o (toString j))
-        newArray vs
-    | (.x .objectHasOwn) =>
-      let id ← core.toObj a0
-      let k ← core.toKey a1
-      pure (.bool (← core.ownDesc id k).isSome)
-    | (.x (.groupBy isMap)) =>
-      -- GroupBy (§7.3.35): the items of an iterable, by key (property key or SameValueZero)
-      if !(← isCallable a1) then throwErr .type "groupBy: the callback is not a function"
-      let items ← core.iterToArray (← core.getIterator a0) #[]
-      let mut keys : Array Value := #[]
-      let mut groups : Array (Array Value) := #[]
-      for i in [0:items.size] do
-        let kv ← core.callV a1 .undef #[items[i]!, .num (Float.ofNat i)]
-        let key ← if isMap then pure (match kv with | .num x => if x == 0 then .num 0 else kv | _ => kv)
-          else do pure (keyValue (← core.toKey kv))
-        match keys.findIdx? (sameValue · key) with
-        | some j => groups := groups.modify j (·.push items[i]!)
-        | none =>
-          keys := keys.push key
-          groups := groups.push #[items[i]!]
-      if isMap then
-        let mut o : Obj := { kind := .coll 0 #[] {} }
-        for j in [0:keys.size] do o := collPut keys[j]! (← newArray groups[j]!) o
-        let mc ← core.getV (.obj r.globalObj) "Map"
-        let mp ← core.getV mc "prototype"
-        pure (.obj (← alloc { o with proto := mp }))
-      else
-        let res ← alloc { proto := .null }
-        for j in [0:keys.size] do
-          defineOwn res (← core.toKey keys[j]!) (.data (← newArray groups[j]!) true true true)
-        pure (.obj res)
-    | (.x .stringLocaleCompare) =>
-      match ← thisPrim thisV with
-      | .undef | .null => throwErr .type "String.prototype.localeCompare called on null or undefined"
-      | _ => pure ()
-      let s ← core.toStr (← thisPrim thisV)
-      let t ← core.toStr a0
-      let a := Str.units s
-      let b := Str.units t
-      pure (.num (if a == b then 0 else if decide (a < b) then -1 else 1))
-    | (.x (.errorStack false)) =>
-      -- get Error.prototype.stack (Error Stack Accessor proposal): a string for an object
-      -- with [[ErrorData]]. The string lists the call frames, as in SpiderMonkey, JSC and
-      -- QuickJS (not the V8 form, which starts with the message). This engine keeps no record
-      -- of call sites, so the list is empty: "" (a script that tests `e.stack` sees none).
-      match thisV with
-      | .obj oid =>
-        match (← getObj oid).kind with
-        | .error => pure (.str "")
-        | _ => pure .undef
-      | _ => throwErr .type "Error.prototype.stack getter called on a non-object"
-    | (.x (.errorStack true)) =>
-      -- set Error.prototype.stack (v): SetterThatIgnoresPrototypeProperties(this,
-      -- %Error.prototype%, "stack", v).
-      let oid ← match thisV with
-        | .obj oid => pure oid
-        | _ => throwErr .type "Error.prototype.stack setter called on a non-object"
-      match a0 with
-      | .str _ => pure ()
-      | _ => throwErr .type "Error.prototype.stack setter: the value is not a string"
-      if oid == r.errorProtos.getD 0 r.objectProto then
-        throwErr .type "Cannot set Error.prototype.stack on Error.prototype"
-      match ← core.ownDesc oid "stack" with
-      | some _ => core.putV thisV "stack" a0 true
-      | none =>
-        let o ← getObj oid
-        match o.kind with
-        | .proxy t hnd =>
-          match ← core.proxyTrap hnd "defineProperty" with
-          | some f =>
-            let d ← newObject
-            defineOwn d "value" (.data a0 true true true)
-            defineOwn d "writable" (.data (.bool true) true true true)
-            defineOwn d "enumerable" (.data (.bool true) true true true)
-            defineOwn d "configurable" (.data (.bool true) true true true)
-            if !toBool (← core.callV f hnd #[t, .str "stack", .obj d]) then
-              throwErr .type "'defineProperty' on proxy: trap returned falsish for property 'stack'"
-          | none =>
-            match t with
-            | .obj tid =>
-              if !(← getObj tid).extensible then throwErr .type "Cannot define property stack, object is not extensible"
-              defineOwn tid "stack" (.data a0 true true true)
-            | _ => throwErr .type "Cannot perform 'defineProperty' on a proxy that has been revoked"
-        | _ =>
-          if !o.extensible then throwErr .type "Cannot define property stack, object is not extensible"
-          defineOwn oid "stack" (.data a0 true true true)
-      pure .undef
-    | (.x .aggregateErrorCtor) =>
-      let proto ← match newTarget with
-        | some nt => do
-          let p ← core.getV nt "prototype"
-          protoOr p nt (·.aggregateErrorProto)
-        | none => pure (.obj r.aggregateErrorProto)
-      let o ← alloc { proto, kind := .error }
-      match a1 with
-      | .undef => pure ()
-      | v => setHidden o "message" (.str (← core.toStr v))
-      -- InstallErrorCause (§20.5.8.1)
-      if let .obj opts := argD args 2 then
-        if ← core.hasProp opts "cause" then setHidden o "cause" (← core.getV (.obj opts) "cause")
-      let errs ← core.iterToArray (← core.getIterator a0) #[]
-      setHidden o "errors" (← newArray errs)
-      pure (.obj o)
-    | (.x .dateUTC) =>
-      let mut xs : Array Float := #[]
-      for i in [0:min 7 args.size] do xs := xs.push (← core.toNum args[i]!)
-      pure (.num (Date.timeClip (dateOfParts xs)))
-    | (.x .dateParse) => pure (.num (Date.parse (← core.toStr a0)))
-    | (.x (.dateMethod k)) =>
-      if k == 32 then
-        -- toJSON (§21.4.4.37)
-        let o ← core.toObj thisV
-        let tv ← core.toPrim (.obj o) "number"
-        if let .num x := tv then
-          if !x.isFinite then return .null
-        let f ← core.getV (.obj o) "toISOString"
-        if !(← isCallable f) then throwErr .type "toISOString is not a function"
-        return ← core.callV f (.obj o) #[]
-      if k == 39 then
-        -- @@toPrimitive (§21.4.4.45)
-        if !thisV.isObj then throwErr .type "Date.prototype[Symbol.toPrimitive] called on a non-object"
-        match a0 with
-        | .str "string" | .str "default" => return ← core.tryMethods thisV ["toString", "valueOf"]
-        | .str "number" => return ← core.tryMethods thisV ["valueOf", "toString"]
-        | _ => throwErr .type "Invalid hint"
-      let some t ← thisDate? thisV | throwErr .type "this is not a Date object."
-      let oid := match thisV with | .obj i => i | _ => 0
-      let p := Date.parts t
-      if k < 20 then
-        if t.isNaN then return .num t
-        return .num (match k with
-          | 0 => Float.ofNat p.date | 1 => Float.ofNat p.weekDay | 2 => Float.ofInt p.year
-          | 3 => Float.ofNat p.hours | 4 => Float.ofNat p.ms | 5 => Float.ofNat p.minutes
-          | 6 => Float.ofNat p.month | 7 => Float.ofNat p.seconds | 8 => 0
-          | _ => Float.ofInt (p.year - 1900))
-      if k < 30 then
-        let set (v : Float) : M Value := do
-          modifyObj oid fun o => { o with kind := .prim (.num v) }
-          pure (.num v)
-        if k == 27 then return ← set (Date.timeClip (← core.toNum a0))
-        if k == 28 then
-          -- setYear (Annex B.2.3.2)
-          let y ← core.toNum a0
-          if y.isNaN then return ← set y
-          let yi := toIntegerOrInf y
-          let yr := if 0 ≤ yi && yi ≤ 99 then 1900 + yi else y
-          let t := if t.isNaN then 0 else t
-          let q := Date.parts t
-          return ← set (Date.timeClip (Date.makeDate (Date.makeDay yr (Float.ofNat q.month) (Float.ofNat q.date))
-            (Float.ofInt ((Date.toInt t).emod Date.msPerDay))))
-        -- the arguments replace parts from `first` on, at most `most` of them (§21.4.4.20 to §21.4.4.28)
-        let (first, most) := match k with
-          | 20 => (2, 1) | 21 => (0, 3) | 22 => (3, 4) | 23 => (6, 1) | 24 => (4, 3) | 25 => (1, 2) | _ => (5, 2)
-        let mut given : Array Float := #[]
-        for i in [0:min most (max 1 args.size)] do given := given.push (← core.toNum (argD args i))
-        if t.isNaN && k != 21 then return .num t
-        let q := Date.parts (if t.isNaN then 0 else t)
-        let mut cs : Array Float := #[Float.ofInt q.year, Float.ofNat q.month, Float.ofNat q.date, Float.ofNat q.hours,
-          Float.ofNat q.minutes, Float.ofNat q.seconds, Float.ofNat q.ms]
-        for i in [0:given.size] do cs := cs.set! (first + i) given[i]!
-        return ← set (Date.timeClip (Date.makeDate (Date.makeDay cs[0]! cs[1]! cs[2]!)
-          (Date.makeTime cs[3]! cs[4]! cs[5]! cs[6]!)))
-      if t.isNaN then
-        if k == 31 then throwErr .range "Invalid time value"
-        return .str "Invalid Date"
-      pure (.str (match k with
-        | 30 | 33 => Date.dateString t
-        | 31 => Date.isoString t
-        | 35 | 37 => Date.timeString t
-        | 38 => Date.utcString t
-        | _ => Date.toStr t))
-    | (.x .namedGetterSet) =>
-      -- the host's function for the named properties of the global object (`namedGlobal`)
-      defineOwn r.globalObj namedGetterKey (.data a0 false false false)
-      pure .undef
-    | (.x .symbolFor) | (.x .symbolKeyFor) =>
-      -- the GlobalSymbolRegistry is one for all realms (§20.4.2.2): it hangs on realm 0's global
-      let h ← get
-      let gReg := if h.curRealm == 0 then r.globalObj else (h.realms.getD 0 {}).realm.globalObj
-      let reg ← match (← getObj gReg).props.get? symbolRegistryKey with
-        | some (.data (.obj id) ..) => pure id
-        | _ => do
-          let id ← alloc { proto := .null }
-          setHidden gReg symbolRegistryKey (.obj id)
-          pure id
-      if id == (.x .symbolFor) then
-        let key ← core.toStr a0
-        match (← getObj reg).props.get? (strKey key) with
-        | some (.data v ..) => pure v
-        | _ =>
-          let sid ← modifyGet fun h => (h.syms.size, { h with syms := h.syms.push key })
-          defineOwn reg (strKey key) (.data (.sym sid) true true true)
-          pure (.sym sid)
-      else
-        match a0 with
-        | .sym sid =>
-          let o ← getObj reg
-          pure (match o.keys.find? (fun k => match o.props.get? k with
-              | some (.data (.sym j) ..) => j == sid | _ => false) with
-            | some k => .str (keyStr k)
-            | none => .undef)
-        | _ => throwErr .type "Symbol.keyFor: the argument is not a symbol"
-    | (.x .stringRaw) =>
-      let cooked ← core.toObj a0
-      let raw ← core.toObj (← core.getV (.obj cooked) "raw")
-      let len := toIntegerOrInf (← core.toNum (← core.getV (.obj raw) "length"))
-      let count := if len ≤ 0 then 0 else len.toUInt64.toNat
-      charge (count / 8)
-      let mut out := ""
-      for i in [0:count] do
-        out := Str.jsAppend out (← core.toStr (← core.getV (.obj raw) (toString i)))
-        if i + 1 < count && i + 1 < args.size then
-          out := Str.jsAppend out (← core.toStr (argD args (i + 1)))
-      pure (.str out)
-    | (.x .weakRefCtor) =>
-      let nt ← match newTarget with
-        | some nt => pure nt
-        | none => throwErr .type "Constructor WeakRef requires 'new'"
-      if !a0.isObj then throwErr .type "WeakRef: the target must be an object"
-      let pp ← core.getV nt "prototype"
-      let proto ← if pp.isObj then pure pp else core.getV (← core.getV (.obj (← funRealm nt).globalObj) "WeakRef") "prototype"
-      let o ← alloc { proto }
-      setHidden o weakRefTargetKey a0
-      pure (.obj o)
-    | (.x .weakRefDeref) =>
-      match thisV with
-      | .obj oid =>
-        match (← getObj oid).props.get? weakRefTargetKey with
-        | some (.data v ..) => pure v
-        | _ => throwErr .type "WeakRef.prototype.deref called on an incompatible receiver"
-      | _ => throwErr .type "WeakRef.prototype.deref called on an incompatible receiver"
-    | (.x .finRegCtor) =>
-      let nt ← match newTarget with
-        | some nt => pure nt
-        | none => throwErr .type "Constructor FinalizationRegistry requires 'new'"
-      if !(← isCallable a0) then throwErr .type "FinalizationRegistry: the cleanup callback is not a function"
-      let pp ← core.getV nt "prototype"
-      let proto ← if pp.isObj then pure pp else core.getV (← core.getV (.obj (← funRealm nt).globalObj) "FinalizationRegistry") "prototype"
-      let o ← alloc { proto }
-      setHidden o finRegCallbackKey a0
-      setHidden o finRegTokensKey (← newArray #[])
-      pure (.obj o)
-    | (.x (.finRegMethod k)) =>
-      let (oid, tokens) ← match thisV with
-        | .obj oid =>
-          match (← getObj oid).props.get? finRegTokensKey with
-          | some (.data (.obj t) ..) => pure (oid, t)
-          | _ => throwErr .type "FinalizationRegistry method called on an incompatible receiver"
-        | _ => throwErr .type "FinalizationRegistry method called on an incompatible receiver"
-      let _ := oid
-      let held ← match (← getObj tokens).kind with | .array es => pure es | _ => pure #[]
-      if k == 0 then
-        -- register(target, heldValue, unregisterToken)
-        if !a0.isObj then throwErr .type "FinalizationRegistry.register: the target must be an object"
-        if sameValue a0 a1 then throwErr .type "FinalizationRegistry.register: the target and the held value are the same"
-        let tok := argD args 2
-        match tok with
-        | .undef => pure ()
-        | .obj _ => modifyObj tokens fun o => { o with kind := .array (held.push tok) }
-        | _ => throwErr .type "FinalizationRegistry.register: the unregister token must be an object"
-        pure .undef
-      else
-        -- unregister(unregisterToken): were there cells with the token
-        if !a0.isObj then throwErr .type "FinalizationRegistry.unregister: the token must be an object"
-        let rest := held.filter fun v => !sameValue v a0
-        modifyObj tokens fun o => { o with kind := .array rest }
-        pure (.bool (rest.size < held.size))
-    | (.x (.mapUpsert computed weak)) =>
-      let ck : Nat ← match thisV with
-        | .obj c => match (← getObj c).kind with
-          | .coll k _ _ => pure k
-          | _ => throwErr .type "method called on incompatible receiver"
-        | _ => throwErr .type "method called on incompatible receiver"
-      -- Map's method needs a Map (kind 0), WeakMap's a WeakMap (kind 2)
-      if ck != (if weak then 2 else 0) then throwErr .type "method called on incompatible receiver"
-      if computed && !(← isCallable a1) then throwErr .type "getOrInsertComputed: the callback is not a function"
-      if weak && !a0.isObj then throwErr .type "Invalid value used as weak collection key"
-      if toBool (← core.callNative .mapHas thisV #[a0] none) then core.callNative .mapGet thisV #[a0] none
-      else
-        let key := match a0 with | .num x => if x == 0 then Value.num 0 else a0 | _ => a0
-        let v ← if computed then core.callV a1 .undef #[key] else pure a1
-        let _ ← core.callNative .mapSet thisV #[a0, v] none
-        pure v
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: streams and URLPattern. `r` is the realm `moreNative` read. -/
+def moreNativeWeb (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | (.x .streams) =>
       -- `n.streams(op, ...)` for the page's stream classes: the queue-with-sizes of a
       -- controller and the fill plan of a BYOB read are `WHATWG.Streams`
@@ -4224,65 +4489,6 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
           pure (.num (if p.ready then -(p.toCopy.toFloat) - 1 else p.toCopy.toFloat))
         | _ => throwErr .type "streams: unknown operation"
       | _ => throwErr .type "streams: unknown operation"
-    | (.x (.protoAccessor false)) =>
-      -- get Object.prototype.__proto__ (B.2.2.1.1)
-      let id ← core.toObj thisV
-      core.callNative .objectGetPrototypeOf .undef #[.obj id] none
-    | (.x (.protoAccessor true)) =>
-      -- set Object.prototype.__proto__ (B.2.2.1.2)
-      match thisV with
-      | .undef | .null => throwErr .type "Object.prototype.__proto__ called on null or undefined"
-      | .obj id =>
-        match a0 with
-        | .obj _ | .null =>
-          if toBool (← core.callNative (.reflect 2) .undef #[.obj id, a0] none) then pure .undef
-          else throwErr .type "Object.prototype.__proto__: the prototype of this object cannot be changed"
-        | _ => pure .undef
-      | _ => pure .undef
-    | (.x .promiseWithResolvers) =>
-      -- §27.2.4.8 Promise.withResolvers: NewPromiseCapability(this) (§27.2.1.5)
-      if !(← isConstructor thisV) then throwErr .type "Promise.withResolvers: this is not a constructor"
-      let cap ← alloc { proto := .null }
-      let exec ← anonFn (.x .capabilityExecutor) #[.obj cap] 2
-      let p ← core.construct thisV #[exec] thisV
-      let field (k : String) : M Value := do
-        match (← getObj cap).getOwn k with
-        | some (.data v ..) => pure v
-        | _ => pure .undef
-      let res ← field "resolve"
-      let rej ← field "reject"
-      if !(← isCallable res) || !(← isCallable rej) then
-        throwErr .type "Promise.withResolvers: the constructor did not give callable resolving functions"
-      let o ← newObject
-      defineOwn o "promise" (.data p true true true)
-      defineOwn o "resolve" (.data res true true true)
-      defineOwn o "reject" (.data rej true true true)
-      pure (.obj o)
-    | (.x .capabilityExecutor) =>
-      -- GetCapabilitiesExecutor (§27.2.1.5 step 4): the record, then resolve and reject
-      match a0 with
-      | .obj cap =>
-        let o ← getObj cap
-        let isSet (k : String) : Bool := match o.getOwn k with
-          | some (.data .undef ..) | none => false
-          | _ => true
-        if isSet "resolve" || isSet "reject" then throwErr .type "Promise executor has already been invoked"
-        defineOwn cap "resolve" (.data a1 true true true)
-        defineOwn cap "reject" (.data (argD args 2) true true true)
-        pure .undef
-      | _ => pure .undef
-    | (.x (.dynFunction k)) =>
-      -- CreateDynamicFunction (§20.2.1.1.1) for the generator, async and async generator kinds
-      let strs ← args.toList.mapM (core.toStr)
-      let (ps, body) := match strs.reverse with
-        | [] => ([], "")
-        | b :: rest => (rest.reverse, b)
-      let kw := match k with | 1 => "function*" | 2 => "async function" | _ => "async function*"
-      match (parseScript (dynFunctionSource kw ps body) false).map Resolve.script with
-      | .error e => throwErr .syntax ((e.drop 13).toString)
-      | .ok { body := [.expr e], .. } =>
-        core.evalExpr { env := 0, thisV := .obj r.globalObj, strict := false } e
-      | .ok _ => throwErr .syntax "invalid function body"
     | (.x .urlPattern) =>
       -- `n.urlPattern(op, ...)` for the page's URLPattern class: the Standard's algorithms are
       -- `WHATWG.URLPattern.create` and `exec`; this converts the arguments and builds the answer.
@@ -4364,61 +4570,13 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
             defineOwn c "groups" (.data (.obj g) true true true)
             defineOwn out name (.data (.obj c) true true true)
           pure (.obj out)
-    | (.x .realmTake) =>
-      -- a test host's `$262.createRealm()`: the next realm the host made (`addRealm`)
-      let h ← get
-      match h.spareRealms[0]? with
-      | none => throwErr .type "$262.createRealm: the host has no realm left to give"
-      | some k =>
-        set { h with spareRealms := h.spareRealms.extract 1 h.spareRealms.size }
-        pure (h.realms.getD k {}).host
-    | (.x .gcNoop) => pure .undef
-    | (.x .dynImport) =>
-      -- EvaluateImportCall (§13.3.10.1): the specifier as a string, then the options' `with`
-      -- object, whose values must be strings (steps 7 to 10); an abrupt step rejects the promise.
-      let pid ← newPromise
-      let x ← catchJS (do
-          let spec ← core.toStr a0
-          let mut ty := ""
-          match a1 with
-          | .undef => pure ()
-          | .obj _ =>
-            match ← core.getV a1 "with" with
-            | .undef => pure ()
-            | .obj wid =>
-              for k in ← core.ownKeysOf wid do
-                if isSymKey k || isPrivKey k then continue
-                let some d ← core.ownDesc wid k | continue
-                if !d.enumerable then continue
-                match ← core.getV (.obj wid) k with
-                | .str v => if k == "type" then ty := Str.toHost v
-                | _ => throwErr .type "import(): the value of an import attribute must be a string"
-            | _ => throwErr .type "import(): the 'with' option must be an object"
-          | _ => throwErr .type "import(): the second argument must be an object"
-          pure (Except.ok (spec, ty)))
-        (fun a => pure (Except.error a))
-      match x with
-      | .error (.throw e) => core.rejectPromise pid e
-      | .error a => throw a
-      | .ok (spec, ty) =>
-        if args.size ≥ 3 then
-          -- `import.source(x)` (the source phase imports proposal): every module this host loads
-          -- is a Source Text Module Record, whose GetModuleSource throws a SyntaxError
-          core.rejectPromise pid (← mkError .syntax "import.source(): a JavaScript module has no source phase representation")
-        else
-        match (← get).importQueue with
-        | some q => modify fun h => { h with importQueue := some (q.push (Str.toHost spec, ty, pid)) }
-        | none => core.rejectPromise pid (← mkError .type "import() is not supported in this script")
-      pure (.obj pid)
-    | (.x (.promiseThenableFn reject)) =>
-      -- bound arguments: the promise and the pair's [[AlreadyResolved]] record
-      match a0, a1 with
-      | .obj pid, .obj record =>
-        if !(← getObj record).props.contains "done" then
-          setHidden record "done" (.bool true)
-          if reject then core.rejectPromise pid (argD args 2) else core.resolvePromise pid (argD args 2)
-        pure .undef
-      | _, _ => pure .undef
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: `for await` and the async-from-sync iterator. `r` is the realm `moreNative` read. -/
+def moreNativeAsyncIter (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | (.x (.forAwait 0)) =>
       -- GetIterator(obj, async) (§7.4.3): the @@asyncIterator method's iterator, or an
       -- async-from-sync iterator over the @@iterator method's (§27.1.6.1).
@@ -4515,6 +4673,13 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
         | some a => throw a
         | none => pure ()
       pure (.obj pid)
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `moreNative`: `Array.fromAsync`. `r` is the realm `moreNative` read. -/
+def moreNativeFromAsync (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | (.x .arrayFromAsync) =>
       -- Array.fromAsync (asyncItems, mapfn, thisArg): a promise for the array; every abrupt
       -- completion of the setup rejects it (IfAbruptRejectPromise)
@@ -4629,13 +4794,105 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       | some a => throw a
       | none => pure ()
       pure Value.undef
-    | (.x .stringIsWellFormed) | (.x .stringToWellFormed) =>
-      let tp ← thisPrim thisV
-      match tp with
-      | .undef | .null => throwErr .type "String.prototype method called on null or undefined"
-      | _ => pure ()
-      let s ← core.toStr tp
-      if id == (.x .stringIsWellFormed) then pure (.bool (Str.isWellFormed s)) else pure (.str (Str.toWellFormed s))
+    | _ => throwErr .type "not a function"
+
+/-- ArrayBuffer `resize` and `transfer` and its accessors, SharedArrayBuffer, %TypedArray%
+(the constructor, `from`, `of`, the accessors and the methods that answer typed arrays),
+Atomics without waiting, and `String.prototype.isWellFormed`/`toWellFormed`. -/
+def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let r ← realm
+    match id with
+    | (.x (.dataViewGetter _)) => moreNativeBuffers core r id thisV args newTarget
+    | (.x (.bufferGetter _)) => moreNativeBuffers core r id thisV args newTarget
+    | (.x .bufferResize) => moreNativeBuffers core r id thisV args newTarget
+    | (.x (.bufferTransfer _)) => moreNativeBuffers core r id thisV args newTarget
+    | (.x .sharedCtor) => moreNativeBuffers core r id thisV args newTarget
+    | (.x (.sharedGetter _)) => moreNativeBuffers core r id thisV args newTarget
+    | (.x .sharedGrow) => moreNativeBuffers core r id thisV args newTarget
+    | (.x .sharedSlice) => moreNativeBuffers core r id thisV args newTarget
+    | (.x .typedArrayCtor) => moreNativeTyped core r id thisV args newTarget
+    | (.x .typedOf) | (.x .typedFrom) => moreNativeTyped core r id thisV args newTarget
+    | (.x (.typedGetter _)) => moreNativeTyped core r id thisV args newTarget
+    | (.x (.typedGeneric _)) => moreNativeTyped core r id thisV args newTarget
+    | (.x (.typedMethod _)) => moreNativeTypedMethod core r id thisV args newTarget
+    | (.x (.atomics _)) => moreNativeBuffers core r id thisV args newTarget
+    | (.x .iteratorCtor) => moreNativeIterator core r id thisV args newTarget
+    | (.x .suppressedErrorCtor) => moreNativeDisposable core r id thisV args newTarget
+    | (.x .disposableStackCtor) => moreNativeDisposable core r id thisV args newTarget
+    | (.x .disposableStackDisposed) => moreNativeDisposable core r id thisV args newTarget
+    | (.x (.disposableStackMethod _)) => moreNativeDisposable core r id thisV args newTarget
+    | (.x .adoptClosure) => moreNativeDisposable core r id thisV args newTarget
+    | (.x .asyncDisposableStackCtor) => moreNativeAsyncDisposable core r id thisV args newTarget
+    | (.x .asyncDsDisposed) => moreNativeAsyncDisposable core r id thisV args newTarget
+    | (.x (.u8Base64 _)) => moreNativeTyped core r id thisV args newTarget
+    | (.x (.arrayToLocaleString _)) => moreNativeTyped core r id thisV args newTarget
+    | (.x .fnHasInstance) => moreNativeObject core r id thisV args newTarget
+    | (.x .asyncDsSyncWrap) => moreNativeAsyncDisposable core r id thisV args newTarget
+    | (.x (.asyncDsMethod _)) => moreNativeAsyncDisposable core r id thisV args newTarget
+    | (.x (.asyncDsStep _)) => moreNativeAsyncDisposable core r id thisV args newTarget
+    | (.x .iteratorDispose) => moreNativeDisposable core r id thisV args newTarget
+    | (.x .temporal) => moreNativeDate core r id thisV args newTarget
+    | (.x .errorIsError) => moreNativeObject core r id thisV args newTarget
+    | (.x .promiseTry) => moreNativePromise core r id thisV args newTarget
+    | (.x (.regexpSym _)) => moreNativeString core r id thisV args newTarget
+    | (.x .speciesGetter) => moreNativeObject core r id thisV args newTarget
+    | (.x (.collMethod _ _)) => moreNativeSet core r id thisV args newTarget
+    | (.x (.stringHtml _)) => moreNativeString core r id thisV args newTarget
+    | (.x .regexpCompile) => moreNativeString core r id thisV args newTarget
+    | (.x .regexpEscape) => moreNativeString core r id thisV args newTarget
+    | (.x (.iteratorZip _)) => moreNativeIteratorZip core r id thisV args newTarget
+    | (.x .iteratorConcat) => moreNativeIterator core r id thisV args newTarget
+    | (.x .iteratorFrom) => moreNativeIterator core r id thisV args newTarget
+    | (.x (.iterLazy _)) => moreNativeIterator core r id thisV args newTarget
+    | (.x (.iterEager 6)) | (.x (.iterEager 7)) => moreNativeIterEager core r id thisV args newTarget
+    | (.x (.iterEager _)) => moreNativeIterEager core r id thisV args newTarget
+    | (.x .helperNext) | (.x .helperReturn) => moreNativeIterHelper core r id thisV args newTarget
+    | (.x .numberToExponential) | (.x .numberToPrecision) => moreNativeString core r id thisV args newTarget
+    | (.x .cloneSerialize) => moreNativeClone core r id thisV args newTarget
+    | (.x .cloneDeserialize) => moreNativeClone core r id thisV args newTarget
+    | (.x .classicScript) => moreNativeClone core r id thisV args newTarget
+    | (.x (.setMethod _)) => moreNativeSet core r id thisV args newTarget
+    | (.x .proxyRevocable) => moreNativeObject core r id thisV args newTarget
+    | (.x .proxyRevoke) => moreNativeObject core r id thisV args newTarget
+    | (.x (.arrayMethod _)) => moreNativeArray core r id thisV args newTarget
+    | (.x .objectHasOwn) => moreNativeObject core r id thisV args newTarget
+    | (.x (.groupBy _)) => moreNativeWeak core r id thisV args newTarget
+    | (.x .stringLocaleCompare) => moreNativeString core r id thisV args newTarget
+    | (.x (.errorStack false)) => moreNativeObject core r id thisV args newTarget
+    | (.x (.errorStack true)) => moreNativeObject core r id thisV args newTarget
+    | (.x .aggregateErrorCtor) => moreNativeObject core r id thisV args newTarget
+    | (.x .dateUTC) => moreNativeDate core r id thisV args newTarget
+    | (.x .dateParse) => moreNativeDate core r id thisV args newTarget
+    | (.x (.dateMethod _)) => moreNativeDate core r id thisV args newTarget
+    | (.x .namedGetterSet) => moreNativeObject core r id thisV args newTarget
+    | (.x .symbolFor) | (.x .symbolKeyFor) => moreNativeString core r id thisV args newTarget
+    | (.x .stringRaw) => moreNativeString core r id thisV args newTarget
+    | (.x .weakRefCtor) => moreNativeWeak core r id thisV args newTarget
+    | (.x .weakRefDeref) => moreNativeWeak core r id thisV args newTarget
+    | (.x .finRegCtor) => moreNativeWeak core r id thisV args newTarget
+    | (.x (.finRegMethod _)) => moreNativeWeak core r id thisV args newTarget
+    | (.x (.mapUpsert _ _)) => moreNativeWeak core r id thisV args newTarget
+    | (.x .streams) => moreNativeWeb core r id thisV args newTarget
+    | (.x (.protoAccessor false)) => moreNativeObject core r id thisV args newTarget
+    | (.x (.protoAccessor true)) => moreNativeObject core r id thisV args newTarget
+    | (.x .promiseWithResolvers) => moreNativePromise core r id thisV args newTarget
+    | (.x .capabilityExecutor) => moreNativePromise core r id thisV args newTarget
+    | (.x (.dynFunction _)) => moreNativeObject core r id thisV args newTarget
+    | (.x .urlPattern) => moreNativeWeb core r id thisV args newTarget
+    | (.x .realmTake) => moreNativeObject core r id thisV args newTarget
+    | (.x .gcNoop) => moreNativeObject core r id thisV args newTarget
+    | (.x .dynImport) => moreNativePromise core r id thisV args newTarget
+    | (.x (.promiseThenableFn _)) => moreNativePromise core r id thisV args newTarget
+    | (.x (.forAwait 0)) => moreNativeAsyncIter core r id thisV args newTarget
+    | (.x (.forAwait 1)) => moreNativeAsyncIter core r id thisV args newTarget
+    | (.x (.forAwait _)) => moreNativeAsyncIter core r id thisV args newTarget
+    | (.x (.asyncFromSync 3)) => moreNativeAsyncIter core r id thisV args newTarget
+    | (.x (.asyncFromSync 4)) => moreNativeAsyncIter core r id thisV args newTarget
+    | (.x (.asyncFromSync 5)) => moreNativeAsyncIter core r id thisV args newTarget
+    | (.x (.asyncFromSync _)) => moreNativeAsyncIter core r id thisV args newTarget
+    | (.x .arrayFromAsync) => moreNativeFromAsync core r id thisV args newTarget
+    | (.x (.fromAsyncStep _)) => moreNativeFromAsync core r id thisV args newTarget
+    | (.x .stringIsWellFormed) | (.x .stringToWellFormed) => moreNativeString core r id thisV args newTarget
     | _ => throwErr .type "not a function"
 
 /-- RegExp, the String methods with a RegExp, Proxy, JSON.parse, ArrayBuffer, the typed
@@ -5175,24 +5432,10 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
     | .host k => callHost k args
     | _ => throwErr .type "not a function"
 
-/-- Built-in functions. `newTarget` is set for `new`. -/
-def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
-    -- A built-in's loops are over its receiver and arguments: one step per call is not
-    -- enough when it walks them, so the call takes steps for their size (`sizeCost`). The
-    -- String methods that index an ASCII receiver in constant time (`charAt`, `charCodeAt`,
-    -- `at`, `codePointAt`) or copy only their result (`slice`, `substring`, `substr`, which
-    -- take steps for the result) do not walk it, and take no steps for it.
-    let recvCost ← if indexesReceiver id thisV then pure 0 else
-      match ← cachedReceiverCost id thisV with
-      | some c => pure c
-      | none => sizeCost thisV
-    let argsCost ← if (← subjectCached id args) then pure 0
-      else args.foldlM (fun acc a => do pure (acc + (← sizeCost a))) 0
-    charge (recvCost + args.size / 64 + argsCost)
+/-- Built-ins of `callNative`: the global functions, `eval`, `%ThrowTypeError%` and `Date.now`. `r` is the realm `callNative` read. -/
+def callNativeGlobal (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
     let a0 := argD args 0
     let a1 := argD args 1
-    let r ← realm
-    let id_ := id
     match id with
     | .print =>
       let parts ← args.toList.mapM (core.toStr)
@@ -5205,6 +5448,20 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       let rx ← core.toNum a1
       pure (.num (parseIntStr s (toInt32 rx)))
     | .parseFloat => pure (.num (parseFloatStr (← core.toStr a0)))
+    | .throwTypeError => throwErr .type "'caller', 'callee', and 'arguments' properties may not be accessed"
+    | .eval =>
+      match a0 with
+      | .str _ => core.directEval { env := 0, thisV := .obj r.globalObj, strict := false } a0
+      | v => pure v
+    | .dateNow => pure (.num ((← hostNowNs) / 1000000).floor)
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: the Object constructor and its static methods. `r` is the realm `callNative` read. -/
+def callNativeObjectStatic (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let id_ := id
+    match id with
     | .objectCtor =>
       match a0 with
       | .undef | .null => pure (.obj (← newObject))
@@ -5345,6 +5602,92 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
           | _ => return .bool (← getObj cur).extensible
         pure (.bool false)
       | _ => pure (.bool false)
+    | .objectGetOwnPropertySymbols =>
+      let id ← core.toObj a0
+      let ks := (← getObj id).ownKeys.filter isSymKey
+      newArray (ks.filterMap fun k => (symOfKey? k).map .sym)
+    | .objectAssign =>
+      let tid ← core.toObj a0
+      for src in args.extract 1 args.size do
+        match src with
+        | .undef | .null => pure ()
+        | _ =>
+          let sid ← core.toObj src
+          for k in (← getObj sid).ownKeys do
+            match (← getObj sid).getOwn k with
+            | some p => if p.enumerable then core.putV (.obj tid) k (← core.getV (.obj sid) k) true
+            | none => pure ()
+      pure (.obj tid)
+    | .objectEntries | .objectValues =>
+      let id ← core.toObj a0
+      let o ← getObj id
+      let ks := o.ownStrKeys.filter fun k => match o.getOwn k with | some p => p.enumerable | none => false
+      let vs ← ks.mapM fun k => do
+        let v ← core.getV (.obj id) k
+        if id_ == .objectEntries then newArray #[keyStrV k, v] else pure v
+      newArray vs
+    | .objectDefineProperties =>
+      match a0 with
+      | .obj id =>
+        -- ObjectDefineProperties (§20.1.2.3.1): every descriptor is read (and checked) before
+        -- any property is defined; keys by [[OwnPropertyKeys]], enumerability by [[GetOwnProperty]]
+        let pid ← core.toObj a1
+        let mut descs : Array (String × Desc) := #[]
+        for k in ← core.ownKeysOf pid do
+          match ← core.ownDesc pid k with
+          | some p =>
+            if p.enumerable then descs := descs.push (k, ← core.toPropDesc (← core.getV (.obj pid) k))
+          | none => pure ()
+        for (k, d) in descs do
+          if !(← core.defineOwnProp id k d) then throwErr .type s!"Cannot redefine property: {k}"
+        pure a0
+      | _ => throwErr .type "Object.defineProperties called on non-object"
+    | .objectSeal =>
+      match a0 with
+      | .obj id =>
+        let o ← getObj id
+        -- a sealed Array's elements are not configurable: they leave the fast form (`markArray`)
+        let o := match o.kind with
+          | .array es =>
+            let o := ({ o with kind := .ordinary } : Obj).markArray
+            let o := (List.range es.size).foldl (fun (o : Obj) i =>
+              if Value.isHole es[i]! then o else o.putOwn (toString i) (PropV.data es[i]! true true true)) o
+            o.putOwn "length" (.data (.num (Float.ofNat es.size)) true false false)
+          | _ => o
+        let props := o.props.mapValues (fun p => (match p with
+          | .data v w e _ => .data v w e false
+          | .acc g s e _ => .acc g s e false))
+        modifyObj id fun _ => { o with props, extensible := false }
+        pure a0
+      | _ => pure a0
+    | .objectIsSealed =>
+      match a0 with
+      | .obj id =>
+        let o ← getObj id
+        pure (.bool (!o.extensible && o.ownKeys.all fun k => match o.getOwn k with
+          | some p => !p.configurable | none => true))
+      | _ => pure (.bool true)
+    | .objectGetOwnPropertyDescriptors =>
+      let id ← core.toObj a0
+      let res ← newObject
+      for k in (← getObj id).ownKeys do
+        let d ← core.callNative .objectGetOwnPropertyDescriptor .undef #[.obj id, keyValue k] none
+        defineOwn res k (.data d true true true)
+      pure (.obj res)
+    | .objectFromEntries =>
+      let res ← newObject
+      let items ← core.iterToArray (← core.getIterator a0) #[]
+      for item in items do
+        let k ← core.toKey (← core.getV item "0")
+        defineOwn res k (.data (← core.getV item "1") true true true)
+      pure (.obj res)
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: Object.prototype and Function. `r` is the realm `callNative` read. -/
+def callNativeObjectProto (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | .objectProtoHasOwnProperty =>
       let k ← core.toKey a0
       let id ← core.toObj thisV
@@ -5485,6 +5828,13 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
           else throwErr .type "Function.prototype.toString requires that 'this' be a Function"
         | _ => throwErr .type "Function.prototype.toString requires that 'this' be a Function"
       | _ => throwErr .type "Function.prototype.toString requires that 'this' be a Function"
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: the Array constructor and the methods that change the array. `r` is the realm `callNative` read. -/
+def callNativeArrayEdit (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | .arrayCtor =>
       if args.size == 1 then
         match a0 with
@@ -5599,6 +5949,82 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
           | some a => core.speciesFill a removed (some removed.size)
         | _ => newArray #[]
       | _ => newArray #[]
+    | .arrayReverse =>
+      match thisV with
+      | .obj oid => match (← getObj oid).kind with
+        | .array es =>
+          if es.any (·.isHole) then core.arrayGeneric id thisV args
+          else modifyObj oid (fun o => { o with kind := .array es.reverse }); pure thisV
+        | _ => core.arrayGeneric id thisV args
+      | _ => core.arrayGeneric id thisV args
+    | .arrayFill =>
+      -- §23.1.3.7 on any object: ToObject, LengthOfArrayLike, the bounds, Set each index
+      let arrayFillGeneric : M Value := do
+        let oid ← core.toObj thisV
+        let o := Value.obj oid
+        let len ← core.arrayLikeLength o
+        let s := relIndex (← core.toNum a1) len
+        let e ← match argD args 2 with
+          | .undef => pure len
+          | v => do pure (relIndex (← core.toNum v) len)
+        for k in [s:e] do
+          tick
+          core.putV o (toString k) a0 true
+        pure o
+      match thisV with
+      | .obj id => match (← getObj id).kind with
+        | .array es =>
+          let s := relIndex (← core.toNum a1) es.size
+          let e ← match argD args 2 with
+            | .undef => pure es.size
+            | v => do pure (relIndex (← core.toNum v) es.size)
+          let es' := es.mapIdx fun i v => if s ≤ i && i < e then a0 else v
+          modifyObj id fun o => { o with kind := .array es' }
+          pure thisV
+        | _ => arrayFillGeneric
+      | _ => arrayFillGeneric
+    | .arraySort =>
+      -- §23.1.3.30: the comparator is undefined or callable; SortIndexedProperties takes the
+      -- present elements, sorts them, writes them back from 0 and deletes the rest
+      if !(a0 matches .undef) && !(← isCallable a0) then
+        throwErr .type "The comparison function must be either a function or undefined"
+      let oid ← core.toObj thisV
+      let o := Value.obj oid
+      let fastEs ← match (← getObj oid).kind with
+        | .array es => pure (if es.any (·.isHole) then none else some es)
+        | _ => pure none
+      let (items, len) ← match fastEs with
+        | some es => pure (es, es.size)
+        | none => do
+          let len ← core.arrayLikeLength o
+          let mut items : Array Value := #[]
+          for k in [0:len] do
+            tick
+            if ← core.hasProp oid (toString k) then items := items.push (← core.getV o (toString k))
+          pure (items, len)
+      let sorted := (← core.mergeSort a0 items.toList).toArray
+      -- write back into the object as it is now (the comparator may have changed it)
+      let wrote ← updateObj oid fun ob =>
+        match ob.kind with
+        | .array cur =>
+          if sorted.size == len && cur.size ≥ len && ob.extensible then
+            (true, { ob with kind := .array (sorted ++ cur.extract len cur.size) })
+          else (false, ob)
+        | _ => (false, ob)
+      if !wrote then
+        for j in [0:sorted.size] do core.putV o (toString j) sorted[j]! true
+        for k in [sorted.size:len] do
+          tick
+          core.deleteOrThrow o (toString k)
+      pure o
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: the Array methods that read the array, and its iterators. `r` is the realm `callNative` read. -/
+def callNativeArrayRead (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let id_ := id
+    match id with
     | .arrayJoin | .arrayToString =>
       -- a cycle (the array met again while it is being joined) is an implementation limit:
       -- RangeError, as exhausting the stack is in other engines, and never a native overflow
@@ -5691,40 +6117,6 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       match sp with
       | none => newArray acc
       | some a => core.speciesFill a acc (some acc.size)
-    | .arrayReverse =>
-      match thisV with
-      | .obj oid => match (← getObj oid).kind with
-        | .array es =>
-          if es.any (·.isHole) then core.arrayGeneric id thisV args
-          else modifyObj oid (fun o => { o with kind := .array es.reverse }); pure thisV
-        | _ => core.arrayGeneric id thisV args
-      | _ => core.arrayGeneric id thisV args
-    | .arrayFill =>
-      -- §23.1.3.7 on any object: ToObject, LengthOfArrayLike, the bounds, Set each index
-      let arrayFillGeneric : M Value := do
-        let oid ← core.toObj thisV
-        let o := Value.obj oid
-        let len ← core.arrayLikeLength o
-        let s := relIndex (← core.toNum a1) len
-        let e ← match argD args 2 with
-          | .undef => pure len
-          | v => do pure (relIndex (← core.toNum v) len)
-        for k in [s:e] do
-          tick
-          core.putV o (toString k) a0 true
-        pure o
-      match thisV with
-      | .obj id => match (← getObj id).kind with
-        | .array es =>
-          let s := relIndex (← core.toNum a1) es.size
-          let e ← match argD args 2 with
-            | .undef => pure es.size
-            | v => do pure (relIndex (← core.toNum v) es.size)
-          let es' := es.mapIdx fun i v => if s ≤ i && i < e then a0 else v
-          modifyObj id fun o => { o with kind := .array es' }
-          pure thisV
-        | _ => arrayFillGeneric
-      | _ => arrayFillGeneric
     | .arrayMap | .arrayForEach | .arrayFilter | .arraySome | .arrayEvery | .arrayFind
     | .arrayFindIndex =>
       -- §23.1.3: ToObject(this), LengthOfArrayLike, then the callback's check
@@ -5757,280 +6149,53 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
         match first with
         | some acc => core.reduceArray a0 (.obj oid) len k acc
         | none => throwErr .type "Reduce of empty array with no initial value"
-    | .arraySort =>
-      -- §23.1.3.30: the comparator is undefined or callable; SortIndexedProperties takes the
-      -- present elements, sorts them, writes them back from 0 and deletes the rest
-      if !(a0 matches .undef) && !(← isCallable a0) then
-        throwErr .type "The comparison function must be either a function or undefined"
-      let oid ← core.toObj thisV
-      let o := Value.obj oid
-      let fastEs ← match (← getObj oid).kind with
-        | .array es => pure (if es.any (·.isHole) then none else some es)
-        | _ => pure none
-      let (items, len) ← match fastEs with
-        | some es => pure (es, es.size)
-        | none => do
-          let len ← core.arrayLikeLength o
-          let mut items : Array Value := #[]
-          for k in [0:len] do
-            tick
-            if ← core.hasProp oid (toString k) then items := items.push (← core.getV o (toString k))
-          pure (items, len)
-      let sorted := (← core.mergeSort a0 items.toList).toArray
-      -- write back into the object as it is now (the comparator may have changed it)
-      let wrote ← updateObj oid fun ob =>
-        match ob.kind with
-        | .array cur =>
-          if sorted.size == len && cur.size ≥ len && ob.extensible then
-            (true, { ob with kind := .array (sorted ++ cur.extract len cur.size) })
-          else (false, ob)
-        | _ => (false, ob)
-      if !wrote then
-        for j in [0:sorted.size] do core.putV o (toString j) sorted[j]! true
-        for k in [sorted.size:len] do
-          tick
-          core.deleteOrThrow o (toString k)
-      pure o
-    | .stringCtor =>
-      let s ← match a0, newTarget with
-        | .sym id, none => pure ("Symbol(" ++ (← get).syms.getD id "" ++ ")")
-        | _, _ => if args.isEmpty then pure "" else core.toStr a0
-      match newTarget with
-      | some _ => pure (.obj (← alloc { proto := .obj r.stringProto, kind := .prim (.str s) }))
-      | none => pure (.str s)
-    | .stringFromCharCode =>
-      let us ← args.toList.mapM fun a => do pure ((toUint32 (← core.toNum a)) % 65536)
-      pure (.str (Str.ofCodeUnits us))
-    | .stringToString =>
-      match ← thisPrim thisV with
-      | .str s => pure (.str s)
-      | _ => throwErr .type "String.prototype.toString requires that 'this' be a String"
-    | .numberCtor =>
-      -- §21.1.1.1: ToNumeric, and a BigInt becomes the Number of its value.
-      let x ← if args.isEmpty then pure 0 else match ← core.toPrim a0 "number" with
-        | .big i => pure (Float.ofInt i)
-        | p => core.toNum p
-      match newTarget with
-      | some _ => pure (.obj (← alloc { proto := .obj r.numberProto, kind := .prim (.num x) }))
-      | none => pure (.num x)
-    | .numberValueOf | .numberToString | .numberToFixed =>
-      -- thisNumberValue (§21.1.3): a Number or a Number object; a Date's time value is not one
-      if (← thisDate? thisV).isSome then throwErr .type "Number.prototype method requires that 'this' be a Number"
-      let x ← match ← thisPrim thisV with
-        | .num x => pure x
-        | _ => throwErr .type "Number.prototype method requires that 'this' be a Number"
-      match id with
-      | .numberValueOf => pure (.num x)
-      | .numberToString =>
-        let radix ← match a0 with | .undef => pure 10 | v => do pure (toIntegerOrInf (← core.toNum v))
-        if radix < 2 || radix > 36 then throwErr .range "toString() radix must be between 2 and 36"
-        if radix == 10 || !isIntegral x then pure (.str (numToString x))
-        else
-          let i := truncInt x
-          let ds := Nat.toDigits radix.toUInt64.toNat i.natAbs
-          pure (.str ((if i < 0 then "-" else "") ++ String.ofList ds))
-      | _ =>
-        let d := toIntegerOrInf (← core.toNum a0)
-        if d < 0 || d > 100 then throwErr .range "toFixed() digits argument must be between 0 and 100"
-        if x.abs ≥ 1e21 || !x.isFinite then pure (.str (numToString x)) else
-        -- exact digits (JS/NumFmt.lean)
-        let (neg, num, den) := NumFmt.ofFloat x
-        pure (.str (NumFmt.fixed neg num den d.toUInt64.toNat))
-    | .numberIsInteger => pure (.bool (match a0 with | .num x => isIntegral x | _ => false))
-    | .booleanCtor =>
-      let b := toBool a0
-      match newTarget with
-      | some _ => pure (.obj (← alloc { proto := .obj r.booleanProto, kind := .prim (.bool b) }))
-      | none => pure (.bool b)
-    | .booleanToString | .booleanValueOf =>
-      match ← thisPrim thisV with
-      | .bool b => pure (if id == .booleanValueOf then .bool b else .str (if b then "true" else "false"))
-      | _ => throwErr .type "Boolean.prototype method requires that 'this' be a Boolean"
-    | .errorCtor k =>
-      let proto ← match newTarget with
-        | some nt => do
-          let p ← core.getV nt "prototype"
-          let nr ← funRealm nt
-          pure (if p.isObj then p else .obj (nr.errorProtos.getD k nr.objectProto))
-        | none => pure (.obj (r.errorProtos.getD k r.objectProto))
-      let o ← alloc { proto, kind := .error }
-      match a0 with
-      | .undef => pure ()
-      | v => setHidden o "message" (.str (← core.toStr v))
-      pure (.obj o)
-    | .errorToString =>
-      if !thisV.isObj then throwErr .type "Error.prototype.toString called on non-object"
-      let nm ← core.getV thisV "name"
-      let nm ← match nm with | .undef => pure "Error" | v => core.toStr v
-      let msg ← core.getV thisV "message"
-      let msg ← match msg with | .undef => pure "" | v => core.toStr v
-      pure (.str (if nm.isEmpty then msg else if msg.isEmpty then nm else nm ++ ": " ++ msg))
-    | .throwTypeError => throwErr .type "'caller', 'callee', and 'arguments' properties may not be accessed"
-    | .jsonStringify =>
-      -- §25.5.2.1 JSON.stringify(value, replacer, space)
-      let mut plist : Option (Array String) := none
-      let mut repl := Value.undef
-      if a1.isObj then
-        if ← isCallable a1 then repl := a1
-        else if ← isArrayDeep 100000 a1 then
-          let len ← core.arrayLikeLength a1
-          let mut ks : Array String := #[]
-          for i in [0:len] do
-            tick
-            let v ← core.getV a1 (toString i)
-            let item ← match v with
-              | .str t => pure (some t)
-              | .num x => pure (some (numToString x))
-              | .obj vid => do
-                match (← getObj vid).kind with
-                | .prim (.str _) | .prim (.num _) => pure (some (← core.toStr v))
-                | _ => pure none
-              | _ => pure none
-            if let some t := item then
-              if !ks.contains (strKey t) then ks := ks.push (strKey t)
-          plist := some ks
-      let mut space := argD args 2
-      if let .obj sid := space then
-        match (← getObj sid).kind with
-        | .prim (.num _) => space := .num (← core.toNum space)
-        | .prim (.str _) => space := .str (← core.toStr space)
-        | _ => pure ()
-      let gap := match space with
-        | .num x =>
-          let k := toIntegerOrInf x
-          let k := if k > 10 then 10 else k
-          if k ≥ 1 then String.ofList (List.replicate k.toUInt64.toNat ' ') else ""
-        | .str t => Str.sliceUnits t 0 (min 10 (Str.jsLength t))
-        | _ => ""
-      let wrapper ← newObject
-      defineOwn wrapper "" (.data a0 true true true)
-      match ← core.jsonSer repl plist gap "" #[] (.obj wrapper) "" with
-      | some t => pure (.str (Str.canonical t))
-      | none => pure .undef
-    | .eval =>
-      match a0 with
-      | .str _ => core.directEval { env := 0, thisV := .obj r.globalObj, strict := false } a0
-      | v => pure v
-    | .symbolCtor =>
-      if newTarget.isSome then throwErr .type "Symbol is not a constructor"
-      let d ← match a0 with | .undef => pure "" | v => core.toStr v
-      let id ← modifyGet fun h => (h.syms.size, { h with syms := h.syms.push d })
-      pure (.sym id)
-    | .symbolToString | .symbolDescription | .symbolValueOf =>
-      let v ← thisPrim thisV
-      match v with
-      | .sym id =>
-        let d := (← get).syms.getD id ""
-        match id_ with
-        | .symbolToString => pure (.str ("Symbol(" ++ d ++ ")"))
-        | .symbolDescription => pure (.str d)
-        | _ => pure v
-      | _ => throwErr .type "Symbol.prototype method requires that 'this' be a Symbol"
-    | .objectGetOwnPropertySymbols =>
-      let id ← core.toObj a0
-      let ks := (← getObj id).ownKeys.filter isSymKey
-      newArray (ks.filterMap fun k => (symOfKey? k).map .sym)
-    | .objectAssign =>
-      let tid ← core.toObj a0
-      for src in args.extract 1 args.size do
-        match src with
-        | .undef | .null => pure ()
-        | _ =>
-          let sid ← core.toObj src
-          for k in (← getObj sid).ownKeys do
-            match (← getObj sid).getOwn k with
-            | some p => if p.enumerable then core.putV (.obj tid) k (← core.getV (.obj sid) k) true
-            | none => pure ()
-      pure (.obj tid)
-    | .objectEntries | .objectValues =>
-      let id ← core.toObj a0
-      let o ← getObj id
-      let ks := o.ownStrKeys.filter fun k => match o.getOwn k with | some p => p.enumerable | none => false
-      let vs ← ks.mapM fun k => do
-        let v ← core.getV (.obj id) k
-        if id_ == .objectEntries then newArray #[keyStrV k, v] else pure v
-      newArray vs
     | .arrayValues | .arrayKeys | .arrayEntries =>
       let o ← core.toObj thisV
       let mode := match id_ with | .arrayKeys => 1 | .arrayEntries => 2 | _ => 0
       pure (.obj (← alloc { proto := .obj r.arrayIterProto, kind := .iter (.obj o) 0 mode }))
-    | .stringIterator =>
-      match thisV with
-      | .undef | .null => throwErr .type "String.prototype[Symbol.iterator] called on null or undefined"
-      | _ =>
-        let s ← core.toStr thisV
-        pure (.obj (← alloc { proto := .obj r.arrayIterProto, kind := .iter (.str s) 0 3 }))
-    | .iterNext =>
-      let id ← match thisV with
-        | .obj id => pure id
-        | _ => throwErr .type "next method called on incompatible receiver"
-      match (← getObj id).kind with
-      | .iter target idx mode =>
-        let result (v : Value) (done : Bool) : M Value := do
-          let o ← newObject
-          defineOwn o "value" (.data v true true true)
-          defineOwn o "done" (.data (.bool done) true true true)
-          pure (.obj o)
-        if mode ≥ 20 then
-          -- %RegExpStringIteratorPrototype%.next (§22.2.9.2.1)
-          if let .undef := target then return ← result .undef true
-          let s := match (← getObj id).props.get? rsiStringKey with
-            | some (.data (.str s) ..) => s
-            | _ => ""
-          let m ← core.regExpExecG target s
-          let finish : M Unit := modifyObj id fun o => { o with kind := .iter .undef idx mode }
-          if let .null := m then finish; return ← result .undef true
-          if mode % 2 == 0 then finish; return ← result m false
-          if (← core.toStr (← core.getV m "0")).isEmpty then
-            let x := toIntegerOrInf (← core.toNum (← core.getV target "lastIndex"))
-            let li := if x ≤ 0 then 0 else if x ≥ 9007199254740991.0 then 9007199254740991 else x.toUInt64.toNat
-            core.putV target "lastIndex" (.num (Float.ofNat (advanceIndex s li ((mode / 2) % 2 == 1)))) true
-          return ← result m false
-        match target with
-        | .undef => result .undef true
-        | .str s =>
-          let cs := charsOf s
-          if idx < cs.size then
-            -- a surrogate pair is one code point (§22.1.5.1 %StringIteratorPrototype%.next)
-            let pair := idx + 1 < cs.size && Str.isHigh (Str.charUnit cs[idx]!) && Str.isLow (Str.charUnit cs[idx + 1]!)
-            let w := if pair then 2 else 1
-            modifyObj id fun o => { o with kind := .iter target (idx + w) mode }
-            result (.str (Str.ofUnitChars (cs.extract idx (idx + w)))) false
-          else
-            modifyObj id fun o => { o with kind := .iter .undef idx mode }
-            result .undef true
-        | _ =>
-          if let .obj tid := target then
-            if let .coll _ es _ := (← getObj tid).kind then
-              match collNext es idx es.size with
-              | none =>
-                modifyObj id fun o => { o with kind := .iter .undef idx mode }
-                return ← result .undef true
-              | some i =>
-                modifyObj id fun o => { o with kind := .iter target (i + 1) mode }
-                let (k, v) := (es[i]!).getD (.undef, .undef)
-                return ← match mode with
-                  | 5 => result k false
-                  | 6 => result v false
-                  | _ => do result (← newArray #[k, v]) false
-          let len ← match target with
-            | .obj tid => match (← getObj tid).kind with
-              | .array es => pure es.size
-              | _ => do pure (toIntegerOrInf (← core.toNum (← core.getV target "length"))).toUInt64.toNat
-            | _ => pure 0
-          if idx < len then
-            modifyObj id fun o => { o with kind := .iter target (idx + 1) mode }
-            match mode with
-            | 1 => result (.num (Float.ofNat idx)) false
-            | 2 =>
-              let v ← core.getV target (toString idx)
-              result (← newArray #[.num (Float.ofNat idx), v]) false
-            | _ => result (← core.getV target (toString idx)) false
-          else
-            modifyObj id fun o => { o with kind := .iter .undef idx mode }
-            result .undef true
-      | _ => throwErr .type "next method called on incompatible receiver"
-    | .iterSelf => pure thisV
+    | .arrayFlat | .arrayFlatMap =>
+      -- flat skips absent elements (`flattenArr`); flatMap's callback sees them as undefined
+      let raw ← match thisV with
+        | .obj tid => match (← getObj tid).kind with
+          | .array es => pure (if id_ == .arrayFlat then some es else none)
+          | _ => pure none
+        | _ => pure none
+      let es ← match raw with | some es => pure es | none => core.elemsOf thisV
+      let es ← if id_ == .arrayFlatMap then do
+          if !(← isCallable a0) then throwErr .type "flatMap mapper is not callable"
+          (List.range es.size).toArray.mapM fun i => core.callV a0 a1 #[es[i]!, .num (Float.ofNat i), thisV]
+        else pure es
+      let depth := if id_ == .arrayFlatMap then 1 else match a0 with
+        | .undef => 1
+        | .num d => if d.isNaN || d < 1 then 0 else (if d > 1000 then 1000 else d.toUInt64.toNat)
+        | _ => 1
+      let flat ← flattenArr depth es (depth + 1)
+      match ← core.speciesFrom thisV 0 with
+      | none => newArray flat
+      | some a => core.speciesFill a flat none
+    | .arrayAt =>
+      let es ← core.elemsOf thisV
+      let k := toIntegerOrInf (← core.toNum a0)
+      let i := if k < 0 then Float.ofNat es.size + k else k
+      if i < 0 || i ≥ Float.ofNat es.size then pure .undef else pure es[i.toUInt64.toNat]!
+    | .arrayFindLast | .arrayFindLastIndex =>
+      if !(← isCallable a0) then throwErr .type "callback is not a function"
+      let es ← core.elemsOf thisV
+      let mut found : Option Nat := none
+      for j in [0:es.size] do
+        let i := es.size - 1 - j
+        if found.isNone then
+          if toBool (← core.callV a0 a1 #[es[i]!, .num (Float.ofNat i), thisV]) then found := some i
+      match found with
+      | some i => pure (if id_ == .arrayFindLast then es[i]! else .num (Float.ofNat i))
+      | none => pure (if id_ == .arrayFindLast then .undef else .num (-1))
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: `Array.from` and `Array.of`. `r` is the realm `callNative` read. -/
+def callNativeArrayFrom (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | .arrayFrom =>
       -- §23.1.2.1: `this` makes the result when it is a constructor other than Array; a map
       -- function's error closes the iterator
@@ -6103,7 +6268,477 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
         let a ← core.construct thisV #[.num (Float.ofNat args.size)] thisV
         core.speciesFill a args (some args.size)
       else newArray args
-    | .dateNow => pure (.num ((← hostNowNs) / 1000000).floor)
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: the String constructor and the String methods kept here. `r` is the realm `callNative` read. -/
+def callNativeString (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let id_ := id
+    match id with
+    | .stringCtor =>
+      let s ← match a0, newTarget with
+        | .sym id, none => pure ("Symbol(" ++ (← get).syms.getD id "" ++ ")")
+        | _, _ => if args.isEmpty then pure "" else core.toStr a0
+      match newTarget with
+      | some _ => pure (.obj (← alloc { proto := .obj r.stringProto, kind := .prim (.str s) }))
+      | none => pure (.str s)
+    | .stringFromCharCode =>
+      let us ← args.toList.mapM fun a => do pure ((toUint32 (← core.toNum a)) % 65536)
+      pure (.str (Str.ofCodeUnits us))
+    | .stringToString =>
+      match ← thisPrim thisV with
+      | .str s => pure (.str s)
+      | _ => throwErr .type "String.prototype.toString requires that 'this' be a String"
+    | .stringIterator =>
+      match thisV with
+      | .undef | .null => throwErr .type "String.prototype[Symbol.iterator] called on null or undefined"
+      | _ =>
+        let s ← core.toStr thisV
+        pure (.obj (← alloc { proto := .obj r.arrayIterProto, kind := .iter (.str s) 0 3 }))
+    | .stringAt =>
+      -- §22.1.3.1: one code unit, found in constant time for ASCII (`Str.unitStrAt?`)
+      let s ← core.toStr (← thisPrim thisV)
+      let len := Str.jsLength s
+      let k := toIntegerOrInf (← core.toNum a0)
+      let i := if k < 0 then Float.ofNat len + k else k
+      if i < 0 || i ≥ Float.ofNat len then pure .undef
+      else pure ((Str.unitStrAt? s i.toUInt64.toNat).map Value.str |>.getD .undef)
+    | .stringPadStart | .stringPadEnd =>
+      let s ← core.toStr (← thisPrim thisV)
+      let len := toIntegerOrInf (← core.toNum a0)
+      let fill ← match a1 with | .undef => pure " " | v => core.toStr v
+      let cur := Str.jsLength s
+      if len ≤ Float.ofNat cur || fill.isEmpty then pure (.str s) else
+      let need := len.toUInt64.toNat - cur
+      if need > maxStringBytes then throwErr .range "Invalid string length"
+      charge (need / 64)
+      let reps := repeatStr fill (need / Str.jsLength fill + 1)
+      let pad := substr reps 0 need
+      pure (.str (if id_ == .stringPadStart then Str.jsAppend pad s else Str.jsAppend s pad))
+    | .stringCodePointAt =>
+      let s ← core.toStr (← thisPrim thisV)
+      let i := toIntegerOrInf (← core.toNum a0)
+      if i < 0 then pure .undef else
+      -- §11.1.4 CodePointAt: a high surrogate followed by a low one is their code point
+      let k := i.toUInt64.toNat
+      match Str.unitAt? s k with
+      | none => pure .undef
+      | some u =>
+        match (if Str.isHigh u then Str.unitAt? s (k + 1) else none) with
+        | some l => pure (.num (Float.ofNat (if Str.isLow l then 0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00) else u)))
+        | none => pure (.num (Float.ofNat u))
+    | .stringTrimStart | .stringTrimEnd =>
+      match ← thisPrim thisV with
+      | .undef | .null => throwErr .type "String.prototype.trimStart/trimEnd called on null or undefined"
+      | _ => pure ()
+      let s ← core.toStr (← thisPrim thisV)
+      let cs := s.toList
+      pure (.str (if id_ == .stringTrimStart then String.ofList (cs.dropWhile isStrWs)
+        else String.ofList (cs.reverse.dropWhile isStrWs).reverse))
+    | .stringReplace | .stringReplaceAll =>
+      if let some v ← core.stringSymDispatch id_ thisV args then return v
+      let s ← core.toStr (← thisPrim thisV)
+      let pat ← core.toStr a0
+      let fnRepl ← isCallable a1
+      let replStr ← if fnRepl then pure "" else core.toStr a1
+      let positions : List Nat :=
+        if id_ == .stringReplaceAll then
+          allPositions s pat 0 (Str.jsLength s + 2)
+        else match indexOfFrom s pat 0 with | some p => [p] | none => []
+      let mut out := ""
+      let mut last := 0
+      -- each `$&` of the replacement adds the search string: asked before it is made
+      let whole := (replStr.splitOn "$&").length - 1
+      if !fnRepl then checkStrLen (replStr.utf8ByteSize + whole * pat.utf8ByteSize)
+      for p in positions do
+        out := out ++ substr s last p
+        let r ← if fnRepl then core.toStr (← core.callV a1 .undef #[.str pat, .num (Float.ofNat p), .str s])
+          else pure (if replStr.contains '$' then getSubstitutionG replStr pat s p #[] none else replStr)
+        checkStrLen (out.utf8ByteSize + r.utf8ByteSize)
+        out := out ++ r
+        last := p + Str.jsLength pat
+      pure (.str (Str.canonical (out ++ substr s last (Str.jsLength s))))
+    | .stringFromCodePoint =>
+      let cs ← args.toList.mapM fun a => do
+        let x ← core.toNum a
+        if !isIntegral x || x < 0 || x > 1114111 then throwErr .range s!"Invalid code point {numToString x}"
+        pure (Str.ofCodePoint x.toUInt64.toNat)
+      pure (.str (Str.canonical (String.join cs)))
+    | .stringSplit =>
+      if let some v ← core.stringSymDispatch id thisV args then return v
+      core.stringOrMath id thisV args
+    | .stringMatch | .stringSearch =>
+      if let some v ← core.stringSymDispatch id thisV args then return v
+      Natives.extraNative core id thisV args newTarget
+    | .stringMatchAll =>
+      if let some v ← core.stringSymDispatch id thisV args then return v
+      let s ← core.toStr thisV
+      let rx ← match a0 with
+        | .undef => newRegExp "(?:)" "g"
+        | _ => do newRegExp (← core.toStr a0) "g"
+      core.regexpSymbol 4 rx #[.str s]
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: Number, Boolean, Math and BigInt. `r` is the realm `callNative` read. -/
+def callNativeNumber (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let id_ := id
+    match id with
+    | .numberCtor =>
+      -- §21.1.1.1: ToNumeric, and a BigInt becomes the Number of its value.
+      let x ← if args.isEmpty then pure 0 else match ← core.toPrim a0 "number" with
+        | .big i => pure (Float.ofInt i)
+        | p => core.toNum p
+      match newTarget with
+      | some _ => pure (.obj (← alloc { proto := .obj r.numberProto, kind := .prim (.num x) }))
+      | none => pure (.num x)
+    | .numberValueOf | .numberToString | .numberToFixed =>
+      -- thisNumberValue (§21.1.3): a Number or a Number object; a Date's time value is not one
+      if (← thisDate? thisV).isSome then throwErr .type "Number.prototype method requires that 'this' be a Number"
+      let x ← match ← thisPrim thisV with
+        | .num x => pure x
+        | _ => throwErr .type "Number.prototype method requires that 'this' be a Number"
+      match id with
+      | .numberValueOf => pure (.num x)
+      | .numberToString =>
+        let radix ← match a0 with | .undef => pure 10 | v => do pure (toIntegerOrInf (← core.toNum v))
+        if radix < 2 || radix > 36 then throwErr .range "toString() radix must be between 2 and 36"
+        if radix == 10 || !isIntegral x then pure (.str (numToString x))
+        else
+          let i := truncInt x
+          let ds := Nat.toDigits radix.toUInt64.toNat i.natAbs
+          pure (.str ((if i < 0 then "-" else "") ++ String.ofList ds))
+      | _ =>
+        let d := toIntegerOrInf (← core.toNum a0)
+        if d < 0 || d > 100 then throwErr .range "toFixed() digits argument must be between 0 and 100"
+        if x.abs ≥ 1e21 || !x.isFinite then pure (.str (numToString x)) else
+        -- exact digits (JS/NumFmt.lean)
+        let (neg, num, den) := NumFmt.ofFloat x
+        pure (.str (NumFmt.fixed neg num den d.toUInt64.toNat))
+    | .numberIsInteger => pure (.bool (match a0 with | .num x => isIntegral x | _ => false))
+    | .booleanCtor =>
+      let b := toBool a0
+      match newTarget with
+      | some _ => pure (.obj (← alloc { proto := .obj r.booleanProto, kind := .prim (.bool b) }))
+      | none => pure (.bool b)
+    | .booleanToString | .booleanValueOf =>
+      match ← thisPrim thisV with
+      | .bool b => pure (if id == .booleanValueOf then .bool b else .str (if b then "true" else "false"))
+      | _ => throwErr .type "Boolean.prototype method requires that 'this' be a Boolean"
+    | .numberIsFinite => pure (.bool (match a0 with | .num x => x.isFinite | _ => false))
+    | .numberIsNaN => pure (.bool (match a0 with | .num x => x.isNaN | _ => false))
+    | .numberIsSafeInteger => pure (.bool (match a0 with | .num x => isIntegral x && x.abs ≤ maxSafeF | _ => false))
+    | .math1 op =>
+      let x ← core.toNum a0
+      pure (.num (match op with
+        | 0 => Float.cbrt x | 1 => Float.log2 x | 2 => Float.log10 x | 3 => Float.sinh x
+        | 4 => Float.cosh x | 5 => Float.tanh x | 6 => Float.asin x | 7 => Float.acos x
+        | 8 => Float.asinh x | 9 => Float.acosh x | 10 => Float.atanh x
+        | 11 => Float.exp x - 1 | 12 => Float.log (1 + x)
+        | 14 => L4Factoidal.Prim.Float16.round x
+        | _ => x.toFloat32.toFloat))
+    | .mathHypot =>
+      let xs ← args.toList.mapM (core.toNum)
+      if xs.any Float.isInf then pure (.num inf)
+      else pure (.num (Float.sqrt (xs.foldl (fun a x => a + x * x) 0)))
+    | .mathImul =>
+      let a := toInt32 (← core.toNum a0); let b := toInt32 (← core.toNum a1)
+      pure (intV (toInt32 (Float.ofInt (a * b % 4294967296))))
+    | .mathClz32 =>
+      let x := toUint32 (← core.toNum a0)
+      pure (.num (Float.ofNat (if x == 0 then 32 else 31 - Nat.log2 x)))
+    | .bigintCtor =>
+      if newTarget.isSome then throwErr .type "BigInt is not a constructor"
+      match ← core.toPrim a0 "number" with
+      | .num x =>
+        if !isIntegral x then throwErr .range s!"The number {numToString x} cannot be converted to a BigInt because it is not an integer"
+        pure (.big (truncInt x))
+      | .str t => match strToBigInt t with
+        | some i => pure (.big i)
+        | none => throwErr .syntax s!"Cannot convert {t} to a BigInt"
+      | .bool b => pure (.big (if b then 1 else 0))
+      | .big i => pure (.big i)
+      | _ => throwErr .type "Cannot convert value to a BigInt"
+    | .bigintAsN signed =>
+      -- ToIndex (§7.1.22).
+      let bf := toIntegerOrInf (← core.toNum a0)
+      if bf < 0 || bf > 9007199254740991 then throwErr .range "Invalid value: not (convertible to) a safe integer"
+      let bits := bf.toUInt64.toNat
+      if bits > 1000000 then throwErr .range "Maximum BigInt size exceeded"
+      -- ToBigInt (§7.1.13): a Number is a TypeError.
+      let x ← match ← core.toPrim a1 "number" with
+        | .big i => pure i
+        | .bool b => pure (if b then 1 else 0)
+        | .str t => match strToBigInt t with
+          | some i => pure i
+          | none => throwErr .syntax s!"Cannot convert {t} to a BigInt"
+        | .num _ => throwErr .type "Cannot convert a Number to a BigInt"
+        | _ => throwErr .type "Cannot convert value to a BigInt"
+      let m : Int := 2 ^ bits
+      let r := x.emod m
+      pure (.big (if signed && bits > 0 && r ≥ 2 ^ (bits - 1) then r - m else r))
+    | .bigintToString | .bigintValueOf =>
+      match ← thisPrim thisV with
+      | .big i =>
+        if id_ == .bigintValueOf then pure (.big i) else
+        let radix ← match a0 with | .undef => pure 10 | v => do pure (toIntegerOrInf (← core.toNum v))
+        if radix < 2 || radix > 36 then throwErr .range "toString() radix must be between 2 and 36"
+        let ds := Nat.toDigits radix.toUInt64.toNat i.natAbs
+        pure (.str ((if i < 0 then "-" else "") ++ String.ofList ds))
+      | _ => throwErr .type "BigInt.prototype method requires that 'this' be a BigInt"
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: Error, `JSON.stringify` and Symbol. `r` is the realm `callNative` read. -/
+def callNativeError (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let id_ := id
+    match id with
+    | .errorCtor k =>
+      let proto ← match newTarget with
+        | some nt => do
+          let p ← core.getV nt "prototype"
+          let nr ← funRealm nt
+          pure (if p.isObj then p else .obj (nr.errorProtos.getD k nr.objectProto))
+        | none => pure (.obj (r.errorProtos.getD k r.objectProto))
+      let o ← alloc { proto, kind := .error }
+      match a0 with
+      | .undef => pure ()
+      | v => setHidden o "message" (.str (← core.toStr v))
+      pure (.obj o)
+    | .errorToString =>
+      if !thisV.isObj then throwErr .type "Error.prototype.toString called on non-object"
+      let nm ← core.getV thisV "name"
+      let nm ← match nm with | .undef => pure "Error" | v => core.toStr v
+      let msg ← core.getV thisV "message"
+      let msg ← match msg with | .undef => pure "" | v => core.toStr v
+      pure (.str (if nm.isEmpty then msg else if msg.isEmpty then nm else nm ++ ": " ++ msg))
+    | .jsonStringify =>
+      -- §25.5.2.1 JSON.stringify(value, replacer, space)
+      let mut plist : Option (Array String) := none
+      let mut repl := Value.undef
+      if a1.isObj then
+        if ← isCallable a1 then repl := a1
+        else if ← isArrayDeep 100000 a1 then
+          let len ← core.arrayLikeLength a1
+          let mut ks : Array String := #[]
+          for i in [0:len] do
+            tick
+            let v ← core.getV a1 (toString i)
+            let item ← match v with
+              | .str t => pure (some t)
+              | .num x => pure (some (numToString x))
+              | .obj vid => do
+                match (← getObj vid).kind with
+                | .prim (.str _) | .prim (.num _) => pure (some (← core.toStr v))
+                | _ => pure none
+              | _ => pure none
+            if let some t := item then
+              if !ks.contains (strKey t) then ks := ks.push (strKey t)
+          plist := some ks
+      let mut space := argD args 2
+      if let .obj sid := space then
+        match (← getObj sid).kind with
+        | .prim (.num _) => space := .num (← core.toNum space)
+        | .prim (.str _) => space := .str (← core.toStr space)
+        | _ => pure ()
+      let gap := match space with
+        | .num x =>
+          let k := toIntegerOrInf x
+          let k := if k > 10 then 10 else k
+          if k ≥ 1 then String.ofList (List.replicate k.toUInt64.toNat ' ') else ""
+        | .str t => Str.sliceUnits t 0 (min 10 (Str.jsLength t))
+        | _ => ""
+      let wrapper ← newObject
+      defineOwn wrapper "" (.data a0 true true true)
+      match ← core.jsonSer repl plist gap "" #[] (.obj wrapper) "" with
+      | some t => pure (.str (Str.canonical t))
+      | none => pure .undef
+    | .symbolCtor =>
+      if newTarget.isSome then throwErr .type "Symbol is not a constructor"
+      let d ← match a0 with | .undef => pure "" | v => core.toStr v
+      let id ← modifyGet fun h => (h.syms.size, { h with syms := h.syms.push d })
+      pure (.sym id)
+    | .symbolToString | .symbolDescription | .symbolValueOf =>
+      let v ← thisPrim thisV
+      match v with
+      | .sym id =>
+        let d := (← get).syms.getD id ""
+        match id_ with
+        | .symbolToString => pure (.str ("Symbol(" ++ d ++ ")"))
+        | .symbolDescription => pure (.str d)
+        | _ => pure v
+      | _ => throwErr .type "Symbol.prototype method requires that 'this' be a Symbol"
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: the built-in iterators' `next`, generators and async functions. `r` is the realm `callNative` read. -/
+def callNativeGenerator (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let id_ := id
+    match id with
+    | .iterNext =>
+      let id ← match thisV with
+        | .obj id => pure id
+        | _ => throwErr .type "next method called on incompatible receiver"
+      match (← getObj id).kind with
+      | .iter target idx mode =>
+        let result (v : Value) (done : Bool) : M Value := do
+          let o ← newObject
+          defineOwn o "value" (.data v true true true)
+          defineOwn o "done" (.data (.bool done) true true true)
+          pure (.obj o)
+        if mode ≥ 20 then
+          -- %RegExpStringIteratorPrototype%.next (§22.2.9.2.1)
+          if let .undef := target then return ← result .undef true
+          let s := match (← getObj id).props.get? rsiStringKey with
+            | some (.data (.str s) ..) => s
+            | _ => ""
+          let m ← core.regExpExecG target s
+          let finish : M Unit := modifyObj id fun o => { o with kind := .iter .undef idx mode }
+          if let .null := m then finish; return ← result .undef true
+          if mode % 2 == 0 then finish; return ← result m false
+          if (← core.toStr (← core.getV m "0")).isEmpty then
+            let x := toIntegerOrInf (← core.toNum (← core.getV target "lastIndex"))
+            let li := if x ≤ 0 then 0 else if x ≥ 9007199254740991.0 then 9007199254740991 else x.toUInt64.toNat
+            core.putV target "lastIndex" (.num (Float.ofNat (advanceIndex s li ((mode / 2) % 2 == 1)))) true
+          return ← result m false
+        match target with
+        | .undef => result .undef true
+        | .str s =>
+          let cs := charsOf s
+          if idx < cs.size then
+            -- a surrogate pair is one code point (§22.1.5.1 %StringIteratorPrototype%.next)
+            let pair := idx + 1 < cs.size && Str.isHigh (Str.charUnit cs[idx]!) && Str.isLow (Str.charUnit cs[idx + 1]!)
+            let w := if pair then 2 else 1
+            modifyObj id fun o => { o with kind := .iter target (idx + w) mode }
+            result (.str (Str.ofUnitChars (cs.extract idx (idx + w)))) false
+          else
+            modifyObj id fun o => { o with kind := .iter .undef idx mode }
+            result .undef true
+        | _ =>
+          if let .obj tid := target then
+            if let .coll _ es _ := (← getObj tid).kind then
+              match collNext es idx es.size with
+              | none =>
+                modifyObj id fun o => { o with kind := .iter .undef idx mode }
+                return ← result .undef true
+              | some i =>
+                modifyObj id fun o => { o with kind := .iter target (i + 1) mode }
+                let (k, v) := (es[i]!).getD (.undef, .undef)
+                return ← match mode with
+                  | 5 => result k false
+                  | 6 => result v false
+                  | _ => do result (← newArray #[k, v]) false
+          let len ← match target with
+            | .obj tid => match (← getObj tid).kind with
+              | .array es => pure es.size
+              | _ => do pure (toIntegerOrInf (← core.toNum (← core.getV target "length"))).toUInt64.toNat
+            | _ => pure 0
+          if idx < len then
+            modifyObj id fun o => { o with kind := .iter target (idx + 1) mode }
+            match mode with
+            | 1 => result (.num (Float.ofNat idx)) false
+            | 2 =>
+              let v ← core.getV target (toString idx)
+              result (← newArray #[.num (Float.ofNat idx), v]) false
+            | _ => result (← core.getV target (toString idx)) false
+          else
+            modifyObj id fun o => { o with kind := .iter .undef idx mode }
+            result .undef true
+      | _ => throwErr .type "next method called on incompatible receiver"
+    | .iterSelf => pure thisV
+    | .agenNext | .agenReturn | .agenThrow =>
+      let pid ← newPromise
+      match thisV with
+      | .obj gid =>
+        match (← getObj gid).kind with
+        | .agen fs st q =>
+          let input := match id_ with
+            | .agenNext => GInput.send a0
+            | .agenReturn => .retV a0
+            | _ => .throwV a0
+          modifyObj gid fun o => { o with kind := .agen fs st (q.push (input, pid)) }
+          core.agenDrain gid
+        | _ => core.rejectPromise pid (← mkError .type "not an async generator")
+      | _ => core.rejectPromise pid (← mkError .type "not an async generator")
+      pure (.obj pid)
+    | .agenResume =>
+      -- bound arguments: the generator and the mode. 0, 1: an `await` in the body ended
+      -- (fulfilled, rejected). 2: the operand of a `yield`, awaited: the request at the head
+      -- gets it. 3: the value of `return(v)` at a `yield`, awaited. 4, 5: the value of a
+      -- `return(v)` to a generator that is not running its body (fulfilled, rejected).
+      match a0 with
+      | .obj gid =>
+        match (← getObj gid).kind with
+        | .agen fs _ q =>
+          let mode := match a1 with | .num m => m.toUInt64.toNat | _ => 0
+          let v := argD args 2
+          let pid := (q.getD 0 (GInput.send .undef, 0)).2
+          let finish (st : Nat) : M Unit :=
+            modifyObj gid fun o => { o with kind := .agen (if st == 3 then [] else fs) st (q.extract 1 q.size) }
+          match mode with
+          | 0 => core.agenRun gid fs (.send v)
+          | 1 => core.agenRun gid fs (.throwV v)
+          | 2 => finish 1; core.resolvePromise pid (← core.iterResult v false); core.agenDrain gid
+          | 3 => core.agenRun gid fs (.retV v)
+          | 4 => finish 3; core.resolvePromise pid (← core.iterResult v true); core.agenDrain gid
+          | _ => finish 3; core.rejectPromise pid v; core.agenDrain gid
+        | _ => pure ()
+        pure .undef
+      | _ => pure .undef
+    | .asyncResume =>
+      match a0 with
+      | .obj co =>
+        let input := if (match a1 with | .num m => m == 1 | _ => false) then GInput.throwV (argD args 2)
+          else .send (argD args 2)
+        core.asyncStep co input
+        pure .undef
+      | _ => pure .undef
+    | .genNext | .genReturn | .genThrow =>
+      let gid ← match thisV with
+        | .obj g => pure g
+        | _ => throwErr .type "next method called on incompatible receiver"
+      match (← getObj gid).kind with
+      | .gen frames st =>
+        let result (v : Value) (done : Bool) : M Value := do
+          let o ← newObject
+          defineOwn o "value" (.data v true true true)
+          defineOwn o "done" (.data (.bool done) true true true)
+          pure (.obj o)
+        if st == 2 then throwErr .type "Generator is already running"
+        let setG (fs : List GFrame) (s : Nat) : M Unit :=
+          modifyObj gid fun o => { o with kind := .gen fs s }
+        if st == 3 || (st == 0 && id_ != .genNext) then
+          setG [] 3
+          match id_ with
+          | .genNext => result .undef true
+          | .genReturn => result a0 true
+          | _ => throw (.throw a0)
+        else
+          setG frames 2
+          let input := match id_ with
+            | .genNext => GInput.send a0
+            | .genReturn => .retV a0
+            | _ => .throwV a0
+          let r ← catchJS (do pure (Except.ok (← core.genRun frames input)))
+            (fun a => pure (Except.error a))
+          match r with
+          | .error a => setG [] 3; throw a
+          | .ok (.yielded v fs) => setG fs 1; result v false
+          | .ok (.awaited _ _) => setG [] 3; throwErr .syntax "await outside an async function"
+          | .ok (.done v) => setG [] 3; result v true
+      | _ => throwErr .type "next method called on incompatible receiver"
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: the Promise constructor, its prototype methods, `resolve`, `reject` and the jobs. `r` is the realm `callNative` read. -/
+def callNativePromise (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let id_ := id
+    match id with
     | .promiseCtor =>
       let nt ← match newTarget with
         | some nt => pure nt
@@ -6248,6 +6883,14 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
         | none => pure ()
         pure .undef
       | _ => pure .undef
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: the Promise combinators (`all`, `allSettled`, `any`, `race`, the keyed ones) and their element functions. `r` is the realm `callNative` read. -/
+def callNativePromiseAll (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let id_ := id
+    match id with
     | .promiseAll | (.x (.promiseCombinator _)) | (.x .promiseAny) =>
       -- §27.2.4.1 Promise.all, §27.2.4.2 allSettled, §27.2.4.3 any, §27.2.4.5 race, on the
       -- constructor `this`: kind 0 race, 1 allSettled, 2 all, 3 any
@@ -6444,45 +7087,14 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
           return ← core.callV a0 .undef #[.obj e]
         return ← core.callV a0 .undef #[arr]
       pure .undef
-    | .agenNext | .agenReturn | .agenThrow =>
-      let pid ← newPromise
-      match thisV with
-      | .obj gid =>
-        match (← getObj gid).kind with
-        | .agen fs st q =>
-          let input := match id_ with
-            | .agenNext => GInput.send a0
-            | .agenReturn => .retV a0
-            | _ => .throwV a0
-          modifyObj gid fun o => { o with kind := .agen fs st (q.push (input, pid)) }
-          core.agenDrain gid
-        | _ => core.rejectPromise pid (← mkError .type "not an async generator")
-      | _ => core.rejectPromise pid (← mkError .type "not an async generator")
-      pure (.obj pid)
-    | .agenResume =>
-      -- bound arguments: the generator and the mode. 0, 1: an `await` in the body ended
-      -- (fulfilled, rejected). 2: the operand of a `yield`, awaited: the request at the head
-      -- gets it. 3: the value of `return(v)` at a `yield`, awaited. 4, 5: the value of a
-      -- `return(v)` to a generator that is not running its body (fulfilled, rejected).
-      match a0 with
-      | .obj gid =>
-        match (← getObj gid).kind with
-        | .agen fs _ q =>
-          let mode := match a1 with | .num m => m.toUInt64.toNat | _ => 0
-          let v := argD args 2
-          let pid := (q.getD 0 (GInput.send .undef, 0)).2
-          let finish (st : Nat) : M Unit :=
-            modifyObj gid fun o => { o with kind := .agen (if st == 3 then [] else fs) st (q.extract 1 q.size) }
-          match mode with
-          | 0 => core.agenRun gid fs (.send v)
-          | 1 => core.agenRun gid fs (.throwV v)
-          | 2 => finish 1; core.resolvePromise pid (← core.iterResult v false); core.agenDrain gid
-          | 3 => core.agenRun gid fs (.retV v)
-          | 4 => finish 3; core.resolvePromise pid (← core.iterResult v true); core.agenDrain gid
-          | _ => finish 3; core.rejectPromise pid v; core.agenDrain gid
-        | _ => pure ()
-        pure .undef
-      | _ => pure .undef
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: Map, Set and their weak kinds. `r` is the realm `callNative` read. -/
+def callNativeMap (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let id_ := id
+    match id with
     | .mapCtor k =>
       let nt ← match newTarget with
         | some nt => pure nt
@@ -6558,6 +7170,13 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
       | .mapIter mode =>
         pure (.obj (← alloc { proto := .obj r.arrayIterProto, kind := .iter thisV 0 mode }))
       | _ => pure .undef
+    | _ => throwErr .type "not a function"
+
+/-- Built-ins of `callNative`: Reflect. `r` is the realm `callNative` read. -/
+def callNativeReflect (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    match id with
     | .reflect op =>
       let needObj : M Unit := if !a0.isObj then throwErr .type "Reflect method called on a non-object" else pure ()
       match op with
@@ -6691,282 +7310,150 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
             modifyObj cur fun o => { o with extensible := false }
             return .bool true
         pure (.bool false)
-    | .objectDefineProperties =>
-      match a0 with
-      | .obj id =>
-        -- ObjectDefineProperties (§20.1.2.3.1): every descriptor is read (and checked) before
-        -- any property is defined; keys by [[OwnPropertyKeys]], enumerability by [[GetOwnProperty]]
-        let pid ← core.toObj a1
-        let mut descs : Array (String × Desc) := #[]
-        for k in ← core.ownKeysOf pid do
-          match ← core.ownDesc pid k with
-          | some p =>
-            if p.enumerable then descs := descs.push (k, ← core.toPropDesc (← core.getV (.obj pid) k))
-          | none => pure ()
-        for (k, d) in descs do
-          if !(← core.defineOwnProp id k d) then throwErr .type s!"Cannot redefine property: {k}"
-        pure a0
-      | _ => throwErr .type "Object.defineProperties called on non-object"
-    | .objectSeal =>
-      match a0 with
-      | .obj id =>
-        let o ← getObj id
-        -- a sealed Array's elements are not configurable: they leave the fast form (`markArray`)
-        let o := match o.kind with
-          | .array es =>
-            let o := ({ o with kind := .ordinary } : Obj).markArray
-            let o := (List.range es.size).foldl (fun (o : Obj) i =>
-              if Value.isHole es[i]! then o else o.putOwn (toString i) (PropV.data es[i]! true true true)) o
-            o.putOwn "length" (.data (.num (Float.ofNat es.size)) true false false)
-          | _ => o
-        let props := o.props.mapValues (fun p => (match p with
-          | .data v w e _ => .data v w e false
-          | .acc g s e _ => .acc g s e false))
-        modifyObj id fun _ => { o with props, extensible := false }
-        pure a0
-      | _ => pure a0
-    | .objectIsSealed =>
-      match a0 with
-      | .obj id =>
-        let o ← getObj id
-        pure (.bool (!o.extensible && o.ownKeys.all fun k => match o.getOwn k with
-          | some p => !p.configurable | none => true))
-      | _ => pure (.bool true)
-    | .objectGetOwnPropertyDescriptors =>
-      let id ← core.toObj a0
-      let res ← newObject
-      for k in (← getObj id).ownKeys do
-        let d ← core.callNative .objectGetOwnPropertyDescriptor .undef #[.obj id, keyValue k] none
-        defineOwn res k (.data d true true true)
-      pure (.obj res)
-    | .objectFromEntries =>
-      let res ← newObject
-      let items ← core.iterToArray (← core.getIterator a0) #[]
-      for item in items do
-        let k ← core.toKey (← core.getV item "0")
-        defineOwn res k (.data (← core.getV item "1") true true true)
-      pure (.obj res)
-    | .arrayFlat | .arrayFlatMap =>
-      -- flat skips absent elements (`flattenArr`); flatMap's callback sees them as undefined
-      let raw ← match thisV with
-        | .obj tid => match (← getObj tid).kind with
-          | .array es => pure (if id_ == .arrayFlat then some es else none)
-          | _ => pure none
-        | _ => pure none
-      let es ← match raw with | some es => pure es | none => core.elemsOf thisV
-      let es ← if id_ == .arrayFlatMap then do
-          if !(← isCallable a0) then throwErr .type "flatMap mapper is not callable"
-          (List.range es.size).toArray.mapM fun i => core.callV a0 a1 #[es[i]!, .num (Float.ofNat i), thisV]
-        else pure es
-      let depth := if id_ == .arrayFlatMap then 1 else match a0 with
-        | .undef => 1
-        | .num d => if d.isNaN || d < 1 then 0 else (if d > 1000 then 1000 else d.toUInt64.toNat)
-        | _ => 1
-      let flat ← flattenArr depth es (depth + 1)
-      match ← core.speciesFrom thisV 0 with
-      | none => newArray flat
-      | some a => core.speciesFill a flat none
-    | .stringAt =>
-      -- §22.1.3.1: one code unit, found in constant time for ASCII (`Str.unitStrAt?`)
-      let s ← core.toStr (← thisPrim thisV)
-      let len := Str.jsLength s
-      let k := toIntegerOrInf (← core.toNum a0)
-      let i := if k < 0 then Float.ofNat len + k else k
-      if i < 0 || i ≥ Float.ofNat len then pure .undef
-      else pure ((Str.unitStrAt? s i.toUInt64.toNat).map Value.str |>.getD .undef)
-    | .arrayAt =>
-      let es ← core.elemsOf thisV
-      let k := toIntegerOrInf (← core.toNum a0)
-      let i := if k < 0 then Float.ofNat es.size + k else k
-      if i < 0 || i ≥ Float.ofNat es.size then pure .undef else pure es[i.toUInt64.toNat]!
-    | .arrayFindLast | .arrayFindLastIndex =>
-      if !(← isCallable a0) then throwErr .type "callback is not a function"
-      let es ← core.elemsOf thisV
-      let mut found : Option Nat := none
-      for j in [0:es.size] do
-        let i := es.size - 1 - j
-        if found.isNone then
-          if toBool (← core.callV a0 a1 #[es[i]!, .num (Float.ofNat i), thisV]) then found := some i
-      match found with
-      | some i => pure (if id_ == .arrayFindLast then es[i]! else .num (Float.ofNat i))
-      | none => pure (if id_ == .arrayFindLast then .undef else .num (-1))
-    | .stringPadStart | .stringPadEnd =>
-      let s ← core.toStr (← thisPrim thisV)
-      let len := toIntegerOrInf (← core.toNum a0)
-      let fill ← match a1 with | .undef => pure " " | v => core.toStr v
-      let cur := Str.jsLength s
-      if len ≤ Float.ofNat cur || fill.isEmpty then pure (.str s) else
-      let need := len.toUInt64.toNat - cur
-      if need > maxStringBytes then throwErr .range "Invalid string length"
-      charge (need / 64)
-      let reps := repeatStr fill (need / Str.jsLength fill + 1)
-      let pad := substr reps 0 need
-      pure (.str (if id_ == .stringPadStart then Str.jsAppend pad s else Str.jsAppend s pad))
-    | .stringCodePointAt =>
-      let s ← core.toStr (← thisPrim thisV)
-      let i := toIntegerOrInf (← core.toNum a0)
-      if i < 0 then pure .undef else
-      -- §11.1.4 CodePointAt: a high surrogate followed by a low one is their code point
-      let k := i.toUInt64.toNat
-      match Str.unitAt? s k with
-      | none => pure .undef
-      | some u =>
-        match (if Str.isHigh u then Str.unitAt? s (k + 1) else none) with
-        | some l => pure (.num (Float.ofNat (if Str.isLow l then 0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00) else u)))
-        | none => pure (.num (Float.ofNat u))
-    | .stringTrimStart | .stringTrimEnd =>
-      match ← thisPrim thisV with
-      | .undef | .null => throwErr .type "String.prototype.trimStart/trimEnd called on null or undefined"
-      | _ => pure ()
-      let s ← core.toStr (← thisPrim thisV)
-      let cs := s.toList
-      pure (.str (if id_ == .stringTrimStart then String.ofList (cs.dropWhile isStrWs)
-        else String.ofList (cs.reverse.dropWhile isStrWs).reverse))
-    | .stringReplace | .stringReplaceAll =>
-      if let some v ← core.stringSymDispatch id_ thisV args then return v
-      let s ← core.toStr (← thisPrim thisV)
-      let pat ← core.toStr a0
-      let fnRepl ← isCallable a1
-      let replStr ← if fnRepl then pure "" else core.toStr a1
-      let positions : List Nat :=
-        if id_ == .stringReplaceAll then
-          allPositions s pat 0 (Str.jsLength s + 2)
-        else match indexOfFrom s pat 0 with | some p => [p] | none => []
-      let mut out := ""
-      let mut last := 0
-      -- each `$&` of the replacement adds the search string: asked before it is made
-      let whole := (replStr.splitOn "$&").length - 1
-      if !fnRepl then checkStrLen (replStr.utf8ByteSize + whole * pat.utf8ByteSize)
-      for p in positions do
-        out := out ++ substr s last p
-        let r ← if fnRepl then core.toStr (← core.callV a1 .undef #[.str pat, .num (Float.ofNat p), .str s])
-          else pure (if replStr.contains '$' then getSubstitutionG replStr pat s p #[] none else replStr)
-        checkStrLen (out.utf8ByteSize + r.utf8ByteSize)
-        out := out ++ r
-        last := p + Str.jsLength pat
-      pure (.str (Str.canonical (out ++ substr s last (Str.jsLength s))))
-    | .stringFromCodePoint =>
-      let cs ← args.toList.mapM fun a => do
-        let x ← core.toNum a
-        if !isIntegral x || x < 0 || x > 1114111 then throwErr .range s!"Invalid code point {numToString x}"
-        pure (Str.ofCodePoint x.toUInt64.toNat)
-      pure (.str (Str.canonical (String.join cs)))
-    | .numberIsFinite => pure (.bool (match a0 with | .num x => x.isFinite | _ => false))
-    | .numberIsNaN => pure (.bool (match a0 with | .num x => x.isNaN | _ => false))
-    | .numberIsSafeInteger => pure (.bool (match a0 with | .num x => isIntegral x && x.abs ≤ maxSafeF | _ => false))
-    | .math1 op =>
-      let x ← core.toNum a0
-      pure (.num (match op with
-        | 0 => Float.cbrt x | 1 => Float.log2 x | 2 => Float.log10 x | 3 => Float.sinh x
-        | 4 => Float.cosh x | 5 => Float.tanh x | 6 => Float.asin x | 7 => Float.acos x
-        | 8 => Float.asinh x | 9 => Float.acosh x | 10 => Float.atanh x
-        | 11 => Float.exp x - 1 | 12 => Float.log (1 + x)
-        | 14 => L4Factoidal.Prim.Float16.round x
-        | _ => x.toFloat32.toFloat))
-    | .mathHypot =>
-      let xs ← args.toList.mapM (core.toNum)
-      if xs.any Float.isInf then pure (.num inf)
-      else pure (.num (Float.sqrt (xs.foldl (fun a x => a + x * x) 0)))
-    | .mathImul =>
-      let a := toInt32 (← core.toNum a0); let b := toInt32 (← core.toNum a1)
-      pure (intV (toInt32 (Float.ofInt (a * b % 4294967296))))
-    | .mathClz32 =>
-      let x := toUint32 (← core.toNum a0)
-      pure (.num (Float.ofNat (if x == 0 then 32 else 31 - Nat.log2 x)))
-    | .asyncResume =>
-      match a0 with
-      | .obj co =>
-        let input := if (match a1 with | .num m => m == 1 | _ => false) then GInput.throwV (argD args 2)
-          else .send (argD args 2)
-        core.asyncStep co input
-        pure .undef
-      | _ => pure .undef
-    | .bigintCtor =>
-      if newTarget.isSome then throwErr .type "BigInt is not a constructor"
-      match ← core.toPrim a0 "number" with
-      | .num x =>
-        if !isIntegral x then throwErr .range s!"The number {numToString x} cannot be converted to a BigInt because it is not an integer"
-        pure (.big (truncInt x))
-      | .str t => match strToBigInt t with
-        | some i => pure (.big i)
-        | none => throwErr .syntax s!"Cannot convert {t} to a BigInt"
-      | .bool b => pure (.big (if b then 1 else 0))
-      | .big i => pure (.big i)
-      | _ => throwErr .type "Cannot convert value to a BigInt"
-    | .bigintAsN signed =>
-      -- ToIndex (§7.1.22).
-      let bf := toIntegerOrInf (← core.toNum a0)
-      if bf < 0 || bf > 9007199254740991 then throwErr .range "Invalid value: not (convertible to) a safe integer"
-      let bits := bf.toUInt64.toNat
-      if bits > 1000000 then throwErr .range "Maximum BigInt size exceeded"
-      -- ToBigInt (§7.1.13): a Number is a TypeError.
-      let x ← match ← core.toPrim a1 "number" with
-        | .big i => pure i
-        | .bool b => pure (if b then 1 else 0)
-        | .str t => match strToBigInt t with
-          | some i => pure i
-          | none => throwErr .syntax s!"Cannot convert {t} to a BigInt"
-        | .num _ => throwErr .type "Cannot convert a Number to a BigInt"
-        | _ => throwErr .type "Cannot convert value to a BigInt"
-      let m : Int := 2 ^ bits
-      let r := x.emod m
-      pure (.big (if signed && bits > 0 && r ≥ 2 ^ (bits - 1) then r - m else r))
-    | .bigintToString | .bigintValueOf =>
-      match ← thisPrim thisV with
-      | .big i =>
-        if id_ == .bigintValueOf then pure (.big i) else
-        let radix ← match a0 with | .undef => pure 10 | v => do pure (toIntegerOrInf (← core.toNum v))
-        if radix < 2 || radix > 36 then throwErr .range "toString() radix must be between 2 and 36"
-        let ds := Nat.toDigits radix.toUInt64.toNat i.natAbs
-        pure (.str ((if i < 0 then "-" else "") ++ String.ofList ds))
-      | _ => throwErr .type "BigInt.prototype method requires that 'this' be a BigInt"
-    | .genNext | .genReturn | .genThrow =>
-      let gid ← match thisV with
-        | .obj g => pure g
-        | _ => throwErr .type "next method called on incompatible receiver"
-      match (← getObj gid).kind with
-      | .gen frames st =>
-        let result (v : Value) (done : Bool) : M Value := do
-          let o ← newObject
-          defineOwn o "value" (.data v true true true)
-          defineOwn o "done" (.data (.bool done) true true true)
-          pure (.obj o)
-        if st == 2 then throwErr .type "Generator is already running"
-        let setG (fs : List GFrame) (s : Nat) : M Unit :=
-          modifyObj gid fun o => { o with kind := .gen fs s }
-        if st == 3 || (st == 0 && id_ != .genNext) then
-          setG [] 3
-          match id_ with
-          | .genNext => result .undef true
-          | .genReturn => result a0 true
-          | _ => throw (.throw a0)
-        else
-          setG frames 2
-          let input := match id_ with
-            | .genNext => GInput.send a0
-            | .genReturn => .retV a0
-            | _ => .throwV a0
-          let r ← catchJS (do pure (Except.ok (← core.genRun frames input)))
-            (fun a => pure (Except.error a))
-          match r with
-          | .error a => setG [] 3; throw a
-          | .ok (.yielded v fs) => setG fs 1; result v false
-          | .ok (.awaited _ _) => setG [] 3; throwErr .syntax "await outside an async function"
-          | .ok (.done v) => setG [] 3; result v true
-      | _ => throwErr .type "next method called on incompatible receiver"
-    | .stringSplit =>
-      if let some v ← core.stringSymDispatch id thisV args then return v
-      core.stringOrMath id thisV args
-    | .stringMatch | .stringSearch =>
-      if let some v ← core.stringSymDispatch id thisV args then return v
-      Natives.extraNative core id thisV args newTarget
-    | .stringMatchAll =>
-      if let some v ← core.stringSymDispatch id thisV args then return v
-      let s ← core.toStr thisV
-      let rx ← match a0 with
-        | .undef => newRegExp "(?:)" "g"
-        | _ => do newRegExp (← core.toStr a0) "g"
-      core.regexpSymbol 4 rx #[.str s]
+    | _ => throwErr .type "not a function"
+
+/-- Built-in functions. `newTarget` is set for `new`. -/
+def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
+    -- A built-in's loops are over its receiver and arguments: one step per call is not
+    -- enough when it walks them, so the call takes steps for their size (`sizeCost`). The
+    -- String methods that index an ASCII receiver in constant time (`charAt`, `charCodeAt`,
+    -- `at`, `codePointAt`) or copy only their result (`slice`, `substring`, `substr`, which
+    -- take steps for the result) do not walk it, and take no steps for it.
+    let recvCost ← if indexesReceiver id thisV then pure 0 else
+      match ← cachedReceiverCost id thisV with
+      | some c => pure c
+      | none => sizeCost thisV
+    let argsCost ← if (← subjectCached id args) then pure 0
+      else args.foldlM (fun acc a => do pure (acc + (← sizeCost a))) 0
+    charge (recvCost + args.size / 64 + argsCost)
+    let r ← realm
+    match id with
+    | .print => callNativeGlobal core r id thisV args newTarget
+    | .isNaN => callNativeGlobal core r id thisV args newTarget
+    | .isFinite => callNativeGlobal core r id thisV args newTarget
+    | .parseInt => callNativeGlobal core r id thisV args newTarget
+    | .parseFloat => callNativeGlobal core r id thisV args newTarget
+    | .objectCtor => callNativeObjectStatic core r id thisV args newTarget
+    | .objectKeys => callNativeObjectStatic core r id thisV args newTarget
+    | .objectGetOwnPropertyNames => callNativeObjectStatic core r id thisV args newTarget
+    | .objectGetPrototypeOf => callNativeObjectStatic core r id thisV args newTarget
+    | .objectSetPrototypeOf => callNativeObjectStatic core r id thisV args newTarget
+    | .objectCreate => callNativeObjectStatic core r id thisV args newTarget
+    | .objectDefineProperty => callNativeObjectStatic core r id thisV args newTarget
+    | .objectGetOwnPropertyDescriptor => callNativeObjectStatic core r id thisV args newTarget
+    | .objectIs => callNativeObjectStatic core r id thisV args newTarget
+    | .objectFreeze => callNativeObjectStatic core r id thisV args newTarget
+    | .objectIsFrozen => callNativeObjectStatic core r id thisV args newTarget
+    | .objectPreventExtensions => callNativeObjectStatic core r id thisV args newTarget
+    | .objectIsExtensible => callNativeObjectStatic core r id thisV args newTarget
+    | .objectProtoHasOwnProperty => callNativeObjectProto core r id thisV args newTarget
+    | .objectProtoPropertyIsEnumerable => callNativeObjectProto core r id thisV args newTarget
+    | .objectProtoDefineGetter | .objectProtoDefineSetter => callNativeObjectProto core r id thisV args newTarget
+    | .objectProtoLookupGetter | .objectProtoLookupSetter => callNativeObjectProto core r id thisV args newTarget
+    | .objectProtoIsPrototypeOf => callNativeObjectProto core r id thisV args newTarget
+    | .objectProtoToString => callNativeObjectProto core r id thisV args newTarget
+    | .objectProtoToLocaleString => callNativeObjectProto core r id thisV args newTarget
+    | .objectProtoValueOf => callNativeObjectProto core r id thisV args newTarget
+    | .functionCtor => callNativeObjectProto core r id thisV args newTarget
+    | .functionProto => callNativeObjectProto core r id thisV args newTarget
+    | .functionProtoCall => callNativeObjectProto core r id thisV args newTarget
+    | .functionProtoApply => callNativeObjectProto core r id thisV args newTarget
+    | .functionProtoBind => callNativeObjectProto core r id thisV args newTarget
+    | .functionProtoToString => callNativeObjectProto core r id thisV args newTarget
+    | .arrayCtor => callNativeArrayEdit core r id thisV args newTarget
+    | .arrayIsArray => callNativeArrayEdit core r id thisV args newTarget
+    | .arrayPush => callNativeArrayEdit core r id thisV args newTarget
+    | .arrayPop => callNativeArrayEdit core r id thisV args newTarget
+    | .arrayShift => callNativeArrayEdit core r id thisV args newTarget
+    | .arrayUnshift => callNativeArrayEdit core r id thisV args newTarget
+    | .arraySlice => callNativeArrayEdit core r id thisV args newTarget
+    | .arraySplice => callNativeArrayEdit core r id thisV args newTarget
+    | .arrayJoin | .arrayToString => callNativeArrayRead core r id thisV args newTarget
+    | .arrayIndexOf | .arrayIncludes => callNativeArrayRead core r id thisV args newTarget
+    | .arrayLastIndexOf => callNativeArrayRead core r id thisV args newTarget
+    | .arrayConcat => callNativeArrayRead core r id thisV args newTarget
+    | .arrayReverse => callNativeArrayEdit core r id thisV args newTarget
+    | .arrayFill => callNativeArrayEdit core r id thisV args newTarget
+    | .arrayMap | .arrayForEach | .arrayFilter | .arraySome | .arrayEvery | .arrayFind
+    | .arrayFindIndex => callNativeArrayRead core r id thisV args newTarget
+    | .arrayReduce => callNativeArrayRead core r id thisV args newTarget
+    | .arraySort => callNativeArrayEdit core r id thisV args newTarget
+    | .stringCtor => callNativeString core r id thisV args newTarget
+    | .stringFromCharCode => callNativeString core r id thisV args newTarget
+    | .stringToString => callNativeString core r id thisV args newTarget
+    | .numberCtor => callNativeNumber core r id thisV args newTarget
+    | .numberValueOf | .numberToString | .numberToFixed => callNativeNumber core r id thisV args newTarget
+    | .numberIsInteger => callNativeNumber core r id thisV args newTarget
+    | .booleanCtor => callNativeNumber core r id thisV args newTarget
+    | .booleanToString | .booleanValueOf => callNativeNumber core r id thisV args newTarget
+    | .errorCtor _ => callNativeError core r id thisV args newTarget
+    | .errorToString => callNativeError core r id thisV args newTarget
+    | .throwTypeError => callNativeGlobal core r id thisV args newTarget
+    | .jsonStringify => callNativeError core r id thisV args newTarget
+    | .eval => callNativeGlobal core r id thisV args newTarget
+    | .symbolCtor => callNativeError core r id thisV args newTarget
+    | .symbolToString | .symbolDescription | .symbolValueOf => callNativeError core r id thisV args newTarget
+    | .objectGetOwnPropertySymbols => callNativeObjectStatic core r id thisV args newTarget
+    | .objectAssign => callNativeObjectStatic core r id thisV args newTarget
+    | .objectEntries | .objectValues => callNativeObjectStatic core r id thisV args newTarget
+    | .arrayValues | .arrayKeys | .arrayEntries => callNativeArrayRead core r id thisV args newTarget
+    | .stringIterator => callNativeString core r id thisV args newTarget
+    | .iterNext => callNativeGenerator core r id thisV args newTarget
+    | .iterSelf => callNativeGenerator core r id thisV args newTarget
+    | .arrayFrom => callNativeArrayFrom core r id thisV args newTarget
+    | .arrayOf => callNativeArrayFrom core r id thisV args newTarget
+    | .dateNow => callNativeGlobal core r id thisV args newTarget
+    | .promiseCtor => callNativePromise core r id thisV args newTarget
+    | (.x .promiseInitOn) => callNativePromise core r id thisV args newTarget
+    | .promiseResolveFn | .promiseRejectFn => callNativePromise core r id thisV args newTarget
+    | .promiseThen => callNativePromise core r id thisV args newTarget
+    | .promiseCatch => callNativePromise core r id thisV args newTarget
+    | .promiseFinally => callNativePromise core r id thisV args newTarget
+    | .promiseFinallyF | .promiseFinallyR => callNativePromise core r id thisV args newTarget
+    | .promiseValueThunk => callNativePromise core r id thisV args newTarget
+    | .promiseThrower => callNativePromise core r id thisV args newTarget
+    | .promiseResolveStatic => callNativePromise core r id thisV args newTarget
+    | .promiseRejectStatic => callNativePromise core r id thisV args newTarget
+    | .promiseReactionJob => callNativePromise core r id thisV args newTarget
+    | .promiseThenableJob => callNativePromise core r id thisV args newTarget
+    | .promiseAll | (.x (.promiseCombinator _)) | (.x .promiseAny) => callNativePromiseAll core r id thisV args newTarget
+    | (.x (.promiseKeyed _)) => callNativePromiseAll core r id thisV args newTarget
+    | .promiseAllElement | (.x (.promiseSettleElement _)) | (.x .promiseAnyReject) => callNativePromiseAll core r id thisV args newTarget
+    | .agenNext | .agenReturn | .agenThrow => callNativeGenerator core r id thisV args newTarget
+    | .agenResume => callNativeGenerator core r id thisV args newTarget
+    | .mapCtor _ => callNativeMap core r id thisV args newTarget
+    | .mapGet | .mapSet | .mapHas | .mapDelete | .mapClear | .mapSize | .mapForEach | .setAdd
+    | .mapIter _ => callNativeMap core r id thisV args newTarget
+    | .reflect _ => callNativeReflect core r id thisV args newTarget
+    | .objectDefineProperties => callNativeObjectStatic core r id thisV args newTarget
+    | .objectSeal => callNativeObjectStatic core r id thisV args newTarget
+    | .objectIsSealed => callNativeObjectStatic core r id thisV args newTarget
+    | .objectGetOwnPropertyDescriptors => callNativeObjectStatic core r id thisV args newTarget
+    | .objectFromEntries => callNativeObjectStatic core r id thisV args newTarget
+    | .arrayFlat | .arrayFlatMap => callNativeArrayRead core r id thisV args newTarget
+    | .stringAt => callNativeString core r id thisV args newTarget
+    | .arrayAt => callNativeArrayRead core r id thisV args newTarget
+    | .arrayFindLast | .arrayFindLastIndex => callNativeArrayRead core r id thisV args newTarget
+    | .stringPadStart | .stringPadEnd => callNativeString core r id thisV args newTarget
+    | .stringCodePointAt => callNativeString core r id thisV args newTarget
+    | .stringTrimStart | .stringTrimEnd => callNativeString core r id thisV args newTarget
+    | .stringReplace | .stringReplaceAll => callNativeString core r id thisV args newTarget
+    | .stringFromCodePoint => callNativeString core r id thisV args newTarget
+    | .numberIsFinite => callNativeNumber core r id thisV args newTarget
+    | .numberIsNaN => callNativeNumber core r id thisV args newTarget
+    | .numberIsSafeInteger => callNativeNumber core r id thisV args newTarget
+    | .math1 _ => callNativeNumber core r id thisV args newTarget
+    | .mathHypot => callNativeNumber core r id thisV args newTarget
+    | .mathImul => callNativeNumber core r id thisV args newTarget
+    | .mathClz32 => callNativeNumber core r id thisV args newTarget
+    | .asyncResume => callNativeGenerator core r id thisV args newTarget
+    | .bigintCtor => callNativeNumber core r id thisV args newTarget
+    | .bigintAsN _ => callNativeNumber core r id thisV args newTarget
+    | .bigintToString | .bigintValueOf => callNativeNumber core r id thisV args newTarget
+    | .genNext | .genReturn | .genThrow => callNativeGenerator core r id thisV args newTarget
+    | .stringSplit => callNativeString core r id thisV args newTarget
+    | .stringMatch | .stringSearch => callNativeString core r id thisV args newTarget
+    | .stringMatchAll => callNativeString core r id thisV args newTarget
     | .regexpCtor | .regexpExec | .regexpTest | .regexpToString | .regexpGetter _
     | .proxyCtor | .jsonParse | .bufferCtor | .bufferSlice
     | .bufferIsView | .typedCtor _ | .typedSet | .typedSubarray | .typedFill | .dateCtor
@@ -8919,7 +9406,9 @@ termination_by structural n _ _ => n
 does is ignored (the original throw wins, step 5), then the completion goes on; a halt goes on
 at once, with no call. It never returns normally. -/
 def iterCloseAbrupt : Nat → Value → Abrupt → M Unit
-  | 0, _, a => throw a
+  -- out of fuel like every function of the block (throwing `a` here, with no call, made a run
+  -- end differently at fuel 0 than at fuel 1: not monotone in the fuel, `JS/FuelMono.lean`)
+  | 0, _, _ => throw (.halt "fuel")
   | n + 1, it, a => do
     if let .throw _ := a then
       let _ ← catchJS (iterClose n it) (fun _ => pure ())
