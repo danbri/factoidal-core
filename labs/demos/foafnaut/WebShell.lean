@@ -1287,6 +1287,7 @@ theorem routeAddress_system_only_open (site : WebRoute.Site) (base input search 
   have typed : ∀ r, typedRoute r ≠ .system u := by
     intro r; cases r <;> simp [typedRoute]
   unfold routeAddress at h
+  dsimp only at h
   split at h
   · exact absurd h (typed _)
   · split at h
@@ -1571,7 +1572,7 @@ private def hubSite : WebRoute.Site := {origin := "https://x.org",pages := "http
 #guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" "mojeek" == .outside "https://www.mojeek.com/search?q=lean+browser"
 #guard routeAddress {} "file:///p/index.html" "lean browser" "mojeek" == .navigate "https://www.mojeek.com/search?q=lean+browser"
 #guard routeAddress {} "file:///p/index.html" "lean browser" "https://example.org/s?q=%s" == .navigate "https://example.org/s?q=lean+browser"
-#guard routeAddress {outside := "https://www.mojeek.com/search?q=a"} "https://www.mojeek.com/search?q=a" "a" "mojeek" == .outside "https://www.mojeek.com/search?q=a"
+#guard routeAddress {hubSite with outside := "https://www.mojeek.com/search?q=a"} "https://www.mojeek.com/search?q=a" "a" "mojeek" == .outside "https://www.mojeek.com/search?q=a"
 -- Hosts the old list sent out: the tab (native) or the Outside page (Hub).
 #guard routeAddress {} "file:///p/index.html" "github.com/danbri" == .navigate "https://github.com/danbri"
 #guard routeAddress hubSite "https://x.org/p/index.html" "github.com/danbri" == .outside "https://github.com/danbri"

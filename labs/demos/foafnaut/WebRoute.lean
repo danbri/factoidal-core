@@ -184,23 +184,40 @@ private def hexValue (c : Char) : Option Nat :=
   else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
   else none
 
+/-- Where `decodeBytes` is: no `%` pending, a `%` seen, or a `%` and one hex digit seen. -/
+inductive Pending where
+  | none
+  | percent
+  | digit (a : Char) (x : Nat)
+
+/-- One character of a query, with no `%` pending: `+` a space, `%` starts a byte. -/
+private def plainStep (acc : List UInt8) (c : Char) : Pending × List UInt8 :=
+  if c == '%' then (.percent, acc)
+  else if c == '+' then (.none, 32 :: acc)
+  else (.none, (String.singleton c).toUTF8.toList.reverse ++ acc)
+
+private def decodeStep : Pending × List UInt8 → Char → Pending × List UInt8
+  | (.none, acc), c => plainStep acc c
+  | (.percent, acc), c =>
+    match hexValue c with
+    | some x => (.digit c x, acc)
+    | none => plainStep (37 :: acc) c
+  | (.digit a x, acc), c =>
+    match hexValue c with
+    | some y => (.none, (x*16+y).toUInt8 :: acc)
+    | none => plainStep ((String.singleton a).toUTF8.toList.reverse ++ 37 :: acc) c
+
 /-- The bytes of a query, `+` a space and `%XX` a byte; a `%` without two hex digits is
-itself. Tail-recursive: a typed line can be long. -/
-def decodeBytes : List Char → List UInt8 → List UInt8
-  | [], acc => acc.reverse
-  | '%' :: rest, acc =>
-    match rest with
-    | a :: b :: more =>
-      match hexValue a, hexValue b with
-      | some x, some y => decodeBytes more ((x*16+y).toUInt8 :: acc)
-      | _, _ => decodeBytes rest (37 :: acc)
-    | _ => decodeBytes rest (37 :: acc)
-  | '+' :: rest, acc => decodeBytes rest (32 :: acc)
-  | c :: rest, acc => decodeBytes rest ((String.singleton c).toUTF8.toList.reverse ++ acc)
+itself. A left fold, so a long typed line needs no stack. -/
+def decodeBytes (cs : List Char) : List UInt8 :=
+  match cs.foldl decodeStep (.none, []) with
+  | (.none, acc) => acc.reverse
+  | (.percent, acc) => (37 :: acc).reverse
+  | (.digit a _, acc) => ((String.singleton a).toUTF8.toList.reverse ++ 37 :: acc).reverse
 
 /-- The words of `encodeQuery`, read back; bytes that are not UTF-8 leave the text as it is. -/
 def decodeQuery (s : String) : String :=
-  (String.fromUTF8? (ByteArray.mk (decodeBytes s.toList []).toArray)).getD s
+  (String.fromUTF8? (ByteArray.mk (decodeBytes s.toList).toArray)).getD s
 
 /-- A Wikipedia article title for the words: spaces are `_`, and anything but letters,
 digits and `-_.` is percent-encoded. -/
@@ -222,7 +239,7 @@ def searchPageURL (words : String) : String := "foafnaut:search/" ++ encodeQuery
 #guard searchTemplate "" == none && searchTemplate "none" == none
 #guard expandSearch "https://example.org/?q=%s&x=%s" "a b&c" == "https://example.org/?q=a+b%26c&x=a+b%26c"
 #guard searchPageURL "lean browser" == "foafnaut:search/lean+browser"
-#guard decodeQuery (encodeQuery "lean browser é&%") == "lean browser é&%" && decodeQuery "a%zz+b%" == "a%zz b%"
+#guard decodeQuery (encodeQuery "lean browser é&%") == "lean browser é&%" && decodeQuery "a%zz+b%" == "a%zz b%" && decodeQuery "%%41%4" == "%A%4"
 #guard encodeTitle " Lean (prover) " == "Lean_%28prover%29"
 -- No engine is chosen by default: an empty setting has no template.
 theorem no_default_search : searchTemplate "" = none := by decide

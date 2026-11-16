@@ -1082,8 +1082,7 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
   -- `outside` is the address whose Outside page the tab shows ("" for any other page), so a
   -- link to it is that page's button; `search` is the search engine chosen in Settings.
   if op == "shellRoute" then
-    let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := request.field? "files" == some (.bool true),
-      outside := str request "outside"}
+    let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := (request.field? "files" == some (.bool true)),outside := str request "outside"}
     let route := match request.field? "address" with
       | some (.string address) => WebShell.routeAddress {site with outside := ""} (str request "base") address (str request "search")
       | _ => WebRoute.routeAddress site (str request "base") (str request "href")
