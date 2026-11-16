@@ -25,6 +25,9 @@ import {spawn,execFileSync} from 'node:child_process';import {fileURLToPath} fro
 import {checkBudgets,knownFailures} from './spinal_budgets.mjs';
 const args=process.argv.slice(2),opt=(n,d)=>{const i=args.indexOf(n);return i<0?d:args[i+1];},flag=n=>args.includes(n);
 const SECONDS=Number(opt('--seconds',45)),OUT=opt('--out'),ADAPTER=opt('--adapter','auto'),LIVE_ONLY=flag('--live');
+// --profile FILE: a CPU profile (Profiler, 1 ms samples) of each worker for the whole run, written
+// as {sessions:[{url,profile}]}: what a worker does in a gap between frames.
+const PROFILE=opt('--profile');
 const hubDir=fileURLToPath(new URL('../../../docs/web/hub/foafnaut/',import.meta.url));
 const pagesDir=fileURLToPath(new URL('./pages/',import.meta.url));
 const runtimeDir=opt('--runtime');
@@ -79,7 +82,7 @@ async function session(adapterMode){
     let ws;for(let i=0;i<300&&!ws;i++){try{ws=(await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl;}catch{await sleep(100);}}
     if(!ws)throw Error('Chrome did not start: no answer on /json/version after 30 s');
     socket=new WebSocket(ws);await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
-    let id=0;const waiting=new Map(),workers=new Set(),messages=[];
+    let id=0;const waiting=new Map(),workers=new Set(),messages=[],profiled=[];
     const send=(method,params={},sessionId)=>new Promise((r,j)=>{const i=++id;waiting.set(i,[r,j]);socket.send(JSON.stringify({id:i,method,params,sessionId}));});
     const t0=Date.now();
     socket.onmessage=({data})=>{const m=JSON.parse(data);
@@ -87,6 +90,9 @@ async function session(adapterMode){
       const from=workers.has(m.sessionId)?'worker':'page';
       if(m.method==='Target.attachedToTarget'&&m.params.targetInfo.type.includes('worker')){
         workers.add(m.params.sessionId);
+        if(PROFILE){profiled.push({sid:m.params.sessionId,url:m.params.targetInfo.url});
+          send('Profiler.enable',{},m.params.sessionId).then(()=>send('Profiler.setSamplingInterval',{interval:1000},m.params.sessionId))
+            .then(()=>send('Profiler.start',{},m.params.sessionId)).catch(()=>{});}
         send('Runtime.enable',{},m.params.sessionId).catch(()=>{});
         send('Runtime.runIfWaitingForDebugger',{},m.params.sessionId).catch(()=>{});
       }
@@ -119,7 +125,7 @@ async function session(adapterMode){
     while(Date.now()-t1<SECONDS*1000){
       await sleep(1000);
       const got=await evaluate(`(()=>{const f=window.__frames??[];window.__frames=[];return f.map(x=>({t:x.t,path:x.path,url:x.url,layoutMs:x.layoutMs,drawMs:x.drawMs,
-        gpuMs:x.gpuMs,totalMs:x.totalMs,primitives:x.primitives,leanRenders:x.leanRenders,rows:x.rows,scriptTurns:x.scripts?.turns,scriptMs:x.scripts?.ms,draw:x.draws?.page??x.draws?.single,chrome:x.draws?.chrome,composite:x.draws?.composite,planRequests:x.surface?.planRequests,pipelineBuilds:x.surface?.pipelineBuilds}));})()`).catch(()=>[]);
+        gpuMs:x.gpuMs,totalMs:x.totalMs,primitives:x.primitives,leanRenders:x.leanRenders,leanCalls:x.leanCalls,rows:x.rows,scriptTurns:x.scripts?.turns,scriptMs:x.scripts?.ms,scriptLastMs:x.scripts?.lastMs,draw:x.draws?.page??x.draws?.single,chrome:x.draws?.chrome,composite:x.draws?.composite,planRequests:x.surface?.planRequests,pipelineBuilds:x.surface?.pipelineBuilds}));})()`).catch(()=>[]);
       frames.push(...got);
       if(Date.now()-t1>=nextSample){
         nextSample+=5000;
@@ -130,6 +136,13 @@ async function session(adapterMode){
       }
     }
     out.seconds=SECONDS;out.workers=workers.size;
+    if(PROFILE){
+      // The page's clock at the run's start, for lining frames up with profile samples (us).
+      const pageNow=await evaluate('performance.timeOrigin+performance.now()').catch(()=>null);
+      const sessions=[];
+      for(const {sid,url} of profiled){const r=await send('Profiler.stop',{},sid).catch(()=>undefined);if(r?.profile)sessions.push({url,profile:r.profile});}
+      fs.writeFileSync(PROFILE,JSON.stringify({pageNowMs:pageNow,frames:frames.map(f=>({t:f.t,path:f.path,layoutMs:f.layoutMs,drawMs:f.drawMs})),sessions}));
+    }
     const pageFrames=frames.filter(f=>String(f.url??'').endsWith(PAGE));
     const first=pageFrames[0];
     // Frames after the first one of the page: the animation's frames (the zoom starts 0.6 s in).
@@ -168,7 +181,10 @@ async function session(adapterMode){
     const gpuText=/GPU|WebGPU|device/i,lostText=/device (was )?lost|lost:|GPU layer surface is failed/i;
     out.errors={count:messages.filter(m=>m.type!=='warning').length,warnings:messages.filter(m=>m.type==='warning').length,
       gpu:messages.filter(m=>gpuText.test(m.text)).length,device_lost:messages.some(m=>lostText.test(m.text))?1:0,first:messages.slice(0,12)};
+    // With each frame, the page's script turns so far (count, total ms, the last turn's ms) and
+    // the engine calls: a gap between frames is a script turn, an engine call or neither.
     out.frames_detail=pageFrames.map(f=>({s:r1((f.t)/1000),path:f.path,layoutMs:f.layoutMs,drawMs:f.drawMs,primitives:f.primitives,
+      scriptTurns:f.scriptTurns,scriptMs:f.scriptMs===undefined?undefined:r1(f.scriptMs),scriptLastMs:f.scriptLastMs,leanCalls:f.leanCalls,leanRenders:f.leanRenders,
       ...(f.draw&&!f.draw.kept?{cpuMs:f.draw.cpuMs,gpuMs:f.draw.gpuMs,segmentsM:m(f.draw.segments),outsideClipM:m(f.draw.segmentsOutsideClip),piecesM:m(f.draw.pieces??0),
         listedM:m(f.draw.listed),drawnPixels:f.draw.drawnPixels,uploadKB:Math.round(f.draw.uploadBytes/1024),partial:f.draw.partial,
         chromeMs:r1(chromeOf(f)),chromeGpuMs:f.chrome?.gpuMs,planRequests:f.planRequests,pipelineBuilds:f.pipelineBuilds,compositeMs:f.composite?r1(f.composite.cpuMs+f.composite.gpuMs):undefined,otherMs:r1(otherOf(f))}:{})}));

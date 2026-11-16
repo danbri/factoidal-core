@@ -3317,23 +3317,125 @@ def Primitive.paintBox (m : Mapping) (p : BackendPrimitive) : Option (Float × F
 
 structure TileListing where
   /-- Each tile the primitive is listed in, with the index of its list record in `lists`, or
-  `allEdges`. A record is the path's fill edges (a count, then the indices; the count
-  `allEdges` with no indices: every edge) then its stroke pieces in the same form. -/
+  `allEdges`. A record is the path's fill edges then its stroke pieces. The edge part is a
+  count and the indices, the count `allEdges` with no indices (every edge), or `cellMark`,
+  then `cellsPerSide+1` offsets and the indices of each row band of the tile (`edgeBands`).
+  The piece part is a count and the indices, `allEdges` (every piece), or `cellMark`, then
+  `cellsPerSide^2+1` offsets and the indices of each cell of the tile (`tileCells`). -/
   tiles : Array (Nat × Nat)
   lists : Array (Array Nat)
   deriving Inhabited
 
-/-- The tiles of one primitive and its edge lists there (`tilesOf`): a function of the
-primitive, the mapping and the grid alone, so a retained compile keeps it with the
-primitive (`RetainedItem.listing`) and a frame that changes nothing else lists it again
-without filtering any edge. -/
+/-- Cells along a side of a tile, for the stroke piece lists and the fill edge bands: a
+sample tests only the pieces of its cell and the edges of its band. -/
+def cellsPerSide : Nat := 4
+
+/-- Side of a cell in pixels. -/
+def cellSize : Nat := tileSize / cellsPerSide
+
+/-- The first word of an edge part or a piece part in cell form. -/
+def cellMark : Nat := 4294967294
+
+/-- `tileIndex` for cells: `min (count-1) ⌊value/cellSize⌋`, 0 below 0. With `count` cells
+across a grid of `count/cellsPerSide` tiles, the cell's tile is `tileIndex value`, as
+`cellSize*cellsPerSide = tileSize` and both divisions are by powers of two. -/
+private def cellIndex (value : Float) (count : Nat) : Nat :=
+  if value <= 0 then 0
+  else min (count-1) (value/cellSize.toFloat).floor.toUInt64.toNat
+
+/-- The box in target pixels of a piece's box (`pieceBox`): its corners through the
+transform and the page mapping, widened by two pixels; `none` when a corner is not finite.
+The four corners and the margin of the per-tile lists before cells. -/
+def pieceScreenBox (mapping : Mapping) (t : Transform) (width : Float) (piece : NativeSVGStroke.Piece) :
+    Option (Float × Float × Float × Float) :=
+  let (a0,b0,a1,b1) := pieceBox piece width
+  let px := fun (x y : Float) =>
+    let w := t.apply x y
+    ((w.1-mapping.minX)*mapping.sx+mapping.tx,(w.2-mapping.minY)*mapping.sy+mapping.ty)
+  let (x0,y0) := px a0 b0
+  let (x1,y1) := px a1 b0
+  let (x2,y2) := px a0 b1
+  let (x3,y3) := px a1 b1
+  if x0.isFinite && y0.isFinite && x1.isFinite && y1.isFinite && x2.isFinite && y2.isFinite && x3.isFinite && y3.isFinite then
+    some (min (min x0 x1) (min x2 x3)-2,min (min y0 y1) (min y2 y3)-2,max (max x0 x1) (max x2 x3)+2,max (max y0 y1) (max y2 y3)+2)
+  else none
+
+/-- Each stroke piece in the cells its screen box meets (`pieceScreenBox`), in record order;
+a piece with no finite box in every cell. `cells` holds the cells of the primitive's tiles
+`left..right × top..bottom`, row by row. -/
+def binPieces (mapping : Mapping) (t : Transform) (width : Float) (across down left top cw ch : Nat)
+    (parts : List NativeSVGStroke.Piece) : Array (Array Nat) := Id.run do
+  let c0x := left*cellsPerSide
+  let c0y := top*cellsPerSide
+  let mut cells : Array (Array Nat) := Array.replicate (cw*ch) #[]
+  let mut i := 0
+  for piece in parts do
+    let (l,u,r,b) := match pieceScreenBox mapping t width piece with
+      | some (x0,y0,x1,y1) =>
+        (max (cellIndex x0 (across*cellsPerSide)) c0x,max (cellIndex y0 (down*cellsPerSide)) c0y,
+         min (cellIndex x1 (across*cellsPerSide)) (c0x+cw-1),min (cellIndex y1 (down*cellsPerSide)) (c0y+ch-1))
+      | none => (c0x,c0y,c0x+cw-1,c0y+ch-1)
+    for y in [u:b+1] do
+      for x in [l:r+1] do
+        cells := cells.modify ((y-c0y)*cw+(x-c0x)) (·.push i)
+    i := i+1
+  return cells
+
+/-- The piece part of tile `(tx,ty)` (relative to the listing's first tile) from the cells
+of `binPieces`: `#[0]` when no cell lists a piece, else `cellMark`, the offset of each
+cell's list and the end, then the lists, cells row by row. -/
+def tileCells (cells : Array (Array Nat)) (cw tx ty : Nat) : Array Nat := Id.run do
+  let mut offsets : Array Nat := Array.emptyWithCapacity (cellsPerSide*cellsPerSide+2)
+  let mut body : Array Nat := #[]
+  offsets := offsets.push cellMark
+  for cy in [0:cellsPerSide] do
+    for cx in [0:cellsPerSide] do
+      offsets := offsets.push body.size
+      body := body ++ cells.getD ((ty*cellsPerSide+cy)*cw+tx*cellsPerSide+cx) #[]
+  if body.isEmpty then return #[0]
+  return offsets.push body.size ++ body
+
+/-- The fill edges of each row band of a tile whose pixel rows start at `ty0` and whose
+columns are `tx0 .. tx0+tileSize`: for band `k`, the edges whose ends do not both lie below or
+both above the local rows of the band's samples, widened by the margin of the tile's local
+rows (`Primitive.localRows`), so that each band's range lies in the tile's. `none` when a
+corner is not finite. -/
+def Primitive.edgeBands (m : Mapping) (p : BackendPrimitive) (edges : Array (Float × Float))
+    (tx0 ty0 : Float) : Option (Array Nat) := do
+  let inv := p.transform.inverse
+  let localY := fun (x y : Float) => (inv.apply ((x-m.tx)/m.sx+m.minX) ((y-m.ty)/m.sy+m.minY)).2
+  let tx1 := tx0+tileSize.toFloat
+  let rows := fun (y0 y1 : Float) =>
+    let a := localY tx0 y0
+    let b := localY tx1 y0
+    let c := localY tx0 y1
+    let d := localY tx1 y1
+    (min (min a b) (min c d),max (max a b) (max c d),a.isFinite && b.isFinite && c.isFinite && d.isFinite)
+  let (tlo,thi,ok) := rows ty0 (ty0+tileSize.toFloat)
+  if !ok then failure
+  let mut out : Array Nat := Array.emptyWithCapacity (cellsPerSide+2)
+  let mut body : Array Nat := #[]
+  out := out.push cellMark
+  for k in [0:cellsPerSide] do
+    let y0 := ty0+Float.ofNat (k*cellSize)
+    let (lo,hi,fine) := rows y0 (y0+cellSize.toFloat)
+    if !fine then failure
+    let margin := (thi-tlo)/16+(lo.abs+hi.abs)/4096+1/4096
+    out := out.push body.size
+    body := body ++ edgesMeeting edges (lo-margin) (hi+margin)
+  return out.push body.size ++ body
+
+/-- The tiles of one primitive, its fill edges in each row band of a tile and its stroke
+pieces in each cell (`tilesOf`): a function of the primitive, the mapping and the grid alone,
+so a retained compile keeps it with the primitive (`RetainedItem.listing`) and a frame that
+changes nothing else lists it again without filtering any edge or placing any piece. -/
 def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPrimitive) : TileListing := Id.run do
   -- The local y of each end of each fill edge of a path (in the order of its record).
   let ys : Option (Array (Float × Float)) := match p.geometry with
     | .path contours => some ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray
     | _ => none
   -- A transform whose local y does not depend on x (no rotation or skew of y) maps a row
-  -- of tiles to one range of local y: one edge list for the row.
+  -- of tiles to one range of local y: one edge part for the row.
   let byRow := p.transform.inverse.b == 0
   let box := p.paintBox mapping
   -- Wholly clipped away: no tile.
@@ -3342,26 +3444,11 @@ def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPr
   let (left,top,right,bottom) := match box with
     | some (x0,y0,x1,y1) => (tileIndex x0 across,tileIndex y0 down,tileIndex x1 across,tileIndex y1 down)
     | none => (0,0,across-1,down-1)
-  -- The stroke pieces of each tile: each piece in the tiles its box meets (`pieceBox` through
-  -- the transform and the mapping, widened by two pixels); a piece whose box is not finite
-  -- goes in every tile. Each tile's pieces are in record order.
-  let width := (right+1-left)
-  let pieces : Option (Array (Array Nat)) := p.dashParts.map fun parts => Id.run do
-    let mut lists : Array (Array Nat) := Array.replicate (width*(bottom+1-top)) #[]
-    for (piece,i) in parts.zipIdx do
-      let (a0,b0,a1,b1) := pieceBox piece p.style.strokeWidth
-      let pixels := [(a0,b0),(a1,b0),(a0,b1),(a1,b1)].map fun (x,y) =>
-        let w := p.transform.apply x y
-        ((w.1-mapping.minX)*mapping.sx+mapping.tx,(w.2-mapping.minY)*mapping.sy+mapping.ty)
-      let xs := pixels.map (·.1)
-      let ys := pixels.map (·.2)
-      let (l,t,r,b) := if (xs++ys).any (fun v => v.isNaN || v.isInf) then (left,top,right,bottom)
-        else (tileIndex (xs.foldl min (xs.headD 0)-2) across,tileIndex (ys.foldl min (ys.headD 0)-2) down,
-          tileIndex (xs.foldl max (xs.headD 0)+2) across,tileIndex (ys.foldl max (ys.headD 0)+2) down)
-      for y in [max t top:min b bottom+1] do
-        for x in [max l left:min r right+1] do
-          lists := lists.modify ((y-top)*width+(x-left)) (·.push i)
-    return lists
+  -- The stroke pieces of each cell of the primitive's tiles (`binPieces`).
+  let cw := (right+1-left)*cellsPerSide
+  let ch := (bottom+1-top)*cellsPerSide
+  let pieces : Option (Array (Array Nat)) := p.dashParts.map
+    (binPieces mapping p.transform p.style.strokeWidth across down left top cw ch)
   let mut tiles : Array (Nat × Nat) := #[]
   let mut lists : Array (Array Nat) := #[]
   for y in [top:bottom+1] do
@@ -3371,14 +3458,11 @@ def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPr
       if let some edges := ys then
         if let some r := rowEdges then edgePart := r
         else
-          let tx0 := Float.ofNat (x*tileSize)
-          let ty0 := Float.ofNat (y*tileSize)
-          if let some (lo,hi) := p.localRows mapping tx0 ty0 (tx0+tileSize.toFloat) (ty0+tileSize.toFloat) then
-            let kept := edgesMeeting edges lo hi
-            edgePart := #[kept.size] ++ kept
+          if let some bands := p.edgeBands mapping edges (Float.ofNat (x*tileSize)) (Float.ofNat (y*tileSize)) then
+            edgePart := bands
           if byRow then rowEdges := some edgePart
       let piecePart : Array Nat := match pieces with
-        | some ps => let l := ps.getD ((y-top)*width+(x-left)) #[]; #[l.size] ++ l
+        | some ps => tileCells ps cw (x-left) (y-top)
         | none => #[allEdges]
       if edgePart.size == 1 && piecePart.size == 1 && edgePart[0]! == allEdges && piecePart[0]! == allEdges then
         tiles := tiles.push (y*across+x,allEdges)
@@ -3390,8 +3474,64 @@ def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPr
         tiles := tiles.push (y*across+x,ref)
   return ⟨tiles,lists⟩
 
+/-- The tile words from the record rows of each primitive and its listing, in paint order
+(`tilesOf`), after `tail` (the paint table): a count of each tile's entries, then each entry
+written at its tile's next place (no list per tile and no pair per entry). The same words as
+`tilesOfListingsRef`; a guard of `SVGRaster` compares the two. -/
+def tilesOfListingsRows (width height : Nat) (tail : Array Nat) (rows : Array Nat) (listings : Array TileListing) : Array Nat := Id.run do
+  let across := (width+tileSize-1)/tileSize
+  let down := (height+tileSize-1)/tileSize
+  let n := across*down
+  let mut counts : Array Nat := Array.replicate n 0
+  for listing in listings do
+    for (t,_) in listing.tiles do
+      if t < n then counts := counts.modify t (·+1)
+  let mut offsets : Array Nat := Array.emptyWithCapacity (n+1)
+  let mut total := 0
+  for c in counts do
+    offsets := offsets.push total
+    total := total+c
+  offsets := offsets.push total
+  -- A very dense page: one tile that lists every primitive once, as before tiles.
+  if total > maxTileEntries then
+    let mut starts : Array Nat := #[]
+    let mut row := 2
+    for r in rows do
+      starts := starts.push row
+      row := row+r
+    return #[max width height+1,1,1,0,starts.size] ++ starts ++ Array.replicate starts.size allEdges ++ tail
+  let poolStart := 3+offsets.size+2*total
+  let mut entries : Array Nat := Array.replicate total 0
+  let mut refs : Array Nat := Array.replicate total 0
+  let mut next : Array Nat := offsets.pop
+  let mut pool : Array Nat := #[]
+  let mut base := 2
+  let mut k := 0
+  for listing in listings do
+    -- The listing's lists go into the pool once each; past the limit, every edge.
+    let mut at_ : Array Nat := Array.emptyWithCapacity listing.lists.size
+    for list in listing.lists do
+      if pool.size+list.size <= maxTileEdgeWords then
+        at_ := at_.push (poolStart+pool.size)
+        pool := pool ++ list
+      else at_ := at_.push allEdges
+    for (t,ref) in listing.tiles do
+      if t < n then
+        let place := next[t]!
+        entries := entries.set! place base
+        refs := refs.set! place (if ref == allEdges then allEdges else at_.getD ref allEdges)
+        next := next.modify t (·+1)
+    base := base+rows.getD k 0
+    k := k+1
+  return #[tileSize,across,down] ++ offsets ++ entries ++ refs ++ pool ++ tail
+
 /-- The tile words from each primitive's listing, in paint order (`tilesOf`). -/
-def tilesOfListings (width height : Nat) (compiled : List BackendPrimitive) (listings : Array TileListing) : Array Nat := Id.run do
+def tilesOfListings (width height : Nat) (compiled : List BackendPrimitive) (listings : Array TileListing) : Array Nat :=
+  tilesOfListingsRows width height (paintTailOf compiled) (compiled.toArray.map (·.rowCount)) listings
+
+/-- `tilesOfListings` as it was written first, with a list of pairs for each tile: the
+reference that the guards compare `tilesOfListingsRows` with. -/
+def tilesOfListingsRef (width height : Nat) (compiled : List BackendPrimitive) (listings : Array TileListing) : Array Nat := Id.run do
   let tail := paintTailOf compiled
   let across := (width+tileSize-1)/tileSize
   let down := (height+tileSize-1)/tileSize
@@ -3445,9 +3585,11 @@ the index in these words of a count followed by that many edge indices), then th
 lists, then the paint table. A primitive is left out of a tile only when its paint box does not
 touch the tile; there it can not change a pixel, so the image does not change.
 A path's edge list in a tile holds the edges whose ends do not both lie below or both above
-the local rows of the tile's samples (`Primitive.localRows`, `edgesMeeting`): the other
-edges change no winding number there (`pathWinding_filter`). The shader walks the list
-instead of every edge of the path. -/
+the local rows of the samples of each row band of the tile (`Primitive.edgeBands`,
+`edgesMeeting`): the other edges change no winding number there (`pathWinding_filter`). The
+shader walks the list of the sample's band instead of every edge of the path. A stroke's list
+holds, for each cell of the tile, the pieces whose box meets the cell (`binPieces`,
+`tileCells`); the shader tests the pieces of the sample's cell (`any_filter_of_keeps`). -/
 def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPrimitive) : Array Nat :=
   let across := (width+tileSize-1)/tileSize
   let down := (height+tileSize-1)/tileSize
@@ -3475,9 +3617,11 @@ private def sceneShader : String :=
   "if(rule==1u){return (winding%2)!=0;}return winding!=0; }\n" ++
   -- A path's fill over the tile's edge list (`tilesOf`): a count, then edge indices; the word
   -- `allEdges` walks every edge. The test of each edge is `windingContains`'s.
-  "fn pathWinding(base:u32,count:u32,rule:u32,p:vec2f,list:u32)->bool {if(list==" ++ toString allEdges ++ "u){return windingContains(base,count,rule,p,4u);}" ++
-  "if(tiles[list]==" ++ toString allEdges ++ "u){return windingContains(base,count,rule,p,4u);}" ++
-  "var winding:i32=0;let n=min(tiles[list],count);for(var j=0u;j<n;j++){let i=tiles[list+1u+j];if(i>=count){break;}" ++
+  -- In cell form (`cellMark`) the list of the sample's row band of the tile (`edgeBands`).
+  "fn pathWinding(base:u32,count:u32,rule:u32,p:vec2f,list:u32,band:u32)->bool {if(list==" ++ toString allEdges ++ "u){return windingContains(base,count,rule,p,4u);}" ++
+  "let n0=tiles[list];if(n0==" ++ toString allEdges ++ "u){return windingContains(base,count,rule,p,4u);}" ++
+  "var first=list+1u;var n=min(n0,count);if(n0==" ++ toString cellMark ++ "u){let s=tiles[list+1u+band];first=list+" ++ toString (2+cellsPerSide) ++ "u+s;n=min(tiles[list+2u+band]-s,count);}" ++
+  "var winding:i32=0;for(var j=0u;j<n;j++){let i=tiles[first+j];if(i>=count){break;}" ++
   "let a=vec2f(parameter(base,20u+4u*i),parameter(base,21u+4u*i));let b=vec2f(parameter(base,22u+4u*i),parameter(base,23u+4u*i));" ++
   "let cross=(b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x);" ++
   "if(a.y<=p.y&&p.y<b.y&&cross>0.0){winding+=1;}" ++
@@ -3510,7 +3654,10 @@ private def sceneShader : String :=
   "fn samplePixel(pixel:vec4f)->vec4f {" ++
   "var rgb=vec3f(1.0);let rowLimit=arrayLength(&params.rows);if(rowLimit<2u){return vec4f(rgb,1.0);}if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
   "let worldP=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);" ++
-  "let across=tiles[1];let down=tiles[2];let tile=min(u32(pixel.y)/tiles[0],down-1u)*across+min(u32(pixel.x)/tiles[0],across-1u);" ++
+  "let across=tiles[1];let down=tiles[2];let tileY=min(u32(pixel.y)/tiles[0],down-1u);let tileX=min(u32(pixel.x)/tiles[0],across-1u);let tile=tileY*across+tileX;" ++
+  -- The sample's row band and cell of its tile (`edgeBands`, `tileCells`).
+  "let band=min((u32(pixel.y)-tileY*tiles[0])/" ++ toString cellSize ++ "u," ++ toString (cellsPerSide-1) ++ "u);" ++
+  "let cell=band*" ++ toString cellsPerSide ++ "u+min((u32(pixel.x)-tileX*tiles[0])/" ++ toString cellSize ++ "u," ++ toString (cellsPerSide-1) ++ "u);" ++
   "let listBase=4u+across*down;let listEnd=tiles[4u+tile];let refBase=listBase+tiles[3u+across*down];\n" ++
   "for(var item=tiles[3u+tile];item<listEnd;item++)" ++ "{var base=tiles[listBase+item];let edgeList=tiles[refBase+item];" ++
   "let remaining=rowLimit-base;if(remaining<5u){break;}let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
@@ -3527,13 +3674,17 @@ private def sceneShader : String :=
   s!"case {Geometry.lineRecordTag}u: " ++ "{if((header.w%2u)==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
   ";}else{strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}}\n" ++
   s!"case {Geometry.polygonRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,2u);}}" ++
-  s!"case {Geometry.pathRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=pathWinding(base,count,header.z,p.xy,edgeList);}} default:{} }\n" ++
+  s!"case {Geometry.pathRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=pathWinding(base,count,header.z,p.xy,edgeList,band);}} default:{} }\n" ++
   -- The stroke pieces: the tile's piece list (after the edge part of the record), else every
   -- piece; the first piece that holds the sample ends the loop (the pieces are a union).
   "if(params.rows[base+4u].w==1.0)" ++ "{strokeHit=false;let parentBase=base;" ++
-  "var pl=" ++ toString allEdges ++ "u;if(edgeList!=" ++ toString allEdges ++ "u){let ne=tiles[edgeList];pl=select(edgeList+1u+ne,edgeList+1u,ne==" ++ toString allEdges ++ "u);}" ++
-  "var listed=false;var pieceCount=dashCount;if(pl!=" ++ toString allEdges ++ "u){if(tiles[pl]!=" ++ toString allEdges ++ "u){listed=true;pieceCount=min(tiles[pl],dashCount);}}" ++
-  "for(var dj=0u;dj<pieceCount;dj++){var di=dj;if(listed){di=tiles[pl+1u+dj];}if(di>=dashCount){break;}base=parentBase+" ++ toString primitiveFixedRowCount ++ s!"u+shapeRows+di*{dashPieceRowCount}u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
+  -- In cell form (`cellMark`) the list of the sample's cell (`tileCells`).
+  "var pl=" ++ toString allEdges ++ "u;if(edgeList!=" ++ toString allEdges ++ "u){let ne=tiles[edgeList];pl=select(edgeList+1u+ne,edgeList+1u,ne==" ++ toString allEdges ++ "u);" ++
+  "if(ne==" ++ toString cellMark ++ "u){pl=edgeList+" ++ toString (2+cellsPerSide) ++ "u+tiles[edgeList+" ++ toString (1+cellsPerSide) ++ "u];}}" ++
+  "var listed=false;var first=0u;var pieceCount=dashCount;if(pl!=" ++ toString allEdges ++ "u){let m=tiles[pl];" ++
+  "if(m==" ++ toString cellMark ++ "u){let s=tiles[pl+1u+cell];listed=true;first=pl+" ++ toString (2+cellsPerSide*cellsPerSide) ++ "u+s;pieceCount=min(tiles[pl+2u+cell]-s,dashCount);}" ++
+  "else if(m!=" ++ toString allEdges ++ "u){listed=true;first=pl+1u;pieceCount=min(m,dashCount);}}" ++
+  "for(var dj=0u;dj<pieceCount;dj++){var di=dj;if(listed){di=tiles[first+dj];}if(di>=dashCount){break;}base=parentBase+" ++ toString primitiveFixedRowCount ++ s!"u+shapeRows+di*{dashPieceRowCount}u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
   "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
   "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
   "else if(dt==7u){piece=" ++ relativeCondition (triangleCondition 0) ++ ";}strokeHit=strokeHit||piece;if(strokeHit){break;}}base=parentBase;}" ++
@@ -4404,6 +4555,55 @@ inductive Reuse where
   | moved (transform : Transform) (opacity : Float)
   | different
 
+/-- The item of a compiled primitive: its records, box and tile listing. -/
+def retainedRecord {κ : Type} (mapping : Mapping) (width height cursor : Nat) (key : κ)
+    (compiled : BackendPrimitive) : RetainedItem κ :=
+  ⟨key,compiled,Primitive.writeRows (ByteArray.emptyWithCapacity (compiled.storageRows*16)) compiled,
+    cursor,compiled.storageRows,compiled.paintWords.length,compiled.paintBox mapping,
+    compiled.tileListing mapping ((width+tileSize-1)/tileSize) ((height+tileSize-1)/tileSize)⟩
+
+/-- One primitive of `compileRetained`: the item, whether its pixels can change, and whether
+it kept its geometry under a new transform. `kept` is last frame's item at this index with
+the reuse of its key, when the cursor is the same. -/
+def retainItem {κ : Type} (mapping : Mapping) (width height cursor : Nat) (key : κ)
+    (render : Unit → Except String Primitive) (kept : Option (RetainedItem κ × Reuse)) :
+    Except String (RetainedItem κ × Bool × Bool) :=
+  match kept with
+  | some (item,.same) => pure ({item with key},false,false)
+  | some (item,.moved transform opacity) =>
+    pure (retainedRecord mapping width height cursor key {item.compiled with transform,opacity},true,true)
+  | _ => do
+    let p ← render ()
+    let compiled ← compilePrimitive mapping cursor p
+    pure (retainedRecord mapping width height cursor key compiled,true,false)
+
+/-- Cost theorem (what is not recomputed). Says: a primitive whose key is the same as last
+frame's at its index (`Reuse.same`) keeps last frame's item whole: its compiled primitive (no
+curve flattened, no stroke piece made), its records (no row written) and its tile listing (no
+edge filtered, no piece placed in a cell); only the key is replaced, and its pixels are not
+marked as changed. Does not say: when the reuse function answers `same` (that is
+`WebPaint.samePrimitive` and `LeafKey.sameContext`), nor anything of time. -/
+theorem retainItem_same {κ : Type} (mapping : Mapping) (width height cursor : Nat) (key : κ)
+    (render : Unit → Except String Primitive) (item : RetainedItem κ) :
+    retainItem mapping width height cursor key render (some (item,.same)) = .ok ({item with key},false,false) := rfl
+
+/-- Cost theorem. Says: a primitive moved under a new transform with the same linear part
+(`Reuse.moved`) keeps last frame's geometry and stroke pieces: the new item's compiled
+primitive has the same geometry, style and `dashParts`, so no curve is flattened and no
+stroke piece is made again; `render` is not called. Only its records and tile listing are made
+for the new transform. Does not say: that the new listing is cheap, or when `moved` is answered. -/
+theorem retainItem_moved {κ : Type} (mapping : Mapping) (width height cursor : Nat) (key : κ)
+    (render : Unit → Except String Primitive) (item : RetainedItem κ) (t : Transform) (o : Float) :
+    retainItem mapping width height cursor key render (some (item,.moved t o)) =
+      .ok (retainedRecord mapping width height cursor key {item.compiled with transform:=t,opacity:=o},true,true) := rfl
+
+theorem retainedRecord_pieces {κ : Type} (mapping : Mapping) (width height cursor : Nat) (key : κ)
+    (item : RetainedItem κ) (t : Transform) (o : Float) :
+    (retainedRecord mapping width height cursor key {item.compiled with transform:=t,opacity:=o}).compiled.dashParts =
+      item.compiled.dashParts ∧
+    (retainedRecord mapping width height cursor key {item.compiled with transform:=t,opacity:=o}).compiled.geometry =
+      item.compiled.geometry := ⟨rfl,rfl⟩
+
 /-- Compile the primitives of `leaves` (a key, and how to make the primitive when it has to be
 compiled), reusing the items of `prev` by `reuse` of their key and the key at their index. The
 second result is the indices whose pixels can change, or `none` when `prev` does not serve
@@ -4425,21 +4625,9 @@ def compileRetained {κ : Type} (reuse : κ → κ → Reuse) (prev : Option (Re
         | some item => if item.cursor == cursor then some (item,reuse item.key key) else none
         | none => none
       | none => none
-    let record := fun (compiled : BackendPrimitive) =>
-      (⟨key,compiled,Primitive.writeRows (ByteArray.emptyWithCapacity (compiled.storageRows*16)) compiled,
-        cursor,compiled.storageRows,compiled.paintWords.length,compiled.paintBox mapping,
-        compiled.tileListing mapping ((width+tileSize-1)/tileSize) ((height+tileSize-1)/tileSize)⟩ : RetainedItem κ)
-    let item ← match kept with
-      | some (item,.same) => pure {item with key}
-      | some (item,.moved transform opacity) =>
-        changed := changed.map (fun (c : Array Nat) => c.push i)
-        moved := moved+1
-        pure (record {item.compiled with transform,opacity})
-      | _ => do
-        let p ← render ()
-        let compiled ← compilePrimitive mapping cursor p
-        changed := changed.map (fun (c : Array Nat) => c.push i)
-        pure (record compiled)
+    let (item,isChanged,isMoved) ← retainItem mapping width height cursor key render kept
+    if isChanged then changed := changed.map (fun (c : Array Nat) => c.push i)
+    if isMoved then moved := moved+1
     rows := rows+item.rows
     if rows*4 > maxDataFloats then throw s!"storage data exceeds {maxDataFloats} floats"
     cursor := cursor+item.paintWords
@@ -4456,7 +4644,9 @@ def Retained.dataBytes {κ : Type} (r : Retained κ) : ByteArray :=
 
 /-- The tile words of a retained compile. -/
 def Retained.tileWords {κ : Type} (r : Retained κ) : Array Nat :=
-  tilesOfListings r.width r.height (r.items.toList.map (·.compiled)) (r.items.map (·.listing))
+  -- Each item's rows are its compiled primitive's (`retainedRecord`: `storageRows`, which is
+  -- `rowCount`): no dash piece list is counted again.
+  tilesOfListingsRows r.width r.height (paintTailOf (r.items.toList.map (·.compiled))) (r.items.map (·.rows)) (r.items.map (·.listing))
 
 /-- The JSON of a layer answer with `sections` data (checks and inspector tree off), as
 `Scene.artifactWith` gives it, and its sections. -/

@@ -1311,7 +1311,7 @@ async function main() {
     // Readback, pixel checks and the frame hash are test work. They run on every frame
     // in sweeps and with --check-pixels; interactively, once after input has been idle.
     everyFrame=checkAll||(!idleChecksOnly&&(!!sweep||!!commands));
-    const IDLE_CHECK_MS=500,QUEUE_WARN=1024;
+    const IDLE_CHECK_MS=500,IDLE_CHECK_ANIMATING_MS=2000,QUEUE_WARN=1024,SCRIPT_ANIMATING_MS=50;
     // Off screen the texture can always take a frame; a window can not while it is hidden or occluded.
     const canPresent=()=>offscreen||native!.canPresent();
     const STAMPED=new Set([2,4,5,11,POINTER_CANCEL]);
@@ -1432,6 +1432,17 @@ async function main() {
       console.log(JSON.stringify({type:"native-html-presented",url:document.url,width:sentWidth,height:sentHeight,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session!.frames}));
     };
     let lastRequest:RequestRecord|undefined,urlWaitSince:number|undefined;
+    // A page whose scripts wake again within a frame or two (requestAnimationFrame) is animating,
+    // even when its turns change nothing for a while: the Spinal Tap page holds its zoom for
+    // 0.7 s, and the idle check (a whole frame again with the CPU probe, about 0.6 s on that
+    // page) then held the zoom's next frames for 1 to 3 s (issue 450). Such a page is checked
+    // after a longer quiet time (IDLE_CHECK_ANIMATING_MS): a requestAnimationFrame loop that
+    // changes nothing is still checked.
+    const scriptAnimating=():boolean=>{
+      const s=document.script;
+      if(!scriptsOn||!s||s.turn.nextWake===null)return false;
+      return s.turn.nextWake-(performance.now()-(scriptEpochs.get(s.session)??performance.now()))<SCRIPT_ANIMATING_MS;
+    };
     const idleCheck=async()=>{
       const idleStart=performance.now();
       let result;
@@ -1733,7 +1744,7 @@ async function main() {
       if(dirty&&canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
-      } else if(!everyFrame&&!dirty&&!animationDue&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
+      } else if(!everyFrame&&!dirty&&!animationDue&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=(scriptAnimating()?IDLE_CHECK_ANIMATING_MS:IDLE_CHECK_MS)){
         // Interactive frames are not read back. When input has been idle, the last frame is drawn again with the checks.
         rendering=idleCheck().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       }
