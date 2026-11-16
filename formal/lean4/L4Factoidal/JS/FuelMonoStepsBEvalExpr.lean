@@ -11,7 +11,7 @@ set_option linter.unusedVariables false
 theorem evalExpr_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Expr) :
     Le (evalExpr (H := H) (md := t1) (n + 1) a0 a1) (evalExpr (md := t2) (m + 1) a0 a1) := by
-  refine Le.unfold (evalExpr.eq_def _ _ _) (evalExpr.eq_def _ _ _) ?_
+  refine Le.unfold (evalExpr.eq_def (md := t1) _ _ _) (evalExpr.eq_def (md := t2) _ _ _) ?_
   fuel_walk 400000 ih
   all_goals first
     | exact hb

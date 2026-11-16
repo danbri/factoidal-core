@@ -12984,7 +12984,7 @@ this). -/
 def defaultFuel : Nat := 2147483647
 
 /-- GlobalDeclarationInstantiation (§16.1.7), then the statements. -/
-def runScriptM (s : Script) (checkpoint : Bool := true) : M Unit := do
+def runScriptM [Mode] (s : Script) (checkpoint : Bool := true) : M Unit := do
   let h ← get
   let g := h.realm.globalObj
   let ctx : Ctx := { env := 0, thisV := .obj g, strict := s.strict }
@@ -13024,7 +13024,7 @@ def describeThrown (h : HeapOf H) (v : Value) : String :=
   | .ok s _ => s
   | .error _ _ => "(an exception whose string conversion threw)"
 
-def runScript (h : HeapOf H) (src : String) (strict : Bool := false) : Outcome × HeapOf H :=
+def runScript [Mode] (h : HeapOf H) (src : String) (strict : Bool := false) : Outcome × HeapOf H :=
   match (parseScript src strict).map Resolve.script with
   | .error e => (.syntaxError e, h)
   | .ok s =>
@@ -13040,7 +13040,7 @@ them (`evalScript`), calls functions of the page (`callFunction`), and runs the
 checkpoint when its event loop says (`checkpoint`). -/
 
 /-- Run a classic script, with no microtask checkpoint after it. -/
-def evalScript (h : HeapOf H) (src : String) : Outcome × HeapOf H :=
+def evalScript [Mode] (h : HeapOf H) (src : String) : Outcome × HeapOf H :=
   match (parseScript src false).map Resolve.script with
   | .error e => (.syntaxError e, h)
   | .ok s =>
@@ -13050,21 +13050,21 @@ def evalScript (h : HeapOf H) (src : String) : Outcome × HeapOf H :=
     | .error (.halt w) h' => (.halted w, h')
 
 /-- Call a function value; the outcome and the value it returned. -/
-def callFunction (h : HeapOf H) (f thisV : Value) (args : Array Value) : (Outcome × Value) × HeapOf H :=
+def callFunction [Mode] (h : HeapOf H) (f thisV : Value) (args : Array Value) : (Outcome × Value) × HeapOf H :=
   match (callV defaultFuel f thisV args : M Value).run h with
   | .ok v h' => ((.ok, v), h')
   | .error (.throw v) h' => ((.threw v (describeThrown h' v), .undef), h')
   | .error (.halt w) h' => ((.halted w, .undef), h')
 
 /-- `o[name](...args)`. -/
-def callMethod (h : HeapOf H) (o : Value) (name : String) (args : Array Value) : (Outcome × Value) × HeapOf H :=
+def callMethod [Mode] (h : HeapOf H) (o : Value) (name : String) (args : Array Value) : (Outcome × Value) × HeapOf H :=
   match (do let f ← getV defaultFuel o name; callV defaultFuel f o args : M Value).run h with
   | .ok v h' => ((.ok, v), h')
   | .error (.throw v) h' => ((.threw v (describeThrown h' v), .undef), h')
   | .error (.halt w) h' => ((.halted w, .undef), h')
 
 /-- The completion value of a script (an indirect `eval`, §19.2.1.1). -/
-def evalValue (h : HeapOf H) (src : String) : (Outcome × Value) × HeapOf H :=
+def evalValue [Mode] (h : HeapOf H) (src : String) : (Outcome × Value) × HeapOf H :=
   callFunction h (.obj h.realm.evalFn) .undef #[.str src]
 
 /-- An object whose methods are the host's natives: `names[k]` (name and length) is
@@ -13094,7 +13094,7 @@ def addNatives (h : HeapOf H) (o : Value) (names : Array (String × Native × Na
 
 /-- The microtask checkpoint: the jobs run until none is left (§9.5; HTML "perform a
 microtask checkpoint"). A job that throws is dropped. The answer counts the jobs run. -/
-def checkpoint (h : HeapOf H) : (Outcome × Nat) × HeapOf H :=
+def checkpoint [Mode] (h : HeapOf H) : (Outcome × Nat) × HeapOf H :=
   let before := h.jobsRun
   match (runJobs defaultFuel : M Unit).run h with
   | .ok _ h' => ((.ok, h'.jobsRun - before), h')

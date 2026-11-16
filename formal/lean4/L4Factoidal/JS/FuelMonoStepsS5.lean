@@ -11,91 +11,91 @@ set_option linter.unusedVariables false
 theorem iterClose_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
     Le (iterClose (H := H) (md := t1) (n + 1) a0) (iterClose (md := t2) (m + 1) a0) := by
-  refine Le.unfold (iterClose.eq_def _ _) (iterClose.eq_def _ _) ?_
+  refine Le.unfold (iterClose.eq_def (md := t1) _ _) (iterClose.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
 theorem iterToArray_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Array Value) :
     Le (iterToArray (H := H) (md := t1) (n + 1) a0 a1) (iterToArray (md := t2) (m + 1) a0 a1) := by
-  refine Le.unfold (iterToArray.eq_def _ _ _) (iterToArray.eq_def _ _ _) ?_
+  refine Le.unfold (iterToArray.eq_def (md := t1) _ _ _) (iterToArray.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
 theorem iterCloseAbrupt_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Abrupt) :
     Le (iterCloseAbrupt (H := H) (md := t1) (n + 1) a0 a1) (iterCloseAbrupt (md := t2) (m + 1) a0 a1) := by
-  refine Le.unfold (iterCloseAbrupt.eq_def _ _ _) (iterCloseAbrupt.eq_def _ _ _) ?_
+  refine Le.unfold (iterCloseAbrupt.eq_def (md := t1) _ _ _) (iterCloseAbrupt.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
 theorem getSuper_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : String) (a2 : Value) :
     Le (getSuper (H := H) (md := t1) (n + 1) a0 a1 a2) (getSuper (md := t2) (m + 1) a0 a1 a2) := by
-  refine Le.unfold (getSuper.eq_def _ _ _ _) (getSuper.eq_def _ _ _ _) ?_
+  refine Le.unfold (getSuper.eq_def (md := t1) _ _ _ _) (getSuper.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
 theorem superCall_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Array Value) :
     Le (superCall (H := H) (md := t1) (n + 1) a0 a1) (superCall (md := t2) (m + 1) a0 a1) := by
-  refine Le.unfold (superCall.eq_def _ _ _) (superCall.eq_def _ _ _) ?_
+  refine Le.unfold (superCall.eq_def (md := t1) _ _ _) (superCall.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
 theorem evalClass_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : ClassDef) (a2 : String) :
     Le (evalClass (H := H) (md := t1) (n + 1) a0 a1 a2) (evalClass (md := t2) (m + 1) a0 a1 a2) := by
-  refine Le.unfold (evalClass.eq_def _ _ _ _) (evalClass.eq_def _ _ _ _) ?_
+  refine Le.unfold (evalClass.eq_def (md := t1) _ _ _ _) (evalClass.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
 theorem defineMembers_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Nat) (a2 : Nat) (a3 : List Member) (a4 : Array (String × Value)) :
     Le (defineMembers (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4) (defineMembers (md := t2) (m + 1) a0 a1 a2 a3 a4) := by
-  refine Le.unfold (defineMembers.eq_def _ _ _ _ _ _) (defineMembers.eq_def _ _ _ _ _ _) ?_
+  refine Le.unfold (defineMembers.eq_def (md := t1) _ _ _ _ _ _) (defineMembers.eq_def (md := t2) _ _ _ _ _ _) ?_
   fuel_walk ih
 
 theorem directEval_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Value) :
     Le (directEval (H := H) (md := t1) (n + 1) a0 a1) (directEval (md := t2) (m + 1) a0 a1) := by
-  refine Le.unfold (directEval.eq_def _ _ _) (directEval.eq_def _ _ _) ?_
+  refine Le.unfold (directEval.eq_def (md := t1) _ _ _) (directEval.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
 theorem evalCompletion_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List Stmt) (a2 : Value) :
     Le (evalCompletion (H := H) (md := t1) (n + 1) a0 a1 a2) (evalCompletion (md := t2) (m + 1) a0 a1 a2) := by
-  refine Le.unfold (evalCompletion.eq_def _ _ _ _) (evalCompletion.eq_def _ _ _ _) ?_
+  refine Le.unfold (evalCompletion.eq_def (md := t1) _ _ _ _) (evalCompletion.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
 theorem genEval_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Expr) :
     Le (genEval (H := H) (md := t1) (n + 1) a0 a1) (genEval (md := t2) (m + 1) a0 a1) := by
-  refine Le.unfold (genEval.eq_def _ _ _) (genEval.eq_def _ _ _) ?_
+  refine Le.unfold (genEval.eq_def (md := t1) _ _ _) (genEval.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
 theorem genUnsupported_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : List GFrame) :
     Le (genUnsupported (H := H) (md := t1) (n + 1) a0) (genUnsupported (md := t2) (m + 1) a0) := by
-  refine Le.unfold (genUnsupported.eq_def _ _) (genUnsupported.eq_def _ _) ?_
+  refine Le.unfold (genUnsupported.eq_def (md := t1) _ _) (genUnsupported.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
 theorem genLift_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Stmt) (a2 : List GFrame) :
     Le (genLift (H := H) (md := t1) (n + 1) a0 a1 a2) (genLift (md := t2) (m + 1) a0 a1 a2) := by
-  refine Le.unfold (genLift.eq_def _ _ _ _) (genLift.eq_def _ _ _ _) ?_
+  refine Le.unfold (genLift.eq_def (md := t1) _ _ _ _) (genLift.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
 theorem asyncStep_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : GInput) :
     Le (asyncStep (H := H) (md := t1) (n + 1) a0 a1) (asyncStep (md := t2) (m + 1) a0 a1) := by
-  refine Le.unfold (asyncStep.eq_def _ _ _) (asyncStep.eq_def _ _ _) ?_
+  refine Le.unfold (asyncStep.eq_def (md := t1) _ _ _) (asyncStep.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
 theorem promiseResolve_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
     Le (promiseResolve (H := H) (md := t1) (n + 1) a0) (promiseResolve (md := t2) (m + 1) a0) := by
-  refine Le.unfold (promiseResolve.eq_def _ _) (promiseResolve.eq_def _ _) ?_
+  refine Le.unfold (promiseResolve.eq_def (md := t1) _ _) (promiseResolve.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
 theorem resolvePromise_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : Value) :
     Le (resolvePromise (H := H) (md := t1) (n + 1) a0 a1) (resolvePromise (md := t2) (m + 1) a0 a1) := by
-  refine Le.unfold (resolvePromise.eq_def _ _ _) (resolvePromise.eq_def _ _ _) ?_
+  refine Le.unfold (resolvePromise.eq_def (md := t1) _ _ _) (resolvePromise.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
 end L4Factoidal.JS.FuelMono

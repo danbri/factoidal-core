@@ -76,7 +76,7 @@ def step(name, args):
     out = [f'theorem {name}_step {{H : Type}} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)',
            f'    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) {binders(args)} :',
            f'    Le ({name} (H := H) (md := t1) (n + 1) {apps(args)}) ({name} (md := t2) (m + 1) {apps(args)}) := by',
-           f'  refine Le.unfold ({name}.eq_def _ {holes(args)}) ({name}.eq_def _ {holes(args)}) ?_']
+           f'  refine Le.unfold ({name}.eq_def (md := t1) _ {holes(args)}) ({name}.eq_def (md := t2) _ {holes(args)}) ?_']
     if name in SITES:
         out.append(walk(name).rstrip('\n'))
         out.append('  all_goals first')
@@ -133,14 +133,14 @@ if not only:
     for name, args in fns:
         lam = f'fun {apps(args)} => ' if args else ''
         if name == 'iterResult':
-            w(f'  h_{name} := {lam}Le.unfold ({name}.eq_def _ {holes(args)}) ({name}.eq_def _ {holes(args)}) '
+            w(f'  h_{name} := {lam}Le.unfold ({name}.eq_def (md := t1) _ {holes(args)}) ({name}.eq_def (md := t2) _ {holes(args)}) '
               '(by cases m <;> exact Le.refl _)')
         elif name == 'vmLoop':
             # it first puts the registers back in the heap (`vmStash`), then is out of fuel
-            w(f'  h_{name} := {lam}Le.unfold ({name}.eq_def _ {holes(args)}) rfl '
+            w(f'  h_{name} := {lam}Le.unfold ({name}.eq_def (md := t1) _ {holes(args)}) rfl '
               '(Le.of_out fun _ => ⟨_, rfl⟩)')
         else:
-            w(f'  h_{name} := {lam}Le.unfold ({name}.eq_def _ {holes(args)}) rfl (Le.fuel _)')
+            w(f'  h_{name} := {lam}Le.unfold ({name}.eq_def (md := t1) _ {holes(args)}) rfl (Le.fuel _)')
     w('')
     w('/-- Fuel monotonicity of the whole block: every function at fuel `n` against every `m ≥ n`. -/')
     w('theorem IH_all {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) :')

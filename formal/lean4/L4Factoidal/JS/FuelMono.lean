@@ -793,14 +793,14 @@ theorem Le.updateGen {look1 look2 : JSM H Value} {asg1 asg2 : Value → JSM H Un
 
 /-- At fuel 0 `iterCloseAbrupt` is out of fuel, as every function of the block is. It threw its
 completion there (with no call), so a run could end differently at fuel 0 than at fuel 1. -/
-theorem iterCloseAbrupt_zero [Mode] (it : Value) (a : Abrupt) :
-    iterCloseAbrupt (H := H) 0 it a = throw (.halt "fuel") :=
-  (iterCloseAbrupt.eq_def 0 it a).trans rfl
+theorem iterCloseAbrupt_zero (t : Mode) (it : Value) (a : Abrupt) :
+    iterCloseAbrupt (H := H) (md := t) 0 it a = throw (.halt "fuel") :=
+  (iterCloseAbrupt.eq_def (md := t) 0 it a).trans rfl
 
 /-- So, at fuel 0, it is below itself at every fuel. -/
 theorem iterCloseAbrupt_zero_le (t1 t2 : Mode) (m : Nat) (it : Value) (a : Abrupt) :
     Le (iterCloseAbrupt (H := H) (md := t1) 0 it a) (iterCloseAbrupt (md := t2) m it a) := by
-  rw [iterCloseAbrupt_zero]
+  rw [iterCloseAbrupt_zero t1]
   exact Le.fuel _
 
 end L4Factoidal.JS.FuelMono
