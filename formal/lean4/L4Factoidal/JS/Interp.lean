@@ -1205,6 +1205,42 @@ def jsonToValue : Nat → L4Factoidal.JSON.Json → M Value
       for (k, v) in kvs do defineOwn o (strKey k) (.data (← jsonToValue fuel v) true true true)
       pure (.obj o)
 
+/-- The source text of a primitive JSON value (for a string, its quoted form; the parser
+keeps no escapes). -/
+def jsonSrcOf : L4Factoidal.JSON.Json → Option String
+  | .null => some "null"
+  | .bool b => some (if b then "true" else "false")
+  | .number t => some t
+  | .string s => some ("\"" ++ s.foldl (fun acc c => acc ++ match c with
+      | '"' => "\\\"" | '\\' => "\\\\" | '\n' => "\\n" | '\r' => "\\r" | '\t' => "\\t"
+      | c => String.singleton c) "" ++ "\"")
+  | _ => none
+
+/-- The primitives of a parsed JSON text and the places `jsonToValue` put them: (holder,
+key, source text, value), for the reviver's context (proposal-json-parse-with-source). -/
+def jsonSources : Nat → Nat → String → L4Factoidal.JSON.Json → Value → M (Array (Nat × String × String × Value))
+  | 0, _, _, _, _ => pure #[]
+  | fuel + 1, holder, key, j, v => do
+    match jsonSrcOf j with
+    | some t => pure #[(holder, key, t, v)]
+    | none =>
+      let .obj vid := v | pure #[]
+      let o ← getObj vid
+      match j, o.kind with
+      | .array xs, .array es =>
+        let mut out := #[]
+        for i in [0:min xs.length es.size] do
+          out := out ++ (← jsonSources fuel vid (toString i) xs[i]! es[i]!)
+        pure out
+      | .object kvs, _ =>
+        let mut out := #[]
+        for (k, jv) in kvs do
+          match o.getOwn (strKey k) with
+          | some (.data cv ..) => out := out ++ (← jsonSources fuel vid (strKey k) jv cv)
+          | _ => pure ()
+        pure out
+      | _, _ => pure #[]
+
 def bufferBytes (o : Obj) : ByteArray :=
   match o.kind with | .buffer b => b | _ => ByteArray.empty
 
@@ -7167,7 +7203,9 @@ def arraySpliceGeneric : Nat → Value → Array Value → M Value
     for k in [0:skip] do
       tick
       let from_ := toString (start + k)
-      removed := removed.push (if ← hasProp n oid from_ then ← getV n o from_ else .hole)
+      let present ← hasProp n oid from_
+      let v ← if present then getV n o from_ else pure .hole
+      removed := removed.push v
     let a ← match sp with
       | none => newArray removed
       | some a => speciesFill n a removed (some skip)
@@ -7223,9 +7261,9 @@ termination_by structural n _ _ => n
 
 /-- InternalizeJSONProperty (§25.5.1.1): the reviver called bottom-up on every property of
 the parsed value, a result of undefined deleting it. `depth` bounds the nesting. -/
-def jsonRevive : Nat → Value → Value → String → Nat → M Value
-  | 0, _, _, _, _ => throw (.halt "fuel")
-  | n + 1, reviver, holder, name, depth => do
+def jsonRevive : Nat → Array (Nat × String × String × Value) → Value → Value → String → Nat → M Value
+  | 0, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, srcs, reviver, holder, name, depth => do
     if depth > 10000 then throwErr .range "Maximum call stack size exceeded"
     let val ← getV n holder name
     if let .obj vid := val then
@@ -7242,14 +7280,20 @@ def jsonRevive : Nat → Value → Value → String → Nat → M Value
           pure ks
       for k in keys do
         tick
-        let nv ← jsonRevive n reviver val k (depth + 1)
+        let nv ← jsonRevive n srcs reviver val k (depth + 1)
         match nv with
         | .undef => let _ ← deleteProp n val k
         | _ => let _ ← defineOwnProp n vid k { value := some nv, writable := some true, enumerable := some true, configurable := some true }
-    -- the third argument (the context of proposal-json-parse-with-source): an object
+    -- the third argument (proposal-json-parse-with-source): an object, with `source` for a
+    -- primitive that is still the parsed one
     let ctxObj ← newObject
-    callV n reviver holder #[keyStrV name, val, ctxObj]
-termination_by structural n _ _ _ _ => n
+    if !val.isObj then
+      if let .obj hid := holder then
+        if let some (_, _, t, ov) := srcs.find? (fun (h, k, _, _) => h == hid && k == name) then
+          if sameValue ov val then
+            defineOwn ctxObj "source" (.data (.str t) true true true)
+    callV n reviver holder #[keyStrV name, val, .obj ctxObj]
+termination_by structural n _ _ _ _ _ => n
 
 /-- Array.prototype pop (§23.1.3.22), shift (§23.1.3.27), unshift (§23.1.3.34) and reverse
 (§23.1.3.25) on any object, step by step: the path for what is not a plain Array with all of
@@ -8258,7 +8302,8 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         -- §25.5.1 step 6: the reviver, from a root object { "": value }
         let root ← newObject
         defineOwn root "" (.data v true true true)
-        jsonRevive n a1 (.obj root) "" 0
+        let srcs ← jsonSources 100000 root "" j v
+        jsonRevive n srcs a1 (.obj root) "" 0
       | .error e => throwErr .syntax s!"Unexpected token in JSON at position {e.pos}"
     | .bufferCtor =>
       needNew "ArrayBuffer"
