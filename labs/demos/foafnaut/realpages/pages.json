@@ -115,6 +115,30 @@
    },
    "licence": "W3C Document License (https://www.w3.org/copyright/document-license-2023/)",
    "attribution": "W3C, CSS Flexible Box Layout Module Level 1, https://www.w3.org/TR/css-flexbox-1/"
+  },
+  {
+   "id": "nature-telemetry",
+   "url": "https://naturetelemetry.com/",
+   "note": "small company page: CSS grid/flex container, 11 images, no scripts, no web fonts (owner's list, 2026-11-16)",
+   "licence": "copyright Bristol Nature Telemetry Ltd 2026; public page vendored as fair use for testing",
+   "attribution": "Bristol Nature Telemetry Ltd, https://naturetelemetry.com/"
+  },
+  {
+   "id": "infobomb",
+   "url": "https://infobomb.org/",
+   "note": "personal site: inline CSS (normalize.css), Google and cdnfonts web fonts, base64 inline images, no scripts (owner's list, 2026-11-16)",
+   "licence": "text CC BY 3.0 (http://creativecommons.org/licenses/by/3.0/); images and design copyright of the site's owner",
+   "attribution": "Infobomb, https://infobomb.org/"
+  },
+  {
+   "id": "w3c-maxf",
+   "url": "https://www.w3.org/People/maxf/",
+   "note": "2007 XHTML 1.0 Transitional home page, ISO-8859-1, inline CSS, no scripts: legacy-markup coverage (owner's list, 2026-11-16)",
+   "budgets": {
+    "first_frame_s": 3
+   },
+   "licence": "copyright W3C and the page's author; W3C site (https://www.w3.org/copyright/); public page vendored as fair use for testing",
+   "attribution": "Max Froumentin, W3C, https://www.w3.org/People/maxf/"
   }
  ]
 }
