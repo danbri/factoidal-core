@@ -42,7 +42,7 @@ function copyLine(copy,url){
   close.addEventListener('click',()=>{copyBar.hidden=true;});
   const parts=['Hub copy of ',link(copy.url??url,copy.title||url),`, fetched ${String(copy.fetched??'').slice(0,10)}. ${copy.attribution??''}. Licence: `];
   const licence=/\((https?:[^)\s]+)\)/.exec(copy.licence??'');
-  parts.push(licence?link(licence[1],(copy.licence??'').replace(licence[0],'').trim()):(copy.licence??''),'.');
+  parts.push(licence?link(licence[1],(copy.licence??'').replace(licence[0],'').replace(/\s+([;,])/g,'$1').trim()):(copy.licence??''),'.');
   copyBar.replaceChildren(...parts,close);copyBar.hidden=false;
 }
 const query=new URLSearchParams(location.search),checkParam=query.get('check'),showStats=query.get('stats')==='1'||checkParam!==null;

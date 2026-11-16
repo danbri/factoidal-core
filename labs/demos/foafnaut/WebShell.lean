@@ -574,7 +574,7 @@ private def lineIcon : String → List Stroke
 
 /-- Icon `name` in colour `c`, `side` backing pixels square, centred in `box`; the strokes are
 `weight` grid units wide. -/
-private def lineIconAt (c : Rendering.Color) (name : String) (box : Box) (side : Nat) (weight : Float := 1.7) :
+private def lineIconAt (c : Rendering.Color) (name : String) (box : Box) (side : Nat) (weight : Float := 1.8) :
     List Rendering.Node :=
   let k := fl side/16
   let x0 := fl box.x+(fl box.w-fl side)/2
@@ -669,7 +669,7 @@ private def flatControlNodes (s : Shell) (t : Theme) (width : Nat) : List Render
   let mut out := [paint t.back 0 0 width row,paint t.base 0 row width (navRow s)]
   let down := fun (name : String) => s.pressed == name && pressable s name
   let circle := fun (c : Rendering.Color) (box : Box) => disk c (fl box.x+fl box.w/2) (fl box.y+fl box.h/2) (fl (min box.w box.h)/2)
-  let iconSide := 18*u
+  let iconSide := 20*u
   for box in boxes s width do
     match box.name.splitOn ":" with
     | ["tab",i] => out := out ++ flatTab s t box (i.toNat?.getD 0)
