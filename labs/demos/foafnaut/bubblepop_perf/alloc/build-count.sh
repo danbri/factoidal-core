@@ -18,7 +18,7 @@ names='lean_ctor_set_float|lean_alloc_ctor|lean_alloc_closure|lean_box_float|lea
 cat > "$O/one.sh" <<ONE
 #!/bin/bash
 # one module: the generated file re-declares the runtime functions it calls; the wrapped names are macros here,
-# so those prototype lines are dropped (lean.h declares them).
+# so those prototype lines are blanked (lean.h declares them; line numbers stay those of the .c file).
 src="$B/ir/\$1.c"; obj="$O/o/\$(echo "\$1" | tr / _).o"
 [ "\$obj" -nt "\$src" ] && [ "\$obj" -nt "$HERE/leanprof.h" ] && exit 0
 if [ -n "${LEANPROF_PLAIN:-}" ]; then
@@ -26,7 +26,7 @@ if [ -n "${LEANPROF_PLAIN:-}" ]; then
     --sysroot "$L" -nostdinc -isystem "$L/include/clang" -O3 -DNDEBUG -DLEAN_EXPORTING
   exit
 fi
-grep -v -E "^[A-Za-z_][A-Za-z0-9_ ]*[ *]+($names)\\(.*\\);\\\$" "\$src" | "$L/bin/clang" -x c -c -o "\$obj" - -include "$HERE/leanprof.h" \\
+sed -E "s/^[A-Za-z_][A-Za-z0-9_ ]*[ *]+($names)\\(.*\\);\\\$//" "\$src" | "$L/bin/clang" -x c -c -o "\$obj" - -include "$HERE/leanprof.h" \\
   -I "$L/include" -ffp-contract=off -fvisibility=hidden -Wno-unused-command-line-argument --sysroot "$L" -nostdinc \\
   -isystem "$L/include/clang" ${LEANPROF_OPT:--O1} -DNDEBUG -DLEAN_EXPORTING
 ONE

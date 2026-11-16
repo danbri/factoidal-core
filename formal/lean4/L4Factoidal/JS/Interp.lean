@@ -200,6 +200,15 @@ that makes objects stops at `maxObjs` and not when the machine is out of memory.
   if h.steps % 1024 == 0 && h.full then throw (.halt heapFullMsg)
   set { h with steps := h.steps - 1 }
 
+/-- One step less in the budget. Not inlined: here the record is the function's own argument at its
+last use, so the compiler updates it in place when nothing else holds it. Inlined into the
+evaluator's large functions, the same update was compiled as a new record at every call (88 bytes;
+`docs/bubblepopjs-heap.md`, section 1.4). -/
+@[noinline] def HeapOf.decStep (h : HeapOf H) : HeapOf H := { h with steps := h.steps - 1 }
+
+/-- `decStep` is the record update it stands for. -/
+@[simp] theorem HeapOf.decStep_eq (h : HeapOf H) : h.decStep = { h with steps := h.steps - 1 } := rfl
+
 /-- The step of a function call. It looks at the size of the heap every time: a run of few
 steps (an event handler, a timer callback) starts with a call, so on a full heap no run gets
 further than its first call, however short the runs are. -/
@@ -207,7 +216,7 @@ further than its first call, however short the runs are. -/
   let h ← get
   if h.steps == 0 then throw (.halt "step budget exhausted")
   if h.full then throw (.halt heapFullMsg)
-  set { h with steps := h.steps - 1 }
+  set h.decStep
 
 /-- Take `k` steps at once: the work of a built-in that loops inside Lean (over a string,
 an array or a buffer) is counted, so a script stops at its budget however it spends it. -/
