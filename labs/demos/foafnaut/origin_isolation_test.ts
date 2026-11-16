@@ -294,9 +294,19 @@ Deno.test({name:"origin isolation checks C1 to C6",ignore:!exists(library)},asyn
     const own=scriptRun(`${A}/own.js`,`throw new Error('own error')`);
     assert.ok(own.some(l=>l.startsWith("err [")&&l.includes("own error")),`an own-origin script's error is not muted: ${own}`);
     assert.ok(thrown.includes("ran")&&thrown.includes("load"),`the script of another origin still runs: ${thrown}`);
-    const leaks=[...json,...thrown].filter(l=>l.includes("C6"));
+    // a parsed <script src> of another origin (the embedder fetched it): its errors are muted too
+    const parsed=(src:string,body:string)=>{
+      const s=start(`<!doctype html><script>onerror=(m,f,l,c,e)=>{console.log('err ['+m+'] ['+f+'] ['+l+'] ['+(e===null?'null':e&&e.message)+']')}</script><script src="${src}"></script>`,
+        `${A}/p.html`,{resources:[...Array(12).keys()].map(nodeId=>({nodeId,source:body}))});
+      const logs=[...s.logs];close();return logs;
+    };
+    const parsedB=parsed(`${B}/p.js`,`throw new Error('C6-PARSED')`);
+    const parsedA=parsed(`${A}/p.js`,`throw new Error('own parsed')`);
+    assert.ok(parsedA.some(l=>l.startsWith("err [")&&l.includes("own parsed")),`an own-origin parsed script's error is not muted: ${parsedA}`);
+    const leaks=[...json,...thrown,...parsedB].filter(l=>l.includes("C6"));
     if(!json.includes(muted))leaks.push(`no muted error for the answer that does not parse: ${json}`);
     if(!thrown.includes(muted))leaks.push(`no muted error for the script that threw: ${thrown}`);
+    if(!parsedB.includes(muted))leaks.push(`no muted error for the parsed script of another origin: ${parsedB}`);
     return leaks;
   });
 

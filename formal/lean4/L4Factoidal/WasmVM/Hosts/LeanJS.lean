@@ -620,6 +620,37 @@ def Session.eval (s : Session) (src : String) : Session :=
   | .syntaxError m => s.reportNew true m
   | o => s.fail ((failure o).getD "")
 
+/-- Run a classic script whose errors are muted (HTML "muted errors": an external script of
+another origin, fetched without CORS): an exception, or a script that does not parse, is
+reported to the page as "Script error." with no URL, position or error value (the prelude's
+`reportMuted`), never with what it threw. The embedder's record keeps the message. -/
+def Session.evalMuted (s : Session) (src : String) : Session :=
+  let (s, o, _) := s.run fun h => let (o, h) := JS.evalScript h src; ((o, .undef), h)
+  match o with
+  | .ok => s
+  | .threw _ m => (s.api? "reportMuted" #[]).1.fail m
+  | .syntaxError m => (s.api? "reportMuted" #[]).1.fail ("SyntaxError: " ++ m)
+  | o => s.fail ((failure o).getD "")
+
+/-- Whether the classic script element `node` that the embedder fetched has muted errors: its
+`src`, resolved against its document's base URL, is of a tuple origin other than the page's
+(not `data:`). The embedder followed any redirect; one to another origin is not seen here. A
+page of an opaque origin (`file:`, `about:`) mutes none. Inline scripts never are. The bases
+are tracked from the first external script on (`ensureBases`). -/
+def Session.scriptMuted (s : Session) (node : Nat) : Session × Bool :=
+  let h := s.host
+  match Hosts.Dom.attrValue? h.dom.dom node "src" with
+  | none => (s, false)
+  | some v =>
+    let page := h.web.net.page
+    if page.origin == "null" || page.origin.isEmpty then (s, false) else
+    let d := h.dom.ensureBases
+    let base := d.documentBase (h.dom.dom.get node).doc
+    let muted := match L4Factoidal.WHATWG.URL.parseUrl v.trimAscii.toString (some base) with
+      | some u => !(u.href.startsWith "data:" || u.origin == page.origin)
+      | none => false
+    (s.setHost { h with dom := d }, muted)
+
 def Session.dispatchOnly (s : Session) (target : Nat) (type : String) : Session × Bool :=
   let (s, v) := s.api? "dispatch" #[.num (Float.ofNat target), .str type, .num (Float.ofNat (Page.flagsOf type))]
   ({ s with tasks := s.tasks + 1 }, match v with | .str "prevented" => true | _ => false)
@@ -834,7 +865,9 @@ def startBegin (base : Session) (dom : Arena) (url : String) (lim : Page.Limits 
 
 /-- One classic script of a start: the current script set, the script, a checkpoint. -/
 def startScript (s : Session) (node : Nat) (src : String) : Session :=
-  engine.checkpoint ((((s.api? "script" #[.num (Float.ofNat node)]).1).eval src))
+  let (s, muted) := s.scriptMuted node
+  let s := (s.api? "script" #[.num (Float.ofNat node)]).1
+  engine.checkpoint (if muted then s.evalMuted src else s.eval src)
 
 /-- The classic scripts `scripts` of a start, in order. -/
 def startScripts (s : Session) (scripts : List (Nat × String)) : Session :=
@@ -965,8 +998,9 @@ def loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat �
   let mut s := s.setHost { s.host with dom }
   if let some root := root then
     for (node, src) in scripts do
-      s := (s.api? "script" #[.num (Float.ofNat (node + root))]).1
-      s := s.eval src
+      let (s', muted) := s.scriptMuted (node + root)
+      s := (s'.api? "script" #[.num (Float.ofNat (node + root))]).1
+      s := if muted then s.evalMuted src else s.eval src
       s := engine.checkpoint s
     s := (s.api? "script" #[.num (-1)]).1
   s := engine.setLoop s ((engine.loop s).queueTask .networking 0 (some { type := "load", target := el }))

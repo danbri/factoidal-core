@@ -18172,6 +18172,8 @@
       return dispatch(wrapTarget(target), e) ? '' : 'prevented';
     },
     report(e) { report(e); },
+    // an exception of a script with muted errors (another origin): "Script error." only
+    reportMuted() { reportMuted(); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
     start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); imgStart(); noteEmptyScripts(); },
