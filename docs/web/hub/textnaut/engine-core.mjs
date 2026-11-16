@@ -65,7 +65,8 @@ export function gridViewport(cols,charWidth,grid){
  * - `createModule(options)`: the Emscripten loader of web-render.mjs;
  * - `compiled`: a promise of the compiled WebAssembly module, or undefined (the loader fetches it);
  * - `fetchBytes(url)`: `{url, bytes, contentType}` of a URL of this site, or a throw;
- * - `origin`: this site's origin; only its URLs are read;
+ * - `origin`: this site's origin; only its URLs are read, and with `copies` true also the
+ *   addresses of other sites that `fetchBytes` answers from the Hub's copies (copies.mjs);
  * - `fontURL`: the default face (Noto Sans), or undefined for the engine's bitmap face;
  * - `gpu()`: a promise of `{draw(artifact) -> {rgba, gpuMs}}`, or of undefined with no WebGPU;
  * - `grid()`: a promise of the grid module (grid.mjs, made from textnaut/grid.ts).
@@ -137,7 +138,7 @@ export function createEngineCore(host){
     const held=[];let total=0;
     for(const {key,url} of wanted){
       try{
-        if(new URL(url).origin!==host.origin)continue;
+        if(new URL(url).origin!==host.origin&&!host.copies)continue;
         const {bytes}=await host.fetchBytes(url);
         if(bytes.length>LIMITS.imageBytes||total+bytes.length>LIMITS.pageImageBytes)continue;
         total+=bytes.length;
@@ -176,7 +177,7 @@ export function createEngineCore(host){
   const siteOnly=url=>{
     const u=new URL(url);
     if(!/^https?:$/.test(u.protocol))throw Error(`${u.href}: not a web address; open it in Foafnaut`);
-    if(u.origin!==host.origin)throw Error(`${u.origin} is another site: the Hub reads pages of this site only (it has no fetch proxy)`);
+    if(u.origin!==host.origin&&!host.copies)throw Error(`${u.origin} is another site: the Hub reads pages of this site only (it has no fetch proxy)`);
     return u.href;
   };
   const siteText=async url=>{const got=await host.fetchBytes(siteOnly(url));return {url:got.url??url,source:textDecoder.decode(got.bytes)};};

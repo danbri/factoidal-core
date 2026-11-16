@@ -14,6 +14,7 @@ import {createRouter} from './link-route.mjs';
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
 import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf,turnSliceSteps} from './page-load.mjs';
 import {gateConsole} from './log-gate.mjs';
+import {copyOf,fetchCopy} from './copies.mjs';
 // The worker's console lines go through the log gate (log-gate.mjs): a flood is summarised and named.
 const logGate=gateConsole(console,{name:'foafnaut'});
 let browserState,stateReason='starting';
@@ -76,6 +77,8 @@ let firstFrameSeen;const firstFrame=new Promise(resolve=>{firstFrameSeen=resolve
 // order it arrived; only moves and scrolls are merged.
 let ready=false,currentStamp,pendingStamp,pendingMove,pendingScroll,flushPort;
 const early=[];
+// systemDark: the host page's prefers-color-scheme; the default theme follows it (WebShell.themeOf).
+let systemDark=false;
 let width=800,height=600,scale=1,theme='next',percent=200,pages=1,pinchBase,pinchMax=1000;
 // The folding chrome (owner, 2026-11-08). With the classic UI (the default) the chrome is
 // always full. Off, a scroll down first folds the chrome, up to the strip with the domain,
@@ -154,7 +157,7 @@ function call(source,options,w=1,h=1,counted=true){
   finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
 const shell=()=>({tabs:tabs.map((tab,i)=>{const page=i===active?doc:tab.doc;return {title:page?.title??'',...(page?.icon?{icon:page.icon}:{})};}),active,...field,focused,
-  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,
+  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,...(systemDark?{dark:true}:{}),pages,scroll,
   ...(folding()?{collapsible:true,collapse:foldPercent()}:{}),...(swipeHint?{swipe:swipeHint}:{}),...scriptMarker()});
 /** This engine draws a folding chrome: it answers shellInfo with the op chromeLayer. */
 // The text size of the settings page (WebSelection.textZoom, op textZoom): Lean answers the
@@ -355,9 +358,10 @@ async function fetchText(url,page=false){
   // A page fetched early is used once; a reload fetches it again.
   let got;
   if(preloaded.has(url)){const page=preloaded.get(url);preloaded.delete(url);try{got=await page;}catch{/* fetch it again */}}
+  if(!got&&offSite(url)){got=await fetchCopy(url);if(!got)throw Error('another site: the Hub reads only this site and its copies of a few openly licensed pages');}
   if(!got){const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
     got={url:response.url||url,bytes:new Uint8Array(await response.arrayBuffer()),contentType:response.headers.get('content-type')??''};}
-  return {url:got.url,...(page?decodePage(got.bytes,got.contentType):{source:textDecoder.decode(got.bytes)})};
+  return {url:got.url,...(got.copy?{copy:got.copy}:{}),...(page?decodePage(got.bytes,got.contentType):{source:textDecoder.decode(got.bytes)})};
 }
 // The settings page has the checkbox of the classic UI where it says <!--foafnaut:classic-ui-->,
 // in the state of now. Lean draws it as it draws the rest of the page.
@@ -392,8 +396,18 @@ function settingsSource(source){
   if(ei>=0&&ej>ei)try{source=source.slice(0,ei+eOpen.length)+call('',{op:'encodingChoices',setting:encodingSetting,locale:systemLocale}).html+source.slice(ej);}catch{/* the static links */}
   return source;
 }
-// A text resource of this site (a linked style sheet): another origin is not read.
-const siteText=url=>{if(new URL(url).origin!==siteOrigin)throw Error('not of this site');return fetchText(url);};
+// A text resource of this site (a linked style sheet): another origin is read only from the
+// Hub's copies (copies.mjs), which fetchText does.
+const siteText=url=>fetchText(url);
+// An address of another site: the Hub has only its copies of it (copies.mjs).
+const offSite=url=>{try{const u=new URL(url);return /^https?:$/.test(u.protocol)&&u.origin!==siteOrigin;}catch{return false;}};
+/** The bytes of an image, font or icon at `url`: this site's, or a Hub copy's; else undefined. */
+async function resourceBytes(url,limit){
+  if(offSite(url))return (await fetchCopy(url))?.bytes;
+  const response=await fetch(url);if(!response.ok)return undefined;
+  if(limit&&Number(response.headers.get('content-length')??0)>limit){response.body?.cancel();return undefined;}
+  return new Uint8Array(await response.arrayBuffer());
+}
 async function prepare(url){
   const page=await fetchText(url,true);
   if(url===settingsURL)page.source=settingsSource(page.source);
@@ -422,7 +436,7 @@ async function prepare(url){
     (sheetURL,reason)=>console.warn('foafnaut: imported style sheet not read:',sheetURL,reason));
   for(const r of imported)sources.push({kind:'Style sheet',url:r.url,source:r.source});
   const webFonts=await pageWebFonts(page,sheets.resources);
-  const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
+  const next={url:page.url,...(page.copy?{copy:page.copy}:{}),title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
     ...(sheets.resources.length?{resources:sheets.resources}:{}),...(sheets.resourceFailures.length?{resourceFailures:sheets.resourceFailures}:{}),
     ...(imported.length?{imported}:{})};
   if(Array.isArray(facts.diagnostics))addEntries(next,facts.diagnostics);
@@ -448,9 +462,7 @@ async function pageWebFonts(page,resources=[]){
     const known=loaded.get(src);
     if(known!==undefined){if(known)break;continue;}
     try{
-      if(new URL(src).origin!==siteOrigin)throw Error('not of this site');
-      const response=await fetch(src);if(!response.ok)throw Error(`HTTP ${response.status}`);
-      const bytes=new Uint8Array(await response.arrayBuffer());
+      const bytes=await resourceBytes(src);if(!bytes)throw Error('not read (another site, or no answer)');
       if(bytes.length>maxFontBytes||total+bytes.length>maxPageFontBytes)throw Error('too large');
       const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
       fontLoad(bytes,'',sha,'web');
@@ -475,9 +487,8 @@ function hasIcons(){
 }
 async function tabIcon(url){
   try{
-    if(!hasIcons()||new URL(url).origin!==siteOrigin)return;
-    const response=await fetch(url);if(!response.ok)return;
-    const bytes=new Uint8Array(await response.arrayBuffer());if(bytes.length>65536)return;
+    if(!hasIcons())return;
+    const bytes=await resourceBytes(url,65536);if(!bytes||bytes.length>65536)return;
     return call('',{op:'iconPrepare',base64:toBase64(bytes),scale:Math.max(2,scale)});
   }catch(error){console.warn('foafnaut: tab icon left out:',url,String(error.message??error));}
 }
@@ -541,10 +552,7 @@ async function pageImageBytes(wanted){
   const images=[];let total=0;
   for(const {key,url} of wanted??[]){
     try{
-      const target=new URL(url);if(target.origin!==siteOrigin)continue;
-      const response=await fetch(target);if(!response.ok)continue;
-      if(Number(response.headers.get('content-length')??0)>maxImageBytes){response.body?.cancel();continue;}
-      const bytes=new Uint8Array(await response.arrayBuffer());
+      const bytes=await resourceBytes(new URL(url).href,maxImageBytes);if(!bytes)continue;
       if(bytes.length>maxImageBytes||total+bytes.length>maxPageImageBytes())continue;
       total+=bytes.length;
       images.push({key,bytes});
@@ -1019,7 +1027,7 @@ function show(next,remember=true){
   if(remember&&doc&&!next.title?.startsWith('Page refused'))browserState?.visit(next.url,next.title??'',doc.url).catch(()=>{});
   doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;folded=0;
   if(remember){history=push(history.history,next.url);pages++;}
-  post({type:'location',url:next.url,home:next.url===homeURL,push:remember});
+  post({type:'location',url:next.url,home:next.url===homeURL,push:remember,copy:next.copy});
   request();
   startPendingScripts(next);
 }
@@ -1031,7 +1039,7 @@ function visit(address){
   // their fallback on an engine from before the route op.
   const route=router.route({...site,href:address,base:homeURL});
   if(!route)return;
-  if(route.route==='system')show(refusal(route.url,'This address is not on this site. Type it in the address bar to open it.'),false);
+  if(route.route==='system')copyOf(route.url).then(found=>found?navigate(route.url,false):show(refusal(route.url,'This address is not on this site, and the Hub has no copy of it. Type it in the address bar to open it in a new tab.'),false));
   else if(route.route==='command')shellCommand(route.name,route.argument);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url,false);
@@ -1053,7 +1061,23 @@ function consolePage(url){
 }
 function openConsole(){const source=doc;newTab();setFocus(false);consoleFrom=source;navigate(consoleURL);}
 const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
+// The Hub's own browser pages as link targets (the start page offers "open in Foafnaut on the
+// Hub" and "in Textnaut on the Hub" for a reader in an ordinary browser): in this tab, a link to
+// this Foafnaut page with an address after # opens that address here, not a second Foafnaut in
+// the page; a link to the Hub's Textnaut page opens in a host tab. Only these two pages.
+const hubSelf=new URL('./',import.meta.url).href,hubTextnaut=new URL('../textnaut/',import.meta.url).href;
+function hubPage(url){
+  let u;try{u=new URL(url);}catch{return false;}
+  const page=u.origin+u.pathname.replace(/index\.html$/,'');
+  if(page===hubSelf&&u.hash.length>1){
+    const text=u.hash.slice(1).replace(/%23/gi,'#').replace(/%25(?=2[35])/gi,'%');
+    visit(/^(foafnaut:|https?:\/\/)/.test(text)?text:'https://'+text);return true;
+  }
+  if(page===hubTextnaut){post({type:'open',url});return true;}
+  return false;
+}
 async function navigate(url,remember=true){
+  if(hubPage(url))return;
   const mine=++serial;loading=true;request();
   const stamp=currentStamp;
   let next;try{next=await pageFor(url);}catch(error){next=refusal(url,String(error.message??error));}
@@ -1285,7 +1309,7 @@ function shellCommand(name,argument){
   else if(name==='new')newTab();else if(name==='close')closeTab(active);
   else if(name==='home')navigate(homeURL);else if(name==='source')viewSource();
   else if(name==='graph')navigate(graphURL);
-  else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();browserState?.settings({theme}).catch(()=>{});}
+  else if(name==='theme'){theme=argument||(theme==='dark'||(theme==='next'&&systemDark)?'light':'dark');request();browserState?.settings({theme}).catch(()=>{});}
   else if(name==='classic'){
     // The settings checkbox: foafnaut:classic/on, /off, or a toggle with no argument.
     classicUI=argument==='on'?true:argument==='off'?false:!classicUI;folded=0;
@@ -1349,15 +1373,20 @@ async function openState(){
 // no URL: a refused link shows Lean's reason and stays out of the history.
 function follow(route){
   if(route.route==='command')shellCommand(route.name,route.argument);
-  else if(route.route==='system')post({type:'open',url:route.url});
+  else if(route.route==='system')offSiteGo(route.url);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url);
+}
+// A link or an address of another site: in the tab when the Hub has a copy of the page
+// (copies.mjs), else in a host tab, as before.
+function offSiteGo(url){
+  copyOf(url).then(found=>found?navigate(url):post({type:'open',url}),()=>post({type:'open',url}));
 }
 // An address typed in the bar, with an engine from before the route op (issue 1274).
 function legacyGo(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
   else if(answer.url?.startsWith('foafnaut:'))navigate(answer.url);
-  else if(answer.go==='system'||!answer.url.startsWith(siteOrigin))post({type:'open',url:answer.url});
+  else if(answer.go==='system'||!answer.url.startsWith(siteOrigin))offSiteGo(answer.url);
   else navigate(answer.url);
 }
 function chrome(control){
@@ -1520,6 +1549,7 @@ async function startEngine(createModule){
       done(instance,compiled);},fail);return {};}})]);
 }
 async function start(data){
+  systemDark=data.dark===true;
   ({width,height,scale}=data);
   // Page text in CSS pixels, as a browser has it: the canvas is in device pixels, so the
   // starting text zoom follows the pixel ratio: twice a usual browser's text (200 on a 1x
@@ -1743,6 +1773,7 @@ function handle(data){
   try{apply(data);}finally{currentStamp=undefined;}
 }
 function apply(data){
+  if(data.type==='dark'){systemDark=data.dark===true;request();return;}
   if(data.type==='visit'){visit(data.address);return;}
   if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);scriptResize();request();}
   if(data.type==='scroll'){closeMenu();scrollBy(data.amount);}

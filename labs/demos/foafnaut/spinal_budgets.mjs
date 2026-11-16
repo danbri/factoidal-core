@@ -40,7 +40,7 @@ lower, unless the entry's `accepted` text is new (a cost taken on purpose, said 
 failure may go only when its metric is now a budget. Returns the violations as text. */
 export function ratchet(before,after){
   const bad=[];
-  for(const section of ['native','hub']){
+  for(const section of ['native','hub','window','pipeline']){
     const was=before[section]?.budgets??{},now=after[section]?.budgets??{};
     for(const [metric,b] of Object.entries(was)){
       if(!b||typeof b!=='object'||(typeof b.max!=='number'&&typeof b.min!=='number'))continue;

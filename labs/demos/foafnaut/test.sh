@@ -113,6 +113,13 @@ GPU_KERNEL_ENGINE=()
 if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then GPU_KERNEL_ENGINE=(--engine "$LAB/.build/web-render/engines/libweb-render.dylib"); fi
 check "gpu_kernel_diff.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
   --allow-read --allow-write --allow-run --allow-env --allow-ffi "$LAB/gpu_kernel_diff.ts" ${GPU_KERNEL_ENGINE[@]+"${GPU_KERNEL_ENGINE[@]}"}
+# The host's frame pipeline against its Lean model (L4Factoidal/HostPipeline/Model.lean,
+# issue 398): traces of two pages off screen, replayed by the Lean checker, plus two controls.
+# Prints NOT RUN itself with no lean, window library or WebGPU adapter. About 40 s.
+PIPE_ENGINE=()
+if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then PIPE_ENGINE=(--native-engine "$LAB/.build/web-render/engines/libweb-render.dylib"); fi
+check "pipeline_trace_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+  -A "$LAB/pipeline_trace_check.ts" ${PIPE_ENGINE[@]+"${PIPE_ENGINE[@]}"}
 # Browser state (WebState.lean): local LWS servers in temporary folders, through the
 # `factoidal` command, and Lean through web-state (build-web-state.sh).
 if [ -x "$LAB/.build/web-state/web-state" ] && command -v factoidal >/dev/null; then

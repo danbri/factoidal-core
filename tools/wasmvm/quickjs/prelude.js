@@ -789,7 +789,7 @@
     // answers for a frame document this page may reach); an about:blank or about:srcdoc
     // frame document, and a document a script made, take the page's (HTML §2.4.1 fallback
     // base URL), as before.
-    get baseURI() { const id = nodeId(this), d = info(id, 0) === 9 ? id : info(id, 7); if (d > 0) { const r = n.query(d, 171, ''); if (typeof r === 'string' && !r.startsWith('about:')) return r; } return document.URL; }
+    get baseURI() { const r = n.query(nodeId(this), 164, ''); return typeof r === 'string' ? r : ''; }
     get isConnected() { if (shadowEngine()) return info(nodeId(this), 25) === 1; let k = nodeId(this); for (let i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; }
     get ownerDocument() { const id = nodeId(this); return info(id, 0) === 9 ? null : wrap(info(id, 7)); }
     getRootNode(options = {}) { if (shadowEngine()) return wrap(info(nodeId(this), options?.composed ? 24 : 28)); let k = nodeId(this); for (;;) { const p = info(k, 1); if (p < 0) return wrap(k); k = p; } }
@@ -13333,7 +13333,7 @@
       if (v === null || !apiOn()) return null;
       // The element's node document's encoding: the page's, or UTF-8 for a document a
       // script made (createHTMLDocument, DOMParser).
-      const r = apiCall(10, [v, document.baseURI, el.ownerDocument === document ? docEncoding() : 'UTF-8'], 3);
+      const r = apiCall(10, [v, el.baseURI, el.ownerDocument === document ? docEncoding() : 'UTF-8'], 3);
       return typeof r === 'string' ? r.split('\0') : null;
     };
     PARTS.forEach((k, i) => {
@@ -13776,7 +13776,7 @@
           get() {
             const id = ids.get(this);
             if (id === undefined || id >= WINDOW) throw new TypeError("parameter is not of type 'Node'");
-            let r = n.query(id, 160, k === 'u' ? row + '\u0000' + (info(id, 7) === 0 ? href : 'about:blank') : row);
+            let r = n.query(id, 160, row);
             if (typeof r === 'number') r = failD(r);
             switch (k) {
               case 'b': return r === '1';

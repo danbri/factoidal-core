@@ -26,10 +26,32 @@ static lean_object *next_state(lean_object *pair) {
 // Wasm has no libuv; the native runtime has its own.
 void initialize_libuv(void) {}
 #endif
+#ifndef __EMSCRIPTEN__
+#include <unistd.h>
+/* Lean's task manager: the pool that runs the engine's `Task.spawn` work (L4Factoidal/Par;
+   issue 398). Which work is split, and into how many chunks, is decided in Lean, and the
+   result does not depend on the pool (Par.mapChunks_eq). The host only sizes the pool: one
+   thread fewer than the online CPUs (the calling thread works too), at most LEAN_POOL_CAP;
+   FOAFNAUT_LEAN_THREADS=N sets it (0: no task manager, so every task runs at once on the
+   calling thread, as in the Wasm build). */
+#define LEAN_POOL_CAP 6
+static unsigned pool_size(void) {
+  const char *set=getenv("FOAFNAUT_LEAN_THREADS");
+  if (set && *set) { long n=strtol(set,NULL,10); return n<0 ? 0 : (n>LEAN_POOL_CAP ? LEAN_POOL_CAP : (unsigned)n); }
+  long cpus=sysconf(_SC_NPROCESSORS_ONLN);
+  if (cpus<=1) return 0;
+  return cpus-1>LEAN_POOL_CAP ? LEAN_POOL_CAP : (unsigned)(cpus-1);
+}
+static unsigned pool_threads;
+#endif
 static int ready(void) {
   static int initialized;
   if (initialized) return 1;
   lean_initialize_runtime_module();
+#ifndef __EMSCRIPTEN__
+  pool_threads=pool_size();
+  if (pool_threads>0) lean_init_task_manager_using(pool_threads);
+#endif
   lean_object *result=initialize_WebRenderRDF(1);
   if (!lean_io_result_is_ok(result)) { lean_dec(result); return 0; }
   lean_dec(result);

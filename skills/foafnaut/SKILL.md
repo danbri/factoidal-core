@@ -266,9 +266,10 @@ bash sweeps.sh [--only NAME]... [--wasm-only]
   start check of `build-executables.sh`. Run `test.sh` and `sweeps.sh` locally before you land an
   engine or window change.
 - `build.yml` also runs `test.sh --skip-build` in the job `foafnaut-host-tests` (Linux) as soon as
-  `foafnaut-engines` is done, on its Wasm engines: about 45 minutes after dispatch, not after the
-  macOS bundle (2.5 hours). Checks that need `web-render-native`, `libweb-render.dylib` or macOS
-  print `NOT RUN` there and still run in the macOS bundle job.
+  `foafnaut-engines` is done, on its Wasm engines: about 35 minutes after dispatch, not after the
+  macOS bundle. Checks that need `web-render-native`, `libweb-render.dylib` or macOS
+  print `NOT RUN` there and still run in the macOS bundle job. Jobs, caches, cold builds and the
+  per-run timing record: [`ci-caching.md`](ci-caching.md).
 - Hub checks, from the repository root, Chrome needed: `node labs/demos/foafnaut/hub_links_check.mjs`
   (before every Pages deploy; `--only published`, `--runtime DIR`), and the other
   `LAB/hub_*_check.mjs` files. See `docs/web/hub/README.md`.
@@ -488,6 +489,8 @@ Several sessions work on the owner's laptop at once.
   (`CLAUDE.md`).
 
 ## Records
+
+- [Frozen document base URLs](../../docs/designissues/2026-11-16-frozen-base-url.md): live script DOM cache, mutation hooks, URL reflection and its proof/test boundary.
 
 - [Frame pipeline](../../docs/designissues/2026-11-07-foafnaut-frame-pipeline.md), the design
   and measurements of frames, scroll and press.

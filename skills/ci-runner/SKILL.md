@@ -1,0 +1,107 @@
+---
+name: ci-runner
+description: The factoidal-builds merge gate (Linux jobs), the nightly macOS run and its issue, and the overnight self-hosted GitHub Actions runner on the owner's Mac (start, stop, logs, removal, safety rules). Read before dispatching build.yml for a merge, when a nightly issue appears, or when touching the Mac runner.
+---
+
+# CI gate, nightly macOS and the Mac runner
+
+Owner decision 2026-11-16: macOS runner starvation held merges for hours (a release waited from 07:41 to about
+12:50 UTC), so merges are gated on the Linux jobs and macOS runs on main, nightly and on request, partly on an
+overnight runner on the owner's Mac. The code is in `danbri/factoidal-builds`: `.github/workflows/build.yml`,
+`foafnaut-macos.yml`, `mac-runner-check.yml`, `scripts/resolve-macos.sh`, `scripts/mac-runs-on.py`,
+`scripts/heavy-step.sh`, `scripts/install-elan.sh`, `scripts/nightly-report.sh`, `scripts/mac-runner/`.
+
+## Merge rule
+
+A core PR merges when:
+
+1. its `build.yml` run is green. Dispatch it on the PR head commit:
+   `gh workflow run build.yml --repo danbri/factoidal-builds -f core_ref=<40-hex PR head>`.
+   A commit that is not on core main runs the Linux jobs only (`lean`, `lean-wasm`, `foafnaut-engines`,
+   `foafnaut-host-tests`, `web-gates`, `publish` (which publishes nothing for a branch), `metrics`); `lean-macos` and
+   `foafnaut` show as skipped, so the run's conclusion is the Linux verdict;
+2. `tools/premerge.sh` passes on the rebased state;
+3. the engine change carries its theorems.
+
+macOS is not a merge requirement. Ask for it with `-f macos=true` when the change is macOS-specific (the native
+window, `native_window.m`, `libweb-render.dylib`, Metal paths); `foafnaut-macos.yml -f branch=true` still builds a
+branch's macOS engine on request.
+
+What still runs macOS:
+
+- every core **main** commit (the hourly poll, and a dispatch of a main commit): the darwin releases and the Mac
+  browser release (`publish.sh` publishes only main commits) keep their full gates;
+- the **nightly** run (cron `41 2 * * *`, 02:41 UTC): main's head with every job, released or not, in its own
+  concurrency group;
+- `foafnaut-macos.yml` every three hours on main, as before.
+
+A nightly failure opens (or comments on) an issue labelled `nightly` in factoidal-builds; a green night comments and
+closes it. The `nightly-report` job prints one line for the coordination log. **A nightly macOS failure on main is fixed
+or reverted the next morning**: whoever reads the coordinator's morning tick claims it in the log.
+
+## Where macOS jobs run
+
+`resolve` picks `runs-on` for the macOS jobs (`scripts/mac-runs-on.py`); GitHub cannot fall back from a self-hosted
+label once a job is queued, so the choice is made before. The owner's Mac (`[self-hosted, macOS, ARM64,
+foafnaut-mac]`) is chosen only when:
+
+- the event is `workflow_dispatch` or `schedule` in danbri/factoidal-builds (never `pull_request`);
+- the repository variable `MAC_RUNNER` (the Mac's heartbeat, `{"seen","until","free_gib"}`) is under 20 minutes old;
+- the overnight window has at least 3 hours left (2 for `foafnaut-macos.yml`, 0.1 for the check workflow);
+- the Mac reported enough free disk: 12 GiB for `build.yml`'s macOS jobs, 10 for `foafnaut-macos.yml`, 4 for the check.
+
+Otherwise `macos-15`. Dispatch input `mac_runner`: `auto` (default), `github`, `self-hosted` (forces the Mac; the job
+waits for it). Check where jobs land with `gh workflow run mac-runner-check.yml --repo danbri/factoidal-builds`.
+
+## The Mac runner
+
+Installed under `~/actions-runner` (official `actions/runner` release for osx-arm64, sha256 checked against the release
+notes by `scripts/mac-runner/install.sh`). The launchd job `org.foafnaut.mac-runner`
+(`~/Library/LaunchAgents/org.foafnaut.mac-runner.plist`) runs `~/actions-runner/ctl/tick.sh` every 5 minutes:
+
+- 22:00 to 07:00 local: starts the runner (under `caffeinate -i`) when it is switched on and at least 4 GiB are free;
+- outside the window: stops it; a running job may finish until 08:00, then it is stopped (that job fails);
+- every tick: sets `MAC_RUNNER` (until = 0 when it should get no new jobs).
+
+Controls (`~/actions-runner/ctl/runner.sh`):
+
+| Command | Effect |
+|---|---|
+| `runner.sh status` | process, window, disk, GitHub's view, `MAC_RUNNER`, last ticks |
+| `runner.sh off` | switch off: no new jobs; stops after the running job (`off --now`: at once) |
+| `runner.sh on` | switch back on (runs inside the window) |
+| `runner.sh now [hours]` | run now for N hours (default 2), outside the window too |
+| `runner.sh logs` | follow `ctl/runner.log` |
+| `runner.sh uninstall` | switch off, remove the launchd job, deregister (`./config.sh remove` with a remove token), delete `MAC_RUNNER`; then `rm -rf ~/actions-runner` |
+
+Logs: `ctl/tick.log` (start/stop decisions), `ctl/runner.log` (the runner), `_diag/` (the runner's own logs).
+Window and floors: `ctl/config` may set `START_H`, `STOP_H`, `GRACE_MIN`, `MIN_FREE_GIB`.
+Removal by hand: `launchctl bootout gui/$(id -u)/org.foafnaut.mac-runner`, then in `~/actions-runner`
+`./config.sh remove --token $(gh api -X POST repos/danbri/factoidal-builds/actions/runners/remove-token -q .token)`.
+
+### Safety rules
+
+- **Only the owner's own events.** The job-started hook (`ctl/job-started.sh`, set in `~/actions-runner/.env`, outside
+  any workflow's reach) fails every job before its steps unless the repository is danbri/factoidal-builds, the event
+  is `workflow_dispatch` or `schedule`, and the actor is `danbri` or `github-actions[bot]`. A fork's pull request can
+  edit a workflow to ask for the self-hosted label; the hook refuses it, and the repository requires approval before
+  outside contributors' workflows run.
+- **Disk:** the hook refuses a job below 4 GiB free; `scripts/heavy-step.sh` checks again before each Lean build.
+  The job-completed hook empties the job's workspace and temp directory and removes `~/leanc-cache` and
+  `~/leanc-shim`.
+- **One Lean build at a time:** `heavy-step.sh` runs the Lean steps (`lake build`, the foafnaut bundle,
+  `build-web-render.sh --native`) under `~/working/foafnaut-tools/leanlock.sh`, in the same queue as the agents.
+  A job without the lock (no `FOAFNAUT_LEANLOCK`) refuses to build.
+- **Owner's tools untouched:** `scripts/install-elan.sh` uses the Mac's own elan (the installer would rewrite the
+  shell profile); toolchains are shared with the owner's builds.
+- **Daytime is the owner's:** nothing runs on the Mac outside 22:00 to 08:00 unless `runner.sh now` is used.
+- Jobs run as the owner's user, so they can read the owner's files and credentials. That is why only the owner's
+  own dispatches and schedules are accepted; don't add events or actors to the hook without the owner's decision.
+
+## Troubleshooting
+
+- A macOS job sits "queued" with self-hosted labels: the Mac went to sleep, lost network or was switched off after the
+  resolve step chose it. Wake it or run `runner.sh now`; or cancel your own run and dispatch with `-f mac_runner=github`.
+- `MAC_RUNNER` stale: `launchctl print gui/$(id -u)/org.foafnaut.mac-runner`, then `ctl/tick.log` and `ctl/launchd.log`.
+- The runner updates itself; a failed update shows in `_diag/`. Re-run `install.sh` from a builds checkout to refresh
+  the controls; it keeps the registration.
