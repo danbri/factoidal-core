@@ -11,6 +11,7 @@ shapes and draws them; no font library runs.
 | `noto-sans-cjk/` | Slices of Noto Sans CJK JP, SC and KR Regular (SubsetOTF), cut with fontTools pyftsubset | 2.004 (SC, JP, KR SubsetOTF) | SIL OFL 1.1 (`OFL.txt`) | https://github.com/notofonts/noto-cjk/tree/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/SubsetOTF |
 | `fruktur/` | Fruktur Regular, a blackletter display font: an asset of the web font demonstration, not a fallback font (`PROVENANCE.md`) | 1.008 | SIL OFL 1.1 (`OFL.txt`) | https://github.com/google/fonts/tree/a60a77e14f28abd4ef243a1b5dfc48df0cec5205/ofl/fruktur |
 | `noto-color-emoji/` | Slices of Noto Color Emoji (the COLRv1 build of googlefonts/noto-emoji, `Noto-COLRv1.ttf`), its SVG table and vertical metrics dropped, cut with fontTools pyftsubset | as published at the commit (`NotoColorEmoji-Regular.ttf`, 25,332,736 bytes, SHA-256 `4d82a18d8d95f60ba883ce242bbadbf84a576e987745dd7ba38d71c67cff2d73`) | SIL OFL 1.1 (`OFL.txt` of the google/fonts family) | https://github.com/google/fonts/tree/c08cd288696d8ca30bf0296dc214d80d33a65d8f/ofl/notocoloremoji |
+| `liberation-serif/` | Liberation Serif Regular, unchanged: the serif face (`serif` and the initial `font-family`), metric-compatible with Times New Roman | 2.1.5 | SIL OFL 1.1 (`OFL.txt`; `AUTHORS`) | https://github.com/liberationfonts/liberation-fonts/releases/tag/2.1.5 (`liberation-fonts-ttf-2.1.5.tar.gz`) |
 | `noto-emoji/` | Noto Emoji, monochrome outlines, instanced at weight 400 and subset with fontTools | 3.002 (`NotoEmoji[wght].ttf`) | SIL OFL 1.1 (`OFL.txt` of the google/fonts family) | https://github.com/google/fonts/tree/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notoemoji |
 
 `NotoSans-Regular.ttf` SHA-256:
@@ -23,6 +24,21 @@ which has no Armenian. The fallback tests in `labs/demos/foafnaut` use it.
 
 The files are not changed. OFL 1.1 lets us copy and bundle them with software
 if the licence stays with them, and it does not let us sell a font on its own.
+
+## The serif face
+
+`liberation-serif/LiberationSerif-Regular.ttf` (393,576 bytes, SHA-256
+`058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74`) is from
+`liberation-fonts-ttf-2.1.5.tar.gz` of the 2.1.5 release (SHA-256
+`7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0`), unchanged. Browsers draw
+`serif` and the initial `font-family` with a Times-like face; Liberation Serif has the advance
+widths of Times New Roman, so lines break where they do in those browsers. Its hinting tables
+are ignored by the font policy (no instruction virtual machine runs). The engine draws with it
+the text whose family list resolves to `serif` (`FontFaceRule.genericOf`); a host reads the file
+only when a render says that a page's text wants it (`wantsSerif`, `labs/demos/foafnaut/serif_font.ts`),
+once a session. Bold and italic serif text is made from the regular face, as for Noto Sans: the
+bold and italic files need the engine to stop synthesising for a face that is already bold or
+italic, which is the next step.
 
 ## Fallback fonts on the Hub
 
