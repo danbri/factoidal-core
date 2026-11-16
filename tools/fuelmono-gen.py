@@ -54,6 +54,17 @@ for i in range(lo, hi):
     fns.append((m.group(1), [re.sub(r'^\((\w+) : (.*)\)$', r'\2', a) for a in parts[1:-1]]))
 
 
+# A definition inside the block that takes no fuel calls none of the block's functions. There it
+# would still take the block's `Mode` (a section variable) as a hidden argument, so the same
+# condition would read differently on the two sides of a step (two modes) and the walk would
+# split it twice. Such a helper is defined before the block.
+strays = [m.group(2) for i in range(lo, hi)
+          for m in [re.match(r'^(@\[[^\]]*\] )?def (\w+)\b', src[i])] if m and m.group(2) not in {n for n, _ in fns}]
+if strays:
+    sys.exit('fuelmono-gen: defined inside the evaluator\'s mutual block without a fuel argument: '
+             + ', '.join(strays) + '. Move them before the block (before `section Block` in JS/Interp.lean).')
+
+
 # functions whose walk needs a larger budget for `split` (see `fuel_walk`, JS/FuelMono.lean)
 SPLIT_CAP = {'evalExpr': 400000}
 

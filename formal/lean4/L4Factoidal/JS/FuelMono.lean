@@ -20,6 +20,23 @@ heap, so it covers the machine off (the reference) and on. Equal results include
 so equal steps left: a host call (`hostCall`, which receives the steps left) sees the same
 count at either fuel.
 
+## Two modes: the reference and the tiers
+
+The functions of the block take the run's `Mode` (`JS/Value.lean`: which fast tiers are on), and
+the induction hypothesis `IH H t1 t2 n m` relates the block in mode `t1` at fuel `n` to the block
+in mode `t2` at fuel `m`, for modes where `t1` has tier 1 on only if `t2` has. With `t1 = t2` it
+is fuel monotonicity. With `t1 = Mode.ref` and `t2 = Mode.engine` it is the refinement of the
+reference by the engine with tier 1 on (`tier1_evalStmts_refines` and its companions in
+`JS/FuelMonoAll.lean`). The two runs start from the same heap and the same function bodies: the
+mode is a parameter of the evaluator, not data in the heap.
+
+The walk treats the two modes as it treats the two fuels. A site of tier 1
+(`Tier1.withFast on fast c g`) is taken apart by `Le.withFast`, which leaves two goals the walk
+does not touch (`Site`): the implication between the modes, and the soundness of the site's fast
+path against the arm's own code, proved once per site in `JS/Tier1Proofs.lean`. A helper of the
+block that calls none of its functions must be defined before the block: inside it, it would
+take the mode as a hidden argument, and the two sides' conditions would differ.
+
 ## State of the proof (2026-11-16)
 
 Proved: `IH_all` (`JS/FuelMonoAll.lean`), fuel monotonicity of every function of the block that
