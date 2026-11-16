@@ -352,3 +352,38 @@ Deno.test("gate: a heavy frame predicted right is asked about when the GPU is do
   const blocked=gate.stats.blockedMs-learnt;
   assert(blocked<10,`the second ask blocked the thread ${blocked} ms`);
 });
+
+Deno.test("gate: a prior far too high holds no frame for long (sleep capped, early asks bound the rate)", async()=>{
+  const queue=blockingQueue(1);
+  const gate=createGpuGate(queue,1,undefined,0.8,undefined,{answersAtReturn:true});
+  gate.turn();
+  // A scene of 1340 units that the GPU draws at once: the prior says 1072 ms.
+  gate.after(1340);
+  const due=gate.dueIn();
+  assert(due!==null&&due<=100,`first heavy frame due in ${due} ms`);
+  for(let k=0;k<100&&gate.inFlight;k++){await sleep(5);gate.turn();}
+  assert.equal(gate.inFlight,0);
+  // Done by the ask about 100 ms after the submission: at most 100/1340 ms per unit.
+  assert(gate.stats.msPerUnit<=0.08,`rate after an early ask ${gate.stats.msPerUnit}`);
+  gate.after(1340);
+  const next=gate.dueIn();
+  assert(next!==null&&next<=120,`next heavy frame due in ${next} ms`);
+  await gate.idle();
+});
+
+Deno.test("gate: a late ask about small work does not raise the rate", async()=>{
+  const queue=blockingQueue(1);
+  const gate=createGpuGate(queue,1,undefined,0,undefined,{answersAtReturn:true});
+  gate.turn();
+  queue.doneAt=performance.now()+40;
+  gate.after(100);gate.turn();
+  const rate=gate.stats.msPerUnit;
+  await sleep(3);
+  // Five units, asked 15 ms late, blocking 2 ms: start to done over cost would be 3.4 ms a unit.
+  gate.after(5);
+  await sleep(15);
+  queue.doneAt=performance.now()+2;
+  gate.turn();
+  assert.equal(gate.inFlight,0);
+  assert(gate.stats.msPerUnit<=rate+1e-3,`rate ${rate} -> ${gate.stats.msPerUnit}`);
+});

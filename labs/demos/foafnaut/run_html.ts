@@ -1673,6 +1673,11 @@ async function main() {
         ||loading||!!candidate||refusing>0||!!prefetching||graphBusy()||!!(document as Page).graph?.clock||netQueue.length>0||netInFlight>0
         ||sockets.size>0||(worker?.inFlight??0)>0||!!sweep||(!!commands&&(commands.length>0&&now+2>=stepAt));
       if(busy){busyAt=now;idleEndAt=undefined;return 0;}
+      // GPU work not yet answered for: the gate asks only from a turn and its answer is a timer,
+      // and the window's wait blocks the thread, so the loop does not wait past the ask's due time
+      // nor at all while an ask's answer is outstanding (a frame waits for it).
+      const gpuDue=session?.gpuDueIn()??null;
+      if((session?.gpuInFlight??0)>0&&(gpuDue===null||gpuDue<2)){busyAt=now;idleEndAt=undefined;return 0;}
       // Loop turns with nothing to do, per second: the wakeups an idle window costs.
       if(idleEndAt!==undefined){idleStats.idleTurns++;idleStats.idleMs+=now-idleEndAt;}
       idleEndAt=now;
@@ -1685,6 +1690,7 @@ async function main() {
       if(!quiet&&(scriptWakeIn===null||scriptWakeIn<2))return 0;
       let wait=quiet?IDLE_WAIT_CAP_MS:TIMER_WAIT_CAP_MS;
       if(scriptWakeIn!==null)wait=Math.min(wait,Math.max(scriptWakeIn,gpuHoldUntil-now));
+      if(gpuDue!==null)wait=Math.min(wait,gpuDue);
       if(!everyFrame&&session?.frames&&!session.lastChecked&&canPresent())wait=Math.min(wait,lastActivity+IDLE_CHECK_MS-now);
       if(commands?.length)wait=Math.min(wait,stepAt-now);
       if(watchSeconds&&firstFrameAt!==undefined)wait=Math.min(wait,firstFrameAt+watchSeconds*1000-now);

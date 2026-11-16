@@ -124,7 +124,11 @@ export function sceneCostIn(frame:{width?:number;height?:number;data?:ArrayLike<
  *    and blocks the thread for all of its GPU time. With no cost known, the prediction is the
  *    last measured GPU time of such work, with the same falls;
  *  - before any ask has measured a rate, `defaultMsPerUnit` (the caller's prior for this
- *    machine; 0: ask at once) gives the first prediction of heavy work;
+ *    machine; 0: ask at once) gives the first prediction of heavy work, slept for at most
+ *    `PRIOR_CAP_MS` (a page whose cost per unit is far below the prior, as with large glyph
+ *    runs, must not be held for a second a frame); an ask that found the GPU done bounds the
+ *    rate by start to ask over cost, and a blocking ask later than it blocked only bounds it
+ *    from above (the GPU may have been idle while the ask was late);
  *  - `answersAtReturn` (a queue whose ask blocks until the work is done, as Deno's): the
  *    submissions count as answered when the ask returns, not when its promise answers 11 ms
  *    later: the next frame's work does not wait for the promise (HostPipeline.Model: `answer`
@@ -139,7 +143,7 @@ export function sceneCostIn(frame:{width?:number;height?:number;data?:ArrayLike<
 export type PipeEvent="submit"|"ask"|"answer";
 export type GateOptions={answersAtReturn?:boolean;debug?:(record:Record<string,unknown>)=>void};
 export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,defaultMsPerUnit=0,onPipe?:(event:PipeEvent)=>void,options:GateOptions={}) {
-  const LIGHT_MS=50,LIGHT_BOUND=3,MARGIN=1.1,EARLY_MS=5,MEASURED_MS=1,ANSWER_MS=25,FALLS=[0.9,0.9,0.75,0.5],HEAVY_UNITS=100,MIN_UNITS=4,FALLBACK_MS=50,LAG_MS=50,LAG_MISSES=3,MAX_MS=5000;
+  const LIGHT_MS=50,LIGHT_BOUND=3,MARGIN=1.1,EARLY_MS=5,MEASURED_MS=1,ANSWER_MS=25,FALLS=[0.9,0.9,0.75,0.5],HEAVY_UNITS=100,MIN_UNITS=4,FALLBACK_MS=50,LAG_MS=50,LAG_MISSES=3,MAX_MS=5000,PRIOR_CAP_MS=100;
   const debug=options.debug;
   let submitted=0,answered=0,estimateMs=0,rate=0,lastCost=0,lastDoneAt=0,earlyRun=0;
   let atReturn=!!options.answersAtReturn,lagMisses=0,turns=0;
@@ -158,7 +162,7 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
   const costUpTo=(seq:number)=>{let c=0;for(const [k,v] of costOf)if(k<=seq)c+=v;return c;};
   // The GPU time of `cost` units at the measured rate, or (no rate yet) of heavy work at the
   // machine prior; 0 when neither says.
-  const msFor=(cost:number)=>cost>0&&rate>0?Math.min(MAX_MS,cost*rate):cost>=HEAVY_UNITS&&rate===0&&defaultMsPerUnit>0?Math.min(MAX_MS,cost*defaultMsPerUnit):0;
+  const msFor=(cost:number)=>cost>0&&rate>0?Math.min(MAX_MS,cost*rate):cost>=HEAVY_UNITS&&rate===0&&defaultMsPerUnit>0?Math.min(PRIOR_CAP_MS,cost*defaultMsPerUnit):0;
   // The predicted GPU time of what is in flight up to `seq`: its cost at the rate (with the
   // margin once a rate is measured; before that, heavy work at the prior and light work 0:
   // asked about at once), or with no cost known the last measured time of such work.
@@ -169,18 +173,23 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
   };
   // The answer for the ask `p`: the GPU was done at `done`; `measured` when the ask blocked, so
   // `done` is when the GPU finished (else it had finished some time before).
-  const settle=(p:NonNullable<typeof pending>,done:number,measured:boolean)=>{
+  const settle=(p:NonNullable<typeof pending>,done:number,measured:boolean,asked=done)=>{
     const busy=Math.max(0,done-p.started);
     // What the ask teaches: work with a cost of MIN_UNITS or more, the rate; work with no cost
     // known, the time of such work; light work, nothing.
     if(measured)stats.blockedAsks++;
     if(p.cost>=MIN_UNITS||p.cost<=0){
+      // Start to done over cost is the rate only when the ask blocked for longer than it was late
+      // (else the GPU may have been idle for part of that time): a late ask bounds the rate from
+      // above. The rate before this ask is the measured one or, with none yet, the prior.
+      const known=rate>0?rate:defaultMsPerUnit,late=Math.max(0,asked-Math.max(p.due,p.started)),blocked=Math.max(0,done-asked);
       if(measured){
         earlyRun=0;
-        if(p.cost>0){rate=busy/p.cost;lastCost=p.cost;}else estimateMs=busy;
+        if(p.cost>0){rate=blocked>=late||known<=0?busy/p.cost:Math.min(known,busy/p.cost);lastCost=p.cost;}else estimateMs=busy;
       }else{
+        // The GPU was done by the ask: the rate falls, and is at most start to ask over cost.
         const fall=FALLS[Math.min(earlyRun,FALLS.length-1)];earlyRun++;
-        if(p.cost>0)rate*=fall;else estimateMs*=fall;
+        if(p.cost>0){const bound=Math.max(0,asked-p.started)/p.cost;rate=known>0?Math.min(known*fall,bound>0?bound:known*fall):0;}else estimateMs*=fall;
       }
     }
     const gpuMs=measured?busy:Math.min(busy,p.predicted/MARGIN);
@@ -206,7 +215,7 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
     const settledAtReturn=atReturn;
     if(settledAtReturn){
       // The work is done: the next frame need not wait for the promise.
-      stats.returnAnswers++;settle(p,returned,blocked>=MEASURED_MS);wake();
+      stats.returnAnswers++;settle(p,returned,blocked>=MEASURED_MS,asked);wake();
     }
     asking=answer.then(()=>{
         const now=performance.now();
@@ -219,7 +228,7 @@ export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void,d
         // Done: the end of a blocking call, or the answer for a queue that does not block.
         const blocking=blocked>=MEASURED_MS,done=blocking?returned:now;
         const early=!blocking&&p.sleep>0&&blocked<EARLY_MS&&now-asked<ANSWER_MS;
-        settle(p,done,!early);
+        settle(p,done,!early,asked);
         debug?.({ev:"ask",seq:p.seq,via,started:p.started,due:p.due,predicted:p.predicted,cost:p.cost,asked,blocked,answeredAt:now,promiseAt:now,early,estimateBefore:before,rate,covered});
       },()=>{answered=Math.max(answered,p.seq);})
       .finally(()=>{

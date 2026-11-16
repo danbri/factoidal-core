@@ -278,6 +278,8 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     gpuTurn(){gate.turn();},
     /** Ms until the gate's next ask is due (null: none planned): the loop turns by then. */
     gpuDueIn():number|null {return gate.dueIn();},
+    /** GPU submissions not yet answered for (the gate is waiting to ask, or for an answer). */
+    get gpuInFlight(){return gate.inFlight;},
     /** Quit or close: from now on no call asks the GPU for work. Resolves when the GPU has
      * finished what it was given (at most the frames in flight). */
     halt():Promise<unknown> {halted=true;return gate.idle();},
