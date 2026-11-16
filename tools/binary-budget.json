@@ -7,8 +7,9 @@
       "web-render.wasm.br": 5925520
     },
     "darwin-arm64": {
-      "leanjs": 11420256,
-      "libweb-render.dylib": 72332320
+      "leanjs": 11420160,
+      "libweb-render.dylib": 72332320,
+      "bubblepop-test262": 31294992
     }
   }
 }
