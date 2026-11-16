@@ -947,7 +947,7 @@ structure FrameOps (σ : Type) where
   deliver : σ → HTML.FrameSessions.Message → σ
   advanceTo : σ → Nat → σ
   /-- A frame's session for the `iframe` element `el` (its own entropy: `frameLimits`). -/
-  start : Nat → DOM.Dom → Array (Nat × String) → HTML.Frames.Origin × HTML.Frames.Origin → Option σ
+  start : Nat → DOM.Dom → Array (Nat × String) → HTML.Frames.Origin × HTML.Frames.Origin → String → String → Option σ
   /-- A frame's navigation ends with a document: `loadFrame` of the engine. -/
   load : σ → Nat → String → Array (Nat × String) → σ
 
@@ -983,7 +983,11 @@ def pumpFrames {σ : Type} (ops : FrameOps σ) (parent : σ) (frames : Array (Na
       if !frames.any (·.1 == el) && frames.size < maxFrameSessions then
         let dom := DOM.parseHtmlDocument src
         let scripts := ((scriptSources dom (.object [])).toOption.map (·.1)).getD #[]
-        if let some c := ops.start el dom scripts (f.origin, Dom.pageOrigin h.dom) then
+        let inherited := ((h.dom.frames.find? (·.1 == el)).bind fun frame =>
+          (h.dom.bases.about.find? (·.1 == frame.2)).map (·.2)).getD
+            (h.dom.prepareBases.documentBase (d.get el).doc)
+        let context := h.dom.baseContext (d.get el).doc
+        if let some c := ops.start el dom scripts (f.origin, Dom.pageOrigin h.dom) inherited (context.policyURL.getD context.url) then
           frames := frames.push (el, c)
   if frames.isEmpty then return (parent, frames, d.size)
   let clock := h.loop.clock
@@ -1000,8 +1004,8 @@ def pageFrameOps (m : Page.Module') (lim : Page.Limits) (fEnt : Nat → ByteArra
   { host := (·.host), setHost := fun s h => { s with host := h },
     deliver := fun s msg => (s.deliverP msg).runLocal,
     advanceTo := fun s c => (s.advance c frameTasks).1,
-    start := fun el dom scripts o =>
-      (Page.start m dom "about:srcdoc" scripts (frameLimits lim fEnt el) #[] {} {} (some o)).toOption,
+    start := fun el dom scripts o inherited policyURL =>
+      (Page.start m dom "about:srcdoc" scripts (frameLimits lim fEnt el) #[] {} {} (some o) (some inherited) (some policyURL)).toOption,
     load := fun s el src scripts => s.loadFrame el src scripts }
 
 def leanFrameOps (base : LeanJS.Session) (lim : Page.Limits) (fEnt : Nat → ByteArray) : FrameOps LeanJS.Session :=
@@ -1010,7 +1014,7 @@ def leanFrameOps (base : LeanJS.Session) (lim : Page.Limits) (fEnt : Nat → Byt
       let e := LeanJS.engine
       e.checkpoint (e.dispatchWith s Page.windowId "message" (Page.messageInit msg)).1,
     advanceTo := fun s c => (LeanJS.engine.advance s c frameTasks).1,
-    start := fun el dom scripts o => some (LeanJS.start base dom "about:srcdoc" scripts (frameLimits lim fEnt el) {} {} (some o)),
+    start := fun el dom scripts o inherited policyURL => some (LeanJS.start base dom "about:srcdoc" scripts (frameLimits lim fEnt el) {} {} (some o) {} (some inherited) (some policyURL)),
     load := fun s el src scripts => LeanJS.loadFrame s el src scripts }
 
 /-- The frames' sessions after frame `el` took the document `src` of `url` (the embedder's

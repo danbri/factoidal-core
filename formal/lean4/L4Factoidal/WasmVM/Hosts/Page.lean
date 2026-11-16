@@ -2103,14 +2103,32 @@ def graftFrames (dom : Arena) (frames : Array (Nat × Arena)) : Arena × Array (
 
 /-- The page's scripts, `DOMContentLoaded`, the frames' and the window's `load` events,
 and the tasks due at time 0, on a session that holds the page's arena. -/
-def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)) (framed : Array (Nat × Nat)) :
+def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)) (framed : Array (Nat × Nat))
+    (aboutBase : Option String := none) (aboutPolicyURL : Option String := none) :
     Prog Session := do
   -- The page's own `iframe` elements get their browsing contexts before its scripts run
   -- (HTML §4.8.5); a page with none pays one look at its nodes. Their initial about:blank
   -- documents are there before any script runs, and that load is not an event scripts see.
-  let d0 := { s.host.dom with url }
+  let d0 := { s.host.dom with
+    url
+    bases := { about := aboutBase.toArray.map fun u => (0, u) }
+    aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
+    baseEncoding := L4Factoidal.WHATWG.Encoding.getEncoding s.limits.encoding,
+    basePolicies := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta }
   let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors s.limits.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader s.limits.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta, violations := s.limits.cspViolations, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers, mayBlock := s.limits.mayBlock } }
   let s := { s with host := { s.host with web } }
+  let d0 := Id.run do
+    let mut d0 := d0
+    for (el, doc) in framed do
+      d0 := d0.prepareBases
+      let parent := (d0.dom.get el).doc
+      let context := d0.baseContext parent
+      let inherited := d0.documentBase parent
+      d0 := { d0 with
+        bases := { d0.bases with about := d0.bases.about.push (doc, inherited) }
+        aboutPolicies := d0.aboutPolicies.push (doc, context.policyURL.getD context.url, context.policies) }
+      d0 := { d0 with bases := DOM.BaseURL.update d0.bases d0.dom d0.baseContext (.tree #[doc]) }
+    return d0
   let d0 := if d0.framing && d0.dom.nodes.any Hosts.Dom.frameOwner then
     let d1 := Hosts.Dom.connectFrames d0 #[0]
     { d1 with navigations := d1.navigations.filter (!·.2.isEmpty) } else d0
@@ -2143,7 +2161,8 @@ frames share the page's script realm. `origins`: this is a sandboxed frame's own
 (`HTML.FrameSessions`), with its own origin and its parent's. -/
 def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Limits := {})
     (frames : Array (Nat × Arena) := #[]) (reads : Reads := {}) (time : ScriptClock := {})
-    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none) : Except String Session := do
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
+    (aboutBase : Option String := none) (aboutPolicyURL : Option String := none) : Except String Session := do
   let (dom, framed) := graftFrames dom frames
   let s : Session ← match m.base with
     | some b =>
@@ -2156,7 +2175,7 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
       let dh := { s.host.dom with frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2) }
       pure { s with host := { s.host with dom := dh, reads, time, web } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage lim.gpuReplay } } }
-  return (s.startP url scripts framed).runLocal
+  return (s.startP url scripts framed aboutBase aboutPolicyURL).runLocal
 
 /-! ## What a turn did -/
 

@@ -757,9 +757,15 @@ arena, the script clock and the network state, the `start` and `url` calls of th
 objects. -/
 def startBegin (base : Session) (dom : Arena) (url : String) (lim : Page.Limits := {})
     (reads : Reads := {}) (time : ScriptClock := {})
-    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none) : Session := Id.run do
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
+    (aboutBase : Option String := none) (aboutPolicyURL : Option String := none) : Session := Id.run do
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage lim.gpuReplay
-  let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
+  let domHost : Page.DomHost := {
+    dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url,
+    bases := { about := aboutBase.toArray.map fun u => (0, u) }
+    aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
+    baseEncoding := L4Factoidal.WHATWG.Encoding.getEncoding lim.encoding,
+    basePolicies := L4Factoidal.Net.Xhr.cspOf lim.csp lim.cspReportOnly lim.cspMeta, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
   -- the page's own iframes get browsing contexts before its scripts run (as `Page.Session.startP`)
   let domHost := if domHost.framing && dom.nodes.any Hosts.Dom.frameOwner then
     let d1 := Hosts.Dom.connectFrames domHost #[0]
@@ -813,8 +819,8 @@ frame's own session (`HTML.FrameSessions`), with its own origin and its parent's
 def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Page.Limits := {})
     (reads : Reads := {}) (time : ScriptClock := {})
     (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
-    (mods : LeanJSModules.Loaded := {}) : Session :=
-  startFinish (startScripts (startBegin base dom url lim reads time origins) scripts.toList) mods
+    (mods : LeanJSModules.Loaded := {}) (aboutBase : Option String := none) (aboutPolicyURL : Option String := none) : Session :=
+  startFinish (startScripts (startBegin base dom url lim reads time origins aboutBase aboutPolicyURL) scripts.toList) mods
 
 /-! ### A start that waits for a sync answer goes on from the script that waited
 
