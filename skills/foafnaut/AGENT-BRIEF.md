@@ -37,6 +37,9 @@ standards conformance.
   a defined refusal at the bound, and a crash in a test run is fixed before the subtests around it
   (`skills/local-lean-rules` section 11).
 - Say exactly what is proved, and what is only tested.
+- Text in scripts you cannot read (Arabic, Indic, Thai, CJK, Mongolian, emoji sequences, mixed scripts) is checked
+  by machines against independent references, never by eye; where suites are too coarse, write small cases of our
+  own: [`i18n-layout-testing`](../i18n-layout-testing/SKILL.md).
 
 ## Performance
 
@@ -74,6 +77,9 @@ standards conformance.
 - Never kill or signal processes you didn't start. Never touch other agents' worktrees.
 - Disk is tight: keep scratch small, delete `.lake`, worktrees and downloaded engines when done, check `df -h /` before
   any build, and stop and report below 4 GiB free. A full disk rebooted the Mac on 2026-11-15.
+- After a session ends, an agent stops, or the Mac reboots: check disk and save unpushed work first
+  ([`cleanup-and-recovery`](../cleanup-and-recovery/SKILL.md); `tools/disk-audit.sh`, `tools/branch-audit.py`).
+- Codex workers: the recipe and brief rules are in [`codex-claude-interop`](../codex-claude-interop/SKILL.md).
 - Releases are never replaced: a published release stays as it is (packaged Textnaut pins its bytes). Publish a new one.
 - Don't sit idle. Commit early and often.
 
@@ -82,6 +88,8 @@ standards conformance.
 - User-facing text says "the built-in engine", not "Lean". Name Lean only where the language is the subject.
 - Names: Foafnaut (browser), Textnaut, BubblePopKit (engine), BubblePopJS, BubblePopWASM.
 - Don't use the word "honest". Plain British English.
+- Nothing is out of scope: unworked areas are "later", "not yet" or "reported separately", each with a plan issue, and
+  headline numbers count everything ([`scope-and-sequencing`](../scope-and-sequencing/SKILL.md)).
 - GitHub: technical content only; never quote the owner's chat; no links to upstream Lean issues; never suggest
   contacting people outside the project.
 - Real web pages are copyright. Public pages may be vendored as zipped snapshots, as fair use for testing, under

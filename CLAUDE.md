@@ -1697,6 +1697,15 @@ session.
   (`third_party/realpages`; the gate) and live (drift); no page is committed to core.
 - [`perceived-performance`](skills/perceived-performance/SKILL.md) — how fast Foafnaut feels: graded evidence,
   metrics mapped to perception, targets, and workflows for goals on tails and spread, not means.
+- [`scope-and-sequencing`](skills/scope-and-sequencing/SKILL.md) — nothing is out of scope; deferred areas
+  are order ("later", "not yet", "reported separately"), each with a plan issue; headline numbers count
+  everything, secondary numbers beside them.
+- [`i18n-layout-testing`](skills/i18n-layout-testing/SKILL.md) — testing text in scripts reviewers cannot
+  read: Unicode conformance files, WPT text directories, HarfBuzz shaping differential, glyph-position and
+  pixel comparison with Chrome and Firefox, and our own small per-script cases with stored references.
+- [`cleanup-and-recovery`](skills/cleanup-and-recovery/SKILL.md) — after a session ends, a crash or a
+  reboot: disk floor and safe freeing, saving unpushed work, restoring `/tmp` state, the weekly
+  forgotten-branch audit (`tools/disk-audit.sh`, `tools/branch-audit.py`).
 - [`node-crypto-haclstar-vc-wasm-build`](skills/node-crypto-haclstar-vc-wasm-build/SKILL.md)
   — the concrete build: VC Data-Integrity crypto running off-native
   (Node + browser) via HACL\*'s official wasm (#286). Three realisation
@@ -1773,8 +1782,9 @@ session.
   appropriate lower-power model and run it in a subagent; Fable-class
   sessions orchestrate, gate, and design — they don't type the code.
 - [`codex-claude-interop`](skills/codex-claude-interop/SKILL.md) — how Claude
-  sessions and Codex share work: the coordination log, files in `/tmp`, `codex exec` with
-  `< /dev/null`, the brief, and the actions only the owner can do.
+  sessions and Codex share work: the coordination log, files in `/tmp`, the Codex worker recipe
+  (`/opt/homebrew/bin/codex`, quota check, `codex exec` from a worktree with `--add-dir`), the
+  brief, and the actions only the owner can do. Codex itself reads `AGENTS.md`.
 - [`subagent-prompting`](skills/subagent-prompting/SKILL.md) —
   worktree path discipline + post-condition checks.
 - [`workflow-gotchas-debugging`](skills/workflow-gotchas-debugging/SKILL.md)
