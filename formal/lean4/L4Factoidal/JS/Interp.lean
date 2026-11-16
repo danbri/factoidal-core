@@ -4895,19 +4895,38 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       callV n thisV a0 argv
     | .functionProtoBind =>
       if !(← isCallable thisV) then throwErr .type "Bind must be called on a function"
-      let o ← alloc { proto := .obj r.functionProto, kind := .bound thisV a0 (args.extract 1 args.size) }
+      -- §20.2.3.2: BoundFunctionCreate (the target's prototype), then `length` from an own
+      -- `length` that is a Number (ToIntegerOrInfinity, minus the bound arguments, at least 0),
+      -- then `name` ("bound " and a String name, else "")
+      let tproto ← match thisV with
+        | .obj tid => match (← getObj tid).kind with
+          | .proxy .. => callNative n .objectGetPrototypeOf .undef #[thisV] none
+          | _ => pure (← getObj tid).proto
+        | _ => pure (.obj r.functionProto)
+      let o ← alloc { proto := tproto, kind := .bound thisV a0 (args.extract 1 args.size) }
+      let argCount := Float.ofNat (args.size - 1 |>.min args.size)
+      let hasLen ← match thisV with
+        | .obj tid => do pure ((← ownDesc n tid "length").isSome)
+        | _ => pure false
+      let l ← if hasLen then do
+          match ← getV n thisV "length" with
+          | .num x =>
+            if x == inf then pure inf
+            else if x == -inf then pure 0
+            else let k := toIntegerOrInf x - argCount; pure (if k < 0 then 0 else k)
+          | _ => pure 0
+        else pure 0
+      defineOwn o "length" (.data (.num l) false false true)
       let nm ← getV n thisV "name"
       let nm := match nm with | .str s => s | _ => ""
       defineOwn o "name" (.data (.str ("bound " ++ nm)) false false true)
-      let len ← getV n thisV "length"
-      let l := match len with | .num x => x | _ => 0
-      let l := l - Float.ofNat (args.size - 1 |>.min args.size)
-      defineOwn o "length" (.data (.num (if l < 0 then 0 else l)) false false true)
       pure (.obj o)
     | .functionProtoToString =>
       match thisV with
       | .obj id => match (← getObj id).kind with
-        | .closure f .. => pure (.str s!"function {f.name.getD ""}() {"{"} [code] }")
+        -- the engine keeps no source text of functions (§20.2.3.5 step 2 wants it): the
+        -- NativeFunction form instead, which Test262's assertToStringOrNativeFunction accepts
+        | .closure f .. => pure (.str s!"function {f.name.getD ""}() {"{"} [native code] }")
         | .native _ | .bound .. => pure (.str "function () { [native code] }")
         -- a callable Proxy (§20.2.3.5 step 3): a NativeFunction string
         | .proxy .. =>
