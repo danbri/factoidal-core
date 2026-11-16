@@ -330,6 +330,11 @@ lean_lib LeanJSHost where
 @[default_target] lean_lib JS where
   roots := #[`L4Factoidal.JS]
 lean_exe leanjs where root := `L4Factoidal.JS.Main
+-- Fuel monotonicity of the evaluator's mutual block (`IH_all`, JS/FuelMonoAll.lean): a chain of
+-- generated proof modules, checked one at a time (about a quarter of an hour, under 2 GB each).
+-- Not a default target: `lake build JSFuelMono`.
+lean_lib JSFuelMono where
+  roots := #[`L4Factoidal.JS.FuelMonoAll]
 -- Test262 files on the page realm (BubblePopJS with prelude.js, as Foafnaut runs page scripts):
 -- the full Test262 run of danbri/factoidal-builds (test262.yml).
 lean_exe «bubblepop-test262» where root := `L4Factoidal.WasmVM.Hosts.Test262Page
