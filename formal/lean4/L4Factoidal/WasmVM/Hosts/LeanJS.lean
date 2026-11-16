@@ -420,31 +420,35 @@ def importMuted (p : L4Factoidal.Net.PageFetch.Page) (url : String) : Bool :=
 never becomes a value of the realm: for a number, the script element request with that handle
 (`Net.Xhr.takeScript`); for a string, a worker's imported script of that URL (the embedder
 fetched it). -/
-def serveScript (h : Host) (wk : WorkerHost) (key : JS.HostArg) : Host × JS.HostAns :=
+def serveScriptSrc (h : Host) (wk : WorkerHost) (key : JS.HostArg) : Host × Option (String × Bool) :=
   match key with
   | .val (.num x) =>
     let (net, got) := L4Factoidal.Net.Xhr.takeScript h.web.net x.toUInt64.toNat
-    let h := { h with web := { h.web with net } }
-    match got with
-    | some (src, muted) => (h, .script src muted)
-    | none => (h, .err "no script")
+    ({ h with web := { h.web with net } }, got)
   | .val (.str u) =>
     let url := JS.Str.toHost u
-    match wk.scripts.find? (·.1 == url) with
-    | some (_, some src) => (h, .script src (importMuted h.web.net.page url))
-    | _ => (h, .err "no script")
-  | _ => (h, .err "no script")
+    (h, (wk.scripts.find? (·.1 == url)).bind fun e => e.2.map fun src => (src, importMuted h.web.net.page url))
+  | _ => (h, none)
+
+/-- A script's source as the host's answer: `HostAns.script`, else a refusal. -/
+def scriptAns : Option (String × Bool) → JS.HostAns
+  | some (src, muted) => .script src muted
+  | none => .err "no script"
+
+/-- The host's answer to a request for a script's source (`serveScriptSrc`, as `scriptAns`). -/
+def serveScript (h : Host) (wk : WorkerHost) (key : JS.HostArg) : Host × JS.HostAns :=
+  ((serveScriptSrc h wk key).1, scriptAns (serveScriptSrc h wk key).2)
 
 /-- Kind: security lemma (origin isolation, C6). Says: the host's answer to a request for a
 script's source is a `HostAns.script` (which the evaluator never makes a value: `hostAnswer`)
 or a refusal; it is never a value or bytes. -/
 theorem serveScript_answer (h : Host) (wk : WorkerHost) (key : JS.HostArg) :
     (∃ src muted, (serveScript h wk key).2 = .script src muted) ∨ (serveScript h wk key).2 = .err "no script" := by
-  unfold serveScript
-  split
-  · split <;> simp_all
-  · split <;> simp_all
-  · simp
+  show (∃ src muted, scriptAns (serveScriptSrc h wk key).2 = .script src muted) ∨
+    scriptAns (serveScriptSrc h wk key).2 = .err "no script"
+  cases (serveScriptSrc h wk key).2 with
+  | none => exact Or.inr rfl
+  | some p => exact Or.inl ⟨p.1, p.2, rfl⟩
 
 /-- The host's natives with the script clock: the instructions run so far are the steps of
 the session before this run and the steps of this run (`runBudget` less the steps left),
