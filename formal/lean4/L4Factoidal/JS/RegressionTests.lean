@@ -770,4 +770,10 @@ these were missing. -/
 #guard out "try { Map.prototype.get.call(new Set(), 1); print('no') } catch (e) { print(e.name) }" == ["TypeError"]
 #guard out "var dv = new DataView(new ArrayBuffer(8), 2); print(dv.byteLength, dv.byteOffset, Object.getOwnPropertyNames(dv).length, Object.prototype.toString.call(new Date(0)))" == ["6 2 0 [object Date]"]
 
+-- `yield` and `await` in a class's heritage and computed keys and in an object literal's computed
+-- keys (the generator machine lifts them; it refused them before)
+#guard out "function* g() { class C { [yield 1]() { return 'm'; } static [yield 2] = 3; } return C; } var it = g(); it.next(); it.next('a'); var C = it.next('b').value; print(new C().a(), C.b)" == ["m 3"]
+#guard out "function* g() { var o = { [yield 1]: yield 2, k: 0 }; return Object.keys(o).join() + ' ' + o.x; } var it = g(); it.next(); it.next('x'); print(it.next(5).value)" == ["x,k 5"]
+#guard out "async function f() { class D extends (await Promise.resolve(Array)) {} return new D(1, 2).length; } f().then(function (v) { print(v); })" == ["2"]
+
 end L4Factoidal.JS.Tests
