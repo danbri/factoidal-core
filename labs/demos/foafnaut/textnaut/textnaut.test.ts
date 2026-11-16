@@ -556,9 +556,18 @@ Deno.test("help: a page title with escape sequences reaches the terminal only as
   }
 });
 
-Deno.test("the browser's hint line names the help key", async () => {
+Deno.test("the browser's hint line names the help and settings keys", async () => {
   const src = await Deno.readTextFile(new URL("./textnaut.ts", import.meta.url));
-  assert(/"\? help \| \[n\] Enter follow/.test(src));
+  assert(/"\? help \| s settings \| \[n\] Enter follow/.test(src));
+});
+
+Deno.test("the help screen starts with the settings this run uses", async () => {
+  const { HelpView } = await import("./help.ts");
+  const help = new HelpView();
+  help.settings = { engine: "native", scripts: true, strict: false };
+  const text = help.render(100, 30, 0, true, "t").join("\n");
+  assert(/Settings \(s opens this screen\)/.test(text) && /native build/.test(text) && /BubblePopJS/.test(text));
+  assert(text.indexOf("Settings") < text.indexOf("Keys in the browser"));
 });
 
 Deno.test("screensaver frame time stays usable: every saver under 60 ms a frame at 200x60 (generous bound)", async () => {

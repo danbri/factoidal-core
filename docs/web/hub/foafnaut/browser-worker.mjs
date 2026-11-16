@@ -77,6 +77,8 @@ let firstFrameSeen;const firstFrame=new Promise(resolve=>{firstFrameSeen=resolve
 // order it arrived; only moves and scrolls are merged.
 let ready=false,currentStamp,pendingStamp,pendingMove,pendingScroll,flushPort;
 const early=[];
+// systemDark: the host page's prefers-color-scheme; the default theme follows it (WebShell.themeOf).
+let systemDark=false;
 let width=800,height=600,scale=1,theme='next',percent=200,pages=1,pinchBase,pinchMax=1000;
 // The folding chrome (owner, 2026-11-08). With the classic UI (the default) the chrome is
 // always full. Off, a scroll down first folds the chrome, up to the strip with the domain,
@@ -155,7 +157,7 @@ function call(source,options,w=1,h=1,counted=true){
   finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
 const shell=()=>({tabs:tabs.map((tab,i)=>{const page=i===active?doc:tab.doc;return {title:page?.title??'',...(page?.icon?{icon:page.icon}:{})};}),active,...field,focused,
-  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,
+  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,...(systemDark?{dark:true}:{}),pages,scroll,
   ...(folding()?{collapsible:true,collapse:foldPercent()}:{}),...(swipeHint?{swipe:swipeHint}:{}),...scriptMarker()});
 /** This engine draws a folding chrome: it answers shellInfo with the op chromeLayer. */
 // The text size of the settings page (WebSelection.textZoom, op textZoom): Lean answers the
@@ -1295,7 +1297,7 @@ function shellCommand(name,argument){
   else if(name==='new')newTab();else if(name==='close')closeTab(active);
   else if(name==='home')navigate(homeURL);else if(name==='source')viewSource();
   else if(name==='graph')navigate(graphURL);
-  else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();browserState?.settings({theme}).catch(()=>{});}
+  else if(name==='theme'){theme=argument||(theme==='dark'||(theme==='next'&&systemDark)?'light':'dark');request();browserState?.settings({theme}).catch(()=>{});}
   else if(name==='classic'){
     // The settings checkbox: foafnaut:classic/on, /off, or a toggle with no argument.
     classicUI=argument==='on'?true:argument==='off'?false:!classicUI;folded=0;
@@ -1535,6 +1537,7 @@ async function startEngine(createModule){
       done(instance,compiled);},fail);return {};}})]);
 }
 async function start(data){
+  systemDark=data.dark===true;
   ({width,height,scale}=data);
   // Page text in CSS pixels, as a browser has it: the canvas is in device pixels, so the
   // starting text zoom follows the pixel ratio: twice a usual browser's text (200 on a 1x
@@ -1758,6 +1761,7 @@ function handle(data){
   try{apply(data);}finally{currentStamp=undefined;}
 }
 function apply(data){
+  if(data.type==='dark'){systemDark=data.dark===true;request();return;}
   if(data.type==='visit'){visit(data.address);return;}
   if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);scriptResize();request();}
   if(data.type==='scroll'){closeMenu();scrollBy(data.amount);}
