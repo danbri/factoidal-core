@@ -39,6 +39,7 @@ theorem le_attempt {α β : Type} {fast : JSM H (Option β)} {c : β → JSM H �
       ((∀ b s', fast s = .ok (some b) s' → g s = c b s') ∧
        (∀ s', fast s = .ok none s' → s' = s) ∧ (∀ e s', fast s ≠ .error e s'))) :
     Le g (Tier1.attempt fast c g) := by
+  show ∀ s, Out (g s) ∨ g s = Tier1.attempt fast c g s
   intro s
   rcases h s with ho | ⟨h1, h2, h3⟩
   · exact Or.inl ho
@@ -240,8 +241,9 @@ theorem update_site (t : Mode) (n : Nat) (ctx : Ctx) (pre inc : Bool) (x : Strin
         have hl := lookupLocal_of_slotNum (H := H) t k ctx x h i s e old hs
         have ha := assignLocal_of_slotSet (H := H) t k ctx x h i
           (.num (if inc then old + 1 else old - 1)) s e (slotSet_of_slotNum s ctx x h i e old hs)
-        simp only [Tier1.updateGen, bind, EStateM.bind, hl, ha, hw]
-        rfl
+        first
+          | (simp only [Tier1.updateGen, bind, EStateM.bind, hl, ha, hw]; done)
+          | (simp only [Tier1.updateGen, bind, EStateM.bind, hl, ha, hw]; rfl)
       · intro s' hb; rw [hf] at hb; cases hb
       · intro e s' hb; rw [hf] at hb; cases hb
 
@@ -319,28 +321,16 @@ theorem binaryGen_num (ev : Expr → JSM H Value) (bo : BinOp → Value → Valu
     (hop : Tier1.isArith op = true) (ha : OperandNum ev s ctx a p) (hb : OperandNum ev s ctx b q) :
     Out (Tier1.binaryGen ev bo ctx op a b s) ∨
       Tier1.binaryGen ev bo ctx op a b s = .ok (.num (Tier1.arithOp op p q)) s := by
-  simp only [Tier1.binaryGen, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get]
   rcases ha with ha | ⟨ha, ⟨sa, ha'⟩ | ha'⟩
   · rcases hb with hb | ⟨hb, ⟨sb, hb'⟩ | hb'⟩
-    · simp only [ha, hb]
-      right
-      cases op <;> simp [Tier1.isArith] at hop <;> rfl
-    · simp only [ha, hb, hb']
-      exact Or.inl ⟨sb, rfl⟩
-    · simp only [ha, hb, hb']
-      right
-      cases op <;> simp [Tier1.isArith] at hop <;> rfl
-  · simp only [ha, ha']
-    exact Or.inl ⟨sa, rfl⟩
+    · right; simp only [Tier1.binaryGen, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure, ha, hb]; cases op <;> simp [Tier1.isArith] at hop <;> rfl
+    · left; simp only [Tier1.binaryGen, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure, ha, hb, hb']; exact ⟨sb, rfl⟩
+    · right; simp only [Tier1.binaryGen, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure, ha, hb, hb']; cases op <;> simp [Tier1.isArith] at hop <;> rfl
+  · left; simp only [Tier1.binaryGen, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure, ha, ha']; exact ⟨sa, rfl⟩
   · rcases hb with hb | ⟨hb, ⟨sb, hb'⟩ | hb'⟩
-    · simp only [ha, ha', hb]
-      right
-      cases op <;> simp [Tier1.isArith] at hop <;> rfl
-    · simp only [ha, ha', hb, hb']
-      exact Or.inl ⟨sb, rfl⟩
-    · simp only [ha, ha', hb, hb']
-      right
-      cases op <;> simp [Tier1.isArith] at hop <;> rfl
+    · right; simp only [Tier1.binaryGen, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure, ha, ha', hb]; cases op <;> simp [Tier1.isArith] at hop <;> rfl
+    · left; simp only [Tier1.binaryGen, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure, ha, ha', hb, hb']; exact ⟨sb, rfl⟩
+    · right; simp only [Tier1.binaryGen, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure, ha, ha', hb, hb']; cases op <;> simp [Tier1.isArith] at hop <;> rfl
 
 /-- The evaluator on `a op b` for an operation of `isArith`, one step unfolded. -/
 theorem binary_succ (t : Mode) (n : Nat) (ctx : Ctx) (op : BinOp) (a b : Expr)
@@ -351,6 +341,30 @@ theorem binary_succ (t : Mode) (n : Nat) (ctx : Ctx) (op : BinOp) (a b : Expr)
           ctx op a b) := by
   cases op <;> (try simp only [Tier1.isArith, Bool.false_eq_true] at hop) <;> rfl
 
+theorem pureNum_binary (hp : HeapOf H) (ctx : Ctx) (k : Nat) (op : BinOp) (a b : Expr) :
+    Tier1.pureNum hp ctx (k + 1) (.binary op a b) =
+      if Tier1.isArith op then
+        match Tier1.pureNum hp ctx k a, Tier1.pureNum hp ctx k b with
+        | some p, some q => some (Tier1.arithOp op p q)
+        | _, _ => none
+      else none := rfl
+
+theorem pureNum_binary_zero (hp : HeapOf H) (ctx : Ctx) (op : BinOp) (a b : Expr) :
+    Tier1.pureNum hp ctx 0 (.binary op a b) = none := rfl
+
+/-- On an operand that is not `a op b`, `pureNum` knows only a leaf's number. -/
+theorem pureNum_leaf (s : HeapOf H) (ctx : Ctx) (k : Nat) (c : Expr) (p : Float)
+    (hnb : ∀ op a b, c ≠ .binary op a b) (h : Tier1.pureNum s ctx k c = some p) :
+    leafV s ctx c = .num p := by
+  unfold Tier1.pureNum at h
+  split at h
+  · rename_i hl; cases h; exact hl
+  · split at h <;> first
+      | cases h
+      | exact absurd rfl (hnb _ _ _)
+      | exact absurd (by assumption) (hnb _ _ _)
+  · cases h
+
 /-- What `pureNum` knows about an operand is what the reference's evaluator gives for it. -/
 theorem pureNum_sound (t : Mode) (ht : t.tier1 = false) (s : HeapOf H) (ctx : Ctx) :
     ∀ (k n : Nat) (c : Expr) (p : Float), Tier1.pureNum s ctx k c = some p →
@@ -359,34 +373,32 @@ theorem pureNum_sound (t : Mode) (ht : t.tier1 = false) (s : HeapOf H) (ctx : Ct
   induction k with
   | zero =>
     intro n c p h
-    unfold Tier1.pureNum at h
-    split at h
-    · rename_i hl; cases h; exact Or.inl hl
-    · split at h <;> cases h
-    · cases h
+    by_cases hb : ∃ op a b, c = .binary op a b
+    · obtain ⟨op, a, b, rfl⟩ := hb
+      rw [pureNum_binary_zero] at h
+      cases h
+    · exact Or.inl (pureNum_leaf s ctx 0 c p (fun op a b hc => hb ⟨op, a, b, hc⟩) h)
   | succ k ih =>
     intro n c p h
-    unfold Tier1.pureNum at h
-    split at h
-    · rename_i hl; cases h; exact Or.inl hl
-    · rename_i hl
+    by_cases hb : ∃ op a b, c = .binary op a b
+    · obtain ⟨op, a, b, rfl⟩ := hb
+      rw [pureNum_binary] at h
       split at h
-      · rename_i k' op a b
+      · rename_i hop
         split at h
-        · rename_i hop
-          split at h
-          · rename_i pa pb hpa hpb
-            cases h
-            refine Or.inr ⟨hl, ?_⟩
-            rcases n with _ | n'
-            · exact Or.inl ⟨s, rfl⟩
-            · show Out (evalExpr (H := H) (md := t) (n' + 1) ctx (.binary op a b) s) ∨ _
-              rw [binary_succ t n' ctx op a b hop, ht]
-              exact binaryGen_num _ _ ctx op a b s pa pb hop (ih n' a pa hpa) (ih n' b pb hpb)
-          · cases h
+        · rename_i pa pb hpa hpb
+          cases h
+          refine Or.inr ⟨rfl, ?_⟩
+          rcases n with _ | n'
+          · exact Or.inl ⟨s, rfl⟩
+          · show Out (evalExpr (H := H) (md := t) (n' + 1) ctx (.binary op a b) s) ∨
+              evalExpr (H := H) (md := t) (n' + 1) ctx (.binary op a b) s =
+                .ok (.num (Tier1.arithOp op pa pb)) s
+            rw [binary_succ t n' ctx op a b hop, ht]
+            exact binaryGen_num _ _ ctx op a b s pa pb hop (ih n' a pa hpa) (ih n' b pb hpb)
         · cases h
       · cases h
-    · cases h
+    · exact Or.inl (pureNum_leaf s ctx (k + 1) c p (fun op a b hc => hb ⟨op, a, b, hc⟩) h)
 
 /-- What `arith?` does: `none` and nothing, or the number of two operands `pureNum` knows. -/
 theorem arith?_spec (ctx : Ctx) (op : BinOp) (a b : Expr) (s : HeapOf H) :
@@ -394,15 +406,23 @@ theorem arith?_spec (ctx : Ctx) (op : BinOp) (a b : Expr) (s : HeapOf H) :
     (∃ p q, Tier1.isArith op = true ∧ Tier1.pureNum s ctx Tier1.depth a = some p ∧
       Tier1.pureNum s ctx Tier1.depth b = some q ∧
       Tier1.arith? ctx op a b s = .ok (some (.num (Tier1.arithOp op p q))) s) := by
-  simp only [Tier1.arith?, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get]
   cases hop : Tier1.isArith op with
-  | false => left; rfl
+  | false =>
+    left
+    simp [Tier1.arith?, hop, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure]
   | true =>
     rcases hpa : Tier1.pureNum s ctx Tier1.depth a with _ | p
-    · left; rfl
+    · left
+      simp [Tier1.arith?, hop, hpa, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure,
+        EStateM.pure]
     · rcases hpb : Tier1.pureNum s ctx Tier1.depth b with _ | q
-      · left; rfl
-      · right; exact ⟨p, q, rfl, rfl, rfl, rfl⟩
+      · left
+        simp [Tier1.arith?, hop, hpa, hpb, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
+          pure, EStateM.pure]
+      · right
+        refine ⟨p, q, rfl, rfl, rfl, ?_⟩
+        simp [Tier1.arith?, hop, hpa, hpb, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
+          pure, EStateM.pure]
 
 /-- **Tier 1, `a op b` for `+ - * /`.** In a mode with tier 1 off, the arm's own code
 (`Tier1.binaryGen` over `evalExpr` and `binop` at the arm's fuel) is `Le` the fast path followed
