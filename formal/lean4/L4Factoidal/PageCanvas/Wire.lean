@@ -290,6 +290,10 @@ def query (p : Parts) : Except String Query := do
 /-- Most pixels one `getImageData` answers. -/
 def maxImageData : Nat := 16777216
 
+/-- The answer to a read-back of a canvas that is not origin-clean (`Store.refuses`); the
+prelude throws it as a `SecurityError`. -/
+def refusal : String := "\x02SecurityError: the canvas has been drawn with data of another origin"
+
 /-- One call of the import: a batch (the answer is empty or the refusal) or a query (its
 answer), and the store after it. -/
 def call (s : Store) (env : Env) (op : Nat) (bytes : ByteArray) : Store × String :=
@@ -304,12 +308,14 @@ def call (s : Store) (env : Env) (op : Nat) (bytes : ByteArray) : Store × Strin
       -- A query's answer starts with U+0001 (and an error with U+0002), so an answer of
       -- bytes (getImageData) is never taken for an error.
       match query p with
-      | .ok (.imageData _ _ _ w h) =>
-        if w * h > maxImageData then (s, "\x02canvas: getImageData too large") else
-        match query p with
-        | .ok q => let (s, a) := s.answer env q; (s, "\x01" ++ a)
-        | .error e => (s, "\x02" ++ e)
-      | .ok q => let (s, a) := s.answer env q; (s, "\x01" ++ a)
+      | .ok q =>
+        -- a read-back of a canvas that is not origin-clean: refused, whatever its pixels
+        if s.refuses q then (s, refusal) else
+        match q with
+        | .imageData _ _ _ w h =>
+          if w * h > maxImageData then (s, "\x02canvas: getImageData too large") else
+          let (s, a) := s.answer env q; (s, "\x01" ++ a)
+        | _ => let (s, a) := s.answer env q; (s, "\x01" ++ a)
       | .error e => (s, "\x02" ++ e)
 
 /-- Op 202: `getImageData` answered as raw bytes (straight RGBA), for the `gpuBytes` native
@@ -321,6 +327,9 @@ def callWords (s : Store) (op : Nat) (bytes : ByteArray) : Except String ByteArr
   let p ← parts bytes
   match ← query p with
   | .imageData id x y w h =>
+    -- HTML §4.12.5.1.16 getImageData: "If the CanvasRenderingContext2D's origin-clean flag
+    -- is set to false, then throw a SecurityError"
+    if s.taint.canvases.contains id then throw "SecurityError"
     if w * h > maxImageData then throw "canvas: getImageData too large"
     match s.canvases.get? id with
     | some c => return c.straight x y w h

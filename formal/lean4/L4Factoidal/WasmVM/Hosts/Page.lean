@@ -1219,6 +1219,12 @@ def captureOp (h : Host) (node : Nat) (q : String) : Host × String :=
       else (h, "NotFoundError")
   | _ => (h, "NotFoundError")
 
+/-- What Canvas 2D draws with, for this realm: the engine's fonts and images, and which
+images are origin-clean, by the origin of the realm's page (a worker's is its owner's) as the
+engine knows it, never as the page says (origin isolation, C2 of issue 518). -/
+def canvasEnvOf (h : Host) : L4Factoidal.PageCanvas.Env :=
+  { h.reads.canvasEnv with imageClean := h.web.net.page.imageClean }
+
 /-- Serve one `foafnaut_dom` import, or `env.emscripten_notify_memory_growth`. -/
 def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st : StoreOf M) :
     Host × StoreOf M × HostResult :=
@@ -1241,12 +1247,14 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       if a 0 == L4Factoidal.PageCanvas.Wire.wordsOp then
         -- Pixels as bytes (the `gpuBytes` native, an ArrayBuffer): the answer counts bytes.
         match L4Factoidal.PageCanvas.Wire.callWords h.dom.canvas (a 0) b with
+        -- a canvas that is not origin-clean (issue 524): the prelude throws a SecurityError
+        | .error "SecurityError" => (h, st, Hosts.Dom.ret (-32))
         | .error _ => (h, st, Hosts.Dom.ret (-1))
         | .ok bytes =>
           let (st, r) := Hosts.Dom.putOut mem st (a 4) (a 5) bytes
           (h, st, r)
       else
-      let (canvas, answer) := L4Factoidal.PageCanvas.Wire.call h.dom.canvas h.reads.canvasEnv (a 0) b
+      let (canvas, answer) := L4Factoidal.PageCanvas.Wire.call h.dom.canvas (canvasEnvOf h) (a 0) b
       let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) (.ok answer)
       ({ h with dom := { h.dom with canvas } }, st, r)
   | "node_query" =>

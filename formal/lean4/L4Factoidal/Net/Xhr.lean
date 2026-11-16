@@ -19,6 +19,7 @@ sequence sees the state of that point. `Ev.setState`, `.guardDone` and `.startFe
 the steps that are not events, in the place the standard has them.
 -/
 import L4Factoidal.Net.PageFetch
+import L4Factoidal.HTML.ImageSize
 import L4Factoidal.Net.Subresource
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.Integrity
@@ -439,6 +440,42 @@ def syncFetch (s : State) (t0 : Transfer) : State × SyncOutcome := Id.run do
         step := onAnswer { t with jar } a
   return (s, .failed)
 
+/-- A natural size as the prelude reads it: "width height", or empty. -/
+def sizeText : Option (Nat × Nat) → String
+  | some (w, h) => toString w ++ " " ++ toString h
+  | none => ""
+
+/-- The `Content-Type` fields of a list of fields. -/
+def typeFields (hs : List (String × String)) : List (String × String) :=
+  hs.filter fun f => f.1.toLower == "content-type"
+
+/-- An image element's response as the prelude gets it: the status, the `Content-Type` and,
+in place of the bytes, the image's natural size (`HTML.ImageSize`: "width height", empty when
+the bytes are not an image), all the element's load needs. The bytes of an image stay in the
+engine (the canvas draws them by key): the prelude runs in the page's realm, so bytes there
+are bytes a page can read, and an opaque answer's must never be (origin isolation, C2 of
+issue 518: a page that replaced `Uint8Array` read another origin's image). -/
+def imageRaw (r : Response) : Response :=
+  let size := (sizeText (HTML.ImageSize.size? r.body)).toUTF8
+  { r with statusText := "", headers := typeFields r.headers, body := size }
+
+/-- Kind: security theorem (origin isolation, C2). Says: what an image element's request gives
+the page's realm depends on the answer only through its status, URL, tainting, `Content-Type`
+fields and the image's natural size: two answers that agree on these (whatever their bytes
+and other fields) give the same response. -/
+theorem imageRaw_noninterference (r r' : Response) (hs : r.status = r'.status) (hu : r.url = r'.url)
+    (ht : r.tainting = r'.tainting)
+    (hh : typeFields r.headers = typeFields r'.headers)
+    (hz : HTML.ImageSize.size? r.body = HTML.ImageSize.size? r'.body) : imageRaw r = imageRaw r' := by
+  simp only [imageRaw, hs, hu, ht, hh, hz]
+
+#guard (imageRaw { status := 200, statusText := "OK", url := "", headers := [("Content-Type", "image/png"), ("x-a", "1")], body := HTML.ImageSize.pngHeader 3 5 }).body.data == "3 5".toUTF8.data
+
+/-- The response an object gets: an image element's request gets `imageRaw` of it, on every
+path a response is made (the host's answer, a `data:` URL answered here, a sync fetch). -/
+def Xhr.forRealm (x : Xhr) (r : Response) : Response :=
+  if x.raw && x.destination == "image" then imageRaw r else r
+
 /-- Sync `send` (XHR §4.5.2 step 12): the fetch happens now; on failure a `NetworkError` is
 thrown; on success the object is done with its last events. `send` has no `loadstart` in
 this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
@@ -461,6 +498,7 @@ def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
         | none => 0
       let evs : Array Ev := #[.setState 4, rsc, .guardDone, .fire false "load" bodySize total (total > 0),
         .fire false "loadend" bodySize total (total > 0)]
+      let r := x.forRealm r
       ((s.set h { x with response := some r, events := evs }) |> fun s => { s with held := s.held + r.body.size }, .ok "")
 
 def textDefault : String := "text/plain;charset=UTF-8"
@@ -618,6 +656,7 @@ def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
     | .fail _ => (requestError s1 h { x with transfer := none } "error", some x.cb)
     | .deliver _ r =>
       let r := if x.raw then rawResponse t a r else r
+      let r := x.forRealm r
       -- a classic script element's answer of a type it may not run, or an opaque one that
       -- begins with a JSON parser breaker, is a network error (`Subresource.scriptBlocked`)
       if x.raw && x.destination == "script" && Subresource.scriptBlocked (r.tainting == "opaque") r.headers r.body then
@@ -1001,6 +1040,7 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       | some r =>
         if !x.sendFlag || x.state != 1 then (s.set h { x with deferred := none }, okStr "") else
         if r.body.size > maxBody || s.held + r.body.size > maxHeld then (requestError s h x "error", okStr "") else
+        let r := x.forRealm r
         ((s.set h { x with deferred := none, response := some r, uploadComplete := true, events := x.events ++ responseEvents x r })
           |> fun s => { s with held := s.held + r.body.size }, okStr "")
       | none => if x.deferFail then (requestError s h x "error", okStr "") else (s, okStr "")

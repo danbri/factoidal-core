@@ -130,6 +130,31 @@ def mayConnect (p : Page) (u : URL.Url) : Bool :=
 def sameOrigin (p : Page) (u : URL.Url) : Bool :=
   p.origin != "null" && u.origin == p.origin
 
+/-- An image by its URL (the key the engine holds it by) is origin-clean for a canvas of the
+page (HTML §4.12.5.1.14 "is not origin-clean": its data is not CORS-cross-origin): a `data:`
+URL, or a URL of the page's own tuple origin. Every other image marks the canvas it is drawn
+on (origin isolation, check C2 of issue 518). The engine also marks an image of the page's
+origin whose answer was opaque (a redirect to another origin), apart from this. -/
+def Page.imageClean (p : Page) (key : String) : Bool :=
+  key.startsWith "data:" || (p.origin != "null" && p.origin != "" && (URL.parseUrl key).map (·.origin) == some p.origin)
+
+/-- Kind: security theorem (origin isolation, C2). Says: an image the page may read back from a
+canvas is a `data:` URL or parses to a URL whose origin is the page's own tuple origin. -/
+theorem Page.imageClean_origin (p : Page) (key : String) (h : p.imageClean key = true) :
+    key.startsWith "data:" = true ∨ (p.origin ≠ "null" ∧ ∃ u, URL.parseUrl key = some u ∧ u.origin = p.origin) := by
+  simp only [Page.imageClean, Bool.or_eq_true, Bool.and_eq_true, bne_iff_ne, ne_eq, beq_iff_eq] at h
+  rcases h with h | ⟨⟨h1, _⟩, h3⟩
+  · exact .inl h
+  · refine .inr ⟨h1, ?_⟩
+    cases hu : URL.parseUrl key with
+    | none => simp [hu] at h3
+    | some u => exact ⟨u, rfl, by simpa [hu] using h3⟩
+
+#guard (Page.ofUrl "http://a.test/p.html").imageClean "http://a.test/i.png"
+#guard !(Page.ofUrl "http://a.test/p.html").imageClean "http://b.test/i.png"
+#guard !(Page.ofUrl "http://a.test/p.html").imageClean "https://a.test/i.png"
+#guard (Page.ofUrl "file:///p.html").imageClean "data:image/png;base64,AA" && !(Page.ofUrl "file:///p.html").imageClean "file:///i.png"
+
 /-- The policy of a dedicated worker's requests (HTML §10.2.4 "run a worker": the worker's
 settings object takes its origin and policy container from its owner). A worker's script URL
 is same-origin with its owner (or `blob:`, whose origin is the owner's), so its requests have
