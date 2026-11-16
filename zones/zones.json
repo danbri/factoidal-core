@@ -1,0 +1,962 @@
+{
+  "schema_version": 1,
+  "roots": [
+    "formal/lean4/L4Factoidal",
+    "labs/demos/foafnaut",
+    "docs/web/hub",
+    "npm",
+    "tools"
+  ],
+  "glob_semantics": "Case-sensitive fnmatch on repository-relative POSIX paths; * crosses /. Rules are unordered unions with explicit exclusions; exactly one rule must match.",
+  "zones": [
+    {
+      "id": "dom",
+      "name": "DOM",
+      "definition": "Document trees, mutation, selectors, events and DOM adapters."
+    },
+    {
+      "id": "js",
+      "name": "JS (BubblePopJS)",
+      "definition": "JavaScript interpretation, compilation and language support."
+    },
+    {
+      "id": "wasm",
+      "name": "WASM (BubblePopWASM)",
+      "definition": "WebAssembly decoding, validation, execution and guest tooling."
+    },
+    {
+      "id": "html",
+      "name": "HTML language",
+      "definition": "HTML tokenisation, tree building, serialisation and element language rules."
+    },
+    {
+      "id": "style",
+      "name": "Style",
+      "definition": "CSS parsing, cascade, computed values and styling for HTML and SVG."
+    },
+    {
+      "id": "xml",
+      "name": "XML stack",
+      "definition": "XML, XPath, XSLT, XQuery, schemas, shared XPath functions and regex, and XML pipelines."
+    },
+    {
+      "id": "rdf",
+      "name": "RDF stack",
+      "definition": "RDF syntaxes, queries, logic, validation, graph storage and planning."
+    },
+    {
+      "id": "json",
+      "name": "JSON stack",
+      "definition": "JSON, JSON-LD, JSON Schema, CSVW and related structured-data readers."
+    },
+    {
+      "id": "network",
+      "name": "Network and protocols",
+      "definition": "URLs, Fetch policy, HTTP, WebSocket, XMPP and transport protocols."
+    },
+    {
+      "id": "security",
+      "name": "Cryptography, auth and identity",
+      "definition": "Cryptography, credentials, identity, access control, Solid and LWS."
+    },
+    {
+      "id": "graphics",
+      "name": "Graphics, GPU and ML/AI",
+      "definition": "Raster and vector graphics, GPU kernels, media codecs and WebNN."
+    },
+    {
+      "id": "browser",
+      "name": "Browser integration and infrastructure",
+      "definition": "Hosts, shell, event loop, shared primitives, package surfaces and general tooling."
+    },
+    {
+      "id": "rendering",
+      "name": "Rendering engine",
+      "definition": "Layout, paint, scene construction, fonts, shaping and Unicode text."
+    }
+  ],
+  "rules": [
+    {
+      "id": "core-dom",
+      "zone": "dom",
+      "paths": [
+        "formal/lean4/L4Factoidal/DOM/**"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "core-js",
+      "zone": "js",
+      "paths": [
+        "formal/lean4/L4Factoidal/JS/**",
+        "formal/lean4/L4Factoidal/Temporal/**",
+        "formal/lean4/L4Factoidal/JS.lean"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "core-wasm",
+      "zone": "wasm",
+      "paths": [
+        "formal/lean4/L4Factoidal/WasmVM/**",
+        "formal/lean4/L4Factoidal/WasmVM.lean"
+      ],
+      "exclude": [
+        "formal/lean4/L4Factoidal/WasmVM/Hosts/**"
+      ]
+    },
+    {
+      "id": "core-html",
+      "zone": "html",
+      "paths": [
+        "formal/lean4/L4Factoidal/HTML/**"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "core-xml",
+      "zone": "xml",
+      "paths": [
+        "formal/lean4/L4Factoidal/XML/**",
+        "formal/lean4/L4Factoidal/XPath/**",
+        "formal/lean4/L4Factoidal/XPath4/**",
+        "formal/lean4/L4Factoidal/XSLT/**",
+        "formal/lean4/L4Factoidal/XSLT4/**",
+        "formal/lean4/L4Factoidal/XQuery4/**",
+        "formal/lean4/L4Factoidal/XQueryUpdate/**",
+        "formal/lean4/L4Factoidal/XSD/**",
+        "formal/lean4/L4Factoidal/XSD11/**",
+        "formal/lean4/L4Factoidal/RelaxNG/**",
+        "formal/lean4/L4Factoidal/Schematron/**",
+        "formal/lean4/L4Factoidal/XProc31/**",
+        "formal/lean4/L4Factoidal/EXPath/**",
+        "formal/lean4/L4Factoidal/XForms/**",
+        "formal/lean4/L4Factoidal/Fn/**",
+        "formal/lean4/L4Factoidal/Regex/**"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "core-rdf",
+      "zone": "rdf",
+      "paths": [
+        "formal/lean4/L4Factoidal/RDF/**",
+        "formal/lean4/L4Factoidal/RDFS/**",
+        "formal/lean4/L4Factoidal/Syntax/**",
+        "formal/lean4/L4Factoidal/SPARQL/**",
+        "formal/lean4/L4Factoidal/SPARQLRL/**",
+        "formal/lean4/L4Factoidal/OWL/**",
+        "formal/lean4/L4Factoidal/SHACL/**",
+        "formal/lean4/L4Factoidal/ShEx/**",
+        "formal/lean4/L4Factoidal/RIF/**",
+        "formal/lean4/L4Factoidal/CL/**",
+        "formal/lean4/L4Factoidal/Unified/**",
+        "formal/lean4/L4Factoidal/N3/**",
+        "formal/lean4/L4Factoidal/GRDDL/**",
+        "formal/lean4/L4Factoidal/RML/**",
+        "formal/lean4/L4Factoidal/RDB2RDF/**",
+        "formal/lean4/L4Factoidal/Storage/**",
+        "formal/lean4/L4Factoidal/Cottas/**",
+        "formal/lean4/L4Factoidal/HDT/**",
+        "formal/lean4/L4Factoidal/Qlvr/**",
+        "formal/lean4/L4Factoidal/Tdb2/**",
+        "formal/lean4/L4Factoidal/DataCube/**",
+        "formal/lean4/L4Factoidal/FullText/**",
+        "formal/lean4/L4Factoidal/Planner/**",
+        "formal/lean4/L4Factoidal/SQL/**",
+        "formal/lean4/L4Factoidal/WebAnnotation/**",
+        "formal/lean4/L4Factoidal/Geo/**"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "core-json",
+      "zone": "json",
+      "paths": [
+        "formal/lean4/L4Factoidal/JSON/**",
+        "formal/lean4/L4Factoidal/JSONLD/**",
+        "formal/lean4/L4Factoidal/JSONSchema/**",
+        "formal/lean4/L4Factoidal/CSVW/**",
+        "formal/lean4/L4Factoidal/YAML/**",
+        "formal/lean4/L4Factoidal/YAMLLD/**"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "core-network",
+      "zone": "network",
+      "paths": [
+        "formal/lean4/L4Factoidal/Net/**",
+        "formal/lean4/L4Factoidal/HTTP/**",
+        "formal/lean4/L4Factoidal/WHATWG/**",
+        "formal/lean4/L4Factoidal/XMPP/**",
+        "formal/lean4/L4Factoidal/WebDAV/**"
+      ],
+      "exclude": [
+        "formal/lean4/L4Factoidal/WHATWG/Encoding/**",
+        "formal/lean4/L4Factoidal/WHATWG/Base64.lean",
+        "formal/lean4/L4Factoidal/WHATWG/Compression.lean",
+        "formal/lean4/L4Factoidal/WHATWG/Streams.lean"
+      ]
+    },
+    {
+      "id": "core-security",
+      "zone": "security",
+      "paths": [
+        "formal/lean4/L4Factoidal/Crypto/**",
+        "formal/lean4/L4Factoidal/Authz/**",
+        "formal/lean4/L4Factoidal/Identity/**",
+        "formal/lean4/L4Factoidal/JOSE/**",
+        "formal/lean4/L4Factoidal/VC/**",
+        "formal/lean4/L4Factoidal/SAML/**",
+        "formal/lean4/L4Factoidal/Solid/**",
+        "formal/lean4/L4Factoidal/LWS/**",
+        "formal/lean4/L4Factoidal/CID/**"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "core-graphics",
+      "zone": "graphics",
+      "paths": [
+        "formal/lean4/L4Factoidal/Codec/**",
+        "formal/lean4/L4Factoidal/GpuKernel/**",
+        "formal/lean4/L4Factoidal/Math/**",
+        "formal/lean4/L4Factoidal/Media/**",
+        "formal/lean4/L4Factoidal/PageCanvas/**",
+        "formal/lean4/L4Factoidal/PageGl/**",
+        "formal/lean4/L4Factoidal/PageGpu/**",
+        "formal/lean4/L4Factoidal/WebCodecs/**",
+        "formal/lean4/L4Factoidal/WebNN/**",
+        "formal/lean4/L4Factoidal/Media.lean",
+        "formal/lean4/L4Factoidal/PageCanvas.lean",
+        "formal/lean4/L4Factoidal/PageGpu.lean",
+        "formal/lean4/L4Factoidal/WHATWG/Base64.lean",
+        "formal/lean4/L4Factoidal/WHATWG/Compression.lean"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "core-browser",
+      "zone": "browser",
+      "paths": [
+        "formal/lean4/L4Factoidal/ClientStorage/**",
+        "formal/lean4/L4Factoidal/Dataflow/**",
+        "formal/lean4/L4Factoidal/Dep/**",
+        "formal/lean4/L4Factoidal/Foafos/**",
+        "formal/lean4/L4Factoidal/HostContract/**",
+        "formal/lean4/L4Factoidal/Prim/**",
+        "formal/lean4/L4Factoidal/Proof/**",
+        "formal/lean4/L4Factoidal/Testing/**",
+        "formal/lean4/L4Factoidal/UI/**",
+        "formal/lean4/L4Factoidal/WebDriver/**",
+        "formal/lean4/L4Factoidal/EventLoop/**",
+        "formal/lean4/L4Factoidal/FrameCost/**",
+        "formal/lean4/L4Factoidal/CsimpReachFixture.lean",
+        "formal/lean4/L4Factoidal/ListTR.lean",
+        "formal/lean4/L4Factoidal/NatBounds.lean",
+        "formal/lean4/L4Factoidal/Risk.lean",
+        "formal/lean4/L4Factoidal/TailRecursionTwins.lean",
+        "formal/lean4/L4Factoidal/Tests.lean",
+        "formal/lean4/L4Factoidal/EventLoop.lean",
+        "formal/lean4/L4Factoidal/FrameCost.lean",
+        "formal/lean4/L4Factoidal/WasmVM/Hosts/**",
+        "formal/lean4/L4Factoidal/WHATWG/Streams.lean",
+        "formal/lean4/L4Factoidal/Encoding/**"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "core-rendering",
+      "zone": "rendering",
+      "paths": [
+        "formal/lean4/L4Factoidal/Rendering/**",
+        "formal/lean4/L4Factoidal/Unicode/**",
+        "formal/lean4/L4Factoidal/Text/**",
+        "formal/lean4/L4Factoidal/MathML/**",
+        "formal/lean4/L4Factoidal/WHATWG/Encoding/**"
+      ],
+      "exclude": [
+        "formal/lean4/L4Factoidal/Rendering/Style.lean",
+        "formal/lean4/L4Factoidal/Rendering/Css*",
+        "formal/lean4/L4Factoidal/Rendering/CascadeTests.lean",
+        "formal/lean4/L4Factoidal/Rendering/ComputedGeneric.lean",
+        "formal/lean4/L4Factoidal/Rendering/ComputedValues.lean",
+        "formal/lean4/L4Factoidal/Rendering/Content.lean",
+        "formal/lean4/L4Factoidal/Rendering/Generated.lean",
+        "formal/lean4/L4Factoidal/Rendering/SheetReader.lean",
+        "formal/lean4/L4Factoidal/Rendering/ImportTree.lean",
+        "formal/lean4/L4Factoidal/Rendering/MediaQuery.lean",
+        "formal/lean4/L4Factoidal/Rendering/SupportsCondition.lean",
+        "formal/lean4/L4Factoidal/Rendering/FlexStyle.lean",
+        "formal/lean4/L4Factoidal/Rendering/GridStyle.lean",
+        "formal/lean4/L4Factoidal/Rendering/FontFaceRule.lean",
+        "formal/lean4/L4Factoidal/Rendering/FontFaceRuleTests.lean",
+        "formal/lean4/L4Factoidal/Rendering/FontSynthesis.lean",
+        "formal/lean4/L4Factoidal/Rendering/Animation/**",
+        "formal/lean4/L4Factoidal/Rendering/CssValues/**"
+      ]
+    },
+    {
+      "id": "core-style",
+      "zone": "style",
+      "paths": [
+        "formal/lean4/L4Factoidal/Rendering/Style.lean",
+        "formal/lean4/L4Factoidal/Rendering/Css*",
+        "formal/lean4/L4Factoidal/Rendering/CascadeTests.lean",
+        "formal/lean4/L4Factoidal/Rendering/ComputedGeneric.lean",
+        "formal/lean4/L4Factoidal/Rendering/ComputedValues.lean",
+        "formal/lean4/L4Factoidal/Rendering/Content.lean",
+        "formal/lean4/L4Factoidal/Rendering/Generated.lean",
+        "formal/lean4/L4Factoidal/Rendering/SheetReader.lean",
+        "formal/lean4/L4Factoidal/Rendering/ImportTree.lean",
+        "formal/lean4/L4Factoidal/Rendering/MediaQuery.lean",
+        "formal/lean4/L4Factoidal/Rendering/SupportsCondition.lean",
+        "formal/lean4/L4Factoidal/Rendering/FlexStyle.lean",
+        "formal/lean4/L4Factoidal/Rendering/GridStyle.lean",
+        "formal/lean4/L4Factoidal/Rendering/FontFaceRule.lean",
+        "formal/lean4/L4Factoidal/Rendering/FontFaceRuleTests.lean",
+        "formal/lean4/L4Factoidal/Rendering/FontSynthesis.lean",
+        "formal/lean4/L4Factoidal/Rendering/Animation/**",
+        "formal/lean4/L4Factoidal/Rendering/CssValues/**"
+      ]
+    },
+    {
+      "id": "lab-graphics",
+      "zone": "graphics",
+      "paths": [
+        "labs/demos/foafnaut/Graphics*.lean",
+        "labs/demos/foafnaut/Image*.lean",
+        "labs/demos/foafnaut/SVG*.lean",
+        "labs/demos/foafnaut/tools/GpuKernelRef.lean"
+      ],
+      "exclude": [
+        "labs/demos/foafnaut/SVGCSS*.lean",
+        "labs/demos/foafnaut/SVGCssColour.lean"
+      ]
+    },
+    {
+      "id": "lab-style",
+      "zone": "style",
+      "paths": [
+        "labs/demos/foafnaut/SVGCSS*.lean",
+        "labs/demos/foafnaut/SVGCssColour.lean"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "lab-rendering",
+      "zone": "rendering",
+      "paths": [
+        "labs/demos/foafnaut/Font*.lean",
+        "labs/demos/foafnaut/RenderPlan*.lean",
+        "labs/demos/foafnaut/SceneSVG*.lean",
+        "labs/demos/foafnaut/WebRender.lean",
+        "labs/demos/foafnaut/WebRenderSVG.lean",
+        "labs/demos/foafnaut/WebRenderFont*.lean",
+        "labs/demos/foafnaut/WebRenderTests.lean",
+        "labs/demos/foafnaut/WebRenderCurveTests.lean",
+        "labs/demos/foafnaut/WebPaint.lean",
+        "labs/demos/foafnaut/WebRepaint.lean",
+        "labs/demos/foafnaut/WebHit*.lean",
+        "labs/demos/foafnaut/WebSelection.lean",
+        "labs/demos/foafnaut/tools/check-font-data.lean",
+        "labs/demos/foafnaut/tools/probes/*.lean"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "lab-rdf",
+      "zone": "rdf",
+      "paths": [
+        "labs/demos/foafnaut/FoafGraph.lean"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "lab-browser",
+      "zone": "browser",
+      "paths": [
+        "labs/demos/foafnaut/Demos.lean",
+        "labs/demos/foafnaut/FoafGeometryProofs.lean",
+        "labs/demos/foafnaut/FoafLiveBridge.lean",
+        "labs/demos/foafnaut/FoafNaut*.lean",
+        "labs/demos/foafnaut/FoafPresentation*.lean",
+        "labs/demos/foafnaut/Geometry*.lean",
+        "labs/demos/foafnaut/LabHygiene.lean",
+        "labs/demos/foafnaut/PolicyBridge.lean",
+        "labs/demos/foafnaut/Solving*.lean",
+        "labs/demos/foafnaut/UI.lean",
+        "labs/demos/foafnaut/WebAbout.lean",
+        "labs/demos/foafnaut/WebAccept.lean",
+        "labs/demos/foafnaut/WebBuild.lean",
+        "labs/demos/foafnaut/WebConsole.lean",
+        "labs/demos/foafnaut/WebDocument*.lean",
+        "labs/demos/foafnaut/WebEventLoop.lean",
+        "labs/demos/foafnaut/WebGesture.lean",
+        "labs/demos/foafnaut/WebGraph.lean",
+        "labs/demos/foafnaut/WebHistory.lean",
+        "labs/demos/foafnaut/WebHostContract.lean",
+        "labs/demos/foafnaut/WebPrint.lean",
+        "labs/demos/foafnaut/WebRenderCLI.lean",
+        "labs/demos/foafnaut/WebRenderRDF.lean",
+        "labs/demos/foafnaut/WebRenderScript*.lean",
+        "labs/demos/foafnaut/WebRoute.lean",
+        "labs/demos/foafnaut/WebScripts.lean",
+        "labs/demos/foafnaut/WebShell.lean",
+        "labs/demos/foafnaut/WebSparql*.lean",
+        "labs/demos/foafnaut/WebState*.lean",
+        "labs/demos/foafnaut/WebWasm*.lean",
+        "labs/demos/foafnaut/WebXslt.lean",
+        "labs/demos/foafnaut/foaf/*.lean"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "lab-hosts-and-resources",
+      "zone": "browser",
+      "paths": [
+        "labs/demos/foafnaut/**"
+      ],
+      "exclude": [
+        "labs/demos/foafnaut/*.lean"
+      ]
+    },
+    {
+      "id": "hub",
+      "zone": "browser",
+      "paths": [
+        "docs/web/hub/**"
+      ]
+    },
+    {
+      "id": "npm-rdf",
+      "zone": "rdf",
+      "paths": [
+        "npm/factoidal/rdfjs.*",
+        "npm/factoidal/sample-store.*",
+        "npm/factoidal/store-host/**",
+        "npm/factoidal/store-http/**",
+        "npm/factoidal/lib/dataset.mjs",
+        "npm/factoidal/lib/nodes.mjs",
+        "npm/factoidal/lib/store.mjs",
+        "npm/factoidal/lib/sbm11*",
+        "npm/factoidal/lib/delta-log-hosts.mjs"
+      ]
+    },
+    {
+      "id": "npm-network",
+      "zone": "network",
+      "paths": [
+        "npm/factoidal/xmpp/**",
+        "npm/factoidal/webdav/**",
+        "npm/factoidal/lib/sync-http-node.mjs"
+      ]
+    },
+    {
+      "id": "npm-security",
+      "zone": "security",
+      "paths": [
+        "npm/factoidal/authz/**",
+        "npm/factoidal/solid/**",
+        "npm/factoidal/lws/**",
+        "npm/factoidal/lib/cipher-host.mjs",
+        "npm/factoidal/lib/cid*.mjs"
+      ]
+    },
+    {
+      "id": "npm-integration",
+      "zone": "browser",
+      "paths": [
+        "npm/**"
+      ],
+      "exclude": [
+        "npm/factoidal/rdfjs.*",
+        "npm/factoidal/sample-store.*",
+        "npm/factoidal/store-host/**",
+        "npm/factoidal/store-http/**",
+        "npm/factoidal/lib/dataset.mjs",
+        "npm/factoidal/lib/nodes.mjs",
+        "npm/factoidal/lib/store.mjs",
+        "npm/factoidal/lib/sbm11*",
+        "npm/factoidal/lib/delta-log-hosts.mjs",
+        "npm/factoidal/xmpp/**",
+        "npm/factoidal/webdav/**",
+        "npm/factoidal/lib/sync-http-node.mjs",
+        "npm/factoidal/authz/**",
+        "npm/factoidal/solid/**",
+        "npm/factoidal/lws/**",
+        "npm/factoidal/lib/cipher-host.mjs",
+        "npm/factoidal/lib/cid*.mjs"
+      ]
+    },
+    {
+      "id": "tools-wasm",
+      "zone": "wasm",
+      "paths": [
+        "tools/wasmvm/**"
+      ],
+      "exclude": [
+        "tools/wasmvm/quickjs/**",
+        "tools/wasmvm/build-quickjs.sh",
+        "tools/fuelmono-gen.py",
+        "tools/wasmvm/media/**",
+        "tools/wasmvm/build-media.sh",
+        "tools/check-svg-dash-proof.py",
+        "tools/unicode/**",
+        "tools/gen_casemap.py",
+        "tools/wasmvm/harfbuzz/**",
+        "tools/wasmvm/build-harfbuzz.sh"
+      ]
+    },
+    {
+      "id": "tools-js",
+      "zone": "js",
+      "paths": [
+        "tools/wasmvm/quickjs/**",
+        "tools/wasmvm/build-quickjs.sh",
+        "tools/fuelmono-gen.py"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "tools-graphics",
+      "zone": "graphics",
+      "paths": [
+        "tools/wasmvm/media/**",
+        "tools/wasmvm/build-media.sh",
+        "tools/check-svg-dash-proof.py"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "tools-rendering",
+      "zone": "rendering",
+      "paths": [
+        "tools/unicode/**",
+        "tools/gen_casemap.py",
+        "tools/wasmvm/harfbuzz/**",
+        "tools/wasmvm/build-harfbuzz.sh"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "tools-xml",
+      "zone": "xml",
+      "paths": [
+        "tools/xpath4/**",
+        "tools/gen-xslt*",
+        "tools/*xpath*",
+        "tools/*xquery*",
+        "tools/*xml-schema*"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "tools-json",
+      "zone": "json",
+      "paths": [
+        "tools/jsonld*",
+        "tools/lean-csvw*"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "tools-network",
+      "zone": "network",
+      "paths": [
+        "tools/devproxy/**",
+        "tools/cloudflare-tunnel-setup.sh"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "tools-security",
+      "zone": "security",
+      "paths": [
+        "tools/aes-gate.py",
+        "tools/solid-*",
+        "tools/lws-*"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "tools-rdf",
+      "zone": "rdf",
+      "paths": [
+        "tools/blockengine*",
+        "tools/*owl*",
+        "tools/*sparql*",
+        "tools/*jena*",
+        "tools/*rdf*",
+        "tools/*nquads*",
+        "tools/*turtle*",
+        "tools/*shacl*",
+        "tools/*hdt*",
+        "tools/*cottas*",
+        "tools/*oxigraph*",
+        "tools/*quadstore*",
+        "tools/tdb2/**",
+        "tools/bench/sbm11*",
+        "tools/bench/three-engines/**",
+        "tools/*graph_bloom*",
+        "tools/datacube*",
+        "tools/cs_cluster_nq.py",
+        "tools/*certified-dataset*",
+        "tools/wasm-store-query*",
+        "tools/bench-closure.sh",
+        "tools/w3c-persisted-census.sh"
+      ],
+      "exclude": []
+    },
+    {
+      "id": "tools-general",
+      "zone": "browser",
+      "paths": [
+        "tools/**"
+      ],
+      "exclude": [
+        "tools/wasmvm/**",
+        "tools/wasmvm/quickjs/**",
+        "tools/wasmvm/build-quickjs.sh",
+        "tools/fuelmono-gen.py",
+        "tools/wasmvm/media/**",
+        "tools/wasmvm/build-media.sh",
+        "tools/check-svg-dash-proof.py",
+        "tools/unicode/**",
+        "tools/gen_casemap.py",
+        "tools/wasmvm/harfbuzz/**",
+        "tools/wasmvm/build-harfbuzz.sh",
+        "tools/xpath4/**",
+        "tools/gen-xslt*",
+        "tools/*xpath*",
+        "tools/*xquery*",
+        "tools/*xml-schema*",
+        "tools/jsonld*",
+        "tools/lean-csvw*",
+        "tools/devproxy/**",
+        "tools/cloudflare-tunnel-setup.sh",
+        "tools/aes-gate.py",
+        "tools/solid-*",
+        "tools/lws-*",
+        "tools/blockengine*",
+        "tools/*owl*",
+        "tools/*sparql*",
+        "tools/*jena*",
+        "tools/*rdf*",
+        "tools/*nquads*",
+        "tools/*turtle*",
+        "tools/*shacl*",
+        "tools/*hdt*",
+        "tools/*cottas*",
+        "tools/*oxigraph*",
+        "tools/*quadstore*",
+        "tools/tdb2/**",
+        "tools/bench/sbm11*",
+        "tools/bench/three-engines/**",
+        "tools/*graph_bloom*",
+        "tools/datacube*",
+        "tools/cs_cluster_nq.py",
+        "tools/*certified-dataset*",
+        "tools/wasm-store-query*",
+        "tools/bench-closure.sh",
+        "tools/w3c-persisted-census.sh"
+      ]
+    },
+    {
+      "id": "lab-js",
+      "zone": "js",
+      "paths": [
+        "labs/demos/foafnaut/bubblepop_perf/lean/*.lean"
+      ]
+    }
+  ],
+  "secondary_tags": [
+    {
+      "tag": "shared-foundation",
+      "paths": [
+        "formal/lean4/L4Factoidal/Prim/**",
+        "formal/lean4/L4Factoidal/ListTR.lean",
+        "formal/lean4/L4Factoidal/NatBounds.lean",
+        "formal/lean4/L4Factoidal/Risk.lean",
+        "formal/lean4/L4Factoidal/Encoding/Hex.lean",
+        "formal/lean4/L4Factoidal/Fn/**",
+        "formal/lean4/L4Factoidal/Regex/**",
+        "formal/lean4/L4Factoidal/WHATWG/Streams.lean"
+      ]
+    },
+    {
+      "tag": "browser-host",
+      "paths": [
+        "formal/lean4/L4Factoidal/WasmVM/Hosts/**",
+        "labs/demos/foafnaut/*.ts",
+        "labs/demos/foafnaut/*.m",
+        "docs/web/hub/foafnaut/*.mjs"
+      ]
+    },
+    {
+      "tag": "tooling",
+      "paths": [
+        "tools/**"
+      ]
+    },
+    {
+      "tag": "test-or-fixture",
+      "paths": [
+        "*Tests.lean",
+        "*_test.*",
+        "*.test.*",
+        "*/test/**",
+        "*/tests/**",
+        "*/fixtures/**"
+      ]
+    },
+    {
+      "tag": "proofs",
+      "paths": [
+        "*Theorems.lean",
+        "*Proofs*.lean",
+        "*/Proof/**",
+        "*/Proofs/**"
+      ]
+    }
+  ],
+  "allowed_dependencies": {
+    "dom": [
+      "html",
+      "xml",
+      "rendering",
+      "network"
+    ],
+    "js": [
+      "json",
+      "xml",
+      "network",
+      "rendering",
+      "browser"
+    ],
+    "wasm": [
+      "graphics"
+    ],
+    "html": [
+      "dom",
+      "network",
+      "rendering",
+      "style",
+      "xml",
+      "js"
+    ],
+    "style": [
+      "dom",
+      "html",
+      "rendering",
+      "graphics",
+      "json",
+      "xml"
+    ],
+    "xml": [
+      "json",
+      "rdf",
+      "js",
+      "network",
+      "security",
+      "rendering",
+      "graphics",
+      "browser"
+    ],
+    "rdf": [
+      "json",
+      "xml",
+      "network",
+      "security",
+      "browser",
+      "rendering",
+      "graphics"
+    ],
+    "json": [
+      "rdf",
+      "xml",
+      "browser"
+    ],
+    "network": [
+      "security",
+      "json",
+      "rendering",
+      "graphics",
+      "browser",
+      "xml"
+    ],
+    "security": [
+      "rdf",
+      "json",
+      "xml",
+      "network",
+      "graphics",
+      "browser"
+    ],
+    "graphics": [
+      "wasm",
+      "rendering",
+      "browser",
+      "json",
+      "xml",
+      "style",
+      "security",
+      "js"
+    ],
+    "browser": [
+      "dom",
+      "js",
+      "wasm",
+      "html",
+      "style",
+      "xml",
+      "rdf",
+      "json",
+      "network",
+      "security",
+      "graphics",
+      "rendering"
+    ],
+    "rendering": [
+      "style",
+      "dom",
+      "html",
+      "xml",
+      "rdf",
+      "json",
+      "graphics",
+      "browser"
+    ]
+  },
+  "interfaces": [
+    {
+      "id": "shared-primitives",
+      "sources": [
+        "js",
+        "xml",
+        "rdf",
+        "json",
+        "network",
+        "security",
+        "graphics",
+        "rendering"
+      ],
+      "target": "browser",
+      "target_paths": [
+        "formal/lean4/L4Factoidal/Prim/**",
+        "formal/lean4/L4Factoidal/ListTR.lean",
+        "formal/lean4/L4Factoidal/NatBounds.lean",
+        "formal/lean4/L4Factoidal/Risk.lean",
+        "formal/lean4/L4Factoidal/Encoding/Hex.lean",
+        "formal/lean4/L4Factoidal/WHATWG/Streams.lean",
+        "formal/lean4/L4Factoidal/FrameCost/**",
+        "npm/factoidal/lib/errors.mjs",
+        "npm/factoidal/lib/evidence.mjs",
+        "npm/factoidal/bin/engine.mjs"
+      ],
+      "reason": "Named shared primitives, cost models and package ABI/error adapters are expected; other integration imports need review."
+    },
+    {
+      "id": "dom-url-and-value-types",
+      "sources": [
+        "dom"
+      ],
+      "target": "network",
+      "target_paths": [
+        "formal/lean4/L4Factoidal/WHATWG/URL/**"
+      ],
+      "reason": "DOM may parse URLs; request execution belongs at the browser/Fetch boundary."
+    },
+    {
+      "id": "rdf-dom-adapter",
+      "sources": [
+        "rdf"
+      ],
+      "target": "dom",
+      "source_paths": [
+        "formal/lean4/L4Factoidal/WebAnnotation/Dom*.lean"
+      ],
+      "reason": "RDF-to-DOM access should be confined to a named adapter."
+    },
+    {
+      "id": "data-retrieval-policy",
+      "sources": [
+        "rdf",
+        "json",
+        "xml"
+      ],
+      "target": "network",
+      "target_paths": [
+        "formal/lean4/L4Factoidal/WHATWG/URL/**",
+        "formal/lean4/L4Factoidal/WHATWG/MimeType.lean",
+        "formal/lean4/L4Factoidal/Net/FetchRules.lean",
+        "formal/lean4/L4Factoidal/Net/PageFetch.lean"
+      ],
+      "reason": "URL utilities and Fetch policy are expected; other network modules require a narrow reviewed interface."
+    },
+    {
+      "id": "vm-browser-host",
+      "sources": [
+        "wasm"
+      ],
+      "target": "browser",
+      "source_paths": [
+        "formal/lean4/L4Factoidal/WasmVM/Tests/**",
+        "formal/lean4/L4Factoidal/WasmVM/Bench/**",
+        "formal/lean4/L4Factoidal/WasmVM.lean"
+      ],
+      "target_paths": [
+        "formal/lean4/L4Factoidal/WasmVM/Hosts/**"
+      ],
+      "reason": "VM tests and umbrella imports may exercise browser hosts; VM execution should remain separate."
+    },
+    {
+      "id": "sparql-http-adapters",
+      "sources": [
+        "rdf"
+      ],
+      "target": "network",
+      "source_paths": [
+        "formal/lean4/L4Factoidal/SPARQL/GraphStoreService.lean",
+        "formal/lean4/L4Factoidal/SPARQL/ProtocolClient.lean",
+        "formal/lean4/L4Factoidal/SPARQL/StoreEndpoint.lean"
+      ],
+      "target_paths": [
+        "formal/lean4/L4Factoidal/HTTP/**"
+      ],
+      "reason": "Named SPARQL service/client adapters use the HTTP API; this does not establish Fetch policy."
+    },
+    {
+      "id": "xml-html-readers",
+      "sources": [
+        "xml"
+      ],
+      "target": "html",
+      "target_paths": [
+        "formal/lean4/L4Factoidal/HTML/TreeBuilder.lean",
+        "formal/lean4/L4Factoidal/HTML/Entities.lean"
+      ],
+      "reason": "XPath HTML readers need the language parser; test modules should not become library dependencies."
+    },
+    {
+      "id": "network-rdf-service",
+      "sources": [
+        "network"
+      ],
+      "target": "rdf",
+      "source_paths": [
+        "formal/lean4/L4Factoidal/HTTP/Ops.lean",
+        "formal/lean4/L4Factoidal/HTTP/RunQuery.lean",
+        "formal/lean4/L4Factoidal/WHATWG/URL/Theorems.lean"
+      ],
+      "target_paths": [
+        "formal/lean4/L4Factoidal/RDF/Graph.lean",
+        "formal/lean4/L4Factoidal/SPARQL/Results*.lean",
+        "formal/lean4/L4Factoidal/Syntax/IriResolve.lean"
+      ],
+      "reason": "Named graph service/serialisation adapters and URL comparison theorems."
+    }
+  ],
+  "unmapped_files": []
+}
