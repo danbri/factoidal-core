@@ -601,17 +601,33 @@ private def lineIconAt (c : Rendering.Color) (name : String) (box : Box) (side :
   let contour := fun (closed : Bool) (pts : List (Float × Float)) => match pts with
     | [] => Rendering.Contour.empty closed
     | (sx,sy)::rest => Rendering.Contour.path ⟨sx,sy⟩ (rest.map fun (a,b) => .line ⟨a,b⟩) closed
-  -- Every line of an icon in one stroked path and its filled shapes in one filled path: at
-  -- most two primitives an icon, as the engine's cost goes by primitive.
-  let strokes := (lineIcon name).filterMap fun
-    | .line points => some (contour false (points.map fun (x,y) => p x y))
-    | .ring cx cy r => some (contour true (unitCircle.map (around cx cy r)))
-    | .arc cx cy r points => some (contour false (points.filterMap fun i => (unitCircle[i]?).map (around cx cy r)))
-    | .solid _ => none
+  -- A line is not stroked (stroking is the costly part of the chrome): each segment is a filled
+  -- quadrilateral `w` wide, lengthened by half of `w` at both ends so joins have no gaps. Every
+  -- quadrilateral winds the same way, so with the nonzero rule their overlaps stay filled.
+  let h := w/2
+  let quad := fun (a b : Float × Float) =>
+    let dx := b.1-a.1
+    let dy := b.2-a.2
+    let len := Float.sqrt (dx*dx+dy*dy)
+    if len == 0 then [] else
+    let ux := dx/len*h
+    let uy := dy/len*h
+    let (ax,ay) := (a.1-ux,a.2-uy)
+    let (bx,by_) := (b.1+ux,b.2+uy)
+    [contour true [(ax-uy,ay+ux),(bx-uy,by_+ux),(bx+uy,by_-ux),(ax+uy,ay-ux)]]
+  let segments := fun (closed : Bool) (pts : List (Float × Float)) =>
+    let next := pts.drop 1 ++ (if closed then pts.take 1 else [])
+    (pts.zip next).flatMap fun (a,b) => quad a b
+  -- One filled path for an icon's lines and one for its solid shapes: at most two primitives.
+  let lines := (lineIcon name).flatMap fun
+    | .line points => segments false (points.map fun (x,y) => p x y)
+    | .ring cx cy r => segments true (unitCircle.map (around cx cy r))
+    | .arc cx cy r points => segments false (points.filterMap fun i => (unitCircle[i]?).map (around cx cy r))
+    | .solid _ => []
   let fills := (lineIcon name).flatMap fun
     | .solid outlines => outlines.map fun o => contour true (o.map fun (x,y) => p x y)
     | _ => []
-  (if strokes.isEmpty then [] else [.paint {primitive := {geometry := .path strokes,style := strokeStyle c w}}]) ++
+  (if lines.isEmpty then [] else [.paint {primitive := {geometry := .path lines,style := {fill := .solid c,rule := .nonzero}}}]) ++
   (if fills.isEmpty then [] else [.paint {primitive := {geometry := .path fills,style := {fill := .solid c,rule := .evenodd}}}])
 
 /-- A tab of the flat look: the active one a raised card in the toolbar's face, joined to it;
