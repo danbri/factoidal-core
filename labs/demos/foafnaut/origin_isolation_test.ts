@@ -1,4 +1,4 @@
-// Origin isolation, checks C1 to C5 (issue 518, docs/designissues/2026-11-16-origin-isolation.md).
+// Origin isolation, checks C1 to C6 (issue 518, docs/designissues/2026-11-16-origin-isolation.md).
 // Each check fails when the leak it names exists. A check listed in OPEN is a known fault: it is
 // reported and does not fail the run, and it fails once it passes, so that it leaves the list.
 // The fixtures are original: two invented origins and marker strings, no page content.
@@ -16,7 +16,8 @@ const exists=(p:string)=>{try{return Deno.statSync(p).isFile;}catch{return false
 
 /** Checks that fail on this tree's engine; each has an engine fix to come (none now).
 An engine from before the C1, C2 and C4 fixes (release 1b2fc90d578e) needs
-ORIGIN_ISOLATION_OPEN=C1,C2,C2b,C2c,C2d,C4. */
+ORIGIN_ISOLATION_OPEN=C1,C2,C2b,C2c,C2d,C4,C6; one from before the C6 fix (release e7604a84f6d4) needs
+ORIGIN_ISOLATION_OPEN=C6. */
 const OPEN=new Set<string>(Deno.env.get("ORIGIN_ISOLATION_OPEN")?.split(",").filter(Boolean)??[]);
 
 type Turn={session:number;logs:string[];errors:string[];navigations?:{nodeId:number;url:string}[];
@@ -53,7 +54,7 @@ async function check(t:Deno.TestContext,name:string,what:string,leak:()=>string[
   });
 }
 
-Deno.test({name:"origin isolation checks C1 to C5",ignore:!exists(library)},async t=>{
+Deno.test({name:"origin isolation checks C1 to C6",ignore:!exists(library)},async t=>{
   const call=engine(library);
   const start=(html:string,url:string,extra:Record<string,unknown>={})=>call(html,{action:"start",url,resources:[],engine:"bubblepop",...extra});
   const settle=(s:number)=>call("",{action:"settle",session:s,budgetMs:1000});
@@ -232,6 +233,44 @@ Deno.test({name:"origin isolation checks C1 to C5",ignore:!exists(library)},asyn
     close();
     assert.ok(logs.includes("domain SecurityError"),`the setter refuses: ${logs}`);
     return logs.filter(l=>l.startsWith("contentDocument")&&l!=="contentDocument null");
+  });
+
+  // C6: a classic script of another origin (no CORS) runs, but its bytes never enter the page's
+  // realm, and its errors are muted (HTML "report an exception": "Script error.", no URL, line or
+  // error). The page replaces Uint8Array and TextDecoder.prototype.decode, which a prelude that
+  // held the bytes would call, and logs what they see.
+  const scriptRun=(src:string,body:string)=>{
+    let s=start(`<!doctype html><script>
+      const U=Uint8Array;
+      globalThis.Uint8Array=class extends U{constructor(...a){super(...a);try{const t=Array.from(this,c=>String.fromCharCode(c)).join('');if(t.includes('C6'))console.log('bytes '+t)}catch(e){}}};
+      const dec=TextDecoder.prototype.decode;
+      TextDecoder.prototype.decode=function(...a){const r=dec.apply(this,a);if(String(r).includes('C6'))console.log('decode '+r);return r};
+      onerror=(m,f,l,c,e)=>{console.log('err ['+m+'] ['+f+'] ['+l+'] ['+(e===null?'null':e&&e.message)+']')};
+      const s=document.createElement('script');s.src='${src}';s.onload=()=>console.log('load');s.onerror=()=>console.log('error');
+      document.head.append(s);</script>`,`${A}/p.html`,{network:true});
+    const logs=[...s.logs];
+    for(let round=0;round<4&&s.netRequests?.length;round++){
+      s=call("",{action:"net",session:s.session,results:s.netRequests.map(w=>w.resolve?{id:w.id,addresses:["93.184.216.34"]}:
+        {id:w.id,status:200,statusText:"OK",headers:[["content-type","text/javascript"],["x-c6","C6-FIELD"]],bodyBase64:btoa(body)})});
+      logs.push(...s.logs);
+    }
+    logs.push(...settle(s.session).logs);
+    close();
+    return logs;
+  };
+  await check(t,"C6","a classic script of another origin: no bytes in the realm, errors muted",()=>{
+    // a credentialed JSON-like answer that does not parse as a script, and one that runs and throws
+    const json=scriptRun(`${B}/c6.json.js`,`{"token":"C6-SECRET-JSON"}`);
+    const thrown=scriptRun(`${B}/c6.js`,`console.log('ran');throw new Error('C6-THROWN')`);
+    const muted="err [Script error.] [] [0] [null]";
+    // the script of the page's own origin keeps its error (not muted)
+    const own=scriptRun(`${A}/own.js`,`throw new Error('own error')`);
+    assert.ok(own.some(l=>l.startsWith("err [")&&l.includes("own error")),`an own-origin script's error is not muted: ${own}`);
+    assert.ok(thrown.includes("ran")&&thrown.includes("load"),`the script of another origin still runs: ${thrown}`);
+    const leaks=[...json,...thrown].filter(l=>l.includes("C6"));
+    if(!json.includes(muted))leaks.push(`no muted error for the answer that does not parse: ${json}`);
+    if(!thrown.includes(muted))leaks.push(`no muted error for the script that threw: ${thrown}`);
+    return leaks;
   });
 
   // C5: what one origin leaves for the next page, and the history of links.

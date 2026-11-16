@@ -160,7 +160,8 @@ theorem WorkerHost.take_head (wh : WorkerHost) (h : wh.head ≤ wh.inbox.size) :
 - both: 3 `take()` answers the next event's head (JSON: `w` worker, `k` kind, `h` header)
   or ""; 4 answers its bytes;
 - worker: 1 `post(0, bytes)` to the page; 10 `close()`; 11 `error(message, file, line,
-  col)`; 12 `importScript(url)` answers the source, -1 when the embedder has not fetched
+  col)`; 12 `importScript(url)` answers 0 when the embedder has the script (the source is
+  never answered: `runFetched(url)` runs it), -1 when the embedder has not fetched
   it yet (the run is undone: `missing`), -2 when the fetch failed. -/
 def serveWorker (wh : WorkerHost) (args : Array JS.HostArg) : WorkerHost × JS.HostAns :=
   let a := fun (i : Nat) => args.getD i (.val .undef)
@@ -188,7 +189,8 @@ def serveWorker (wh : WorkerHost) (args : Array JS.HostArg) : WorkerHost × JS.H
   | 12 =>
     let url := text 1
     match wh.scripts.find? (·.1 == url) with
-    | some (_, some src) => (wh, .val (.str (JS.Str.ofHost src)))
+    -- the source stays in the engine: `runFetched(url)` runs it (`serveScript`)
+    | some (_, some _) => (wh, .val (.num 0))
     | some (_, none) => (wh, .val (.num (-2)))
     | none => ({ wh with missing := wh.missing <|> some url }, .val (.num (-1)))
   | _ => (wh, .err "worker: no such op")
@@ -407,6 +409,43 @@ def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.Host
      | .error m => (h, .err m))
   | _ => (h, .err "foafnaut_dom: no such native")
 
+/-- A worker's imported script runs with muted errors unless it is of the worker's own origin
+(or a `data:` or `blob:` URL): HTML "fetch a classic worker-imported script" (a no-cors
+request; a CORS-cross-origin answer has muted errors). -/
+def importMuted (p : L4Factoidal.Net.PageFetch.Page) (url : String) : Bool :=
+  !(url.startsWith "blob:" || p.imageClean url)
+
+/-- The source of a classic script for the engine to run (`JS.hostScriptId`,
+`Native.classicScriptHost`, the prelude's `n.runFetched`), answered as `HostAns.script`, which
+never becomes a value of the realm: for a number, the script element request with that handle
+(`Net.Xhr.takeScript`); for a string, a worker's imported script of that URL (the embedder
+fetched it). -/
+def serveScript (h : Host) (wk : WorkerHost) (key : JS.HostArg) : Host × JS.HostAns :=
+  match key with
+  | .val (.num x) =>
+    let (net, got) := L4Factoidal.Net.Xhr.takeScript h.web.net x.toUInt64.toNat
+    let h := { h with web := { h.web with net } }
+    match got with
+    | some (src, muted) => (h, .script src muted)
+    | none => (h, .err "no script")
+  | .val (.str u) =>
+    let url := JS.Str.toHost u
+    match wk.scripts.find? (·.1 == url) with
+    | some (_, some src) => (h, .script src (importMuted h.web.net.page url))
+    | _ => (h, .err "no script")
+  | _ => (h, .err "no script")
+
+/-- Kind: security lemma (origin isolation, C6). Says: the host's answer to a request for a
+script's source is a `HostAns.script` (which the evaluator never makes a value: `hostAnswer`)
+or a refusal; it is never a value or bytes. -/
+theorem serveScript_answer (h : Host) (wk : WorkerHost) (key : JS.HostArg) :
+    (∃ src muted, (serveScript h wk key).2 = .script src muted) ∨ (serveScript h wk key).2 = .err "no script" := by
+  unfold serveScript
+  split
+  · split <;> simp_all
+  · split <;> simp_all
+  · simp
+
 /-- The host's natives with the script clock: the instructions run so far are the steps of
 the session before this run and the steps of this run (`runBudget` less the steps left),
 as `Page.Session.run` counts the instructions of a run at each host call. -/
@@ -414,6 +453,10 @@ def hostCall (lh : LHost) (k : Nat) (args : Array JS.HostArg) (left : Nat) : LHo
   if k == 29 then
     let ⟨page, base, wasm0, wk, budget⟩ := lh
     let (wk, ans) := serveWorker wk args
+    (⟨page, base, wasm0, wk, budget⟩, ans)
+  else if k == JS.hostScriptId then
+    let ⟨page, base, wasm0, wk, budget⟩ := lh
+    let (page, ans) := serveScript page wk (args.getD 0 (.val .undef))
     (⟨page, base, wasm0, wk, budget⟩, ans)
   else
   let base := lh.base
@@ -705,6 +748,8 @@ def prepareSource (lim : Page.Limits := {}) : Except String Session := do
   -- of the engine, not of the host, since they walk the heap
   let heap := JS.addNatives heap nobj #[("serialize", .x .cloneSerialize, 2), ("deserialize", .x .cloneDeserialize, 1),
     ("runScript", .x .classicScript, 1),
+    -- a classic script whose source the engine holds and the realm never sees (`serveScript`)
+    ("runFetched", .x .classicScriptHost, 1),
     -- the global object's slot for the page's named properties (`JS.namedGetterKey`)
     ("setNamedGetter", .x .namedGetterSet, 1),
     -- the URL Pattern Standard (`WHATWG.URLPattern`), for the prelude's URLPattern class
