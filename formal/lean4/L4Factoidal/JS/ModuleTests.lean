@@ -110,6 +110,10 @@ def runMods (mods : List (String × String)) (roots : List Nat) : List String :=
 #guard (parseModule "function f() {} function f() {}").toOption.isNone
 #guard (parseModule "{ var f; } function f() {}").toOption.isNone
 #guard (parseModule "function f() { var f; } var g;").toOption.isSome
+-- module code: no new.target, no super, no private name outside a class
+#guard (parseModule "new.target").toOption.isNone
+#guard (parseModule "this.#x").toOption.isNone
+#guard (parseModule "class C { #x; m() { return this.#x } }").toOption.isSome
 #guard (parseModule "import {a} from 'x'; let a = 1").toOption.isNone
 #guard (parseModule "export {nothere}").toOption.isNone
 #guard (parseModule "return 1").toOption.isNone

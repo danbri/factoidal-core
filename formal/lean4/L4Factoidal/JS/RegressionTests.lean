@@ -792,5 +792,10 @@ replaced by assignment; Function.prototype[@@hasInstance] was missing; `source` 
 #guard out "try { [2, 1].sort(null); print('no') } catch (e) { print(e.name) }" == ["TypeError"]
 #guard out "var o = { length: 4, 0: 'a', 1: 'b', 2: 'c', 3: 'd' }; var r = Array.prototype.splice.call(o, 1, 2, 'x'); print(r.join(), o.length, o[0], o[1], o[2], 3 in o)" == ["b,c 3 a x d false"]
 #guard out "print(JSON.stringify(JSON.parse('{\"a\":1,\"b\":[2,3]}', function (k, v) { return typeof v === 'number' ? v * 10 : v; })))" == ["{\"a\":10,\"b\":[20,30]}"]
+-- `yield` and `await` in a class's heritage and computed keys and in an object literal's computed
+-- keys (the generator machine lifts them; it refused them before)
+#guard out "function* g() { class C { [yield 1]() { return 'm'; } static [yield 2] = 3; } return C; } var it = g(); it.next(); it.next('a'); var C = it.next('b').value; print(new C().a(), C.b)" == ["m 3"]
+#guard out "function* g() { var o = { [yield 1]: yield 2, k: 0 }; return Object.keys(o).join() + ' ' + o.x; } var it = g(); it.next(); it.next('x'); print(it.next(5).value)" == ["x,k 5"]
+#guard out "async function f() { class D extends (await Promise.resolve(Array)) {} return new D(1, 2).length; } f().then(function (v) { print(v); })" == ["2"]
 
 end L4Factoidal.JS.Tests

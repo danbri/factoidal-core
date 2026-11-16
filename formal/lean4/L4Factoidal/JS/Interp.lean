@@ -939,6 +939,19 @@ abbrev Lift := StateM (Nat × Array Stmt)
 
 def liftName (k : Nat) : String := "%y" ++ toString k
 
+/-- A computed key of the member holds a `yield` (outside nested functions). -/
+def Member.keyHasYield : Member → Bool
+  | .mk _ _ (.computed e) _ => e.hasYield
+  | _ => false
+
+/-- The property definition holds a `yield` in its key or its value. -/
+def PropDef.hasYield : PropDef → Bool
+  | .init (.computed k) v => k.hasYield || v.hasYield
+  | .init _ v => v.hasYield
+  | .getter (.computed k) _ | .setter (.computed k) _ => k.hasYield
+  | .spread e => e.hasYield
+  | _ => false
+
 /-- A literal: its evaluation cannot be observed, and it is not worth a temporary. -/
 def isLiteral : Expr → Bool
   | .num _ | .str _ | .bool _ | .null | .bigint _ | .lit _ => true
@@ -1030,7 +1043,31 @@ def liftE : Nat → Expr → Lift Expr
         | _ => pure t
       pure (.assign op t (← liftE n v))
     | .object ps => pure (.object (← liftP n ps))
+    | .classE (.mk name h ctor ms) =>
+      -- ClassDefinitionEvaluation (§15.7.14) evaluates the heritage, then the computed keys in
+      -- order: their `yield`s go first, each key before them held in a temporary
+      let h ← match h with
+        | some x => do
+          let x ← liftE n x
+          let x ← if ms.any Member.keyHasYield && !isLiteral x then liftTemp x else pure x
+          pure (some x)
+        | none => pure none
+      pure (.classE (.mk name h ctor (← liftMembers n ms)))
     | _ => pure e
+termination_by structural n _ => n
+
+/-- The computed keys of class members, lifted in order (`liftE`'s `classE`). -/
+def liftMembers : Nat → List Member → Lift (List Member)
+  | 0, ms => pure ms
+  | _ + 1, [] => pure []
+  | n + 1, m :: ms => do
+    let m ← match m with
+      | .mk st kind (.computed k) f => do
+        let k ← liftE n k
+        let k ← if ms.any Member.keyHasYield && !isLiteral k then liftTemp k else pure k
+        pure (Member.mk st kind (.computed k) f)
+      | _ => pure m
+    pure (m :: (← liftMembers n ms))
 termination_by structural n _ => n
 
 /-- Lift `e` into statements of its own (one branch of a conditional). -/
@@ -1061,8 +1098,22 @@ def liftP : Nat → List PropDef → Lift (List PropDef)
   | 0, ps => pure ps
   | _ + 1, [] => pure []
   | n + 1, p :: ps => do
+    let later := ps.any PropDef.hasYield
     let p ← match p with
       | .init (.lit k) v => do pure (PropDef.init (.lit k) (← liftE n v))
+      | .init (.computed k) v => do
+        -- the key, then the value (§13.2.5.5): a key before a `yield` is held in a temporary
+        let k ← liftE n k
+        let k ← if (v.hasYield || later) && !isLiteral k then liftTemp k else pure k
+        let v ← liftE n v
+        let v ← if later && !isLiteral v then liftTemp v else pure v
+        pure (PropDef.init (.computed k) v)
+      | .getter (.computed k) f => do
+        let k ← liftE n k
+        pure (PropDef.getter (.computed (← if later && !isLiteral k then liftTemp k else pure k)) f)
+      | .setter (.computed k) f => do
+        let k ← liftE n k
+        pure (PropDef.setter (.computed (← if later && !isLiteral k then liftTemp k else pure k)) f)
       | .spread v => do pure (PropDef.spread (← liftE n v))
       | _ => pure p
     pure (p :: (← liftP n ps))
@@ -1089,6 +1140,10 @@ def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
       if acc.isEmpty then none else some (acc.toList ++ [mk e'])
   match s with
   | .expr e => wrap e .expr
+  | .classDecl x c =>
+    match run (.classE c) with
+    | (.classE c', acc) => if acc.isEmpty then none else some (acc.toList ++ [.classDecl x c'])
+    | _ => none
   | .ret (some e) => wrap e (fun x => .ret (some x))
   | .throwS e => wrap e .throwS
   | .decl k [Decl.mk p (some e)] => wrap e (fun x => .decl k [Decl.mk p (some x)])
@@ -11091,10 +11146,9 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | .error a => throw a
       | .ok (spec, ty) =>
         if args.size ≥ 3 then
-          -- `import.source(x)`: GetModuleSource of a Source Text Module Record throws a
-          -- SyntaxError... of the module's own; this host gives a JavaScript module no source
-          -- phase object, which the proposal leaves to the host: a TypeError
-          rejectPromise n pid (← mkError .type "import.source(): this module has no source phase representation")
+          -- `import.source(x)` (the source phase imports proposal): every module this host loads
+          -- is a Source Text Module Record, whose GetModuleSource throws a SyntaxError
+          rejectPromise n pid (← mkError .syntax "import.source(): a JavaScript module has no source phase representation")
         else
         match (← get).importQueue with
         | some q => modify fun h => { h with importQueue := some (q.push (Str.toHost spec, ty, pid)) }
