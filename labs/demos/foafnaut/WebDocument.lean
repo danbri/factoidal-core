@@ -31,6 +31,7 @@ import WebConsole
 import WebPaint
 import L4Factoidal.Rendering.FontFaceRule
 import L4Factoidal.Rendering.ImportTree
+import L4Factoidal.HTML.AccessibleTree
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -3055,6 +3056,48 @@ def withWants (laid : Laid) (answer : String × Array ByteArray) : String × Arr
   if !laid.wantsSerif || !text.endsWith "}" then answer
   else ((text.dropEnd 1).toString ++ ",\"wantsSerif\":true}",sections)
 
+/-- What the accessibility tree reads of a layout (`HTML.AccessibleTree.Env`): an element
+with `display: none` makes no box, `visibility` hides one, and the border boxes. With no
+computed styles (a layout that kept none) the markup decides what makes no box. -/
+def accessibilityEnv (laid : Laid) : HTML.AccessibleTree.Env :=
+  let styles : Array Rendering.CSS.Computed := match laid.styles.get with
+    | .ok s => s
+    | .error _ => #[]
+  let int := fun (f : Float) => f.round.toInt64.toInt
+  let env : HTML.AccessibleTree.Env :=
+    { rendered := fun k => match styles[k]? with
+        | some s => !(s.display == .none)
+        | none => !HTML.AccessibleTree.markupUnrendered laid.dom k,
+      visible := fun k => match styles[k]? with
+        | some s => s.visible
+        | none => true }
+  env.withBoxes (laid.boxes.map fun b => (b.source, ⟨int b.x, int b.y, (int b.width).toNat, (int b.height).toNat⟩))
+
+/-- Op `accessibilityTree`: the accessibility tree of the page of a render request (the same
+fields as the frame's, so the kept layout answers). `{"serial", "top", "scroll", "nodes"}`:
+`nodes` as `HTML.AccessibleTree.json` gives them, each `box` in the layout's pixels from the
+top of the page; `top` is the chrome's height and `scroll` the page's scroll, so a box is
+at `y - scroll + top` in the window. `serial` is the layout's number: with `since` equal to
+it the answer is `{"serial", "unchanged": true}` and no tree is made. With `view: true` the
+answer is `{"source"}`: the tree as a page for a person (`HTML.AccessibleTree.viewPage`),
+about the request's `url`. -/
+def accessibilityAnswer (laid : Laid) (request : JSON.Json) (top scroll : Nat) : String :=
+  let number := fun (n : Nat) => JSON.Json.number (toString n)
+  let since := match request.field? "since" with
+    | some (.number n) => n.toNat?
+    | _ => none
+  if laid.serial != 0 && since == some laid.serial then
+    (JSON.Json.object [("serial",number laid.serial),("unchanged",.bool true)]).toString
+  else
+    let entries := HTML.AccessibleTree.tree laid.dom (accessibilityEnv laid)
+    if request.field? "view" == some (.bool true) then
+      (JSON.Json.object [("source",.string (HTML.AccessibleTree.viewPage (str request "url") entries))]).toString
+    else
+      (JSON.Json.object ([("serial",number laid.serial),("top",number top),("scroll",number scroll)] ++
+        (match HTML.AccessibleTree.json entries with
+         | .object fields => fields
+         | _ => []))).toString
+
 /-- An operation of the engine: it reads and changes the engine's state, and reads the
 machine through `M` (`BaseIO` in the engine, `Id` in tests: time 0, no random bytes). -/
 abbrev DocM (M : Type → Type) := ExceptT String (StateT Engine M)
@@ -3236,7 +3279,8 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     | .ok none => pure ()
     | .error x => throw x
   let op := str request "op" "render"
-  if op != "render" && op != "selectedText" && op != "findInPage" && op != "printLayout" && op != "nodeAt" then
+  if op != "render" && op != "selectedText" && op != "findInPage" && op != "printLayout" && op != "nodeAt" &&
+      op != "accessibilityTree" then
     let dom ← stepState fun e => match prepareDOMIn e.kept html request with
       | .ok (dom,made) => ({e with kept := e.kept.add made},.ok dom)
       | .error x => (e,.error x)
@@ -3312,6 +3356,10 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     let number := fun (n : Nat) => JSON.Json.number (toString n)
     return ((JSON.Json.object [("contentHeight",number content),
       ("pages",.array (pages.map fun (top,rows) => .array [number top,number rows]))]).toString,#[])
+  -- The accessibility tree of the layout (`accessibilityAnswer`). Only a host with assistive
+  -- technology attached asks: a frame does not make it.
+  if op == "accessibilityTree" then
+    return (accessibilityAnswer laid request top ((shell.map (·.scroll)).getD 0),#[])
   -- Pointer positions are in window coordinates; the page starts below the chrome.
   let moved := Float.ofNat top-Float.ofNat ((shell.map (·.scroll)).getD 0)
   let chosen := (← selection request).map (fun value => WebSelection.shift value moved)
