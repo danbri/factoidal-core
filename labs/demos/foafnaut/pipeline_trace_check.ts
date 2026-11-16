@@ -9,12 +9,20 @@
 // Pages: pages/spinal-tap-sparql.html (animated, heavy GPU) watched for 10 s, and
 // fixtures/gpu-par/article.html (an original long article) with the scroll sweep.
 //
+// The Spinal Tap run is also held to the `pipeline` budgets of fixtures/spinal-bisect/budgets.json
+// (rules of spinal_budgets.mjs): no GPU submission of a frame without its cost (the gate then
+// sleeps through a band's GPU time, not the whole frame's: a count, exact on every machine), and
+// ceilings on the frame time p95 and on the time the main thread is blocked in GPU waits. The
+// two times are enforced on a developer's machine and printed only under CI (shared runners:
+// set FOAFNAUT_TIMING_BUDGETS=1 to enforce them there).
+//
 //   deno run -A --unstable-webgpu --unstable-ffi pipeline_trace_check.ts --native-engine LIB
 //
 // Needs `lean` (elan), the window library and a WebGPU adapter; without them it prints NOT RUN
 // and exits 0. Exit 1 on a violation or a control the checker accepts. About 40 s.
 import {dirname,join,resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {checkBudgets} from "./spinal_budgets.mjs";
 
 const here=dirname(fileURLToPath(import.meta.url));
 const lean4=resolve(here,"../../../formal/lean4");
@@ -58,16 +66,30 @@ for(const [name,events] of [["two waits, no pump",["submit","ask","answer","subm
 if(!engine){if(failed){console.error("pipeline_trace_check: a control was accepted");Deno.exit(1);}notRun("no native engine given (--native-engine); controls passed");}
 
 for(const [name,page] of [["spinal-tap",["pages/spinal-tap-sparql.html","--watch-sweep","10"]],["article",["fixtures/gpu-par/article.html","--scroll-sweep"]]] as [string,string[]][]){
-  const trace=join(out,`${name}.txt`);
+  const trace=join(out,`${name}.txt`),gateTrace=join(out,`${name}-gate.jsonl`);
   try{Deno.removeSync(trace);}catch{/* none */}
+  try{Deno.removeSync(gateTrace);}catch{/* none */}
   const r=await run(Deno.execPath(),["run","--no-check","--no-config","--no-npm","--node-modules-dir=none","--unstable-webgpu","--unstable-ffi","-A",
-    join(here,"run_html.ts"),"--offscreen","--no-state","--perf-summary","--native-engine",engine,"--pipe-trace",trace,"--html",join(here,page[0]),...page.slice(1)],undefined,here);
+    join(here,"run_html.ts"),"--offscreen","--no-state","--perf-summary","--native-engine",engine as string,"--pipe-trace",trace,"--gate-trace",gateTrace,"--html",join(here,page[0]),...page.slice(1)],undefined,here);
   const summary=r.out.split("\n").find(l=>l.startsWith('{"type":"native-html-perf-summary"'));
   if(r.code!==0||!summary){console.error(`${name}: the run failed (exit ${r.code}):\n${(r.err||r.out).slice(-2000)}`);failed++;continue;}
   const gpu=JSON.parse(summary).gpu,gaps=JSON.parse(summary).pumpGapMs;
   const c=await checkTrace(trace);
   console.log(JSON.stringify({page:name,checker:c.out.trim(),pumpGapMaxMs:gaps.max,blockedMs:gpu.blockedMs,maxBlockedMs:gpu.maxBlockedMs,maxWaitsBetweenPumps:gpu.maxWaitsBetweenPumps}));
   if(c.code!==0)failed++;
+  if(name==="spinal-tap"){
+    const frames=JSON.parse(summary).frames;
+    const submits=(await Deno.readTextFile(gateTrace)).split("\n").filter(l=>l.startsWith('{"ev":"submit"')).map(l=>JSON.parse(l) as {cost:number});
+    const run={pipeline:{spinal:{costlessSubmits:submits.filter(s=>!(s.cost>0)).length,submits:submits.length,frameMsP95:frames.totalMsP95,gpuBlockedMs:gpu.blockedMs}}};
+    const budgets=JSON.parse(await Deno.readTextFile(join(here,"fixtures/spinal-bisect/budgets.json"))).pipeline.budgets;
+    const timed=(metric:string)=>metric.endsWith("Ms")||metric.endsWith("MsP95");
+    const enforceTimes=!Deno.env.get("CI")||Deno.env.get("FOAFNAUT_TIMING_BUDGETS")==="1";
+    for(const r of checkBudgets(budgets,run)){
+      const enforced=!timed(r.metric)||enforceTimes;
+      console.log(JSON.stringify({budget:r.metric,value:r.value,[r.kind]:r.limit,ok:r.ok,enforced}));
+      if(!r.ok&&enforced)failed++;
+    }
+  }
 }
 if(failed){console.error(`pipeline_trace_check: ${failed} failed`);Deno.exit(1);}
 console.log("pipeline_trace_check: every trace is a run of HostPipeline.Model");
