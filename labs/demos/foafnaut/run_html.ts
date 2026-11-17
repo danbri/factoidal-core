@@ -1776,7 +1776,7 @@ async function main() {
       if(firstFrameAt===undefined&&canPresent())return 0;
       const busy=(dirty&&canPresent())||animationDue||!!rendering||!!shifting||shiftPending||pressPresent||!!pressed||!!holding||scriptBusy
         ||loading||!!candidate||refusing>0||!!prefetching||graphBusy()||!!(document as Page).graph?.clock||netQueue.length>0||netInFlight>0
-        ||sockets.size>0||(worker?.inFlight??0)>0||!!sweep||(!!commands&&(commands.length>0&&now+2>=stepAt));
+        ||sockets.size>0||(worker?.inFlight??0)>0||axBusy||!!sweep||(!!commands&&(commands.length>0&&now+2>=stepAt));
       if(busy){busyAt=now;idleEndAt=undefined;return 0;}
       // GPU work not yet answered for: the gate asks only from a turn and its answer is a timer,
       // and the window's wait blocks the thread, so the loop does not wait past the ask's due time
