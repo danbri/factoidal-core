@@ -16004,18 +16004,25 @@
     const syn = registeredSyntax(name);
     return syn !== '' ? JSON.parse(typedOp('reifys', syn, text)).map(reified) : [reified(JSON.parse(typedOp('reifyp', name, text)))];
   };
+  // The text a typed value was set from, while the declaration is still what that set made:
+  // the declaration keeps its specified form (`CSS.percent(50)` stays a percentage for the
+  // typed OM), though CSSOM serialises it canonically (`opacity: 50%` reads back as 0.5).
+  const typedRead = (st, name) => {
+    const text = st.read(name), kept = st.typed === undefined ? undefined : st.typed.get(name);
+    return kept !== undefined && kept[1] === text && text !== '' ? kept[0] : text;
+  };
   class StylePropertyMapReadOnly {
     constructor(...key) { if (key[0] !== typedKey) illegal(); }
     get(property) {
       if (arguments.length < 1) throw new TypeError('get: 1 argument required');
-      const name = knownProperty(property), text = mstate(this).read(name);
+      const name = knownProperty(property), text = typedRead(mstate(this), name);
       if (text === '') return undefined;
       if (name.startsWith('--')) return customTyped(name, text)[0];
       return reified(listValued(name) ? JSON.parse(typedOp('reifyall', text))[0] : JSON.parse(typedOp('reifyp', name, text)));
     }
     getAll(property) {
       if (arguments.length < 1) throw new TypeError('getAll: 1 argument required');
-      const name = knownProperty(property), text = mstate(this).read(name);
+      const name = knownProperty(property), text = typedRead(mstate(this), name);
       if (text === '') return [];
       if (name.startsWith('--')) return customTyped(name, text);
       return listValued(name) ? JSON.parse(typedOp('reifyall', text)).map(reified) : [reified(JSON.parse(typedOp('reifyp', name, text)))];
@@ -16066,6 +16073,7 @@
       const text = xs.join(', ');
       if (styleOp('val', name, text).charAt(0) !== '1') throw new TypeError(`The value is not one '${name}' takes`);
       st.set(name, text);
+      (st.typed ??= new Map()).set(name, [text, st.read(name)]);
     }
     append(property, ...values) {
       if (arguments.length < 2) throw new TypeError('append: 2 arguments required');

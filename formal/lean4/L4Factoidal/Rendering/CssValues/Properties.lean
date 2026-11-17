@@ -361,6 +361,8 @@ def spaced (cvs : List CV) : List CV :=
 line), at the top level and in `repeat()`. -/
 def gridCanon (v : String) : String :=
   if (v.splitOn "[]").length ≤ 1 then v else
+  -- a subgrid's line name lists are kept, empty ones too: each is one line (CSS Grid 2 §9)
+  if (lower (String.ofList (v.toList.dropWhile (· == ' ')))).startsWith "subgrid" then v else
   let keep := fun (c : CV) => match c with
     | .block '[' body => !(stripWs body).isEmpty
     | _ => true
@@ -369,6 +371,8 @@ def gridCanon (v : String) : String :=
       if lower name == "repeat" then .fn name (joinGroups ((splitCommas args).map fun g => spaced ((stripWs g).filter keep)))
       else c
     | c => c))
+
+#guard gridCanon "subgrid [] [a]" == "subgrid [] [a]" && gridCanon " subgrid repeat(1, [])" == " subgrid repeat(1, [])"
 
 /-- `image-set()` (CSS Images 4 §2.2): `-webkit-image-set()` is `image-set()`, a string is
 the `url()` of that string, and an image with no resolution has `1x`. -/
