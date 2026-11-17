@@ -245,7 +245,12 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     /** Draw one Lean scene. check=true also reads the window back, checks Lean's probe pixels and hashes. */
     draw:(frame:HTMLArtifact,check:boolean):Promise<DrawResult>=>inOrder(()=>{lastLayers=undefined;return render(frame,check);},sceneCost(frame as never),check),
     /** Draw the two layers of one Lean render and present their composite at `offset`. */
-    drawLayers:(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult>=>inOrder(()=>{frameUnits=undefined;return renderLayers(layers,width,height,offset,check);},
+    drawLayers:(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean,accept?:()=>boolean):Promise<DrawResult>=>inOrder(()=>{
+      // Acceptance can change while this call waits behind a newer frame or GPU
+      // work. Check before replacing any textures; the caller asks Lean to decide.
+      if(accept&&!accept()){frameUnits=0;return Promise.resolve(notPresented());}
+      frameUnits=undefined;return renderLayers(layers,width,height,offset,check);
+    },
       ()=>frameUnits??sceneCost(layers.page as never)+sceneCost(layers.chrome as never)+width*height/1e6,check),
     /** Present the layers already drawn at another offset: no Lean call and no scene draw. */
     shift:(offset:number,check:boolean,expected?:HTMLLayers):Promise<DrawResult>=>inOrder(async()=>{

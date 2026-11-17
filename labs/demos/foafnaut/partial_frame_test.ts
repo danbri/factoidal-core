@@ -6,6 +6,9 @@
 // Run: deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi --allow-read --allow-ffi partial_frame_test.ts
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLLayers} from "./native_html_engine.ts";
+import {startCompileWorker} from "./native_html_compile.ts";
+const workerMode=Deno.args.includes("--presenter=worker");
+
 import {prepareHTML,loadFontFile} from "./native_html_document.ts";
 
 const library=Deno.env.get("WEB_RENDER_DYLIB")??new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
@@ -25,9 +28,16 @@ const sameBytes=(a:ArrayLike<number>,b:ArrayLike<number>,what:string)=>{
   for(let i=0;i<a.length;i++)if(!(a[i]===b[i]||(Number.isNaN(a[i])&&Number.isNaN(b[i]))))assert.fail(`${what}: differs at ${i}: ${a[i]} vs ${b[i]}`);
 };
 
-Deno.test({name:"partial compile counts and bytes",ignore:noLibrary,sanitizeResources:false,sanitizeOps:false,fn:async()=>{
+Deno.test({name:`partial compile counts and bytes (${workerMode?"worker":"inline"})`,ignore:noLibrary,sanitizeResources:false,sanitizeOps:false,fn:async()=>{
   const engine=await loadHTML(library);
   await loadFontFile(engine,new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname,"Noto Sans");
+  const worker=workerMode?await startCompileWorker(undefined,library,false,true):undefined;
+  // All calls are awaited: the serial preparation below never overlaps a worker call.
+  const compileLayers=async(...args:Parameters<typeof engine.compileLayers>)=>worker
+    ? (await worker.compileLayers(...args)).layers : engine.compileLayers(...args);
+  const frameWork=async(reset:boolean)=>worker
+    ? (await worker.call("frameWork",reset)).value as ReturnType<typeof engine.frameWork> : engine.frameWork(reset);
+  try{
   for(const n of [40,800]){
     const html=page(n);
     const doc=await prepareHTML(engine as never,url,undefined,html);
@@ -36,11 +46,11 @@ Deno.test({name:"partial compile counts and bytes",ignore:noLibrary,sanitizeReso
     const base=doc.request(800,600).options;
     const at=(x:number,extra:Record<string,unknown>={})=>({...base,shell,checks:false,commands:[{op:"setAttribute",nodeId:mover,name:"transform",value:`translate(${x} 0)`}],...extra});
     const damageOf=(l:HTMLLayers)=>(l.page as unknown as {damage?:{id:number;base:number|null;rects:number[][]|null}}).damage;
-    engine.compileLayers(doc.source,800,600,at(0));
-    engine.compileLayers(doc.source,800,600,at(5));
-    engine.frameWork(true);
-    const frame=engine.compileLayers(doc.source,800,600,at(90));
-    const work=engine.frameWork(true)!;
+    await compileLayers(doc.source,800,600,at(0));
+    await compileLayers(doc.source,800,600,at(5));
+    await frameWork(true);
+    const frame=await compileLayers(doc.source,800,600,at(90));
+    const work=(await frameWork(true))!;
     const d=damageOf(frame);
     assert(d,"the answer has a damage record");
     assert(d.base!==null&&d.rects,"damage against the last frame");
@@ -55,39 +65,47 @@ Deno.test({name:"partial compile counts and bytes",ignore:noLibrary,sanitizeReso
     // geometry, and the bytes are those of the plain compile (below).
     const group=nodes.find(x=>x.attributes.id==="group")!.id;
     const both=(x:number,g:number,extra:Record<string,unknown>={})=>({...base,shell,checks:false,commands:[{op:"setAttribute",nodeId:mover,name:"transform",value:`translate(${x} 0)`},{op:"setAttribute",nodeId:group,name:"transform",value:`translate(${g} 3)`}],...extra});
-    engine.compileLayers(doc.source,800,600,both(90,0));
-    engine.compileLayers(doc.source,800,600,both(90,7));
-    engine.frameWork(true);
-    const shifted=engine.compileLayers(doc.source,800,600,both(90,31));
-    const groupWork=engine.frameWork(true)!;
+    await compileLayers(doc.source,800,600,both(90,0));
+    await compileLayers(doc.source,800,600,both(90,7));
+    await frameWork(true);
+    const shifted=await compileLayers(doc.source,800,600,both(90,31));
+    const groupWork=(await frameWork(true))!;
     assert.equal(groupWork.recompiled,0,`group move flattens nothing: ${JSON.stringify(groupWork)}`);
     assert.equal(groupWork.moved,3,`group move: ${JSON.stringify(groupWork)}`);
-    const groupPlain=engine.compileLayers(doc.source,800,600,both(90,31,{retained:false}));
+    const groupPlain=await compileLayers(doc.source,800,600,both(90,31,{retained:false}));
     sameBytes(shifted.page.data,groupPlain.page.data,`group move data n=${n}`);
     sameBytes(shifted.page.tiles as ArrayLike<number>,groupPlain.page.tiles as ArrayLike<number>,`group move tiles n=${n}`);
     // The same frame again: the kept answer, nothing to draw.
     // (The frames of the group move above took the kept slots, so `frame` is compiled once more.)
-    const first=engine.compileLayers(doc.source,800,600,at(90));
-    engine.frameWork(true);
-    const again=engine.compileLayers(doc.source,800,600,at(90));
+    const first=await compileLayers(doc.source,800,600,at(90));
+    await frameWork(true);
+    const again=await compileLayers(doc.source,800,600,at(90));
     assert.equal(damageOf(again)!.id,damageOf(first)!.id,"a frame with no change answers the same id");
-    assert.equal(engine.frameWork(true)!.recompiled,0,"a frame with no change compiles nothing");
+    assert.equal((await frameWork(true))!.recompiled,0,"a frame with no change compiles nothing");
     // The bytes are those of the plain compile of the same frame.
-    const plain=engine.compileLayers(doc.source,800,600,at(90,{retained:false}));
+    const plain=await compileLayers(doc.source,800,600,at(90,{retained:false}));
     assert(damageOf(plain)===undefined,"the plain path answers no damage");
     assert.equal(frame.page.primitiveCount,plain.page.primitiveCount);
     sameBytes(frame.page.data,plain.page.data,`data n=${n}`);
     sameBytes(frame.page.tiles as ArrayLike<number>,plain.page.tiles as ArrayLike<number>,`tiles n=${n}`);
   }
+  }finally{worker?.terminate();}
 }});
 
 // A text change that lays the page out again (issue 450): the layout makes every primitive a
 // new object; those equal in value to the last frame's are kept (WebPaint.samePrimitive), so a
 // changed digit compiles a few primitives, not the page, and the bytes are those of the plain
 // compile.
-Deno.test({name:"a relayout keeps the primitives it did not change",ignore:noLibrary,sanitizeResources:false,sanitizeOps:false,fn:async()=>{
+Deno.test({name:`a relayout keeps the primitives it did not change (${workerMode?"worker":"inline"})`,ignore:noLibrary,sanitizeResources:false,sanitizeOps:false,fn:async()=>{
   const engine=await loadHTML(library);
   await loadFontFile(engine,new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname,"Noto Sans");
+  const worker=workerMode?await startCompileWorker(undefined,library,false,true):undefined;
+  // All calls are awaited: the serial preparation below never overlaps a worker call.
+  const compileLayers=async(...args:Parameters<typeof engine.compileLayers>)=>worker
+    ? (await worker.compileLayers(...args)).layers : engine.compileLayers(...args);
+  const frameWork=async(reset:boolean)=>worker
+    ? (await worker.call("frameWork",reset)).value as ReturnType<typeof engine.frameWork> : engine.frameWork(reset);
+  try{
   const rows=Array.from({length:200},(_,i)=>`<p style="margin:2px;border:1px solid #888">Row ${i} of a page that does not change</p>`).join("");
   const html=`<!doctype html><body style="margin:0"><p id="tick">0</p>${rows}</body>`;
   const doc=await prepareHTML(engine as never,url,undefined,html);
@@ -97,15 +115,16 @@ Deno.test({name:"a relayout keeps the primitives it did not change",ignore:noLib
   const base=doc.request(800,600).options;
   const at=(digit:number,extra:Record<string,unknown>={})=>({...base,shell,checks:false,
     commands:[{op:"replaceData",nodeId:tick,offset:0,count:1,value:String(digit)}],...extra});
-  engine.compileLayers(doc.source,800,600,at(1));
-  engine.compileLayers(doc.source,800,600,at(2));
-  engine.frameWork(true);
-  const frame=engine.compileLayers(doc.source,800,600,at(3));
-  const work=engine.frameWork(true)!;
-  const plain=engine.compileLayers(doc.source,800,600,at(3,{retained:false}));
+  await compileLayers(doc.source,800,600,at(1));
+  await compileLayers(doc.source,800,600,at(2));
+  await frameWork(true);
+  const frame=await compileLayers(doc.source,800,600,at(3));
+  const work=(await frameWork(true))!;
+  const plain=await compileLayers(doc.source,800,600,at(3,{retained:false}));
   assert.equal(work.layouts,1,`the text change lays out: ${JSON.stringify(work)}`);
   assert(frame.page.primitiveCount>=60,`a page with many primitives: ${frame.page.primitiveCount}`);
   assert(work.recompiled!+work.moved!<=4,`a changed digit compiles a few primitives: ${JSON.stringify(work)}`);
   sameBytes(frame.page.data,plain.page.data,"relayout data");
   sameBytes(frame.page.tiles as ArrayLike<number>,plain.page.tiles as ArrayLike<number>,"relayout tiles");
+  }finally{worker?.terminate();}
 }});

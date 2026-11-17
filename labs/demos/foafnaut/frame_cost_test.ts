@@ -2,14 +2,35 @@
 // the hosts' frame scheduling (formal/lean4/L4Factoidal/FrameCost) gives, for 80 event
 // sequences, each decision, its cost, the band Lean drew and the prefetch its rule asks
 // for next: fixtures/frame_cost_cases.json, the output of `lake exe frame-cost-cases`.
-// This test replays the events through the host functions that decide in run_html.ts
-// (layer_compositor.keeps, scroll_prefetch.stateKey, sameState, canSwap, prefetchTarget),
+// This test replays the events through the selected presenter and host scheduling
+// functions (stateKey, sameState, prefetchTarget), retaining the inline oracle,
 // taking each band from Lean's answer as the host does, and fails on any decision, cost
 // or prefetch target that differs. It then checks the bounds of the section `Ratchet` of
 // FrameCost/Theorems.lean on every case, so a slow path fails here as well as in Lean.
-import {keeps} from "./layer_compositor.ts";
+import {clampOffset,keeps} from "./layer_compositor.ts";
+import {loadPresenter} from "./native_html_engine.ts";
 import {stateKey,sameState,canSwap,keepReach,prefetchTarget,PREFETCH_MARGIN_ROWS,type Band,type StateKey} from "./scroll_prefetch.ts";
 const assert=(ok:boolean,message:string)=>{if(!ok)throw new Error(message);};
+
+// --presenter=inline is the unchanged host-arithmetic oracle. Worker mode calls
+// the pure Wasm presenter entry, as the worker host does on its main thread;
+// this model test does not start a layout worker or measure its scheduling.
+const presenterMode=Deno.args.find(arg=>arg.startsWith("--presenter="))?.slice("--presenter=".length)??"inline";
+if(presenterMode!=="inline"&&presenterMode!=="worker")throw new Error("Use --presenter=inline or --presenter=worker");
+const presenter=presenterMode==="worker"?await loadPresenter():undefined;
+function placement(band:Band,scroll:number){
+  if(!presenter)return {...clampOffset(band as Parameters<typeof clampOffset>[0],scroll),kept:keeps(band as Parameters<typeof keeps>[0],scroll)};
+  const {bandTop,bandHeight,keepFrom,keepTo}=band;
+  const answer=presenter({view:band.view,scroll,shown:{id:1,bandTop,bandHeight,keepFrom,keepTo},asked:null},{kind:"vsync"});
+  if(!answer.placement)throw new Error("Lean presenter returned no placement for a shown frame");
+  const output=answer.outputs[0];
+  assert(answer.outputs.length===1&&output.kind==="present"&&output.frameId===1&&output.offset===answer.placement.offset,"present output agrees with placement");
+  return answer.placement;
+}
+function swapAt(shown:Band,prefetched:{key:StateKey;band:Band},now:StateKey,scroll:number){
+  if(!presenter)return canSwap(shown,prefetched,now,scroll);
+  return !placement(shown,scroll).kept&&placement(prefetched.band,scroll).kept&&sameState(prefetched.key,now);
+}
 
 type LeanBand=[number,number,number,number]|null;
 type Step={event:[string,...number[]];decision:string;cost:[number,number,number];scroll:number;view:number;limit:number;
@@ -66,10 +87,10 @@ function replay(c:Case):{decision:string;cost:[number,number,number];due:[number
     else if(kind==="paintOnly")paint=a;
     const now=state(key,paint,scroll),view=key.height-key.top;
     const bytes=(band:Band)=>key.width*band.bandHeight*4;
-    // canShift() && keeps(...): the composite moves, no Lean call.
-    if(shown&&sameState(shown.state,now)&&keeps(shown.band as Parameters<typeof keeps>[0],scroll)){out.push({decision:"shift",cost:[0,0,0],due:due()});continue;}
+    // canShift() and the selected presenter path: composite only, no layout call.
+    if(shown&&sameState(shown.state,now)&&placement(shown.band,scroll).kept){out.push({decision:"shift",cost:[0,0,0],due:due()});continue;}
     // swapReady(): a prefetched band of this state keeps the scroll.
-    if(shown&&sameState(shown.state,now)&&prefetched&&canSwap(shown.band,prefetched,now,scroll)){
+    if(shown&&sameState(shown.state,now)&&prefetched&&swapAt(shown.band,prefetched,now,scroll)){
       const swapped=prefetched;shown={state:swapped.key,band:swapped.band};prefetched=undefined;
       out.push({decision:"swap",cost:[0,0,bytes(swapped.band)],due:due()});continue;
     }
@@ -86,6 +107,18 @@ function replay(c:Case):{decision:string;cost:[number,number,number];due:[number
 Deno.test("the fixture is Lean's: 80 cases of 40 events, four layouts kept",()=>{
   assert(cases.length===80,`cases: ${cases.length}`);
   for(const c of cases){assert(c.steps.length===40,`seed ${c.seed}: ${c.steps.length} steps`);assert(c.slots===4,`slots ${c.slots}`);}
+});
+
+Deno.test(`presenter ${presenterMode}: every fixture band has stage-0 placement at its edges`,()=>{
+  for(const c of cases)for(const step of c.steps){
+    if(!step.shown)continue;
+    const band=place(step.shown,step.view);
+    for(const scroll of [0,band.bandTop,band.keepFrom,band.keepTo,band.bandTop+band.bandHeight-band.view+1]){
+      const got=placement(band,scroll),expected=clampOffset(band as Parameters<typeof clampOffset>[0],scroll);
+      assert(got.offset===expected.offset&&got.exact===expected.exact,`seed ${c.seed}: placement at ${scroll}`);
+      assert(got.kept===keeps(band as Parameters<typeof keeps>[0],scroll),`seed ${c.seed}: kept at ${scroll}`);
+    }
+  }
 });
 
 Deno.test("stateKey leaves the scroll out and keeps the pointer state, as a band shows one",()=>{

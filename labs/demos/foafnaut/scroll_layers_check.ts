@@ -9,15 +9,22 @@
 // alone (the path with layers), each to the end of the GPU work.
 //
 // deno run --unstable-webgpu --unstable-ffi --allow-read --allow-ffi scroll_layers_check.ts
-//   [--native-engine DYLIB] [--bench] [--html FILE] [--bitmap-font]
-import {loadHTML,type HTMLArtifact} from "./native_html_engine.ts";
+//   [--native-engine DYLIB] [--presenter=inline|worker] [--bench] [--html FILE] [--bitmap-font]
+// Worker mode compares worker CPU layers through the shared frame slot with the serial
+// single-frame GPU oracle. Every worker call finishes before the next serial engine call.
+import {loadHTML,loadPresenter,type HTMLArtifact,type HTMLLayers} from "./native_html_engine.ts";
 import {inputURL,loadFontFile,prepareHTML} from "./native_html_document.ts";
 import {createLayerRenderer,clampOffset,keeps} from "./layer_compositor.ts";
+import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
+import {createPresenter} from "./presenter_host.ts";
 
 const args=[...Deno.args];
+let presenterMode:"inline"|"worker"="inline";
 let nativeEngine:string|undefined,bench=false,bitmap=false,page=new URL("./pages/status.html",import.meta.url).pathname;
 while(args.length){const arg=args.shift();
   if(arg==="--native-engine")nativeEngine=args.shift();
+  else if(arg==="--presenter=inline")presenterMode="inline";
+  else if(arg==="--presenter=worker")presenterMode="worker";
   else if(arg==="--bench")bench=true;
   else if(arg==="--bitmap-font")bitmap=true;
   else if(arg==="--html")page=args.shift()!;
@@ -26,9 +33,14 @@ while(args.length){const arg=args.shift();
 const adapter=await navigator.gpu?.requestAdapter();
 if(!adapter){console.log("NOT RUN: scroll_layers_check.ts needs a GPU adapter");Deno.exit(0);}
 const device=await adapter.requestDevice();
+// Complete the pure entry's initialisation and serial document preparation before the
+// worker loads this same dylib. Its document state must never be called concurrently.
+const presenterCall=presenterMode==="worker"?await loadPresenter(nativeEngine):undefined;
 const engine=await loadHTML(nativeEngine);
-if(!bitmap)await loadFontFile(engine,new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname,"Noto Sans");
+const font={path:new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname,family:"Noto Sans"};
+if(!bitmap)await loadFontFile(engine,font.path,font.family);
 const doc=await prepareHTML(engine,inputURL(page,true));
+const pressDoc=bench?undefined:await prepareHTML(engine,inputURL(new URL("./pages/index.html",import.meta.url).pathname,true));
 const W=1600,H=1000,scale=2,format=navigator.gpu.getPreferredCanvasFormat();
 const shell=(scroll:number)=>({tabs:[{title:doc.title??""}],active:0,address:doc.url,cursor:0,focused:false,canBack:false,canForward:false,
   loading:false,scale,theme:"next",pages:1,scroll});
@@ -43,8 +55,21 @@ const ms=(a:number,b:number)=>Math.round((b-a)*10)/10;
 const first:HTMLArtifact=engine.compile(doc.source,W,H,options(0,false));
 const bottom=Math.max(0,...((first.webRender.boxes as number[][]|undefined)??[]).map(box=>box[2]+box[4]));
 const limit=Math.max(0,bottom-H+60*scale);
-console.log(JSON.stringify({type:"scroll-layers-page",url:doc.url,engine:nativeEngine?"native":"wasm",format,width:W,height:H,limit}));
+console.log(JSON.stringify({type:"scroll-layers-page",presenter:presenterMode,url:doc.url,engine:nativeEngine?"native":"wasm",format,width:W,height:H,limit}));
 
+let worker:CompileClient|undefined;
+const presenter=presenterCall?createPresenter(presenterCall,scroll=>worker?.requestBand(scroll)):undefined;
+const placement=(layers:HTMLLayers["layers"],scroll:number)=>presenter?presenter.show(layers,scroll):
+  {...clampOffset(layers,scroll),kept:keeps(layers,scroll)};
+const compileLayers=async(source:string,options:Record<string,unknown>):Promise<HTMLLayers>=>{
+  if(!worker)return engine.compileLayers(source,W,H,options);
+  const {layers}=await worker.compileLayers(source,W,H,options);
+  if(!(layers.chrome.pixels instanceof Uint8Array)||!(layers.page.pixels instanceof Uint8Array))
+    throw new Error("worker presenter test requires CPU pixels for both layers");
+  return layers;
+};
+try{
+if(presenterMode==="worker")worker=await startCompileWorker(bitmap?undefined:font,nativeEngine,false,true);
 if(!bench){
   // Lean's scene shader takes 16 samples at an edge only in a scene of at most this many
   // storage rows (Graphics.lean pixelSampleRefineRowLimit). A band and one frame can fall on
@@ -56,7 +81,7 @@ if(!bench){
   const ROUNDING_PIXELS=32;
   let compared=0,failed=0,expected=0,chromeExpected=0;
   for(const frameScroll of [0,Math.min(limit,1200)]){
-    const layers=engine.compileLayers(doc.source,W,H,options(frameScroll,true));
+    const layers=await compileLayers(doc.source,options(frameScroll,true));
     await renderer.drawLayers(layers,true);
     const place=layers.layers;
     const scrolls=[...new Set([place.keepFrom,frameScroll,frameScroll+120,place.keepTo,place.bandTop+place.bandHeight-place.view,frameScroll-200])]
@@ -64,7 +89,7 @@ if(!bench){
     for(const scroll of scrolls){
       const one=engine.compile(doc.source,W,H,options(scroll,true));
       const want=await renderer.drawSingle(one,single,true);
-      const {offset,exact}=clampOffset(place,scroll);
+      const {offset,exact}=placement(place,scroll);
       if(!exact)throw new Error(`scroll ${scroll} is not in the band`);
       const got=await renderer.composite(composed,W,H,offset,true);
       compared++;
@@ -87,12 +112,12 @@ if(!bench){
       if(verdict==="fail"||verdict==="stale-expected-failure"||chromeVerdict==="fail")failed++;
       if(verdict==="expected-failure-1269")expected++;
       if(chromeVerdict==="expected-failure-1269")chromeExpected++;
-      console.log(JSON.stringify({type:"scroll-layers-compare",frameScroll,bandTop:place.bandTop,scroll,offset,verdict,chromeVerdict,chromePixels,pagePixels,sameBytes:want.hash===got.hash&&differ===0,
+      console.log(JSON.stringify({type:"scroll-layers-compare",presenter:presenterMode,frameScroll,bandTop:place.bandTop,scroll,offset,verdict,chromeVerdict,chromePixels,pagePixels,sameBytes:want.hash===got.hash&&differ===0,
         frameHash:want.hash,compositeHash:got.hash,differentPixels:pixels.size,largestDifference:worst,
         rows:{frame:one.data.length/4,page:layers.page.data.length/4,chrome:layers.chrome.data.length/4}}));
     }
   }
-  console.log(`scroll layers: ${compared-failed-expected} pass, ${failed} fail, ${expected} expected failures (https://github.com/danbri/factoidal/issues/1269) (out of ${compared} scrolls); chrome edges by the other sampling rule (1269): ${chromeExpected}`);
+  console.log(`scroll layers: ${compared-failed-expected} pass, ${failed} fail, ${expected} expected failures (https://github.com/danbri/factoidal/issues/1269) (out of ${compared} scrolls); chrome edges by the other sampling rule (1269): ${chromeExpected}; presenter=${presenterMode}`);
   if(!compared||compared===expected||failed)Deno.exitCode=1;
 
   // Press (issue 1268). (1) The composite with Lean's press rectangles of a link: the pixels in
@@ -101,17 +126,17 @@ if(!bench){
   // and only inside the button's box.
   let pressFailed=0;
   // The status page has no link: the press checks use the index page.
-  const pressDoc=await prepareHTML(engine,inputURL(new URL("./pages/index.html",import.meta.url).pathname,true));
+  if(!pressDoc)throw new Error("press fixture was not prepared");
   const pressOptions=(checks:boolean,extra:Record<string,unknown>={})=>({...pressDoc.request(W,H).options,textScalePercent:150,shell:{...shell(0),address:pressDoc.url},...(checks?{}:{checks:false}),...extra});
-  const layers=engine.compileLayers(pressDoc.source,W,H,pressOptions(true));
+  const layers=await compileLayers(pressDoc.source,pressOptions(true));
   await renderer.drawLayers(layers,true);
   renderer.setPress(undefined);
-  const idle=await renderer.composite(composed,W,H,0,true);
+  const idle=await renderer.composite(composed,W,H,placement(layers.layers,0).offset,true);
   const top=layers.layers.top,links=layers.page.webRender.links as unknown[][];
   const link=links[0] as number[];
   const answer=engine.press({...shell(0),address:pressDoc.url},Math.round(link[2]+link[4]/2),Math.round(link[3]+link[5]/2+top),W,Math.round(link[3]+link[5]/2),links);
   renderer.setPress(answer.rects);
-  const down=await renderer.composite(composed,W,H,0,true);
+  const down=await renderer.composite(composed,W,H,placement(layers.layers,0).offset,true);
   renderer.setPress(undefined);
   const inside=(x:number,y:number)=>answer.rects.some(([rx,ry,rw,rh])=>x>=rx&&x<rx+rw&&y>=ry&&y<ry+rh);
   let darkened=0,wrong=0;
@@ -124,11 +149,11 @@ if(!bench){
     if(inside(x,y))darkened++;
   }
   if(!answer.rects.length||!darkened||wrong)pressFailed++;
-  console.log(JSON.stringify({type:"press-composite",href:answer.href,rects:answer.rects,darkenedPixels:darkened,wrongChannels:wrong,verdict:answer.rects.length&&darkened&&!wrong?"pass":"fail"}));
+  console.log(JSON.stringify({type:"press-composite",presenter:presenterMode,href:answer.href,rects:answer.rects,darkenedPixels:darkened,wrongChannels:wrong,verdict:answer.rects.length&&darkened&&!wrong?"pass":"fail"}));
   const box=[64*scale,30*scale,28*scale,28*scale];
-  const raised=engine.compileLayers(pressDoc.source,W,H,pressOptions(true,{shell:{...shell(0),address:pressDoc.url,pressed:"reload"}}));
+  const raised=await compileLayers(pressDoc.source,pressOptions(true,{shell:{...shell(0),address:pressDoc.url,pressed:"reload"}}));
   await renderer.drawLayers(raised,true);
-  const pressedFrame=await renderer.composite(composed,W,H,0,true);
+  const pressedFrame=await renderer.composite(composed,W,H,placement(raised.layers,0).offset,true);
   let changed=0,outside=0;
   for(let i=0;i<idle.pixels!.length;i+=4){
     if(idle.pixels![i]===pressedFrame.pixels![i]&&idle.pixels![i+1]===pressedFrame.pixels![i+1]&&idle.pixels![i+2]===pressedFrame.pixels![i+2])continue;
@@ -136,14 +161,14 @@ if(!bench){
     if(x>=box[0]&&x<box[0]+box[2]&&y>=box[1]&&y<box[1]+box[3])changed++;else outside++;
   }
   if(!changed||outside)pressFailed++;
-  console.log(JSON.stringify({type:"press-frame",control:"reload",box,changedPixels:changed,changedOutside:outside,verdict:changed&&!outside?"pass":"fail"}));
-  console.log(`press: ${2-pressFailed} pass, ${pressFailed} fail (out of 2)`);
+  console.log(JSON.stringify({type:"press-frame",presenter:presenterMode,control:"reload",box,changedPixels:changed,changedOutside:outside,verdict:changed&&!outside?"pass":"fail"}));
+  console.log(`press: ${2-pressFailed} pass, ${pressFailed} fail (out of 2); presenter=${presenterMode}`);
   if(pressFailed)Deno.exitCode=1;
 } else {
   // Warm both paths once: plans, pipelines and the kept layout.
   await renderer.drawSingle(engine.compile(doc.source,W,H,options(0,false)),single,false);await done();
-  let layers=engine.compileLayers(doc.source,W,H,options(0,false));await renderer.drawLayers(layers,false);
-  await renderer.composite(composed,W,H,0,false);await done();
+  let layers=await compileLayers(doc.source,options(0,false));await renderer.drawLayers(layers,false);
+  await renderer.composite(composed,W,H,placement(layers.layers,0).offset,false);await done();
   const leanMs:number[]=[],drawSubmitMs:number[]=[],compositeSubmitMs:number[]=[],emptyWaitMs:number[]=[];
   const before:number[]=[],after:number[]=[],refresh:{step:number;ms:number}[]=[];
   let scroll=0;
@@ -156,24 +181,27 @@ if(!bench){
     // With layers: the composite at the new offset. A new band is made when Lean's keep range
     // ends; in the window host that runs in the worker while composites go on, so it is timed apart.
     const b=performance.now();
-    const {offset}=clampOffset(layers.layers,scroll);
+    const {offset,kept}=placement(layers.layers,scroll);
     await renderer.composite(composed,W,H,offset,false);const sent=performance.now();await done();
     after.push(ms(b,performance.now()));compositeSubmitMs.push(ms(b,sent));
     const e=performance.now();device.queue.submit([]);await done();emptyWaitMs.push(ms(e,performance.now()));
-    if(!keeps(layers.layers,scroll)){
+    if(!kept){
       const c=performance.now();
-      layers=engine.compileLayers(doc.source,W,H,options(scroll,false));await renderer.drawLayers(layers,false);await done();
+      layers=await compileLayers(doc.source,options(scroll,false));await renderer.drawLayers(layers,false);await done();
       refresh.push({step,ms:ms(c,performance.now())});
     }
   }
   // GPU time with the wait's own delay taken out: 20 passes, one wait, less one empty wait.
   const batch=async(draw:()=>Promise<unknown>)=>{const t=performance.now();for(let i=0;i<20;i++)await draw();await done();return Math.round((performance.now()-t-emptyWaitMs[0])/20*100)/100;};
-  const compositeBatchMs=await batch(()=>renderer.composite(composed,W,H,clampOffset(layers.layers,scroll).offset,false));
+  const compositeBatchMs=await batch(()=>renderer.composite(composed,W,H,placement(layers.layers,scroll).offset,false));
   const lastFrame=engine.compile(doc.source,W,H,options(scroll,false));
   const frameDrawBatchMs=await batch(()=>renderer.drawSingle(lastFrame,single,false));
   const p=(v:number[],q:number)=>[...v].sort((x,y)=>x-y)[Math.min(v.length-1,Math.ceil(q*v.length)-1)];
-  console.log(JSON.stringify({type:"scroll-layers-bench",engine:nativeEngine?"native":"wasm",steps:20,stepPixels:120,
+  console.log(JSON.stringify({type:"scroll-layers-bench",presenter:presenterMode,engine:nativeEngine?"native":"wasm",steps:20,stepPixels:120,
     frameMs:before,compositeMs:after,frameP50:p(before,0.5),compositeP50:p(after,0.5),compositeMax:Math.max(...after),refresh,
     leanP50:p(leanMs,0.5),frameDrawSubmitP50:p(drawSubmitMs,0.5),compositeSubmitP50:p(compositeSubmitMs,0.5),compositeSubmitMax:Math.max(...compositeSubmitMs),emptySubmitWaitP50:p(emptyWaitMs,0.5),compositeGpuMsPerPass:compositeBatchMs,frameDrawGpuMsPerPass:frameDrawBatchMs}));
 }
-renderer.dispose();single.destroy();composed.destroy();
+}finally{
+  worker?.terminate();
+  renderer.dispose();single.destroy();composed.destroy();
+}

@@ -222,7 +222,7 @@ async function main() {
   // Initialise the pure native entry before the worker enters the same dylib.
   // Inline keeps the synchronous stage-0 engine and arithmetic as the oracle.
   const presenterCall=presenterMode==="worker"&&!check?await loadPresenter(nativeEngine):undefined;
-  const engine=timed(await loadHTML(presenterMode==="inline"?nativeEngine:undefined));
+  const engine=timed(await loadHTML(presenterMode==="inline"||check?nativeEngine:undefined));
   const presenter=presenterCall?createPresenter(presenterCall,y=>worker?.requestBand(y)):undefined;
   const clampOffset=(place:HTMLLayers["layers"],at:number)=>presenter?presenter.inspect(place,at):inlineOffset(place,at);
   const keeps=(place:HTMLLayers["layers"],at:number)=>presenter?presenter.inspect(place,at).kept:inlineKeeps(place,at);
@@ -1574,7 +1574,7 @@ async function main() {
       // A tab chosen during the draw must not be replaced by this page. A page that a navigation
       // prepares during the draw is not a reason to drop the frame: see the candidate check below.
       const shownBefore=document;
-      const result=nextLayers?await session!.drawLayers(nextLayers,sentWidth,sentHeight,place!.offset,everyFrame):await session!.draw(next,everyFrame);
+      const result=nextLayers?await session!.drawLayers(nextLayers,sentWidth,sentHeight,place!.offset,everyFrame,presenter?()=>presenter.accepts(nextLayers!.layers):undefined):await session!.draw(next,everyFrame);
       if(document!==shownBefore){awaiting=[...stamps,...awaiting];dirty=true;return;}
       if(carried&&carried===pressed){
         if(result.presented){carried.framed=true;pressFrameMs.push(result.presentedAt-carried.at);
@@ -1608,7 +1608,7 @@ async function main() {
           if(latest.offset!==place!.offset)shiftPending=true;
         }
         // Scrolls taken while Lean worked: shown now if the band holds them, else after the next band.
-        if(place!.exact){settle(awaitingShift,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingShift=[];awaitingBand=[];}
+        if(place!.exact&&scroll===scrollNow){settle(awaitingShift,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingShift=[];awaitingBand=[];}
         if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
         clock.has=!!nextLayers.layers.animations;clock.running=!!nextLayers.layers.animating;
         if(clock.running){animationDue=true;animationFrames++;}
@@ -1657,7 +1657,7 @@ async function main() {
         const {layers}=await worker.compileLayers(shownRequest.request.source,shownRequest.width,shownRequest.height,options);
         if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document)return;
         const {offset}=clampOffset(layers.layers,scroll);
-        result=await session!.drawLayers(layers,shownRequest.width,shownRequest.height,offset,true);
+        result=await session!.drawLayers(layers,shownRequest.width,shownRequest.height,offset,true,presenter?()=>presenter.accepts(layers.layers):undefined);
         if(result.presented)recordPresented({...shownRequest,request:{...shownRequest.request,options}},layers.layers.bandTop+offset);
         if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document){dirty=true;return;}
         if(result.presented){current={...shownRequest,request:{...shownRequest.request,options},layers};frame=layers.page;shownOffset=offset;presenter?.show(layers.layers,scroll);}
@@ -1915,22 +1915,22 @@ async function main() {
         if(!swap&&!keeps(current.layers.layers,scroll)&&!bandComing())dirty=true;
         const shown=swap?{...swap.record,layers:swap.layers}:current,shownLayers=shown.layers;
         const start=performance.now(),{offset,exact}=presenter&&!swap?presenter.show(shownLayers.layers,scroll):clampOffset(shownLayers.layers,scroll),at=scroll;
-        shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame):session!.shift(offset,everyFrame,presenter?shownLayers:undefined)).then(result=>{
+        shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame,presenter?()=>presenter.accepts(swap.layers.layers):undefined):session!.shift(offset,everyFrame,presenter?shownLayers:undefined)).then(result=>{
           if(swap&&document!==swap.record.document){awaitingShift=[...stamps,...awaitingShift];dirty=true;return;}
           const finished=performance.now();
           trace("native-html-scroll",{frame:frameNumber,scroll:at,offset,exact,swap:!!swap,totalMs:ms(start,finished),drawMs:Math.round(result.drawMs*10)/10,
             presented:result.presented,checked:result.checked,pixelHash:result.checked?result.pixelHash:null,...(swap?{bandTop:swap.layers.layers.bandTop,target:swap.target}:{})});
-          if(swap){
+          if(swap&&(!presenter||result.presented)){
             // The textures hold the prefetched layers now, presented or not.
-            current={...swap.record,layers:swap.layers};presenter?.show(swap.layers.layers,at);
+            current={...swap.record,layers:swap.layers};presenter?.show(swap.layers.layers,scroll);
             frame=swap.layers.page;lastRequest=swap.record;if(prefetched===swap)prefetched=undefined;
           }
-          if(!result.presented){awaitingShift=[...stamps,...awaitingShift];shiftPending=true;return;}
+          if(!result.presented){awaitingShift=[...stamps,...awaitingShift];shiftPending=true;if(swap)dirty=true;return;}
           if(swap)prefetchStats.swaps++;
           shownOffset=offset;shifts.push(finished-start);lastActivity=Math.max(lastActivity,finished);if(result.checked)checkedFrames++;
           recordPresented(shown,shownLayers.layers.bandTop+offset);
           // A scroll past the band is not fully shown: it waits for the next band.
-          if(exact){settle(stamps,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingBand=[];}
+          if(exact){settle(stamps,result.presentedAt);if(scroll===at){settle(awaitingBand,result.presentedAt);awaitingBand=[];}}
           else awaitingBand=[...awaitingBand,...stamps];
         }).catch(error=>{fatal=error;}).finally(()=>{shifting=undefined;});
       }

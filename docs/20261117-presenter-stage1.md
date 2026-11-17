@@ -38,3 +38,11 @@ byte parity, publication ordering and presenter calls during a real BubblePopJS 
 They await rebuilt engines. Publication IDs are preserved through the host; stale
 prefetches are checked by Lean before installation. Queued shifts check that their
 textures remain installed before presenting.
+
+Follow-up concurrency review found a final-request wake race and a queued old-prefetch
+installation race. Wake generations now trigger another read after an older reply; two
+deterministic tests cover final publication and termination. Draw acceptance runs inside
+the GPU queue before texture changes, using the pure Lean presenter. Frame decode errors
+reject the waiting call. Scroll latency is not settled against a frame drawn before the
+latest requested scroll. The test script now schedules inline/worker variants of cost,
+prefetch, partial-frame, scroll-pixel and sweep checks; these await rebuilt engines.

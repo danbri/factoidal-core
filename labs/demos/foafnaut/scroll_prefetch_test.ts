@@ -1,6 +1,29 @@
-// The scroll prefetch rules (scroll_prefetch.ts), with no window and no engine.
-import {keepReach,trackMotion,prefetchTarget,stateKey,sameState,canSwap,holdForPrefetch,MOTION_GAP_MS,type Band,type Motion} from "./scroll_prefetch.ts";
+// Scroll prefetch rules, with no window. --presenter=worker also checks the
+// pure Wasm presenter entry; it does not start a layout worker.
+import {clampOffset,keeps} from "./layer_compositor.ts";
+import {loadPresenter} from "./native_html_engine.ts";
+import {keepReach,trackMotion,prefetchTarget,stateKey,sameState,canSwap,holdForPrefetch,MOTION_GAP_MS,type Band,type Motion,type StateKey} from "./scroll_prefetch.ts";
 const assert=(ok:boolean,message:string)=>{if(!ok)throw new Error(message);};
+
+// --presenter=inline is the unchanged host-arithmetic oracle. Worker mode calls
+// the pure Wasm presenter entry, as the worker host does on its main thread;
+// this model test does not start a layout worker or measure its scheduling.
+const presenterMode=Deno.args.find(arg=>arg.startsWith("--presenter="))?.slice("--presenter=".length)??"inline";
+if(presenterMode!=="inline"&&presenterMode!=="worker")throw new Error("Use --presenter=inline or --presenter=worker");
+const presenter=presenterMode==="worker"?await loadPresenter():undefined;
+function placement(band:Band,scroll:number){
+  if(!presenter)return {...clampOffset(band as Parameters<typeof clampOffset>[0],scroll),kept:keeps(band as Parameters<typeof keeps>[0],scroll)};
+  const {bandTop,bandHeight,keepFrom,keepTo}=band;
+  const answer=presenter({view:band.view,scroll,shown:{id:1,bandTop,bandHeight,keepFrom,keepTo},asked:null},{kind:"vsync"});
+  if(!answer.placement)throw new Error("Lean presenter returned no placement for a shown frame");
+  const output=answer.outputs[0];
+  assert(answer.outputs.length===1&&output.kind==="present"&&output.frameId===1&&output.offset===answer.placement.offset,"present output agrees with placement");
+  return answer.placement;
+}
+function swapAt(shown:Band,prefetched:{key:StateKey;band:Band},now:StateKey,scroll:number){
+  if(!presenter)return canSwap(shown,prefetched,now,scroll);
+  return !placement(shown,scroll).kept&&placement(prefetched.band,scroll).kept&&sameState(prefetched.key,now);
+}
 
 // WebDocument.band and Band.keepFrom/keepTo, with bandMargin 512, refreshMargin 128 and
 // maxLayerRows 4096, as Lean answers them.
@@ -10,6 +33,17 @@ const leanBand=(scroll:number,view:number):Band=>{
 };
 const rule={marginRows:256,horizonMs:2*1000/60+30,limit:5000};
 const moving=(direction:-1|1,rowsPerMs=0.1):Motion=>({direction,rowsPerMs,scroll:0,at:0});
+
+Deno.test(`presenter ${presenterMode}: prefetched band placement equals the inline oracle`,()=>{
+  for(const view of [800,1000,3500])for(const made of [0,100,511,512,2000,4800]){
+    const band=leanBand(made,view);
+    for(const scroll of [0,band.bandTop,band.keepFrom,band.keepTo,band.keepTo+1,band.bandTop+band.bandHeight]){
+      const got=placement(band,scroll),expected=clampOffset(band as Parameters<typeof clampOffset>[0],scroll);
+      assert(got.offset===expected.offset&&got.exact===expected.exact,`placement ${made}/${view} at ${scroll}`);
+      assert(got.kept===keeps(band as Parameters<typeof keeps>[0],scroll),`kept ${made}/${view} at ${scroll}`);
+    }
+  }
+});
 
 Deno.test("keep reach is read from Lean's band: 384 rows, at the top too",()=>{
   for(const scroll of [0,100,511,512,900,3000])assert(keepReach(leanBand(scroll,1000))===384,`reach at ${scroll}`);
@@ -79,10 +113,10 @@ Deno.test("swap only past the shown band, in the prefetched band, for the same s
   const doc={},key=stateKey(doc,{shell:{scroll:0}},1600,1000);
   const shownBand=leanBand(2000,1000),next=leanBand(prefetchTarget(shownBand,shownBand.keepTo-10,moving(1),rule)!,1000);
   const prefetched={key,band:next};
-  assert(!canSwap(shownBand,prefetched,key,shownBand.keepTo),"still in the shown band");
-  assert(canSwap(shownBand,prefetched,key,shownBand.keepTo+1),"past it, in the next");
-  assert(!canSwap(shownBand,prefetched,key,next.keepTo+1),"past both");
-  assert(!canSwap(shownBand,prefetched,stateKey(doc,{shell:{scroll:0},textScalePercent:200},1600,1000),shownBand.keepTo+1),"state changed");
+  assert(!swapAt(shownBand,prefetched,key,shownBand.keepTo),"still in the shown band");
+  assert(swapAt(shownBand,prefetched,key,shownBand.keepTo+1),"past it, in the next");
+  assert(!swapAt(shownBand,prefetched,key,next.keepTo+1),"past both");
+  assert(!swapAt(shownBand,prefetched,stateKey(doc,{shell:{scroll:0},textScalePercent:200},1600,1000),shownBand.keepTo+1),"state changed");
 });
 
 Deno.test("a frame waits for a band prefetched for the same state, never for another state",()=>{

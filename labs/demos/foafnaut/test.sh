@@ -233,8 +233,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     --allow-read --allow-ffi --allow-run=hb-shape "$LAB/showoff_test.ts"
   # Partial compile (NativeSVG.compileRetained): one moved shape recompiles one primitive,
   # no change compiles nothing, and the bytes equal the plain compile. Native engine.
-  check "partial_frame_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-    --allow-read --allow-ffi --allow-env "$LAB/partial_frame_test.ts"
+  for presenter in inline worker; do
+    check "partial_frame_test.ts ($presenter)" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi --allow-env "$LAB/partial_frame_test.ts"  -- "--presenter=$presenter"
+  done
   # The Hub's fallback fonts: files, sizes, SHA-256, and which fonts each demo page fetches.
   check "fallback_fonts_test.ts" deno test --no-check --no-config --allow-read "$LAB/fallback_fonts_test.ts"
   # SVG text, tspan and textPath drawn with the held font (issue 1270), Wasm and native.
@@ -251,8 +253,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     --allow-read --allow-ffi "$LAB/gesture_test.ts"
   # These import the engine module too, so they run here, once it is built: the frame cost
   # cases and scroll prefetch (Wasm and native).
-  check "frame_cost_test.ts scroll_prefetch_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-    --allow-read --allow-ffi "$LAB/frame_cost_test.ts" "$LAB/scroll_prefetch_test.ts"
+  for presenter in inline worker; do
+    check "frame_cost_test.ts scroll_prefetch_test.ts ($presenter)" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/frame_cost_test.ts" "$LAB/scroll_prefetch_test.ts"  -- "--presenter=$presenter"
+  done
   # Liberal mode and the console (WebAccept.lean, WebConsole.lean): each skip on the original
   # fixtures (fixtures/liberal), strict refusals, the note, the console page, media queries
   # against the viewport, and the same frame with no entries on pages strict accepts. Wasm and native.
@@ -385,8 +389,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   fi
   # Two-layer scroll (issue 1268): the composite of the layers has the bytes of one Lean
   # frame at each scroll tried, on this machine's GPU. With no GPU adapter it says NOT RUN.
-  check "scroll_layers_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-    --allow-read --allow-ffi "$LAB/scroll_layers_check.ts"
+  for presenter in inline worker; do
+    check "scroll_layers_check.ts ($presenter)" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/scroll_layers_check.ts"  "--presenter=$presenter"
+  done
   # A heavy frame in bands of about 16 ms (issue 450) gives the bytes of one draw. NOT RUN with no GPU.
   check "banded_draw_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi --allow-env --allow-net=127.0.0.1 "$LAB/banded_draw_check.ts"
@@ -396,7 +402,9 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # Every run_html.ts sweep with --offscreen, native and Wasm engines (issue 1268): no window is
   # shown, so it runs with the screen locked and on CI. About 65 s on an M1.
   if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
-    check "sweeps.sh" bash "$LAB/sweeps.sh"
+    for presenter in inline worker; do
+      check "sweeps.sh ($presenter)" bash "$LAB/sweeps.sh" "--presenter=$presenter"
+    done
   else
     echo 'NOT RUN: sweeps.sh needs macOS and the window library'
   fi

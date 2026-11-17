@@ -6,6 +6,7 @@ import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 import type {WorkerReply,WorkerRequest} from "./native_html_worker.ts";
 import {createByteSlot,createRequestSlot,publishRequest,readBytes} from "./presenter_mailbox.ts";
 import {FRAME_SLOT_BYTES,decodeFrame} from "./presenter_frame.ts";
+import {createBandWake} from "./presenter_wake.ts";
 import type {PageFonts} from "./native_html_fonts.ts";
 
 export type CompileClient={
@@ -37,7 +38,6 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
   const worker=new Worker(new URL("./native_html_worker.ts",import.meta.url),{type:"module"});
   const frames=presenter?createByteSlot(FRAME_SLOT_BYTES):undefined;
   const requests=presenter?createRequestSlot():undefined;
-  let bandWake=false;
   const pending=new Map<number,{resolve:(reply:WorkerReply)=>void;reject:(error:Error)=>void}>();
   let next=0,alive=true,ordinary=0;
   const fail=(error:Error)=>{alive=false;for(const p of pending.values())p.reject(error);pending.clear();};
@@ -46,12 +46,14 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     const p=pending.get(reply.id);if(!p)return;
     pending.delete(reply.id);
     if(reply.ok&&reply.frameSequence!==undefined&&frames){
-      const read=readBytes(frames);
-      if(read.status==="value"&&read.sequence===reply.frameSequence){
-        const frame=decodeFrame(read.bytes);
-        if(frame.request!==reply.id){p.reject(new Error("presenter frame/request mismatch"));return;}
-        p.resolve({...reply,value:frame.layers,ms:frame.workerMs});
-      }else p.resolve({id:reply.id,ok:false,error:"presenter frame superseded",dropped:true});
+      try{
+        const read=readBytes(frames);
+        if(read.status==="value"&&read.sequence===reply.frameSequence){
+          const frame=decodeFrame(read.bytes);
+          if(frame.request!==reply.id){p.reject(new Error("presenter frame/request mismatch"));return;}
+          p.resolve({...reply,value:frame.layers,ms:frame.workerMs});
+        }else p.resolve({id:reply.id,ok:false,error:"presenter frame superseded",dropped:true});
+      }catch(error){p.reject(error instanceof Error?error:new Error(String(error)));}
     }else p.resolve(reply);
   };
   worker.onerror=event=>{event.preventDefault();fail(new Error("engine worker: "+event.message));};
@@ -61,6 +63,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     if(!alive){reject(new Error("engine worker is not running"));return;}
     const id=++next;pending.set(id,{resolve,reject});worker.postMessage({...request,id});
   });
+  const wakeBand=createBandWake(()=>send({op:"bandWake"}),()=>alive);
   const init=await send({op:"init",font,nativeEngine,frames,requests,...(logAll?{logAll}:{})});
   if(!init.ok)throw new Error(init.error);
   const invoke=async(input:boolean,name:RemoteCall,...args:unknown[])=>{
@@ -77,8 +80,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
   return {
     requestBand(scroll){
       if(!requests||!alive)return;
-      publishRequest(requests,scroll);
-      if(!bandWake){bandWake=true;send({op:"bandWake"}).finally(()=>{bandWake=false;}).catch(()=>{});}
+      wakeBand(publishRequest(requests,scroll));
     },
     get alive(){return alive;},
     get pending(){return ordinary;},
