@@ -1793,6 +1793,12 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
     | _ => pure ()
   return s
 
+/-- A margin hint as its pixels and its percentage part (`marginParts`'s form). -/
+def hintEdge : Option Length → Option (Float × Float)
+  | some (.px v) => some (v, 0)
+  | some (.percent p) => some (0, p)
+  | _ => none
+
 /-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
 `video`, `canvas`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
 `width` and `height` properties; `hr` width too. `hspace` and `vspace` of `img`, `embed`,
@@ -1800,12 +1806,6 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
 `border` of `img`, `object` and an image button to the border widths, with a solid border.
 All below author CSS. A percentage height resolves against a definite containing height
 (`Fragment.percentHeights`) and is read as `auto` otherwise. -/
-/-- A margin hint as its pixels and its percentage part (`marginParts`'s form). -/
-def hintEdge : Option Length → Option (Float × Float)
-  | some (.px v) => some (v, 0)
-  | some (.percent p) => some (0, p)
-  | _ => none
-
 def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   let tag := n.lname
   let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
