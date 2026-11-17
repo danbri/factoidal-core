@@ -258,23 +258,25 @@ defjob l4schematron l4schematron parse_schematron schematron \
 # XML Schema suite (submodule third_party/testing/xsd), RELAX NG, XInclude and
 # Canonical XML. The three QT4 runs take tens of minutes each (l4xslt4: 25 minutes on
 # 2026-11-14) and l4xsd11 reads 41,668 tests: these four are LONG_JOBS, left out of
-# a run without --only; pass --timeout when naming them. `--isolate 60`
-# runs each test set in a child process with a 60 s cap, so one test set that
+# a run without --only; pass --timeout when naming them. `--isolate 180`
+# runs each test set in a child process with a 180 s cap (60 s cut misc-HtmlTestSuite at
+# html-test-0880 on a loaded Mac on 2026-11-17: 499 unfinished tests counted as failures; alone it
+# ends in 94 s with 1,371 of 1,379), so one test set that
 # overflows the stack or loops costs that set and not the run. The long jobs list each failing
 # and unsupported case with its reason (--list-fails, --verbose), so a run's log is enough to
 # group the failures by cause.
 LONG_JOBS="l4qt4-xpath l4qt4-xquery l4xslt4 l4xsd11"
 defjob l4qt4-xpath l4qt4 parse_qt4_total none \
   "XPath 4.0 and Functions and Operators 4.0 (qt4tests)" "" \
-  "--root third_party/testing/qt4tests --isolate 60 --list-fails"
+  "--root third_party/testing/qt4tests --isolate 180 --list-fails"
 # The XQuery run reads all fourteen families of the catalog (the runner's default in XQuery
 # mode is eight), so each specification has a row of its own ("family F").
 defjob l4qt4-xquery l4qt4 parse_qt4_total none \
   "XQuery 4.0 (qt4tests)" "" \
-  "--root third_party/testing/qt4tests --lang xquery --isolate 60 --list-fails --family prod --family op --family fn --family map --family array --family math --family app --family misc --family ser --family upd --family ft --family bin --family file --family xs"
+  "--root third_party/testing/qt4tests --lang xquery --isolate 180 --list-fails --family prod --family op --family fn --family map --family array --family math --family app --family misc --family ser --family upd --family ft --family bin --family file --family xs"
 defjob l4xslt4 l4xslt4 parse_qt4_total none \
   "XSLT 4.0 (xslt40-test)" "" \
-  "--root third_party/testing/xslt40-test --isolate 60 --list-fails"
+  "--root third_party/testing/xslt40-test --isolate 180 --list-fails"
 defjob l4xsd11 l4xsd11 parse_xsd11 none \
   "XML Schema 1.1 Structures (W3C xsdtests)" "" \
   "third_party/testing/xsd --verbose"
