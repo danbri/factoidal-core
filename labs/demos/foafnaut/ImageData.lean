@@ -235,11 +235,14 @@ theorem decodeWith_none (bytes : ByteArray) :
   unfold decodeWith
   cases decode bytes <;> rfl
 
-/-- Add one image to the store under `href`, held at factor `k` (`reduce`). The document
-    budget is checked from the pixels already held, so no later image can pass it. -/
-def Store.addBytes (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat := 1)
-    (vector : VectorReader := fun _ => none) : Store × Nat :=
-  match decodeWith vector bytes with
+/-- What `decodeWith` answers for one file: the picture and the image's own size when it
+is not the picture's, or the refusal. -/
+abbrev Decoded := Except String (Bitmap × Option (Nat × Nat))
+
+/-- Add one decoded image to the store under `href`, held at factor `k` (`reduce`). The
+    document budget is checked from the pixels already held, so no later image can pass it. -/
+def Store.addDecoded (store : Store) (used : Nat) (href : String) (decoded : Decoded) (k : Nat := 1) : Store × Nat :=
+  match decoded with
   | .error message => (store.insert href (.error message),used)
   | .ok (whole,own) =>
     let bitmap := reduce whole k
@@ -258,19 +261,32 @@ def Store.addBytes (store : Store) (used : Nat) (href : String) (bytes : ByteArr
         | some (w,h) => store.insert (naturalKey href) (.ok (store.size,{width := w, height := h, rgba := ByteArray.empty}))
       (store,used+size)
 
-/-- The pixels a store holds stay within the document's budget: adding an image never takes
-them past `maxDocumentPixels`, whatever the image and the factor. With the limit of one
-decoded image above the budget, this is what bounds the pictures a page holds. -/
-theorem Store.addBytes_within (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat)
-    (vector : VectorReader) (h : used ≤ maxDocumentPixels) :
-    (store.addBytes used href bytes k vector).2 ≤ maxDocumentPixels := by
-  unfold Store.addBytes
+/-- Add one image to the store under `href`, held at factor `k` (`reduce`): `addDecoded` of
+    what `decodeWith` reads from the bytes. -/
+def Store.addBytes (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat := 1)
+    (vector : VectorReader := fun _ => none) : Store × Nat :=
+  store.addDecoded used href (decodeWith vector bytes) k
+
+/-- The pixels a store holds stay within the document's budget: adding a decoded image never
+takes them past `maxDocumentPixels`, whatever the image and the factor. -/
+theorem Store.addDecoded_within (store : Store) (used : Nat) (href : String) (decoded : Decoded) (k : Nat)
+    (h : used ≤ maxDocumentPixels) :
+    (store.addDecoded used href decoded k).2 ≤ maxDocumentPixels := by
+  unfold Store.addDecoded
   split
   · exact h
   · dsimp only
     split
     · exact h
     · rename_i hle; exact Nat.le_of_not_lt hle
+
+/-- The pixels a store holds stay within the document's budget: adding an image never takes
+them past `maxDocumentPixels`, whatever the image and the factor. With the limit of one
+decoded image above the budget, this is what bounds the pictures a page holds. -/
+theorem Store.addBytes_within (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat)
+    (vector : VectorReader) (h : used ≤ maxDocumentPixels) :
+    (store.addBytes used href bytes k vector).2 ≤ maxDocumentPixels :=
+  Store.addDecoded_within store used href _ k h
 
 /-- Add one `data:` reference, held at factor `k`. -/
 def Store.addData (store : Store) (used : Nat) (href : String) (k : Nat := 1)

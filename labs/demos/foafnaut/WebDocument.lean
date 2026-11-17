@@ -202,7 +202,7 @@ structure Kept where
 structure Made where
   parsed : Option (String × Bool × Except String DOM.Dom) := none
   sheet : Option (String × RawSheet) := none
-  store : Option ((List String × List (String × ByteArray)) × NativeImage.Store) := none
+  store : Option WebRender.StoreEntry := none
   words : NativeSVGText.Words := {}
 
 /-- `a` then the entries of `b` that `a` lacks (the first operation's wins). -/
@@ -1283,6 +1283,16 @@ def pageLayer (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band) 
     tree := [.group none ⟨1,0,0,1,0,-lift⟩ (keep ++ extra)]
     links := Rendering.moveLinks (· - lift) page.links}
 
+/-- Kind: equality. Says: the layout text of a page layer (`WebRender.layoutJSON`) is the head
+of the page's boxes, glyph runs and face, the same for every band `b`, then the tail of the
+layer's links. So the engine may keep the head of one band and write only the tail for
+another band of the same layout (`pageArtifactImpl`). Does not say: that the engine keeps it. -/
+theorem pageLayer_layoutJSON (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+    (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) :
+    WebRender.layoutJSON (pageLayer page extra b) boxes face =
+      WebRender.layoutHead boxes page.glyphRuns face ++ WebRender.layoutTail (pageLayer page extra b).links :=
+  WebRender.layoutJSON_of_head _ _ _ _ rfl
+
 /-- The page layer keeps every link of the page, moved up by the band's top and nothing
 else (`LinkTheorems.moveLinks_getElem`, `LinkTheorems.hitLink_band`; issue 1268). -/
 theorem pageLayer_links (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band) :
@@ -1368,6 +1378,10 @@ structure KeptPage where
   /-- The number that `damage.id` answers: a host that drew answer `id` can draw a later
   answer with `damage.base = id` by its damage rectangles alone. -/
   id : Nat := 0
+  /-- `WebRender.layoutHead` of this frame's boxes, glyph runs and face: the part of
+  `layoutText` that every band of the layout shares (`WebRender.layoutJSON_of_head`); empty
+  when not made. -/
+  layoutHead : String := ""
 
 /-- Page layer answers kept: the last two, for a chrome change and back. -/
 def keptPageSlots : Nat := 2
@@ -1417,12 +1431,24 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
       -- The retained compile only for a frame host's answer: sections, no probes, no tree.
       -- `pageArtifact` (the reference) stays the plain path, that `partial_frame_test.ts`
       -- compares this with.
-      let previous := kept.find? fun k => k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree && k.retained.isSome
+      let previous : Option KeptPage := kept.find? fun (k : KeptPage) => k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree && k.retained.isSome
       match form,checks,tree,retainOn with
       | .sections first,false,false,true =>
         let layoutText := previous.bind fun k =>
           if ptrEq k.boxes boxes && ptrEq k.face face && ptrEq k.page.links page.links && ptrEq k.page.glyphRuns page.glyphRuns then
             some k.layoutText else none
+        -- Another band of the same layout: the head of its layout text is this one's
+        -- (the layer's glyph runs are the page's, and the
+        -- head reads no link: `pageLayer_layoutJSON`); only the links, moved for the band,
+        -- are written again.
+        let (layoutText,head) := match layoutText with
+          | some text => (text,(previous.map fun (k : KeptPage) => k.layoutHead).getD "")
+          | none =>
+            let head := match kept.find? fun (k : KeptPage) => !k.layoutHead.isEmpty && ptrEq k.boxes boxes && ptrEq k.face face &&
+                ptrEq k.page.glyphRuns page.glyphRuns with
+              | some k => k.layoutHead
+              | none => WebRender.layoutHead boxes page.glyphRuns face
+            (head ++ WebRender.layoutTail layer.links,head)
         -- A layout makes every primitive a new object: the address test first, then the
         -- values (`WebPaint.samePrimitive`, proved to hold only of equal primitives; bitmaps
         -- by address, as the paint table keeps one per image).
@@ -1432,25 +1458,25 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
           else if (ptrEq a.primitive.geometry b.primitive.geometry || decide (a.primitive.geometry = b.primitive.geometry)) &&
               (ptrEq a.primitive.style b.primitive.style || WebPaint.sameStyle bitmaps a.primitive.style b.primitive.style) then a.movedOf b
           else NativeSVG.Reuse.different
-        match WebPaint.retainedAnswer reuseLeaf (previous.bind (·.retained)) layer boxes face first layoutText with
+        match WebPaint.retainedAnswer reuseLeaf (previous.bind (·.retained)) layer boxes face first (some layoutText) with
         | .error e => return .error e
         | .ok (retained,damage,value,sections,layout,recompiled,moved) =>
           let id := (← pageIdRef.modifyGet fun n => (n+1,n+1))
           let number := fun (n : Nat) => toString n
           let damageText := "{\"id\":" ++ number id ++ ",\"base\":" ++
             (match previous.bind (·.retained),damage with
-             | some _,some _ => number (previous.map (·.id)).get!
+             | some _,some _ => number ((previous.map fun (k : KeptPage) => k.id).getD 0)
              | _,_ => "null") ++ ",\"rects\":" ++
             (match damage with | some rects => NativeSVG.damageJSON rects | none => "null") ++ "}"
           let value := (value.dropEnd 1).toString ++ ",\"damage\":" ++ damageText ++ "}"
           let answer := (value,sections)
-          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id⟩ :: kept).take keptPageSlots)
+          keptPageRef.set (((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head⟩ : KeptPage) :: kept).take keptPageSlots)
           pageWorkRef.modify fun (m,g,a,b,c) => (m+1,g,a+recompiled,b+(retained.items.size-recompiled-moved),c+moved)
           return .ok answer
       | _,_,_,_ =>
         let made := WebRender.artifactWith (WebPaint.cull layer) boxes face live form checks tree
         if let .ok answer := made then
-          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0⟩ :: kept).take keptPageSlots)
+          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0,""⟩ :: kept).take keptPageSlots)
           pageWorkRef.modify fun (m,g,x) => (m+1,g,x)
         return made
 
@@ -2039,7 +2065,7 @@ liberal mode no SVG content refuses the page (`liberalSvg_ok`, `liberalSvg_noSvg
 def liberalSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
     (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) :
     Rendering.Layout.Embedding × Rendering.Layout.Pictures × DOM.Dom × List WebAccept.Diagnostic ×
-      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words :=
+      Option WebRender.StoreEntry × NativeSVGText.Words :=
   match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts with
   | .ok (e,p,s,w) => (e,p,dom,[],s,w)
   | .error e =>
@@ -2466,7 +2492,7 @@ its first layout (`WebRender.storeAhead`, for the tree and the images of the ses
 the page has no image, and when the page or the request can not be read (the layout says
 why). -/
 def storeAheadOf (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) :
-    Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+    Option WebRender.StoreEntry :=
   let layout := layoutRequest ((request.field? "layout").getD (.object []))
   match (parseIn kept html (DOM.xmlSyntax (str layout "url") (str layout "syntax"))).1, suppliedImages layout with
   | .ok dom, .ok supplied =>
