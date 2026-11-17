@@ -226,6 +226,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-29 | [Full Text and XQuery Update merge](20261029-full-text-update-merge.md) | pending | record |
 | 2026-10-29 | [Processor feature settings](20261029-processor-feature-settings.md) | uncommitted | record |
 | 2026-10-29 | [XQuery 4.0 merge against updated main](20261029-xquery4-merge-main2.md) | uncommitted | record |
+| 2026-10-29 | [Language version settings (XPath/XQuery 1.0, 3.0, 3.1, 4.0)](20261029-version-resume.md) | https://github.com/danbri/factoidal-core/pull/262 | current: [design](designissues/2026-10-29-language-version-settings.md) |
 | 2026-10-29 | [QT4 optional features merge against updated main](20261029-qt4-optional-features-merge2.md) | uncommitted | record: both baselines, per-family validation |
 | 2026-10-29 | [The HTML parser in Lean, measured by html5lib-tests](designissues/2026-10-29-html-parser.md) | (this commit) | record: tokenizer and tree builder at whatwg/html `93967771` (processing instructions, customizable select), fragment parsing; WPT tree construction 1963 pass, 0 fail, html5lib tokenizer 7043 pass, 0 fail, expected failures with issues; quadratic arena copy removed, 4.2 times slower than parse5; theorems connecting HTML and XML 1.0 (newlines, numeric references), whole tree measured on 5000 documents; tracking https://github.com/danbri/factoidal/issues/1167 |
 | 2026-10-29 | [QT4 Unicode reuse and namespace lookup agreement](20261029-qt4-unicode-namespace.md) | same commit | Unicode 18 normalization, retained XPath 15.1 graphemes, verified namespace lookup bridge and remaining proof obligations; https://github.com/danbri/factoidal/issues/1195, https://github.com/danbri/factoidal/issues/1181 |
@@ -239,44 +240,29 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [Foafnaut native graphics and SVG lab](designissues/2026-10-30-foafnaut-native-graphics.md) | same commit | current: Lean WASM / raw WebGPU boundary, native demos and executable packaging, pinned SVG reftests and explicit validation limits |
 | 2026-10-30 | [HTML, SVG, text and portable rendering](designissues/2026-10-30-document-layout-renderers.md) | same commit | current SVG/test limits and proposed Lean document/layout/scene pipeline; HarfBuzz boundary; CPU/embedded backend contracts and theorem scope |
 | 2026-10-30 | [FOAFNaut RDF-driven native study](designissues/2026-10-30-foafnaut-rdf-native.md) | same commit | current: typed FOAF graph, Lean radial layout and interaction, temporary GPU bitmap labels, modern visual direction and native packaging |
-
 - [2026-10-30: Lean GPU render plans and remaining host boundary](designissues/2026-10-30-lean-render-plan.md).
 - [2026-10-30: FOAFNaut live presentation admission](20261030-foafnaut-live-presentation.md): opaque Lean state, acknowledged picking, retained approved geometry, 64 WASM/host tests and 12 C checks.
 | 2026-10-30 | [HTML parser and public API integration](20261030-html-public-integration.md) | same commit | current main integrated, both gate sets preserved, public PI/namespace/template/error regressions; fresh native API and HTML/QT4 controls pass; fresh WASM CI remains required; https://github.com/danbri/factoidal-core/pull/269 |
 | 2026-10-30 | [IETF date zero-seconds panic](20261030-parse-ietf-date-zero-seconds.md) | same commit | seconds serialization avoids an empty numeric parse; native stderr regression detects panic fallback even when values match |
-
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
-
 | 2026-10-30 | [FOAFNaut current-main refresh](20261030-foafnaut-main-refresh.md) | same commit | live presentation retained, engine source hashes agree, 64 Deno tests and 12 C checks; SVG oracle roadmap and official visual limits |
-
 | 2026-10-31 | [SVG independent images and paint fallback](20261031-svg-independent-images.md) | same commit | 38-case denominator preserved; independent browser captures, explicit oracle disagreements, 2 compiler acceptances and zero GPU visual passes |
-
 | 2026-10-31 | [Shared SVG affine algebra and actual GPU comparisons](20261031-svg-affine-gpu.md) | same commit | TOAN reuse, typed scalar backend, transform/precision regressions; browser-host Apple Metal yields 2/38 independent full-image matches; native Deno remains unavailable |
-
 | 2026-10-31 | [Resident raw WebGPU snapshot sessions](20261031-svg-resident-rendering.md) | same commit | retained GPU resources, 68 Deno tests/12 C checks, twenty actual Apple Metal frame/readbacks; measured throughput remains below 12 Hz |
-
 | 2026-10-31 | [Retained SVG linear paths](20261031-svg-linear-paths.md) | — | bounded Lean paths, compound glyphs, real GPU comparison and measured limits |
-
 | 2026-11-01 | [Shared retained SVG linear strokes](20261101-svg-linear-strokes.md) | same commit | open/closed contours, miter fallback, total pathLength, one-opacity union; one official same-renderer GPU reference pair exactly matches |
-
 | 2026-11-01 | [SVG stroke topology contracts](20261101-svg-stroke-topology.md) | same commit | exact open/closed edge theorems over real stroker; unconditional closure mutation rejected |
 | 2026-11-01 | [Solving: one SVG scene, two rendering backends](20261101-solving-backend-comparison.md) | this commit | layered browser scene uses same accepted SVG source in browser renderer and Lean/WebGPU path; Lean now retains nested SVG groups with local transforms, proves the cached painter-order lowering and emits bounded optional tree-inspector JSON; CPU probes now reuse one packed array with a proved record cursor; compositor surfaces, HTML/layout integration and cross-renderer equivalence remain open |
-
 | 2026-11-02 | [FOAFNaut macOS build and Solving package](20261102-foafnaut-macos-build.md) | this commit | fresh engine/package validation, official runtime cache provenance, renderer equality with distinct retained trees, and static browser SVG launcher relocation without Lean |
 | 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |
-
 | 2026-10-31 | [Shared component descriptor model](designissues/2026-10-31-component-descriptor-model.md) | same commit | design proposal: one UI/API/CLI model, useful witnesses and human purposes, distinct semantic/authority/evidence scopes |
 | 2026-10-31 | [Browser release integrity gates](20261031-browser-release-integrity-gates.md) | — | stamped compilation, bad-digest refusal and CSP browser checks |
-
 | 2026-10-31 | [Published 0.28.0 and hub pin](20261031-release-028-published.md) | — | registry consumer, browser and hub validation |
-
 | 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
 | 2026-11-02 | [SVG standards implementation overnight](20261102-svg-standards-overnight.md) | uncommitted | isolated SVG lane; defs/use/symbol, affine clipping, typed C/S/Q/T/A geometry and checked backend cache; native/WASM/GPU evidence and numeric limits recorded |
-
 | 2026-11-02 | [XMPP: STARTTLS, then WebSocket, MUC, MIX, GC3](20261102-xmpp-starttls.md) | same commit | current: step 1 (STARTTLS) landed; steps 2 to 5 in order |
 | 2026-11-02 | [Exact compiled UI overlap loop](20261102-ui-overlap-compiled-loop.md) | this commit | kernel-proved foldl compiler replacement, 106 UI guards and targeted emitted-C recursion/replacement audits; no allow-list exemption |
-
 | 2026-11-03 | [Linked RDF graphs in the Lean renderer](20261103-lean-rdf-renderer.md) | — | strict N-Triples to direct DOM and shared scene; complete native/WASM artifact equality and12,288 exact CPU/GPU image pixels |
 | 2026-11-03 | [Fresh web registry inventory](20261103-web-inventory-generation.md) | this commit | actual fresh remote Registry/Tests generation, witnessed UI/Rendering directory inventory and unchanged stage kinds; directory counts are not renderer passes |
 | 2026-11-03 | [LWS with large bodies](20261103-lws-large-bodies.md) | this commit | measured 1 MiB to 200 MiB PUT/GET in files mode, sealed; no size limits or quotas today (issue 1240); guidance: about 1 MiB per item, no media |

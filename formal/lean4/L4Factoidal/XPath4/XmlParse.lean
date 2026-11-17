@@ -156,7 +156,7 @@ def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   let strip := optionStr opts "strip-space" "none"
   if !["all", "none", "conditional"].contains strip then
     err "XPTY0004" ("strip-space must be all, none or conditional, not " ++ strip)
-  let trust ← optBool opts "trust-external" false
+  let trust ← optBool opts "trust-external" (e.features.version != .v40 && !e.untrusted)
   let xi ← optBool opts "xinclude" false
   if xi && !e.xinclude then
     err "FODC0013" "this processor is configured without XInclude"

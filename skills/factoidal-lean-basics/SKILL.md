@@ -667,3 +667,6 @@ layout intermediate. The initial ASCII bitmap profile is incomplete text
 support, not shaped real-font coverage. Scope, architecture reconciliation
 and evidence: [design record](../../docs/designissues/2026-11-02-lean-web-rendering.md),
 https://github.com/danbri/factoidal/issues/1230 (shared Lean web renderer).
+
+Selectable historical language versions and the compatibility theorem boundary:
+[language version settings](../../docs/designissues/2026-10-29-language-version-settings.md).

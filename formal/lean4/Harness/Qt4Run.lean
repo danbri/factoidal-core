@@ -10,14 +10,16 @@ and `misc`), and scores every test case for XPath 4.0 or, with
 `--lang xquery`, for XQuery 4.0 (`L4Factoidal.XQuery4`):
 
 * **unsupported** — the test case or its test set has a dependency
-  this processor does not satisfy: a spec that is not XPath 4.0
-  (`XQ*` only, or an `XP` version range that excludes 4.0), a feature
+  this processor does not satisfy: a spec for the other language (an
+  `XQ*` only test in XPath mode), a feature
   it does not have (static typing, which XPath 4.0 and XQuery 4.0 have
   dropped, `fn:transform`, ...), a language other than English, XML 1.0
   before the fifth edition, or an environment that needs a collection
   or a function library. An unsupported test is NEVER a pass. The
   settings of the dynamic context that a test names (the default
-  language, the XML version, XPath 1.0 compatibility mode) are set for
+  language, the XML version, XPath 1.0 compatibility mode, and the
+  language version that a `spec` dependency names: XPath or XQuery 1.0,
+  3.0, 3.1 or 4.0) are set for
   that test (`configureFor`); the namespace axis is on in XPath mode;
 * Negative optional-feature dependencies select an engine configuration
   with those features disabled; the test still runs.
@@ -39,6 +41,7 @@ The test data is untrusted input: it is parsed, never executed as
 anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XPath4.CompatibilityTheorems
 import L4Factoidal.XPath4.FeatureTests
 import L4Factoidal.XPath4.StaticTypingTests
 import L4Factoidal.XPath4.StaticTypingTheorems
@@ -98,10 +101,6 @@ def defective : List (String × String) :=
     "full-text-composability-queries-results-q1", "full-text-composability-queries-results-q4",
     "FTWindow-paragraphs3", "FTWindow-unconstrained-paragraphs3"
   ].map (fun n => (n, "https://github.com/danbri/factoidal/issues/1173"))
-  -- F&O 4.0: fn:collection and fn:uri-collection take $options, so two
-  -- arguments are XPTY0004, not XPST0017
-  ++ [ ("fn-collection-1", "https://github.com/danbri/factoidal/issues/1150"),
-       ("fn-uri-collection-1", "https://github.com/danbri/factoidal/issues/1150") ]
   -- F&O 4.0: fn:duration-to-seconds takes xs:dayTimeDuration?, so an
   -- xs:yearMonthDuration argument is XPTY0004
   ++ [ ("duration-to-seconds-016", "https://github.com/danbri/factoidal/issues/1158") ]
@@ -162,20 +161,25 @@ def readBytesSafe (p : String) : IO (Option ByteArray) := do
 
 /-! ## Dependencies -/
 
-def specOk (v : String) (xq : Bool := false) : Bool :=
-  (v.splitOn " ").any (fun t =>
+/-- Newest supported version allowed by a dependency, in the selected language. -/
+def specVersion (v : String) (xq : Bool := false) : Option LanguageVersion :=
+  let nums := (v.splitOn " ").filterMap (fun t =>
     if t.startsWith (if xq then "XQ" else "XP") then
       let rest := (t.drop 2).toString
       let plus := rest.endsWith "+"
       let num := (if plus then (rest.dropEnd 1).toString else rest).toNat?
-      match num with
-      | some k => k == 40 || (plus && k ≤ 40)
-      | none => false
-    else false)
+      num.bind (fun k => if plus && k ≤ 40 then some 40
+        else if [10, 20, 30, 31, 40].contains k then some k else none)
+    else none)
+  match nums.foldl max 0 with
+  | 10 => some .v10 | 20 => some .v20 | 30 => some .v30
+  | 31 => some .v31 | 40 => some .v40 | _ => none
+
+def specOk (v : String) (xq : Bool := false) : Bool := (specVersion v xq).isSome
 
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
-  f == "higherOrderFunctions" || f == "serialization"
+  f == "xpath-1.0-compatibility" || f == "higherOrderFunctions" || f == "serialization"
     -- UCA collations: unknown parameters are ignored with fallback=yes,
     -- and the parameters of `XPath4.Collation` are implemented
     || f == "simple-uca-fallback" || f == "advanced-uca-fallback"
@@ -236,13 +240,16 @@ def configureFor (deps : List Node) (env : Env) : Env :=
 
 /-- Select a processor configuration from positive and negative feature dependencies.
     The query and its assertions use this same configuration. -/
-def featureSettings (deps : List Node) : FeatureSettings :=
+def featureSettings (deps : List Node) (xq : Bool := false) : FeatureSettings :=
   deps.foldl (fun settings d =>
-    if attrD d "type" != "feature" then settings else
+    if attrD d "type" == "spec" then
+      { settings with version := (specVersion (attrD d "value") xq).getD .v40 }
+    else if attrD d "type" != "feature" then settings else
     let names := (attrD d "value").splitOn " "
     if attrD d "satisfied" "true" == "false" then
       names.foldl FeatureSettings.disable settings
     else if names.contains "staticTyping" then { settings with staticTyping := true }
+    else if names.contains "xpath-1.0-compatibility" then { settings with xpath10Compatibility := true }
     else settings) {}
 
 def depOk (xq : Bool) (d : Node) : Bool :=
@@ -574,7 +581,7 @@ def checkAssert (env : Env) (res : M Seq) (sp : SerParams) : Nat → Node → Ou
         | .error e =>
           -- an error code already written as `Q{uri}local` (EXPath) is kept
           let eqn := if e.code.startsWith "Q{" then e.code
-            else "Q{" ++ (if e.uri == "" then nsERR else e.uri) ++ "}" ++ e.code
+            else "Q{" ++ (if e.noNs then "" else if e.uri == "" then nsERR else e.uri) ++ "}" ++ e.code
           let ok := if code.startsWith "Q{" then code == eqn
             else code == "*" || code == e.code || ("err:" ++ e.code) == code || code.endsWith (":" ++ e.code)
           ok? ok ("wrong error code " ++ (if e.uri == "" then e.code else eqn) ++ " (expected " ++ code ++ ")")
@@ -675,6 +682,9 @@ def checkAssert (env : Env) (res : M Seq) (sp : SerParams) : Nat → Node → Ou
             let pq : QN := { uri := "", loc := "l4pat" }
             let fq : QN := { uri := "", loc := "l4flags" }
             let envM := ((env.bind q (sStr out)).bind pq (sStr txt)).bind fq (sStr (attrD a "flags"))
+            -- Assertion patterns belong to the current test catalog, even
+            -- when the query exercises an older language configuration.
+            let envM := { envM with features := { envM.features with version := .v40 } }
             match evalIn envM "matches($l4ser, $l4pat, $l4flags)" with
             | .ok [.atom ⟨_, .bool true⟩] => .pass
             | .ok _ => .fail ("serialization '" ++ cut out 80 ++ "' does not match")
@@ -1109,7 +1119,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
       let env := configureFor (setDeps ++ deps) env
-      let env := (configureUpd (setDeps ++ deps) env).restrictFeatures (featureSettings (setDeps ++ deps))
+      let env := (configureUpd (setDeps ++ deps) env).restrictFeatures (featureSettings (setDeps ++ deps) xq)
       -- External queries use their own file location; inline queries use
       -- the test-set directory (implementation-defined, XPath 4.0 C.1).
       -- (`#UNDEFINED`: the test wants the base URI absent)
@@ -1226,7 +1236,9 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
           | .ok p => (p, res)
           | .error ex => ({}, (match res with | .error e0 => .error e0 | .ok _ => .error ex))
         match checkAssert env res sp 100 a, bad with
-        | .pass, none => t := { t with pass := t.pass + 1 }
+        | .pass, none =>
+            t := { t with pass := t.pass + 1 }
+            if o.trace then fails := fails ++ [s!"PASS {setName}/{name}"]
         | .pass, some iss =>
             t := { t with fail := t.fail + 1 }
             fails := fails ++ [s!"FAIL {setName}/{name}: STALE exclusion: the test passes; remove it from Harness.Qt4Defective in Harness/Qt4Run.lean ({iss})"]
@@ -1253,6 +1265,7 @@ def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally 
   IO.FS.writeFile pf ""
   let mut args : Array String := #["--root", o.root, "--family", fam, "--set", setName, "--progress", pf, "--lang", o.lang]
   if o.listFails then args := args.push "--list-fails"
+  if o.trace then args := args.push "--trace"
   for h in o.hang do args := args ++ #["--hang", h]
   args := args ++ #["--file-host", o.fileHost]
   let child ← IO.Process.spawn { cmd := (← IO.appPath).toString, args, stdin := .null, stdout := .inherit, stderr := .null }

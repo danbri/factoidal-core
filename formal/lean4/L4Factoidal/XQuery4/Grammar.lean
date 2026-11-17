@@ -431,7 +431,10 @@ def pFlwor (sp : SubParsers) : P Expr := do
             else e
           cs := cs.push (.letC v vt e)
         if !(← eatS ",") then break
-    else if ← eatKw "where" then cs := cs.push (.whereC (← subE sp.exprSingle))
+    else if ← eatKw "where" then
+      if (← read).features.version.number < 30 && cs.any (fun c => match c with | .whereC _ => true | _ => false) then
+        synErr "XQuery 1.0 permits only one where clause"
+      cs := cs.push (.whereC (← subE sp.exprSingle))
     else if ← atKw "while" then
       expectKw "while"
       cs := cs.push (.whileC (← subE sp.exprSingle))
@@ -543,7 +546,10 @@ def pTypeswitch (sp : SubParsers) : P Expr := do
       else pure noName
     let mut ts : Array IType := #[← subE sp.seqType]
     for _ in [0:1000] do
-      if ← eatS "|" then ts := ts.push (← subE sp.seqType) else break
+      if ← eatS "|" then
+        if (← read).features.version.number < 30 then synErr "typeswitch union cases require version 3.0"
+        ts := ts.push (← subE sp.seqType)
+      else break
     expectKw "return"
     types := types.push (if ts.size == 1 then ts[0]! else .choice ts.toList)
     vars := vars.push v
@@ -561,7 +567,10 @@ where
 /-- `{ Expr? }`. -/
 def pBraced (sp : SubParsers) : P Expr := do
   expectS "{"
-  if ← eatS "}" then pure (.seq []) else
+  if ← eatS "}" then
+    if (← read).features.version.number < 31 then synErr "an enclosed expression must not be empty before 3.1"
+    pure (.seq [])
+  else
   let e ← subE sp.expr
   expectS "}"
   pure e
@@ -693,7 +702,9 @@ def pAttrValue (sp : SubParsers) (q : Char) (v11 : Bool := false) : P (List Expr
       literal := false
       adv 1
       ws
-      if (← curCh) == '}' then adv 1
+      if (← curCh) == '}' then
+        if c.features.version.number < 31 then synErr "an enclosed expression must not be empty before 3.1"
+        adv 1
       else
         let e ← subE sp.expr
         expectS "}"
@@ -911,6 +922,7 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
           adv 1
           ws
           if (← curCh) == '}' then
+            if cfg.features.version.number < 31 then synErr "an enclosed expression must not be empty before 3.1"
             adv 1
             ps := ps.push (.bound (.seq []))
           else
@@ -971,7 +983,7 @@ def reservedOpNames : List String :=
    "precedes-or-is", "return", "satisfies", "to", "union", "where", "while"]
 
 /-- Does a computed constructor start at `i`? -/
-def startsComputed (s : Array Char) (i : Nat) : Bool :=
+def startsComputed (s : Array Char) (i : Nat) (version : LanguageVersion := .v40) : Bool :=
   match ncnameAt s i with
   | some (n, e) =>
     if !compKeywords.contains n then false else
@@ -994,7 +1006,7 @@ def startsComputed (s : Array Char) (i : Nat) : Bool :=
       match qnameAt s j with
       | some (pf, nl, e2) =>
         -- 4.0: an operator keyword after the keyword makes a path expression (`element div {}`)
-        !(!hash && pf == "" && reservedOpNames.contains nl) &&
+        !(version == .v40 && !hash && pf == "" && reservedOpNames.contains nl) &&
         chAt s (skipWsF s (s.size + 1) 0 e2) == '{'
       | none =>
         -- Q{uri}local
@@ -1039,7 +1051,7 @@ def pExtensionExpr (sp : SubParsers) : P Expr := do
     -- Pragma (4.0): "(#" S EQName (S PragmaContents)? "#)"; the whitespace
     -- holds no comment and is not optional.
     let j := skipXmlWs c.s i
-    if j == i then synErr "a pragma needs whitespace after '(#'"
+    if j == i && c.features.version == .v40 then synErr "a pragma needs whitespace after '(#'"
     let mut nameEnd := j
     if chAt c.s j == 'Q' && chAt c.s (j+1) == '{' then
       match readUntil c.s (j + 2) "}" with
@@ -1050,6 +1062,8 @@ def pExtensionExpr (sp : SubParsers) : P Expr := do
       | none => synErr "bad pragma name"
     else
       let some (p, _, e) := qnameAt c.s j | synErr "bad pragma name"
+      if p == "" && c.features.version.number < 31 then
+        throw { code := "XPST0081", msg := "an unprefixed pragma requires a namespace before 3.1" }
       if p != "" then
         let u ← lookupNs p
         if u == "" then throw { code := "XPST0081", msg := "the pragma prefix " ++ p ++ " has no namespace" }
@@ -1098,6 +1112,9 @@ def pAnnotations : P (List (QN × List Atomic)) := do
         for _ in [0:1000] do
           ws
           let ch ← peekAt 0
+          if (← read).features.version != .v40 &&
+              !(ch == '"' || ch == '\'' || ch.isDigit || ch == '.') then
+            synErr "an annotation value must be an unsigned numeric or string literal before 4.0"
           if ch == '"' || ch == '\'' then vals := vals ++ [Atomic.ofStr (← pStringLit)]
           else if ch == '#' then
             adv 1
@@ -1164,7 +1181,7 @@ where
     let maps : List Expr := anns.map (fun (q, vs) =>
       .mapC [(.lit (Atomic.ofQN q), .seq (vs.map (fun v => Expr.lit v)))])
     return some (.ext "annotated" (f :: maps) [] [] [])
-  if !startsComputed s i then return none
+  if !startsComputed s i cfg.features.version then return none
   let some (kw, _) := ncnameAt s i | return none
   adv kw.length
   let sns ← staticNs
@@ -1182,6 +1199,7 @@ where
     let body ← pBraced sp
     pure (some (.ext "pi" [nm, body] [] [] []))
   | "namespace" =>
+    if cfg.features.version.number < 30 then synErr "namespace constructors require version 3.0"
     let nm ← pCompName sp "ns"
     let body ← pBraced sp
     pure (some (.ext "ns" [nm, body] [] [] []))
@@ -1213,7 +1231,7 @@ where
 
 def exprSingleP (sp : SubParsers) : P (Option Expr) := do
   if ← isFlworStart then return some (← pFlwor sp)
-  if ← kwThen "switch" '(' then return some (← pSwitch sp)
+  if (← read).features.version.number ≥ 30 && (← kwThen "switch" '(') then return some (← pSwitch sp)
   if ← kwThen "typeswitch" '(' then return some (← pTypeswitch sp)
   if ← kwThen "try" '{' then return some (← pTry sp)
   pure none
@@ -1234,7 +1252,7 @@ def liftOpt (r : Except Err (Option Expr × Nat)) : Except Err (Option (Expr × 
 def grammar (cfg : Cfg) : ExtGrammar where
   exprSingle s ns sp i := liftOpt (runP (exprSingleP sp) s ns i cfg.features)
   primary s ns sp i := liftOpt (runP (primaryP cfg sp) s ns i cfg.features)
-  startsPrimary s i := startsComputed s i
+  startsPrimary s i := startsComputed s i cfg.features.version
   stringLit t := expandRefs t cfg.xml11
   postConcat s ns sp lhs i := L4Factoidal.FullText.ftPostConcat (fun t => expandRefs t cfg.xml11) s ns sp lhs i
 

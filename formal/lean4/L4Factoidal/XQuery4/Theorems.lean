@@ -196,24 +196,27 @@ theorem nameOf_ncname (env : Env) (s : Seq) (sns : List (String × String)) (isA
   simp only [ha, hv, bind, Except.bind] at h
   split at h
   · simp [err] at h
-  ·
+  · simp only [pure, Except.pure, bind, Except.bind] at h
     split at h
-    · -- Q{uri}local
+    · simp [err] at h
+    ·
       split at h
-      · rename_i u l _
+      · -- Q{uri}local
         split at h
-        · rename_i hc
-          simp [pure, Except.pure] at h
-          subst h
-          simp only [Bool.and_eq_true] at hc
-          exact isNCName_xsd_xml l hc.1
+        · rename_i u l _
+          split at h
+          · rename_i hc
+            simp [pure, Except.pure] at h
+            subst h
+            simp only [Bool.and_eq_true] at hc
+            exact isNCName_xsd_xml l hc.1
+          · simp [err, throw, throwThe, MonadExceptOf.throw] at h
         · simp [err, throw, throwThe, MonadExceptOf.throw] at h
-      · simp [err, throw, throwThe, MonadExceptOf.throw] at h
-    · split at h
-      · rename_i p l hp
-        have hl := isNCName_xsd_xml l (parseQNameLex_local _ p l hp)
-        repeat' (first | (split at h) | (simp [pure, Except.pure] at h; subst h; exact hl) | (simp [err, throw, throwThe, MonadExceptOf.throw] at h))
-      · simp [err, throw, throwThe, MonadExceptOf.throw] at h
+      · split at h
+        · rename_i p l hp
+          have hl := isNCName_xsd_xml l (parseQNameLex_local _ p l hp)
+          repeat' (first | (split at h) | (simp [pure, Except.pure] at h; subst h; exact hl) | (simp [err, throw, throwThe, MonadExceptOf.throw] at h))
+        · simp [err, throw, throwThe, MonadExceptOf.throw] at h
 
 /-! ## Regular expressions in XQuery are the shared `Regex`
 
@@ -229,18 +232,24 @@ variable (h : Hooks) (e : Env) (s p f : String) (rep : Seq)
 
 theorem tokenize_shared :
     (libLookupAll (fnQ "tokenize")).map (fun g => g h e [sStr s, sStr p, sStr f]) =
-      some (do let re ← compileRe4 p f; pure ((tokenize4 s re).map (fun t => .atom (Atomic.ofStr t)))) := rfl
+      some (do
+        let re ← compileRe4 p f e.features.version
+        rejectEmptyPattern e.features.version re.r
+        pure ((tokenize4 s re).map (fun t => .atom (Atomic.ofStr t)))) := rfl
 
 theorem replace_shared :
     (libLookupAll (fnQ "replace")).map (fun g => g h e [sStr s, sStr p, rep, sStr f]) =
-      some (do let re ← compileRe4 p f; pure (sStr (← replace4 h e s re rep))) := rfl
+      some (do
+        let re ← compileRe4 p f e.features.version
+        rejectEmptyPattern e.features.version re.r
+        pure (sStr (← replace4 h e s re rep))) := rfl
 
 /-- The pattern is compiled by the shared profile (below the quantifier
     limit of 1000). -/
 theorem compileRe4_shared (r : L4Factoidal.Regex.Compiled) (hq : ¬ maxQuant p > 1000)
     (hc : L4Factoidal.Regex.Profiles.compileXPath40 p f = .ok r) :
     compileRe4 p f = .ok { r, names := r.names, groups := countGroups r.capt } := by
-  simp [compileRe4, compileRe, hq, hc, bind, Except.bind, pure, Except.pure]
+  simp [compileRe4, compileReVersion_v40, compileRe, hq, hc, bind, Except.bind, pure, Except.pure]
 
 end RegexShared
 

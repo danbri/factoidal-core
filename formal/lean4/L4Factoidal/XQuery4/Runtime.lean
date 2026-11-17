@@ -538,6 +538,8 @@ def nameOf (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
     match a.v with
     | .qn q => pure q
     | .str lex =>
+      if env.features.version != .v40 && a.is .anyURI then
+        err "XPTY0004" "a computed name cannot be xs:anyURI before 4.0"
       if !(a.isStringLike || a.ty == .untyped) then err "XPTY0004" "a computed name must be a QName or a string"
       let lex := lex.trimAscii.toString
       if lex.startsWith "Q{" then
@@ -634,12 +636,13 @@ def cmpTuples (tz : Int) (specs : List (OSpec × Coll)) : List (Option Atomic) �
 
 /-- `group by` key equality (§4.13.7): deep-equal of the atomized keys,
     NaN equal to NaN; the empty key equals the empty key. -/
-def groupKeyEq (a b : Option Atomic) (coll : Coll := .codepoint) : Bool :=
+def groupKeyEq (a b : Option Atomic) (coll : Coll := .codepoint)
+    (version : LanguageVersion := .v40) (tz : Int := 0) : Bool :=
   match a, b with
   | none, none => true
   | some x, some y =>
     if x.isStringLike && y.isStringLike && !coll.isCodepoint then coll.eq x.str y.str
-    else deepAtomEq x y
+    else if version == .v40 then deepAtomEq x y else legacyValueEqual tz x y
   | _, _ => false
 
 /-- The decoded window clause. -/
@@ -680,18 +683,18 @@ def stepClause (cb : XCb) (c : Expr) (tuples : List Env) (bound : List QN) :
             match a with
             | .arr ms =>
               for m in ms do
-                let x ← t.coerce vt m ("$" ++ v.show)
+                let x ← t.bindTyped vt m ("$" ++ v.show)
                 out := out.push (bindOpt (bindV t v x) pv (sInt k)); k := k + 1
             | _ => err "XPTY0004" "for member requires arrays"
         else
         if s.isEmpty && allowing == "1" then
           -- the empty sequence must match the declared type (§4.13.2)
-          let x ← t.coerce vt [] ("$" ++ v.show)
+          let x ← t.bindTyped vt [] ("$" ++ v.show)
           out := out.push (bindOpt (bindV t v x) pv (sInt 0))
         else
           let mut k := 1
           for i in s do
-            let x ← t.coerce vt [i] ("$" ++ v.show)
+            let x ← t.bindTyped vt [i] ("$" ++ v.show)
             out := out.push (bindOpt (bindV t v x) pv (sInt k)); k := k + 1
       ts := out.toList
       bnd := bnd ++ [v] ++ (if isNoName pv then [] else [pv])
@@ -704,8 +707,8 @@ def stepClause (cb : XCb) (c : Expr) (tuples : List Env) (bound : List QN) :
           match m with
           | .map kvs =>
             for (key, val) in kvs do
-              let kx ← t.coerce kt [.atom key] ("$" ++ kv.show)
-              let vx ← if isNoName vv then pure val else t.coerce vt val ("$" ++ vv.show)
+              let kx ← t.bindTyped kt [.atom key] ("$" ++ kv.show)
+              let vx ← if isNoName vv then pure val else t.bindTyped vt val ("$" ++ vv.show)
               let t1 := bindOpt (bindOpt t kv kx) vv vx
               out := out.push (bindOpt t1 pv (sInt k)); k := k + 1
           | _ => err "XPTY0004" "for key/value requires maps"
@@ -715,7 +718,7 @@ def stepClause (cb : XCb) (c : Expr) (tuples : List Env) (bound : List QN) :
       let mut out : Array Env := #[]
       for t in ts do
         let s ← cb.eval t e
-        out := out.push (bindV t v (← t.coerce vt s ("$" ++ v.show)))
+        out := out.push (bindV t v (← t.bindTyped vt s ("$" ++ v.show)))
       ts := out.toList
       bnd := bnd ++ [v]
     | .ext "c:where" [e] [] [] [] =>
@@ -768,11 +771,11 @@ def stepClause (cb : XCb) (c : Expr) (tuples : List Env) (bound : List QN) :
           let kv ← cb.eval t k
           -- the declared type of a grouping variable is checked against
           -- the atomized key (§4.13.7)
-          let _ ← t.coerce ty ((← t.atomize kv).map .atom) ("$" ++ q.show)
+          let _ ← t.bindTyped ty ((← t.atomize kv).map .atom) ("$" ++ q.show)
           ks := ks.push (← keyOf t kv)
         let kl := ks.toList
         match groups.findIdx? (fun (g, _) => g.length == kl.length &&
-            ((g.zip kl).zip (cl ++ List.replicate kl.length .codepoint)).all (fun ((a, b), c) => groupKeyEq a b c)) with
+            ((g.zip kl).zip (cl ++ List.replicate kl.length .codepoint)).all (fun ((a, b), c) => groupKeyEq a b c t.features.version t.tz)) with
         | some gi => groups := groups.modify gi (fun (g, ms) => (g, ms.push t))
         | none => groups := groups.push (kl, #[t])
       let others := bnd.filter (fun q => !gvs.any (· == q))
@@ -822,7 +825,7 @@ def stepClause (cb : XCb) (c : Expr) (tuples : List Env) (bound : List QN) :
             let last := endAt.getD (n - 1)
             if keep then
               let win := (items.extract i (last + 1)).toList
-              let win ← t.coerce vt win ("$" ++ v.show)
+              let win ← t.bindTyped vt win ("$" ++ v.show)
               let tw := bindWinVars (bindWinVars (bindV t v win) w.s items i) w.e items last
               out := out.push tw
             if !w.sliding then nextFree := last + 1
@@ -951,6 +954,8 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       let tv ← env.atomize (← cb.eval env tgt)
       let target ← match tv with
         | [a] =>
+          if env.features.version != .v40 && a.is .anyURI then
+            err "XPTY0004" "a node name cannot be xs:anyURI before 4.0"
           if a.isStringLike || a.ty == .untyped || a.is .ncname then
             let t := a.str.trimAscii.toString
             if isNCName t then pure t else err "XQDY0041" ("invalid processing-instruction target " ++ t)
@@ -973,6 +978,8 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       let p ← match pv with
         | [] => pure ""
         | [a] =>
+          if env.features.version != .v40 && a.is .anyURI then
+            err "XPTY0004" "a node name cannot be xs:anyURI before 4.0"
           if a.isStringLike || a.ty == .untyped || a.is .ncname then
             let t := a.str.trimAscii.toString
             if t == "" || isNCName t then pure t else err "XQDY0074" ("invalid namespace prefix " ++ t)
@@ -1048,6 +1055,8 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
         if res.isSome then continue
         for c in cases do
           let cv ← env.atomize (← cb.eval env c)
+          if env.features.version != .v40 && cv.length > 1 then
+            err "XPTY0004" "a switch case value must be an optional singleton before 4.0"
           let cv := cv.map (fun a => if a.ty == .untyped then Atomic.ofStr a.str else a)
           let hit := match ov with
             | [] => cv.isEmpty
