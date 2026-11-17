@@ -31,7 +31,7 @@ theorem resolveIn_strict (c : UInt32) (raw gc : UInt8) : resolveIn .strict c raw
 
 /-- Kind: tailoring. Says: under `normal` or `loose` a CJ character is ID (CSS Text 3 §5.3). -/
 theorem resolveIn_cj (mode : Mode) (h : mode ≠ .strict) (c : UInt32) (gc : UInt8) :
-    resolveIn mode c cCJ gc = cID := by
+    resolveIn mode c LineBreakData.cCJ gc = LineBreakData.cID := by
   simp [resolveIn, h]
 
 #print axioms breaks_contains_end
