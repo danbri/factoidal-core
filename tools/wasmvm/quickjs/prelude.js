@@ -14799,12 +14799,13 @@
   };
 
   // An element of a frame's document: its container's `marginwidth` and `marginheight`, which
-  // Lean's cascade of that document gives its body (HTML §15.3.3); '' for the page's elements.
+  // Lean's cascade of that document gives its body (HTML §15.3.3), and the container, whose box
+  // is the frame's viewport for its media queries; '' for the page's elements.
   const frameQ = id => {
     const d = info(id, 7), f = d > 0 ? info(d, 12) : -1;
     if (!(f >= 0)) return '';
     const a = k => { const v = n.attr(f, k); return typeof v === 'string' ? v : ''; };
-    return '\u0002' + a('marginwidth') + '\u0000' + a('marginheight');
+    return '\u0002' + a('marginwidth') + '\u0000' + a('marginheight') + '\u0000' + f;
   };
   const computedValue = (el, name, pe = -1) => {
     if (pe === -2) return '';
