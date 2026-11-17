@@ -30,6 +30,71 @@ inductive WritingMode where
   | horizontalTb | verticalRl | verticalLr
   deriving Repr, BEq
 
+/-- The side of an anchor box that an `anchor()` function names (CSS Anchor Positioning 1
+§3.2 `<anchor-side>`): a physical side, a flow-relative one (of the containing block's
+writing mode, or of the box's own with `self-`), `inside` or `outside` (the same side as the
+inset, or the opposite one), `center`, or a fraction from the start side. -/
+inductive AnchorSide where
+  | top | right | bottom | left | start | end_ | selfStart | selfEnd | inside | outside | center
+  | fraction (f : Float)
+  deriving Repr, BEq
+
+/-- An `anchor()` function in an inset (CSS Anchor Positioning 1 §3.2): the anchor name
+(`none`: the box's default anchor, `position-anchor`), the side, and the fallback length
+when no anchor is found (`none`: the inset is `auto`). -/
+structure AnchorRef where
+  name : Option String := none
+  side : AnchorSide := .center
+  fallback : Option Length := none
+  deriving Repr
+
+/-- The same anchor reference. -/
+def AnchorRef.same (a b : AnchorRef) : Bool :=
+  a.name == b.name && a.side == b.side &&
+    (match a.fallback, b.fallback with
+     | some x, some y => x.same y
+     | none, none => true
+     | _, _ => false)
+
+def AnchorRef.sameOpt : Option AnchorRef → Option AnchorRef → Bool
+  | some a, some b => a.same b
+  | none, none => true
+  | _, _ => false
+
+/-- An `<anchor-side>` keyword. -/
+def anchorSideOf : String → Option AnchorSide
+  | "top" => some .top | "right" => some .right | "bottom" => some .bottom | "left" => some .left
+  | "start" => some .start | "end" => some .end_ | "self-start" => some .selfStart
+  | "self-end" => some .selfEnd | "inside" => some .inside | "outside" => some .outside
+  | "center" => some .center
+  | _ => none
+
+/-- The `anchor()` of an inset's canonical value (CSS Anchor Positioning 1 §3.2): an
+optional anchor name and a side, and an optional length-percentage fallback (read for
+`property`); `none` for any other value. A fallback that is itself an `anchor()` is not
+read: the inset is then `auto` when the anchor is missing. -/
+def anchorOf (fontSize : Float) (property v : String) : Option AnchorRef :=
+  match CssValues.stripWs (CssValues.CV.parse v) with
+  | [.fn fname args] =>
+    if CssValues.lower fname != "anchor" then none else
+    match CssValues.splitCommas args with
+    | g :: rest =>
+      let parts := CssValues.stripWs g
+      let name := parts.findSome? fun c => match c with
+        | .tok (.ident k) => if k.startsWith "--" then some k else none
+        | _ => none
+      let side := parts.findSome? fun c => match c with
+        | .tok (.ident k) => if k.startsWith "--" then none else anchorSideOf (CssValues.lower k)
+        | .tok (.pct x) => some (.fraction (ratToFloat x / 100))
+        | _ => none
+      side.map fun side =>
+        let fallback := match rest with
+          | [f] => tableLength fontSize property (CssValues.serialize (CssValues.stripWs f))
+          | _ => none
+        { name, side, fallback }
+    | [] => none
+  | _ => none
+
 /-- `text-transform` (CSS Text 3 §2.1): the case in which text is shown. -/
 inductive TextTransform where | none | uppercase | lowercase | capitalize
   deriving Repr, BEq, DecidableEq
@@ -78,6 +143,17 @@ structure PositionStyle where
   nowrap : Bool := false
   /-- `text-transform` (CSS Text 3 §2.1; inherited). -/
   textTransform : TextTransform := .none
+  /-- `anchor-name` (CSS Anchor Positioning 1 §2.1): the names by which positioned boxes find
+  this one. -/
+  anchorNames : List String := []
+  /-- `position-anchor` (§2.4): the name of the default anchor of an `anchor()` with none. -/
+  positionAnchor : Option String := none
+  /-- The insets that are `anchor()` functions (top, right, bottom, left); their `Length`
+  fields hold the fallback, or `auto`. -/
+  anchorTop : Option AnchorRef := none
+  anchorRight : Option AnchorRef := none
+  anchorBottom : Option AnchorRef := none
+  anchorLeft : Option AnchorRef := none
   /-- `transform` (CSS Transforms 1): its functions in order (`BoxTransform.steps`); empty
   for `none`. -/
   transform : List TransformStep := []
@@ -108,7 +184,9 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform &&
   sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin &&
   a.marginOf == b.marginOf && a.paddingOf == b.paddingOf && a.scrolls == b.scrolls &&
-  a.contents == b.contents
+  a.contents == b.contents && a.anchorNames == b.anchorNames && a.positionAnchor == b.positionAnchor &&
+  AnchorRef.sameOpt a.anchorTop b.anchorTop && AnchorRef.sameOpt a.anchorRight b.anchorRight &&
+  AnchorRef.sameOpt a.anchorBottom b.anchorBottom && AnchorRef.sameOpt a.anchorLeft b.anchorLeft
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed
@@ -144,7 +222,7 @@ transformed one (CSS Transforms 1 §3: it is their containing block, so they mov
 def PositionStyle.containsAbsolutes (p : PositionStyle) : Bool := p.isPositioned || !p.transform.isEmpty
 
 def positionProperties : List String :=
-  ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing", "aspect-ratio",
+  ["position", "top", "right", "bottom", "left", "z-index", "anchor-name", "position-anchor", "float", "clear", "box-sizing", "aspect-ratio",
    "writing-mode", "list-style-type", "list-style-position", "white-space", "text-transform", "transform", "transform-origin", "overflow-x", "overflow-y"]
 
 /-- The ratio `a / b` (width to height) as two whole numbers in lowest terms; `none` when
@@ -175,8 +253,12 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
   | none => none
   | some v =>
     let reset := resetsToInitial v
-    let inset := fun (put : Length → PositionStyle) =>
-      if reset then some (put .auto) else (tableLength fontSize name value).map put
+    -- an inset: a length, or an `anchor()` with its fallback as the length
+    let inset := fun (put : Length → Option AnchorRef → PositionStyle) =>
+      if reset then some (put .auto none) else
+      match anchorOf fontSize name v with
+      | some a => some (put (a.fallback.getD .auto) (some a))
+      | none => (tableLength fontSize name value).map (put · none)
     match name with
     | "position" =>
       if reset then some {p with position := .static} else
@@ -187,10 +269,16 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       | "fixed" => some {p with position := .fixed}
       | "sticky" => some {p with position := .sticky}
       | _ => none
-    | "top" => inset fun l => {p with top := l}
-    | "right" => inset fun l => {p with right := l}
-    | "bottom" => inset fun l => {p with bottom := l}
-    | "left" => inset fun l => {p with left := l}
+    | "top" => inset fun l a => {p with top := l, anchorTop := a}
+    | "right" => inset fun l a => {p with right := l, anchorRight := a}
+    | "bottom" => inset fun l a => {p with bottom := l, anchorBottom := a}
+    | "left" => inset fun l a => {p with left := l, anchorLeft := a}
+    | "anchor-name" =>
+      if reset || v == "none" then some {p with anchorNames := []}
+      else some {p with anchorNames := (v.splitOn ",").map fun t => t.trimAscii.toString}
+    | "position-anchor" =>
+      if reset || !v.startsWith "--" then some {p with positionAnchor := none}
+      else some {p with positionAnchor := some v}
     | "z-index" =>
       if reset || v == "auto" then some {p with zIndex := none} else
       match tableComponents fontSize name value with
@@ -335,6 +423,12 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {nowrap := true} "white-space" "inherit").map (·.nowrap)) == some true
 #guard ((PositionStyle.set 10 {} "white-space" "bogus").map (·.nowrap)) == none
 #guard ((PositionStyle.set 10 {} "text-transform" "uppercase").map (·.textTransform)) == some .uppercase
+-- anchor positioning (CSS Anchor Positioning 1)
+#guard ((PositionStyle.set 10 {} "anchor-name" "--a1").map (·.anchorNames)) == some ["--a1"]
+#guard ((PositionStyle.set 10 {} "position-anchor" "--b").map (·.positionAnchor)) == some (some "--b")
+#guard ((PositionStyle.set 10 {} "left" "anchor(--a1 right)").map fun p => (p.anchorLeft.map (·.name), p.anchorLeft.map (·.side))) == some (some (some "--a1"), some .right)
+#guard ((PositionStyle.set 10 {} "top" "anchor(bottom, 10px)").map fun p => ((p.anchorTop.bind (·.name)).isNone && (p.anchorTop.map (·.side)) == some .bottom && p.top.same (.px 10))) == some true
+#guard ((PositionStyle.set 10 {anchorLeft := some {}} "left" "5px").map (·.anchorLeft.isNone)) == some true
 #guard ((PositionStyle.set 10 {textTransform := .uppercase} "text-transform" "none").map (·.textTransform)) == some .none
 #guard ((PositionStyle.set 10 {} "text-transform" "UPPERCASE").map (·.textTransform)) == some .uppercase
 #guard ((PositionStyle.set 10 {} "list-style-type" "none").map (·.listStyle)) == some .none

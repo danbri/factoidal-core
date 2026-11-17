@@ -1745,6 +1745,43 @@ def renderedLegend (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
           !(styles[k]!).pos.isAbsolute && (styles[k]!).pos.float == .none) == some id
   | none => false
 
+/-- The fraction of an anchor box's size, from its top or left edge, at which the side an
+`anchor()` names lies (CSS Anchor Positioning 1 §3.2), for an inset of the horizontal axis or
+the vertical one, on the far side (`right`, `bottom`) or not. `start` and `end` are of the
+containing block's direction (`rtl`), `self-start` and `self-end` of the box's own
+(`selfRtl`); a percentage is from the start side. `none`: a side of the other axis. -/
+def anchorFraction (side : AnchorSide) (horizontal far rtl selfRtl : Bool) : Option Float :=
+  let flip := fun (f : Float) (r : Bool) => if r then 1 - f else f
+  match side with
+  | .left => if horizontal then some 0 else none
+  | .right => if horizontal then some 1 else none
+  | .top => if horizontal then none else some 0
+  | .bottom => if horizontal then none else some 1
+  | .center => some 0.5
+  | .start => some (flip 0 rtl)
+  | .end_ => some (flip 1 rtl)
+  | .selfStart => some (flip 0 selfRtl)
+  | .selfEnd => some (flip 1 selfRtl)
+  | .inside => some (if far then 1 else 0)
+  | .outside => some (if far then 0 else 1)
+  | .fraction f => some (flip f rtl)
+
+#guard anchorFraction .right true false false false == some 1 && anchorFraction .right false false false false == none
+#guard anchorFraction .start true false true false == some 1 && anchorFraction .outside false true false false == some 0
+
+/-- The border box `(x, y, width, height)` of the anchor named `name` among `boxes`: of the
+last element in tree order whose `anchor-name` holds it (an element's first box is its own
+border box). -/
+def anchorBoxIn (styles : Array Computed) (boxes : Array Box) (name : String) :
+    Option (Float × Float × Float × Float) := Id.run do
+  let mut found : Option (Float × Float × Float × Float) := none
+  let mut last : Option Nat := none
+  for b in boxes do
+    if last != some b.source && ((styles[b.source]?).map (·.pos.anchorNames.contains name)).getD false then
+      found := some (b.x, b.y, b.width, b.height)
+      last := some b.source
+  return found
+
 /-- The style of the box whose padding box is the containing block of the absolutely
 positioned box `id` (CSS 2.1 §10.1): its nearest ancestor that holds absolutely positioned
 boxes (`containsAbsolutes`), else the root element's. A loop up the ancestors. -/
@@ -2065,7 +2102,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .anonymous _ _ => false}
     -- An absolutely positioned box (CSS 2.1 §10.3.7 and §10.6.4) in the containing block
     -- `(cx,cy,cw,ch)`; `at'` has its static position.
-    let absolute (at' : Pending) (cx cy cw ch : Float) : Except String Result := do
+    let absolute (at' : Pending) (cx cy cw ch : Float)
+        (anchors : String → Option (Float × Float × Float × Float) := fun _ => none) : Except String Result := do
       let id := at'.id
       let s := styles[id]!
       if s.display == .none then return {}
@@ -2074,10 +2112,20 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let p := s.padding
       let edgesX := b.left+b.right+p.left+p.right
       let edgesY := b.top+b.bottom+p.top+p.bottom
-      let left := CSS.resolve cw s.pos.left
-      let right := CSS.resolve cw s.pos.right
-      let top := CSS.resolve ch s.pos.top
-      let bottom := CSS.resolve ch s.pos.bottom
+      -- `anchor()` insets (CSS Anchor Positioning 1 §3.2): the distance from the containing
+      -- block's edge to the named side of the anchor's border box; with no such anchor (or a
+      -- side of the other axis), the inset's own length, its fallback
+      let rtlCB := (absoluteContainer dom styles id).direction == .rtl
+      let anchored := fun (ref : Option AnchorRef) (horizontal far : Bool) => (show Option Float from
+        ref.bind fun a => ((a.name.orElse fun _ => s.pos.positionAnchor).bind anchors).bind fun (ax, ay, aw, ah) =>
+          (anchorFraction a.side horizontal far (horizontal && rtlCB) (horizontal && s.direction == .rtl)).map fun f =>
+            let (lo, size, cLo, cSize) := if horizontal then (ax, aw, cx, cw) else (ay, ah, cy, ch)
+            let edge := lo + f * size
+            if far then cLo + cSize - edge else edge - cLo)
+      let left := (anchored s.pos.anchorLeft true false).orElse fun _ => CSS.resolve cw s.pos.left
+      let right := (anchored s.pos.anchorRight true true).orElse fun _ => CSS.resolve cw s.pos.right
+      let top := (anchored s.pos.anchorTop false false).orElse fun _ => CSS.resolve ch s.pos.top
+      let bottom := (anchored s.pos.anchorBottom false true).orElse fun _ => CSS.resolve ch s.pos.bottom
       let specified := CSS.resolve cw s.width
       -- CSS Box Alignment 3 §6.1.2 and §6.2.2: `justify-self` and `align-self` of an
       -- absolutely positioned box; `auto` and `normal` are `stretch`.
@@ -2169,12 +2217,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut below : Result := {}
       let mut above : Result := {}
       let mut kept : Array Pending := #[]
+      -- the anchors of `content` (CSS Anchor Positioning 1 §2): by name, the border box of the
+      -- last element in tree order with that `anchor-name`; read only for an `anchor()` inset
+      let anchors := fun (name : String) => anchorBoxIn styles content.boxes name
       for (z,p) in ordered do
         if (styles[p.id]!).pos.position == .fixed && !root then kept := kept.push p
         else
           let r ← match area p with
-            | some (ax,ay,aw,ah) => absolute p ax ay aw ah
-            | none => absolute p cx cy cw ch
+            | some (ax,ay,aw,ah) => absolute p ax ay aw ah anchors
+            | none => absolute p cx cy cw ch anchors
           if z < 0 then below := below.over r else above := above.over r
       return {content with nodes := below.nodes ++ content.nodes ++ above.nodes,
                            boxes := content.boxes ++ below.boxes ++ above.boxes,
