@@ -1803,9 +1803,9 @@ def shapeOfPath (v : List Tok) : Option (List Tok) :=
       match pathRawOf inner with
       | some ((m, [x, y]) :: segs) =>
         if m.toUpper != 'M' then none else
-        (segs.mapM fun (c, a) => shapeCommandOf c a).map fun cs =>
-          [Tok.op "shape"] ++ fill ++ [.ident "from", pxTok x, pxTok y] ++
-            cs.foldl (fun acc c => acc ++ .comma :: c) [] ++ .close :: post
+        (segs.mapM (m := Option) fun (c, a) => shapeCommandOf c a).map fun (cs : List (List Tok)) =>
+          [Tok.op "shape"] ++ fill ++ [Tok.ident "from", pxTok x, pxTok y] ++
+            cs.foldl (fun (acc : List Tok) (c : List Tok) => acc ++ (Tok.comma :: c)) [] ++ (Tok.close :: post)
       | _ => none
     | _ => none
   | _ => none
@@ -1856,7 +1856,7 @@ theorem arcFlag_start (p : Int) (x y : Bool) (h : p ≤ 0) : arcFlag p x y = x :
 
 /-- Kind: correctness. Says: at or past the end an arc flag is the end's. -/
 theorem arcFlag_end (p : Int) (x y : Bool) (h : one ≤ p) : arcFlag p x y = y := by
-  have : ¬ p ≤ 0 := by unfold one scale at h; omega
+  have : ¬ p ≤ 0 := by unfold Fix.one Fix.scale at h; omega
   simp [arcFlag, this, h]
 
 /-- Kind: correctness. Says: between the ends an arc flag is set exactly when either end
