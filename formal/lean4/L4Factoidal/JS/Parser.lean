@@ -1808,8 +1808,8 @@ of the source has more tokens than (`P.relexAt` can change the count). -/
 def parseFuel (tokens : Nat) : Nat := 64 * tokens + 1024
 
 /-- Parse a script (§16.1). `strict` forces strict mode code. -/
-def parseScript (src : String) (strict : Bool := false) (evalCode : Bool := false) :
-    Except String Script :=
+def parseScript (src : String) (strict : Bool := false) (evalCode : Bool := false)
+    (inFunction : Bool := true) : Except String Script :=
   let cs := src.toList.toArray
   match lexChars cs with
   | .error e => .error e
@@ -1817,8 +1817,11 @@ def parseScript (src : String) (strict : Bool := false) (evalCode : Bool := fals
     let toks := internToks toks
     let strict := strict || hasUseStrict toks 0
     -- global code has no super and no new.target (§16.1.1); eval code may be in a method
-    let st : PState := { toks, strict, src := cs, privAny := evalCode, superCall := evalCode,
-                         superProp := evalCode, newTargetOk := evalCode }
+    -- (eval code run as global code, `inFunction` false: an indirect eval or one at the top
+    -- level, has none either, §19.2.1.1 steps 5-7)
+    let fn := evalCode && inFunction
+    let st : PState := { toks, strict, src := cs, privAny := evalCode, superCall := fn,
+                         superProp := fn, newTargetOk := fn }
     match (parseStmts (parseFuel (cs.size + 1)) #[]).run st with
     | .ok body st' =>
       if (st'.toks.getD st'.pos default).kind != .eof then

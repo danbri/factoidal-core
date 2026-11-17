@@ -1458,6 +1458,23 @@ def typedGenericNames : Array (String × Nat) :=
   #[("forEach", 1), ("join", 1), ("indexOf", 1), ("includes", 1), ("every", 1), ("some", 1), ("reduce", 1),
     ("find", 1), ("findIndex", 1), ("values", 0), ("keys", 0), ("entries", 0)]
 
+/-- The first character of a private name's key (`privKey`). -/
+def privMark : Char := Char.ofNat 0x10FFFE
+
+/-- An entry of a class constructor's `fields` that is a private method (`m`), getter (`g`) or
+setter (`s`) of its instances, keyed by the private name's key `k`: two private marks and the
+tag, which no field's key starts with (a private name is an identifier, a String key never
+starts with the mark: `strKey`). -/
+def privElemKey (tag : Char) (k : String) : String :=
+  String.singleton privMark ++ String.singleton privMark ++ String.singleton tag ++ k
+
+/-- The tag and private name of a `privElemKey` entry. -/
+def privElemOf (ek : String) : Option (Char × String) :=
+  if ek.front != privMark then none else
+  let r := (ek.drop 1).toString
+  if r.front != privMark then none else
+  some ((r.drop 1).toString.front, (r.drop 2).toString)
+
 /-- Where %TypedArray%.prototype keeps the Array.prototype function a generic method uses. -/
 def typedGenericKey (nm : String) : String := privKey ("%Array." ++ nm)
 
@@ -7635,9 +7652,19 @@ def getV : Nat → Value → String → M Value
   | n + 1, v, key => do
     match v with
     | .obj id =>
+      let c0 := key.front
+      -- PrivateGet (§7.3.32): a private name is the object's own element, never a prototype's,
+      -- and no Proxy trap sees it
+      if c0 == privMark then
+        match (← getObj id).getOwn key with
+        | some (.data x ..) => return x
+        | some (.acc g _ _ _) =>
+          if g.isObj then return ← callV n g v #[]
+          throwErr .type s!"'#{(key.drop 1).toString}' was defined without a getter"
+        | none => throwErr .type s!"Cannot read private member #{(key.drop 1).toString} from an object whose class did not declare it"
       -- a typed array's integer index is its element, never a prototype's property
       -- (§10.4.5.4 TypedArrayGetElement)
-      if key.front.isDigit then
+      if c0.isDigit then
         if let .typed ty b off len := (← getObj id).kind then
           if let some i := arrayIndex? key then
             let live ← liveLen ty b off len
@@ -7777,6 +7804,18 @@ def putV : Nat → Value → String → Value → Bool → M Unit
       -- an own writable data property of a non-exotic object is overwritten in place
       if ← setOwnData id key val then return
       let o ← getObj id
+      -- PrivateSet (§7.3.33): the object's own element; a method is not writable, an accessor
+      -- needs a setter
+      if isPrivKey key then
+        match o.getOwn key with
+        | some (.data _ w e c) =>
+          if w then defineOwn id key (.data val true e c)
+          else throwErr .type s!"Private method #{(key.drop 1).toString} is not writable"
+        | some (.acc _ st _ _) =>
+          if st.isObj then let _ ← callV n st target #[val]
+          else throwErr .type s!"'#{(key.drop 1).toString}' was defined without a setter"
+        | none => throwErr .type s!"Cannot write private member #{(key.drop 1).toString} to an object whose class did not declare it"
+        return
       match o.kind with
       | .proxy t hnd =>
         match ← proxyTrap n hnd "set" with
@@ -8318,14 +8357,37 @@ def initFields : Nat → Ctx → Value → Value → M Unit
     | .obj fid =>
       match (← getObj fid).kind with
       | .closure _ _ _ _ _ fields =>
+        -- the private methods and accessors first (PrivateMethodOrAccessorAdd, §7.3.30): a
+        -- second add to the same object is a TypeError, a getter and setter make one accessor
+        if let .obj tid := thisV then
+          let mut added : Array String := #[]
+          for (ek, fn) in fields do
+            if let some (tag, k) := privElemOf ek then
+              let own := (← getObj tid).getOwn k
+              if tag == 'm' then
+                if own.isSome then throwErr .type s!"Cannot initialize private method #{(k.drop 1).toString} twice on the same object"
+                defineOwn tid k (.data fn false false false)
+              else
+                let (g, st) ← match own with
+                  | none => pure (Value.undef, Value.undef)
+                  | some (.acc g st _ _) =>
+                    if added.contains k then pure (g, st)
+                    else throwErr .type s!"Cannot initialize #{(k.drop 1).toString} twice on the same object"
+                  | some _ => throwErr .type s!"Cannot initialize #{(k.drop 1).toString} twice on the same object"
+                defineOwn tid k (if tag == 'g' then .acc fn st false false else .acc g fn false false)
+              added := added.push k
         for (k, init) in fields do
+          if (privElemOf k).isSome then continue
           let v ← callV n init thisV #[]
           match thisV with
           | .obj tid =>
             match (← getObj tid).getOwn k with
-            | some p => if !p.configurable then throwErr .type s!"Cannot redefine property: {k}"
+            | some p =>
+              -- PrivateFieldAdd (§7.3.31): never twice on one object
+              if isPrivKey k then throwErr .type s!"Cannot initialize #{(k.drop 1).toString} twice on the same object"
+              if !p.configurable then throwErr .type s!"Cannot redefine property: {k}"
             | none => pure ()
-            defineOwn tid k (.data v true true true)
+            defineOwn tid k (.data v true (!isPrivKey k) true)
           | _ => pure ()
       | _ => pure ()
     | _ => pure ()
@@ -8910,7 +8972,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
     | .binary .inOp (.member (.ident "") k) b =>
       -- `#x in o` (§13.10.1, `privIn`): the private name's key itself
       match ← evalExpr n ctx b with
-      | .obj id => pure (.bool (← hasProp n id k))
+      | .obj id => pure (.bool ((← getObj id).getOwn k).isSome)
       | _ => throwErr .type "Cannot use 'in' operator to search for a key in a non-object"
     | .binary op a b =>
       let x ← (match leafV (← get) ctx a with | .hole => evalExpr n ctx a | v => pure v)
@@ -9699,10 +9761,16 @@ def defineMembers : Nat → Ctx → Nat → Nat → List Member → Array (Strin
     if static && key == "prototype" && kind != .field then
       throwErr .type "Classes may not have a static property named 'prototype'"
     let nm ← nameOfKey key
+    -- a private method or accessor of the instances (§15.7.14 step 36: [[PrivateMethods]]) is
+    -- added to each instance before its fields (InitializeInstanceElements), not to the prototype
+    if !static && isPrivKey key && (kind == .method || kind == .getter || kind == .setter) then
+      let tag := if kind == .method then 'm' else if kind == .getter then 'g' else 's'
+      let fn ← makeClosure ctx f (if kind == .method then nm else if kind == .getter then "get " ++ nm else "set " ++ nm) (.obj proto)
+      return ← defineMembers n ctx fid proto ms (acc.push (privElemKey tag key, fn))
     match kind with
     | .method =>
       let m ← makeClosure ctx f nm (.obj target)
-      setHidden target key m
+      if isPrivKey key then defineOwn target key (.data m false false false) else setHidden target key m
       defineMembers n ctx fid proto ms acc
     | .getter =>
       let g ← makeClosure ctx f ("get " ++ nm) (.obj target)
@@ -9733,7 +9801,7 @@ def directEval : Nat → Ctx → Value → M Value
   | n + 1, ctx, src => do
     match src with
     | .str code =>
-      match (parseScript code ctx.strict (evalCode := true)).map Resolve.script with
+      match (parseScript code ctx.strict (evalCode := true) (inFunction := ctx.env != 0)).map Resolve.script with
       | .error e => throwErr .syntax ((e.drop 13).toString)
       | .ok sc =>
         -- EvalDeclarationInstantiation: sloppy eval code in a function's parameters may not
