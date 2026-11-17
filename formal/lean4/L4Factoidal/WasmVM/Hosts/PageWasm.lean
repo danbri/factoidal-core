@@ -507,7 +507,7 @@ def memNew (s : State) (p : ByteArray) : Result :=
   let mx := rd32 p 4
   if s.store.mems.size ≥ s.config.memories || ini > s.config.pages ||
       totalPages s.store + ini > s.config.totalPages then err s (-5) else
-  let (st, a) := s.store.addMem ⟨⟨ini, if mx == none32 then none else some mx⟩⟩
+  let (st, a) := s.store.addMem ⟨⟨ini, if mx == none32 then none else some mx, false⟩⟩
   ok { s with store := st } (u32 ByteArray.empty a)
 
 /-- Op 10: grow a memory by `delta` pages: the old size, or -1. -/
@@ -541,7 +541,7 @@ def tableNew (s : State) (p : ByteArray) : Result :=
     let ini := rd32 p 0
     let mx := rd32 p 4
     if ini > 10000000 then err s (-5) else
-    let (st, a) := s.store.addTable ⟨⟨ini, if mx == none32 then none else some mx⟩, r⟩ (rd64 p 8)
+    let (st, a) := s.store.addTable ⟨⟨ini, if mx == none32 then none else some mx, false⟩, r⟩ (rd64 p 8)
     ok { s with store := st } (u32 ByteArray.empty a)
   | _ => err s (-2)
 
