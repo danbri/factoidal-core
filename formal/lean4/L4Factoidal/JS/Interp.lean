@@ -1558,6 +1558,26 @@ takes the general path. -/
   let i := numIndex x
   if i < noIndex then typedElemAt h id i else .hole
 
+/-- `o[x] = v` for a Number `x` and a Number `v`, when `o` is a typed array of a Number element
+type, `x` is an array index and no undo log covers `o`: the element is written (or the write is
+dropped past the live length, §10.4.5.16 TypedArraySetElement) with no key string, and the answer
+is `true`. `false` otherwise, with nothing done: the caller takes the general path. `putV` on the
+key of `x` does the same write (`typedSetNum_refines` in `JS/Theorems.lean`). The undo log is
+part of the test because `putV` notes the object in it before it finds no plain property to
+overwrite. Called after the Array path (`setElem`) has declined, so an Array write pays nothing. -/
+@[inline] def typedSetNum (id : Nat) (x : Float) (v : Value) : M Bool := do
+  let h ← get
+  match (h.obj id).kind, v with
+  | .typed ty b off len, .num _ =>
+    let i := numIndex x
+    if i < noIndex && !typedIsBig ty && h.undoObjs.base ≤ id then
+      let bo := h.obj b
+      let live := if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len
+      if i < live then typedWriteV ty b off i v
+      pure true
+    else pure false
+  | _, _ => pure false
+
 /-- The %TypedArray%.prototype methods that validate the typed array and then take the steps
 of the Array.prototype method of the same name (`NativeX.typedGeneric`): name, length. -/
 def typedGenericNames : Array (String × Nat) :=
@@ -8964,7 +8984,10 @@ def evalExpr : Nat → Ctx → Expr → M Value
         let v ← evalExpr n ctx rhs
         let isIdx := x ≥ 0 && x < maxIndexF && x.floor == x
         let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
-        if !done then putV n b (keyOfNum x) v ctx.strict
+        if !done then
+          -- not an Array's element: a typed array's element by its number (`typedSetNum`), else `putV`
+          let done ← typedSetNum id x v
+          if !done then putV n b (keyOfNum x) v ctx.strict
         pure v
       | _, _ =>
         let key ← toKey n kv
@@ -11129,7 +11152,9 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       | .obj id, .num x =>
         let isIdx := x ≥ 0 && x < maxIndexF && x.floor == x
         let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
-        if !done then putV n b (keyOfNum x) v code.strict
+        if !done then
+          let done ← typedSetNum id x v
+          if !done then putV n b (keyOfNum x) v code.strict
       | _, _ =>
         let key ← toKey n kv
         putV n b key v code.strict

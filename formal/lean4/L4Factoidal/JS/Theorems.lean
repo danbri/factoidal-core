@@ -216,6 +216,117 @@ theorem typedConv_num {H : Type} (n ty : Nat) (x : Float) (h : typedIsBig ty = f
 #print axioms typedConv_num_arm
 #print axioms typedConv_num
 
+/-! ## A typed array's element written by a Number, with no key string (`typedSetNum`) -/
+
+/-- An array with a cell swapped out and put back is the array. -/
+theorem swapAt_set_same (objs : Array Obj) (id : Nat) (h : id < objs.size) :
+    (objs.swapAt! id default).2.set! id (objs.swapAt! id default).1 = objs := by
+  simp only [Array.swapAt!, h, dite_true, Array.swapAt, Array.set!_eq_setIfInBounds]
+  apply Array.ext
+  · simp
+  · intro j hj1 hj2
+    by_cases hji : id = j
+    · subst hji; rw [Array.getElem_setIfInBounds_self]
+    · rw [Array.getElem_setIfInBounds_ne (by simpa using hj2) hji, Array.getElem_set_ne _ _ hji]
+#print axioms swapAt_set_same
+
+theorem HeapOf.obj_eq_getElem {H : Type} (h : HeapOf H) (id : Nat) (hid : id < h.objs.size) : h.obj id = h.objs[id] := by
+  simp [HeapOf.obj, Array.getD, hid]
+
+/-- A change that leaves the object as it was leaves the heap as it was, when no undo log covers the object. -/
+theorem updateObj_keep {H : Type} {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) (h : HeapOf H) (a : α)
+    (hb : h.undoObjs.base ≤ id) (hid : id < h.objs.size) (hf : f (h.obj id) = (a, h.obj id)) :
+    updateObj id f h = .ok a h := by
+  have hnb : ¬ id < h.undoObjs.base := by omega
+  rw [HeapOf.obj_eq_getElem h id hid] at hf
+  unfold updateObj
+  simp only [modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet, HeapOf.noteObj, hnb, if_false, hid, if_true, takeAt]
+  have h1 : (h.objs.swapAt! id default).fst = h.objs[id] := by
+    simp [Array.swapAt!, hid, Array.swapAt]
+  have h2 := swapAt_set_same h.objs id hid
+  rw [h1] at h2 ⊢
+  rw [hf]
+  simp only [h2]
+#print axioms updateObj_keep
+
+theorem obj_lt_of_typed {H : Type} (h : HeapOf H) (id ty b off len : Nat) (hk : (h.obj id).kind = .typed ty b off len) :
+    id < h.objs.size := by
+  apply Classical.byContradiction
+  intro hn
+  have : h.obj id = default := by simp [HeapOf.obj, Array.getD, hn]
+  rw [this] at hk
+  cases hk
+
+theorem setElem_typed {H : Type} (h : HeapOf H) (id i ty b off len : Nat) (v : Value)
+    (hk : (h.obj id).kind = .typed ty b off len) (hb : h.undoObjs.base ≤ id) :
+    setElem id i v h = .ok false h := by
+  unfold setElem
+  exact updateObj_keep id _ h false hb (obj_lt_of_typed h id ty b off len hk) (by simp only [hk])
+
+theorem setOwnData_typed {H : Type} (h : HeapOf H) (id ty b off len : Nat) (key : String) (v : Value)
+    (hk : (h.obj id).kind = .typed ty b off len) (hb : h.undoObjs.base ≤ id) :
+    setOwnData id key v h = .ok false h := by
+  unfold setOwnData
+  exact updateObj_keep id _ h false hb (obj_lt_of_typed h id ty b off len hk) (by simp only [hk])
+#print axioms setOwnData_typed
+
+theorem bind_pure_unit {H : Type} (m : JSM H Unit) : (EStateM.bind m fun _ => EStateM.pure ()) = m := by
+  funext s
+  unfold EStateM.bind
+  cases m s <;> rfl
+
+/-- **Kind: refinement.** `[[Set]]` of a Number on a typed array of a Number element type, by the
+key of an index Number, when no undo log covers the object: the element write `typedWriteV` (or
+nothing past the live length), given that `typedConv` answers the Number (`typedConv_num`). -/
+theorem putV_typedNum {H : Type} (n id : Nat) (x y : Float) (strict : Bool) (h : HeapOf H) (ty b off len : Nat)
+    (hk : (h.obj id).kind = .typed ty b off len) (hb : h.undoObjs.base ≤ id)
+    (hx : numIndex x < noIndex)
+    (hconv : typedConv (H := H) n ty (.num y) = pure (.num y)) :
+    putV (n + 1) (.obj id) (keyOfNum x) (.num y) strict h =
+      (if numIndex x < (if typedOob (isDetached (h.obj b)) off len (elemSize ty) (bufferBytes (h.obj b)).size then 0 else len)
+        then typedWriteV ty b off (numIndex x) (.num y) else pure ()) h := by
+  rw [putV.eq_def]
+  simp only [bind, EStateM.bind, setOwnData_typed h id ty b off len _ _ hk hb, getObj, pure, EStateM.pure, get, getThe,
+    MonadStateOf.get, EStateM.get, hk, arrayIndex?_keyOfNum x hx, hconv, liveLen]
+  simp only [EStateM.bind, EStateM.get, EStateM.pure, Bool.false_eq_true, if_false, hk, hconv, pure]
+  simp only [bind_pure_unit]
+#print axioms putV_typedNum
+
+/-- **Kind: refinement.** The form the evaluator and the register machine now write for `o[x] = v`
+with a Number `x`, after the Array path has declined (`typedSetNum` first, `putV` on the key of `x`
+when it answers `false`) runs as `putV` alone, from every heap and for every value, with fuel 2
+or more for `putV` (below that `putV` is out of fuel before it stores). Does not say anything
+about speed. -/
+theorem typedSetNum_refines {H : Type} (n id : Nat) (x : Float) (v : Value) (strict : Bool) (h : HeapOf H) :
+    (do let done ← typedSetNum id x v
+        if !done then putV (n + 2) (.obj id) (keyOfNum x) v strict : JSM H Unit) h
+    = putV (n + 2) (.obj id) (keyOfNum x) v strict h := by
+  unfold typedSetNum
+  simp only [bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure]
+  cases hk : (h.obj id).kind with
+  | typed ty b off len =>
+    cases v with
+    | num y =>
+      simp only []
+      by_cases hc : (decide (numIndex x < noIndex) && !typedIsBig ty && decide (h.undoObjs.base ≤ id)) = true
+      · have hc' := hc
+        simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true'] at hc'
+        obtain ⟨⟨hx, hbig⟩, hb⟩ := hc'
+        simp only [hc, if_true]
+        rw [putV_typedNum (n + 1) id x y strict h ty b off len hk hb hx (typedConv_num n ty y hbig)]
+        by_cases hl : numIndex x < (if typedOob (isDetached (h.obj b)) off len (elemSize ty) (bufferBytes (h.obj b)).size = true then 0 else len)
+        · simp only [hl, if_true]
+          unfold EStateM.bind
+          cases typedWriteV ty b off (numIndex x) (Value.num y) h <;> rfl
+        · simp only [hl, if_false]; rfl
+      · simp only [hc]; rfl
+    | _ => rfl
+  | _ => rfl
+
+#print axioms updateObj_keep
+#print axioms putV_typedNum
+#print axioms typedSetNum_refines
+
 theorem arrayIndex?_lt {s : String} {n : Nat} (h : arrayIndex? s = some n) : n < 4294967295 := by
   unfold arrayIndex? at h
   split at h
