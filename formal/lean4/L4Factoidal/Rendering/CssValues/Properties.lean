@@ -351,6 +351,23 @@ def radialCanon (v : String) : String :=
       | [] => cv
     | cv => cv)
 
+/-- Items separated by single spaces. -/
+def spaced (cvs : List CV) : List CV :=
+  cvs.foldl (fun acc c => if acc.isEmpty then [c] else acc ++ [.tok .ws, c]) []
+
+/-- A grid template without its empty line name lists `[]` (CSS Grid 2 §7.2: they name no
+line), at the top level and in `repeat()`. -/
+def gridCanon (v : String) : String :=
+  if (v.splitOn "[]").length ≤ 1 then v else
+  let keep := fun (c : CV) => match c with
+    | .block '[' body => !(stripWs body).isEmpty
+    | _ => true
+  serialize (spaced ((stripWs (CV.parse v)).filter keep |>.map fun c => match c with
+    | .fn name args =>
+      if lower name == "repeat" then .fn name (joinGroups ((splitCommas args).map fun g => spaced ((stripWs g).filter keep)))
+      else c
+    | c => c))
+
 /-- The canonical forms that the order of the grammar alone does not give, by property. -/
 def canonical (p v : String) : String :=
   match p with
@@ -363,6 +380,7 @@ def canonical (p v : String) : String :=
   | "animation-timing-function" | "transition-timing-function" => easingCanon v
   | "filter" | "backdrop-filter" => filterCanon v
   | "translate" => translateCanon v
+  | "grid" | "grid-template" | "grid-template-rows" | "grid-template-columns" => gridCanon v
   | _ => radialCanon (gradientCanon v)
 
 /-- `canonical`, and for a shape property the shape's canonical form (`shapeValue`):
@@ -1360,6 +1378,9 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "translate" "100px 0px" == some "100px" && specified "translate" "100px 200px 0px" == some "100px 200px" && specified "translate" "1px 2px 0" == some "1px 2px"
 #guard specified "background-image" "radial-gradient(ellipse farthest-corner, red, blue)" == some "radial-gradient(red, blue)"
 #guard specified "background-image" "radial-gradient(circle farthest-corner, red, blue)" == some "radial-gradient(circle, red, blue)"
+#guard specified "grid-template" "none / [] 0px" == some "none / 0px" && specified "grid-template" "[] 10px [] / [] auto []" == some "10px / auto"
+#guard specified "grid-template" "\"a\" 10px [] [b] \"b\" 20px / 30px" == some "\"a\" 10px [b] \"b\" 20px / 30px"
+#guard specified "grid-template-rows" "repeat(1, [] 10px [])" == some "repeat(1, 10px)" && specified "grid" "[a] \"a\" 10px []" == some "[a] \"a\" 10px"
 #guard specified "will-change" "transform, opacity" == some "transform, opacity" && specified "will-change" "auto" == some "auto"
 -- a math function of a non-legacy colour function stays in the specified value (CSS Color 4)
 #guard specified "color" "color(srgb calc(0.5 + 1) calc(0.5 - 1) calc(0.5) / calc(-0.5 + 1))" ==
