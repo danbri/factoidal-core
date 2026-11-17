@@ -554,18 +554,24 @@ def overridesWhere (s : State) (ac : Access) (keep : Nat → Bool) : List Overri
       -- a sizing property with a `calc-size()` among its values (CSS Values 5 §7.1.1): every
       -- value in one shape over one basis (`CalcSizeForm.canonical`), so that the components
       -- interpolate; a page with none pays one text test per keyframe
+      -- (also a keyword with a length under `interpolate-size: allow-keywords`, CSS Values 5 §7.2)
       let raw := eff.keyframes.filterMap fun k => k.props.lookup property
+      let sized := sizingProperty property && (raw.any calcSizeText || calcSizeText (Value.toText underlying))
+      let keywords := sizingProperty property && !sized && ac.base e "interpolate-size" == some "allow-keywords"
       let basis : Option String :=
-        if !sizingProperty property || !(raw.any calcSizeText || calcSizeText (Value.toText underlying)) then none
+        if !sized && !keywords then none
         else L4Factoidal.Rendering.CalcSizeForm.basisFor
-          ((raw.filterMap fun t => ac.compute e property t) ++ [Value.toText underlying])
+          ((raw.filterMap fun t => ac.compute e property t) ++ [Value.toText underlying]) keywords
       let shaped := fun (t : String) => match basis with
         | some b => L4Factoidal.Rendering.CalcSizeForm.normalizeWith b t
         | none => t
       let underlying := if basis.isSome then Value.parse (shaped (Value.toText underlying)) else underlying
       let compute := fun (text : String) =>
         (ac.compute e property text).map fun t => withCurrentColor ac e property (Value.parse (shaped t))
-      match Effect.value eff.keyframes eff.composite property (kindOf property) p underlying compute eff.neutralEasing with
+      -- (a value in the one shape is not clamped component by component: its size can be
+      -- below 0 only as a whole, which the layout clamps)
+      let kind := if basis.isSome then Value.Kind.generic else kindOf property
+      match Effect.value eff.keyframes eff.composite property kind p underlying compute eff.neutralEasing with
       | some v =>
         if !stack.contains (e, property) then keys := keys.push (e, property)
         stack := stack.insert (e, property) (v, isCssTransition a.origin)

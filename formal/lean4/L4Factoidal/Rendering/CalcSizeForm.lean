@@ -257,8 +257,13 @@ def canonical (texts : List String) : Option (List String) :=
 
 /-- The basis the values of an animation of a sizing property share when one of them is a
 `calc-size()` (`canonical`); `none` otherwise. -/
-def basisFor (texts : List String) : Option String :=
-  if !texts.any isCalcSize then none else (texts.mapM ofText).bind commonBasis
+def basisFor (texts : List String) (keywords : Bool := false) : Option String :=
+  let sized := texts.any isCalcSize
+  if !sized && !keywords then none else do
+  let b ← commonBasis (← texts.mapM ofText)
+  -- with `interpolate-size: allow-keywords` (`keywords`) and no `calc-size()`, only when a
+  -- keyword meets a length: lengths alone interpolate as they always did
+  if !sized && b == "any" then none else some b
 
 /-- A value in the one shape over basis `b` (as `canonical` writes it); a value that is no
 form over `b` or `any` is left as it is. -/
@@ -313,6 +318,7 @@ private def show_ (t : String) : String := (ofText t).elim "-" text
 #guard canonical ["auto", "calc-size(min-content, size)"] == none
 #guard canonical ["10px", "20px"] == none
 #guard basisFor ["auto", "calc-size(auto, 2 * size)"] == some "auto" && basisFor ["auto", "10px"] == none
+#guard basisFor ["auto", "10px"] (keywords := true) == some "auto" && basisFor ["5px", "10px"] (keywords := true) == none
 #guard normalizeWith "auto" "0" == "calc-size(auto, 0 * size + 0px + 0%)"
 #guard fmt 0.1 == "0.1" && fmt (-2.25) == "-2.25" && fmt 100 == "100"
 
