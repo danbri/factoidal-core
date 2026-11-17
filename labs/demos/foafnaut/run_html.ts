@@ -1574,7 +1574,7 @@ async function main() {
       // A tab chosen during the draw must not be replaced by this page. A page that a navigation
       // prepares during the draw is not a reason to drop the frame: see the candidate check below.
       const shownBefore=document;
-      const result=nextLayers?await session!.drawLayers(nextLayers,sentWidth,sentHeight,place!.offset,everyFrame,presenter?()=>presenter.accepts(nextLayers!.layers):undefined):await session!.draw(next,everyFrame);
+      const result=nextLayers?await session!.drawLayers(nextLayers,sentWidth,sentHeight,place!.offset,everyFrame,presenter?installed=>presenter.accepts(nextLayers!.layers,installed?.layers):undefined):await session!.draw(next,everyFrame);
       if(document!==shownBefore){awaiting=[...stamps,...awaiting];dirty=true;return;}
       if(carried&&carried===pressed){
         if(result.presented){carried.framed=true;pressFrameMs.push(result.presentedAt-carried.at);
@@ -1657,7 +1657,7 @@ async function main() {
         const {layers}=await worker.compileLayers(shownRequest.request.source,shownRequest.width,shownRequest.height,options);
         if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document)return;
         const {offset}=clampOffset(layers.layers,scroll);
-        result=await session!.drawLayers(layers,shownRequest.width,shownRequest.height,offset,true,presenter?()=>presenter.accepts(layers.layers):undefined);
+        result=await session!.drawLayers(layers,shownRequest.width,shownRequest.height,offset,true,presenter?installed=>presenter.accepts(layers.layers,installed?.layers):undefined);
         if(result.presented)recordPresented({...shownRequest,request:{...shownRequest.request,options}},layers.layers.bandTop+offset);
         if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document){dirty=true;return;}
         if(result.presented){current={...shownRequest,request:{...shownRequest.request,options},layers};frame=layers.page;shownOffset=offset;presenter?.show(layers.layers,scroll);}
@@ -1915,7 +1915,7 @@ async function main() {
         if(!swap&&!keeps(current.layers.layers,scroll)&&!bandComing())dirty=true;
         const shown=swap?{...swap.record,layers:swap.layers}:current,shownLayers=shown.layers;
         const start=performance.now(),{offset,exact}=presenter&&!swap?presenter.show(shownLayers.layers,scroll):clampOffset(shownLayers.layers,scroll),at=scroll;
-        shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame,presenter?()=>presenter.accepts(swap.layers.layers):undefined):session!.shift(offset,everyFrame,presenter?shownLayers:undefined)).then(result=>{
+        shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame,presenter?installed=>presenter.accepts(swap.layers.layers,installed?.layers):undefined):session!.shift(offset,everyFrame,presenter?shownLayers:undefined)).then(result=>{
           if(swap&&document!==swap.record.document){awaitingShift=[...stamps,...awaitingShift];dirty=true;return;}
           const finished=performance.now();
           trace("native-html-scroll",{frame:frameNumber,scroll:at,offset,exact,swap:!!swap,totalMs:ms(start,finished),drawMs:Math.round(result.drawMs*10)/10,

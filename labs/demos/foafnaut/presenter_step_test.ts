@@ -1,7 +1,9 @@
 // The serial document op and the independent pure entry must give identical answers.
 // FOAFNAUT_PRESENTER_ENGINE chooses the native library; absent, both use the Wasm build.
 import {strict as assert} from "node:assert";
-import {loadHTML,loadPresenter,type PresenterState,type PresenterInput} from "./native_html_engine.ts";
+import {loadHTML,loadPresenter,type HTMLLayerPlace,type PresenterState,type PresenterInput} from "./native_html_engine.ts";
+
+import {createPresenter} from "./presenter_host.ts";
 
 const library=Deno.env.get("FOAFNAUT_PRESENTER_ENGINE");
 const pure=await loadPresenter(library);
@@ -41,4 +43,16 @@ Deno.test("presenter: malformed wire numbers are refused",()=>{
     assert.throws(()=>pure(initial,{kind:"scrollTo",y}));
     assert.throws(()=>engine.presenterStep(initial,{kind:"scrollTo",y}));
   }
+});
+
+Deno.test("presenter: an installed frame remains newer even before host recording",()=>{
+  const host=createPresenter(pure,()=>{});
+  const layer=(id:number):HTMLLayerPlace=>({presenterId:id,top:0,view:100,
+    bandTop:100,bandHeight:300,keepFrom:100,keepTo:300,composite:""});
+  host.show(layer(1),100);
+  assert.equal(host.accepts(layer(2)),true,"the recorded frame alone would accept this prefetch");
+  assert.equal(host.accepts(layer(2),layer(3)),false,"a newer installed texture must prevent replacement");
+  assert.equal(host.accepts(layer(4),layer(3)),true,"a newer publication can replace both");
+  host.show(layer(4),100);
+  assert.equal(host.accepts(layer(3),layer(2)),false,"the recorded frame also prevents replacement");
 });

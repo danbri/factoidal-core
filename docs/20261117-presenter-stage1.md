@@ -69,3 +69,8 @@ records the shown frame afterwards; intervening input can change that latter sta
 Resize reaches the presenter with the new layer viewport, and a prefetched publication
 is held until selected. Pixel/ordering tests must check this host boundary separately.
 The 128 MiB slot bounds a publication, not total retained host frame memory.
+
+Queued-frame acceptance now also checks the actually installed texture frame with Lean.
+This covers an abandoned draw whose textures were installed before the caller recorded
+them. A pure-presenter regression test covers that gap between installed and recorded
+frames; it awaits the rebuilt engine. Host and test typechecks pass.

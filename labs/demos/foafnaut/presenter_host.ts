@@ -16,9 +16,12 @@ export function createPresenter(call:PresenterCall,requestBand:(scroll:number)=>
   }
   return {
     input,
-    accepts(layers:HTMLLayers["layers"]){
+    accepts(layers:HTMLLayers["layers"],installed?:HTMLLayers["layers"]){
       const f=frame(layers);
-      return call(state,{kind:"frame",frame:f}).state.shown?.id===f.id;
+      const accepts=(s:PresenterState)=>call(s,{kind:"frame",frame:f}).state.shown?.id===f.id;
+      // An abandoned draw can install textures before its caller records them.
+      // Ask Lean about those too, so they cannot be replaced by an older frame.
+      return accepts(state)&&(!installed||accepts({...state,shown:frame(installed)}));
     },
     // Inspection does not install a frame or publish requests. Used for queued
     // frames and prefetches before their textures replace the displayed frame.
