@@ -27,10 +27,13 @@ refused, with a message that names it. Nothing is skipped.
     (direct key agreement), or one `ds:KeyName` that names a caller's
     symmetric key. `decryptWrapped` (SAML `EncryptedElementType`) also
     takes the one `EncryptedKey` sibling when `KeyInfo` is absent.
-  * Key transport (§5.5): `xmlenc#rsa-oaep-mgf1p` (SHA-1 digest, MGF1 with
-    SHA-1, optional `xenc:OAEPparams`), `xmlenc11#rsa-oaep` with the digest
-    and the mask generation function the same hash: SHA-1 with
-    `mgf1sha1` (the defaults of §5.5.2) or SHA-256 with `mgf1sha256`.
+  * Key transport (§5.5): `xmlenc#rsa-oaep-mgf1p` (MGF1 with SHA-1) and
+    `xmlenc11#rsa-oaep` (MGF1 with the hash of `xenc11:MGF`: `mgf1sha1`,
+    `mgf1sha224`, `mgf1sha256`, `mgf1sha384` or `mgf1sha512`; default
+    `mgf1sha1`), each with the `ds:DigestMethod` SHA-1 (the default),
+    SHA-224, SHA-256, SHA-384 or SHA-512, and an optional
+    `xenc:OAEPparams` label (§5.5.2). The digest and the MGF1 hash are
+    independent (`OaepDigest`, `oaepHashOf`).
     `xmlenc#rsa-1_5` is refused (Bleichenbacher, CRYPTO 1998). The RSA key
     is the caller's key named by `ds:KeyName` in the `EncryptedKey`'s
     `KeyInfo`, or the caller's only RSA key. `ds:X509Data` and
@@ -435,9 +438,65 @@ def dataAlgOf (opts : Opts) (m : El) : M DataAlg :=
       else if u == aes192Gcm || u == aes192Cbc then refuse "AES-192 is not supported"
       else refuse s!"the data encryption algorithm {u} is not supported"
 
+/-- A hash function of RSA-OAEP key transport (§5.5.2): the `ds:DigestMethod`
+(the label hash) or the hash of the `xenc11:MGF` mask generation function. -/
+inductive OaepDigest where
+  | sha1 | sha224 | sha256 | sha384 | sha512
+  deriving BEq, Repr, DecidableEq
+
+def OaepDigest.fn : OaepDigest → ByteArray → ByteArray
+  | .sha1 => L4Factoidal.Crypto.sha1
+  | .sha224 => L4Factoidal.Crypto.sha224
+  | .sha256 => L4Factoidal.Crypto.sha256
+  | .sha384 => L4Factoidal.Crypto.sha384
+  | .sha512 => L4Factoidal.Crypto.sha512
+
+/-- The output length in octets. -/
+def OaepDigest.len : OaepDigest → Nat
+  | .sha1 => 20 | .sha224 => 28 | .sha256 => 32 | .sha384 => 48 | .sha512 => 64
+
+/-- The digest method identifiers: §5.7 of XML Encryption 1.1 (SHA-1,
+SHA-256, SHA-384, SHA-512) and SHA-224 of RFC 6931 §2.1.2, which XML
+Signature 1.1 also lists. -/
+def OaepDigest.digestUri : OaepDigest → String
+  | .sha1 => sha1Digest
+  | .sha224 => "http://www.w3.org/2001/04/xmldsig-more#sha224"
+  | .sha256 => sha256Digest
+  | .sha384 => "http://www.w3.org/2001/04/xmldsig-more#sha384"
+  | .sha512 => xencNs ++ "sha512"
+
+/-- The MGF identifiers of §5.5.2: `xmlenc11#mgf1sha1` and the SHA-2 ones. -/
+def OaepDigest.mgfUri : OaepDigest → String
+  | .sha1 => mgf1Sha1
+  | .sha224 => xenc11Ns ++ "mgf1sha224"
+  | .sha256 => mgf1Sha256
+  | .sha384 => xenc11Ns ++ "mgf1sha384"
+  | .sha512 => xenc11Ns ++ "mgf1sha512"
+
+def OaepDigest.all : List OaepDigest := [.sha1, .sha224, .sha256, .sha384, .sha512]
+
+def OaepDigest.ofDigestUri? (u : String) : Option OaepDigest :=
+  OaepDigest.all.find? (·.digestUri == u)
+
+def OaepDigest.ofMgfUri? (u : String) : Option OaepDigest :=
+  OaepDigest.all.find? (·.mgfUri == u)
+
+/-- The OAEP hashes of a label digest and an MGF1 hash. -/
+def oaepHashOf (digest mgf : OaepDigest) : RsaOaep.OaepHash :=
+  { hash := digest.fn, hLen := digest.len, mgfHash := mgf.fn, mgfLen := mgf.len }
+
+/-- With the same hash for the digest and MGF1, `oaepHashOf` is the OAEP
+instance JWE uses (`RSA-OAEP` is SHA-1, `RSA-OAEP-256` is SHA-256). So the
+XML Encryption 1.0 algorithm `rsa-oaep-mgf1p` with its default digest, and
+XML Encryption 1.1 `rsa-oaep` with SHA-256 and `mgf1sha256`, are the same
+function as the two JWE algorithms. -/
+theorem oaepHashOf_sha1 : oaepHashOf .sha1 .sha1 = RsaOaep.oaepSha1 := rfl
+
+theorem oaepHashOf_sha256 : oaepHashOf .sha256 .sha256 = RsaOaep.oaepSha256 := rfl
+
 /-- The key encryption algorithm of an `EncryptedKey`. -/
 inductive KeyAlg where
-  | oaep (sha256 : Bool) (label : ByteArray)
+  | oaep (digest mgf : OaepDigest) (label : ByteArray)
   | kw (len : Nat)
 
 def KeyAlg.oaepHash (sha256 : Bool) : RsaOaep.OaepHash :=
@@ -472,20 +531,22 @@ def keyAlgOf (m : El) : M KeyAlg := do
   | some u =>
       if u == rsa15 then
         refuse "RSA PKCS #1 v1.5 key transport (rsa-1_5) is refused (Bleichenbacher, CRYPTO 1998)"
-      else if u == rsaOaepMgf1p then
-        let (dig, _, label) ← oaepParams m false
-        match dig with
-        | none => pure (.oaep false label)
-        | some d =>
-            if d == sha1Digest then pure (.oaep false label)
-            else refuse "rsa-oaep-mgf1p is supported with the SHA-1 digest only (MGF1 there is SHA-1)"
-      else if u == rsaOaep11 then
-        let (dig, mgf, label) ← oaepParams m true
-        let d := dig.getD sha1Digest
-        let g := mgf.getD mgf1Sha1
-        if d == sha1Digest && g == mgf1Sha1 then pure (.oaep false label)
-        else if d == sha256Digest && g == mgf1Sha256 then pure (.oaep true label)
-        else refuse "xmlenc11#rsa-oaep is supported with SHA-1 and mgf1sha1, or SHA-256 and mgf1sha256"
+      else if u == rsaOaepMgf1p || u == rsaOaep11 then
+        -- §5.5.2: the digest defaults to SHA-1; `rsa-oaep-mgf1p` fixes MGF1
+        -- with SHA-1, `xmlenc11#rsa-oaep` names it in `xenc11:MGF` (default
+        -- `mgf1sha1`).
+        let (dig, mgf, label) ← oaepParams m (u == rsaOaep11)
+        let d ← match dig with
+          | none => pure OaepDigest.sha1
+          | some d => match OaepDigest.ofDigestUri? d with
+            | some x => pure x
+            | none => refuse s!"the RSA-OAEP digest method {d} is not supported"
+        let g ← match mgf with
+          | none => pure OaepDigest.sha1
+          | some g => match OaepDigest.ofMgfUri? g with
+            | some x => pure x
+            | none => refuse s!"the RSA-OAEP mask generation function {g} is not supported"
+        pure (.oaep d g label)
       else if u == kwAes128 || u == kwAes256 then
         if !(m.elementOnly && m.children.isEmpty) then refuse "the key wrap method must have no parameters"
         else pure (.kw (if u == kwAes128 then 16 else 32))
@@ -655,13 +716,13 @@ def unwrapKey (cipher : Cipher) (prims : Prims) (keys : Keys) (ek : El) (keyLen 
   let alg ← keyAlgOf p.method
   let kr ← kekRefOf p.keyInfo
   match alg with
-  | .oaep sha256 label =>
+  | .oaep dig mgf label =>
       let name? ← match kr with
         | .name n => pure (some n)
         | .unnamed => pure none
         | .agreement _ => refuse "RSA-OAEP key transport with a key agreement is not supported"
       let k ← pick "RSA" name? keys.rsa (·.kid)
-      match RsaOaep.oaepDecrypt (KeyAlg.oaepHash sha256) prims.rsaPrivate k.n k.d p.cipherValue label with
+      match RsaOaep.oaepDecrypt (oaepHashOf dig mgf) prims.rsaPrivate k.n k.d p.cipherValue label with
       | some cek => if cek.size == keyLen then pure cek else .error .decryptFailed
       | none => .error .decryptFailed
   | .kw len =>

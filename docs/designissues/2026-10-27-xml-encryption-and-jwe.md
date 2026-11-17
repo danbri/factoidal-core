@@ -131,8 +131,13 @@ rulings):
   block appended; Lean removes the §5.2 padding. Checked against Santuario's
   `aes128-cbc` in `tests/xmlenc/wasm.mjs`.
 * RSA-OAEP with the same hash for the digest and MGF1 only (SHA-1 or
-  SHA-256): `rsa-oaep-mgf1p` with a SHA-256 digest and the W3C cases
-  WRAP.3 and WRAP.4 (SHA-384 or SHA-512 with MGF1-SHA-1) are refused.
+  SHA-256) until 2026-11-17. Since then (track B item 5, part 1, of
+  https://github.com/danbri/factoidal/issues/1165): every digest of §5.5.2
+  and §5.7 (SHA-1, SHA-224, SHA-256, SHA-384, SHA-512) with either
+  algorithm, and for `xmlenc11#rsa-oaep` any `mgf1sha*` MGF, independent of
+  the digest (`Enc.OaepDigest`, `Enc.oaepHashOf`; `RsaOaep.OaepHash` has the
+  fields `mgfHash` and `mgfLen`, by default the label hash). W3C WRAP.3 and
+  WRAP.4 decrypt natively; WRAP.2 waits for AES-192.
 * X25519 key agreement: `xmlenc11#ECDH-ES` with an X25519 originator key,
   and `http://www.w3.org/2021/04/xmldsig-more#x25519` (RFC 9231), which
   Santuario 4 writes; the originator key is a `dsig11:DEREncodedKeyValue`

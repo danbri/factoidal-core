@@ -27,18 +27,23 @@ open L4Factoidal.Crypto
 
 /-! ## Hash parameter -/
 
-/-- The hash of an OAEP instance: the function and its output length
-`hLen` in octets. One hash serves as the label hash and as the MGF1 hash in
-every instance this tree uses. -/
+/-- The hashes of an OAEP instance (RFC 8017 §7.1, "Options: Hash, MGF"): the
+label hash `hash` with its output length `hLen` in octets, and the hash of
+MGF1, `mgfHash` with its output length `mgfLen`. By default MGF1 uses the label
+hash, as JWE `RSA-OAEP` and `RSA-OAEP-256` do. XML Encryption 1.1 §5.5.2
+names the two separately (`ds:DigestMethod` and `xenc11:MGF`): W3C case WRAP.3
+is a SHA-384 label hash with MGF1 over SHA-1. -/
 structure OaepHash where
   hash : ByteArray → ByteArray
   hLen : Nat
+  mgfHash : ByteArray → ByteArray := hash
+  mgfLen : Nat := hLen
 
 /-- SHA-1, for XML Encryption `rsa-oaep-mgf1p` and JWE `RSA-OAEP`. -/
-def oaepSha1 : OaepHash := ⟨sha1, 20⟩
+def oaepSha1 : OaepHash := { hash := sha1, hLen := 20 }
 
 /-- SHA-256, for JWE `RSA-OAEP-256`. -/
-def oaepSha256 : OaepHash := ⟨sha256, 32⟩
+def oaepSha256 : OaepHash := { hash := sha256, hLen := 32 }
 
 /-! ## Octet-list helpers -/
 
@@ -63,8 +68,8 @@ def i2osp4 (c : Nat) : List UInt8 :=
 the first `maskLen` octets. The RFC's "mask too long" error
 (`maskLen > 2^32 hLen`) cannot occur for a modulus of at most 4096 bits. -/
 def mgf1 (H : OaepHash) (seed : List UInt8) (maskLen : Nat) : List UInt8 :=
-  let blocks := (maskLen + H.hLen - 1) / H.hLen
-  ((List.range blocks).flatMap fun c => ofBA (H.hash (toBA (seed ++ i2osp4 c)))).take maskLen
+  let blocks := (maskLen + H.mgfLen - 1) / H.mgfLen
+  ((List.range blocks).flatMap fun c => ofBA (H.mgfHash (toBA (seed ++ i2osp4 c)))).take maskLen
 
 /-- `a XOR m`, octet by octet, over the length of `a`. When `m` is shorter
 than `a` the missing mask octets are zero. With that convention the

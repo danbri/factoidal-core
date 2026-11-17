@@ -95,7 +95,9 @@ const w3c = JSON.parse(readFileSync(join(w3cDir, 'cases.json'), 'utf8'));
 const w3cKeys = JSON.parse(readFileSync(join(w3cDir, 'keys.json'), 'utf8'));
 for (const c of w3c.cases) {
   test(`W3C ${c.id}: ${c.outcome}`, async () => {
-    const res = await decrypt({ document: readFileSync(join(w3cDir, c.file), 'utf8'), keys: w3cKeys });
+    // `key` names the one key a case is given (the documents name RSA keys by certificate only).
+    const caseKeys = c.key ? w3cKeys.filter((k) => k.kid === c.key) : w3cKeys;
+    const res = await decrypt({ document: readFileSync(join(w3cDir, c.file), 'utf8'), keys: caseKeys });
     if (c.outcome === 'ok') {
       assert.equal(res.ok, true, res.error);
       assert.equal(res.canonical, canonical(readFileSync(join(w3cDir, c.expected), 'utf8')));

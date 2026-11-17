@@ -145,7 +145,12 @@ def main (args : List String) : IO UInt32 := do
       for c in ((w3c.field? "cases").bind Json.asArray?).getD [] do
         let id := (c.getString? "id").getD "?"
         let doc ← IO.FS.readFile (w3cDir / ((c.getString? "file").getD "missing"))
-        let r := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string doc), ("keys", w3cKeys)])
+        -- `key` in cases.json names the one key a case is given; the RSA keys
+        -- are all unnamed in the documents (X509Data only).
+        let caseKeys := match c.getString? "key", w3cKeys with
+          | some k, .array ks => Json.array (ks.filter fun j => j.getString? "kid" == some k)
+          | _, _ => w3cKeys
+        let r := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string doc), ("keys", caseKeys)])
         match c.getString? "outcome" with
         | some "ok" =>
             if c.field? "native" == some (.bool true) then
