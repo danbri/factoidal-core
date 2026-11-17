@@ -127,15 +127,278 @@
     return typeof s === 'string' && s !== '' ? s.split(' ').map(k => wrap(Number(k))) : [];
   };
   const viewport = () => { const v = query(0, 19, 2); return v[0] > 0 ? v : [800, 600]; };
-  class DOMRectReadOnly {
-    constructor(x = 0, y = 0, width = 0, height = 0) { Object.assign(this, { x: +x, y: +y, width: +width, height: +height }); }
-    get top() { return Math.min(this.y, this.y + this.height); }
-    get bottom() { return Math.max(this.y, this.y + this.height); }
-    get left() { return Math.min(this.x, this.x + this.width); }
-    get right() { return Math.max(this.x, this.x + this.width); }
-    toJSON() { return { x: this.x, y: this.y, width: this.width, height: this.height, top: this.top, right: this.right, bottom: this.bottom, left: this.left }; }
-  }
-  class DOMRect extends DOMRectReadOnly {}
+  // ==== geometry ==== Geometry Interfaces 1: DOMPoint, DOMRect, DOMQuad, DOMMatrix and
+  // their read-only forms. The objects keep their numbers; every new matrix (from a string,
+  // a dictionary, a sequence, a product, a rotation, an inverse) and every transformed point
+  // is Lean's (`Rendering.Geometry.answer`, node_query 156), the numbers passed as the hex
+  // digits of their bits so that they come back exactly.
+  const geometry = (() => {
+    const dv = new DataView(new ArrayBuffer(8));
+    const hx = x => { dv.setFloat64(0, x); return dv.getUint32(0).toString(16).padStart(8, '0') + dv.getUint32(4).toString(16).padStart(8, '0'); };
+    const unhex = (s, i) => { dv.setUint32(0, parseInt(s.slice(i, i + 8), 16)); dv.setUint32(4, parseInt(s.slice(i + 8, i + 16), 16)); return dv.getFloat64(0); };
+    const ABSENT = '----------------';
+    const ask = q => { const r = n.query(0, 156, q); return typeof r === 'string' ? r : 'T'; };
+    const workerScope = () => { try { return inWorker; } catch { return false; } };
+    const illegal = () => new TypeError('Illegal invocation');
+    const slot = (map, o) => { const s = map.get(o); if (s === undefined) throw illegal(); return s; };
+    const num = v => +v;
+    const dictOf = (v, what) => {
+      if (v === undefined || v === null) return {};
+      if (typeof v !== 'object' && typeof v !== 'function') throw new TypeError(`${what}: the argument is not an object.`);
+      return v;
+    };
+    // methods and accessors as Web IDL makes them: enumerable, named "get x" / "set x"
+    const getter = (P, k, get, set) => {
+      const d = { enumerable: true, configurable: true, get: Object.getOwnPropertyDescriptor({ get [k]() { return get(this); } }, k).get };
+      if (set) d.set = Object.getOwnPropertyDescriptor({ set [k](v) { set(this, v); } }, k).set;
+      Object.defineProperty(P, k, d);
+    };
+    const method = (P, k, f, length) => {
+      Object.defineProperty(f, 'name', { value: k }); Object.defineProperty(f, 'length', { value: length });
+      Object.defineProperty(P, k, { value: f, writable: true, enumerable: true, configurable: true });
+    };
+    const tag = (C, name) => Object.defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
+
+    // ---- points (§2) ----
+    const points = new WeakMap();
+    class DOMPointReadOnly {
+      constructor(x = 0, y = 0, z = 0, w = 1) { points.set(this, { x: num(x), y: num(y), z: num(z), w: num(w) }); }
+    }
+    class DOMPoint extends DOMPointReadOnly {}
+    const pointOf = (C, p) => { const o = Object.create(C.prototype); points.set(o, p); return o; };
+    // DOMPointInit, its members in lexicographic order (Web IDL §3.2.17)
+    const pointInit = (v, what) => {
+      const d = dictOf(v, what);
+      const w = d.w, x = d.x, y = d.y, z = d.z;
+      return { x: x === undefined ? 0 : num(x), y: y === undefined ? 0 : num(y), z: z === undefined ? 0 : num(z), w: w === undefined ? 1 : num(w) };
+    };
+    for (const k of ['x', 'y', 'z', 'w']) {
+      getter(DOMPointReadOnly.prototype, k, o => slot(points, o)[k]);
+      getter(DOMPoint.prototype, k, o => slot(points, o)[k], (o, v) => { slot(points, o)[k] = num(v); });
+    }
+    method(DOMPointReadOnly, 'fromPoint', function fromPoint(other = undefined) { return pointOf(DOMPointReadOnly, pointInit(other, 'fromPoint')); }, 0);
+    method(DOMPoint, 'fromPoint', function fromPoint(other = undefined) { return pointOf(DOMPoint, pointInit(other, 'fromPoint')); }, 0);
+    method(DOMPointReadOnly.prototype, 'matrixTransform', function matrixTransform(matrix = undefined) {
+      const p = slot(points, this), m = matrixInit(matrix, true, 'matrixTransform');
+      const r = ask('point\u0000' + enc(m) + '\u0000' + hx(p.x) + '\u0000' + hx(p.y) + '\u0000' + hx(p.z) + '\u0000' + hx(p.w));
+      if (r.length !== 64) throw new TypeError('matrixTransform: the matrix is not valid');
+      return pointOf(DOMPoint, { x: unhex(r, 0), y: unhex(r, 16), z: unhex(r, 32), w: unhex(r, 48) });
+    }, 0);
+    method(DOMPointReadOnly.prototype, 'toJSON', function toJSON() { const p = slot(points, this); return { x: p.x, y: p.y, z: p.z, w: p.w }; }, 0);
+
+    // ---- rectangles (§4) ----
+    const rects = new WeakMap();
+    class DOMRectReadOnly {
+      constructor(x = 0, y = 0, width = 0, height = 0) { rects.set(this, { x: num(x), y: num(y), width: num(width), height: num(height) }); }
+    }
+    class DOMRect extends DOMRectReadOnly {}
+    const rectOf = (C, r) => { const o = Object.create(C.prototype); rects.set(o, r); return o; };
+    const rectInit = (v, what) => {
+      const d = dictOf(v, what);
+      const height = d.height, width = d.width, x = d.x, y = d.y;
+      return { x: x === undefined ? 0 : num(x), y: y === undefined ? 0 : num(y), width: width === undefined ? 0 : num(width), height: height === undefined ? 0 : num(height) };
+    };
+    for (const k of ['x', 'y', 'width', 'height']) {
+      getter(DOMRectReadOnly.prototype, k, o => slot(rects, o)[k]);
+      getter(DOMRect.prototype, k, o => slot(rects, o)[k], (o, v) => { slot(rects, o)[k] = num(v); });
+    }
+    // top is min(y, y + height) and so on, NaN when either is (§4.1)
+    const lo = (a, b) => Math.min(a, b), hi = (a, b) => Math.max(a, b);
+    getter(DOMRectReadOnly.prototype, 'top', o => { const r = slot(rects, o); return lo(r.y, r.y + r.height); });
+    getter(DOMRectReadOnly.prototype, 'right', o => { const r = slot(rects, o); return hi(r.x, r.x + r.width); });
+    getter(DOMRectReadOnly.prototype, 'bottom', o => { const r = slot(rects, o); return hi(r.y, r.y + r.height); });
+    getter(DOMRectReadOnly.prototype, 'left', o => { const r = slot(rects, o); return lo(r.x, r.x + r.width); });
+    method(DOMRectReadOnly, 'fromRect', function fromRect(other = undefined) { return rectOf(DOMRectReadOnly, rectInit(other, 'fromRect')); }, 0);
+    method(DOMRect, 'fromRect', function fromRect(other = undefined) { return rectOf(DOMRect, rectInit(other, 'fromRect')); }, 0);
+    method(DOMRectReadOnly.prototype, 'toJSON', function toJSON() {
+      slot(rects, this);
+      return { x: this.x, y: this.y, width: this.width, height: this.height, top: this.top, right: this.right, bottom: this.bottom, left: this.left };
+    }, 0);
+    // DOMRectList (§4.2): what getClientRects() answers
+    const rectLists = new WeakMap();
+    class DOMRectList { constructor() { throw new TypeError('Illegal constructor'); } }
+    getter(DOMRectList.prototype, 'length', o => slot(rectLists, o).length);
+    method(DOMRectList.prototype, 'item', function item(index) {
+      const xs = slot(rectLists, this);
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'item' on 'DOMRectList': 1 argument required, but only 0 present.");
+      return xs[index >>> 0] ?? null;
+    }, 1);
+    Object.defineProperty(DOMRectList.prototype, Symbol.iterator, { value: Array.prototype[Symbol.iterator], writable: true, configurable: true });
+    const rectList = xs => {
+      const o = Object.create(DOMRectList.prototype); rectLists.set(o, xs);
+      xs.forEach((r, i) => Object.defineProperty(o, i, { value: r, enumerable: true, configurable: true }));
+      return o;
+    };
+
+    // ---- quadrilaterals (§5) ----
+    const quads = new WeakMap();
+    class DOMQuad {
+      constructor(p1 = undefined, p2 = undefined, p3 = undefined, p4 = undefined) {
+        quads.set(this, [p1, p2, p3, p4].map(p => pointOf(DOMPoint, pointInit(p, 'DOMQuad'))));
+      }
+    }
+    const quadOf = ps => { const o = Object.create(DOMQuad.prototype); quads.set(o, ps.map(p => pointOf(DOMPoint, p))); return o; };
+    ['p1', 'p2', 'p3', 'p4'].forEach((k, i) => getter(DOMQuad.prototype, k, o => slot(quads, o)[i]));
+    method(DOMQuad, 'fromRect', function fromRect(other = undefined) {
+      const r = rectInit(other, 'fromRect');
+      return quadOf([{ x: r.x, y: r.y, z: 0, w: 1 }, { x: r.x + r.width, y: r.y, z: 0, w: 1 },
+        { x: r.x + r.width, y: r.y + r.height, z: 0, w: 1 }, { x: r.x, y: r.y + r.height, z: 0, w: 1 }]);
+    }, 0);
+    method(DOMQuad, 'fromQuad', function fromQuad(other = undefined) {
+      const d = dictOf(other, 'fromQuad');
+      const p1 = d.p1, p2 = d.p2, p3 = d.p3, p4 = d.p4;
+      return quadOf([p1, p2, p3, p4].map(p => pointInit(p, 'fromQuad')));
+    }, 0);
+    method(DOMQuad.prototype, 'getBounds', function getBounds() {
+      const ps = slot(quads, this).map(p => slot(points, p));
+      // §5.1: the least and greatest of the coordinates, NaN when any is
+      const ext = (k, f) => ps.reduce((a, p) => Number.isNaN(a) || Number.isNaN(p[k]) ? NaN : f(a, p[k]), ps[0][k]);
+      const left = ext('x', Math.min), top = ext('y', Math.min);
+      return rectOf(DOMRect, { x: left, y: top, width: ext('x', Math.max) - left, height: ext('y', Math.max) - top });
+    }, 0);
+    method(DOMQuad.prototype, 'toJSON', function toJSON() { const ps = slot(quads, this); return { p1: ps[0], p2: ps[1], p3: ps[2], p4: ps[3] }; }, 0);
+
+    // ---- matrices (§6) ----
+    const matrices = new WeakMap();
+    const enc = st => (st.two ? '2' : '3') + st.m.map(hx).join('');
+    const dec = r => {
+      if (r === 'S') throw new DOMException('Failed to parse the string as a transform list.', 'SyntaxError');
+      if (r.length !== 257) throw new TypeError('The matrix is not valid.');
+      const m = new Array(16);
+      for (let i = 0; i < 16; i++) m[i] = unhex(r, 1 + 16 * i);
+      return { m, two: r[0] === '2' };
+    };
+    const IDENTITY = () => ({ m: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], two: true });
+    const NAMES3 = ['m11', 'm12', 'm13', 'm14', 'm21', 'm22', 'm23', 'm24', 'm31', 'm32', 'm33', 'm34', 'm41', 'm42', 'm43', 'm44'];
+    const ALIAS = { a: 0, b: 1, c: 4, d: 5, e: 12, f: 13 };
+    // DOMMatrix2DInit / DOMMatrixInit: the members read in lexicographic order, then Lean's
+    // "validate and fixup" (§6.1)
+    const ORDER2 = ['a', 'b', 'c', 'd', 'e', 'f', 'm11', 'm12', 'm21', 'm22', 'm41', 'm42'];
+    const ORDER3 = ['a', 'b', 'c', 'd', 'e', 'f', 'is2D', 'm11', 'm12', 'm13', 'm14', 'm21', 'm22', 'm23', 'm24', 'm31', 'm32', 'm33', 'm34', 'm41', 'm42', 'm43', 'm44'];
+    const SLOTS = ['a', 'b', 'c', 'd', 'e', 'f', ...NAMES3];
+    const matrixInit = (v, threeD, what) => {
+      const d = dictOf(v, what), got = {};
+      for (const k of threeD ? ORDER3 : ORDER2) { const x = d[k]; if (x !== undefined) got[k] = k === 'is2D' ? !!x : num(x); }
+      const r = ask('init\u0000' + (threeD ? '3' : '2') + '\u0000' + SLOTS.map(k => k in got ? hx(got[k]) : ABSENT).join('') +
+        '\u0000' + (got.is2D === undefined ? '-' : got.is2D ? '1' : '0'));
+      if (r === 'T') throw new TypeError(`Failed to execute '${what}': the dictionary is not a valid matrix.`);
+      return dec(r);
+    };
+    const matrixOf = (C, st) => { const o = Object.create(C.prototype); matrices.set(o, st); return o; };
+    const run = (st, verb, ...xs) => { const r = dec(ask(verb + '\u0000' + enc(st) + xs.map(x => '\u0000' + hx(x)).join(''))); st.m = r.m; st.two = r.two; };
+    const product = (a, b) => dec(ask('mul\u0000' + enc(a) + '\u0000' + enc(b)));
+    const parseList = (s, what) => {
+      if (workerScope()) throw new TypeError(`Failed to execute '${what}': a string is not allowed in a worker.`);
+      return dec(ask('parse\u0000' + s));
+    };
+    class DOMMatrixReadOnly {
+      constructor(init = undefined) {
+        let st;
+        if (init === undefined) st = IDENTITY();
+        else if (typeof init === 'object' && init !== null && typeof init[Symbol.iterator] === 'function') {
+          const xs = Array.from(init, num);
+          if (xs.length !== 6 && xs.length !== 16) throw new TypeError(`Failed to construct '${new.target.name}': The sequence must contain 6 elements for a 2D matrix or 16 elements for a 3D matrix.`);
+          st = dec(ask('seq\u0000' + xs.map(hx).join('')));
+        } else st = parseList(String(init), new.target.name);
+        matrices.set(this, st);
+      }
+    }
+    class DOMMatrix extends DOMMatrixReadOnly {}
+    const ZERO3 = new Set(['m13', 'm14', 'm23', 'm24', 'm31', 'm32', 'm34', 'm43']), ONE3 = new Set(['m33', 'm44']);
+    const setEntry = (k, i) => (o, v) => {
+      const st = slot(matrices, o), x = num(v);
+      st.m[i] = x;
+      if ((ZERO3.has(k) && x !== 0) || (ONE3.has(k) && x !== 1)) st.two = false;
+    };
+    for (const [k, i] of [...Object.entries(ALIAS), ...NAMES3.map((k, i) => [k, i])]) {
+      getter(DOMMatrixReadOnly.prototype, k, o => slot(matrices, o).m[i]);
+      getter(DOMMatrix.prototype, k, o => slot(matrices, o).m[i], setEntry(k, i));
+    }
+    getter(DOMMatrixReadOnly.prototype, 'is2D', o => slot(matrices, o).two);
+    getter(DOMMatrixReadOnly.prototype, 'isIdentity', o => { const m = slot(matrices, o).m; return IDENTITY().m.every((x, i) => m[i] === x); });
+    const self = o => slot(matrices, o);
+    const copy = o => { const st = self(o); return matrixOf(DOMMatrix, { m: st.m.slice(), two: st.two }); };
+    // the operations that change a DOMMatrix (§6.5), and the read-only ones that answer a changed copy
+    const selfOps = {
+      translateSelf: [(st, tx = 0, ty = 0, tz = 0) => run(st, 'translate', num(tx), num(ty), num(tz)), 0],
+      scaleSelf: [(st, sx = 1, sy = undefined, sz = 1, ox = 0, oy = 0, oz = 0) => {
+        sx = num(sx); run(st, 'scale', sx, sy === undefined ? sx : num(sy), num(sz), num(ox), num(oy), num(oz)); }, 0],
+      scale3dSelf: [(st, s = 1, ox = 0, oy = 0, oz = 0) => { s = num(s); run(st, 'scale', s, s, s, num(ox), num(oy), num(oz)); }, 0],
+      rotateSelf: [(st, rx = 0, ry = undefined, rz = undefined) => {
+        rx = num(rx);
+        if (ry === undefined && rz === undefined) run(st, 'rotate', 0, 0, rx);
+        else run(st, 'rotate', rx, ry === undefined ? 0 : num(ry), rz === undefined ? 0 : num(rz)); }, 0],
+      rotateFromVectorSelf: [(st, x = 0, y = 0) => run(st, 'vector', num(x), num(y)), 0],
+      rotateAxisAngleSelf: [(st, x = 0, y = 0, z = 0, angle = 0) => run(st, 'axis', num(x), num(y), num(z), num(angle)), 0],
+      skewXSelf: [(st, s = 0) => run(st, 'skewx', num(s)), 0],
+      skewYSelf: [(st, s = 0) => run(st, 'skewy', num(s)), 0],
+      multiplySelf: [(st, other = undefined) => { const o = matrixInit(other, true, 'multiplySelf'); const r = product(st, o); st.m = r.m; st.two = r.two; }, 0],
+      preMultiplySelf: [(st, other = undefined) => { const o = matrixInit(other, true, 'preMultiplySelf'); const r = product(o, st); st.m = r.m; st.two = r.two; }, 0],
+      invertSelf: [st => run(st, 'invert'), 0],
+    };
+    for (const [k, [f, length]] of Object.entries(selfOps))
+      method(DOMMatrix.prototype, k, function (...args) { f(self(this), ...args); return this; }, length);
+    method(DOMMatrix.prototype, 'setMatrixValue', function setMatrixValue(transformList) {
+      const st = self(this);
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'setMatrixValue' on 'DOMMatrix': 1 argument required, but only 0 present.");
+      const r = parseList(String(transformList), 'setMatrixValue'); st.m = r.m; st.two = r.two; return this;
+    }, 1);
+    for (const [k, self_, length] of [['translate', 'translateSelf', 0], ['scale', 'scaleSelf', 0], ['scale3d', 'scale3dSelf', 0],
+      ['rotate', 'rotateSelf', 0], ['rotateFromVector', 'rotateFromVectorSelf', 0], ['rotateAxisAngle', 'rotateAxisAngleSelf', 0],
+      ['skewX', 'skewXSelf', 0], ['skewY', 'skewYSelf', 0], ['multiply', 'multiplySelf', 0]])
+      method(DOMMatrixReadOnly.prototype, k, function (...args) { const c = copy(this); selfOps[self_][0](self(c), ...args); return c; }, length);
+    method(DOMMatrixReadOnly.prototype, 'scaleNonUniform', function scaleNonUniform(sx = 1, sy = 1) {
+      const c = copy(this); run(self(c), 'scale', num(sx), num(sy), 1, 0, 0, 0); return c; }, 0);
+    method(DOMMatrixReadOnly.prototype, 'flipX', function flipX() { const c = copy(this), st = self(c); const r = product(st, { m: [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], two: true }); st.m = r.m; st.two = r.two; return c; }, 0);
+    method(DOMMatrixReadOnly.prototype, 'flipY', function flipY() { const c = copy(this), st = self(c); const r = product(st, { m: [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], two: true }); st.m = r.m; st.two = r.two; return c; }, 0);
+    method(DOMMatrixReadOnly.prototype, 'inverse', function inverse() { const c = copy(this); run(self(c), 'invert'); return c; }, 0);
+    method(DOMMatrixReadOnly.prototype, 'transformPoint', function transformPoint(point = undefined) {
+      const st = self(this), p = pointInit(point, 'transformPoint');
+      const r = ask('point\u0000' + enc(st) + '\u0000' + hx(p.x) + '\u0000' + hx(p.y) + '\u0000' + hx(p.z) + '\u0000' + hx(p.w));
+      return pointOf(DOMPoint, { x: unhex(r, 0), y: unhex(r, 16), z: unhex(r, 32), w: unhex(r, 48) });
+    }, 0);
+    method(DOMMatrixReadOnly.prototype, 'toFloat32Array', function toFloat32Array() { return new Float32Array(self(this).m); }, 0);
+    method(DOMMatrixReadOnly.prototype, 'toFloat64Array', function toFloat64Array() { return new Float64Array(self(this).m); }, 0);
+    // the stringifier (§6.6): matrix() or matrix3d(), the numbers as ECMAScript writes them
+    method(DOMMatrixReadOnly.prototype, 'toString', function toString() {
+      const st = self(this);
+      if (!st.m.every(Number.isFinite)) throw new DOMException('Cannot serialize a matrix with non-finite values.', 'InvalidStateError');
+      return st.two ? `matrix(${[0, 1, 4, 5, 12, 13].map(i => String(st.m[i])).join(', ')})` : `matrix3d(${st.m.map(String).join(', ')})`;
+    }, 0);
+    method(DOMMatrixReadOnly.prototype, 'toJSON', function toJSON() {
+      const st = self(this), o = {};
+      for (const k of ['a', 'b', 'c', 'd', 'e', 'f']) o[k] = st.m[ALIAS[k]];
+      NAMES3.forEach((k, i) => { o[k] = st.m[i]; });
+      o.is2D = st.two; o.isIdentity = this.isIdentity;
+      return o;
+    }, 0);
+    for (const C of [DOMMatrixReadOnly, DOMMatrix]) {
+      method(C, 'fromMatrix', function fromMatrix(other = undefined) { return matrixOf(C, matrixInit(other, true, 'fromMatrix')); }, 0);
+      for (const [k, A] of [['fromFloat32Array', Float32Array], ['fromFloat64Array', Float64Array]])
+        method(C, k, function (array) {
+          if (!(array instanceof A)) throw new TypeError(`Failed to execute '${k}': parameter 1 is not of type '${A.name}'.`);
+          if (array.length !== 6 && array.length !== 16) throw new TypeError(`Failed to execute '${k}': The sequence must contain 6 elements for a 2D matrix or 16 elements for a 3D matrix.`);
+          return matrixOf(C, dec(ask('seq\u0000' + Array.from(array, hx).join(''))));
+        }, 1);
+    }
+    for (const [C, name] of [[DOMPointReadOnly, 'DOMPointReadOnly'], [DOMPoint, 'DOMPoint'], [DOMRectReadOnly, 'DOMRectReadOnly'], [DOMRect, 'DOMRect'],
+      [DOMRectList, 'DOMRectList'], [DOMQuad, 'DOMQuad'], [DOMMatrixReadOnly, 'DOMMatrixReadOnly'], [DOMMatrix, 'DOMMatrix']]) tag(C, name);
+    // serializable (§7): a copy of the same interface, its numbers as they are
+    const clone = v => {
+      if (v === null || typeof v !== 'object') return undefined;
+      const p = points.get(v);
+      if (p) return pointOf(v instanceof DOMPoint ? DOMPoint : DOMPointReadOnly, { ...p });
+      const r = rects.get(v);
+      if (r) return rectOf(v instanceof DOMRect ? DOMRect : DOMRectReadOnly, { ...r });
+      const q = quads.get(v);
+      if (q) return quadOf(q.map(pt => ({ ...slot(points, pt) })));
+      const m = matrices.get(v);
+      if (m) return matrixOf(v instanceof DOMMatrix ? DOMMatrix : DOMMatrixReadOnly, { m: m.m.slice(), two: m.two });
+      return undefined;
+    };
+    return { DOMPointReadOnly, DOMPoint, DOMRectReadOnly, DOMRect, DOMRectList, DOMQuad, DOMMatrixReadOnly, DOMMatrix, rectList, clone, matrixInit };
+  })();
+  const { DOMPointReadOnly, DOMPoint, DOMRectReadOnly, DOMRect, DOMRectList, DOMQuad, DOMMatrixReadOnly, DOMMatrix } = geometry;
 
   // ---- events --------------------------------------------------------------------
   const ev = new WeakMap();
@@ -954,7 +1217,7 @@
     // is the viewport.
     getBoundingClientRect() { const b = layoutOf(this); return new DOMRect(b[0], b[1], b[2], b[3]); }
     // an element with no box (the engine's twelfth number is -1) has no client rects (CSSOM View §6.1)
-    getClientRects() { const b = query(nodeId(this), 17, 8); if (b.length >= 12 && b[11] === -1) return []; return [new DOMRect(b[0], b[1], b[2], b[3])]; }
+    getClientRects() { const b = query(nodeId(this), 17, 8); if (b.length >= 12 && b[11] === -1) return geometry.rectList([]); return geometry.rectList([new DOMRect(b[0], b[1], b[2], b[3])]); }
     get clientWidth() { return this === document.documentElement ? viewport()[0] : Math.round(layoutOf(this)[6]); }
     get clientHeight() { return this === document.documentElement ? viewport()[1] : Math.round(layoutOf(this)[7]); }
     get clientLeft() { return Math.round(layoutOf(this)[4]); }
@@ -2444,26 +2707,6 @@
       setTransform(m = {}) { const t = matrixOf(m); q.push(92, this[K].id, ...t); later(); }
     }
     const made = (C, kind, id) => { const o = Object.create(C.prototype); define(o, K, { kind, id }); objs.set(id, o); return o; };
-    class DOMMatrixReadOnly {
-      constructor(init) {
-        const v = init === undefined ? [1, 0, 0, 1, 0, 0] : Array.from(init, Number);
-        if (v.length === 6) { [this.a, this.b, this.c, this.d, this.e, this.f] = v; this.is2D = true; }
-        else if (v.length === 16) { [this.a, this.b, , , this.c, this.d, , , , , , , this.e, this.f] = v; this.is2D = false; }
-        else throw new TypeError('DOMMatrix needs 6 or 16 numbers');
-      }
-      get m11() { return this.a; } get m12() { return this.b; } get m21() { return this.c; } get m22() { return this.d; }
-      get m41() { return this.e; } get m42() { return this.f; }
-      get m13() { return 0; } get m14() { return 0; } get m23() { return 0; } get m24() { return 0; } get m31() { return 0; }
-      get m32() { return 0; } get m33() { return 1; } get m34() { return 0; } get m43() { return 0; } get m44() { return 1; }
-      get isIdentity() { return this.a === 1 && this.b === 0 && this.c === 0 && this.d === 1 && this.e === 0 && this.f === 0; }
-    }
-    class DOMMatrix extends DOMMatrixReadOnly {}
-    class DOMPointReadOnly {
-      constructor(x = 0, y = 0, z = 0, w = 1) { this.x = +x; this.y = +y; this.z = +z; this.w = +w; }
-      static fromPoint(p = {}) { return new this(p.x ?? 0, p.y ?? 0, p.z ?? 0, p.w ?? 1); }
-      toJSON() { return { x: this.x, y: this.y, z: this.z, w: this.w }; }
-    }
-    class DOMPoint extends DOMPointReadOnly {}
     const matrixOf = m => {
       if (m === null || typeof m !== 'object') throw new TypeError('The matrix is not an object');
       const g = (x, y, d) => m[x] !== undefined ? +m[x] : m[y] !== undefined ? +m[y] : d;
@@ -11417,6 +11660,7 @@
       for (const v of entries) out.add(structuredCloneOf(v, memory));
       return out;
     }
+    { const g = geometry.clone(value); if (g !== undefined) return keep(g); }
     if (value instanceof DOMException) {
       return keep(new DOMException(String(value.message), String(value.name)));
     }
@@ -13988,7 +14232,7 @@
   }
   // ==== end shadowframes: frames ========================================================
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
-    WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, CloseEvent, StorageEvent, SecurityPolicyViolationEvent, DeviceMotionEvent,
+    WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, DOMRectList, DOMPoint, DOMPointReadOnly, DOMQuad, DOMMatrix, DOMMatrixReadOnly, WebKitCSSMatrix: DOMMatrix, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, CloseEvent, StorageEvent, SecurityPolicyViolationEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, MathMLElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
@@ -14223,7 +14467,7 @@
     }
     // CSSOM View §6.1: the boxes of the range's common ancestor element in Lean's layout.
     getBoundingClientRect() { let k = Number(op(rid(this), 110)); if (info(k, 0) !== 1) k = info(k, 1); if (k < 0 || info(k, 0) !== 1) return new DOMRect(0, 0, 0, 0); return wrap(k).getBoundingClientRect(); }
-    getClientRects() { const r = this.getBoundingClientRect(); return r.width === 0 && r.height === 0 ? [] : [r]; }
+    getClientRects() { const r = this.getBoundingClientRect(); return geometry.rectList(r.width === 0 && r.height === 0 ? [] : [r]); }
   }
   const howConsts = { START_TO_START: 0, START_TO_END: 1, END_TO_END: 2, END_TO_START: 3 };
   consts(Range, howConsts); consts(Range.prototype, howConsts);
@@ -16623,7 +16867,7 @@
     'CanvasGradient', 'CanvasPattern', 'TextMetrics', 'DOMMatrix', 'DOMMatrixReadOnly', 'DOMPoint', 'DOMPointReadOnly',
     // WebCodecs' are [Exposed=(Window,DedicatedWorker)].
     'VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioData', 'AudioDecoder', 'VideoDecoder',
-    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect',
+    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect', 'DOMQuad',
     // client-side storage (sections IndexedDB and File System API)
     'indexedDB', 'IDBFactory', 'IDBRequest', 'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange', 'IDBObjectStore', 'IDBIndex', 'IDBCursor',
     'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList', 'QuotaExceededError', 'FileSystemHandle',

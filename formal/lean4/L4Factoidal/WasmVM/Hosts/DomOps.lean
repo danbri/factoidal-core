@@ -49,6 +49,7 @@ import L4Factoidal.HTML.ReferrerSource
 import L4Factoidal.HTML.ProtocolHandler
 import L4Factoidal.HTML.SessionHistory
 import L4Factoidal.HTML.TableDom
+import L4Factoidal.Rendering.Geometry
 -- the computed role (WebScripts' `computed` action; an accessibility tree later)
 import L4Factoidal.HTML.AccessibleRole
 
@@ -786,6 +787,10 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     -- the property names of a computed style (`ComputedGeneric.namesText`): the page
     -- reads the value of the k-th name with measure op 200 + k
     return L4Factoidal.Rendering.ComputedGeneric.namesText
+  | 156 =>
+    -- Geometry Interfaces 1: the matrices of DOMMatrix and the points they transform
+    -- (`Rendering.Geometry.answer`)
+    return L4Factoidal.Rendering.Geometry.answer q
   | 153 =>
     -- the rules of a style sheet text and its changes (CSSOM §6.4, `CssSheet.sheetOp`)
     return L4Factoidal.Rendering.CssSheet.sheetOp q
