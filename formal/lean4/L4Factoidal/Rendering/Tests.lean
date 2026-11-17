@@ -349,6 +349,11 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 #guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩} 0 0 10 10).size == 4
 #guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩, borderColor := ⟨.color ⟨1,0,0⟩,.current,.current,.current⟩} 0 0 10 10).size == 4
 #guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩, borderColor := .all .transparent} 0 0 10 10).size == 0
+-- an alpha or an opacity fades each paint; with none the paints are as before
+#guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩, paintOpacity := 0.5} 0 0 10 10).all fun
+  | .paint item => item.primitive.opacity == 0.5 | _ => false
+#guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩} 0 0 10 10).all fun
+  | .paint item => item.primitive.opacity == 1 | _ => false
 #guard (borderNodes 0 {borderStyle := ⟨.dashed,.none,.none,.none⟩, borderWidth := ⟨2,2,2,2⟩} 0 0 100 10).size == 8
 #guard (borderNodes 0 {borderStyle := ⟨.dotted,.none,.none,.none⟩, borderWidth := ⟨4,4,4,4⟩} 0 0 100 10).size == 13
 #guard (borderNodes 0 {borderStyle := .all .double, borderWidth := ⟨3,3,3,3⟩} 0 0 20 20).size == 8

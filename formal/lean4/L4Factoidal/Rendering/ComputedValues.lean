@@ -45,6 +45,9 @@ def channel (x : Float) : String := toString (max 0 (min 255 (x * 255).round)).t
 
 /-- CSS Color 4 §15.2: `rgb(r, g, b)`. -/
 def color (c : Color) : String := s!"rgb({channel c.r}, {channel c.g}, {channel c.b})"
+/-- CSS Color 4 §15.2: `rgb(r, g, b)`, or `rgba(r, g, b, a)` with an alpha under 1. -/
+def colorA (c : Color) (a : Float) : String :=
+  if a >= 1 then color c else s!"rgba({channel c.r}, {channel c.g}, {channel c.b}, {FloatFormat.format a})"
 
 def display : Display → String
   | .none => "none" | .block => "block" | .inline => "inline" | .inlineBlock => "inline-block"
@@ -60,10 +63,11 @@ def borderStyle : BorderStyle → String
 
 /-- A side's border colour: `currentColor` is the element's colour; `transparent` is
 `rgba(0, 0, 0, 0)` (CSS Color 4 §15.2). -/
-def sideColor (current : Color) : SideColor → String
-  | .current => color current
+def sideColor (current : Color) (currentAlpha : Float) : SideColor → String
+  | .current => colorA current currentAlpha
   | .transparent => "rgba(0, 0, 0, 0)"
   | .color c => color c
+  | .alpha c a => colorA c a
 
 def textAlign : TextAlign → String
   | .start => "start" | .right => "right" | .center => "center" | .left => "left" | .end_ => "end"
@@ -85,8 +89,8 @@ def values (c : Computed) : List (String × String) :=
   let bw := c.borderEdges
   [("display", display c.display), ("width", length c.width), ("height", length c.height)] ++
   edges "margin" c.margin px ++ edges "padding" c.padding px ++
-  [("color", color c.color),
-   ("background-color", match c.background with | some b => color b | none => "rgba(0, 0, 0, 0)"),
+  [("color", colorA c.color c.colorAlpha),
+   ("background-color", match c.background with | some b => colorA b c.backgroundAlpha | none => "rgba(0, 0, 0, 0)"),
    ("font-size", px c.fontSize), ("font-family", c.fontFamily),
    ("line-height", match c.lineHeightFactor with | some _ => "normal" | none => px c.lineHeight),
    ("visibility", if c.visible then "visible" else "hidden"),
@@ -95,7 +99,7 @@ def values (c : Computed) : List (String × String) :=
    ("border-top-width", px bw.top), ("border-right-width", px bw.right),
    ("border-bottom-width", px bw.bottom), ("border-left-width", px bw.left)] ++
   ["top", "right", "bottom", "left"].map (fun s => (s!"border-{s}-style", borderStyle (c.borderStyle.get s))) ++
-  ["top", "right", "bottom", "left"].map (fun s => (s!"border-{s}-color", sideColor c.color (c.borderColor.get s))) ++
+  ["top", "right", "bottom", "left"].map (fun s => (s!"border-{s}-color", sideColor c.color c.colorAlpha (c.borderColor.get s))) ++
   [("border-spacing", if c.borderSpacingX == c.borderSpacingY then px c.borderSpacingX
       else px c.borderSpacingX ++ " " ++ px c.borderSpacingY),
    ("border-collapse", if c.borderCollapse then "collapse" else "separate"),
