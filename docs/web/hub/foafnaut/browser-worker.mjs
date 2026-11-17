@@ -218,7 +218,8 @@ const push=(state,url)=>call('',{op:'historyPush',history:state,url});
 const refusal=(url,message)=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   message=String(message).replace(/^(Error: )?Lean HTML: /,'');
-  const page={url,title:'Page refused',source:`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`};
+  // syntax html: the refusal of an .xml address is still this HTML page.
+  const page={url,title:'Page refused',syntax:'html',source:`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`};
   addEntries(page,[{source:'System',severity:'error',feature:'page',where:url,message:String(message),action:'page refused'}]);
   return page;
 };
@@ -461,7 +462,9 @@ async function prepare(url){
     (sheetURL,reason)=>console.warn('foafnaut: imported style sheet not read:',sheetURL,reason));
   for(const r of imported)sources.push({kind:'Style sheet',url:r.url,source:r.source});
   const webFonts=await pageWebFonts(page,sheets.resources);
-  const next={url:page.url,...(page.copy?{copy:page.copy}:{}),title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
+  // The XSLT result's syntax (html for the output methods html and text) goes with the page to every
+  // request (pageLayoutFields): an .xml address must not make the result parse as XML.
+  const next={url:page.url,...(page.copy?{copy:page.copy}:{}),...(page.syntax?{syntax:page.syntax}:{}),title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
     ...(sheets.resources.length?{resources:sheets.resources}:{}),...(sheets.resourceFailures.length?{resourceFailures:sheets.resourceFailures}:{}),
     ...(imported.length?{imported}:{})};
   if(Array.isArray(facts.diagnostics))addEntries(next,facts.diagnostics);

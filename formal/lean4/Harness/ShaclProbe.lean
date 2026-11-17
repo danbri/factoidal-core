@@ -376,7 +376,7 @@ def bumpGroup (scores : List (String × Score)) (group : String) (o : Outcome) :
 def defaultManifest : String :=
   "third_party/testing/shacl/data-shapes-test-suite/tests/core/manifest.ttl"
 
-def main (args : List String) : IO UInt32 := do
+def run (args : List String) : IO UInt32 := do
   let opts : Options :=
     { conformsOnly := args.contains "--conforms-only",
       verbose := args.contains "-v" || args.contains "--verbose" }
@@ -413,5 +413,3 @@ def main (args : List String) : IO UInt32 := do
   return (if total.fail > 0 then 1 else 0)
 
 end ShaclProbe
-
-def main (args : List String) : IO UInt32 := ShaclProbe.main args
