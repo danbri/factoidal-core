@@ -248,9 +248,12 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     drawLayers:(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult>=>inOrder(()=>{frameUnits=undefined;return renderLayers(layers,width,height,offset,check);},
       ()=>frameUnits??sceneCost(layers.page as never)+sceneCost(layers.chrome as never)+width*height/1e6,check),
     /** Present the layers already drawn at another offset: no Lean call and no scene draw. */
-    shift:(offset:number,check:boolean):Promise<DrawResult>=>inOrder(async()=>{
+    shift:(offset:number,check:boolean,expected?:HTMLLayers):Promise<DrawResult>=>inOrder(async()=>{
       if(disposed)throw new Error("Native HTML session already disposed");
       if(!lastLayers)throw new Error("shift before any layers were drawn");
+      // A queued frame may have replaced the textures while this shift waited for
+      // the GPU. Its offset belongs to expected, so return without presenting.
+      if(expected&&lastLayers.layers!==expected)return notPresented();
       lastLayers.offset=offset;
       return present(lastLayers.width,lastLayers.height,offset,check,performance.now(),{});
     },lastLayers?lastLayers.width*lastLayers.height/1e6:0,check),

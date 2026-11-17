@@ -283,7 +283,8 @@ theorem stage0Request_refines (engine : State → Nat → LayerFrame) (fresh : F
   by_cases h : s.asked = some y
   · simp [stage0Request, ask, h, run]
   · simp only [stage0Request, ask, h, ↓reduceIte]
-    rw [run, step_fresh_frame _ _ (fun g hg => fresh s y g hg)]
+    rw [run, step_fresh_frame {s with asked := some y} (engine s y)
+      (fun g hg => fresh s y g hg)]
     simp [run]
 
 /-- Kind: refinement. Says: a synchronous stage-0 turn equals the presenter on its expanded

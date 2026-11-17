@@ -29,3 +29,12 @@ Validation so far:
   not scroll latency. Large frame copies can exceed one display interval.
 
 The theorem work and its proof boundary are in `20261117-presenter-theorems.md`.
+
+Further checks: timing-analysis and host-contract source checks bring the local total to
+12 passing tests. The cloud Lean job on 0b0d20fd0 found one failed rewrite in
+stage0Request_refines; the state argument now explicitly includes the recorded request.
+The repaired proof awaits compilation. Worker integration tests now exercise native/Wasm
+byte parity, publication ordering and presenter calls during a real BubblePopJS turn.
+They await rebuilt engines. Publication IDs are preserved through the host; stale
+prefetches are checked by Lean before installation. Queued shifts check that their
+textures remain installed before presenting.

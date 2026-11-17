@@ -29,7 +29,7 @@ rows, the page layer in band rows from page row `bandTop`, and the WGSL that put
 in the window. `keepFrom`..`keepTo` are the scrolls that this band shows with no new render. */
 /** The answer of fontFaces: the used faces and how many @font-face rules the page has. */
 export type WebFontFaces={faces:{family:string;sources:string[]}[];rules:number};
-export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean;scrollLimit?:number;
+export type HTMLLayerPlace = {presenterId?:number;top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean;scrollLimit?:number;
   /** WebPaint: an SVG animation runs or will begin by the clock (draw the next frame); the page has animations (send its clicks). */
   animating?:boolean;animations?:boolean;
   /** The splash (WebShell.splashNodes) is in this frame: ask for the next one. */

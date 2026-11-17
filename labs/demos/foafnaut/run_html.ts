@@ -1041,7 +1041,7 @@ async function main() {
   };
   const stateNow=()=>stateKey(document,requestFor(scroll).options,width,height);
   // The prefetched band can be shown now in place of a Lean frame.
-  const swapReady=()=>!!current&&!!prefetched&&(presenter?(!keeps(current.layers.layers,scroll)&&keeps(prefetched.layers.layers,scroll)&&sameState(prefetched.key,stateNow())):canSwap(current.layers.layers,{key:prefetched.key,band:prefetched.layers.layers},stateNow(),scroll));
+  const swapReady=()=>!!current&&!!prefetched&&(presenter?(presenter.accepts(prefetched.layers.layers)&&!keeps(current.layers.layers,scroll)&&keeps(prefetched.layers.layers,scroll)&&sameState(prefetched.key,stateNow())):canSwap(current.layers.layers,{key:prefetched.key,band:prefetched.layers.layers},stateNow(),scroll));
   // A band that keeps this scroll is ready, or is being made for the same state: wait for it.
   const bandComing=()=>{
     if(swapReady())return true;
@@ -1564,6 +1564,8 @@ async function main() {
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.
       if((candidate??document)!==nextDocument){awaiting=[...stamps,...awaiting];dirty=true;return;}
+      // A late publication must not replace textures for a newer accepted frame.
+      if(nextLayers&&presenter&&!presenter.accepts(nextLayers.layers)){awaiting=[...stamps,...awaiting];dirty=true;return;}
       // With layers, the composite shows the scroll of now, kept in the new band.
       const scrollNow=nextDocument!==document?0:scroll;
       const place=nextLayers?clampOffset(nextLayers.layers,scrollNow):undefined;
@@ -1601,7 +1603,10 @@ async function main() {
       settle(stamps,result.presentedAt);
       if(nextLayers){
         current={layers:nextLayers,request,document:nextDocument,width:sentWidth,height:sentHeight};shownOffset=place!.offset;
-        presenter?.show(nextLayers.layers,scrollNow);
+        if(presenter){
+          const latest=presenter.show(nextLayers.layers,nextDocument!==document?0:scroll);
+          if(latest.offset!==place!.offset)shiftPending=true;
+        }
         // Scrolls taken while Lean worked: shown now if the band holds them, else after the next band.
         if(place!.exact){settle(awaitingShift,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingShift=[];awaitingBand=[];}
         if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
@@ -1887,7 +1892,7 @@ async function main() {
       if(pressPresent&&!shifting&&current&&canPresent()){
         pressPresent=false;
         const start=performance.now(),p=pressed,shown=current,offset=shownOffset;
-        shifting=session!.shift(offset,false).then(result=>{
+        shifting=session!.shift(offset,false,presenter?shown.layers:undefined).then(result=>{
           trace("native-html-press",{state:p?"down":"up",control:p?.control??null,active:p?.active??null,rects:p?.rects.length??0,
             presented:result.presented,totalMs:ms(start,performance.now()),...(p?{fromQueuedMs:ms(p.at,result.presentedAt)}:{})});
           if(!result.presented){pressPresent=true;return;}
@@ -1910,7 +1915,7 @@ async function main() {
         if(!swap&&!keeps(current.layers.layers,scroll)&&!bandComing())dirty=true;
         const shown=swap?{...swap.record,layers:swap.layers}:current,shownLayers=shown.layers;
         const start=performance.now(),{offset,exact}=presenter&&!swap?presenter.show(shownLayers.layers,scroll):clampOffset(shownLayers.layers,scroll),at=scroll;
-        shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame):session!.shift(offset,everyFrame)).then(result=>{
+        shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame):session!.shift(offset,everyFrame,presenter?shownLayers:undefined)).then(result=>{
           if(swap&&document!==swap.record.document){awaitingShift=[...stamps,...awaitingShift];dirty=true;return;}
           const finished=performance.now();
           trace("native-html-scroll",{frame:frameNumber,scroll:at,offset,exact,swap:!!swap,totalMs:ms(start,finished),drawMs:Math.round(result.drawMs*10)/10,

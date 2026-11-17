@@ -5,7 +5,7 @@ export function createPresenter(call:PresenterCall,requestBand:(scroll:number)=>
   let state:PresenterState={view:0,scroll:0,shown:null,asked:null},nextId=0;
   const ids=new WeakMap<object,number>();
   function frame(layers:HTMLLayers["layers"]):PresenterFrame{
-    let id=ids.get(layers);if(id===undefined){id=++nextId;ids.set(layers,id);}
+    let id=layers.presenterId??ids.get(layers);if(id===undefined){id=++nextId;ids.set(layers,id);}
     const {bandTop,bandHeight,keepFrom,keepTo}=layers;
     return {id,bandTop,bandHeight,keepFrom,keepTo};
   }
@@ -16,6 +16,10 @@ export function createPresenter(call:PresenterCall,requestBand:(scroll:number)=>
   }
   return {
     input,
+    accepts(layers:HTMLLayers["layers"]){
+      const f=frame(layers);
+      return call(state,{kind:"frame",frame:f}).state.shown?.id===f.id;
+    },
     // Inspection does not install a frame or publish requests. Used for queued
     // frames and prefetches before their textures replace the displayed frame.
     inspect(layers:HTMLLayers["layers"],scroll:number){

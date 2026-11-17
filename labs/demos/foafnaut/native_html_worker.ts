@@ -88,7 +88,7 @@ const handle=async(request:WorkerRequest)=>{
       startEpochMs:performance.timeOrigin+turnStart,endEpochMs:performance.timeOrigin+performance.now()}));
     if(frameSlot&&request.name==="compileLayers"){
       const layers=value as import("./native_html_engine.ts").HTMLLayers&{presenterId:number};
-      layers.presenterId=++frameId;
+      layers.presenterId=++frameId;layers.layers.presenterId=layers.presenterId;
       const ms=performance.now()-start;
       const payload=encodeFrame({request:request.id,layers,workerMs:ms});
       const frameSequence=publishBytes(frameSlot,payload);
