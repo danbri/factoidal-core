@@ -2115,6 +2115,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- `anchor()` insets (CSS Anchor Positioning 1 §3.2): the distance from the containing
       -- block's edge to the named side of the anchor's border box; with no such anchor (or a
       -- side of the other axis), the inset's own length, its fallback
+      -- `position-area` (CSS Anchor Positioning 1 §3.1): the containing block is the area of the
+      -- 3 × 3 grid that the default anchor's edges cut from it, and `auto` insets are 0
+      let area := s.pos.positionArea.bind fun ((x0, x1), (y0, y1)) =>
+        (s.pos.positionAnchor.bind anchors).map fun (ax, ay, aw, ah) =>
+          let xs := #[cx, ax, ax+aw, cx+cw]
+          let ys := #[cy, ay, ay+ah, cy+ch]
+          (xs[x0]!, ys[y0]!, max 0 (xs[x1]!-xs[x0]!), max 0 (ys[y1]!-ys[y0]!))
+      let (cx, cy, cw, ch) := area.getD (cx, cy, cw, ch)
+      let autoInset : Option Float := if area.isSome then some 0 else none
       let rtlCB := (absoluteContainer dom styles id).direction == .rtl
       let anchored := fun (ref : Option AnchorRef) (horizontal far : Bool) => (show Option Float from
         ref.bind fun a => ((a.name.orElse fun _ => s.pos.positionAnchor).bind anchors).bind fun (ax, ay, aw, ah) =>
@@ -2122,10 +2131,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             let (lo, size, cLo, cSize) := if horizontal then (ax, aw, cx, cw) else (ay, ah, cy, ch)
             let edge := lo + f * size
             if far then cLo + cSize - edge else edge - cLo)
-      let left := (anchored s.pos.anchorLeft true false).orElse fun _ => CSS.resolve cw s.pos.left
-      let right := (anchored s.pos.anchorRight true true).orElse fun _ => CSS.resolve cw s.pos.right
-      let top := (anchored s.pos.anchorTop false false).orElse fun _ => CSS.resolve ch s.pos.top
-      let bottom := (anchored s.pos.anchorBottom false true).orElse fun _ => CSS.resolve ch s.pos.bottom
+      let left := ((anchored s.pos.anchorLeft true false).orElse fun _ => CSS.resolve cw s.pos.left).orElse fun _ => autoInset
+      let right := ((anchored s.pos.anchorRight true true).orElse fun _ => CSS.resolve cw s.pos.right).orElse fun _ => autoInset
+      let top := ((anchored s.pos.anchorTop false false).orElse fun _ => CSS.resolve ch s.pos.top).orElse fun _ => autoInset
+      let bottom := ((anchored s.pos.anchorBottom false true).orElse fun _ => CSS.resolve ch s.pos.bottom).orElse fun _ => autoInset
       let specified := CSS.resolve cw s.width
       -- CSS Box Alignment 3 §6.1.2 and §6.2.2: `justify-self` and `align-self` of an
       -- absolutely positioned box; `auto` and `normal` are `stretch`.

@@ -95,6 +95,51 @@ def anchorOf (fontSize : Float) (property v : String) : Option AnchorRef :=
     | [] => none
   | _ => none
 
+/-- A `position-area` keyword (CSS Anchor Positioning 1 §3.1.1) as its axis (`some true`
+horizontal, `some false` vertical, `none` either) and its tracks, in a horizontal-tb,
+left-to-right containing block. -/
+def areaKeyword (k : String) : Option (Option Bool × Nat × Nat) :=
+  let x := fun (a b : Nat) => some (some true, a, b)
+  let y := fun (a b : Nat) => some (some false, a, b)
+  let e := fun (a b : Nat) => some (none, a, b)
+  match k with
+  | "left" | "x-start" | "self-x-start" | "inline-start" | "self-inline-start" => x 0 1
+  | "right" | "x-end" | "self-x-end" | "inline-end" | "self-inline-end" => x 2 3
+  | "span-left" | "span-x-start" | "span-self-x-start" | "span-inline-start" | "span-self-inline-start" => x 0 2
+  | "span-right" | "span-x-end" | "span-self-x-end" | "span-inline-end" | "span-self-inline-end" => x 1 3
+  | "top" | "y-start" | "self-y-start" | "block-start" | "self-block-start" => y 0 1
+  | "bottom" | "y-end" | "self-y-end" | "block-end" | "self-block-end" => y 2 3
+  | "span-top" | "span-y-start" | "span-self-y-start" | "span-block-start" | "span-self-block-start" => y 0 2
+  | "span-bottom" | "span-y-end" | "span-self-y-end" | "span-block-end" | "span-self-block-end" => y 1 3
+  | "start" | "self-start" => e 0 1
+  | "end" | "self-end" => e 2 3
+  | "span-start" | "span-self-start" => e 0 2
+  | "span-end" | "span-self-end" => e 1 3
+  | "center" => e 1 2
+  | "span-all" => e 0 3
+  | _ => none
+
+/-- The tracks of a `position-area` value (horizontal, vertical): one keyword of an axis spans
+all of the other; two keywords of no fixed axis are the block axis, then the inline one. -/
+def areaOf (v : String) : Option ((Nat × Nat) × (Nat × Nat)) :=
+  match (v.splitOn " ").filter (· != "") |>.mapM areaKeyword with
+  | some [(ax, a0, a1)] =>
+    match ax with
+    | some true => some ((a0, a1), (0, 3))
+    | some false => some ((0, 3), (a0, a1))
+    | none => some ((a0, a1), (a0, a1))
+  | some [(ax, a0, a1), (bx, b0, b1)] =>
+    match ax, bx with
+    | some true, _ => some ((a0, a1), (b0, b1))
+    | some false, _ => some ((b0, b1), (a0, a1))
+    | none, some true => some ((b0, b1), (a0, a1))
+    | none, _ => some ((b0, b1), (a0, a1))
+  | _ => none
+
+#guard areaOf "top left" == some ((0, 1), (0, 1)) && areaOf "left top" == some ((0, 1), (0, 1))
+#guard areaOf "end start" == some ((0, 1), (2, 3)) && areaOf "top" == some ((0, 3), (0, 1))
+#guard areaOf "span-all" == some ((0, 3), (0, 3)) && areaOf "center right" == some ((2, 3), (1, 2))
+
 /-- `text-transform` (CSS Text 3 §2.1): the case in which text is shown. -/
 inductive TextTransform where | none | uppercase | lowercase | capitalize
   deriving Repr, BEq, DecidableEq
@@ -154,6 +199,10 @@ structure PositionStyle where
   anchorRight : Option AnchorRef := none
   anchorBottom : Option AnchorRef := none
   anchorLeft : Option AnchorRef := none
+  /-- `position-area` (CSS Anchor Positioning 1 §3.1): the tracks of the 3 × 3 grid around the
+  default anchor that the box's containing block spans, horizontally and vertically, each as
+  the first and the last-plus-one track (0 to 3); `none` for `none`. -/
+  positionArea : Option ((Nat × Nat) × (Nat × Nat)) := none
   /-- `transform` (CSS Transforms 1): its functions in order (`BoxTransform.steps`); empty
   for `none`. -/
   transform : List TransformStep := []
@@ -184,7 +233,7 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform &&
   sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin &&
   a.marginOf == b.marginOf && a.paddingOf == b.paddingOf && a.scrolls == b.scrolls &&
-  a.contents == b.contents && a.anchorNames == b.anchorNames && a.positionAnchor == b.positionAnchor &&
+  a.contents == b.contents && a.positionArea == b.positionArea && a.anchorNames == b.anchorNames && a.positionAnchor == b.positionAnchor &&
   AnchorRef.sameOpt a.anchorTop b.anchorTop && AnchorRef.sameOpt a.anchorRight b.anchorRight &&
   AnchorRef.sameOpt a.anchorBottom b.anchorBottom && AnchorRef.sameOpt a.anchorLeft b.anchorLeft
 
@@ -222,7 +271,7 @@ transformed one (CSS Transforms 1 §3: it is their containing block, so they mov
 def PositionStyle.containsAbsolutes (p : PositionStyle) : Bool := p.isPositioned || !p.transform.isEmpty
 
 def positionProperties : List String :=
-  ["position", "top", "right", "bottom", "left", "z-index", "anchor-name", "position-anchor", "float", "clear", "box-sizing", "aspect-ratio",
+  ["position", "top", "right", "bottom", "left", "z-index", "anchor-name", "position-anchor", "position-area", "float", "clear", "box-sizing", "aspect-ratio",
    "writing-mode", "list-style-type", "list-style-position", "white-space", "text-transform", "transform", "transform-origin", "overflow-x", "overflow-y"]
 
 /-- The ratio `a / b` (width to height) as two whole numbers in lowest terms; `none` when
@@ -276,6 +325,9 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
     | "anchor-name" =>
       if reset || v == "none" then some {p with anchorNames := []}
       else some {p with anchorNames := (v.splitOn ",").map fun t => t.trimAscii.toString}
+    | "position-area" =>
+      if reset || v == "none" then some {p with positionArea := none} else
+      (areaOf v).map fun a => {p with positionArea := some a}
     | "position-anchor" =>
       if reset || !v.startsWith "--" then some {p with positionAnchor := none}
       else some {p with positionAnchor := some v}
