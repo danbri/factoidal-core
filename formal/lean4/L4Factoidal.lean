@@ -717,6 +717,9 @@ import L4Factoidal.OWL.StructureRdf
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.OWL.FunctionalSyntaxTests
+import L4Factoidal.OWL.Profiles
+import L4Factoidal.OWL.StructureFromRdf
+import L4Factoidal.OWL.ProfilesTests
 import L4Factoidal.OWL.OwlXml
 import L4Factoidal.OWL.OwlXmlTests
 import L4Factoidal.OWL.ClassExprTests
@@ -1269,6 +1272,7 @@ import L4Factoidal.WHATWG.URL.IdnaData
 import L4Factoidal.WHATWG.URL.Idna
 import L4Factoidal.WHATWG.URL.Host
 import L4Factoidal.WHATWG.URL.Parser
+import L4Factoidal.WHATWG.URL.Cost
 import L4Factoidal.WHATWG.URL.Theorems
 import L4Factoidal.WHATWG.URLPattern
 import L4Factoidal.WHATWG.URLPatternTests

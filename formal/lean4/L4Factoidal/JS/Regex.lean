@@ -1341,4 +1341,67 @@ def exec (re : Compiled) (cs : Array Char) (from_ : Nat) : Option (Array (Option
     | none => return none
   return none
 
+/-! ### The search as a recursion
+
+`exec` is the reference: a `for` over the start positions with the start in a mutable variable.
+Compiled, each position made the loop's state pair, its step, and the matcher's state record with
+the captures array built again (61% of the allocations of the marked workload were in that loop).
+`execFast` is the same search as a recursion on the count of positions left, with the empty
+captures made once; the compiled program runs it (`@[csimp] exec_eq_fast`). -/
+
+/-- The search of `exec` from `start`, for `k` more start positions. -/
+def execLoop (re : Compiled) (cs : Array Char) (fuel : Nat) (caps0 : Array (Option (Nat × Nat))) :
+    Nat → Nat → Option (Array (Option (Nat × Nat)))
+  | 0, _ => none
+  | k + 1, start =>
+    match matchNode cs fuel re.flags false re.node { pos := start, caps := caps0 } some with
+    | some st => some (#[some (start, st.pos)] ++ st.caps)
+    | none =>
+      if re.flags.sticky then none else
+      match readAt cs re.flags.unicode false start with
+      | some (_, w) => execLoop re cs fuel caps0 k (start + w)
+      | none => none
+
+/-- `exec`, by `execLoop`. -/
+def execFast (re : Compiled) (cs : Array Char) (from_ : Nat) : Option (Array (Option (Nat × Nat))) :=
+  if from_ > cs.size then none
+  else execLoop re cs (matchFuel cs.size) (Array.replicate re.groups none) (cs.size - from_ + 1) from_
+
+/-- **Kind: refinement.** `execFast` gives the match `exec` gives (or none), for every compiled
+expression, subject and start. Does not say anything about speed. -/
+@[csimp] theorem exec_eq_fast : @exec = @execFast := by
+  funext re cs from_
+  unfold exec execFast
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range']
+  split
+  · rfl
+  · rename_i hfrom
+    have hsz : [:cs.size - from_ + 1].size = cs.size - from_ + 1 := by simp [Std.Legacy.Range.size]
+    rw [hsz]
+    clear hfrom hsz
+    generalize cs.size - from_ + 1 = m
+    generalize hl : List.range' 0 m = l
+    have hlen : m = l.length := by rw [← hl, List.length_range']
+    rw [hlen]
+    clear hlen hl
+    generalize from_ = start
+    induction l generalizing start with
+    | nil => rfl
+    | cons a as ih =>
+      simp only [List.forIn_cons, List.length_cons, execLoop]
+      cases hm : matchNode cs (matchFuel cs.size) re.flags false re.node
+          { pos := start, caps := Array.replicate re.groups none } some with
+      | some st => rfl
+      | none =>
+        by_cases hs : re.flags.sticky = true
+        · rw [if_pos hs, if_pos hs]; rfl
+        · rw [if_neg hs, if_neg hs]
+          cases hr : readAt cs re.flags.unicode false start with
+          | none => rfl
+          | some p =>
+            obtain ⟨c, w⟩ := p
+            exact ih (start + w)
+
+#print axioms exec_eq_fast
+
 end L4Factoidal.JS.Re

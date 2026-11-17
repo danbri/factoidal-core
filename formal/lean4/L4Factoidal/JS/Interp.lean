@@ -58,8 +58,12 @@ would still be shared with the array while it changes (and its elements copied).
 
 /-- Change object `id` with `f`, which also answers a value. The object is moved out of the
 heap while `f` runs, so `f` holds the only reference and a change to its elements does not
-copy them (an Array push is amortised constant time, not a copy of the array). -/
-def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
+copy them (an Array push is amortised constant time, not a copy of the array).
+
+Specialised for `f` (`@[specialize]`): each caller passes a function written in place, and without
+this every write of an element or a property made a closure for it, called it through a pointer
+and took its answer from a pair. -/
+@[specialize] def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
   modifyGet fun h =>
     let objs := h.objs
     let h := { h with objs := #[] }
@@ -637,28 +641,102 @@ def typedBytes (ty : Nat) (x : Float) : ByteArray :=
   | 11 => le (L4Factoidal.Prim.Float16.ofFloat x).toNat 2
   | _ => le x.toBits.toNat 8
 
-/-- Direct reads for Uint8Array and Uint8ClampedArray. -/
+/-! ### Direct element access for the one-, two- and four-byte integer types
+
+`typedRead` and `typedBytes` are the reference: little-endian sums and digits over `List.range w`
+with powers of two. The compiled program runs `typedReadByteFast` and `typedBytesByteFast`
+(`@[csimp]`, proved equal below): byte reads and constant multipliers, no list and no power.
+
+A note for whoever extends the proofs: nothing here may ask Lean whether two terms with a product
+by a large literal are equal by computation (`rfl`, `show`, `decide` on the whole sum, or a `simp`
+that closes the goal by reflexivity before the two sides are the same text). `n * 16777216` with
+`n` not a literal unfolds `Nat.mul` one successor at a time: a first draft of these theorems did
+not finish in five minutes and passed 6 GB. The lemmas below only rewrite. -/
+
+/-- The little-endian sum of two bytes, as the reference writes it and as two terms. -/
+theorem leSum2 (b : Nat → Nat) :
+    (List.range 2).foldl (fun a k => a + b k * 2 ^ (8 * k)) 0 = b 0 + b 1 * 256 := by
+  have r : List.range 2 = [0, 1] := rfl
+  have p0 : (2:Nat) ^ (8 * 0) = 1 := by decide
+  have p1 : (2:Nat) ^ (8 * 1) = 256 := by decide
+  rw [r, List.foldl_cons, List.foldl_cons, List.foldl_nil, p0, p1, Nat.mul_one, Nat.zero_add]
+
+/-- The little-endian sum of four bytes. -/
+theorem leSum4 (b : Nat → Nat) :
+    (List.range 4).foldl (fun a k => a + b k * 2 ^ (8 * k)) 0
+      = b 0 + b 1 * 256 + b 2 * 65536 + b 3 * 16777216 := by
+  have r : List.range 4 = [0, 1, 2, 3] := rfl
+  have p0 : (2:Nat) ^ (8 * 0) = 1 := by decide
+  have p1 : (2:Nat) ^ (8 * 1) = 256 := by decide
+  have p2 : (2:Nat) ^ (8 * 2) = 65536 := by decide
+  have p3 : (2:Nat) ^ (8 * 3) = 16777216 := by decide
+  rw [r, List.foldl_cons, List.foldl_cons, List.foldl_cons, List.foldl_cons, List.foldl_nil,
+    p0, p1, p2, p3, Nat.mul_one, Nat.zero_add]
+
+/-- The two little-endian bytes of a number, as the reference writes them and as two terms. -/
+theorem leBytes2 (v : Nat) :
+    ByteArray.mk ((List.range 2).toArray.map fun k => (v / 2 ^ (8 * k) % 256).toUInt8)
+      = ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8] := by
+  have r : List.range 2 = [0, 1] := rfl
+  have p0 : (2:Nat) ^ (8 * 0) = 1 := by decide
+  have p1 : (2:Nat) ^ (8 * 1) = 256 := by decide
+  rw [r, List.map_toArray, List.map_cons, List.map_cons, List.map_nil, p0, p1, Nat.div_one]
+
+/-- The four little-endian bytes of a number. -/
+theorem leBytes4 (v : Nat) :
+    ByteArray.mk ((List.range 4).toArray.map fun k => (v / 2 ^ (8 * k) % 256).toUInt8)
+      = ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8,
+          (v / 16777216 % 256).toUInt8] := by
+  have r : List.range 4 = [0, 1, 2, 3] := rfl
+  have p0 : (2:Nat) ^ (8 * 0) = 1 := by decide
+  have p1 : (2:Nat) ^ (8 * 1) = 256 := by decide
+  have p2 : (2:Nat) ^ (8 * 2) = 65536 := by decide
+  have p3 : (2:Nat) ^ (8 * 3) = 16777216 := by decide
+  rw [r, List.map_toArray, List.map_cons, List.map_cons, List.map_cons, List.map_cons, List.map_nil,
+    p0, p1, p2, p3, Nat.div_one]
+
+/-- Direct reads for the unsigned one-byte types and the integer types of two and four bytes
+(Int8 keeps the reference path). -/
 def typedReadByteFast (ty : Nat) (bytes : ByteArray) (at_ : Nat) : Value :=
   match ty with
   | 1 | 2 => .num (Float.ofNat (bytes.get! at_).toNat)
+  | 3 =>
+    let x := (bytes.get! at_).toNat + (bytes.get! (at_ + 1)).toNat * 256
+    .num (Float.ofInt (if x ≥ 32768 then (x : Int) - 65536 else x))
+  | 4 => .num (Float.ofNat ((bytes.get! at_).toNat + (bytes.get! (at_ + 1)).toNat * 256))
+  | 5 =>
+    let x := (bytes.get! at_).toNat + (bytes.get! (at_ + 1)).toNat * 256
+      + (bytes.get! (at_ + 2)).toNat * 65536 + (bytes.get! (at_ + 3)).toNat * 16777216
+    .num (Float.ofInt (if x ≥ 2147483648 then (x : Int) - 4294967296 else x))
+  | 6 => .num (Float.ofNat ((bytes.get! at_).toNat + (bytes.get! (at_ + 1)).toNat * 256
+      + (bytes.get! (at_ + 2)).toNat * 65536 + (bytes.get! (at_ + 3)).toNat * 16777216))
   | _ => typedRead ty bytes at_
 
-/-- **Kind: refinement.** Says the direct byte read preserves every result of
+/-- **Kind: refinement.** Says the direct read preserves every result of
 `typedRead`, for all type tags, buffers and offsets. Does not say the reference
 implements all of ECMA-262 or that this is faster. -/
 @[csimp] theorem typedRead_eq_byteFast : typedRead = typedReadByteFast := by
   funext ty bytes at_
   match ty with
-  | 0 | _ + 3 => rfl
+  | 0 | _ + 7 => rfl
   | 1 | 2 =>
     simp only [typedRead, typedReadByteFast, List.range_one, List.foldl_cons,
       List.foldl_nil, Nat.mul_zero, Nat.pow_zero, Nat.mul_one, Nat.zero_add, Nat.add_zero]
+  | 3 | 4 => simp only [typedRead, typedReadByteFast, leSum2, Nat.add_zero]
+  | 5 | 6 => simp only [typedRead, typedReadByteFast, leSum4, Nat.add_zero]
 
-/-- Direct singleton buffers for the three byte-sized numeric element types. -/
+/-- Direct buffers for the integer element types of one, two and four bytes. -/
 def typedBytesByteFast (ty : Nat) (x : Float) : ByteArray :=
   match ty with
   | 0 | 1 => ByteArray.mk #[(Int.toNat (toInt32Wide x % 256) % 256).toUInt8]
   | 2 => ByteArray.mk #[(clampByte x % 256).toUInt8]
+  | 3 | 4 =>
+    let v := Int.toNat (toInt32Wide x % 65536)
+    ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8]
+  | 5 | 6 =>
+    let v := Int.toNat (toInt32Wide x % 4294967296)
+    ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8,
+      (v / 16777216 % 256).toUInt8]
   | _ => typedBytes ty x
 
 /-- **Kind: refinement.** Says direct byte writes produce exactly the reference
@@ -666,11 +744,14 @@ bytes for every type tag and Float. Does not say anything about speed. -/
 @[csimp] theorem typedBytes_eq_byteFast : typedBytes = typedBytesByteFast := by
   funext ty x
   match ty with
-  | _ + 3 => rfl
+  | _ + 7 => rfl
   | 0 | 1 | 2 =>
     simp only [typedBytes, typedBytesByteFast, List.range_one, Array.map_singleton, Nat.mul_zero, Nat.pow_zero, Nat.div_one,
       show (2 : Int) ^ (8 * 1) = 256 from by decide]
-
+  | 3 | 4 =>
+    simp only [typedBytes, typedBytesByteFast, leBytes2, show (2 : Int) ^ (8 * 2) = 65536 from by decide]
+  | 5 | 6 =>
+    simp only [typedBytes, typedBytesByteFast, leBytes4, show (2 : Int) ^ (8 * 4) = 4294967296 from by decide]
 #print axioms typedRead_eq_byteFast
 #print axioms typedBytes_eq_byteFast
 
@@ -1327,6 +1408,26 @@ def bufferBytes (o : Obj) : ByteArray :=
 
 def elemSize (ty : Nat) : Nat := (typedNames[ty]?.map (·.2)).getD 1
 
+/-- `elemSize` by a match: no read of the table and no `Option` for each element access. -/
+def elemSizeFast (ty : Nat) : Nat :=
+  match ty with
+  | 3 | 4 | 11 => 2
+  | 5 | 6 | 7 => 4
+  | 8 | 9 | 10 => 8
+  | _ => 1
+
+/-- **Kind: refinement.** `elemSizeFast` is `elemSize` for every type tag (those past the table
+included). -/
+@[csimp] theorem elemSize_eq_fast : elemSize = elemSizeFast := by
+  funext ty
+  match ty with
+  | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 => rfl
+  | n + 12 =>
+    have h : typedNames[n + 12]? = none := Array.getElem?_eq_none (by show 12 ≤ n + 12; omega)
+    unfold elemSize; rw [h]; rfl
+
+#print axioms elemSize_eq_fast
+
 /-- A new ArrayBuffer with these bytes. -/
 def newBuffer (bytes : ByteArray) : M Value := do
   -- `byteLength` is an accessor of ArrayBuffer.prototype (§25.1.6.2)
@@ -1448,7 +1549,7 @@ def typedLenOf (detached : Bool) (off len elem size : Nat) : Nat :=
 /-- The element count of a typed array as its buffer now is (§10.4.5.12
 TypedArrayLength): 0 when the buffer is detached or too small for the view; for a
 length-tracking view (`autoLen`), the elements that fit in the buffer now. -/
-def liveLen (ty buf off len : Nat) : M Nat := do
+@[inline] def liveLen (ty buf off len : Nat) : M Nat := do
   let bo ← getObj buf
   pure (typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size)
 

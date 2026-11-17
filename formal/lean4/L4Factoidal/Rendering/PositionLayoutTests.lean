@@ -143,6 +143,15 @@ private def drawing := "<div id=o><canvas id=k width=15 height=15>no canvas</can
 #guard box drawing "" "k" == some (0,0,15,15)
 #guard box drawing "" "z" == some (0,15,200,7)
 #guard box "<canvas id=k></canvas>" "#k{display:block}" "k" == some (0,0,300,150)
+-- An iframe, and a video with nothing drawn, are replaced boxes with no natural size: the
+-- default object size, 300 by 150; a width alone keeps the default height (HTML §15.4.1,
+-- CSS Images 3 §4.1). The iframe has the user agent's 2px inset border.
+#guard box "<iframe id=k></iframe>" "#k{display:block;border:0}" "k" == some (0,0,300,150)
+#guard box "<iframe id=k width=100></iframe>" "#k{display:block;border:0}" "k" == some (0,0,100,150)
+#guard box "<iframe id=k></iframe>" "#k{display:block}" "k" == some (0,0,304,154)
+#guard (box "<p><iframe id=k height=20></iframe></p>" "#k{border:0}" "k").map (fun (_,_,w,h) => (w,h)) == some (300,20)
+#guard box "<video id=k></video>" "#k{display:block}" "k" == some (0,0,300,150)
+#guard box "<video id=k height=100></video>" "#k{display:block}" "k" == some (0,0,300,100)
 -- With `aspect-ratio` and auto sizes: the natural width, the height by the ratio, within
 -- the limits of both axes (the cases of WPT css-sizing/aspect-ratio/replaced-element-043).
 private def ratioCss := "#k{display:block;width:auto;height:auto;aspect-ratio:2;"

@@ -492,6 +492,23 @@ def Env.slotN (e : Env) (x : String) : Nat :=
   | some m => (m.get? x).getD e.names.size
   | none => Env.scan e.names x 0
 
+/-- `slotN` with no `Option` from the index (`Std.HashMap.getD`): the global record is indexed, and
+each read of a global name was a `some`. -/
+def Env.slotNFast (e : Env) (x : String) : Nat :=
+  match e.index with
+  | some m => m.getD x e.names.size
+  | none => Env.scan e.names x 0
+
+/-- **Kind: refinement.** `slotNFast` answers as `slotN` for every record and name. -/
+@[csimp] theorem Env.slotN_eq_fast : @Env.slotN = @Env.slotNFast := by
+  funext e x
+  unfold Env.slotN Env.slotNFast
+  cases e.index with
+  | none => rfl
+  | some m => simp only [PropMap.getD_eq_get?_getD]
+
+#print axioms Env.slotN_eq_fast
+
 def Env.slot? (e : Env) (x : String) : Option Nat :=
   let i := e.slotN x
   if i == e.names.size then none else some i
@@ -745,25 +762,55 @@ structure HeapOf (H : Type) extends ColdHeap H where
 
 instance : Inhabited (HeapOf H) := ⟨{}⟩
 
+/-- The logging branch of `noteObj`: the write of object `id` is logged. Not inlined: `noteObj`
+is expanded at every write of the heap (144 sites in the evaluator), and this branch takes the
+cold record apart and builds it again; as a call it is in the program once. The log is taken out
+of the heap while it grows, so it is changed in place. -/
+@[noinline] def HeapOf.noteObjOn (h : HeapOf H) (objs : Array Obj) (id : Nat) : HeapOf H × Array Obj :=
+  let L := h.undoObjs
+  let h := { h with undoObjs := {} }
+  let (L, objs) := L.noteAt objs id
+  ({ h with undoObjs := L }, objs)
+
+/-- The logging branch of `noteEnv`, as `noteObjOn`. -/
+@[noinline] def HeapOf.noteEnvOn (h : HeapOf H) (envs : Array Env) (e : Nat) : HeapOf H × Array Env :=
+  let L := h.undoEnvs
+  let h := { h with undoEnvs := {} }
+  let (L, envs) := L.noteAt envs e
+  ({ h with undoEnvs := L }, envs)
+
 /-- Before a write of object `id` of `objs` (the object array, taken out of `h`): log its old
-value when an undo log is kept (`ColdHeap.undoObjs`). The log is taken out of the heap while it
-grows, so it is changed in place. -/
+value when an undo log is kept (`ColdHeap.undoObjs`). With no log (`base` 0) this is one
+comparison; with one, the call of `noteObjOn`. -/
 @[inline] def HeapOf.noteObj (h : HeapOf H) (objs : Array Obj) (id : Nat) : HeapOf H × Array Obj :=
-  if id < h.undoObjs.base then
-    let L := h.undoObjs
-    let h := { h with undoObjs := {} }
-    let (L, objs) := L.noteAt objs id
-    ({ h with undoObjs := L }, objs)
-  else (h, objs)
+  if id < h.undoObjs.base then h.noteObjOn objs id else (h, objs)
+
+/-- **Kind: refinement.** `noteObj` is the definition it had before its logging branch became
+the function `noteObjOn`: the same heap and array for every heap, array and index. Does not say
+anything about speed or code size. -/
+theorem HeapOf.noteObj_eq (h : HeapOf H) (objs : Array Obj) (id : Nat) :
+    h.noteObj objs id =
+      if id < h.undoObjs.base then
+        let L := h.undoObjs
+        let h := { h with undoObjs := {} }
+        let (L, objs) := L.noteAt objs id
+        ({ h with undoObjs := L }, objs)
+      else (h, objs) := rfl
 
 /-- Before a write of environment `e` of `envs` (taken out of `h`): as `noteObj`. -/
 @[inline] def HeapOf.noteEnv (h : HeapOf H) (envs : Array Env) (e : Nat) : HeapOf H × Array Env :=
-  if e < h.undoEnvs.base then
-    let L := h.undoEnvs
-    let h := { h with undoEnvs := {} }
-    let (L, envs) := L.noteAt envs e
-    ({ h with undoEnvs := L }, envs)
-  else (h, envs)
+  if e < h.undoEnvs.base then h.noteEnvOn envs e else (h, envs)
+
+/-- **Kind: refinement.** `noteEnv` is the definition it had before its logging branch became
+the function `noteEnvOn`. Does not say anything about speed or code size. -/
+theorem HeapOf.noteEnv_eq (h : HeapOf H) (envs : Array Env) (e : Nat) :
+    h.noteEnv envs e =
+      if e < h.undoEnvs.base then
+        let L := h.undoEnvs
+        let h := { h with undoEnvs := {} }
+        let (L, envs) := L.noteAt envs e
+        ({ h with undoEnvs := L }, envs)
+      else (h, envs) := rfl
 
 /-- Begin an action that may be undone: from here each write of an object or environment that
 exists now logs its old value once. -/
