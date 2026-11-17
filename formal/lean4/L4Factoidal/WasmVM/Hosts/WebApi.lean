@@ -34,6 +34,7 @@ gave them), the answer that waits, the random generator, and the session's Crypt
 on a whole buffer: the boundary is crossed once per `decode`, never per byte.
 -/
 import L4Factoidal.Rendering.Observe
+import L4Factoidal.DOM.PiAttributes
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.WHATWG.Encoding.Api
 import L4Factoidal.WHATWG.URL.Parser
@@ -633,6 +634,14 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
   | 170 => pure' do match L4Factoidal.Rendering.Observe.entryText (← strArg fs 0) with | some r => ofStr r | none => .error (-1)
   | 171 => pure' do match L4Factoidal.Rendering.Observe.margin? (← strArg fs 0) with
     | some m => ofStr (L4Factoidal.Rendering.Observe.marginText m)
+    | none => .error (-3)
+  -- 172: the attributes of a processing instruction's data (`DOM/PiAttributes.lean`): mode
+  -- `p` reads them, `s` and `r` give the data after `setAttribute` and `removeAttribute`;
+  -- an invalid attribute name is -3 (InvalidCharacterError).
+  | 172 => pure' do
+    let arg := fun (i : Nat) => (strArg fs i).toOption.getD ""
+    match L4Factoidal.DOM.PiAttributes.op (← strArg fs 0) (arg 1) (arg 2) (arg 3) with
+    | some r => ofStr r
     | none => .error (-3)
   | 21 => pure' (match strArg fs 0 with
     | .ok d => match Base64.btoa d with | some r => ofStr r | none => .error (-3)
