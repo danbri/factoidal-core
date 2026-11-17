@@ -24,6 +24,7 @@ defaulting to
 `third_party/testing/shacl/shacl12-test-suite/tests/node-expr/manifest.ttl`.
 -/
 import Harness.Manifest
+import Harness.ShaclProbe
 import L4Factoidal.SHACL.NodeExpr
 import L4Factoidal.Syntax.Turtle
 
@@ -109,11 +110,12 @@ def evalSubjects (g : Graph) : List Subject :=
     then some t.s else none))
 
 /-- Subjects typed `sht:Validate`. The `constraints/` sub-directory
-    holds two of these — ordinary SHACL validation tests that happen to
-    use a node expression in a shape. They belong to `l4shacl`, not
-    here, and are counted as UNSUPPORTED so this runner's denominator
-    is the suite's own and the two are visible rather than missing.
-    F\*'s 142 is these two plus the 140 `EvalNodeExpr` entries. -/
+    holds two of these: SHACL validation tests whose shapes use a node
+    expression (`sh:expression`, `sh:nodeByExpression`). They run here
+    with the validator of `l4shacl` (`ShaclProbe.collectFromFile`,
+    `ShaclProbe.runTest`, full report comparison), so this runner's
+    denominator is the suite's own: the 140 `EvalNodeExpr` entries and
+    these two. -/
 def validateSubjects (g : Graph) : List Subject :=
   (g.filterMap (fun t =>
     if t.p.val == rdfType && termKey t.o == shtNs ++ "Validate"
@@ -160,8 +162,14 @@ def runFile (path : String) : IO Score := do
             IO.println s!"  EMPTY {path}: no recognized test entries"
             return { fail := 1 }
           let mut score : Score := {}
-          for _ in validateSubjects g do
-            score := score.bump (.unsupported "sht:Validate — a validation test, run by l4shacl")
+          if !(validateSubjects g).isEmpty then
+            -- The file's own `sht:Validate` entries, read and run as `l4shacl` reads and runs them.
+            let visited ← IO.mkRef ([] : List String)
+            let abs := (← IO.FS.realPath path).toString
+            for tc in ← ShaclProbe.collectFromFile visited abs do
+              let (out, _) := ShaclProbe.runTest {} tc
+              if out.isFail then IO.println ("  " ++ out.line (basename path ++ " / " ++ tc.name))
+              score := score.bump out
           for s in evalSubjects g do
             match specOf g s with
             | none =>
