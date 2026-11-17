@@ -6766,6 +6766,9 @@
   const imgArrive = ks => {
     for (const k of ks)
       if (!imgStates.has(k) && !imgLazy.has(k) && isImgNode(k) && imgLoads(info(k, 7)) && (n0.attr(k, 'src') !== null || n0.attr(k, 'srcset') !== null)) {
+        // while the document loads, an image that arrives delays its load event as the
+        // parser's do (HTML §4.8.4.3 "update the image data" step 18)
+        if (readyState !== 'complete') imgDelay.add(k);
         imgWatch(); updateImage(k);
       }
   };
