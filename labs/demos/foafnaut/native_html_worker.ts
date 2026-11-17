@@ -17,20 +17,25 @@ import {fallbackFontHost,loadFallbackFonts} from "./native_html_fonts.ts";
 import {htmlQueue} from "./native_html_queue.ts";
 import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 
+import {publishBytes,readRequest} from "./presenter_mailbox.ts";
+import {encodeFrame} from "./presenter_frame.ts";
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 export {REMOTE_CALLS};
 export type {RemoteCall};
-export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string;logAll?:boolean}
+export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string;logAll?:boolean;frames?:SharedArrayBuffer;requests?:SharedArrayBuffer}
   |{id:number;op:"call";name:RemoteCall;args:unknown[];input?:boolean;low?:boolean}
-  |{id:number;op:"dropLow"}
+  |{id:number;op:"dropLow"|"bandWake"}
   // The fallback fonts a page needs (native_html_fonts.ts): chosen and read here, as bytes,
   // into this engine, before the calls sent after it.
   |{id:number;op:"pageFonts";source:string}
   // The serif face (serif_font.ts), into this engine, before the calls sent after it.
   |{id:number;op:"serifFont";path:string;family:string};
-export type WorkerReply={id:number;ok:true;value?:unknown;ms:number}|{id:number;ok:false;error:string;dropped?:boolean};
+export type WorkerReply={id:number;ok:true;value?:unknown;ms:number;frameSequence?:bigint}|{id:number;ok:false;error:string;dropped?:boolean};
 
 let engine:Promise<HTMLEngine>|undefined;
+let frameSlot:SharedArrayBuffer|undefined,requestSlot:SharedArrayBuffer|undefined;
+let latestScroll:number|undefined,frameId=0;
+const takeBand=()=>{if(requestSlot){const read=readRequest(requestSlot);if(read.status==="value")latestScroll=read.value;}};
 // The worker's lines go through the log gate too (log-gate.mjs); --log-all comes with init.
 const logGate=gateConsole(console,{name:"foafnaut worker"});
 // Only an engine that answers its first font with `fonts` (the count held) adds a fallback
@@ -42,6 +47,7 @@ const handle=async(request:WorkerRequest)=>{
     const start=performance.now();
     if(request.op==="init"){
       if(request.logAll)logGate.setAll(true);
+      frameSlot=request.frames;requestSlot=request.requests;
       engine=loadHTML(request.nativeEngine);const e=await engine;
       if(request.font&&typeof (await loadFontFile(e,request.font.path,request.font.family))?.fonts==="number")
         fallbackFonts=fallbackFontHost(fonts=>loadFallbackFonts(e,fonts));
@@ -60,11 +66,28 @@ const handle=async(request:WorkerRequest)=>{
       scope.postMessage({id:request.id,ok:true,value,ms:performance.now()-start} satisfies WorkerReply);
       return;
     }
+    takeBand();
+    if(request.op==="bandWake"){scope.postMessage({id:request.id,ok:true,ms:0} satisfies WorkerReply);return;}
     if(request.op!=="call")return;
     if(!engine)throw new Error("engine worker was not initialised");
     if(!(REMOTE_CALLS as readonly string[]).includes(request.name))throw new Error(`Engine call ${request.name} is not available in the worker`);
     const e=await engine as unknown as Record<string,(...args:unknown[])=>unknown>;
-    const value=e[request.name](...request.args);
+    const args=[...request.args];
+    if(frameSlot&&request.name==="compileLayers"){
+      const {presenterFollowScroll,...options}=args[3] as Record<string,unknown>;
+      args[3]={...options,cpu:true,...(presenterFollowScroll&&latestScroll!==undefined?
+        {shell:{...options.shell as Record<string,unknown>,scroll:latestScroll}}:{})};
+    }
+    const value=e[request.name](...args);
+    if(frameSlot&&request.name==="compileLayers"){
+      const layers=value as import("./native_html_engine.ts").HTMLLayers&{presenterId:number};
+      layers.presenterId=++frameId;
+      const ms=performance.now()-start;
+      const frameSequence=publishBytes(frameSlot,encodeFrame({request:request.id,layers,workerMs:ms}));
+      scope.postMessage({id:request.id,ok:true,ms,frameSequence} satisfies WorkerReply);
+      takeBand();
+      return;
+    }
     // The storage floats and tile words move to the main thread, not copied: one scene,
     // or the two layers. With a bytes answer they are views of one buffer, sent once.
     const scenes=[value,(value as {page?:unknown})?.page,(value as {chrome?:unknown})?.chrome] as (Partial<HTMLArtifact>|null|undefined)[];

@@ -67,7 +67,8 @@ export function publishBytes(buffer:SharedArrayBuffer,bytes:Uint8Array):bigint {
   return committed/2n;
 }
 
-/** One attempt, with no retry or wait on the presenter thread. */
+/** One attempt, with no retry or wait on the presenter thread. Matching
+ * afterSequence returns unchanged before copying or allocating the payload. */
 export function readBytes(buffer:SharedArrayBuffer,afterSequence?:bigint):ByteSlotRead {
   const v=views(buffer),before=Atomics.load(v.version,0);
   if(before===0n)return {status:"empty"};

@@ -4,9 +4,12 @@
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 import type {WorkerReply,WorkerRequest} from "./native_html_worker.ts";
+import {createByteSlot,createRequestSlot,publishRequest,readBytes} from "./presenter_mailbox.ts";
+import {FRAME_SLOT_BYTES,decodeFrame} from "./presenter_frame.ts";
 import type {PageFonts} from "./native_html_fonts.ts";
 
 export type CompileClient={
+  requestBand(scroll:number):void;
   call(name:RemoteCall,...args:unknown[]):Promise<{value:unknown;workerMs:number}>;
   /** Input runs before ordinary work; scriptSession calls always share this FIFO. */
   inputCall(name:RemoteCall,...args:unknown[]):Promise<{value:unknown;workerMs:number}>;
@@ -30,12 +33,27 @@ export type CompileClient={
   readonly alive:boolean;
   terminate():void;
 };
-export async function startCompileWorker(font?:{path:string;family:string},nativeEngine?:string,logAll=false):Promise<CompileClient> {
+export async function startCompileWorker(font?:{path:string;family:string},nativeEngine?:string,logAll=false,presenter=false):Promise<CompileClient> {
   const worker=new Worker(new URL("./native_html_worker.ts",import.meta.url),{type:"module"});
+  const frames=presenter?createByteSlot(FRAME_SLOT_BYTES):undefined;
+  const requests=presenter?createRequestSlot():undefined;
+  let bandWake=false;
   const pending=new Map<number,{resolve:(reply:WorkerReply)=>void;reject:(error:Error)=>void}>();
   let next=0,alive=true,ordinary=0;
   const fail=(error:Error)=>{alive=false;for(const p of pending.values())p.reject(error);pending.clear();};
-  worker.onmessage=event=>{const reply=event.data as WorkerReply;const p=pending.get(reply.id);if(p){pending.delete(reply.id);p.resolve(reply);}};
+  worker.onmessage=event=>{
+    const reply=event.data as WorkerReply;
+    const p=pending.get(reply.id);if(!p)return;
+    pending.delete(reply.id);
+    if(reply.ok&&reply.frameSequence!==undefined&&frames){
+      const read=readBytes(frames);
+      if(read.status==="value"&&read.sequence===reply.frameSequence){
+        const frame=decodeFrame(read.bytes);
+        if(frame.request!==reply.id){p.reject(new Error("presenter frame/request mismatch"));return;}
+        p.resolve({...reply,value:frame.layers,ms:frame.workerMs});
+      }else p.resolve({id:reply.id,ok:false,error:"presenter frame superseded",dropped:true});
+    }else p.resolve(reply);
+  };
   worker.onerror=event=>{event.preventDefault();fail(new Error("engine worker: "+event.message));};
   worker.onmessageerror=()=>fail(new Error("engine worker: unreadable message"));
   type Body=WorkerRequest extends infer R?R extends {id:number}?Omit<R,"id">:never:never;
@@ -43,7 +61,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     if(!alive){reject(new Error("engine worker is not running"));return;}
     const id=++next;pending.set(id,{resolve,reject});worker.postMessage({...request,id});
   });
-  const init=await send({op:"init",font,nativeEngine,...(logAll?{logAll}:{})});
+  const init=await send({op:"init",font,nativeEngine,frames,requests,...(logAll?{logAll}:{})});
   if(!init.ok)throw new Error(init.error);
   const invoke=async(input:boolean,name:RemoteCall,...args:unknown[])=>{
     ordinary++;
@@ -57,6 +75,11 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
   const names=REMOTE_CALLS;
   const engine=Object.fromEntries(names.map(name=>[name,async(...args:unknown[])=>(await call(name,...args)).value])) as CompileClient["engine"];
   return {
+    requestBand(scroll){
+      if(!requests||!alive)return;
+      publishRequest(requests,scroll);
+      if(!bandWake){bandWake=true;send({op:"bandWake"}).finally(()=>{bandWake=false;}).catch(()=>{});}
+    },
     get alive(){return alive;},
     get pending(){return ordinary;},
     get inFlight(){return pending.size;},

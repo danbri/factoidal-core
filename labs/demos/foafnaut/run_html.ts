@@ -1,6 +1,7 @@
-import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit} from "./native_html_engine.ts";
+import {loadHTML,loadPresenter,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit} from "./native_html_engine.ts";
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
-import {clampOffset,keeps} from "./layer_compositor.ts";
+import {createPresenter} from "./presenter_host.ts";
+import {clampOffset as inlineOffset,keeps as inlineKeeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,holdForPrefetch,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
 import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
@@ -47,9 +48,10 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--presenter=worker|inline] [--offscreen] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
+  let presenterMode:"inline"|"worker"="worker";
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let accessibilityOn=false;
@@ -60,6 +62,8 @@ async function main() {
       url=inputURL(value,arg==="--html");
     } else if(arg==="--follow-links")follow=true;
     else if(arg==="--check-engine")check=true;
+    else if(arg==="--presenter=inline")presenterMode="inline";
+    else if(arg==="--presenter=worker")presenterMode="worker";
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
@@ -212,7 +216,13 @@ async function main() {
         console.log(JSON.stringify({type:"native-html-slow-call",t:Math.round(performance.now()),call:name,ms:Math.round(took*10)/10}));}
       return result;
     }])) as T;
-  const engine=timed(await loadHTML());
+  // Initialise the pure native entry before the worker enters the same dylib.
+  // Inline keeps the synchronous stage-0 engine and arithmetic as the oracle.
+  const presenterCall=presenterMode==="worker"&&!check?await loadPresenter(nativeEngine):undefined;
+  const engine=timed(await loadHTML(presenterMode==="inline"?nativeEngine:undefined));
+  const presenter=presenterCall?createPresenter(presenterCall,y=>worker?.requestBand(y)):undefined;
+  const clampOffset=(place:HTMLLayers["layers"],at:number)=>presenter?presenter.inspect(place,at):inlineOffset(place,at);
+  const keeps=(place:HTMLLayers["layers"],at:number)=>presenter?presenter.inspect(place,at).kept:inlineKeeps(place,at);
   const browserState=stateOff||check||sweep||commands||printPDF?undefined:
     hostState({engineState:engine.state,dir:stateDir,log:record=>console.log(JSON.stringify({t:Math.round(performance.now()),...record}))});
   // Noto Sans is the default face; the bitmap face is the safe mode, and the fallback.
@@ -228,7 +238,7 @@ async function main() {
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
   let engineRan="wasm";
   const sayEngine=(where:string)=>{
-    engineRan=worker&&nativeEngine?`native ${nativeEngine}`:"wasm";
+    engineRan=(worker||presenterMode==="inline")&&nativeEngine?`native ${nativeEngine}`:"wasm";
     console.log(`engine: ${engineRan}`);
     console.log(JSON.stringify({type:"native-html-engine",t:Math.round(performance.now()),engine:engineRan,where}));
   };
@@ -262,6 +272,7 @@ async function main() {
     console.log(JSON.stringify({type:"native-html-serif",t:Math.round(performance.now()),where,ms:Math.round((performance.now()-start)*10)/10}));
   });
   const useMainEngine=async(reason:string)=>{
+    if(presenterMode==="worker")throw new Error("Presenter worker unavailable: "+reason);
     console.error("Native HTML: ENGINE WORKER UNAVAILABLE, so Lean runs on the main thread and the window can miss input:",reason);
     console.log(JSON.stringify({type:"native-html-worker",state:"main-thread-fallback",reason}));
     worker=undefined;lean=engine;sayEngine("main-thread");
@@ -273,16 +284,16 @@ async function main() {
       if(serif.started)await loadFontFile(engine,serifFontPath(),SERIF_FAMILY,"bytes","serif").catch(()=>{});
     }catch(error){if(fontFile)throw error;workerFont=undefined;}}
   };
-  if(check){
+  if(check||presenterMode==="inline"){
     sayEngine("main-thread");
     if(workerFont)try{mainFallbacks=typeof (await loadFontFile(engine,workerFont.path,workerFont.family))?.fonts==="number";}catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
   } else {
-    try{worker=await startCompileWorker(workerFont,nativeEngine,logAll);}
+    try{worker=await startCompileWorker(workerFont,nativeEngine,logAll,presenterMode==="worker");}
     catch(error){
       if(workerFont&&!fontFile){
         console.error("Native HTML: bitmap font, because Noto Sans did not load or the worker failed:",String(error));
         workerFont=undefined;
-        try{worker=await startCompileWorker(undefined,nativeEngine,logAll);}catch(error2){await useMainEngine(String(error2));}
+        try{worker=await startCompileWorker(undefined,nativeEngine,logAll,presenterMode==="worker");}catch(error2){await useMainEngine(String(error2));}
       } else if(fontFile)throw error;
       else await useMainEngine(String(error));
     }
@@ -944,7 +955,7 @@ async function main() {
     const next=Math.max(0,Math.min(scrollLimit(),scroll+Math.round(amount)));
     if(next===scroll)return;
     frameCost.scrollEvents++;frameCost.scrollRows+=Math.abs(next-scroll);
-    scroll=next;motion=trackMotion(motion,scroll,performance.now());
+    scroll=next;presenter?.input({kind:"scrollTo",y:scroll});motion=trackMotion(motion,scroll,performance.now());
     // Inside the band of the layers on screen, a scroll only moves the composite: no Lean call.
     // Lean's keep range says when to ask for a new band; until it comes, the view stays in the old one.
     // A prefetched band of the same state that keeps the scroll, ready or coming, takes the place of a new render.
@@ -1027,7 +1038,7 @@ async function main() {
   };
   const stateNow=()=>stateKey(document,requestFor(scroll).options,width,height);
   // The prefetched band can be shown now in place of a Lean frame.
-  const swapReady=()=>!!current&&!!prefetched&&canSwap(current.layers.layers,{key:prefetched.key,band:prefetched.layers.layers},stateNow(),scroll);
+  const swapReady=()=>!!current&&!!prefetched&&(presenter?(!keeps(current.layers.layers,scroll)&&keeps(prefetched.layers.layers,scroll)&&sameState(prefetched.key,stateNow())):canSwap(current.layers.layers,{key:prefetched.key,band:prefetched.layers.layers},stateNow(),scroll));
   // A band that keeps this scroll is ready, or is being made for the same state: wait for it.
   const bandComing=()=>{
     if(swapReady())return true;
@@ -1376,7 +1387,7 @@ async function main() {
   // Exit summary: input to present latency, and frame totals. Always traced; --perf-summary also prints it.
   const summary=()=>{
     logGate.flush();
-    const line={type:"native-html-perf-summary",present:offscreen?"offscreen-texture":"window",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
+    const line={type:"native-html-perf-summary",presenter:presenterMode,present:offscreen?"offscreen-texture":"window",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
       engine:engineRan,compileBackend:engineRan.startsWith("native")?"native":"wasm",layered,
       scrollPresents:{count:shifts.length,totalMsP50:percentile(shifts,0.5),totalMsP95:percentile(shifts,0.95),maxMs:shifts.length?Math.round(Math.max(...shifts)*10)/10:null},
       frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
@@ -1519,13 +1530,18 @@ async function main() {
       let next:HTMLArtifact,nextLayers:HTMLLayers|undefined,where="worker",workerMs:number|undefined;
       try{
         if(layered){
-          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,request.options));bandMs=workerMs;}
+          if(worker?.alive){
+            if(presenter&&nextDocument===document)worker.requestBand(scroll);
+            ({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,
+              {...request.options,...(presenter?{presenterFollowScroll:nextDocument===document}:{})}));bandMs=workerMs;
+          }
           else{where="main";nextLayers=engine.compileLayers(request.source,sentWidth,sentHeight,request.options);}
           next=nextLayers.page;
         }
         else if(worker?.alive){({artifact:next,workerMs}=await worker.compile(request.source,sentWidth,sentHeight,request.options));}
         else{where="main";next=engine.compile(request.source,sentWidth,sentHeight,request.options);}
       }catch(error){
+        if(String(error).includes("presenter frame superseded")){awaiting=[...stamps,...awaiting];dirty=true;return;}
         if(worker&&!worker.alive){
           // The worker died: Lean runs on the main thread from now on, and the trace says so.
           await useMainEngine("worker died: "+String(error));
@@ -1582,6 +1598,7 @@ async function main() {
       settle(stamps,result.presentedAt);
       if(nextLayers){
         current={layers:nextLayers,request,document:nextDocument,width:sentWidth,height:sentHeight};shownOffset=place!.offset;
+        presenter?.show(nextLayers.layers,scrollNow);
         // Scrolls taken while Lean worked: shown now if the band holds them, else after the next band.
         if(place!.exact){settle(awaitingShift,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingShift=[];awaitingBand=[];}
         if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
@@ -1635,7 +1652,7 @@ async function main() {
         result=await session!.drawLayers(layers,shownRequest.width,shownRequest.height,offset,true);
         if(result.presented)recordPresented({...shownRequest,request:{...shownRequest.request,options}},layers.layers.bandTop+offset);
         if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document){dirty=true;return;}
-        if(result.presented){current={...shownRequest,request:{...shownRequest.request,options},layers};frame=layers.page;shownOffset=offset;}
+        if(result.presented){current={...shownRequest,request:{...shownRequest.request,options},layers};frame=layers.page;shownOffset=offset;presenter?.show(layers.layers,scroll);}
       } else if(lastRequest&&lastRequest.request.options.checks===false&&worker?.alive){
         // The frame on screen was made with no probe: Lean makes it again with its probe.
         // The page must not have changed meanwhile; if it has, the next idle time checks.
@@ -1889,7 +1906,7 @@ async function main() {
         if(swap&&pressed&&session!.pressed){session!.setPress(undefined);dirty=true;}
         if(!swap&&!keeps(current.layers.layers,scroll)&&!bandComing())dirty=true;
         const shown=swap?{...swap.record,layers:swap.layers}:current,shownLayers=shown.layers;
-        const start=performance.now(),{offset,exact}=clampOffset(shownLayers.layers,scroll),at=scroll;
+        const start=performance.now(),{offset,exact}=presenter&&!swap?presenter.show(shownLayers.layers,scroll):clampOffset(shownLayers.layers,scroll),at=scroll;
         shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame):session!.shift(offset,everyFrame)).then(result=>{
           if(swap&&document!==swap.record.document){awaitingShift=[...stamps,...awaitingShift];dirty=true;return;}
           const finished=performance.now();
@@ -1897,7 +1914,7 @@ async function main() {
             presented:result.presented,checked:result.checked,pixelHash:result.checked?result.pixelHash:null,...(swap?{bandTop:swap.layers.layers.bandTop,target:swap.target}:{})});
           if(swap){
             // The textures hold the prefetched layers now, presented or not.
-            current={...swap.record,layers:swap.layers};
+            current={...swap.record,layers:swap.layers};presenter?.show(swap.layers.layers,at);
             frame=swap.layers.page;lastRequest=swap.record;if(prefetched===swap)prefetched=undefined;
           }
           if(!result.presented){awaitingShift=[...stamps,...awaitingShift];shiftPending=true;return;}

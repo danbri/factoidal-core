@@ -1212,6 +1212,7 @@ import L4Factoidal.Planner.Exactness
 import L4Factoidal.Planner.Kinds.WebMcp
 import L4Factoidal.Planner.Kinds.Llm
 import L4Factoidal.Presenter.Spec
+import L4Factoidal.Presenter.Wire
 import L4Factoidal.TailRecursionTwins
 import L4Factoidal.CsimpReachFixture
 import L4Factoidal.OWL.ComprehensionTheorems

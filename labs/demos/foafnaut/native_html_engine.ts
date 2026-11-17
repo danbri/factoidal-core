@@ -4,7 +4,7 @@ import {allFinite} from "./finite_floats.ts";
 // This ignored runtime is installed only after checking the Builds manifest.
 // @ts-ignore generated release module
 import createModule from "./.build/native-html/runtime/web-render.mjs";
-import {traceBackends} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
+import {traceBackends,documentLine} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
 /** The answer of accessibilityTree: the nodes in tree order, or `unchanged` for the layout of `since`. */
@@ -18,6 +18,8 @@ export type CommandState={tabs?:number;active?:number;scroll?:number;view?:numbe
 export type HTMLArtifact = {
   abi:string; width:number; height:number; data:number[]|Float32Array; wgsl:string; tiles:number[]|Uint32Array;
   primitiveCount:number; checks:{x:number;y:number;rgb:number[]}[];
+  /** RGBA bytes drawn by Lean's CPU raster in the engine worker. */
+  pixels?:Uint8Array;
   webRender:{links:unknown[][];[name:string]:unknown};
   /** In liberal mode, what Lean skipped to draw the page (WebAccept). */
   diagnostics?:{source:"System";severity:string;feature:string;where:string;action:string;message:string}[];
@@ -141,6 +143,51 @@ type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:I
 export type ImageInfo={engine:string;ops:string[];maxImages:number;maxBytes:number;held:number;layoutSlots:number};
 /** The answer of `frameWork`: layouts, kept layouts used and pointer states painted with no layout. */
 export type FrameWork={layouts:number;kept:number;repaints:number;layoutSlots:number;pagesMade?:number;pagesKept?:number;paintOnly?:number;recompiled?:number;reused?:number;moved?:number};
+export type PresenterFrame={id:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number};
+export type PresenterState={view:number;scroll:number;shown:PresenterFrame|null;asked:number|null};
+export type PresenterInput={kind:"scrollTo";y:number}|{kind:"resize";h:number}|{kind:"frame";frame:PresenterFrame}|{kind:"vsync"};
+export type PresenterOutput={kind:"present";frameId:number;offset:number}|{kind:"needBand";scroll:number};
+export type PresenterPlacement={frameId:number;offset:number;exact:boolean;kept:boolean};
+export type PresenterAnswer={state:PresenterState;outputs:PresenterOutput[];placement:PresenterPlacement|null};
+export type PresenterCall=(state:PresenterState,input:PresenterInput)=>PresenterAnswer;
+
+/** Load the pure presenter entry, initialising it before the engine worker starts. Native
+ * calls use the same dylib but never enter its mutable document engine. A missing entry
+ * refuses this mode; there is no JavaScript substitute for the Lean step. */
+export async function loadPresenter(nativeEngine?:string):Promise<PresenterCall> {
+  let invoke:(request:string)=>string;
+  if(nativeEngine){
+    const library=Deno.dlopen(nativeEngine,{
+      web_presenter_step_call:{parameters:["buffer"],result:"pointer"},
+      web_render_free:{parameters:["pointer"],result:"void"},
+    } as const);
+    invoke=request=>{
+      const pointer=library.symbols.web_presenter_step_call(encoder.encode(request+"\0"));
+      if(!pointer)throw new Error("Presenter engine initialisation failed");
+      try{return new Deno.UnsafePointerView(pointer).getCString();}
+      finally{library.symbols.web_render_free(pointer);}
+    };
+  }else{
+    const module=await createModule() as unknown as Module;
+    invoke=request=>{
+      const pointer=module.ccall("web_presenter_step_call","number",["string"],[request]);
+      if(!pointer)throw new Error("Presenter engine allocation failed");
+      try{return module.UTF8ToString(pointer);}
+      finally{module.ccall("web_render_free",null,["number"],[pointer]);}
+    };
+  }
+  let trace:string|undefined;
+  try{trace=Deno.env.get("FOAFNAUT_HOST_TRACE");}catch{/* tracing is optional */}
+  const call:PresenterCall=(state,input)=>{
+    const request=JSON.stringify({op:"presenterStep",state,input}),text=invoke(request);
+    if(trace)Deno.writeFileSync(trace,encoder.encode(JSON.stringify(documentLine("web_presenter_step_call","",request,1,1,text))+"\n"),{append:true});
+    const answer=JSON.parse(text);
+    if(answer?.error)throw new Error(`Lean presenter: ${answer.error}`);
+    return answer as PresenterAnswer;
+  };
+  call({view:0,scroll:0,shown:null,asked:null},{kind:"vsync"});
+  return call;
+}
 /** Backend 2: a native dylib of the same Lean objects. Every call must come from one thread; no nonblocking FFI. */
 export function nativeBackends(path:string):Backends {
   const library=Deno.dlopen(path,{
@@ -278,9 +325,10 @@ function placeSections(scene:Record<string,unknown>,buffer:ArrayBuffer,sections:
     const s=sections[k];if(!s||s[1]%4)throw new Error("Unexpected Lean bytes answer section");
     delete scene[key];return s;
   };
-  const data=at("dataSection"),tiles=at("tilesSection");
+  const data=at("dataSection"),tiles=at("tilesSection"),pixels=at("pixelsSection");
   if(data)scene.data=new Float32Array(buffer,data[0],data[1]/4);
   if(tiles)scene.tiles=new Uint32Array(buffer,tiles[0],tiles[1]/4);
+  if(pixels)scene.pixels=new Uint8Array(buffer,pixels[0],pixels[1]);
 }
 /** Lean sends the storage floats as the bytes the GPU reads; this only decodes and checks them. */
 function sceneOf(result:Record<string,unknown>&{dataBase64?:unknown},width:number,height:number):HTMLArtifact {
@@ -436,6 +484,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       return documentCall("",{op:"imageLoad",key,sha256,imageBase64:btoa(text)}) as {key:string;sha256:string;bytes:number;held:number};
     },
     imageDrop:()=>documentCall("",{op:"imageDrop"}) as {held:number},
+    /** Pure presenter operation through the ordinary serial document ABI (tests and inline mode). */
+    presenterStep:(state:PresenterState,input:PresenterInput)=>documentCall("",{op:"presenterStep",state,input}) as PresenterAnswer,
     /** Lean's count of its frame work; undefined for an engine without it. */
     frameWork:(reset=false):FrameWork|undefined=>{
       try{return documentCall("",{op:"frameWork",...(reset?{reset:true}:{})}) as FrameWork;}catch{return undefined;}

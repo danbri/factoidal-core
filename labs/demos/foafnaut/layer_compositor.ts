@@ -165,6 +165,24 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
    * bands give the bytes of one draw. */
   type Bands={count:number;between:(units:number)=>Promise<void>};
   async function drawScene(slot:Slot,frame:HTMLArtifact,check:boolean,target?:GPUTexture,bands?:Bands):Promise<PassResult> {
+    // The worker rasterised this scene in Lean. Upload its bytes; no page drawing
+    // or raster decision is made by this host. Layer textures use RGBA regardless
+    // of the window surface format (the composite shader samples either).
+    const pixels=(frame as HTMLArtifact&{pixels?:Uint8Array}).pixels;
+    if(pixels&&!target){
+      if(pixels.byteLength!==frame.width*frame.height*4)throw new Error("invalid worker pixel length");
+      const size=`cpu:${frame.width}x${frame.height}`;
+      if(!slot.texture||slot.size!==size){
+        slot.texture?.destroy();stats.layerTextures++;
+        slot.texture=device.createTexture({size:[frame.width,frame.height],format:"rgba8unorm",
+          usage:LAYER_USAGE()|GPUTextureUsage.COPY_DST});slot.size=size;
+      }
+      device.queue.writeTexture({texture:slot.texture},pixels as Uint8Array<ArrayBuffer>,
+        {bytesPerRow:frame.width*4,rowsPerImage:frame.height},[frame.width,frame.height]);
+      if(check)checkPixels(frame as unknown as Parameters<typeof checkPixels>[0],pixels);
+      stats.scenesFull++;
+      return {steps:{upload:0},pixels:check?pixels:undefined,hash:check?pixelHash(pixels):"",units:0};
+    }
     const p=await plan(frame.width,frame.height,frame.data);
     const pipeline=await pipelineFor(p,frame.wgsl);
     if(!target){

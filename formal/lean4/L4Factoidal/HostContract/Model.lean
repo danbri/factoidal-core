@@ -22,11 +22,11 @@ namespace L4Factoidal.HostContract
 library (`libweb-render.dylib`, `.so`) and in the Wasm build (`web-render.wasm`, by `ccall`).
 `web_render_free` is not listed: it takes back an answer and decides nothing. -/
 inductive Export where
-  | documentCall | documentCallBin | fontCallBin | imageCallBin | decodeCallBin | decode2CallBin
+  | documentCall | documentCallBin | fontCallBin | imageCallBin | decodeCallBin | decode2CallBin | presenterCall
   deriving DecidableEq, Repr
 
 def Export.all : List Export :=
-  [.documentCall, .documentCallBin, .fontCallBin, .imageCallBin, .decodeCallBin, .decode2CallBin]
+  [.documentCall, .documentCallBin, .fontCallBin, .imageCallBin, .decodeCallBin, .decode2CallBin, .presenterCall]
 
 def Export.symbol : Export → String
   | .documentCall => "web_document_call"
@@ -35,6 +35,7 @@ def Export.symbol : Export → String
   | .imageCallBin => "web_document_image_call_bin"
   | .decodeCallBin => "web_document_decode_call_bin"
   | .decode2CallBin => "web_document_decode2_call_bin"
+  | .presenterCall => "web_presenter_step_call"
 
 def Export.ofSymbol? (s : String) : Option Export := Export.all.find? (·.symbol == s)
 
@@ -99,8 +100,9 @@ def ops : List OpSpec :=
     ⟨"scriptSetting", .state, []⟩, ⟨"encodingSetting", .state, []⟩, ⟨"textZoom", .state, []⟩,
     ⟨"historyPush", .state, []⟩, ⟨"gesture", .state, [.pointer]⟩,
     ⟨"graphStart", .state, []⟩, ⟨"graphEvent", .state, []⟩, ⟨"wasmRun", .state, []⟩,
-    ⟨"command", .state, []⟩,
+    ⟨"command", .state, []⟩, ⟨"postFrame", .state, []⟩,
     -- page answers
+    ⟨"presenterStep", .query, []⟩,
     ⟨"render", .query, []⟩, ⟨"inspect", .query, []⟩, ⟨"decode", .query, []⟩,
     ⟨"nodeAt", .query, [.pointer]⟩, ⟨"selectedText", .query, []⟩, ⟨"findInPage", .query, []⟩,
     ⟨"printLayout", .query, [.print]⟩, ⟨"fontFaces", .query, []⟩, ⟨"fontRequests", .query, []⟩,
@@ -134,7 +136,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 69
+#guard opNames.length == 71
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state

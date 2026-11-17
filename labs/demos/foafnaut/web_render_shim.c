@@ -9,6 +9,7 @@ extern lean_object *initialize_WebRenderFont(uint8_t builtin);
 extern lean_object *initialize_WebDocument(uint8_t builtin);
 extern lean_object *web_render_compile(lean_object *,uint32_t,uint32_t);
 extern lean_object *web_document_engine_new(lean_object *);
+extern lean_object *web_presenter_step(lean_object *);
 /* The engine's state between calls (WebDocument.Engine; issue 390): an ordinary Lean
    value. Each call passes it (owned, so Lean holds the only reference and changes it in
    place) and gets the next state back. One call at a time, as before. */
@@ -81,6 +82,14 @@ char *web_render_font_call(const char *html,const char *font_data,uint32_t width
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }
 void web_render_free(char *value) { free(value); }
+/* Pure presenter entry: the same library, with no access to the document's mutable
+   engine value. Initialise this on the main thread before starting the engine worker;
+   thereafter ready() only reads its completed initialisation flag. */
+char *web_presenter_step_call(const char *request) {
+  if (!ready()) return NULL;
+  lean_object *value=web_presenter_step(lean_mk_string(request));
+  char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
+}
 extern lean_object *web_document_compile(lean_object *,lean_object *,lean_object *,uint32_t,uint32_t);
 char *web_document_call(const char *html,const char *request,uint32_t width,uint32_t height) {
   if (!ready()) return NULL;

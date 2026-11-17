@@ -12,6 +12,7 @@ import WebAbout
 import WebGraph
 import WebEventLoop
 import WebHostContract
+import L4Factoidal.Presenter.Wire
 import WebWasm
 import WebState
 import WebSparql
@@ -935,6 +936,7 @@ def textZoomAnswer (request : JSON.Json) : Except String String := do
 
 /-- Input decisions need no document, so they do not parse one. -/
 private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : String) (request : JSON.Json) : ExceptT String M (Option String) := do
+  if op == "presenterStep" then return some ((← Presenter.Wire.answer request).toString)
   if op == "textZoom" then return some (← textZoomAnswer request)
   -- The console tab (WebConsole): the page of the entries the host kept for a tab.
   if op == "consolePage" then return some (WebConsole.answer request)
