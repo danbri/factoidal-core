@@ -561,6 +561,42 @@ def addCommand (s : State) (c : Command) (d : Dom) : State × HostResult :=
       | none => s.writes
     ({ s with live := live s, bases, dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret 0)
 
+/-- The arena's stamp: the changes recorded so far and the nodes of the arena. What a
+script-side holder read of the tree at one stamp (the nodes of a live collection, the rules
+of a style element's text) is what the tree holds while the stamp stays: every change of
+the tree is a recorded command, which adds one to `changes` (`addCommand_changes`,
+`commit_changes`), and a node made makes the arena larger. State that is not the tree (the
+selectedness of options, a constructed sheet's text) is not in it, and holders of such state
+do not use it. -/
+def stamp (s : State) : Nat := s.changes + s.dom.size
+
+/-- Kind: property. Says: `prepareBases` does not change the count of changes. -/
+theorem prepareBases_changes (s : State) : s.prepareBases.changes = s.changes := by
+  unfold State.prepareBases State.ensureBasesSlow
+  split
+  · rfl
+  · dsimp only
+    split
+    · rfl
+    · show s.resolveBaseEncoding.changes = s.changes
+      unfold State.resolveBaseEncoding
+      split <;> rfl
+
+/-- Kind: property. Says: a command that `addCommand` records (it answers 0) adds one to the
+count of changes, and one it refuses (the node or command bound) leaves the count as it was:
+the count never goes down, and moves at every recorded change. -/
+theorem addCommand_changes (s : State) (c : Command) (d : Dom) :
+    (addCommand s c d).1.changes = s.changes ∨ (addCommand s c d).1.changes = s.changes + 1 := by
+  unfold addCommand
+  split
+  · exact Or.inl rfl
+  · dsimp only
+    split
+    · exact Or.inr (by simp [prepareBases_changes])
+    · split
+      · exact Or.inl (prepareBases_changes s)
+      · exact Or.inr (by simp [prepareBases_changes])
+
 /-- A node argument: -1 (any value of 2^31 or more) is none. -/
 def optNode (v : Nat) : Option Nat := if v ≥ 2147483648 then none else some v
 
@@ -593,6 +629,14 @@ def commit (s : State) (c : Command) (d : Dom) (r : Int) : State × HostResult :
       | some k => s.writes.insert k s.commands.size
       | none => s.writes
     ({ s with pre := none, live := p.live, bases, dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret r)
+
+/-- Kind: property. Says: `commit` (a recorded change, answered) adds one to the count of
+changes. -/
+theorem commit_changes (s : State) (c : Command) (d : Dom) (r : Int) :
+    (commit s c d r).1.changes = s.changes + 1 := by
+  unfold commit
+  dsimp only
+  split <;> rfl
 
 /-- Run the change `f` of a command like `c0` on the arena, in place: what recording reads
 of the arena before the change is read first (into `s.pre`), and the budgets are checked;
@@ -963,10 +1007,13 @@ shadow root when open (`shadowRoot`); 21 a shadow root's host; 22 a shadow root'
 element's shadow root, open or closed; 27 1 when the arena has a shadow host (for any `node`,
 even with no document); 28 the root
 (`getRootNode()`); 30 on a frame element: 1 when its initial `about:blank` load was waiting
-and is now taken to run at once (`takeBlankLoad`), else 0. -1 none, -2 no such node. -/
+and is now taken to run at once (`takeBlankLoad`), else 0; 31 the arena's stamp (`stamp`), for
+any `node`. -1 none, -2 no such node. -/
 def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   let d := s.dom
   let n := arg args 0
+  -- 31 asks about the arena, not a node (as 27)
+  if arg args 1 == 31 then (s, ret (stamp s)) else
   -- 27 asks about the arena, not a node: answered for any node number, so a script engine
   -- can ask it before there is a document (the prelude's probe for shadow trees)
   if arg args 1 == 27 then (s, ret (if d.hasShadow then 1 else 0)) else
@@ -1005,6 +1052,12 @@ def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
     else if x.type == .document then (s, ret (if s.parentOrigin.isSome then 128 else 0))
     else (s, ret (-1))
   | _ => (s, ret (-2))
+
+/-- Kind: property. Says: the arena's stamp is what `node_info` 31 answers, for any node
+number, and asking changes nothing. -/
+theorem nodeInfo_stamp (n : Value) (s : State) :
+    nodeInfo #[n, .i32 31] s = (s, ret (stamp s)) := by
+  simp [nodeInfo, arg]
 
 /-- `nodeName` (DOM §4.4). -/
 def nodeName (d : Dom) (n : Nat) : String :=

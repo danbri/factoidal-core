@@ -1145,7 +1145,10 @@ def HeapOf.fastGet (h : HeapOf H) (id : Nat) (key : String) : Nat → Value
     match o.props.get? key with
     | some (.data v ..) => v
     | some _ => .hole
-    | none => match o.proto with
+    | none =>
+      -- a private name is never inherited (PrivateGet, §7.3.32): the general path refuses it
+      if isPrivKey key then .hole else
+      match o.proto with
       | .obj p => h.fastGet p key fuel
       | _ => .hole
 
