@@ -727,8 +727,19 @@
   const positions = { DOCUMENT_POSITION_DISCONNECTED: 1, DOCUMENT_POSITION_PRECEDING: 2, DOCUMENT_POSITION_FOLLOWING: 4,
     DOCUMENT_POSITION_CONTAINS: 8, DOCUMENT_POSITION_CONTAINED_BY: 16, DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: 32 };
   const listCache = new WeakMap();
-  const liveList = (ids, proto) => {
+  // The arena's stamp (node_info 31, Lean's `Dom.stamp`): it moves whenever a change of the
+  // DOM is recorded or a node is made, so what was read of the tree at one stamp is what the
+  // tree holds while the stamp stays.
+  const domStamp = () => n.info(0, 31);
+  // A live list: its nodes are read from the tree (`ids0`) when the tree has changed since they
+  // were last read, not at each read of an index or of the length. A loop over a collection
+  // (`for (i = 0; i < list.length; i++) list[i]`) read the whole list twice at each step: over
+  // getElementsByTagName of a large document that was a walk of the document per step.
+  // `kept` false: a list whose nodes depend on more than the tree (the selectedness of options).
+  const liveList = (ids0, proto, kept = true) => {
     const target = Object.create(proto ?? NodeList.prototype), named = proto === HTMLCollection.prototype;
+    let at = -1, held = null;
+    const ids = !kept ? ids0 : () => { const now = domStamp(); if (now !== at || held === null) { held = ids0(); at = now; } return held; };
     return new Proxy(target, {
       get(t, p, recv) {
         if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) { const k = ids()[Number(p)]; return k === undefined ? undefined : wrap(k); }
@@ -766,7 +777,7 @@
     namedItem(name) { for (const e of this) if (e.id === name || e.getAttribute('name') === name) return e; return null; }
   }
   define(HTMLCollection.prototype, Symbol.iterator, Array.prototype.values);
-  const liveCollection = ids => liveList(ids, HTMLCollection.prototype);
+  const liveCollection = (ids, kept = true) => liveList(ids, HTMLCollection.prototype, kept);
   const staticList = xs => {
     const o = Object.create(NodeList.prototype);
     xs.forEach((x, i) => Object.defineProperty(o, i, { value: x, enumerable: true }));
@@ -14706,8 +14717,12 @@
   const sheetErr = name => new DOMException('The style sheet operation failed: ' + name, name);
   // A holder of rules (a sheet, or a group rule): `text()` and `write(t)` its rules' text.
   const rulesOf = holder => {
-    const st = holder.st, text = st.text();
-    if (st.rules && st.seen === text) return st.rules;
+    const st = holder.st;
+    // a style element's sheet: its text is the element's, which is as it was while the DOM is
+    // (`domStamp`), so the rules are kept without reading the text again
+    if (st.rules && st.ofElement && st.stamp === domStamp()) return st.rules;
+    const text = st.text();
+    if (st.rules && st.seen === text) { if (st.ofElement) st.stamp = domStamp(); return st.rules; }
     const r = sheetOp('rules', text), old = st.rules || [];
     // beside the rules, their texts and kinds (what an insert or a delete needs of them)
     const texts = [], kinds = [];
@@ -14721,6 +14736,7 @@
     });
     st.texts = texts; st.kinds = kinds;
     st.seen = text;
+    if (st.ofElement) st.stamp = domStamp();
     return st.rules;
   };
   // The object of a rule from Lean's fields of it (CssSheet.ruleFields).
@@ -14740,6 +14756,7 @@
     const text = st.texts.join('\n');
     st.write(text);
     st.seen = text;
+    if (st.ofElement) st.stamp = domStamp();
   };
   const ruleNow = rule => { const rs = ruleState.get(rule); if (!rs) throw new TypeError('Illegal invocation'); const xs = rulesOf(rs.holder); if (xs[rs.index] !== rule) rs.detached = true; return rs; };
   const insertInto = (holder, rule, index) => {
@@ -14932,6 +14949,7 @@
     let sh = elementSheets.get(el);
     if (!sh) {
       sh = el.localName === 'style' ? sheetOfText(() => el.textContent, t => { el.textContent = t; }, el) : sheetOfText(() => '', () => {}, el);
+      if (el.localName === 'style') holderOf(sh).st.ofElement = true;
       elementSheets.set(el, sh);
     }
     return sh;
@@ -16955,7 +16973,7 @@
     const setSelected = (k, v) => { chk(n.treeOp(k, v ? 1 : 0, 6)); };
     const optionsOf = cachedColl(), selectedOf = cachedColl();
     prop(S, 'options', function () { const sel = this; return optionsOf(sel, () => { const c = collectionOf(() => optionIds(sel), HTMLOptionsCollection.prototype, false); ownerOf.set(c, sel); return c; }); });
-    prop(S, 'selectedOptions', function () { const sel = this; return selectedOf(sel, () => liveCollection(() => selectedIds(sel))); });
+    prop(S, 'selectedOptions', function () { const sel = this; return selectedOf(sel, () => liveCollection(() => selectedIds(sel), false)); });
     prop(S, 'length', function () { return optionIds(this).length; }, function (v) {
       v = v >>> 0;
       const ks = optionIds(this);
