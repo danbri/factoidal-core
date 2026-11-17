@@ -1431,7 +1431,7 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
       -- The retained compile only for a frame host's answer: sections, no probes, no tree.
       -- `pageArtifact` (the reference) stays the plain path, that `partial_frame_test.ts`
       -- compares this with.
-      let previous := kept.find? fun k => k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree && k.retained.isSome
+      let previous : Option KeptPage := kept.find? fun (k : KeptPage) => k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree && k.retained.isSome
       match form,checks,tree,retainOn with
       | .sections first,false,false,true =>
         let layoutText := previous.bind fun k =>
@@ -1442,9 +1442,9 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
         -- head reads no link: `pageLayer_layoutJSON`); only the links, moved for the band,
         -- are written again.
         let (layoutText,head) := match layoutText with
-          | some text => (text,(previous.map (·.layoutHead)).getD "")
+          | some text => (text,(previous.map fun (k : KeptPage) => k.layoutHead).getD "")
           | none =>
-            let head := match kept.find? fun k => !k.layoutHead.isEmpty && ptrEq k.boxes boxes && ptrEq k.face face &&
+            let head := match kept.find? fun (k : KeptPage) => !k.layoutHead.isEmpty && ptrEq k.boxes boxes && ptrEq k.face face &&
                 ptrEq k.page.glyphRuns page.glyphRuns with
               | some k => k.layoutHead
               | none => WebRender.layoutHead boxes page.glyphRuns face
@@ -1465,12 +1465,12 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
           let number := fun (n : Nat) => toString n
           let damageText := "{\"id\":" ++ number id ++ ",\"base\":" ++
             (match previous.bind (·.retained),damage with
-             | some _,some _ => number (previous.map (·.id)).get!
+             | some _,some _ => number ((previous.map fun (k : KeptPage) => k.id).getD 0)
              | _,_ => "null") ++ ",\"rects\":" ++
             (match damage with | some rects => NativeSVG.damageJSON rects | none => "null") ++ "}"
           let value := (value.dropEnd 1).toString ++ ",\"damage\":" ++ damageText ++ "}"
           let answer := (value,sections)
-          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head⟩ :: kept).take keptPageSlots)
+          keptPageRef.set (((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head⟩ : KeptPage) :: kept).take keptPageSlots)
           pageWorkRef.modify fun (m,g,a,b,c) => (m+1,g,a+recompiled,b+(retained.items.size-recompiled-moved),c+moved)
           return .ok answer
       | _,_,_,_ =>
