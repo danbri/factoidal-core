@@ -506,6 +506,22 @@ def lt : XNum → XNum → Bool
 def min (a b : XNum) : XNum := if a == .nan || b == .nan then .nan else if lt b a then b else a
 def max (a b : XNum) : XNum := if a == .nan || b == .nan then .nan else if lt a b then b else a
 
+/-- Kind: algebra. Says: the sum of extended values does not depend on the order of the
+two terms (so a sum's infinite terms may be added in any order). -/
+theorem add_comm (a b : XNum) : a.add b = b.add a := by
+  cases a <;> cases b <;> simp [add, Rat.add_comm]
+
+/-- Kind: algebra. Says: NaN absorbs every product and sum (§10.9.1: "If the result contains a
+NaN, the result is NaN"). -/
+theorem nan_absorbs (a : XNum) : XNum.nan.mul a = .nan ∧ a.mul .nan = .nan ∧
+    XNum.nan.add a = .nan ∧ a.add .nan = .nan := by
+  cases a <;> simp [mul, add]
+
+/-- Kind: algebra. Says: `min` and `max` with a NaN argument are NaN, as CSS asks of `min()`,
+`max()` and `clamp()`. -/
+theorem min_max_nan (a : XNum) : XNum.min .nan a = .nan ∧ XNum.max a .nan = .nan := by
+  simp [XNum.min, XNum.max]
+
 end XNum
 
 /-- A simplified calculation that is one value, as an extended number and its unit. -/
