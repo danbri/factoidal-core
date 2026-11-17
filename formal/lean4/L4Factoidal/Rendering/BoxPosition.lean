@@ -34,6 +34,12 @@ inductive WritingMode where
 inductive TextTransform where | none | uppercase | lowercase | capitalize
   deriving Repr, BEq, DecidableEq
 
+/-- `line-break` (CSS Text 3 §5.3; inherited): `auto` and `strict` break as UAX 14 does by
+default; `normal` and `loose` also let a line start with a small kana, and `loose` with an
+iteration mark (`Unicode.LineBreak.Mode`). `anywhere` is read as `loose` here. -/
+inductive LineBreakStyle where | auto | strict | normal | loose
+  deriving Repr, BEq, DecidableEq
+
 /-- `list-style-type` (CSS Lists 3 §3.1; inherited), as this profile draws markers:
 `auto` is by the kind of list (a number in `ol`, else the bullet of the list's nesting
 depth), `none` no marker, a bullet, or a number (every numbering style is decimal here). -/
@@ -78,6 +84,8 @@ structure PositionStyle where
   nowrap : Bool := false
   /-- `text-transform` (CSS Text 3 §2.1; inherited). -/
   textTransform : TextTransform := .none
+  /-- `line-break` (CSS Text 3 §5.3; inherited). -/
+  lineBreak : LineBreakStyle := .auto
   /-- `transform` (CSS Transforms 1): its functions in order (`BoxTransform.steps`); empty
   for `none`. -/
   transform : List TransformStep := []
@@ -106,6 +114,7 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto &&
   a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside &&
   a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform &&
+  a.lineBreak == b.lineBreak &&
   sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin &&
   a.marginOf == b.marginOf && a.paddingOf == b.paddingOf && a.scrolls == b.scrolls &&
   a.contents == b.contents
@@ -145,7 +154,7 @@ def PositionStyle.containsAbsolutes (p : PositionStyle) : Bool := p.isPositioned
 
 def positionProperties : List String :=
   ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing", "aspect-ratio",
-   "writing-mode", "list-style-type", "list-style-position", "white-space", "text-transform", "transform", "transform-origin", "overflow-x", "overflow-y"]
+   "writing-mode", "list-style-type", "list-style-position", "white-space", "text-transform", "line-break", "transform", "transform-origin", "overflow-x", "overflow-y"]
 
 /-- The ratio `a / b` (width to height) as two whole numbers in lowest terms; `none` when
 it is degenerate (a term that is zero or negative: CSS Sizing 4 §5.1, it behaves as `auto`). -/
@@ -253,6 +262,15 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       | "nowrap" | "pre" => some {p with nowrap := true}
       | "normal" | "pre-wrap" | "pre-line" | "break-spaces" => some {p with nowrap := false}
       | _ => none
+    | "line-break" =>
+      if v == "inherit" || v == "unset" then some p
+      else if reset then some {p with lineBreak := .auto} else
+      match v with
+      | "auto" => some {p with lineBreak := .auto}
+      | "strict" => some {p with lineBreak := .strict}
+      | "normal" => some {p with lineBreak := .normal}
+      | "loose" | "anywhere" => some {p with lineBreak := .loose}
+      | _ => none
     | "text-transform" =>
       if v == "inherit" || v == "unset" then some p
       else if reset then some {p with textTransform := .none} else
@@ -335,6 +353,8 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {nowrap := true} "white-space" "inherit").map (·.nowrap)) == some true
 #guard ((PositionStyle.set 10 {} "white-space" "bogus").map (·.nowrap)) == none
 #guard ((PositionStyle.set 10 {} "text-transform" "uppercase").map (·.textTransform)) == some .uppercase
+#guard ((PositionStyle.set 10 {} "line-break" "loose").map (·.lineBreak)) == some .loose
+#guard ((PositionStyle.set 10 {lineBreak := .normal} "line-break" "inherit").map (·.lineBreak)) == some .normal
 #guard ((PositionStyle.set 10 {textTransform := .uppercase} "text-transform" "none").map (·.textTransform)) == some .none
 #guard ((PositionStyle.set 10 {} "text-transform" "UPPERCASE").map (·.textTransform)) == some .uppercase
 #guard ((PositionStyle.set 10 {} "list-style-type" "none").map (·.listStyle)) == some .none

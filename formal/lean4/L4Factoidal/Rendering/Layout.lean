@@ -483,10 +483,10 @@ Chinese, Japanese and Korean text wraps between its characters as in a browser (
 §5.1, `word-break: normal`), and a table cell's narrowest width is a character, not the
 sentence. Each piece with its offset in code points. A word with no `wideChar` is one
 piece, with no UAX 14 pass. -/
-def wordPieces (word : String) : List (Nat × String) :=
+def wordPieces (word : String) (mode : Unicode.LineBreak.Mode := .strict) : List (Nat × String) :=
   let cs := word.toList.toArray
   if !cs.any (fun c => wideChar c.toNat) then [(0, word)] else Id.run do
-    let cuts := (Unicode.LineBreak.breaks cs).filter fun i =>
+    let cuts := (Unicode.LineBreak.breaks cs mode).filter fun i =>
       i < cs.size && (wideChar cs[i-1]!.toNat || wideChar cs[i]!.toNat)
     let mut out : List (Nat × String) := []
     let mut from_ := 0
@@ -503,6 +503,16 @@ def wordPieces (word : String) : List (Nat × String) :=
 #guard (wordPieces "こんにちは世界・カタカナ・漢字").map (·.2) ==
   ["こ", "ん", "に", "ち", "は", "世", "界・", "カ", "タ", "カ", "ナ・", "漢", "字"]
 #guard (wordPieces "Unicode漢字").map (·.1) == [0, 7, 8]
+-- `line-break: normal` lets a small kana start a line (CSS Text 3 §5.3)
+#guard (wordPieces "文文ぁ字" .normal).map (·.2) == ["文", "文", "ぁ", "字"]
+#guard (wordPieces "文文ぁ字").map (·.2) == ["文", "文ぁ", "字"]
+
+/-- The UAX 14 tailoring of a box's `line-break`. -/
+def lineBreakMode (s : Computed) : Unicode.LineBreak.Mode :=
+  match s.pos.lineBreak with
+  | .auto | .strict => .strict
+  | .normal => .normal
+  | .loose => .loose
 
 private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
@@ -515,7 +525,7 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
   for c in text.toList do
     if [' ','\n','\r','\t'].contains c || c.toNat == 12 then
       if !word.isEmpty then
-        for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
+        for (off, piece) in wordPieces word (lineBreakMode style) do result := .word id style piece (start+off) :: result
         word := ""
       if style.preformatted then
         -- CSS Text 3 §4.1.1 `white-space: pre`: each space and tab stays, and each newline breaks.
@@ -542,7 +552,7 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
       column := column+1
     index := index+1
   if !word.isEmpty then
-    for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
+    for (off, piece) in wordPieces word (lineBreakMode style) do result := .word id style piece (start+off) :: result
   return result.reverse
 
 /-- What an `img` with no picture shows: its `alt` text in brackets, nothing for
