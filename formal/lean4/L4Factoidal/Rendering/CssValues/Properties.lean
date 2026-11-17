@@ -98,6 +98,15 @@ def colorReader : Color.Reader := fun cv =>
   | none =>
     match cv with
     | .fn _ _ =>
+      -- `calc(infinity)` is the channel's upper bound, `calc(-infinity)` and `calc(NaN)` its
+      -- lower bound (CSS Values 4 §10.12): a number larger than any channel's range, and a
+      -- multiple of 360 so that a hue of either is 0. Asked first: `numeric` would give the
+      -- computed stand-in of an infinite number, which is not a channel's bound.
+      let ext := ((Calc.parse cv).map fun c => Calc.simp none (Calc.depth 64 c + 4) c).bind extOf
+      match ext with
+      | some (.pinf, u) => if u == "" || u == "%" || u == "deg" then some (.num infiniteChannel) else none
+      | some (.ninf, u) | some (.nan, u) => if u == "" || u == "%" || u == "deg" then some (.num (-infiniteChannel)) else none
+      | _ =>
       match numeric (some {}) { kind := .number } cv with
       | some (.tok (.num v _)) => some (.num v)
       | _ =>
@@ -106,14 +115,7 @@ def colorReader : Color.Reader := fun cv =>
         | _ =>
           match numeric (some {}) { kind := .angle } cv with
           | some (.tok (.dim v _ _)) => some (.angle v)
-          | _ =>
-            -- `calc(infinity)` is the channel's upper bound, `calc(-infinity)` and
-            -- `calc(NaN)` its lower bound (CSS Values 4 §10.12): a number larger than any
-            -- channel's range, and a multiple of 360 so that a hue of either is 0
-            match (Calc.parse cv).map fun c => Calc.simp none (Calc.depth 64 c + 4) c with
-            | some (.kw "infinity") => some (.num infiniteChannel)
-            | some (.kw "-infinity") | some (.kw "nan") => some (.num (-infiniteChannel))
-            | _ => none
+          | _ => none
     | _ => none
 
 /-- The matcher's environment: specified values with `none`, computed values with a
