@@ -3,6 +3,7 @@ import WebRender
 import WebRoute
 import WebSelection
 import L4Factoidal.Rendering.Smil
+import L4Factoidal.HTML.AccessibleTree
 
 /-! The browser's own face: tabs, the address bar and its buttons, drawn into the
 same scene as the page, so one WebGPU pass draws the window. The default look is flat
@@ -322,6 +323,62 @@ def hit (s : Shell) (width x y : Nat) : Option String :=
   match ((boxes s width).filter (·.contains x y)).getLast? with
   | some box => some box.name
   | none => some "chrome"
+
+/-! ### The chrome for assistive technology
+
+The controls are drawn, and most are icons, so a screen reader is given them in words: a
+toolbar, and below it each control of `boxes` with a role, a name, its state and its box in
+window pixels (`HTML.AccessibleTree.Entry`, as the page's own tree). A press on one is a
+press at its box, which `hit` answers as for a pointer. -/
+
+/-- The name of a control in words. -/
+def controlLabel (s : Shell) (name : String) : String :=
+  let title := fun (i : String) => match i.toNat? with
+    | some n => match s.tabs[n]? with
+      | some tab => if tab.title.isEmpty then s!"Tab {n + 1}" else tab.title
+      | none => s!"Tab {n + 1}"
+    | none => "Tab"
+  match name.splitOn ":" with
+  | ["back"] => "Back"
+  | ["forward"] => "Forward"
+  | ["reload"] => "Reload"
+  | ["home"] => "Home"
+  | ["address"] => "Address"
+  | ["find"] => "Find in page"
+  | ["source"] => "View source"
+  | ["tabs"] => "Tabs"
+  | ["settings"] => "Settings"
+  | ["newTab"] => "New tab"
+  | ["expand"] => "Show toolbar"
+  | ["tab", i] => title i
+  | ["close", i] => "Close " ++ title i
+  | _ => menuLabel name
+
+/-- The chrome's accessibility entries, numbered from `base`: the toolbar, then its controls
+left to right, top to bottom. A folded chrome is one button that unfolds it. -/
+def accessible (s : Shell) (width base : Nat) : List HTML.AccessibleTree.Entry :=
+  let rect := fun (x y w h : Nat) => some (⟨Int.ofNat x, Int.ofNat y, w, h⟩ : HTML.AccessibleTree.Rect)
+  let bar : HTML.AccessibleTree.Entry :=
+    { depth := 0, id := base, role := "toolbar", name := "Browser toolbar", box := rect 0 0 width (height s width) }
+  if s.collapse > 0 then
+    [bar, { depth := 1, id := base + 1, role := "button", name := controlLabel s "expand", focusable := true,
+            box := rect 0 0 width (height s width) }]
+  else
+    bar :: (boxes s width).zipIdx.map fun (b, i) =>
+      let kind := (b.name.splitOn ":").headD ""
+      let label := controlLabel s b.name
+      let box := rect b.x b.y b.w b.h
+      if kind == "address" || kind == "find" then
+        let focused := if kind == "address" then s.focused else s.findFocused
+        { depth := 1, id := base + 1 + i, role := "textbox", name := label, focusable := true, box,
+          props := [("value", if kind == "address" then s.address else s.find)] ++
+            (if focused then [("focused", "true")] else []) }
+      else if kind == "tab" then
+        { depth := 1, id := base + 1 + i, role := "tab", name := label, focusable := true, box,
+          props := [("selected", if b.name == s!"tab:{s.active}" then "true" else "false")] }
+      else
+        { depth := 1, id := base + 1 + i, role := "button", name := label, focusable := pressable s b.name, box,
+          props := if pressable s b.name then [] else [("disabled", "true")] }
 
 /-! ### The pointer -/
 

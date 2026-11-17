@@ -44,6 +44,11 @@ export function loadNativeWindow() {
     ng_open_file_panel: { parameters: [], result: "pointer", optional: true },
     ng_reduce_motion: { parameters: [], result: "i32", optional: true },
     ng_save_file_panel: { parameters: ["buffer"], result: "pointer", optional: true },
+    // Accessibility elements (native_window.m): absent in an older window library.
+    ng_ax_wanted: { parameters: [], result: "i32", optional: true },
+    ng_ax_set_tree: { parameters: ["buffer"], result: "i32", optional: true },
+    ng_ax_set_view: { parameters: ["f64","f64"], result: "void", optional: true },
+    ng_ax_announce: { parameters: ["buffer","i32"], result: "void", optional: true },
   } as const);
   const symbols = library.symbols;
   const isMainThread = () => symbols.ng_is_main_thread() === 1;
@@ -63,6 +68,13 @@ export function loadNativeWindow() {
     },
     // The system's Reduce motion setting; false with an older window library.
     reduceMotion:()=>symbols.ng_reduce_motion?.()===1,
+    // Accessibility: whether a client asked for the elements (or VoiceOver is on); the engine's
+    // tree as JSON (the number of elements, -1 when refused or with an older library); where the
+    // page is in the window; words for a screen reader to speak.
+    axWanted:()=>symbols.ng_ax_wanted?.()===1,
+    axSetTree:(json:string)=>symbols.ng_ax_set_tree?symbols.ng_ax_set_tree(new TextEncoder().encode(json.replaceAll("\0","")+"\0")):-1,
+    axSetView:(top:number,scroll:number)=>symbols.ng_ax_set_view?.(top,scroll),
+    axAnnounce:(text:string,assertive:boolean)=>symbols.ng_ax_announce?.(new TextEncoder().encode(text.replaceAll("\0","")+"\0"),assertive?1:0),
     // File > Open File… and Save Page As…: the path the person chose, or null when cancelled
     // (or with an older window library, which has no panels).
     openFilePanel():string|null {
