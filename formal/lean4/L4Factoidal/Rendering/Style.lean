@@ -207,6 +207,14 @@ structure Computed where
   descendants, as `text-align: -webkit-center` does in other engines. Inherited as
   `text-align` is; any other `text-align` clears it. -/
   centerBlocks : Bool := false
+  /-- `clip: rect(...)` with no area (CSS 2.1 §11.1.2; it applies to absolutely positioned
+  boxes) and `clip-path: inset(50%)` or more: what pages write to hide text visually and keep
+  it for screen readers (skip links, labels). Not inherited; `clipHidden` is. -/
+  clipRectEmpty : Bool := false
+  clipPathEmpty : Bool := false
+  /-- The element or an ancestor is clipped to nothing: none of it is painted (`visible`
+  false), and its boxes stay in the layout. Inherited, never cleared by a descendant. -/
+  clipHidden : Bool := false
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -1086,6 +1094,40 @@ def maskHides (value : String) : Bool :=
   | [] | [_] => false
   | _ :: rest => rest.any fun p => (p.toList.dropWhile (fun c => c == ' ' || c == '"' || c == '\'')).head? != some '#'
 
+/-- CSS 2.1 §11.1.2: whether `clip: rect(top, right, bottom, left)` (commas or spaces; `auto`
+is the box's edge) has no area: its bottom at or above its top, or its right at or left of
+its left. Any other value clips nothing here. -/
+def clipRectEmpty (value : String) : Bool :=
+  let v := (trim value).toLower
+  if !(v.startsWith "rect(" && v.endsWith ")") then false else
+  let inner := String.ofList ((v.toList.drop 5).dropLast)
+  let parts := ((inner.replace "," " ").splitOn " ").filter (· != "")
+  match parts.map (fun p => if p == "auto" then none else (pixels p).toOption) with
+  | [t, r, b, l] =>
+    (match t, b with | some t, some b => b <= t | _, _ => false) ||
+    (match r, l with | some r, some l => r <= l | _, _ => false)
+  | _ => false
+
+/-- CSS Masking 1 §6.1: whether `clip-path: inset(...)` with every inset at 50% or more
+leaves no area. Other shapes and references clip nothing here. -/
+def clipPathEmpty (value : String) : Bool :=
+  let v := (trim value).toLower
+  if !(v.startsWith "inset(" && v.endsWith ")") then false else
+  let parts := ((String.ofList ((v.toList.drop 6).dropLast)).splitOn " ").filter (· != "")
+  !parts.isEmpty && parts.all fun p => p.endsWith "%" && ((String.ofList p.toList.dropLast).toNat?.getD 0) ≥ 50
+
+#guard clipRectEmpty "rect(0 0 0 0)"
+#guard clipRectEmpty "rect(0, 0, 0, 0)"
+#guard clipRectEmpty "rect(1px, 1px, 1px, 1px)"
+#guard clipRectEmpty "RECT(1px 1px 1px 1px)"
+#guard !clipRectEmpty "rect(0, 10px, 10px, 0)"
+#guard !clipRectEmpty "rect(auto, auto, auto, auto)"
+#guard !clipRectEmpty "auto"
+#guard clipPathEmpty "inset(50%)"
+#guard clipPathEmpty "inset(100%)"
+#guard !clipPathEmpty "inset(10%)"
+#guard !clipPathEmpty "circle(40%)"
+
 #guard maskHides "url(https://example.org/icon.svg)"
 #guard maskHides "url(\"data:image/svg+xml,%3Csvg%3E\") no-repeat center / 20px"
 #guard maskHides "linear-gradient(red, blue), url(a.svg)"
@@ -1160,6 +1202,9 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   -- `none` and the generated images (gradients) leave it painted, as before.
   | "mask-image" | "-webkit-mask-image" | "mask" | "-webkit-mask" =>
     return {s with masked := maskHides d.value}
+  -- the visually hidden pattern (`clipHidden`, `finishEffects`)
+  | "clip" => return {s with clipRectEmpty := clipRectEmpty d.value}
+  | "clip-path" | "-webkit-clip-path" => return {s with clipPathEmpty := clipPathEmpty d.value}
   | "direction" => match (trim d.value).toLower with
     | "ltr" => return {s with direction := .ltr}
     | "rtl" => return {s with direction := .rtl}
@@ -1520,7 +1565,7 @@ def ownProperties : List String :=
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
-   "font-family","background-image","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask"]
+   "font-family","background-image","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
 alignment, position and grid readers take, `content`, and the prefixed names those readers
@@ -1953,12 +1998,32 @@ theorem alignHints_plain (n : DOM.Node) (s parent : Computed) (hp : parent.cente
     alignHints n s parent = s := by
   simp [alignHints, alignOf, hp, hc, ha]
 
+/-- Whether the element itself is clipped to nothing: `clip` with no area on an absolutely
+positioned box (CSS 2.1 §11.1.2 applies `clip` to those only), or `clip-path` with no area. -/
+def Computed.clippedAway (s : Computed) : Bool := (s.clipRectEmpty && s.pos.isAbsolute) || s.clipPathEmpty
+
 /-- After the cascade of an element: its text is raised by its own `super` (a third of the
 parent's font size, CSS 2.1 §10.8.1, as other engines draw it) or lowered by its own `sub`
-(a fifth), over what its ancestors raise. Nothing else changes. -/
+(a fifth), over what its ancestors raise; and when it or an ancestor is clipped to nothing
+(`clippedAway`, the visually hidden pattern of skip links and screen reader text) it is
+`clipHidden` and not painted, whatever its own `visibility`. -/
 def finishEffects (parent s : Computed) : Computed :=
   let own : Float := if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
-  {s with rise := parent.rise + own}
+  let hidden := parent.clipHidden || s.clippedAway
+  {s with rise := parent.rise + own, clipHidden := hidden, visible := s.visible && !hidden}
+
+/-- Kind: property (pages that hide nothing pay nothing). Says: with no clip to nothing on
+the element or above it, its visibility is its own. -/
+theorem finishEffects_visible (parent s : Computed) (hp : parent.clipHidden = false) (hs : s.clippedAway = false) :
+    (finishEffects parent s).visible = s.visible := by
+  simp [finishEffects, hp, hs]
+
+/-- Kind: property. Says: everything under an element clipped to nothing is not painted,
+whatever its own declarations (the text of a skip link stays hidden). Does not say:
+anything about layout, which is unchanged. -/
+theorem finishEffects_hidden_parent (parent s : Computed) (hp : parent.clipHidden = true) :
+    (finishEffects parent s).clipHidden = true ∧ (finishEffects parent s).visible = false := by
+  simp [finishEffects, hp]
 
 /-- Kind: property. Says: an element that is neither `sub` nor `super` raises its text as
 much as its parent does. Does not say: where the line box is (it is not grown). -/
@@ -1966,10 +2031,11 @@ theorem finishEffects_rise_plain (parent s : Computed) (h : s.shift = 0) :
     (finishEffects parent s).rise = parent.rise + 0 := by
   simp [finishEffects, h]
 
-/-- Kind: property (a raise and nothing else). Says: the style after `finishEffects` is the
-cascade's in every field but `rise`. -/
-theorem finishEffects_only_rise (parent s : Computed) :
-    finishEffects parent s = {s with rise := (finishEffects parent s).rise} := by
+/-- Kind: property. Says: the style after `finishEffects` is the cascade's in every field but
+`rise`, `clipHidden` and `visible`. -/
+theorem finishEffects_fields (parent s : Computed) :
+    finishEffects parent s = {s with rise := (finishEffects parent s).rise,
+      clipHidden := (finishEffects parent s).clipHidden, visible := (finishEffects parent s).visible} := by
   simp [finishEffects]
 
 /-- The properties that presentational hints changed from `before` to `after`: those the
