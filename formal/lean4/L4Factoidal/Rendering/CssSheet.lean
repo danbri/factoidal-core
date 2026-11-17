@@ -150,7 +150,10 @@ def anbSource (cvs : List CV) : String :=
   let (out, _) := (trimWs cvs).foldl (fun (acc : String × Bool) cv =>
     let (s, signed) := acc
     match cv with
-    | .tok (.num v _) => (s ++ (if signed && v ≥ 0 then "+" else "") ++ serialize [cv], false)
+    -- (not after `n-`: `5n- 5` is `5n-5`, its integer has no sign of its own)
+    | .tok (.num v _) =>
+      let ndash := (String.ofList (s.toList.reverse.dropWhile (· == ' ')).reverse).endsWith "-"
+      (s ++ (if signed && v ≥ 0 && !ndash then "+" else "") ++ serialize [cv], false)
     | .tok .ws => (s ++ " ", signed)
     | .tok (.delim _) => (s ++ serialize [cv], false)
     | cv => (s ++ serialize [cv], true)) ("", false)
