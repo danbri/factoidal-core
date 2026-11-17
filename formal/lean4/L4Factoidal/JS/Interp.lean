@@ -6061,7 +6061,12 @@ def callNativeObjectProto (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
         let id ← core.toObj thisV
         let custom ← core.getV (.obj id) (symKey symToStringTag)
         let oo ← getObj id
-        let builtin := if oo.isArray then "Array" else match oo.kind with
+        -- §20.1.3.6 steps 4-5: IsArray sees through a Proxy, and a callable Proxy is a Function
+        let builtin ← if oo.kind matches .proxy .. then do
+            let arr ← isArrayDeep 100000 (.obj id)
+            let fn ← isCallable (.obj id)
+            pure (if arr then "Array" else if fn then "Function" else "Object")
+          else pure <| if oo.isArray then "Array" else match oo.kind with
           | .array _ => "Array"
           | .closure .. | .native _ | .bound .. => "Function"
           | .error => "Error"
@@ -9053,16 +9058,11 @@ def evalExpr : Nat → Ctx → Expr → M Value
           match b, k with
           | some (.obj id), some key =>
             let o ← getObj id
-            if let .proxy pt hnd := o.kind then
-              match ← proxyTrap n hnd "deleteProperty" with
-              | some f =>
-                let ok := toBool (← callV n f hnd #[pt, keyValue key])
-                if !ok && ctx.strict then throwErr .type s!"'deleteProperty' on proxy: trap returned falsish for property '{key}'"
-                return .bool ok
-              | none =>
-                match pt with
-                | .obj tid => deleteOwn tid key; return .bool true
-                | _ => return .bool true
+            if let .proxy .. := o.kind then
+              -- [[Delete]] of a Proxy (§10.5.10, `deleteProp`): the trap or the target's own
+              let ok ← deleteProp n (.obj id) key
+              if !ok && ctx.strict then throwErr .type s!"'deleteProperty' on proxy: trap returned falsish for property '{key}'"
+              return .bool ok
             match o.getOwn key with
             | none => pure (.bool true)
             | some p =>
@@ -11522,7 +11522,18 @@ def deleteProp : Nat → Value → String → M Bool
     let o ← getObj id
     if let .proxy pt hnd := o.kind then
       match ← proxyTrap n hnd "deleteProperty" with
-      | some f => return toBool (← callV n f hnd #[pt, keyValue key])
+      | some f =>
+        let ok := toBool (← callV n f hnd #[pt, keyValue key])
+        -- §10.5.10 steps 10-14: a trap may not report deleted a non-configurable property,
+        -- nor any property of a target that is not extensible
+        if ok then
+          if let .obj tid := pt then
+            if let some d ← ownDesc n tid key then
+              if !d.configurable then
+                throwErr .type s!"'deleteProperty' on proxy: trap returned truish for property '{key}' which is non-configurable in the proxy target"
+              if !(← getObj tid).extensible then
+                throwErr .type s!"'deleteProperty' on proxy: trap returned truish for property '{key}' but the proxy target is non-extensible"
+        return ok
       | none => return ← deleteProp n pt key
     match o.getOwn key with
     | none => pure true
