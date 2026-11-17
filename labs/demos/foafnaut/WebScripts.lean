@@ -1179,6 +1179,17 @@ def inputReported (s : LeanJS.Session) : LeanJS.Session :=
   if s.host.pointer.keyDefault.isNone then s
   else s.setHost { s.host with pointer := { s.host.pointer with keyDefault := none } }
 
+/-- The cascade that the accessible name reads (`HTML.AccessibleRole.Css`), from the answers of
+the page's layout reads: op 29 the computed value of a longhand, and the computed `content` of
+`::before`, `::after` and `::marker` (200 + `pseudoBase` × (place + 1) + the index of
+`content`, as `getComputedStyle(element, pseudo)` asks). Nothing is read until the name asks. -/
+def nameCss (f : Page.Answers) : L4Factoidal.HTML.AccessibleRole.Css :=
+  let content := Rendering.ComputedGeneric.nameLists.get.1.findIdx? (· == "content")
+  { value := fun k p => (f k 29 p).getD ""
+    pseudo := fun k i => match content with
+      | some j => (f k (200 + Rendering.ComputedGeneric.pseudoBase * (i + 1) + j) "").getD ""
+      | none => "" }
+
 /-- The node of an element reference of a host's `actions`: `path:` and the child indices
 from the document (`WebDriver.Input.resolvePath`). -/
 def refNode (d : DOM.Dom) (ref : String) : Option Nat :=
@@ -1421,9 +1432,15 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     let node := if str request "what" == "nodeProperties" then
         (L4Factoidal.HTML.AccessibleTree.ofAccId (str request "element")).bind fun k => if k < d.size then some k else none
       else refNode d (str request "element")
+    -- a label reads the cascade (`nameCss`) of the layout reads of this version of the page
+    -- (`Host.measured`: made once, kept for the page's own reads); a role reads the markup
+    let (host, answers) := if str request "what" == "label" then a.page.host.measured else (a.page.host, none)
+    let css := match answers with
+      | some f => nameCss f
+      | none => {}
     let value := match node, str request "what" with
       | some k, "role" => L4Factoidal.HTML.AccessibleRole.computedRole d k
-      | some k, "label" => L4Factoidal.HTML.AccessibleRole.accessibleName d k
+      | some k, "label" => L4Factoidal.HTML.AccessibleRole.accessibleName d k css
       | some k, "properties" | some k, "nodeProperties" => (L4Factoidal.HTML.AccessibleTree.propertiesIn d k).toString
       | _, _ => ""
     let found := node.isSome
@@ -1432,6 +1449,7 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
       ("status", .string (if found then "success" else "error")),
       ("message", .string (if found then "" else "no such element")), ("value", .string value)]).toString
     run fun a =>
+      let a := { a with page := a.page.setHost host }
       let a := e.checkpoint (e.dispatchWith a Page.windowId "message"
         (Page.messageInit { frame := 0, toParent := false, data := reply, origin := str request "origin" })).1
       (e.advance a (e.loop a).clock).1

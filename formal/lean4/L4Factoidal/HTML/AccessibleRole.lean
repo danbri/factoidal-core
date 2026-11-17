@@ -13,6 +13,7 @@ same function.
 -/
 import L4Factoidal.DOM.Forms
 import L4Factoidal.DOM.OfHtml
+import L4Factoidal.Rendering.Content
 
 namespace L4Factoidal.HTML.AccessibleRole
 open L4Factoidal.DOM L4Factoidal.DOM.Forms
@@ -361,22 +362,110 @@ def embeddedValue (d : Dom) (k : NodeId) : Option String :=
       some ((attr? d k "aria-valuetext").getD ((attr? d k "aria-valuenow").getD ""))
     | _ => none
 
+/-! ### What the cascade says about a name (Accessible Name 1.2 §4.3.2 steps 2A and 2F)
+
+When the caller has the computed style (`Css`), the name reads it: `display: none` hides an
+element and its subtree, `visibility: hidden` or `collapse` hides an element's own text (a
+child that is visible again counts), a node that `aria-labelledby` names directly is read
+whole even when hidden, a child's `display` sets its text apart by spaces, `text-transform`
+changes the text, and the `content` of `::before`, `::after` and a list item's `::marker` is
+part of a name from content (its alternative text after `/` when it has one). With the
+defaults (no cascade known) the name is the one of the markup alone. -/
+structure Css where
+  /-- The computed value of a longhand on an element; "" when not known. -/
+  value : NodeId → String → String := fun _ _ => ""
+  /-- The computed `content` of a pseudo-element of an element (0 `::before`, 1 `::after`,
+  2 `::marker`); "" when not known. -/
+  pseudo : NodeId → Nat → String := fun _ _ => ""
+  /-- Inside a hidden node that `aria-labelledby` names: nothing is hidden. -/
+  reveal : Bool := false
+
+namespace Css
+def displayNone (c : Css) (k : NodeId) : Bool := c.value k "display" == "none"
+def invisible (c : Css) (k : NodeId) : Bool :=
+  let v := c.value k "visibility"
+  v == "hidden" || v == "collapse"
+end Css
+
+/-- Whether a child's text is set apart by spaces: by its computed `display` when known
+(anything but `inline`, `contents` and `none`; a `br` always), else by its tag
+(`blockTags`). -/
+def spaced (d : Dom) (css : Css) (c : NodeId) : Bool :=
+  let v := css.value c "display"
+  if v.isEmpty then isHtml d c blockTags
+  else isHtml d c ["br"] || !(v == "inline" || v == "contents" || v == "none")
+
+/-- Each word's first letter in upper case (`text-transform: capitalize`). -/
+def capitalizeWords (s : String) : String :=
+  let step := fun (st : Bool × List Char) (c : Char) => (isAsciiWs c, (if st.1 then c.toUpper else c) :: st.2)
+  String.ofList (s.toList.foldl step (true, [])).2.reverse
+
+/-- The text of text node `k` as its parent's `text-transform` shows it. -/
+def transformed (d : Dom) (css : Css) (k : NodeId) (s : String) : String :=
+  match (d.get k).parent with
+  | none => s
+  | some p => match css.value p "text-transform" with
+    | "uppercase" => s.map Char.toUpper
+    | "lowercase" => s.map Char.toLower
+    | "capitalize" => capitalizeWords s
+    | _ => s
+
+/-- The text a `content` value of a pseudo-element of `k` gives a name: its alternative text
+after `/` when there is one (CSS Content 3 §2), else its strings, attributes and quotes
+(`Rendering.CSS.Content.read`); counters and images give nothing. -/
+def contentText (d : Dom) (k : NodeId) (value : String) : String :=
+  if value.isEmpty then "" else
+  let attr := fun n => (attr? d k n).getD ""
+  let isSlash := fun (cv : Rendering.CssValues.CV) => match cv with
+    | .tok (.delim '/') => true
+    | _ => false
+  let all := Rendering.CssValues.stripWs (Rendering.CssValues.CV.parse value)
+  match all.dropWhile (!isSlash ·) with
+  | _ :: alt => Rendering.CSS.Content.text attr ((alt.take Rendering.CSS.Content.maxPieces).filterMap Rendering.CSS.Content.piece)
+  | [] => match Rendering.CSS.Content.read value with
+    | some (.parts ps) => Rendering.CSS.Content.text attr ps
+    | _ => ""
+
+/-- The place of list item `k` among its parent's `li` children, from the parent's `start`. -/
+def ordinal (d : Dom) (k : NodeId) : Nat :=
+  match (d.get k).parent with
+  | none => 1
+  | some p =>
+    let before := (((d.get p).kids.toList.takeWhile (· != k)).filter (isHtml d · ["li"])).length
+    ((attr? d p "start").bind (·.trimAscii.toString.toNat?)).getD 1 + before
+
+/-- The text of the `::marker` of list item `k`: its `content` when set, else the marker of
+its `list-style-type`, followed by a space. -/
+def markerText (d : Dom) (css : Css) (k : NodeId) : String :=
+  if css.value k "display" != "list-item" then "" else
+  let v := css.pseudo k 2
+  if !(v.isEmpty || v == "normal") then contentText d k v ++ " " else
+  match css.value k "list-style-type" with
+  | "disc" => "\u2022 "
+  | "circle" => "\u25E6 "
+  | "square" => "\u25AA "
+  | "decimal" => toString (ordinal d k) ++ ". "
+  | _ => ""
+
 mutual
 /-- The text alternative of node `k` (§4.3.2): `labelled` while computing a node that an
 `aria-labelledby` names, `content` while computing a name from the content of an ancestor.
 `fuel` bounds the depth (the tree's nesting). -/
-def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool) : String :=
+def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool) (css : Css := {}) : String :=
   match fuel with
   | 0 => ""
   | fuel + 1 =>
     let x := d.get k
-    if x.type == .text then x.data
+    if x.type == .text then
+      (if !css.reveal && (x.parent.map css.invisible).getD false then "" else transformed d css k x.data)
     else if x.type != .element then ""
-    else if hiddenEl d k && !labelled then ""
+    else if (hiddenEl d k || css.displayNone k) && !labelled && !css.reveal then ""
     else
+      -- a hidden node that `aria-labelledby` names is read with all of its subtree
+      let css := if labelled && (hiddenEl d k || css.displayNone k || css.invisible k) then { css with reveal := true } else css
       let byLabelledBy := if labelled then "" else match attr? d k "aria-labelledby" with
         | some ids => collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
-            (byIdIn d k id).map fun j => textAlternative d fuel j true true))
+            (byIdIn d k id).map fun j => textAlternative d fuel j true true css))
         | none => ""
       if !byLabelledBy.isEmpty then byLabelledBy else
       let embedded := if content then embeddedValue d k else none
@@ -385,12 +474,13 @@ def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool
       | none =>
       let label := (attr? d k "aria-label").map (·.trimAscii.toString) |>.getD ""
       if !label.isEmpty then label else
-      let native := hostLabel d fuel k
+      let native := hostLabel d fuel k css
       if !native.isEmpty then native else
       let role := computedRole d k
       let fromContent := if content || labelled || (nameFromContentRoles.contains role && !noContentName d k) ||
             isHtml d k ["summary"] then
-          childrenText d fuel x.kids.toList else ""
+          markerText d css k ++ contentText d k (css.pseudo k 0) ++ childrenText d fuel x.kids.toList css ++
+            contentText d k (css.pseudo k 1) else ""
       if !fromContent.isEmpty then fromContent else
       let title := (attr? d k "title").getD ""
       if !title.trimAscii.toString.isEmpty then title else
@@ -398,16 +488,16 @@ def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool
       if !ph.trimAscii.toString.isEmpty then ph else (attr? d k "aria-placeholder").getD ""
 
 /-- The names of children in order, block elements set apart by spaces. -/
-def childrenText (d : Dom) (fuel : Nat) (kids : List NodeId) : String :=
+def childrenText (d : Dom) (fuel : Nat) (kids : List NodeId) (css : Css := {}) : String :=
   match kids with
   | [] => ""
   | c :: rest =>
-    let t := textAlternative d fuel c false true
-    let t := if isHtml d c blockTags then " " ++ t ++ " " else t
-    t ++ childrenText d fuel rest
+    let t := textAlternative d fuel c false true css
+    let t := if spaced d css c then " " ++ t ++ " " else t
+    t ++ childrenText d fuel rest css
 
 /-- The host language's label (HTML-AAM §5, accessible name computations by element). -/
-def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
+def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) (css : Css := {}) : String :=
   let x := d.get k
   -- SVG-AAM §8.1: the `title` child, else a link's `xlink:title`
   if x.ns == some svgNS then
@@ -417,7 +507,7 @@ def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
   else if x.ns != some htmlNS then "" else
   -- the control itself is left out of its label's text
   let labels := fun (ls : List NodeId) => collapse (" ".intercalate (ls.map fun l =>
-    childrenText d fuel ((d.get l).kids.toList.filter (· != k))))
+    childrenText d fuel ((d.get l).kids.toList.filter (· != k)) css))
   match x.lname with
   | "input" =>
     let t := asciiLower ((attr? d k "type").getD "text")
@@ -435,21 +525,21 @@ def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
   | "textarea" | "select" | "meter" | "progress" | "output" | "button" => labels (labelsOf d k)
   | "img" | "area" => (attr? d k "alt").getD ""
   | "fieldset" => match firstChildTag d k ["legend"] with
-    | some l => collapse (childrenText d fuel (d.get l).kids.toList)
+    | some l => collapse (childrenText d fuel (d.get l).kids.toList css)
     | none => ""
   | "figure" => match firstChildTag d k ["figcaption"] with
-    | some l => collapse (childrenText d fuel (d.get l).kids.toList)
+    | some l => collapse (childrenText d fuel (d.get l).kids.toList css)
     | none => ""
   | "table" => match firstChildTag d k ["caption"] with
-    | some l => collapse (childrenText d fuel (d.get l).kids.toList)
+    | some l => collapse (childrenText d fuel (d.get l).kids.toList css)
     | none => ""
   | "optgroup" => (attr? d k "label").getD ""
   | _ => ""
 end
 
 /-- The accessible name of element `k`, white space collapsed. -/
-def accessibleName (d : Dom) (k : NodeId) : String :=
-  collapse (textAlternative d (d.size + 1) k false false)
+def accessibleName (d : Dom) (k : NodeId) (css : Css := {}) : String :=
+  collapse (textAlternative d (d.size + 1) k false false css)
 
 /-! ## What is proved -/
 
@@ -501,11 +591,13 @@ theorem invalid_tokens_implicit (d : Dom) (k : NodeId) (v : String) (hv : attr? 
   rw [this]
   rfl
 
-/-- Says: a hidden element that no `aria-labelledby` names gives no text to any name. -/
-theorem hidden_no_name (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool)
-    (he : (d.get k).type = .element) (hh : hiddenEl d k = true) :
-    textAlternative d (fuel + 1) k false content = "" := by
-  simp [textAlternative, he, hh]
+/-- Says: a hidden element (by its markup, or by `display: none` when the cascade is known)
+that no `aria-labelledby` names, outside a hidden node that one names, gives no text to any
+name. -/
+theorem hidden_no_name (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool) (css : Css)
+    (he : (d.get k).type = .element) (hh : (hiddenEl d k || css.displayNone k) = true) (hr : css.reveal = false) :
+    textAlternative d (fuel + 1) k false content css = "" := by
+  simp [textAlternative, he, hh, hr]
   intro h
   exact absurd h (by decide)
 
@@ -567,6 +659,38 @@ private def nameOf (html tag : String) : String :=
 #guard roleOf "<article><aside>x</aside></article>" "aside" == "generic" && roleOf "<aside>x</aside>" "aside" == "complementary"
 #guard nameOf "<label for=b>Go</label><input id=b type=submit value=v>" "input" == "Go" && nameOf "<input type=submit value=v>" "input" == "v"
 #guard nameOf "<input aria-placeholder=ap value=v>" "input" == "ap"
+
+/-! ### Tests with a cascade (accname/name/comp_name_from_content.html, comp_labelledby_hidden_nodes.html,
+comp_hidden_not_referenced.html, comp_name_from_pseudo_content_marker.tentative.html): a stand-in
+cascade reads the computed values from `data-` attributes (`data-display`, `data-p0` for the
+`content` of `::before`...). -/
+
+private def fromData (d : Dom) : Css :=
+  { value := fun k p => (attr? d k ("data-" ++ p)).getD "", pseudo := fun k i => (attr? d k ("data-p" ++ toString i)).getD "" }
+
+private def nameCss (html id : String) : String :=
+  let d := DOM.parseHtmlDocument html
+  match (List.range d.size).find? (fun i => attr? d i "id" == some id) with
+  | some i => accessibleName d i (fromData d)
+  | none => "?"
+
+#guard nameCss "<button id=b>x<span data-display=none>y</span></button>" "b" == "x"
+#guard nameCss "<h2 id=h>a <span data-visibility=hidden>b <span data-visibility=visible>c</span></span></h2>" "h" == "a c"
+#guard nameCss "<button id=b aria-labelledby=s>x</button><span id=s data-visibility=hidden>foo <span data-visibility=hidden>bar</span></span>" "b" == "foo bar"
+#guard nameCss "<button id=b aria-labelledby=s>x</button><span id=s>foo <span data-display=none>bar <span>baz</span></span></span>" "b" == "foo"
+#guard nameCss "<button id=b aria-labelledby=s aria-label=foo>x</button><span id=s><span data-visibility=hidden>label</span></span>" "b" == "foo"
+#guard nameCss "<button id=b data-p0='\"before \"' data-p1='\" after\"'>label</button>" "b" == "before label after"
+#guard nameCss "<a href=# id=b data-a=alt data-p0='\"x\" / \"start \" attr(data-a) \" end \"'>label</a>" "b" == "start alt end label"
+#guard nameCss "<button id=b data-p0=none>label</button>" "b" == "label"
+#guard nameCss "<h1 id=h data-text-transform=uppercase>Call us</h1>" "h" == "CALL US" &&
+  nameCss "<h1 id=h data-text-transform=capitalize>call us</h1>" "h" == "Call Us"
+#guard nameCss "<button id=b><span data-display=block>one</span><span data-display=inline-block>two</span><span>three</span></button>" "b" == "one two three"
+#guard nameCss "<a href=# id=b><div data-display=inline>one</div><div data-display=inline>two</div></a>" "b" == "onetwo"
+#guard nameCss "<button aria-labelledby=l id=b>x</button><ul><li id=l data-display=list-item data-list-style-type=disc>the sky</li></ul>" "b" == "\u2022 the sky"
+#guard nameCss "<button aria-labelledby=l id=b>x</button><ol start=3><li>a</li><li id=l data-display=list-item data-list-style-type=decimal>b</li></ol>" "b" == "4. b"
+#guard nameCss "<button aria-labelledby=l id=b>x</button><ul><li id=l data-display=list-item data-p2='\"\u2767 \" / \"Bullet\"'>radish</li></ul>" "b" == "Bullet radish"
+-- with no cascade the name is the markup's
+#guard accessibleName (DOM.parseHtmlDocument "<a href=#><div>one</div><div>two</div></a>") 4 == accessibleName (DOM.parseHtmlDocument "<a href=#><div>one</div><div>two</div></a>") 4 {}
 
 
 end L4Factoidal.HTML.AccessibleRole

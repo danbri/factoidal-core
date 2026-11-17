@@ -528,31 +528,35 @@ theorem tree_depth (d : Dom) (env : Env) (root : NodeId) (e : Entry) (h : e ∈ 
 /-- Says (step 2B before 2D and later): the text of the nodes that `aria-labelledby` names,
 when there is some, is the text alternative, whatever `aria-label`, the host language or
 the content give. -/
-theorem labelledby_first (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool) (ids : String)
-    (he : (d.get k).type = .element) (hh : hiddenEl d k = false)
+theorem labelledby_first (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool) (ids : String) (css : Css)
+    (he : (d.get k).type = .element) (hh : ((hiddenEl d k || css.displayNone k) && !css.reveal) = false)
     (hl : attr? d k "aria-labelledby" = some ids)
     (hne : (collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
-        (byIdIn d k id).map fun j => textAlternative d fuel j true true))).isEmpty = false) :
-    textAlternative d (fuel + 1) k false content =
+        (byIdIn d k id).map fun j => textAlternative d fuel j true true css))).isEmpty = false) :
+    textAlternative d (fuel + 1) k false content css =
       collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
-        (byIdIn d k id).map fun j => textAlternative d fuel j true true)) := by
+        (byIdIn d k id).map fun j => textAlternative d fuel j true true css)) := by
   have h1 : (NodeType.element == NodeType.text) = false := rfl
   have h2 : (NodeType.element != NodeType.element) = false := rfl
   rw [textAlternative]
-  simp [he, h1, h2, hh, hl, hne]
+  have hh' : ((hiddenEl d k || css.displayNone k) && !false && !css.reveal) = false := by simpa using hh
+  simp only [he, h1, h2, hh', hl, Bool.false_eq_true, if_false]
+  simp [hne]
 
 /-- Says (step 2D before 2E and later): with no `aria-labelledby`, a non-empty `aria-label`
 is the text alternative of an element whose name is not being taken from the content of
 an ancestor. -/
-theorem aria_label_second (d : Dom) (k : NodeId) (fuel : Nat) (v : String)
-    (he : (d.get k).type = .element) (hh : hiddenEl d k = false)
+theorem aria_label_second (d : Dom) (k : NodeId) (fuel : Nat) (v : String) (css : Css)
+    (he : (d.get k).type = .element) (hh : ((hiddenEl d k || css.displayNone k) && !css.reveal) = false)
     (hl : attr? d k "aria-labelledby" = none) (hv : attr? d k "aria-label" = some v)
     (hne : v.trimAscii.toString.isEmpty = false) :
-    textAlternative d (fuel + 1) k false false = v.trimAscii.toString := by
+    textAlternative d (fuel + 1) k false false css = v.trimAscii.toString := by
   have h1 : (NodeType.element == NodeType.text) = false := rfl
   have h2 : (NodeType.element != NodeType.element) = false := rfl
   rw [textAlternative]
-  simp [he, h1, h2, hh, hl, hv]
+  have hh' : ((hiddenEl d k || css.displayNone k) && !false && !css.reveal) = false := by simpa using hh
+  simp only [he, h1, h2, hh', hl, hv, Bool.false_eq_true, if_false]
+  simp
   intro h
   simp [h] at hne
 
@@ -560,17 +564,19 @@ theorem aria_label_second (d : Dom) (k : NodeId) (fuel : Nat) (v : String)
 `aria-labelledby` traversal"): a node computed for an `aria-labelledby` does not follow its
 own `aria-labelledby`: its text alternative is the same whatever that attribute names. Two
 elements that name each other therefore end: the depth of `aria-labelledby` is one. -/
-theorem labelledby_once (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool)
+theorem labelledby_once (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool) (css : Css)
     (he : (d.get k).type = .element) :
-    textAlternative d (fuel + 1) k true content =
-      (match (if content then embeddedValue d k else none) with
+    textAlternative d (fuel + 1) k true content css =
+      (let css := if hiddenEl d k || css.displayNone k || css.invisible k then { css with reveal := true } else css
+       match (if content then embeddedValue d k else none) with
        | some v => v
        | none =>
         let label := (attr? d k "aria-label").map (·.trimAscii.toString) |>.getD ""
         if !label.isEmpty then label else
-        let native := hostLabel d fuel k
+        let native := hostLabel d fuel k css
         if !native.isEmpty then native else
-        let fromContent := childrenText d fuel (d.get k).kids.toList
+        let fromContent := markerText d css k ++ contentText d k (css.pseudo k 0) ++
+          childrenText d fuel (d.get k).kids.toList css ++ contentText d k (css.pseudo k 1)
         if !fromContent.isEmpty then fromContent else
         let title := (attr? d k "title").getD ""
         if !title.trimAscii.toString.isEmpty then title else
