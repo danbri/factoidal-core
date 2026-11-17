@@ -41,20 +41,47 @@ local notation "M" => JSM H
 
 @[inline] def alloc (o : Obj) : M Nat := modifyGet fun h => (h.objs.size, { h with objs := h.objs.push o })
 @[inline] def getObj (id : Nat) : M Obj := do pure ((← get).obj id)
+/-! A write of the heap tests the undo log once (`id < h.undoObjs.base`: false when no log is kept).
+The logged write is a function of its own, not inlined (`HeapOf.modifyObjOn` and the like); the
+plain write is in line and is one record update. With the test inside the write (`noteObj` on the
+heap without its array, answering a pair) the compiled code gave the record's cell to the logging
+branch and built a new heap record (88 bytes) for each plain write in `assignLocal`, `assignName`,
+`typedWriteV`, `callClosure` and `vmEnter`. `modifyObj_eq` and the lemmas after it in
+`JS/Theorems.lean`: each writer is the function it was. -/
+
+/-- `modifyObj` with the undo log on: the write of object `id` is logged first. Not inlined. -/
+@[noinline] def HeapOf.modifyObjOn (h : HeapOf H) (id : Nat) (f : Obj → Obj) : HeapOf H :=
+  let objs := h.objs
+  let h := { h with objs := #[] }
+  let (h, objs) := h.noteObjOn objs id
+  { h with objs := objs.modify id f }
+
 @[inline] def modifyObj (id : Nat) (f : Obj → Obj) : M Unit :=
   -- the object array is taken out of the heap first, and `Array.modify` moves the object
   -- out of the array for `f`: both are changed in place when nothing else holds them
   modify fun h =>
-    let objs := h.objs
-    let h := { h with objs := #[] }
-    let (h, objs) := h.noteObj objs id
-    { h with objs := objs.modify id f }
+    if id < h.undoObjs.base then h.modifyObjOn id f
+    else
+      let objs := h.objs
+      let h := { h with objs := #[] }
+      { h with objs := objs.modify id f }
 
 /-- Object `id` and the array with a placeholder in its place. Not inlined: the compiler
 must not move the write of the placeholder after the uses of the object, or the object
 would still be shared with the array while it changes (and its elements copied). -/
 @[noinline] def takeAt (objs : Array Obj) (id : Nat) : Obj × Array Obj :=
   objs.swapAt! id default
+
+/-- `updateObj` with the undo log on. Not inlined, and not specialised: a logged write is rare. -/
+@[noinline] def HeapOf.updateObjOn {α} [Inhabited α] (h : HeapOf H) (id : Nat) (f : Obj → α × Obj) : α × HeapOf H :=
+  let objs := h.objs
+  let h := { h with objs := #[] }
+  let (h, objs) := h.noteObjOn objs id
+  if id < objs.size then
+    let (o, objs) := takeAt objs id
+    let (a, o) := f o
+    (a, { h with objs := objs.set! id o })
+  else (default, { h with objs })
 
 /-- Change object `id` with `f`, which also answers a value. The object is moved out of the
 heap while `f` runs, so `f` holds the only reference and a change to its elements does not
@@ -65,14 +92,15 @@ this every write of an element or a property made a closure for it, called it th
 and took its answer from a pair. -/
 @[specialize] def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
   modifyGet fun h =>
-    let objs := h.objs
-    let h := { h with objs := #[] }
-    let (h, objs) := h.noteObj objs id
-    if id < objs.size then
-      let (o, objs) := takeAt objs id
-      let (a, o) := f o
-      (a, { h with objs := objs.set! id o })
-    else (default, { h with objs })
+    if id < h.undoObjs.base then h.updateObjOn id f
+    else
+      let objs := h.objs
+      let h := { h with objs := #[] }
+      if id < objs.size then
+        let (o, objs) := takeAt objs id
+        let (a, o) := f o
+        (a, { h with objs := objs.set! id o })
+      else (default, { h with objs })
 
 /-- The elements of an Array object, taken out of it: the object is left with no elements
 (`Kind.ordinary`) so the elements are the only reference. -/
@@ -152,34 +180,58 @@ made it. -/
   modify fun h => if h.curRealm == 0 then h else { h with fnRealm := h.fnRealm.insert id h.curRealm }
 
 
+/-- Environment `e` becomes `en`, with the undo log on: the write is logged first. Not inlined. -/
+@[noinline] def HeapOf.setEnvOn (h : HeapOf H) (e : Nat) (en : Env) : HeapOf H :=
+  let envs := h.envs
+  let h := { h with envs := #[] }
+  let (h, envs) := h.noteEnvOn envs e
+  { h with envs := envs.set! e en }
+
+/-- `modifyEnv` with the undo log on. Not inlined. -/
+@[noinline] def HeapOf.modifyEnvOn (h : HeapOf H) (e : Nat) (f : Env → Env) : HeapOf H :=
+  let envs := h.envs
+  let h := { h with envs := #[] }
+  let (h, envs) := h.noteEnvOn envs e
+  { h with envs := envs.modify e f }
+
 /-- Put an environment record in a free slot of the environment array. -/
 @[inline] def pushEnv (en : Env) : M Nat :=
   modifyGet fun h =>
-    let envs := h.envs
-    let h := { h with envs := #[] }
     match h.envFree.back? with
     | some e =>
-      let (h, envs) := h.noteEnv envs e
-      (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
-    | none => (envs.size, { h with envs := envs.push en })
+      if e < h.undoEnvs.base then
+        let h := h.setEnvOn e en
+        (e, { h with envFree := h.envFree.pop })
+      else
+        let envs := h.envs
+        let h := { h with envs := #[] }
+        (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
+    | none =>
+      let envs := h.envs
+      let h := { h with envs := #[] }
+      (envs.size, { h with envs := envs.push en })
 
 @[inline] def newEnv (parent : Nat) : M Nat := pushEnv { parent }
 
 /-- Environment `e` is not reachable any more: drop its contents and reuse its slot. -/
 @[inline] def releaseEnv (e : Nat) : M Unit :=
   modify fun h =>
-    let envs := h.envs
-    let h := { h with envs := #[] }
-    let (h, envs) := h.noteEnv envs e
-    { h with envs := envs.set! e default, envFree := h.envFree.push e }
+    if e < h.undoEnvs.base then
+      let h := h.setEnvOn e default
+      { h with envFree := h.envFree.push e }
+    else
+      let envs := h.envs
+      let h := { h with envs := #[] }
+      { h with envs := envs.set! e default, envFree := h.envFree.push e }
 
 /-- Change an environment in place: the array and the record are taken out while `f` runs. -/
 @[inline] def modifyEnv (e : Nat) (f : Env → Env) : M Unit :=
   modify fun h =>
-    let envs := h.envs
-    let h := { h with envs := #[] }
-    let (h, envs) := h.noteEnv envs e
-    { h with envs := envs.modify e f }
+    if e < h.undoEnvs.base then h.modifyEnvOn e f
+    else
+      let envs := h.envs
+      let h := { h with envs := #[] }
+      { h with envs := envs.modify e f }
 
 @[inline] def declare (env : Nat) (name : String) (b : Binding) : M Unit :=
   modifyEnv env (·.put name b)
