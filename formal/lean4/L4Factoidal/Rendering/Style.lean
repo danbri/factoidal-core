@@ -1969,6 +1969,9 @@ def alignOf (tag a : String) (s : Computed) : Computed :=
   else if tag == "table" && a == "center" then {s with autoMarginLeft := true, autoMarginRight := true}
   else s
 
+/-- The `align` attribute of `n`, trimmed and in lower case. -/
+def alignValue (n : DOM.Node) : String := (attrValue n "align").trimAscii.toString.toLower
+
 /-- Presentational hints of alignment, below author CSS (an author `text-align` or margin
 wins): a block-level child of a parent that centres its blocks starts with auto inline
 margins; the `center` element centres its text and its blocks (the user agent's
@@ -1984,7 +1987,7 @@ def alignHints (n : DOM.Node) (s parent : Computed) : Computed :=
     {s with autoMarginLeft := true, autoMarginRight := true} else s
   let s := if parent.centerBlocks && n.lname == "table" then {s with textAlign := .start, centerBlocks := false} else s
   if n.lname == "center" then {s with textAlign := .center, centerBlocks := true}
-  else alignOf n.lname (attrValue n "align").trimAscii.toString.toLower s
+  else alignOf n.lname (alignValue n) s
 
 /-- Kind: property. Says: an empty `align` value changes no style. -/
 theorem alignOf_empty (tag : String) (s : Computed) : alignOf tag "" s = s := by
@@ -1994,9 +1997,9 @@ theorem alignOf_empty (tag : String) (s : Computed) : alignOf tag "" s = s := by
 not centre its blocks, and an element other than `center`, the hints change nothing. Does
 not say: what an author rule does after them. -/
 theorem alignHints_plain (n : DOM.Node) (s parent : Computed) (hp : parent.centerBlocks = false)
-    (hc : n.lname ≠ "center") (ha : (attrValue n "align").trimAscii.toString.toLower = "") :
+    (hc : n.lname ≠ "center") (ha : alignValue n = "") :
     alignHints n s parent = s := by
-  simp [alignHints, alignOf, hp, hc, ha]
+  simp [alignHints, hp, hc, ha, alignOf_empty]
 
 /-- Whether the element itself is clipped to nothing: `clip` with no area on an absolutely
 positioned box (CSS 2.1 §11.1.2 applies `clip` to those only), or `clip-path` with no area. -/
