@@ -584,8 +584,9 @@ private def controlItems (dom : Dom) (id : Nat) (s : Computed) : Array Inline :=
   match CSS.controlText dom id with
   | none => #[]
   | some (text, placeholder) =>
-    let t := {s with background := none, underline := false, preformatted := false,
-      color := (if placeholder then ⟨0.459,0.459,0.459⟩ else s.color), pos := {s.pos with nowrap := true}}
+    let grey : Color := ⟨0.459,0.459,0.459⟩
+    let pos := {s.pos with nowrap := true}
+    let t : Computed := {s with background := none, underline := false, preformatted := false, color := (if placeholder then grey else s.color), pos := pos}
     (textItems id t text).toArray
 
 /-- An inline element's background goes behind its text (CSS 2.1 §14.2). Text has no
