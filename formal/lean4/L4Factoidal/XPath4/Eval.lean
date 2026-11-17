@@ -303,10 +303,6 @@ def compatArg (env : Env) (t : IType) (v : Seq) : M Seq := do
     | [.atom x] => pure (sStr x.str)
     | [.node n] => pure (sStr (env.nodeString n))
     | _ => pure v
-  | .choice [.atomic (.b .double), .atomic (.b .float), .atomic (.b .decimal)] =>
-    match ← env.atomize v with
-    | [] => pure []
-    | a :: _ => pure (single (compatNum a))
   | .atomic (.b .double) =>
     match ← env.atomize v with
     | [] => pure (single (Atomic.ofDbl (0.0 / 0.0)))
