@@ -37,6 +37,51 @@ def inputType (d : Dom) (k : NodeId) : String :=
   let t := Dom.asciiLower ((attr? d k "type").getD "")
   if inputTypes.contains t then t else "text"
 
+/-- The value mode of an `input` type state (HTML §4.10.5.1): what its `value` IDL attribute
+reads and writes. -/
+inductive ValueMode where
+  /-- The element's value, kept apart from the `value` content attribute once set. -/
+  | value
+  /-- The `value` content attribute, or "" without one. -/
+  | dflt
+  /-- The `value` content attribute, or "on" without one. -/
+  | dfltOn
+  /-- The selected files' names: "" here, where no file is ever selected. -/
+  | filename
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The value mode of type state `t` (HTML §4.10.5.1.1 to §4.10.5.1.22). -/
+def valueModeOf (t : String) : ValueMode :=
+  if t == "hidden" || t == "submit" || t == "image" || t == "reset" || t == "button" then .dflt
+  else if t == "checkbox" || t == "radio" then .dfltOn
+  else if t == "file" then .filename
+  else .value
+
+/-- The value of `input` `k` by its value mode, before its type's value sanitization (the
+page's `value` getter sanitizes it, `FormValidity.answer` "S"). -/
+def inputValue (d : Dom) (k : NodeId) : String :=
+  match valueModeOf (inputType d k) with
+  | .value => match (d.get k).dirtyValue with
+    | some v => v
+    | none => (attr? d k "value").getD ""
+  | .dflt => (attr? d k "value").getD ""
+  | .dfltOn => (attr? d k "value").getD "on"
+  | .filename => ""
+
+/-- Kind: property. Says: an input in the value mode "value" whose dirty value flag is set
+has that value, whatever its `value` attribute. -/
+theorem inputValue_dirty (d : Dom) (k : NodeId) (v : String)
+    (hm : valueModeOf (inputType d k) = .value) (hv : (d.get k).dirtyValue = some v) :
+    inputValue d k = v := by
+  simp [inputValue, hm, hv]
+
+/-- Kind: property. Says: with the dirty value flag false, an input in the value mode
+"value" has the value of its `value` attribute, "" without one. -/
+theorem inputValue_clean (d : Dom) (k : NodeId)
+    (hm : valueModeOf (inputType d k) = .value) (hv : (d.get k).dirtyValue = none) :
+    inputValue d k = (attr? d k "value").getD "" := by
+  simp [inputValue, hm, hv]
+
 /-- A `button`'s type: "submit" unless the attribute says "reset" or "button". -/
 def buttonType (d : Dom) (k : NodeId) : String :=
   let t := Dom.asciiLower ((attr? d k "type").getD "")
@@ -82,12 +127,12 @@ def checkedInGroup (d : Dom) (k : NodeId) : Option NodeId :=
   (radioGroup d k).find? (checkedness d ·)
 
 /-- The reset algorithm of a form (HTML §4.10.22): its inputs lose the dirty checkedness
-flag, and the options of its selects their dirtiness (the selectedness is again the
-`selected` attribute). -/
+and dirty value flags (their value is again the `value` attribute), and the options of its
+selects their dirtiness (the selectedness is again the `selected` attribute). -/
 def resetForm (d : Dom) (form : NodeId) : Dom :=
   (d.treeOrder form false).foldl (fun d j =>
     if (isHtml d j ["input"] && formOwner d j == some form) || isHtml d j ["option"] then
-      d.setNode j fun x => { x with checkedness := none }
+      d.setNode j fun x => { x with checkedness := none, dirtyValue := none }
     else d) d
 
 /-- The summary of its parent details (HTML §4.11.2): the first `summary` child of a

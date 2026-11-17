@@ -17107,7 +17107,28 @@
 
     // ---- input: the members that are not plain reflection ----
     const indeterminate = new WeakMap();
-    prop(I, 'indeterminate', function () { return indeterminate.get(this) === true; }, function (v) { indeterminate.set(this, !!v); });
+    // HTML §4.10.5 cloning steps: a clone of an input takes its indeterminateness (the value
+    // and checkedness are Lean's node state, which the clone copies). Only once a script set
+    // one: the clone of a page that never did is not walked.
+    let cloneHooked = false;
+    const hookClone = () => {
+      if (cloneHooked) return;
+      cloneHooked = true;
+      const clone0 = n.clone;
+      const inputsOf = (id, deep) => {
+        const own = info(id, 0) === 1 && wrap(id) instanceof I ? [wrap(id)] : [];
+        return deep && info(id, 6) > 0 && (info(id, 0) === 1 || info(id, 0) === 11 || info(id, 0) === 9) ? own.concat([...wrap(id).querySelectorAll('input')]) : own;
+      };
+      n.clone = (id, deep) => {
+        const c = clone0.call(n, id, deep);
+        if (typeof c === 'number' && c >= 0) {
+          const a = inputsOf(id, deep), b = inputsOf(c, deep);
+          if (a.length === b.length) a.forEach((x, i) => { if (indeterminate.get(x) === true) indeterminate.set(b[i], true); });
+        }
+        return c;
+      };
+    };
+    prop(I, 'indeterminate', function () { return indeterminate.get(this) === true; }, function (v) { indeterminate.set(this, !!v); if (v) hookClone(); });
     prop(I, 'list', function () {
       const id = this.getAttribute('list');
       if (id === null || id === '') return null;
@@ -17162,7 +17183,7 @@
         const r = chk(n.query(0, 187, [value.length, start, end, clamp(this, s.start), clamp(this, s.end), replacement.length, mode].join(' '))).split(' ').map(Number);
         const next = value.slice(0, r[0]) + replacement + value.slice(r[1]);
         const dir = s.dir;
-        if (next !== value) { if (this instanceof T) this.textContent = next; else this.setAttribute('value', next); }
+        if (next !== value) { if (this instanceof T) this.textContent = next; else setInputValue(this, next); }
         setSel(this, r[2], r[3], mode === 'preserve' ? dir : 'none');
       });
     }
@@ -17170,26 +17191,55 @@
     // §4.10.21): Lean's (DOM.FormValidity over HTML.InputValue, node_query 188) ----
     const vq = (el, ...parts) => { const r = n.query(nodeId(el), 188, parts.join('\u0000')); return typeof r === 'string' ? r : ''; };
     const numericTypes = ['date', 'month', 'week', 'time', 'datetime-local', 'number', 'range'];
-    // The value (HTML §4.10.5.1.x "value sanitization"): the `value` attribute as the type reads
-    // it. A one-line text needs no sanitizing, so no question is asked for it.
-    const inputValue = el => {
-      const t = typeState(el), raw = el.getAttribute('value');
-      if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || t === 'button') return raw ?? '';
-      if (t === 'checkbox' || t === 'radio') return raw ?? 'on';
-      if (t === 'file') return '';
-      const v = raw ?? '';
+    // The value by the type's value mode (HTML §4.10.5.1, Lean's DOM.Forms.inputValue, op 169
+    // "v": the dirty value, else the `value` attribute), sanitized for the type ("value
+    // sanitization", op 188 "S"); a one-line text needs no sanitizing, so no question is asked.
+    const valueQ = (el, q) => chk(n.query(nodeId(el), 169, q));
+    const sanitizeFor = (el, t, v) => {
+      if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || t === 'button' || t === 'checkbox' || t === 'radio' || t === 'file') return v;
       if ((t === 'text' || t === 'search' || t === 'tel' || t === 'password') && !/[\r\n]/.test(v)) return v;
       return vq(el, 'S', v);
+    };
+    const inputValue = el => sanitizeFor(el, typeState(el), valueQ(el, 'v'));
+    // Setting the value (the `value` setter's steps per mode): mode "value" keeps the
+    // sanitized value with its dirty value flag; the default modes set the `value` attribute
+    // (Lean answers "a"); a value a script sets moves the cursor to its end.
+    const setInputValue = (el, v) => {
+      const before = inputValue(el);
+      if (valueQ(el, 's' + sanitizeFor(el, typeState(el), v)) === 'a') el.setAttribute('value', v);
+      const now = inputValue(el);
+      if (now !== before) { const s = selOf(el); s.start = s.end = now.length; s.dir = 'none'; }
     };
     prop(I, 'value', function () { return inputValue(this); }, function (v) {
       v = v === null ? '' : String(v);
       if (typeState(this) === 'file') { if (v !== '') throw new DOMException('The value of a file input can only be set to the empty string.', 'InvalidStateError'); return; }
-      const before = inputValue(this);
-      this.setAttribute('value', v);
-      const now = inputValue(this);
-      // a value that a script sets moves the cursor to its end
-      if (now !== before) { const s = selOf(this); s.start = s.end = now.length; s.dir = 'none'; }
+      setInputValue(this, v);
     });
+    prop(I, 'defaultValue', function () { return this.getAttribute('value') ?? ''; }, function (v) { this.setAttribute('value', String(v)); });
+    // A change of the `type` attribute's state (HTML §4.10.5): the value mode change steps
+    // are Lean's (op 169 "t", with the old mode and the old value); a type that selects text
+    // after one that did not starts with the cursor at the start.
+    {
+      const modeLetter = t => (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || t === 'button') ? 'd'
+        : (t === 'checkbox' || t === 'radio') ? 'o' : t === 'file' ? 'f' : 'v';
+      const textual = t => ['text', 'search', 'url', 'tel', 'password'].includes(t);
+      const isInput = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'input';
+      const around = (id, name, f) => {
+        if (String(name).toLowerCase() !== 'type' || !isInput(id)) return f();
+        const el = wrap(id), oldT = typeState(el), oldV = inputValue(el);
+        const r = f();
+        const newT = typeState(el);
+        if (r === 0 && newT !== oldT) {
+          const a = valueQ(el, 't' + modeLetter(oldT) + oldV);
+          if (a.startsWith('a')) el.setAttribute('value', a.slice(1));
+          if (textual(newT) && !textual(oldT)) { const s = selOf(el); s.start = s.end = 0; s.dir = 'none'; }
+        }
+        return r;
+      };
+      const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
+      n.setAttr = (id, name, value) => around(id, name, () => setAttr0(id, name, value));
+      n.removeAttr = (id, name) => around(id, name, () => removeAttr0(id, name));
+    }
     const step = (el, dir, k) => {
       const r = vq(el, dir, inputValue(el), String(k === undefined ? 1 : k | 0));
       if (r === 'e' || r === '') throw new DOMException('The element has no allowed value step.', 'InvalidStateError');
