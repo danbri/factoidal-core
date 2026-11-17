@@ -3101,6 +3101,8 @@
     // HTML §3.1.1: the Location of the document's window, when it has one (a frame's document
     // in this realm has its frame's), else null
     get location() { return this === document ? location : (info(nodeId(this), 12) >= 0 ? frameLocation(nodeId(this)) : null); }
+    // CSSOM View §5: the scrolling element of a document in no-quirks mode is its root element
+    get scrollingElement() { return this.documentElement; }
     get doctype() { return wrap(kids(nodeId(this)).find(k => info(k, 0) === 10) ?? -1); }
     get documentElement() { return wrap(kids(nodeId(this)).find(k => info(k, 0) === 1) ?? -1); }
     get head() { const h = this.documentElement; return h ? (h.children[0]?.localName === 'head' ? h.children[0] : [...h.children].find(e => e.localName === 'head') ?? null) : null; }
@@ -4223,7 +4225,19 @@
   })();
   def('history', sessionHistory.history);
   sessionHistoryFragment = (url, oldURL) => { href = oldURL; sessionHistory.fragment(url); href = url; };
-  def('screen', Object.freeze({ width: 800, height: 600, availWidth: 800, availHeight: 600, colorDepth: 24, pixelDepth: 24 }));
+  // CSSOM View §4.3: the Screen of the window, an object with its attributes on Screen.prototype;
+  // a global attribute is an accessor of the global ([Replaceable]: a script may set its own)
+  const globalAttr = (k, get) => Object.defineProperty(globalThis, k, { enumerable: true, configurable: true,
+    get: Object.getOwnPropertyDescriptor({ get [k]() { return get(); } }, k).get,
+    set: Object.getOwnPropertyDescriptor({ set [k](v) { Object.defineProperty(globalThis, k, { value: v, writable: true, enumerable: true, configurable: true }); } }, k).set });
+  class Screen { constructor() { throw new TypeError('Illegal constructor'); } }
+  const theScreen = Object.create(Screen.prototype);
+  for (const [k, v] of [['availWidth', 800], ['availHeight', 600], ['width', 800], ['height', 600], ['colorDepth', 24], ['pixelDepth', 24]])
+    Object.defineProperty(Screen.prototype, k, { enumerable: true, configurable: true,
+      get: Object.getOwnPropertyDescriptor({ get [k]() { if (this !== theScreen) throw new TypeError('Illegal invocation'); return v; } }, k).get });
+  Object.defineProperty(Screen.prototype, Symbol.toStringTag, { value: 'Screen', configurable: true });
+  def('Screen', Screen);
+  globalAttr('screen', () => theScreen);
   for (const [k, i] of [['innerWidth', 0], ['innerHeight', 1], ['outerWidth', 0], ['outerHeight', 1]])
     Object.defineProperty(globalThis, k, { get: () => viewport()[i], set(v) {}, configurable: true, enumerable: true });
   // ==== dprfix ==== devicePixelRatio (CSSOM View §4): the screen's device pixels for each
@@ -4231,8 +4245,9 @@
   // the engine has no answer. Layout and every length a script reads are CSS pixels.
   Object.defineProperty(globalThis, 'devicePixelRatio', { get: () => { const r = query(0, 22, 1)[0]; return r > 0 ? r : 1; },
     set(v) {}, configurable: true, enumerable: true });
-  def('scrollX', 0); def('scrollY', 0);
-  def('pageXOffset', 0); def('pageYOffset', 0);
+  // the page does not scroll here: its scroll position is 0; the window's place on the screen too
+  for (const k of ['scrollX', 'scrollY', 'pageXOffset', 'pageYOffset', 'screenX', 'screenLeft', 'screenY', 'screenTop'])
+    globalAttr(k, () => 0);
   const text = xs => xs.map(x => typeof x === 'string' ? x : (() => { try { return typeof x === 'object' && x !== null && !(x instanceof Error) ? JSON.stringify(x) : String(x); } catch { return String(x); } })()).join(' ');
   const log = (...xs) => n.log(text(xs));
   // A line of another level starts with the level between two U+0001 marks; the console tab
@@ -13653,19 +13668,56 @@
   // Rendering.MediaQuery.holds in the media environment of the page's layout, the one its
   // style sheets are read in), asked at each read of `matches`, so it follows the window.
   // A query Lean can not read, and an engine without the op, answer false. No change events yet.
-  def('matchMedia', q => {
-    const media = String(q);
-    const list = { media, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } };
-    Object.defineProperty(list, 'matches', { enumerable: true, configurable: true, get() { return n.query(0, 41, media) === '1'; } });
+  // A MediaQueryList (CSSOM View §4.2) is an EventTarget; its change events are not sent yet.
+  class MediaQueryList extends EventTarget { constructor() { throw new TypeError('Illegal constructor'); super(); } }
+  const mqlMedia = new WeakMap();
+  const mqlOf = o => { const m = mqlMedia.get(o); if (m === undefined) throw new TypeError('Illegal invocation'); return m; };
+  Object.defineProperties(MediaQueryList.prototype, {
+    media: { get: function media() { return mqlOf(this); }, enumerable: true, configurable: true },
+    matches: { get: function matches() { return n.query(0, 41, mqlOf(this)) === '1'; }, enumerable: true, configurable: true },
+    addListener: { value: function addListener(callback) { mqlOf(this); if (callback !== null && callback !== undefined) this.addEventListener('change', callback); }, writable: true, enumerable: true, configurable: true },
+    removeListener: { value: function removeListener(callback) { mqlOf(this); if (callback !== null && callback !== undefined) this.removeEventListener('change', callback); }, writable: true, enumerable: true, configurable: true },
+    onchange: { get: function onchange() { return handlerOf(this, 'change'); }, set: function onchange(f) { setHandler(this, 'change', f); }, enumerable: true, configurable: true },
+  });
+  for (const k of ['media', 'matches']) Object.defineProperty(Object.getOwnPropertyDescriptor(MediaQueryList.prototype, k).get, 'name', { value: 'get ' + k });
+  for (const k of ['onchange']) {
+    const d = Object.getOwnPropertyDescriptor(MediaQueryList.prototype, k);
+    Object.defineProperty(d.get, 'name', { value: 'get ' + k }); Object.defineProperty(d.set, 'name', { value: 'set ' + k });
+  }
+  Object.defineProperty(MediaQueryList.prototype, Symbol.toStringTag, { value: 'MediaQueryList', configurable: true });
+  class MediaQueryListEvent extends Event {
+    constructor(type, init = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'MediaQueryListEvent': 1 argument required, but only 0 present.");
+      super(type, init);
+      const o = init ?? {};
+      mqlEventState.set(this, { media: o.media === undefined ? '' : String(o.media), matches: !!o.matches });
+    }
+  }
+  const mqlEventState = new WeakMap();
+  for (const k of ['media', 'matches'])
+    Object.defineProperty(MediaQueryListEvent.prototype, k, { enumerable: true, configurable: true,
+      get: Object.getOwnPropertyDescriptor({ get [k]() { const st = mqlEventState.get(this); if (!st) throw new TypeError('Illegal invocation'); return st[k]; } }, k).get });
+  Object.defineProperty(MediaQueryListEvent.prototype, Symbol.toStringTag, { value: 'MediaQueryListEvent', configurable: true });
+  def('MediaQueryList', MediaQueryList); def('MediaQueryListEvent', MediaQueryListEvent);
+  def('matchMedia', function matchMedia(query) {
+    if (arguments.length < 1) throw new TypeError("Failed to execute 'matchMedia' on 'Window': 1 argument required, but only 0 present.");
+    const list = Reflect.construct(EventTarget, [], MediaQueryList);
+    mqlMedia.set(list, String(query));
     return list;
   });
   def('postMessage', () => {});
-  def('focus', () => {}); def('blur', () => {}); def('close', () => {}); def('stop', () => {}); def('scrollTo', () => {}); def('scrollBy', () => {});
+  def('focus', () => {}); def('blur', () => {}); def('close', () => {}); def('stop', () => {}); 
   def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
   // CSSOM View §4: a top-level window that a script did not open is not moved or resized
   // (moveTo, moveBy, resizeTo, resizeBy do nothing); the page does not scroll here (scroll
   // is scrollTo); HTML §7.2.2.3: captureEvents and releaseEvents do nothing.
-  def('scroll', () => {}); def('moveTo', () => {}); def('moveBy', () => {}); def('resizeTo', () => {}); def('resizeBy', () => {});
+  // The operations of Window (CSSOM View §4) are enumerable own properties of the global
+  // ([Global]); the page does not scroll or move here. moveTo and the rest need two arguments.
+  for (const [k, need] of [['scroll', 0], ['scrollTo', 0], ['scrollBy', 0], ['moveTo', 2], ['moveBy', 2], ['resizeTo', 2], ['resizeBy', 2], ['matchMedia', 1]]) {
+    const f = k === 'matchMedia' ? globalThis.matchMedia : ({ [k](...a) { if (a.length < need) throw new TypeError(`Failed to execute '${k}' on 'Window': ${need} arguments required, but only ${a.length} present.`); } })[k];
+    if (need > 0 && k !== 'matchMedia') Object.defineProperty(f, 'length', { value: need });
+    Object.defineProperty(globalThis, k, { value: f, writable: true, enumerable: true, configurable: true });
+  }
   def('captureEvents', () => {}); def('releaseEvents', () => {});
   // window.open (HTML §7.2.2.1): no new window is made here; a URL that does not parse is a
   // SyntaxError, as the "window open steps" say (the parse is Lean's).
