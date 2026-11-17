@@ -1416,8 +1416,39 @@ private def containerVisible (attrs : List NamespaceAttribute) : Except String B
   if opacity > 0 && opacity < 1 then throw "container opacity requires compositing surface"
   return !displaySuppressed attrs && opacity > 0
 
+/-- The tokens of a path's data for `rectPathData?`: command letters and numbers, split at
+spaces, commas, letters and a sign that follows a digit. -/
+private def pathTokens (d : String) : List String :=
+  let spaced := d.toList.foldl (fun (acc : List Char) c =>
+    if c.isAlpha && c != 'e' && c != 'E' then ' ' :: c :: ' ' :: acc
+    else if c == ',' then ' ' :: acc
+    else if c == '-' && (acc.head?.map (fun p => p.isDigit || p == '.')).getD false then c :: ' ' :: acc
+    else c :: acc) []
+  ((String.ofList spaced.reverse).splitOn " ").filter (· != "")
+
+/-- A path `d` that is an axis-aligned rectangle, in the forms drawing programs export for
+the clip of a frame (`M0 0h140v21.42H0z`, `M x y H x2 V y2 H x Z`): its x, y, width and
+height. Any other path is `none`. -/
+def rectPathData? (d : String) : Option (Float × Float × Float × Float) :=
+  let num := fun (t : String) => (number t).toOption
+  match pathTokens d with
+  | ["M",x,y,"h",w,"v",h,"H",x2,z] => do
+    let (x,y,w,h,x2) := (← num x,← num y,← num w,← num h,← num x2)
+    if x2 == x && (z == "z" || z == "Z") then some (x,y,w,h) else none
+  | ["M",x,y,"H",x2,"V",y2,"H",x3,z] => do
+    let (x,y,x2,y2,x3) := (← num x,← num y,← num x2,← num y2,← num x3)
+    if x3 == x && (z == "z" || z == "Z") then some (min x x2,min y y2,(x2-x).abs,(y2-y).abs) else none
+  | _ => none
+
+#guard rectPathData? "M0 0h140v22H0z" == some (0,0,140,22)
+#guard rectPathData? "M 0,0 H 24 V 24 H 0 Z" == some (0,0,24,24)
+#guard rectPathData? "M0 0h140v22H1z" == none
+#guard (rectPathData? "M0 0h140v21.42H0z").isSome
+#guard rectPathData? "M0 0l10 10z" == none
+
 /-- CSS Masking 1 §6: `clip-path` naming a `clipPath` of one untransformed
-    `rect`. Any other clip shape stays a named refusal. -/
+    `rect`, or of one `path` that is such a rectangle (`rectPathData?`). Any other clip
+    shape stays a named refusal. -/
 private def rectClip (lengths : LengthContext) (references : NativeSVGReferences.Index) (source : String) :
     Except String (Float × Float × Float × Float) := do
   if !(source.startsWith "url(#" && source.endsWith ")") then throw "unsupported clip-path syntax"
@@ -1429,6 +1460,8 @@ private def rectClip (lengths : LengthContext) (references : NativeSVGReferences
     throw "unsupported clipPath attributes"
   let shapes := children.filter fun | .element .. => true | _ => false
   let [.element shapeName shape _] := shapes | throw "unsupported clipPath: one rect required"
+  if shapeName.localPart == "path" && (attr shape "transform").isNone then
+    if let some r := rectPathData? ((attr shape "d").getD "") then return r
   if shapeName.localPart != "rect" || (attr shape "transform").isSome then throw "unsupported clipPath: one rect required"
   return (← geometryNumber lengths shape "x",← geometryNumber lengths shape "y",
     ← geometryNumber lengths shape "width",← geometryNumber lengths shape "height")
