@@ -492,6 +492,23 @@ def Env.slotN (e : Env) (x : String) : Nat :=
   | some m => (m.get? x).getD e.names.size
   | none => Env.scan e.names x 0
 
+/-- `slotN` with no `Option` from the index (`Std.HashMap.getD`): the global record is indexed, and
+each read of a global name was a `some`. -/
+def Env.slotNFast (e : Env) (x : String) : Nat :=
+  match e.index with
+  | some m => m.getD x e.names.size
+  | none => Env.scan e.names x 0
+
+/-- **Kind: refinement.** `slotNFast` answers as `slotN` for every record and name. -/
+@[csimp] theorem Env.slotN_eq_fast : @Env.slotN = @Env.slotNFast := by
+  funext e x
+  unfold Env.slotN Env.slotNFast
+  cases e.index with
+  | none => rfl
+  | some m => simp only [PropMap.getD_eq_get?_getD]
+
+#print axioms Env.slotN_eq_fast
+
 def Env.slot? (e : Env) (x : String) : Option Nat :=
   let i := e.slotN x
   if i == e.names.size then none else some i
