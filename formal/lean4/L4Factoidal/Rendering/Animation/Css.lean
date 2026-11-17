@@ -138,9 +138,19 @@ def longhandsOf (property : String) : List String :=
   | some row => if row.longhands.isEmpty || (CssValues.shapeOf row).isNone then [p] else row.longhands
   | none => [p]
 
+/-- The system font keywords of `font` (CSS Fonts 4 §3.7, `<system-family-name>`). -/
+def systemFonts : List String := ["caption", "icon", "menu", "message-box", "small-caption", "status-bar"]
+
 /-- A declaration as the longhand declarations of `longhandsOf`: a CSS-wide keyword on a
-shorthand kept whole stays on that shorthand. -/
+shorthand kept whole stays on that shorthand. A system font (`font: caption`) is its
+longhands as the cascade resolves it: the engine has no fonts of the platform, and the
+property table keeps the keyword whole, so each longhand of `font` is what the element
+takes when `font` is not declared (all are inherited properties: `inherit`). Its longhands
+then interpolate as any other (CSS Fonts 4 §3.7: "system fonts are first resolved"). -/
 def expandDecl (name value : String) : List (String × String) :=
+  if CssValues.propertyName name == "font" && systemFonts.contains (CssValues.trimText value).toLower then
+    (longhandsOf "font").map fun l => (l, "inherit")
+  else
   match CssValues.expand name value with
   | some pairs =>
     let p := CssValues.propertyName name
@@ -151,6 +161,8 @@ def expandDecl (name value : String) : List (String × String) :=
 #guard longhandsOf "margin" == ["margin-top", "margin-right", "margin-bottom", "margin-left"]
 #guard expandDecl "background-position" "inherit" == [("background-position", "inherit")]
 #guard (expandDecl "margin" "inherit").length == 4
+#guard (expandDecl "font" "caption").all (·.2 == "inherit") && (expandDecl "font" "Menu").length == (longhandsOf "font").length
+#guard (expandDecl "font" "caption").any (·.1 == "font-size")
 
 /-- The keyframes of the body of one `@keyframes` rule, by offset, keyframes of one
 offset merged (later declarations win). A keyframe whose selector is not valid is

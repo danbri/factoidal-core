@@ -2682,18 +2682,38 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   -- document): a cascade of its own, the UA sheet and the frame document's `style` elements,
   -- from its root (`CSS.computeAllWith` at `r`). The body of such a document takes the margins
   -- of its container's `marginwidth` and `marginheight` (`CSS.containerMarginHints`), which the
-  -- script side brings in `q` as U+0002, the two values and U+0000 between them.
+  -- script side brings in `q` as U+0002, the two values and U+0000 between them, then the
+  -- container's node. A `style` element applies when its `type` and `media` say so in the
+  -- frame's media environment (HTML §4.2.6: "the element's media attribute's value matches
+  -- the environment"; Media Queries 4 §4: `width` and `height` are the frame's viewport, the
+  -- padding box of its container); a frame document none of whose sheets asks for a media
+  -- condition lays nothing out for it.
   let frameView := fun (r node : Nat) (q : String) => (do
-    let source := String.intercalate "\n" ((dom.treeOrder r).toList.filterMap fun id =>
-      if DOM.Dom.isHtmlElement (dom.get id) "style" then dom.textContent id else none)
-    let rules ← Rendering.CSS.parseIn {medium := medium request} source
+    let parts := (q.drop 1).toString.splitOn "\x00"
+    let styleIds := (dom.treeOrder r).toList.filter fun id => DOM.Dom.isHtmlElement (dom.get id) "style"
+    let asksMedia := styleIds.any fun id =>
+      !(Rendering.CSS.attrValue (dom.get id) "media").isEmpty || ((dom.textContent id).getD "").contains '@'
+    let env : Rendering.MediaQuery.Env := if !asksMedia then {medium := medium request} else
+      let viewport := match q.startsWith "\x02", (parts[2]?).bind String.toNat? with
+        | true, some f => (match laid.get with
+          | .ok l => paddingBoxOf l f
+          | .error _ => none)
+        | _, _ => none
+      { mediaEnv (medium request) width height 100 with
+        width := viewport.map (·.1), height := viewport.map (·.2),
+        deviceWidth := some width.toFloat, deviceHeight := some height.toFloat }
+    let source := String.intercalate "\n" (styleIds.filterMap fun id =>
+      match activeSheetIn .liberal env (dom.get id) id with
+      | .ok (true, _) => dom.textContent id
+      | _ => none)
+    let rules ← Rendering.CSS.parseIn env source
     let ix := Rendering.CSS.RuleIndex.build rules
     let matchesOf : Nat → List Rendering.CSS.Match := fun id => ix.matched (Rendering.CSS.readKeys dom) dom id {}
     let styles ← Rendering.CSS.computeAllWith matchesOf dom 1 r
     let n := dom.get node
     let isBody := DOM.Dom.isHtmlElement n "body" && (n.parent.bind fun p => (dom.get p).parent) == some r
-    let styles := match isBody, q.startsWith "\x02", (q.drop 1).toString.splitOn "\x00" with
-      | true, true, [mw, mh] => styles.modify node (Rendering.CSS.containerMarginHints mw mh)
+    let styles := match isBody, q.startsWith "\x02", parts with
+      | true, true, mw :: mh :: _ => styles.modify node (Rendering.CSS.containerMarginHints mw mh)
       | _, _, _ => styles
     return ({ dom := dom, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height } :
       Rendering.ComputedGeneric.View) : Except String Rendering.ComputedGeneric.View)
