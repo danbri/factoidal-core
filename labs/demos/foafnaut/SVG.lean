@@ -80,6 +80,21 @@ private theorem pow10_foldl (n : Nat) (x : Float) :
 @[csimp] private theorem pow10_eq_fast : @pow10 = @pow10Fast := by
   funext n; exact pow10_foldl n 1
 
+/-- The exponents the number reader takes: any negative exponent of at most two digits (the
+reader's digit bound), and positive ones up to 12; a larger positive exponent is past the
+magnitude bound of 1,000,000 for every mantissa that is not 0. -/
+def exponentAllowed (negative : Bool) (exponent : Nat) : Bool := negative || exponent ≤ 12
+
+/-- Kind: bound. Says: a positive exponent is taken only up to 12. -/
+theorem exponentAllowed_positive (e : Nat) : exponentAllowed false e = true ↔ e ≤ 12 := by
+  simp [exponentAllowed]
+
+/-- Kind: property. Says: every negative exponent is taken (the round-off numbers that
+drawing programs write, `1.13686838e-13`). Does not say: anything about the digit bound,
+which the reader checks first (at most two exponent digits). -/
+theorem exponentAllowed_negative (e : Nat) : exponentAllowed true e = true := by
+  simp [exponentAllowed]
+
 /-- Strict signed decimal/exponent lexer. Relative units and non-finite values
 are errors; bounded magnitudes keep this profile within useful f32 precision. -/
 def numberReference (input : String) : Except String Float := do
@@ -103,7 +118,11 @@ def numberReference (input : String) : Except String Float := do
     if (s.contains 'e' || s.contains 'E') && expDigits.isEmpty then throw "exponent requires digits"
     if whole.length+fraction.length > 24 || expDigits.length > 2 then throw "numeric precision exceeds profile bound"
     let exponent := (String.ofList expDigits).toNat?.getD 0
-    if exponent > 12 then throw "numeric exponent exceeds profile bound"
+    -- A positive exponent above 12 is past the magnitude bound anyway. A negative one is
+    -- read up to the two digits allowed above: drawing programs write the round-off of
+    -- their arithmetic as numbers such as `1.13686838e-13` (BBC News' logo), which are 0
+    -- to any pixel; refusing them refused the whole drawing.
+    if !exponentAllowed expNegative exponent then throw "numeric exponent exceeds profile bound"
     let integer := Float.ofNat ((String.ofList whole).toNat?.getD 0)
     let decimal := Float.ofNat ((String.ofList fraction).toNat?.getD 0) / pow10 fraction.length
     let unsigned := (integer+decimal) * (if expNegative then 1/pow10 exponent else pow10 exponent)
@@ -163,6 +182,11 @@ private def sameNumber (text : String) : Bool :=
 #guard (List.range 4000).all fun n =>
   let t := toString n
   sameNumber t && sameNumber ("-" ++ t) && sameNumber ("0." ++ t) && sameNumber (t ++ "." ++ toString (n*7919 % 100000))
+-- the round-off of drawing programs is read (as about 0); a large positive exponent is not
+#guard ((number "1.13686838e-13").toOption.map fun v => decide (v.abs < 1e-12)) == some true
+#guard ((number "-3.55271368e-15").toOption.map fun v => decide (v.abs < 1e-12)) == some true
+#guard (number "1e13").toOption.isNone
+#guard (number "4.4e-05").toOption.isSome
 private def lengthNumber (input : String) : Except String Float :=
   let s := trim input
   number (if s.endsWith "px" then String.ofList (s.toList.take (s.length-2)) else s)
@@ -399,9 +423,13 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
     pure ((← number (String.ofList (s.toList.take (s.length-1))))/100*base)
   else lengthNumber s
 
+/-- The presentation attributes every drawing element may carry. `clip-rule` (SVG 2 §14.3.7)
+matters only for a shape inside a `clipPath`; this reader takes it and clips with the
+nonzero rule. Icon sets write it on every path (`fill-rule="evenodd" clip-rule="evenodd"`:
+GitHub's icons), and refusing it refused the whole drawing. -/
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
-  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events"]
+  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events","clip-rule"]
 /-- SVG Tiny 1.2 §11.13 and §11.16: elements that define a paint and draw nothing. -/
 private def paintServers := ["linearGradient","radialGradient","solidColor"]
 /-- Attributes that say nothing about what is drawn, and that HTML pages put on inline SVG:
@@ -1388,8 +1416,39 @@ private def containerVisible (attrs : List NamespaceAttribute) : Except String B
   if opacity > 0 && opacity < 1 then throw "container opacity requires compositing surface"
   return !displaySuppressed attrs && opacity > 0
 
+/-- The tokens of a path's data for `rectPathData?`: command letters and numbers, split at
+spaces, commas, letters and a sign that follows a digit. -/
+private def pathTokens (d : String) : List String :=
+  let spaced := d.toList.foldl (fun (acc : List Char) c =>
+    if c.isAlpha && c != 'e' && c != 'E' then ' ' :: c :: ' ' :: acc
+    else if c == ',' then ' ' :: acc
+    else if c == '-' && (acc.head?.map (fun p => p.isDigit || p == '.')).getD false then c :: ' ' :: acc
+    else c :: acc) []
+  ((String.ofList spaced.reverse).splitOn " ").filter (· != "")
+
+/-- A path `d` that is an axis-aligned rectangle, in the forms drawing programs export for
+the clip of a frame (`M0 0h140v21.42H0z`, `M x y H x2 V y2 H x Z`): its x, y, width and
+height. Any other path is `none`. -/
+def rectPathData? (d : String) : Option (Float × Float × Float × Float) :=
+  let num := fun (t : String) => (number t).toOption
+  match pathTokens d with
+  | ["M",x,y,"h",w,"v",h,"H",x2,z] => do
+    let (x,y,w,h,x2) := (← num x,← num y,← num w,← num h,← num x2)
+    if x2 == x && (z == "z" || z == "Z") then some (x,y,w,h) else none
+  | ["M",x,y,"H",x2,"V",y2,"H",x3,z] => do
+    let (x,y,x2,y2,x3) := (← num x,← num y,← num x2,← num y2,← num x3)
+    if x3 == x && (z == "z" || z == "Z") then some (min x x2,min y y2,(x2-x).abs,(y2-y).abs) else none
+  | _ => none
+
+#guard rectPathData? "M0 0h140v22H0z" == some (0,0,140,22)
+#guard rectPathData? "M 0,0 H 24 V 24 H 0 Z" == some (0,0,24,24)
+#guard rectPathData? "M0 0h140v22H1z" == none
+#guard (rectPathData? "M0 0h140v21.42H0z").isSome
+#guard rectPathData? "M0 0l10 10z" == none
+
 /-- CSS Masking 1 §6: `clip-path` naming a `clipPath` of one untransformed
-    `rect`. Any other clip shape stays a named refusal. -/
+    `rect`, or of one `path` that is such a rectangle (`rectPathData?`). Any other clip
+    shape stays a named refusal. -/
 private def rectClip (lengths : LengthContext) (references : NativeSVGReferences.Index) (source : String) :
     Except String (Float × Float × Float × Float) := do
   if !(source.startsWith "url(#" && source.endsWith ")") then throw "unsupported clip-path syntax"
@@ -1401,6 +1460,8 @@ private def rectClip (lengths : LengthContext) (references : NativeSVGReferences
     throw "unsupported clipPath attributes"
   let shapes := children.filter fun | .element .. => true | _ => false
   let [.element shapeName shape _] := shapes | throw "unsupported clipPath: one rect required"
+  if shapeName.localPart == "path" && (attr shape "transform").isNone then
+    if let some r := rectPathData? ((attr shape "d").getD "") then return r
   if shapeName.localPart != "rect" || (attr shape "transform").isSome then throw "unsupported clipPath: one rect required"
   return (← geometryNumber lengths shape "x",← geometryNumber lengths shape "y",
     ← geometryNumber lengths shape "width",← geometryNumber lengths shape "height")
@@ -1443,22 +1504,41 @@ private def imageKeysAt : Nat → Option String → NamespaceNode → List Strin
 def imageKeys (root : NamespaceNode) (base : Option String := none) : List String :=
   (imageKeysAt 64 base root).eraseDups
 
-/-- As `imageStore`, for the keys `keys` (SVG `image` and HTML `img` references). -/
-def imageStoreOf (keys : List String) (supplied : List (String × ByteArray) := [])
-    (vector : NativeImage.VectorReader := fun _ => none) : NativeImage.Store :=
+/-- As `imageStoreOf`, with the bytes of each image read by `dec` (`NativeImage.decodeWith`
+of a vector reader, or a decoder that gives what it gave before for the same bytes:
+`WebRender.memoDecode`). -/
+def imageStoreOfWith (dec : ByteArray → NativeImage.Decoded) (keys : List String)
+    (supplied : List (String × ByteArray) := []) : NativeImage.Store :=
   let keys := keys.eraseDups
-  -- The factor at which the document's images fit its pixel budget (`NativeImage.factorFor`),
-  -- from the sizes that the files' headers give: 1 when they fit as they are.
   let sizes := keys.filterMap fun key =>
     if key.toLower.startsWith "data:" then (NativeImage.dataBytes key).toOption.bind NativeImage.naturalSize
     else (supplied.find? (·.1 == key)).bind fun (_,bytes) => NativeImage.naturalSize bytes
   let k := NativeImage.factorFor sizes
   (keys.foldl (fun (state : NativeImage.Store × Nat) key =>
-    if key.toLower.startsWith "data:" then state.1.addData state.2 key k vector
+    if key.toLower.startsWith "data:" then
+      match NativeImage.dataBytes key with
+      | .error message => (state.1.insert key (.error message),state.2)
+      | .ok bytes => state.1.addDecoded state.2 key (dec bytes) k
     else match supplied.find? (·.1 == key) with
-      | some (_,bytes) => state.1.addBytes state.2 key bytes k vector
+      | some (_,bytes) => state.1.addDecoded state.2 key (dec bytes) k
       | none => (state.1.insert key (.error s!"image resource not supplied: {key}"),state.2))
     (({} : NativeImage.Store),0)).1
+
+/-- Kind: equality. Says: a store made with a decoder that answers as `decodeWith vector`
+does, on every input, is the store of `imageStoreOfWith (decodeWith vector)`. -/
+theorem imageStoreOfWith_congr (dec : ByteArray → NativeImage.Decoded) (vector : NativeImage.VectorReader)
+    (h : ∀ b, dec b = NativeImage.decodeWith vector b) (keys : List String) (supplied : List (String × ByteArray)) :
+    imageStoreOfWith dec keys supplied = imageStoreOfWith (NativeImage.decodeWith vector) keys supplied := by
+  have : dec = NativeImage.decodeWith vector := funext h
+  subst this; rfl
+
+/-- As `imageStore`, for the keys `keys` (SVG `image` and HTML `img` references): the factor
+at which the document's images fit its pixel budget (`NativeImage.factorFor`), from the
+sizes that the files' headers give (1 when they fit as they are), then each image decoded
+(`NativeImage.decodeWith vector`) and held at it (`imageStoreOfWith`). -/
+def imageStoreOf (keys : List String) (supplied : List (String × ByteArray) := [])
+    (vector : NativeImage.VectorReader := fun _ => none) : NativeImage.Store :=
+  imageStoreOfWith (NativeImage.decodeWith vector) keys supplied
 
 /-- Decode each image of a tree once. `supplied` holds the bytes that the host
     fetched, by key; a `data:` URI needs no host. A reference with no bytes, and an

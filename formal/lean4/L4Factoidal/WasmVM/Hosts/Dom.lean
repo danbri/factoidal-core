@@ -93,6 +93,9 @@ inductive Command where
   | importNode (node doc : Nat) (deep : Bool) (result : Nat)
   /-- The checkedness of an `input` set to `value` (`DOM.Forms.setChecked`). -/
   | setChecked (node : Nat) (value : Bool)
+  /-- The dirty value of an `input` (`Node.dirtyValue`): `some v` sets its value to `v` and
+  its dirty value flag, `none` clears the flag (HTML §4.10.5). -/
+  | setValue (node : Nat) (value : Option String)
   /-- The reset algorithm of form `node` (`DOM.Forms.resetForm`). -/
   | resetForm (node : Nat)
   /-- The element states of `node` (`Node.states`: a showing popover, a modal dialog, a
@@ -416,7 +419,7 @@ def Command.sameWrite : Command → Command → Bool
 `name` and the tree): a write before one of them stays before it. -/
 def Command.reads : Command → Bool
   | .cloneNode .. | .importNode .. | .normalize _ | .setAttributeNS .. | .removeAttributeNS ..
-  | .adoptNode .. | .setChecked .. | .resetForm _ | .attachShadow .. | .assignSlot .. | .replaceData .. | .splitText .. | .frameDocument ..
+  | .adoptNode .. | .setChecked .. | .setValue .. | .resetForm _ | .attachShadow .. | .assignSlot .. | .replaceData .. | .splitText .. | .frameDocument ..
   | .registerProperty .. => true
   | _ => false
 
@@ -1971,6 +1974,10 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n
     if !Forms.isHtml d n ["form"] then throw "script command: target must be a form"
     return Forms.resetForm d n
+  | .setValue n v => do
+    checkNode d n
+    if !Forms.isHtml d n ["input"] then throw "script command: target must be an input"
+    return d.setNode n fun x => { x with dirtyValue := v }
   | .attachShadow h f r => do
     checkNode d h
     match d.attachShadow h (shadowInitOfFlags f) with

@@ -1,5 +1,5 @@
 // The scroll prefetch rules (scroll_prefetch.ts), with no window and no engine.
-import {keepReach,trackMotion,prefetchTarget,stateKey,sameState,canSwap,MOTION_GAP_MS,type Band,type Motion} from "./scroll_prefetch.ts";
+import {keepReach,trackMotion,prefetchTarget,stateKey,sameState,canSwap,holdForPrefetch,MOTION_GAP_MS,type Band,type Motion} from "./scroll_prefetch.ts";
 const assert=(ok:boolean,message:string)=>{if(!ok)throw new Error(message);};
 
 // WebDocument.band and Band.keepFrom/keepTo, with bandMargin 512, refreshMargin 128 and
@@ -83,4 +83,14 @@ Deno.test("swap only past the shown band, in the prefetched band, for the same s
   assert(canSwap(shownBand,prefetched,key,shownBand.keepTo+1),"past it, in the next");
   assert(!canSwap(shownBand,prefetched,key,next.keepTo+1),"past both");
   assert(!canSwap(shownBand,prefetched,stateKey(doc,{shell:{scroll:0},textScalePercent:200},1600,1000),shownBand.keepTo+1),"state changed");
+});
+
+Deno.test("a frame waits for a band prefetched for the same state, never for another state",()=>{
+  const doc={},resources={};
+  const at=(scroll:number,extra:Record<string,unknown>={})=>stateKey(doc,{resources,shell:{scroll,top:65},...extra},1280,800);
+  assert(!holdForPrefetch(undefined,at(2400)),"no prefetch: no hold");
+  assert(holdForPrefetch({key:at(240)},at(2400)),"the same state at another scroll: hold");
+  assert(!holdForPrefetch({key:at(240)},at(2400,{hover:12})),"a pointer change: no hold");
+  assert(!holdForPrefetch({key:at(240)},stateKey({},{resources,shell:{scroll:2400,top:65}},1280,800)),"another document: no hold");
+  assert(!holdForPrefetch({key:at(240)},stateKey(doc,{resources,shell:{scroll:2400,top:65}},1280,700)),"another size: no hold");
 });

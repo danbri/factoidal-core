@@ -45,7 +45,7 @@ inductive Skip where
   /-- An external stylesheet that the host could not fetch, or did not fetch because of a
   limit: the page is drawn without it, as a browser does after a failed fetch. -/
   | stylesheetMissing
-  /-- Style sheets past the limit on the bytes of all sheets (2 MiB): not applied. -/
+  /-- Style sheets past the limit on the bytes of all sheets (8 MiB): not applied. -/
   | stylesheetBytes
   /-- Elements nested deeper than layout reads (64 levels): the deeper content is not drawn. -/
   | nestingDepth

@@ -55,6 +55,10 @@
     TYPE_MISMATCH_ERR: 17, SECURITY_ERR: 18, NETWORK_ERR: 19, ABORT_ERR: 20, URL_MISMATCH_ERR: 21,
     QUOTA_EXCEEDED_ERR: 22, TIMEOUT_ERR: 23, INVALID_NODE_TYPE_ERR: 24, DATA_CLONE_ERR: 25 };
   consts(DOMException, legacy); consts(DOMException.prototype, legacy);
+  // Web IDL §3.7.6: an operation called with fewer arguments than it requires throws.
+  const idlArgs = (got, k, iface, op) => {
+    if (got < k) throw new TypeError(`Failed to execute '${op}' on '${iface}': ${k} argument${k > 1 ? 's' : ''} required, but only ${got} present.`);
+  };
   const fail = code => {
     switch (code) {
       case -2: throw new TypeError('not a node of the right type');
@@ -127,15 +131,278 @@
     return typeof s === 'string' && s !== '' ? s.split(' ').map(k => wrap(Number(k))) : [];
   };
   const viewport = () => { const v = query(0, 19, 2); return v[0] > 0 ? v : [800, 600]; };
-  class DOMRectReadOnly {
-    constructor(x = 0, y = 0, width = 0, height = 0) { Object.assign(this, { x: +x, y: +y, width: +width, height: +height }); }
-    get top() { return Math.min(this.y, this.y + this.height); }
-    get bottom() { return Math.max(this.y, this.y + this.height); }
-    get left() { return Math.min(this.x, this.x + this.width); }
-    get right() { return Math.max(this.x, this.x + this.width); }
-    toJSON() { return { x: this.x, y: this.y, width: this.width, height: this.height, top: this.top, right: this.right, bottom: this.bottom, left: this.left }; }
-  }
-  class DOMRect extends DOMRectReadOnly {}
+  // ==== geometry ==== Geometry Interfaces 1: DOMPoint, DOMRect, DOMQuad, DOMMatrix and
+  // their read-only forms. The objects keep their numbers; every new matrix (from a string,
+  // a dictionary, a sequence, a product, a rotation, an inverse) and every transformed point
+  // is Lean's (`Rendering.Geometry.answer`, node_query 156), the numbers passed as the hex
+  // digits of their bits so that they come back exactly.
+  const geometry = (() => {
+    const dv = new DataView(new ArrayBuffer(8));
+    const hx = x => { dv.setFloat64(0, x); return dv.getUint32(0).toString(16).padStart(8, '0') + dv.getUint32(4).toString(16).padStart(8, '0'); };
+    const unhex = (s, i) => { dv.setUint32(0, parseInt(s.slice(i, i + 8), 16)); dv.setUint32(4, parseInt(s.slice(i + 8, i + 16), 16)); return dv.getFloat64(0); };
+    const ABSENT = '----------------';
+    const ask = q => { const r = n.query(0, 156, q); return typeof r === 'string' ? r : 'T'; };
+    const workerScope = () => { try { return inWorker; } catch { return false; } };
+    const illegal = () => new TypeError('Illegal invocation');
+    const slot = (map, o) => { const s = map.get(o); if (s === undefined) throw illegal(); return s; };
+    const num = v => +v;
+    const dictOf = (v, what) => {
+      if (v === undefined || v === null) return {};
+      if (typeof v !== 'object' && typeof v !== 'function') throw new TypeError(`${what}: the argument is not an object.`);
+      return v;
+    };
+    // methods and accessors as Web IDL makes them: enumerable, named "get x" / "set x"
+    const getter = (P, k, get, set) => {
+      const d = { enumerable: true, configurable: true, get: Object.getOwnPropertyDescriptor({ get [k]() { return get(this); } }, k).get };
+      if (set) d.set = Object.getOwnPropertyDescriptor({ set [k](v) { set(this, v); } }, k).set;
+      Object.defineProperty(P, k, d);
+    };
+    const method = (P, k, f, length) => {
+      Object.defineProperty(f, 'name', { value: k }); Object.defineProperty(f, 'length', { value: length });
+      Object.defineProperty(P, k, { value: f, writable: true, enumerable: true, configurable: true });
+    };
+    const tag = (C, name) => Object.defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
+
+    // ---- points (§2) ----
+    const points = new WeakMap();
+    class DOMPointReadOnly {
+      constructor(x = 0, y = 0, z = 0, w = 1) { points.set(this, { x: num(x), y: num(y), z: num(z), w: num(w) }); }
+    }
+    class DOMPoint extends DOMPointReadOnly {}
+    const pointOf = (C, p) => { const o = Object.create(C.prototype); points.set(o, p); return o; };
+    // DOMPointInit, its members in lexicographic order (Web IDL §3.2.17)
+    const pointInit = (v, what) => {
+      const d = dictOf(v, what);
+      const w = d.w, x = d.x, y = d.y, z = d.z;
+      return { x: x === undefined ? 0 : num(x), y: y === undefined ? 0 : num(y), z: z === undefined ? 0 : num(z), w: w === undefined ? 1 : num(w) };
+    };
+    for (const k of ['x', 'y', 'z', 'w']) {
+      getter(DOMPointReadOnly.prototype, k, o => slot(points, o)[k]);
+      getter(DOMPoint.prototype, k, o => slot(points, o)[k], (o, v) => { slot(points, o)[k] = num(v); });
+    }
+    method(DOMPointReadOnly, 'fromPoint', function fromPoint(other = undefined) { return pointOf(DOMPointReadOnly, pointInit(other, 'fromPoint')); }, 0);
+    method(DOMPoint, 'fromPoint', function fromPoint(other = undefined) { return pointOf(DOMPoint, pointInit(other, 'fromPoint')); }, 0);
+    method(DOMPointReadOnly.prototype, 'matrixTransform', function matrixTransform(matrix = undefined) {
+      const p = slot(points, this), m = matrixInit(matrix, true, 'matrixTransform');
+      const r = ask('point\u0000' + enc(m) + '\u0000' + hx(p.x) + '\u0000' + hx(p.y) + '\u0000' + hx(p.z) + '\u0000' + hx(p.w));
+      if (r.length !== 64) throw new TypeError('matrixTransform: the matrix is not valid');
+      return pointOf(DOMPoint, { x: unhex(r, 0), y: unhex(r, 16), z: unhex(r, 32), w: unhex(r, 48) });
+    }, 0);
+    method(DOMPointReadOnly.prototype, 'toJSON', function toJSON() { const p = slot(points, this); return { x: p.x, y: p.y, z: p.z, w: p.w }; }, 0);
+
+    // ---- rectangles (§4) ----
+    const rects = new WeakMap();
+    class DOMRectReadOnly {
+      constructor(x = 0, y = 0, width = 0, height = 0) { rects.set(this, { x: num(x), y: num(y), width: num(width), height: num(height) }); }
+    }
+    class DOMRect extends DOMRectReadOnly {}
+    const rectOf = (C, r) => { const o = Object.create(C.prototype); rects.set(o, r); return o; };
+    const rectInit = (v, what) => {
+      const d = dictOf(v, what);
+      const height = d.height, width = d.width, x = d.x, y = d.y;
+      return { x: x === undefined ? 0 : num(x), y: y === undefined ? 0 : num(y), width: width === undefined ? 0 : num(width), height: height === undefined ? 0 : num(height) };
+    };
+    for (const k of ['x', 'y', 'width', 'height']) {
+      getter(DOMRectReadOnly.prototype, k, o => slot(rects, o)[k]);
+      getter(DOMRect.prototype, k, o => slot(rects, o)[k], (o, v) => { slot(rects, o)[k] = num(v); });
+    }
+    // top is min(y, y + height) and so on, NaN when either is (§4.1)
+    const lo = (a, b) => Math.min(a, b), hi = (a, b) => Math.max(a, b);
+    getter(DOMRectReadOnly.prototype, 'top', o => { const r = slot(rects, o); return lo(r.y, r.y + r.height); });
+    getter(DOMRectReadOnly.prototype, 'right', o => { const r = slot(rects, o); return hi(r.x, r.x + r.width); });
+    getter(DOMRectReadOnly.prototype, 'bottom', o => { const r = slot(rects, o); return hi(r.y, r.y + r.height); });
+    getter(DOMRectReadOnly.prototype, 'left', o => { const r = slot(rects, o); return lo(r.x, r.x + r.width); });
+    method(DOMRectReadOnly, 'fromRect', function fromRect(other = undefined) { return rectOf(DOMRectReadOnly, rectInit(other, 'fromRect')); }, 0);
+    method(DOMRect, 'fromRect', function fromRect(other = undefined) { return rectOf(DOMRect, rectInit(other, 'fromRect')); }, 0);
+    method(DOMRectReadOnly.prototype, 'toJSON', function toJSON() {
+      slot(rects, this);
+      return { x: this.x, y: this.y, width: this.width, height: this.height, top: this.top, right: this.right, bottom: this.bottom, left: this.left };
+    }, 0);
+    // DOMRectList (§4.2): what getClientRects() answers
+    const rectLists = new WeakMap();
+    class DOMRectList { constructor() { throw new TypeError('Illegal constructor'); } }
+    getter(DOMRectList.prototype, 'length', o => slot(rectLists, o).length);
+    method(DOMRectList.prototype, 'item', function item(index) {
+      const xs = slot(rectLists, this);
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'item' on 'DOMRectList': 1 argument required, but only 0 present.");
+      return xs[index >>> 0] ?? null;
+    }, 1);
+    Object.defineProperty(DOMRectList.prototype, Symbol.iterator, { value: Array.prototype[Symbol.iterator], writable: true, configurable: true });
+    const rectList = xs => {
+      const o = Object.create(DOMRectList.prototype); rectLists.set(o, xs);
+      xs.forEach((r, i) => Object.defineProperty(o, i, { value: r, enumerable: true, configurable: true }));
+      return o;
+    };
+
+    // ---- quadrilaterals (§5) ----
+    const quads = new WeakMap();
+    class DOMQuad {
+      constructor(p1 = undefined, p2 = undefined, p3 = undefined, p4 = undefined) {
+        quads.set(this, [p1, p2, p3, p4].map(p => pointOf(DOMPoint, pointInit(p, 'DOMQuad'))));
+      }
+    }
+    const quadOf = ps => { const o = Object.create(DOMQuad.prototype); quads.set(o, ps.map(p => pointOf(DOMPoint, p))); return o; };
+    ['p1', 'p2', 'p3', 'p4'].forEach((k, i) => getter(DOMQuad.prototype, k, o => slot(quads, o)[i]));
+    method(DOMQuad, 'fromRect', function fromRect(other = undefined) {
+      const r = rectInit(other, 'fromRect');
+      return quadOf([{ x: r.x, y: r.y, z: 0, w: 1 }, { x: r.x + r.width, y: r.y, z: 0, w: 1 },
+        { x: r.x + r.width, y: r.y + r.height, z: 0, w: 1 }, { x: r.x, y: r.y + r.height, z: 0, w: 1 }]);
+    }, 0);
+    method(DOMQuad, 'fromQuad', function fromQuad(other = undefined) {
+      const d = dictOf(other, 'fromQuad');
+      const p1 = d.p1, p2 = d.p2, p3 = d.p3, p4 = d.p4;
+      return quadOf([p1, p2, p3, p4].map(p => pointInit(p, 'fromQuad')));
+    }, 0);
+    method(DOMQuad.prototype, 'getBounds', function getBounds() {
+      const ps = slot(quads, this).map(p => slot(points, p));
+      // §5.1: the least and greatest of the coordinates, NaN when any is
+      const ext = (k, f) => ps.reduce((a, p) => Number.isNaN(a) || Number.isNaN(p[k]) ? NaN : f(a, p[k]), ps[0][k]);
+      const left = ext('x', Math.min), top = ext('y', Math.min);
+      return rectOf(DOMRect, { x: left, y: top, width: ext('x', Math.max) - left, height: ext('y', Math.max) - top });
+    }, 0);
+    method(DOMQuad.prototype, 'toJSON', function toJSON() { const ps = slot(quads, this); return { p1: ps[0], p2: ps[1], p3: ps[2], p4: ps[3] }; }, 0);
+
+    // ---- matrices (§6) ----
+    const matrices = new WeakMap();
+    const enc = st => (st.two ? '2' : '3') + st.m.map(hx).join('');
+    const dec = r => {
+      if (r === 'S') throw new DOMException('Failed to parse the string as a transform list.', 'SyntaxError');
+      if (r.length !== 257) throw new TypeError('The matrix is not valid.');
+      const m = new Array(16);
+      for (let i = 0; i < 16; i++) m[i] = unhex(r, 1 + 16 * i);
+      return { m, two: r[0] === '2' };
+    };
+    const IDENTITY = () => ({ m: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], two: true });
+    const NAMES3 = ['m11', 'm12', 'm13', 'm14', 'm21', 'm22', 'm23', 'm24', 'm31', 'm32', 'm33', 'm34', 'm41', 'm42', 'm43', 'm44'];
+    const ALIAS = { a: 0, b: 1, c: 4, d: 5, e: 12, f: 13 };
+    // DOMMatrix2DInit / DOMMatrixInit: the members read in lexicographic order, then Lean's
+    // "validate and fixup" (§6.1)
+    const ORDER2 = ['a', 'b', 'c', 'd', 'e', 'f', 'm11', 'm12', 'm21', 'm22', 'm41', 'm42'];
+    const ORDER3 = ['a', 'b', 'c', 'd', 'e', 'f', 'is2D', 'm11', 'm12', 'm13', 'm14', 'm21', 'm22', 'm23', 'm24', 'm31', 'm32', 'm33', 'm34', 'm41', 'm42', 'm43', 'm44'];
+    const SLOTS = ['a', 'b', 'c', 'd', 'e', 'f', ...NAMES3];
+    const matrixInit = (v, threeD, what) => {
+      const d = dictOf(v, what), got = {};
+      for (const k of threeD ? ORDER3 : ORDER2) { const x = d[k]; if (x !== undefined) got[k] = k === 'is2D' ? !!x : num(x); }
+      const r = ask('init\u0000' + (threeD ? '3' : '2') + '\u0000' + SLOTS.map(k => k in got ? hx(got[k]) : ABSENT).join('') +
+        '\u0000' + (got.is2D === undefined ? '-' : got.is2D ? '1' : '0'));
+      if (r === 'T') throw new TypeError(`Failed to execute '${what}': the dictionary is not a valid matrix.`);
+      return dec(r);
+    };
+    const matrixOf = (C, st) => { const o = Object.create(C.prototype); matrices.set(o, st); return o; };
+    const run = (st, verb, ...xs) => { const r = dec(ask(verb + '\u0000' + enc(st) + xs.map(x => '\u0000' + hx(x)).join(''))); st.m = r.m; st.two = r.two; };
+    const product = (a, b) => dec(ask('mul\u0000' + enc(a) + '\u0000' + enc(b)));
+    const parseList = (s, what) => {
+      if (workerScope()) throw new TypeError(`Failed to execute '${what}': a string is not allowed in a worker.`);
+      return dec(ask('parse\u0000' + s));
+    };
+    class DOMMatrixReadOnly {
+      constructor(init = undefined) {
+        let st;
+        if (init === undefined) st = IDENTITY();
+        else if (typeof init === 'object' && init !== null && typeof init[Symbol.iterator] === 'function') {
+          const xs = Array.from(init, num);
+          if (xs.length !== 6 && xs.length !== 16) throw new TypeError(`Failed to construct '${new.target.name}': The sequence must contain 6 elements for a 2D matrix or 16 elements for a 3D matrix.`);
+          st = dec(ask('seq\u0000' + xs.map(hx).join('')));
+        } else st = parseList(String(init), new.target.name);
+        matrices.set(this, st);
+      }
+    }
+    class DOMMatrix extends DOMMatrixReadOnly {}
+    const ZERO3 = new Set(['m13', 'm14', 'm23', 'm24', 'm31', 'm32', 'm34', 'm43']), ONE3 = new Set(['m33', 'm44']);
+    const setEntry = (k, i) => (o, v) => {
+      const st = slot(matrices, o), x = num(v);
+      st.m[i] = x;
+      if ((ZERO3.has(k) && x !== 0) || (ONE3.has(k) && x !== 1)) st.two = false;
+    };
+    for (const [k, i] of [...Object.entries(ALIAS), ...NAMES3.map((k, i) => [k, i])]) {
+      getter(DOMMatrixReadOnly.prototype, k, o => slot(matrices, o).m[i]);
+      getter(DOMMatrix.prototype, k, o => slot(matrices, o).m[i], setEntry(k, i));
+    }
+    getter(DOMMatrixReadOnly.prototype, 'is2D', o => slot(matrices, o).two);
+    getter(DOMMatrixReadOnly.prototype, 'isIdentity', o => { const m = slot(matrices, o).m; return IDENTITY().m.every((x, i) => m[i] === x); });
+    const self = o => slot(matrices, o);
+    const copy = o => { const st = self(o); return matrixOf(DOMMatrix, { m: st.m.slice(), two: st.two }); };
+    // the operations that change a DOMMatrix (§6.5), and the read-only ones that answer a changed copy
+    const selfOps = {
+      translateSelf: [(st, tx = 0, ty = 0, tz = 0) => run(st, 'translate', num(tx), num(ty), num(tz)), 0],
+      scaleSelf: [(st, sx = 1, sy = undefined, sz = 1, ox = 0, oy = 0, oz = 0) => {
+        sx = num(sx); run(st, 'scale', sx, sy === undefined ? sx : num(sy), num(sz), num(ox), num(oy), num(oz)); }, 0],
+      scale3dSelf: [(st, s = 1, ox = 0, oy = 0, oz = 0) => { s = num(s); run(st, 'scale', s, s, s, num(ox), num(oy), num(oz)); }, 0],
+      rotateSelf: [(st, rx = 0, ry = undefined, rz = undefined) => {
+        rx = num(rx);
+        if (ry === undefined && rz === undefined) run(st, 'rotate', 0, 0, rx);
+        else run(st, 'rotate', rx, ry === undefined ? 0 : num(ry), rz === undefined ? 0 : num(rz)); }, 0],
+      rotateFromVectorSelf: [(st, x = 0, y = 0) => run(st, 'vector', num(x), num(y)), 0],
+      rotateAxisAngleSelf: [(st, x = 0, y = 0, z = 0, angle = 0) => run(st, 'axis', num(x), num(y), num(z), num(angle)), 0],
+      skewXSelf: [(st, s = 0) => run(st, 'skewx', num(s)), 0],
+      skewYSelf: [(st, s = 0) => run(st, 'skewy', num(s)), 0],
+      multiplySelf: [(st, other = undefined) => { const o = matrixInit(other, true, 'multiplySelf'); const r = product(st, o); st.m = r.m; st.two = r.two; }, 0],
+      preMultiplySelf: [(st, other = undefined) => { const o = matrixInit(other, true, 'preMultiplySelf'); const r = product(o, st); st.m = r.m; st.two = r.two; }, 0],
+      invertSelf: [st => run(st, 'invert'), 0],
+    };
+    for (const [k, [f, length]] of Object.entries(selfOps))
+      method(DOMMatrix.prototype, k, function (...args) { f(self(this), ...args); return this; }, length);
+    method(DOMMatrix.prototype, 'setMatrixValue', function setMatrixValue(transformList) {
+      const st = self(this);
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'setMatrixValue' on 'DOMMatrix': 1 argument required, but only 0 present.");
+      const r = parseList(String(transformList), 'setMatrixValue'); st.m = r.m; st.two = r.two; return this;
+    }, 1);
+    for (const [k, self_, length] of [['translate', 'translateSelf', 0], ['scale', 'scaleSelf', 0], ['scale3d', 'scale3dSelf', 0],
+      ['rotate', 'rotateSelf', 0], ['rotateFromVector', 'rotateFromVectorSelf', 0], ['rotateAxisAngle', 'rotateAxisAngleSelf', 0],
+      ['skewX', 'skewXSelf', 0], ['skewY', 'skewYSelf', 0], ['multiply', 'multiplySelf', 0]])
+      method(DOMMatrixReadOnly.prototype, k, function (...args) { const c = copy(this); selfOps[self_][0](self(c), ...args); return c; }, length);
+    method(DOMMatrixReadOnly.prototype, 'scaleNonUniform', function scaleNonUniform(sx = 1, sy = 1) {
+      const c = copy(this); run(self(c), 'scale', num(sx), num(sy), 1, 0, 0, 0); return c; }, 0);
+    method(DOMMatrixReadOnly.prototype, 'flipX', function flipX() { const c = copy(this), st = self(c); const r = product(st, { m: [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], two: true }); st.m = r.m; st.two = r.two; return c; }, 0);
+    method(DOMMatrixReadOnly.prototype, 'flipY', function flipY() { const c = copy(this), st = self(c); const r = product(st, { m: [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], two: true }); st.m = r.m; st.two = r.two; return c; }, 0);
+    method(DOMMatrixReadOnly.prototype, 'inverse', function inverse() { const c = copy(this); run(self(c), 'invert'); return c; }, 0);
+    method(DOMMatrixReadOnly.prototype, 'transformPoint', function transformPoint(point = undefined) {
+      const st = self(this), p = pointInit(point, 'transformPoint');
+      const r = ask('point\u0000' + enc(st) + '\u0000' + hx(p.x) + '\u0000' + hx(p.y) + '\u0000' + hx(p.z) + '\u0000' + hx(p.w));
+      return pointOf(DOMPoint, { x: unhex(r, 0), y: unhex(r, 16), z: unhex(r, 32), w: unhex(r, 48) });
+    }, 0);
+    method(DOMMatrixReadOnly.prototype, 'toFloat32Array', function toFloat32Array() { return new Float32Array(self(this).m); }, 0);
+    method(DOMMatrixReadOnly.prototype, 'toFloat64Array', function toFloat64Array() { return new Float64Array(self(this).m); }, 0);
+    // the stringifier (§6.6): matrix() or matrix3d(), the numbers as ECMAScript writes them
+    method(DOMMatrixReadOnly.prototype, 'toString', function toString() {
+      const st = self(this);
+      if (!st.m.every(Number.isFinite)) throw new DOMException('Cannot serialize a matrix with non-finite values.', 'InvalidStateError');
+      return st.two ? `matrix(${[0, 1, 4, 5, 12, 13].map(i => String(st.m[i])).join(', ')})` : `matrix3d(${st.m.map(String).join(', ')})`;
+    }, 0);
+    method(DOMMatrixReadOnly.prototype, 'toJSON', function toJSON() {
+      const st = self(this), o = {};
+      for (const k of ['a', 'b', 'c', 'd', 'e', 'f']) o[k] = st.m[ALIAS[k]];
+      NAMES3.forEach((k, i) => { o[k] = st.m[i]; });
+      o.is2D = st.two; o.isIdentity = this.isIdentity;
+      return o;
+    }, 0);
+    for (const C of [DOMMatrixReadOnly, DOMMatrix]) {
+      method(C, 'fromMatrix', function fromMatrix(other = undefined) { return matrixOf(C, matrixInit(other, true, 'fromMatrix')); }, 0);
+      for (const [k, A] of [['fromFloat32Array', Float32Array], ['fromFloat64Array', Float64Array]])
+        method(C, k, function (array) {
+          if (!(array instanceof A)) throw new TypeError(`Failed to execute '${k}': parameter 1 is not of type '${A.name}'.`);
+          if (array.length !== 6 && array.length !== 16) throw new TypeError(`Failed to execute '${k}': The sequence must contain 6 elements for a 2D matrix or 16 elements for a 3D matrix.`);
+          return matrixOf(C, dec(ask('seq\u0000' + Array.from(array, hx).join(''))));
+        }, 1);
+    }
+    for (const [C, name] of [[DOMPointReadOnly, 'DOMPointReadOnly'], [DOMPoint, 'DOMPoint'], [DOMRectReadOnly, 'DOMRectReadOnly'], [DOMRect, 'DOMRect'],
+      [DOMRectList, 'DOMRectList'], [DOMQuad, 'DOMQuad'], [DOMMatrixReadOnly, 'DOMMatrixReadOnly'], [DOMMatrix, 'DOMMatrix']]) tag(C, name);
+    // serializable (§7): a copy of the same interface, its numbers as they are
+    const clone = v => {
+      if (v === null || typeof v !== 'object') return undefined;
+      const p = points.get(v);
+      if (p) return pointOf(v instanceof DOMPoint ? DOMPoint : DOMPointReadOnly, { ...p });
+      const r = rects.get(v);
+      if (r) return rectOf(v instanceof DOMRect ? DOMRect : DOMRectReadOnly, { ...r });
+      const q = quads.get(v);
+      if (q) return quadOf(q.map(pt => ({ ...slot(points, pt) })));
+      const m = matrices.get(v);
+      if (m) return matrixOf(v instanceof DOMMatrix ? DOMMatrix : DOMMatrixReadOnly, { m: m.m.slice(), two: m.two });
+      return undefined;
+    };
+    return { DOMPointReadOnly, DOMPoint, DOMRectReadOnly, DOMRect, DOMRectList, DOMQuad, DOMMatrixReadOnly, DOMMatrix, rectList, clone, matrixInit };
+  })();
+  const { DOMPointReadOnly, DOMPoint, DOMRectReadOnly, DOMRect, DOMRectList, DOMQuad, DOMMatrixReadOnly, DOMMatrix } = geometry;
 
   // ---- events --------------------------------------------------------------------
   const ev = new WeakMap();
@@ -884,12 +1151,12 @@
     querySelectorAll(sel) { if (arguments.length < 1) throw new TypeError('querySelectorAll: 1 argument required'); return staticList(select(this, sel, false)); },
     // DOM §4.2.6.2 "list of elements with qualified name": in an HTML document, an HTML element
     // matches the ASCII lower case of the name.
-    getElementsByTagName(name) { const id = nodeId(this); name = String(name); const lower = name.replace(/[A-Z]/g, c => c.toLowerCase());
+    getElementsByTagName(name) { idlArgs(arguments.length, 1, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementsByTagName'); const id = nodeId(this); name = String(name); const lower = name.replace(/[A-Z]/g, c => c.toLowerCase());
       return liveCollection(() => elementsOf(id).filter(k => { if (name === '*') return true;
         const p = str(k, 5), q = p === null ? str(k, 0) : p + ':' + str(k, 0); return q === (info(k, 8) === 1 ? lower : name); })); },
-    getElementsByTagNameNS(ns, localName) { const id = nodeId(this); ns = ns === null || ns === undefined || ns === '' ? null : String(ns); localName = String(localName);
+    getElementsByTagNameNS(ns, localName) { idlArgs(arguments.length, 2, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementsByTagNameNS'); const id = nodeId(this); ns = ns === null || ns === undefined || ns === '' ? null : String(ns); localName = String(localName);
       return liveCollection(() => elementsOf(id).filter(k => (ns === '*' || str(k, 2) === ns) && (localName === '*' || str(k, 0) === localName))); },
-    getElementsByClassName(names) { const id = nodeId(this); const want = String(names).split(/[ \t\n\f\r]+/).filter(Boolean);
+    getElementsByClassName(names) { idlArgs(arguments.length, 1, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementsByClassName'); const id = nodeId(this); const want = String(names).split(/[ \t\n\f\r]+/).filter(Boolean);
       return liveCollection(() => want.length === 0 ? [] : elementsOf(id).filter(k => { const c = (n.attr(k, 'class') ?? '').split(/[ \t\n\f\r]+/); return want.every(w => c.includes(w)); })); },
   };
   const childNode = {
@@ -954,7 +1221,7 @@
     // is the viewport.
     getBoundingClientRect() { const b = layoutOf(this); return new DOMRect(b[0], b[1], b[2], b[3]); }
     // an element with no box (the engine's twelfth number is -1) has no client rects (CSSOM View §6.1)
-    getClientRects() { const b = query(nodeId(this), 17, 8); if (b.length >= 12 && b[11] === -1) return []; return [new DOMRect(b[0], b[1], b[2], b[3])]; }
+    getClientRects() { const b = query(nodeId(this), 17, 8); if (b.length >= 12 && b[11] === -1) return geometry.rectList([]); return geometry.rectList([new DOMRect(b[0], b[1], b[2], b[3])]); }
     get clientWidth() { return this === document.documentElement ? viewport()[0] : Math.round(layoutOf(this)[6]); }
     get clientHeight() { return this === document.documentElement ? viewport()[1] : Math.round(layoutOf(this)[7]); }
     get clientLeft() { return Math.round(layoutOf(this)[4]); }
@@ -975,11 +1242,11 @@
     set className(v) { chk(n.setAttr(nodeId(this), 'class', String(v))); }
     get classList() { let l = tokenLists.get(this); if (!l) tokenLists.set(this, l = tokenList(this, 'class')); return l; }
     set classList(v) { this.classList.value = v; }
-    getAttribute(name) { const r = n.attr(nodeId(this), String(name)); return typeof r === 'number' ? fail(r) : r; }
+    getAttribute(name) { idlArgs(arguments.length, 1, 'Element', 'getAttribute'); const r = n.attr(nodeId(this), String(name)); return typeof r === 'number' ? fail(r) : r; }
     // The namespaced forms pass "namespace U+0000 name" (Hosts.Dom.nsName?).
-    getAttributeNS(ns, name) { const r = n.attr(nodeId(this), nsArg(ns) + '\u0000' + String(name)); return typeof r === 'number' ? fail(r) : r; }
-    hasAttribute(name) { return this.getAttribute(name) !== null; }
-    hasAttributeNS(ns, name) { return this.getAttributeNS(ns, name) !== null; }
+    getAttributeNS(ns, name) { idlArgs(arguments.length, 2, 'Element', 'getAttributeNS'); const r = n.attr(nodeId(this), nsArg(ns) + '\u0000' + String(name)); return typeof r === 'number' ? fail(r) : r; }
+    hasAttribute(name) { idlArgs(arguments.length, 1, 'Element', 'hasAttribute'); return this.getAttribute(name) !== null; }
+    hasAttributeNS(ns, name) { idlArgs(arguments.length, 2, 'Element', 'hasAttributeNS'); return this.getAttributeNS(ns, name) !== null; }
     hasAttributes() { return this.getAttributeNames().length > 0; }
     setAttribute(name, value) {
       if (arguments.length < 2) throw new TypeError('setAttribute: 2 arguments required');
@@ -991,7 +1258,7 @@
       const q = String(name);
       chk(n.setAttr(nodeId(this), nsArg(ns) + '\u0000' + q, ttAttr === null ? String(value) : ttAttr(this, nsArg(ns), q, value)));
     }
-    removeAttribute(name) {
+    removeAttribute(name) { idlArgs(arguments.length, 1, 'Element', 'removeAttribute');
       const k = lowerIfHtml(this, String(name)), a = attrNodes(this).find(x => x.name === k);
       if (a) detachAttr(a);
       chk(n.removeAttr(nodeId(this), String(name)));
@@ -999,8 +1266,8 @@
       if (a && k.startsWith('on') && handlerNames.includes(k.slice(2)) && (this instanceof HTMLElement || this instanceof SVGElement || this instanceof MathMLElement))
         { const t = windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? bodyWindow(this) : this; if (t) setHandler(t, k.slice(2), null); }
     }
-    removeAttributeNS(ns, name) { const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
-    toggleAttribute(name, force) {
+    removeAttributeNS(ns, name) { idlArgs(arguments.length, 2, 'Element', 'removeAttributeNS'); const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
+    toggleAttribute(name, force) { idlArgs(arguments.length, 1, 'Element', 'toggleAttribute');
       name = String(name);
       chk(n.query(0, 3, name));
       const has = this.hasAttribute(name);
@@ -1008,11 +1275,11 @@
       if (!has && (force === undefined || force === true)) { setAttrPlain(this, name, ''); return true; }
       return has;
     }
-    getAttributeNode(name) { name = lowerIfHtml(this, String(name)); return attrNodes(this).find(a => a.name === name) ?? null; }
-    getAttributeNodeNS(ns, name) { return attrNode(this, nsArg(ns) || null, String(name)); }
+    getAttributeNode(name) { idlArgs(arguments.length, 1, 'Element', 'getAttributeNode'); name = lowerIfHtml(this, String(name)); return attrNodes(this).find(a => a.name === name) ?? null; }
+    getAttributeNodeNS(ns, name) { idlArgs(arguments.length, 2, 'Element', 'getAttributeNodeNS'); return attrNode(this, nsArg(ns) || null, String(name)); }
     setAttributeNode(attr) { return setAttrNode(this, attr); }
     setAttributeNodeNS(attr) { return setAttrNode(this, attr); }
-    removeAttributeNode(attr) {
+    removeAttributeNode(attr) { idlArgs(arguments.length, 1, 'Element', 'removeAttributeNode');
       if (!(attr instanceof Attr) || attrState.get(attr).el !== this) throw new DOMException('The attribute is not on this element.', 'NotFoundError');
       const a = attrState.get(attr);
       detachAttr(attr); chk(n.removeAttr(nodeId(this), (a.ns ?? '') + '\u0000' + a.lname)); return attr;
@@ -1022,8 +1289,8 @@
     matches(sel) { if (arguments.length < 1) throw new TypeError('matches: 1 argument required'); return selectorQuery(nodeId(this), 8, sel) === '1'; }
     webkitMatchesSelector(sel) { if (arguments.length < 1) throw new TypeError('webkitMatchesSelector: 1 argument required'); return this.matches(sel); }
     closest(sel) { if (arguments.length < 1) throw new TypeError('closest: 1 argument required'); const k = selectorQuery(nodeId(this), 9, sel); return k === null ? null : wrap(Number(k)); }
-    insertAdjacentElement(where, el) { return insertAdjacent(this, where, el); }
-    insertAdjacentText(where, text) { insertAdjacent(this, where, document.createTextNode(text)); }
+    insertAdjacentElement(where, el) { idlArgs(arguments.length, 2, 'Element', 'insertAdjacentElement'); return insertAdjacent(this, where, el); }
+    insertAdjacentText(where, text) { idlArgs(arguments.length, 2, 'Element', 'insertAdjacentText'); insertAdjacent(this, where, document.createTextNode(text)); }
   }
   // ---- Attr and NamedNodeMap (DOM §4.9.1, §4.9.2) ----------------------------------------
   // The attributes are Lean's, on their element (Hosts.Dom node_query 2 lists them). An Attr
@@ -1426,6 +1693,245 @@
     // (a media element with loading=lazy waits until it is needed: not on a src change)
     mediaSrcSet = el => { if (el instanceof HTMLMediaElement && String(el.getAttribute('loading') ?? '').toLowerCase() !== 'lazy') el.load(); };
     Object.assign(mediaGlobals, { Audio, MediaError, TimeRanges });
+  }
+  // ---- Text tracks and the track lists of media elements (HTML §4.8.11.11, §4.8.11.10):
+  // the objects and their state. A media element's text tracks are those of its `track`
+  // children, in tree order, then those a script added (addTextTrack). With no media
+  // decoders nothing plays, so no cue becomes active and no time marches on; a `track`
+  // element's file is not fetched (its readiness stays "not loaded"). The audio and video
+  // track lists are empty. A page that never asks pays nothing: the objects are made when
+  // read.
+  {
+    const isIndex = p => typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p);
+    const illegal = () => { throw new TypeError('Illegal constructor'); };
+    const priv = new WeakMap();
+    const own = (o, C, what) => { const v = priv.get(o); if (v === undefined || !(o instanceof C)) throw new TypeError(`Illegal invocation${what ? ': ' + what : ''}`); return v; };
+    // A list with indexed getters over `items()` (WebIDL §3.9: indices are read-only).
+    const objList = (C, items, st) => {
+      const t = Object.create(C.prototype);
+      priv.set(t, st);
+      const p = new Proxy(t, {
+        get(o, k, r) { if (isIndex(k)) return items()[Number(k)]; return Reflect.get(o, k, r); },
+        set(o, k, v, r) { if (isIndex(k)) return false; return Reflect.set(o, k, v, r); },
+        defineProperty(o, k, d) { if (isIndex(k)) return false; return Reflect.defineProperty(o, k, d); },
+        has(o, k) { if (isIndex(k)) return Number(k) < items().length; return Reflect.has(o, k); },
+        ownKeys(o) { return [...items().keys()].map(String).concat(Reflect.ownKeys(o)); },
+        getOwnPropertyDescriptor(o, k) {
+          if (isIndex(k)) { const x = items()[Number(k)]; return x === undefined ? undefined : { value: x, enumerable: true, configurable: true, writable: false }; }
+          return Reflect.getOwnPropertyDescriptor(o, k);
+        },
+      });
+      priv.set(p, st);
+      return p;
+    };
+    const handlersOn = (C, names) => { for (const name of names)
+      Object.defineProperty(C.prototype, 'on' + name, { get() { return handlerOf(this, name); }, set(f) { setHandler(this, name, f); }, configurable: true, enumerable: true }); };
+    const getters = (C, o) => { for (const [k, f] of Object.entries(o)) Object.defineProperty(C.prototype, k, { get: f, configurable: true, enumerable: true }); };
+
+    // ---- cues (HTML §4.8.11.11.6; WebVTT §8.2 VTTCue) ----
+    class TextTrackCue extends EventTarget { constructor() { super(); illegal(); } }
+    const cueOf = c => own(c, TextTrackCue);
+    const finiteCue = (v, what) => { const x = Number(v); if (!Number.isFinite(x)) throw new TypeError(`Failed to set the '${what}' property on 'TextTrackCue': The provided double value is non-finite.`); return x; };
+    Object.defineProperties(TextTrackCue.prototype, {
+      track: { get() { return cueOf(this).track; }, configurable: true, enumerable: true },
+      id: { get() { return cueOf(this).id; }, set(v) { cueOf(this).id = String(v); }, configurable: true, enumerable: true },
+      startTime: { get() { return cueOf(this).start; }, set(v) { const c = cueOf(this); c.start = finiteCue(v, 'startTime'); if (c.track) sortCues(own(c.track, TextTrack)); }, configurable: true, enumerable: true },
+      endTime: { get() { return cueOf(this).end; }, set(v) { const c = cueOf(this); c.end = finiteCue(v, 'endTime'); if (c.track) sortCues(own(c.track, TextTrack)); }, configurable: true, enumerable: true },
+      pauseOnExit: { get() { return cueOf(this).pauseOnExit; }, set(v) { cueOf(this).pauseOnExit = !!v; }, configurable: true, enumerable: true },
+    });
+    handlersOn(TextTrackCue, ['enter', 'exit']);
+    let cueOrder = 0;
+    const enumIn = (v, allowed) => allowed.includes(String(v)) ? String(v) : undefined;
+    class VTTCue extends TextTrackCue {
+      constructor(startTime, endTime, text) {
+        if (new.target === undefined) throw new TypeError("Failed to construct 'VTTCue': Please use the 'new' operator, this DOM object constructor cannot be called as a function.");
+        if (arguments.length < 3) throw new TypeError(`Failed to construct 'VTTCue': 3 arguments required, but only ${arguments.length} present.`);
+        const start = Number(startTime), end = Number(endTime);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) throw new TypeError("Failed to construct 'VTTCue': The provided double value is non-finite.");
+        const o = Reflect.construct(EventTarget, [], new.target);
+        priv.set(o, { track: null, id: '', start, end, pauseOnExit: false, order: cueOrder++, text: String(text),
+          region: null, vertical: '', snapToLines: true, line: 'auto', lineAlign: 'start', position: 'auto', positionAlign: 'auto', size: 100, align: 'center' });
+        return o;
+      }
+      getCueAsHTML() { const f = document.createDocumentFragment(); f.append(own(this, VTTCue).text); return f; }
+    }
+    const vtt = c => own(c, VTTCue);
+    const pct = (v, what) => { const x = Number(v); if (!Number.isFinite(x)) throw new TypeError(`Failed to set the '${what}' property on 'VTTCue': The provided double value is non-finite.`);
+      if (x < 0 || x > 100) throw new DOMException(`Failed to set the '${what}' property on 'VTTCue': The value provided (${x}) is outside the range [0, 100].`, 'IndexSizeError'); return x; };
+    Object.defineProperties(VTTCue.prototype, {
+      region: { get() { return vtt(this).region; }, set(v) { vtt(this).region = v ?? null; }, configurable: true, enumerable: true },
+      vertical: { get() { return vtt(this).vertical; }, set(v) { const x = enumIn(v, ['', 'rl', 'lr']); if (x !== undefined) vtt(this).vertical = x; }, configurable: true, enumerable: true },
+      snapToLines: { get() { return vtt(this).snapToLines; }, set(v) { vtt(this).snapToLines = !!v; }, configurable: true, enumerable: true },
+      line: { get() { return vtt(this).line; }, set(v) {
+        if (v === 'auto') { vtt(this).line = 'auto'; return; }
+        const x = Number(v); if (typeof v === 'string' || !Number.isFinite(x)) throw new TypeError("Failed to set the 'line' property on 'VTTCue': The provided value is not 'auto' or a finite number.");
+        vtt(this).line = x; }, configurable: true, enumerable: true },
+      lineAlign: { get() { return vtt(this).lineAlign; }, set(v) { const x = enumIn(v, ['start', 'center', 'end']); if (x !== undefined) vtt(this).lineAlign = x; }, configurable: true, enumerable: true },
+      position: { get() { return vtt(this).position; }, set(v) { vtt(this).position = v === 'auto' ? 'auto' : pct(v, 'position'); }, configurable: true, enumerable: true },
+      positionAlign: { get() { return vtt(this).positionAlign; }, set(v) { const x = enumIn(v, ['line-left', 'center', 'line-right', 'auto']); if (x !== undefined) vtt(this).positionAlign = x; }, configurable: true, enumerable: true },
+      size: { get() { return vtt(this).size; }, set(v) { vtt(this).size = pct(v, 'size'); }, configurable: true, enumerable: true },
+      align: { get() { return vtt(this).align; }, set(v) { const x = enumIn(v, ['start', 'center', 'end', 'left', 'right']); if (x !== undefined) vtt(this).align = x; }, configurable: true, enumerable: true },
+      text: { get() { return vtt(this).text; }, set(v) { vtt(this).text = String(v); }, configurable: true, enumerable: true },
+    });
+    class TextTrackCueList { constructor() { illegal(); } }
+    Object.defineProperty(TextTrackCueList.prototype, 'length', { get() { return own(this, TextTrackCueList).items().length; }, configurable: true, enumerable: true });
+    Object.defineProperty(TextTrackCueList.prototype, 'getCueById', { value: function getCueById(id) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'getCueById' on 'TextTrackCueList': 1 argument required, but only 0 present.");
+      id = String(id); if (id === '') return null;
+      return own(this, TextTrackCueList).items().find(c => cueOf(c).id === id) ?? null; }, writable: true, configurable: true, enumerable: true });
+    Object.defineProperty(TextTrackCueList.prototype, Symbol.iterator, { value: Array.prototype.values, writable: true, configurable: true });
+
+    // ---- text tracks (HTML §4.8.11.11.5) ----
+    class TextTrack extends EventTarget { constructor() { super(); illegal(); } }
+    const kinds = ['subtitles', 'captions', 'descriptions', 'chapters', 'metadata'];
+    const sortCues = st => st.cues.sort((a, b) => { const x = cueOf(a), y = cueOf(b); return x.start - y.start || y.end - x.end || x.order - y.order; });
+    // st: { kind(), label(), language(), id(), mode, cues, cueList, activeList, el (track element or null), media }
+    const makeTrack = st => {
+      const t = Reflect.construct(EventTarget, [], TextTrack);
+      st.cues = []; st.cueList = null; st.activeList = null; st.mode = st.mode ?? 'disabled';
+      priv.set(t, st);
+      return t;
+    };
+    const tt = t => own(t, TextTrack);
+    getters(TextTrack, {
+      kind() { return tt(this).kind(); }, label() { return tt(this).label(); }, language() { return tt(this).language(); },
+      id() { return tt(this).id(); }, inBandMetadataTrackDispatchType() { tt(this); return ''; },
+      cues() { const st = tt(this); if (st.mode === 'disabled') return null; if (st.cueList === null) st.cueList = objList(TextTrackCueList, () => st.cues, { items: () => st.cues }); return st.cueList; },
+      activeCues() { const st = tt(this); if (st.mode === 'disabled') return null; if (st.activeList === null) st.activeList = objList(TextTrackCueList, () => [], { items: () => [] }); return st.activeList; },
+    });
+    Object.defineProperty(TextTrack.prototype, 'mode', { get() { return tt(this).mode; }, set(v) {
+      const st = tt(this), m = enumIn(v, ['disabled', 'hidden', 'showing']);
+      if (m === undefined || m === st.mode) return;
+      st.mode = m;
+      // HTML §4.8.11.11.5: a change of mode queues a `change` event at the media element's list
+      if (st.media) { const list = st.media(); if (list) task(() => fire(list, 'change', {})); }
+    }, configurable: true, enumerable: true });
+    const methods = {
+      addCue(cue) {
+        const st = tt(this);
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'addCue' on 'TextTrack': 1 argument required, but only 0 present.");
+        if (!(cue instanceof TextTrackCue) || !priv.has(cue)) throw new TypeError("Failed to execute 'addCue' on 'TextTrack': parameter 1 is not of type 'TextTrackCue'.");
+        const c = cueOf(cue);
+        if (c.track === this) { const i = st.cues.indexOf(cue); if (i >= 0) st.cues.splice(i, 1); }
+        else if (c.track) { const o = tt(c.track); const i = o.cues.indexOf(cue); if (i >= 0) o.cues.splice(i, 1); }
+        c.track = this; c.order = cueOrder++;
+        st.cues.push(cue); sortCues(st);
+      },
+      removeCue(cue) {
+        const st = tt(this);
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'removeCue' on 'TextTrack': 1 argument required, but only 0 present.");
+        if (!(cue instanceof TextTrackCue) || !priv.has(cue)) throw new TypeError("Failed to execute 'removeCue' on 'TextTrack': parameter 1 is not of type 'TextTrackCue'.");
+        const i = st.cues.indexOf(cue);
+        if (i < 0) throw new DOMException("Failed to execute 'removeCue' on 'TextTrack': The specified cue is not listed in the TextTrack's list of cues.", 'NotFoundError');
+        st.cues.splice(i, 1); cueOf(cue).track = null;
+      },
+    };
+    for (const [k, f] of Object.entries(methods)) Object.defineProperty(TextTrack.prototype, k, { value: f, writable: true, configurable: true, enumerable: true });
+    handlersOn(TextTrack, ['cuechange']);
+
+    // ---- track lists (HTML §4.8.11.10.1, §4.8.11.11.5) ----
+    const listClass = name => {
+      const C = ({ [name]: class extends EventTarget { constructor() { super(); illegal(); } } })[name];
+      Object.defineProperty(C.prototype, 'length', { get() { return own(this, C).items().length; }, configurable: true, enumerable: true });
+      Object.defineProperty(C.prototype, 'getTrackById', { value: function getTrackById(id) {
+        if (arguments.length < 1) throw new TypeError(`Failed to execute 'getTrackById' on '${name}': 1 argument required, but only 0 present.`);
+        id = String(id);
+        return own(this, C).items().find(t => t.id === id) ?? null; }, writable: true, configurable: true, enumerable: true });
+      Object.defineProperty(C.prototype, Symbol.iterator, { value: Array.prototype.values, writable: true, configurable: true });
+      handlersOn(C, ['change', 'addtrack', 'removetrack']);
+      return C;
+    };
+    const TextTrackList = listClass('TextTrackList'), AudioTrackList = listClass('AudioTrackList'), VideoTrackList = listClass('VideoTrackList');
+    // a list that is also an event target: the proxy stands for the target everywhere (its
+    // listeners and handlers are the proxy's)
+    const eventList = (C, items) => {
+      const st = { items }, o = Reflect.construct(EventTarget, [], C), p = proxyFor(o, items), id = ids.get(o);
+      priv.set(o, st); priv.set(p, st); ids.set(p, id); targets.set(id, p);
+      return p;
+    };
+    const proxyFor = (o, items) => new Proxy(o, {
+      get(t, k) { if (isIndex(k)) return items()[Number(k)]; const v = Reflect.get(t, k, t); return v; },
+      set(t, k, v) { if (isIndex(k)) return false; return Reflect.set(t, k, v, t); },
+      defineProperty(t, k, d) { if (isIndex(k)) return false; return Reflect.defineProperty(t, k, d); },
+      has(t, k) { if (isIndex(k)) return Number(k) < items().length; return Reflect.has(t, k); },
+      ownKeys(t) { return [...items().keys()].map(String).concat(Reflect.ownKeys(t)); },
+      getOwnPropertyDescriptor(t, k) {
+        if (isIndex(k)) { const x = items()[Number(k)]; return x === undefined ? undefined : { value: x, enumerable: true, configurable: true, writable: false }; }
+        return Reflect.getOwnPropertyDescriptor(t, k);
+      },
+    });
+    class AudioTrack { constructor() { illegal(); } }
+    class VideoTrack { constructor() { illegal(); } }
+    class TrackEvent extends Event {
+      constructor(type, init = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'TrackEvent': 1 argument required, but only 0 present.");
+        super(type, init);
+        const tr = initOf(init).track ?? null;
+        if (tr !== null && !(tr instanceof TextTrack || tr instanceof AudioTrack || tr instanceof VideoTrack))
+          throw new TypeError("Failed to construct 'TrackEvent': Failed to read the 'track' property from 'TrackEventInit': The provided value is not of type '(AudioTrack or TextTrack or VideoTrack)'.");
+        state(this).track = tr;
+      }
+      get track() { return state(this).track; }
+    }
+
+    // ---- the track element (HTML §4.8.13) ----
+    const trackEls = new WeakMap();   // track element -> its TextTrack
+    const trackOfEl = el => {
+      let t = trackEls.get(el);
+      if (!t) {
+        const kindOf = () => { const k = el.getAttribute('kind'); if (k === null) return 'subtitles'; const l = k.toLowerCase(); return kinds.includes(l) ? l : 'metadata'; };
+        t = makeTrack({ kind: kindOf, label: () => el.getAttribute('label') ?? '', language: () => el.getAttribute('srclang') ?? '',
+          id: () => el.getAttribute('id') ?? '', el, media: () => { const p = el.parentElement; return p instanceof HTMLMediaElement ? textTracksOf(p) : null; } });
+        trackEls.set(el, t);
+      }
+      return t;
+    };
+    const TE = named.HTMLTrackElement;
+    const trackConsts = { NONE: 0, LOADING: 1, LOADED: 2, ERROR: 3 };
+    for (const [k, v] of Object.entries(trackConsts)) for (const o of [TE, TE.prototype]) Object.defineProperty(o, k, { value: v, enumerable: true });
+    Object.defineProperties(TE.prototype, {
+      kind: { get() { return tt(trackOfEl(this)).kind(); }, set(v) { this.setAttribute('kind', String(v)); }, configurable: true, enumerable: true },
+      src: { get() { const v = this.getAttribute('src'); if (v === null) return ''; return resolveURL(v) ?? v; }, set(v) { this.setAttribute('src', String(v)); }, configurable: true, enumerable: true },
+      srclang: { get() { return this.getAttribute('srclang') ?? ''; }, set(v) { this.setAttribute('srclang', String(v)); }, configurable: true, enumerable: true },
+      label: { get() { return this.getAttribute('label') ?? ''; }, set(v) { this.setAttribute('label', String(v)); }, configurable: true, enumerable: true },
+      default: { get() { return this.hasAttribute('default'); }, set(v) { this.toggleAttribute('default', !!v); }, configurable: true, enumerable: true },
+      readyState: { get() { trackOfEl(this); return 0; }, configurable: true, enumerable: true },
+      track: { get() { return trackOfEl(this); }, configurable: true, enumerable: true },
+    });
+
+    // ---- the media element's lists (HTML §4.8.11.10, §4.8.11.11.4) ----
+    const mediaLists = new WeakMap();   // media element -> { text, audio, video, added }
+    const listsOf = el => {
+      let m = mediaLists.get(el);
+      if (!m) {
+        const added = [];
+        const texts = () => [...el.children].filter(c => c instanceof TE).map(trackOfEl).concat(added);
+        m = { added, text: eventList(TextTrackList, texts), audio: eventList(AudioTrackList, () => []), video: eventList(VideoTrackList, () => []) };
+        mediaLists.set(el, m);
+      }
+      return m;
+    };
+    const textTracksOf = el => listsOf(el).text;
+    const mediaOnly = el => { if (!(el instanceof HTMLMediaElement) || !ids.has(el)) throw new TypeError('Illegal invocation'); return el; };
+    Object.defineProperties(HTMLMediaElement.prototype, {
+      textTracks: { get() { return textTracksOf(mediaOnly(this)); }, configurable: true, enumerable: true },
+      audioTracks: { get() { return listsOf(mediaOnly(this)).audio; }, configurable: true, enumerable: true },
+      videoTracks: { get() { return listsOf(mediaOnly(this)).video; }, configurable: true, enumerable: true },
+      addTextTrack: { value: function addTextTrack(kind, label = '', language = '') {
+        mediaOnly(this);
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'addTextTrack' on 'HTMLMediaElement': 1 argument required, but only 0 present.");
+        kind = String(kind); label = String(label); language = String(language);
+        if (!kinds.includes(kind)) throw new TypeError(`Failed to execute 'addTextTrack' on 'HTMLMediaElement': The provided value '${kind}' is not a valid enum value of type TextTrackKind.`);
+        const m = listsOf(this);
+        // HTML §4.8.11.11.4: mode "hidden", readiness "loaded"; an addtrack event is queued
+        const t = makeTrack({ kind: () => kind, label: () => label, language: () => language, id: () => '', el: null, mode: 'hidden', media: () => m.text });
+        m.added.push(t);
+        task(() => { const e = new TrackEvent('addtrack', { track: t }); state(e).trusted = true; dispatch(m.text, e); });
+        return t;
+      }, writable: true, configurable: true, enumerable: true },
+    });
+    const task = f => { chk(n.timer(register(f), 0, 0)); };
+    Object.assign(mediaGlobals, { TextTrack, TextTrackCue, VTTCue, TextTrackCueList, TextTrackList, AudioTrackList, VideoTrackList, AudioTrack, VideoTrack, TrackEvent });
   }
   // An iframe's document is Lean's (Hosts.Page.start `frames`, node_info 11). The frames share
   // this realm: a frame's window is a view of this window with its own document.
@@ -2444,26 +2950,6 @@
       setTransform(m = {}) { const t = matrixOf(m); q.push(92, this[K].id, ...t); later(); }
     }
     const made = (C, kind, id) => { const o = Object.create(C.prototype); define(o, K, { kind, id }); objs.set(id, o); return o; };
-    class DOMMatrixReadOnly {
-      constructor(init) {
-        const v = init === undefined ? [1, 0, 0, 1, 0, 0] : Array.from(init, Number);
-        if (v.length === 6) { [this.a, this.b, this.c, this.d, this.e, this.f] = v; this.is2D = true; }
-        else if (v.length === 16) { [this.a, this.b, , , this.c, this.d, , , , , , , this.e, this.f] = v; this.is2D = false; }
-        else throw new TypeError('DOMMatrix needs 6 or 16 numbers');
-      }
-      get m11() { return this.a; } get m12() { return this.b; } get m21() { return this.c; } get m22() { return this.d; }
-      get m41() { return this.e; } get m42() { return this.f; }
-      get m13() { return 0; } get m14() { return 0; } get m23() { return 0; } get m24() { return 0; } get m31() { return 0; }
-      get m32() { return 0; } get m33() { return 1; } get m34() { return 0; } get m43() { return 0; } get m44() { return 1; }
-      get isIdentity() { return this.a === 1 && this.b === 0 && this.c === 0 && this.d === 1 && this.e === 0 && this.f === 0; }
-    }
-    class DOMMatrix extends DOMMatrixReadOnly {}
-    class DOMPointReadOnly {
-      constructor(x = 0, y = 0, z = 0, w = 1) { this.x = +x; this.y = +y; this.z = +z; this.w = +w; }
-      static fromPoint(p = {}) { return new this(p.x ?? 0, p.y ?? 0, p.z ?? 0, p.w ?? 1); }
-      toJSON() { return { x: this.x, y: this.y, z: this.z, w: this.w }; }
-    }
-    class DOMPoint extends DOMPointReadOnly {}
     const matrixOf = m => {
       if (m === null || typeof m !== 'object') throw new TypeError('The matrix is not an object');
       const g = (x, y, d) => m[x] !== undefined ? +m[x] : m[y] !== undefined ? +m[y] : d;
@@ -3039,7 +3525,7 @@
     get data() { return str(nodeId(this), 3); }
     set data(v) { chk(n.setText(nodeId(this), v === null ? '' : String(v))); }
     get length() { return this.data.length; }
-    substringData(offset, count) { const d = this.data; offset >>>= 0; if (offset > d.length) throw new DOMException('offset', 'IndexSizeError'); return d.substring(offset, offset + (count >>> 0)); }
+    substringData(offset, count) { idlArgs(arguments.length, 2, 'CharacterData', 'substringData'); const d = this.data; offset >>>= 0; if (offset > d.length) throw new DOMException('offset', 'IndexSizeError'); return d.substring(offset, offset + (count >>> 0)); }
     appendData(s) { this.data = this.data + String(s); }
     insertData(offset, s) { this.replaceData(offset, 0, s); }
     deleteData(offset, count) { this.replaceData(offset, count, ''); }
@@ -3059,7 +3545,7 @@
       while (j + 1 < xs.length && info(xs[j + 1], 0) === 3) j++;
       return xs.slice(i, j + 1).map(k => str(k, 3)).join('');
     }
-    splitText(offset) {
+    splitText(offset) { idlArgs(arguments.length, 1, 'Text', 'splitText');
       const d = this.data; offset >>>= 0;
       if (offset > d.length) throw new DOMException('offset', 'IndexSizeError');
       const rest = d.slice(offset);
@@ -3082,7 +3568,7 @@
   }
   class DocumentFragment extends Node {
     constructor() { return wrap(chk(n.create(2, ''))); }
-    getElementById(id) { id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
+    getElementById(id) { idlArgs(arguments.length, 1, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementById'); id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
   }
   let readyState = 'loading';
   class Document extends Node {
@@ -3143,7 +3629,7 @@
     get anchors() { const id = nodeId(this); return liveCollection(() => elementsOf(id).filter(k => htmlEl(k) && str(k, 0) === 'a' && n.attr(k, 'name') !== null)); }
     get applets() { return liveCollection(() => []); }
     get currentScript() { return currentScript; }
-    getElementById(id) { id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
+    getElementById(id) { idlArgs(arguments.length, 1, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementById'); id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
     getElementsByName(name) { if (arguments.length < 1) throw new TypeError("Failed to execute 'getElementsByName' on 'Document': 1 argument required, but only 0 present."); return staticList(elementsOf(nodeId(this)).filter(k => n.attr(k, 'name') === String(name)).map(wrap)); }
     // Each node is made in this document: kind + 16 × its node number (Hosts.Dom.createKind).
     createElement(name, options) { return wrap(chk(n.create(3 + 16 * nodeId(this), String(name)))); }
@@ -3162,12 +3648,12 @@
       const [ns2, pfx, lname] = chk(n.query(0, 4, nsArg(ns) + '\u0000' + String(qname))).split('\u0000');
       return newAttr({ el: null, ns: ns2 || null, pfx: pfx || null, lname, value: '', doc: nodeId(this) });
     }
-    createTextNode(data) { return wrap(chk(n.create(0 + 16 * nodeId(this), String(data)))); }
-    createComment(data) { return wrap(chk(n.create(1 + 16 * nodeId(this), String(data)))); }
+    createTextNode(data) { idlArgs(arguments.length, 1, 'Document', 'createTextNode'); return wrap(chk(n.create(0 + 16 * nodeId(this), String(data)))); }
+    createComment(data) { idlArgs(arguments.length, 1, 'Document', 'createComment'); return wrap(chk(n.create(1 + 16 * nodeId(this), String(data)))); }
     createDocumentFragment() { return wrap(chk(n.create(2 + 16 * nodeId(this), ''))); }
-    createProcessingInstruction(target, data) { return wrap(chk(n.create(5 + 16 * nodeId(this), String(target) + '\u0000' + String(data)))); }
-    createCDATASection(data) { return wrap(chk(n.create(6 + 16 * nodeId(this), String(data)))); }
-    createEvent(name) {
+    createProcessingInstruction(target, data) { idlArgs(arguments.length, 2, 'Document', 'createProcessingInstruction'); return wrap(chk(n.create(5 + 16 * nodeId(this), String(target) + '\u0000' + String(data)))); }
+    createCDATASection(data) { idlArgs(arguments.length, 1, 'Document', 'createCDATASection'); return wrap(chk(n.create(6 + 16 * nodeId(this), String(data)))); }
+    createEvent(name) { idlArgs(arguments.length, 1, 'Document', 'createEvent');
       const map = { event: Event, events: Event, htmlevents: Event, customevent: CustomEvent, mouseevent: MouseEvent,
         mouseevents: MouseEvent, uievent: UIEvent, uievents: UIEvent, keyboardevent: KeyboardEvent, focusevent: FocusEvent,
         svgevents: Event, messageevent: MessageEvent, hashchangeevent: HashChangeEvent, storageevent: StorageEvent,
@@ -3215,7 +3701,7 @@
       if (el) d.appendChild(el);
       return d;
     }
-    createDocumentType(name, publicId, systemId) {
+    createDocumentType(name, publicId, systemId) { idlArgs(arguments.length, 3, 'DOMImplementation', 'createDocumentType');
       return wrap(chk(n.create(9 + 16 * implDoc.get(this), String(name) + '\u0000' + String(publicId) + '\u0000' + String(systemId))));
     }
     hasFeature() { return true; }
@@ -4093,6 +4579,7 @@
       return wrap(id);
     };
     define(Document.prototype, 'createElement', function createElement(name, options = undefined) {
+      idlArgs(arguments.length, 1, 'Document', 'createElement');
       name = String(name);
       const id = chk(n.create(3 + 16 * nodeId(this), name));
       if (name.length === 6 && name.toLowerCase() === 'script') noteFreshScript(id);
@@ -5524,6 +6011,143 @@
     return FormDataC = FormData;
   };
   lazy('FormData', makeFormData);
+  // ---- DataTransfer (HTML §6.11.3-§6.11.5) and FileList (File API §5): a drag data store
+  // in read/write mode, as `new DataTransfer()` makes; the drag-and-drop source of one (a
+  // user's drag) is not here yet. Formats are ASCII lowercase; "text" is "text/plain" and
+  // "url" "text/uri-list" (getData("url") is the first URL of the list).
+  let makeFileList = () => undefined;
+  {
+    let made;
+    const make = () => {
+      if (made) return made;
+      const File = makeFile();
+      const lists = new WeakMap(), stores = new WeakMap(), itemOf = new WeakMap(), itemLists = new WeakMap();
+      const illegal = () => { throw new TypeError('Illegal constructor'); };
+      const isIndex = p => typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p);
+      const indexed = (o, items) => new Proxy(o, {
+        get(t, k, r) { if (isIndex(k)) return items()[Number(k)]; return Reflect.get(t, k, r); },
+        set(t, k, v, r) { if (isIndex(k)) return false; return Reflect.set(t, k, v, r); },
+        defineProperty(t, k, d) { if (isIndex(k)) return false; return Reflect.defineProperty(t, k, d); },
+        has(t, k) { if (isIndex(k)) return Number(k) < items().length; return Reflect.has(t, k); },
+        ownKeys(t) { return [...items().keys()].map(String).concat(Reflect.ownKeys(t)); },
+        getOwnPropertyDescriptor(t, k) {
+          if (isIndex(k)) { const x = items()[Number(k)]; return x === undefined ? undefined : { value: x, enumerable: true, configurable: true, writable: false }; }
+          return Reflect.getOwnPropertyDescriptor(t, k);
+        },
+      });
+      class FileList {
+        constructor() { illegal(); }
+        get length() { return brand(lists, this, 'FileList.length').files.length; }
+        item(index) { return brand(lists, this, 'FileList.item').files[index >>> 0] ?? null; }
+      }
+      Object.defineProperty(FileList.prototype, Symbol.iterator, { value: Array.prototype.values, writable: true, configurable: true });
+      setTag(FileList, 'FileList');
+      const fileList = files => { const st = { files }, o = Object.create(FileList.prototype); lists.set(o, st); const p = indexed(o, () => st.files); lists.set(p, st); return p; };
+      // a store: its items ({ kind, type, data }) in order, and the effects
+      const S = (o, what) => brand(stores, o, 'DataTransfer.' + what);
+      const norm = f => { f = String(f).replace(/[A-Z]/g, c => c.toLowerCase()); return f === 'text' ? 'text/plain' : f === 'url' ? 'text/uri-list' : f; };
+      class DataTransferItem {
+        constructor() { illegal(); }
+        get kind() { const it = brand(itemOf, this, 'DataTransferItem.kind'); return it.removed ? '' : it.kind; }
+        get type() { const it = brand(itemOf, this, 'DataTransferItem.type'); return it.removed ? '' : it.type; }
+        getAsString(callback) {
+          const it = brand(itemOf, this, 'DataTransferItem.getAsString');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'getAsString' on 'DataTransferItem': 1 argument required, but only 0 present.");
+          if (callback === null || typeof callback !== 'function' || it.removed || it.kind !== 'string') return;
+          const data = it.data;
+          chk(n.timer(register(() => callback(data)), 0, 0));
+        }
+        getAsFile() { const it = brand(itemOf, this, 'DataTransferItem.getAsFile'); return it.removed || it.kind !== 'file' ? null : it.data; }
+      }
+      setTag(DataTransferItem, 'DataTransferItem');
+      const itemObj = it => { if (!it.obj) { it.obj = Object.create(DataTransferItem.prototype); itemOf.set(it.obj, it); } return it.obj; };
+      class DataTransferItemList {
+        constructor() { illegal(); }
+        get length() { return brand(itemLists, this, 'DataTransferItemList.length').items.length; }
+        add(data, type = undefined) {
+          const st = brand(itemLists, this, 'DataTransferItemList.add');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'add' on 'DataTransferItemList': 1 argument required, but only 0 present.");
+          if (data instanceof File) {
+            const it = { kind: 'file', type: data.type, data };
+            st.items.push(it); st.changed(); return itemObj(it);
+          }
+          if (arguments.length < 2) throw new TypeError("Failed to execute 'add' on 'DataTransferItemList': parameter 1 is not of type 'File'.");
+          const t = String(type).replace(/[A-Z]/g, c => c.toLowerCase());
+          if (st.items.some(x => x.kind === 'string' && x.type === t))
+            throw new DOMException("Failed to execute 'add' on 'DataTransferItemList': An item already exists for type '" + t + "'.", 'NotSupportedError');
+          const it = { kind: 'string', type: t, data: String(data) };
+          st.items.push(it); st.changed(); return itemObj(it);
+        }
+        remove(index) {
+          const st = brand(itemLists, this, 'DataTransferItemList.remove');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'remove' on 'DataTransferItemList': 1 argument required, but only 0 present.");
+          const i = index >>> 0;
+          if (i < st.items.length) { st.items[i].removed = true; st.items.splice(i, 1); st.changed(); }
+        }
+        clear() { const st = brand(itemLists, this, 'DataTransferItemList.clear'); for (const it of st.items) it.removed = true; st.items.length = 0; st.changed(); }
+      }
+      setTag(DataTransferItemList, 'DataTransferItemList');
+      const drops = ['none', 'copy', 'link', 'move'];
+      const alloweds = ['none', 'copy', 'copyLink', 'copyMove', 'link', 'linkMove', 'move', 'all', 'uninitialized'];
+      class DataTransfer {
+        constructor() {
+          const st = { items: [], dropEffect: 'none', effectAllowed: 'none', types: null, files: null, list: null };
+          st.changed = () => { st.types = null; st.files = null; };
+          stores.set(this, st);
+        }
+        get dropEffect() { return S(this, 'dropEffect').dropEffect; }
+        set dropEffect(v) { const st = S(this, 'dropEffect'); v = String(v); if (drops.includes(v)) st.dropEffect = v; }
+        get effectAllowed() { return S(this, 'effectAllowed').effectAllowed; }
+        set effectAllowed(v) { const st = S(this, 'effectAllowed'); v = String(v); if (alloweds.includes(v)) st.effectAllowed = v; }
+        get items() {
+          const st = S(this, 'items');
+          if (!st.list) { const o = Object.create(DataTransferItemList.prototype), p = indexed(o, () => st.items.map(itemObj)); itemLists.set(o, st); itemLists.set(p, st); st.list = p; }
+          return st.list;
+        }
+        setDragImage(image, x, y) { S(this, 'setDragImage'); if (arguments.length < 3) throw new TypeError("Failed to execute 'setDragImage' on 'DataTransfer': 3 arguments required, but only " + arguments.length + ' present.'); }
+        get types() {
+          const st = S(this, 'types');
+          if (!st.types) {
+            const t = st.items.filter(x => x.kind === 'string').map(x => x.type);
+            if (st.items.some(x => x.kind === 'file')) t.push('Files');
+            st.types = Object.freeze(t);
+          }
+          return st.types;
+        }
+        getData(format) {
+          const st = S(this, 'getData');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'getData' on 'DataTransfer': 1 argument required, but only 0 present.");
+          const f = String(format).replace(/[A-Z]/g, c => c.toLowerCase()), url = f === 'url', key = norm(f);
+          const it = st.items.find(x => x.kind === 'string' && x.type === key);
+          if (!it) return '';
+          if (url) { for (const line of it.data.split(/\r\n|\r|\n/)) if (line !== '' && line[0] !== '#') return line; return ''; }
+          return it.data;
+        }
+        setData(format, data) {
+          const st = S(this, 'setData');
+          if (arguments.length < 2) throw new TypeError("Failed to execute 'setData' on 'DataTransfer': 2 arguments required, but only " + arguments.length + ' present.');
+          const key = norm(format), i = st.items.findIndex(x => x.kind === 'string' && x.type === key);
+          if (i >= 0) { st.items[i].removed = true; st.items.splice(i, 1); }
+          st.items.push({ kind: 'string', type: key, data: String(data) }); st.changed();
+        }
+        clearData(format = undefined) {
+          const st = S(this, 'clearData');
+          if (format === undefined) { for (const x of st.items) if (x.kind === 'string') x.removed = true; st.items = st.items.filter(x => x.kind !== 'string'); }
+          else { const key = norm(format), i = st.items.findIndex(x => x.kind === 'string' && x.type === key); if (i >= 0) { st.items[i].removed = true; st.items.splice(i, 1); } }
+          st.changed();
+        }
+        get files() {
+          const st = S(this, 'files');
+          if (!st.files) st.files = fileList(st.items.filter(x => x.kind === 'file').map(x => x.data));
+          return st.files;
+        }
+      }
+      setTag(DataTransfer, 'DataTransfer');
+      return made = { DataTransfer, DataTransferItemList, DataTransferItem, FileList, fileList, lists };
+    };
+    makeFileList = make;
+    lazyGroup(['DataTransfer', 'DataTransferItemList', 'DataTransferItem', 'FileList'], make);
+  }
   // ---- FileReader (File API §6.2) ---------------------------------------------------------
   // A read is tasks of this realm: loadstart, progress, load and loadend at the reader, in that
   // order, with the result packaged when the read ends (§6.2.3). The text is Lean's decoding
@@ -11417,6 +12041,7 @@
       for (const v of entries) out.add(structuredCloneOf(v, memory));
       return out;
     }
+    { const g = geometry.clone(value); if (g !== undefined) return keep(g); }
     if (value instanceof DOMException) {
       return keep(new DOMException(String(value.message), String(value.name)));
     }
@@ -13973,6 +14598,50 @@
     }
   }
   if (frameEngine()) { def('MessageChannel', MessageChannel); def('MessagePort', MessagePort); }
+  // HTML §9.5 BroadcastChannel: a message goes to every other open channel of the same name
+  // in this agent's same-origin globals (the page and its same-origin frames share this
+  // realm), in the order the channels were made, each in its own task; a worker's channels
+  // are another agent's and are not reached yet. A page that makes no channel pays nothing.
+  {
+    const channels = new WeakMap();   // channel -> { name, closed, order }
+    let open = [], made = 0;
+    const B = (o, what) => { const st = channels.get(o); if (!st) throw new TypeError(`Failed to execute '${what}' on 'BroadcastChannel': Illegal invocation`); return st; };
+    class BroadcastChannel extends EventTarget {
+      constructor(name) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'BroadcastChannel': 1 argument required, but only 0 present.");
+        super();
+        const st = { name: String(name), closed: false, order: made++ };
+        channels.set(this, st); open.push(this);
+      }
+      get name() { return B(this, 'name').name; }
+      postMessage(message) {
+        const st = B(this, 'postMessage');
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'BroadcastChannel': 1 argument required, but only 0 present.");
+        if (st.closed) throw new DOMException("Failed to execute 'postMessage' on 'BroadcastChannel': Channel is closed", 'InvalidStateError');
+        const data = globalThis.structuredClone(message);
+        const origin = String(globalThis.origin ?? '');
+        for (const c of open) {
+          if (c === this) continue;
+          const cs = channels.get(c);
+          if (cs.closed || cs.name !== st.name) continue;
+          setTimeout(() => {
+            if (cs.closed) return;
+            let copy;
+            try { copy = globalThis.structuredClone(data); } catch { const e = new MessageEvent('messageerror', { origin }); state(e).trusted = true; dispatch(c, e); return; }
+            const e = new MessageEvent('message', { data: copy, origin }); state(e).trusted = true; dispatch(c, e);
+          }, 0);
+        }
+      }
+      close() { const st = B(this, 'close'); if (!st.closed) { st.closed = true; open = open.filter(c => c !== this); } }
+      get onmessage() { return handlerOf(this, 'message'); }
+      set onmessage(f) { setHandler(this, 'message', f); }
+      get onmessageerror() { return handlerOf(this, 'messageerror'); }
+      set onmessageerror(f) { setHandler(this, 'messageerror', f); }
+    }
+    for (const k of ['name', 'onmessage', 'onmessageerror']) Object.defineProperty(BroadcastChannel.prototype, k, { ...Object.getOwnPropertyDescriptor(BroadcastChannel.prototype, k), enumerable: true });
+    for (const k of ['postMessage', 'close']) Object.defineProperty(BroadcastChannel.prototype, k, { ...Object.getOwnPropertyDescriptor(BroadcastChannel.prototype, k), enumerable: true });
+    if (frameEngine()) def('BroadcastChannel', BroadcastChannel);
+  }
   // HTML §7.2.2.3 "Named access on the Window object": an element with an id is a property
   // of the window when nothing else has that name. The window's named properties object is
   // a proxy in its prototype chain (WebIDL §3.7.4); the lookup is Lean's (node_query 5),
@@ -13988,7 +14657,7 @@
   }
   // ==== end shadowframes: frames ========================================================
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
-    WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, CloseEvent, StorageEvent, SecurityPolicyViolationEvent, DeviceMotionEvent,
+    WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, DOMRectList, DOMPoint, DOMPointReadOnly, DOMQuad, DOMMatrix, DOMMatrixReadOnly, WebKitCSSMatrix: DOMMatrix, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, CloseEvent, StorageEvent, SecurityPolicyViolationEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, MathMLElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
@@ -14223,7 +14892,7 @@
     }
     // CSSOM View §6.1: the boxes of the range's common ancestor element in Lean's layout.
     getBoundingClientRect() { let k = Number(op(rid(this), 110)); if (info(k, 0) !== 1) k = info(k, 1); if (k < 0 || info(k, 0) !== 1) return new DOMRect(0, 0, 0, 0); return wrap(k).getBoundingClientRect(); }
-    getClientRects() { const r = this.getBoundingClientRect(); return r.width === 0 && r.height === 0 ? [] : [r]; }
+    getClientRects() { const r = this.getBoundingClientRect(); return geometry.rectList(r.width === 0 && r.height === 0 ? [] : [r]); }
   }
   const howConsts = { START_TO_START: 0, START_TO_END: 1, END_TO_END: 2, END_TO_START: 3 };
   consts(Range, howConsts); consts(Range.prototype, howConsts);
@@ -14555,12 +15224,13 @@
   };
 
   // An element of a frame's document: its container's `marginwidth` and `marginheight`, which
-  // Lean's cascade of that document gives its body (HTML §15.3.3); '' for the page's elements.
+  // Lean's cascade of that document gives its body (HTML §15.3.3), and the container, whose box
+  // is the frame's viewport for its media queries; '' for the page's elements.
   const frameQ = id => {
     const d = info(id, 7), f = d > 0 ? info(d, 12) : -1;
     if (!(f >= 0)) return '';
     const a = k => { const v = n.attr(f, k); return typeof v === 'string' ? v : ''; };
-    return '\u0002' + a('marginwidth') + '\u0000' + a('marginheight');
+    return '\u0002' + a('marginwidth') + '\u0000' + a('marginheight') + '\u0000' + f;
   };
   const computedValue = (el, name, pe = -1) => {
     if (pe === -2) return '';
@@ -15334,18 +16004,25 @@
     const syn = registeredSyntax(name);
     return syn !== '' ? JSON.parse(typedOp('reifys', syn, text)).map(reified) : [reified(JSON.parse(typedOp('reifyp', name, text)))];
   };
+  // The text a typed value was set from, while the declaration is still what that set made:
+  // the declaration keeps its specified form (`CSS.percent(50)` stays a percentage for the
+  // typed OM), though CSSOM serialises it canonically (`opacity: 50%` reads back as 0.5).
+  const typedRead = (st, name) => {
+    const text = st.read(name), kept = st.typed === undefined ? undefined : st.typed.get(name);
+    return kept !== undefined && kept[1] === text && text !== '' ? kept[0] : text;
+  };
   class StylePropertyMapReadOnly {
     constructor(...key) { if (key[0] !== typedKey) illegal(); }
     get(property) {
       if (arguments.length < 1) throw new TypeError('get: 1 argument required');
-      const name = knownProperty(property), text = mstate(this).read(name);
+      const name = knownProperty(property), text = typedRead(mstate(this), name);
       if (text === '') return undefined;
       if (name.startsWith('--')) return customTyped(name, text)[0];
       return reified(listValued(name) ? JSON.parse(typedOp('reifyall', text))[0] : JSON.parse(typedOp('reifyp', name, text)));
     }
     getAll(property) {
       if (arguments.length < 1) throw new TypeError('getAll: 1 argument required');
-      const name = knownProperty(property), text = mstate(this).read(name);
+      const name = knownProperty(property), text = typedRead(mstate(this), name);
       if (text === '') return [];
       if (name.startsWith('--')) return customTyped(name, text);
       return listValued(name) ? JSON.parse(typedOp('reifyall', text)).map(reified) : [reified(JSON.parse(typedOp('reifyp', name, text)))];
@@ -15396,6 +16073,7 @@
       const text = xs.join(', ');
       if (styleOp('val', name, text).charAt(0) !== '1') throw new TypeError(`The value is not one '${name}' takes`);
       st.set(name, text);
+      (st.typed ??= new Map()).set(name, [text, st.read(name)]);
     }
     append(property, ...values) {
       if (arguments.length < 2) throw new TypeError('append: 2 arguments required');
@@ -16623,7 +17301,7 @@
     'CanvasGradient', 'CanvasPattern', 'TextMetrics', 'DOMMatrix', 'DOMMatrixReadOnly', 'DOMPoint', 'DOMPointReadOnly',
     // WebCodecs' are [Exposed=(Window,DedicatedWorker)].
     'VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioData', 'AudioDecoder', 'VideoDecoder',
-    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect',
+    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect', 'DOMQuad',
     // client-side storage (sections IndexedDB and File System API)
     'indexedDB', 'IDBFactory', 'IDBRequest', 'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange', 'IDBObjectStore', 'IDBIndex', 'IDBCursor',
     'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList', 'QuotaExceededError', 'FileSystemHandle',
@@ -17107,14 +17785,47 @@
 
     // ---- input: the members that are not plain reflection ----
     const indeterminate = new WeakMap();
-    prop(I, 'indeterminate', function () { return indeterminate.get(this) === true; }, function (v) { indeterminate.set(this, !!v); });
+    // HTML §4.10.5 cloning steps: a clone of an input takes its indeterminateness (the value
+    // and checkedness are Lean's node state, which the clone copies). Only once a script set
+    // one: the clone of a page that never did is not walked.
+    let cloneHooked = false;
+    const hookClone = () => {
+      if (cloneHooked) return;
+      cloneHooked = true;
+      const clone0 = n.clone;
+      const inputsOf = (id, deep) => {
+        const own = info(id, 0) === 1 && wrap(id) instanceof I ? [wrap(id)] : [];
+        return deep && info(id, 6) > 0 && (info(id, 0) === 1 || info(id, 0) === 11 || info(id, 0) === 9) ? own.concat([...wrap(id).querySelectorAll('input')]) : own;
+      };
+      n.clone = (id, deep) => {
+        const c = clone0.call(n, id, deep);
+        if (typeof c === 'number' && c >= 0) {
+          const a = inputsOf(id, deep), b = inputsOf(c, deep);
+          if (a.length === b.length) a.forEach((x, i) => { if (indeterminate.get(x) === true) indeterminate.set(b[i], true); });
+        }
+        return c;
+      };
+    };
+    prop(I, 'indeterminate', function () { return indeterminate.get(this) === true; }, function (v) { indeterminate.set(this, !!v); if (v) hookClone(); });
     prop(I, 'list', function () {
       const id = this.getAttribute('list');
       if (id === null || id === '') return null;
       const root = this.getRootNode(), el = root.getElementById ? root.getElementById(id) : root.querySelector('#' + CSSns.escape(id));
       return el instanceof named.HTMLDataListElement ? el : null;
     });
-    prop(I, 'files', function () { return null; });
+    // `files` (HTML §4.10.5.1.18): a file input's FileList (empty until a script gives it one,
+    // as from a DataTransfer); null for any other type
+    const inputFiles = new WeakMap();
+    prop(I, 'files', function () {
+      if (typeState(this) !== 'file') return null;
+      let f = inputFiles.get(this);
+      if (!f) { const m = makeFileList(); if (!m) return null; f = m.fileList([]); inputFiles.set(this, f); }
+      return f;
+    }, function (v) {
+      if (typeState(this) !== 'file' || v === null) return;
+      const m = makeFileList();
+      if (m && m.lists.has(v)) inputFiles.set(this, v);
+    });
 
     // ---- the selection of a text control (HTML §4.10.20) ----
     const selState = new WeakMap();
@@ -17162,7 +17873,7 @@
         const r = chk(n.query(0, 187, [value.length, start, end, clamp(this, s.start), clamp(this, s.end), replacement.length, mode].join(' '))).split(' ').map(Number);
         const next = value.slice(0, r[0]) + replacement + value.slice(r[1]);
         const dir = s.dir;
-        if (next !== value) { if (this instanceof T) this.textContent = next; else this.setAttribute('value', next); }
+        if (next !== value) { if (this instanceof T) this.textContent = next; else setInputValue(this, next); }
         setSel(this, r[2], r[3], mode === 'preserve' ? dir : 'none');
       });
     }
@@ -17170,26 +17881,55 @@
     // §4.10.21): Lean's (DOM.FormValidity over HTML.InputValue, node_query 188) ----
     const vq = (el, ...parts) => { const r = n.query(nodeId(el), 188, parts.join('\u0000')); return typeof r === 'string' ? r : ''; };
     const numericTypes = ['date', 'month', 'week', 'time', 'datetime-local', 'number', 'range'];
-    // The value (HTML §4.10.5.1.x "value sanitization"): the `value` attribute as the type reads
-    // it. A one-line text needs no sanitizing, so no question is asked for it.
-    const inputValue = el => {
-      const t = typeState(el), raw = el.getAttribute('value');
-      if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || t === 'button') return raw ?? '';
-      if (t === 'checkbox' || t === 'radio') return raw ?? 'on';
-      if (t === 'file') return '';
-      const v = raw ?? '';
+    // The value by the type's value mode (HTML §4.10.5.1, Lean's DOM.Forms.inputValue, op 169
+    // "v": the dirty value, else the `value` attribute), sanitized for the type ("value
+    // sanitization", op 188 "S"); a one-line text needs no sanitizing, so no question is asked.
+    const valueQ = (el, q) => chk(n.query(nodeId(el), 169, q));
+    const sanitizeFor = (el, t, v) => {
+      if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || t === 'button' || t === 'checkbox' || t === 'radio' || t === 'file') return v;
       if ((t === 'text' || t === 'search' || t === 'tel' || t === 'password') && !/[\r\n]/.test(v)) return v;
       return vq(el, 'S', v);
+    };
+    const inputValue = el => sanitizeFor(el, typeState(el), valueQ(el, 'v'));
+    // Setting the value (the `value` setter's steps per mode): mode "value" keeps the
+    // sanitized value with its dirty value flag; the default modes set the `value` attribute
+    // (Lean answers "a"); a value a script sets moves the cursor to its end.
+    const setInputValue = (el, v) => {
+      const before = inputValue(el);
+      if (valueQ(el, 's' + sanitizeFor(el, typeState(el), v)) === 'a') el.setAttribute('value', v);
+      const now = inputValue(el);
+      if (now !== before) { const s = selOf(el); s.start = s.end = now.length; s.dir = 'none'; }
     };
     prop(I, 'value', function () { return inputValue(this); }, function (v) {
       v = v === null ? '' : String(v);
       if (typeState(this) === 'file') { if (v !== '') throw new DOMException('The value of a file input can only be set to the empty string.', 'InvalidStateError'); return; }
-      const before = inputValue(this);
-      this.setAttribute('value', v);
-      const now = inputValue(this);
-      // a value that a script sets moves the cursor to its end
-      if (now !== before) { const s = selOf(this); s.start = s.end = now.length; s.dir = 'none'; }
+      setInputValue(this, v);
     });
+    prop(I, 'defaultValue', function () { return this.getAttribute('value') ?? ''; }, function (v) { this.setAttribute('value', String(v)); });
+    // A change of the `type` attribute's state (HTML §4.10.5): the value mode change steps
+    // are Lean's (op 169 "t", with the old mode and the old value); a type that selects text
+    // after one that did not starts with the cursor at the start.
+    {
+      const modeLetter = t => (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || t === 'button') ? 'd'
+        : (t === 'checkbox' || t === 'radio') ? 'o' : t === 'file' ? 'f' : 'v';
+      const textual = t => ['text', 'search', 'url', 'tel', 'password'].includes(t);
+      const isInput = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'input';
+      const around = (id, name, f) => {
+        if (String(name).toLowerCase() !== 'type' || !isInput(id)) return f();
+        const el = wrap(id), oldT = typeState(el), oldV = inputValue(el);
+        const r = f();
+        const newT = typeState(el);
+        if (r === 0 && newT !== oldT) {
+          const a = valueQ(el, 't' + modeLetter(oldT) + oldV);
+          if (a.startsWith('a')) el.setAttribute('value', a.slice(1));
+          if (textual(newT) && !textual(oldT)) { const s = selOf(el); s.start = s.end = 0; s.dir = 'none'; }
+        }
+        return r;
+      };
+      const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
+      n.setAttr = (id, name, value) => around(id, name, () => setAttr0(id, name, value));
+      n.removeAttr = (id, name) => around(id, name, () => removeAttr0(id, name));
+    }
     const step = (el, dir, k) => {
       const r = vq(el, dir, inputValue(el), String(k === undefined ? 1 : k | 0));
       if (r === 'e' || r === '') throw new DOMException('The element has no allowed value step.', 'InvalidStateError');
