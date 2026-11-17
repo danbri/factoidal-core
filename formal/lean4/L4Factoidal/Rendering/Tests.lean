@@ -347,8 +347,7 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 #guard ((stateAt "<p id='x' style='border-width:4px'>A</p>" "" "x").toOption.map (·.borderEdges.left)) == some 0
 -- borders: one colour and one plain style is four rectangles; anything else side by side
 #guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩} 0 0 10 10).size == 4
-#guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩,
-  borderColor := ⟨.color ⟨1,0,0⟩,.current,.current,.current⟩} 0 0 10 10).size == 4
+#guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩, borderColor := ⟨.color ⟨1,0,0⟩,.current,.current,.current⟩} 0 0 10 10).size == 4
 #guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩, borderColor := .all .transparent} 0 0 10 10).size == 0
 #guard (borderNodes 0 {borderStyle := ⟨.dashed,.none,.none,.none⟩, borderWidth := ⟨2,2,2,2⟩} 0 0 100 10).size == 8
 #guard (borderNodes 0 {borderStyle := ⟨.dotted,.none,.none,.none⟩, borderWidth := ⟨4,4,4,4⟩} 0 0 100 10).size == 13

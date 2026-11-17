@@ -1457,7 +1457,7 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
   let value := fun (v : String) => some v
   let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
   match d.property with
-  | "color" | "border-color" => (colorHex d.value).bind fun h => if h == "transparent" then none else value h
+  | "color" => (colorHex d.value).bind fun h => if h == "transparent" then none else value h
   | "background-color" | "background" =>
     -- also the colour of a `background` shorthand (`declarations` reads it as the colour)
     match colorHex d.value with

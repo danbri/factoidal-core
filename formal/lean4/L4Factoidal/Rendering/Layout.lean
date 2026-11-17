@@ -247,24 +247,30 @@ gaps about as long as the dashes, with a dash at each end (the gaps take what is
 None: the side is painted solid (too short for two dashes, or more than `maxDashes`). -/
 def dashCount (length dash : Float) : Option Nat :=
   if dash <= 0 || length <= 0 || !length.isFinite || !dash.isFinite then none else
-  let k := ((length+dash)/(2*dash)).floor.toUInt64.toNat
-  if k < 2 || k > maxDashes then none else some k
+  boundedDashes ((length+dash)/(2*dash)).floor.toUInt64.toNat
+where
+  /-- `k` dashes when that is 2 to `maxDashes`. -/
+  boundedDashes (k : Nat) : Option Nat := if k < 2 || k > maxDashes then none else some k
 
 /-- Kind: bound. Says: a side of a dashed or dotted border never has more than `maxDashes`
 dashes, whatever its length and width, and a side with dashes has at least two (so the gap
 between them is defined). Does not say: where the dashes are. -/
 theorem dashCount_le (length dash : Float) (n : Nat) (h : dashCount length dash = some n) :
     2 ≤ n ∧ n ≤ maxDashes := by
-  unfold dashCount at h
-  split at h
-  · cases h
-  · split at h
-    · cases h
-    · rename_i hk
-      simp only [Option.some.injEq] at h
-      subst h
-      simp only [Bool.or_eq_true, decide_eq_true_eq, not_or, Nat.not_lt] at hk
+  have hb : ∀ k, dashCount.boundedDashes k = some n → 2 ≤ n ∧ n ≤ maxDashes := by
+    intro k hk
+    unfold dashCount.boundedDashes at hk
+    by_cases hc : (k < 2 || k > maxDashes) = true
+    · rw [if_pos hc] at hk; cases hk
+    · rw [if_neg hc] at hk
+      simp only [Option.some.injEq] at hk
+      subst hk
+      simp only [Bool.or_eq_true, decide_eq_true_eq, not_or, Nat.not_lt] at hc
       omega
+  unfold dashCount at h
+  by_cases hc : (dash <= 0 || length <= 0 || !length.isFinite || !dash.isFinite) = true
+  · rw [if_pos hc] at h; cases h
+  · rw [if_neg hc] at h; exact hb _ h
 
 /-- The border of a border box at `(x,y)`, size `w` by `h`, each side in its own style and
 colour (CSS Backgrounds 3 §4). A border whose painted sides all share one colour and one
