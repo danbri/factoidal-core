@@ -12559,8 +12559,8 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
         -- §22.1.3.30, §22.1.3.28: the full, language-independent Unicode case mappings
         -- (`Text.CaseMap`: SpecialCasing then UnicodeData, Final_Sigma), not ASCII only
         -- (ASCII text, the common case, keeps the ASCII loop: the two agree on it)
-        | .stringToUpperCase => pure (.str (if s.all (·.toNat < 128) then s.toUpper else L4Factoidal.Text.CaseMap.upperCase s))
-        | .stringToLowerCase => pure (.str (if s.all (·.toNat < 128) then s.toLower else L4Factoidal.Text.CaseMap.lowerCase s))
+        | .stringToUpperCase => pure (.str (if s.all (fun (c : Char) => decide (c.toNat < 128)) then s.toUpper else L4Factoidal.Text.CaseMap.upperCase s))
+        | .stringToLowerCase => pure (.str (if s.all (fun (c : Char) => decide (c.toNat < 128)) then s.toLower else L4Factoidal.Text.CaseMap.lowerCase s))
         | .stringTrim => pure (.str (trimJs s))
         | .stringRepeat =>
           let c := toIntegerOrInf (← toNum n a0)
