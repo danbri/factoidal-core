@@ -18,6 +18,10 @@ inductive Length where
   `stretch`, the size that fills the containing block. They are not numbers: `resolve`
   answers `none` for them, and the layout gives them their sizes (`Layout.sizeKeyword`). -/
   | minContent | maxContent | fitContent | stretch
+  /-- `calc-size()` (CSS Values 5 §7.1) as a linear form (`CalcSizeForm`): `k × size + pct
+  × (percentage basis) + px`, where `size` is the size the basis gives: `auto` or a sizing
+  keyword, laid out by the layout; `px 0` stands for `any` (no size). -/
+  | calcSize (basis : Length) (k pct px : Float)
   deriving Repr
 
 /-- The same length (a NaN is not the same as itself, as with `==` on floats). -/
@@ -32,6 +36,7 @@ def Length.same : Length → Length → Bool
   | .maxContent, .maxContent => true
   | .fitContent, .fitContent => true
   | .stretch, .stretch => true
+  | .calcSize b k p x, .calcSize b' k' p' x' => k == k' && p == p' && x == x' && Length.same b b'
   | _, _ => false
 
 /-- A sizing keyword: a size that the layout takes from the contents or the containing block. -/

@@ -8,6 +8,7 @@ import L4Factoidal.Rendering.GridStyle
 import L4Factoidal.Rendering.CssValues.Logical
 import L4Factoidal.Rendering.SheetReader
 import L4Factoidal.Rendering.CssVars
+import L4Factoidal.Rendering.CalcSizeForm
 import L4Factoidal.Rendering.FontSynthesis
 import L4Factoidal.DOM.Selectors
 import L4Factoidal.HTML.Dimension
@@ -909,11 +910,18 @@ def length (s : String) : Except String Length := do
   if s == "0" then return .px 0
   if s.startsWith "calc(" then
     if let some l := calcLengthOfText s then return l
+  -- `calc-size()` linear in `size` (CSS Values 5 §7.1; `CalcSizeForm`): its basis and form
+  if L4Factoidal.Rendering.CalcSizeForm.isCalcSize s then
+    if let some f := L4Factoidal.Rendering.CalcSizeForm.ofText s then
+      let basis : Length := if f.basis == "auto" then .auto else (sizeKeyword? f.basis).getD (.px 0)
+      return .calcSize basis f.k f.pct f.px
   throw s!"unsupported CSS length unit: {s}"
 def resolve (basis : Float) : Length → Option Float
   | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
   | .calc p n => some (basis*p+n)
   | .minContent | .maxContent | .fitContent | .stretch => none
+  -- a `calc-size()` over `any` (no size) is a length-percentage; over a keyword, the layout's
+  | .calcSize b _ p n => match b with | .px _ => some (basis*p+n) | _ => none
 /-- CSS Values 4 §6.2: viewport units, computed once the viewport is known. -/
 def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor

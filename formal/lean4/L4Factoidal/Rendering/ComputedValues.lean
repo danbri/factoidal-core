@@ -35,6 +35,11 @@ def length : CSS.Length → String
   | .maxContent => "max-content"
   | .fitContent => "fit-content"
   | .stretch => "stretch"
+  | .calcSize b k p x =>
+    let basis := match b with
+      | .auto => "auto" | .minContent => "min-content" | .maxContent => "max-content"
+      | .fitContent => "fit-content" | .stretch => "stretch" | _ => "any"
+    L4Factoidal.Rendering.CalcSizeForm.text { basis, k, pct := p, px := x }
 
 /-- `none` for a maximum that is `auto` here (CSS 2.1 §10.4, §10.7). -/
 def maxLength : CSS.Length → String

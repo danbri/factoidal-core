@@ -432,6 +432,27 @@ def keywordWidth (l : CSS.Length) (lo hi fill : Float) : Option Float :=
   | .stretch => some (max 0 fill)
   | _ => none
 
+/-- Whether `l` is a `calc-size()` whose basis is a sizing keyword (its `size` is a width
+of the contents or the fill width). -/
+def calcSizeKeyword : CSS.Length → Bool
+  | .calcSize b _ _ _ => b.isKeyword
+  | _ => false
+
+/-- The width `size` stands for in a `calc-size()` of basis `b` (CSS Values 5 §7.1): the fill
+width for `auto`, a keyword's width (`keywordWidth`), a length's own value (`any` is `px 0`).
+`none` when it has none here. -/
+def calcSizeBasis (b : CSS.Length) (lo hi fill available : Float) : Option Float :=
+  match b with
+  | .auto => some (max 0 fill)
+  | b => match keywordWidth b lo hi fill with
+    | some w => some w
+    | none => CSS.resolve available b
+
+/-- Kind: property. Says: the `size` of a `calc-size()` over `auto` is the fill width, as
+`width: auto` is. Does not say: anything of the other bases. -/
+theorem calcSizeBasis_auto (lo hi fill available : Float) :
+    calcSizeBasis .auto lo hi fill available = some (max 0 fill) := rfl
+
 /-- The margin-box width of a box that shrinks to fit (a float, an inline-block, an
 absolutely positioned box): by its `width` keyword, else fit-content (CSS 2.1 §10.3.5).
 `lo` and `hi` are its min-content and max-content margin-box widths, `room` the

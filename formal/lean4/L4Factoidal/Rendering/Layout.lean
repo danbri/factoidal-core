@@ -2310,12 +2310,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- CSS Sizing 3 §3.2: `width`, `min-width` or `max-width` given as a keyword is a
       -- width of the contents (measured only when a keyword is used) or the fill width.
       let fill := available-margin.left-margin.right-edgesX
-      let keyed := imposedWidth.isNone && (s.width.isKeyword || s.minWidth.isKeyword || s.maxWidth.isKeyword)
+      -- (`calc-size()` over a keyword measures the contents too: CSS Values 5 §7.1)
+      let keyed := imposedWidth.isNone && (s.width.isKeyword || s.minWidth.isKeyword || s.maxWidth.isKeyword
+        || calcSizeKeyword s.width)
       let (contentLo,contentHi) ← if keyed then intrinsic dom styles font embedding pictures fuel (.inner id 0)
         else pure (0,0)
-      let widthOf := fun (l : CSS.Length) => match keywordWidth l contentLo contentHi fill with
-        | some w => some w
-        | none => CSS.resolve available l
+      let widthOf := fun (l : CSS.Length) => match l with
+        | .calcSize b k p x => (calcSizeBasis b contentLo contentHi fill available).map fun w => max 0 (k*w+p*available+x)
+        | l => match keywordWidth l contentLo contentHi fill with
+          | some w => some w
+          | none => CSS.resolve available l
       let width := match imposedWidth with
         | some w => max 0 (w-edgesX)
         | none =>
@@ -2445,9 +2449,19 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let joinsBottom := imposedWidth.isNone && imposedHeight.isNone && collapsesBottom dom s id && !s.display.isFlex && !s.display.isGrid
       let marginBottom := if joinsBottom then collapsePx margin.bottom content.marginBottom else margin.bottom
       let content := if joinsBottom then {content with height := content.height-content.marginBottom} else content
-      let height := match definite with
-        | some h => h
-        | none =>
+      -- `height: calc-size()` over `auto` or a content keyword (CSS Values 5 §7.1): `size`
+      -- is the height of the contents
+      let calcSized : Option Float := if imposedHeight.isSome then none else match s.height with
+        | .calcSize b k p x => match b with
+          | .auto | .minContent | .maxContent | .fitContent => some (max 0 (k*content.height+x))
+          -- over `any`: a length (a percentage of a height is not definite in this profile)
+          | .px _ => if p == 0 then some (max 0 x) else none
+          | _ => none
+        | _ => none
+      let height := match definite, calcSized with
+        | some h, _ => h
+        | none, some h => clampOpt minHeight maxHeight h
+        | none, none =>
           if contentLimits && imposedHeight.isNone then
             let own := match s.height with
               | .px h => max 0 h

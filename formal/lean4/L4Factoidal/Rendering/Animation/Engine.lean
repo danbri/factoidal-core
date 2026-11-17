@@ -18,6 +18,7 @@ A page with no animation and no transition declaration makes no call here
 import L4Factoidal.Rendering.Animation.Css
 import L4Factoidal.Rendering.Animation.Model
 import Std.Data.HashMap
+import L4Factoidal.Rendering.CalcSizeForm
 
 namespace L4Factoidal.Rendering.Animation
 open Fix (one)
@@ -183,6 +184,14 @@ Writing Modes 4 §2: `direction`, `unicode-bidi`). -/
 def animatable (property : String) : Bool :=
   !(property.startsWith "animation" || property.startsWith "transition"
     || property == "direction" || property == "unicode-bidi")
+
+/-- The properties whose values may be `calc-size()` (CSS Values 5 §7.1). -/
+def sizingProperty (property : String) : Bool :=
+  ["width", "height", "min-width", "min-height", "max-width", "max-height", "block-size", "inline-size",
+   "min-block-size", "min-inline-size", "max-block-size", "max-inline-size"].contains property
+
+/-- Whether a text holds a `calc-size()`. -/
+def calcSizeText (text : String) : Bool := (text.splitOn "calc-size(").length > 1
 
 /-- The animation type of a property beyond its value's shape. -/
 def kindOf (property : String) : Value.Kind :=
@@ -542,8 +551,20 @@ def overridesWhere (s : State) (ac : Access) (keep : Nat → Bool) : List Overri
           -- a property the engine does not compute is not animated
           let some baseText := ac.base e property | continue
           pure (withCurrentColor ac e property (Value.parse baseText))
+      -- a sizing property with a `calc-size()` among its values (CSS Values 5 §7.1.1): every
+      -- value in one shape over one basis (`CalcSizeForm.canonical`), so that the components
+      -- interpolate; a page with none pays one text test per keyframe
+      let raw := eff.keyframes.filterMap fun k => k.props.lookup property
+      let basis : Option String :=
+        if !sizingProperty property || !(raw.any calcSizeText || calcSizeText (Value.toText underlying)) then none
+        else L4Factoidal.Rendering.CalcSizeForm.basisFor
+          ((raw.filterMap fun t => ac.compute e property t) ++ [Value.toText underlying])
+      let shaped := fun (t : String) => match basis with
+        | some b => L4Factoidal.Rendering.CalcSizeForm.normalizeWith b t
+        | none => t
+      let underlying := if basis.isSome then Value.parse (shaped (Value.toText underlying)) else underlying
       let compute := fun (text : String) =>
-        (ac.compute e property text).map fun t => withCurrentColor ac e property (Value.parse t)
+        (ac.compute e property text).map fun t => withCurrentColor ac e property (Value.parse (shaped t))
       match Effect.value eff.keyframes eff.composite property (kindOf property) p underlying compute eff.neutralEasing with
       | some v =>
         if !stack.contains (e, property) then keys := keys.push (e, property)
