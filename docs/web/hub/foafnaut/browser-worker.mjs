@@ -12,7 +12,7 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
-import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf,turnSliceSteps} from './page-load.mjs';
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf,turnSliceSteps,startSliceSteps,scriptsFirst} from './page-load.mjs';
 import {gateConsole} from './log-gate.mjs';
 import {fetchOutside} from './copies.mjs';
 // The worker's console lines go through the log gate (log-gate.mjs): a flood is summarised and named.
@@ -846,15 +846,18 @@ async function startScripts(page,scripts){
   const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,zoomUnit:zoomUnit(),...(history?{shell:shell()}:{}),layout,
     ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{}),...(page.syntax?{syntax:page.syntax}:{}),
     ...(scriptOps.includes('net')?{network:true,hostCors:true}:{}),
+    // the start in slices (page-load.mjs startSliceSteps): the page is drawn after its classic
+    // scripts and the first slice of the rest; the timer turns go on with the start
+    sliceSteps:startSliceSteps,
     // the layer surface replays page GPU commands on WebGPU (not in CPU mode)
     ...(!cpuMode&&self.navigator?.gpu?{gpuReplay:true}:{})});
   scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};
-  scriptTurn(page,turn);
+  scriptTurn(page,turn,true);
 }
 // A turn's logs, and a new frame only when the DOM changed: no DOM change, no layout (the
 // commands are part of the render request and so of the layout key).
-function scriptTurn(page,turn){
+function scriptTurn(page,turn,first=false){
   for(const line of turn.logs)console.log('page:',line.replace(/^\u0001(\w+)\u0001/,'$1: '));
   for(const line of turn.errors)console.warn('page error:',line);
   addEntries(page,[...turn.logs.map(message=>({source:'page',severity:'log',message})),...turn.errors.map(message=>({source:'page',severity:'error',message}))]);
@@ -868,9 +871,18 @@ function scriptTurn(page,turn){
   // frame of the whole page without layers costs a full redraw and a new render plan each time:
   // at the rate of the Spinal Tap page's requestAnimationFrame turns its frames took 0.4 to 3.3 s
   // (issue 450).
-  if(takeTurn(page,turn)&&page===doc){bandWanted=layered!==false&&!!L;request();}
+  // Scripts first (page-load.mjs scriptsFirst): while the page's start has not finished, a change
+  // waits for the start to end or for a few times the last layout's time (scriptTimers draws it).
+  if(takeTurn(page,turn)&&page===doc){
+    bandWanted=layered!==false&&!!L;
+    // (the start turn's own change is in the page's first frame: only later turns wait)
+    if(!first&&scriptsFirst({now:performance.now(),more:turn.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs}))changeHeld??=performance.now();
+    else{changeHeld=undefined;request();}
+  }
   if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
 }
+// A change of the page that waits for its start (scriptsFirst), since when; and the last layout's time.
+let changeHeld,lastLayoutMs=0;
 // Dedicated workers (BubblePopJS; docs/designissues/2026-11-09-dedicated-workers.md): the
 // scripts a page's workers wait for, read as the page's own scripts are (Lean checked the
 // worker's URL is of the page's origin), then the turn goes on.
@@ -946,7 +958,12 @@ async function gpuShow(){
 // against 16 ms animation frames and missed some of them.
 function scriptTimers(){
   const script=doc?.script;
+  // a change that waited for the page's start is drawn when the start ended or waited long enough
+  if(changeHeld!==undefined&&(!script||!scriptsFirst({now:performance.now(),more:script.turn.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs}))){changeHeld=undefined;request();}
   if(!script||drawing||dirty||script.turn.nextWake===null||script.turn.nextWake===undefined)return 16;
+  // While its start is not finished the page's clock moves only by its own steps, as in a start
+  // made in one turn: the time a draw took between two slices is not time its timers saw pass.
+  if(script.turn.startMore===true)script.epoch=performance.now()-script.turn.clock;
   let elapsed=performance.now()-script.epoch;
   if(elapsed<script.turn.nextWake)return script.turn.nextWake-elapsed;
   // A page whose callbacks take longer than real time would fall further behind at each
@@ -1563,7 +1580,7 @@ async function draw(){
       const done=performance.now();incoming=undefined;
       phase('firstFrame');
       post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
-        stats:{path,...(cpuMode?{cpu:true}:{}),layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
+        stats:{path,...(cpuMode?{cpu:true}:{}),layoutMs:Math.round(lastLayoutMs=laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
           leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),...(statsMode&&layerSurface?.lastDraw?{draws:layerSurface.lastDraw,surface:layerSurface.stats}:{}),rows:Math.round(frame.data.length/4),scripts:{...scriptStats},...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
           // For hub_links_check.mjs: the links of a one-frame view, and who routes them.
