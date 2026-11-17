@@ -755,13 +755,18 @@ bytes for every type tag and Float. Does not say anything about speed. -/
 #print axioms typedRead_eq_byteFast
 #print axioms typedBytes_eq_byteFast
 
+/-- The source text of a private name from its key: `#x` for `privKey "x"` and for the key of
+one class evaluation (`privRk`: the name, `#` and a number; an identifier has no `#`). -/
+def privDisplay (key : String) : String :=
+  "#" ++ ((key.drop 1).toString.takeWhile (· != '#'))
+
 /-- The `name` of a function stored under a property key (§10.2.9 SetFunctionName). -/
 def nameOfKey (key : String) : M String := do
   match symOfKey? key with
   | some id =>
     let d := (← get).syms.getD id ""
     pure (if d.isEmpty && id ≥ wellKnown.size then "" else "[" ++ d ++ "]")
-  | none => pure (if isPrivKey key then "#" ++ (key.drop 1).toString else keyStr key)
+  | none => pure (if isPrivKey key then privDisplay key else keyStr key)
 
 
 
@@ -7778,8 +7783,8 @@ def getV : Nat → Value → String → M Value
         | some (.data x ..) => return x
         | some (.acc g _ _ _) =>
           if g.isObj then return ← callV n g v #[]
-          throwErr .type s!"'#{(key.drop 1).toString}' was defined without a getter"
-        | none => throwErr .type s!"Cannot read private member #{(key.drop 1).toString} from an object whose class did not declare it"
+          throwErr .type s!"'{privDisplay key}' was defined without a getter"
+        | none => throwErr .type s!"Cannot read private member {privDisplay key} from an object whose class did not declare it"
       -- a typed array's integer index is its element, never a prototype's property
       -- (§10.4.5.4 TypedArrayGetElement)
       if c0.isDigit then
@@ -7800,7 +7805,7 @@ def getV : Nat → Value → String → M Value
           | some i => if i < (← liveLen ty b off len) then pure (typedRead ty (bufferBytes (← getObj b)) (off + i * elemSize ty)) else pure .undef
           | none => pure .undef
         | _ =>
-          if isPrivKey key then throwErr .type s!"Cannot read private member #{(key.drop 1).toString} from an object whose class did not declare it"
+          if isPrivKey key then throwErr .type s!"Cannot read private member {privDisplay key} from an object whose class did not declare it"
           -- a property the global object and its prototype chain do not have: the host's
           -- named properties (`namedGlobal`), asked for on this miss only
           if id == (← get).realm.globalObj && !isSymKey key then
@@ -7928,11 +7933,11 @@ def putV : Nat → Value → String → Value → Bool → M Unit
         match o.getOwn key with
         | some (.data _ w e c) =>
           if w then defineOwn id key (.data val true e c)
-          else throwErr .type s!"Private method #{(key.drop 1).toString} is not writable"
+          else throwErr .type s!"Private method {privDisplay key} is not writable"
         | some (.acc _ st _ _) =>
           if st.isObj then let _ ← callV n st target #[val]
-          else throwErr .type s!"'#{(key.drop 1).toString}' was defined without a setter"
-        | none => throwErr .type s!"Cannot write private member #{(key.drop 1).toString} to an object whose class did not declare it"
+          else throwErr .type s!"'{privDisplay key}' was defined without a setter"
+        | none => throwErr .type s!"Cannot write private member {privDisplay key} to an object whose class did not declare it"
         return
       match o.kind with
       | .proxy t hnd =>
@@ -7962,7 +7967,7 @@ def putV : Nat → Value → String → Value → Bool → M Unit
         return
       | _, _ => pure ()
       if isPrivKey key && ((← get).findProp id key 1000).isNone then
-        throwErr .type s!"Cannot write private member #{(key.drop 1).toString} to an object whose class did not declare it"
+        throwErr .type s!"Cannot write private member {privDisplay key} to an object whose class did not declare it"
       match o.getOwn key with
       | some (.data _ w e c) =>
         -- (a String object's indices and length are reported read-only by `getOwn`; its other
@@ -8483,15 +8488,15 @@ def initFields : Nat → Ctx → Value → Value → M Unit
             if let some (tag, k) := privElemOf ek then
               let own := (← getObj tid).getOwn k
               if tag == 'm' then
-                if own.isSome then throwErr .type s!"Cannot initialize private method #{(k.drop 1).toString} twice on the same object"
+                if own.isSome then throwErr .type s!"Cannot initialize private method {privDisplay k} twice on the same object"
                 defineOwn tid k (.data fn false false false)
               else
                 let (g, st) ← match own with
                   | none => pure (Value.undef, Value.undef)
                   | some (.acc g st _ _) =>
                     if added.contains k then pure (g, st)
-                    else throwErr .type s!"Cannot initialize #{(k.drop 1).toString} twice on the same object"
-                  | some _ => throwErr .type s!"Cannot initialize #{(k.drop 1).toString} twice on the same object"
+                    else throwErr .type s!"Cannot initialize {privDisplay k} twice on the same object"
+                  | some _ => throwErr .type s!"Cannot initialize {privDisplay k} twice on the same object"
                 defineOwn tid k (if tag == 'g' then .acc fn st false false else .acc g fn false false)
               added := added.push k
         for (k, init) in fields do
@@ -8502,7 +8507,7 @@ def initFields : Nat → Ctx → Value → Value → M Unit
             match (← getObj tid).getOwn k with
             | some p =>
               -- PrivateFieldAdd (§7.3.31): never twice on one object
-              if isPrivKey k then throwErr .type s!"Cannot initialize #{(k.drop 1).toString} twice on the same object"
+              if isPrivKey k then throwErr .type s!"Cannot initialize {privDisplay k} twice on the same object"
               if !p.configurable then throwErr .type s!"Cannot redefine property: {k}"
             | none => pure ()
             defineOwn tid k (.data v true (!isPrivKey k) true)
