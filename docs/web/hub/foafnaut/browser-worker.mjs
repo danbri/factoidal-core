@@ -841,11 +841,11 @@ async function startScripts(page,scripts){
     ...(!cpuMode&&self.navigator?.gpu?{gpuReplay:true}:{})});
   scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};
-  scriptTurn(page,turn);
+  scriptTurn(page,turn,true);
 }
 // A turn's logs, and a new frame only when the DOM changed: no DOM change, no layout (the
 // commands are part of the render request and so of the layout key).
-function scriptTurn(page,turn){
+function scriptTurn(page,turn,first=false){
   for(const line of turn.logs)console.log('page:',line.replace(/^\u0001(\w+)\u0001/,'$1: '));
   for(const line of turn.errors)console.warn('page error:',line);
   addEntries(page,[...turn.logs.map(message=>({source:'page',severity:'log',message})),...turn.errors.map(message=>({source:'page',severity:'error',message}))]);
@@ -863,7 +863,8 @@ function scriptTurn(page,turn){
   // waits for the start to end or for a few times the last layout's time (scriptTimers draws it).
   if(takeTurn(page,turn)&&page===doc){
     bandWanted=layered!==false&&!!L;
-    if(scriptsFirst({now:performance.now(),more:turn.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs}))changeHeld??=performance.now();
+    // (the start turn's own change is in the page's first frame: only later turns wait)
+    if(!first&&scriptsFirst({now:performance.now(),more:turn.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs}))changeHeld??=performance.now();
     else{changeHeld=undefined;request();}
   }
   if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
@@ -948,6 +949,9 @@ function scriptTimers(){
   // a change that waited for the page's start is drawn when the start ended or waited long enough
   if(changeHeld!==undefined&&(!script||!scriptsFirst({now:performance.now(),more:script.turn.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs}))){changeHeld=undefined;request();}
   if(!script||drawing||dirty||script.turn.nextWake===null||script.turn.nextWake===undefined)return 16;
+  // While its start is not finished the page's clock moves only by its own steps, as in a start
+  // made in one turn: the time a draw took between two slices is not time its timers saw pass.
+  if(script.turn.startMore===true)script.epoch=performance.now()-script.turn.clock;
   let elapsed=performance.now()-script.epoch;
   if(elapsed<script.turn.nextWake)return script.turn.nextWake-elapsed;
   // A page whose callbacks take longer than real time would fall further behind at each

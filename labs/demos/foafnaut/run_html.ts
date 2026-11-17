@@ -1992,7 +1992,14 @@ async function main() {
       // engine for the bands the scroll needs)
       const held=inputFirstOn&&inputFirst({now,inputAt,heldSince:timerHeldSince,
         waiting:shifting!==undefined||shiftPending||awaitingShift.length>0||awaitingBand.length>0||(pageChanged!==undefined&&scrollHolds(now))});
-      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil){
+      // (the rest of a start in slices waits for the page's first frame: a slice can be one long
+      // script, and run before that frame it would hold the engine the frame needs)
+      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil
+        &&(script.turn.startMore!==true||firstShown.has(document))){
+        // While its start is not finished the page's clock moves only by its own steps, as in a
+        // start made in one turn: the time the host took to show the page between two slices is
+        // not time the page's timers saw pass.
+        if(script.turn.startMore===true)scriptEpochs.set(script.session,now-script.turn.clock);
         const elapsed=now-(scriptEpochs.get(script.session)??now);
         if(elapsed>=script.turn.nextWake&&held)timerHeldSince??=now;
         else if(elapsed>=script.turn.nextWake){

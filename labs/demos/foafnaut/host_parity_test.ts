@@ -364,7 +364,7 @@ Deno.test("page-load: a script turn on the page record",async()=>{
   // scripts first (page-load.mjs scriptsFirst), the rule of every host that starts a page in slices: the
   // turn's frame waits while the page's start has not finished, in the Hub and in the window
   const win=await Deno.readTextFile(`${lab}run_html.ts`);
-  assert(/scriptsFirst\(\{now:performance\.now\(\),more:turn\.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs\}\)/.test(hub)&&/sliceSteps:startSliceSteps/.test(hub),
+  assert(/!first&&scriptsFirst\(\{now:performance\.now\(\),more:turn\.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs\}\)/.test(hub)&&/sliceSteps:startSliceSteps/.test(hub),
     "the Hub does not start a page in slices with the scripts-first rule");
   assert(/scriptsFirst\(\{now,more:document\.script\?\.turn\.startMore===true,changedAt:pageChanged,layoutMs:lastLayoutMs\}\)/.test(win)&&/sliceSteps:startSliceSteps/.test(win),
     "the window does not start a page in slices with the scripts-first rule");
