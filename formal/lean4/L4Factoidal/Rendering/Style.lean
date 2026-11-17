@@ -2338,7 +2338,7 @@ a one-line control become spaces. `none` for every other node, and when there is
 show. The value a person types is the host's and is not shown here. -/
 def controlText (dom : Dom) (id : Nat) : Option (String × Bool) :=
   let n := dom.get id
-  let oneLine := fun (t : String) => String.mk (t.toList.map fun c => if c == '\n' || c == '\r' || c == '\t' then ' ' else c)
+  let oneLine := fun (t : String) => String.ofList (t.toList.map fun c => if c == '\n' || c == '\r' || c == '\t' then ' ' else c)
   if n.type != .element || !(n.ns == some DOM.htmlNS || n.ns.isNone) then none
   else if n.lname == "input" then
     let t0 := (attrValue n "type").trimAscii.toString.toLower
@@ -2351,7 +2351,7 @@ def controlText (dom : Dom) (id : Nat) : Option (String × Bool) :=
       else none
     else if t == "file" then some ("Choose File", false)
     else if textualInputTypes.contains t then
-      if !value.isEmpty then some ((if t == "password" then String.mk (value.toList.map fun _ => '•') else value), false)
+      if !value.isEmpty then some ((if t == "password" then String.ofList (value.toList.map fun _ => '•') else value), false)
       else
         let p := oneLine (attrValue n "placeholder")
         if p.isEmpty then none else some (p, true)
