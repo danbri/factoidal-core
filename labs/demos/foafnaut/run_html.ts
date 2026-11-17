@@ -52,6 +52,7 @@ async function main() {
   let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
+  let accessibilityOn=false;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
@@ -91,6 +92,9 @@ async function main() {
     // events go through the window library's queue as before, from a window that is never shown.
     // Sweeps then run with the screen locked, the display asleep, or on a machine with no display.
     else if(arg==="--offscreen")offscreen=true;
+    // Accessibility trees from the first frame, as with a screen reader attached (a check with no
+    // assistive technology): each tree is a native-html-accessibility line of the trace.
+    else if(arg==="--accessibility")accessibilityOn=true;
     // Browser state in a local LWS server (native_state.ts): on in an interactive window, off in sweeps and checks.
     else if(arg==="--no-state")stateOff=true;
     // The splash at start (WebShell.splashNodes): on in an interactive window; off with
@@ -1397,7 +1401,7 @@ async function main() {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
     native.setInputTrace(traceInput);native.setHistory(history.canBack,history.canForward);
     // VoiceOver already on (or a client already asked): accessibility trees from the first frame.
-    axOn=native.axWanted();
+    axOn=accessibilityOn||native.axWanted();
     // The command sweep copies text. It gives the clipboard back unless the person
     // copied something else meanwhile.
     const savedClipboard=commands||pasted?native.readClipboard():"";

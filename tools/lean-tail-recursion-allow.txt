@@ -2443,3 +2443,5 @@ L4Factoidal_GpuKernel_P_*  # (c) GPU kernel conditions (GpuKernel/Expr.lean): co
 L4Factoidal_GpuKernel_lastWrite  # (s) GpuKernel/Race.lean: the meaning of a write list for applyWrites_apply and the race theorems; the executed path is applyWrites (List.foldl)
 L4Factoidal_GpuKernel_Resident_fit  # (a) PENDING https://github.com/danbri/factoidal-core/issues/398 one frame's resident entries; to become an accumulator form proved equal before the host calls it
 L4Factoidal_GpuKernel_Resident_total  # (a) PENDING https://github.com/danbri/factoidal-core/issues/398 List.sum (foldr) over one frame's entries, as fit above
+# --- Added 2026-11-17, the accessibility tree (HTML/AccessibleTree.lean) ---
+L4Factoidal_HTML_AccessibleTree_walk*  # (c) one call per child of a node with less fuel; the fuel is maxDepth (512), so the depth is at most 512 (proved: tree_depth)
