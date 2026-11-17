@@ -2,7 +2,7 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
+import {Downloaded,inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
@@ -53,7 +53,7 @@ async function main() {
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let accessibilityOn=false;
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
+  let downloadsArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -105,6 +105,8 @@ async function main() {
     else if(arg==="--no-splash")splashArg="off";
     else if(arg==="--splash")splashArg="on";
     else if(arg==="--state-dir"){stateDir=args.shift();if(!stateDir)throw new Error("--state-dir needs a folder");}
+    // Where downloads are saved (default ~/Downloads).
+    else if(arg==="--downloads"){downloadsArg=args.shift();if(!downloadsArg)throw new Error("--downloads needs a folder");}
     else if(arg==="--restore-session")restoreSession=true;
     // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
     else if(arg==="--idle-checks-only")idleChecksOnly=true;
@@ -220,6 +222,8 @@ async function main() {
       return result;
     }])) as T;
   const engine=timed(await loadHTML());
+  // Downloads go to --downloads, else ~/Downloads (HOME is the one variable the app may read).
+  const downloads=downloadsArg??(()=>{try{const home=Deno.env.get("HOME");return home?`${home}/Downloads`:undefined;}catch{return undefined;}})();
   const browserState=stateOff||check||sweep||commands||printPDF?undefined:
     hostState({engineState:engine.state,dir:stateDir,log:record=>console.log(JSON.stringify({t:Math.round(performance.now()),...record}))});
   // Noto Sans is the default face; the bitmap face is the safe mode, and the fallback.
@@ -1397,7 +1401,7 @@ async function main() {
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,...(request?{request}:{})})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,downloads,...(request?{request}:{})})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -1406,6 +1410,14 @@ async function main() {
       }
     }).catch(error=>{
       if(current.signal.aborted)return;
+      // A download: the file is saved and the page the person was on stays (no history entry).
+      if(error instanceof Downloaded){
+        loading=false;dirty=true;
+        console.log(`Native HTML: saved ${error.url} as ${error.path} (${error.bytes} bytes)`);
+        trace("native-html-download",{url:error.url,path:error.path,bytes:error.bytes});
+        addEntries(document,[{source:"System",severity:"info",feature:"download",where:error.url,message:`saved as ${error.path} (${error.bytes} bytes)`,action:"saved"}]);
+        return;
+      }
       loading=false;if(push)remember(engine.historyPush(history.history,target),"push");
       refuse(target,error);
     });

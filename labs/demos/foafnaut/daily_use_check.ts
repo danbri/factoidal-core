@@ -15,7 +15,9 @@
 import {handle} from "./daily_use_server.ts";
 
 const lab=new URL(".",import.meta.url).pathname;
-type Case={name:string;start:string;steps:(string|number[])[];gap?:string};
+type Case={name:string;start:string;steps:(string|number[])[];gap?:string;
+  /** A check after the run, with the downloads folder: a failure's text, or undefined. */
+  after?:(downloads:string)=>Promise<string|undefined>};
 // The page rows of the local site: the server lays fields out in CSS pixels at fixed places,
 // and the window draws pages at two backing pixels to the CSS pixel off screen.
 const at=(x:number,y:number)=>`tap:${x*2},${y*2}`;
@@ -32,8 +34,8 @@ const cases:Case[]=[
     gap:"page loads carry no cookies: no cookie jar for documents yet (docs/foafnaut-daily-use.md)"},
   {name:"a target=_blank link opens a new tab",start:"/links.html",steps:[at(75,138),"hold","tabs=2:1","title=Results: blank"],
     gap:"a link's target is not read by the window: _blank opens in the same tab (docs/foafnaut-daily-use.md)"},
-  {name:"a download is saved, the page stays",start:"/links.html",steps:[at(75,218),"hold","hold","hold","url:/links.html"],
-    gap:"no downloads: an attachment is shown as a page (docs/foafnaut-daily-use.md)"},
+  {name:"a download is saved, the page stays",start:"/links.html",steps:[at(75,218),"hold","hold","hold","url:/links.html","title=Links"],
+    after:async dir=>{try{const size=(await Deno.stat(`${dir}/file.bin`)).size;return size===1024?undefined:`file.bin has ${size} bytes`;}catch{return "no file.bin in the downloads folder";}}},
 ];
 
 const args=[...Deno.args];
@@ -46,16 +48,18 @@ let bad=0;
 const results:string[]=[];
 for(const c of cases){
   if(only&&c.name!==only)continue;
-  const file=`${dir}/steps.json`;
+  const file=`${dir}/steps.json`,downloads=await Deno.makeTempDir({dir,prefix:"downloads-"});
   await Deno.writeTextFile(file,JSON.stringify(c.steps));
   const start=c.start.startsWith("http")?c.start:origin+c.start;
   const t0=performance.now();
   const out=await new Deno.Command("perl",{args:["-e","alarm shift; exec @ARGV","60","deno","run","--no-check","--no-config","--no-npm","--node-modules-dir=none",
-    "--unstable-webgpu","--unstable-ffi","-A",`${lab}run_html.ts`,"--offscreen","--no-state","--follow-links","--url",start,"--steps",file,...args],
+    "--unstable-webgpu","--unstable-ffi","-A",`${lab}run_html.ts`,"--offscreen","--no-state","--follow-links","--downloads",downloads,"--url",start,"--steps",file,...args],
     stdout:"piped",stderr:"piped"}).output();
   const ms=Math.round(performance.now()-t0);
   const text=new TextDecoder().decode(out.stdout)+new TextDecoder().decode(out.stderr);
   const failures=text.split("\n").filter(l=>/^Native HTML (steps|sweep|shortcut sweep)/.test(l));
+  const afterFailure=out.code===0&&c.after?await c.after(downloads):undefined;
+  if(afterFailure)failures.push(afterFailure);
   const passed=out.code===0&&failures.length===0;
   const verdict=passed?(c.gap?"XPASS":"PASS"):(c.gap?"XFAIL":"FAIL");
   if(verdict==="FAIL"||verdict==="XPASS")bad++;

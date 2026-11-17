@@ -36,7 +36,23 @@ export function setPageDecoding(next:{fallback?:string;locale?:string}){pageDeco
 /** How a document is asked for: a form's POST (method, body, its type), and whether the
 server's page for an HTTP error status (404, 500, ...) is the answer, as browsers show it. Only
 a top-level document asks for that; a script or a sheet with an error status stays an error. */
-export type DocumentRequest={method?:"GET"|"POST";body?:string;bodyType?:string;errorPages?:boolean};
+export type DocumentRequest={method?:"GET"|"POST";body?:string;bodyType?:string;errorPages?:boolean;
+  /** Ask the engine whether the response is shown or saved (a download); `downloads` is the
+  folder a saved file goes to. Only a navigation asks. */
+  decide?:(response:{contentType:string;disposition:string;url:string})=>Promise<{action:string;name?:string}|undefined>|{action:string;name?:string}|undefined;
+  downloads?:string};
+/** A navigation whose response was saved as a file (a download): the page stays. */
+export class Downloaded extends Error{constructor(readonly url:string,readonly path:string,readonly bytes:number){super(`saved ${url} as ${path}`);}}
+/** A free name in `dir` for `name` (Lean made it safe: no separator, no leading dot): the name,
+else "name (1).ext", "name (2).ext", ... */
+async function freePath(dir:string,name:string):Promise<string>{
+  const dot=name.lastIndexOf("."),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):"";
+  for(let i=0;i<1000;i++){
+    const path=`${dir}/${i?`${stem} (${i})${ext}`:name}`;
+    try{await Deno.lstat(path);}catch{return path;}
+  }
+  throw new Error(`no free name for ${name} in ${dir}`);
+}
 export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder,request:DocumentRequest={}):Promise<{url:string;source:string;bytes:number;encoding?:string;raw:Uint8Array;contentType:string;contentTypeOptions:string;status?:number}> {
   const parsed=new URL(inputURL(url));
   const abort=()=>signal?.throwIfAborted();abort();
@@ -57,6 +73,20 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
     // for anything but a top-level document, it is an error.
     if(!response.ok&&!(request.errorPages&&response.body&&response.status>=400)){await response.body?.cancel();throw new Error(`HTTP ${response.status}: ${url}`);}
     if(!response.ok)status=response.status;
+    // A download (Lean decides from the type and Content-Disposition): the body goes to a new
+    // file in the downloads folder, written as it arrives (no size limit: it is not a page), and
+    // the navigation ends with Downloaded.
+    const decided=request.decide&&response.ok?await request.decide({contentType,disposition:response.headers.get("content-disposition")??"",url:finalURL}):undefined;
+    if(decided?.action==="save"&&decided.name&&request.downloads){
+      await Deno.mkdir(request.downloads,{recursive:true});
+      const path=await freePath(request.downloads,decided.name);
+      const file=await Deno.open(path,{write:true,createNew:true});
+      let written=0;
+      try{for await(const chunk of response.body!){abort();for(let at=0;at<chunk.length;)at+=await file.write(chunk.subarray(at));written+=chunk.length;}}
+      catch(error){file.close();await Deno.remove(path).catch(()=>{});throw error;}
+      file.close();
+      throw new Downloaded(finalURL,path,written);
+    }
     const reader=response.body?.getReader();
     if(!reader)throw new Error("Native HTML resource has no response body");
     const chunks:Uint8Array[]=[];let length=0;
@@ -315,15 +345,16 @@ export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compi
   compile(...a:Parameters<HTMLEngine["compile"]>):Promise<ReturnType<HTMLEngine["compile"]>>;
   selectedText(...a:Parameters<HTMLEngine["selectedText"]>):Promise<ReturnType<HTMLEngine["selectedText"]>>;
   findInPage(...a:Parameters<HTMLEngine["findInPage"]>):Promise<ReturnType<HTMLEngine["findInPage"]>>;
-})&{decodeDocument?:PageDecoder};
+})&{decodeDocument?:PageDecoder;download?:(request:{contentType:string;disposition:string;url:string})=>unknown};
 /** How a page is accepted. `liberal`: liberal mode (WebAccept.lean, --be-liberal-in-what-we-accept
 and the Settings checkbox): Lean skips what it may skip and says so, and this host passes on
 the fetches that failed instead of refusing the page. */
-export type AcceptOptions={liberal?:boolean;request?:DocumentRequest};
+export type AcceptOptions={liberal?:boolean;request?:DocumentRequest;downloads?:string};
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
   const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c,pageDecoding.fallback,pageDecoding.locale):undefined;
   const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array;status?:number}=inline===undefined
-    ?await readSource(url,signal,decode,{errorPages:true,...accept.request}):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
+    ?await readSource(url,signal,decode,{errorPages:true,...(engine.download&&accept.downloads?{decide:r=>engine.download!(r) as {action:string;name?:string}|undefined,downloads:accept.downloads}:{}),...accept.request})
+    :{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // The page's console (native_console.ts): System entries now, script lines later.
   const page={};
   if(document.status)addEntries(page,[{source:"System",severity:"warning",feature:"page",where:document.url,message:`HTTP ${document.status}`,action:"the server's page is shown"}]);

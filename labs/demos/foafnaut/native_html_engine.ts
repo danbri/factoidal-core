@@ -423,6 +423,11 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     searchPage:(request:{argument:string;tabs:{url:string;title:string}[];resources:unknown[];state:boolean;search:string})=>
       documentCall("",{...request,op:"searchPage"}) as {title:string;source:string},
     outsidePage:(url:string,hub=false,textnaut=false)=>{try{return documentCall("",{op:"outsidePage",url,hub,textnaut}) as {title:string;source:string};}catch{return undefined;}},
+    /** What a navigation's response does (WebDocument op `download`, Net.Subresource.navigated):
+    shown, or saved under the name Lean made safe. Undefined for an engine from before the op
+    (every response is then shown, as before). */
+    download:(request:{contentType:string;disposition:string;url:string})=>{
+      try{return documentCall("",{...request,op:"download"}) as {action:"show"}|{action:"save";name:string};}catch{return undefined;}},
     decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
       if(!backends.decode)return undefined;
       const answer=backends.decode(bytes,charset,fallback,locale),i=answer.indexOf("\n");

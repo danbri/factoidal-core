@@ -37,7 +37,7 @@ need a build of the branch (marked "needs the branch's engine" until one is meas
 | Submit a POST form | daily "post a form" | **fail**: POST was not planned | needs the branch's engine |
 | Sign in to a simple site; cookies kept across a restart | daily "sign in: the cookie is kept" (XFAIL) | **fail**: page loads carry no cookies | open (gap 1) |
 | A `target=_blank` link opens a new tab | daily "a target=_blank link..." (XFAIL) | **fail**: opens in the same tab | open (gap 3) |
-| Download a file | daily "a download is saved..." (XFAIL) | **fail**: the file is shown as a page | open (gap 4) |
+| Download a file | daily "a download is saved, the page stays" | **fail**: the file is shown as a page | saved to ~/Downloads under a safe name (`safeName_safe`); said in the console only (needs the branch's engine) |
 | A page script sets the title: the tab shows it | by hand | **fail**: the tab keeps the parsed title | open |
 | IME (composition, dead keys) in page fields | not tested | unknown | open |
 
@@ -58,8 +58,12 @@ need a build of the branch (marked "needs the branch's engine" until one is meas
    persistence under the privacy rules (a cookie kept on disk only when its site asked for it to
    outlive the session, cleared with the history).
 3. **New-tab links.** `target=_blank` and Command-click should open a tab (with no `opener`).
-4. **Downloads.** An attachment or a type the browser does not show should be saved (to
-   `~/Downloads`, with the name checked) and the page kept.
+4. **Downloads.** Done on the branch: the engine decides from the type and
+   `Content-Disposition` (`Net.Subresource.navigated`), the name is made safe (`safeName_safe`:
+   not empty, no separator or control character, no leading dot), the host writes the body to
+   `~/Downloads` (`--downloads DIR`) under a free name and the page stays. Open: the person is
+   told only in the console (no download bar yet). The app is now compiled with `--allow-write`
+   (the host writes downloads and Save Page As; page content can not write files).
 5. **Script-set titles** in the tab and window title.
 
 ## Timings (installed engine, off screen, M-series Mac)
