@@ -14464,33 +14464,57 @@
     const st = holder.st, text = st.text();
     if (st.rules && st.seen === text) return st.rules;
     const r = sheetOp('rules', text), old = st.rules || [];
+    // beside the rules, their texts and kinds (what an insert or a delete needs of them)
+    const texts = [], kinds = [];
     st.rules = r === '' ? [] : r.split('\u0001').map((row, i) => {
-      const [kind, type, prelude, body, cssText] = row.split('\u0002');
+      const cssText = row.slice(row.lastIndexOf('\u0002') + 1);
+      texts.push(cssText); kinds.push(row.slice(0, row.indexOf('\u0002')));
       // the object of a rule that is as it was stays the same object
       const prev = old[i] && ruleState.get(old[i]);
       if (prev && prev.cssText === cssText) { prev.index = i; return old[i]; }
-      const rule = Object.create((ruleClasses[kind + 'Rule'] || CSSRule).prototype);
-      ruleState.set(rule, { kind, type: Number(type), prelude, body, cssText, index: i, holder });
-      return rule;
+      return ruleOfRow(row, i, holder);
     });
+    st.texts = texts; st.kinds = kinds;
     st.seen = text;
     return st.rules;
   };
-  const changed = (holder, answer) => {
-    if (answer.charAt(0) === '\u0001') throw sheetErr(answer.slice(1));
-    holder.st.write(answer.slice(1));
+  // The object of a rule from Lean's fields of it (CssSheet.ruleFields).
+  const ruleOfRow = (row, i, holder) => {
+    const [kind, type, prelude, body, cssText] = row.split('\u0002');
+    const rule = Object.create((ruleClasses[kind + 'Rule'] || CSSRule).prototype);
+    ruleState.set(rule, { kind, type: Number(type), prelude, body, cssText, index: i, holder });
+    return rule;
+  };
+  // After an insert or a delete at `from`: the rules from there know their places, and the
+  // holder's text is its rules' texts, one a line (CssSheet.textOf; `textOf_insert`,
+  // `textOf_delete`). The rules are not read from that text again while it stays the text
+  // (`rulesOf`), so a sheet that grows a rule at a time costs a rule at a time, not the sheet.
+  const wroteRules = (holder, xs, from) => {
+    const st = holder.st;
+    for (let k = from; k < xs.length; k++) ruleState.get(xs[k]).index = k;
+    const text = st.texts.join('\n');
+    st.write(text);
+    st.seen = text;
   };
   const ruleNow = rule => { const rs = ruleState.get(rule); if (!rs) throw new TypeError('Illegal invocation'); const xs = rulesOf(rs.holder); if (xs[rs.index] !== rule) rs.detached = true; return rs; };
   const insertInto = (holder, rule, index) => {
     const xs = rulesOf(holder), i = index >>> 0;
     if (i > xs.length) throw sheetErr('IndexSizeError');
-    changed(holder, sheetOp('insert', holder.st.text(), String(rule), String(i)));
+    // Lean decides from the rule's text and the kinds of the rules there (CssSheet.insertAt,
+    // which is insertRule: `insertRule_eq_insertAt`); the other rules' text is not read again
+    const st = holder.st, a = sheetOp('insertAt', st.kinds.join(','), String(rule), String(i));
+    if (a.charAt(0) !== '\u0000') throw sheetErr(a === '' ? 'SyntaxError' : a.slice(1));
+    const made = ruleOfRow(a.slice(1), i, holder), rs = ruleState.get(made);
+    xs.splice(i, 0, made); st.texts.splice(i, 0, rs.cssText); st.kinds.splice(i, 0, rs.kind);
+    wroteRules(holder, xs, i + 1);
     return i;
   };
   const deleteFrom = (holder, index) => {
     const xs = rulesOf(holder), i = index >>> 0;
     if (i >= xs.length) throw sheetErr('IndexSizeError');
-    changed(holder, sheetOp('delete', holder.st.text(), String(i)));
+    const st = holder.st;
+    xs.splice(i, 1); st.texts.splice(i, 1); st.kinds.splice(i, 1);
+    wroteRules(holder, xs, i);
   };
   // CSSRuleList and StyleSheetList (CSSOM §6.2.2, §6.1.2): length and item() are on the
   // prototype and read the list's items through this map (list object or target → items)

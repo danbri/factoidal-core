@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.37.2 (2026-11-17)
+
+- `foafnaut --update`, `--latest` and `--which` read the release list again. 0.37.1 asked for every page the list named, but GitHub serves only the first 1000 results of a list and refuses later pages with HTTP 422; when the list passed 10 pages that refusal failed the whole lookup, and the launcher fell back to the macOS lane's pointer (it kept the newer installed build, so nothing was replaced wrongly). The launcher now asks for at most 10 pages, and a later page that fails is left out with a note under `--verbose`. Textnaut's copy of the lookup has the same fix.
+
 ## 0.37.1 (2026-11-17)
 
 - `foafnaut --update` (and `--latest`) now installs the newest macOS build of main. Before, the launcher read only the first 60 releases of `danbri/factoidal-builds` and took the most recently published one: GitHub lists releases in no useful order, so the newest build could be missed (on 2026-11-16 it installed an older build in place of `build-0137191edfef`), and a branch build could be taken. The launcher now reads every page of the release list (pages read together, at most 20), asks `danbri/factoidal-core` which of the most recently published candidates are on main, and takes the one nearest main's head. Branch builds and drafts are skipped. If GitHub's API limit is reached, the macOS lane's pointer (`latest/darwin-status.json`) is used, and the launcher says so; `GITHUB_TOKEN` is used when set. The archive is still checked against the sha256 in the release's `build-info.json`, and nothing changes when it does not match.
