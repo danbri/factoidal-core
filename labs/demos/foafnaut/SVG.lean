@@ -80,6 +80,21 @@ private theorem pow10_foldl (n : Nat) (x : Float) :
 @[csimp] private theorem pow10_eq_fast : @pow10 = @pow10Fast := by
   funext n; exact pow10_foldl n 1
 
+/-- The exponents the number reader takes: any negative exponent of at most two digits (the
+reader's digit bound), and positive ones up to 12; a larger positive exponent is past the
+magnitude bound of 1,000,000 for every mantissa that is not 0. -/
+def exponentAllowed (negative : Bool) (exponent : Nat) : Bool := negative || exponent ≤ 12
+
+/-- Kind: bound. Says: a positive exponent is taken only up to 12. -/
+theorem exponentAllowed_positive (e : Nat) : exponentAllowed false e = true ↔ e ≤ 12 := by
+  simp [exponentAllowed]
+
+/-- Kind: property. Says: every negative exponent is taken (the round-off numbers that
+drawing programs write, `1.13686838e-13`). Does not say: anything about the digit bound,
+which the reader checks first (at most two exponent digits). -/
+theorem exponentAllowed_negative (e : Nat) : exponentAllowed true e = true := by
+  simp [exponentAllowed]
+
 /-- Strict signed decimal/exponent lexer. Relative units and non-finite values
 are errors; bounded magnitudes keep this profile within useful f32 precision. -/
 def numberReference (input : String) : Except String Float := do
@@ -103,7 +118,11 @@ def numberReference (input : String) : Except String Float := do
     if (s.contains 'e' || s.contains 'E') && expDigits.isEmpty then throw "exponent requires digits"
     if whole.length+fraction.length > 24 || expDigits.length > 2 then throw "numeric precision exceeds profile bound"
     let exponent := (String.ofList expDigits).toNat?.getD 0
-    if exponent > 12 then throw "numeric exponent exceeds profile bound"
+    -- A positive exponent above 12 is past the magnitude bound anyway. A negative one is
+    -- read up to the two digits allowed above: drawing programs write the round-off of
+    -- their arithmetic as numbers such as `1.13686838e-13` (BBC News' logo), which are 0
+    -- to any pixel; refusing them refused the whole drawing.
+    if !exponentAllowed expNegative exponent then throw "numeric exponent exceeds profile bound"
     let integer := Float.ofNat ((String.ofList whole).toNat?.getD 0)
     let decimal := Float.ofNat ((String.ofList fraction).toNat?.getD 0) / pow10 fraction.length
     let unsigned := (integer+decimal) * (if expNegative then 1/pow10 exponent else pow10 exponent)
@@ -163,6 +182,11 @@ private def sameNumber (text : String) : Bool :=
 #guard (List.range 4000).all fun n =>
   let t := toString n
   sameNumber t && sameNumber ("-" ++ t) && sameNumber ("0." ++ t) && sameNumber (t ++ "." ++ toString (n*7919 % 100000))
+-- the round-off of drawing programs is read (as about 0); a large positive exponent is not
+#guard ((number "1.13686838e-13").toOption.map (·.abs < 1e-12)) == some true
+#guard ((number "-3.55271368e-15").toOption.map (·.abs < 1e-12)) == some true
+#guard (number "1e13").toOption.isNone
+#guard (number "4.4e-05").toOption.isSome
 private def lengthNumber (input : String) : Except String Float :=
   let s := trim input
   number (if s.endsWith "px" then String.ofList (s.toList.take (s.length-2)) else s)
@@ -399,9 +423,13 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
     pure ((← number (String.ofList (s.toList.take (s.length-1))))/100*base)
   else lengthNumber s
 
+/-- The presentation attributes every drawing element may carry. `clip-rule` (SVG 2 §14.3.7)
+matters only for a shape inside a `clipPath`; this reader takes it and clips with the
+nonzero rule. Icon sets write it on every path (`fill-rule="evenodd" clip-rule="evenodd"`:
+GitHub's icons), and refusing it refused the whole drawing. -/
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
-  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events"]
+  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events","clip-rule"]
 /-- SVG Tiny 1.2 §11.13 and §11.16: elements that define a paint and draw nothing. -/
 private def paintServers := ["linearGradient","radialGradient","solidColor"]
 /-- Attributes that say nothing about what is drawn, and that HTML pages put on inline SVG:
