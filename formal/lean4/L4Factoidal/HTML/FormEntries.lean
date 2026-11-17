@@ -65,7 +65,7 @@ def controlEntries (d : Dom) (submitter : Option NodeId) (charset : String) (k :
       else if isInput && t == "file" then [{ name, file := true }]
       else if isInput && t == "hidden" && Dom.asciiLower name == "_charset_" then [{ name, value := charset }]
       else if isHtml d k ["textarea"] then { name, value := (d.textContent k).getD "" } :: dirnameEntry d k
-      else if isInput then { name, value := (attr? d k "value").getD "" } :: dirnameEntry d k
+      else if isInput then { name, value := inputValue d k } :: dirnameEntry d k
       else [{ name, value := (attr? d k "value").getD "" }]
 
 /-- The submittable elements whose form owner is the form, in tree order. -/

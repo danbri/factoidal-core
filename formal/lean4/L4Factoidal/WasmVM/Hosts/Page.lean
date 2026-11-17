@@ -1291,7 +1291,9 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         let ds := h.dom
         let h := { h with dom := emptyDomHost }
         let (dom, answer) := Hosts.Dom.domOp ds (a 0) (a 1) q
-        let reads := if Hosts.Dom.treeOps.contains (a 1) then h.reads.wrote else h.reads
+        -- 169 writes an input's value or `value` attribute, except when it reads ("v")
+        let writes := Hosts.Dom.treeOps.contains (a 1) || (a 1 == Hosts.Dom.valueOp && !q.startsWith "v")
+        let reads := if writes then h.reads.wrote else h.reads
         let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
         ({ h with dom, reads }, st, r)
     else

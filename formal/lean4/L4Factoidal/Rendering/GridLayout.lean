@@ -189,8 +189,8 @@ def gridTrackFns (axis : Grid.Axis) (auto : List Grid.TrackSize) (lead count : N
 its margin box, within its `min-width` and `max-width`; a px `width` is all three. The
 minimum contribution is the min-content width (the automatic minimum size, §6.6), the
 `min-width` when one is given, or the edges alone for an item that clips. -/
-def gridInlineContribution (kids : Children) (item : Item) (is : Computed) (start span : Nat) :
-    Except String Grid.Contribution := do
+def gridInlineSizes (kids : Children) (item : Item) (is : Computed) :
+    Except String (Nat × Nat × Nat) := do
   let m := is.margin
   let b := is.borderEdges
   let p := is.padding
@@ -200,7 +200,7 @@ def gridInlineContribution (kids : Children) (item : Item) (is : Computed) (star
   match is.width with
   | .px w =>
     let outer := gridUnits (clampOpt lo hi w+edges)
-    return {start, span, minimum := outer, minContent := outer, maxContent := outer}
+    return (outer, outer, outer)
   | _ =>
     let (a,c) ← kids.intrinsic item
     let minC := clampOpt lo hi (max 0 (a-edges))+edges
@@ -208,7 +208,47 @@ def gridInlineContribution (kids : Children) (item : Item) (is : Computed) (star
     let minimum := match is.minWidth with
       | .px v => v+edges
       | _ => if is.clipOverflow then edges else minC
-    return {start, span, minimum := gridUnits minimum, minContent := gridUnits minC, maxContent := gridUnits maxC}
+    return (gridUnits minimum, gridUnits minC, gridUnits maxC)
+
+/-- `gridInlineSizes` as the contribution of an item that starts at column `start` and
+spans `span` columns. -/
+def gridInlineContribution (kids : Children) (item : Item) (is : Computed) (start span : Nat) :
+    Except String Grid.Contribution :=
+  (fun (m : Nat × Nat × Nat) => ({start, span, minimum := m.1, minContent := m.2.1, maxContent := m.2.2} : Grid.Contribution)) <$>
+    gridInlineSizes kids item is
+
+/-- The contribution a grid container lays its columns out with, in its definite width:
+`gridInlineContribution`, or, for an item that spans only columns whose sizing functions
+read no item (`Grid.Contribution.inert`: a fixed minimum and a fixed or `fr` maximum, as
+`minmax(0, 1fr)`) when no column is collapsed, the item with its contributions 0 and no
+measure of its content (`gridInlineContributionIn_ok`, `gridSizes_map_blankInert`: the
+column sizes are the same). An unmeasured item that `gridInlineContribution` refuses is
+laid out, not refused. -/
+def gridInlineContributionIn (fns : Array Grid.TrackFn) (collapsed : Array Bool) (kids : Children) (item : Item)
+    (is : Computed) (start span : Nat) : Except String Grid.Contribution :=
+  if !collapsed.any id && ({start, span} : Grid.Contribution).inert fns then .ok {start, span}
+  else gridInlineContribution kids item is start span
+
+/-- Kind: equality. Says: where `gridInlineContribution` answers a contribution `c`,
+`gridInlineContributionIn` answers `c` with its contributions made 0 when it is inert and
+no column is collapsed (`Grid.Contribution.blankInert`), else `c`. Does not say: that the
+loop of `gridLayoutH` builds the whole array this way (it does, item by item). -/
+theorem gridInlineContributionIn_ok (fns : Array Grid.TrackFn) (collapsed : Array Bool) (kids : Children) (item : Item)
+    (is : Computed) (start span : Nat) (c : Grid.Contribution) (h : gridInlineContribution kids item is start span = .ok c) :
+    gridInlineContributionIn fns collapsed kids item is start span =
+      .ok (if !collapsed.any id then c.blankInert fns else c) := by
+  unfold gridInlineContribution at h
+  cases hs : gridInlineSizes kids item is with
+  | error e => simp [hs, Functor.map, Except.map] at h
+  | ok t =>
+    simp only [hs, Functor.map, Except.map, Except.ok.injEq] at h
+    subst h
+    have hi' : ({start, span, minimum := t.1, minContent := t.2.1, maxContent := t.2.2} : Grid.Contribution).inert fns =
+        ({start, span} : Grid.Contribution).inert fns := rfl
+    unfold gridInlineContributionIn Grid.Contribution.blankInert
+    rw [hi']
+    cases hc : collapsed.any id <;> cases hi : ({start, span} : Grid.Contribution).inert fns <;>
+      simp [gridInlineContribution, hs, Functor.map, Except.map]
 
 /-- The used border-box width of an item in an area `areaW` wide (§6.2): its `width`
 (a percentage is of the area); else, stretched, the area less its margins; else its
@@ -257,6 +297,17 @@ def gridSizes (fns : Array Grid.TrackFn) (collapsed : Array Bool) (gap : Nat) (i
       {c with start := before.getD c.start 0, span := before.getD (c.start + c.span) 0 - before.getD c.start 0}
     let sizes := Grid.sizeTracks live.toArray gap moved space stretch
     Array.ofFn (n := fns.size) fun i => if collapsed.getD i.val false then 0 else sizes.getD (before.getD i.val 0) 0
+
+/-- Kind: equality (a cost contract). Says: with no collapsed track, in a definite space,
+the used sizes of the tracks are the same when the inert items' contributions are made 0
+(`Grid.sizeTracks_map_blankInert`). Does not say: anything with a collapsed track. -/
+theorem gridSizes_map_blankInert (fns : Array Grid.TrackFn) (collapsed : Array Bool) (gap : Nat)
+    (items : Array Grid.Contribution) (u : Nat) (stretch : Bool) (h : collapsed.any id = false) :
+    gridSizes fns collapsed gap (items.map (Grid.Contribution.blankInert fns)) (.definite u) stretch =
+      gridSizes fns collapsed gap items (.definite u) stretch := by
+  unfold gridSizes
+  rw [h]
+  exact Grid.sizeTracks_map_blankInert fns gap items u stretch
 
 /-- The sizes of the tracks of an axis with the gaps between those not collapsed, in units. -/
 def gridExtent (sizes : Array Nat) (collapsed : Array Bool) (gap : Nat) : Nat :=
@@ -311,7 +362,7 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
   let mut colItems : Array Grid.Contribution := #[]
   for i in [0:n] do
     let a := plan.areas.getD i default
-    colItems := colItems.push (← gridInlineContribution kids items[i]! styles[i]! a.col a.colSpan)
+    colItems := colItems.push (← gridInlineContributionIn colFns colCollapsed kids items[i]! styles[i]! a.col a.colSpan)
   let colSizes := gridSizes colFns colCollapsed colGap colItems (.definite availW) (gridStretches s.align.justifyContent)
   let colFree : Int := Int.ofNat availW - Int.ofNat (gridExtent colSizes colCollapsed colGap)
   let colSpread := Grid.contentOffsetsInt (gridDistribution s.align.justifyContent rtl) colFree (gridLive colSizes colCollapsed)

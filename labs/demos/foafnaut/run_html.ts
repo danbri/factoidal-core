@@ -1,7 +1,7 @@
 import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit} from "./native_html_engine.ts";
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
-import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
+import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,holdForPrefetch,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
 import {Downloaded,inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
@@ -49,7 +49,7 @@ async function main() {
   if(args.includes("--help")){
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
-  let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
+  let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let accessibilityOn=false;
@@ -72,6 +72,7 @@ async function main() {
     else if(arg==="--poll-idle")pollIdle=true;
     // For comparison: page changes are not held while the user scrolls, timer turns not held for input.
     else if(arg==="--no-scroll-first")scrollFirstOn=false;
+    else if(arg==="--no-prefetch-hold")prefetchHoldOn=false;
     else if(arg==="--no-input-first")inputFirstOn=false;
     // For comparison: a page's start is one turn (every script and task due at once before the first frame).
     else if(arg==="--no-start-slices")startSlicesOn=false;
@@ -1008,7 +1009,8 @@ async function main() {
   type RequestRecord={request:ReturnType<typeof document.request>;width:number;height:number;document:typeof document};
   let prefetched:{key:StateKey;layers:HTMLLayers;target:number;record:RequestRecord}|undefined;
   let prefetching:{key:StateKey;target:number;reach:number}|undefined;
-  const prefetchStats={sent:0,ready:0,swaps:0,dropped:0,stale:0,missed:0};
+  const prefetchStats={sent:0,ready:0,swaps:0,dropped:0,stale:0,missed:0,held:0};
+  let holdTraced=false;
   // Frame cost ratchet (L4Factoidal/FrameCost, section Ratchet): Lean frames and rows
   // scrolled after the first frame. --scroll-sweep fails when the frames pass the bound.
   const frameCost={leanFrames:0,scrollEvents:0,scrollRows:0,reach:0};
@@ -2001,7 +2003,13 @@ async function main() {
       // The scroll paused (or held the change long enough): the page's change is drawn now.
       if(pageChanged!==undefined&&(firstShown.has(document)||!rendering)&&!scrollHolds(performance.now())&&!scriptsHold(performance.now())){pageChanged=undefined;dirty=true;}
       if(axDue&&!axBusy&&!rendering)axUpdate();
-      if(dirty&&canPresent()&&!rendering){
+      // A frame for a scroll past the band waits for the band being prefetched for the same
+      // state (holdForPrefetch): when it comes, the frame is not needed, or is asked for at the
+      // scroll of then. Without --no-prefetch-hold.
+      const bandHeld=prefetchHoldOn&&dirty&&layered&&canShift()&&holdForPrefetch(prefetching,stateNow());
+      if(bandHeld&&!holdTraced){holdTraced=true;prefetchStats.held++;}
+      if(!bandHeld)holdTraced=false;
+      if(dirty&&canPresent()&&!rendering&&!bandHeld){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       } else if(!everyFrame&&!dirty&&!animationDue&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=(scriptAnimating()?IDLE_CHECK_ANIMATING_MS:IDLE_CHECK_MS)){
