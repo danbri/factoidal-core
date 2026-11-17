@@ -14593,6 +14593,50 @@
     }
   }
   if (frameEngine()) { def('MessageChannel', MessageChannel); def('MessagePort', MessagePort); }
+  // HTML §9.5 BroadcastChannel: a message goes to every other open channel of the same name
+  // in this agent's same-origin globals (the page and its same-origin frames share this
+  // realm), in the order the channels were made, each in its own task; a worker's channels
+  // are another agent's and are not reached yet. A page that makes no channel pays nothing.
+  {
+    const channels = new WeakMap();   // channel -> { name, closed, order }
+    let open = [], made = 0;
+    const B = (o, what) => { const st = channels.get(o); if (!st) throw new TypeError(`Failed to execute '${what}' on 'BroadcastChannel': Illegal invocation`); return st; };
+    class BroadcastChannel extends EventTarget {
+      constructor(name) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'BroadcastChannel': 1 argument required, but only 0 present.");
+        super();
+        const st = { name: String(name), closed: false, order: made++ };
+        channels.set(this, st); open.push(this);
+      }
+      get name() { return B(this, 'name').name; }
+      postMessage(message) {
+        const st = B(this, 'postMessage');
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'BroadcastChannel': 1 argument required, but only 0 present.");
+        if (st.closed) throw new DOMException("Failed to execute 'postMessage' on 'BroadcastChannel': Channel is closed", 'InvalidStateError');
+        const data = globalThis.structuredClone(message);
+        const origin = String(globalThis.origin ?? '');
+        for (const c of open) {
+          if (c === this) continue;
+          const cs = channels.get(c);
+          if (cs.closed || cs.name !== st.name) continue;
+          setTimeout(() => {
+            if (cs.closed) return;
+            let copy;
+            try { copy = globalThis.structuredClone(data); } catch { const e = new MessageEvent('messageerror', { origin }); state(e).trusted = true; dispatch(c, e); return; }
+            const e = new MessageEvent('message', { data: copy, origin }); state(e).trusted = true; dispatch(c, e);
+          }, 0);
+        }
+      }
+      close() { const st = B(this, 'close'); if (!st.closed) { st.closed = true; open = open.filter(c => c !== this); } }
+      get onmessage() { return handlerOf(this, 'message'); }
+      set onmessage(f) { setHandler(this, 'message', f); }
+      get onmessageerror() { return handlerOf(this, 'messageerror'); }
+      set onmessageerror(f) { setHandler(this, 'messageerror', f); }
+    }
+    for (const k of ['name', 'onmessage', 'onmessageerror']) Object.defineProperty(BroadcastChannel.prototype, k, { ...Object.getOwnPropertyDescriptor(BroadcastChannel.prototype, k), enumerable: true });
+    for (const k of ['postMessage', 'close']) Object.defineProperty(BroadcastChannel.prototype, k, { ...Object.getOwnPropertyDescriptor(BroadcastChannel.prototype, k), enumerable: true });
+    if (frameEngine()) def('BroadcastChannel', BroadcastChannel);
+  }
   // HTML §7.2.2.3 "Named access on the Window object": an element with an id is a property
   // of the window when nothing else has that name. The window's named properties object is
   // a proxy in its prototype chain (WebIDL §3.7.4); the lookup is Lean's (node_query 5),
