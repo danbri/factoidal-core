@@ -346,12 +346,11 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 #guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,s.borderColor.map rgb255)) == some (1,some (255,0,0))
 #guard ((stateAt "<p id='x' style='border-width:4px'>A</p>" "" "x").toOption.map (·.borderEdges.left)) == some 0
 -- the line metrics of a web font are its own ascent and descent (CSS 2.1 §10.8.1)
-#guard (({family := "x", unitsPerEm := 1000, advance := 0, ascent := 1069, descent := 293, outline := fun _ => [],
-  admits := fun _ => false, familyMetrics := fun f => if f == "Ahem" then some (800,200) else none} : FontProfile).metricsOf
-  {fontFamily := "Ahem", fontSize := 100}) == (80,20)
-#guard (({family := "x", unitsPerEm := 1000, advance := 0, ascent := 1000, descent := 250, outline := fun _ => [],
-  admits := fun _ => false, familyMetrics := fun f => if f == "Ahem" then some (800,200) else none} : FontProfile).metricsOf
-  {fontFamily := "serif", fontSize := 20}) == (20,5)
+private def ahemProfile (ascent descent : Float) : FontProfile :=
+  {family := "x", unitsPerEm := 1000, advance := 0, ascent, descent, outline := fun _ => [],
+   admits := fun _ => false, familyMetrics := fun f => if f == "Ahem" then some (800,200) else none}
+#guard (ahemProfile 1069 293).metricsOf {fontFamily := "Ahem", fontSize := 100} == (80,20)
+#guard (ahemProfile 1000 250).metricsOf {fontFamily := "serif", fontSize := 20} == (20,5)
 
 private def runState (html css : String) (active : Option String := none) : Except String (Scene × Array Box) := do
   let dom := DOM.parseHtmlDocument html
