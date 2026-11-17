@@ -469,7 +469,18 @@ def isConstructor (v : Value) : M Bool := do
 
 @[inline] def isCallable (v : Value) : M Bool := do
   match v with
-  | .obj id => pure (← getObj id).kind.callable
+  | .obj id =>
+    match (← getObj id).kind with
+    -- a Proxy has [[Call]] when its target has (ProxyCreate, §10.5.14 step 7)
+    | .proxy (.obj t) _ => do
+      let rec go : Nat → Nat → M Bool
+        | 0, _ => pure false
+        | k + 1, t => do
+          match (← getObj t).kind with
+          | .proxy (.obj t') _ => go k t'
+          | kd => pure kd.callable
+      go 1000 t
+    | k => pure k.callable
   | _ => pure false
 
 def typeOf (v : Value) : M String := do
@@ -482,7 +493,10 @@ def typeOf (v : Value) : M String := do
   | .str _ => pure "string"
   | .sym _ => pure "symbol"
   | .big _ => pure "bigint"
-  | .obj id => pure (typeOfKind (← getObj id).kind)
+  | .obj id =>
+    match (← getObj id).kind with
+    | .proxy .. => pure (if ← isCallable v then "function" else "object")
+    | k => pure (typeOfKind k)
 
 /-- The source text CreateDynamicFunction (§20.2.1.1.1 steps 13 to 16) parses: `kw` is
 `function`, `function*`, `async function` or `async function*`. -/
@@ -8166,10 +8180,10 @@ def instOf : Nat → Value → Value → M Bool
       | .obj fid =>
         -- Function.prototype[@@hasInstance] is OrdinaryHasInstance, done here without a call
         match (← getObj fid).kind with
-        | .native (.x .fnHasInstance) => if !co.kind.callable then return false
+        | .native (.x .fnHasInstance) => if !(← isCallable c) then return false
         | _ => return toBool (← callV n hi c #[v])
       | f => return toBool (← callV n f c #[v])
-      if !co.kind.callable then throwErr .type "Right-hand side of 'instanceof' is not callable"
+      if !(← isCallable c) then throwErr .type "Right-hand side of 'instanceof' is not callable"
       match co.kind with
       | .bound t _ _ => instOf n v t
       | _ =>
@@ -8293,6 +8307,13 @@ def callV : Nat → Value → Value → Array Value → M Value
         if h.realms.isEmpty || k == h.curRealm then callNative n nid thisV args none
         else inRealm k (callNative n nid thisV args none)
       | .bound t bt bargs => callV n t bt (bargs ++ args)
+      | .proxy t hnd =>
+        -- [[Call]] of a Proxy (§10.5.12): the `apply` trap with the target, this and the
+        -- arguments as an array; with no trap, the target is called
+        if !(← isCallable f) then throwErr .type "not a function"
+        match ← proxyTrap n hnd "apply" with
+        | some trap => callV n trap hnd #[t, thisV, ← newArray args]
+        | none => callV n t thisV args
       | _ => throwErr .type "not a function"
     | _ => throwErr .type "not a function"
 termination_by structural n _ _ _ => n
