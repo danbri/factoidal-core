@@ -15160,6 +15160,8 @@
   });
   def('getSelection', getSelection);
   for (const C of new Set([HTMLElement, HTMLUnknownElement, ...Object.values(named)])) reflectInstall(C);
+  // HTMLOrSVGElement's reflected attributes (autofocus, tabIndex) on SVG and MathML elements
+  reflectInstall(SVGElement); reflectInstall(MathMLElement);
   // ---- IDL attributes that reflect an element or elements (HTML §2.6.1) ----
   // `ariaActiveDescendantElement`, `ariaLabelledByElements` and the other ARIA element
   // attributes, `popoverTargetElement`, `commandForElement`. The page keeps the explicitly set

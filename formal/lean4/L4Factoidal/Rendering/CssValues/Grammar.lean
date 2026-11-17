@@ -499,6 +499,9 @@ def leaf (env : Env) (m : G → List CV → Res) (name : String) (lo hi : Option
       | [.tok (.ident n)] =>
         if cssWide.contains (lower n) || lower n == "default" then [] else [(idents, ts.drop 1)]
       | _ => [(idents, ts.drop idents.length)]
+  -- `calc-size()` (CSS Values 5 §7.1): a basis of `auto` only where the property takes `auto`
+  | "calc-size()" => oneCV (fun cv => (calcSizeOf env.ctx true 8 cv).map CV.raw) ts
+  | "calc-size-noauto()" => oneCV (fun cv => (calcSizeOf env.ctx false 8 cv).map CV.raw) ts
   | "position" => positionLeaf env.ctx false ts
   | "bg-position" => positionLeaf env.ctx true ts
   | _ =>
