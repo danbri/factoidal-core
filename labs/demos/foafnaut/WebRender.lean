@@ -509,14 +509,50 @@ private def runJSON (r : Rendering.GlyphRun) : String :=
   "{\"source\":" ++ toString r.source ++ ",\"font\":" ++ quote r.font ++ ",\"size\":" ++ toString r.fontSize ++
   ",\"text\":" ++ quote r.text ++ ",\"glyphs\":" ++ array (r.glyphs.toList.map fun g =>
     array [toString g.index,toString g.x,toString g.y,toString g.advance,toString g.clusterStart,toString g.clusterEnd]) ++ "}"
-def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
-    (font : Option Rendering.FontProvider.Face) : String :=
-  let header := match font with
+private def layoutHeader (font : Option Rendering.FontProvider.Face) : String :=
+  match font with
     | none => "{\"profile\":\"lean-block-inline-ascii-bitmap-v1\",\"fontScope\":\"ASCII bitmap; no real font shaping\""
     | some face => "{\"profile\":\"lean-block-inline-font-data-v1\",\"fontScope\":\"Supplied HarfBuzz/FreeType horizontal LTR words; canonical font contours with checked backend compilation; no bidi or fallback\",\"fontResource\":{\"family\":" ++ quote face.family ++ ",\"fontSha256\":" ++ quote face.fontSha256 ++ ",\"faceIndex\":" ++ toString face.faceIndex ++ ",\"style\":" ++ quote face.style ++ ",\"unitsPerEm\":" ++ toString face.unitsPerEm ++ "}"
-  header ++ ",\"boxes\":" ++
-  array (boxes.toList.map fun b => array [toString b.source,toString b.x,toString b.y,toString b.width,toString b.height]) ++
-  ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ ",\"links\":" ++ Rendering.Links.encode s.links ++ "}"
+private def boxesJSON (boxes : Array Rendering.Layout.Box) : String :=
+  array (boxes.toList.map fun b => array [toString b.source,toString b.x,toString b.y,toString b.width,toString b.height])
+
+/-- The part of `layoutJSON` before the links: the font header, the boxes and the glyph
+runs. It reads no link and no band, so every band of one layout has the same head: the
+engine keeps it with a page layer answer and gives it again for another band
+(`WebDocument.pageArtifact`). On a long page the boxes and glyph runs of the whole page are
+most of a band's compile (a W3C specification, 2026-11-17: about 60%). -/
+def layoutHead (boxes : Array Rendering.Layout.Box) (runs : Array Rendering.GlyphRun)
+    (font : Option Rendering.FontProvider.Face) : String :=
+  layoutHeader font ++ ",\"boxes\":" ++ boxesJSON boxes ++ ",\"glyphRuns\":" ++ array (runs.toList.map runJSON)
+
+/-- The part of `layoutJSON` after the head: the links, and the end of the object. -/
+def layoutTail (links : Array Rendering.LinkRegion) : String :=
+  ",\"links\":" ++ Rendering.Links.encode links ++ "}"
+
+def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+    (font : Option Rendering.FontProvider.Face) : String :=
+  layoutHead boxes s.glyphRuns font ++ layoutTail s.links
+
+/-- Kind: equality (the answer's format). Says: `layoutJSON` is the text it was before the
+head and the tail were split out (2026-11-17): the font header, then `"boxes"`,
+`"glyphRuns"` and `"links"` in that order, each written by the same function as before.
+Does not say: anything about what a host does with the text. -/
+theorem layoutJSON_eq_flat (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+    (font : Option Rendering.FontProvider.Face) :
+    layoutJSON s boxes font = layoutHeader font ++ ",\"boxes\":" ++ boxesJSON boxes ++
+      ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ ",\"links\":" ++
+      Rendering.Links.encode s.links ++ "}" := by
+  simp only [layoutJSON, layoutHead, layoutTail, String.append_assoc]
+
+/-- Kind: equality. Says: for a scene whose glyph runs are `runs`, `layoutJSON` is the head
+of the boxes, `runs` and the font, then the tail of the scene's own links. So a head made
+for one scene is the head of every scene with the same runs, boxes and font, whatever its
+links. Does not say: that the links of two such scenes are the same. -/
+theorem layoutJSON_of_head (s : Rendering.Scene) (runs : Array Rendering.GlyphRun)
+    (boxes : Array Rendering.Layout.Box) (font : Option Rendering.FontProvider.Face)
+    (h : s.glyphRuns = runs) :
+    layoutJSON s boxes font = layoutHead boxes runs font ++ layoutTail s.links := by
+  subst h; rfl
 
 /-- Shared checked scene serialization for HTML and structured-document frontends:
 the artifact with the storage floats and tile words in the form `form`, and the
