@@ -11400,6 +11400,8 @@
     }
     if (ArrayBuffer.isView(value)) {
       if (value.buffer.detached) throw cloneError('An ArrayBufferView is detached and');
+      // a DataView out of the bounds of its (resized) buffer: its byteLength throws
+      if (typeof DataView === 'function' && value instanceof DataView) { try { void value.byteLength; } catch { throw cloneError('An out-of-bounds DataView'); } }
       const buffer = structuredCloneOf(value.buffer, memory);
       if (typeof DataView === 'function' && value instanceof DataView) return keep(new DataView(buffer, value.byteOffset, value.byteLength));
       const C = typedArrays.find(T => value instanceof T);
@@ -11419,6 +11421,16 @@
     }
     if (value instanceof DOMException) {
       return keep(new DOMException(String(value.message), String(value.name)));
+    }
+    // Blob and File are serializable (File API §3.1, §4.1): a new object of the same bytes
+    // (immutable, so shared), type, and for a File its name and last modified time.
+    if (BlobC !== undefined && blobs.has(value)) {
+      const b = blobs.get(value);
+      if (FileC !== undefined && value instanceof FileC)
+        return keep(new FileC([b.bytes], value.name, { type: b.type, lastModified: value.lastModified }));
+      const r = Object.create(BlobC.prototype);
+      blobs.set(r, { bytes: b.bytes, type: b.type });
+      return keep(r);
     }
     if (cryptoKeys !== undefined && cryptoKeys.has(value)) return keep(cloneCryptoKey(value)); // haclweb
     if (isPlatform(value)) throw cloneError(Object.prototype.toString.call(value));
@@ -11458,7 +11470,14 @@
     }
     // The transferred buffers move: their new objects are made now, and the old ones are
     // detached after the walk (HTML StructuredSerializeWithTransfer step 5).
-    for (const t of transfer) memory.set(t, t.slice(0));
+    // (a resizable buffer stays resizable, with its maximum length)
+    const moved = t => {
+      if (!t.resizable) return t.slice(0);
+      const b = new ArrayBuffer(t.byteLength, { maxByteLength: t.maxByteLength });
+      new Uint8Array(b).set(new Uint8Array(t));
+      return b;
+    };
+    for (const t of transfer) memory.set(t, moved(t));
     const out = structuredCloneOf(value, memory);
     for (const t of transfer) t.transfer();
     return out;
