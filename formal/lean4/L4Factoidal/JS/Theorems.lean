@@ -48,6 +48,140 @@ theorem toUint32_lt (x : Float) : toUint32 x < 4294967296 := by
     have h1 := Int.emod_lt_of_pos (truncInt x) (b := 4294967296) (by decide)
     omega
 
+/-! ## A Number as an array index, with no key string (`numIndex`, `typedElemNum`) -/
+
+/-- The first digit of a positive number's decimal text is not `0`. -/
+theorem head_toDigits_ne_zero : ∀ (n : Nat), 0 < n → (Nat.toDigits 10 n).head? ≠ some '0' := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro hpos
+    by_cases h : n < 10
+    · rw [Nat.toDigits_of_lt_base h]
+      have : n = 1 ∨ n = 2 ∨ n = 3 ∨ n = 4 ∨ n = 5 ∨ n = 6 ∨ n = 7 ∨ n = 8 ∨ n = 9 := by omega
+      rcases this with h | h | h | h | h | h | h | h | h <;> subst h <;> decide
+    · have h10 : 10 ≤ n := by omega
+      rw [Nat.toDigits_of_base_le (by omega) h10]
+      have hne : Nat.toDigits 10 (n / 10) ≠ [] := Nat.toDigits_ne_nil
+      have := ih (n / 10) (by omega) (by omega)
+      cases hd : Nat.toDigits 10 (n / 10) with
+      | nil => exact absurd hd hne
+      | cons a as => rw [hd] at this; simpa using this
+
+theorem arrayIndex?_toString (i : Nat) (h : i < 4294967295) : arrayIndex? (toString i) = some i := by
+  have hlen : (toString i).length ≤ 10 := by
+    rw [Nat.toString_eq_repr, Nat.length_repr_le_iff (by omega)]; omega
+  have hne : (toString i).isEmpty = false := by
+    rw [String.isEmpty_eq_false_iff, Nat.toString_eq_repr]; exact Nat.repr_ne_empty
+  have hall : (toString i).all Char.isDigit = true := by
+    rw [String.all_bool_eq, Nat.toString_eq_repr, Nat.toList_repr, List.all_eq_true]
+    intro c hc
+    exact Nat.isDigit_of_mem_toDigits (by omega) (by omega) hc
+  have hfront : ((toString i).length > 1 && (toString i).front == '0') = false := by
+    by_cases h1 : (toString i).length > 1
+    · have hi : 0 < i := by
+        rcases Nat.eq_zero_or_pos i with h0 | h0
+        · subst h0; exact absurd h1 (by decide)
+        · exact h0
+      have := head_toDigits_ne_zero i hi
+      rw [String.front_eq, String.front?_eq, Nat.toString_eq_repr, Nat.toList_repr]
+      cases hd : (Nat.toDigits 10 i).head? with
+      | none => simp
+      | some c =>
+        rw [hd] at this
+        have : c ≠ '0' := fun hc => this (by rw [hc])
+        simp [this]
+    · simp only [h1, decide_false, Bool.false_and]
+  have hfold : (toString i).foldl (fun a c => a * 10 + (c.toNat - 48)) 0 = i := by
+    rw [String.foldl_eq_foldl_toList, Nat.toString_eq_repr, Nat.toList_repr]
+    have := Nat.ofDigitChars_ten_toDigits (n := i)
+    rw [Nat.ofDigitChars_eq_foldl] at this
+    have hf : (fun (a : Nat) (c : Char) => a * 10 + (c.toNat - 48)) = (fun sofar c => 10 * sofar + (c.toNat - '0'.toNat)) := by
+      funext a c; rw [Nat.mul_comm]; rfl
+    rw [hf]; exact this
+  unfold arrayIndex?
+  have hlen' : ¬ (toString i).length > 10 := by omega
+  simp only [hne, hlen', hall, hfront, hfold, h]
+  simp
+
+theorem front_toString_isDigit (i : Nat) : (toString i).front.isDigit = true := by
+  rw [String.front_eq, String.front?_eq, Nat.toString_eq_repr, Nat.toList_repr]
+  cases hd : Nat.toDigits 10 i with
+  | nil => exact absurd hd Nat.toDigits_ne_nil
+  | cons a as =>
+    have : a ∈ Nat.toDigits 10 i := by rw [hd]; simp
+    simpa using Nat.isDigit_of_mem_toDigits (by omega) (by omega) this
+
+/-- **Kind: refinement.** When `numIndex x` is an index, the key of `x` is the decimal text of that
+index. By the cases of `numToString`; nothing is assumed about floating-point arithmetic. -/
+theorem keyOfNum_numIndex (x : Float) (h : numIndex x < noIndex) : keyOfNum x = toString (numIndex x) := by
+  by_cases h1 : x.isNaN = true
+  · rw [numIndex, if_pos h1] at h; exact absurd h (Nat.lt_irrefl _)
+  by_cases h2 : (x == 0) = true
+  · rw [numIndex, if_neg h1, if_pos h2, keyOfNum, numToString, if_neg h1, if_pos h2]; rfl
+  by_cases h3 : x.isInf = true
+  · rw [numIndex, if_neg h1, if_neg h2, if_pos h3] at h; exact absurd h (Nat.lt_irrefl _)
+  by_cases h4 : (isIntegral x && decide (x.abs < tenPow21)) = true
+  · rw [numIndex, if_neg h1, if_neg h2, if_neg h3, if_pos h4] at h ⊢
+    rw [keyOfNum, numToString, if_neg h1, if_neg h2, if_neg h3, if_pos h4]
+    show toString (truncInt x) = _
+    cases hti : truncInt x with
+    | ofNat i =>
+      rw [hti] at h
+      by_cases hlt : i < noIndex
+      · simp only [hlt, if_true]; rfl
+      · simp only [hlt, if_false] at h; exact absurd h (Nat.lt_irrefl _)
+    | negSucc i => rw [hti] at h; exact absurd h (Nat.lt_irrefl _)
+  · rw [numIndex, if_neg h1, if_neg h2, if_neg h3, if_neg h4] at h; exact absurd h (Nat.lt_irrefl _)
+
+theorem arrayIndex?_keyOfNum (x : Float) (h : numIndex x < noIndex) :
+    arrayIndex? (keyOfNum x) = some (numIndex x) := by
+  rw [keyOfNum_numIndex x h]; exact arrayIndex?_toString _ h
+
+theorem front_keyOfNum (x : Float) (h : numIndex x < noIndex) : (keyOfNum x).front.isDigit = true := by
+  rw [keyOfNum_numIndex x h]; exact front_toString_isDigit _
+
+/-- **Kind: refinement.** `[[Get]]` of a typed array's element by the key of a Number is the pure
+read `typedElemAt` of that index, with the heap unchanged, at every fuel but 0. -/
+theorem getV_typedElem {H : Type} (n id : Nat) (x : Float) (h : HeapOf H) (v : Value) (hx : numIndex x < noIndex)
+    (hv : typedElemAt h id (numIndex x) = v) (hne : v ≠ .hole) :
+    getV (n + 1) (.obj id) (keyOfNum x) h = .ok v h := by
+  rw [getV.eq_def]
+  unfold typedElemAt at hv
+  cases hk : (h.obj id).kind with
+  | typed ty b off len =>
+    rw [hk] at hv
+    simp only [front_keyOfNum x hx, arrayIndex?_keyOfNum x hx, if_true]
+    simp only [getObj, liveLen, bind, EStateM.bind, pure, EStateM.pure, get, getThe, MonadStateOf.get, EStateM.get, hk]
+    rw [← hv]
+  | _ => rw [hk] at hv; exact absurd hv.symm hne
+
+/-- **Kind: refinement.** The form the evaluator and the register machine now write for `o[x]`
+with a Number `x` on an object that is not an Array (`typedElemNum` first, `getV` on the key of
+`x` when it answers `Value.hole`) runs as `getV` on the key of `x` alone, from every heap, at
+every fuel but 0 (at fuel 0 `getV` is out of fuel). Does not say anything about speed. -/
+theorem getV_typedElemNum {H : Type} (n id : Nat) (x : Float) (h : HeapOf H) :
+    (match typedElemNum h id x with
+      | .hole => getV (n + 1) (.obj id) (keyOfNum x)
+      | w => pure w : JSM H Value) h = getV (n + 1) (.obj id) (keyOfNum x) h := by
+  cases hv : typedElemNum h id x with
+  | hole => rfl
+  | _ =>
+    unfold typedElemNum at hv
+    by_cases hx : numIndex x < noIndex
+    · simp only [hx, if_true] at hv
+      exact (getV_typedElem n id x h _ hx hv (by simp)).symm
+    · simp only [hx, if_false] at hv; cases hv
+
+/-- ToPropertyKey of a Number is its key, with any fuel left (the evaluator's `.index` arm and
+`vmGetIndex` reach `getV` through it). -/
+theorem toKey_num {H : Type} (n : Nat) (x : Float) : toKey (H := H) (n + 1) (.num x) = pure (keyOfNum x) := by
+  rw [toKey.eq_def]
+
+#print axioms arrayIndex?_toString
+#print axioms arrayIndex?_keyOfNum
+#print axioms getV_typedElemNum
+
 /-! ## ToNumber of a Number (the `toNumQ` form of `JS/Interp.lean`) -/
 
 /-- ToNumber of a Number is that Number, with any fuel left. -/

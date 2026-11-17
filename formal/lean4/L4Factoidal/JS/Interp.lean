@@ -1539,6 +1539,25 @@ TypedArrayLength): 0 when the buffer is detached or too small for the view. -/
   let bo ← getObj buf
   pure (if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len)
 
+/-- Element `i` of the typed array `id` as its buffer now is (§10.4.5.15 TypedArrayGetElement:
+`undefined` past the live length); `Value.hole` when `id` is not a typed array. A pure function
+of the heap: no result cell, no key. -/
+def typedElemAt (h : HeapOf H) (id i : Nat) : Value :=
+  match (h.obj id).kind with
+  | .typed ty b off len =>
+    let bo := h.obj b
+    let live := if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len
+    if i < live then typedRead ty (bufferBytes bo) (off + i * elemSize ty) else .undef
+  | _ => .hole
+
+/-- `o[x]` for a Number `x` when `o` is a typed array and `x` an array index: the element, with
+no key string (`getV` would make the string of `x`, parse it back into the index and read the
+same element: `getV_typedElemNum` in `JS/Theorems.lean`). `Value.hole` otherwise: the caller
+takes the general path. -/
+@[inline] def typedElemNum (h : HeapOf H) (id : Nat) (x : Float) : Value :=
+  let i := numIndex x
+  if i < noIndex then typedElemAt h id i else .hole
+
 /-- The %TypedArray%.prototype methods that validate the typed array and then take the steps
 of the Array.prototype method of the same name (`NativeX.typedGeneric`): name, length. -/
 def typedGenericNames : Array (String × Nat) :=
@@ -9116,7 +9135,11 @@ def evalExpr : Nat → Ctx → Expr → M Value
             | .hole => getV n b (← toKey n kv)
             | v => pure v
           else getV n b (← toKey n kv)
-        | _ => getV n b (← toKey n kv)
+        | _ =>
+          -- an element of a typed array by its number (`typedElemNum`), else the general path
+          match typedElemNum (← get) id x with
+          | .hole => getV n b (← toKey n kv)
+          | w => pure w
       | .undef, _ => throwErr .type "Cannot read properties of undefined"
       | .null, _ => throwErr .type "Cannot read properties of null"
       | _, _ => getV n b (← toKey n kv)
@@ -10610,7 +10633,10 @@ def vmGetIndex : Nat → Value → Value → M Value
           | .hole => getV n b (← toKey n kv)
           | v => pure v
         else getV n b (← toKey n kv)
-      | _ => getV n b (← toKey n kv)
+      | _ =>
+        match typedElemNum (← get) id x with
+        | .hole => getV n b (← toKey n kv)
+        | w => pure w
     | _, _ =>
       if let .undef := b then throwErr .type "Cannot read properties of undefined"
       if let .null := b then throwErr .type "Cannot read properties of null"
@@ -11077,7 +11103,9 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
           | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
         | _ =>
           vmStash regs fregs (bp + code.nregs)
-          let v ← getV n b (keyOfNum x)
+          let v ← (match typedElemNum (← get) id x with
+            | .hole => getV n b (keyOfNum x)
+            | w => pure w)
           let (regs, fregs) ← vmTake
           match (v) with
           | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
