@@ -62,9 +62,9 @@ def specStore : Store × Nat := Id.run do
       ("global_f32", .f32, (Float32.toBits 666.6).toUInt64), ("global_f64", .f64, (666.6 : Float).toBits)] do
     let (st', a) := st.addGlobal ⟨false, t⟩ v
     st := st'; exports := exports.push (n, .global a)
-  let (st', ta) := st.addTable ⟨⟨10, some 20⟩, .funcref⟩ nullRef
+  let (st', ta) := st.addTable ⟨⟨10, some 20, false⟩, .funcref⟩ nullRef
   st := st'; exports := exports.push ("table", .table ta)
-  let (st', ma) := st.addMem ⟨⟨1, some 2⟩⟩
+  let (st', ma) := st.addMem ⟨⟨1, some 2, false⟩⟩
   st := st'; exports := exports.push ("memory", .mem ma)
   let ia := st.insts.size
   st := { st with insts := st.insts.push { exports } }

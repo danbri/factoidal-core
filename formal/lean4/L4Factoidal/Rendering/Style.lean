@@ -1793,6 +1793,12 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
     | _ => pure ()
   return s
 
+/-- A margin hint as its pixels and its percentage part (`marginParts`'s form). -/
+def hintEdge : Option Length → Option (Float × Float)
+  | some (.px v) => some (v, 0)
+  | some (.percent p) => some (0, p)
+  | _ => none
+
 /-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
 `video`, `canvas`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
 `width` and `height` properties; `hr` width too. `hspace` and `vspace` of `img`, `embed`,
@@ -1810,10 +1816,11 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   if sized then
     if let some h := dimensionAttribute (attrValue n "height") then s := {s with height := h}
   if imageInput || ["img","embed","object","marquee"].contains tag then
-    if let some (.px h) := dimensionAttribute (attrValue n "hspace") then
-      s := {s with margin := {s.margin with left := h, right := h}}
-    if let some (.px v) := dimensionAttribute (attrValue n "vspace") then
-      s := {s with margin := {s.margin with top := v, bottom := v}}
+    -- a dimension: pixels, or a percentage of the containing block's width (`marginOf`)
+    if let some (h, ho) := hintEdge (dimensionAttribute (attrValue n "hspace")) then
+      s := {s with margin := {s.margin with left := h, right := h}, pos := (s.pos.withMarginOf 1 ho).withMarginOf 3 ho}
+    if let some (v, vo) := hintEdge (dimensionAttribute (attrValue n "vspace")) then
+      s := {s with margin := {s.margin with top := v, bottom := v}, pos := (s.pos.withMarginOf 0 vo).withMarginOf 2 vo}
   if imageInput || tag == "img" || tag == "object" then
     if let some b := pixelLengthAttribute (attrValue n "border") then
       s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyle := .solid}
@@ -1859,7 +1866,13 @@ def hintedProperties (before after : Computed) : List String :=
   (if after.margin.top == before.margin.top then [] else ["margin-top"]) ++
   (if after.margin.right == before.margin.right then [] else ["margin-right"]) ++
   (if after.margin.bottom == before.margin.bottom then [] else ["margin-bottom"]) ++
-  (if after.margin.left == before.margin.left then [] else ["margin-left"])
+  (if after.margin.left == before.margin.left then [] else ["margin-left"]) ++
+  (if after.pos.marginOf == before.pos.marginOf then [] else ["margin-top","margin-right","margin-bottom","margin-left"]) ++
+  -- the `border` of an image button, `img` or `object` (HTML §15.4.3): the widths and the
+  -- solid style it sets are above the user agent's `input` border
+  (if after.borderStyle == before.borderStyle && after.borderWidth.top == before.borderWidth.top then [] else
+    ["border","border-width","border-style","border-top-width","border-right-width","border-bottom-width",
+     "border-left-width","border-top-style","border-right-style","border-bottom-style","border-left-style"])
 
 /-- A hint that sets no width leaves the UA's `width` rules in force. -/
 theorem hintedProperties_width (before after : Computed) (h : after.width.same before.width = true) :
@@ -2083,7 +2096,9 @@ def userAgentSheet : String :=
   "input[type=checkbox],input[type=radio]{width:13px;height:13px;margin:3px 3px 3px 4px;padding:0;border-width:0}" ++
   "textarea{display:inline-block;padding:2px;border:1px solid #767676;width:176px;height:30px;background-color:#ffffff;white-space:pre-wrap}" ++
   "select{display:inline-block;padding:1px 0;border:1px solid #767676;width:64px;height:17px;background-color:#ffffff}" ++
-  "select>*{display:none}"
+  "select>*{display:none}" ++
+  -- HTML §15.4.1: `iframe { border: 2px inset; }`
+  "iframe{border:2px inset}"
 
 def userAgentRules : List Rule := (parse userAgentSheet).toOption.getD []
 
@@ -2514,6 +2529,44 @@ theorem closedDetailsContent_other (dom : Dom) (id p : Nat) (hp : (dom.get id).p
     (hn : ((dom.get p).lname == "details") = false) : closedDetailsContent dom id = false := by
   simp [closedDetailsContent, hp, hn]
 
+/-- The elements the user agent sheet isolates (HTML §15.3.5, "Bidirectional text"). -/
+def isolatedTags : List String :=
+  ["address","blockquote","center","div","figure","figcaption","footer","form","header","hr",
+   "legend","listing","main","p","plaintext","pre","summary","xmp","article","aside","h1","h2",
+   "h3","h4","h5","h6","hgroup","nav","section","search","table","caption","colgroup","col",
+   "thead","tbody","tfoot","tr","td","th","dir","dd","dl","dt","menu","ol","ul","li","bdi","output"]
+
+/-- The `unicode-bidi` of the user agent sheet (HTML §15.3.5) for an HTML element `tag` with the
+`dir` attribute `dir` (ASCII lower case, "" when absent) and, for an `input`, the `type`
+attribute `type` (lower case): `bdo` is `isolate-override`; an `input` of type search, tel,
+url or email, a `textarea` and a `pre` with `dir=auto` are `plaintext`; the listed elements and
+an element with a valid `dir` are `isolate`; else none (the initial `normal`). -/
+def uaUnicodeBidi (tag dir type : String) : Option UnicodeBidi :=
+  if tag == "bdo" then some .isolateOverride
+  else if dir == "auto" && (tag == "textarea" || tag == "pre" ||
+      (tag == "input" && ["search","tel","url","email"].contains type)) then some .plaintext
+  else if ["rtl","ltr","auto"].contains dir || isolatedTags.contains tag then some .isolate
+  else none
+
+/-- Kind: property. Says: `bdo` is `isolate-override`, whatever its `dir`. -/
+theorem uaUnicodeBidi_bdo (dir type : String) : uaUnicodeBidi "bdo" dir type = some .isolateOverride := by
+  simp [uaUnicodeBidi]
+
+/-- Kind: property. Says: an element with `dir=ltr` or `dir=rtl` is isolated, unless it is a `bdo`
+(which overrides as well). -/
+theorem uaUnicodeBidi_dir (tag dir type : String) (hd : dir = "ltr" ∨ dir = "rtl") (ht : tag ≠ "bdo") :
+    uaUnicodeBidi tag dir type = some .isolate := by
+  rcases hd with rfl | rfl <;> simp [uaUnicodeBidi, ht]
+
+#guard uaUnicodeBidi "div" "" "" == some .isolate
+#guard uaUnicodeBidi "span" "" "" == none
+#guard uaUnicodeBidi "span" "invalid" "" == none
+#guard uaUnicodeBidi "input" "auto" "email" == some .plaintext
+#guard uaUnicodeBidi "input" "auto" "text" == some .isolate
+#guard uaUnicodeBidi "input" "" "email" == none
+#guard uaUnicodeBidi "textarea" "auto" "" == some .plaintext
+#guard uaUnicodeBidi "pre" "" "" == some .isolate
+
 /-- Winning declarations are keyed by property, with importance, origin, specificity
 and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
 origin (`userAgentRules`) is below the author origin. Inheritance is applied first.
@@ -2571,7 +2624,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     -- Lists 3 §3.1); the rest of `pos` is not
     pos := {writingMode := parent.pos.writingMode, listStyle := parent.pos.listStyle,
             listInside := parent.pos.listInside, nowrap := parent.pos.nowrap,
-            textTransform := parent.pos.textTransform}}
+            textTransform := parent.pos.textTransform, lineBreak := parent.pos.lineBreak}}
   -- HTML §3.2.6.4 and §15.3.5: the `dir` attribute sets `direction` and isolates the
   -- element; `bdi` isolates, and `bdo` overrides with isolation. Author CSS wins.
   if n.ns == some DOM.htmlNS || n.ns.isNone then
@@ -2580,9 +2633,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     else if dirAttr == "ltr" then initial := {initial with direction := .ltr}
     else if dirAttr == "auto" || (n.lname == "bdi" && !hasAttribute n "dir") then
       initial := {initial with direction := autoDirection dom id}
-    if n.lname == "bdo" then initial := {initial with unicodeBidi := .isolateOverride}
-    else if ["rtl","ltr","auto"].contains dirAttr || n.lname == "bdi" then
-      initial := {initial with unicodeBidi := .isolate}
+    if let some b := uaUnicodeBidi n.lname dirAttr (attrValue n "type").toLower then
+      initial := {initial with unicodeBidi := b}
   let preHint := initial
   if n.ns == some DOM.htmlNS || n.ns.isNone then
     initial := bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))
@@ -2708,7 +2760,8 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by
-        pos := {nowrap := parent.pos.nowrap, textTransform := parent.pos.textTransform}}
+        pos := {nowrap := parent.pos.nowrap, textTransform := parent.pos.textTransform,
+                lineBreak := parent.pos.lineBreak}}
 
 /-- Visit parents before children, using a work list and bounded arena size.
 `matchesOf id` are the rules that match element `id`, in sheet order. `root` is the

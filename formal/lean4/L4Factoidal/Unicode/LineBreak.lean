@@ -42,15 +42,34 @@ structure LBUnit where
   else if raw == cCJ then cNS
   else raw
 
+/-- The strictness of line breaking (CSS Text 3 §5.3 `line-break`), by which LB1 is
+tailored: `strict` resolves CJ to NS, as UAX 14 does by default (this engine's `auto`);
+`normal` and `loose` resolve it to ID, so that a line may start with a small kana or the
+prolonged sound mark; `loose` also lets a line start with an iteration mark
+(々 〻 ゝ ゞ ヽ ヾ, class NS). -/
+inductive Mode where
+  | strict | normal | loose
+  deriving DecidableEq, Inhabited, Repr
+
+/-- The iteration marks that `line-break: loose` lets start a line (CSS Text 3 §5.3). -/
+def iterationMark (c : UInt32) : Bool :=
+  c == 0x3005 || c == 0x303B || c == 0x309D || c == 0x309E || c == 0x30FD || c == 0x30FE
+
+/-- The class of a character after LB1 under `mode`. -/
+@[inline] def resolveIn (mode : Mode) (c : UInt32) (raw : UInt8) (gc : UInt8) : UInt8 :=
+  if mode != .strict && raw == cCJ then cID
+  else if mode == .loose && iterationMark c then cID
+  else resolve raw gc
+
 /-- Cut the text into units (LB1, LB9, LB10). A character that attaches to the
 previous unit gets no break before it. -/
-def units (cs : Array Char) : Array LBUnit := Id.run do
+def units (cs : Array Char) (mode : Mode := .strict) : Array LBUnit := Id.run do
   let mut us : Array LBUnit := Array.mkEmpty cs.size
   for i in [0:cs.size] do
     let c := cs[i]!
     let v := lbTable.get c.val
     let gc := gcTable.get c.val
-    let k := resolve (v &&& 63) gc
+    let k := resolveIn mode c.val (v &&& 63) gc
     if (k == cCM || k == cZWJ) && us.size > 0 && !noAttach (us[us.size - 1]!).cls then
       us := us.modify (us.size - 1) fun u => { u with zwj := k == cZWJ }
     else if k == cCM || k == cZWJ then
@@ -74,8 +93,8 @@ private def sot : UInt8 := 255   -- no unit (start of text); also eot
 
 /-- Break flags, one per character: `true` at index `i` when a break is
 allowed between character `i - 1` and character `i`. -/
-def breakFlags (cs : Array Char) : Array Bool := Id.run do
-  let us := units cs
+def breakFlags (cs : Array Char) (mode : Mode := .strict) : Array Bool := Id.run do
+  let us := units cs mode
   let m := us.size
   let mut flags : Array Bool := Array.replicate cs.size false
   -- state after the previous unit
@@ -185,13 +204,18 @@ def breakFlags (cs : Array Char) : Array Bool := Id.run do
 /-- Positions (counts of code points before the break) where a line break is
 allowed or mandatory, increasing; the end of the text is always listed (LB3)
 and position 0 never (LB2). Empty text has no position. -/
-def breaks (cs : Array Char) : Array Nat :=
+def breaks (cs : Array Char) (mode : Mode := .strict) : Array Nat :=
   if cs.size = 0 then #[]
   else
-    let fl := breakFlags cs
+    let fl := breakFlags cs mode
     ((Array.range cs.size).filter fun i => 0 < i && fl.getD i false).push cs.size
 
 #guard breaks #[] == #[]
+-- `line-break` (CSS Text 3 §5.3): a small kana (CJ) starts a line only when not strict, an
+-- iteration mark only when loose
+#guard breaks #['文', 'ぁ'] == #[2] && breaks #['文', 'ぁ'] .normal == #[1, 2] && breaks #['文', 'ぁ'] .loose == #[1, 2]
+#guard breaks #['文', 'ー'] .strict == #[2] && breaks #['文', 'ー'] .normal == #[1, 2]
+#guard breaks #['文', '々'] .normal == #[2] && breaks #['文', '々'] .loose == #[1, 2]
 #guard breaks #['a'] == #[1]
 #guard breaks #['a', ' ', 'b'] == #[2, 3]
 #guard breaks #['a', 'b'] == #[2]
