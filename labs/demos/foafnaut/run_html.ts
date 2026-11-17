@@ -1978,7 +1978,10 @@ async function main() {
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       } else if(!everyFrame&&!dirty&&!animationDue&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=(scriptAnimating()?IDLE_CHECK_ANIMATING_MS:IDLE_CHECK_MS)){
         // Interactive frames are not read back. When input has been idle, the last frame is drawn again with the checks.
-        rendering=idleCheck().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
+        rendering=idleCheck().catch(error=>{
+          if(String(error).includes("presenter frame superseded")){lastActivity=performance.now();return;}
+          fatal=error;
+        }).finally(()=>{rendering=undefined;});
       }
       if(watchSeconds&&firstFrameAt!==undefined&&performance.now()-firstFrameAt>=watchSeconds*1000)running=false;
       // A repeatable measurement: step the window through fixed sizes, then exit.

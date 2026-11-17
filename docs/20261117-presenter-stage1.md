@@ -61,3 +61,11 @@ smoke run using installed c91b7d21d0a9 native engine exited 2 with `GPU BLOCKED:
 HTML adapter unavailable in this launch context`, before drawing or collecting any of
 the 120 scheduled inputs. No before/after latency claim follows from it. The three
 frozen snapshots were downloaded from factoidal-builds commit 3f998c4580cd.
+
+Assurance review: a superseded idle-check frame now retries after quiet time instead of
+ending the browser. The synchronous theorem does not establish a literal refinement of
+the asynchronous host trace: the host inspects the Lean placement before GPU work and
+records the shown frame afterwards; intervening input can change that latter state.
+Resize reaches the presenter with the new layer viewport, and a prefetched publication
+is held until selected. Pixel/ordering tests must check this host boundary separately.
+The 128 MiB slot bounds a publication, not total retained host frame memory.

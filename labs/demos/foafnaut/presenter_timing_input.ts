@@ -68,6 +68,7 @@ if (busyURL) {
     const result = new Response(text + "\n<script>\n" + script + "\n</script>",
       {status:response.status,statusText:response.statusText,headers});
     Object.defineProperty(result,"url",{value:response.url || url});
+    console.log(JSON.stringify({type:"presenter-timing-busy-input",url}));
     return result;
   };
 }

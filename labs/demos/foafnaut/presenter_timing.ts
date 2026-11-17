@@ -112,7 +112,8 @@ async function main() {
           path("run_html.ts"),`--presenter=${mode}`,"--native-engine",engine,"--offscreen","--offscreen-size",scenario.viewport+"@1",
           "--text-size","100","--no-state","--no-splash","--perf-summary","--idle-checks-only","--log-all","--be-liberal-in-what-we-accept",
           "--watch-sweep",String(seconds),...(scenario.busy?[]:["--no-scripts"]),"--url",scenario.url];
-        const env:Record<string,string>={PRESENTER_TIMING_INPUT:"1",PRESENTER_TIMING_BUSY_URL:"",REALPAGES_REPLAY:""};
+        const env:Record<string,string>={PRESENTER_TIMING_INPUT:"1",PRESENTER_TIMING_COUNT:"120",PRESENTER_TIMING_PERIOD:"16",
+          PRESENTER_TIMING_DELAY:"1500",PRESENTER_TIMING_BUSY_URL:"",REALPAGES_REPLAY:""};
         if(scenario.snapshot)env.REALPAGES_REPLAY=scenario.snapshot;
         if(scenario.busy&&scenario.snapshot)env.PRESENTER_TIMING_BUSY_URL=scenario.url;
         await Deno.writeTextFile(`${out}/${label}.command.json`,JSON.stringify({command:Deno.execPath(),args:cmd,env,load:Deno.loadavg()},null,2)+"\n");
@@ -138,6 +139,8 @@ async function main() {
         if(!summary)reasons.push("missing perf summary");
         if(all.length!==120)reasons.push(`expected 120 visible scroll samples, got ${all.length}`);
         if(Number(summary?.inputEventsDropped??0)>0)reasons.push("native events dropped");
+        if(scenario.busy&&scenario.snapshot&&!records.some(r=>r.type==="presenter-timing-busy-input"))
+          reasons.push("busy workload was not injected into the replayed page");
         if(scenario.busy&&!busySamples.length)reasons.push("no scroll input overlaps a measured script turn over 50 ms");
         if(scenario.busy&&!exact)reasons.push("busy overlap inferred from completion: exact engine execution epochs absent");
         const values=all.map(s=>s.ms);
