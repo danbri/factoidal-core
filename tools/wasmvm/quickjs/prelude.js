@@ -1416,6 +1416,245 @@
     mediaSrcSet = el => { if (el instanceof HTMLMediaElement && String(el.getAttribute('loading') ?? '').toLowerCase() !== 'lazy') el.load(); };
     Object.assign(mediaGlobals, { Audio, MediaError, TimeRanges });
   }
+  // ---- Text tracks and the track lists of media elements (HTML §4.8.11.11, §4.8.11.10):
+  // the objects and their state. A media element's text tracks are those of its `track`
+  // children, in tree order, then those a script added (addTextTrack). With no media
+  // decoders nothing plays, so no cue becomes active and no time marches on; a `track`
+  // element's file is not fetched (its readiness stays "not loaded"). The audio and video
+  // track lists are empty. A page that never asks pays nothing: the objects are made when
+  // read.
+  {
+    const isIndex = p => typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p);
+    const illegal = () => { throw new TypeError('Illegal constructor'); };
+    const priv = new WeakMap();
+    const own = (o, C, what) => { const v = priv.get(o); if (v === undefined || !(o instanceof C)) throw new TypeError(`Illegal invocation${what ? ': ' + what : ''}`); return v; };
+    // A list with indexed getters over `items()` (WebIDL §3.9: indices are read-only).
+    const objList = (C, items, st) => {
+      const t = Object.create(C.prototype);
+      priv.set(t, st);
+      const p = new Proxy(t, {
+        get(o, k, r) { if (isIndex(k)) return items()[Number(k)]; return Reflect.get(o, k, r); },
+        set(o, k, v, r) { if (isIndex(k)) return false; return Reflect.set(o, k, v, r); },
+        defineProperty(o, k, d) { if (isIndex(k)) return false; return Reflect.defineProperty(o, k, d); },
+        has(o, k) { if (isIndex(k)) return Number(k) < items().length; return Reflect.has(o, k); },
+        ownKeys(o) { return [...items().keys()].map(String).concat(Reflect.ownKeys(o)); },
+        getOwnPropertyDescriptor(o, k) {
+          if (isIndex(k)) { const x = items()[Number(k)]; return x === undefined ? undefined : { value: x, enumerable: true, configurable: true, writable: false }; }
+          return Reflect.getOwnPropertyDescriptor(o, k);
+        },
+      });
+      priv.set(p, st);
+      return p;
+    };
+    const handlersOn = (C, names) => { for (const name of names)
+      Object.defineProperty(C.prototype, 'on' + name, { get() { return handlerOf(this, name); }, set(f) { setHandler(this, name, f); }, configurable: true, enumerable: true }); };
+    const getters = (C, o) => { for (const [k, f] of Object.entries(o)) Object.defineProperty(C.prototype, k, { get: f, configurable: true, enumerable: true }); };
+
+    // ---- cues (HTML §4.8.11.11.6; WebVTT §8.2 VTTCue) ----
+    class TextTrackCue extends EventTarget { constructor() { super(); illegal(); } }
+    const cueOf = c => own(c, TextTrackCue);
+    const finiteCue = (v, what) => { const x = Number(v); if (!Number.isFinite(x)) throw new TypeError(`Failed to set the '${what}' property on 'TextTrackCue': The provided double value is non-finite.`); return x; };
+    Object.defineProperties(TextTrackCue.prototype, {
+      track: { get() { return cueOf(this).track; }, configurable: true, enumerable: true },
+      id: { get() { return cueOf(this).id; }, set(v) { cueOf(this).id = String(v); }, configurable: true, enumerable: true },
+      startTime: { get() { return cueOf(this).start; }, set(v) { const c = cueOf(this); c.start = finiteCue(v, 'startTime'); if (c.track) sortCues(own(c.track, TextTrack)); }, configurable: true, enumerable: true },
+      endTime: { get() { return cueOf(this).end; }, set(v) { const c = cueOf(this); c.end = finiteCue(v, 'endTime'); if (c.track) sortCues(own(c.track, TextTrack)); }, configurable: true, enumerable: true },
+      pauseOnExit: { get() { return cueOf(this).pauseOnExit; }, set(v) { cueOf(this).pauseOnExit = !!v; }, configurable: true, enumerable: true },
+    });
+    handlersOn(TextTrackCue, ['enter', 'exit']);
+    let cueOrder = 0;
+    const enumIn = (v, allowed) => allowed.includes(String(v)) ? String(v) : undefined;
+    class VTTCue extends TextTrackCue {
+      constructor(startTime, endTime, text) {
+        if (new.target === undefined) throw new TypeError("Failed to construct 'VTTCue': Please use the 'new' operator, this DOM object constructor cannot be called as a function.");
+        if (arguments.length < 3) throw new TypeError(`Failed to construct 'VTTCue': 3 arguments required, but only ${arguments.length} present.`);
+        const start = Number(startTime), end = Number(endTime);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) throw new TypeError("Failed to construct 'VTTCue': The provided double value is non-finite.");
+        const o = Reflect.construct(EventTarget, [], new.target);
+        priv.set(o, { track: null, id: '', start, end, pauseOnExit: false, order: cueOrder++, text: String(text),
+          region: null, vertical: '', snapToLines: true, line: 'auto', lineAlign: 'start', position: 'auto', positionAlign: 'auto', size: 100, align: 'center' });
+        return o;
+      }
+      getCueAsHTML() { const f = document.createDocumentFragment(); f.append(own(this, VTTCue).text); return f; }
+    }
+    const vtt = c => own(c, VTTCue);
+    const pct = (v, what) => { const x = Number(v); if (!Number.isFinite(x)) throw new TypeError(`Failed to set the '${what}' property on 'VTTCue': The provided double value is non-finite.`);
+      if (x < 0 || x > 100) throw new DOMException(`Failed to set the '${what}' property on 'VTTCue': The value provided (${x}) is outside the range [0, 100].`, 'IndexSizeError'); return x; };
+    Object.defineProperties(VTTCue.prototype, {
+      region: { get() { return vtt(this).region; }, set(v) { vtt(this).region = v ?? null; }, configurable: true, enumerable: true },
+      vertical: { get() { return vtt(this).vertical; }, set(v) { const x = enumIn(v, ['', 'rl', 'lr']); if (x !== undefined) vtt(this).vertical = x; }, configurable: true, enumerable: true },
+      snapToLines: { get() { return vtt(this).snapToLines; }, set(v) { vtt(this).snapToLines = !!v; }, configurable: true, enumerable: true },
+      line: { get() { return vtt(this).line; }, set(v) {
+        if (v === 'auto') { vtt(this).line = 'auto'; return; }
+        const x = Number(v); if (typeof v === 'string' || !Number.isFinite(x)) throw new TypeError("Failed to set the 'line' property on 'VTTCue': The provided value is not 'auto' or a finite number.");
+        vtt(this).line = x; }, configurable: true, enumerable: true },
+      lineAlign: { get() { return vtt(this).lineAlign; }, set(v) { const x = enumIn(v, ['start', 'center', 'end']); if (x !== undefined) vtt(this).lineAlign = x; }, configurable: true, enumerable: true },
+      position: { get() { return vtt(this).position; }, set(v) { vtt(this).position = v === 'auto' ? 'auto' : pct(v, 'position'); }, configurable: true, enumerable: true },
+      positionAlign: { get() { return vtt(this).positionAlign; }, set(v) { const x = enumIn(v, ['line-left', 'center', 'line-right', 'auto']); if (x !== undefined) vtt(this).positionAlign = x; }, configurable: true, enumerable: true },
+      size: { get() { return vtt(this).size; }, set(v) { vtt(this).size = pct(v, 'size'); }, configurable: true, enumerable: true },
+      align: { get() { return vtt(this).align; }, set(v) { const x = enumIn(v, ['start', 'center', 'end', 'left', 'right']); if (x !== undefined) vtt(this).align = x; }, configurable: true, enumerable: true },
+      text: { get() { return vtt(this).text; }, set(v) { vtt(this).text = String(v); }, configurable: true, enumerable: true },
+    });
+    class TextTrackCueList { constructor() { illegal(); } }
+    Object.defineProperty(TextTrackCueList.prototype, 'length', { get() { return own(this, TextTrackCueList).items().length; }, configurable: true, enumerable: true });
+    Object.defineProperty(TextTrackCueList.prototype, 'getCueById', { value: function getCueById(id) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'getCueById' on 'TextTrackCueList': 1 argument required, but only 0 present.");
+      id = String(id); if (id === '') return null;
+      return own(this, TextTrackCueList).items().find(c => cueOf(c).id === id) ?? null; }, writable: true, configurable: true, enumerable: true });
+    Object.defineProperty(TextTrackCueList.prototype, Symbol.iterator, { value: Array.prototype.values, writable: true, configurable: true });
+
+    // ---- text tracks (HTML §4.8.11.11.5) ----
+    class TextTrack extends EventTarget { constructor() { super(); illegal(); } }
+    const kinds = ['subtitles', 'captions', 'descriptions', 'chapters', 'metadata'];
+    const sortCues = st => st.cues.sort((a, b) => { const x = cueOf(a), y = cueOf(b); return x.start - y.start || y.end - x.end || x.order - y.order; });
+    // st: { kind(), label(), language(), id(), mode, cues, cueList, activeList, el (track element or null), media }
+    const makeTrack = st => {
+      const t = Reflect.construct(EventTarget, [], TextTrack);
+      st.cues = []; st.cueList = null; st.activeList = null; st.mode = st.mode ?? 'disabled';
+      priv.set(t, st);
+      return t;
+    };
+    const tt = t => own(t, TextTrack);
+    getters(TextTrack, {
+      kind() { return tt(this).kind(); }, label() { return tt(this).label(); }, language() { return tt(this).language(); },
+      id() { return tt(this).id(); }, inBandMetadataTrackDispatchType() { tt(this); return ''; },
+      cues() { const st = tt(this); if (st.mode === 'disabled') return null; if (st.cueList === null) st.cueList = objList(TextTrackCueList, () => st.cues, { items: () => st.cues }); return st.cueList; },
+      activeCues() { const st = tt(this); if (st.mode === 'disabled') return null; if (st.activeList === null) st.activeList = objList(TextTrackCueList, () => [], { items: () => [] }); return st.activeList; },
+    });
+    Object.defineProperty(TextTrack.prototype, 'mode', { get() { return tt(this).mode; }, set(v) {
+      const st = tt(this), m = enumIn(v, ['disabled', 'hidden', 'showing']);
+      if (m === undefined || m === st.mode) return;
+      st.mode = m;
+      // HTML §4.8.11.11.5: a change of mode queues a `change` event at the media element's list
+      if (st.media) { const list = st.media(); if (list) task(() => fire(list, 'change', {})); }
+    }, configurable: true, enumerable: true });
+    const methods = {
+      addCue(cue) {
+        const st = tt(this);
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'addCue' on 'TextTrack': 1 argument required, but only 0 present.");
+        if (!(cue instanceof TextTrackCue) || !priv.has(cue)) throw new TypeError("Failed to execute 'addCue' on 'TextTrack': parameter 1 is not of type 'TextTrackCue'.");
+        const c = cueOf(cue);
+        if (c.track === this) { const i = st.cues.indexOf(cue); if (i >= 0) st.cues.splice(i, 1); }
+        else if (c.track) { const o = tt(c.track); const i = o.cues.indexOf(cue); if (i >= 0) o.cues.splice(i, 1); }
+        c.track = this; c.order = cueOrder++;
+        st.cues.push(cue); sortCues(st);
+      },
+      removeCue(cue) {
+        const st = tt(this);
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'removeCue' on 'TextTrack': 1 argument required, but only 0 present.");
+        if (!(cue instanceof TextTrackCue) || !priv.has(cue)) throw new TypeError("Failed to execute 'removeCue' on 'TextTrack': parameter 1 is not of type 'TextTrackCue'.");
+        const i = st.cues.indexOf(cue);
+        if (i < 0) throw new DOMException("Failed to execute 'removeCue' on 'TextTrack': The specified cue is not listed in the TextTrack's list of cues.", 'NotFoundError');
+        st.cues.splice(i, 1); cueOf(cue).track = null;
+      },
+    };
+    for (const [k, f] of Object.entries(methods)) Object.defineProperty(TextTrack.prototype, k, { value: f, writable: true, configurable: true, enumerable: true });
+    handlersOn(TextTrack, ['cuechange']);
+
+    // ---- track lists (HTML §4.8.11.10.1, §4.8.11.11.5) ----
+    const listClass = name => {
+      const C = ({ [name]: class extends EventTarget { constructor() { super(); illegal(); } } })[name];
+      Object.defineProperty(C.prototype, 'length', { get() { return own(this, C).items().length; }, configurable: true, enumerable: true });
+      Object.defineProperty(C.prototype, 'getTrackById', { value: function getTrackById(id) {
+        if (arguments.length < 1) throw new TypeError(`Failed to execute 'getTrackById' on '${name}': 1 argument required, but only 0 present.`);
+        id = String(id);
+        return own(this, C).items().find(t => t.id === id) ?? null; }, writable: true, configurable: true, enumerable: true });
+      Object.defineProperty(C.prototype, Symbol.iterator, { value: Array.prototype.values, writable: true, configurable: true });
+      handlersOn(C, ['change', 'addtrack', 'removetrack']);
+      return C;
+    };
+    const TextTrackList = listClass('TextTrackList'), AudioTrackList = listClass('AudioTrackList'), VideoTrackList = listClass('VideoTrackList');
+    // a list that is also an event target: the proxy stands for the target everywhere (its
+    // listeners and handlers are the proxy's)
+    const eventList = (C, items) => {
+      const st = { items }, o = Reflect.construct(EventTarget, [], C), p = proxyFor(o, items), id = ids.get(o);
+      priv.set(o, st); priv.set(p, st); ids.set(p, id); targets.set(id, p);
+      return p;
+    };
+    const proxyFor = (o, items) => new Proxy(o, {
+      get(t, k) { if (isIndex(k)) return items()[Number(k)]; const v = Reflect.get(t, k, t); return v; },
+      set(t, k, v) { if (isIndex(k)) return false; return Reflect.set(t, k, v, t); },
+      defineProperty(t, k, d) { if (isIndex(k)) return false; return Reflect.defineProperty(t, k, d); },
+      has(t, k) { if (isIndex(k)) return Number(k) < items().length; return Reflect.has(t, k); },
+      ownKeys(t) { return [...items().keys()].map(String).concat(Reflect.ownKeys(t)); },
+      getOwnPropertyDescriptor(t, k) {
+        if (isIndex(k)) { const x = items()[Number(k)]; return x === undefined ? undefined : { value: x, enumerable: true, configurable: true, writable: false }; }
+        return Reflect.getOwnPropertyDescriptor(t, k);
+      },
+    });
+    class AudioTrack { constructor() { illegal(); } }
+    class VideoTrack { constructor() { illegal(); } }
+    class TrackEvent extends Event {
+      constructor(type, init = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'TrackEvent': 1 argument required, but only 0 present.");
+        super(type, init);
+        const tr = initOf(init).track ?? null;
+        if (tr !== null && !(tr instanceof TextTrack || tr instanceof AudioTrack || tr instanceof VideoTrack))
+          throw new TypeError("Failed to construct 'TrackEvent': Failed to read the 'track' property from 'TrackEventInit': The provided value is not of type '(AudioTrack or TextTrack or VideoTrack)'.");
+        state(this).track = tr;
+      }
+      get track() { return state(this).track; }
+    }
+
+    // ---- the track element (HTML §4.8.13) ----
+    const trackEls = new WeakMap();   // track element -> its TextTrack
+    const trackOfEl = el => {
+      let t = trackEls.get(el);
+      if (!t) {
+        const kindOf = () => { const k = el.getAttribute('kind'); if (k === null) return 'subtitles'; const l = k.toLowerCase(); return kinds.includes(l) ? l : 'metadata'; };
+        t = makeTrack({ kind: kindOf, label: () => el.getAttribute('label') ?? '', language: () => el.getAttribute('srclang') ?? '',
+          id: () => el.getAttribute('id') ?? '', el, media: () => { const p = el.parentElement; return p instanceof HTMLMediaElement ? textTracksOf(p) : null; } });
+        trackEls.set(el, t);
+      }
+      return t;
+    };
+    const TE = named.HTMLTrackElement;
+    const trackConsts = { NONE: 0, LOADING: 1, LOADED: 2, ERROR: 3 };
+    for (const [k, v] of Object.entries(trackConsts)) for (const o of [TE, TE.prototype]) Object.defineProperty(o, k, { value: v, enumerable: true });
+    Object.defineProperties(TE.prototype, {
+      kind: { get() { return tt(trackOfEl(this)).kind(); }, set(v) { this.setAttribute('kind', String(v)); }, configurable: true, enumerable: true },
+      src: { get() { const v = this.getAttribute('src'); if (v === null) return ''; return resolveURL(v) ?? v; }, set(v) { this.setAttribute('src', String(v)); }, configurable: true, enumerable: true },
+      srclang: { get() { return this.getAttribute('srclang') ?? ''; }, set(v) { this.setAttribute('srclang', String(v)); }, configurable: true, enumerable: true },
+      label: { get() { return this.getAttribute('label') ?? ''; }, set(v) { this.setAttribute('label', String(v)); }, configurable: true, enumerable: true },
+      default: { get() { return this.hasAttribute('default'); }, set(v) { this.toggleAttribute('default', !!v); }, configurable: true, enumerable: true },
+      readyState: { get() { trackOfEl(this); return 0; }, configurable: true, enumerable: true },
+      track: { get() { return trackOfEl(this); }, configurable: true, enumerable: true },
+    });
+
+    // ---- the media element's lists (HTML §4.8.11.10, §4.8.11.11.4) ----
+    const mediaLists = new WeakMap();   // media element -> { text, audio, video, added }
+    const listsOf = el => {
+      let m = mediaLists.get(el);
+      if (!m) {
+        const added = [];
+        const texts = () => [...el.children].filter(c => c instanceof TE).map(trackOfEl).concat(added);
+        m = { added, text: eventList(TextTrackList, texts), audio: eventList(AudioTrackList, () => []), video: eventList(VideoTrackList, () => []) };
+        mediaLists.set(el, m);
+      }
+      return m;
+    };
+    const textTracksOf = el => listsOf(el).text;
+    const mediaOnly = el => { if (!(el instanceof HTMLMediaElement) || !ids.has(el)) throw new TypeError('Illegal invocation'); return el; };
+    Object.defineProperties(HTMLMediaElement.prototype, {
+      textTracks: { get() { return textTracksOf(mediaOnly(this)); }, configurable: true, enumerable: true },
+      audioTracks: { get() { return listsOf(mediaOnly(this)).audio; }, configurable: true, enumerable: true },
+      videoTracks: { get() { return listsOf(mediaOnly(this)).video; }, configurable: true, enumerable: true },
+      addTextTrack: { value: function addTextTrack(kind, label = '', language = '') {
+        mediaOnly(this);
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'addTextTrack' on 'HTMLMediaElement': 1 argument required, but only 0 present.");
+        kind = String(kind); label = String(label); language = String(language);
+        if (!kinds.includes(kind)) throw new TypeError(`Failed to execute 'addTextTrack' on 'HTMLMediaElement': The provided value '${kind}' is not a valid enum value of type TextTrackKind.`);
+        const m = listsOf(this);
+        // HTML §4.8.11.11.4: mode "hidden", readiness "loaded"; an addtrack event is queued
+        const t = makeTrack({ kind: () => kind, label: () => label, language: () => language, id: () => '', el: null, mode: 'hidden', media: () => m.text });
+        m.added.push(t);
+        task(() => { const e = new TrackEvent('addtrack', { track: t }); state(e).trusted = true; dispatch(m.text, e); });
+        return t;
+      }, writable: true, configurable: true, enumerable: true },
+    });
+    const task = f => { chk(n.timer(register(f), 0, 0)); };
+    Object.assign(mediaGlobals, { TextTrack, TextTrackCue, VTTCue, TextTrackCueList, TextTrackList, AudioTrackList, VideoTrackList, AudioTrack, VideoTrack, TrackEvent });
+  }
   // An iframe's document is Lean's (Hosts.Page.start `frames`, node_info 11). The frames share
   // this realm: a frame's window is a view of this window with its own document.
   // Reflected content attributes (HTML §2.6.1): strings, and URLs resolved against the
