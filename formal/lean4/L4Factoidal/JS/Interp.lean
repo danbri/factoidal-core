@@ -7611,6 +7611,16 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
 
 end Natives
 
+set_option hygiene false in
+/-- `toNumQ n v`: ToNumber of `v` with fuel `n`, written so that a value that is a Number already
+costs no call: `toNum` is a function of the block, so its answer is a result cell holding a boxed
+number, and the operands of the numeric and bit operators are Numbers nearly always. The value of
+the expression is `toNum n v` at every fuel but 0, where `toNum 0 v` is out of fuel and this
+answers the Number (`toNumQ_succ`, `toNum_zero` in `JS/Theorems.lean`). Not hygienic: `toNum` is
+defined after this point, in the block. -/
+local macro "toNumQ " n:term:max v:term:max : term =>
+  `((match $v:term with | Value.num toNumQ_x => pure toNumQ_x | toNumQ_w => toNum $n toNumQ_w : M Float))
+
 mutual
 
 /-- `[[Get]]` on any value (§7.3.2 GetV). -/
@@ -7881,7 +7891,11 @@ else ToNumber (§10.4.5.16). -/
 def typedConv : Nat → Nat → Value → M Value
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ty, v => do
-    if typedIsBig ty then pure (.big (← toBigInt n v)) else pure (.num (← toNum n v))
+    -- a Number is stored as it is: no ToNumber call and no new box (`typedConv_num`)
+    if typedIsBig ty then pure (.big (← toBigInt n v)) else
+      match v with
+      | .num _ => pure v
+      | w => pure (.num (← toNum n w))
 termination_by structural n _ _ => n
 
 /-- ToString (§7.1.17). -/
@@ -8056,23 +8070,23 @@ def binop : Nat → BinOp → Value → Value → M Value
         | .big x, .big y => pure (.big (x + y))
         | .big _, _ | _, .big _ => throwErr .type "Cannot mix BigInt and other types, use explicit conversions"
         | _, _ => pure (.num ((← toNum n pa) + (← toNum n pb)))
-    | .sub => pure (.num ((← toNum n a) - (← toNum n b)))
-    | .mul => pure (.num ((← toNum n a) * (← toNum n b)))
-    | .div => pure (.num ((← toNum n a) / (← toNum n b)))
-    | .mod => pure (.num (jsMod (← toNum n a) (← toNum n b)))
-    | .exp => pure (.num (jsPow (← toNum n a) (← toNum n b)))
+    | .sub => pure (.num ((← toNumQ n a) - (← toNumQ n b)))
+    | .mul => pure (.num ((← toNumQ n a) * (← toNumQ n b)))
+    | .div => pure (.num ((← toNumQ n a) / (← toNumQ n b)))
+    | .mod => pure (.num (jsMod (← toNumQ n a) (← toNumQ n b)))
+    | .exp => pure (.num (jsPow (← toNumQ n a) (← toNumQ n b)))
     | .shl =>
-      let x := toInt32 (← toNum n a); let s := toUint32 (← toNum n b) % 32
+      let x := toInt32 (← toNumQ n a); let s := toUint32 (← toNumQ n b) % 32
       pure (intV (toInt32 (Float.ofInt (x * 2 ^ s))))
     | .sar =>
-      let x := toInt32 (← toNum n a); let s := toUint32 (← toNum n b) % 32
+      let x := toInt32 (← toNumQ n a); let s := toUint32 (← toNumQ n b) % 32
       pure (intV (x / 2 ^ s))
     | .shr =>
-      let x := toUint32 (← toNum n a); let s := toUint32 (← toNum n b) % 32
+      let x := toUint32 (← toNumQ n a); let s := toUint32 (← toNumQ n b) % 32
       pure (.num (floatOfNat (x / 2 ^ s)))
     | .band | .bor | .bxor =>
-      let x := toUint32 (← toNum n a)
-      let y := toUint32 (← toNum n b)
+      let x := toUint32 (← toNumQ n a)
+      let y := toUint32 (← toNumQ n b)
       let r := match op with
         | .band => x &&& y | .bor => x ||| y | _ => x ^^^ y
       pure (intV (toInt32 (floatOfNat r)))
@@ -8882,12 +8896,12 @@ def evalExpr : Nat → Ctx → Expr → M Value
         match op with
         | .neg => match ← toPrim n v "number" with
           | .big i => pure (.big (-i))
-          | p => pure (.num (-(← toNum n p)))
+          | p => pure (.num (-(← toNumQ n p)))
         | .plus => pure (.num (← toNum n v))
         | .not => pure (.bool !(toBool v))
         | .bnot => match ← toPrim n v "number" with
           | .big i => pure (.big (-i - 1))
-          | p => pure (intV (-(toInt32 (← toNum n p)) - 1))
+          | p => pure (intV (-(toInt32 (← toNumQ n p)) - 1))
         | .typeof => pure (.str (← typeOf v))
         | .void => pure .undef
         | .delete => pure (.bool true)
@@ -10572,12 +10586,12 @@ def vmUnary : Nat → UnOp → Value → M Value
     match op with
     | .neg => match ← toPrim n v "number" with
       | .big i => pure (.big (-i))
-      | p => pure (.num (-(← toNum n p)))
+      | p => pure (.num (-(← toNumQ n p)))
     | .plus => pure (.num (← toNum n v))
     | .not => pure (.bool !(toBool v))
     | .bnot => match ← toPrim n v "number" with
       | .big i => pure (.big (-i - 1))
-      | p => pure (intV (-(toInt32 (← toNum n p)) - 1))
+      | p => pure (intV (-(toInt32 (← toNumQ n p)) - 1))
     | .typeof => pure (.str (← typeOf v))
     | .void => pure .undef
     | .delete => pure (.bool true)

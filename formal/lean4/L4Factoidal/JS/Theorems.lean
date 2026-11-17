@@ -48,6 +48,40 @@ theorem toUint32_lt (x : Float) : toUint32 x < 4294967296 := by
     have h1 := Int.emod_lt_of_pos (truncInt x) (b := 4294967296) (by decide)
     omega
 
+/-! ## ToNumber of a Number (the `toNumQ` form of `JS/Interp.lean`) -/
+
+/-- ToNumber of a Number is that Number, with any fuel left. -/
+theorem toNum_num {H : Type} (n : Nat) (x : Float) : toNum (H := H) (n + 1) (.num x) = pure x := by
+  rw [toNum.eq_def]
+
+/-- Out of fuel at 0, whatever the value. -/
+theorem toNum_zero {H : Type} (v : Value) : toNum (H := H) 0 v = throw (.halt "fuel") := by
+  rw [toNum.eq_def]
+
+/-- **Kind: refinement.** The form the evaluator now writes for ToNumber of an operand (`toNumQ`:
+a Number is answered with no call) is `toNum` at every fuel but 0, for every value. At fuel 0
+`toNum` is out of fuel (`toNum_zero`) and the form answers a Number; the fuel is not a script's
+budget, and a run that is out of fuel at one fuel is the same run at a larger one
+(`FuelMonoAll.IH_all`). Does not say anything about speed. -/
+theorem toNumQ_succ {H : Type} (n : Nat) (v : Value) :
+    (match v with | Value.num x => pure x | w => toNum (n + 1) w : JSM H Float) = toNum (n + 1) v := by
+  cases v <;> first | rfl | exact (toNum_num n _).symm
+
+/-- **Kind: refinement.** `typedConv` of a Number for a Number element type: the arm that now
+answers the Number itself gives what the `toNum` call it replaced gave (with fuel for that call). -/
+theorem typedConv_num_arm {H : Type} (n : Nat) (x : Float) :
+    (do pure (Value.num (← toNum (n + 1) (.num x))) : JSM H Value) = pure (.num x) := by
+  rw [toNum_num]; rfl
+
+theorem typedConv_num {H : Type} (n ty : Nat) (x : Float) (h : typedIsBig ty = false) :
+    typedConv (H := H) (n + 1) ty (.num x) = pure (.num x) := by
+  rw [typedConv.eq_def]
+  first | (simp only [h, Bool.false_eq_true, ↓reduceIte]; done) | (simp only [h]; rfl) | simp [h]
+
+#print axioms toNumQ_succ
+#print axioms typedConv_num_arm
+#print axioms typedConv_num
+
 theorem arrayIndex?_lt {s : String} {n : Nat} (h : arrayIndex? s = some n) : n < 4294967295 := by
   unfold arrayIndex? at h
   split at h
