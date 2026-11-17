@@ -336,3 +336,13 @@ tested alternate), VC Data Integrity cryptosuites, and the SPARQL
 hash builtins take the algorithm as a parameter. Adding the successor
 is then one constructor + one dispatcher arm + its test vectors, not
 a hunt through call sites.
+
+## Algorithms deferred or behind an opt-in (2026-11-17)
+
+DSA (https://github.com/danbri/factoidal/issues/1224) and ECDSA P-384/P-521
+(https://github.com/danbri/factoidal/issues/1223) are not implemented, by owner decision of
+2026-11-17. RSA verification with a 1024-bit key is HACL\*'s operation behind the risk token
+`Risk.rsa1024Verify` (https://github.com/danbri/factoidal/issues/1227). Status of each family,
+real use, and the verified libraries that exist (no verified DSA is known; NSS ships HACL\*-generated
+`Hacl_P384`/`Hacl_P521`, upstream HACL\* does not):
+`docs/designissues/2026-11-17-xmldsig-dsa-p384-p521-status.md`.

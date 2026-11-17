@@ -34,6 +34,7 @@
  *
  * Boundary contract, with k = n.size:
  *   l4_hacl_rsa_public_op(n, e, s)  -> res[k] | empty
+ *   l4_hacl_rsa_public_op_1024(n, e, s) -> res[128] | empty  (k = 128 only)
  *   l4_hacl_rsa_private_op(n, d, c) -> res[k] | empty
  * The EMPTY ByteArray is a refusal, never a result:
  *   * k not 256, 384 or 512 bytes (2048, 3072 or 4096 bits);
@@ -76,11 +77,9 @@ static uint32_t l4_be_bit_length(const uint8_t *b, size_t n) {
   return bits;
 }
 
-LEAN_EXPORT lean_obj_res l4_hacl_rsa_public_op(b_lean_obj_arg n_ba,
-                                               b_lean_obj_arg e_ba,
-                                               b_lean_obj_arg s_ba) {
-  size_t k = lean_sarray_size(n_ba);
-  if (k != 256 && k != 384 && k != 512) return l4_rsa_empty();
+/* s^e mod n for a modulus of k bytes; the caller has checked k. */
+static lean_obj_res l4_rsa_public_op_k(b_lean_obj_arg n_ba, b_lean_obj_arg e_ba,
+                                       b_lean_obj_arg s_ba, size_t k) {
   if (lean_sarray_size(s_ba) != k) return l4_rsa_empty();
   size_t elen = lean_sarray_size(e_ba);
   if (elen == 0 || elen > k) return l4_rsa_empty();
@@ -119,6 +118,26 @@ LEAN_EXPORT lean_obj_res l4_hacl_rsa_public_op(b_lean_obj_arg n_ba,
   free(bn_e);
   free(bn_r);
   return out;
+}
+
+LEAN_EXPORT lean_obj_res l4_hacl_rsa_public_op(b_lean_obj_arg n_ba,
+                                               b_lean_obj_arg e_ba,
+                                               b_lean_obj_arg s_ba) {
+  size_t k = lean_sarray_size(n_ba);
+  if (k != 256 && k != 384 && k != 512) return l4_rsa_empty();
+  return l4_rsa_public_op_k(n_ba, e_ba, s_ba, k);
+}
+
+/* The same operation for a 1024-bit modulus (k = 128) only, and for no
+ * other size.  The Lean binding (`Crypto.Rsa.rsaPublicOp1024`) takes a
+ * `Risk.Accepted .rsa1024Verify`, so only a caller that accepted that risk
+ * by name reaches it (https://github.com/danbri/factoidal/issues/1227). */
+LEAN_EXPORT lean_obj_res l4_hacl_rsa_public_op_1024(b_lean_obj_arg n_ba,
+                                                    b_lean_obj_arg e_ba,
+                                                    b_lean_obj_arg s_ba) {
+  size_t k = lean_sarray_size(n_ba);
+  if (k != 128) return l4_rsa_empty();
+  return l4_rsa_public_op_k(n_ba, e_ba, s_ba, k);
 }
 
 /* RSADP, RFC 8017 section 5.1.2 step 2.a: m = c^d mod n.  Constant time

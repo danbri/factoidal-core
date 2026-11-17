@@ -21,6 +21,16 @@ inductive Risk where
   on each), nor that the host binds only the address it asked about. Bounded by the lock
   after `Gate.maxFailures` refusals. -/
   | webdriverEndpoint
+  /-- Verification of an RSA signature under a 1024-bit modulus
+  (`Crypto.Rsa.rsaPublicOp1024`, XML Signature 1.1 through
+  `XML.DSig11.nativeBackendRsa1024`). The arithmetic is HACL*'s, as for 2048 bits and more.
+  Not shown: that the key resists factoring. NIST SP 800-131A Rev. 2 (2019) allows a
+  1024-bit RSA key only to verify legacy signatures; XML Signature 1.1 §6.4.2 permits it.
+  A signature that validates under such a key is evidence only against a party who cannot
+  factor a 1024-bit modulus. Owner, 2026-11-17, on
+  https://github.com/danbri/factoidal/issues/1227: "off by default and make user pass in a
+  \"dangerously_and_regrettsbly_.... \" symbol". -/
+  | rsa1024Verify
   deriving DecidableEq, Repr
 
 /-- Evidence that a caller accepted risk `r`. The constructor is private: the only way to

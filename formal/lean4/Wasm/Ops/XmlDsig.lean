@@ -185,7 +185,9 @@ def verifyCore (be : Backend) (cfg : Config) (src : String) :
   | [] => throw "the document has no ds:Signature"
   | _ => throw "the document has more than one ds:Signature; validate one with `validate`"
 
-def verifyWith (be : Backend) (argJson : String) : String :=
+def verifyWith (be : Backend) (argJson : String) (warnings : List String := []) : String :=
+  let w : List (String × Json) :=
+    if warnings.isEmpty then [] else [("warnings", .array (warnings.map Json.string))]
   match parseJson argJson with
   | .error e => errJson s!"argJson: {toString e}"
   | .ok j =>
@@ -193,9 +195,9 @@ def verifyWith (be : Backend) (argJson : String) : String :=
       | .error e => errJson e
       | .ok (src, cfg) =>
           match verifyCore be cfg src with
-          | .error r => okWith [("valid", .bool false), ("reason", .string r)]
+          | .error r => okWith ([("valid", .bool false), ("reason", .string r)] ++ w)
           | .ok (v, c) =>
-              okWith [("valid", .bool true), ("signedInfo", .string v.signedInfo),
+              okWith <| w ++ [("valid", .bool true), ("signedInfo", .string v.signedInfo),
                       ("references", .array (v.references.map fun (u, o) =>
                           .object [("uri", .string u), ("octets", .string (b64 o))])),
                       ("key", match v.key with | some k => keyJson k | none => .null),
@@ -362,8 +364,23 @@ end XmlDsig
 
 def xmlDsigOpNames : List String := ["xmlVerify", "xmlSign"]
 
-/-- `xmlVerify(argJson)`: core validation with HACL* RSA and P-256. -/
-def xmlVerify (argJson : String) : String := XmlDsig.verifyWith nativeBackend argJson
+/-- The member of the `xmlVerify` argument that accepts `Risk.rsa1024Verify`:
+only the literal `true` turns it on (owner, 2026-11-17,
+https://github.com/danbri/factoidal/issues/1227). -/
+def rsa1024OptIn (argJson : String) : Bool :=
+  match parseJson argJson with
+  | .ok j => (j.field? "dangerouslyAndRegrettablyAcceptRsa1024").bind Json.asBool? == some true
+  | .error _ => false
+
+/-- `xmlVerify(argJson)`: core validation with HACL* RSA and P-256. A
+1024-bit RSA key is refused unless the argument has
+`"dangerouslyAndRegrettablyAcceptRsa1024": true`; then the backend is
+`nativeBackendRsa1024`, and the result carries a `warnings` entry. -/
+def xmlVerify (argJson : String) : String :=
+  if rsa1024OptIn argJson then
+    XmlDsig.verifyWith (nativeBackendRsa1024 (L4Factoidal.Risk.dangerouslyAccept .rsa1024Verify)) argJson
+      ["dangerouslyAndRegrettablyAcceptRsa1024: 1024-bit RSA keys were accepted for this verification (https://github.com/danbri/factoidal/issues/1227)"]
+  else XmlDsig.verifyWith nativeBackend argJson
 
 /-- `xmlSign(argJson)`: signature generation by the custodians of
 `DSig11Native`, checked by core validation before it is returned. -/

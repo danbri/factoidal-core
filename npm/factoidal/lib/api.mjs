@@ -1867,9 +1867,15 @@ function buildApi(driver) {
    * decides whether to trust them. The engine fetches nothing: `documents`
    * gives the octets of each URI that is not a same-document reference.
    *
+   * A 1024-bit RSA key is refused unless
+   * `dangerouslyAndRegrettablyAcceptRsa1024` is `true` (XML Signature 1.1
+   * §6.4.2 permits such keys; NIST SP 800-131A Rev. 2 allows them only to
+   * verify legacy signatures). With it, the result has a `warnings` array.
+   *
    * @param {string} document the XML document
    * @param {{key?: object, hmacKey?: Uint8Array, keyFromKeyInfo?: boolean,
-   *   certificates?: Uint8Array[], documents?: Object<string, Uint8Array|string>}} [options]
+   *   certificates?: Uint8Array[], documents?: Object<string, Uint8Array|string>,
+   *   dangerouslyAndRegrettablyAcceptRsa1024?: boolean}} [options]
    *   `key` is a public JWK (RSA, or EC on P-256, P-384, P-521); `hmacKey`
    *   the HMAC key octets; `certificates` DER certificates to select from
    * @returns {Promise<{valid: true, signedInfo: string,
@@ -1888,6 +1894,9 @@ function buildApi(driver) {
     }
     if (o.hmacKey !== undefined) args.hmacKey = octetsToBase64('xmlVerify', 'options.hmacKey', o.hmacKey);
     if (o.keyFromKeyInfo !== undefined) args.keyFromKeyInfo = o.keyFromKeyInfo === true;
+    // 1024-bit RSA keys: off by default; only the literal true turns them on
+    // (https://github.com/danbri/factoidal/issues/1227). The engine decides.
+    if (o.dangerouslyAndRegrettablyAcceptRsa1024 === true) args.dangerouslyAndRegrettablyAcceptRsa1024 = true;
     if (o.certificates !== undefined) {
       if (!Array.isArray(o.certificates)) {
         throw new TypeError('xmlVerify: options.certificates must be an array of Uint8Array');
@@ -1905,8 +1914,10 @@ function buildApi(driver) {
       }
     }
     const r = await dsigOp('xmlVerify', 'XML Signature verification', args);
-    if (r.valid !== true) return { valid: false, reason: String(r.reason) };
+    const warnings = Array.isArray(r.warnings) ? { warnings: r.warnings.map(String) } : {};
+    if (r.valid !== true) return { valid: false, reason: String(r.reason), ...warnings };
     return {
+      ...warnings,
       valid: true,
       signedInfo: r.signedInfo,
       references: (r.references || []).map((x) => ({ uri: x.uri, octets: base64ToBytes(x.octets) })),
