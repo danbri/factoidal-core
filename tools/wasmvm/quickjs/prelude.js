@@ -3070,7 +3070,9 @@
     // has the readiness "complete" (HTML §3.1.3 "current document readiness")
     get readyState() { return this === document || info(nodeId(this), 12) >= 0 ? readyState : 'complete'; }
     get defaultView() { return this === document ? window : (info(nodeId(this), 12) >= 0 ? frameWindow(nodeId(this)) : null); }
-    get location() { return this === document ? location : null; }
+    // HTML §3.1.1: the Location of the document's window, when it has one (a frame's document
+    // in this realm has its frame's), else null
+    get location() { return this === document ? location : (info(nodeId(this), 12) >= 0 ? frameLocation(nodeId(this)) : null); }
     get doctype() { return wrap(kids(nodeId(this)).find(k => info(k, 0) === 10) ?? -1); }
     get documentElement() { return wrap(kids(nodeId(this)).find(k => info(k, 0) === 1) ?? -1); }
     get head() { const h = this.documentElement; return h ? (h.children[0]?.localName === 'head' ? h.children[0] : [...h.children].find(e => e.localName === 'head') ?? null) : null; }
