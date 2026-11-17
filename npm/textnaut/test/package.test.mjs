@@ -33,7 +33,7 @@ test('app/ holds exactly what textnaut.ts imports, plus the import map and its t
 test('npm pack lists every file needed and only those', () => {
   const out = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
   const files = out[0].files.map((f) => f.path).sort();
-  const expected = ['LICENSE', 'NOTICE', 'README.md', 'package.json', 'engine-pin.json', 'bin/textnaut.mjs', 'lib/engine.mjs', 'lib/native.mjs', ...appFiles().map((f) => `app/${f}`)].sort();
+  const expected = ['LICENSE', 'NOTICE', 'README.md', 'package.json', 'engine-pin.json', 'bin/textnaut.mjs', 'lib/engine.mjs', 'lib/native.mjs', 'lib/releases.mjs', ...appFiles().map((f) => `app/${f}`)].sort();
   assert.deepEqual(files, expected);
   assert(files.every((f) => !/\.test\.|\.py$|pty_check|\.wasm$|\.dylib$/.test(f)), 'no tests, scripts or binaries');
 });
