@@ -2,7 +2,7 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {Downloaded,inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
+import {Downloaded,inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,type DocumentCookies,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
@@ -13,7 +13,7 @@ import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPoin
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.ts";
-import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
+import {defaultStateDir,hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
 import {fetchedAnswer,scriptFailure,scrollLimitOf,inputFirst,scrollFirst,scriptsFirst,turnSliceSteps,startSliceSteps} from "../../../docs/web/hub/foafnaut/page-load.mjs";
@@ -53,7 +53,7 @@ async function main() {
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let accessibilityOn=false;
-  let downloadsArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
+  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -107,6 +107,9 @@ async function main() {
     else if(arg==="--state-dir"){stateDir=args.shift();if(!stateDir)throw new Error("--state-dir needs a folder");}
     // Where downloads are saved (default ~/Downloads).
     else if(arg==="--downloads"){downloadsArg=args.shift();if(!downloadsArg)throw new Error("--downloads needs a folder");}
+    // The file the browser's lasting cookies are kept in (default: cookies.txt in the data
+    // folder, when browser state is on; a sweep or check keeps cookies in memory only).
+    else if(arg==="--cookie-file"){cookieFileArg=args.shift();if(!cookieFileArg)throw new Error("--cookie-file needs a file");}
     else if(arg==="--restore-session")restoreSession=true;
     // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
     else if(arg==="--idle-checks-only")idleChecksOnly=true;
@@ -480,10 +483,40 @@ async function main() {
   let liberal=!cliStrict;
   // The start page has a script. A host that can run no page script (the Wasm engine with no
   // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
+  // The browser's cookies for page loads (WebDocument op `cookies`, Net.Cookies): the engine
+  // decides each hop's Cookie field and what a response sets; the jar is text kept here. Only
+  // the engine's `keep` answer (cookies with an expiry, not passed: persistent_no_session) is
+  // written, to cookieFile, mode 0600; session cookies end with the program. An engine without
+  // the op: no cookies, as before.
+  let jarText="",jarSaving:ReturnType<typeof setTimeout>|undefined;
+  const cookieFile=cookieFileArg??(browserState?`${stateDir??defaultStateDir()}/cookies.txt`:undefined);
+  if(cookieFile)try{jarText=await Deno.readTextFile(cookieFile);}catch{/* none yet */}
+  type CookieOp=(request:Record<string,string>)=>Promise<{cookie?:string;jar?:string}|undefined>|{cookie?:string;jar?:string}|undefined;
+  const cookieOp=():CookieOp|undefined=>(lean as unknown as {cookies?:CookieOp}).cookies;
+  const seconds=()=>String(Math.floor(Date.now()/1000));
+  const writeJar=async()=>{
+    jarSaving=undefined;
+    if(!cookieFile)return;
+    try{
+      const kept=await cookieOp()?.({action:"keep",jar:jarText,now:seconds()});
+      if(typeof kept?.jar!=="string")return;
+      const dir=cookieFile.slice(0,cookieFile.lastIndexOf("/"));if(dir)await Deno.mkdir(dir,{recursive:true,mode:0o700});
+      await Deno.writeTextFile(cookieFile+".new",kept.jar,{mode:0o600});await Deno.rename(cookieFile+".new",cookieFile);
+    }catch(error){console.error("Native HTML: cookies not saved:",String(error));}
+  };
+  // (at most one write a second; a write that is due is made at quit)
+  const saveJar=()=>{if(cookieFile&&jarSaving===undefined)jarSaving=setTimeout(writeJar,1000);};
+  const flushJar=async()=>{if(jarSaving!==undefined){clearTimeout(jarSaving);await writeJar();}};
+  const cookiesFor=(initiator:string):DocumentCookies|undefined=>cookieOp()?{
+    request:async(url,method)=>(await cookieOp()!({action:"request",jar:jarText,now:seconds(),url,initiator,method}))?.cookie??"",
+    response:async(url,setCookie)=>{
+      const answer=await cookieOp()!({action:"response",jar:jarText,now:seconds(),url,setCookie:setCookie.join("\n")});
+      if(typeof answer?.jar==="string"&&answer.jar!==jarText){jarText=answer.jar;saveJar();}
+    }}:undefined;
   // A start page that can not be read (no network, a name that does not resolve, a refused
   // connection) opens the window on the refusal page for it, as a later navigation would: the
   // browser does not stop. A check run (--check-engine) still fails.
-  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
+  let document=await prepareHTML(lean,url,undefined,undefined,{liberal,...(url?{cookies:cookiesFor("")}:{})}).catch(error=>{
     if(!startDefault&&check)throw error;
     if(!startDefault){
       console.error("Native HTML refused:",url,String(error));
@@ -667,7 +700,7 @@ async function main() {
       if(blocked)addEntries(page,[{source:"System",severity:"warning",feature:"form submission",where:nav.url,message:"a new tab that no press or key asked for",action:"not opened"}]);
       else{
         if(nav.target==="_blank"){newTab();leaveAddress();}
-        navigate(nav.url,true,nav.method==="post"?{method:"POST",body:nav.body??"",bodyType:nav.contentType}:undefined);
+        navigate(nav.url,true,nav.method==="post"?{method:"POST",body:nav.body??"",bodyType:nav.contentType}:undefined,page.url);
       }
     }
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
@@ -1235,7 +1268,7 @@ async function main() {
     // The Outside page (mail, phone, messages): shown in the tab, nothing opened.
     else if(route.route==="outside")navigate(route.url);
     // A page link loads only with --follow-links; the browser's own pages always do.
-    else if(route.route!=="navigate"||follow)navigate(route.url);
+    else if(route.route!=="navigate"||follow)navigate(route.url,true,undefined,route.route==="navigate"?document.url:"");
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
     trace("native-html-go",answer);
@@ -1394,14 +1427,16 @@ async function main() {
   const saveSession=()=>browserState?.session(tabs.map((tab,index)=>{const page=index===active?document:tab.document;
     return {url:page.url,title:page.title??"",scroll:index===active?scroll:tab.scroll};}),active);
   // The settings page with the page script rows that Lean makes for the current setting.
-  const navigate=(target:string,push=true,request?:DocumentRequest)=>{
+  // `initiator`: the page that started the navigation (a link, a form), "" for an address a
+  // person typed or chose: the engine's same-site rule for cookies reads it.
+  const navigate=(target:string,push=true,request?:DocumentRequest,initiator="")=>{
     const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     // The loading state is drawn now (a chrome-only frame: the page layer is kept), so a click
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,downloads,...(request?{request}:{})})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,downloads,cookies:cookiesFor(initiator),...(request?{request}:{})})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -2223,6 +2258,7 @@ async function main() {
     const gpuIdle=session?.halt();
     // A frame in progress ends before its session is disposed.
     try{await rendering;await shifting;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
+    await flushJar();
     worker?.terminate();
     await browserState?.close().catch(error=>console.error("Native HTML: browser state did not close:",String(error)));
     try{summary();}catch(error){console.error("Native HTML summary failed:",String(error));}

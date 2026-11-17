@@ -33,6 +33,7 @@ retrieval). `web_api` ops 96 and 97 (`WasmVM.Hosts.WebApi`).
 
 Every loop is a core list combinator or a tail call on a shorter list.
 -/
+import L4Factoidal.WHATWG.URL.Parser
 
 namespace L4Factoidal.Net.Cookies
 
@@ -706,5 +707,153 @@ private def jh : Jar := setH (setH (setH {} "sid=1; HttpOnly; Path=/") "pref=2; 
 #guard forScript (set1 {} "__Http-a=1; Secure") site 1000 == "" && forScript (set1 {} "__Host-Http-a=1; Secure; Path=/") site 1000 == ""
 #guard forRequest (setH {} "__Host-Http-a=1; Secure; HttpOnly; Path=/") site 1000 true == "__Host-Http-a=1"
 #guard forRequest (setH {} "__Host-a=1; Secure; Path=/; Domain=www.example.com") site 1000 true == ""
+
+/-! ## The browser's jar for page loads
+
+A navigation (a link, an address, a form) carries the browser's cookies for its URL and keeps
+those its responses set, hop by hop through redirects, by the rules above: a cookie is its
+host's, `Secure` only over https, `HttpOnly` hidden from scripts. Which cookies a navigation
+carries (`sentNav`): all when it is same-site with the page that started it (or a person typed
+or chose the address); on a cross-site GET also `Lax` ones and those with no `SameSite`; on a
+cross-site POST only `SameSite=None` (RFC 6265bis §5.2, §5.8.3). A navigation's response sets
+cookies as a same-site one does (the top-level site is the URL's own).
+
+The host keeps the jar as text between calls (`Jar.wire`; `Jar.ofWire` drops a line that a
+cookie set by these rules could not be) and writes to disk only `Jar.persistent`: cookies with
+an expiry that has not passed. A session cookie ends with the program
+(`persistent_no_session`). -/
+
+/-- One cookie as a line of `Jar.wire`: its fields joined by `;` (a cookie's name, value, host
+and path can not hold `;`, which ends a cookie or an attribute when one is set). -/
+def Cookie.wire (c : Cookie) : String :=
+  ";".intercalate [c.name, c.value, c.host, c.path, if c.secure then "1" else "0", if c.httpOnly then "1" else "0",
+    (c.expires.map toString).getD "", toString c.created, toString c.sameSite]
+
+/-- The jar as text: the next creation number, then one line per cookie. -/
+def Jar.wire (j : Jar) : String := "\n".intercalate (toString j.next :: j.cookies.map Cookie.wire)
+
+/-- A line of `Jar.wire` as a cookie; `none` for a line that is not one, or that holds what a
+cookie set by the rules could not hold: a control character or `;`, an empty or upper-case
+host, a path that does not start with `/`, a name and value over the limit. -/
+def Cookie.ofWire (line : String) : Option Cookie :=
+  match line.splitOn ";" with
+  | [name, value, host, path, secure, httpOnly, expires, created, sameSite] =>
+    if (name.toList ++ value.toList ++ host.toList ++ path.toList).any isCtl || host.isEmpty || lower host != host ||
+       !path.startsWith "/" || name.length + value.length > maxNameValue || path.length > maxAttribute then none
+    else some { name, value, host, path, secure := secure == "1", httpOnly := httpOnly == "1",
+                expires := expires.toNat?, created := created.toNat?.getD 0, sameSite := min 3 (sameSite.toNat?.getD 0) }
+  | _ => none
+
+/-- The jar of `Jar.wire` text. -/
+def Jar.ofWire (s : String) : Jar :=
+  match s.splitOn "\n" with
+  | [] => {}
+  | n :: lines =>
+    let cs := lines.filterMap Cookie.ofWire
+    { cookies := cs, next := max (n.toNat?.getD 0) (cs.foldl (fun m c => max m (c.created + 1)) 0) }
+
+/-- The cookies that may be written to disk: those with an expiry that has not passed. -/
+def Jar.persistent (j : Jar) (now : Nat) : Jar :=
+  { j with cookies := j.cookies.filter fun c => c.expires.isSome && !expired c now }
+
+/-- The site of a navigation's URL: its host (lower case), its path, whether it is https;
+`none` for a URL with no cookies (not http or https, no host). -/
+def siteOfUrl (url : String) : Option Site :=
+  match L4Factoidal.WHATWG.URL.parseUrl url none with
+  | none => none
+  | some u =>
+    if u.scheme != "http" && u.scheme != "https" then none else
+    match u.host with
+    | none => none
+    | some h => some { host := lower h.serialize, path := u.pathname, secure := u.scheme == "https" }
+
+/-- A cookie that a navigation to `site` carries at `now`: `sameSite` when the page that
+started it has the same host (or none did), `get` for a GET. -/
+def sentNav (site : Site) (now : Nat) (sameSite get : Bool) (c : Cookie) : Bool :=
+  c.host == site.host && pathMatch site.path c.path && (!c.secure || site.secure) && !expired c now &&
+    (sameSite || c.sameSite == 1 || (get && (c.sameSite == 0 || c.sameSite == 2)))
+
+/-- The `Cookie` field of a navigation's request to `url`, started from the page at
+`initiator` ("" when a person typed or chose the address), by `method`. -/
+def navCookie (jar : Jar) (url initiator : String) (now : Nat) (method : String) : String :=
+  match siteOfUrl url with
+  | none => ""
+  | some site =>
+    let sameSite := initiator.isEmpty || (siteOfUrl initiator).map (·.host) == some site.host
+    let cs := (jar.cookies.filter (sentNav site now sameSite (method == "GET"))).mergeSort fun a b =>
+      a.path.length > b.path.length || (a.path.length == b.path.length && a.created ≤ b.created)
+    "; ".intercalate (cs.map fun c => if c.name.isEmpty then c.value else c.name ++ "=" ++ c.value)
+
+/-- The jar after the `Set-Cookie` fields of a navigation's response from `url`. -/
+def navSet (jar : Jar) (url : String) (now : Nat) (fields : List String) : Jar :=
+  match siteOfUrl url with
+  | none => jar
+  | some site => fields.foldl (fun j f => setFromHeader j site now f) jar
+
+/-- Kind: privacy invariant (what reaches the disk). Says: every cookie of the jar's part that
+is written to disk has an expiry, and it has not passed: a session cookie is never written.
+Does not say: that the host writes this part only, or where. -/
+theorem persistent_no_session (j : Jar) (now : Nat) (c : Cookie) (h : c ∈ (j.persistent now).cookies) :
+    c.expires.isSome = true ∧ expired c now = false := by
+  unfold Jar.persistent at h
+  have h' := (List.mem_filter.mp h).2
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at h'
+  exact h'
+
+/-- Kind: security invariant (cookies of a navigation). Says: a navigation carries only cookies
+of its URL's own host, never a `Secure` one over http, and on a cross-site navigation never a
+`Strict` one, and on a cross-site POST only `SameSite=None` ones. Does not say: that the host
+sends the field it is given, or anything of the response's cookies. -/
+theorem sentNav_safe (site : Site) (now : Nat) (ss get : Bool) (c : Cookie) (h : sentNav site now ss get c = true) :
+    c.host = site.host ∧ (c.secure = true → site.secure = true) ∧ (ss = false → c.sameSite ≠ 3) ∧
+      (ss = false → get = false → c.sameSite = 1) := by
+  unfold sentNav at h
+  simp only [Bool.and_eq_true, beq_iff_eq, Bool.or_eq_true, Bool.not_eq_true'] at h
+  obtain ⟨⟨⟨⟨hh, _⟩, hs⟩, _⟩, hss⟩ := h
+  refine ⟨hh, fun hc => ?_, fun hf => ?_, fun hf hg => ?_⟩
+  · cases hs with
+    | inl h => simp [hc] at h
+    | inr h => exact h
+  · subst hf
+    rcases hss with (h | h) | h
+    · cases h
+    · omega
+    · omega
+  · subst hf; subst hg
+    rcases hss with (h | h) | h
+    · cases h
+    · exact h
+    · simp at h
+
+/-- Kind: well-formedness of what is read back. Says: a cookie read from jar text has a
+non-empty lower-case host and a path that starts with `/`, as a cookie set by the rules has;
+so a jar file can not hold a cookie for no host, or for a host in another case that `sent`
+would not match. Does not say: that the cookie was ever set by a server. -/
+theorem ofWire_wellformed (s : String) (c : Cookie) (h : c ∈ (Jar.ofWire s).cookies) :
+    c.host ≠ "" ∧ lower c.host = c.host ∧ c.path.startsWith "/" = true := by
+  unfold Jar.ofWire at h
+  split at h
+  · simp at h
+  · simp only [List.mem_filterMap] at h
+    obtain ⟨line, _, hl⟩ := h
+    unfold Cookie.ofWire at hl
+    split at hl
+    · split at hl
+      · cases hl
+      · rename_i hc
+        cases hl
+        simp only [Bool.or_eq_true, not_or, Bool.not_eq_true, String.isEmpty_iff, bne_iff_ne, ne_eq,
+          Decidable.not_not] at hc
+        exact ⟨hc.1.1.1.1.2, hc.1.1.1.2, by simpa using hc.1.1.2⟩
+    · cases hl
+
+#guard
+  let site : Site := { host := "a.test", path := "/", secure := true }
+  let j := navSet {} "https://a.test/login" 1000 ["sid=1; Path=/; HttpOnly; Max-Age=60", "s2=2; Path=/"]
+  let back := Jar.ofWire j.wire
+  navCookie back "https://a.test/me" "" 1010 "GET" == "sid=1; s2=2" &&
+    (back.persistent 1010).cookies.map (·.name) == ["sid"] &&
+    navCookie back "https://b.test/" "" 1010 "GET" == "" &&
+    forRequest back site 1010 true == "sid=1; s2=2"
 
 end L4Factoidal.Net.Cookies

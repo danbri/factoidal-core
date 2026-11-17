@@ -426,6 +426,12 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     /** What a navigation's response does (WebDocument op `download`, Net.Subresource.navigated):
     shown, or saved under the name Lean made safe. Undefined for an engine from before the op
     (every response is then shown, as before). */
+    /** The browser's cookies for page loads (WebDocument op `cookies`, Net.Cookies): the jar is
+    text the host keeps; `request` gives a hop's Cookie field, `response` the jar after its
+    Set-Cookie fields, `keep` the part that may be written to disk. Undefined for an engine from
+    before the op (page loads then carry no cookies, as before). */
+    cookies:(request:{action:"request"|"response"|"keep";jar:string;now:string;url?:string;initiator?:string;method?:string;setCookie?:string})=>{
+      try{return documentCall("",{...request,op:"cookies"}) as {cookie?:string;jar?:string;error?:string};}catch{return undefined;}},
     download:(request:{contentType:string;disposition:string;url:string})=>{
       try{return documentCall("",{...request,op:"download"}) as {action:"show"}|{action:"save";name:string};}catch{return undefined;}},
     decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
