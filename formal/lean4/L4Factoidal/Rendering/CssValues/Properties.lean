@@ -1229,6 +1229,10 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
   | "column-rule-width" => "5px, repeat(4, 6px, 5px)" | "column-rule-style" => "double, repeat(4, none, solid)"
   | _ => "salmon, repeat(4, currentcolor, red)") == some "5px double salmon, repeat(4, 6px, 5px solid red)"
 #guard specified "will-change" "auto, transform" == none && specified "will-change" "transform, none" == none
+-- calc-size() in the sizing properties (calc-size-parsing.html)
+#guard specified "width" "calc-size(auto, size)" == some "calc-size(auto, size)" && specified "max-width" "calc-size(auto, size)" == none
+#guard specified "max-height" "calc-size(fit-content, 30px + size / 2)" == some "calc-size(fit-content, 30px + (0.5 * size))"
+#guard specified "flex-basis" "calc-size(any, 50px)" == some "calc-size(any, 50px)" && specified "height" "calc(calc-size(auto, size))" == none
 #guard specified "will-change" "transform, opacity" == some "transform, opacity" && specified "will-change" "auto" == some "auto"
 -- a math function of a non-legacy colour function stays in the specified value (CSS Color 4)
 #guard specified "color" "color(srgb calc(0.5 + 1) calc(0.5 - 1) calc(0.5) / calc(-0.5 + 1))" ==

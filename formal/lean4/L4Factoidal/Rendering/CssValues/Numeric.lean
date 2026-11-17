@@ -221,8 +221,9 @@ def splitCommas (cvs : List CV) : List (List CV) :=
 
 mutual
   /-- One calc value: a number, a dimension, a percentage, a keyword, a parenthesised sum
-  or a math function. The recursion is on the nesting of the value. -/
-  def calcOperand : Nat → CV → Option Calc
+  or a math function. `sz`: the keyword `size` of `calc-size()` may stand here (CSS Values 5
+  §7.1). The recursion is on the nesting of the value. -/
+  def calcOperand (sz : Bool) : Nat → CV → Option Calc
     | 0, _ => none
     | fuel + 1, cv =>
       match cv with
@@ -231,11 +232,11 @@ mutual
       | .tok (.dim v _ u) => if (unitKind (lower u)).isSome then some (.val v (lower u)) else none
       | .tok (.ident s) =>
         let k := lower s
-        if ["e", "pi", "infinity", "-infinity", "nan"].contains k then some (.kw k) else none
-      | .block '(' body => calcExpr fuel body
+        if ["e", "pi", "infinity", "-infinity", "nan"].contains k || (sz && k == "size") then some (.kw k) else none
+      | .block '(' body => calcExpr sz fuel body
       | .fn name args =>
         let n := lower name
-        if n == "calc" then calcExpr fuel args
+        if n == "calc" then calcExpr sz fuel args
         else if mathFunctions.contains n then
           -- the comma-separated arguments: a rounding strategy is the first argument of
           -- `round()`, and `none` may stand for the ends of `clamp()`
@@ -254,16 +255,16 @@ mutual
             match word with
             | some w =>
               if (n == "round" && i == 0 && roundingStrategies.contains w) || (n == "clamp" && w == "none") then some (Calc.kw w)
-              else calcExpr fuel g
-            | none => calcExpr fuel g
+              else calcExpr sz fuel g
+            | none => calcExpr sz fuel g
           parsed.map fun xs => .fn n (if noClamp then .kw "no-clamp" :: xs else xs)
         else none
       | _ => none
   /-- A calc sum over component values (white space included). -/
-  def calcExpr : Nat → List CV → Option Calc
+  def calcExpr (sz : Bool) : Nat → List CV → Option Calc
     | 0, _ => none
     | fuel + 1, cvs =>
-      match calcItems (calcOperand fuel) cvs true [] with
+      match calcItems (calcOperand sz fuel) cvs true [] with
       | some items => if items.isEmpty then none else calcSum (items.length + 2) items []
       | none => none
 end
@@ -271,7 +272,7 @@ end
 /-- The calculation of a math function component value. -/
 def Calc.parse (cv : CV) : Option Calc :=
   match cv with
-  | .fn name args => if mathFunctions.contains (lower name) then calcOperand (cvSize 64 args + 8) cv else none
+  | .fn name args => if mathFunctions.contains (lower name) then calcOperand false (cvSize 64 args + 8) cv else none
   | _ => none
 
 /-! ### Types -/
@@ -289,6 +290,7 @@ def Calc.type (pctAs : Kind) : Nat → Calc → Option Ty
     | .val _ "" => some {}
     | .val _ "%" => some (Ty.ofKind pctAs)
     | .val _ u => (unitKind u).map Ty.ofKind
+    | .kw "size" => some (Ty.ofKind .length)
     | .kw _ => some {}
     | .neg x => Calc.type pctAs fuel x
     | .inv x => (Calc.type pctAs fuel x).map Ty.inv
@@ -761,6 +763,51 @@ def Calc.text (c : Calc) : String :=
   | .fn _ _ => Calc.css fuel false c
   | _ => "calc(" ++ Calc.css fuel false c ++ ")"
 
+/-! ### `calc-size()` (CSS Values 5 §7.1) -/
+
+/-- The sizing keywords a `calc-size()` basis may be; `auto` only where the property takes it
+(not the `max-*` sizes). -/
+def calcSizeKeywords (allowAuto : Bool) : List String :=
+  (if allowAuto then ["auto"] else []) ++ ["min-content", "max-content", "fit-content", "stretch"]
+
+/-- A length-percentage calc sum (white space and all), simplified, as the text inside a math
+function; `sz`: the keyword `size` may stand in it. `none` when it is not of that type. -/
+def calcSizeSum (ctx : Option Ctx) (sz : Bool) (cvs : List CV) : Option String := do
+  let c ← calcExpr sz (cvSize 64 cvs + 8) cvs
+  let fuel := Calc.depth 64 c + 4
+  if Calc.type .length fuel c != some (Ty.ofKind .length) then none
+  let s := Calc.simp ctx fuel c
+  some (Calc.css (Calc.depth 64 s + 4) false s)
+
+/-- `calc-size( <calc-size-basis>, <calc-sum> )`: the basis is a sizing keyword, `any`, a
+nested `calc-size()` or a length-percentage sum; the second argument a length-percentage sum
+in which `size` (the basis's size) may stand unless the basis is `any`. The canonical text,
+the sums simplified as in `calc()` (`size * 2` is `2 * size`, `2in` is `192px`). The recursion
+is on the nesting of the basis. -/
+def calcSizeOf (ctx : Option Ctx) (allowAuto : Bool) : Nat → CV → Option String
+  | 0, _ => none
+  | fuel + 1, cv =>
+    match cv with
+    | .fn name args =>
+      if lower name != "calc-size" then none else
+      match splitCommas args with
+      | [b, e] =>
+        let basis : Option (String × Bool) :=
+          match stripWs b with
+          | [.tok (.ident k)] =>
+            if lower k == "any" then some ("any", false)
+            else if (calcSizeKeywords allowAuto).contains (lower k) then some (lower k, true)
+            else none
+          | [.fn n inner] =>
+            if lower n == "calc-size" then (calcSizeOf ctx allowAuto fuel (.fn n inner)).map (·, true)
+            else (calcSizeSum ctx false b).map (·, true)
+          | _ => (calcSizeSum ctx false b).map (·, true)
+        match basis with
+        | some (bt, sz) => (calcSizeSum ctx sz e).map fun et => "calc-size(" ++ bt ++ ", " ++ et ++ ")"
+        | none => none
+      | _ => none
+    | _ => none
+
 /-! ### Reading a numeric component value -/
 
 /-- What a grammar asks of a numeric value: the kind, whether a percentage may stand for
@@ -934,6 +981,28 @@ private def num : NumReq := { kind := .number }
 #guard spec { kind := .number } "exp(0)" == some "calc(1)"
 #guard spec { kind := .number } "calc(pi)" == some "calc(3.14159)"
 #guard spec len "clamp(none, 2px, 3em)" == some "min(2px, 3em)"
+-- calc-size() (calc-size-parsing.html)
+private def csz (allowAuto : Bool) (s : String) : Option String :=
+  match stripWs (CV.parse s) with
+  | [cv] => calcSizeOf none allowAuto 8 cv
+  | _ => none
+#guard csz true "calc-size(auto, size)" == some "calc-size(auto, size)"
+#guard csz false "calc-size(auto, size)" == none && csz true "calc-size(none, size)" == none
+#guard csz true "calc-size(min-content, size * 2)" == some "calc-size(min-content, 2 * size)"
+#guard csz false "calc-size(max-content, size / 2)" == some "calc-size(max-content, 0.5 * size)"
+#guard csz false "calc-size(fit-content, 30px + size / 2)" == some "calc-size(fit-content, 30px + (0.5 * size))"
+#guard csz true "calc-size(fit-content, 50% + size / 2)" == some "calc-size(fit-content, 50% + (0.5 * size))"
+#guard csz true "calc-size(any, 25em)" == some "calc-size(any, 25em)"
+#guard csz true "calc-size(any, 50px + 30%)" == some "calc-size(any, 30% + 50px)"
+#guard csz true "calc-size(calc-size(any, 30px), size)" == some "calc-size(calc-size(any, 30px), size)"
+#guard csz true "calc-size(any, size)" == none && csz true "calc-size(any, fit-content)" == none
+#guard csz true "calc-size(10px, sign(size) * size)" == some "calc-size(10px, sign(size) * size)"
+#guard csz true "calc-size(any, calc-size(10px, sign(size) * size))" == none
+#guard csz true "calc-size(calc-size(2in, 30px), 25em)" == some "calc-size(calc-size(192px, 30px), 25em)"
+#guard csz true "calc-size(calc-size(min-content, size), size)" == some "calc-size(calc-size(min-content, size), size)"
+#guard csz true "calc-size(30px)" == none && csz true "calc-size(any)" == none && csz true "calc-size(size)" == none
+#guard csz true "calc-size(calc-size(fit-content, size * 2))" == none
+#guard spec len "calc(size)" == none
 -- infinity and NaN (calc-infinity-nan-serialize-*.html, calc-infinity-nan-computed.html)
 #guard spec len "calc(1px * NaN)" == some "calc(NaN * 1px)"
 #guard spec len "calc(1in * NaN)" == some "calc(NaN * 1px)"
