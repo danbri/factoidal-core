@@ -1832,9 +1832,7 @@ def alignHints (n : DOM.Node) (s : Computed) : Computed :=
 /-- Kind: property (zero cost). Says: an element with no `align` hint keeps its style. -/
 theorem alignHints_other (n : DOM.Node) (s : Computed) (h : alignTags.contains n.lname = false) :
     alignHints n s = s := by
-  unfold alignHints
-  rw [h]
-  rfl
+  simp only [alignHints, h, Bool.not_false, reduceIte]
 
 /-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
 `video`, `canvas`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
