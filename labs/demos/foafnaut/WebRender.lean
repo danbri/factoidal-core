@@ -277,14 +277,34 @@ theorem imageSource_plain (dom : DOM.Dom) (id : Nat) (h : plainImage dom id = tr
     imageSource dom id = plainSource dom id := by
   simp [imageSource, h]
 
-/-- The image of each HTML `img`, by node, as a key of the image store
-(`NativeSVG.imageKey`: a `data:` URI as it stands, another URL resolved). -/
+/-- The URL, as written, of the image an `object` shows (HTML §4.8.7): its `data`, when the
+element says the resource is an image, by a `type` attribute of an `image/` type or by a
+`data:` URL of one. Any other `object` is none: it shows its fallback content, as before, and
+the host fetches nothing more for it. -/
+def objectImageSource (n : DOM.Node) : Option String :=
+  if !DOM.Dom.isHtmlElement n "object" then none else
+  let data := (Rendering.CSS.attrValue n "data").trimAscii.toString
+  let type := (Rendering.CSS.attrValue n "type").trimAscii.toString.toLower
+  if data.isEmpty then none
+  else if type.startsWith "image/" || data.toLower.startsWith "data:image/" then some data
+  else none
+
+/-- Kind: property (zero cost). Says: an element that is not an HTML `object` shows no
+object image, so a page with no `object` has the same image keys as before. -/
+theorem objectImageSource_other (n : DOM.Node) (h : DOM.Dom.isHtmlElement n "object" = false) :
+    objectImageSource n = none := by
+  simp [objectImageSource, h]
+
+/-- The image of each HTML `img`, and of each `object` that shows an image
+(`objectImageSource`), by node, as a key of the image store (`NativeSVG.imageKey`: a
+`data:` URI as it stands, another URL resolved). -/
 def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) := Id.run do
   let mut out : Array (Nat × String) := #[]
   for id in [0:dom.size] do
     let n := dom.get id
     if DOM.Dom.isHtmlElement n "img" then
       if let some src := imageSource dom id then out := out.push (id,NativeSVG.imageKey base src)
+    else if let some data := objectImageSource n then out := out.push (id,NativeSVG.imageKey base data)
   return out.toList
 
 /-! ### An SVG document as the image of an `img` (2026-11-14)

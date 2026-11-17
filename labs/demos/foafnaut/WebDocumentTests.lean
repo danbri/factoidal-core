@@ -464,6 +464,10 @@ private def keysOf (html : String) : List String :=
 #guard keysOf "<picture><source srcset='w.webp' type='image/webp'><img src='a.jpg'></picture>" == ["https://e.test/p/a.jpg"]
 #guard keysOf "<picture><source srcset='p.png'><img src='a.jpg'></picture>" == ["https://e.test/p/p.png"]
 #guard keysOf "<img alt='none'>" == []
+-- an `object` that shows an image (2026-11-17): by its `type`, or a `data:` URL of an image type
+#guard keysOf "<object data='a.svg' type='image/svg+xml'></object>" == ["https://e.test/p/a.svg"]
+#guard keysOf "<object data='data:image/svg+xml;base64,PHN2Zz4='></object>" == ["data:image/svg+xml;base64,PHN2Zz4="]
+#guard keysOf "<object data='page.html'></object><object type='image/png'></object>" == []
 #guard WebRender.undecodablePath "https://e.test/a.JPG.WEBP?x=1#f" && WebRender.undecodablePath "x.avif" && !WebRender.undecodablePath "x.webp.png"
 #guard WebRender.plainImage (DOM.parseHtmlDocument "<img id=i src='a.png'>") ((DOM.parseHtmlDocument "<img id=i src='a.png'>").getElementById 0 "i" |>.getD 0)
 

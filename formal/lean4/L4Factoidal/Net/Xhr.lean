@@ -514,12 +514,27 @@ script whose answer is opaque. -/
 def Xhr.hidesScript (x : Xhr) (r : Response) : Bool :=
   x.raw && x.destination == "script" && r.tainting == "opaque"
 
-/-- The response an object gets: an image element's request gets `imageRaw` of it, an opaque
-classic script element's request `scriptRaw` of it, on every path a response is made (the
-host's answer, a `data:` URL answered here, a sync fetch). -/
+/-- Whether object `x` is an element's request whose answer the realm gets as `imageRaw`: an
+image element's (`img`, destination `image`) and an `object` element's (destination `object`,
+HTML §4.8.7: its load and error events need the status, the type and, for an image, the
+natural size; never the bytes, which may be another origin's). -/
+def Xhr.sizeOnly (x : Xhr) : Bool :=
+  x.raw && (x.destination == "image" || x.destination == "object")
+
+/-- The response an object gets: an image or `object` element's request (`sizeOnly`) gets
+`imageRaw` of it, an opaque classic script element's request `scriptRaw` of it, on every path
+a response is made (the host's answer, a `data:` URL answered here, a sync fetch). -/
 def Xhr.forRealm (x : Xhr) (r : Response) : Response :=
-  if x.raw && x.destination == "image" then imageRaw r
+  if x.sizeOnly then imageRaw r
   else if x.hidesScript r then scriptRaw r else r
+
+/-- Kind: security theorem (origin isolation). Says: an `object` element's request gets
+`imageRaw` of its answer, as an image's does: the status, the URL, the tainting, the
+`Content-Type` and the natural size, never the bytes (`imageRaw_noninterference`). -/
+theorem forRealm_object (x : Xhr) (r : Response) (hr : x.raw = true) (hd : x.destination = "object") :
+    x.forRealm r = imageRaw r := by
+  have hi : x.sizeOnly = true := by simp [Xhr.sizeOnly, hr, hd]
+  simp [Xhr.forRealm, hi]
 
 /-- What the engine keeps of answer `r` for itself: the whole answer of an opaque classic
 script, else nothing. -/
@@ -543,7 +558,7 @@ theorem forRealm_script_noninterference (x : Xhr) (r r' : Response) (hr : x.raw 
     (hs : okStatus r.status = okStatus r'.status) : x.forRealm r = x.forRealm r' := by
   have hh : x.hidesScript r = true := by simp [Xhr.hidesScript, hr, hd, ho]
   have hh' : x.hidesScript r' = true := by simp [Xhr.hidesScript, hr, hd, ho']
-  have hi : (x.raw && x.destination == "image") = false := by simp [hd]
+  have hi : x.sizeOnly = false := by simp [Xhr.sizeOnly, hd]
   simp only [Xhr.forRealm, hi, hh, hh', Bool.false_eq_true, if_false, if_true]
   exact scriptRaw_noninterference r r' hs (by rw [ho, ho'])
 

@@ -635,6 +635,7 @@
   // A script element that a script made (section dynscripts): told when it is created.
   let noteFreshScript = () => {}, noteFrameMade = () => {};
   let noteImg = () => {};   // section images: an img element made by script
+  let noteObj = () => {}, objStart = () => {};   // section objects: an object element made by script; the page's own
   // A parser-inserted script element with no src and no child text bailed out of "prepare
   // the script element" before it was started (HTML §4.12.1.1 step 7): text added later runs it.
   const noteEmptyScripts = () => {
@@ -4097,6 +4098,7 @@
       const id = chk(n.create(3 + 16 * nodeId(this), name));
       if (name.length === 6 && name.toLowerCase() === 'script') noteFreshScript(id);
       else if (name.length === 3 && name.toLowerCase() === 'img') noteImg(id);
+      else if (name.length === 6 && name.toLowerCase() === 'object') noteObj(id);
       else if ((name.length === 6 || name.length === 5) && /^i?frame$/i.test(name)) noteFrameMade();
       else if (ttMeta !== null && name.length === 4 && name.toLowerCase() === 'meta') ttMeta();
       return made(id, options);
@@ -6792,6 +6794,62 @@
       if (st.complete) return st.w > 0 || st.h > 0 ? Promise.resolve() : Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
       return new Promise((res, rej) => st.waiters.push([res, rej]));
     });
+  }
+
+  // ---- objects (HTML §4.8.7 "update the object element's data"): an object element with a
+  // `data` URL fetches it in a task once it is connected, then fires `load` (a 2xx answer) or
+  // `error` (a failed fetch or another status). The answer reaches the realm as an image's
+  // does (Net.Xhr.forRealm, destination `object`): its status and type, never its bytes.
+  // Whether the object shows an image is Lean's (WebRender.objectImageSource); the layout
+  // draws it as it draws an img. A page with no object element pays nothing.
+  {
+    const objGens = new Map();   // node -> the generation of its last update
+    let objGen = 0, objWatching = false;
+    const isObj = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'object';
+    const objAttrs = new Set(['data', 'type']);
+    const updateObject = id => {
+      const gen = ++objGen;
+      objGens.set(id, gen);
+      chk(n.timer(register(() => {
+        if (objGens.get(id) !== gen) return;
+        const el = wrap(id);
+        if (!el.isConnected) { imgUndelay(id); return; }
+        const data = n0.attr(id, 'data');
+        if (typeof data !== 'string') { imgUndelay(id); return; }
+        const done = ok => { if (objGens.get(id) !== gen) return; imgFire(el, ok ? 'load' : 'error'); imgUndelay(id); };
+        const url = data === '' ? null : resolveURL(data);
+        if (url === null || url === undefined) { done(false); return; }
+        if (cspBlocksRequest('object-src', url, '', false, id)) { flushViolations(); done(false); return; }
+        elementFetch(url, { destination: 'object', mode: 'no-cors', credentials: 'include' }).then(r => {
+          if (r === undefined) { if (objGens.get(id) === gen) imgUndelay(id); return; }
+          done(r !== null && r.status >= 200 && r.status < 300);
+        });
+      }), 0, 0));
+    };
+    const objectsIn = id => {
+      const t = info(id, 0);
+      if (t !== 1 && t !== 11) return [];
+      const own = t === 1 && isObj(id) ? [id] : [];
+      return info(id, 6) > 0 ? own.concat([...wrap(id).querySelectorAll('object')].map(nodeId)) : own;
+    };
+    const objWatch = () => {
+      if (objWatching) return;
+      objWatching = true;
+      const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
+      n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0 && objAttrs.has(String(name).toLowerCase()) && isObj(id)) updateObject(id); return r; };
+      n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && objAttrs.has(String(name).toLowerCase()) && isObj(id)) updateObject(id); return r; };
+      for (const op of ['insert', 'replace']) {
+        const f = n[op];
+        n[op] = (p, node, child) => { const r = f.call(n, p, node, child); if (r === 0) for (const k of objectsIn(node)) if (n0.attr(k, 'data') !== null) updateObject(k); return r; };
+      }
+    };
+    noteObj = () => objWatch();
+    objStart = () => {
+      const objs = document.getElementsByTagName('object');
+      if (objs.length === 0) return;
+      objWatch();
+      for (const el of objs) { const id = nodeId(el); if (n0.attr(id, 'data') !== null) { imgDelay.add(id); updateObject(id); } }
+    };
   }
 
   // ---- Origin (HTML §7.5 "Origin.from", the Origin interface) -----------------------------
@@ -18545,7 +18603,7 @@
     reportMuted() { reportMuted(); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
-    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); imgStart(); noteEmptyScripts(); },
+    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); imgStart(); objStart(); noteEmptyScripts(); },
     script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; if (d > 0 && ttDoc !== null) ttDoc(d); },
     url(u) { href = String(u); creationHref = href; },
     release(id) { callbacks.delete(id); },
