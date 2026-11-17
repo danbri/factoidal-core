@@ -2034,11 +2034,11 @@ theorem finishEffects_rise_plain (parent s : Computed) (h : s.shift = 0) :
     (finishEffects parent s).rise = parent.rise + 0 := by
   simp [finishEffects, h]
 
-/-- Kind: property. Says: the style after `finishEffects` is the cascade's in every field but
-`rise`, `clipHidden` and `visible`. -/
-theorem finishEffects_fields (parent s : Computed) :
-    finishEffects parent s = {s with rise := (finishEffects parent s).rise,
-      clipHidden := (finishEffects parent s).clipHidden, visible := (finishEffects parent s).visible} := by
+/-- Kind: property. Says: `finishEffects` keeps the display and the box sizes of the
+cascade: it changes no layout. -/
+theorem finishEffects_layout (parent s : Computed) :
+    (finishEffects parent s).display = s.display ∧ (finishEffects parent s).width = s.width ∧
+      (finishEffects parent s).height = s.height ∧ (finishEffects parent s).margin = s.margin := by
   simp [finishEffects]
 
 /-- The properties that presentational hints changed from `before` to `after`: those the
