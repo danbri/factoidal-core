@@ -91,6 +91,9 @@ export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCou
   /** The values of the page's running animations and transitions at this turn: [node, longhand, computed text, isTransition]. */
   animated?:[number,string,string,boolean][];
   navigations?:{nodeId:number;url:string}[];frameLoads?:number;
+  /** A navigation of the page itself that Lean planned (a form's submission): the URL, the
+   * method, and for POST the body and its type; target `_blank` for a new tab. Said once. */
+  navigate?:{url:string;method:"get"|"post";body?:string;contentType?:string;target?:string};
   /** Requests the page asked for (XMLHttpRequest): the policy is the engine's; the host only makes them. */
   netRequests?:NetWire[];
   netCancels?:number[];
@@ -420,6 +423,11 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     searchPage:(request:{argument:string;tabs:{url:string;title:string}[];resources:unknown[];state:boolean;search:string})=>
       documentCall("",{...request,op:"searchPage"}) as {title:string;source:string},
     outsidePage:(url:string,hub=false,textnaut=false)=>{try{return documentCall("",{op:"outsidePage",url,hub,textnaut}) as {title:string;source:string};}catch{return undefined;}},
+    /** What a navigation's response does (WebDocument op `download`, Net.Subresource.navigated):
+    shown, or saved under the name Lean made safe. Undefined for an engine from before the op
+    (every response is then shown, as before). */
+    download:(request:{contentType:string;disposition:string;url:string})=>{
+      try{return documentCall("",{...request,op:"download"}) as {action:"show"}|{action:"save";name:string};}catch{return undefined;}},
     decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
       if(!backends.decode)return undefined;
       const answer=backends.decode(bytes,charset,fallback,locale),i=answer.indexOf("\n");

@@ -19214,6 +19214,9 @@
     dispatch(target, type, flags) {
       // not an event: the default action of a press, which only Lean asks for
       if (type === '@focus') { pressFocus(target); return ''; }
+      // Enter in a field of a form with no submit button (HTML §4.10.21.2; Lean decided,
+      // DOM.FormControls.implicitSubmission): the form is submitted from itself
+      if (type === '@submit') { const f = wrap(target); if (f) submitForm(f, f); return ''; }
       // the default action of a key in a text control (Lean chose the control and the
       // command, Hosts.PageEvents.key): the command runs on its value (op 179) and fires input
       if (type === '@edit') {

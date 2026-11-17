@@ -222,7 +222,12 @@ def pointer (s : σ) (kind : PointerKind) (node : Nat) (init : String) : σ :=
   let s := match kind with
     | .down =>
       let (s, prevented) := e.dispatchWith s target "pointerdown" init
-      let s := if prevented then s else (e.dispatchWith s target "mousedown" init).1
+      -- the default action of the press, as in `lowPointer`: when neither `pointerdown` nor
+      -- `mousedown` was canceled, the focusable area there takes the focus, else the focused
+      -- element loses it (`DOM.Focus.pressTarget`, through the prelude's focus update steps)
+      let s := Input.afterCancelable prevented (fun s =>
+        let (s, downCanceled) := e.dispatchWith s target "mousedown" init
+        Input.afterCancelable downCanceled (fun s => (e.dispatch s target "@focus").1) s) s
       e.setPointer s { (e.host s).pointer with pressed := some target, canceled := prevented }
     | .up =>
       let s := (e.dispatchWith s target "pointerup" init).1
@@ -342,6 +347,14 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
               let (s, shown) := e.rendered s control
               if !shown then s else (e.dispatchWith s control "@edit" (editInit command value)).1) s
           | none =>
+            -- Enter (no modifier) in a field that has implicit submission (HTML §4.10.21.2,
+            -- `DOM.FormControls.implicitSubmission`): a click at the form's default button, or
+            -- the form submitted from itself (`@submit`, the prelude's submit steps)
+            let plain := k.key == "Enter" && !k.shift && !k.ctrl && !k.alt && !k.cmd
+            match (if plain then Hosts.Dom.implicitOf (e.host s).dom else none) with
+            | some (.click b) => e.click s b
+            | some (.submit f) => (e.dispatch s f "@submit").1
+            | none =>
             let h := e.host s
             e.setHost s { h with dom := Hosts.Dom.caretMove h.dom k }) s) s
     (e.advance s (e.loop s).clock).1

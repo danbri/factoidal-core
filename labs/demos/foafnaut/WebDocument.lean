@@ -3276,6 +3276,14 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   -- A document's subresource requests go through the engine's network rules, step by step.
   if str request "op" == "subresource" then
     return (← stepState fun e => let (e, r) := e.subresource request; (e, .ok r),#[])
+  -- What a navigation's response does: shown as a page, or saved as a download under a safe
+  -- name (`Net.Subresource.navigated`, theorem `safeName_safe`). The host asks before it reads
+  -- the body.
+  if str request "op" == "download" then
+    let answer := match Net.Subresource.navigated (str request "contentType") (str request "disposition") (str request "url") with
+      | .show => JSON.Json.object [("action", .string "show")]
+      | .save name => JSON.Json.object [("action", .string "save"), ("name", .string name)]
+    return (answer.toString, #[])
   if str request "op" == "imageLoad" then
     return (← stepState fun e => let (h,r) := loadImage e.holds request; ({e with holds := h},r),#[])
   -- The ops of held images and frame work: a host asks this before it calls them (issue 1274).

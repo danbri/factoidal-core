@@ -115,6 +115,8 @@ def ops : List OpSpec :=
     ⟨"wasmSpecSample", .query, []⟩, ⟨"scriptPlan", .query, []⟩, ⟨"scriptChoices", .query, []⟩,
     ⟨"encodingChoices", .query, []⟩, ⟨"searchPage", .query, []⟩, ⟨"searchChoices", .query, []⟩,
     ⟨"searchSetting", .query, []⟩, ⟨"outsidePage", .query, []⟩,
+    -- what a navigation response does (show or save as a download): decided from its headers
+    ⟨"download", .query, []⟩,
     -- the browser's own controls (WebShell): answers from the request
     ⟨"shellText", .query, []⟩, ⟨"shellKey", .query, [.keyboard]⟩, ⟨"shellEdit", .query, [.keyboard]⟩,
     ⟨"shellHit", .query, [.pointer]⟩, ⟨"shellActions", .query, []⟩, ⟨"shellSubmit", .query, []⟩,
@@ -134,7 +136,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 69
+#guard opNames.length == 70
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state
