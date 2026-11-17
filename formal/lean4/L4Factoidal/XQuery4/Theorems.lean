@@ -104,7 +104,8 @@ theorem evalModule_emptyProlog (fuel : Nat) (env : Env) (m : Module) (e : Expr)
     fun env' seen => loadImports_nil env' 49 seen m hi
   simp only [evalModule, h50, hs, hsl, withSchemaLocations_nil]
   simp [hb, hl, hd, bindModules_empty _ _ _ hd]
-  split <;> rfl
+  simp only [bind, Except.bind]
+  split <;> (try split) <;> rfl
 
 /-! ## More FLWOR clauses as XPath 4.0 expressions -/
 
