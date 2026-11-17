@@ -239,13 +239,131 @@ def gradientCanon (v : String) : String :=
       | cv => cv
     serialize out
 
+/-- A percentage as the number it stands for (`50%` is `0.5`). -/
+def pctToNum : CV → CV
+  | .tok (.pct x) => .tok (.num (x / 100) false)
+  | cv => cv
+
+/-- The arguments of a function, comma groups kept, each group with its white space. -/
+def joinGroups (groups : List (List CV)) : List CV :=
+  (groups.map stripWs).foldl (fun acc g => if acc.isEmpty then g else acc ++ [.tok .comma, .tok .ws] ++ g) []
+
+/-- `transform` (CSS Transforms 1 §11, 2 §12): the scaling and skewing functions in lower case
+as serialised, a percentage of a scaling function as a number, a unitless zero angle of a
+skewing function as `0deg`. -/
+def transformCanon (v : String) : String :=
+  if v == "none" then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      let n := lower name
+      if n.startsWith "scale" then .fn n (args.map pctToNum)
+      else if n.startsWith "skew" then .fn n (args.map fun a => match a with
+        | .tok (.num x _) => if x == 0 then .tok (.dim 0 true "deg") else a
+        | a => a)
+      else cv
+    | cv => cv)
+
+/-- An `<opacity-value>` (CSS Color 4 §11.2) is serialised as a number. -/
+def opacityCanon (v : String) : String :=
+  match stripWs (CV.parse v) with
+  | [cv] => serialize [pctToNum cv]
+  | _ => v
+
+/-- `counter()` and `counters()` without their default style, `decimal` (CSS Lists 3 §6). -/
+def counterCanon (v : String) : String :=
+  if (v.splitOn "counter").length ≤ 1 then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      let n := lower name
+      let groups := splitCommas args
+      let isDecimal := fun (g : List CV) => match stripWs g with
+        | [.tok (.ident k)] => lower k == "decimal"
+        | _ => false
+      if (n == "counter" && groups.length == 2 || n == "counters" && groups.length == 3) &&
+          (groups.getLast?.map isDecimal).getD false then
+        .fn name (joinGroups groups.dropLast)
+      else cv
+    | cv => cv)
+
+/-- Easing functions (CSS Easing 1 §2.2): `step-start` is `steps(1, start)`, `step-end`
+is `steps(1)`, and `steps(n, end)` or `steps(n, jump-end)` is `steps(n)`. -/
+def easingCanon (v : String) : String :=
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .tok (.ident k) =>
+      if lower k == "step-start" then .raw "steps(1, start)"
+      else if lower k == "step-end" then .raw "steps(1)" else cv
+    | .fn name args =>
+      if lower name != "steps" then cv else
+      match splitCommas args with
+      | [n, pos] =>
+        match stripWs pos with
+        | [.tok (.ident k)] => if lower k == "end" || lower k == "jump-end" then .fn name (stripWs n) else cv
+        | _ => cv
+      | _ => cv
+    | cv => cv)
+
+/-- Filter functions whose amount is at most 1 (`grayscale()`, `invert()`, `opacity()`,
+`sepia()`, Filter Effects 1 §13.1): a larger amount is serialised as 100% or 1. -/
+def filterCanon (v : String) : String :=
+  if v == "none" then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      if !["grayscale", "invert", "opacity", "sepia"].contains (lower name) then cv else
+      .fn name (args.map fun a => match a with
+        | .tok (.pct x) => if x > 100 then .tok (.pct 100) else a
+        | .tok (.num x i) => if x > 1 then .tok (.num 1 true) else .tok (.num x i)
+        | a => a)
+    | cv => cv)
+
+/-- `translate` (CSS Transforms 2 §5): a zero z is left out, and then a zero y. -/
+def translateCanon (v : String) : String :=
+  let zero := fun (cv : CV) => match cv with
+    | .tok (.dim x _ _) => x == 0
+    | .tok (.num x _) => x == 0
+    | _ => false
+  let ts := stripWs (CV.parse v)
+  let ts := match ts with
+    | [x, y, z] => if zero z then [x, y] else ts
+    | _ => ts
+  let ts := match ts with
+    | [x, y] => if zero y then [x] else ts
+    | _ => ts
+  " ".intercalate (ts.map fun cv => serialize [cv])
+
+/-- A radial gradient without its default ending shape and size (`ellipse`,
+`farthest-corner`, CSS Images 3 §3.2). -/
+def radialCanon (v : String) : String :=
+  if (v.splitOn "radial-gradient(").length ≤ 1 then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      if !(lower name).endsWith "radial-gradient" then cv else
+      match splitCommas args with
+      | first :: rest =>
+        let ws := stripWs first
+        let atIx := ws.findIdx? fun c => match c with | .tok (.ident k) => lower k == "at" | _ => false
+        let (shape, pos) := match atIx with | some i => (ws.take i, ws.drop i) | none => (ws, [])
+        let shape' := shape.filter fun c => match c with
+          | .tok (.ident k) => !(lower k == "ellipse" || lower k == "farthest-corner")
+          | _ => true
+        if shape'.length == shape.length then cv else
+        let first' := (shape' ++ pos).foldl (fun acc c => if acc.isEmpty then [c] else acc ++ [.tok .ws, c]) []
+        .fn name (joinGroups (if first'.isEmpty then rest else first' :: rest))
+      | [] => cv
+    | cv => cv)
+
 /-- The canonical forms that the order of the grammar alone does not give, by property. -/
 def canonical (p v : String) : String :=
   match p with
   | "display" => displayCanon v
   | "scale" => if v == "none" then v else scaleCanon v
   | "rotate" => rotateCanon v
-  | _ => gradientCanon v
+  | "transform" => transformCanon v
+  | "opacity" | "flood-opacity" | "fill-opacity" | "stroke-opacity" | "stop-opacity" => opacityCanon v
+  | "content" => counterCanon (gradientCanon v)
+  | "animation-timing-function" | "transition-timing-function" => easingCanon v
+  | "filter" | "backdrop-filter" => filterCanon v
+  | "translate" => translateCanon v
+  | _ => radialCanon (gradientCanon v)
 
 /-- `canonical`, and for a shape property the shape's canonical form (`shapeValue`):
 `none` when a `path()` in it is not path data, so the value is not one of the property's. -/
@@ -1227,6 +1345,21 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
   | "column-rule-width" => "5px, repeat(4, 6px, 5px)" | "column-rule-style" => "double, repeat(4, none, solid)"
   | _ => "salmon, repeat(4, currentcolor, red)") == some "5px double salmon, repeat(4, 6px, 5px solid red)"
 #guard specified "will-change" "auto, transform" == none && specified "will-change" "transform, none" == none
+-- canonical forms (transform-valid.html, opacity-valid.html, content-valid.html,
+-- *-timing-function-valid.html, filter-parsing-valid.html, translate-parsing-valid.html,
+-- gradient-*-valid.html)
+#guard specified "transform" "scale(250%)" == some "scale(2.5)" && specified "transform" "scaleX(720%)" == some "scalex(7.2)"
+#guard specified "transform" "skewX(0)" == some "skewx(0deg)" && specified "transform" "translateX(-4px)" == some "translateX(-4px)"
+#guard specified "transform" "scale3d(50%, 250%, 300%)" == some "scale3d(0.5, 2.5, 3)"
+#guard specified "opacity" "50%" == some "0.5" && specified "opacity" "2.5e1%" == some "0.25" && specified "opacity" "-100%" == some "-1"
+#guard specified "content" "counter(counter-name, dECiMaL)" == some "counter(counter-name)"
+#guard specified "content" "counters(counter-name, \".\", DECIMAL)" == some "counters(counter-name, \".\")"
+#guard specified "transition-timing-function" "step-start" == some "steps(1, start)" && specified "transition-timing-function" "step-end" == some "steps(1)"
+#guard specified "animation-timing-function" "steps( 2, end )" == some "steps(2)" && specified "animation-timing-function" "steps(2, start)" == some "steps(2, start)"
+#guard specified "filter" "grayscale(300%)" == some "grayscale(100%)" && specified "filter" "opacity(2)" == some "opacity(1)"
+#guard specified "translate" "100px 0px" == some "100px" && specified "translate" "100px 200px 0px" == some "100px 200px" && specified "translate" "1px 2px 0" == some "1px 2px"
+#guard specified "background-image" "radial-gradient(ellipse farthest-corner, red, blue)" == some "radial-gradient(red, blue)"
+#guard specified "background-image" "radial-gradient(circle farthest-corner, red, blue)" == some "radial-gradient(circle, red, blue)"
 #guard specified "will-change" "transform, opacity" == some "transform, opacity" && specified "will-change" "auto" == some "auto"
 -- a math function of a non-legacy colour function stays in the specified value (CSS Color 4)
 #guard specified "color" "color(srgb calc(0.5 + 1) calc(0.5 - 1) calc(0.5) / calc(-0.5 + 1))" ==
