@@ -366,8 +366,9 @@ private def fills (r : Except String (Scene × Array Box)) : List (Nat × Nat ×
           | _ => []
       | _ => []
   | .error _ => []
--- The button's border box: 2+6 + two glyphs of 6 + 6+2 wide; 2+1 + 7 + 1+2 high.
-#guard boxOf "<button id='k'>OK</button>" css "k" == some (28,13)
+-- The button's border box: 2+6 + two glyphs + 6+2 wide; 2+1 + 7 + 1+2 high. Its glyphs are
+-- of the user agent's control font size (13.333px, as other engines), not the page's.
+#guard (boxOf "<button id='k'>OK</button>" css "k").map (fun (w,h) => ((w*1000).round,h)) == some (38857,13)
 #guard ((runState "<button>OK</button>" css).toOption.map fun r => r.1.glyphRuns.size) == some 1
 -- A block border adds to the border box.
 #guard boxOf "<div id='d' style='border:1px solid red'>A</div>" css "d" == some (26,9)
