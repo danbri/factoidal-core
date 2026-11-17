@@ -354,6 +354,12 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
       # XMLHttpRequest, fetch, a data: URL and a CORS refusal (native_net_window_check.ts).
       check "native_net_window_check.ts (quickjs)" env QUICKJS_WASM="$QJS_GUEST" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi -A \
         "$LAB/native_net_window_check.ts" ${GPU_ENGINE[@]+"${GPU_ENGINE[@]}"}
+      # Everyday use in the window against a local site (docs/foafnaut-daily-use.md): links,
+      # back, reload, a 404 page, a start address that does not answer, typing in a search box
+      # and Enter, a form's button, a POST; the open gaps (cookies, new-tab links, downloads)
+      # must still fail (XFAIL) until they are closed.
+      check "daily_use_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi -A \
+        "$LAB/daily_use_check.ts" ${GPU_ENGINE[@]+"${GPU_ENGINE[@]}"}
     fi
   else
     echo 'NOT RUN: native_html_scripts_test.ts needs the QuickJS guest module (tools/wasmvm/build-quickjs.sh)'

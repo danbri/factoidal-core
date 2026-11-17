@@ -91,6 +91,9 @@ export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCou
   /** The values of the page's running animations and transitions at this turn: [node, longhand, computed text, isTransition]. */
   animated?:[number,string,string,boolean][];
   navigations?:{nodeId:number;url:string}[];frameLoads?:number;
+  /** A navigation of the page itself that Lean planned (a form's submission): the URL, the
+   * method, and for POST the body and its type; target `_blank` for a new tab. Said once. */
+  navigate?:{url:string;method:"get"|"post";body?:string;contentType?:string;target?:string};
   /** Requests the page asked for (XMLHttpRequest): the policy is the engine's; the host only makes them. */
   netRequests?:NetWire[];
   netCancels?:number[];

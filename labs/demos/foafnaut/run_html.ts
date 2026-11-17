@@ -2,7 +2,7 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
+import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
@@ -143,6 +143,14 @@ async function main() {
     // item's command): "find=N:C" checks N matches with match C current, "find=closed" a closed field.
     else if(arg==="--find-sweep")commands=["f",[9,113,0],[9,117,0],[9,105,0],[9,99,0],[9,107,0],"find=3:1","g","find=3:2","G","find=3:1","G","find=3:3",
       [5,51,0],[5,51,0],[5,51,0],[5,51,0],[5,51,0],"find=0:0",[9,76,0],[9,65,0],[9,90,0],[9,89,0],"find=1:1",[5,53,0],"find=closed",[10,41,0],"url:foafnaut:about","tabs=2:1"];
+    // Steps from a JSON file (an array in the language of the sweeps above), for host tests of
+    // everyday use (daily_use_check.ts). Two more forms: "type:TEXT" types each character as a
+    // key of the window; "tap:X,Y" presses and releases at X,Y in page rows (layout units, as a
+    // link's rectangle); "title=X" checks the shown page's title, waiting for it up to 10 s (20 s
+    // while a page loads).
+    else if(arg==="--steps"){const file=args.shift();if(!file)throw new Error("--steps needs a JSON file");
+      commands=(JSON.parse(Deno.readTextFileSync(file)) as (string|number[])[]).flatMap(step=>typeof step==="string"&&step.startsWith("type:")
+        ?[...step.slice(5)].map(c=>[9,c.codePointAt(0)!,0]):[step]);}
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
     // Watch a page that moves by itself (an SVG animation, page script timers) for N seconds
@@ -468,8 +476,15 @@ async function main() {
   let liberal=!cliStrict;
   // The start page has a script. A host that can run no page script (the Wasm engine with no
   // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
+  // A start page that can not be read (no network, a name that does not resolve, a refused
+  // connection) opens the window on the refusal page for it, as a later navigation would: the
+  // browser does not stop. A check run (--check-engine) still fails.
   let document=await prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
-    if(!startDefault)throw error;
+    if(!startDefault&&check)throw error;
+    if(!startDefault){
+      console.error("Native HTML refused:",url,String(error));
+      return prepareHTML(lean,url!,undefined,refusalHTML(url!,String(error)));
+    }
     console.log(JSON.stringify({type:"native-html-start-fallback",url,to:indexURL,reason:String(error instanceof Error?error.message:error)}));
     return prepareHTML(lean,indexURL,undefined,undefined,{liberal});
   }),width=1280,height=800;
@@ -563,14 +578,31 @@ async function main() {
   // most one move in a frame. A move waits while one is on its way. An engine without the
   // action gets a click on release.
   const queuePointer=pressPointers();
-  const scriptPointer=(kind:PointerKind,x:number,y:number,held:NativePress<typeof document>)=>{
+  // A page with no script session gets one on its first press (startScripts): the press and
+  // the keys after it then reach Lean's events, focus and editing. Once per page.
+  const lazyStarts=new WeakMap<object,Promise<unknown>>();
+  const ensureScripts=(page:typeof document):Promise<unknown>|undefined=>{
+    const start=(page as {startScripts?:()=>Promise<unknown>}).startScripts;
+    if(!scriptsOn||page.script||!start||(page as {graph?:unknown}).graph)return undefined;
+    let started=lazyStarts.get(page);
+    if(!started){started=start().then(s=>{if(s)trace("native-html-script-lazy",{url:page.url});}).catch(error=>scriptFailed(page,error,"start"));lazyStarts.set(page,started);}
+    return started;
+  };
+  // (a press on a link starts none: the link is followed by the window, and a page that only
+  // follows links pays nothing; the release of a press that started one waits for it)
+  const scriptPointer=(kind:PointerKind,x:number,y:number,held:NativePress<typeof document>,mayStart=false)=>{
     const page=held.page;
-    if(!scriptsOn||!page.script||!scriptOps.includes("pointer"))return;
+    if(!scriptsOn||!scriptOps.includes("pointer"))return;
+    const starting=page.script?undefined:kind==="down"&&mayStart?ensureScripts(page):lazyStarts.get(page);
+    if(!page.script&&!starting)return;
     // WebHit returns this event's coordinates; the engine keeps the down target
     // separately. Use what is shown for each event, not a frame frozen at press.
     // Capture before queueing so a later present cannot change this event's request.
-    const session=page.script.session,hit=scriptHitRequest(page),options={...hit.options,x,y};
+    const hit=scriptHitRequest(page),options={...hit.options,x,y};
     queuePointer(kind,async()=>{
+      if(starting)await starting;
+      if(!page.script)return;
+      const session=page.script.session;
       const at=await scriptInput("pointerAt",page.source,hit.width,hit.height,options) as {node:number|null};
       const node=pointerNode(held,kind,at.node);
       if(node===undefined)return;
@@ -585,10 +617,14 @@ async function main() {
   // time, in order. The window's own command for a key (scrolling) runs only when Lean says
   // the page left the key alone (keyDefault); Space is sent as a key, so its text is not.
   let keyChain:Promise<void>=Promise.resolve(),spaceSent=false;
-  const pageTakesKeys=()=>scriptsOn&&!!document.script&&scriptOps.includes("key");
+  // (a page whose session is starting after its first press takes keys too: they wait for it)
+  const pageTakesKeys=()=>scriptsOn&&(!!document.script||lazyStarts.has(document))&&scriptOps.includes("key");
   const scriptKey=(page:typeof document,request:{text?:string;mac?:number;modifiers?:number},after?:()=>void)=>{
-    const session=page.script!.session;
+    const starting=lazyStarts.get(page);
     keyChain=keyChain.then(async()=>{
+      if(starting)await starting;
+      if(!page.script){if(page===document)after?.();return;}
+      const session=page.script.session;
       const turn=await scriptCall("scriptSession","",{action:"key",session,...request}) as ScriptTurn;
       scriptTurn(page,turn,"key");
       if(after&&turn.keyDefault!==false&&page===document)after();
@@ -617,6 +653,19 @@ async function main() {
     if(!first||revision>0){pageChangedNow();tellSession(document);}
   };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
+    // A navigation of the page itself that Lean planned (a form submitted, HTML §4.10.21.3):
+    // GET loads the URL; POST sends the body Lean serialized; `_blank` opens a new tab.
+    if(turn.navigate&&page===document){
+      const nav=turn.navigate;
+      // (a new tab only for a person's press or key, never a timer's or the start's: no pop-ups)
+      const blocked=nav.target==="_blank"&&!/^(pointer|key)/.test(cause);
+      trace("native-html-form-navigate",{url:nav.url,method:nav.method,target:nav.target??"",cause,blocked});
+      if(blocked)addEntries(page,[{source:"System",severity:"warning",feature:"form submission",where:nav.url,message:"a new tab that no press or key asked for",action:"not opened"}]);
+      else{
+        if(nav.target==="_blank"){newTab();leaveAddress();}
+        navigate(nav.url,true,nav.method==="post"?{method:"POST",body:nav.body??"",bodyType:nav.contentType}:undefined);
+      }
+    }
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
     for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
     for(const line of turn.errors)console.error(`page error: ${line}`);
@@ -1341,14 +1390,14 @@ async function main() {
   const saveSession=()=>browserState?.session(tabs.map((tab,index)=>{const page=index===active?document:tab.document;
     return {url:page.url,title:page.title??"",scroll:index===active?scroll:tab.scroll};}),active);
   // The settings page with the page script rows that Lean makes for the current setting.
-  const navigate=(target:string,push=true)=>{
+  const navigate=(target:string,push=true,request?:DocumentRequest)=>{
     const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     // The loading state is drawn now (a chrome-only frame: the page layer is kept), so a click
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,...(request?{request}:{})})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -1747,7 +1796,7 @@ async function main() {
           if(find.focused){find.focused=false;dirty=true;}
           press=beginPress(document,event.a,event.b);
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
-          scriptPointer("down",event.a,event.b,press);
+          scriptPointer("down",event.a,event.b,press,typeof answer.sourceNode!=="number");
           if(typeof answer.sourceNode==="number")startPress({active:answer.sourceNode,rects:answer.rects});
           if(view.selection){view.selection=undefined;dirty=true;}
         }
@@ -1996,6 +2045,21 @@ async function main() {
           urlWaitSince=undefined;
           const ok=document.url.endsWith(step.slice(4));trace("native-html-test-url",{expected:step.slice(4),url:document.url,ok});
           if(!ok){console.error(`Native HTML sweep: expected a page ending ${step.slice(4)}, shown ${document.url}`);Deno.exitCode=1;}
+        }
+        // (a title not yet shown is asked again for up to 10 s: a form's navigation starts when
+        // the page's turn for the key or press has run)
+        else if(typeof step==="string"&&step.startsWith("title=")&&((loading||candidate||rendering||refusing>0)||(document.title??"")!==step.slice(6))
+          &&(urlWaitSince??=performance.now())>performance.now()-((loading||candidate||rendering||refusing>0)?20000:10000)){
+          commands.unshift(step);stepAt=performance.now()+50;
+        }
+        else if(typeof step==="string"&&step.startsWith("title=")){
+          urlWaitSince=undefined;
+          const ok=(document.title??"")===step.slice(6);trace("native-html-test-title",{expected:step.slice(6),title:document.title,url:document.url,ok});
+          if(!ok){console.error(`Native HTML steps: expected the title ${JSON.stringify(step.slice(6))}, shown ${JSON.stringify(document.title)} at ${document.url}`);Deno.exitCode=1;}
+        }
+        else if(typeof step==="string"&&step.startsWith("tap:")){
+          const [x,y]=step.slice(4).split(",").map(Number),row=Math.round(windowRow(y));
+          trace("native-html-test-tap",{x,y,row});native.testEvent(2,x,row);native.testEvent(4,x,row);
         }
         else if(typeof step==="string"&&step.startsWith("pointer:")){
           const ok=pointerShown===step.slice(8);trace("native-html-test-pointer",{expected:step.slice(8),pointer:pointerShown,ok});
