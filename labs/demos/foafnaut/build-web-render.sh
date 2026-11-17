@@ -181,6 +181,20 @@ assert_no_gmp(){
   echo "NO_GMP $(basename "$1"): nm shows no __gmp symbol"
 }
 if [ "$MODE" = --native ]; then
+  # FOAFNAUT_NATIVE_LTO=1 (macOS; off by default): ThinLTO across the engine's C and the units of
+  # Lean's runtime that an allocation and a free pass through (build-leanrt-no-gmp.sh, LEANRT_LTO).
+  # The shipped build calls mi_malloc_small, lean_dec_ref_cold, lean_del_core and mi_free across
+  # the library boundary for every cell; inlined, the library corpus runs in 0.85 of the time and
+  # a held-out Test262 selection in 0.77 to 0.88 (docs/designissues/2026-11-16-lean-memory-overhead.md,
+  # section D). The engine's C is then compiled by the system clang with leanc's own flags
+  # (`leanc --print-cflags`: among them -ffp-contract=off and -fvisibility=hidden), because the
+  # system linker reads only its own compiler's bitcode. The library grows by about 5%, so it is
+  # checked under its own budget name until a budget for it is recorded.
+  NATIVE_LTO=0
+  [ "${FOAFNAUT_NATIVE_LTO:-0}" = 1 ] && [ "$(uname -s)" = Darwin ] && NATIVE_LTO=1
+  LTO_LINK=()
+  [ "$NATIVE_LTO" = 1 ] && LTO_LINK=(-flto=thin)
+  echo "NATIVE_LTO=$NATIVE_LTO"
   OBJECTS=()
   for source in "${SOURCES[@]}" "$BUILD/ir/WebRenderCLI.c"; do
     name=$(basename "$source" .c)
@@ -194,7 +208,12 @@ if [ "$MODE" = --native ]; then
     # (fib 58 against 119 million instructions a second; WasmVM record, "In the Foafnaut
     # engine").
     # No heartbeat count at each allocation (lean_no_heartbeat.h): the engine never reads it.
+    if [ "$NATIVE_LTO" = 1 ]; then
+      # shellcheck disable=SC2046  # leanc's flags are separate words
+      compile_bg ${LAUNCH[@]+"${LAUNCH[@]}"} "${CC:-cc}" $(leanc --print-cflags) -Wno-unused-command-line-argument -O3 -DNDEBUG -flto=thin -include "$LAB/lean_no_heartbeat.h" -Dlean_inc_heartbeat=foafnaut_no_heartbeat -c "$source" -o "$object"
+    else
     compile_bg ${LAUNCH[@]+"${LAUNCH[@]}"} leanc -O3 -DNDEBUG -include "$LAB/lean_no_heartbeat.h" -Dlean_inc_heartbeat=foafnaut_no_heartbeat -c "$source" -o "$object"
+    fi
     OBJECTS+=("$object")
   done
   for source in "${HACL_SOURCES[@]}"; do
@@ -212,8 +231,8 @@ if [ "$MODE" = --native ]; then
   # build-leanrt-no-gmp.sh. The Linux library does too (below); the Linux web-render-native
   # program still links through leanc with GMP (not yet changed).
   if [ "$(uname -s)" = Darwin ]; then
-    LEANRT=$("$LAB/build-leanrt-no-gmp.sh" "$TOOLCHAIN" "$LAB/.build/leanrt-no-gmp" | tail -1)
-    "${CC:-cc}" -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}" \
+    LEANRT=$(LEANRT_LTO="$NATIVE_LTO" "$LAB/build-leanrt-no-gmp.sh" "$TOOLCHAIN" "$LAB/.build/leanrt-no-gmp" | tail -1)
+    "${CC:-cc}" -O3 ${LTO_LINK[@]+"${LTO_LINK[@]}"} -o "$BUILD/web-render-native" "${OBJECTS[@]}" \
       "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANRT" \
       -L"$TOOLCHAIN/lib" -luv -lc++ -Wl,-dead_strip 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
     assert_no_gmp "$BUILD/web-render-native"
@@ -265,7 +284,7 @@ if [ "$MODE" = --native ]; then
   if [ -n "$LIBRARY" ]; then
   "${CC:-cc}" -O3 -DNDEBUG -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
   # Static Lean runtime from the same toolchain: the library needs no Lean at run time.
-  "${CC:-cc}" -O2 -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
+  "${CC:-cc}" -O2 ${LTO_LINK[@]+"${LTO_LINK[@]}"} -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
     "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANRT" \
     -L"$TOOLCHAIN/lib" -luv "${SHARED[@]}" 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
   assert_no_gmp "$LIBRARY"
@@ -350,7 +369,9 @@ fi
 # Size and link content of the engine (tools/binary-budget.py, issue 551): no Lean.Elab/Lean.Meta
 # code, at most 2 % above the recorded size for this platform.
 if [ "$MODE" = --native ] && [ -n "${LIBRARY:-}" ]; then
-  python3 "$ROOT/tools/binary-budget.py" check "$(basename "$LIBRARY")=$LIBRARY"
+  BUDGET_NAME=$(basename "$LIBRARY")
+  [ "${NATIVE_LTO:-0}" = 1 ] && BUDGET_NAME="libweb-render-lto.dylib"
+  python3 "$ROOT/tools/binary-budget.py" check "$BUDGET_NAME=$LIBRARY"
 elif [ "$MODE" = --wasm ]; then
   python3 "$ROOT/tools/binary-budget.py" check "web-render.wasm=$BUILD/engines/web-render.wasm"
 fi

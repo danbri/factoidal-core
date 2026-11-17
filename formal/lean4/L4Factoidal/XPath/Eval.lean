@@ -76,6 +76,14 @@ structure Ctx where
       refusal — rather than an empty tree that a stylesheet would
       quietly transform into nothing. -/
   docs : List (String × Doc) := []
+  /-- The URI of `doc` itself, as a stylesheet would write it in
+      `document(uri)`. With it, `document(uri)` for that URI is the
+      document the evaluation started from (document number 0), the
+      SAME nodes and not a second copy: XSLT 1.0 section 12.1, "two
+      documents are treated as the same document if they are identified
+      by the same URI". A union of nodes reached both ways then has each
+      node once. `none`: the caller names no URI for `doc`. -/
+  docUri : Option String := none
   /-- The node test of a step, when the caller's data model has a rule of its own for
       names. `none` is XPath 1.0 §2.3 (`matchesTest`), which every caller before the
       browser's DOM used. The DOM's rule for HTML documents (an unprefixed name matches
@@ -96,6 +104,32 @@ def docTable (primary : Doc) (self? : Option Doc) (docs : List (String × Doc))
   | k + 2 => ((docs[k]?).map (·.2)).getD []
 
 def Ctx.docById (c : Ctx) (k : Nat) : Doc := docTable c.doc c.self? c.docs k
+
+/-- What `document(u)` returns for one URI string (XSLT 1.0 section
+    12.1). `document('')` is the stylesheet's own tree (document number
+    1). The URI of the starting document (`docUri`) is that document
+    (number 0). Any other URI is answered from `c.docs`, which the caller
+    supplies (number `k + 2`); a URI that is not there is `none`, so the
+    transform is REFUSED rather than run against an empty tree. The
+    document numbers are the ones `Ctx.docById` reads back. -/
+def Ctx.documentOf (c : Ctx) (u : String) : Option Value :=
+  if u == "" then c.self?.map (fun d => Value.nodes [Item.doc d 1])
+  else if c.docUri == some u then some (Value.nodes [Item.doc c.doc 0])
+  else (c.docs.findIdx? (fun (v, _) => v == u)).bind (fun k =>
+         (c.docs[k]?).map (fun (_, d) => Value.nodes [Item.doc d (k + 2)]))
+
+/-- **`document(uri)` for the URI of the source document is the source
+    document itself**: its document node, with document number 0. -/
+theorem Ctx.documentOf_primary (c : Ctx) (u : String) (hu : u ≠ "") (h : c.docUri = some u) :
+    c.documentOf u = some (Value.nodes [Item.doc c.doc 0]) := by
+  simp [Ctx.documentOf, hu, h]
+
+/-- A caller that names no URI for the starting document gets the
+    behaviour before `docUri` existed. -/
+theorem Ctx.documentOf_noUri (c : Ctx) (u : String) (hu : u ≠ "") (h : c.docUri = none) :
+    c.documentOf u = (c.docs.findIdx? (fun (v, _) => v == u)).bind (fun k =>
+      (c.docs[k]?).map (fun (_, d) => Value.nodes [Item.doc d (k + 2)])) := by
+  simp [Ctx.documentOf, hu, h]
 
 /-- The document an item belongs to. Every axis, every parent and every
     in-scope namespace of an item is read from THIS document, never
@@ -578,14 +612,7 @@ partial def evalCall (c : Ctx) (f : String) (args : List Expr) : Option Value :=
                   else if v.toStr == "xsl:vendor-url" then "https://github.com/danbri/factoidal"
                   else ""))
   | "document", [v] =>
-      -- `document('')` is the stylesheet's own tree. Any other URI is
-      -- answered from `c.docs`, which the caller supplies; a URI that
-      -- is not there is `none`, so the transform is REFUSED rather
-      -- than run against an empty tree.
-      -- The document numbers are the ones `Ctx.docById` reads back.
-      if v.toStr == "" then (c.self?.map (fun d => Value.nodes [Item.doc d 1]))
-      else ((c.docs.findIdx? (fun (u, _) => u == v.toStr)).bind (fun k =>
-             (c.docs[k]?).map (fun (_, d) => Value.nodes [Item.doc d (k + 2)])))
+      c.documentOf v.toStr
   | _, _ => none
 
 end
