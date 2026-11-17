@@ -24,7 +24,7 @@ Or install it: `npm install -g @foafos/textnaut`, then:
 Textnaut uses the native engine when it is installed. Otherwise it downloads the Wasm engine once (11.7 MB, checked by SHA-256).
 
 - Linux (x86_64): `textnaut --install-native` downloads the native engine once, checks it by SHA-256 and keeps it in `~/.foafnaut` (or `$FOAFNAUT_HOME`); from then on Textnaut uses it. It needs only glibc, no other install. This package pins the release; `--install-native latest` takes the newest self-contained release instead, checked against that release's own build-info.
-- macOS (Apple silicon): the native engine comes with the foafnaut app (`npx -p @factoidal/core foafnaut --install-latest`).
+- macOS (Apple silicon): the native engine comes with the foafnaut app (`npx -p @factoidal/core foafnaut --update`).
 
 `--engine FILE` (or `TEXTNAUT_NATIVE=FILE`) uses a given library. `--wasm` forces Wasm. `--timing` shows which engine ran and how long each step took.
 

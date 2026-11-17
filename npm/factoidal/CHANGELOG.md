@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.37.2 (2026-11-17)
+
+- `foafnaut --update`, `--latest` and `--which` read the release list again. 0.37.1 asked for every page the list named, but GitHub serves only the first 1000 results of a list and refuses later pages with HTTP 422; when the list passed 10 pages that refusal failed the whole lookup, and the launcher fell back to the macOS lane's pointer (it kept the newer installed build, so nothing was replaced wrongly). The launcher now asks for at most 10 pages, and a later page that fails is left out with a note under `--verbose`. Textnaut's copy of the lookup has the same fix.
+
+## 0.37.1 (2026-11-17)
+
+- `foafnaut --update` (and `--latest`) now installs the newest macOS build of main. Before, the launcher read only the first 60 releases of `danbri/factoidal-builds` and took the most recently published one: GitHub lists releases in no useful order, so the newest build could be missed (on 2026-11-16 it installed an older build in place of `build-0137191edfef`), and a branch build could be taken. The launcher now reads every page of the release list (pages read together, at most 20), asks `danbri/factoidal-core` which of the most recently published candidates are on main, and takes the one nearest main's head. Branch builds and drafts are skipped. If GitHub's API limit is reached, the macOS lane's pointer (`latest/darwin-status.json`) is used, and the launcher says so; `GITHUB_TOKEN` is used when set. The archive is still checked against the sha256 in the release's `build-info.json`, and nothing changes when it does not match.
+- `foafnaut` modes are simpler. `foafnaut` opens the installed build and makes no network call. `foafnaut --update` installs the newest build of main and prints the build it replaced and the new one (commit, commit date, build time); it keeps an installed build that is newer than every release. `foafnaut --latest` updates, then opens the page; if the update fails it says why and opens the installed build. `foafnaut --bleeding-edge` opens your local build and prints its path, commit and age. `foafnaut --which` shows which build runs, the newest build of main and how many commits the installed one is behind, and the local build; `--list` shows installed builds with their dates. `--install-latest` still works, as `--update`, with a one-line note. Errors say what failed: no network, the API limit, no macOS build yet, a digest mismatch. `--help` is shorter.
+- Before, plain `foafnaut` started whichever of the installed release and the local build had the newer files; now it starts the installed build and says when the local build is newer.
+- Textnaut's `--install-native latest` uses the same lookup (the next Textnaut release carries it).
+- The RDF engine is built from current main; the package suite passes on it in the release build.
+
 ## 0.37.0 (2026-11-14)
 
 - Foafnaut: Web Platform Tests on the Linux engine, full measured runs: 85.06% on the morning of 2026-11-14, 91.76% (2,082,990 of 2,270,129 subtests) at commit 53326e401; 66 crashed tests and 4,876 harness timeouts in that run. Test262 on BubblePopJS: 42,515 of 53,833 (79.0%).
