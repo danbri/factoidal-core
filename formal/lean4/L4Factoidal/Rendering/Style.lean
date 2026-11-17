@@ -1793,6 +1793,12 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
     | _ => pure ()
   return s
 
+/-- A margin hint as its pixels and its percentage part (`marginParts`'s form). -/
+def hintEdge : Option Length → Option (Float × Float)
+  | some (.px v) => some (v, 0)
+  | some (.percent p) => some (0, p)
+  | _ => none
+
 /-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
 `video`, `canvas`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
 `width` and `height` properties; `hr` width too. `hspace` and `vspace` of `img`, `embed`,
@@ -1810,10 +1816,11 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   if sized then
     if let some h := dimensionAttribute (attrValue n "height") then s := {s with height := h}
   if imageInput || ["img","embed","object","marquee"].contains tag then
-    if let some (.px h) := dimensionAttribute (attrValue n "hspace") then
-      s := {s with margin := {s.margin with left := h, right := h}}
-    if let some (.px v) := dimensionAttribute (attrValue n "vspace") then
-      s := {s with margin := {s.margin with top := v, bottom := v}}
+    -- a dimension: pixels, or a percentage of the containing block's width (`marginOf`)
+    if let some (h, ho) := hintEdge (dimensionAttribute (attrValue n "hspace")) then
+      s := {s with margin := {s.margin with left := h, right := h}, pos := (s.pos.withMarginOf 1 ho).withMarginOf 3 ho}
+    if let some (v, vo) := hintEdge (dimensionAttribute (attrValue n "vspace")) then
+      s := {s with margin := {s.margin with top := v, bottom := v}, pos := (s.pos.withMarginOf 0 vo).withMarginOf 2 vo}
   if imageInput || tag == "img" || tag == "object" then
     if let some b := pixelLengthAttribute (attrValue n "border") then
       s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyle := .solid}
@@ -1859,7 +1866,13 @@ def hintedProperties (before after : Computed) : List String :=
   (if after.margin.top == before.margin.top then [] else ["margin-top"]) ++
   (if after.margin.right == before.margin.right then [] else ["margin-right"]) ++
   (if after.margin.bottom == before.margin.bottom then [] else ["margin-bottom"]) ++
-  (if after.margin.left == before.margin.left then [] else ["margin-left"])
+  (if after.margin.left == before.margin.left then [] else ["margin-left"]) ++
+  (if after.pos.marginOf == before.pos.marginOf then [] else ["margin-top","margin-right","margin-bottom","margin-left"]) ++
+  -- the `border` of an image button, `img` or `object` (HTML §15.4.3): the widths and the
+  -- solid style it sets are above the user agent's `input` border
+  (if after.borderStyle == before.borderStyle && after.borderWidth.top == before.borderWidth.top then [] else
+    ["border","border-width","border-style","border-top-width","border-right-width","border-bottom-width",
+     "border-left-width","border-top-style","border-right-style","border-bottom-style","border-left-style"])
 
 /-- A hint that sets no width leaves the UA's `width` rules in force. -/
 theorem hintedProperties_width (before after : Computed) (h : after.width.same before.width = true) :
