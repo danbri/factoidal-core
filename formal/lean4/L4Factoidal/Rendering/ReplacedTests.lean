@@ -48,6 +48,20 @@ private def boxes (html : String) (extra : String := "") (width : Nat := 200) :
     let id := CSS.attrValue (dom.get b.source) "id"
     if id.isEmpty || (dom.get b.source).type != .element then none else some (id,b.x,b.y,b.width,b.height)
 
+-- An img with no picture held but a natural size from its request (`Node.natural`, 2026-11-17):
+-- a box of that size, as a script's img that loaded (before: its alt text, here nothing)
+private def naturalBoxes (html : String) : Except String (List (String × Float × Float × Float × Float)) := do
+  let dom := DOM.parseHtmlDocument html
+  let dom := match dom.getElementById 0 "i" with
+    | some k => dom.setNode k fun x => { x with natural := some (27, 13) }
+    | none => dom
+  let (_,found) ← Layout.render dom (← CSS.parse css) font noSVG 200 100 1 {} (picturesOf dom)
+  return found.toList.filterMap fun b =>
+    let id := CSS.attrValue (dom.get b.source) "id"
+    if id.isEmpty || (dom.get b.source).type != .element then none else some (id,b.x,b.y,b.width,b.height)
+#guard (naturalBoxes "<img id=i alt='' src='b.png'>").map (·.lookup "i") == .ok (some (0,0,27,13))
+#guard (naturalBoxes "<img id=i alt='' src='b.png' width=54>").map (·.lookup "i") == .ok (some (0,0,54,26))
+
 -- Sizing, CSS 2.1 §10.3.2 and §10.6.2: intrinsic size, one dimension with the ratio, both.
 private def size (style : Computed) (available : Float := 200) := replacedSize style (some (40,20)) available
 #guard size {} == (40,20)

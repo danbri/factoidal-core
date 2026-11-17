@@ -135,6 +135,11 @@ structure Node where
   with a custom element name matches `:defined` only then); 8 the focused element (`:focus`,
   `DOM.Focus`). 0 for every node a parser makes; a clone starts at 0. -/
   states : Nat := 0
+  /-- The natural size, in CSS pixels, of the image an HTML `img` element's current request
+  got (HTML §4.8.4.3), once it loaded: what the engine read from the image's first bytes
+  (`Net.Xhr.imageRaw`). The layout lays an `img` whose picture it does not hold out at this
+  size. `none` before a load, after an error and in a clone. -/
+  natural : Option (Nat × Nat) := none
 deriving Inhabited, Repr
 
 structure Dom where

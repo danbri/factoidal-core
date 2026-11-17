@@ -416,7 +416,7 @@ def selContainsNode (s : State) (node : Nat) (partial_ : Bool) : Bool :=
 /-! ## The ops -/
 
 /-- The ops that change the tree (`Hosts.Page` counts them as writes for layout reads). -/
-def treeOps : List Nat := [112, 113, 114, 116, 119, 120, 149, 167]
+def treeOps : List Nat := [112, 113, 114, 116, 119, 120, 149, 163, 167]
 
 def bpText (b : BP) : String := s!"{b.node} {b.offset}"
 
@@ -807,6 +807,19 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       if let some (name, entry) := L4Factoidal.Rendering.CssRegister.registration q then
         exec (.registerProperty name entry)
     return r
+  -- 163: the natural size of `img` `id` from its current request (`Node.natural`, which the
+  -- layout lays an img it holds no picture of out at): `q` "w h" when it loaded, "" when its
+  -- request failed or a new one started. The size is the one Lean read from the image's
+  -- bytes (`Net.Xhr.imageRaw`), which the realm got for this element's own request.
+  | 163 =>
+    let n ← nodeArg d id
+    if !L4Factoidal.DOM.Forms.isHtml d n ["img"] then throw (-2)
+    let z := match (q.splitOn " ").map String.toNat? with
+      | [some w, some h] => some (w, h)
+      | _ => none
+    if z.any (fun (w, h) => w > maxNatural || h > maxNatural) then throw (-2)
+    if (d.get n).natural != z then exec (.setNatural n z)
+    return ""
   | 167 =>
     -- a reflected attribute's setter, applied: the decision of 161, then the content
     -- attribute set or removed as a command (the page has no MutationObserver and the row

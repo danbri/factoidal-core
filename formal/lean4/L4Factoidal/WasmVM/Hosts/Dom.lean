@@ -98,6 +98,8 @@ inductive Command where
   /-- The element states of `node` (`Node.states`: a showing popover, a modal dialog, a
   defined custom element) set to `states`. -/
   | setStates (node : Nat) (states : Nat)
+  /-- The natural size of `img` `node` (`Node.natural`); `none` clears it. -/
+  | setNatural (node : Nat) (size : Option (Nat × Nat))
   /-- `attachShadow` of `host` (`DOM.Dom.attachShadow`, the state as `shadowFlags`) made or
   reused shadow root `result`. -/
   | attachShadow (host flags result : Nat)
@@ -399,6 +401,10 @@ def Command.sameWrite : Command → Command → Bool
 `writeKey` names otherwise), and `adoptNode` (a node's document decides how
 `setAttribute` names an attribute), and the form state commands (which read `type`,
 `name` and the tree): a write before one of them stays before it. -/
+/-- The largest natural width or height `setNatural` takes (`HTML.ImageSize` reads 16-bit
+and 32-bit sizes; a layout box past this is refused, not drawn). -/
+def maxNatural : Nat := 65535
+
 def Command.reads : Command → Bool
   | .cloneNode .. | .importNode .. | .normalize _ | .setAttributeNS .. | .removeAttributeNS ..
   | .adoptNode .. | .setChecked .. | .resetForm _ | .attachShadow .. | .assignSlot .. | .replaceData .. | .splitText .. | .frameDocument ..
@@ -1948,6 +1954,11 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n
     if v ≥ 16 then throw "script command: states exceed bound"
     return d.setNode n fun x => { x with states := v }
+  | .setNatural n z => do
+    checkNode d n
+    if !Forms.isHtml d n ["img"] then throw "script command: target must be an img"
+    if z.any (fun (w, h) => w > maxNatural || h > maxNatural) then throw "script command: natural size exceeds bound"
+    return d.setNode n fun x => { x with natural := z }
   | .registerProperty name entry => do
     if d.nodes.isEmpty || (d.get 0).type != .document then throw "script command: no document"
     if entry.utf8ByteSize > 65536 then throw "script command: registration exceeds bound"

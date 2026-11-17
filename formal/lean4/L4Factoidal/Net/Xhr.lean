@@ -521,6 +521,30 @@ def Xhr.forRealm (x : Xhr) (r : Response) : Response :=
   if x.raw && x.destination == "image" then imageRaw r
   else if x.hidesScript r then scriptRaw r else r
 
+/-- Whether image key `key` is CORS-same-origin for the realm's canvases although its URL is of
+another origin (HTML §4.12.5.1.14: an image whose request was in CORS mode and whose answer
+passed the CORS check is not CORS-cross-origin): an image element's own request (`raw`,
+destination `image`) for that URL whose answer is ok and has the response tainting `cors`.
+The answer's tainting is the engine's (`PageFetch.responseOf`), never the page's. -/
+def State.corsImage (s : State) (key : String) : Bool :=
+  s.xhrs.any fun x => x.raw && x.destination == "image" && x.url == key &&
+    match x.response with
+    | some r => r.tainting == "cors" && okStatus r.status
+    | none => false
+
+/-- Kind: security theorem (origin isolation). Says: a key `corsImage` calls clean is the URL
+of an image element's request whose answer passed the CORS check (tainting `cors`, ok status);
+an opaque or failed answer, or a page's own `fetch`, never makes one clean. -/
+theorem State.corsImage_spec (s : State) (key : String) (h : s.corsImage key = true) :
+    ∃ x ∈ s.xhrs, x.raw = true ∧ x.destination = "image" ∧ x.url = key ∧
+      ∃ r, x.response = some r ∧ r.tainting = "cors" ∧ okStatus r.status = true := by
+  unfold State.corsImage at h
+  obtain ⟨x, hx, hp⟩ := Array.any_eq_true'.mp h
+  refine ⟨x, hx, ?_⟩
+  cases hr : x.response with
+  | none => simp [hr] at hp
+  | some r => simp_all
+
 /-- What the engine keeps of answer `r` for itself: the whole answer of an opaque classic
 script, else nothing. -/
 def Xhr.keep (x : Xhr) (r : Response) : Option Response :=
