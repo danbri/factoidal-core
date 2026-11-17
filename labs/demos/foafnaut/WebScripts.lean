@@ -1470,11 +1470,18 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     -- accessible name of the element the page names (`refNode`; `HTML.AccessibleRole`), answered to the page as the reply to its
     -- request `id`, in the message that the `actions` replies use
     let d := a.page.host.dom.dom
-    let value := match refNode d (str request "element"), str request "what" with
+    -- `properties`: the accessibility properties of the element's entry in the engine's
+    -- accessibility tree (`HTML.AccessibleTree.propertiesIn`), as JSON text; `nodeProperties`:
+    -- those of the entry an accessibility ID names (`element` is the ID).
+    let node := if str request "what" == "nodeProperties" then
+        (L4Factoidal.HTML.AccessibleTree.ofAccId (str request "element")).bind fun k => if k < d.size then some k else none
+      else refNode d (str request "element")
+    let value := match node, str request "what" with
       | some k, "role" => L4Factoidal.HTML.AccessibleRole.computedRole d k
       | some k, "label" => L4Factoidal.HTML.AccessibleRole.accessibleName d k
+      | some k, "properties" | some k, "nodeProperties" => (L4Factoidal.HTML.AccessibleTree.propertiesIn d k).toString
       | _, _ => ""
-    let found := (refNode d (str request "element")).isSome
+    let found := node.isSome
     let reply := (JSON.Json.object [("type", .string "testdriver-complete"),
       ("id", .number (toString ((natField request "id").getD 0))),
       ("status", .string (if found then "success" else "error")),
