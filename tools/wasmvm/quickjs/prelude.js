@@ -6688,6 +6688,7 @@
   };
   const imgAttrs = new Set(['src', 'srcset', 'sizes', 'crossorigin', 'referrerpolicy']);
   const imgFire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
+  const imgSized = new Set();   // imgs whose natural size the layout has (op 163)
   const updateImage = id => {
     const el = wrap(id);
     const gen = ++imgGen;
@@ -6701,6 +6702,9 @@
     imgStates.set(id, st);
     const settle = ok => {
       st.complete = true;
+      // the layout's size of the img (Lean's Node.natural, op 163): the image's natural size
+      // once it loaded, cleared when its request failed; an engine without op 163 ignores it
+      if (!ok && imgSized.delete(id)) n.query(id, 163, '');
       for (const [res, rej] of st.waiters.splice(0)) ok ? res() : rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
       imgFire(el, ok ? 'load' : 'error');
       imgUndelay(id);
@@ -6723,6 +6727,7 @@
       if (size === '') { settle(false); return; }
       const [w, h] = size.split(' ').map(Number);
       st.w = w; st.h = h;
+      if (n.query(id, 163, size) === '') imgSized.add(id);
       settle(true);
     });
   };

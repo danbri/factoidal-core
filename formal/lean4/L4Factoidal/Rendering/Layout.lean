@@ -353,7 +353,18 @@ def blankReplaced (n : DOM.Node) : Option (Option (Float × Float)) :=
       if digits.isEmpty || digits.length > 5 then fallback else digits.foldl (fun k c => k*10+(c.toNat-48)) 0
     some (some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150)))
   else if DOM.Dom.isHtmlElement n "iframe" || DOM.Dom.isHtmlElement n "video" then some none
+  -- an `img` whose image loaded for a script, whose picture the engine does not hold (an img
+  -- a script made, or one the host did not fetch): a box of the image's natural size, empty
+  -- (HTML §4.8.4.3; before, it stood as its alt text, "[image]" or nothing)
+  else if DOM.Dom.isHtmlElement n "img" then n.natural.map fun (w, h) => some (Float.ofNat w, Float.ofNat h)
   else none
+
+/-- Kind: property. Says: an `img` with no natural size is no blank replaced box: it stands as
+its alt text, as before. -/
+theorem blankReplaced_img_none (n : DOM.Node) (h : DOM.Dom.isHtmlElement n "img" = true) (hn : n.natural = none) :
+    blankReplaced n = none := by
+  have hl : n.lname = "img" := by simp [DOM.Dom.isHtmlElement] at h; exact h.2
+  simp [blankReplaced, DOM.Dom.isHtmlElement, hl, hn] <;> split <;> simp_all
 
 /-- Kind: property. Says: an `iframe` is a replaced box with no natural size. -/
 theorem blankReplaced_iframe (n : DOM.Node) (h : DOM.Dom.isHtmlElement n "iframe" = true) :

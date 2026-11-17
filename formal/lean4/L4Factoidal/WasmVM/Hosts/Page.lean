@@ -1221,9 +1221,11 @@ def captureOp (h : Host) (node : Nat) (q : String) : Host × String :=
 
 /-- What Canvas 2D draws with, for this realm: the engine's fonts and images, and which
 images are origin-clean, by the origin of the realm's page (a worker's is its owner's) as the
-engine knows it, never as the page says (origin isolation, C2 of issue 518). -/
+engine knows it, never as the page says (origin isolation, C2 of issue 518), and the images
+of another origin whose image element's request passed the CORS check
+(`Net.Xhr.State.corsImage`: `<img crossorigin>` with an answer that allows the page). -/
 def canvasEnvOf (h : Host) : L4Factoidal.PageCanvas.Env :=
-  { h.reads.canvasEnv with imageClean := h.web.net.page.imageClean }
+  { h.reads.canvasEnv with imageClean := fun key => h.web.net.page.imageClean key || h.web.net.corsImage key }
 
 /-- Serve one `foafnaut_dom` import, or `env.emscripten_notify_memory_growth`. -/
 def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st : StoreOf M) :
