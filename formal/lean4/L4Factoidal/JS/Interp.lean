@@ -1458,6 +1458,21 @@ def typedGenericNames : Array (String × Nat) :=
   #[("forEach", 1), ("join", 1), ("indexOf", 1), ("includes", 1), ("every", 1), ("some", 1), ("reduce", 1),
     ("find", 1), ("findIndex", 1), ("values", 0), ("keys", 0), ("entries", 0)]
 
+/-- The key of the private name `k` where the scope `env` sees it (§9.2.1.2
+ResolvePrivateIdentifier): each evaluation of a class binds its private names to keys of their
+own in the class scope (`evalClass`), so two classes, or two evaluations of one class, never
+share a private element. Any other key is itself. -/
+def privRk (env : Nat) (k : String) : M String := do
+  if !isPrivKey k then return k
+  let h ← get
+  match h.findEnv k 100000 env with
+  | some e => match (h.envs.getD e default).get? k with
+    | some b => match b.v with
+      | .str s => pure s
+      | _ => pure k
+    | none => pure k
+  | none => pure k
+
 /-- The first character of a private name's key (`privKey`). -/
 def privMark : Char := Char.ofNat 0x10FFFE
 
@@ -2306,9 +2321,11 @@ def moreNativeBuffers (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value
       let okTy := if op == 10 then ty == 5 || ty == 9 else [0, 1, 3, 4, 5, 6, 9, 10].contains ty
       if !okTy then throwErr .type "Atomics operation on a typed array of the wrong element type"
       if isDetached (← getObj b) then throwErr .type "Atomics operation on a detached ArrayBuffer"
+      -- ValidateAtomicAccess (§25.4.3.2): the length is taken before the index is converted
+      let live ← liveLen ty b off len
       let idx := toIntegerOrInf (← core.toNum a1)
       if idx < 0 || idx > 9007199254740991 then throwErr .range "Invalid atomic access index"
-      if idx ≥ Float.ofNat (← liveLen ty b off len) then throwErr .range "Invalid atomic access index"
+      if idx ≥ Float.ofNat live then throwErr .range "Invalid atomic access index"
       let i := idx.toUInt64.toNat
       let at_ := off + i * elemSize ty
       let read : M Value := do pure (typedRead ty (bufferBytes (← getObj b)) at_)
@@ -8720,7 +8737,7 @@ def evalRef : Nat → Ctx → Expr → M (Option Value × Option String)
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, e => do
     match e with
-    | .member o k => pure (some (← evalExpr n ctx o), some k)
+    | .member o k => pure (some (← evalExpr n ctx o), some (← privRk ctx.env k))
     -- a super reference as a target (§13.3.7, §6.2.5.6 PutValue): the base is `this`, the
     -- receiver of the [[Set]]. A setter of the parent is found from `this` too, unless the
     -- object or its class overrides it (then that one runs: a known difference).
@@ -8860,7 +8877,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       pure (.str out)
     | .tagged tag cooked raw subs =>
       let (f, thisV) ← match tag with
-        | .member o k => do let b ← evalExpr n ctx o; pure (← getV n b k, b)
+        | .member o k => do let b ← evalExpr n ctx o; pure (← getV n b (← privRk ctx.env k), b)
         | _ => do pure (← evalExpr n ctx tag, Value.undef)
       let strs ← newArray (cooked.toArray.map .str)
       let raws ← newArray (raw.toArray.map .str)
@@ -8972,7 +8989,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
     | .binary .inOp (.member (.ident "") k) b =>
       -- `#x in o` (§13.10.1, `privIn`): the private name's key itself
       match ← evalExpr n ctx b with
-      | .obj id => pure (.bool ((← getObj id).getOwn k).isSome)
+      | .obj id => pure (.bool ((← getObj id).getOwn (← privRk ctx.env k)).isSome)
       | _ => throwErr .type "Cannot use 'in' operator to search for a key in a non-object"
     | .binary op a b =>
       let x ← (match leafV (← get) ctx a with | .hole => evalExpr n ctx a | v => pure v)
@@ -9019,6 +9036,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
     | .assign none (.member o k) rhs =>
       let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
       let v ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      let k ← if isPrivKey k then privRk ctx.env k else pure k
       putV n b k v ctx.strict
       pure v
     | .assign (some .add) (.local x h i) rhs =>
@@ -9114,7 +9132,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let (f, thisV) ← match callee with
         | .optCallee inner =>
           let (f, t) ← match inner with
-            | .member o k => do let b ← evalExpr n ctx o; pure (← getV n b k, b)
+            | .member o k => do let b ← evalExpr n ctx o; pure (← getV n b (← privRk ctx.env k), b)
             | .index o k => do
               let b ← evalExpr n ctx o
               let key ← toKey n (← evalExpr n ctx k)
@@ -9125,6 +9143,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
           | _ => pure (f, t)
         | .member o k =>
           let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+          let k ← if isPrivKey k then privRk ctx.env k else pure k
           let f ← (match (← get).fastGetV b k with | .hole => getV n b k | v => pure v)
           pure (f, b)
         | .index o k =>
@@ -9165,6 +9184,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       construct n f argv f
     | .member o k =>
       let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+      let k ← if isPrivKey k then privRk ctx.env k else pure k
       match (← get).fastGetV b k with
       | .hole => getV n b k
       | v => pure v
@@ -9733,6 +9753,11 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
     defineOwn fid "name" (.data (.str cname) false false true)
     defineOwn fid "prototype" (.data (.obj proto) false false false)
     setHidden proto "constructor" (.obj fid)
+    -- the private names of this evaluation (§15.7.14 steps 5-6: a new Private Name each)
+    for m in members do
+      if let .mk _ _ (.lit k) _ := m then
+        if isPrivKey k && !((← get).envs.getD cenv default).has k then
+          declare cenv k { v := .str (k ++ "#" ++ toString fid), mutable := false }
     -- the class binding is initialised before static fields and blocks run (§15.7.14)
     let statics := members.filter fun m => match m with
       | .mk true .field .. | .mk true .staticBlock .. => true
@@ -9756,7 +9781,7 @@ def defineMembers : Nat → Ctx → Nat → Nat → List Member → Array (Strin
   | n + 1, ctx, fid, proto, (.mk static kind k f) :: ms, acc => do
     let target := if static then fid else proto
     let key ← match k with
-      | .lit s => pure s
+      | .lit s => privRk ctx.env s
       | .computed e => do toKey n (← evalExpr n { ctx with thisV := .obj fid } e)
     if static && key == "prototype" && kind != .field then
       throwErr .type "Classes may not have a static property named 'prototype'"

@@ -1047,10 +1047,12 @@ def parseMethodParams : Nat → Bool → Bool → P (List PatElem × Option Pat)
     -- `super.x` in the parameters of a method (or constructor) is the method's; a plain
     -- function's parameters have none. `super(...)` only in a derived class's constructor's
     -- (§15.4.1, §15.7.1: HasDirectSuper of a method that is not the constructor).
-    modify fun s => { s with fieldInit := false, superCall := superCallOk, superProp := method, newTargetOk := true }
+    -- (a function boundary: `await` of an enclosing static block is an identifier again)
+    modify fun s => { s with fieldInit := false, superCall := superCallOk, superProp := method, newTargetOk := true,
+                             awaitReserved := false }
     let r ← parseParams n #[]
     modify fun s => { s with fieldInit := o.fieldInit, superCall := o.superCall, superProp := o.superProp,
-                             newTargetOk := o.newTargetOk }
+                             newTargetOk := o.newTargetOk, awaitReserved := o.awaitReserved }
     return r
 
 /-- A parameter list after `(`, to the `)` (consumed): patterns with initialisers
@@ -1093,7 +1095,7 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
                      depth := 0, topDepth := 1, lexStack := [names], pending := #[],
                      fieldInit := outer.staticNext || (kind == FunKind.arrow && outer.fieldInit),
                      staticBody := outer.staticNext, inParams := false,
-                     awaitReserved := outer.staticNext || (kind == FunKind.arrow && outer.awaitReserved),
+                     awaitReserved := outer.staticNext,
                      staticNext := false, superCall := superCallIn kind outer.superCall,
                      superProp := superPropIn kind outer.superProp,
                      newTargetOk := kind != FunKind.arrow || outer.newTargetOk }
@@ -1126,11 +1128,12 @@ def parseArrowBody : Nat → List PatElem → Option Pat → Nat → P Expr
     if names.eraseDups.length != names.length then
       fail "duplicate parameter name not allowed in this context"
     set { outer with vars := #[], varSet := {}, inFun := true, inAsync := coro == 2, inGen := false, tla := false,
-                     inParams := false }
+                     inParams := false, awaitReserved := false }
     let e ← parseAssign n false
     let inner ← get
     set { inner with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun, inAsync := outer.inAsync,
-                     inGen := outer.inGen, tla := outer.tla, inParams := outer.inParams }
+                     inGen := outer.inGen, tla := outer.tla, inParams := outer.inParams,
+                     awaitReserved := outer.awaitReserved }
     return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow false (coro == 2) {})
 
 def parseExpr : Nat → Bool → P Expr
@@ -1458,7 +1461,12 @@ def parsePrimary : Nat → P Expr
       | "function" =>
         advance
         let gen ← eatP "*"
+        -- a function expression's name is in its own scope: `await` of an enclosing static
+        -- block is an identifier there (§15.2.1)
+        let ar := (← get).awaitReserved
+        modify fun s => { s with awaitReserved := false }
         let name ← if (← peek).kind == .ident then pure (some (← bindingName)) else pure none
+        modify fun s => { s with awaitReserved := ar }
         return .func (← parseFunction n name .normal (if gen then 1 else 0))
       | "let" | "yield" =>
         -- an identifier in code that is not strict; `yield` is never one in a generator
