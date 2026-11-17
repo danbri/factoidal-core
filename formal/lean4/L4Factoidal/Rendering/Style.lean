@@ -2514,12 +2514,6 @@ theorem closedDetailsContent_other (dom : Dom) (id p : Nat) (hp : (dom.get id).p
     (hn : ((dom.get p).lname == "details") = false) : closedDetailsContent dom id = false := by
   simp [closedDetailsContent, hp, hn]
 
-/-- Winning declarations are keyed by property, with importance, origin, specificity
-and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
-origin (`userAgentRules`) is below the author origin. Inheritance is applied first.
-`matched` are the rules that match the element, in sheet order (`matchedRules`). In one
-list position with the origin, a shadow tree's normal declarations lose to the document's
-and its important ones win (CSS Cascade 4 §6.1 "context"), above the style attribute. -/
 /-- The elements the user agent sheet isolates (HTML §15.3.5, "Bidirectional text"). -/
 def isolatedTags : List String :=
   ["address","blockquote","center","div","figure","figcaption","footer","form","header","hr",
@@ -2558,6 +2552,12 @@ theorem uaUnicodeBidi_dir (tag dir type : String) (hd : dir = "ltr" ∨ dir = "r
 #guard uaUnicodeBidi "textarea" "auto" "" == some .plaintext
 #guard uaUnicodeBidi "pre" "" "" == some .isolate
 
+/-- Winning declarations are keyed by property, with importance, origin, specificity
+and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
+origin (`userAgentRules`) is below the author origin. Inheritance is applied first.
+`matched` are the rules that match the element, in sheet order (`matchedRules`). In one
+list position with the origin, a shadow tree's normal declarations lose to the document's
+and its important ones win (CSS Cascade 4 §6.1 "context"), above the style attribute. -/
 def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Computed) : Except String Computed := do
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
