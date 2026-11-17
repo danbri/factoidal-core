@@ -81,6 +81,9 @@ async function main() {
     inputCount:120,inputPeriodMs:16,inputDelayMs:1500,inputDelta:-2,
     os:Deno.osRelease(),deno:Deno.version,load:Deno.loadavg(),diskAvailableKiB:await checkDisk(),
     power:await commandText("pmset",["-g","batt"]),thermal:await commandText("pmset",["-g","therm"]),
+    inputs:await Promise.all(scenarios.map(async scenario=>({id:scenario.id,busy:scenario.busy,
+      snapshot:scenario.snapshot,sha256:await sha(scenario.snapshot??path("fixtures/presenter/busy.html"))}))),
+    busyScriptSha256:await sha(path("fixtures/presenter/busy.js")),
     revision:await commandText("git",["rev-parse","HEAD"]),
     tree:await commandText("git",["status","--short"]),
     files:await Promise.all(["run_html.ts","native_html_compile.ts","native_html_worker.ts","presenter_timing_input.ts"].map(async file=>({file,sha256:await sha(path(file))})))};
@@ -107,7 +110,7 @@ async function main() {
         const cmd=["run","--no-check","--no-config","--no-npm","--node-modules-dir=none","--unstable-webgpu","--unstable-ffi","-A",
           ...(scenario.snapshot?["--preload",path("realpages/replay.ts")]:[]),"--preload",path("presenter_timing_input.ts"),
           path("run_html.ts"),`--presenter=${mode}`,"--native-engine",engine,"--offscreen","--offscreen-size",scenario.viewport+"@1",
-          "--text-size","100","--no-state","--no-splash","--perf-summary","--idle-checks-only","--be-liberal-in-what-we-accept",
+          "--text-size","100","--no-state","--no-splash","--perf-summary","--idle-checks-only","--log-all","--be-liberal-in-what-we-accept",
           "--watch-sweep",String(seconds),...(scenario.busy?[]:["--no-scripts"]),"--url",scenario.url];
         const env:Record<string,string>={PRESENTER_TIMING_INPUT:"1",PRESENTER_TIMING_BUSY_URL:"",REALPAGES_REPLAY:""};
         if(scenario.snapshot)env.REALPAGES_REPLAY=scenario.snapshot;
@@ -121,11 +124,11 @@ async function main() {
         await Deno.writeTextFile(log,text);
         const records=parseRecords(text),all=samples(records),summary=records.find(r=>r.type==="native-html-perf-summary");
         const turns=records.filter(r=>r.type==="native-html-script"&&Number(r.leanMs)>50&&r.cause!=="start");
-        const maxScriptTurnMs=Math.max(0,...turns.map(r=>Number(r.leanMs)));
         // Completion minus leanMs is only an inferred interval; reply delivery may be late.
         // Exact worker epoch records, if available, are preferred by the next block.
         const epochTurns=records.filter(r=>r.type==="presenter-engine-turn"&&r.op==="scriptSession"&&
           typeof r.startEpochMs==="number"&&typeof r.endEpochMs==="number"&&Number(r.endEpochMs)-Number(r.startEpochMs)>50);
+        const maxScriptTurnMs=Math.max(0,...epochTurns.map(r=>Number(r.endEpochMs)-Number(r.startEpochMs)));
         const exact=epochTurns.length>0&&all.length>0&&all.every(s=>s.inputEpochMs!==null);
         const busySamples=all.filter(s=>exact?epochTurns.some(t=>s.inputEpochMs!>=Number(t.startEpochMs)&&s.inputEpochMs!<=Number(t.endEpochMs)):
           turns.some(t=>s.start>=Number(t.t)-Number(t.leanMs)&&s.start<=Number(t.t))).map(s=>s.ms);

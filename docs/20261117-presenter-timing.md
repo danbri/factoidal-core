@@ -51,5 +51,12 @@ percentiles. Engine/source hashes, revision, working-tree status, machine load, 
 thermal reports are retained. The harness kills only its own child on the time limit.
 
 Validation so far: both timing modules pass `deno check --no-config`; the three aggregation
-and trace-parsing tests pass. No timing run has been made with these files yet. Neither
-performance gains nor execution-overlap results are claimed.
+and trace-parsing tests pass. A locked smoke run stopped before drawing: Deno reported no GPU adapter in this
+launch context (exit 2, 0/120 input samples). No valid timing comparison has been made.
+Neither performance gains nor execution-overlap results are claimed.
+
+The inline baseline retains the existing engine worker, GPU raster and host offset
+arithmetic. The checked-in code already uses an engine worker, despite the design table
+describing a fully synchronous stage 0. The comparison must preserve that actual baseline.
+Snapshot and busy-script hashes are recorded with the inputs; full logging retains the
+engine execution epochs needed to validate overlap.

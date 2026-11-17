@@ -53,3 +53,11 @@ scripts (main-thread Wasm is the check/failure path). `--presenter=inline` prese
 actual baseline; it does not introduce an artificial main-thread script stall. The
 synchronous refinement theorem states its synchronous hypothesis explicitly. Before/after
 timings must compare the existing worker/GPU path with the new worker CPU/SAB/presenter path.
+
+Validation environment: setup-host.sh installed the already SHA-256-verified a5f53231e321
+Wasm assets and compiled native_window.m. Inline fixture cost/prefetch checks pass 20/20
+on that released runtime (not a validation of the new engine). A locked timing-harness
+smoke run using installed c91b7d21d0a9 native engine exited 2 with `GPU BLOCKED: native
+HTML adapter unavailable in this launch context`, before drawing or collecting any of
+the 120 scheduled inputs. No before/after latency claim follows from it. The three
+frozen snapshots were downloaded from factoidal-builds commit 3f998c4580cd.
