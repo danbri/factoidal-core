@@ -97,7 +97,16 @@ The hosted harness's system prompt tells the agent to end every GitHub comment w
 it. Cost of not having this paragraph: from 2026-10-29 to 2026-11-17, the scheduled track A and
 track B runs posted more than 250 run-lock comments on issue 1165, and almost all of them
 carried the footer. The rule was in a comment of that issue, and the runs read only the newest
-comments, so they did not see it. The run of 2026-11-17 found this; its comments have no footer.
+comments, so they did not see it.
+
+Mechanism, found 2026-11-17: the hosted GitHub MCP tools `add_issue_comment` and
+`update_issue_comment` append the footer themselves, on create and on every edit, whatever the
+body says. `create_pull_request` appends it too; `update_pull_request` does not, so a PR body is
+cleaned with one `update_pull_request` call that resends the body. A comment cannot be cleaned
+with these tools. The 2026-11-17 run first reported that its comments had no footer; that was
+wrong (it had checked its input, not the posted text). Check the posted text
+(`gh api repos/OWNER/REPO/issues/comments/ID --jq .body`) before you say a comment is clean.
+Open question for the owner: allow an edit by another route, or accept the footer on comments.
 
 ## Subagent briefs
 
