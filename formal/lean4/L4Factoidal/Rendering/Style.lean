@@ -1781,9 +1781,13 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   let heightHint := if ["td","th"].contains tag then nonzeroDimensionAttribute (attrValue n "height")
     else if ["table","tr"].contains tag then dimensionAttribute (attrValue n "height") else none
   if let some h := heightHint then s := {s with height := h}
-  if ["table","tr","td","th"].contains tag then
+  if ["table","thead","tbody","tfoot","tr","td","th"].contains tag then
     let bg := attrValue n "bgcolor"
     if !bg.isEmpty then if let .ok c := color bg then s := {s with background := some c}
+  -- HTML §15.3.10: a `table`'s `bordercolor` maps to the four `border-*-color` properties
+  if tag == "table" then
+    let bc := attrValue n "bordercolor"
+    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColor := some c}
   if ["tr","td","th","thead","tbody","tfoot"].contains tag then
     match (attrValue n "valign").toLower with
     | "top" => s := {s with verticalAlign := .top}
@@ -1798,6 +1802,37 @@ def hintEdge : Option Length → Option (Float × Float)
   | some (.px v) => some (v, 0)
   | some (.percent p) => some (0, p)
   | _ => none
+
+/-- The `text-align` an `align` attribute value maps to (HTML §15.3.3): `left`, `right` and
+`center` (with `middle` too where `middle` is allowed), ASCII case-insensitively. `justify`
+and anything else give none: this profile lays justified text out as `start`. -/
+def alignValue (value : String) (middle : Bool) : Option TextAlign :=
+  match value.toLower with
+  | "left" => some .left
+  | "right" => some .right
+  | "center" => some .center
+  | "middle" => if middle then some .center else none
+  | _ => none
+
+/-- HTML §15.3.3 and §15.3.8: the `align` attribute of `div`, `caption`, `thead`, `tbody`,
+`tfoot`, `tr`, `td` and `th` (`left`, `right`, `center`, `middle`) and of `h1` to `h6` and
+`p` (`left`, `right`, `center`) maps to `text-align`; a `th` without one is centred (the
+user agent's `th { text-align: -internal-center }`). Below author CSS, as every hint. -/
+def alignTags : List String :=
+  ["div","caption","thead","tbody","tfoot","tr","td","th","h1","h2","h3","h4","h5","h6","p"]
+
+@[inherit_doc alignTags]
+def alignHints (n : DOM.Node) (s : Computed) : Computed :=
+  let tag := n.lname
+  if !alignTags.contains tag then s else
+  match alignValue (attrValue n "align") (!["h1","h2","h3","h4","h5","h6","p"].contains tag) with
+  | some a => {s with textAlign := a}
+  | none => if tag == "th" && !hasAttribute n "align" then {s with textAlign := .center} else s
+
+/-- Kind: property (zero cost). Says: an element with no `align` hint keeps its style. -/
+theorem alignHints_other (n : DOM.Node) (s : Computed) (h : alignTags.contains n.lname = false) :
+    alignHints n s = s := by
+  simp only [alignHints, h, Bool.not_false, reduceIte]
 
 /-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
 `video`, `canvas`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
@@ -2637,7 +2672,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       initial := {initial with unicodeBidi := b}
   let preHint := initial
   if n.ns == some DOM.htmlNS || n.ns.isNone then
-    initial := bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))
+    initial := alignHints n (bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent))))
   -- HTML §15.1: presentational hints sit above the user agent's rules (below the author's):
   -- a property a hint sets here takes no value from a rule of the UA sheet (`input` has
   -- `width: 147px` there; `<input type=image width=40>` is 40px wide)

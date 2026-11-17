@@ -95,6 +95,13 @@ private def runXs (html : String) (extra : String := "") : Option (List Float) :
 #guard ((computedAt "<div style='text-align:center'><p><b id='x'>A</b></p></div>" "" "x").toOption.map
   (·.textAlign == .center)) == some true
 #guard ((computedAt "<div id='x' style='text-align:justify'></div>" "" "x").toOption.map (·.textAlign == .start)) == some true
+-- `align` attributes (HTML §15.3.3, 2026-11-17): a hint below author CSS; a `th` is centred
+#guard ((computedAt "<table><tr><td id='x' align=Middle>A</td></tr></table>" "" "x").toOption.map (·.textAlign == .center)) == some true
+#guard ((computedAt "<table><tr align=right><td><b id='x'>A</b></td></tr></table>" "" "x").toOption.map (·.textAlign == .right)) == some true
+#guard ((computedAt "<table><tr><th id='x'>A</th></tr></table>" "" "x").toOption.map (·.textAlign == .center)) == some true
+#guard ((computedAt "<table><tr><th id='x' align=left>A</th></tr></table>" "" "x").toOption.map (·.textAlign == .left)) == some true
+#guard ((computedAt "<div id='x' align=center style='text-align:left'>A</div>" "" "x").toOption.map (·.textAlign == .left)) == some true
+#guard ((computedAt "<p id='x' align=middle>A</p>" "" "x").toOption.map (·.textAlign == .start)) == some true
 -- Auto margins centre a block with a width or a max-width; one auto margin takes all the room.
 #guard runXs "<main style='width:60px;margin:0 auto'>A</main>" == some [30]
 #guard runXs "<main style='max-width:60px;margin:0 auto'>A</main>" == some [30]
