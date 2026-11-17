@@ -339,6 +339,24 @@ def cspRequest (s : State) (name url : String) (redirected : Bool := false) (non
     let vs := CspPolicy.violationsRequest s.csp name (cspSelf s.page) (cspUrl u) redirected nonce parserInserted
     (report s vs name (reportUrl u) node, CspPolicy.enforced vs)
 
+/-- Whether `connect-src` governs a request of destination `destination` (CSP §6.1.3 and
+§6.8.4, "get the effective directive for request"): a request of `fetch`, `XMLHttpRequest`
+or `sendBeacon` has the destination `"empty"` and is governed by `connect-src`. An element's
+request (op 165, which only the prelude makes: an `img`, an `object`, a script element) is
+governed by the element's own directive (`img-src`, `object-src`, `script-src-elem` with the
+element's nonce), which the caller asks before the request starts; `connect-src` never
+governs it (an `object` of a page with `connect-src 'none'` loads, as in Chrome). -/
+def connectGoverned (destination : String) : Bool := destination == "empty"
+
+/-- Kind: security property. Says: a request with the destination of `fetch` and
+`XMLHttpRequest` (the default of every object a page makes) is checked against `connect-src`.
+Does not say: that only the prelude can set another destination (op 165's comment). -/
+theorem connectGoverned_empty : connectGoverned "empty" = true := rfl
+
+/-- Kind: property. Says: an image or `object` element's request is not checked against
+`connect-src`. Does not say: that its own directive was checked (the prelude asks). -/
+theorem connectGoverned_element : connectGoverned "image" = false ∧ connectGoverned "object" = false := ⟨rfl, rfl⟩
+
 /-- An inline script or style under the session's policy (`CspPolicy.violationsInline`, with
 HACL*'s SHA-2 for hash sources): the violations queued, and whether it is blocked. The sample
 is the first 40 characters of the text when the policy asks for one (`'report-sample'`). -/
@@ -429,7 +447,7 @@ def syncFetch (s : State) (t0 : Transfer) : State × SyncOutcome := Id.run do
       s := s.notePin t
       -- a redirect's target is checked against the policy as the first URL was (CSP §4.1.2)
       if t.redirects != hops then
-        let (s', blocked) := cspRequest s "connect-src" t.url true
+        let (s', blocked) := if connectGoverned t.destination then cspRequest s "connect-src" t.url true else (s, false)
         s := s'
         hops := t.redirects
         if blocked then return (s, .failed)
@@ -581,7 +599,7 @@ def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
   let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now, pin := s.pinFor x.url, destination := x.destination }
-  let (s, blocked) := cspRequest s "connect-src" x.url
+  let (s, blocked) := if connectGoverned x.destination then cspRequest s "connect-src" x.url else (s, false)
   let (s, out) := if blocked then (s, SyncOutcome.failed) else syncFetch s t
   match out with
   | .need => (s.set h { x with events := #[] }, .error errNeedHost)
@@ -639,7 +657,8 @@ def sendX (s : State) (h : Nat) (body : Option ByteArray) (ctDefault : String) (
 def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if x.state != 1 || !x.sendFlag then s else
   -- Content Security Policy: `connect-src` governs `fetch` and `XMLHttpRequest` (CSP §6.1.3)
-  let (s, blocked) := cspRequest s "connect-src" x.url
+  -- (an element's request: its own directive, which the caller asked; `connectGoverned`)
+  let (s, blocked) := if connectGoverned x.destination then cspRequest s "connect-src" x.url else (s, false)
   if blocked then s.set h { x with deferFail := true } else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
@@ -749,7 +768,7 @@ def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
     | .send t' w =>
       let s := s.notePin t'
       -- a redirect's target is checked against the policy as the first URL was (CSP §4.1.2)
-      let (s, blocked) := if t'.redirects != t.redirects then cspRequest s "connect-src" t'.url true else (s, false)
+      let (s, blocked) := if t'.redirects != t.redirects && connectGoverned t.destination then cspRequest s "connect-src" t'.url true else (s, false)
       if blocked then (requestError { s with live := s.live.filter (·.1 != id) } h { x with transfer := none } "error", some x.cb) else
       ({ s with live := s.live.map (fun e => if e.1 == id then (id, h, t') else e), outbox := s.outbox.push w }, none)
     | .fail _ => (requestError s1 h { x with transfer := none } "error", some x.cb)

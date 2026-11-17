@@ -6807,13 +6807,16 @@
     let objGen = 0, objWatching = false;
     const isObj = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'object';
     const objAttrs = new Set(['data', 'type']);
+    const objRendered = el => { for (let e = el; e !== null; e = e.parentElement) if (computedValue(e, 'display') === 'none') return false; return true; };
     const updateObject = id => {
       const gen = ++objGen;
       objGens.set(id, gen);
       chk(n.timer(register(() => {
         if (objGens.get(id) !== gen) return;
         const el = wrap(id);
-        if (!el.isConnected) { imgUndelay(id); return; }
+        // step 2: an object that is not being rendered (display: none on it or on an
+        // ancestor) does not fetch, fires no event and does not delay the load event
+        if (!el.isConnected || !objRendered(el)) { imgUndelay(id); return; }
         const data = n0.attr(id, 'data');
         if (typeof data !== 'string') { imgUndelay(id); return; }
         const done = ok => { if (objGens.get(id) !== gen) return; imgFire(el, ok ? 'load' : 'error'); imgUndelay(id); };
