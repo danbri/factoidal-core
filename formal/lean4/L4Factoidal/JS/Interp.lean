@@ -58,8 +58,12 @@ would still be shared with the array while it changes (and its elements copied).
 
 /-- Change object `id` with `f`, which also answers a value. The object is moved out of the
 heap while `f` runs, so `f` holds the only reference and a change to its elements does not
-copy them (an Array push is amortised constant time, not a copy of the array). -/
-def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
+copy them (an Array push is amortised constant time, not a copy of the array).
+
+Specialised for `f` (`@[specialize]`): each caller passes a function written in place, and without
+this every write of an element or a property made a closure for it, called it through a pointer
+and took its answer from a pair. -/
+@[specialize] def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
   modifyGet fun h =>
     let objs := h.objs
     let h := { h with objs := #[] }
@@ -1398,6 +1402,26 @@ def bufferBytes (o : Obj) : ByteArray :=
 
 def elemSize (ty : Nat) : Nat := (typedNames[ty]?.map (·.2)).getD 1
 
+/-- `elemSize` by a match: no read of the table and no `Option` for each element access. -/
+def elemSizeFast (ty : Nat) : Nat :=
+  match ty with
+  | 3 | 4 | 11 => 2
+  | 5 | 6 | 7 => 4
+  | 8 | 9 | 10 => 8
+  | _ => 1
+
+/-- **Kind: refinement.** `elemSizeFast` is `elemSize` for every type tag (those past the table
+included). -/
+@[csimp] theorem elemSize_eq_fast : elemSize = elemSizeFast := by
+  funext ty
+  match ty with
+  | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 => rfl
+  | n + 12 =>
+    have h : typedNames[n + 12]? = none := Array.getElem?_eq_none (by show 12 ≤ n + 12; omega)
+    unfold elemSize; rw [h]; rfl
+
+#print axioms elemSize_eq_fast
+
 /-- A new ArrayBuffer with these bytes. -/
 def newBuffer (bytes : ByteArray) : M Value := do
   -- `byteLength` is an accessor of ArrayBuffer.prototype (§25.1.6.2)
@@ -1511,7 +1535,7 @@ def typedOob (detached : Bool) (off len elem size : Nat) : Bool :=
 
 /-- The element count of a typed array as its buffer now is (§10.4.5.12
 TypedArrayLength): 0 when the buffer is detached or too small for the view. -/
-def liveLen (ty buf off len : Nat) : M Nat := do
+@[inline] def liveLen (ty buf off len : Nat) : M Nat := do
   let bo ← getObj buf
   pure (if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len)
 
