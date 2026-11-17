@@ -350,7 +350,16 @@ def embeddedValue (d : Dom) (k : NodeId) : Option String :=
     let sel := (opts.toList.find? fun o => (attr? d o "selected").isSome) <|> opts.toList.head?
     some ((sel.bind fun o => d.textContent o).getD "")
   else if isHtml d k ["textarea"] then some ((d.textContent k).getD "")
-  else none
+  else match explicitRole d k with
+    -- ARIA widgets: a text field's or combo box's text, a list box's selected options, a range's value
+    | some "combobox" | some "textbox" | some "searchbox" => some ((d.textContent k).getD "")
+    | some "listbox" =>
+      let chosen := (d.treeOrder k false).toList.filter fun o =>
+        explicitRole d o == some "option" && (attr? d o "aria-selected").map asciiLower == some "true"
+      some (" ".intercalate (chosen.map fun o => (d.textContent o).getD ""))
+    | some "slider" | some "spinbutton" | some "scrollbar" =>
+      some ((attr? d k "aria-valuetext").getD ((attr? d k "aria-valuenow").getD ""))
+    | _ => none
 
 mutual
 /-- The text alternative of node `k` (§4.3.2): `labelled` while computing a node that an
@@ -550,6 +559,9 @@ private def nameOf (html tag : String) : String :=
 #guard nameOf "<svg><circle><title>dot</title></circle></svg>" "circle" == "dot" && nameOf "<svg><title>pic</title></svg>" "svg" == "pic"
 #guard nameOf "<em title=t>x</em>" "em" == "t" && nameOf "<code>x</code>" "code" == "" && nameOf "<table><tr><td>x</td></tr></table>" "td" == ""
 #guard nameOf "<details><summary title=t>sum</summary></details>" "summary" == "sum"
+#guard nameOf "<label><input type=checkbox> Flash <span role=slider aria-valuenow=3 aria-label=n></span> times</label>" "input" == "Flash 3 times"
+#guard nameOf "<label><input type=checkbox> Pick <ul role=listbox aria-label=n><li role=option>1</li><li role=option aria-selected=true>2</li></ul> now</label>" "input" == "Pick 2 now"
+#guard nameOf "<label><input type=checkbox> Do <span role=combobox aria-label=n>3</span> times</label>" "input" == "Do 3 times"
 #guard nameOf "<label for=i hidden>H</label><input id=i>" "input" == "" && nameOf "<fieldset><legend hidden>H</legend><legend>V</legend></fieldset>" "fieldset" == "V"
 #guard nameOf "<a href=x><em>very</em> good</a>" "a" == "very good" && nameOf "<div role=cell>x</div>" "div" == "x"
 #guard roleOf "<article><aside>x</aside></article>" "aside" == "generic" && roleOf "<aside>x</aside>" "aside" == "complementary"

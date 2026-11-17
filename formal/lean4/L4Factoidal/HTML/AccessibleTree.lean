@@ -930,8 +930,10 @@ private def shape (html : String) : List (Nat × String × String) :=
       "\",\"children\":[" ++ ",".intercalate (tabs.map fun t => "\"" ++ accId t ++ "\"") ++ "]}" &&
   tabs.length == 2 && ((propertiesIn d (nodeOf "checkbox")).toString.splitOn "\"checked\":\"mixed\"").length == 2 &&
   ofAccId (accId 12) == some 12 && ofAccId "12" == none)
-#guard (json [{ depth := 1, id := 4, role := "button", name := "a", tag := "button", focusable := true,
-    props := [("pressed", "true")], box := some ⟨1, -2, 3, 4⟩ }]).toString ==
+private def sample : Entry :=
+  { depth := 1, id := 4, role := "button", name := "a", tag := "button", focusable := true,
+    props := [("pressed", "true")], box := some ⟨1, -2, 3, 4⟩ }
+#guard (json [sample]).toString ==
   "{\"nodes\":[{\"id\":4,\"depth\":1,\"role\":\"button\",\"name\":\"a\",\"tag\":\"button\",\"props\":{\"pressed\":\"true\"},\"focusable\":true,\"box\":[1,-2,3,4]}]}"
 #guard ((viewPage "x" (treeOf "<button>a&lt;</button>")).splitOn "<li").length == 3
 
