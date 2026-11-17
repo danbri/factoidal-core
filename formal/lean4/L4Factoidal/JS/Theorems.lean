@@ -25,6 +25,9 @@ import L4Factoidal.JS.Interp
   errors for `??` beside `&&`/`||` (§13.13), for a name of a lexical `for` head or catch
   parameter that the body also declares with `var` (§14.7, §14.15), and the strict-mode test for
   legacy escapes, which never flags a string literal without a backslash (§12.9.4.1).
+- `typedLenOf_fits`, `typedLenOf_fixed`, `typedLenOf_auto`: TypedArrayLength (§10.4.5.12) never
+  reaches past the buffer (every element index below it is inside the bytes), is the fixed
+  length of a view in bounds, and for a length-tracking view the whole elements after the offset.
 - `holdableIn_obj`, `holdableIn_registered`, `holdableIn_unregistered`, `holdableIn_prim`:
   CanBeHeldWeakly (§9.13) holds of every object and of every Symbol that the registry does not
   hold, and of no registered Symbol and no other primitive.
@@ -440,11 +443,16 @@ theorem accessorParamsOk_setter (c : Nat) (r : Bool) (h : accessorParamsOk false
 
 /-! ## ValidateTypedArray (`typedOob`, §10.4.5.11, §23.2.4.4) -/
 
-/-- Kind: a refusal. Says: a view that is in bounds is on a live buffer and its bytes fit in it. -/
+/-- Kind: a refusal. Says: a fixed-length view that is in bounds is on a live buffer and its
+bytes fit in it; a length-tracking view (`autoLen`) in bounds starts inside it. -/
 theorem typedOob_false (d : Bool) (off len e size : Nat) (h : typedOob d off len e size = false) :
-    d = false ∧ off + len * e ≤ size := by
-  simp [typedOob] at h
-  exact ⟨h.1, h.2⟩
+    d = false ∧ (if len = autoLen then off ≤ size else off + len * e ≤ size) := by
+  unfold typedOob at h
+  cases d <;> simp at h
+  by_cases ha : len = autoLen
+  · simp [ha] at h ⊢; omega
+  · have hb : (len == autoLen) = false := by simp [ha]
+    simp [hb, ha] at h ⊢; omega
 
 /-- Kind: a refusal. Says: a detached buffer is always out of bounds. -/
 theorem typedOob_detached (off len e size : Nat) : typedOob true off len e size = true := by
@@ -672,6 +680,40 @@ theorem legacyEscapeIn_noBackslash (cs : Array Char) (j : Nat) :
     · have hne : cs[i]! ≠ '\\' := h i (Nat.le_refl _) (by omega)
       simp only [hj, if_false, bne_iff_ne, ne_eq, hne, not_false_eq_true, if_true]
       exact ih (i + 1) (fun k hk hkj => h k (by omega) hkj)
+
+/-! ### TypedArrayLength (§10.4.5.12) -/
+
+/-- Every element below TypedArrayLength lies inside the buffer: a view in bounds never reads
+past its bytes, a length-tracking one included. -/
+theorem typedLenOf_fits (d : Bool) (off len elem size : Nat) :
+    off + typedLenOf d off len elem size * elem ≤ size ∨ typedLenOf d off len elem size = 0 := by
+  unfold typedLenOf typedOob
+  by_cases hd : d = true
+  · simp [hd]
+  · by_cases ha : len = autoLen
+    · by_cases ho : off > size
+      · simp [hd, ha, ho]
+      · left
+        simp only [hd, ha, ho, Bool.false_or, beq_self_eq_true, if_true, decide_false, Bool.false_eq_true, if_false]
+        have := Nat.div_mul_le_self (size - off) elem
+        omega
+    · by_cases ho : off + len * elem > size
+      · simp [hd, ha, ho]
+      · left
+        have hb : (len == autoLen) = false := by simp [ha]
+        simp only [hd, hb, ho, Bool.false_or, Bool.false_eq_true, if_false, decide_false]
+        omega
+
+theorem typedLenOf_fixed (off len elem size : Nat) (ha : len ≠ autoLen) (hin : off + len * elem ≤ size) :
+    typedLenOf false off len elem size = len := by
+  have hb : (len == autoLen) = false := by simp [ha]
+  have ho : ¬ (off + len * elem > size) := by omega
+  simp [typedLenOf, typedOob, hb, ho]
+
+theorem typedLenOf_auto (off elem size : Nat) (hin : off ≤ size) :
+    typedLenOf false off autoLen elem size = (size - off) / elem := by
+  have ho : ¬ (off > size) := by omega
+  simp [typedLenOf, typedOob, ho]
 
 /-! ### CanBeHeldWeakly (§9.13) -/
 

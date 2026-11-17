@@ -272,6 +272,12 @@ def cachedChars (s : String) : M (Array Char) := do
   modify fun h => { h with reCache := some (s, cs) }
   return cs
 
+/-- The [[ArrayLength]] of a length-tracking typed array (§10.4.5: `auto`, a view made on a
+resizable buffer with no length): its length follows the buffer's (`typedLenOf`). No typed
+array has this many elements (a buffer holds at most `maxBufferBytes`), so a fixed length is
+never it. -/
+def autoLen : Nat := 2 ^ 53
+
 /-- The steps a value's size is worth to a built-in that walks it: a step for every 64
 bytes of a string, 64 elements of an array, or 4096 bytes of an ArrayBuffer or typed
 array (copied or compared at memory speed). -/
@@ -281,7 +287,7 @@ def sizeCost (v : Value) : M Nat := do
   | .obj id => match (← getObj id).kind with
     | .array es => pure (es.size / 64)
     | .buffer b => pure (b.size / 4096)
-    | .typed _ _ _ len => pure (len / 4096)
+    | .typed _ _ _ len => pure ((if len == autoLen then 0 else len) / 4096)
     | _ => pure 0
   | _ => pure 0
 
@@ -1430,13 +1436,21 @@ def isDetached (o : Obj) : Bool := hiddenFlag o bufDetachedKey
 /-- IsTypedArrayOutOfBounds (§10.4.5.11) of a view with a fixed length: the buffer is
 detached, or the view's bytes run past its end. -/
 def typedOob (detached : Bool) (off len elem size : Nat) : Bool :=
-  detached || off + len * elem > size
+  detached || (if len == autoLen then off > size else off + len * elem > size)
+
+/-- TypedArrayLength (§10.4.5.12) of a view at byte offset `off` with [[ArrayLength]] `len`
+(`autoLen`: length-tracking) over a buffer of `size` bytes: 0 when it is out of bounds, else
+the fixed length, or as many whole elements as fit after the offset. -/
+def typedLenOf (detached : Bool) (off len elem size : Nat) : Nat :=
+  if typedOob detached off len elem size then 0
+  else if len == autoLen then (size - off) / elem else len
 
 /-- The element count of a typed array as its buffer now is (§10.4.5.12
-TypedArrayLength): 0 when the buffer is detached or too small for the view. -/
+TypedArrayLength): 0 when the buffer is detached or too small for the view; for a
+length-tracking view (`autoLen`), the elements that fit in the buffer now. -/
 def liveLen (ty buf off len : Nat) : M Nat := do
   let bo ← getObj buf
-  pure (if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len)
+  pure (typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size)
 
 /-- The %TypedArray%.prototype methods that validate the typed array and then take the steps
 of the Array.prototype method of the same name (`NativeX.typedGeneric`): name, length. -/
@@ -1600,7 +1614,7 @@ def callHost (k : Nat) (args : Array Value) : M Value := do
     match a with
     | .obj id => match (← getObj id).kind with
       | .buffer b => pure (HostArg.bytes b)
-      | .typed ty b off len => pure (.bytes ((bufferBytes (← getObj b)).extract off (off + len * elemSize ty)))
+      | .typed ty b off len => pure (.bytes ((bufferBytes (← getObj b)).extract off (off + (← liveLen ty b off len) * elemSize ty)))
       | _ => pure (.val a)
     | _ => pure (.val a)
   match st with
@@ -2332,7 +2346,8 @@ def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
       let (ty, b, off, len) ← thisTyped what
       if !(← typedInBounds ty b off len) then
         throwErr .type s!"{what}: the typed array is detached or out of bounds"
-      pure (ty, b, off, len)
+      -- the TypedArrayLength of the record (§23.2.4.4 step 4): a length-tracking view's too
+      pure (ty, b, off, ← liveLen ty b off len)
     match id with
     | (.x .typedArrayCtor) => throwErr .type "Abstract class TypedArray not directly constructable"
     | (.x .typedOf) | (.x .typedFrom) =>
@@ -2374,7 +2389,7 @@ def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
       let some (ty, b, off, len) := info
         | if which == 4 then pure .undef else throwErr .type "TypedArray accessor called on incompatible receiver"
       let live ← liveLen ty b off len
-      let gone := live == 0 && len > 0 || isDetached (← getObj b)
+      let gone := !(← typedInBounds ty b off len)
       match which with
       | 0 => pure (.obj b)
       | 1 => pure (.num (Float.ofNat (live * elemSize ty)))
@@ -2385,7 +2400,63 @@ def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
       -- the %TypedArray%.prototype methods whose steps are Array.prototype's after
       -- ValidateTypedArray: that function, kept hidden on %TypedArray%.prototype
       let nm := typedGenericNames.getD k ("", 0)
-      let _ ← validTyped s!"%TypedArray%.prototype.{nm.1}"
+      let (_, _, _, len) ← validTyped s!"%TypedArray%.prototype.{nm.1}"
+      -- the steps of §23.2.3: the length is the TypedArrayLength taken here (never a `length`
+      -- property), and each element is a [[Get]] when it is reached (undefined once a resize or
+      -- a detach in a callback has taken it); only indexOf asks HasProperty first
+      let at_ (i : Nat) : M Value := core.getV thisV (toString i)
+      let cbOf : M Value := do
+        if !(← isCallable a0) then throwErr .type s!"%TypedArray%.prototype.{nm.1}: the callback is not a function"
+        pure a0
+      let call (f : Value) (i : Nat) : M (Value × Value) := do
+        let v ← at_ i
+        pure (v, ← core.callV f a1 #[v, .num (Float.ofNat i), thisV])
+      if k == 0 || k == 4 || k == 5 || k == 7 || k == 8 then
+        -- forEach, every, some, find, findIndex
+        let f ← cbOf
+        for i in [0:len] do
+          let (v, res) ← call f i
+          let t := toBool res
+          if k == 4 && !t then return .bool false
+          if k == 5 && t then return .bool true
+          if k == 7 && t then return v
+          if k == 8 && t then return .num (Float.ofNat i)
+        return (if k == 4 then .bool true else if k == 5 then .bool false
+          else if k == 8 then .num (-1) else .undef)
+      if k == 6 then
+        -- reduce
+        let f ← cbOf
+        if len == 0 && args.size < 2 then throwErr .type "Reduce of empty array with no initial value"
+        let mut acc := a1
+        let mut start := 0
+        if args.size < 2 then
+          acc ← at_ 0
+          start := 1
+        for i in [start:len] do
+          let v ← at_ i
+          acc ← core.callV f .undef #[acc, v, .num (Float.ofNat i), thisV]
+        return acc
+      if k == 2 || k == 3 then
+        -- indexOf, includes
+        if len == 0 then return (if k == 2 then .num (-1) else .bool false)
+        let start := relIndex (← core.toNum a1) len
+        for i in [start:len] do
+          if k == 2 then
+            if let .obj oid := thisV then
+              if (← core.hasProp oid (toString i)) then
+                if strictEq (← at_ i) a0 then return .num (Float.ofNat i)
+          else if sameValueZero (← at_ i) a0 then return .bool true
+        return (if k == 2 then .num (-1) else .bool false)
+      if k == 1 then
+        -- join
+        let sep ← match a0 with | .undef => pure "," | v => core.toStr v
+        let mut parts : Array String := Array.emptyWithCapacity len
+        for i in [0:len] do
+          match ← at_ i with
+          | .undef | .null => parts := parts.push ""
+          | v => parts := parts.push (← core.toStr v)
+        checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize + sep.utf8ByteSize) 0)
+        return .str (Str.canonical (sep.intercalate parts.toList))
       let tp ← match (← getObj r.typedArrayCtor).getOwn "prototype" with
         | some (.data (.obj p) ..) => pure p
         | _ => throwErr .type "no %TypedArray%.prototype"
@@ -2513,7 +2584,8 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
       let (ty, b, off, len) ← thisTyped what
       if !(← typedInBounds ty b off len) then
         throwErr .type s!"{what}: the typed array is detached or out of bounds"
-      pure (ty, b, off, len)
+      -- the TypedArrayLength of the record (§23.2.4.4 step 4): a length-tracking view's too
+      pure (ty, b, off, ← liveLen ty b off len)
     -- a new typed array of type `ty` holding these (already converted) values
     let fresh (ty : Nat) (xs : Array Value) : M Value := do
       let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * elemSize ty) 0))
@@ -2561,7 +2633,7 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
         let .typed ty2 b2 off2 len2 := (← getObj aid).kind
           | throwErr .type "The species constructor did not make a typed array"
         let live2 ← liveLen ty2 b2 off2 len2
-        if live2 == 0 && len2 > 0 then throwErr .type "The species constructor made a detached typed array"
+        if !(← typedInBounds ty2 b2 off2 len2) then throwErr .type "The species constructor made a detached typed array"
         if live2 < count then throwErr .type "The species constructor made a typed array that is too short"
         if typedIsBig ty2 != typedIsBig ty then throwErr .type "The species constructor made a typed array of the other content type"
         pure (some a)
@@ -5243,12 +5315,18 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
           if isDetached (← getObj oid) then throwErr .type "Cannot construct a typed array on a detached ArrayBuffer"
           let off := (toIntegerOrInf (← core.toNum a1)).toUInt64.toNat
           if off % es != 0 then throwErr .range s!"start offset of {(typedNames[ty]?.map (·.1)).getD ""} should be a multiple of {es}"
+          let resizable := (hiddenNum (← getObj oid) bufMaxKey).isSome
           let len ← match argD args 2 with
             | .undef =>
+              -- §23.2.5.1.3 step 8: on a resizable buffer, a length-tracking view
+              if resizable then
+                if off > bytes.size then throwErr .range "Start offset is outside the bounds of the buffer"
+                pure autoLen
+              else
               if bytes.size < off || (bytes.size - off) % es != 0 then throwErr .range "byte length should be a multiple of the element size"
               pure ((bytes.size - off) / es)
             | v => do pure (toIntegerOrInf (← core.toNum v)).toUInt64.toNat
-          if off + len * es > bytes.size then throwErr .range "Invalid typed array length"
+          if len != autoLen && off + len * es > bytes.size then throwErr .range "Invalid typed array length"
           newTyped ty oid off len
         | .typed sty sb soff slen =>
           let bytes := bufferBytes (← getObj sb)
@@ -5364,7 +5442,9 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
         pure .undef
       | .typedSubarray =>
         -- §23.2.3.30: the bounds (converted first), then TypedArraySpeciesCreate(O, « buffer,
-        -- beginByteOffset, newLength ») (§23.2.4.1): the species constructor, or the type's own
+        -- beginByteOffset, newLength ») (§23.2.4.1): the species constructor, or the type's own.
+        -- A length-tracking view with no `end` makes one too (step 13: « buffer, beginByteOffset »).
+        let tracks := len == autoLen && a1 matches .undef
         let len ← liveLen ty b off len
         let a := relIndex (toIntegerOrInf (← core.toNum a0)) len
         let e ← match a1 with
@@ -5376,10 +5456,15 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
         let c ← core.speciesCtor thisV dflt
         if strictEq c dflt then
           if isDetached (← getObj b) then throwErr .type "subarray: the buffer is detached"
+          if tracks then
+            if begin > (bufferBytes (← getObj b)).size then
+              throwErr .range "subarray: the view is out of the buffer's bounds"
+            return ← newTyped ty b begin autoLen
           if begin + newLen * elemSize ty > (bufferBytes (← getObj b)).size then
             throwErr .range "subarray: the view is out of the buffer's bounds"
           return ← newTyped ty b begin newLen
-        let res ← core.construct c #[.obj b, .num (Float.ofNat begin), .num (Float.ofNat newLen)] c
+        let res ← core.construct c (if tracks then #[.obj b, .num (Float.ofNat begin)]
+          else #[.obj b, .num (Float.ofNat begin), .num (Float.ofNat newLen)]) c
         -- TypedArrayCreateFromConstructor: a valid typed array of the same content type
         let .obj rid := res | throwErr .type "subarray: the species constructor did not make a typed array"
         let .typed rty rb roff rlen := (← getObj rid).kind
