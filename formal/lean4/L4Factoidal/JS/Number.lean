@@ -277,6 +277,23 @@ def arrayIndex? (s : String) : Option Nat :=
     let n := s.foldl (fun a c => a * 10 + (c.toNat - 48)) 0
     if n < 4294967295 then some n else none
 
+/-- No array index: the bound of `arrayIndex?` (2^32 - 1). -/
+def noIndex : Nat := 4294967295
+
+/-- The array index a Number is as a property key, with no key string made: `noIndex` when its
+key (`numToString`) is not a canonical array index. It follows the cases of `numToString`, so
+that `arrayIndex? (numToString x) = some (numIndex x)` whenever this is an index
+(`arrayIndex?_keyOfNum` in `JS/Theorems.lean`: proved with no assumption about floating point). -/
+def numIndex (x : Float) : Nat :=
+  if x.isNaN then noIndex
+  else if x == 0 then 0
+  else if x.isInf then noIndex
+  else if isIntegral x && x.abs < tenPow21 then
+    match truncInt x with
+    | .ofNat i => if i < noIndex then i else noIndex
+    | _ => noIndex
+  else noIndex
+
 /-- The UTF-16 length of a string (§6.1.4: code units). -/
 def utf16Length (s : String) : Nat :=
   s.foldl (fun a c => a + (if c.toNat ≥ 0x10000 then 2 else 1)) 0

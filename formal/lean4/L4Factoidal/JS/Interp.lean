@@ -1558,6 +1558,45 @@ length-tracking view (`autoLen`), the elements that fit in the buffer now. -/
   let bo ← getObj buf
   pure (typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size)
 
+/-- Element `i` of the typed array `id` as its buffer now is (§10.4.5.15 TypedArrayGetElement:
+`undefined` past the live length); `Value.hole` when `id` is not a typed array. A pure function
+of the heap: no result cell, no key. -/
+def typedElemAt (h : HeapOf H) (id i : Nat) : Value :=
+  match (h.obj id).kind with
+  | .typed ty b off len =>
+    let bo := h.obj b
+    let live := typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size
+    if i < live then typedRead ty (bufferBytes bo) (off + i * elemSize ty) else .undef
+  | _ => .hole
+
+/-- `o[x]` for a Number `x` when `o` is a typed array and `x` an array index: the element, with
+no key string (`getV` would make the string of `x`, parse it back into the index and read the
+same element: `getV_typedElemNum` in `JS/Theorems.lean`). `Value.hole` otherwise: the caller
+takes the general path. -/
+@[inline] def typedElemNum (h : HeapOf H) (id : Nat) (x : Float) : Value :=
+  let i := numIndex x
+  if i < noIndex then typedElemAt h id i else .hole
+
+/-- `o[x] = v` for a Number `x` and a Number `v`, when `o` is a typed array of a Number element
+type, `x` is an array index and no undo log covers `o`: the element is written (or the write is
+dropped past the live length, §10.4.5.16 TypedArraySetElement) with no key string, and the answer
+is `true`. `false` otherwise, with nothing done: the caller takes the general path. `putV` on the
+key of `x` does the same write (`typedSetNum_refines` in `JS/Theorems.lean`). The undo log is
+part of the test because `putV` notes the object in it before it finds no plain property to
+overwrite. Called after the Array path (`setElem`) has declined, so an Array write pays nothing. -/
+@[inline] def typedSetNum (id : Nat) (x : Float) (v : Value) : M Bool := do
+  let h ← get
+  match (h.obj id).kind, v with
+  | .typed ty b off len, .num _ =>
+    let i := numIndex x
+    if i < noIndex && !typedIsBig ty && h.undoObjs.base ≤ id then
+      let bo := h.obj b
+      let live := typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size
+      if i < live then typedWriteV ty b off i v
+      pure true
+    else pure false
+  | _, _ => pure false
+
 /-- The %TypedArray%.prototype methods that validate the typed array and then take the steps
 of the Array.prototype method of the same name (`NativeX.typedGeneric`): name, length. -/
 def typedGenericNames : Array (String × Nat) :=
@@ -2019,6 +2058,12 @@ def vmMaxDepth : Nat := 20000
 /-- Take the registers back out of the heap, for the caller to own. -/
 @[inline] def vmTake : M (Array Value × FloatArray) :=
   modifyGet fun h => ((h.vmRegs, h.vmF), { h with vmRegs := #[], vmF := .empty })
+
+/-- What `vmStash regs fregs top` followed by `vmTake` leaves in the heap, when the caller keeps
+the registers: one update of the record, with no array moved in and out
+(`vmStash_pure_vmTake` in `JS/Theorems.lean`). -/
+@[inline] def vmSettle (top : Nat) : M Unit :=
+  modify fun h => { h with vmRegs := #[], vmF := .empty, vmTop := top }
 
 /-- A register as a language value (boxing a number). -/
 @[inline] def vmRd (regs : Array Value) (fregs : FloatArray) (i : Nat) : Value :=
@@ -7767,6 +7812,16 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
 
 end Natives
 
+set_option hygiene false in
+/-- `toNumQ n v`: ToNumber of `v` with fuel `n`, written so that a value that is a Number already
+costs no call: `toNum` is a function of the block, so its answer is a result cell holding a boxed
+number, and the operands of the numeric and bit operators are Numbers nearly always. The value of
+the expression is `toNum n v` at every fuel but 0, where `toNum 0 v` is out of fuel and this
+answers the Number (`toNumQ_succ`, `toNum_zero` in `JS/Theorems.lean`). Not hygienic: `toNum` is
+defined after this point, in the block. -/
+local macro "toNumQ " n:term:max v:term:max : term =>
+  `((match $v:term with | Value.num toNumQ_x => pure toNumQ_x | toNumQ_w => toNum $n toNumQ_w : M Float))
+
 mutual
 
 /-- `[[Get]]` on any value (§7.3.2 GetV). -/
@@ -8059,7 +8114,11 @@ else ToNumber (§10.4.5.16). -/
 def typedConv : Nat → Nat → Value → M Value
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ty, v => do
-    if typedIsBig ty then pure (.big (← toBigInt n v)) else pure (.num (← toNum n v))
+    -- a Number is stored as it is: no ToNumber call and no new box (`typedConv_num`)
+    if typedIsBig ty then pure (.big (← toBigInt n v)) else
+      match v with
+      | .num _ => pure v
+      | w => pure (.num (← toNum n w))
 termination_by structural n _ _ => n
 
 /-- ToString (§7.1.17). -/
@@ -8234,23 +8293,23 @@ def binop : Nat → BinOp → Value → Value → M Value
         | .big x, .big y => pure (.big (x + y))
         | .big _, _ | _, .big _ => throwErr .type "Cannot mix BigInt and other types, use explicit conversions"
         | _, _ => pure (.num ((← toNum n pa) + (← toNum n pb)))
-    | .sub => pure (.num ((← toNum n a) - (← toNum n b)))
-    | .mul => pure (.num ((← toNum n a) * (← toNum n b)))
-    | .div => pure (.num ((← toNum n a) / (← toNum n b)))
-    | .mod => pure (.num (jsMod (← toNum n a) (← toNum n b)))
-    | .exp => pure (.num (jsPow (← toNum n a) (← toNum n b)))
+    | .sub => pure (.num ((← toNumQ n a) - (← toNumQ n b)))
+    | .mul => pure (.num ((← toNumQ n a) * (← toNumQ n b)))
+    | .div => pure (.num ((← toNumQ n a) / (← toNumQ n b)))
+    | .mod => pure (.num (jsMod (← toNumQ n a) (← toNumQ n b)))
+    | .exp => pure (.num (jsPow (← toNumQ n a) (← toNumQ n b)))
     | .shl =>
-      let x := toInt32 (← toNum n a); let s := toUint32 (← toNum n b) % 32
+      let x := toInt32 (← toNumQ n a); let s := toUint32 (← toNumQ n b) % 32
       pure (intV (toInt32 (Float.ofInt (x * 2 ^ s))))
     | .sar =>
-      let x := toInt32 (← toNum n a); let s := toUint32 (← toNum n b) % 32
+      let x := toInt32 (← toNumQ n a); let s := toUint32 (← toNumQ n b) % 32
       pure (intV (x / 2 ^ s))
     | .shr =>
-      let x := toUint32 (← toNum n a); let s := toUint32 (← toNum n b) % 32
+      let x := toUint32 (← toNumQ n a); let s := toUint32 (← toNumQ n b) % 32
       pure (.num (floatOfNat (x / 2 ^ s)))
     | .band | .bor | .bxor =>
-      let x := toUint32 (← toNum n a)
-      let y := toUint32 (← toNum n b)
+      let x := toUint32 (← toNumQ n a)
+      let y := toUint32 (← toNumQ n b)
       let r := match op with
         | .band => x &&& y | .bor => x ||| y | _ => x ^^^ y
       pure (intV (toInt32 (floatOfNat r)))
@@ -9083,12 +9142,12 @@ def evalExpr : Nat → Ctx → Expr → M Value
         match op with
         | .neg => match ← toPrim n v "number" with
           | .big i => pure (.big (-i))
-          | p => pure (.num (-(← toNum n p)))
+          | p => pure (.num (-(← toNumQ n p)))
         | .plus => pure (.num (← toNum n v))
         | .not => pure (.bool !(toBool v))
         | .bnot => match ← toPrim n v "number" with
           | .big i => pure (.big (-i - 1))
-          | p => pure (intV (-(toInt32 (← toNum n p)) - 1))
+          | p => pure (intV (-(toInt32 (← toNumQ n p)) - 1))
         | .typeof => pure (.str (← typeOf v))
         | .void => pure .undef
         | .delete => pure (.bool true)
@@ -9132,7 +9191,10 @@ def evalExpr : Nat → Ctx → Expr → M Value
         let v ← evalExpr n ctx rhs
         let isIdx := x ≥ 0 && x < maxIndexF && x.floor == x
         let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
-        if !done then putV n b (keyOfNum x) v ctx.strict
+        if !done then
+          -- not an Array's element: a typed array's element by its number (`typedSetNum`), else `putV`
+          let done ← typedSetNum id x v
+          if !done then putV n b (keyOfNum x) v ctx.strict
         pure v
       | _, _ =>
         let key ← toKey n kv
@@ -9308,7 +9370,11 @@ def evalExpr : Nat → Ctx → Expr → M Value
             | .hole => getV n b (← toKey n kv)
             | v => pure v
           else getV n b (← toKey n kv)
-        | _ => getV n b (← toKey n kv)
+        | _ =>
+          -- an element of a typed array by its number (`typedElemNum`), else the general path
+          match typedElemNum (← get) id x with
+          | .hole => getV n b (← toKey n kv)
+          | w => pure w
       | .undef, _ => throwErr .type "Cannot read properties of undefined"
       | .null, _ => throwErr .type "Cannot read properties of null"
       | _, _ => getV n b (← toKey n kv)
@@ -10789,12 +10855,12 @@ def vmUnary : Nat → UnOp → Value → M Value
     match op with
     | .neg => match ← toPrim n v "number" with
       | .big i => pure (.big (-i))
-      | p => pure (.num (-(← toNum n p)))
+      | p => pure (.num (-(← toNumQ n p)))
     | .plus => pure (.num (← toNum n v))
     | .not => pure (.bool !(toBool v))
     | .bnot => match ← toPrim n v "number" with
       | .big i => pure (.big (-i - 1))
-      | p => pure (intV (-(toInt32 (← toNum n p)) - 1))
+      | p => pure (intV (-(toInt32 (← toNumQ n p)) - 1))
     | .typeof => pure (.str (← typeOf v))
     | .void => pure .undef
     | .delete => pure (.bool true)
@@ -10813,7 +10879,10 @@ def vmGetIndex : Nat → Value → Value → M Value
           | .hole => getV n b (← toKey n kv)
           | v => pure v
         else getV n b (← toKey n kv)
-      | _ => getV n b (← toKey n kv)
+      | _ =>
+        match typedElemNum (← get) id x with
+        | .hole => getV n b (← toKey n kv)
+        | w => pure w
     | _, _ =>
       if let .undef := b then throwErr .type "Cannot read properties of undefined"
       if let .null := b then throwErr .type "Cannot read properties of null"
@@ -11279,12 +11348,23 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
           | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
           | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
         | _ =>
-          vmStash regs fregs (bp + code.nregs)
-          let v ← getV n b (keyOfNum x)
-          let (regs, fregs) ← vmTake
-          match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          -- a typed array's element by its number is read from the heap before the registers are
+          -- stashed: with the stash and the take around it the compiled loop took the heap record
+          -- apart and built it again for each read. `vmSettle` leaves the heap as they would.
+          match typedElemNum (← get) id x with
+          | .hole =>
+            vmStash regs fregs (bp + code.nregs)
+            let v ← getV n b (keyOfNum x)
+            let (regs, fregs) ← vmTake
+            match (v) with
+            | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+            | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x =>
+            vmSettle (bp + code.nregs)
+            vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv =>
+            vmSettle (bp + code.nregs)
+            vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
       | _, _ =>
         let kv := vmRd regs fregs (bp + i)
         vmStash regs fregs (bp + code.nregs)
@@ -11304,7 +11384,9 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       | .obj id, .num x =>
         let isIdx := x ≥ 0 && x < maxIndexF && x.floor == x
         let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
-        if !done then putV n b (keyOfNum x) v code.strict
+        if !done then
+          let done ← typedSetNum id x v
+          if !done then putV n b (keyOfNum x) v code.strict
       | _, _ =>
         let key ← toKey n kv
         putV n b key v code.strict
