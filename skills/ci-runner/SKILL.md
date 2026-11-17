@@ -31,7 +31,7 @@ What runs macOS:
 
 - **the Mac release lane** (owner rule 2026-11-16: for all tangible progress there is always a Mac build of main
   done or building). `mac-release.yml` checks every 15 minutes whether main's head has a Mac release
-  (`build-<12 hex>-foafnaut-darwin-arm64`, what `foafnaut --latest` installs). When it has none and no lane run is
+  (`build-<12 hex>-foafnaut-darwin-arm64`, what `foafnaut --update` installs). When it has none and no lane run is
   waiting or building it, it dispatches `build.yml` with an empty `core_ref`, into the concurrency group
   `build-factoidal-main` (with the hourly poll): one running run and the newest pending one. A pending run resolves
   main's head when it starts, so a newer main replaces the pending build and never cancels the running one. The runs
