@@ -1,4 +1,5 @@
 import L4Factoidal.JS.Value
+import L4Factoidal.Text.CaseMap
 import L4Factoidal.JS.Clone
 import L4Factoidal.JS.Parser
 import L4Factoidal.JS.Resolve
@@ -12555,8 +12556,11 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
               pure (if l < 0 then 0 else min l.toUInt64.toNat (len - st))
           charge (len / 64)
           pure (.str (substr s st (st + len)))
-        | .stringToUpperCase => pure (.str s.toUpper)
-        | .stringToLowerCase => pure (.str s.toLower)
+        -- §22.1.3.30, §22.1.3.28: the full, language-independent Unicode case mappings
+        -- (`Text.CaseMap`: SpecialCasing then UnicodeData, Final_Sigma), not ASCII only
+        -- (ASCII text, the common case, keeps the ASCII loop: the two agree on it)
+        | .stringToUpperCase => pure (.str (if s.all (·.toNat < 128) then s.toUpper else L4Factoidal.Text.CaseMap.upperCase s))
+        | .stringToLowerCase => pure (.str (if s.all (·.toNat < 128) then s.toLower else L4Factoidal.Text.CaseMap.lowerCase s))
         | .stringTrim => pure (.str (trimJs s))
         | .stringRepeat =>
           let c := toIntegerOrInf (← toNum n a0)

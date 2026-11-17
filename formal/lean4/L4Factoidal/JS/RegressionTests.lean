@@ -798,4 +798,8 @@ replaced by assignment; Function.prototype[@@hasInstance] was missing; `source` 
 #guard out "function* g() { var o = { [yield 1]: yield 2, k: 0 }; return Object.keys(o).join() + ' ' + o.x; } var it = g(); it.next(); it.next('x'); print(it.next(5).value)" == ["x,k 5"]
 #guard out "async function f() { class D extends (await Promise.resolve(Array)) {} return new D(1, 2).length; } f().then(function (v) { print(v); })" == ["2"]
 
+-- toUpperCase and toLowerCase map every script, with the special casings (2026-11-17: ASCII only before)
+#guard out "print('Maß'.toUpperCase(), 'École'.toUpperCase(), 'ÉCOLE'.toLowerCase())" == ["MASS ÉCOLE école"]
+#guard out "print('\u039F\u0394\u039F\u03A3'.toLowerCase() === '\u03BF\u03B4\u03BF\u03C2', '\u0130'.toLowerCase().length, '\uFB03'.toUpperCase(), 'Abc'.toUpperCase())" == ["true 2 FFI ABC"]
+
 end L4Factoidal.JS.Tests
