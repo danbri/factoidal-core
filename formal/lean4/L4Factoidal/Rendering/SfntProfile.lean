@@ -727,6 +727,13 @@ fonts apart). -/
 def fontsKey (fonts : Array Font) : String :=
   fonts.foldl (fun k f => k ++ f.sha256 ++ ":" ++ f.family ++ ":" ++ toString f.faceIndex ++ ":" ++ toString f.bytes.size ++ ";") ""
 
+/-- The ascent and the descent of `font` (its hhea/OS/2 ascender and descender, as its words
+carry them) in units of `units` per em; none for a font with no units per em. -/
+def fontMetricsIn (units : Float) (font : Font) : Option (Float × Float) :=
+  if font.face.unitsPerEm == 0 then none else
+  let k := units/Float.ofNat font.face.unitsPerEm
+  some (ofInt font.face.ascender*k,-(ofInt font.face.descender)*k)
+
 /-- The memo is only a shortcut: a word that is not in it is shaped when asked for, by
 `shape` (text, pixels, direction), which must give what `shapeFresh fonts` gives.
 The profile is named by the first font of `fonts`; the others draw what it lacks. -/
@@ -757,6 +764,8 @@ def profile (fonts : Array Font) (memo : Memo)
       let web := webFonts family
       if web.isEmpty then none else some (match familyShape with
         | some shape => shape web
-        | none => shapeFreshWith f (web ++ fonts))}
+        | none => shapeFreshWith f (web ++ fonts)),
+    -- the first web font's ascent and descent in the primary font's units (CSS 2.1 §10.8.1)
+    familyMetrics := fun family => (webFonts family)[0]?.bind (fontMetricsIn space.unitsPerEm)}
 
 end L4Factoidal.Rendering.SfntProfile

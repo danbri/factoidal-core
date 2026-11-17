@@ -59,6 +59,11 @@ structure FontProfile where
   when it is not the script's. `none`: the family list names no web font, and
   `shapedWord` serves. -/
   familyWord : String → Option (String → Nat → Option Bool → Except String FontProvider.Word) := fun _ => none
+  /-- The ascent and descent, in this profile's units, of the first font of an element's
+  `font-family` value when that names a web font (the font whose words `familyWord`
+  shapes); `none`: the profile's own (`ascent`, `descent`). CSS 2.1 §10.8.1: the content
+  area and the leading of an inline box are those of its first available font. -/
+  familyMetrics : String → Option (Float × Float) := fun _ => none
 
 def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
   {family := face.family,unitsPerEm := face.unitsPerEm,advance := 0,
@@ -100,10 +105,25 @@ private def spaceWidth (font : FontProfile) (style : Computed) : Except String F
       throw "unsupported painted whitespace glyph in collapsed space profile"
     return word.advance*style.fontSize/font.unitsPerEm
 
+/-- The ascent and the descent in pixels of the first available font of `style` (CSS 2.1
+§10.8.1 A and D): a web font its family names (`familyMetrics`), else the profile's. -/
+def FontProfile.metricsOf (font : FontProfile) (style : Computed) : Float × Float :=
+  let (a,d) := (font.familyMetrics style.fontFamily).getD (font.ascent,font.descent)
+  (a*style.fontSize/font.unitsPerEm,d*style.fontSize/font.unitsPerEm)
+
+/-- Kind: equivalence. Says: a style whose family names no web font has the profile's own
+ascent and descent, scaled to its size (the line metrics before web font metrics). Does not
+say: which fonts a family names. -/
+theorem FontProfile.metricsOf_default (font : FontProfile) (style : Computed)
+    (h : font.familyMetrics style.fontFamily = none) :
+    font.metricsOf style = (font.ascent*style.fontSize/font.unitsPerEm,font.descent*style.fontSize/font.unitsPerEm) := by
+  simp [FontProfile.metricsOf, h]
+
 /-- CSS leading surrounds the actual ascent+descent metric box, which need
 not equal one em (ordinary real fonts often differ). -/
 private def lineLeading (font : FontProfile) (style : Computed) : Float :=
-  (style.lineHeight-(font.ascent+font.descent)*style.fontSize/font.unitsPerEm)/2
+  let (a,d) := font.metricsOf style
+  (style.lineHeight-(a+d))/2
 
 /-- CSS Overflow 3 §3.1: `overflow: hidden` and `overflow: clip` clip the content of a
 box to its padding box (`paddingBox`); the box's own background and border are drawn
@@ -752,7 +772,8 @@ private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x
   match s.background with
   | some c =>
     if !s.visible || width <= 0 then #[] else
-    #[.paint ⟨some source,{geometry := .rect x top width ((font.ascent+font.descent)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
+    let (a,d) := font.metricsOf s
+    #[.paint ⟨some source,{geometry := .rect x top width (a+d),style := {fill := .solid c}}⟩]
   | none => #[]
 
 /-- All inline participants share the line baseline, computed before any glyph
@@ -765,14 +786,16 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   let mut tallBottom : Float := 0
   if let some style := strut then
     let leading := lineLeading font style
-    ascent := font.ascent*style.fontSize/font.unitsPerEm+leading
-    descent := font.descent*style.fontSize/font.unitsPerEm+leading
+    let (a,d) := font.metricsOf style
+    ascent := a+leading
+    descent := d+leading
   for (_,item) in items do
     match item with
     | .word _ s _ _ | .space _ s | .lineBreak s =>
       let leading := lineLeading font s
-      ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
-      descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
+      let (a,d) := font.metricsOf s
+      ascent := max ascent (a+leading)
+      descent := max descent (d+leading)
     -- An atomic box (an inline-block, an inline flex or grid container) sits on the line by
     -- `vertical-align`: on its own baseline (`atomicBaseline`), or by its margin box.
     | .atomic _ s _ h inner => match s.verticalAlign with
@@ -812,9 +835,9 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   -- box starts or ends on this line.
   let fragment := fun (f : InlineBox.Frame Float) (s : Computed) (ended : Bool) =>
     let b := s.borderEdges
-    let scale := s.fontSize/font.unitsPerEm
-    let top := y+ascent-font.ascent*scale-s.padding.top-b.top
-    let height := (font.ascent+font.descent)*scale+s.padding.top+s.padding.bottom+b.top+b.bottom
+    let (a,d) := font.metricsOf s
+    let top := y+ascent-a-s.padding.top-b.top
+    let height := a+d+s.padding.top+s.padding.bottom+b.top+b.bottom
     let left := f.lo
     -- never past the box's right edge by a rounding of the subtraction: the width of a
     -- container that shrinks to fit is read from these boxes
@@ -834,10 +857,13 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     let mut extent : Option (Float × Float) := none
     match item with
     | .word source s text start =>
+      -- the glyphs' frame: the profile's ascent above the baseline (the words are shaped
+      -- in its metrics); the box: the content area of the first available font
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
       let leading := lineLeading font s
+      let area := y+ascent-(font.metricsOf s).1
       if reordered && s.background.isSome then
-        out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) top (← itemWidth font rtl item)}
+        out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) area (← itemWidth font rtl item)}
       match ← font.word s text rtl with
       | none =>
         -- A character this font has no glyph for shows as a question mark.
@@ -846,7 +872,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
         let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,top-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
+        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,area-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
         extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
       | some word =>
         let scale := s.fontSize/word.unitsPerEm
@@ -854,12 +880,12 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let glyphs := word.glyphs.map fun glyph =>
           ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
         let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,top-leading,width,s.lineHeight⟩}
+        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,area-leading,width,s.lineHeight⟩}
         extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
       let leading := lineLeading font s
-      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
+      let top := y+ascent-(font.metricsOf s).1-leading
       out := {out with nodes := if reordered then out.nodes ++ textBackground font source s (x+offset) (top+leading) advance else out.nodes,
                        boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
       extent := some (x+offset,x+offset+advance)
