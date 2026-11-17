@@ -18,7 +18,7 @@
 
 // No host list: no web host goes to the system by itself (owner, 2026-11-16).
 const systemSchemes=['mailto','tel','sms'];
-const builtinPages=new Map([['bookmarks',false],['history',false],['settings',false],['wasm',true],['sparql',true],['console',true],['about',false],['search',true]]);
+const builtinPages=new Map([['bookmarks',false],['history',false],['settings',false],['wasm',true],['sparql',true],['console',true],['about',false],['search',true],['accessibility',false]]);
 const commands=['back','forward','reload','new','close','home','source','theme','zoom','bookmark','unbookmark','pod','sync','sparql-step','classic','encoding','liberal','search-engine'];
 // Commands a link may give only on the Settings page (WebRoute.settingsOnly).
 const settingsOnly=['search-engine'];

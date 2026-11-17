@@ -1127,6 +1127,7 @@ import L4Factoidal.Net.WebSocket
 import L4Factoidal.Net.Subresource
 import L4Factoidal.HTML.ReferrerSource
 import L4Factoidal.HTML.CspSource
+import L4Factoidal.HTML.AccessibleTree
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.ProxyProtocol

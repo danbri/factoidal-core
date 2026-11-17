@@ -19,6 +19,7 @@ import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
 import {fetchedAnswer,scriptFailure,scrollLimitOf,inputFirst,scrollFirst,scriptsFirst,turnSliceSteps,startSliceSteps} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
+import type {AccessibilityAnswer} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
@@ -51,6 +52,7 @@ async function main() {
   let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
+  let accessibilityOn=false;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
@@ -92,6 +94,9 @@ async function main() {
     // events go through the window library's queue as before, from a window that is never shown.
     // Sweeps then run with the screen locked, the display asleep, or on a machine with no display.
     else if(arg==="--offscreen")offscreen=true;
+    // Accessibility trees from the first frame, as with a screen reader attached (a check with no
+    // assistive technology): each tree is a native-html-accessibility line of the trace.
+    else if(arg==="--accessibility")accessibilityOn=true;
     // Browser state in a local LWS server (native_state.ts): on in an interactive window, off in sweeps and checks.
     else if(arg==="--no-state")stateOff=true;
     // The splash at start (WebShell.splashNodes): on in an interactive window; off with
@@ -863,6 +868,15 @@ async function main() {
     outsideDocs.set(page,target);
     return page;
   };
+  // foafnaut:accessibility: the accessibility tree of the page shown, as a page the engine
+  // writes (HTML/AccessibleTree.lean viewPage), for a person who checks what a screen reader gets.
+  const accessibilityURL="foafnaut:accessibility";
+  const accessibilityPage=async(target:string)=>{
+    const source=document,hit=scriptHitRequest(source),options={...hit.options,view:true,url:source.url};
+    const answer=(worker?.alive?await worker.engine.accessibilityTree(source.source,hit.width,hit.height,options)
+      :engine.accessibilityTree(source.source,hit.width,hit.height,options)) as unknown as {source:string};
+    return prepareHTML(lean,target,undefined,answer.source);
+  };
   // Option-Command-J and View > Console: the console of the page shown, in a new tab.
   const openConsole=()=>{const source=document;newTab();leaveAddress();consoleFrom=source;navigate(consoleURL);};
   // The system pointer for a window point: Lean answers from the chrome, the graph model or the
@@ -966,10 +980,40 @@ async function main() {
   const recordPresented=(record:RequestRecord,at:number)=>{
     if(record.document===document){
       presented={document:record.document,width:record.width,height:record.height,scroll:at,options:record.request.options};
+      if(axOn)axDue=true;
       if(!firstShown.has(record.document))firstShown.set(record.document,performance.now());
     }
   };
   const scriptHitRequest=(page:typeof document)=>pointerRequest(page,presented,()=>({width,height,options:requestAt(page,page===document?scroll:0).options}));
+  // Accessibility (HTML/AccessibleTree.lean, native_window.m). Nothing here runs until an
+  // accessibility client asks the window for its elements (event 15) or VoiceOver is on at the
+  // start. Then, after a frame is shown, the engine's tree of the page on screen goes to the
+  // window library as the engine wrote it. For the layout of its last tree the engine answers
+  // `unchanged` and makes none: a scroll only moves the elements.
+  let axOn=false,axDue=false,axBusy=false,axSerial=0,axPage:typeof document|undefined;
+  const axUpdate=async()=>{
+    const page=document;
+    if(!axOn||axBusy||!native||!presented||presented.document!==page)return;
+    axBusy=true;axDue=false;
+    const hit=scriptHitRequest(page),started=performance.now();
+    try{
+      const options={...hit.options,mac:true,since:axPage===page?axSerial:0};
+      const answer=(worker?.alive?await worker.engine.accessibilityTree(page.source,hit.width,hit.height,options)
+        :engine.accessibilityTree(page.source,hit.width,hit.height,options)) as AccessibilityAnswer;
+      if(page!==document){axDue=true;return;}
+      let elements=-1;
+      if(answer.unchanged)native.axSetView(answer.top,answer.scroll);
+      else{
+        elements=native.axSetTree(JSON.stringify(answer));axSerial=answer.serial;axPage=page;
+        for(const say of answer.announce??[])native.axAnnounce(say.text,say.live==="assertive");
+      }
+      trace("native-html-accessibility",{serial:answer.serial,unchanged:!!answer.unchanged,elements,
+        announced:answer.announce?.length??0,ms:Math.round((performance.now()-started)*10)/10});
+    }catch(error){
+      // An engine with no such op: said once, and no more trees are asked for.
+      axOn=false;console.error(`accessibility tree: ${error instanceof Error?error.message:String(error)}`);
+    }finally{axBusy=false;}
+  };
   // The request of the page at scroll `at`: as it is on screen while a change waits for the
   // scroll to pause (pageChanged), else as it is now.
   const requestFor=(at:number)=>{
@@ -1304,7 +1348,7 @@ async function main() {
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -1368,6 +1412,8 @@ async function main() {
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
     native.setInputTrace(traceInput);native.setHistory(history.canBack,history.canForward);
+    // VoiceOver already on (or a client already asked): accessibility trees from the first frame.
+    axOn=accessibilityOn||native.axWanted();
     // The command sweep copies text. It gives the clipboard back unless the person
     // copied something else meanwhile.
     const savedClipboard=commands||pasted?native.readClipboard():"";
@@ -1683,6 +1729,8 @@ async function main() {
         // R alone reloads, except where the page takes keys (its text goes to the page).
         if(event.kind===5&&event.a===15&&!pageTakesKeys())windowCommand(8);
         if(event.kind===10)windowCommand(event.a);
+        // An accessibility client asked the window for its elements: trees from now on.
+        if(event.kind===15&&!axOn){axOn=true;axDue=true;}
         if(event.kind===2){
           // Hit coordinates and boxes belong to the successfully presented frame.
           // One small Lean call: the control or the link pressed, and what the composite darkens.
@@ -1744,7 +1792,7 @@ async function main() {
       if(firstFrameAt===undefined&&canPresent())return 0;
       const busy=(dirty&&canPresent())||animationDue||!!rendering||!!shifting||shiftPending||pressPresent||!!pressed||!!holding||scriptBusy
         ||loading||!!candidate||refusing>0||!!prefetching||graphBusy()||!!(document as Page).graph?.clock||netQueue.length>0||netInFlight>0
-        ||sockets.size>0||(worker?.inFlight??0)>0||!!sweep||(!!commands&&(commands.length>0&&now+2>=stepAt));
+        ||sockets.size>0||(worker?.inFlight??0)>0||axBusy||!!sweep||(!!commands&&(commands.length>0&&now+2>=stepAt));
       if(busy){busyAt=now;idleEndAt=undefined;return 0;}
       // GPU work not yet answered for: the gate asks only from a turn and its answer is a timer,
       // and the window's wait blocks the thread, so the loop does not wait past the ask's due time
@@ -1891,6 +1939,7 @@ async function main() {
       if(animationDue&&!rendering&&performance.now()>=gpuHoldUntil){animationDue=false;dirty=true;}
       // The scroll paused (or held the change long enough): the page's change is drawn now.
       if(pageChanged!==undefined&&(firstShown.has(document)||!rendering)&&!scrollHolds(performance.now())&&!scriptsHold(performance.now())){pageChanged=undefined;dirty=true;}
+      if(axDue&&!axBusy&&!rendering)axUpdate();
       if(dirty&&canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});

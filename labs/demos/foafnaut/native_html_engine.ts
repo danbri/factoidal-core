@@ -7,6 +7,9 @@ import createModule from "./.build/native-html/runtime/web-render.mjs";
 import {traceBackends} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
+/** The answer of accessibilityTree: the nodes in tree order, or `unchanged` for the layout of `since`. */
+export type AccessibilityAnswer={serial:number;top:number;scroll:number;unchanged?:boolean;
+  nodes?:Record<string,unknown>[];announce?:{live:string;text:string}[]};
 /** The answer of findInPage: matches, the current one from 0, and its rectangles [x,y,w,h] in page rows. */
 /** What the desktop program reports to about:foafnaut: rows to show, and its build record. */
 export type AboutHost={rows?:[string,string][];version?:string;commit?:string};
@@ -550,6 +553,11 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // the current match (from 0) and its rectangles in page rows.
     findInPage:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       documentCall(source,{...options,op:"findInPage"},width,height) as FindAnswer,
+    // The accessibility tree of the page of a frame's request (HTML/AccessibleTree.lean): asked
+    // only while assistive technology is attached. `options.since` is the `serial` of the last
+    // answer: the engine then answers `unchanged` for the same layout and makes no tree.
+    accessibilityTree:(source:string,width:number,height:number,options:Record<string,unknown>)=>
+      documentCall(source,{...options,op:"accessibilityTree"},width,height) as AccessibilityAnswer,
     // about:foafnaut, written by the engine (WebAbout) from its own build facts; `host` is
     // what this program reports, which the page shows as reported and does not check.
     aboutPage:(host:AboutHost)=>(documentCall("",{op:"aboutPage",host}) as {source:string}).source,

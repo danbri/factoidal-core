@@ -50,7 +50,7 @@ argument after a slash (`foafnaut:sparql/q=...`, `foafnaut:wasm/NAME.wasm#export
 The graph page is `graphURL`: the graph app draws it. -/
 def builtinPages : List (String × Bool) :=
   [("bookmarks",false),("history",false),("settings",false),("wasm",true),("sparql",true),("console",true),("about",false),
-   ("search",true)]
+   ("search",true),("accessibility",false)]
 
 /-- The FOAF graph is a page of the browser, drawn by the graph app (issue 1268). -/
 def graphURL : String := "foafnaut:graph"
@@ -514,6 +514,7 @@ private def native : Site := {pages := "file:///lab/pages/",files := true}
 #guard route hub here "foafnaut:sparql/q=ASK+%7B%7D" == .page "sparql" "foafnaut:sparql/q=ASK+%7B%7D"
 #guard route hub here "foafnaut:wasm" == .page "wasm" "foafnaut:wasm"
 #guard route hub here "foafnaut:console" == .page "console" "foafnaut:console"
+#guard route hub here "foafnaut:accessibility" == .page "accessibility" "foafnaut:accessibility"
 #guard route hub here "foafnaut:console/2" == .page "console" "foafnaut:console/2"
 #guard route hub here "foafnaut:liberal/on" == .command "liberal" "on"
 #guard route hub here "foafnaut:theme/arcade" == .command "theme" "arcade"
@@ -778,7 +779,7 @@ theorem builtin_resolves (site : Site) (base : String) :
     ∀ p ∈ builtinPages, route site base ("foafnaut:" ++ p.1) = .page p.1 (pageURL site p.1) := by
   intro p hp
   simp only [builtinPages, List.mem_cons, List.not_mem_nil, or_false] at hp
-  rcases hp with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+  rcases hp with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
     simp only [route, analyze_foafnaut, decide, foafnautRoute]
   · rw [show builtin ((trimEnd "bookmarks".toList).filter (!isTabOrNewline ·)) = .page "bookmarks" none by decide]; rfl
   · rw [show builtin ((trimEnd "history".toList).filter (!isTabOrNewline ·)) = .page "history" none by decide]; rfl
@@ -788,6 +789,7 @@ theorem builtin_resolves (site : Site) (base : String) :
   · rw [show builtin ((trimEnd "console".toList).filter (!isTabOrNewline ·)) = .page "console" none by decide]; rfl
   · rw [show builtin ((trimEnd "about".toList).filter (!isTabOrNewline ·)) = .page "about" none by decide]; rfl
   · rw [show builtin ((trimEnd "search".toList).filter (!isTabOrNewline ·)) = .page "search" none by decide]; rfl
+  · rw [show builtin ((trimEnd "accessibility".toList).filter (!isTabOrNewline ·)) = .page "accessibility" none by decide]; rfl
 
 /-- `foafnaut:graph` runs the graph app. -/
 theorem graph_resolves (site : Site) (base : String) : route site base graphURL = .graph := by

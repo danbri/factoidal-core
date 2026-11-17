@@ -70,6 +70,28 @@ const modifiers=event=>(event.shiftKey?1:0)|(event.metaKey?2:0)|(event.altKey?4:
 const now=()=>performance.timeOrigin+performance.now();
 const send=message=>worker.postMessage(message.type==='start'||message.type==='hello'?message:{...message,t:now()});
 darkQuery?.addEventListener?.('change',event=>send({type:'dark',dark:event.matches}));
+// Screen reader support (accessibility-mirror.mjs). A page can not see whether a screen reader
+// runs, so a person turns it on with the first control of the page (it stays on for the next
+// visit: localStorage; ?accessibility=1 also turns it on). Only then is the mirror module
+// loaded and the worker asked for the engine's accessibility trees.
+const axSwitch=document.querySelector('#ax-switch'),axRoot=document.querySelector('#ax');
+let mirror,axOnNow=false;
+async function axSet(on){
+  if(!axRoot)return;
+  if(on&&!mirror){
+    const {createMirror}=await import('./accessibility-mirror.mjs');
+    // A screen reader's activation of an element is a press and release at its centre.
+    mirror=createMirror(axRoot,(x,y)=>{send({type:'press',pointer:'mouse',x,y});send({type:'release',scrolled:false,x,y});});
+  }
+  axOnNow=on;
+  if(!on)mirror?.clear();
+  axRoot.hidden=!on;
+  axSwitch?.setAttribute('aria-pressed',String(on));
+  try{if(on)localStorage.setItem('foafnaut-accessibility','1');else localStorage.removeItem('foafnaut-accessibility');}catch{/* no storage: on for this visit */}
+  send({type:'accessibility',on});
+}
+axSwitch?.addEventListener('click',()=>axSet(!axOnNow));
+const axSaved=()=>{try{return localStorage.getItem('foafnaut-accessibility')==='1';}catch{return false;}};
 window.foafnautThread=worker instanceof Worker?'worker':'page';
 let focused=false,moved=undefined,edgeZone=0,swipeId=0,holdMs=0;
 // The address menu's action table for the frame on screen (WebShell.menuActions): each
@@ -138,6 +160,14 @@ worker.onmessage=({data})=>{
   // phase for the touch under way (WebGesture.lean).
   if(data.type==='gestures'){edgeZone=data.edgeZone;holdMs=data.holdMs??0;}
   if(data.type==='swipe'&&moved?.edge?.id===data.id)swipeAnswer(data.phase);
+  // The engine's accessibility tree of the page on screen (browser-worker.mjs axSend).
+  if(data.type==='accessibility'&&mirror&&axOnNow){
+    if(data.error){axSet(false);return;}
+    if(data.answer.unchanged)mirror.move(data.answer.top,data.answer.scroll,scale());
+    else mirror.apply(data.answer,scale());
+    // For tests: what the mirror holds.
+    window.foafnautAccessibility={elements:mirror.size,serial:data.answer.serial,unchanged:!!data.answer.unchanged,ms:data.ms};
+  }
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
   if(data.type==='print-status'&&data.preparing){note.textContent='Preparing pages\u2026';note.hidden=false;}
   if(data.type==='print')printPages(data);
@@ -184,6 +214,7 @@ function begin(surface){
 }
 const canTransfer=worker instanceof Worker&&typeof canvas.transferControlToOffscreen==='function'&&typeof OffscreenCanvas==='function';
 if(canTransfer)send({type:'hello',page:hubAddress()?undefined:query.get('page')});else begin(false);
+if(query.get('accessibility')==='1'||axSaved())axSet(true);
 addEventListener('resize',()=>{fling.stop();send({type:'resize',...size()});});
 // Back and forward in the host browser: the engine shows that address, not as a new entry.
 let fromHost=false;

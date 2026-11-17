@@ -2463,3 +2463,5 @@ L4Factoidal_OWL_Profiles_cesKey  # (b) nesting of one class expression; the loop
 L4Factoidal_OWL_Profiles_oceKey  # (b) nesting of one class expression (the optional class of a cardinality)
 L4Factoidal_OWL_Struct_FromRdf_Ctx_dr  # (c) fuel starts at maxNesting = 512 and decreases at each nested data range; operands visited by List.mapM
 L4Factoidal_OWL_Struct_FromRdf_Ctx_ceMarkers  # (c) fuel starts at maxNesting = 512 and decreases at each nested class expression; operands visited by List.mapM
+# --- Added 2026-11-17, the accessibility tree (HTML/AccessibleTree.lean) ---
+L4Factoidal_HTML_AccessibleTree_walk*  # (c) one call per child of a node with less fuel; the fuel is maxDepth (512), so the depth is at most 512 (proved: tree_depth)
