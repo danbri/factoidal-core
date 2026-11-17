@@ -358,13 +358,16 @@ Deno.test("gate: a prior far too high holds no frame for long (sleep capped, ear
   const gate=createGpuGate(queue,1,undefined,0.8,undefined,{answersAtReturn:true});
   gate.turn();
   // A scene of 1340 units that the GPU draws at once: the prior says 1072 ms.
+  const submitted=performance.now();
   gate.after(1340);
   const due=gate.dueIn();
   assert(due!==null&&due<=100,`first heavy frame due in ${due} ms`);
   for(let k=0;k<100&&gate.inFlight;k++){await sleep(5);gate.turn();}
   assert.equal(gate.inFlight,0);
-  // Done by the ask about 100 ms after the submission: at most 100/1340 ms per unit.
-  assert(gate.stats.msPerUnit<=0.08,`rate after an early ask ${gate.stats.msPerUnit}`);
+  // Done by the ask about 100 ms after the submission: at most 100/1340 ms per unit, or the
+  // time the ask really came at on a slow machine (timers overshoot on busy CI runners).
+  const bound=Math.max(0.08,(performance.now()-submitted)/1340);
+  assert(gate.stats.msPerUnit<=bound,`rate after an early ask ${gate.stats.msPerUnit} > ${bound}`);
   gate.after(1340);
   const next=gate.dueIn();
   assert(next!==null&&next<=120,`next heavy frame due in ${next} ms`);
