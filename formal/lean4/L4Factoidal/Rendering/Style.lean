@@ -2636,6 +2636,18 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     if let some b := uaUnicodeBidi n.lname dirAttr (attrValue n "type").toLower then
       initial := {initial with unicodeBidi := b}
   let preHint := initial
+  -- MathML Core §2.1.2 and §2.1.3: on a MathML element `dir` is a presentational hint for
+  -- `direction` (`ltr` or `rtl`, ASCII case-insensitive; any other value none), and
+  -- `mathcolor`, `mathbackground` and `mathsize` for `color`, `background-color` and
+  -- `font-size`. The deprecated MathML 3 attributes (`color`, `background`, `fontsize` ...)
+  -- are not mapped.
+  if n.ns == some DOM.mathmlNS then
+    let dirAttr := (attrValue n "dir").toLower
+    if dirAttr == "rtl" then initial := {initial with direction := .rtl}
+    else if dirAttr == "ltr" then initial := {initial with direction := .ltr}
+    for (attr, property) in [("mathcolor", "color"), ("mathbackground", "background-color"), ("mathsize", "font-size")] do
+      let value := attrValue n attr
+      if !value.isEmpty then initial := applyOrKeep initial ⟨property, value, false⟩
   if n.ns == some DOM.htmlNS || n.ns.isNone then
     initial := bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))
   -- HTML §15.1: presentational hints sit above the user agent's rules (below the author's):
