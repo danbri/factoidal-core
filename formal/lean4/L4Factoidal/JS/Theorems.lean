@@ -182,6 +182,20 @@ theorem toKey_num {H : Type} (n : Nat) (x : Float) : toKey (H := H) (n + 1) (.nu
 #print axioms arrayIndex?_keyOfNum
 #print axioms getV_typedElemNum
 
+/-- **Kind: refinement.** `vmStash`, a value that needs no evaluation, then `vmTake`, is `vmSettle`
+with the registers kept: the same heap and the same registers for the continuation, for every
+heap. The register machine's read of a typed array's element uses it. -/
+theorem vmStash_pure_vmTake {H α : Type} (regs : Array Value) (fregs : FloatArray) (top : Nat) (w : Value)
+    (k : Value → Array Value × FloatArray → JSM H α) :
+    (do vmStash regs fregs top
+        let v ← (pure w : JSM H Value)
+        let r ← vmTake
+        k v r) = (do vmSettle top; k w (regs, fregs)) := by
+  funext h
+  rfl
+
+#print axioms vmStash_pure_vmTake
+
 /-! ## ToNumber of a Number (the `toNumQ` form of `JS/Interp.lean`) -/
 
 /-- ToNumber of a Number is that Number, with any fuel left. -/

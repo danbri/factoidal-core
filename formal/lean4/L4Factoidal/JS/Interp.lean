@@ -2008,6 +2008,12 @@ def vmMaxDepth : Nat := 20000
 @[inline] def vmTake : M (Array Value × FloatArray) :=
   modifyGet fun h => ((h.vmRegs, h.vmF), { h with vmRegs := #[], vmF := .empty })
 
+/-- What `vmStash regs fregs top` followed by `vmTake` leaves in the heap, when the caller keeps
+the registers: one update of the record, with no array moved in and out
+(`vmStash_pure_vmTake` in `JS/Theorems.lean`). -/
+@[inline] def vmSettle (top : Nat) : M Unit :=
+  modify fun h => { h with vmRegs := #[], vmF := .empty, vmTop := top }
+
 /-- A register as a language value (boxing a number). -/
 @[inline] def vmRd (regs : Array Value) (fregs : FloatArray) (i : Nat) : Value :=
   match regs[i]! with
@@ -11125,14 +11131,23 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
           | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
           | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
         | _ =>
-          vmStash regs fregs (bp + code.nregs)
-          let v ← (match typedElemNum (← get) id x with
-            | .hole => getV n b (keyOfNum x)
-            | w => pure w)
-          let (regs, fregs) ← vmTake
-          match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          -- a typed array's element by its number is read from the heap before the registers are
+          -- stashed: with the stash and the take around it the compiled loop took the heap record
+          -- apart and built it again for each read. `vmSettle` leaves the heap as they would.
+          match typedElemNum (← get) id x with
+          | .hole =>
+            vmStash regs fregs (bp + code.nregs)
+            let v ← getV n b (keyOfNum x)
+            let (regs, fregs) ← vmTake
+            match (v) with
+            | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+            | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x =>
+            vmSettle (bp + code.nregs)
+            vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv =>
+            vmSettle (bp + code.nregs)
+            vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
       | _, _ =>
         let kv := vmRd regs fregs (bp + i)
         vmStash regs fregs (bp + code.nregs)
