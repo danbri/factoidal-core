@@ -144,6 +144,17 @@ structure Pre where
   live : L4Factoidal.DOM.Live.Live := {}
   deriving Inhabited
 
+/-- A navigation of the page itself that the page asked for and the embedder makes: a form
+submitted (`HTML.FormSubmission.plan`, DomOps op 170). The method is `get` or `post`; a POST
+has its body and the body's type. `target` is `_blank` for a new top-level page, else "". -/
+structure PageNavigation where
+  url : String
+  method : String := "get"
+  body : String := ""
+  contentType : String := ""
+  target : String := ""
+  deriving Repr, BEq, Inhabited
+
 /-- The host's state: the arena and what the page asked for. -/
 structure State where
   dom : Dom
@@ -187,6 +198,10 @@ structure State where
   /-- Navigations the page started and the embedder has not answered: an `iframe` and
   the URL of its `src` ("" for its initial `about:blank`, whose `load` event is due). -/
   navigations : Array (Nat × String) := #[]
+  /-- A navigation of the page itself that the embedder has not been told of (a turn says it
+  once, as `navigate`). The last one asked for wins, as a later navigation of a navigable
+  cancels an earlier one that has not been made. -/
+  pageNavigation : Option PageNavigation := none
   /-- The page's live ranges and NodeIterators (`DOM.Live`): each command moves them, only
   when there is one (`DOM.Live.Live.idle`). A range or iterator is its index. -/
   live : L4Factoidal.DOM.Live.Live := {}

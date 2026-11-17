@@ -58,7 +58,11 @@ argument for `start`:
   types it), or `mac` (a macOS virtual key code) or `key` (a DOM key value), with
   `modifiers` (1 Shift, 2 Command, 4 Option, 8 Control). The turn's `keyDefault` says
   whether the host may scroll for the key (its `keydown` was not canceled and it went to
-  no text control or editing host).
+  no text control or editing host). A press gives the focus to the focusable area there (as
+  `actions` does), and Enter in a field of a form submits it (`DOM.FormControls.implicitSubmission`).
+- A turn whose page asked to navigate itself (a form submitted, GET or POST:
+  `HTML.FormSubmission.plan`, DomOps op 170) has `navigate` (`url`, `method`, and for POST
+  `body` and `contentType`; `target` `_blank` for a new page), once; the embedder loads it.
 - `webdriverStart` (`address`, `port`, `platform`, `dangerouslyEnable`): a WebDriver
   endpoint (`WebDriver.Gate.start`: off unless `dangerouslyEnable`, which only the test
   runner's `--dangerously-enable-webdriver-endpoint` sends; loopback only); answers its
@@ -509,10 +513,12 @@ def netDrained (w : WebApi.State) : WebApi.State :=
 /-- The session after a turn answer: the GPU commands it carried are the host's now. -/
 def drained (s : Page.Session) : Page.Session :=
   { s with host := { s.host with dom := { s.host.dom with gpuOut := #[], canvas := s.host.dom.canvas.sent,
-                                                           gpu := s.host.dom.gpu.newFrame },
+                                                           gpu := s.host.dom.gpu.newFrame, pageNavigation := none },
                                   web := netDrained s.host.web } }
 
 def drainedLean (s : LeanJS.Session) : LeanJS.Session :=
+  -- the page's own navigation is said once (`navFields`)
+  let s := if s.host.dom.pageNavigation.isNone then s else s.setHost { s.host with dom := { s.host.dom with pageNavigation := none } }
   let h := s.host
   let web := if h.web.net.outbox.isEmpty && h.web.net.cancels.isEmpty && h.web.net.syncAnswers.isEmpty then h.web else netDrained h.web
   if h.dom.gpuOut.isEmpty && h.dom.canvas.drawn.isEmpty && h.web.net.outbox.isEmpty && h.web.net.cancels.isEmpty && h.web.net.syncAnswers.isEmpty then s else
@@ -891,6 +897,17 @@ def hostNavigations (h : Page.Host) : JSON.Json :=
   .array ((h.dom.navigations.filter fun (_, u) => !u.isEmpty && !leanNavigation u).toList.map fun (el, u) =>
     .object [("nodeId", num el), ("url", .string u)])
 
+/-- The navigation of the page itself that a turn asked for (a form submitted:
+`Hosts.Dom.State.pageNavigation`), as `navigate` (`url`, `method`, and for POST `body` and
+`contentType`; `target` `_blank` for a new page); said once (`navReported`). -/
+def navFields (h : Page.Host) : List (String × JSON.Json) :=
+  match h.dom.pageNavigation with
+  | none => []
+  | some n =>
+    [("navigate", .object ([("url", .string n.url), ("method", .string n.method)] ++
+      (if n.method == "post" then [("body", .string n.body), ("contentType", .string n.contentType)] else []) ++
+      (if n.target.isEmpty then [] else [("target", .string n.target)])))]
+
 /-- The frame fields of a turn answer, only when there is something to say: `navigations`
 for the embedder, and `frameLoads`, the `srcdoc` documents Lean loaded in the turn. -/
 def frameFields (h : Page.Host) (loads : Nat) : List (String × JSON.Json) :=
@@ -1252,7 +1269,7 @@ def leanTurn (held : Held) (id : Nat) (before : Before) (a : LeanJSWorkers.Agent
   let view := if held.startTodo.isSome then { view with quiet := false, moveWake := some s.host.loop.clock } else view
   let (answer, marks) := turnAnswerOf id before view marks full ns
     ([("engine",.string "bubblepop")] ++ (if held.startTodo.isSome then [("startMore", .bool true)] else []) ++
-      frameFields s.host loads ++ workers ++ netFields s.host ++ inputFields s)
+      frameFields s.host loads ++ workers ++ netFields s.host ++ inputFields s ++ navFields s.host)
   ({ held with leanSession := some (id, inputReported (drainedLean s), marks), leanWorkers := a.w, leanFrames := frames, frameScan := scan }, .ok answer)
 
 /-- The end of a BubblePopJS start from the session after its classic scripts: the module
@@ -1718,7 +1735,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s
         let fEnt ← frameEntropyIf id s.limits.entropy s.host.dom.dom 0
         let (s, frames, scan) := pumpFrames (pageFrameOps m s.limits fEnt) s #[] 0
-        let (answer, marks) := turnAnswer id {} s {} true ns (frameFields s.host loads ++ netFields s.host)
+        let (answer, marks) := turnAnswer id {} s {} true ns (frameFields s.host loads ++ netFields s.host ++ navFields s.host)
         let s := drained s
         return ({ held with session := some (id, s, marks), leanSession := none, startTodo := none, nextSession := id + 1, layoutRequest := layoutOf request, frames, leanFrames := #[], frameScan := scan }, .ok answer)
   | _ =>
@@ -1752,7 +1769,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
               let fEnt ← frameEntropyIf id s'.limits.entropy s'.host.dom.dom held.frameScan
               pure (pumpFrames (pageFrameOps m s'.limits fEnt) s' held.frames held.frameScan)
             | none => pure (s', held.frames, held.frameScan)
-          let (answer, marks) := turnAnswer id before s' marks full ns (frameFields s'.host loads ++ netFields s'.host)
+          let (answer, marks) := turnAnswer id before s' marks full ns (frameFields s'.host loads ++ netFields s'.host ++ navFields s'.host)
           return ({ held with session := some (id, drained s', marks), frames, frameScan := scan, syncCache := #[], pendingSync := none }, Except.ok answer)
       match action with
       | "click" =>
