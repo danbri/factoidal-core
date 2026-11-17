@@ -518,14 +518,22 @@ def meterValue (d : Dom) (el : NodeId) (which : Nat) : Float :=
   | _ => clamp mn mx ((num "optimum").getD ((mn + mx) / 2))
 
 /-- The `tabIndex` default (HTML §6.6.3): 0 for the elements that are focusable areas by
-default, else -1. -/
+default, else -1. A MathML element: 0 for `a` (MathML Core §2.1.3: a link, with or without
+`href`), else -1. -/
 def tabIndexDefault (d : Dom) (el : NodeId) : Int :=
   let x := d.get el
   let n := x.lname
-  if ["button", "input", "select", "textarea", "iframe", "frame", "object", "embed"].contains n then 0
+  if x.ns == some mathmlNS then (if n == "a" then 0 else -1)
+  else if ["button", "input", "select", "textarea", "iframe", "frame", "object", "embed"].contains n then 0
   else if (n == "a" || n == "area") && (attr d el "href").isSome then 0
   else if n == "summary" then 0
   else -1
+
+/-- Kind: conformance. Says: a MathML element's `tabIndex` default is 0 for `a` and -1 for every
+other MathML element, whatever its attributes (an `href` makes no other element focusable). -/
+theorem tabIndexDefault_mathml (d : Dom) (el : NodeId) (h : (d.get el).ns = some mathmlNS) :
+    tabIndexDefault d el = if (d.get el).lname == "a" then 0 else -1 := by
+  simp [tabIndexDefault, h]
 
 /-- The `draggable` default (HTML §6.11.7, the auto state): true for an `img` element and
 for an `a` element with an `href` attribute. -/
