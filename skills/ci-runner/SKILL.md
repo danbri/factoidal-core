@@ -30,7 +30,8 @@ branch's macOS engine on request.
 What runs macOS:
 
 - **the Mac release lane** (owner rule 2026-11-16: for all tangible progress there is always a Mac build of main
-  done or building). `mac-release.yml` checks every 15 minutes whether main's head has a Mac release
+  done or building). `mac-release.yml` checks (every 15 minutes, see "Poll triggers" below) whether main's head
+  has a Mac release
   (`build-<12 hex>-foafnaut-darwin-arm64`, what `foafnaut --update` installs). When it has none and no lane run is
   waiting or building it, it dispatches `build.yml` with an empty `core_ref`, into the concurrency group
   `build-factoidal-main` (with the hourly poll): one running run and the newest pending one. A pending run resolves
@@ -69,13 +70,29 @@ once main has been ahead of the Mac release for 90 minutes. The wait is a Linux 
 when you merge or give up:
 `gh pr edit <n> -R danbri/factoidal-core --add-label landing` / `--remove-label landing`.
 
+### Poll triggers
+
+GitHub drops most scheduled events in danbri/factoidal-builds (2026-11-16: build.yml's hourly poll ran 3 times in
+24 h; mac-release.yml's 15-minute cron did not fire once in its first 4 hours). So the poll has three triggers:
+
+- `workflow_run`: the end of a run of build.yml, Branch WPT check, Foafnaut Linux engine or Release tests. Such a poll
+  ends at once when another poll was made in the last 10 minutes, except after a main-lane build;
+- the Mac runner's `tick.sh` (every 5 minutes, all day) dispatches `mac-release.yml` when no poll was made for 20
+  minutes and none is waiting or running;
+- the cron, when GitHub sends it.
+
+Don't rely on `schedule:` alone for anything that must run; give it a `workflow_run` or dispatch fallback.
+
 ### Status
 
 `latest/darwin-status.json` in factoidal-builds: main's head, the newest Mac release (by commit), `lag_min` (since
 main moved past it), the lane's runs and the last decision (with any wait: "waited 12 min for #550, #525"). Read it
 with `gh api repos/danbri/factoidal-builds/contents/latest/darwin-status.json -H 'Accept: application/vnd.github.raw'`.
 The poll warns in its run when main has been ahead for more than 2 hours, and the Mac runner's `tick.sh` copies each
-lane dispatch and that alert (at most hourly) into the coordination log as `macalways-ci:` lines.
+lane dispatch and that alert (at most hourly) into the coordination log as `macalways-ci:` lines. The alert's lag
+is computed fresh from the GitHub API (`ctl/darwin-status.py status`, at most every 10 minutes), not taken from the
+committed JSON, whose `lag_min` is only as new as the last poll that changed it (`behind_since` is the field to
+compute from).
 
 A nightly failure opens (or comments on) an issue labelled `nightly` in factoidal-builds; a green night comments and
 closes it. The `nightly-report` job prints one line for the coordination log. **A nightly macOS failure on main is fixed

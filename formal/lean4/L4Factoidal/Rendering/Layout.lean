@@ -338,16 +338,36 @@ def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available
       | none,none => Ratio.autoSize rn rd (LU.ofPx (max 0 ((intrinsic.map Prod.fst).getD 300))) minW maxW minH maxH)
     (LU.toPx size.1,LU.toPx size.2)
 
-/-- A replaced element with no decoded content here: a `canvas`, whose natural size is
-its `width` and `height` attributes, 300 by 150 without them (HTML §4.12.5.1). Its box is
-laid out as a picture's is, and is empty. -/
-def blankReplaced (n : DOM.Node) : Option (Float × Float) :=
+/-- A replaced element with no decoded content here, and its natural size when it has one.
+A `canvas` has the natural size of its `width` and `height` attributes, 300 by 150 without
+them (HTML §4.12.5.1). An `iframe`, and a `video` with no frame or poster drawn, are
+replaced elements (HTML §15.4.1) with no natural size and no natural ratio: `some none`,
+so `replacedSize` gives them the default object size, 300 by 150 (CSS Images 3 §4.1), and
+a `width` without a `height` keeps the default height (as `video-intrinsic-width-height`
+of WPT says). Their boxes are laid out as a picture's are, and are empty: the engine does
+not draw a child document or a video frame in its container yet. -/
+def blankReplaced (n : DOM.Node) : Option (Option (Float × Float)) :=
   if DOM.Dom.isHtmlElement n "canvas" then
     let whole := fun (name : String) (fallback : Nat) =>
       let digits := ((CSS.attrValue n name).toList.dropWhile fun c => c == ' ' || c == '\t' || c == '\n').takeWhile Char.isDigit
       if digits.isEmpty || digits.length > 5 then fallback else digits.foldl (fun k c => k*10+(c.toNat-48)) 0
-    some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150))
+    some (some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150)))
+  else if DOM.Dom.isHtmlElement n "iframe" || DOM.Dom.isHtmlElement n "video" then some none
   else none
+
+/-- Kind: property. Says: an `iframe` is a replaced box with no natural size. -/
+theorem blankReplaced_iframe (n : DOM.Node) (h : DOM.Dom.isHtmlElement n "iframe" = true) :
+    blankReplaced n = some none := by
+  have hl : n.lname = "iframe" := by simp [DOM.Dom.isHtmlElement] at h; exact h.2
+  have hc : DOM.Dom.isHtmlElement n "canvas" = false := by simp [DOM.Dom.isHtmlElement, hl]
+  simp [blankReplaced, hc, h]
+
+/-- Kind: value. Says: a replaced box with no natural size, no `width` or `height` and no
+limits is 300 by 150, the default object size (CSS Images 3 §4.1). -/
+theorem replacedNatural_default (s : Computed) (a : Float) (hw : s.width = .auto) (hh : s.height = .auto)
+    (hmw : s.minWidth = .auto) (hxw : s.maxWidth = .auto) (hmh : s.minHeight = .auto) (hxh : s.maxHeight = .auto) :
+    replacedNatural s none a = (max 0 (max 0 (min unbounded 300)), max 0 (max 0 (min unbounded 150))) := by
+  simp [replacedNatural, hw, hh, hmw, hxw, hmh, hxh]
 
 /-- The intrinsic size of a picture: its pixels, one CSS pixel each; for a picture held
 reduced, the size of the image it was made from (`natural`). -/
@@ -463,10 +483,10 @@ Chinese, Japanese and Korean text wraps between its characters as in a browser (
 §5.1, `word-break: normal`), and a table cell's narrowest width is a character, not the
 sentence. Each piece with its offset in code points. A word with no `wideChar` is one
 piece, with no UAX 14 pass. -/
-def wordPieces (word : String) : List (Nat × String) :=
+def wordPieces (word : String) (mode : Unicode.LineBreak.Mode := .strict) : List (Nat × String) :=
   let cs := word.toList.toArray
   if !cs.any (fun c => wideChar c.toNat) then [(0, word)] else Id.run do
-    let cuts := (Unicode.LineBreak.breaks cs).filter fun i =>
+    let cuts := (Unicode.LineBreak.breaks cs mode).filter fun i =>
       i < cs.size && (wideChar cs[i-1]!.toNat || wideChar cs[i]!.toNat)
     let mut out : List (Nat × String) := []
     let mut from_ := 0
@@ -483,6 +503,16 @@ def wordPieces (word : String) : List (Nat × String) :=
 #guard (wordPieces "こんにちは世界・カタカナ・漢字").map (·.2) ==
   ["こ", "ん", "に", "ち", "は", "世", "界・", "カ", "タ", "カ", "ナ・", "漢", "字"]
 #guard (wordPieces "Unicode漢字").map (·.1) == [0, 7, 8]
+-- `line-break: normal` lets a small kana start a line (CSS Text 3 §5.3)
+#guard (wordPieces "文文ぁ字" .normal).map (·.2) == ["文", "文", "ぁ", "字"]
+#guard (wordPieces "文文ぁ字").map (·.2) == ["文", "文ぁ", "字"]
+
+/-- The UAX 14 tailoring of a box's `line-break`. -/
+def lineBreakMode (s : Computed) : Unicode.LineBreak.Mode :=
+  match s.pos.lineBreak with
+  | .auto | .strict => .strict
+  | .normal => .normal
+  | .loose => .loose
 
 private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
@@ -495,7 +525,7 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
   for c in text.toList do
     if [' ','\n','\r','\t'].contains c || c.toNat == 12 then
       if !word.isEmpty then
-        for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
+        for (off, piece) in wordPieces word (lineBreakMode style) do result := .word id style piece (start+off) :: result
         word := ""
       if style.preformatted then
         -- CSS Text 3 §4.1.1 `white-space: pre`: each space and tab stays, and each newline breaks.
@@ -522,7 +552,7 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
       column := column+1
     index := index+1
   if !word.isEmpty then
-    for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
+    for (off, piece) in wordPieces word (lineBreakMode style) do result := .word id style piece (start+off) :: result
   return result.reverse
 
 /-- What an `img` with no picture shows: its `alt` text in brackets, nothing for
@@ -585,7 +615,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
       return #[.replaced id s ow oh nodes]
     -- A `canvas`: a replaced box of its natural size, with nothing drawn in it here.
     if let some size := blankReplaced n then
-      let (w,h) := replacedSize s (some size) available
+      let (w,h) := replacedSize s size available
       let (ow,oh,nodes) := replacedBox id s w h (fun _ _ => [])
       return #[.replaced id s ow oh nodes]
     -- An image that is missing, broken or refused stands as its description, and stays a link.
@@ -1700,7 +1730,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
         let w := (replacedSize s (some picture.size) 0).1
         return (compressible w+add,w+add)
       if let some size := blankReplaced n then
-        let w := (replacedSize s (some size) 0).1
+        let w := (replacedSize s size 0).1
         return (compressible w+add,w+add)
       if n.ns == some DOM.svgNS then
         let w := (← svgSize n s 0).1+add
@@ -1744,6 +1774,43 @@ def renderedLegend (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
         (dom.get k).type == .element && (dom.get k).lname == "legend" && (styles[k]!).display != .none &&
           !(styles[k]!).pos.isAbsolute && (styles[k]!).pos.float == .none) == some id
   | none => false
+
+/-- The fraction of an anchor box's size, from its top or left edge, at which the side an
+`anchor()` names lies (CSS Anchor Positioning 1 §3.2), for an inset of the horizontal axis or
+the vertical one, on the far side (`right`, `bottom`) or not. `start` and `end` are of the
+containing block's direction (`rtl`), `self-start` and `self-end` of the box's own
+(`selfRtl`); a percentage is from the start side. `none`: a side of the other axis. -/
+def anchorFraction (side : AnchorSide) (horizontal far rtl selfRtl : Bool) : Option Float :=
+  let flip := fun (f : Float) (r : Bool) => if r then 1 - f else f
+  match side with
+  | .left => if horizontal then some 0 else none
+  | .right => if horizontal then some 1 else none
+  | .top => if horizontal then none else some 0
+  | .bottom => if horizontal then none else some 1
+  | .center => some 0.5
+  | .start => some (flip 0 rtl)
+  | .end_ => some (flip 1 rtl)
+  | .selfStart => some (flip 0 selfRtl)
+  | .selfEnd => some (flip 1 selfRtl)
+  | .inside => some (if far then 1 else 0)
+  | .outside => some (if far then 0 else 1)
+  | .fraction f => some (flip f rtl)
+
+#guard anchorFraction .right true false false false == some 1 && anchorFraction .right false false false false == none
+#guard anchorFraction .start true false true false == some 1 && anchorFraction .outside false true false false == some 0
+
+/-- The border box `(x, y, width, height)` of the anchor named `name` among `boxes`: of the
+last element in tree order whose `anchor-name` holds it (an element's first box is its own
+border box). -/
+def anchorBoxIn (styles : Array Computed) (boxes : Array Box) (name : String) :
+    Option (Float × Float × Float × Float) := Id.run do
+  let mut found : Option (Float × Float × Float × Float) := none
+  let mut last : Option Nat := none
+  for b in boxes do
+    if last != some b.source && ((styles[b.source]?).map (·.pos.anchorNames.contains name)).getD false then
+      found := some (b.x, b.y, b.width, b.height)
+      last := some b.source
+  return found
 
 /-- The style of the box whose padding box is the containing block of the absolutely
 positioned box `id` (CSS 2.1 §10.1): its nearest ancestor that holds absolutely positioned
@@ -2065,7 +2132,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .anonymous _ _ => false}
     -- An absolutely positioned box (CSS 2.1 §10.3.7 and §10.6.4) in the containing block
     -- `(cx,cy,cw,ch)`; `at'` has its static position.
-    let absolute (at' : Pending) (cx cy cw ch : Float) : Except String Result := do
+    let absolute (at' : Pending) (cx cy cw ch : Float)
+        (anchors : String → Option (Float × Float × Float × Float) := fun _ => none) : Except String Result := do
       let id := at'.id
       let s := styles[id]!
       if s.display == .none then return {}
@@ -2074,10 +2142,29 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let p := s.padding
       let edgesX := b.left+b.right+p.left+p.right
       let edgesY := b.top+b.bottom+p.top+p.bottom
-      let left := CSS.resolve cw s.pos.left
-      let right := CSS.resolve cw s.pos.right
-      let top := CSS.resolve ch s.pos.top
-      let bottom := CSS.resolve ch s.pos.bottom
+      -- `anchor()` insets (CSS Anchor Positioning 1 §3.2): the distance from the containing
+      -- block's edge to the named side of the anchor's border box; with no such anchor (or a
+      -- side of the other axis), the inset's own length, its fallback
+      -- `position-area` (CSS Anchor Positioning 1 §3.1): the containing block is the area of the
+      -- 3 × 3 grid that the default anchor's edges cut from it, and `auto` insets are 0
+      let area := s.pos.positionArea.bind fun ((x0, x1), (y0, y1)) =>
+        (s.pos.positionAnchor.bind anchors).map fun (ax, ay, aw, ah) =>
+          let xs := #[cx, ax, ax+aw, cx+cw]
+          let ys := #[cy, ay, ay+ah, cy+ch]
+          (xs[x0]!, ys[y0]!, max 0 (xs[x1]!-xs[x0]!), max 0 (ys[y1]!-ys[y0]!))
+      let (cx, cy, cw, ch) := area.getD (cx, cy, cw, ch)
+      let autoInset : Option Float := if area.isSome then some 0 else none
+      let rtlCB := (absoluteContainer dom styles id).direction == .rtl
+      let anchored := fun (ref : Option AnchorRef) (horizontal far : Bool) => (show Option Float from
+        ref.bind fun a => ((a.name.orElse fun _ => s.pos.positionAnchor).bind anchors).bind fun (ax, ay, aw, ah) =>
+          (anchorFraction a.side horizontal far (horizontal && rtlCB) (horizontal && s.direction == .rtl)).map fun f =>
+            let (lo, size, cLo, cSize) := if horizontal then (ax, aw, cx, cw) else (ay, ah, cy, ch)
+            let edge := lo + f * size
+            if far then cLo + cSize - edge else edge - cLo)
+      let left := ((anchored s.pos.anchorLeft true false).orElse fun _ => CSS.resolve cw s.pos.left).orElse fun _ => autoInset
+      let right := ((anchored s.pos.anchorRight true true).orElse fun _ => CSS.resolve cw s.pos.right).orElse fun _ => autoInset
+      let top := ((anchored s.pos.anchorTop false false).orElse fun _ => CSS.resolve ch s.pos.top).orElse fun _ => autoInset
+      let bottom := ((anchored s.pos.anchorBottom false true).orElse fun _ => CSS.resolve ch s.pos.bottom).orElse fun _ => autoInset
       let specified := CSS.resolve cw s.width
       -- CSS Box Alignment 3 §6.1.2 and §6.2.2: `justify-self` and `align-self` of an
       -- absolutely positioned box; `auto` and `normal` are `stretch`.
@@ -2092,15 +2179,24 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let placeOn := fun (horizontalAxis : Bool) =>
         let inlineAxis := horizontalAxis != (container.pos.writingMode != .horizontalTb)
         let a := if inlineAxis then s.align.justifySelf else s.align.alignSelf
-        match a with
-        | .auto | .normal | .stretch => SelfPlace.Place.stretch
-        | .center => .center
-        | .end_ | .flexEnd | .lastBaseline => SelfPlace.Place.end_.physical (flowOf container horizontalAxis)
-        | .selfStart => SelfPlace.Place.start.physical (flowOf s horizontalAxis)
-        | .selfEnd => SelfPlace.Place.end_.physical (flowOf s horizontalAxis)
-        | .left => .start
-        | .right => .end_
-        | _ => SelfPlace.Place.start.physical (flowOf container horizontalAxis)
+        -- in a `position-area`, `normal` aligns toward the anchor (CSS Anchor Positioning 1
+        -- §3.1.3): the end of an area before it, the start of one after it, the centre of its own
+        let toward := if area.isNone then none else
+          s.pos.positionArea.map fun ((x0, x1), (y0, y1)) =>
+            match if horizontalAxis then (x0, x1) else (y0, y1) with
+            | (0, 1) | (0, 2) => SelfPlace.Place.end_
+            | (2, 3) | (1, 3) => SelfPlace.Place.start
+            | _ => SelfPlace.Place.center
+        match a, toward with
+        | .auto, some t | .normal, some t => t
+        | .auto, _ | .normal, _ | .stretch, _ => SelfPlace.Place.stretch
+        | .center, _ => .center
+        | .end_, _ | .flexEnd, _ | .lastBaseline, _ => SelfPlace.Place.end_.physical (flowOf container horizontalAxis)
+        | .selfStart, _ => SelfPlace.Place.start.physical (flowOf s horizontalAxis)
+        | .selfEnd, _ => SelfPlace.Place.end_.physical (flowOf s horizontalAxis)
+        | .left, _ => .start
+        | .right, _ => .end_
+        | _, _ => SelfPlace.Place.start.physical (flowOf container horizontalAxis)
       let placeX := placeOn true
       let placeY := placeOn false
       -- §10.3.7: the width is given, or fills the room between `left` and `right`, or
@@ -2169,12 +2265,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut below : Result := {}
       let mut above : Result := {}
       let mut kept : Array Pending := #[]
+      -- the anchors of `content` (CSS Anchor Positioning 1 §2): by name, the border box of the
+      -- last element in tree order with that `anchor-name`; read only for an `anchor()` inset
+      let anchors := fun (name : String) => anchorBoxIn styles content.boxes name
       for (z,p) in ordered do
         if (styles[p.id]!).pos.position == .fixed && !root then kept := kept.push p
         else
           let r ← match area p with
-            | some (ax,ay,aw,ah) => absolute p ax ay aw ah
-            | none => absolute p cx cy cw ch
+            | some (ax,ay,aw,ah) => absolute p ax ay aw ah anchors
+            | none => absolute p cx cy cw ch anchors
           if z < 0 then below := below.over r else above := above.over r
       return {content with nodes := below.nodes ++ content.nodes ++ above.nodes,
                            boxes := content.boxes ++ below.boxes ++ above.boxes,
@@ -2252,7 +2351,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let (w,h) := replacedSize sized (some picture.size) available
         return replaced w h (fun cx cy => pictureNodes id s picture cx cy w h) s
       if let some size := blankReplaced n then
-        let (w,h) := replacedSize sized (some size) available
+        let (w,h) := replacedSize sized size available
         return replaced w h (fun _ _ => []) s
       if n.ns == some DOM.svgNS then
         let (sw,sh) ← svgSize n sized available
@@ -2507,7 +2606,7 @@ of it (`Inline.openInline`): an inline element that is not replaced. -/
 def isInlineBox (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
   let n := dom.get id
   n.type == .element && ((styles[id]?).map (·.display == .inline)).getD false &&
-    !["img","br","canvas","video"].contains n.lname && n.ns != some DOM.svgNS
+    !["img","br","canvas","video","iframe"].contains n.lname && n.ns != some DOM.svgNS
 
 /-- The boxes that link regions are cut from: the boxes of text, of replaced elements and
 of block-level and atomic boxes. The box of an inline box is left out: what is inside it

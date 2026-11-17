@@ -12,7 +12,8 @@
 #                            [--list]
 #                            [--verbose] [-h|--help]
 #
-#   --only     Run a subset. A name is a runner (l4w3c, l4owl-probe, ...) or a
+#   --only     Run a subset (the only way to run the long jobs: l4qt4-xpath,
+#              l4qt4-xquery, l4xslt4, l4xsd11). A name is a runner (l4w3c, l4owl-probe, ...) or a
 #              job id (l4w3c-sparql11, l4owl-probe-dl-inconsistency, ...).
 #   --resume   Reuse a runner log under .claude-runs/lean-scoreboard/ when its
 #              .meta file shows the run finished. A log with no .meta file (the
@@ -252,6 +253,47 @@ defjob l4xslt l4xslt parse_xslt xslt \
   "XSLT 1.0" "" ""
 defjob l4schematron l4schematron parse_schematron schematron \
   "Schematron" "" ""
+# --- XML family beyond XML 1.0 and the XSLT 1.0 slice ---------------------------
+# The QT4 Community Group suites (third_party/testing/qt4tests, xslt40-test), the W3C
+# XML Schema suite (submodule third_party/testing/xsd), RELAX NG, XInclude and
+# Canonical XML. The three QT4 runs take tens of minutes each (l4xslt4: 25 minutes on
+# 2026-11-14) and l4xsd11 reads 41,668 tests: these four are LONG_JOBS, left out of
+# a run without --only; pass --timeout when naming them. `--isolate 180`
+# runs each test set in a child process with a 180 s cap (60 s cut misc-HtmlTestSuite at
+# html-test-0880 on a loaded Mac on 2026-11-17: 499 unfinished tests counted as failures; alone it
+# ends in 94 s with 1,371 of 1,379), so one test set that
+# overflows the stack or loops costs that set and not the run. The long jobs list each failing
+# and unsupported case with its reason (--list-fails, --verbose), so a run's log is enough to
+# group the failures by cause.
+LONG_JOBS="l4qt4-xpath l4qt4-xquery l4xslt4 l4xsd11 l4xslt4-xalan"
+defjob l4qt4-xpath l4qt4 parse_qt4_total none \
+  "XPath 4.0 and Functions and Operators 4.0 (qt4tests)" "" \
+  "--root third_party/testing/qt4tests --isolate 180 --list-fails"
+# The XQuery run reads all fourteen families of the catalog (the runner's default in XQuery
+# mode is eight), so each specification has a row of its own ("family F").
+defjob l4qt4-xquery l4qt4 parse_qt4_total none \
+  "XQuery 4.0 (qt4tests)" "" \
+  "--root third_party/testing/qt4tests --lang xquery --isolate 180 --list-fails --family prod --family op --family fn --family map --family array --family math --family app --family misc --family ser --family upd --family ft --family bin --family file --family xs"
+defjob l4xslt4 l4xslt4 parse_qt4_total none \
+  "XSLT 4.0 (xslt40-test)" "" \
+  "--root third_party/testing/xslt40-test --isolate 180 --list-fails"
+# The Apache Xalan XSLT 1.0 conformance corpus (third_party/testing/xslt1-xalan, Apache-2.0),
+# run by both engines: the XSLT 1.0 engine and the XSLT 4.0 processor on 1.0 stylesheets.
+defjob l4xslt4-xalan l4xslt4 parse_xalan none \
+  "XSLT 1.0 (Xalan corpus)" "" \
+  "--xslt10 third_party/testing/xslt1-xalan"
+defjob l4xsd11 l4xsd11 parse_xsd11 none \
+  "XML Schema 1.1 Structures (W3C xsdtests)" "" \
+  "third_party/testing/xsd --verbose"
+defjob l4relaxng l4relaxng parse_relaxng none \
+  "RELAX NG" "" \
+  "third_party/testing/relaxng/spectest.xml third_party/testing/relaxng/compacttest.xml"
+defjob l4xinclude l4xinclude parse_xinclude none \
+  "XInclude" "" \
+  "third_party/testing/xinclude/XIncl20060927"
+defjob l4c14n l4c14n parse_c14n none \
+  "Canonical XML 1.0, 1.1 and Exclusive" "" \
+  "third_party/testing/xml-c14n"
 defjob l4mathml l4mathml parse_mathml mathml \
   "MathML (Content)" "" ""
 defjob l4jsonschema l4jsonschema parse_jsonschema jsonschema \
@@ -820,6 +862,58 @@ parse_xslt() {
     "pass = equal under Canonical XML 1.0 (the suite's assert-xml) or differing only by whitespace; other = refused ($ref) + not UTF-8 ($nu) + unreadable ($er)" "$line"
 }
 
+# l4qt4 and l4xslt4: "TOTAL: N pass, M fail, K unsupported (out of T)[; E excluded (defective test data)]".
+parse_qt4_total() {
+  local ex note
+  ex="$(pick_line '^TOTAL: [0-9]+ pass' last | sed -nE 's/^.*; ([0-9]+) excluded \(defective test data\).*$/\1/p')"
+  note="other = unsupported: a dependency this processor does not satisfy (another language version, an optional feature it does not have); never a pass"
+  [ -n "$ex" ] && note="$note; $ex more excluded as defective test data, outside the total"
+  row_sl "$CUR_AREA" "" '^TOTAL: [0-9]+ pass' last "$note"
+  # One more row per family (l4qt4: "== families ==") or test directory (l4xslt4:
+  # "== directories =="), labelled "family F": the populations of one specification each
+  # (F&O, Serialization, Update, Full Text, EXPath, xs, ...), measured in the same run.
+  local fam
+  for fam in $(awk '/^== (families|directories) ==$/ {on=1; next} /^TOTAL: / {on=0}
+                   on && /^[A-Za-z0-9_.-]+: [0-9]+ pass/ {sub(/:.*/, ""); print}' "$CUR_LOG"); do
+    row_sl "$CUR_AREA" "family $fam" "^$fam: [0-9]+ pass" last "$note"
+  done
+}
+
+# l4xsd11: "XSD 1.1 (w3c/xsdtests): schema ...; instance ...; total N pass, M fail, K unsupported (out of T); A not applicable".
+parse_xsd11() {
+  local line tot nums na
+  line="$(pick_line '^XSD 1\.1 \(w3c/xsdtests\): schema [0-9]+ pass' last)"
+  if [ -z "$line" ]; then emit_status unparsed "$CUR_AREA" "" "no 'XSD 1.1 (w3c/xsdtests):' line in the log"; return; fi
+  tot="$(printf '%s\n' "$line" | sed -nE 's/^.*; total ([0-9]+ pass, [0-9]+ fail, [0-9]+ unsupported \(out of [0-9]+\)).*$/total: \1/p')"
+  if [ -z "$tot" ] || ! nums="$(scoreline_nums "$tot")"; then emit_status unparsed "$CUR_AREA" "" "the line has no '; total N pass, M fail, K unsupported (out of T)' part" "$line"; return; fi
+  na="$(printf '%s\n' "$line" | sed -nE 's/^.*; ([0-9]+) not applicable.*$/\1/p')"
+  set -- $nums
+  emit_ok "$CUR_AREA" "" "$1" "$2" "$3" "$4" "schema tests and instance tests together; other = unsupported; ${na:-0} more are not applicable (XSD 1.0 only), outside the total" "$line"
+}
+
+# l4xslt4 --xslt10: "xalan XSLT 1.0 engine: N pass, M fail (out of T); U unreadable" and the
+# same for the XSLT 4.0 processor.
+parse_xalan() {
+  row_sl "$CUR_AREA" "XSLT 1.0 engine" '^xalan XSLT 1\.0 engine: [0-9]+ pass' last "a case whose files are not readable is a failure"
+  row_sl "$CUR_AREA" "XSLT 4.0 engine" '^xalan XSLT 4\.0 engine, 1\.0 stylesheets: [0-9]+ pass' last "a case whose files are not readable is a failure"
+}
+
+parse_relaxng() {
+  row_sl "$CUR_AREA" "spectest (RELAX NG Specification)" '^RELAX NG spectest: [0-9]+ pass' last
+  row_sl "$CUR_AREA" "compacttest (Compact Syntax)" '^RELAX NG compacttest: [0-9]+ pass' last
+}
+
+parse_xinclude() {
+  row_sl "$CUR_AREA" "" '^l4xinclude: [0-9]+ pass' last "other = expected failures (listed in the runner with a reason each) + stale ones"
+}
+
+parse_c14n() {
+  local ex note=""
+  ex="$(pick_line '^c14n: [0-9]+ pass' last | sed -nE 's/^.*; ([0-9]+) excluded \(defective test data\).*$/\1/p')"
+  [ -n "$ex" ] && note="$ex more excluded as defective test data, outside the total"
+  row_sl "$CUR_AREA" "" '^c14n: [0-9]+ pass' last "$note"
+}
+
 parse_schematron() {
   local line nums u er tot
   line="$(pick_line '^schematron DECIDED: [0-9]+ pass' last)"
@@ -1272,8 +1366,15 @@ if [ -n "$ONLY" ]; then
   done
   SELECTED=("${SORTED[@]}")
 else
+  # A full run leaves out the long jobs (LONG_JOBS): name them with --only.
   i=0
-  while [ "$i" -lt "$JOB_N" ]; do SELECTED[${#SELECTED[@]}]="$i"; i=$((i + 1)); done
+  while [ "$i" -lt "$JOB_N" ]; do
+    case " $LONG_JOBS " in
+      *" ${JOB_ID[$i]} "*) echo "lean-scoreboard: ${JOB_ID[$i]} is a long job, not part of a full run; run it with --only ${JOB_ID[$i]} --timeout SECONDS" >&2 ;;
+      *) SELECTED[${#SELECTED[@]}]="$i" ;;
+    esac
+    i=$((i + 1))
+  done
 fi
 
 T_START=$(date +%s)

@@ -416,7 +416,7 @@ lean_lib ClosureChecks where
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
     `Harness.Sbm11Export, `Harness.Sbm11MemGenCheck, `Harness.Sbm11PackSpecCheck,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
-    `Harness.ProofObligations, `Harness.WorkerPool, `Harness.DomDump] : Array Lean.Name).map Glob.one
+    `Harness.ProofObligations, `Harness.WorkerPool, `Harness.DomDump, `Harness.ShaclProbe] : Array Lean.Name).map Glob.one
   ++ #[Glob.submodules `Harness.Unicode]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
@@ -885,8 +885,9 @@ lean_exe «l4xforms» where root := `Harness.XFormsRun
 -- tests/xmlenc/fixtures.json (Harness/XmlEncProbe.lean, issues 1084, 1073).
 @[default_target] lean_exe «l4xmlenc-probe» where root := `Harness.XmlEncProbe
 
--- SHACL Core probe over the W3C shacl test suite (Harness/ShaclProbe.lean).
-@[default_target] lean_exe «l4shacl» where root := `Harness.ShaclProbe
+-- SHACL Core probe over the W3C shacl test suite (Harness/ShaclProbe.lean; the entry point
+-- is Harness/ShaclProbeMain.lean, so other runners can import the probe).
+@[default_target] lean_exe «l4shacl» where root := `Harness.ShaclProbeMain
 
 -- SHACL 1.2 rules suite (Harness/ShaclRulesRun.lean, L4Factoidal/SHACL/Rules.lean).
 @[default_target] lean_exe «l4shacl-rules» where root := `Harness.ShaclRulesRun

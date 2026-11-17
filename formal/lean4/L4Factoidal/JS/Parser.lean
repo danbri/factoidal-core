@@ -94,6 +94,18 @@ structure PState where
   /-- May `new.target` appear here (§15.1.1, §16.1.1): in a function that is not an arrow
   function, and in an arrow function or field initialiser inside one. -/
   newTargetOk : Bool := true
+  /-- The logical operator that formed the expression `parseBinRest` answered last, outside
+  parentheses (`mixesCoalesce`). -/
+  binTop : Option LogOp := none
+  /-- `staticBody`: the function being read is a class static block (`return` is an early
+  error there, §15.7.1). `awaitReserved`: in a static block or an arrow function inside one,
+  where `await` is no identifier (§15.7.1: ContainsAwait, and the static semantics of
+  IdentifierReference, BindingIdentifier and LabelIdentifier). -/
+  staticBody : Bool := false
+  awaitReserved : Bool := false
+  /-- In the formal parameters of a generator or an async function: a YieldExpression or an
+  AwaitExpression there is an early error (§15.5.1, §15.8.1). -/
+  inParams : Bool := false
   deriving Inhabited
 
 abbrev P := EStateM String PState
@@ -229,10 +241,19 @@ def bindingName : P String := do
     if s.strict && strictReserved.contains t.text then
       fail s!"'{t.text}' is a reserved word in strict mode code"
     if s.inGen && t.text == "yield" then fail "'yield' cannot be a binding name in a generator"
-    if s.inAsync && t.text == "await" then fail "'await' cannot be a binding name in an async function"
+    if (s.inAsync || s.awaitReserved) && t.text == "await" then
+      fail "'await' cannot be a binding name in an async function or a class static block"
     advance; pure t.text
   else if t.kind == .kw && (t.text == "let" || t.text == "yield") then advance; pure t.text
   else fail "expected an identifier"
+
+/-- A legacy octal or non-octal-decimal numeric literal, or a string with a legacy escape
+(`Token.legacy`, Annex B.1.1 and B.1.2), is an early error in strict mode code
+(§12.9.3.1, §12.9.4.1). -/
+def legacyOk (t : Token) : P Unit := do
+  if t.legacy && (← get).strict then
+    fail (if t.kind == .num then "octal literals are not allowed in strict mode code"
+      else "octal escape sequences are not allowed in strict mode code")
 
 /-- The name of a class: class code is strict (§15.7.1), its name too. -/
 def classBindingName : P String := do
@@ -332,6 +353,11 @@ def checkDecls (ss : List Stmt) (vars : List String) (inBlock : Bool := true) : 
     if funs.any vars.contains then fail "identifier has already been declared"
     if !blockFunsOk (← get).strict fdecls then fail "identifier has already been declared"
 
+/-- Is one of the names `lex` also a `var` declared after the first `before` of `vars`
+(`realVars`)? -/
+def lexVarClash (lex : List String) (vars : Array String) (before : Nat) : Bool :=
+  !lex.isEmpty && (vars.extract before vars.size).any lex.contains
+
 /-- Where `super(...)` may appear in a function body of this kind (§15.7.1, §15.2.1): only
 in a derived class's constructor; an arrow function keeps its context's answer. -/
 def superCallIn (k : FunKind) (outer : Bool) : Bool :=
@@ -372,6 +398,11 @@ def binPrec (t : Token) (noIn : Bool) : Option (Nat × Sum BinOp LogOp) :=
     | "**" => some (12, .inl .exp)
     | _ => none
 
+/-- Does an operand formed by `o` beside the logical operator `l` mix `??` with `&&` or `||`? -/
+def mixesCoalesce (l : LogOp) : Option LogOp → Bool
+  | some o => (l == .coalesce) != (o == .coalesce)
+  | none => false
+
 def assignOp (t : Token) : Option (Option BinOp ⊕ LogOp) :=
   if t.kind != .punct then none else
   match t.text with
@@ -394,6 +425,9 @@ def isTarget : Expr → Bool
 or, in code that is not strict, a call (§13.15.1 with the web's exception: the call is
 evaluated, then PutValue throws a ReferenceError; the evaluator's `evalRef`, `putTarget`). -/
 def targetOk (e : Expr) : P Bool := do
+  -- §13.1.1: in strict mode code `eval` and `arguments` are not simple targets
+  if let .ident x := e then
+    if (x == "eval" || x == "arguments") && (← get).strict then return false
   if isTarget e then return true
   match e with
   -- an ImportCall is never a target (§13.3.10.1: it is not a CallExpression of Annex B's kind)
@@ -658,7 +692,7 @@ def parseStmt : Nat → P Stmt
       | "for" => advance; parseFor n
       | "return" =>
         advance
-        if !(← get).inFun then fail "'return' outside of a function"
+        if !(← get).inFun || (← get).staticBody then fail "'return' outside of a function"
         let t' ← peek
         if isP t' ";" || isP t' "}" || t'.kind == .eof || t'.nl then semi; return .ret none
         let e ← parseExpr n false
@@ -719,6 +753,8 @@ def parseStmt : Nat → P Stmt
         advance; expectP "("
         let o ← parseExpr n false
         expectP ")"
+        -- Annex B.3.4 allows a function declaration as the clause of an `if` only (§14.11)
+        if ← atK "function" then fail "function declaration in a single-statement context"
         return .withS o (← parseSubStmt n)
       | _ => parseExprStmt n
     else if t.kind == .ident then
@@ -727,8 +763,11 @@ def parseStmt : Nat → P Stmt
         advance; advance
         let st ← get
         if st.labels.any (·.1 == t.text) then fail s!"label '{t.text}' has already been declared"
-        if (st.inAsync && t.text == "await") || ((st.inGen || st.strict) && t.text == "yield") then
+        if ((st.inAsync || st.awaitReserved) && t.text == "await") || ((st.inGen || st.strict) && t.text == "yield") then
           fail s!"'{t.text}' cannot be a label here"
+        if t.escaped && keywords.contains t.text then fail s!"keyword '{t.text}' must not contain escapes"
+        if st.strict && strictReserved.contains t.text then
+          fail s!"'{t.text}' is a reserved word in strict mode code"
         -- the statement after this label and the labels that follow it (`a: b: for ...`)
         let isLoop := labelsLoop st.toks st.pos st.toks.size
         if (← atK "function") then fail "labelled function declarations are not supported"
@@ -838,7 +877,12 @@ def parseDecls : Nat → DeclKind → Bool → List Decl → P (List Decl)
         addRealVar x
     let init ← if ← atP "=" then advance; pure (some (← parseAssign n noIn)) else pure none
     let acc := acc ++ [Decl.mk target init]
-    if ← atP "," then advance; parseDecls n kind noIn acc
+    if ← atP "," then
+      -- a declarator before a `,` is never a for-in/of head: `const` and patterns need `=`
+      if init.isNone then
+        if kind == .constK then fail "missing initializer in const declaration"
+        if target.name?.isNone then fail "missing initializer in destructuring declaration"
+      advance; parseDecls n kind noIn acc
     else
       -- an initialiser is needed for `const` and patterns, except in a for-in/of head
       let headOk ← if noIn then do
@@ -872,13 +916,24 @@ def parseFor : Nat → P Stmt
       | none => if isP t ";" then pure none else pure (some (ForInit.expr (← parseExpr n true)))
     let isOf := (← peek).kind == .ident && (← peek).text == "of" && !(← peek).escaped
     if isAwait && !isOf then fail "expected 'of' in a for await statement"
+    -- §14.7.5: `for (async of` is not the start of a for-of statement (`for await` may)
+    if isOf && !isAwait && declKind.isNone && t.kind == .ident && t.text == "async" && !t.escaped &&
+        t2.kind == .ident && t2.text == "of" then
+      fail "the left-hand side of a for-of loop may not be 'async'"
+    let lex := match init with | some (.decl .var _) => [] | some (.decl _ ds) => ds.flatMap Decl.names | _ => []
+    -- §14.7.1.1, §14.7.5.1: the bound names of a lexical head are distinct, and none is `let`
+    if lex.eraseDups.length != lex.length then fail "identifier has already been declared"
+    if lex.contains "let" then fail "'let' cannot be a lexically bound name"
+    let varsBefore := (← get).realVars.size
     if isOf || (← atK "in") then
       advance
       let obj ← if isOf then parseAssign n false else parseExpr n false
       expectP ")"
-      pushScope (match init with | some (.decl .var _) => [] | some (.decl _ ds) => ds.flatMap Decl.names | _ => [])
+      pushScope lex
       let body ← parseLoopBody n
       popScope
+      -- §14.7.5.1: no name of a lexical head is also a `var` of the body
+      if lexVarClash lex (← get).realVars varsBefore then fail "identifier has already been declared"
       let (kind, pat) ← match init with
         | some (.decl k [Decl.mk p none]) => pure (some k, p)
         | some (.decl .var [Decl.mk (.id x) (some _)]) =>
@@ -887,7 +942,14 @@ def parseFor : Nat → P Stmt
         | some (.decl _ _) | some (.letOnce _) => fail "invalid for-in/of declaration"
         | some (.expr e) =>
           match exprToPat 64 e with
-          | some p => pure (none, p)
+          | some p =>
+            if (← get).strict && (match e with | .ident _ => false | _ => true) &&
+                p.names.any (fun x => x == "eval" || x == "arguments") then
+              fail "cannot assign to 'eval' or 'arguments' in strict mode code"
+            if let .ident x := e then
+              if (x == "eval" || x == "arguments") && (← get).strict then
+                fail "cannot assign to 'eval' or 'arguments' in strict mode code"
+            pure (none, p)
           | none =>
             match e with
             | .call .. => if (← get).strict then fail "invalid left-hand side in for-in/of" else pure (none, Pat.target e)
@@ -902,9 +964,11 @@ def parseFor : Nat → P Stmt
     expectP ";"
     let update ← if ← atP ")" then pure none else pure (some (← parseExpr n false))
     expectP ")"
-    pushScope (match init with | some (.decl .var _) => [] | some (.decl _ ds) => ds.flatMap Decl.names | _ => [])
+    pushScope lex
     let body ← parseLoopBody n
     popScope
+    -- §14.7.4.1: no name of a lexical head is also a `var` of the body
+    if lexVarClash lex (← get).realVars varsBefore then fail "identifier has already been declared"
     return .forS init test update body
 
 def parseTry : Nat → P Stmt
@@ -918,7 +982,18 @@ def parseTry : Nat → P Stmt
             let x ← if (← atP "[") || (← atP "{") then parsePattern n .letK else do pure (Pat.id (← bindingName))
             expectP ")"; pure (some x)
           else pure none
-        pure (p, some (← parseBlock n))
+        let varsBefore := (← get).realVars.size
+        let h ← parseBlock n
+        -- §14.15.1: the catch parameter's names are distinct and not declared lexically in the
+        -- block (functions included); with a pattern, not as a `var` either (Annex B.3.4)
+        if let some q := p then
+          let names := q.names
+          if names.eraseDups.length != names.length then fail "identifier has already been declared"
+          let lex := lexNames h ++ h.filterMap (fun s => match s with | .funDecl x _ => some x | _ => none)
+          if names.any lex.contains then fail "identifier has already been declared"
+          if !(q matches .id _) && lexVarClash names (← get).realVars varsBefore then
+            fail "identifier has already been declared"
+        pure (p, some h)
       else pure (none, none)
     let fin ← if ← atK "finally" then advance; pure (some (← parseBlock n)) else pure none
     if handler.isNone && fin.isNone then fail "missing catch or finally after try"
@@ -955,24 +1030,29 @@ def parseFunction : Nat → Option String → FunKind → Nat → P FunDef
     -- function there, which are not module code's top level (§16.2.1.6.1: the early error of
     -- `await` in a FormalParameters does not see the module's [+Await])
     modify fun s => { s with inGen := gen == 1 || gen == 3,
-                             inAsync := if outer.tla then gen == 2 || gen == 3 else outer.inAsync, tla := false }
-    let (ps, rest) ← parseMethodParams n (kind != FunKind.normal)
-    modify fun s => { s with inGen := outer.inGen, inAsync := outer.inAsync, tla := outer.tla }
+                             inAsync := if outer.tla then gen == 2 || gen == 3 else outer.inAsync, tla := false,
+                             inParams := gen != 0, awaitReserved := gen == 2 || gen == 3 }
+    let (ps, rest) ← parseMethodParams n (kind != FunKind.normal) (kind == FunKind.ctor true)
+    modify fun s => { s with inGen := outer.inGen, inAsync := outer.inAsync, tla := outer.tla,
+                             inParams := outer.inParams, awaitReserved := outer.awaitReserved }
     parseBody n name ps rest kind gen
 
 /-- The parameter list of a function that is not an arrow function: `arguments` there is the
 function's own, so the class-initialiser rule (§15.7.1) of an enclosing field initialiser or
 static block does not reach into it. -/
-def parseMethodParams : Nat → Bool → P (List PatElem × Option Pat)
-  | 0, _ => fail "parser fuel exhausted"
-  | n + 1, method => do
+def parseMethodParams : Nat → Bool → Bool → P (List PatElem × Option Pat)
+  | 0, _, _ => fail "parser fuel exhausted"
+  | n + 1, method, superCallOk => do
     let o ← get
-    -- `super` in the parameters of a method (or constructor) is the method's; a plain
-    -- function's parameters have none
-    modify fun s => { s with fieldInit := false, superCall := method, superProp := method, newTargetOk := true }
+    -- `super.x` in the parameters of a method (or constructor) is the method's; a plain
+    -- function's parameters have none. `super(...)` only in a derived class's constructor's
+    -- (§15.4.1, §15.7.1: HasDirectSuper of a method that is not the constructor).
+    -- (a function boundary: `await` of an enclosing static block is an identifier again)
+    modify fun s => { s with fieldInit := false, superCall := superCallOk, superProp := method, newTargetOk := true,
+                             awaitReserved := false }
     let r ← parseParams n #[]
     modify fun s => { s with fieldInit := o.fieldInit, superCall := o.superCall, superProp := o.superProp,
-                             newTargetOk := o.newTargetOk }
+                             newTargetOk := o.newTargetOk, awaitReserved := o.awaitReserved }
     return r
 
 /-- A parameter list after `(`, to the `)` (consumed): patterns with initialisers
@@ -1014,6 +1094,8 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
                      inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3, tla := false,
                      depth := 0, topDepth := 1, lexStack := [names], pending := #[],
                      fieldInit := outer.staticNext || (kind == FunKind.arrow && outer.fieldInit),
+                     staticBody := outer.staticNext, inParams := false,
+                     awaitReserved := outer.staticNext,
                      staticNext := false, superCall := superCallIn kind outer.superCall,
                      superProp := superPropIn kind outer.superProp,
                      newTargetOk := kind != FunKind.arrow || outer.newTargetOk }
@@ -1027,6 +1109,7 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
                      usesArgs := outer.usesArgs || (arrow && usesArgs),
                      depth := outer.depth, topDepth := outer.topDepth, lexStack := outer.lexStack,
                      pending := outer.pending, fieldInit := outer.fieldInit, staticNext := false,
+                     staticBody := outer.staticBody, awaitReserved := outer.awaitReserved, inParams := outer.inParams,
                      superCall := outer.superCall, superProp := outer.superProp, newTargetOk := outer.newTargetOk }
     return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind
       (gen == 1 || gen == 3) (gen == 2 || gen == 3) {}
@@ -1037,11 +1120,20 @@ def parseArrowBody : Nat → List PatElem → Option Pat → Nat → P Expr
   | n + 1, params, rest, coro => do
     if ← atP "{" then return .func (← parseBody n none params rest .arrow coro)
     let outer ← get
-    set { outer with vars := #[], varSet := {}, inFun := true, inAsync := coro == 2, inGen := false, tla := false }
+    -- §15.3.1: the early errors of ArrowParameters that `parseBody` checks for a block body
+    let names := params.flatMap (fun p => match p with | .mk q _ => q.names) ++
+      (match rest with | some r => r.names | none => [])
+    if outer.strict && names.any (fun p => p == "eval" || p == "arguments") then
+      fail "'eval' or 'arguments' cannot be a parameter in strict mode code"
+    if names.eraseDups.length != names.length then
+      fail "duplicate parameter name not allowed in this context"
+    set { outer with vars := #[], varSet := {}, inFun := true, inAsync := coro == 2, inGen := false, tla := false,
+                     inParams := false, awaitReserved := false }
     let e ← parseAssign n false
     let inner ← get
     set { inner with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun, inAsync := outer.inAsync,
-                     inGen := outer.inGen, tla := outer.tla }
+                     inGen := outer.inGen, tla := outer.tla, inParams := outer.inParams,
+                     awaitReserved := outer.awaitReserved }
     return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow false (coro == 2) {})
 
 def parseExpr : Nat → Bool → P Expr
@@ -1065,8 +1157,10 @@ def parseAssign : Nat → Bool → P Expr
     let t ← peek
     let t2 ← peekAt 1
     if (← get).inGen && (t.kind == .ident || t.kind == .kw) && t.text == "yield" && !t.escaped then
+      if (← get).inParams then fail "a yield expression is not allowed in formal parameters"
       advance
-      if ← atP "*" then
+      -- `yield [no LineTerminator here] * AssignmentExpression` (§15.5)
+      if (← atP "*") && !(← peek).nl then
         advance
         let arg ← parseAssign n noIn
         -- in an async generator `yield*` delegates to an async iterator (§15.5.5): the
@@ -1102,6 +1196,9 @@ def parseAssign : Nat → Bool → P Expr
     match assignOp (← peek) with
     | none => return lhs
     | some op =>
+      -- §13.15.1: the target of `&&=`, `||=` and `??=` is simple (no call, even in sloppy code)
+      if op matches .inr _ then
+        if let .call .. := lhs then fail "invalid assignment target"
       if !(← targetOk lhs) then
         match op, lhs with
         | .inl none, .array _ | .inl none, .object _ =>
@@ -1141,23 +1238,31 @@ def parseBin : Nat → Nat → Bool → P Expr
   | 0, _, _ => fail "parser fuel exhausted"
   | n + 1, minPrec, noIn => do
     let lhs ← parseUnary n
-    parseBinRest n minPrec noIn lhs
+    parseBinRest n minPrec noIn lhs none
 
-def parseBinRest : Nat → Nat → Bool → Expr → P Expr
-  | 0, _, _, _ => fail "parser fuel exhausted"
-  | n + 1, minPrec, noIn, lhs => do
+/-- `lhsOp`: the logical operator that formed `lhs` in this loop (not inside parentheses). On
+return, `binTop` is the one that formed the answer, so that `??` beside an unparenthesised `&&`
+or `||` is found (§13.13: CoalesceExpression takes no LogicalANDExpression or
+LogicalORExpression operand, and the reverse). -/
+def parseBinRest : Nat → Nat → Bool → Expr → Option LogOp → P Expr
+  | 0, _, _, _, _ => fail "parser fuel exhausted"
+  | n + 1, minPrec, noIn, lhs, lhsOp => do
     -- after an operand a `/` is a division: the lexer's first choice was a regular expression
     if (← peek).kind == .regex then relexAt false
     match binPrec (← peek) noIn with
-    | none => return lhs
+    | none => modify (fun s => { s with binTop := lhsOp }); return lhs
     | some (prec, op) =>
-      if prec < minPrec then return lhs
+      if prec < minPrec then modify (fun s => { s with binTop := lhsOp }); return lhs
       advance
       let rhs ← parseBin n (if prec == 12 then prec else prec + 1) noIn
+      let rhsOp := (← get).binTop
+      if let .inr l := op then
+        if mixesCoalesce l lhsOp || mixesCoalesce l rhsOp then
+          fail "'??' cannot be mixed with '&&' or '||' without parentheses"
       let e := match op with
         | .inl b => Expr.binary b lhs rhs
         | .inr l => Expr.logical l lhs rhs
-      parseBinRest n minPrec noIn e
+      parseBinRest n minPrec noIn e (match op with | .inr l => some l | .inl _ => none)
 
 def parseUnary : Nat → P Expr
   | 0 => fail "parser fuel exhausted"
@@ -1187,7 +1292,7 @@ def parseUnary : Nat → P Expr
         | .member _ k | .chain (.member _ k) =>
           if isPrivKey k then fail "private fields can not be deleted"
         | _ => pure ()
-      if op != .delete && op != .typeof && op != .void && (← atP "**") then
+      if ← atP "**" then
         fail "unary operator before '**' needs parentheses"
       return .unary op e
     | none =>
@@ -1197,6 +1302,7 @@ def parseUnary : Nat → P Expr
         if !(← targetOk e) then fail "invalid update target"
         return .update true (t.text == "++") e
       if t.kind == .ident && t.text == "await" && !t.escaped && (← get).inAsync then
+        if (← get).inParams then fail "an await expression is not allowed in formal parameters"
         advance
         let e ← parseUnary n
         if (← get).tla then modify fun s => { s with usesTLA := true }
@@ -1316,9 +1422,9 @@ def parsePrimary : Nat → P Expr
   | n + 1 => do
     let t ← peek
     match t.kind with
-    | .num => advance; return .num t.num
+    | .num => legacyOk t; advance; return .num t.num
     | .big => advance; return .bigint t.text.toNat!
-    | .str => advance; return .str t.text
+    | .str => legacyOk t; advance; return .str t.text
     | .regex => advance; regexLiteral t.text t.flags
     | .tmpl =>
       advance
@@ -1334,9 +1440,13 @@ def parsePrimary : Nat → P Expr
           ((← get).strict && ["implements", "interface", "package", "private", "protected",
             "public", "static", "yield", "let"].contains t.text)) then
         fail s!"keyword '{t.text}' must not contain escapes"
-      if t.text == "await" && (← get).inAsync then fail "'await' is not an identifier in an async function"
+      if t.text == "await" && ((← get).inAsync || (← get).awaitReserved) then
+        fail "'await' is not an identifier in an async function or a class static block"
       if (t.text == "yield" && ((← get).inGen || (← get).strict)) || (t.text == "let" && (← get).strict) then
         fail s!"'{t.text}' is not an identifier here"
+      -- §13.1.1: an IdentifierReference of strict mode code is not a word reserved there
+      if (← get).strict && strictReserved.contains t.text then
+        fail s!"'{t.text}' is a reserved word in strict mode code"
       advance
       if t.text == "arguments" then
         if (← get).fieldInit then fail "'arguments' is not allowed in a class field initializer or static block"
@@ -1351,7 +1461,12 @@ def parsePrimary : Nat → P Expr
       | "function" =>
         advance
         let gen ← eatP "*"
+        -- a function expression's name is in its own scope: `await` of an enclosing static
+        -- block is an identifier there (§15.2.1)
+        let ar := (← get).awaitReserved
+        modify fun s => { s with awaitReserved := false }
         let name ← if (← peek).kind == .ident then pure (some (← bindingName)) else pure none
+        modify fun s => { s with awaitReserved := ar }
         return .func (← parseFunction n name .normal (if gen then 1 else 0))
       | "let" | "yield" =>
         -- an identifier in code that is not strict; `yield` is never one in a generator
@@ -1470,7 +1585,7 @@ def parsePropKey : Nat → P PropKey
         advance; return .lit (privKey nt.text)
       fail "expected a private name"
     match propName? t with
-    | some s => advance; return .lit s
+    | some s => legacyOk t; advance; return .lit s
     | none => fail "expected a property name"
 
 def parseObject : Nat → List PropDef → P (List PropDef)
@@ -1487,7 +1602,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         advance
         let k ← parsePropKey n
         expectP "("
-        let (ps, rest) ← parseMethodParams n true
+        let (ps, rest) ← parseMethodParams n true false
         if !accessorParamsOk (t.text == "get") ps.length rest.isSome then fail "wrong number of accessor parameters"
         let f ← parseBody n none ps rest .method 0
         pure (if t.text == "get" then PropDef.getter k f else PropDef.setter k f)
@@ -1496,7 +1611,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         let k ← parsePropKey n
         expectP "("
         let og := (← get).inGen
-        let (ps, rest) ← parseMethodParams n true
+        let (ps, rest) ← parseMethodParams n true false
         let f ← parseBody n none ps rest .method 1
         modify fun s => { s with inGen := og }
         pure (PropDef.init k (.func f))
@@ -1506,7 +1621,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         let k ← parsePropKey n
         expectP "("
         let og := (← get).inAsync
-        let (ps, rest) ← parseMethodParams n true
+        let (ps, rest) ← parseMethodParams n true false
         let f ← parseBody n none ps rest .method (if g then 3 else 2)
         modify fun s => { s with inAsync := og }
         pure (PropDef.init k (.func f))
@@ -1527,7 +1642,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         let k ← parsePropKey n
         if ← atP "(" then
           advance
-          let (ps, rest) ← parseMethodParams n true
+          let (ps, rest) ← parseMethodParams n true false
           pure (PropDef.init k (.func (← parseBody n none ps rest .method 0)))
         else
           expectP ":"
@@ -1670,8 +1785,8 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
       fail "a class element has a name it may not have"
     if ← atP "(" then
       advance
-      let (ps, rest) ← parseMethodParams n true
       let isCtor := !static && !accessor && (kt.kind == .ident || kt.kind == .kw || kt.kind == .str) && kt.text == "constructor"
+      let (ps, rest) ← parseMethodParams n true (isCtor && derived)
       if isCtor then
         if ctor.isSome then fail "a class may only have one constructor"
         let f ← parseBody n none ps rest (.ctor derived) 0
@@ -1701,8 +1816,8 @@ of the source has more tokens than (`P.relexAt` can change the count). -/
 def parseFuel (tokens : Nat) : Nat := 64 * tokens + 1024
 
 /-- Parse a script (§16.1). `strict` forces strict mode code. -/
-def parseScript (src : String) (strict : Bool := false) (evalCode : Bool := false) :
-    Except String Script :=
+def parseScript (src : String) (strict : Bool := false) (evalCode : Bool := false)
+    (inFunction : Bool := true) : Except String Script :=
   let cs := src.toList.toArray
   match lexChars cs with
   | .error e => .error e
@@ -1710,8 +1825,11 @@ def parseScript (src : String) (strict : Bool := false) (evalCode : Bool := fals
     let toks := internToks toks
     let strict := strict || hasUseStrict toks 0
     -- global code has no super and no new.target (§16.1.1); eval code may be in a method
-    let st : PState := { toks, strict, src := cs, privAny := evalCode, superCall := evalCode,
-                         superProp := evalCode, newTargetOk := evalCode }
+    -- (eval code run as global code, `inFunction` false: an indirect eval or one at the top
+    -- level, has none either, §19.2.1.1 steps 5-7)
+    let fn := evalCode && inFunction
+    let st : PState := { toks, strict, src := cs, privAny := evalCode, superCall := fn,
+                         superProp := fn, newTargetOk := fn }
     match (parseStmts (parseFuel (cs.size + 1)) #[]).run st with
     | .ok body st' =>
       if (st'.toks.getD st'.pos default).kind != .eof then

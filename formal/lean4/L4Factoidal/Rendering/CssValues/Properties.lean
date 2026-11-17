@@ -98,6 +98,15 @@ def colorReader : Color.Reader := fun cv =>
   | none =>
     match cv with
     | .fn _ _ =>
+      -- `calc(infinity)` is the channel's upper bound, `calc(-infinity)` and `calc(NaN)` its
+      -- lower bound (CSS Values 4 §10.12): a number larger than any channel's range, and a
+      -- multiple of 360 so that a hue of either is 0. Asked first: `numeric` would give the
+      -- computed stand-in of an infinite number, which is not a channel's bound.
+      let ext := ((Calc.parse cv).map fun c => Calc.simp none (Calc.depth 64 c + 4) c).bind extOf
+      match ext with
+      | some (.pinf, u) => if u == "" || u == "%" || u == "deg" then some (.num infiniteChannel) else none
+      | some (.ninf, u) | some (.nan, u) => if u == "" || u == "%" || u == "deg" then some (.num (-infiniteChannel)) else none
+      | _ =>
       match numeric (some {}) { kind := .number } cv with
       | some (.tok (.num v _)) => some (.num v)
       | _ =>
@@ -106,14 +115,7 @@ def colorReader : Color.Reader := fun cv =>
         | _ =>
           match numeric (some {}) { kind := .angle } cv with
           | some (.tok (.dim v _ _)) => some (.angle v)
-          | _ =>
-            -- `calc(infinity)` is the channel's upper bound, `calc(-infinity)` and
-            -- `calc(NaN)` its lower bound (CSS Values 4 §10.12): a number larger than any
-            -- channel's range, and a multiple of 360 so that a hue of either is 0
-            match (Calc.parse cv).map fun c => Calc.simp none (Calc.depth 64 c + 4) c with
-            | some (.kw "infinity") => some (.num infiniteChannel)
-            | some (.kw "-infinity") | some (.kw "nan") => some (.num (-infiniteChannel))
-            | _ => none
+          | _ => none
     | _ => none
 
 /-- The matcher's environment: specified values with `none`, computed values with a
@@ -1227,6 +1229,13 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
   | "column-rule-width" => "5px, repeat(4, 6px, 5px)" | "column-rule-style" => "double, repeat(4, none, solid)"
   | _ => "salmon, repeat(4, currentcolor, red)") == some "5px double salmon, repeat(4, 6px, 5px solid red)"
 #guard specified "will-change" "auto, transform" == none && specified "will-change" "transform, none" == none
+-- `first baseline` is serialised as `baseline` (CSS Box Alignment 3 §4.1, the shortest form)
+#guard specified "align-items" "first baseline" == some "baseline" && specified "align-self" "last baseline" == some "last baseline"
+#guard specified "justify-self" "baseline" == some "baseline" && specified "align-content" "first baseline" == some "baseline"
+-- calc-size() in the sizing properties (calc-size-parsing.html)
+#guard specified "width" "calc-size(auto, size)" == some "calc-size(auto, size)" && specified "max-width" "calc-size(auto, size)" == none
+#guard specified "max-height" "calc-size(fit-content, 30px + size / 2)" == some "calc-size(fit-content, 30px + (0.5 * size))"
+#guard specified "flex-basis" "calc-size(any, 50px)" == some "calc-size(any, 50px)" && specified "height" "calc(calc-size(auto, size))" == none
 #guard specified "will-change" "transform, opacity" == some "transform, opacity" && specified "will-change" "auto" == some "auto"
 -- a math function of a non-legacy colour function stays in the specified value (CSS Color 4)
 #guard specified "color" "color(srgb calc(0.5 + 1) calc(0.5 - 1) calc(0.5) / calc(-0.5 + 1))" ==

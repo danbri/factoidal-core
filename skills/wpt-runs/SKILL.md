@@ -416,14 +416,23 @@ suites job, on the same triggers as WPT, and are recorded in `runs.csv` (one row
   `release-tests/release-tests.py`): SHACL 1.0/1.2, ShEx and ShExC, JSON-LD (toRdf, expand,
   compact, flatten, fromRdf, HTML, framing), CSVW, RML modules, RIF Core, RDF 1.2 semantics,
   VC/DID/Data Integrity, xmlconf, XSLT 1.0, Schematron, MathML, JSON Schema, OWL 2 species.
+- **lean-xml** (since 2026-11-16; the daily 13:41 run and runs by hand only, about two hours):
+  the same way, the scoreboard's XML family jobs (`XML_ROWS`) in two lanes at once: XPath 4.0
+  and XQuery 4.0 (`l4qt4` over qt4tests), XSLT 4.0 (`l4xslt4` over xslt40-test), XSD 1.1 Part 1
+  (`l4xsd11` over w3c/xsdtests), RELAX NG (spec and compact suites), XInclude, Canonical XML.
+  Unsupported dependencies count as other, never as passes. On other runs the job does nothing
+  and no row is written.
 - **OWL 2 as discrete populations** (`release-tests/owl-populations.py`): the W3C OWL 2 Test
   Cases (`third_party/testing/owl/all.rdf`, 2009-11-18, every case not Rejected: 489 cases, 355
   Approved; W3C Document Licence). One row per population: each of Positive/Negative
   EntailmentTest, ConsistencyTest, InconsistencyTest under the Direct Semantics (`--dl`: RL
   closure, materialisation, tableau refuter) and under the RDF-Based Semantics (`--rdf-based`),
   `l4-owl2-<type>-<direct|rdfbased>`; ProfileIdentificationTest per profile EL, QL, RL
-  (`l4-owl2-profile-*`: no built-in recogniser, so `valid=false` with that reason and the
-  official size 418); species (`l4-owl2-species-all|dl|full-only`). The denominator is always
+  (`l4-owl2-profile-*`, 418 cases each, since 2026-11-16: the probe's `--profile-id` mode, which
+  is the OWL 2 DL species verdict and then the profile's grammar, `OWL/Profiles.lean`, over the
+  axioms read back from the RDF graph, `OWL/StructureFromRdf.lean`; a graph the reader cannot
+  place is `undecided` and counted as other; a core commit whose probe lacks the mode gives
+  `valid=false` with that reason); species (`l4-owl2-species-all|dl|full-only`). The denominator is always
   the population's full official count; `names_run` = units decided (pass + fail); meta.json
   has the split by status (Approved, Proposed, Extracredit, none).
 - A row is valid when the scoreboard gave it status `ok` with tests found, or (OWL) the probe
@@ -481,8 +490,9 @@ what needs attention (invalid, partial, stale, runners with no recorded rows).
   `parts` key if it is an l4w3c umbrella manifest; (3) `node --test tests/hub/specs_test.mjs`
   (checks the mapping) and `python3 tests/browser-wpt/specs_data_test.py`. A suite id in runs.csv
   that the mapping lacks is listed in `data.json` `unmapped` and on the page's "Needs attention"
-  view. Runners with numbers but no recorded rows (the QT4 runners `l4qt4`, `l4xslt4`) go in
-  `unrecorded`, with the write-up and date, and are never shown as a score.
+  view. Runners with numbers but no recorded rows (the Xalan corpus run of `l4xslt4 --xslt10`,
+  the `xs` family of `l4qt4`) go in `unrecorded`, with the write-up and date, and are never shown
+  as a score.
 - **Tooling.** Charts are the Conformance page's own SVG line chart; d3 and Observable Plot (ISC,
   vendored in `third_party/observable`) are there if a view needs more. No server-side
   dashboards: Grafana is AGPL-3.0 (relicensed 2021-04-20, grafana/grafana 8db3eb90ae) and needs

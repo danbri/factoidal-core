@@ -244,8 +244,12 @@ def main (args : List String) : IO UInt32 := do
                 let sdir := (sp.splitOn "/").dropLast
                 let mut extra : List (String × List Node) := []
                 let mut absent : List String := []
+                -- `source_uri` (manifest): the upstream file name of the
+                -- source document. A stylesheet that names it in
+                -- `document()` means the source document itself.
+                let srcUri := str? "source_uri" c
                 for u in (documentUris styleSrc.toList).eraseDups do
-                  if u != "" then
+                  if u != "" && some u != srcUri then
                     let path := dir ++ "/" ++ String.intercalate "/" (sdir ++ [u])
                     if ← System.FilePath.pathExists path then
                       let dtext ← IO.FS.readFile path
@@ -261,7 +265,7 @@ def main (args : List String) : IO UInt32 := do
                     IO.println s!"ERROR {cat}/{name}: the source is not well-formed XML: {e.message} at {e.position}"
                     t := { t with errors := t.errors + 1 }
                 | .ok style, .ok source =>
-                    match transform style source extra with
+                    match transformAt style source extra [] srcUri with
                     | .refused why =>
                         -- A refusal that names nothing is hard to act on.
                         -- When the stylesheet asks for a document the
