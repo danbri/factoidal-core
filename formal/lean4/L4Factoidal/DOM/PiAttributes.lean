@@ -77,13 +77,43 @@ theorem unescape_escape (cs : List Char) : unescapeList (escapeList cs) = cs := 
     unfold unescapeList
     split <;> simp_all
 
+/-! ## The executed forms: loops
+
+`escapeList` and `unescapeList` are the specification (recursion as deep as the value is
+long); the engine runs these accumulator loops, proved equal to them. -/
+
+def escapeGo : List Char → List Char → List Char
+  | [], acc => acc.reverse
+  | c :: cs, acc => escapeGo cs ((escapeChar c).reverse ++ acc)
+
+theorem escapeGo_eq : ∀ (cs acc : List Char), escapeGo cs acc = acc.reverse ++ escapeList cs
+  | [], acc => by simp [escapeGo, escapeList]
+  | c :: cs, acc => by simp [escapeGo, escapeList, escapeGo_eq cs, List.reverse_append, List.append_assoc]
+
+def unescapeGo : List Char → List Char → List Char
+  | '&' :: 'a' :: 'm' :: 'p' :: ';' :: rest, acc => unescapeGo rest ('&' :: acc)
+  | '&' :: 'n' :: 'b' :: 's' :: 'p' :: ';' :: rest, acc => unescapeGo rest ('\u00A0' :: acc)
+  | '&' :: 'l' :: 't' :: ';' :: rest, acc => unescapeGo rest ('<' :: acc)
+  | '&' :: 'g' :: 't' :: ';' :: rest, acc => unescapeGo rest ('>' :: acc)
+  | '&' :: 'q' :: 'u' :: 'o' :: 't' :: ';' :: rest, acc => unescapeGo rest ('"' :: acc)
+  | c :: rest, acc => unescapeGo rest (c :: acc)
+  | [], acc => acc.reverse
+
+theorem unescapeGo_eq (cs acc : List Char) : unescapeGo cs acc = acc.reverse ++ unescapeList cs := by
+  induction cs, acc using unescapeGo.induct <;> simp_all [unescapeGo, unescapeList]
+
+/-- Kind: equivalence (spec and fast path). Says: the loops give what the specification
+gives, so `unescape_escape` holds of what the engine runs. -/
+theorem fast_eq (cs : List Char) : escapeGo cs [] = escapeList cs ∧ unescapeGo cs [] = unescapeList cs := by
+  simp [escapeGo_eq, unescapeGo_eq]
+
 /-! ## Reading the data -/
 
-/-- The characters of `cs` up to the first `stop`, and what follows that character; `none`
-when there is no `stop`. -/
-def untilChar (stop : Char) : List Char → Option (List Char × List Char)
-  | [] => none
-  | c :: cs => if c == stop then some ([], cs) else (untilChar stop cs).map fun (a, b) => (c :: a, b)
+/-- The characters of `cs` up to the first `stop` (`acc` holds those read so far, last
+first), and what follows that character; `none` when there is no `stop`. A loop. -/
+def untilChar (stop : Char) : List Char → List Char → Option (List Char × List Char)
+  | [], _ => none
+  | c :: cs, acc => if c == stop then some (acc.reverse, cs) else untilChar stop cs (c :: acc)
 
 /-- The attributes of data `cs`, read left to right: ASCII whitespace, then a name (up to
 `=`), `=`, then a value in double or single quotes, then whitespace or the end. Anything else
@@ -96,7 +126,7 @@ def parseList : Nat → List Char → List (String × String) → Option (List (
     match cs.dropWhile isSpace with
     | [] => some acc.reverse
     | rest =>
-      match untilChar '=' rest with
+      match untilChar '=' rest [] with
       | none => none
       | some (name, after) =>
         let n := String.ofList name
@@ -104,15 +134,15 @@ def parseList : Nat → List Char → List (String × String) → Option (List (
         match after with
         | q :: tail =>
           if q != '"' && q != '\'' then none else
-          match untilChar q tail with
+          match untilChar q tail [] with
           | none => none
           | some (v, more) =>
             match more with
             | c :: _ => if !isSpace c then none else
-                let acc := if acc.any (·.1 == n) then acc else (n, String.ofList (unescapeList v)) :: acc
+                let acc := if acc.any (·.1 == n) then acc else (n, String.ofList (unescapeGo v [])) :: acc
                 parseList fuel more acc
             | [] =>
-                let acc := if acc.any (·.1 == n) then acc else (n, String.ofList (unescapeList v)) :: acc
+                let acc := if acc.any (·.1 == n) then acc else (n, String.ofList (unescapeGo v [])) :: acc
                 some acc.reverse
         | [] => none
 
@@ -131,7 +161,7 @@ theorem parseList_zero (cs : List Char) (acc : List (String × String)) : parseL
 /-- The data of attributes `as`: `name="value"` pairs, one space between, each value escaped
 as an element's attribute value is. -/
 def serialize (as : List (String × String)) : String :=
-  " ".intercalate (as.map fun (k, v) => k ++ "=\"" ++ String.ofList (escapeList v.toList) ++ "\"")
+  " ".intercalate (as.map fun (k, v) => k ++ "=\"" ++ String.ofList (escapeGo v.toList []) ++ "\"")
 
 /-- `setAttribute(name, value)`: the new data, with the attribute changed in place or added at
 the end; `none` for a name that is not a valid attribute local name (InvalidCharacterError).
