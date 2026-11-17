@@ -812,6 +812,65 @@ theorem HeapOf.noteEnv_eq (h : HeapOf H) (envs : Array Env) (e : Nat) :
         ({ h with undoEnvs := L }, envs)
       else (h, envs) := rfl
 
+/-! ### The note with the heap kept whole
+
+`noteObj` and `noteEnv` take the heap without its array and answer a pair. Inlined into a function
+with more than one way out, that pair met the write after it at a join, and the compiled code
+passed the heap there as its twelve fields and built a new record (88 bytes) for each write: once
+for each `assignLocal`, `assignName`, `typedWriteV`, call and return in evaluator-run code (counting
+build: 0.86 M records on the acorn workload). `notedObj` and `notedEnv` take and answer the heap
+as one record, with its array still in it, so the write after them changes that record in place.
+The hot writers (`modifyObj`, `updateObj`, `modifyEnv`, `pushEnv`, `releaseEnv`) use them; the
+definitions above stay for the others and as the reference (`notedObj_take`, `notedEnv_take`). -/
+
+/-- The logging branch for a heap that still holds its object array: the array is taken out for
+the log to read, and put back. Not inlined. -/
+@[noinline] def HeapOf.noteObjIn (h : HeapOf H) (id : Nat) : HeapOf H :=
+  let objs := h.objs
+  let h := { h with objs := #[] }
+  let (h, objs) := h.noteObjOn objs id
+  { h with objs := objs }
+
+/-- The heap with the write of object `id` noted in the undo log, when one is kept: the heap goes
+in and comes out as one record, so the write that follows changes it in place. -/
+@[inline] def HeapOf.notedObj (h : HeapOf H) (id : Nat) : HeapOf H :=
+  if id < h.undoObjs.base then h.noteObjIn id else h
+
+/-- **Kind: refinement.** Noting inside the heap and then taking the object array out gives the heap
+and the array that taking the array out and then `noteObj` gave (the order every write had), for
+every heap and index. -/
+theorem HeapOf.notedObj_take (h : HeapOf H) (id : Nat) :
+    (({ h.notedObj id with objs := #[] } : HeapOf H), (h.notedObj id).objs)
+      = ({ h with objs := #[] } : HeapOf H).noteObj h.objs id := by
+  unfold HeapOf.notedObj HeapOf.noteObj
+  show _ = if id < h.undoObjs.base then _ else _
+  by_cases hc : id < h.undoObjs.base
+  · simp only [hc, if_true, HeapOf.noteObjIn, HeapOf.noteObjOn]
+  · simp only [hc, if_false]
+#print axioms HeapOf.notedObj_take
+
+/-- As `noteObjIn`, for the environment array. -/
+@[noinline] def HeapOf.noteEnvIn (h : HeapOf H) (e : Nat) : HeapOf H :=
+  let envs := h.envs
+  let h := { h with envs := #[] }
+  let (h, envs) := h.noteEnvOn envs e
+  { h with envs := envs }
+
+/-- As `notedObj`, for environment `e`. -/
+@[inline] def HeapOf.notedEnv (h : HeapOf H) (e : Nat) : HeapOf H :=
+  if e < h.undoEnvs.base then h.noteEnvIn e else h
+
+/-- **Kind: refinement.** As `notedObj_take`, for the environment array. -/
+theorem HeapOf.notedEnv_take (h : HeapOf H) (e : Nat) :
+    (({ h.notedEnv e with envs := #[] } : HeapOf H), (h.notedEnv e).envs)
+      = ({ h with envs := #[] } : HeapOf H).noteEnv h.envs e := by
+  unfold HeapOf.notedEnv HeapOf.noteEnv
+  show _ = if e < h.undoEnvs.base then _ else _
+  by_cases hc : e < h.undoEnvs.base
+  · simp only [hc, if_true, HeapOf.noteEnvIn, HeapOf.noteEnvOn]
+  · simp only [hc, if_false]
+#print axioms HeapOf.notedEnv_take
+
 /-- Begin an action that may be undone: from here each write of an object or environment that
 exists now logs its old value once. -/
 def HeapOf.undoBegin (h : HeapOf H) : HeapOf H :=

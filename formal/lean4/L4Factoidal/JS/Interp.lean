@@ -45,9 +45,9 @@ local notation "M" => JSM H
   -- the object array is taken out of the heap first, and `Array.modify` moves the object
   -- out of the array for `f`: both are changed in place when nothing else holds them
   modify fun h =>
+    let h := h.notedObj id
     let objs := h.objs
     let h := { h with objs := #[] }
-    let (h, objs) := h.noteObj objs id
     { h with objs := objs.modify id f }
 
 /-- Object `id` and the array with a placeholder in its place. Not inlined: the compiler
@@ -65,9 +65,9 @@ this every write of an element or a property made a closure for it, called it th
 and took its answer from a pair. -/
 @[specialize] def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
   modifyGet fun h =>
+    let h := h.notedObj id
     let objs := h.objs
     let h := { h with objs := #[] }
-    let (h, objs) := h.noteObj objs id
     if id < objs.size then
       let (o, objs) := takeAt objs id
       let (a, o) := f o
@@ -155,30 +155,33 @@ made it. -/
 /-- Put an environment record in a free slot of the environment array. -/
 @[inline] def pushEnv (en : Env) : M Nat :=
   modifyGet fun h =>
-    let envs := h.envs
-    let h := { h with envs := #[] }
     match h.envFree.back? with
     | some e =>
-      let (h, envs) := h.noteEnv envs e
+      let h := h.notedEnv e
+      let envs := h.envs
+      let h := { h with envs := #[] }
       (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
-    | none => (envs.size, { h with envs := envs.push en })
+    | none =>
+      let envs := h.envs
+      let h := { h with envs := #[] }
+      (envs.size, { h with envs := envs.push en })
 
 @[inline] def newEnv (parent : Nat) : M Nat := pushEnv { parent }
 
 /-- Environment `e` is not reachable any more: drop its contents and reuse its slot. -/
 @[inline] def releaseEnv (e : Nat) : M Unit :=
   modify fun h =>
+    let h := h.notedEnv e
     let envs := h.envs
     let h := { h with envs := #[] }
-    let (h, envs) := h.noteEnv envs e
     { h with envs := envs.set! e default, envFree := h.envFree.push e }
 
 /-- Change an environment in place: the array and the record are taken out while `f` runs. -/
 @[inline] def modifyEnv (e : Nat) (f : Env → Env) : M Unit :=
   modify fun h =>
+    let h := h.notedEnv e
     let envs := h.envs
     let h := { h with envs := #[] }
-    let (h, envs) := h.noteEnv envs e
     { h with envs := envs.modify e f }
 
 @[inline] def declare (env : Nat) (name : String) (b : Binding) : M Unit :=

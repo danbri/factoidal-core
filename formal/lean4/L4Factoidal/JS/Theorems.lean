@@ -196,6 +196,83 @@ theorem vmStash_pure_vmTake {H α : Type} (regs : Array Value) (fregs : FloatArr
 
 #print axioms vmStash_pure_vmTake
 
+/-! ## The heap writers with the undo log's note inside the heap (`notedObj`, `notedEnv`)
+
+**Kind: refinement.** Each writer is the function it was when it took the array out first and
+noted through `noteObj` or `noteEnv`: the right sides are those definitions, word for word. -/
+
+theorem modifyObj_eq {H : Type} (id : Nat) (f : Obj → Obj) :
+    (modifyObj id f : JSM H Unit) = modify fun h =>
+      let objs := h.objs
+      let h := { h with objs := #[] }
+      let (h, objs) := h.noteObj objs id
+      { h with objs := objs.modify id f } := by
+  unfold modifyObj
+  congr 1; funext h
+  simp only []
+  rw [← HeapOf.notedObj_take h id]
+
+theorem updateObj_eq {H : Type} {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) :
+    (updateObj id f : JSM H α) = modifyGet fun h =>
+      let objs := h.objs
+      let h := { h with objs := #[] }
+      let (h, objs) := h.noteObj objs id
+      if id < objs.size then
+        let (o, objs) := takeAt objs id
+        let (a, o) := f o
+        (a, { h with objs := objs.set! id o })
+      else (default, { h with objs }) := by
+  unfold updateObj
+  congr 1; funext h
+  simp only []
+  rw [← HeapOf.notedObj_take h id]
+
+theorem pushEnv_eq {H : Type} (en : Env) :
+    (pushEnv en : JSM H Nat) = modifyGet fun h =>
+      let envs := h.envs
+      let h := { h with envs := #[] }
+      match h.envFree.back? with
+      | some e =>
+        let (h, envs) := h.noteEnv envs e
+        (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
+      | none => (envs.size, { h with envs := envs.push en }) := by
+  unfold pushEnv
+  congr 1; funext h
+  simp only []
+  cases hb : h.envFree.back? with
+  | none => rfl
+  | some e =>
+    simp only []
+    rw [← HeapOf.notedEnv_take h e]
+
+theorem releaseEnv_eq {H : Type} (e : Nat) :
+    (releaseEnv e : JSM H Unit) = modify fun h =>
+      let envs := h.envs
+      let h := { h with envs := #[] }
+      let (h, envs) := h.noteEnv envs e
+      { h with envs := envs.set! e default, envFree := h.envFree.push e } := by
+  unfold releaseEnv
+  congr 1; funext h
+  simp only []
+  rw [← HeapOf.notedEnv_take h e]
+
+theorem modifyEnv_eq {H : Type} (e : Nat) (f : Env → Env) :
+    (modifyEnv e f : JSM H Unit) = modify fun h =>
+      let envs := h.envs
+      let h := { h with envs := #[] }
+      let (h, envs) := h.noteEnv envs e
+      { h with envs := envs.modify e f } := by
+  unfold modifyEnv
+  congr 1; funext h
+  simp only []
+  rw [← HeapOf.notedEnv_take h e]
+
+#print axioms modifyObj_eq
+#print axioms updateObj_eq
+#print axioms pushEnv_eq
+#print axioms releaseEnv_eq
+#print axioms modifyEnv_eq
+
 /-! ## ToNumber of a Number (the `toNumQ` form of `JS/Interp.lean`) -/
 
 /-- ToNumber of a Number is that Number, with any fuel left. -/
@@ -254,7 +331,7 @@ theorem updateObj_keep {H : Type} {α} [Inhabited α] (id : Nat) (f : Obj → α
   have hnb : ¬ id < h.undoObjs.base := by omega
   rw [HeapOf.obj_eq_getElem h id hid] at hf
   unfold updateObj
-  simp only [modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet, HeapOf.noteObj, hnb, if_false, hid, if_true, takeAt]
+  simp only [modifyGet, MonadStateOf.modifyGet, EStateM.modifyGet, HeapOf.notedObj, hnb, if_false, hid, if_true, takeAt]
   have h1 : (h.objs.swapAt! id default).fst = h.objs[id] := by
     simp [Array.swapAt!, hid, Array.swapAt]
   have h2 := swapAt_set_same h.objs id hid
