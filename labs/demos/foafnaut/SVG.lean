@@ -183,8 +183,8 @@ private def sameNumber (text : String) : Bool :=
   let t := toString n
   sameNumber t && sameNumber ("-" ++ t) && sameNumber ("0." ++ t) && sameNumber (t ++ "." ++ toString (n*7919 % 100000))
 -- the round-off of drawing programs is read (as about 0); a large positive exponent is not
-#guard ((number "1.13686838e-13").toOption.map (·.abs < 1e-12)) == some true
-#guard ((number "-3.55271368e-15").toOption.map (·.abs < 1e-12)) == some true
+#guard ((number "1.13686838e-13").toOption.map fun v => decide (v.abs < 1e-12)) == some true
+#guard ((number "-3.55271368e-15").toOption.map fun v => decide (v.abs < 1e-12)) == some true
 #guard (number "1e13").toOption.isNone
 #guard (number "4.4e-05").toOption.isSome
 private def lengthNumber (input : String) : Except String Float :=
