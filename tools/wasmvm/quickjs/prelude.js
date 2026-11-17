@@ -13322,68 +13322,292 @@
   lazy('CacheStorage', () => cachesApi()?.classes.CacheStorage);
   // ==== end Cache API ============================================================================
 
-  // ---- User Timing: performance.mark, measure ---------------------------------------------
-  // performance.now and timeOrigin are QuickJS-NG's, on the WASI clock, which is Lean's script
-  // clock (Hosts.Page.ScriptClock). The entries are this list.
+  // ---- Performance: HR Time 3, Performance Timeline 2, User Timing 3, Navigation Timing 2 ----
+  // performance.now and timeOrigin are the engine's, on Lean's script clock (Hosts.Page.ScriptClock).
+  // This section gives them their Web IDL shape (HR Time §4: `Performance` is an EventTarget whose
+  // operations and attributes are on its prototype; the global's `performance` is a [Replaceable]
+  // attribute) and keeps the page's performance entry buffer: the navigation entry, marks and
+  // measures. A PerformanceObserver is told of new entries in a task (Performance Timeline §6).
+  // The document's milestones (DOMContentLoaded, load) are noted by the event code (`navNote`).
+  // Resource entries are not made yet: 'resource' is not a supported entry type.
+  let navNote = () => {};
   if (typeof performance === 'object' && performance !== null && typeof performance.mark !== 'function') {
+    const native = performance;
+    const nowOf = () => native.now();
+    const origin = Number(native.timeOrigin) || 0;
+    const inWindow = () => typeof globalThis.document === 'object' && globalThis.document !== null;
     const entries = [];
-    class PerformanceEntry {
-      constructor() { throw new TypeError('Illegal constructor'); }
-      toJSON() { return { name: this.name, entryType: this.entryType, startTime: this.startTime, duration: this.duration }; }
-    }
-    const entry = (C, name, entryType, startTime, duration, detail) => {
-      const e = Object.create(C.prototype);
-      for (const [k, v] of Object.entries({ name, entryType, startTime, duration, detail })) Object.defineProperty(e, k, { value: v, enumerable: true });
-      return e;
-    };
-    const time = (x, what) => { const t = Number(x); if (!(t >= 0)) throw new TypeError(`${what}: the time is negative or not a number`); return t; };
+    const slots = new WeakMap();
+    const slot = o => { const s = (typeof o === 'object' || typeof o === 'function') && o !== null ? slots.get(o) : undefined; if (!s) throw new TypeError('Illegal invocation'); return s; };
+    // an accessor whose function is named `get <k>` (Web IDL §3.7.6)
+    const attr = (P, k, f) => Object.defineProperty(P, k, {
+      get: Object.getOwnPropertyDescriptor({ get [k]() { return f(this); } }, k).get, enumerable: true, configurable: true });
+    const op = (P, k, f) => Object.defineProperty(P, k, { value: f, writable: true, enumerable: true, configurable: true });
+    const need = (args, k, what) => { if (args.length < k) throw new TypeError(`${what}: ${k} argument${k > 1 ? 's' : ''} required, but only ${args.length} present.`); };
+    const illegal = function () { throw new TypeError('Illegal constructor'); };
+    let nextId = 1;
+    // The read only attributes of PerformanceTiming, in order (Navigation Timing 2 §5.1).
+    const timingNames = ['navigationStart', 'unloadEventStart', 'unloadEventEnd', 'redirectStart', 'redirectEnd', 'fetchStart',
+      'domainLookupStart', 'domainLookupEnd', 'connectStart', 'connectEnd', 'secureConnectionStart', 'requestStart',
+      'responseStart', 'responseEnd', 'domLoading', 'domInteractive', 'domContentLoadedEventStart',
+      'domContentLoadedEventEnd', 'domComplete', 'loadEventStart', 'loadEventEnd'];
+    // The document's milestones in ms after the time origin: unset until reached. This
+    // document had no previous document and no redirect; fetch to response are its start.
+    const nav = {};
+    const navRel = k => (['unloadEventStart', 'unloadEventEnd', 'redirectStart', 'redirectEnd', 'secureConnectionStart'].includes(k) ? undefined
+      : ['navigationStart', 'fetchStart', 'domainLookupStart', 'domainLookupEnd', 'connectStart', 'connectEnd', 'requestStart',
+        'responseStart', 'responseEnd', 'domLoading'].includes(k) ? 0 : nav[k]);
+
+    class Performance extends EventTarget { constructor() { illegal(); super(); } }
+    const perf = Reflect.construct(EventTarget, [], Performance);
+    const perfOf = o => { if (o !== perf) throw new TypeError('Illegal invocation'); return o; };
+
+    // ---- entries ----
+    class PerformanceEntry { constructor() { illegal(); } }
+    for (const k of ['id', 'name', 'entryType', 'startTime', 'duration', 'navigationId']) attr(PerformanceEntry.prototype, k, o => slot(o)[k]);
+    op(PerformanceEntry.prototype, 'toJSON', function toJSON() {
+      const s = slot(this), o = {};
+      for (let P = Object.getPrototypeOf(this); P && P !== Object.prototype; P = Object.getPrototypeOf(P))
+        for (const k of Object.getOwnPropertyNames(P)) {
+          const d = Object.getOwnPropertyDescriptor(P, k);
+          if (d.get && !(k in o)) { const v = d.get.call(this); if (v === null || ['string', 'number', 'boolean'].includes(typeof v) || (typeof v === 'object' && typeof v.toJSON === 'function')) o[k] = v !== null && typeof v === 'object' ? v.toJSON() : v; }
+        }
+      void s; return o;
+    });
+    const make = (C, fields) => { const e = Object.create(C.prototype); slots.set(e, Object.assign({ id: nextId++, navigationId: 1 }, fields)); return e; };
+    const time = (x, what) => { const t = Number(x); if (!(t >= 0)) throw new TypeError(`Failed to execute '${what}': the time is negative or not a number`); return t; };
+    const timingName = name => timingNames.includes(name);
     class PerformanceMark extends PerformanceEntry {
-      constructor(name, options = undefined) {
-        const o = dict(options, "Failed to construct 'PerformanceMark'");
-        const e = entry(new.target, String(name), 'mark', o.startTime === undefined ? performance.now() : time(o.startTime, 'PerformanceMark'), 0,
-          o.detail === undefined ? null : structuredClone(o.detail));
-        return e;
+      constructor(markName, markOptions = undefined) {
+        need(arguments, 1, "Failed to construct 'PerformanceMark'");
+        const name = String(markName);
+        if (inWindow() && timingName(name)) throw new DOMException(`Failed to construct 'PerformanceMark': '${name}' is part of the PerformanceTiming interface, and cannot be used as a mark name.`, 'SyntaxError');
+        const o = dict(markOptions, "Failed to construct 'PerformanceMark'");
+        const startTime = o.startTime === undefined ? nowOf() : time(o.startTime, 'PerformanceMark');
+        const detail = o.detail === undefined ? null : structuredClone(o.detail);
+        return make(new.target, { name, entryType: 'mark', startTime, duration: 0, detail });
       }
     }
-    class PerformanceMeasure extends PerformanceEntry {}
+    class PerformanceMeasure extends PerformanceEntry { constructor() { illegal(); super(); } }
+    attr(PerformanceMark.prototype, 'detail', o => slot(o).detail);
+    attr(PerformanceMeasure.prototype, 'detail', o => slot(o).detail);
+    class PerformanceResourceTiming extends PerformanceEntry { constructor() { illegal(); super(); } }
+    const resourceNums = ['workerStart', 'redirectStart', 'redirectEnd', 'fetchStart', 'domainLookupStart', 'domainLookupEnd',
+      'connectStart', 'connectEnd', 'secureConnectionStart', 'requestStart', 'finalResponseHeadersStart', 'firstInterimResponseStart',
+      'responseStart', 'responseEnd', 'workerRouterEvaluationStart', 'workerCacheLookupStart', 'transferSize', 'encodedBodySize', 'decodedBodySize'];
+    for (const k of ['initiatorType', 'deliveryType', 'nextHopProtocol', ...resourceNums, 'workerMatchedRouterSource', 'workerFinalRouterSource',
+      'responseStatus', 'renderBlockingStatus', 'contentType', 'contentEncoding']) attr(PerformanceResourceTiming.prototype, k, o => slot(o)[k] ?? '');
+    op(PerformanceResourceTiming.prototype, 'toJSON', PerformanceEntry.prototype.toJSON);
+    class PerformanceTimingConfidence { constructor() { illegal(); } }
+    attr(PerformanceTimingConfidence.prototype, 'randomizedTriggerRate', o => slot(o).rate);
+    attr(PerformanceTimingConfidence.prototype, 'value', o => slot(o).value);
+    op(PerformanceTimingConfidence.prototype, 'toJSON', function toJSON() { const s = slot(this); return { randomizedTriggerRate: s.rate, value: s.value }; });
+    class PerformanceNavigationTiming extends PerformanceResourceTiming { constructor() { illegal(); super(); } }
+    for (const k of ['unloadEventStart', 'unloadEventEnd', 'domInteractive', 'domContentLoadedEventStart', 'domContentLoadedEventEnd',
+      'domComplete', 'loadEventStart', 'loadEventEnd']) attr(PerformanceNavigationTiming.prototype, k, o => (slot(o), nav[k] ?? 0));
+    attr(PerformanceNavigationTiming.prototype, 'type', o => (slot(o), 'navigate'));
+    attr(PerformanceNavigationTiming.prototype, 'redirectCount', o => (slot(o), 0));
+    attr(PerformanceNavigationTiming.prototype, 'criticalCHRestart', o => (slot(o), 0));
+    attr(PerformanceNavigationTiming.prototype, 'notRestoredReasons', o => (slot(o), null));
+    attr(PerformanceNavigationTiming.prototype, 'confidence', o => slot(o).confidence);
+    op(PerformanceNavigationTiming.prototype, 'toJSON', PerformanceEntry.prototype.toJSON);
+    // the navigation entry (Navigation Timing 2 §4): its duration is the load event's end
+    let navEntry = null;
+    const navigationEntry = () => {
+      if (navEntry === null && inWindow()) {
+        const confidence = Object.create(PerformanceTimingConfidence.prototype);
+        slots.set(confidence, { rate: 0, value: 'high' });
+        const fields = { name: String((globalThis.location && globalThis.location.href) || ''), entryType: 'navigation', startTime: 0, initiatorType: 'navigation',
+          deliveryType: '', nextHopProtocol: 'http/1.1', responseStatus: 200, renderBlockingStatus: 'non-blocking',
+          contentType: 'text/html', contentEncoding: '', workerMatchedRouterSource: '', workerFinalRouterSource: '', confidence };
+        for (const k of resourceNums) fields[k] = 0;
+        navEntry = make(PerformanceNavigationTiming, fields);
+        Object.defineProperty(slots.get(navEntry), 'duration', { get() { return nav.loadEventEnd ?? 0; }, enumerable: true });
+      }
+      return navEntry;
+    };
+    // the performance entry buffer, in chronological order (Performance Timeline §5.2)
+    const all = () => { const n = navigationEntry(); return (n ? [n, ...entries] : entries.slice()).sort((a, b) => slot(a).startTime - slot(b).startTime); };
+    const byType = (list, type) => list.filter(e => slot(e).entryType === type);
+    const byName = (list, name, type) => list.filter(e => slot(e).name === name && (type === undefined || slot(e).entryType === type));
+
+    // ---- PerformanceObserver (Performance Timeline §6) ----
+    const observers = [];
+    let taskQueued = false;
+    const supportedList = () => inWindow() ? ['mark', 'measure', 'navigation'] : ['mark', 'measure'];
+    let supportedFrozen = null;
+    class PerformanceObserverEntryList { constructor() { illegal(); } }
+    const entryList = list => { const l = Object.create(PerformanceObserverEntryList.prototype); slots.set(l, { list }); return l; };
+    const sorted = l => slot(l).list.slice().sort((a, b) => slot(a).startTime - slot(b).startTime);
+    op(PerformanceObserverEntryList.prototype, 'getEntries', function getEntries() { return sorted(this); });
+    op(PerformanceObserverEntryList.prototype, 'getEntriesByType', function getEntriesByType(type) {
+      need(arguments, 1, "Failed to execute 'getEntriesByType' on 'PerformanceObserverEntryList'"); return byType(sorted(this), String(type)); });
+    op(PerformanceObserverEntryList.prototype, 'getEntriesByName', function getEntriesByName(name, type = undefined) {
+      need(arguments, 1, "Failed to execute 'getEntriesByName' on 'PerformanceObserverEntryList'");
+      return byName(sorted(this), String(name), type === undefined ? undefined : String(type)); });
+    const deliver = () => {
+      taskQueued = false;
+      for (const o of observers.slice()) {
+        const s = slots.get(o);
+        if (!s || s.buffer.length === 0) continue;
+        const list = entryList(s.buffer.splice(0));
+        const options = {};
+        if (s.dropped) { options.droppedEntriesCount = 0; s.dropped = false; }
+        try { s.callback.call(o, list, o, options); } catch (err) { report(err); }
+      }
+    };
+    const queueTask = () => { if (!taskQueued) { taskQueued = true; setTimeout(deliver, 0); } };
+    // queue a PerformanceEntry (Performance Timeline §5.3)
+    const queueEntry = e => {
+      const t = slot(e).entryType;
+      let any = false;
+      for (const o of observers) { const s = slots.get(o); if (s.types.has(t)) { s.buffer.push(e); any = true; } }
+      if (any) queueTask();
+    };
+    class PerformanceObserver {
+      constructor(callback) {
+        need(arguments, 1, "Failed to construct 'PerformanceObserver'");
+        if (typeof callback !== 'function') throw new TypeError("Failed to construct 'PerformanceObserver': The callback provided as parameter 1 is not a function.");
+        slots.set(this, { callback, buffer: [], types: new Set(), mode: null, dropped: false });
+      }
+      static get supportedEntryTypes() { return supportedFrozen ??= Object.freeze(supportedList()); }
+    }
+    op(PerformanceObserver.prototype, 'observe', function observe(options = undefined) {
+      const s = slot(this);
+      const o = dict(options, "Failed to execute 'observe' on 'PerformanceObserver'");
+      const types = o.entryTypes === undefined ? undefined : Array.from(o.entryTypes, String);
+      const type = o.type === undefined ? undefined : String(o.type);
+      if (types === undefined && type === undefined) throw new TypeError("Failed to execute 'observe' on 'PerformanceObserver': An observe() call must include either entryTypes or type arguments.");
+      if (types !== undefined && (type !== undefined || o.buffered !== undefined)) throw new TypeError("Failed to execute 'observe' on 'PerformanceObserver': An observe() call must not include both entryTypes and type arguments.");
+      const mode = types !== undefined ? 'multiple' : 'single';
+      if (s.mode !== null && s.mode !== mode) throw new DOMException("Failed to execute 'observe' on 'PerformanceObserver': This PerformanceObserver has performed observe({" + (s.mode === 'multiple' ? 'entryTypes' : 'type') + ": ...}, therefore it cannot perform observe({" + (mode === 'multiple' ? 'entryTypes' : 'type') + ': ...}).', 'InvalidModificationError');
+      s.mode = mode; s.dropped = true;
+      const supported = PerformanceObserver.supportedEntryTypes;
+      if (mode === 'multiple') {
+        const known = types.filter(t => supported.includes(t));
+        if (known.length === 0) return;
+        s.types = new Set(known);
+      } else {
+        if (!supported.includes(type)) return;
+        s.types.add(type);
+        if (o.buffered) { const old = byType(all(), type); if (old.length) { s.buffer.push(...old); queueTask(); } }
+      }
+      if (!observers.includes(this)) observers.push(this);
+    });
+    op(PerformanceObserver.prototype, 'disconnect', function disconnect() {
+      const s = slot(this); const i = observers.indexOf(this);
+      if (i >= 0) observers.splice(i, 1);
+      s.buffer = []; s.types = new Set(); s.mode = null;
+    });
+    op(PerformanceObserver.prototype, 'takeRecords', function takeRecords() { return slot(this).buffer.splice(0); });
+
+    // ---- convert a mark to a timestamp (User Timing 3 §4.1.1) ----
+    const timingValue = k => { const r = navRel(k); return r === undefined ? 0 : Math.floor(origin + r); };
     const markTime = (m, what) => {
-      if (typeof m === 'number') return time(m, what);
-      const name = String(m);
-      for (let i = entries.length - 1; i >= 0; i--) if (entries[i].entryType === 'mark' && entries[i].name === name) return entries[i].startTime;
-      throw new DOMException(`Failed to execute 'measure' on 'Performance': The mark '${name}' does not exist.`, 'SyntaxError');
+      if (typeof m === 'string' && timingName(m)) {
+        if (!inWindow()) throw new TypeError(`Failed to execute '${what}' on 'Performance': '${m}' is part of the PerformanceTiming interface, which is not available here.`);
+        if (m === 'navigationStart') return 0;
+        const v = timingValue(m);
+        if (v === 0) throw new DOMException(`Failed to execute '${what}' on 'Performance': '${m}' is empty: either the event hasn't happened yet, or it would provide cross-origin timing information.`, 'InvalidAccessError');
+        return v - timingValue('navigationStart');
+      }
+      if (typeof m === 'string') {
+        for (let i = entries.length - 1; i >= 0; i--) { const s = slot(entries[i]); if (s.entryType === 'mark' && s.name === m) return s.startTime; }
+        throw new DOMException(`Failed to execute '${what}' on 'Performance': The mark '${m}' does not exist.`, 'SyntaxError');
+      }
+      return time(m, what);
     };
-    const methods = {
-      mark(name, options = undefined) { const e = new PerformanceMark(name, options); entries.push(e); return e; },
-      measure(name, startOrOptions = undefined, endMark = undefined) {
-        let start, end, detail = null, duration;
-        if (startOrOptions !== null && typeof startOrOptions === 'object' && !Array.isArray(startOrOptions)) {
-          const o = startOrOptions;
-          if (endMark !== undefined) throw new TypeError("Failed to execute 'measure' on 'Performance': end must not be given with options");
-          if (o.start === undefined && o.end === undefined && o.duration === undefined && o.detail === undefined) { start = 0; end = performance.now(); }
-          else {
-            if (o.start !== undefined && o.end !== undefined && o.duration !== undefined) throw new TypeError("Failed to execute 'measure' on 'Performance': start, end and duration together");
-            if (o.start === undefined && o.end === undefined) throw new TypeError("Failed to execute 'measure' on 'Performance': no start nor end");
-            if (o.duration !== undefined) duration = time(o.duration, 'measure');
-            end = o.end !== undefined ? markTime(o.end, 'measure') : (o.start !== undefined && duration !== undefined ? markTime(o.start, 'measure') + duration : performance.now());
-            start = o.start !== undefined ? markTime(o.start, 'measure') : (duration !== undefined ? end - duration : 0);
-            detail = o.detail === undefined ? null : structuredClone(o.detail);
-          }
-        } else {
-          start = startOrOptions === undefined ? 0 : markTime(startOrOptions, 'measure');
-          end = endMark === undefined ? performance.now() : markTime(endMark, 'measure');
-        }
-        const e = entry(PerformanceMeasure, String(name), 'measure', start, end - start, detail);
-        entries.push(e); return e;
-      },
-      getEntries() { return entries.slice().sort((a, b) => a.startTime - b.startTime); },
-      getEntriesByType(type) { const t = String(type); return this.getEntries().filter(e => e.entryType === t); },
-      getEntriesByName(name, type = undefined) { const x = String(name); return this.getEntries().filter(e => e.name === x && (type === undefined || e.entryType === String(type))); },
-      clearMarks(name = undefined) { for (let i = entries.length - 1; i >= 0; i--) if (entries[i].entryType === 'mark' && (name === undefined || entries[i].name === String(name))) entries.splice(i, 1); },
-      clearMeasures(name = undefined) { for (let i = entries.length - 1; i >= 0; i--) if (entries[i].entryType === 'measure' && (name === undefined || entries[i].name === String(name))) entries.splice(i, 1); },
-      toJSON() { return { timeOrigin: performance.timeOrigin }; },
+    const isOptions = x => x !== null && x !== undefined && typeof x === 'object';
+
+    // ---- Performance ----
+    op(Performance.prototype, 'now', function now() { perfOf(this); return nowOf(); });
+    attr(Performance.prototype, 'timeOrigin', o => (perfOf(o), origin));
+    op(Performance.prototype, 'getEntries', function getEntries() { perfOf(this); return all(); });
+    op(Performance.prototype, 'getEntriesByType', function getEntriesByType(type) {
+      perfOf(this); need(arguments, 1, "Failed to execute 'getEntriesByType' on 'Performance'"); return byType(all(), String(type)); });
+    op(Performance.prototype, 'getEntriesByName', function getEntriesByName(name, type = undefined) {
+      perfOf(this); need(arguments, 1, "Failed to execute 'getEntriesByName' on 'Performance'");
+      return byName(all(), String(name), type === undefined ? undefined : String(type)); });
+    op(Performance.prototype, 'mark', function mark(markName, markOptions = undefined) {
+      perfOf(this); need(arguments, 1, "Failed to execute 'mark' on 'Performance'");
+      const e = new PerformanceMark(markName, markOptions);
+      entries.push(e); queueEntry(e); return e;
+    });
+    op(Performance.prototype, 'measure', function measure(measureName, startOrMeasureOptions = undefined, endMark = undefined) {
+      perfOf(this); need(arguments, 1, "Failed to execute 'measure' on 'Performance'");
+      const name = String(measureName);
+      const opts = isOptions(startOrMeasureOptions) ? startOrMeasureOptions : null;
+      const has = k => opts !== null && opts[k] !== undefined;
+      const startArg = opts === null && startOrMeasureOptions !== undefined && startOrMeasureOptions !== null ? String(startOrMeasureOptions) : undefined;
+      const endArg = endMark === undefined ? undefined : String(endMark);
+      if (opts !== null && (has('start') || has('end') || has('duration') || has('detail'))) {
+        if (endArg !== undefined) throw new TypeError("Failed to execute 'measure' on 'Performance': If a non-empty PerformanceMeasureOptions object was passed, |end_mark| must not be passed.");
+        if (!has('start') && !has('end')) throw new TypeError("Failed to execute 'measure' on 'Performance': If a non-empty PerformanceMeasureOptions object was passed, at least one of its 'start' or 'end' properties must be present.");
+        if (has('start') && has('end') && has('duration')) throw new TypeError("Failed to execute 'measure' on 'Performance': If a non-empty PerformanceMeasureOptions object was passed, it must not have all of its 'start', 'duration', and 'end' properties defined");
+      }
+      const optTime = k => { const v = opts[k]; return typeof v === 'number' ? v : String(v); };
+      const duration = has('duration') ? time(opts.duration, 'measure') : undefined;
+      let end;
+      if (endArg !== undefined) end = markTime(endArg, 'measure');
+      else if (has('end')) end = markTime(optTime('end'), 'measure');
+      else if (has('start') && duration !== undefined) end = markTime(optTime('start'), 'measure') + duration;
+      else end = nowOf();
+      let start;
+      if (has('start')) start = markTime(optTime('start'), 'measure');
+      else if (duration !== undefined && has('end')) start = end - duration;
+      else if (startArg !== undefined) start = markTime(startArg, 'measure');
+      else start = 0;
+      const detail = has('detail') ? structuredClone(opts.detail) : null;
+      const e = make(PerformanceMeasure, { name, entryType: 'measure', startTime: start, duration: end - start, detail });
+      entries.push(e); queueEntry(e); return e;
+    });
+    const clear = (type, name) => { for (let i = entries.length - 1; i >= 0; i--) { const s = slot(entries[i]); if (s.entryType === type && (name === undefined || s.name === name)) entries.splice(i, 1); } };
+    op(Performance.prototype, 'clearMarks', function clearMarks(markName = undefined) { perfOf(this); clear('mark', markName === undefined ? undefined : String(markName)); });
+    op(Performance.prototype, 'clearMeasures', function clearMeasures(measureName = undefined) { perfOf(this); clear('measure', measureName === undefined ? undefined : String(measureName)); });
+    op(Performance.prototype, 'clearResourceTimings', function clearResourceTimings() { perfOf(this); });
+    op(Performance.prototype, 'setResourceTimingBufferSize', function setResourceTimingBufferSize(maxSize) {
+      perfOf(this); need(arguments, 1, "Failed to execute 'setResourceTimingBufferSize' on 'Performance'"); });
+    let onfull = null;
+    Object.defineProperty(Performance.prototype, 'onresourcetimingbufferfull', { enumerable: true, configurable: true,
+      get: Object.getOwnPropertyDescriptor({ get onresourcetimingbufferfull() { perfOf(this); return onfull; } }, 'onresourcetimingbufferfull').get,
+      set: Object.getOwnPropertyDescriptor({ set onresourcetimingbufferfull(v) { perfOf(this); onfull = typeof v === 'function' || (typeof v === 'object' && v !== null) ? v : null; } }, 'onresourcetimingbufferfull').set });
+
+    // ---- Navigation Timing 1 (§5): performance.timing and performance.navigation, in a window ----
+    class PerformanceTiming { constructor() { illegal(); } }
+    const timing = Object.create(PerformanceTiming.prototype); slots.set(timing, {});
+    for (const k of timingNames) attr(PerformanceTiming.prototype, k, o => (slot(o), timingValue(k)));
+    op(PerformanceTiming.prototype, 'toJSON', function toJSON() { slot(this); const o = {}; for (const k of timingNames) o[k] = timingValue(k); return o; });
+    class PerformanceNavigation { constructor() { illegal(); } }
+    const navigation = Object.create(PerformanceNavigation.prototype); slots.set(navigation, {});
+    for (const [k, v] of [['TYPE_NAVIGATE', 0], ['TYPE_RELOAD', 1], ['TYPE_BACK_FORWARD', 2], ['TYPE_RESERVED', 255]]) {
+      Object.defineProperty(PerformanceNavigation, k, { value: v, enumerable: true });
+      Object.defineProperty(PerformanceNavigation.prototype, k, { value: v, enumerable: true });
+    }
+    attr(PerformanceNavigation.prototype, 'type', o => (slot(o), 0));
+    attr(PerformanceNavigation.prototype, 'redirectCount', o => (slot(o), 0));
+    op(PerformanceNavigation.prototype, 'toJSON', function toJSON() { slot(this); return { type: 0, redirectCount: 0 }; });
+    attr(Performance.prototype, 'timing', o => (perfOf(o), inWindow() ? timing : undefined));
+    attr(Performance.prototype, 'navigation', o => (perfOf(o), inWindow() ? navigation : undefined));
+    op(Performance.prototype, 'toJSON', function toJSON() {
+      perfOf(this);
+      const o = { timeOrigin: origin };
+      if (inWindow()) { o.timing = timing.toJSON(); o.navigation = navigation.toJSON(); }
+      return o;
+    });
+
+    // the event code notes the document's milestones; the load event's end queues the navigation entry
+    navNote = k => {
+      if (nav[k] !== undefined) return;
+      nav[k] = nowOf();
+      if (k === 'loadEventEnd') { const e = navigationEntry(); if (e) queueEntry(e); }
     };
-    for (const [k, f] of Object.entries(methods)) define(performance, k, f);
-    for (const [k, C] of Object.entries({ PerformanceEntry, PerformanceMark, PerformanceMeasure })) { setTag(C, k); def(k, C); }
+
+    for (const [k, C] of Object.entries({ Performance, PerformanceEntry, PerformanceMark, PerformanceMeasure, PerformanceObserver,
+      PerformanceObserverEntryList, PerformanceResourceTiming, PerformanceNavigationTiming, PerformanceTimingConfidence,
+      PerformanceTiming, PerformanceNavigation })) { setTag(C, k); def(k, C); }
+    Object.defineProperty(globalThis, 'performance', { enumerable: true, configurable: true,
+      get: Object.getOwnPropertyDescriptor({ get performance() { return perf; } }, 'performance').get,
+      set: Object.getOwnPropertyDescriptor({ set performance(v) { Object.defineProperty(globalThis, 'performance', { value: v, writable: true, enumerable: true, configurable: true }); } }, 'performance').set });
   }
   // ---- The document's encoding; HTMLHyperlinkElementUtils (HTML §4.6.6) on a and area -----
   // The encoding is Lean's (op 9: the page's meta charset declaration), and is fixed once
@@ -16313,6 +16537,7 @@
     'CustomEvent', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent', 'ProgressEvent', 'SecurityPolicyViolationEvent', 'AbortController', 'AbortSignal',
     'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'URLPattern', 'crypto', 'Crypto',
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
+    'PerformanceObserver', 'PerformanceObserverEntryList', 'PerformanceResourceTiming',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter',
     'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'Temporal', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL', 'WebSocket', 'WebSocketStream', 'WebSocketError', 'CloseEvent', 'EventSource',
@@ -18218,15 +18443,20 @@
       if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
       state(e).trusted = true;
       // "update the current document readiness" fires readystatechange at the document
+      // the document's milestones (Navigation Timing 2 §4: domInteractive, DOMContentLoaded's start)
+      if (type === 'DOMContentLoaded' && target === 0) { navNote('domInteractive'); navNote('domContentLoadedEventStart'); }
       if (type === 'DOMContentLoaded' && readyState !== 'interactive') { readyState = 'interactive'; fire(document, 'readystatechange'); }
       // the window's load waits for the images of the page's start (section images)
       if (type === 'load' && target === WINDOW && imgDelay.size > 0 && deferredLoad === null) {
         deferredLoad = () => {
+          navNote('domComplete'); navNote('loadEventStart');
           if (readyState !== 'complete') { readyState = 'complete'; fire(document, 'readystatechange'); }
           const ev = new Event('load'); state(ev).trusted = true; dispatch(window, ev);
+          navNote('loadEventEnd');
         };
         return '';
       }
+      if (type === 'load' && target === WINDOW) { navNote('domComplete'); navNote('loadEventStart'); }
       if (type === 'load' && target === WINDOW && readyState !== 'complete') { readyState = 'complete'; fire(document, 'readystatechange'); }
       if (type === 'load' && target !== WINDOW && target !== 0 && info(target, 29) >= 0) frameLoad(target);
       // A message from a frame's own session is for the window of the document that holds
@@ -18235,7 +18465,10 @@
         const d = info(via, 7);
         if (d > 0) { const before = scriptDocument; scriptDocument = wrap(d); try { return dispatch(frameTarget(d), e) ? '' : 'prevented'; } finally { scriptDocument = before; } }
       }
-      return dispatch(wrapTarget(target), e) ? '' : 'prevented';
+      const ok = dispatch(wrapTarget(target), e);
+      if (type === 'DOMContentLoaded' && target === 0) navNote('domContentLoadedEventEnd');
+      if (type === 'load' && target === WINDOW) navNote('loadEventEnd');
+      return ok ? '' : 'prevented';
     },
     report(e) { report(e); },
     // an exception of a script with muted errors (another origin): "Script error." only
