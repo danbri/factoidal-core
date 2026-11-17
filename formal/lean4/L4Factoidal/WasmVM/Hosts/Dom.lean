@@ -396,15 +396,15 @@ def Command.sameWrite : Command → Command → Bool
   | .setTextContent n _, .setTextContent m _ => n == m
   | _, _ => false
 
+/-- The largest natural width or height `setNatural` takes (`HTML.ImageSize` reads 16-bit
+and 32-bit sizes; a layout box past this is refused, not drawn). -/
+def maxNatural : Nat := 65535
+
 /-- The commands that read attributes or character data (`cloneNode`, `importNode`,
 `normalize`), the namespaced attribute writes (whose attribute may be one that
 `writeKey` names otherwise), and `adoptNode` (a node's document decides how
 `setAttribute` names an attribute), and the form state commands (which read `type`,
 `name` and the tree): a write before one of them stays before it. -/
-/-- The largest natural width or height `setNatural` takes (`HTML.ImageSize` reads 16-bit
-and 32-bit sizes; a layout box past this is refused, not drawn). -/
-def maxNatural : Nat := 65535
-
 def Command.reads : Command → Bool
   | .cloneNode .. | .importNode .. | .normalize _ | .setAttributeNS .. | .removeAttributeNS ..
   | .adoptNode .. | .setChecked .. | .resetForm _ | .attachShadow .. | .assignSlot .. | .replaceData .. | .splitText .. | .frameDocument ..
