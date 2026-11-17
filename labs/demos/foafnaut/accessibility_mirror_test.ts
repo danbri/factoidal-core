@@ -104,7 +104,7 @@ Deno.test("a scroll moves the elements, and an activation is a press at the cent
   const mirror = createMirror(root, (x: number, y: number) => presses.push([x, y]));
   mirror.apply(page("Save"), 2);
   mirror.move(100, 140, 2);
-  equal((root.children[0] as Element).children[1].style.top, "80px", "the button after a scroll of 100 frame pixels");
+  equal(((root.children[0] as Element).children[1] as Element).style.top, "80px", "the button after a scroll of 100 frame pixels");
   // A node of the chrome is in window pixels and does not scroll.
   mirror.apply({ top: 100, scroll: 500, nodes: [{ id: 1073741825, depth: 0, role: "button", fixed: true, box: [8, 20, 56, 56], web: { role: "button", aria: { label: "Back" } } },
     ...page("Save").nodes] }, 2);
