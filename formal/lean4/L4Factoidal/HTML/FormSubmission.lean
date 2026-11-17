@@ -127,6 +127,8 @@ def entryList (d : Dom) (form : NodeId) (submitter : Option NodeId) (charsetName
       out := out.push (name, charsetName)
     else if isHtml d k ["textarea"] then
       out := out.push (name, (d.textContent k).getD "")
+    else if isInput then
+      out := out.push (name, inputValue d k)
     else
       out := out.push (name, (attr? d k "value").getD "")
   return out

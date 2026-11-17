@@ -418,6 +418,9 @@ def selContainsNode (s : State) (node : Nat) (partial_ : Bool) : Bool :=
 /-- The ops that change the tree (`Hosts.Page` counts them as writes for layout reads). -/
 def treeOps : List Nat := [112, 113, 114, 116, 119, 120, 149, 167]
 
+/-- The op of an input's value (`169`): it writes unless it reads ("v"). -/
+def valueOp : Nat := 169
+
 def bpText (b : BP) : String := s!"{b.node} {b.offset}"
 
 /-- The TreeWalker machine's answer: "d NODE" (or "d -1") when the method is done, else
@@ -990,6 +993,45 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 188 =>
     let n ← nodeArg d id
     return L4Factoidal.DOM.FormValidity.answer d n q
+  -- 169: the value of input `id` by its value mode (HTML §4.10.5.1, `DOM.Forms.inputValue`;
+  -- the page sanitizes what it reads): `q` "v" reads it; "s" and a value sets it: in mode
+  -- "value" the value and its dirty value flag (answer ""); in "default" and "default/on" the
+  -- answer is "a": the page sets the `value` content attribute (so that it is one change, seen
+  -- by mutation observers); in "filename" only "" (else InvalidStateError). "t", the old
+  -- value mode's letter (v, d, o, f) and the old value: the steps for a change of the `type`
+  -- attribute's state (HTML §4.10.5 "When an input element's type attribute changes state"),
+  -- "a" and a value when the page is to set the `value` content attribute to it, else "".
+  | 169 =>
+    let n ← nodeArg d id
+    if !L4Factoidal.DOM.Forms.isHtml d n ["input"] then throw (-2)
+    let mode := L4Factoidal.DOM.Forms.valueModeOf (L4Factoidal.DOM.Forms.inputType d n)
+    match q.toList with
+    | ['v'] => return L4Factoidal.DOM.Forms.inputValue d n
+    | 's' :: rest =>
+      match mode with
+      | .value =>
+        exec (.setValue n (some (String.ofList rest)))
+        return ""
+      | .dflt | .dfltOn => return "a"
+      | .filename => if rest.isEmpty then return "" else throw (-16)
+    | 't' :: old :: rest =>
+      let oldValue := String.ofList rest
+      if old == 'v' && (mode == .dflt || mode == .dfltOn) then
+        -- step 1: a value that is not empty becomes the `value` content attribute
+        return if oldValue.isEmpty then "" else "a" ++ oldValue
+      else if old != 'v' && mode == .value then
+        -- step 2: the value is the content attribute's again, the dirty value flag false
+        if (d.get n).dirtyValue.isSome then exec (.setValue n none)
+        return ""
+      else if mode == .value then
+        -- step 4: a value kept from mode "value" is sanitized for the new type (a clean
+        -- value is the attribute's, which the page sanitizes when it reads it)
+        if let some v := (d.get n).dirtyValue then
+          let v' := L4Factoidal.DOM.FormValidity.answer d n ("S\x00" ++ v)
+          if v' != v then exec (.setValue n (some v'))
+        return ""
+      else return ""
+    | _ => throw (-2)
   -- 189: the node that `focus()` on element `id` focuses, or with `q` "d" its focus delegate
   -- (`DOM.Focus.answer`); "" for none
   | 189 =>
