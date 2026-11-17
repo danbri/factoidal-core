@@ -784,29 +784,32 @@ nested `calc-size()` or a length-percentage sum; the second argument a length-pe
 in which `size` (the basis's size) may stand unless the basis is `any`. The canonical text,
 the sums simplified as in `calc()` (`size * 2` is `2 * size`, `2in` is `192px`). The recursion
 is on the nesting of the basis. -/
-def calcSizeOf (ctx : Option Ctx) (allowAuto : Bool) : Nat → CV → Option String
-  | 0, _ => none
-  | fuel + 1, cv =>
-    match cv with
-    | .fn name args =>
+def calcSizeOf (ctx : Option Ctx) (allowAuto : Bool) (fuel : Nat) (cv : CV) : Option String :=
+  -- down the nested bases (a tail call each), the calculations innermost first
+  let rec chain : Nat → CV → List (List CV) → Option (List CV × List (List CV))
+    | fuel + 1, .fn name args, es =>
       if lower name != "calc-size" then none else
       match splitCommas args with
       | [b, e] =>
-        let basis : Option (String × Bool) :=
-          match stripWs b with
-          | [.tok (.ident k)] =>
-            if lower k == "any" then some ("any", false)
-            else if (calcSizeKeywords allowAuto).contains (lower k) then some (lower k, true)
-            else none
-          | [.fn n inner] =>
-            if lower n == "calc-size" then (calcSizeOf ctx allowAuto fuel (.fn n inner)).map (·, true)
-            else (calcSizeSum ctx false b).map (·, true)
-          | _ => (calcSizeSum ctx false b).map (·, true)
-        match basis with
-        | some (bt, sz) => (calcSizeSum ctx sz e).map fun et => "calc-size(" ++ bt ++ ", " ++ et ++ ")"
-        | none => none
+        match stripWs b with
+        | [.fn n inner] => if lower n == "calc-size" then chain fuel (.fn n inner) (e :: es) else some (b, e :: es)
+        | _ => some (b, e :: es)
       | _ => none
-    | _ => none
+    | _, _, _ => none
+  match chain fuel cv [] with
+  | none => none
+  | some (b, es) =>
+    let basis : Option (String × Bool) :=
+      match stripWs b with
+      | [.tok (.ident k)] =>
+        if lower k == "any" then some ("any", false)
+        else if (calcSizeKeywords allowAuto).contains (lower k) then some (lower k, true)
+        else none
+      | _ => (calcSizeSum ctx false b).map (·, true)
+    -- then out again: each calculation in the basis below it
+    es.foldl (fun acc e => acc.bind fun (bt, sz) =>
+      (calcSizeSum ctx sz e).map fun et => ("calc-size(" ++ bt ++ ", " ++ et ++ ")", true)) basis
+      |>.map (·.1)
 
 /-! ### Reading a numeric component value -/
 
