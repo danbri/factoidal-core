@@ -593,7 +593,7 @@ theorem takeLayout_absent (held : Held) (action : String) (request : JSON.Json)
 /-- The page's arena, parsed as `WebDocument.prepareDOM` parses it, so node numbers agree
 with a render's replay of the commands. -/
 def parse (html url : String) (kind : String := "") : Except String DOM.Dom :=
-  if html.utf8ByteSize > 1048576 then .error "document HTML exceeds 1MiB"
+  if html.utf8ByteSize > 16777216 then .error "document HTML exceeds 16 MiB"
   else if DOM.xmlSyntax url kind then DOM.parseXmlDocument html
   else .ok (DOM.parseHtmlDocument html)
 
