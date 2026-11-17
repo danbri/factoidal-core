@@ -290,9 +290,15 @@ Use `--wasm-engine` for the Wasm engine. `--be-liberal-in-what-we-accept` draws 
 what was skipped; `WebAccept.Skip` is the list. Strict is the default at `6f08a9824`.
 
 The launcher `npm/factoidal/bin/foafnaut.mjs` (installed at `~/.local/bin/foafnaut`):
-plain `foafnaut` starts the newer of the installed release and the bleeding-edge build;
-`--bleeding-edge` also prints the build commit and age; `--latest` and `--install-latest`
-install from `danbri/factoidal-builds`. `~/.foafnaut/config.json` key `bleedingEdge` gives the app path.
+plain `foafnaut` starts the installed build (`~/.foafnaut/current`, no network use);
+`--update` (old name `--install-latest`) installs the newest macOS build of main and says what it
+replaced; `--latest` updates, then starts; `--bleeding-edge` starts the local build and prints its
+commit and age; `--which` shows what runs, the newest build of main and how far behind, and the local
+build. `~/.foafnaut/config.json` key `bleedingEdge` gives the local app path. The lookup
+(`bin/foafnaut-releases.mjs`, copied as Textnaut's `lib/releases.mjs`) reads every page of the
+release list, then asks `danbri/factoidal-core`'s compare API which candidates are on main and picks
+the one nearest main's head; branch builds are skipped. The lane pointer
+`latest/darwin-status.json` (`mac_release`) is only a fallback: it can lag the newest release.
 
 Measuring:
 
@@ -426,6 +432,12 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- A proof module that imports `Lean.Elab.*` or `Lean.Meta.*` (tactics, `elab`, `MetaM`) must not be in the
+  import closure of an executable or engine. 2026-11-16: `L4Factoidal.JS` imported `JS/FuelMono` (tactics),
+  so `leanjs` linked Lean's elaborator and grew from 11 MB to 111 MB unnoticed (issue 551). Make such a
+  module a lib root of its own; `tools/binary-budget.py` (premerge, build-web-render.sh, the CI lean job)
+  fails on the import, on Lean-library symbols in the binary, and on growth over 2 % of
+  `tools/binary-budget.json`.
 - A compiled host needs every permission its source uses. 2026-11-08: `deno compile`
   had no `--allow-env`, `run_html.ts` read `HOME`, and the app died at start while all
   source tests passed. Fixed by `--allow-env=HOME` and the start check of

@@ -245,8 +245,8 @@ async function main() {
     if(answer.loaded.length||answer.failed.length)console.log(JSON.stringify({type:"native-html-fonts",t:Math.round(performance.now()),where,
       ms:Math.round((performance.now()-start)*10)/10,fonts:answer.loaded,...(answer.failed.length?{failed:answer.failed}:{}),held:answer.held.length}));
   };
-  // The serif face (serif_font.ts): read and given to the engine that lays pages out the
-  // first time a render answers wantsSerif, then the page is drawn again; never before.
+  // The serif face (serif_font.ts): read and given, once a session, to the engine that lays
+  // pages out, before the first page (below).
   const serif=serifFontHost(async()=>{
     const start=performance.now(),path=serifFontPath(),where=worker?.alive?"worker":"main";
     if(worker?.alive)await worker.serifFont(path,SERIF_FAMILY);
@@ -282,6 +282,12 @@ async function main() {
   }
   // With the bitmap face (safe mode) a page gets no fallback fonts.
   if(workerFont)setFontHost(pageFonts);
+  // The serif face goes in now, ahead of the first page. The worker takes calls in order, so
+  // the first layout of a serif page already has the face and is final (no second layout).
+  // Cost: one 394 KB file read and the engine's policy read of it (under 1 ms warm), once a
+  // session; a page whose text never resolves to serif draws as before. A render that still
+  // answers wantsSerif (a failed load) does not start another (serifFontHost).
+  if(workerFont){const loading=serif.want();if(!worker?.alive)await loading;}
   // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
@@ -338,6 +344,9 @@ async function main() {
   // language is Deno's navigator.language (from LANG / LC_ALL); Lean maps it by HTML
   // §13.2.3.2's table of suggested defaults (WHATWG.Encoding.Sniff.localeEncoding).
   let encodingSetting="";const systemLocale=navigator.language??"";
+  // The search engine chosen in Settings (WebRoute.searchSetting): "" until the person picks
+  // one, and then words typed in the address bar open the browser's own search page.
+  let searchSetting="";
   setPageDecoding({fallback:encodingSetting,locale:systemLocale});
   // A window shows a page that runs no script before its images are in and draws it again with
   // them. Runs that compare frames or replay input (checks, sweeps, commands, printing) wait.
@@ -821,6 +830,27 @@ async function main() {
     consoleSources.set(page,source);
     return page;
   };
+  // foafnaut:search/WORDS (WebShell.searchPage): words typed in the address bar, with no search
+  // engine chosen. Lean writes it from the open tabs and the stored bookmarks and history,
+  // which are read from the local store; nothing is fetched from anywhere to show it.
+  const searchURL="foafnaut:search";
+  const searchPage=async(target:string)=>{
+    const resources=browserState?await browserState.resources().catch(()=>undefined):undefined;
+    const open=tabs.map((_,i)=>tabPage(i)!).map(page=>({url:page.url,title:page.title??""}));
+    const answer=engine.searchPage({argument:target.slice(searchURL.length+1),tabs:open,resources:resources??[],state:resources!==undefined,search:searchSetting});
+    return await prepareHTML(lean,target,undefined,answer.source);
+  };
+  // The Outside page (WebShell.outsidePage) of a mail, phone or messages address: one button,
+  // and only a press of it (Lean's route "system" for that page) opens the other program.
+  const outsideDocs=new WeakMap<object,string>();
+  const isOtherProgram=(target:string)=>/^(mailto|tel|sms):/i.test(target);
+  const outsidePage=async(target:string)=>{
+    const answer=engine.outsidePage(target);
+    if(!answer)throw new Error("this engine has no Outside page, so the address was not opened");
+    const page=await prepareHTML(lean,target,undefined,answer.source);
+    outsideDocs.set(page,target);
+    return page;
+  };
   // Option-Command-J and View > Console: the console of the page shown, in a new tab.
   const openConsole=()=>{const source=document;newTab();leaveAddress();consoleFrom=source;navigate(consoleURL);};
   // The system pointer for a window point: Lean answers from the chrome, the graph model or the
@@ -988,6 +1018,10 @@ async function main() {
     const eOpen="<!--foafnaut:encoding-->",eClose="<!--/foafnaut:encoding-->",ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
     const choices=ei>=0&&ej>ei?await lean.encodingChoices(encodingSetting,systemLocale):undefined;
     if(choices)source=source.slice(0,ei+eOpen.length)+choices+source.slice(ej);
+    // The search engine section, as Lean makes it for the setting (none chosen by default).
+    const sOpen="<!--foafnaut:search-->",sClose="<!--/foafnaut:search-->",si=source.indexOf(sOpen),sj=source.indexOf(sClose);
+    const searchChoices=si>=0&&sj>si?engine.searchChoices(searchSetting):undefined;
+    if(searchChoices)source=source.slice(0,si+sOpen.length)+searchChoices+source.slice(sj);
     const size=textZoom();
     // A ticked box is filled (boxon), as WebRenderScript.choicesHTML does for the script rows.
     const box=`<span class="box${liberal?" boxon":""}"></span>`;
@@ -1031,6 +1065,15 @@ async function main() {
         if(document.url===settingsURL)navigate(settingsURL,false);else dirty=true;
       }).catch(error=>refuse(`foafnaut:encoding/${argument}`,error));
     }
+    else if(name==="search-engine"){
+      // Lean reads the choice (an engine of its list, an address with %s, or none); a link
+      // gives this command only on the Settings page (WebRoute.settingsOnly).
+      const chosen=engine.searchSetting(argument);
+      if(!chosen){refuse(`foafnaut:search-engine/${argument}`,"this engine has no search engine setting");return;}
+      searchSetting=chosen.setting;browserState?.settings({search:searchSetting});
+      trace("native-html-search-setting",{setting:searchSetting===""?"none":searchSetting});
+      if(document.url===settingsURL)navigate(settingsURL,false);else dirty=true;
+    }
     else if(STATE_COMMANDS.includes(name)){
       if(!browserState){refuse(`foafnaut:${name}`,"Browser state is off (--no-state, a sweep or a check)");return;}
       browserState.command(name,argument,{url:document.url,title:document.title??""}).then(page=>{if(page)navigate(page);}).catch(error=>refuse(`foafnaut:${name}`,error));
@@ -1068,8 +1111,9 @@ async function main() {
     if(ended)wheelSum=undefined;
     if(answer.navigate)windowCommand(answer.direction==="back"?6:7);
   };
-  // Lean chose to hand this URL to the system browser. Off screen it is traced and not opened,
-  // so a sweep never opens a browser window on the person's screen.
+  // Lean chose to hand this URL to the system: the press of the Outside page's button, or
+  // `:open URL` typed. Off screen it is traced and not opened, so a sweep never opens a
+  // browser window on the person's screen.
   const openSystem=(target:string)=>{
     if(offscreen){trace("native-html-system-url",{url:target,opened:false,why:"offscreen"});return;}
     try{native!.openURL(target);}catch(error){refuse(target,error);}
@@ -1079,12 +1123,15 @@ async function main() {
     if(route.route==="command")shellCommand(route.name,route.argument);
     else if(route.route==="system")openSystem(route.url);
     else if(route.route==="refuse")refuse(route.url,route.reason);
+    // The Outside page (mail, phone, messages): shown in the tab, nothing opened.
+    else if(route.route==="outside")navigate(route.url);
     // A page link loads only with --follow-links; the browser's own pages always do.
     else if(route.route!=="navigate"||follow)navigate(route.url);
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
     trace("native-html-go",answer);
-    if(answer.go==="system")openSystem(answer.url);
+    // An engine from before the route op: nothing leaves the browser on its word alone.
+    if(answer.go==="system")refuse(answer.url,"an older engine asked to open this address outside the browser; it was not opened");
     else if(answer.go==="page")navigate(answer.url);
     else shellCommand(answer.name,answer.argument);
   };
@@ -1126,7 +1173,7 @@ async function main() {
   // An address from the bar (Return, or Paste and go): Lean routes it as typed.
   const goTo=(target:string)=>{
     leaveAddress();
-    const route=router.address({...site,address:target,base:document.baseURL||document.url}) as LinkRoute|undefined;
+    const route=router.address({...site,address:target,base:document.baseURL||document.url,search:searchSetting}) as LinkRoute|undefined;
     if(route)followRoute(route);else go(engine.shellSubmit(target));
   };
   // A long press of the mouse (WebGesture hold): asked once when Lean's time has passed with
@@ -1245,7 +1292,7 @@ async function main() {
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -1339,7 +1386,8 @@ async function main() {
         if(typeof saved.settings.scripts==="string")scriptSetting=saved.settings.scripts;
         if(!cliLiberal&&!cliStrict&&typeof saved.settings.liberal==="boolean"&&saved.settings.liberal!==liberal){
           liberal=saved.settings.liberal;if(liberal&&document.title==="Page refused")navigate(document.url,false);}
-        if(typeof saved.settings.encoding==="string"){encodingSetting=saved.settings.encoding;setPageDecoding({fallback:encodingSetting});}}
+        if(typeof saved.settings.encoding==="string"){encodingSetting=saved.settings.encoding;setPageDecoding({fallback:encodingSetting});}
+        if(typeof saved.settings.search==="string")searchSetting=engine.searchSetting(saved.settings.search)?.setting??"";}
       if(restoreSession)(saved.session?.tabs??[]).forEach((tab:{url:string},index:number)=>{if(index>0)newTab();navigate(tab.url);});
     }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
@@ -1669,7 +1717,7 @@ async function main() {
           }
           const target=engine.hit(frame,released[0],pageRow(released[1]));
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
-            followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url}) as LinkRoute);}
+            followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url,outside:outsideDocs.get(document)??""}) as LinkRoute);}
         }
     };
     // Idle (issue 450): with nothing to draw, nothing in flight and no deadline near, the loop

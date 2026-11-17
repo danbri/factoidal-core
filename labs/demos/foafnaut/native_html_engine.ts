@@ -78,7 +78,7 @@ export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"comma
 export type GestureAnswer = {phase:"pending"|"swipe"|"other";direction:"back"|"forward"|null;progress:number;navigate:boolean;hint:number};
 /** Where a link or an address goes (WebRoute.lean, docs/web/hub/foafnaut/link-route.mjs). */
 export type LinkRoute = {route:"page";name:string;url:string}|{route:"graph";url:string}|{route:"navigate";url:string}|
-  {route:"system";url:string}|{route:"command";name:string;argument:string}|{route:"refuse";url:string;reason:string};
+  {route:"outside";url:string}|{route:"system";url:string}|{route:"command";name:string;argument:string}|{route:"refuse";url:string;reason:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
 /** One turn of a script session (WebScripts.turnAnswer). `commands` is the whole command
 list, given only when `changed`: a host lays the page out again only then. */
@@ -407,6 +407,14 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     and the settings page section for it; undefined for an engine from before. */
     encodingSetting:(setting:string)=>{try{return (documentCall("",{op:"encodingSetting",setting}) as {setting:string}).setting;}catch{return undefined;}},
     encodingChoices:(setting:string,locale:string)=>{try{return (documentCall("",{op:"encodingChoices",setting,locale}) as {html:string}).html;}catch{return undefined;}},
+    /** The search engine chosen in Settings, as Lean keeps it (WebRoute.searchSetting: "" for
+    none), the settings section for it, the browser's search page for typed words, and the
+    Outside page; undefined for an engine from before (the feature is then off). */
+    searchSetting:(setting:string)=>{try{return documentCall("",{op:"searchSetting",setting}) as {setting:string;name:string};}catch{return undefined;}},
+    searchChoices:(setting:string)=>{try{return (documentCall("",{op:"searchChoices",setting}) as {html:string}).html;}catch{return undefined;}},
+    searchPage:(request:{argument:string;tabs:{url:string;title:string}[];resources:unknown[];state:boolean;search:string})=>
+      documentCall("",{...request,op:"searchPage"}) as {title:string;source:string},
+    outsidePage:(url:string,hub=false,textnaut=false)=>{try{return documentCall("",{op:"outsidePage",url,hub,textnaut}) as {title:string;source:string};}catch{return undefined;}},
     decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
       if(!backends.decode)return undefined;
       const answer=backends.decode(bytes,charset,fallback,locale),i=answer.indexOf("\n");

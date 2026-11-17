@@ -26,26 +26,39 @@ function tar(files) {
 const LIB = Buffer.from('\x7fELF made-up library');
 const GZ = gzipSync(tar({ 'foafnaut/libweb-render.so': LIB, 'foafnaut/README-linux.txt': Buffer.from('readme'), 'foafnaut/ldd.txt': Buffer.from('x') }));
 const TAG = 'build-0123456789ab-foafnaut-linux-x86_64';
-const URL_ = `https://example.invalid/${TAG}/foafnaut-linux-x86_64.tar.gz`;
-const INFO_URL = `https://example.invalid/${TAG}/build-info.json`;
-const info = (selfContained) => ({ source_commit: '0123456789ab'.padEnd(40, 'c'), library: selfContained ? { self_contained: true } : undefined,
-  artifacts: { 'foafnaut-linux-x86_64.tar.gz': { sha256: sha256(GZ), size: GZ.length, files: { 'foafnaut/libweb-render.so': { sha256: sha256(LIB), size: LIB.length } } } } });
 const OLD = 'build-aaaaaaaaaaaa-foafnaut-linux-x86_64';
+const BRANCH = 'build-bbbbbbbbbbbb-foafnaut-linux-x86_64';
+const dl = (tag, name) => `https://github.com/r/b/releases/download/${tag}/${name}`;
+const URL_ = dl(TAG, 'foafnaut-linux-x86_64.tar.gz');
+const info = (selfContained, sha = '0123456789ab') => ({ source_commit: sha.padEnd(40, 'c'), library: selfContained ? { self_contained: true } : undefined,
+  artifacts: { 'foafnaut-linux-x86_64.tar.gz': { sha256: sha256(GZ), size: GZ.length, files: { 'foafnaut/libweb-render.so': { sha256: sha256(LIB), size: LIB.length } } } } });
 
-/** A fetch that serves a release list with one old (toolchain-needing) and one self-contained release. */
+/**
+ * A fetch that serves a release list with one old (toolchain-needing) build of main, one self-contained
+ * build of main, and a self-contained branch build published last; and the source repository's compare API.
+ */
 function fakeFetch(seen = []) {
+  const headers = { get: () => null };
   return async (url) => {
     seen.push(url);
-    const reply = (body, ok = true) => ({ ok, status: ok ? 200 : 404, json: async () => body, arrayBuffer: async () => body });
-    if (url.includes('/releases?')) {
+    const reply = (body, ok = true) => ({ ok, status: ok ? 200 : 404, headers, json: async () => body, arrayBuffer: async () => body });
+    if (url.startsWith('https://api.github.com/repos/r/b/releases?')) {
       return reply([
-        { tag_name: OLD, published_at: '2026-11-15T10:00:00Z', assets: [{ name: 'build-info.json', browser_download_url: 'https://example.invalid/old/info' }, { name: 'foafnaut-linux-x86_64.tar.gz', browser_download_url: 'https://example.invalid/old/tgz' }] },
-        { tag_name: TAG, published_at: '2026-11-15T09:00:00Z', assets: [{ name: 'build-info.json', browser_download_url: INFO_URL }, { name: 'foafnaut-linux-x86_64.tar.gz', browser_download_url: URL_ }] },
-        { tag_name: 'build-bbbbbbbbbbbb-foafnaut-web', published_at: '2026-11-15T11:00:00Z', assets: [] },
+        { tag_name: OLD, published_at: '2026-11-15T10:00:00Z' },
+        { tag_name: TAG, published_at: '2026-11-15T09:00:00Z' },
+        { tag_name: 'build-bbbbbbbbbbbb-foafnaut-web', published_at: '2026-11-15T11:00:00Z' },
+        { tag_name: BRANCH, published_at: '2026-11-15T12:00:00Z' },
       ]);
     }
-    if (url === 'https://example.invalid/old/info') return reply(info(false));
-    if (url === INFO_URL) return reply(info(true));
+    const compare = /\/repos\/danbri\/factoidal-core\/compare\/([0-9a-f]{12})\.\.\.main$/.exec(url);
+    if (compare) {
+      const ahead = { aaaaaaaaaaaa: 3, '0123456789ab': 5 }[compare[1]];
+      return reply(ahead === undefined ? { status: 'diverged', ahead_by: 2, behind_by: 4, base_commit: { sha: compare[1] } }
+        : { status: 'ahead', ahead_by: ahead, behind_by: 0, base_commit: { sha: compare[1].padEnd(40, 'c'), commit: { committer: { date: '2026-11-15T08:00:00Z' } } } });
+    }
+    if (url === dl(OLD, 'build-info.json')) return reply(info(false, 'aaaaaaaaaaaa'));
+    if (url === dl(TAG, 'build-info.json')) return reply(info(true));
+    if (url === dl(BRANCH, 'build-info.json')) return reply(info(true, 'bbbbbbbbbbbb'));
     if (url === URL_) return reply(GZ.buffer.slice(GZ.byteOffset, GZ.byteOffset + GZ.length));
     return reply(null, false);
   };
@@ -59,10 +72,17 @@ test('native platforms: Linux x86_64 and arm64 only', () => {
 });
 
 test('latest skips releases that are not self-contained', async () => {
-  const choice = await nativeChoice('linux-x86_64', { channel: 'latest', fetchImpl: fakeFetch(), thePin: { repository: 'r/b' } });
+  const choice = await nativeChoice('linux-x86_64', { channel: 'latest', fetchImpl: fakeFetch(), thePin: { repository: 'r/b' }, env: {} });
   assert.equal(choice.release, TAG);
   assert.equal(choice.pinned, false);
   assert.equal(choice.tarball.sha256, sha256(GZ));
+});
+
+test('latest never takes a branch build, even one published later', async () => {
+  const seen = [];
+  const choice = await nativeChoice('linux-x86_64', { channel: 'latest', fetchImpl: fakeFetch(seen), thePin: { repository: 'r/b' }, env: {} });
+  assert.equal(choice.release, TAG);
+  assert(!seen.includes(dl(BRANCH, 'build-info.json')));
 });
 
 test('a named release is used only if it is self-contained', async () => {

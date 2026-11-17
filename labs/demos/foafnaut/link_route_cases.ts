@@ -2,21 +2,25 @@
 // relative and absolute links of the site, other sites, every foafnaut: page and command,
 // mailto:, javascript:, data: and odd ones, on the pages and sites of both hosts.
 
-export type LinkCase={href:string;base:string;origin:string;pages:string;files:boolean};
+export type LinkCase={href:string;base:string;origin:string;pages:string;files:boolean;outside:string};
 
 const hubOrigin="https://danbri.github.io",hubPages=hubOrigin+"/factoidal-core/web/hub/foafnaut/pages/";
 const localOrigin="http://127.0.0.1:8123",localPages=localOrigin+"/web/hub/foafnaut/pages/";
 const nativePages="file:///Users/someone/factoidal-core/labs/demos/foafnaut/pages/";
 
 /** The sites and the pages a link is on. */
-export const places:{origin:string;pages:string;files:boolean;bases:string[]}[]=[
-  {origin:hubOrigin,pages:hubPages,files:false,bases:[hubPages+"index.html",hubPages+"deep/dir/page.html?x=1#top","foafnaut:sparql/q=ASK"]},
+// `outside`: the tab shows the browser's Outside page for that address (the base is that
+// address), so a link to it is the press of its button.
+export const places:{origin:string;pages:string;files:boolean;bases:string[];outside?:string}[]=[
+  {origin:hubOrigin,pages:hubPages,files:false,bases:[hubPages+"index.html",hubPages+"deep/dir/page.html?x=1#top","foafnaut:sparql/q=ASK",hubPages+"settings.html"]},
   {origin:localOrigin,pages:localPages,files:false,bases:[localPages+"index.html"]},
-  {origin:"",pages:nativePages,files:true,bases:[nativePages+"index.html","https://example.org/dir/page.html?q#f","foafnaut:graph"]},
+  {origin:"",pages:nativePages,files:true,bases:[nativePages+"index.html","https://example.org/dir/page.html?q#f","foafnaut:graph",nativePages+"settings.html"]},
+  {origin:hubOrigin,pages:hubPages,files:false,bases:["https://example.org/a"],outside:"https://example.org/a"},
+  {origin:"",pages:nativePages,files:true,bases:["mailto:someone@example.org"],outside:"mailto:someone@example.org"},
 ];
 
-const builtin=["graph","bookmarks","history","settings","wasm","sparql","help"];
-const commands=["back","forward","reload","new","close","home","source","theme","zoom","bookmark","unbookmark","pod","sync","sparql-step","classic","encoding"];
+const builtin=["graph","bookmarks","history","settings","wasm","sparql","help","about","search","console"];
+const commands=["back","forward","reload","new","close","home","source","theme","zoom","bookmark","unbookmark","pod","sync","sparql-step","classic","encoding","liberal","search-engine"];
 
 function hrefsFor(origin:string):string[]{
   const out:string[]=[];
@@ -25,7 +29,8 @@ function hrefsFor(origin:string):string[]{
   }
   out.push("foafnaut:sparql/q=SELECT+*+WHERE+%7B%7D&step=2","foafnaut:sparql/q=a/b","foafnaut:wasm/hello.wasm#main","foafnaut:wasm/sub/x.wasm",
     "foafnaut:theme/arcade","foafnaut:zoom/150","foafnaut:bookmark/a,b","Foafnaut:graph","foafnaut:/graph","foafnaut:graph#x","foafnaut:graph?x",
-    "foaf\tnaut:graph","\u0001foafnaut:graph");
+    "foaf\tnaut:graph","\u0001foafnaut:graph","foafnaut:search/lean+browser","foafnaut:search-engine/mojeek","foafnaut:search-engine/https://example.org/?q=%s",
+    "https://example.org/a","https://example.org/a#f","https://example.org/A");
   const paths=["","/","a.html","./a.html","../a.html","../../../../../x.html","/root.html","dir/","a/./b/../c.html","a b.html","a%20b.html",
     "\u00e9.html","\u4e2d\u6587.html","a\\b.html","%2e%2e/x","a/%2e/b","a/%2E%2e/b","x%2ey.html","a\"b","a<b>c","a`b","a{b}c","a^b","a|b","a[b]",
     "a'b","~user/x","a:b","./a:b","%","%zz","a%2fb","a;p=1/b","a//b",".","..","./","../"];
@@ -54,6 +59,6 @@ function hrefsFor(origin:string):string[]{
 export function linkCases():LinkCase[]{
   const cases:LinkCase[]=[];
   for(const place of places)for(const base of place.bases)for(const href of hrefsFor(place.origin||"https://example.org"))
-    cases.push({href,base,origin:place.origin,pages:place.pages,files:place.files});
+    cases.push({href,base,origin:place.origin,pages:place.pages,files:place.files,outside:place.outside??""});
   return cases;
 }
