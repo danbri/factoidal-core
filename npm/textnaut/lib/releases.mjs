@@ -6,8 +6,8 @@
 // sets per build the newest macOS release can sit many pages in (2026-11-16: a first page of 60 missed
 // build-0137191edfef and installed an older build). Why not just published_at: a branch build can be
 // published after a main build, and a rebuild of an old commit is published late. So: read every page
-// (bounded), take the most recently published candidates, and ask the source repository which of
-// them are on main and how far each is from main's head. The one nearest the head is the newest.
+// GitHub serves (the first 1000 releases, 10 pages), take the most recently published candidates, and
+// ask the source repository which of them are on main and how far each is from main's head. The one nearest the head is the newest.
 
 export const BUILDS = 'danbri/factoidal-builds';
 export const CORE = 'danbri/factoidal-core';
@@ -48,10 +48,12 @@ export function linkPages(link) {
 }
 
 /**
- * Every release of `builds`, reading at most maxPages pages of 100. Page 1 names the last page, and the
- * others are read together.
+ * The releases of `builds`, reading at most maxPages pages of 100. Page 1 names the last page, and the
+ * others are read together. GitHub serves only the first 1000 results of a list (a later page is refused
+ * with HTTP 422; found 2026-11-17 when the list passed 10 pages), so maxPages is 10, and a later page that
+ * fails is left out with a note in `skipped` rather than failing the whole list.
  */
-export async function listReleases({ builds = BUILDS, fetchImpl = globalThis.fetch, headers, maxPages = 20 } = {}) {
+export async function listReleases({ builds = BUILDS, fetchImpl = globalThis.fetch, headers, maxPages = 10, skipped = [] } = {}) {
   const page = async (n) => {
     const reply = await get(fetchImpl, `${API}/repos/${builds}/releases?per_page=100&page=${n}`, headers);
     if (!reply.ok) throw apiError(reply, `the release list of ${builds}`);
@@ -61,12 +63,13 @@ export async function listReleases({ builds = BUILDS, fetchImpl = globalThis.fet
   const all = [...first.list];
   if (first.link.last) {
     const last = Math.min(first.link.last, maxPages);
-    const rest = await Promise.all(Array.from({ length: Math.max(0, last - 1) }, (_, i) => page(i + 2)));
-    for (const r of rest) all.push(...r.list);
+    const rest = await Promise.allSettled(Array.from({ length: Math.max(0, last - 1) }, (_, i) => page(i + 2)));
+    rest.forEach((r, i) => { if (r.status === 'fulfilled') all.push(...r.value.list); else skipped.push(`release list page ${i + 2}: ${r.reason.message}`); });
   } else {
     // No last link: follow next links one by one, within the same bound.
     for (let n = first.link.next, k = 1; n && k < maxPages; k++) {
-      const r = await page(n);
+      let r;
+      try { r = await page(n); } catch (error) { skipped.push(`release list page ${n}: ${error.message}`); break; }
       all.push(...r.list);
       n = r.link.next;
     }
@@ -109,14 +112,14 @@ async function position(fetchImpl, headers, core, sha, branch) {
  * `branch` are left out. Only the `maxCompare` most recently published candidates are checked.
  */
 export async function mainReleases({ target = 'darwin-arm64', builds = BUILDS, core = CORE, branch = 'main', currentSha,
-  fetchImpl = globalThis.fetch, env = process.env, maxPages = 20, maxCompare = 8 } = {}) {
+  fetchImpl = globalThis.fetch, env = process.env, maxPages = 10, maxCompare = 8 } = {}) {
   const token = env.GITHUB_TOKEN || env.GH_TOKEN;
   const headers = { accept: 'application/vnd.github+json', 'user-agent': 'foafnaut', ...(token ? { authorization: `Bearer ${token}` } : {}) };
   const pattern = tagPattern(target);
   const notes = [];
   const [pointer, listing] = await Promise.all([
     readPointer({ builds, fetchImpl, target }),
-    listReleases({ builds, fetchImpl, headers, maxPages }).then((list) => ({ list }), (error) => ({ error })),
+    listReleases({ builds, fetchImpl, headers, maxPages, skipped: notes }).then((list) => ({ list }), (error) => ({ error })),
   ]);
   const byTag = new Map();
   for (const r of listing.list ?? []) {
