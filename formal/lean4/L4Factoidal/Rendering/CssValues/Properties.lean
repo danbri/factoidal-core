@@ -248,16 +248,16 @@ def pctToNum : CV → CV
 def joinGroups (groups : List (List CV)) : List CV :=
   (groups.map stripWs).foldl (fun acc g => if acc.isEmpty then g else acc ++ [.tok .comma, .tok .ws] ++ g) []
 
-/-- `transform` (CSS Transforms 1 §11, 2 §12): the scaling and skewing functions in lower case
-as serialised, a percentage of a scaling function as a number, a unitless zero angle of a
-skewing function as `0deg`. -/
+/-- `transform` (CSS Transforms 1 §11, 2 §12): a percentage of a scaling function as a number,
+a unitless zero angle of a skewing function as `0deg`. Function names keep their case: what
+`commitStyles()` writes reads back as written. -/
 def transformCanon (v : String) : String :=
   if v == "none" then v else
   serialize ((CV.parse v).map fun cv => match cv with
     | .fn name args =>
       let n := lower name
-      if n.startsWith "scale" then .fn n (args.map pctToNum)
-      else if n.startsWith "skew" then .fn n (args.map fun a => match a with
+      if n.startsWith "scale" then .fn name (args.map pctToNum)
+      else if n.startsWith "skew" then .fn name (args.map fun a => match a with
         | .tok (.num x _) => if x == 0 then .tok (.dim 0 true "deg") else a
         | a => a)
       else cv
@@ -1431,8 +1431,8 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 -- canonical forms (transform-valid.html, opacity-valid.html, content-valid.html,
 -- *-timing-function-valid.html, filter-parsing-valid.html, translate-parsing-valid.html,
 -- gradient-*-valid.html)
-#guard specified "transform" "scale(250%)" == some "scale(2.5)" && specified "transform" "scaleX(720%)" == some "scalex(7.2)"
-#guard specified "transform" "skewX(0)" == some "skewx(0deg)" && specified "transform" "translateX(-4px)" == some "translateX(-4px)"
+#guard specified "transform" "scale(250%)" == some "scale(2.5)" && specified "transform" "scaleX(720%)" == some "scaleX(7.2)"
+#guard specified "transform" "skewX(0)" == some "skewX(0deg)" && specified "transform" "translateX(-4px)" == some "translateX(-4px)"
 #guard specified "transform" "scale3d(50%, 250%, 300%)" == some "scale3d(0.5, 2.5, 3)"
 #guard specified "opacity" "50%" == some "0.5" && specified "opacity" "2.5e1%" == some "0.25" && specified "opacity" "-100%" == some "-1"
 #guard specified "content" "counter(counter-name, dECiMaL)" == some "counter(counter-name)"
