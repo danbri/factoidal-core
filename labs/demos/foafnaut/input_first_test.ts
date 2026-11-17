@@ -46,3 +46,36 @@ Deno.test("scroll first: just after a page is first shown, a change waits SCROLL
   assert.equal(scrollFirst({now:1000,scrollAt:-Infinity,changedAt:undefined,shownAt:1000-SCROLL_QUIET_MS+1}),true);
   assert.equal(scrollFirst({now:1000,scrollAt:-Infinity,changedAt:undefined,shownAt:1000-SCROLL_QUIET_MS}),false);
 });
+
+import {scriptsFirst,startSliceSteps,SCRIPTS_HOLD_MIN_MS,SCRIPTS_HOLD_MAX_MS,SCRIPTS_HOLD_LAYOUTS} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+
+Deno.test("scripts first: a page change waits while the page's start has not finished, a few layout times at most", ()=>{
+  // a start that finished holds nothing
+  assert.equal(scriptsFirst({now:1000,more:false,changedAt:undefined,layoutMs:1500}),false);
+  assert.equal(scriptsFirst({now:1000,more:false,changedAt:990,layoutMs:1500}),false);
+  // a start that has not: the change waits, from when it was made
+  assert.equal(scriptsFirst({now:1000,more:true,changedAt:undefined,layoutMs:1500}),true);
+  assert.equal(scriptsFirst({now:1000+SCRIPTS_HOLD_LAYOUTS*1500-1,more:true,changedAt:1000,layoutMs:1500}),true);
+  assert.equal(scriptsFirst({now:1000+SCRIPTS_HOLD_LAYOUTS*1500,more:true,changedAt:1000,layoutMs:1500}),false);
+  // a page whose layout is quick is drawn often; a very slow one within the most
+  assert.equal(scriptsFirst({now:1000+SCRIPTS_HOLD_MIN_MS-1,more:true,changedAt:1000,layoutMs:2}),true);
+  assert.equal(scriptsFirst({now:1000+SCRIPTS_HOLD_MIN_MS,more:true,changedAt:1000,layoutMs:2}),false);
+  assert.equal(scriptsFirst({now:1000+SCRIPTS_HOLD_MAX_MS,more:true,changedAt:1000,layoutMs:60000}),false);
+  assert.equal(scriptsFirst({now:1000+SCRIPTS_HOLD_MAX_MS-1,more:true,changedAt:1000,layoutMs:60000}),true);
+  // with no layout timed yet, the least
+  assert.equal(scriptsFirst({now:1000+SCRIPTS_HOLD_MIN_MS,more:true,changedAt:1000}),false);
+});
+
+Deno.test("scripts first: a host that draws when the rule lets it spends at most a quarter of a long start in layouts", ()=>{
+  // a start of 20 s of script slices that each change the page; a layout takes 1.5 s
+  const layoutMs=1500;let now=0,changedAt:number|undefined,layouts=0,scriptMs=0;
+  while(scriptMs<20000){
+    now+=50;scriptMs+=50;changedAt??=now;                       // a slice, and its change
+    if(!scriptsFirst({now,more:true,changedAt,layoutMs})){now+=layoutMs;layouts++;changedAt=undefined;}
+  }
+  assert.ok(layouts>=3&&layouts*layoutMs<=scriptMs/SCRIPTS_HOLD_LAYOUTS+layoutMs,`${layouts} layouts in ${scriptMs} ms of scripts`);
+});
+
+Deno.test("the start's slice is a whole number of steps", ()=>{
+  assert.ok(Number.isInteger(startSliceSteps)&&startSliceSteps>=1000&&startSliceSteps<=100000);
+});
