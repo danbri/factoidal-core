@@ -9249,8 +9249,11 @@ def evalExpr : Nat → Ctx → Expr → M Value
           | _ => pure (f, t)
         | .member o k =>
           let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
-          let k ← if isPrivKey k then privRk ctx.env k else pure k
-          let f ← (match (← get).fastGetV b k with | .hole => getV n b k | v => pure v)
+          -- (a private name's static key is never a property: `fastGetV` misses it, and the
+          -- general path resolves it first, so the hit path pays nothing for private names)
+          let f ← (match (← get).fastGetV b k with
+            | .hole => do getV n b (← if isPrivKey k then privRk ctx.env k else pure k)
+            | v => pure v)
           pure (f, b)
         | .index o k =>
           let b ← evalExpr n ctx o
@@ -9290,9 +9293,8 @@ def evalExpr : Nat → Ctx → Expr → M Value
       construct n f argv f
     | .member o k =>
       let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
-      let k ← if isPrivKey k then privRk ctx.env k else pure k
       match (← get).fastGetV b k with
-      | .hole => getV n b k
+      | .hole => getV n b (← if isPrivKey k then privRk ctx.env k else pure k)
       | v => pure v
     | .index o k =>
       let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
