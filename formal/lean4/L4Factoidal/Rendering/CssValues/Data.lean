@@ -655,6 +655,7 @@ def properties : Array (String × String × Bool × String × String) := #[
   ("stop-color", "<'color'>", false, "black", ""),
   ("stop-opacity", "<'opacity'>", false, "1", ""),
   ("stroke", "<paint>", true, "", ""),
+  ("stroke-color", "<color>", true, "transparent", ""),
   ("stroke-dasharray", "none | <dasharray>", true, "none", ""),
   ("stroke-dashoffset", "<length-percentage> | <number>", true, "0px", ""),
   ("stroke-linecap", "butt | round | square", true, "butt", ""),
