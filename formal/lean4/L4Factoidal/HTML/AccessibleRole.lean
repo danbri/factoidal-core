@@ -275,7 +275,7 @@ def firstChildTag (d : Dom) (k : NodeId) (tags : List String) : Option NodeId :=
 def embeddedValue (d : Dom) (k : NodeId) : Option String :=
   if isHtml d k ["input"] then
     let t := asciiLower ((attr? d k "type").getD "text")
-    if ["text", "search", "email", "tel", "url", "number", "range", ""].contains t then some ((attr? d k "value").getD "")
+    if ["text", "search", "email", "tel", "url", "number", "range", ""].contains t then some (inputValue d k)
     else none
   else if isHtml d k ["select"] then
     let opts := (d.treeOrder k).filter (isHtml d · ["option"])

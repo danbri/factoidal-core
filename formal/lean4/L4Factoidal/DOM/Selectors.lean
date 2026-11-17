@@ -1270,7 +1270,7 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
       | "read-only" => !readWrite d k
       | "placeholder-shown" =>
         isHtml d k ["input", "textarea"] && (attrVal? d k "placeholder").isSome &&
-          ((attrVal? d k "value").getD "").isEmpty && x.kids.isEmpty
+          (match x.dirtyValue with | some v => v | none => (attrVal? d k "value").getD "").isEmpty && x.kids.isEmpty
       | "default" =>
         (isHtml d k ["input"] && (attrVal? d k "checked").isSome &&
           ["checkbox", "radio"].contains (lowerAscii ((attrVal? d k "type").getD ""))) ||
