@@ -106,4 +106,6 @@ def compile (request : String) : String :=
 #guard (natural (.number "2147483648")).isError
 #guard (inputOf (.object [("kind",.string "unknown")])).isError
 
+#print axioms exact_offset
+
 end L4Factoidal.Presenter.Wire

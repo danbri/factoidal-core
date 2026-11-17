@@ -18,9 +18,11 @@ error. The host does not clamp invalid input or substitute its own arithmetic.
 
 `Wire.exact_offset` states that an exact placement selects the requested top row.
 It does not establish the CPU/GPU pixel equality or the host's thread behaviour.
-The theorem has been written but not checked locally: the required build lock
-exits 3 because the sandbox cannot inspect the process table. A build and an
-axiom report are still required.
+The library build passed in cloud run 44144679468 on 4c6cd118e, including this
+module, after repairing the state constructor syntax. Local Lean still cannot run:
+the required lock exits 3 because this context cannot inspect the process table.
+The exact-offset theorem now also has a `#print axioms` command for the next build;
+that additional diagnostic has not yet run.
 
 Checks completed for this section:
 

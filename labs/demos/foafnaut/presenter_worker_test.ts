@@ -106,7 +106,7 @@ if(Deno.args.includes(CHILD)){
     // Capture both threads' stamps so a delayed reply cannot be mistaken for execution
     // overlap. The deadline bounds this child process; it is not a performance budget.
     const result=await new Deno.Command(Deno.execPath(),{
-      args:["run","--no-config","--no-lock","-A","--unstable-ffi",new URL(import.meta.url).pathname,CHILD],
+      args:["run","--no-check","--no-config","--no-lock","-A","--unstable-ffi",new URL(import.meta.url).pathname,CHILD],
       stdout:"piped",stderr:"piped",env:{PRESENTER_TIMING_INPUT:"1"},signal:AbortSignal.timeout(120_000),
     }).output();
     const stdout=new TextDecoder().decode(result.stdout),stderr=new TextDecoder().decode(result.stderr);

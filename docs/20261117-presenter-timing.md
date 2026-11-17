@@ -60,3 +60,9 @@ arithmetic. The checked-in code already uses an engine worker, despite the desig
 describing a fully synchronous stage 0. The comparison must preserve that actual baseline.
 Snapshot and busy-script hashes are recorded with the inputs; full logging retains the
 engine execution epochs needed to validate overlap.
+
+The real native event ABI was checked without a GPU surface under the timing lock.
+Three synthetic events delayed by a 60 ms main-thread stall retained deadlines 1, 11
+and 21 ms, with kind 11 and delta -2; no fourth event was emitted. This validates
+the injector and its Deno FFI proxy, not scroll latency. Raw log: local
+`/tmp/codex-presenter1-timing-abi.log`.
