@@ -13448,12 +13448,18 @@
     return list;
   });
   def('postMessage', () => {});
-  def('focus', () => {}); def('blur', () => {}); def('close', () => {}); def('stop', () => {}); def('scrollTo', () => {}); def('scrollBy', () => {});
+  def('focus', () => {}); def('blur', () => {}); def('close', () => {}); def('stop', () => {}); 
   def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
   // CSSOM View §4: a top-level window that a script did not open is not moved or resized
   // (moveTo, moveBy, resizeTo, resizeBy do nothing); the page does not scroll here (scroll
   // is scrollTo); HTML §7.2.2.3: captureEvents and releaseEvents do nothing.
-  def('scroll', () => {}); def('moveTo', () => {}); def('moveBy', () => {}); def('resizeTo', () => {}); def('resizeBy', () => {});
+  // The operations of Window (CSSOM View §4) are enumerable own properties of the global
+  // ([Global]); the page does not scroll or move here. moveTo and the rest need two arguments.
+  for (const [k, need] of [['scroll', 0], ['scrollTo', 0], ['scrollBy', 0], ['moveTo', 2], ['moveBy', 2], ['resizeTo', 2], ['resizeBy', 2], ['matchMedia', 1]]) {
+    const f = k === 'matchMedia' ? globalThis.matchMedia : ({ [k](...a) { if (a.length < need) throw new TypeError(`Failed to execute '${k}' on 'Window': ${need} arguments required, but only ${a.length} present.`); } })[k];
+    if (need > 0 && k !== 'matchMedia') Object.defineProperty(f, 'length', { value: need });
+    Object.defineProperty(globalThis, k, { value: f, writable: true, enumerable: true, configurable: true });
+  }
   def('captureEvents', () => {}); def('releaseEvents', () => {});
   // window.open (HTML §7.2.2.1): no new window is made here; a URL that does not parse is a
   // SyntaxError, as the "window open steps" say (the parse is Lean's).
