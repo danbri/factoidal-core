@@ -1,3 +1,5 @@
+import L4Factoidal.Prim.StringFront
+
 /-!
 # L4Factoidal.JS.Str — JavaScript strings as UTF-16 code units (§6.1.4)
 

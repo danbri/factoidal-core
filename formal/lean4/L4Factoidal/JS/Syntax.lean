@@ -1,3 +1,4 @@
+import L4Factoidal.Prim.StringFront
 import Std.Data.HashMap
 
 /-!
