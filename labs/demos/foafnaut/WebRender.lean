@@ -359,36 +359,121 @@ def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rende
 /-! Each layout decoded the page's images again (`imageStoreOf`): 44 ms of a relayout of
 gov.uk (realperf). The engine keeps the last two stores by their keys and supplied bytes
 (`StoresKept`, in `WebDocument.Engine`; issue 390): a layout looks a store up there, and
-gives back the store it made, which the engine keeps. -/
-abbrev StoresKept := Array ((List String × List (String × ByteArray)) × NativeImage.Store)
+gives back the store it made, which the engine keeps.
+
+A new store (another image came) decoded every image of the page again, not only the new
+one: on a W3C specification whose SVG figures came in several groups, the decoding of the
+same files was about 85% of the engine's time before the first frame (2026-11-17). So a
+kept store also keeps what each file decoded to (`Decodes`), and a new store reads a file
+that a kept one decoded from there (`memoDecode`): the same answer, made once. -/
+
+/-- What files decoded to (`NativeImage.decodeWith vectorPicture`), by their bytes. -/
+abbrev Decodes := Array (ByteArray × NativeImage.Decoded)
+
+/-- Two byte arrays that `==` calls equal are equal. -/
+theorem bytes_eq_of_beq {a b : ByteArray} (h : (a == b) = true) : a = b := by
+  have h' : (a.data == b.data) = true := h
+  exact ByteArray.ext (eq_of_beq h')
+
+/-- What the bytes decode to: as `cache` has it for the same bytes, else `decodeWith`. -/
+def memoDecode (cache : Decodes) (b : ByteArray) : NativeImage.Decoded :=
+  match cache.find? (·.1 == b) with
+  | some (_,r) => r
+  | none => NativeImage.decodeWith vectorPicture b
+
+/-- Every entry of the cache is what its bytes decode to. -/
+def DecodesValid (cache : Decodes) : Prop := ∀ e ∈ cache, e.2 = NativeImage.decodeWith vectorPicture e.1
+
+/-- Kind: refinement. Says: from a valid cache, `memoDecode` answers what `decodeWith` does,
+for any bytes. Does not say: that the cache holds the bytes (then it decodes them). -/
+theorem memoDecode_eq (cache : Decodes) (valid : DecodesValid cache) (b : ByteArray) :
+    memoDecode cache b = NativeImage.decodeWith vectorPicture b := by
+  unfold memoDecode
+  split
+  · next _ b' r h =>
+    have mem := Array.mem_of_find?_eq_some h
+    have sat := Array.find?_some h
+    have v := valid _ mem
+    simp only at v sat
+    rw [v, bytes_eq_of_beq sat]
+  · rfl
+
+/-- What the supplied files that `keys` names decode to, read from `cache` where it has them. -/
+def decodesFor (cache : Decodes) (keys : List String) (images : List (String × ByteArray)) : Decodes :=
+  ((images.filter fun (k,_) => keys.contains k).map fun (_,b) => (b, memoDecode cache b)).toArray
+
+/-- Kind: invariant. Says: what `decodesFor` makes from a valid cache is a valid cache. -/
+theorem decodesFor_valid (cache : Decodes) (valid : DecodesValid cache) (keys : List String)
+    (images : List (String × ByteArray)) : DecodesValid (decodesFor cache keys images) := by
+  intro e he
+  simp only [decodesFor, List.mem_toArray, List.mem_map] at he
+  obtain ⟨⟨k, b⟩, _, rfl⟩ := he
+  exact memoDecode_eq cache valid b
+
+/-- A kept store: the keys and supplied bytes it was made for, the store, and what the
+files it decoded decoded to. -/
+abbrev StoreEntry := (List String × List (String × ByteArray)) × NativeImage.Store × Decodes
+
+abbrev StoresKept := Array StoreEntry
 
 /-- The store of `keys` and `images`: the kept one, or a new one, which is also given back
-to be kept. -/
+to be kept. A new one decodes only the files that no kept store decoded. -/
 def storeIn (kept : StoresKept) (keys : List String) (images : List (String × ByteArray)) :
-    NativeImage.Store × Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+    NativeImage.Store × Option StoreEntry :=
   match kept.find? (fun ((k,i),_) => k == keys && i == images) with
-  | some (_,store) => (store,none)
-  | none => let store := pageStore keys images; (store,some ((keys,images),store))
+  | some (_,store,_) => (store,none)
+  | none =>
+    let decs := decodesFor (kept.flatMap (·.2.2)) keys images
+    let store := NativeSVG.imageStoreOfWith (memoDecode decs) keys images
+    (store,some ((keys,images),store,decs))
 
 /-- `kept` with `made` last, at most two. -/
-def keepStore (kept : StoresKept) (made : (List String × List (String × ByteArray)) × NativeImage.Store) : StoresKept :=
+def keepStore (kept : StoresKept) (made : StoreEntry) : StoresKept :=
   (if kept.size ≥ 2 then kept.extract 1 kept.size else kept).push made
 
 /-- A table is valid when each store is `imageStoreOf` of any keys and images that its own
-compare equal to (`==`, as `storeIn` compares them). -/
+compare equal to (`==`, as `storeIn` compares them), and what it keeps of the files is what
+they decode to. -/
 def StoresValid (kept : StoresKept) : Prop :=
-  ∀ e ∈ kept, ∀ keys images, (e.1.1 == keys && e.1.2 == images) = true → e.2 = pageStore keys images
+  ∀ e ∈ kept, (∀ keys images, (e.1.1 == keys && e.1.2 == images) = true → e.2.1 = pageStore keys images) ∧
+    DecodesValid e.2.2
+
+/-- Kind: refinement. Says: a store made with the files decoded by a valid cache is
+`pageStore`. -/
+theorem imageStoreOfWith_memo (decs : Decodes) (valid : DecodesValid decs) (keys : List String)
+    (images : List (String × ByteArray)) :
+    NativeSVG.imageStoreOfWith (memoDecode decs) keys images = pageStore keys images :=
+  NativeSVG.imageStoreOfWith_congr _ vectorPicture (memoDecode_eq decs valid) keys images
+
+/-- Kind: invariant. Says: the decodes of a valid table, all together, are a valid cache. -/
+theorem StoresValid.decodes (kept : StoresKept) (valid : StoresValid kept) :
+    DecodesValid (kept.flatMap (·.2.2)) := by
+  intro d hd
+  rw [Array.mem_flatMap] at hd
+  obtain ⟨e, he, hd⟩ := hd
+  exact (valid e he).2 d hd
 
 /-- Refinement: from a valid table, `storeIn` gives `imageStoreOf`. -/
 theorem storeIn_eq (kept : StoresKept) (valid : StoresValid kept) (keys : List String) (images : List (String × ByteArray)) :
     (storeIn kept keys images).1 = pageStore keys images := by
   unfold storeIn
   split
-  · next _ k store h =>
+  · next _ k store decs h =>
     obtain ⟨k1,k2⟩ := k
     have sat := Array.find?_some h
-    exact valid _ (Array.mem_of_find?_eq_some h) keys images sat
-  · rfl
+    exact (valid _ (Array.mem_of_find?_eq_some h)).1 keys images sat
+  · exact imageStoreOfWith_memo _ (decodesFor_valid _ (StoresValid.decodes kept valid) keys images) keys images
+
+/-- Kind: invariant. Says: what a new store keeps of the files, from a valid table, is valid. -/
+theorem storeIn_made_decodes (kept : StoresKept) (valid : StoresValid kept) (keys : List String)
+    (images : List (String × ByteArray)) (made : StoreEntry) (h : (storeIn kept keys images).2 = some made) :
+    DecodesValid made.2.2 := by
+  unfold storeIn at h
+  split at h
+  · simp at h
+  · simp only [Option.some.injEq] at h
+    subst h
+    exact decodesFor_valid _ (StoresValid.decodes kept valid) keys images
 
 /-- The keys of a document's image store, in the order `makeReplacedIn` asks for them: the
 images of its SVG content, then the `img` elements'. -/
@@ -406,31 +491,36 @@ store yet: on a page with large images and SVG image files the first turn of its
 took 150 s in place of 8 (lean-lang.org, 2026-11-14). The work is the first frame's, done
 once and earlier; a page with no image makes an empty store. -/
 def storeAhead (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
-    (images : List (String × ByteArray)) : Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+    (images : List (String × ByteArray)) : Option StoreEntry :=
   match storeKeys dom documentURL with
   | .ok keys => if keys.isEmpty then none else (storeIn kept keys images).2
   | .error _ => none
 
-/-- Kind: refinement. Says: a store made ahead is `pageStore` of the document's own keys
-(`storeKeys`) and of the images given, under those keys and images: what a layout that asks
-`storeIn` for the same keys and images would make itself. Does not say: that the next layout
-asks with lists that compare equal to these (it asks with `storeKeys`' expression and the
-request's images; that the kept store is then found is tested, not proved: `==` on byte
-arrays has no lawfulness instance here). -/
-theorem storeAhead_made (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
-    (images : List (String × ByteArray)) (made : (List String × List (String × ByteArray)) × NativeImage.Store)
+/-- Kind: refinement. Says: a store made ahead from a valid table is `pageStore` of the
+document's own keys (`storeKeys`) and of the images given, under those keys and images:
+what a layout that asks `storeIn` for the same keys and images would make itself. Does not
+say: that the next layout asks with lists that compare equal to these (it asks with
+`storeKeys`' expression and the request's images; that the kept store is then found is
+tested, not proved). -/
+theorem storeAhead_made (kept : StoresKept) (valid : StoresValid kept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (made : StoreEntry)
     (h : storeAhead kept dom documentURL images = some made) :
-    ∃ keys, storeKeys dom documentURL = .ok keys ∧ made = ((keys,images),pageStore keys images) := by
+    ∃ keys, storeKeys dom documentURL = .ok keys ∧ made.1 = (keys,images) ∧ made.2.1 = pageStore keys images := by
   unfold storeAhead at h
   split at h
   · rename_i keys hk
     split at h
     · simp at h
     · refine ⟨keys, hk, ?_⟩
-      unfold storeIn at h
+      have hs := storeIn_eq kept valid keys images
+      unfold storeIn at h hs
       split at h
       · simp at h
-      · simpa using h.symm
+      · rename_i hnone
+        simp only [hnone] at hs
+        simp only [Option.some.injEq] at h
+        subst h
+        exact ⟨rfl, hs⟩
   · simp at h
 
 /-- The embedding of SVG roots and the pictures of `img` elements, from one image
@@ -442,7 +532,7 @@ glyph outlines go to the reader as numbers in a table. -/
 def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.Dom) (documentURL : Option String := none)
     (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
-      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words) := do
+      Option StoreEntry × NativeSVGText.Words) := do
   let imgs := htmlImageKeys dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
     let (store,made) := storeIn kept (imgs.map (·.2)) images
@@ -474,7 +564,7 @@ can not be read at all: the rest of the page is still drawn. -/
 def makeReplacedNoSvg (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
     (images : List (String × ByteArray)) (refusal : String) :
     Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
-      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words :=
+      Option StoreEntry × NativeSVGText.Words :=
   let imgs := htmlImageKeys dom documentURL
   let (store,made) := storeIn kept (imgs.map (·.2)) images
   (fun _ _ _ _ => .error refusal,picturesOf store imgs,made,{})

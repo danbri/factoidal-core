@@ -202,7 +202,7 @@ structure Kept where
 structure Made where
   parsed : Option (String × Bool × Except String DOM.Dom) := none
   sheet : Option (String × RawSheet) := none
-  store : Option ((List String × List (String × ByteArray)) × NativeImage.Store) := none
+  store : Option WebRender.StoreEntry := none
   words : NativeSVGText.Words := {}
 
 /-- `a` then the entries of `b` that `a` lacks (the first operation's wins). -/
@@ -2065,7 +2065,7 @@ liberal mode no SVG content refuses the page (`liberalSvg_ok`, `liberalSvg_noSvg
 def liberalSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
     (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) :
     Rendering.Layout.Embedding × Rendering.Layout.Pictures × DOM.Dom × List WebAccept.Diagnostic ×
-      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words :=
+      Option WebRender.StoreEntry × NativeSVGText.Words :=
   match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts with
   | .ok (e,p,s,w) => (e,p,dom,[],s,w)
   | .error e =>
@@ -2492,7 +2492,7 @@ its first layout (`WebRender.storeAhead`, for the tree and the images of the ses
 the page has no image, and when the page or the request can not be read (the layout says
 why). -/
 def storeAheadOf (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) :
-    Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+    Option WebRender.StoreEntry :=
   let layout := layoutRequest ((request.field? "layout").getD (.object []))
   match (parseIn kept html (DOM.xmlSyntax (str layout "url") (str layout "syntax"))).1, suppliedImages layout with
   | .ok dom, .ok supplied =>
