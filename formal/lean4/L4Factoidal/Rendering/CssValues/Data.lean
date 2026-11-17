@@ -788,7 +788,7 @@ def syntaxes : Array (String × String) := #[
   ("auto-track-list", "[ <line-names>? [ <fixed-size> | <fixed-repeat> ] ]* <line-names>? <auto-repeat> [ <line-names>? [ <fixed-size> | <fixed-repeat> ] ]* <line-names>?"),
   ("autospace", "no-autospace | [ ideograph-alpha || ideograph-numeric || punctuation ] || [ insert | replace ]"),
   ("axis", "block | inline | x | y"),
-  ("baseline-position", "[ first | last ]? baseline"),
+  ("baseline-position", "[ first= | last ]? baseline"),
   ("basic-shape", "<inset()> | <xywh()> | <rect()> | <circle()> | <ellipse()> | <polygon()> | <path()> | <shape()>"),
   ("basic-shape-rect", "<inset()> | <rect()> | <xywh()>"),
   ("bg-clip", "<visual-box> | [ border-area || text ]"),

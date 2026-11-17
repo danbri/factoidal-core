@@ -1227,6 +1227,9 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
   | "column-rule-width" => "5px, repeat(4, 6px, 5px)" | "column-rule-style" => "double, repeat(4, none, solid)"
   | _ => "salmon, repeat(4, currentcolor, red)") == some "5px double salmon, repeat(4, 6px, 5px solid red)"
 #guard specified "will-change" "auto, transform" == none && specified "will-change" "transform, none" == none
+-- `first baseline` is serialised as `baseline` (CSS Box Alignment 3 §4.1, the shortest form)
+#guard specified "align-items" "first baseline" == some "baseline" && specified "align-self" "last baseline" == some "last baseline"
+#guard specified "justify-self" "baseline" == some "baseline" && specified "align-content" "first baseline" == some "baseline"
 #guard specified "will-change" "transform, opacity" == some "transform, opacity" && specified "will-change" "auto" == some "auto"
 -- a math function of a non-legacy colour function stays in the specified value (CSS Color 4)
 #guard specified "color" "color(srgb calc(0.5 + 1) calc(0.5 - 1) calc(0.5) / calc(-0.5 + 1))" ==
