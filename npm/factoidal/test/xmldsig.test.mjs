@@ -121,3 +121,25 @@ test('refusals: a method of another key kind, DSA, wrong arguments', async () =>
   await assert.rejects(xmlVerify(DOC, { hmacKey: 'secret' }), TypeError);
   await assert.rejects(xmlVerify(DOC, { certificates: 'x' }), TypeError);
 });
+
+// RSA keys of 1024 bits (https://github.com/danbri/factoidal/issues/1227): refused by default,
+// accepted only with dangerouslyAndRegrettablyAcceptRsa1024: true, with a warning. The vector is
+// the W3C XML Signature 1.1 interop vector of 2012 (third_party/testing/xmldsig11-interop).
+test('a 1024-bit RSA key: refused by default, valid with the opt-in and a warning', async (t) => {
+  const { readFileSync, existsSync } = await import('node:fs');
+  const path = new URL('../../../third_party/testing/xmldsig11-interop/oracle/signature-enveloping-rsa-sha256.xml',
+    import.meta.url);
+  if (!existsSync(path)) { t.skip('the W3C interop vectors are not checked out'); return; }
+  const doc = readFileSync(path, 'utf8');
+  const d = await xmlVerify(doc);
+  assert.equal(d.valid, false);
+  assert.match(d.reason, /dangerouslyAndRegrettablyAcceptRsa1024/);
+  assert.equal(d.warnings, undefined);
+  // Only the literal true turns it on.
+  assert.equal((await xmlVerify(doc, { dangerouslyAndRegrettablyAcceptRsa1024: 'yes' })).valid, false);
+  const v = await xmlVerify(doc, { dangerouslyAndRegrettablyAcceptRsa1024: true });
+  assert.equal(v.valid, true);
+  assert.equal(v.key.kty, 'RSA');
+  assert.equal(v.warnings.length, 1);
+  assert.match(v.warnings[0], /1024-bit RSA/);
+});

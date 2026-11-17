@@ -1996,16 +1996,19 @@ export function xmlVerify(
     keyFromKeyInfo?: boolean;
     certificates?: Uint8Array[];
     documents?: Record<string, Uint8Array | string>;
+    /** Accept 1024-bit RSA keys (refused by default). https://github.com/danbri/factoidal/issues/1227 */
+    dangerouslyAndRegrettablyAcceptRsa1024?: boolean;
   }
 ): Promise<
   | {
+      warnings?: string[];
       valid: true;
       signedInfo: string;
       references: { uri: string; octets: Uint8Array }[];
       key: object | null;
       certificate: Uint8Array | null;
     }
-  | { valid: false; reason: string }
+  | { valid: false; reason: string; warnings?: string[] }
 >;
 
 /**

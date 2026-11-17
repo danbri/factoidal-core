@@ -931,6 +931,16 @@ def signingCertificate? (cfg : Config) (cd : C14nDoc) (s : Signature) : Option (
           | .ok r => retrievedCert? cfg.certificates r
           | .error e => some (.error e)
 
+/-- The refusal of a 1024-bit RSA key by a backend that has not accepted
+`Risk.rsa1024Verify`: it names the opt-in of each surface. -/
+def rsa1024Refusal : String :=
+  "a 1024-bit RSA key is refused by default (XML Signature 1.1 §6.4.2 permits it; NIST SP 800-131A Rev. 2 allows it only to verify legacy signatures). To accept it: the member dangerouslyAndRegrettablyAcceptRsa1024: true of the xmlVerify options, or the backend XML.DSig11.nativeBackendRsa1024 (Risk.dangerouslyAccept .rsa1024Verify) in Lean. https://github.com/danbri/factoidal/issues/1227"
+
+/-- The refusal when the backend's RSA public operation gives `none`. -/
+def rsaRefusal (n : ByteArray) : String :=
+  if n.size == 128 then rsa1024Refusal
+  else s!"the RSA public operation refused the key or the value (a {n.size * 8}-bit modulus; the HACL* operation takes 2048, 3072 and 4096 bits, and 1024 bits only after an explicit opt-in: https://github.com/danbri/factoidal/issues/1227)"
+
 /-- The check of `ds:SignatureValue` over the canonical `ds:SignedInfo`.
 `.ok (b, k)`: the check gave `b`, with the public key `k` (none for a MAC). -/
 def signatureValueOk (be : Backend) (cfg : Config) (cd : C14nDoc) (s : Signature) (msg : ByteArray) :
@@ -944,7 +954,7 @@ def signatureValueOk (be : Backend) (cfg : Config) (cd : C14nDoc) (s : Signature
       match keyFor cfg cd s with
       | .ok (.rsa n e) =>
           match be.rsaPublicOp n e s.value with
-          | none => .error s!"the RSA public operation refused the key or the value (a {n.size * 8}-bit modulus; the HACL* operation takes 2048, 3072 and 4096 bits: https://github.com/danbri/factoidal/issues/1227)"
+          | none => .error (rsaRefusal n)
           | some _ => .ok (JOSE.Pkcs1.rsaPkcs1Verify be.rsaPublicOp h.digestInfo h.size n e s.value (h.digest msg),
                            some (.rsa n e))
       | .ok (.ec ..) => .error "an RSA signature method with an EC key"

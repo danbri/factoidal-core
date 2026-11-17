@@ -1069,6 +1069,26 @@ was evidence of invalid content, rather than embracing RDF's open world web etho
   `docs/designissues/2026-11-10-theorems-as-contributions.md`. Those rules are a session's
   proposal: add each real misreading to that record's section 5 with its date and cost.
 
+### XML Signature: DSA and P-384/P-521 deferred; 1024-bit RSA behind an opt-in (owner, 2026-11-17)
+
+Owner, verbatim: "1223 1224 1227 - do not implement currently. Investigate usage, libraries. Are
+they obsolete? Widely used? Both?" and "1227 - off by default and make user pass in a
+"dangerously_and_regrettsbly_.... " symbol as we have done elsewhere somehow."
+
+- https://github.com/danbri/factoidal/issues/1223 (ECDSA P-384 and P-521) and
+  https://github.com/danbri/factoidal/issues/1224 (DSA): not implemented now. The issues stay open,
+  and the expected failures that name them stay.
+- https://github.com/danbri/factoidal/issues/1227 (1024-bit RSA keys): verification is refused by
+  default. The opt-in is `Risk.rsa1024Verify` in Lean, and the `xmlVerify` option
+  `dangerouslyAndRegrettablyAcceptRsa1024: true` (with a warning in the result). Signing keeps the
+  2048-bit minimum.
+- Answer to "obsolete, widely used, or both?", with sources:
+  `docs/designissues/2026-11-17-xmldsig-dsa-p384-p521-status.md`. DSA is obsolete, although XML
+  Signature 1.1 still requires its verification. P-384 is current and widely used. P-521 is
+  current but rare.
+- Coordinator's reading, not the owner's words: track B item 4 is no longer blocked by 1223 and
+  1224, so item 5 (XML Encryption 1.1) can start.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

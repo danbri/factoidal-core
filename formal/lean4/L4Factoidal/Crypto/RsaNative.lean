@@ -89,7 +89,19 @@ What we do NOT check:
 Modulus sizes below 2048 bits are REFUSED rather than supported. RFC 7518
 §3.3 requires a key of at least 2048 bits for RS256, and a verifier that
 accepts a 1024-bit modulus is a downgrade target.
+
+## The 1024-bit exception (https://github.com/danbri/factoidal/issues/1227)
+
+`rsaPublicOp1024` is the same HACL* operation for a 1024-bit modulus, and
+for no other size. It takes a `Risk.Accepted .rsa1024Verify`, so only a
+caller that accepted that risk by name reaches it (skills/lean-risk-flags).
+It exists for XML Signature 1.1 verification of legacy signatures (§6.4.2
+permits 1024-bit keys; the W3C interop vectors of 2012 and 2001 use them).
+`rsaPublicOp` above still refuses 1024 bits, so JWS `RS256` and every other
+caller keep the 2048-bit floor.
 -/
+
+import L4Factoidal.Risk
 
 namespace L4Factoidal.Crypto.Rsa
 
@@ -113,5 +125,25 @@ is unambiguously a refusal. -/
 def rsaPublicOp (n e s : ByteArray) : Option ByteArray :=
   let r := rsaPublicOpRaw n e s
   if r.size == 0 then none else some r
+
+/-- `l4_hacl_rsa_public_op_1024`: `rsaPublicOpRaw` for a modulus of exactly
+128 bytes (1024 bits); the empty `ByteArray` for every other size and every
+refusal of `rsaPublicOpRaw`. Reached only through `rsaPublicOp1024`. -/
+@[extern "l4_hacl_rsa_public_op_1024"]
+opaque rsaPublicOp1024Raw (n : @& ByteArray) (e : @& ByteArray)
+    (s : @& ByteArray) : ByteArray
+
+/-- The RSA public operation for a 1024-bit modulus, for a caller that
+accepted `Risk.rsa1024Verify`. `none` for every other modulus size. -/
+def rsaPublicOp1024 (_ : Risk.Accepted .rsa1024Verify) (n e s : ByteArray) : Option ByteArray :=
+  if n.size != 128 then none else
+  let r := rsaPublicOp1024Raw n e s
+  if r.size == 0 then none else some r
+
+/-- `rsaPublicOp1024` refuses every modulus that is not 1024 bits, whatever
+HACL* computes. -/
+theorem rsaPublicOp1024_only_1024 (tok : Risk.Accepted .rsa1024Verify) (n e s : ByteArray)
+    (h : n.size ≠ 128) : rsaPublicOp1024 tok n e s = none := by
+  simp [rsaPublicOp1024, h]
 
 end L4Factoidal.Crypto.Rsa

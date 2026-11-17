@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `xmlVerify` accepts RSA keys of 1024 bits only with the option `dangerouslyAndRegrettablyAcceptRsa1024: true`; the result then has a `warnings` array. Without it such a key is refused, with a reason that names the option (owner decision of 2026-11-17 on https://github.com/danbri/factoidal/issues/1227). XML Signature 1.1 §6.4.2 permits 1024-bit keys; NIST SP 800-131A Rev. 2 allows them only to verify legacy signatures. The arithmetic is HACL*'s (`l4_hacl_rsa_public_op_1024`); the Lean entry `Crypto.Rsa.rsaPublicOp1024` takes the risk token `Risk.rsa1024Verify`. Signing keys keep the 2048-bit floor. `lake exe l4xmldsig`: the 11 vectors with 1024-bit keys (10 of the 2012 set, 1 of 2001) are refused by default and validate with the opt-in: 12 pass, 0 fail (out of 12, with one changed signature value).
+
 ## 0.37.2 (2026-11-17)
 
 - `foafnaut --update`, `--latest` and `--which` read the release list again. 0.37.1 asked for every page the list named, but GitHub serves only the first 1000 results of a list and refuses later pages with HTTP 422; when the list passed 10 pages that refusal failed the whole lookup, and the launcher fell back to the macOS lane's pointer (it kept the newer installed build, so nothing was replaced wrongly). The launcher now asks for at most 10 pages, and a later page that fails is left out with a note under `--verbose`. Textnaut's copy of the lookup has the same fix.

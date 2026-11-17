@@ -52,6 +52,14 @@ Harness/XmlDsigRun — core validation (XML Signature 1.1 §3.2) by
     with the identity provider's key: the two verdicts are compared with
     the table `samlExpected`.
 
+  * 1024-bit RSA keys (https://github.com/danbri/factoidal/issues/1227):
+    the 10 such vectors of the 2012 set and `signature-enveloping-rsa.xml` of
+    the 2001 set are run twice. With `nativeBackend` they must be refused
+    with `rsa1024Refusal` (the default). With `nativeBackendRsa1024`, after
+    the runner accepts `Risk.rsa1024Verify` (a test acceptance, listed in
+    skills/lean-risk-flags §5), they must validate. Tally line
+    `rsa-1024 opt-in`.
+
 Expected failures name an open issue. The run fails when one passes
 (STALE) or fails for a reason that does not name its issue.
 
@@ -71,15 +79,27 @@ def issueUrl (n : Nat) : String := s!"https://github.com/danbri/factoidal/issues
 /-- The interop vectors that fail today, each with the issue whose URL the
 error must name. -/
 def oracleXfail : List (String × Nat) :=
-  let rsa1024 := ["derencoded-rsa", "keyinforeference-rsa", "rsa-sha224", "rsa-sha256", "rsa_sha384",
-    "rsa_sha512", "sha224-rsa_sha256", "sha256-rsa-sha256", "sha384-rsa_sha256", "sha512-rsa_sha256"]
   let ec := ["p384_sha1", "p384_sha1_4050", "p384_sha224", "p384_sha256", "p384_sha256_4050", "p384_sha384",
     "p384_sha384_4050", "p384_sha512", "p384_sha512_4050",
     "p521_sha1", "p521_sha1_4050", "p521_sha224", "p521_sha256", "p521_sha256_4050", "p521_sha384",
     "p521_sha384_4050", "p521_sha512", "p521_sha512_4050"]
-  (rsa1024.map fun n => (s!"signature-enveloping-{n}.xml", 1227)) ++
   (ec.map fun n => (s!"signature-enveloping-{n}.xml", 1223)) ++
   [("signature-enveloping-x509digest-rsa.xml", 1229)]
+
+/-- The vectors signed with a 1024-bit RSA key: refused by default, valid
+after the opt-in (https://github.com/danbri/factoidal/issues/1227). -/
+def oracleRsa1024 : List String :=
+  ["derencoded-rsa", "keyinforeference-rsa", "rsa-sha224", "rsa-sha256", "rsa_sha384",
+   "rsa_sha512", "sha224-rsa_sha256", "sha256-rsa-sha256", "sha384-rsa_sha256", "sha512-rsa_sha256"].map
+    (s!"signature-enveloping-{·}.xml")
+
+def merlinRsa1024 : List String := ["signature-enveloping-rsa.xml"]
+
+/-- The runner's acceptance of `Risk.rsa1024Verify`: a test of the opt-in
+path, owner decision of 2026-11-17 on
+https://github.com/danbri/factoidal/issues/1227. Not reachable from a
+document. -/
+def rsa1024Backend : Backend := nativeBackendRsa1024 (L4Factoidal.Risk.dangerouslyAccept .rsa1024Verify)
 
 /-- Expected failures whose error cannot name the issue, because the
 missing piece is data, not code: the text the error must contain. -/
@@ -116,6 +136,16 @@ def record (t : Tally) (name : String) (wantValid : Bool) (xf : Option Nat)
       if wantValid then IO.println s!"FAIL {name}: {e}"; return { t with fail := t.fail + 1 }
       else IO.println s!"PASS {name} (refused: {e})"; return { t with pass := t.pass + 1 }
 
+/-- A 1024-bit case under the default backend: it must be refused with
+`rsa1024Refusal`, and nothing else. -/
+def recordRsa1024Default (t : Tally) (name : String) (r : Except String Unit) : IO Tally :=
+  match r with
+  | .error e =>
+      if e == rsa1024Refusal then do
+        IO.println s!"PASS {name} (refused by default: 1024-bit RSA key)"; return { t with pass := t.pass + 1 }
+      else do IO.println s!"FAIL {name}: refused, but not by the 1024-bit rule: {e}"; return { t with fail := t.fail + 1 }
+  | .ok () => do IO.println s!"FAIL {name}: validates with no opt-in"; return { t with fail := t.fail + 1 }
+
 def runOracle (t0 : Tally) (dir : String) : IO Tally := do
   let mut t := t0
   -- the cases, in the order of the vendored checksum list
@@ -125,8 +155,11 @@ def runOracle (t0 : Tally) (dir : String) : IO Tally := do
     let src ← IO.FS.readFile s!"{dir}/{n}"
     let cfg : Config := { hmacKey := some "testkey".toUTF8 }
     let want := n != "signature-enveloping-hmac-sha1-truncated40.xml"
-    t ← record t s!"xmldsig11-interop {n}" want ((oracleXfail.find? (·.1 == n)).map (·.2))
-      (outcome (validateText nativeBackend cfg src))
+    if oracleRsa1024.contains n then
+      t ← recordRsa1024Default t s!"xmldsig11-interop {n}" (outcome (validateText nativeBackend cfg src))
+    else
+      t ← record t s!"xmldsig11-interop {n}" want ((oracleXfail.find? (·.1 == n)).map (·.2))
+        (outcome (validateText nativeBackend cfg src))
   return t
 
 /-- The XPath Filter 2.0 vectors (`merlin-xpath-filter2-three`): the
@@ -184,8 +217,7 @@ def merlinXfail : List (String × Nat) :=
   ["signature-enveloped-dsa.xml", "signature-enveloping-b64-dsa.xml", "signature-enveloping-dsa.xml",
    "signature-external-b64-dsa.xml", "signature-external-dsa.xml", "signature-keyname.xml",
    "signature-retrievalmethod-rawx509crt.xml", "signature-x509-crt-crl.xml", "signature-x509-crt.xml",
-   "signature-x509-is.xml", "signature-x509-ski.xml", "signature-x509-sn.xml", "signature.xml"].map (·, 1224) ++
-  [("signature-enveloping-rsa.xml", 1227)]
+   "signature-x509-is.xml", "signature-x509-ski.xml", "signature-x509-sn.xml", "signature.xml"].map (·, 1224)
 
 /-- The two external resources of the 2001 vectors, from the vendored
 `xml-stylesheet.b64`: the file itself, and its decoded octets, which are
@@ -233,8 +265,12 @@ def runMerlin (t0 : Tally) (dir : String) : IO Tally := do
               IO.println s!"FAIL {name} ({ref.uri.getD ""}): digest does not match ({o.size} octets)"
               t := { t with fail := t.fail + 1 }
       let want := f != "signature-enveloping-hmac-sha1-40.xml"
-      t ← record t s!"merlin-2001 {f} core validation" want ((merlinXfail.find? (·.1 == f)).map (·.2))
-        (outcome (validateParsed nativeBackend cfg cd sg))
+      if merlinRsa1024.contains f then
+        t ← recordRsa1024Default t s!"merlin-2001 {f} core validation"
+          (outcome (validateParsed nativeBackend cfg cd sg))
+      else
+        t ← record t s!"merlin-2001 {f} core validation" want ((merlinXfail.find? (·.1 == f)).map (·.2))
+          (outcome (validateParsed nativeBackend cfg cd sg))
   return t
 
 /-- The key selection of `ds:X509Data` (§4.5.4) in the 2001 vectors:
@@ -520,6 +556,33 @@ def runWycheproof (path : String) (label : String) (h : DigestAlg) : IO WyTally 
         t := { t with fail := t.fail + 1 }
   return t
 
+/-- The opt-in run: every 1024-bit vector must validate under
+`rsa1024Backend`, and a changed signature value must still be refused. -/
+def runRsa1024OptIn (t0 : Tally) (odir mdir : String) : IO Tally := do
+  let mut t := t0
+  for n in oracleRsa1024 do
+    let src ← IO.FS.readFile s!"{odir}/{n}"
+    t ← record t s!"rsa-1024 opt-in xmldsig11-interop {n}" true none
+      (outcome (validateText rsa1024Backend {} src))
+  let b64 ← IO.FS.readBinFile s!"{mdir}/xml-stylesheet.b64"
+  let mcfg : Config := { resolve := merlinResolve b64 }
+  for f in merlinRsa1024 do
+    let src ← IO.FS.readFile s!"{mdir}/merlin-xmldsig-twenty-three/{f}"
+    t ← record t s!"rsa-1024 opt-in merlin-2001 {f}" true none
+      (outcome (validateText rsa1024Backend mcfg src))
+  -- negative: one changed character of the signature value
+  match oracleRsa1024.head? with
+  | none => pure ()
+  | some n =>
+    let src ← IO.FS.readFile s!"{odir}/{n}"
+    match src.splitOn "SignatureValue>" with
+    | [a, b, c] =>
+      let b' := if b.startsWith "A" then "B" ++ (b.drop 1).toString else "A" ++ (b.drop 1).toString
+      t ← record t s!"rsa-1024 opt-in {n} with a changed SignatureValue" false none
+        (outcome (validateText rsa1024Backend {} (a ++ "SignatureValue>" ++ b' ++ "SignatureValue>" ++ c)))
+    | _ => IO.println s!"FAIL rsa-1024 opt-in: no <SignatureValue> in {n}"; t := { t with fail := t.fail + 1 }
+  return t
+
 def main (args0 : List String) : IO UInt32 := do
   let (args, outDir) := match args0.dropWhile (· != "--sign-out") with
     | _ :: o :: _ => (args0.takeWhile (· != "--sign-out"), some o)
@@ -536,6 +599,8 @@ def main (args0 : List String) : IO UInt32 := do
   IO.println s!"xmldsig-filter2-interop: {x2.pass} pass, {x2.fail} fail, {x2.xfail} expected failures (out of {x2.pass + x2.fail + x2.xfail})"
   let m ← runMerlin {} s!"{root}/third_party/testing/xmldsig-merlin-2001"
   IO.println s!"xmldsig-merlin-2001: {m.pass} pass, {m.fail} fail, {m.xfail} expected failures (out of {m.pass + m.fail + m.xfail})"
+  let r1 ← runRsa1024OptIn {} odir s!"{root}/third_party/testing/xmldsig-merlin-2001"
+  IO.println s!"rsa-1024 opt-in: {r1.pass} pass, {r1.fail} fail (out of {r1.pass + r1.fail})"
   let mx ← runMerlinX509 {} s!"{root}/third_party/testing/xmldsig-merlin-2001/merlin-xmldsig-twenty-three"
   IO.println s!"xmldsig-merlin-2001 X509Data selection: {mx.pass} pass, {mx.fail} fail (out of {mx.pass + mx.fail})"
   let u ← runFixtures {} fdir
@@ -555,4 +620,4 @@ def main (args0 : List String) : IO UInt32 := do
     let x ← runWycheproof s!"{wp}/{file}" label h
     IO.println s!"{label}: {x.pass} pass, {x.fail} fail, {x.acceptable} acceptable (out of {x.pass + x.fail + x.acceptable})"
     wf := wf + x.fail
-  return (if t.fail + x2.fail + m.fail + mx.fail + u.fail + ux.fail + ur.fail + v.fail + w.fail + wf == 0 then 0 else 1)
+  return (if t.fail + x2.fail + m.fail + r1.fail + mx.fail + u.fail + ux.fail + ur.fail + v.fail + w.fail + wf == 0 then 0 else 1)
