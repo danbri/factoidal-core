@@ -66,6 +66,8 @@ private def ancCss := "#k{position:relative;width:180px;height:120px} #a1{anchor
 -- position-area: the area of the grid that the default anchor cuts from the containing block
 #guard box anc (ancCss ++ "#t{position:absolute;position-anchor:--a1;position-area:top left;justify-self:stretch;align-self:stretch}") "t" == some (0,30,30,0)
 #guard box anc (ancCss ++ "#t{position:absolute;position-anchor:--a1;position-area:bottom span-right;justify-self:stretch;align-self:stretch}") "t" == some (30,60,150,90)
+-- with normal alignment the box sits toward the anchor: at the end of an area before it
+#guard box anc (ancCss ++ "#t{position:absolute;position-anchor:--a2;position-area:top left;width:10px;height:10px}") "t" == some (140,80,10,10)
 -- Insets with a width and auto margins: centred.
 #guard box page (rel ++ "#p{position:absolute;left:0;right:0;width:30px;margin-left:auto;margin-right:auto}") "p" == some (62,14,30,7)
 #guard box page (rel ++ "#p{position:absolute;top:0;bottom:0;left:0;height:10px;margin-top:auto;margin-bottom:auto}") "p" == some (22,29,12,10)

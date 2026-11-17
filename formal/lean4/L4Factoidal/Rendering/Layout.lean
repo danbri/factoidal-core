@@ -2149,15 +2149,24 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let placeOn := fun (horizontalAxis : Bool) =>
         let inlineAxis := horizontalAxis != (container.pos.writingMode != .horizontalTb)
         let a := if inlineAxis then s.align.justifySelf else s.align.alignSelf
-        match a with
-        | .auto | .normal | .stretch => SelfPlace.Place.stretch
-        | .center => .center
-        | .end_ | .flexEnd | .lastBaseline => SelfPlace.Place.end_.physical (flowOf container horizontalAxis)
-        | .selfStart => SelfPlace.Place.start.physical (flowOf s horizontalAxis)
-        | .selfEnd => SelfPlace.Place.end_.physical (flowOf s horizontalAxis)
-        | .left => .start
-        | .right => .end_
-        | _ => SelfPlace.Place.start.physical (flowOf container horizontalAxis)
+        -- in a `position-area`, `normal` aligns toward the anchor (CSS Anchor Positioning 1
+        -- §3.1.3): the end of an area before it, the start of one after it, the centre of its own
+        let toward := if area.isNone then none else
+          s.pos.positionArea.map fun ((x0, x1), (y0, y1)) =>
+            match if horizontalAxis then (x0, x1) else (y0, y1) with
+            | (0, 1) | (0, 2) => SelfPlace.Place.end_
+            | (2, 3) | (1, 3) => SelfPlace.Place.start
+            | _ => SelfPlace.Place.center
+        match a, toward with
+        | .auto, some t | .normal, some t => t
+        | .auto, _ | .normal, _ | .stretch, _ => SelfPlace.Place.stretch
+        | .center, _ => .center
+        | .end_, _ | .flexEnd, _ | .lastBaseline, _ => SelfPlace.Place.end_.physical (flowOf container horizontalAxis)
+        | .selfStart, _ => SelfPlace.Place.start.physical (flowOf s horizontalAxis)
+        | .selfEnd, _ => SelfPlace.Place.end_.physical (flowOf s horizontalAxis)
+        | .left, _ => .start
+        | .right, _ => .end_
+        | _, _ => SelfPlace.Place.start.physical (flowOf container horizontalAxis)
       let placeX := placeOn true
       let placeY := placeOn false
       -- §10.3.7: the width is given, or fills the room between `left` and `right`, or
