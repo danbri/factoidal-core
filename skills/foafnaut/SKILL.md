@@ -290,9 +290,15 @@ Use `--wasm-engine` for the Wasm engine. `--be-liberal-in-what-we-accept` draws 
 what was skipped; `WebAccept.Skip` is the list. Strict is the default at `6f08a9824`.
 
 The launcher `npm/factoidal/bin/foafnaut.mjs` (installed at `~/.local/bin/foafnaut`):
-plain `foafnaut` starts the newer of the installed release and the bleeding-edge build;
-`--bleeding-edge` also prints the build commit and age; `--latest` and `--install-latest`
-install from `danbri/factoidal-builds`. `~/.foafnaut/config.json` key `bleedingEdge` gives the app path.
+plain `foafnaut` starts the installed build (`~/.foafnaut/current`, no network use);
+`--update` (old name `--install-latest`) installs the newest macOS build of main and says what it
+replaced; `--latest` updates, then starts; `--bleeding-edge` starts the local build and prints its
+commit and age; `--which` shows what runs, the newest build of main and how far behind, and the local
+build. `~/.foafnaut/config.json` key `bleedingEdge` gives the local app path. The lookup
+(`bin/foafnaut-releases.mjs`, copied as Textnaut's `lib/releases.mjs`) reads every page of the
+release list, then asks `danbri/factoidal-core`'s compare API which candidates are on main and picks
+the one nearest main's head; branch builds are skipped. The lane pointer
+`latest/darwin-status.json` (`mac_release`) is only a fallback: it can lag the newest release.
 
 Measuring:
 
