@@ -368,6 +368,66 @@ def gridCanon (v : String) : String :=
       else c
     | c => c))
 
+/-- `image-set()` (CSS Images 4 §2.2): `-webkit-image-set()` is `image-set()`, a string is
+the `url()` of that string, and an image with no resolution has `1x`. -/
+def imageSetCanon (v : String) : String :=
+  if (v.splitOn "image-set(").length ≤ 1 then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      let n := lower name
+      if n != "image-set" && n != "-webkit-image-set" then cv else
+      .fn "image-set" (joinGroups ((splitCommas args).map fun g =>
+        let ws := (stripWs g).map fun c => match c with
+          | .tok (.str s) => .raw ("url(" ++ serializeString s ++ ")")
+          | c => c
+        let isRes := fun (c : CV) => match c with
+          | .tok (.dim _ _ u) => ["x", "dppx", "dpi", "dpcm"].contains (lower u)
+          | .fn f _ => mathFunctions.contains (lower f)
+          | _ => false
+        spaced (if ws.any isRes then ws else ws ++ [.tok (.dim 1 true "x")])))
+    | cv => cv)
+
+/-- `counter-reset`, `counter-set` and `counter-increment` (CSS Lists 3 §4): a counter name
+with no number has the default, `dflt` (0, or 1 for `counter-increment`); a `reversed()`
+counter of `counter-reset` keeps none. -/
+def counterListCanon (dflt : Nat) (v : String) : String :=
+  if v == "none" then v else
+  let ts := (stripWs (CV.parse v)).toArray
+  let isNum := fun (c : CV) => match c with
+    | .tok (.num _ _) => true
+    | .fn f _ => mathFunctions.contains (lower f)
+    | _ => false
+  let out := Id.run do
+    let mut out : Array CV := #[]
+    for i in [0:ts.size] do
+      let c := ts[i]!
+      out := out.push c
+      match c with
+      | .tok (.ident _) => if !((ts[i+1]?).map isNum).getD false then out := out.push (.tok (.num dflt true))
+      | _ => pure ()
+    return out
+  serialize (spaced out.toList)
+
+/-- `font-feature-settings` (CSS Fonts 4 §6.12): a value of 1 or `on` is left out, `off` is 0. -/
+def featureCanon (v : String) : String :=
+  if v == "normal" then v else
+  serialize (joinGroups ((splitCommas (CV.parse v)).map fun g =>
+    match stripWs g with
+    | [t, .tok (.num x _)] => if x == 1 then [t] else [t, .tok (.num x true)]
+    | [t, .tok (.ident k)] => if lower k == "on" then [t] else if lower k == "off" then [t, .tok (.num 0 true)] else [t, .tok (.ident k)]
+    | g' => spaced g'))
+
+/-- `color-scheme` (CSS Color Adjust 1 §2): `only` after the schemes. -/
+def colorSchemeCanon (v : String) : String :=
+  let ws := v.splitOn " "
+  if ws.head? == some "only" && ws.length > 1 then " ".intercalate (ws.drop 1 ++ ["only"]) else v
+
+/-- `place-content` (CSS Box Alignment 3 §5.3): a lone baseline value is its `align-content`,
+with `justify-content` at its default for baselines, `start`. -/
+def placeContentCanon (v : String) : String :=
+  if v == "baseline" || v == "first baseline" then "baseline start"
+  else if v == "last baseline" then "last baseline start" else v
+
 /-- The canonical forms that the order of the grammar alone does not give, by property. -/
 def canonical (p v : String) : String :=
   match p with
@@ -376,12 +436,17 @@ def canonical (p v : String) : String :=
   | "rotate" => rotateCanon v
   | "transform" => transformCanon v
   | "opacity" | "flood-opacity" | "fill-opacity" | "stroke-opacity" | "stop-opacity" => opacityCanon v
-  | "content" => counterCanon (gradientCanon v)
+  | "content" => imageSetCanon (counterCanon (gradientCanon v))
+  | "counter-reset" | "counter-set" => counterListCanon 0 v
+  | "counter-increment" => counterListCanon 1 v
+  | "font-feature-settings" => featureCanon v
+  | "color-scheme" => colorSchemeCanon v
+  | "place-content" => placeContentCanon v
   | "animation-timing-function" | "transition-timing-function" => easingCanon v
   | "filter" | "backdrop-filter" => filterCanon v
   | "translate" => translateCanon v
   | "grid" | "grid-template" | "grid-template-rows" | "grid-template-columns" => gridCanon v
-  | _ => radialCanon (gradientCanon v)
+  | _ => imageSetCanon (radialCanon (gradientCanon v))
 
 /-- `canonical`, and for a shape property the shape's canonical form (`shapeValue`):
 `none` when a `path()` in it is not path data, so the value is not one of the property's. -/
@@ -1378,6 +1443,14 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "translate" "100px 0px" == some "100px" && specified "translate" "100px 200px 0px" == some "100px 200px" && specified "translate" "1px 2px 0" == some "1px 2px"
 #guard specified "background-image" "radial-gradient(ellipse farthest-corner, red, blue)" == some "radial-gradient(red, blue)"
 #guard specified "background-image" "radial-gradient(circle farthest-corner, red, blue)" == some "radial-gradient(circle, red, blue)"
+#guard specified "background-image" "image-set('example.jpg' 1x)" == some "image-set(url(\"example.jpg\") 1x)"
+#guard specified "background-image" "-webkit-image-set(url(foo), url(bar) 1x)" == some "image-set(url(\"foo\") 1x, url(\"bar\") 1x)"
+#guard specified "background-image" "-webkit-image-set(url(\"example.png\") calc(2x * 3))" == some "image-set(url(\"example.png\") calc(6dppx))"
+#guard specified "counter-reset" "chapter reversed(chapter)" == some "chapter 0 reversed(chapter)" && specified "counter-reset" "reversed(chapter) 9 chapter" == some "reversed(chapter) 9 chapter 0"
+#guard specified "counter-increment" "first -1 second third 99" == some "first -1 second 1 third 99" && specified "counter-set" "chapter" == some "chapter 0"
+#guard specified "font-feature-settings" "\"dlig\" 1, \"smcp\" on, \"dlig\" 0" == some "\"dlig\", \"smcp\", \"dlig\" 0" && specified "font-feature-settings" "\"liga\" off" == some "\"liga\" 0"
+#guard specified "color-scheme" "only light dark" == some "light dark only" && specified "color-scheme" "light only" == some "light only"
+#guard specified "place-content" "baseline" == some "baseline start"
 #guard specified "grid-template" "none / [] 0px" == some "none / 0px" && specified "grid-template" "[] 10px [] / [] auto []" == some "10px / auto"
 #guard specified "grid-template" "\"a\" 10px [] [b] \"b\" 20px / 30px" == some "\"a\" 10px [b] \"b\" 20px / 30px"
 #guard specified "grid-template-rows" "repeat(1, [] 10px [])" == some "repeat(1, 10px)" && specified "grid" "[a] \"a\" 10px []" == some "[a] \"a\" 10px"
