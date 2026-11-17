@@ -30,6 +30,10 @@ inductive Item where
   | literal (s : String)
   /-- A required line break count. -/
   | breaks (n : Nat)
+  /-- An atomic inline with no text of its own here (a replaced element, an empty
+  inline-block): it is visible content of the line, so the white space before it is written
+  (as one space) and the white space after it is not removed as the start of a line. -/
+  | atomic
   deriving Repr, DecidableEq, Inhabited
 
 /-- White space that collapses: space, tab, line feed, carriage return, form feed. -/
@@ -66,6 +70,7 @@ def write (st : Line × List Char) : Item → Line × List Char
   | .br => ({ atStart := true, pending := false }, '\n' :: st.2)
   | .literal s => ({ atStart := true, pending := false }, s.toList.reverse ++ st.2)
   | .breaks _ => st
+  | .atomic => ({ atStart := false, pending := false }, if st.1.pending then ' ' :: st.2 else st.2)
 
 /-- A piece of the result: text, or a required line break count. -/
 inductive Piece where
@@ -104,7 +109,7 @@ def render (items : List Item) : String := join (pieces items)
 
 /-- Wire form (`node_query` op 190): the items separated by U+0000; each is a letter and its
 data: "c", "p", "l" text (collapse, preserve, lines); "b" a br; "t" literal text; "n" and a
-count. -/
+count; "a" an atomic inline. -/
 def parseItems (q : String) : List Item :=
   (q.splitOn "\x00").filterMap fun s =>
     match s.toList with
@@ -112,6 +117,7 @@ def parseItems (q : String) : List Item :=
     | 'p' :: r => some (.text .preserve (String.ofList r))
     | 'l' :: r => some (.text .lines (String.ofList r))
     | ['b'] => some .br
+    | ['a'] => some .atomic
     | 't' :: r => some (.literal (String.ofList r))
     | 'n' :: r => (String.ofList r).toNat?.map .breaks
     | _ => none
@@ -146,6 +152,12 @@ theorem join_breaks_only (ns : List Nat) : join (ns.map Piece.brk) = "" := by
     | cons n t ih => simp [ih]
   simp [join, hf, hd]
 
+/-- Kind: property. Says: after an atomic inline no space is waiting and the line has
+started, so white space after it is written before the next visible character (`abc <img>
+def` keeps a space on each side). Does not say: which elements the page objects send as
+atomic. -/
+theorem write_atomic_state (st : Line × List Char) : (write st .atomic).1 = { atStart := false, pending := false } := rfl
+
 /-! ## Tests (WPT html/dom/elements/the-innertext-and-outertext-properties/getter-tests.js) -/
 
 open Item Ws in
@@ -171,5 +183,10 @@ open Item Ws in
 open Item Ws in
 #guard render [breaks 1, breaks 2] == "" && render [text collapse "   "] == ""
 #guard answer "cabc \x00b\x00c def\x00n1\x00pX Y" == "abc\ndef\nX Y"
+open Item Ws in
+#guard render [text collapse "abc ", atomic, text collapse " def"] == "abc  def"
+open Item Ws in
+#guard render [atomic, text collapse " abc"] == " abc" && render [text collapse "abc ", atomic] == "abc "
+#guard answer "c123\x00a\x00pabc\x00a\x00cdef" == "123abcdef"
 
 end L4Factoidal.HTML.InnerText

@@ -17325,7 +17325,22 @@
     const parentOf = e => { const p = e.parentNode; return p instanceof ShadowRoot ? p.host : p; };
     const rendered = el => { if (!el.isConnected) return false; for (let e = el; e instanceof Element; e = parentOf(e)) if (cv(e, 'display') === 'none') return false; return true; };
     const blocks = new Set(['block', 'flow-root', 'flex', 'grid', 'table', 'list-item', 'table-caption']);
-    const wsLetter = el => { const w = cv(el, 'white-space'); return w === 'pre' || w === 'pre-wrap' || w === 'break-spaces' ? 'p' : w === 'pre-line' ? 'l' : 'c'; };
+    // the longhand first (white-space is a shorthand of it and text-wrap-mode)
+    const wsLetter = el => {
+      const c = cv(el, 'white-space-collapse');
+      if (c !== '') return c === 'preserve' || c === 'break-spaces' || c === 'preserve-spaces' ? 'p' : c === 'preserve-breaks' ? 'l' : 'c';
+      const w = cv(el, 'white-space'); return w === 'pre' || w === 'pre-wrap' || w === 'break-spaces' ? 'p' : w === 'pre-line' ? 'l' : 'c';
+    };
+    // HTML §15.4 replaced elements (and an `input`, a `select` button): an atomic inline whose
+    // children are not rendered; inline-level boxes that are atomic (inline-block and its
+    // kin) have their own line, then sit on the line as one atomic inline.
+    const replacedNames = new Set(['img', 'input', 'textarea', 'iframe', 'video', 'audio', 'canvas', 'object', 'embed', 'meter', 'progress']);
+    const atomicDisplays = new Set(['inline-block', 'inline-flex', 'inline-grid', 'inline-table', 'inline flow-root', 'inline flex', 'inline grid', 'inline table']);
+    // SVG elements whose subtree is never rendered (SVG 2 §5.1, §13, §15), and the ones whose
+    // text children are rendered
+    const svgHidden = new Set(['defs', 'symbol', 'clipPath', 'mask', 'pattern', 'marker', 'linearGradient', 'radialGradient',
+      'filter', 'stop', 'title', 'desc', 'metadata', 'style', 'script']);
+    const svgText = new Set(['text', 'tspan', 'textPath']);
     const transformed = (el, text) => {
       const t = cv(el, 'text-transform');
       return t === 'uppercase' ? text.toUpperCase() : t === 'lowercase' ? text.toLowerCase()
@@ -17335,8 +17350,14 @@
     // the items of the children of `el` (its own text runs are written when it is visible)
     const children = (el, out, visible) => {
       let letter = null;
+      // SVG: text is rendered only in a text content element
+      const textShown = visible && (!(el instanceof SVGElement) || svgText.has(el.localName));
+      // a closed details element renders its first summary only (HTML §15.5.4)
+      const closedDetails = htmlEl(nodeId(el)) && el.localName === 'details' && !el.hasAttribute('open');
+      let summary = closedDetails ? [...el.children].find(c => htmlEl(nodeId(c)) && c.localName === 'summary') : undefined;
       for (const c of el.childNodes) {
-        if (c.nodeType === 3) { if (visible) { letter ??= wsLetter(el); out.push(letter + transformed(el, c.data).replace(/\u0000/g, '�')); } }
+        if (closedDetails && c !== summary) continue;
+        if (c.nodeType === 3) { if (textShown) { letter ??= wsLetter(el); out.push(letter + transformed(el, c.data).replace(/\u0000/g, '�')); } }
         else if (c.nodeType === 1) collect(c, out);
       }
     };
@@ -17345,6 +17366,19 @@
       if (display === 'none') return;
       const visible = visibleEl(el), html = htmlEl(nodeId(el)), name = el.localName;
       if (html && name === 'br') { if (visible) out.push('b'); return; }
+      // not rendered: rp (ruby fallback), noscript (scripting is on), a hidden SVG subtree
+      if (html && (name === 'rp' || name === 'noscript')) return;
+      if (el instanceof SVGElement && svgHidden.has(name)) return;
+      if (html && replacedNames.has(name)) { if (visible) out.push('a'); return; }
+      if (atomicDisplays.has(display)) {
+        const inner = [];
+        children(el, inner, visible);
+        const r = inner.length === 0 ? '' : n.query(0, 191, inner.join('\u0000'));
+        if (visible) out.push('a');
+        if (typeof r === 'string' && r !== '') out.push('p' + r);
+        if (visible) out.push('a');
+        return;
+      }
       const block = blocks.has(display), p = html && name === 'p';
       if (visible) { if (p) out.push('n2'); if (block) out.push('n1'); }
       children(el, out, visible);
