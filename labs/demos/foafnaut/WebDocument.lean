@@ -507,7 +507,7 @@ def importEdges (text : String) : List Rendering.ImportTree.Edge :=
 /-- The document's sheets in `env`, in tree order, each with the URL its own URLs resolve
 against (the document's base for a `style` element, the sheet's URL for a supplied one,
 CSS Values 4 §4.5.1), with the skip points of mode `m`: a `media` that can not be read, a
-stylesheet the host could not fetch, and sheets past 2 MiB. -/
+stylesheet the host could not fetch, and sheets past 8 MiB. -/
 def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
     Except String (List (String × String) × List WebAccept.Diagnostic) := do
   let given ← importedSheets request
@@ -540,8 +540,8 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
           let (_,d) ← WebAccept.skip m .stylesheetMissing (sheetWhere n id)
             s!"stylesheet resource missing or duplicated for node {id}" ()
           ds := ds ++ d
-    if bytes+source.utf8ByteSize > 2097152 then
-      let (_,d) ← WebAccept.skip m .stylesheetBytes (sheetWhere n id) "document stylesheets exceed 2MiB" ()
+    if bytes+source.utf8ByteSize > 8388608 then
+      let (_,d) ← WebAccept.skip m .stylesheetBytes (sheetWhere n id) "document stylesheets exceed 8 MiB" ()
       ds := ds ++ d
       continue
     bytes := bytes+source.utf8ByteSize
@@ -549,7 +549,7 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
     -- the sheets it imports that the host gave, before it, within the same bound of bytes
     if !given.isEmpty then
       for (u,t) in Rendering.ImportTree.sheetsOf importEdges Syntax.resolveIri (fun url => given.lookup url) from_ source do
-        if bytes+t.utf8ByteSize ≤ 2097152 then
+        if bytes+t.utf8ByteSize ≤ 8388608 then
           bytes := bytes+t.utf8ByteSize
           sheets := (u,t)::sheets
     sheets := (from_,source)::sheets
