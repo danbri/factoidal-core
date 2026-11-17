@@ -20,13 +20,14 @@ namespace L4Factoidal.HostContract
 
 /-- The engine's C ABI symbols (`labs/demos/foafnaut/web_render_shim.c`), the same in the native
 library (`libweb-render.dylib`, `.so`) and in the Wasm build (`web-render.wasm`, by `ccall`).
+`postFrame` names the host mailbox publication rather than a C symbol.
 `web_render_free` is not listed: it takes back an answer and decides nothing. -/
 inductive Export where
-  | documentCall | documentCallBin | fontCallBin | imageCallBin | decodeCallBin | decode2CallBin | presenterCall
+  | documentCall | documentCallBin | fontCallBin | imageCallBin | decodeCallBin | decode2CallBin | presenterCall | frameMailbox
   deriving DecidableEq, Repr
 
 def Export.all : List Export :=
-  [.documentCall, .documentCallBin, .fontCallBin, .imageCallBin, .decodeCallBin, .decode2CallBin, .presenterCall]
+  [.documentCall, .documentCallBin, .fontCallBin, .imageCallBin, .decodeCallBin, .decode2CallBin, .presenterCall, .frameMailbox]
 
 def Export.symbol : Export → String
   | .documentCall => "web_document_call"
@@ -36,6 +37,7 @@ def Export.symbol : Export → String
   | .decodeCallBin => "web_document_decode_call_bin"
   | .decode2CallBin => "web_document_decode2_call_bin"
   | .presenterCall => "web_presenter_step_call"
+  | .frameMailbox => "postFrame"
 
 def Export.ofSymbol? (s : String) : Option Export := Export.all.find? (·.symbol == s)
 

@@ -29,7 +29,8 @@ Assumptions, listed, not proved here:
   counters are outside `obs`.
 - A3: the native and Wasm builds compute the same Lean functions (the compilers are correct);
   the trace check of the two builds on one page tests it.
-- A4 (host): each host calls the engine from one thread, passes each answer on unaltered, frees
+- A4 (host): each host calls the mutable document engine from one thread (the independent pure
+  presenter entry may run concurrently after serial initialisation), passes each answer on unaltered, frees
   each answer once, and records every call in test mode. Not checkable from Lean; the trace
   checker catches an altered or missing answer only when another host made the same call.
 - A5 (host resources): the host has the memory for the answers (bounded by the engine:

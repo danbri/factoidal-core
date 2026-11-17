@@ -1,3 +1,4 @@
+const presenterTiming=(()=>{try{return Deno.env.get("PRESENTER_TIMING_INPUT")==="1";}catch{return false;}})();
 import {loadHTML,loadPresenter,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit} from "./native_html_engine.ts";
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {createPresenter} from "./presenter_host.ts";
@@ -212,6 +213,8 @@ async function main() {
   const timed=<T extends Record<string,unknown>>(raw:T):T=>Object.fromEntries(Object.entries(raw).map(([name,fn])=>
     [name,typeof fn!=="function"?fn:(...args:unknown[])=>{
       const start=performance.now(),result=(fn as (...a:unknown[])=>unknown)(...args),took=performance.now()-start;
+      if(presenterTiming&&name==="scriptSession")console.log(JSON.stringify({type:"presenter-engine-turn",op:name,
+        startEpochMs:performance.timeOrigin+start,endEpochMs:performance.timeOrigin+performance.now()}));
       if(took>2){const entry=slowCalls[name]??={count:0,maxMs:0};entry.count++;entry.maxMs=Math.max(entry.maxMs,Math.round(took*10)/10);
         console.log(JSON.stringify({type:"native-html-slow-call",t:Math.round(performance.now()),call:name,ms:Math.round(took*10)/10}));}
       return result;
@@ -1506,7 +1509,7 @@ async function main() {
     const settle=(stamps:{kind:number;at:number}[],at:number)=>{
       for(const stamp of stamps){
         const latency=Math.round((at-stamp.at)*10)/10;latencies.push(latency);
-        trace("native-html-input-latency",{kind:KIND_NAMES[stamp.kind]??stamp.kind,ms:latency,frame:frameNumber,from:latencyFrom()});
+        trace("native-html-input-latency",{kind:KIND_NAMES[stamp.kind]??stamp.kind,ms:latency,frame:frameNumber,from:latencyFrom(),inputEpochMs:performance.timeOrigin+stamp.at,presentEpochMs:performance.timeOrigin+at});
       }
     };
     const renderFrame=async()=>{

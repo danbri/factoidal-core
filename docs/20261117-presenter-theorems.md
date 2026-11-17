@@ -33,3 +33,12 @@ Local type-check command used the required lock and explicit Lean project direct
 It exited 3 before Lean ran: the sandbox hides the process table, so the lock refused to
 run. The draft is not yet type-checked. The seven `#print axioms` commands are in the source
 for the build to record; no axiom output is claimed here. Cloud checking remains required.
+
+## Trace execution and compilation
+
+The synchronous model runners are `noncomputable`: they are used in proofs and kernel
+examples, not in the engine. The executable `run` has a tail-recursive replacement `runFast`.
+`runAcc_eq` states the accumulator invariant (outputs reversed before the initial accumulator);
+`run_eq_runFast` is the `@[csimp]` equality. This avoids new input-length C recursion or an
+audit exemption for the model. These two additional lemmas also have `#print axioms` commands.
+The cloud build still has to check these edits; no local lock bypass was used.

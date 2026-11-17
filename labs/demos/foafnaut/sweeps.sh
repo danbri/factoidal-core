@@ -14,11 +14,13 @@ LAB=$(cd "$(dirname "$0")" && pwd)
 for need in .build/native/libnative-window.dylib .build/native-html/runtime/web-render.wasm .build/engines/render-plan.wasm; do
   [ -f "$LAB/$need" ] || { echo "sweeps.sh: missing $need (build-engines.sh, build-executables.sh)" >&2; exit 2; }
 done
-ONLY=() WASM_ONLY=0
+ONLY=() WASM_ONLY=0 PRESENTER=worker
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY+=("${2:?--only needs a sweep name}"); shift 2 ;;
     --wasm-only) WASM_ONLY=1; shift ;;
+    --presenter=inline) PRESENTER=inline; shift ;;
+    --presenter=worker) PRESENTER=worker; shift ;;
     *) echo "usage: $0 [--only NAME]... [--wasm-only]" >&2; exit 2 ;;
   esac
 done
@@ -60,7 +62,7 @@ for entry in "${SWEEPS[@]}"; do
     t0=$(date +%s)
     # shellcheck disable=SC2086 # the sweep arguments split on spaces, as written above
     timeout 600 deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi -A \
-      "$LAB/run_html.ts" --offscreen --perf-summary --no-state --strict --fail-on-flood $args "${choice[@]}" >"$log" 2>&1
+      "$LAB/run_html.ts" "--presenter=$PRESENTER" --offscreen --perf-summary --no-state --strict --fail-on-flood $args "${choice[@]}" >"$log" 2>&1
     rc=$?
     secs=$(( $(date +%s) - t0 ))
     summary=$(python3 -I - "$log" <<'EOF'

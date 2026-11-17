@@ -210,7 +210,7 @@ def stage0Step (engine : State → Nat → LayerFrame) (s : State) : SyncInput �
     | none => ⟨s, [], []⟩
 
 /-- Run the synchronous host directly, collecting its observable outputs. -/
-def stage0Run (engine : State → Nat → LayerFrame) (s : State) : List SyncInput → State × List Output
+noncomputable def stage0Run (engine : State → Nat → LayerFrame) (s : State) : List SyncInput → State × List Output
   | [] => (s, [])
   | i :: inputs =>
     let t := stage0Step engine s i
@@ -219,7 +219,7 @@ def stage0Run (engine : State → Nat → LayerFrame) (s : State) : List SyncInp
 
 /-- Expand a synchronous execution to presenter inputs. The answer to a request precedes the
 next external input; no timing or scheduler assumption is hidden in this expansion. -/
-def synchronousInputs (engine : State → Nat → LayerFrame) (s : State) : List SyncInput → List Input
+noncomputable def synchronousInputs (engine : State → Nat → LayerFrame) (s : State) : List SyncInput → List Input
   | [] => []
   | i :: inputs =>
     let t := stage0Step engine s i
@@ -235,6 +235,33 @@ theorem run_append (s : State) (xs ys : List Input) :
   induction xs generalizing s with
   | nil => simp [run]
   | cons i xs ih => simp [run, ih, List.append_assoc]
+
+/-- Tail-recursive execution of the presenter trace, with outputs kept in reverse order.
+Only the small input/output trace is traversed; page layout is not part of this function. -/
+def runAcc (s : State) : List Input → List Output → State × List Output
+  | [], acc => (s, acc)
+  | i :: inputs, acc =>
+    let next := step s i
+    runAcc next.1 inputs (next.2.reverse ++ acc)
+
+/-- Kind: refinement. Says: the tail runner stores exactly the specification's outputs in
+reverse order before its initial accumulator. Does not say: the input trace has bounded length. -/
+theorem runAcc_eq (s : State) (inputs : List Input) (acc : List Output) :
+    runAcc s inputs acc = ((run s inputs).1, (run s inputs).2.reverse ++ acc) := by
+  induction inputs generalizing s acc with
+  | nil => simp [runAcc, run]
+  | cons i inputs ih => simp [runAcc, run, ih, List.reverse_append, List.append_assoc]
+
+/-- The executable trace runner: reverse once after the tail-recursive pass. -/
+def runFast (s : State) (inputs : List Input) : State × List Output :=
+  let result := runAcc s inputs []
+  (result.1, result.2.reverse)
+
+/-- Kind: refinement. Says: the compiler may use the tail runner without changing any final
+state or output. Does not say: host calls, scheduling or page rendering are proved. -/
+@[csimp] theorem run_eq_runFast : @run = @runFast := by
+  funext s inputs
+  simp [runFast, runAcc_eq]
 
 /-- Kind: property. Says: a fresh completed frame replaces the shown frame without output.
 Does not say: the frame's pixels agree with the layout or the requested scroll. -/
@@ -309,6 +336,8 @@ theorem lastRequestSeen_append (sent : List Nat) (y : Nat) :
   simp [LastRequestSeen]
 
 #print axioms run_append
+#print axioms runAcc_eq
+#print axioms run_eq_runFast
 #print axioms step_fresh_frame
 #print axioms stage0Request_refines
 #print axioms stage0Step_refines
@@ -330,12 +359,12 @@ private theorem synchronousTestEngine_fresh : FreshEngine synchronousTestEngine 
   intro s y g h
   simp [synchronousTestEngine, h]
 
-#guard (stage0Run synchronousTestEngine s0
-  [.scrollTo 0, .vsync, .scrollTo 1500, .vsync, .scrollTo 2500, .vsync]).2 ==
-  [.needBand 0, .present 1 0, .present 1 1500, .needBand 2500, .present 2 0]
-#guard run s0 (synchronousInputs synchronousTestEngine s0
-  [.scrollTo 0, .vsync, .resize 900, .vsync]) ==
-  stage0Run synchronousTestEngine s0 [.scrollTo 0, .vsync, .resize 900, .vsync]
+example : (stage0Run synchronousTestEngine s0
+  [.scrollTo 0, .vsync, .scrollTo 1500, .vsync, .scrollTo 2500, .vsync]).2 =
+  [.needBand 0, .present 1 0, .present 1 1500, .needBand 2500, .present 2 0] := by decide
+example : run s0 (synchronousInputs synchronousTestEngine s0
+  [.scrollTo 0, .vsync, .resize 900, .vsync]) =
+  stage0Run synchronousTestEngine s0 [.scrollTo 0, .vsync, .resize 900, .vsync] := by decide
 
 -- a scroll inside the kept range: presented at the next tick with no engine request
 #guard (run s0 [.frame f1, .scrollTo 1500, .vsync]).2 == [.present 1 1500]

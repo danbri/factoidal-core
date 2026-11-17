@@ -1,3 +1,4 @@
+const presenterTiming=(()=>{try{return Deno.env.get("PRESENTER_TIMING_INPUT")==="1";}catch{return false;}})();
 // The Lean HTML engine in a Deno Worker. Every engine call that can take more than
 // about 2 ms runs here, one at a time, so the main thread keeps
 // only the window, the event pump, input and the GPU (issue 1268). The engine is the
@@ -18,6 +19,7 @@ import {htmlQueue} from "./native_html_queue.ts";
 import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 
 import {publishBytes,readRequest} from "./presenter_mailbox.ts";
+import {documentLine} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
 import {encodeFrame} from "./presenter_frame.ts";
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 export {REMOTE_CALLS};
@@ -35,6 +37,8 @@ export type WorkerReply={id:number;ok:true;value?:unknown;ms:number;frameSequenc
 let engine:Promise<HTMLEngine>|undefined;
 let frameSlot:SharedArrayBuffer|undefined,requestSlot:SharedArrayBuffer|undefined;
 let latestScroll:number|undefined,frameId=0;
+let hostTrace:string|undefined;
+try{hostTrace=Deno.env.get("FOAFNAUT_HOST_TRACE");}catch{/* test mode only */}
 const takeBand=()=>{if(requestSlot){const read=readRequest(requestSlot);if(read.status==="value")latestScroll=read.value;}};
 // The worker's lines go through the log gate too (log-gate.mjs); --log-all comes with init.
 const logGate=gateConsole(console,{name:"foafnaut worker"});
@@ -78,12 +82,18 @@ const handle=async(request:WorkerRequest)=>{
       args[3]={...options,cpu:true,...(presenterFollowScroll&&latestScroll!==undefined?
         {shell:{...options.shell as Record<string,unknown>,scroll:latestScroll}}:{})};
     }
+    const turnStart=performance.now();
     const value=e[request.name](...args);
+    if(presenterTiming&&request.name==="scriptSession")console.log(JSON.stringify({type:"presenter-engine-turn",op:request.name,
+      startEpochMs:performance.timeOrigin+turnStart,endEpochMs:performance.timeOrigin+performance.now()}));
     if(frameSlot&&request.name==="compileLayers"){
       const layers=value as import("./native_html_engine.ts").HTMLLayers&{presenterId:number};
       layers.presenterId=++frameId;
       const ms=performance.now()-start;
-      const frameSequence=publishBytes(frameSlot,encodeFrame({request:request.id,layers,workerMs:ms}));
+      const payload=encodeFrame({request:request.id,layers,workerMs:ms});
+      const frameSequence=publishBytes(frameSlot,payload);
+      if(hostTrace)Deno.writeTextFileSync(hostTrace,JSON.stringify(documentLine("postFrame","",
+        JSON.stringify({op:"postFrame",frameId:layers.presenterId,bytes:payload.length}),1,1,payload))+"\n",{append:true});
       scope.postMessage({id:request.id,ok:true,ms,frameSequence} satisfies WorkerReply);
       takeBand();
       return;
