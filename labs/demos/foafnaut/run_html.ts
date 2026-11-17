@@ -16,7 +16,7 @@ import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.
 import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
-import {fetchedAnswer,scriptFailure,scrollLimitOf,inputFirst,scrollFirst,turnSliceSteps} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+import {fetchedAnswer,scriptFailure,scrollLimitOf,inputFirst,scrollFirst,scriptsFirst,turnSliceSteps,startSliceSteps} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
@@ -48,7 +48,7 @@ async function main() {
   if(args.includes("--help")){
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
-  let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
+  let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
@@ -71,6 +71,8 @@ async function main() {
     // For comparison: page changes are not held while the user scrolls, timer turns not held for input.
     else if(arg==="--no-scroll-first")scrollFirstOn=false;
     else if(arg==="--no-input-first")inputFirstOn=false;
+    // For comparison: a page's start is one turn (every script and task due at once before the first frame).
+    else if(arg==="--no-start-slices")startSlicesOn=false;
     // Off screen: a PNG of the window after the 120th present of page canvases, a picture of
     // what the native engine drew (the page's layers, its canvases and the chrome).
     else if(arg==="--shot"){shotFile=args.shift();if(!shotFile)throw new Error("--shot needs a file path");}
@@ -433,6 +435,9 @@ async function main() {
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
+          // The start in slices (page-load.mjs startSliceSteps): the page is shown after its classic
+          // scripts and the first slice of the rest; the timer turns go on with the start.
+          ...(startSlicesOn?{sliceSteps:startSliceSteps}:{}),
           ...(scriptOps.includes("net")?{network:true}:{}),...(gpuReplay?{gpuReplay:true}:{})}) as ScriptTurn;
         netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
@@ -441,7 +446,8 @@ async function main() {
         for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
         for(const line of turn.errors)console.error(`page error: ${line}`);
         console.log(JSON.stringify({type:"native-html-script",cause:"start",engine:plan.engine,t:Math.round(performance.now()),session:turn.session,
-          commands:turn.commandCount,instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake}));
+          commands:turn.commandCount,instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,layouts:turn.layouts,reads:turn.reads,readOps:turn.readOps,
+          leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake,...(turn.startMore?{startMore:true}:{})}));
         return turn;
       }});
       console.log(JSON.stringify({type:"native-html-scripts",state:"on",engines:scriptEngines,default:(await keepPlans(),planFor("")?.engine),module:quickjsLoaded?quickjsPath:null,loaded,ms:Math.round(performance.now()-t0)}));
@@ -531,11 +537,16 @@ async function main() {
     const shownAt=firstShown.get(document);
     return scrollFirst({now,scrollAt,changedAt:pageChanged===undefined?undefined:Math.max(pageChanged,shownAt??-Infinity),shownAt});
   };
+  // Scripts first (page-load.mjs scriptsFirst): while the page's start has not finished (the
+  // last turn said startMore), a change by its scripts waits for the start to end, or for a few
+  // times the last layout's time: the slices of a start are not each followed by a layout.
+  let lastLayoutMs=0;
+  const scriptsHold=(now:number)=>scriptsFirst({now,more:document.script?.turn.startMore===true,changedAt:pageChanged,layoutMs:lastLayoutMs});
   // A change before the page's first frame is shown waits for it (that frame has the page as
   // it was asked for; the next one, after the hold, has the change).
   const pageChangedNow=()=>{
     const now=performance.now();
-    if((scrollFirstOn&&!firstShown.has(document)&&!!rendering)||scrollHolds(now))pageChanged??=now;else dirty=true;
+    if((scrollFirstOn&&!firstShown.has(document)&&!!rendering)||scrollHolds(now)||scriptsHold(now))pageChanged??=now;else dirty=true;
   };
   // A failed action of a page's script session (page-load.mjs scriptFailure, the rule of every
   // host): a session the engine no longer holds ends the page's scripts with one line; a failed
@@ -605,7 +616,8 @@ async function main() {
     for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
-      instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,layouts:turn.layouts,reads:turn.reads,readOps:turn.readOps,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake});
+      instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,layouts:turn.layouts,reads:turn.reads,readOps:turn.readOps,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake,
+      ...(turn.startMore?{startMore:true}:{})});
     // A turn that draws a page canvas is activity: no idle check (a Lean frame drawn again
     // with probes, which held up the next turns) while the page animates its canvas.
     if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
@@ -1514,7 +1526,7 @@ async function main() {
         resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:result.presented,compiledIn:where,workerMs:workerMs===undefined?null:Math.round(workerMs*10)/10,
         why,checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,
         ...(nextLayers?{layers:{top:nextLayers.layers.top,bandTop:nextLayers.layers.bandTop,bandHeight:nextLayers.layers.bandHeight,offset:place!.offset,chromeFloats:nextLayers.chrome.data.length}}:{}),...engineFact});
-      resizeAt=undefined;
+      resizeAt=undefined;lastLayoutMs=compiled-frameStart;
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
       firstFrameAt??=finished;totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
       if(result.checked)checkedFrames++;
@@ -1878,7 +1890,7 @@ async function main() {
       }
       if(animationDue&&!rendering&&performance.now()>=gpuHoldUntil){animationDue=false;dirty=true;}
       // The scroll paused (or held the change long enough): the page's change is drawn now.
-      if(pageChanged!==undefined&&(firstShown.has(document)||!rendering)&&!scrollHolds(performance.now())){pageChanged=undefined;dirty=true;}
+      if(pageChanged!==undefined&&(firstShown.has(document)||!rendering)&&!scrollHolds(performance.now())&&!scriptsHold(performance.now())){pageChanged=undefined;dirty=true;}
       if(dirty&&canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
@@ -2028,7 +2040,14 @@ async function main() {
       // engine for the bands the scroll needs)
       const held=inputFirstOn&&inputFirst({now,inputAt,heldSince:timerHeldSince,
         waiting:shifting!==undefined||shiftPending||awaitingShift.length>0||awaitingBand.length>0||(pageChanged!==undefined&&scrollHolds(now))});
-      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil){
+      // (the rest of a start in slices waits for the page's first frame: a slice can be one long
+      // script, and run before that frame it would hold the engine the frame needs)
+      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil
+        &&(script.turn.startMore!==true||firstShown.has(document))){
+        // While its start is not finished the page's clock moves only by its own steps, as in a
+        // start made in one turn: the time the host took to show the page between two slices is
+        // not time the page's timers saw pass.
+        if(script.turn.startMore===true)scriptEpochs.set(script.session,now-script.turn.clock);
         const elapsed=now-(scriptEpochs.get(script.session)??now);
         if(elapsed>=script.turn.nextWake&&held)timerHeldSince??=now;
         else if(elapsed>=script.turn.nextWake){
