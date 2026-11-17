@@ -325,6 +325,14 @@ private def isPx (v : Float) : CSS.Length → Bool
 #guard hinted "<iframe width=300 height=100></iframe>" "" "iframe" fun s => isPx 300 s.width && isPx 100 s.height
 #guard hinted "<embed hspace=7 vspace='3.5'>" "" "embed" fun s => s.margin.left == 7 && s.margin.right == 7 && s.margin.top == 3.5
 #guard hinted "<img border=4>" "" "img" fun s => s.borderStyle == .solid && s.borderWidth.top == 4
+-- `hspace` and `vspace` map to the dimension properties: a percentage is of the containing
+-- block's width (HTML §15.4.3; WPT html/rendering/dimension-attributes)
+#guard hinted "<img hspace='10%' vspace=3>" "" "img" fun s => s.margin.left == 0 && s.margin.top == 3 && s.pos.marginOf == (0,0.1,0,0.1)
+#guard hinted "<input type=image hspace='50%'>" "" "input" fun s => s.pos.marginOf == (0,0.5,0,0.5)
+#guard hinted "<input type=image border=7>" "" "input" fun s => s.borderStyle == .solid && s.borderWidth.left == 7
+-- the border hint is above the user agent's rules (the `input` border), as the width hints are
+#guard (hintedProperties {} {borderStyle := .solid, borderWidth := ⟨0,0,0,0⟩}).contains "border"
+#guard !(hintedProperties {} {}).contains "border"
 #guard hinted "<img border=4 width=+5>" "img{border-width:1px;width:9px}" "img" fun s => s.borderWidth.left == 1 && isPx 9 s.width
 #guard hinted "<table><tr><td width=0 height='0%'>x</table>" "" "td" fun s => match s.width, s.height with | .auto, .auto => true | _, _ => false
 #guard hinted "<table width=0 height=0><tr><td>x</table>" "" "table" fun s => (match s.width with | .auto => true | _ => false) && isPx 0 s.height

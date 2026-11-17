@@ -66,6 +66,46 @@ def funcT? (c : Ctx) (i : Nat) : Option FuncType :=
   | some _ => none
   | none => c.types[i]?
 
+/-- The address type of memory `m`: `i64` for a 64-bit memory (memory64), else `i32`
+(also when there is no memory `m`: the callers check the index first). -/
+def memAddr (c : Ctx) (m : Nat) : ValType := (c.mems[m]?.map (·.limits.addrType)).getD .i32
+
+/-- The address type of table `x`: `i64` for a 64-bit table (table64), else `i32`. -/
+def tableAddr (c : Ctx) (x : Nat) : ValType := (c.tables[x]?.map (·.limits.addrType)).getD .i32
+
+/-- The type of a count that spans two memories or tables of address types `a` and `b`
+(`memory.copy`, `table.copy`): `i64` only when both are `i64`. -/
+def minAddr : ValType → ValType → ValType
+  | .i64, .i64 => .i64
+  | _, _ => .i32
+
+/-- Kind: conservativity. Says: in a module none of whose memories is 64-bit, every memory
+address is `i32`, so memory instructions type exactly as before memory64. -/
+theorem memAddr_of_no64 (c : Ctx) (m : Nat) (h : ∀ t ∈ c.mems, t.limits.addr64 = false) :
+    c.memAddr m = .i32 := by
+  unfold memAddr
+  cases hm : c.mems[m]? with
+  | none => rfl
+  | some t =>
+    have ht : t ∈ c.mems := Array.mem_of_getElem? hm
+    simp [Limits.addrType, h t ht]
+
+/-- Kind: conservativity. Says: the same for tables (`call_indirect`, `table.*`). -/
+theorem tableAddr_of_no64 (c : Ctx) (x : Nat) (h : ∀ t ∈ c.tables, t.limits.addr64 = false) :
+    c.tableAddr x = .i32 := by
+  unfold tableAddr
+  cases hm : c.tables[x]? with
+  | none => rfl
+  | some t =>
+    have ht : t ∈ c.tables := Array.mem_of_getElem? hm
+    simp [Limits.addrType, h t ht]
+
+/-- Kind: typing rule. Says: a count across two memories or tables is `i32` as soon as one
+of them is an i32 one (Wasm 3.0 `memory.copy`, `table.copy`), and `i64` when both are 64-bit. -/
+theorem minAddr_i32_left (b : ValType) : minAddr .i32 b = .i32 := rfl
+theorem minAddr_i32_right (a : ValType) : minAddr a .i32 = .i32 := by cases a <;> rfl
+theorem minAddr_i64 : minAddr .i64 .i64 = .i64 := rfl
+
 def structT? (c : Ctx) (i : Nat) : Option (Array FieldType) :=
   match c.comp? i with
   | some (.struct fs) => some fs
@@ -325,19 +365,20 @@ def stepSimd (c : Ctx) (nL : Nat) (s : VState) (k : Nat) (m : MemArg) (lane : Na
   let some sh := simdShape k | .error "unknown SIMD instruction"
   let memOk := fun (w : Nat) => (show V Unit from do
     if m.mem ≥ c.mems.size then .error "unknown memory"
-    if m.offset ≥ 4294967296 then .error "offset out of range"
+    if c.memAddr m.mem == .i32 && m.offset ≥ 4294967296 then .error "offset out of range"
     if 2 ^ m.align > w then .error "alignment must not be larger than natural")
+  let aty := c.memAddr m.mem
   let laneOk := fun (n : Nat) => (show V Unit from
     if lane < n then .ok () else .error "invalid lane index")
   match sh with
   | .load w =>
     memOk w
-    let s ← s.pop c .i32
+    let s ← s.pop c aty
     .ok ((s.push nL (some .v128)).emit (.simd k m.mem m.offset 0))
   | .store =>
     memOk 16
     let s ← s.pop c .v128
-    let s ← s.pop c .i32
+    let s ← s.pop c aty
     .ok (s.emit (.simd k m.mem m.offset 0))
   | .const => .ok ((s.push nL (some .v128)).emit (.simdImm k lo hi))
   | .shuffle =>
@@ -373,12 +414,12 @@ def stepSimd (c : Ctx) (nL : Nat) (s : VState) (k : Nat) (m : MemArg) (lane : Na
   | .loadLane w =>
     memOk w
     laneOk (16 / w)
-    let s ← s.popAll c #[.i32, .v128]
+    let s ← s.popAll c #[aty, .v128]
     .ok ((s.push nL (some .v128)).emit (.simd k m.mem m.offset lane))
   | .storeLane w =>
     memOk w
     laneOk (16 / w)
-    let s ← s.popAll c #[.i32, .v128]
+    let s ← s.popAll c #[aty, .v128]
     .ok (s.emit (.simd k m.mem m.offset lane))
 
 /-- Whether a field of this type has a default value. -/
@@ -585,7 +626,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let some tt := c.tables[x]? | .error "unknown table"
     if !c.refSub tt.elem ⟨true, .func⟩ then .error "type mismatch: call_indirect table is not funcref"
     let some ft := c.funcT? ti | .error "unknown type"
-    let s ← s.pop c .i32
+    let s ← s.pop c tt.limits.addrType
     let s ← s.popAll c ft.params
     .ok ((s.pushAll nL ft.results).emit (if c.isFinal ti then .callIndirect ti x else .gc GcOp.callIndirectSub ti x 0))
   | .drop =>
@@ -635,69 +676,76 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     .ok (s.emit (if g.type == .v128 then .vGlobalSet x else .globalSet x))
   | .tableGet x =>
     let some t := c.tables[x]? | .error "unknown table"
-    let s ← s.pop c .i32
+    let s ← s.pop c t.limits.addrType
     .ok ((s.push nL (some (.ref t.elem))).emit (.tableGet x))
   | .tableSet x =>
     let some t := c.tables[x]? | .error "unknown table"
     let s ← s.pop c (.ref t.elem)
-    let s ← s.pop c .i32
+    let s ← s.pop c t.limits.addrType
     .ok (s.emit (.tableSet x))
   | .tableSize x =>
     if c.tables[x]?.isNone then .error "unknown table"
-    .ok ((s.push nL (some .i32)).emit (.tableSize x))
+    .ok ((s.push nL (some (c.tableAddr x))).emit (.tableSize x))
   | .tableGrow x =>
     let some t := c.tables[x]? | .error "unknown table"
-    let s ← s.pop c .i32
+    let s ← s.pop c t.limits.addrType
     let s ← s.pop c (.ref t.elem)
-    .ok ((s.push nL (some .i32)).emit (.tableGrow x))
+    -- The run answers the old size or 0xFFFFFFFF (failure); for an i64 table the sign
+    -- extension makes the failure -1 (sizes stay below 2^31: the run caps tables lower).
+    let s := (s.push nL (some t.limits.addrType)).emit (.tableGrow x)
+    .ok (if t.limits.addr64 then s.emit (.num .i64_extend_i32_s) else s)
   | .tableFill x =>
     let some t := c.tables[x]? | .error "unknown table"
-    let s ← s.pop c .i32
+    let s ← s.pop c t.limits.addrType
     let s ← s.pop c (.ref t.elem)
-    let s ← s.pop c .i32
+    let s ← s.pop c t.limits.addrType
     .ok (s.emit (.tableFill x))
   | .tableCopy d sx =>
     let some td := c.tables[d]? | .error "unknown table"
     let some ts := c.tables[sx]? | .error "unknown table"
     if !c.refSub ts.elem td.elem then .error "type mismatch: table.copy element types"
-    let s ← s.popAll c #[.i32, .i32, .i32]
+    let s ← s.popAll c #[td.limits.addrType, ts.limits.addrType,
+      Ctx.minAddr td.limits.addrType ts.limits.addrType]
     .ok (s.emit (.tableCopy d sx))
   | .tableInit x e =>
     let some t := c.tables[x]? | .error "unknown table"
     let some et := c.elems[e]? | .error "unknown elem segment"
     if !c.refSub et t.elem then .error "type mismatch: table.init element types"
-    let s ← s.popAll c #[.i32, .i32, .i32]
+    let s ← s.popAll c #[t.limits.addrType, .i32, .i32]
     .ok (s.emit (.tableInit x e))
   | .elemDrop e =>
     if c.elems[e]?.isNone then .error "unknown elem segment"
     .ok (s.emit (.elemDrop e))
   | .load op m =>
     if m.mem ≥ c.mems.size then .error "unknown memory"
-    if m.offset ≥ 4294967296 then .error "offset out of range"
+    if c.memAddr m.mem == .i32 && m.offset ≥ 4294967296 then .error "offset out of range"
     let (w, _, _) := op.shape
     if 2 ^ m.align > w then .error "alignment must not be larger than natural"
-    let s ← s.pop c .i32
+    let s ← s.pop c (c.memAddr m.mem)
     .ok ((s.push nL (some op.type)).emit (.load op m.mem m.offset))
   | .store op m =>
     if m.mem ≥ c.mems.size then .error "unknown memory"
-    if m.offset ≥ 4294967296 then .error "offset out of range"
+    if c.memAddr m.mem == .i32 && m.offset ≥ 4294967296 then .error "offset out of range"
     if 2 ^ m.align > op.width then .error "alignment must not be larger than natural"
     let s ← s.pop c op.type
-    let s ← s.pop c .i32
+    let s ← s.pop c (c.memAddr m.mem)
     .ok (s.emit (.store op m.mem m.offset))
   | .memorySize m =>
     if m ≥ c.mems.size then .error "unknown memory"
-    .ok ((s.push nL (some .i32)).emit (.memorySize m))
+    .ok ((s.push nL (some (c.memAddr m))).emit (.memorySize m))
   | .memoryGrow m =>
     if m ≥ c.mems.size then .error "unknown memory"
-    let s ← s.pop c .i32
-    .ok ((s.push nL (some .i32)).emit (.memoryGrow m))
+    let s ← s.pop c (c.memAddr m)
+    -- The run answers the old size in pages or 0xFFFFFFFF (failure); for an i64 memory the
+    -- sign extension makes the failure -1 (page counts stay below 2^31: the page limit).
+    let s := (s.push nL (some (c.memAddr m))).emit (.memoryGrow m)
+    .ok (if c.memAddr m == .i64 then s.emit (.num .i64_extend_i32_s) else s)
   | .memoryInit d m =>
     if m ≥ c.mems.size then .error "unknown memory"
     match c.dataCount with
     | none => .error "data count section required"
     | some n => if d ≥ n then .error "unknown data segment" else
-      let s ← s.popAll c #[.i32, .i32, .i32]
+      let s ← s.popAll c #[c.memAddr m, .i32, .i32]
       .ok (s.emit (.memoryInit d m))
   | .dataDrop d =>
     match c.dataCount with
@@ -705,11 +753,11 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     | some n => if d ≥ n then .error "unknown data segment" else .ok (s.emit (.dataDrop d))
   | .memoryCopy d sm =>
     if d ≥ c.mems.size || sm ≥ c.mems.size then .error "unknown memory"
-    let s ← s.popAll c #[.i32, .i32, .i32]
+    let s ← s.popAll c #[c.memAddr d, c.memAddr sm, Ctx.minAddr (c.memAddr d) (c.memAddr sm)]
     .ok (s.emit (.memoryCopy d sm))
   | .memoryFill m =>
     if m ≥ c.mems.size then .error "unknown memory"
-    let s ← s.popAll c #[.i32, .i32, .i32]
+    let s ← s.popAll c #[c.memAddr m, .i32, c.memAddr m]
     .ok (s.emit (.memoryFill m))
   | .i32Const v => .ok ((s.push nL (some .i32)).emit (.const v.toUInt64))
   | .i64Const v => .ok ((s.push nL (some .i64)).emit (.const v))
@@ -825,7 +873,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     if !c.refSub tt.elem ⟨true, .func⟩ then .error "type mismatch: call_indirect table is not funcref"
     let some ft := c.funcT? ti | .error "unknown type"
     if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
-    let s ← s.pop c .i32
+    let s ← s.pop c tt.limits.addrType
     let s ← s.popAll c ft.params
     let o := if c.isFinal ti then Op.returnCallIndirect ti x else .gc GcOp.returnCallIndirectSub ti x 0
     .ok (((emitTail s ft.params 1 o).emit (.return_ fc.results.size)).setUnreachable)
@@ -1046,6 +1094,23 @@ structure ValidModule where
 def limitsOk (l : Limits) (bound : Nat) : Bool :=
   l.min ≤ bound && (match l.max with | some m => m ≤ bound && l.min ≤ m | none => true)
 
+/-- Most pages of a memory: 65536 (4 GiB) for an i32 memory, 2^48 for an i64 one (Wasm 3.0
+§3.2.10: the address space over the page size). -/
+def memBound (l : Limits) : Nat := if l.addr64 then 281474976710656 else 65536
+
+def memBoundMsg (l : Limits) : String :=
+  if l.addr64 then "memory size must be at most 2^48 pages (16 EiB)"
+  else "memory size must be at most 65536 pages (4GiB)"
+
+/-- Most elements of a table: 2^32 - 1 for an i32 table, 2^64 - 1 for an i64 one. -/
+def tableBound (l : Limits) : Nat := if l.addr64 then 18446744073709551615 else 4294967295
+
+/-- Kind: conservativity. Says: an i32 memory or table keeps the bounds it had before
+memory64 (65536 pages; 2^32 - 1 elements). -/
+theorem bounds_of_i32 (l : Limits) (h : l.addr64 = false) :
+    memBound l = 65536 ∧ tableBound l = 4294967295 := by
+  simp [memBound, tableBound, h]
+
 def funcRefs (m : Module) : Std.HashSet Nat := Id.run do
   let mut r : Std.HashSet Nat := {}
   let scan := fun (r : Std.HashSet Nat) (e : Expr) =>
@@ -1195,8 +1260,8 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
   for i in m.imports do
     match i.desc with
     | .func t => if (c.funcT? t).isNone then err "unknown type"
-    | .table t => if !limitsOk t.limits 4294967295 then err "size minimum must not be greater than maximum"
-    | .mem t => if !limitsOk t.limits 65536 then err "memory size must be at most 65536 pages (4GiB)"
+    | .table t => if !limitsOk t.limits (tableBound t.limits) then err "size minimum must not be greater than maximum"
+    | .mem t => if !limitsOk t.limits (memBound t.limits) then err (memBoundMsg t.limits)
     | .global g => if !c.valOk g.type then err "unknown type"
     | .tag t => match c.funcT? t with
       | none => err "unknown type"
@@ -1206,7 +1271,7 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
   let nImpFuncs := m.importedFuncTypes.size
   let nImpGlobals := m.importedGlobals.size
   for t in m.tables do
-    if !limitsOk t.type.limits 4294967295 then err "size minimum must not be greater than maximum"
+    if !limitsOk t.type.limits (tableBound t.type.limits) then err "size minimum must not be greater than maximum"
     if !c.heapOk t.type.elem.heap then err "unknown type"
     match t.init with
     | some e => lift (checkConst c nImpGlobals e (.ref t.type.elem))
@@ -1218,7 +1283,7 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
       if !ft.results.isEmpty then err "non-empty tag result type"
       if hasV128 ft.params then err "unsupported: v128 in a tag type"
   for mt in m.mems do
-    if !limitsOk mt.limits 65536 then err "memory size must be at most 65536 pages (4GiB)"
+    if !limitsOk mt.limits (memBound mt.limits) then err (memBoundMsg mt.limits)
   let mut gi := nImpGlobals
   for g in m.globals do
     if !c.valOk g.type.type then err "unknown type"
@@ -1247,13 +1312,13 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
       | none => err "unknown table"
       | some t =>
         if !c.refSub el.type t.elem then err "type mismatch"
-        lift (checkConst c c.globals.size off .i32)
+        lift (checkConst c c.globals.size off t.limits.addrType)
     | _ => pure ()
   for d in m.datas do
     match d.mode with
     | .active x off =>
       if x ≥ c.mems.size then err "unknown memory"
-      lift (checkConst c c.globals.size off .i32)
+      lift (checkConst c c.globals.size off (c.memAddr x))
     | .passive => pure ()
   let code ← compileAll c m nImpFuncs parallel
   return ⟨m, c, code⟩
