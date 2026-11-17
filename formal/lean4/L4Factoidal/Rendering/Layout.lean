@@ -338,16 +338,36 @@ def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available
       | none,none => Ratio.autoSize rn rd (LU.ofPx (max 0 ((intrinsic.map Prod.fst).getD 300))) minW maxW minH maxH)
     (LU.toPx size.1,LU.toPx size.2)
 
-/-- A replaced element with no decoded content here: a `canvas`, whose natural size is
-its `width` and `height` attributes, 300 by 150 without them (HTML §4.12.5.1). Its box is
-laid out as a picture's is, and is empty. -/
-def blankReplaced (n : DOM.Node) : Option (Float × Float) :=
+/-- A replaced element with no decoded content here, and its natural size when it has one.
+A `canvas` has the natural size of its `width` and `height` attributes, 300 by 150 without
+them (HTML §4.12.5.1). An `iframe`, and a `video` with no frame or poster drawn, are
+replaced elements (HTML §15.4.1) with no natural size and no natural ratio: `some none`,
+so `replacedSize` gives them the default object size, 300 by 150 (CSS Images 3 §4.1), and
+a `width` without a `height` keeps the default height (as `video-intrinsic-width-height`
+of WPT says). Their boxes are laid out as a picture's are, and are empty: the engine does
+not draw a child document or a video frame in its container yet. -/
+def blankReplaced (n : DOM.Node) : Option (Option (Float × Float)) :=
   if DOM.Dom.isHtmlElement n "canvas" then
     let whole := fun (name : String) (fallback : Nat) =>
       let digits := ((CSS.attrValue n name).toList.dropWhile fun c => c == ' ' || c == '\t' || c == '\n').takeWhile Char.isDigit
       if digits.isEmpty || digits.length > 5 then fallback else digits.foldl (fun k c => k*10+(c.toNat-48)) 0
-    some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150))
+    some (some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150)))
+  else if DOM.Dom.isHtmlElement n "iframe" || DOM.Dom.isHtmlElement n "video" then some none
   else none
+
+/-- Kind: property. Says: an `iframe` is a replaced box with no natural size. -/
+theorem blankReplaced_iframe (n : DOM.Node) (h : DOM.Dom.isHtmlElement n "iframe" = true) :
+    blankReplaced n = some none := by
+  have hl : n.lname = "iframe" := by simp [DOM.Dom.isHtmlElement] at h; exact h.2
+  have hc : DOM.Dom.isHtmlElement n "canvas" = false := by simp [DOM.Dom.isHtmlElement, hl]
+  simp [blankReplaced, hc, h]
+
+/-- Kind: value. Says: a replaced box with no natural size, no `width` or `height` and no
+limits is 300 by 150, the default object size (CSS Images 3 §4.1). -/
+theorem replacedNatural_default (s : Computed) (a : Float) (hw : s.width = .auto) (hh : s.height = .auto)
+    (hmw : s.minWidth = .auto) (hxw : s.maxWidth = .auto) (hmh : s.minHeight = .auto) (hxh : s.maxHeight = .auto) :
+    replacedNatural s none a = (max 0 (max 0 (min unbounded 300)), max 0 (max 0 (min unbounded 150))) := by
+  simp [replacedNatural, hw, hh, hmw, hxw, hmh, hxh]
 
 /-- The intrinsic size of a picture: its pixels, one CSS pixel each; for a picture held
 reduced, the size of the image it was made from (`natural`). -/
@@ -585,7 +605,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
       return #[.replaced id s ow oh nodes]
     -- A `canvas`: a replaced box of its natural size, with nothing drawn in it here.
     if let some size := blankReplaced n then
-      let (w,h) := replacedSize s (some size) available
+      let (w,h) := replacedSize s size available
       let (ow,oh,nodes) := replacedBox id s w h (fun _ _ => [])
       return #[.replaced id s ow oh nodes]
     -- An image that is missing, broken or refused stands as its description, and stays a link.
@@ -1700,7 +1720,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
         let w := (replacedSize s (some picture.size) 0).1
         return (compressible w+add,w+add)
       if let some size := blankReplaced n then
-        let w := (replacedSize s (some size) 0).1
+        let w := (replacedSize s size 0).1
         return (compressible w+add,w+add)
       if n.ns == some DOM.svgNS then
         let w := (← svgSize n s 0).1+add
@@ -2252,7 +2272,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let (w,h) := replacedSize sized (some picture.size) available
         return replaced w h (fun cx cy => pictureNodes id s picture cx cy w h) s
       if let some size := blankReplaced n then
-        let (w,h) := replacedSize sized (some size) available
+        let (w,h) := replacedSize sized size available
         return replaced w h (fun _ _ => []) s
       if n.ns == some DOM.svgNS then
         let (sw,sh) ← svgSize n sized available
@@ -2507,7 +2527,7 @@ of it (`Inline.openInline`): an inline element that is not replaced. -/
 def isInlineBox (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
   let n := dom.get id
   n.type == .element && ((styles[id]?).map (·.display == .inline)).getD false &&
-    !["img","br","canvas","video"].contains n.lname && n.ns != some DOM.svgNS
+    !["img","br","canvas","video","iframe"].contains n.lname && n.ns != some DOM.svgNS
 
 /-- The boxes that link regions are cut from: the boxes of text, of replaced elements and
 of block-level and atomic boxes. The box of an inline box is left out: what is inside it

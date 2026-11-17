@@ -2096,7 +2096,9 @@ def userAgentSheet : String :=
   "input[type=checkbox],input[type=radio]{width:13px;height:13px;margin:3px 3px 3px 4px;padding:0;border-width:0}" ++
   "textarea{display:inline-block;padding:2px;border:1px solid #767676;width:176px;height:30px;background-color:#ffffff;white-space:pre-wrap}" ++
   "select{display:inline-block;padding:1px 0;border:1px solid #767676;width:64px;height:17px;background-color:#ffffff}" ++
-  "select>*{display:none}"
+  "select>*{display:none}" ++
+  -- HTML §15.4.1: `iframe { border: 2px inset; }`
+  "iframe{border:2px inset}"
 
 def userAgentRules : List Rule := (parse userAgentSheet).toOption.getD []
 
