@@ -552,7 +552,9 @@ theorem aria_label_second (d : Dom) (k : NodeId) (fuel : Nat) (v : String)
   have h1 : (NodeType.element == NodeType.text) = false := rfl
   have h2 : (NodeType.element != NodeType.element) = false := rfl
   rw [textAlternative]
-  simp [he, h1, h2, hh, hl, hv, hne]
+  simp [he, h1, h2, hh, hl, hv]
+  intro h
+  simp [h] at hne
 
 /-- Says (the cycle guard, step 2B's "the current node is not already part of an
 `aria-labelledby` traversal"): a node computed for an `aria-labelledby` does not follow its
@@ -578,6 +580,7 @@ theorem labelledby_once (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool)
   have h2 : (NodeType.element != NodeType.element) = false := rfl
   rw [textAlternative]
   simp [he, h1, h2]
+  rfl
 
 /-! ## The tree as JSON, for a host -/
 
@@ -850,8 +853,7 @@ theorem announcements_same (rs : List Region) : announcements rs rs = [] := by
   unfold announcements
   rw [List.filterMap_eq_nil_iff]
   intro r hr
-  have hc : rs.contains r = true := List.contains_iff_mem.mpr hr
-  simp [hc]
+  simp [hr]
 
 /-- Says: with no region there is nothing to speak. -/
 theorem announcements_nil (old : List Region) : announcements old [] = [] := rfl
@@ -921,12 +923,12 @@ private def shape (html : String) : List (Nat × String × String) :=
    announcements (rs.map fun (k, l, _) => (k, l, "Saving")) rs)) ==
   ([("polite", "Saved"), ("assertive", "")], [("polite", "Saved")], [], [("polite", "Saved")])
 #guard (let d := DOM.parseHtmlDocument "<div role=tablist aria-label=tabs><div role=tab aria-label=one></div><div role=tab aria-label=two aria-selected=true></div></div><div role=checkbox aria-checked=mixed></div>"
-  let at := fun (role : String) => ((tree d (Env.ofMarkup d)).find? (·.role == role)).map (·.id) |>.getD 0
+  let nodeOf := fun (role : String) => ((tree d (Env.ofMarkup d)).find? (·.role == role)).map (·.id) |>.getD 0
   let tabs := (tree d (Env.ofMarkup d)).filter (·.role == "tab") |>.map (·.id)
-  (propertiesIn d (at "tablist")).toString ==
-    "{\"accessibilityId\":\"" ++ accId (at "tablist") ++ "\",\"role\":\"tablist\",\"label\":\"tabs\",\"parent\":\"" ++ accId (at "document") ++
+  (propertiesIn d (nodeOf "tablist")).toString ==
+    "{\"accessibilityId\":\"" ++ accId (nodeOf "tablist") ++ "\",\"role\":\"tablist\",\"label\":\"tabs\",\"parent\":\"" ++ accId (nodeOf "document") ++
       "\",\"children\":[" ++ ",".intercalate (tabs.map fun t => "\"" ++ accId t ++ "\"") ++ "]}" &&
-  tabs.length == 2 && ((propertiesIn d (at "checkbox")).toString.splitOn "\"checked\":\"mixed\"").length == 2 &&
+  tabs.length == 2 && ((propertiesIn d (nodeOf "checkbox")).toString.splitOn "\"checked\":\"mixed\"").length == 2 &&
   ofAccId (accId 12) == some 12 && ofAccId "12" == none)
 #guard (json [{ depth := 1, id := 4, role := "button", name := "a", tag := "button", focusable := true,
     props := [("pressed", "true")], box := some ⟨1, -2, 3, 4⟩ }]).toString ==
