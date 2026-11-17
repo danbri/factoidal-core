@@ -234,9 +234,23 @@ def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.r
   return rect near x y w b.top ++ rect far x (y+h-b.bottom) w b.bottom ++
     rect near x (y+b.top) b.left (h-b.top-b.bottom) ++ rect far (x+w-b.right) (y+b.top) b.right (h-b.top-b.bottom)
 
-/-- Background, then border, of a border box. -/
+/-- Background, then border, of a border box. None for a box whose mask image is not drawn
+(`Computed.masked`): unmasked, the background of an icon would be a filled box. -/
 private def decorations (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  background id s x y w h ++ borderNodes id s x y w h
+  if s.masked then #[] else background id s x y w h ++ borderNodes id s x y w h
+
+/-- Kind: safety of the paint (no undrawn mask shows as a filled box). Says: a box whose
+mask image is not drawn paints no background and no border. Does not say: anything about
+its content or its layout, which are as before. -/
+theorem decorations_masked (id : Nat) (s : Computed) (x y w h : Float) (hm : s.masked = true) :
+    decorations id s x y w h = #[] := by
+  simp [decorations, hm]
+
+/-- Kind: property (pages with no such mask pay nothing). Says: with no undrawn mask the
+decorations are the background and the border, as before. -/
+theorem decorations_plain (id : Nat) (s : Computed) (x y w h : Float) (hm : s.masked = false) :
+    decorations id s x y w h = background id s x y w h ++ borderNodes id s x y w h := by
+  simp [decorations, hm]
 
 /-- The content of a replaced element that Lean decoded or drew: the image of an
 `img`, and in time the poster or frame of a `video` or the bitmap of a `canvas`.
@@ -563,6 +577,17 @@ private def altItems (id : Nat) (s : Computed) (n : DOM.Node) : Array Inline :=
     let alt := CSS.attrValue n "alt"
     if alt.isEmpty then #[] else (textItems id s s!"[{alt}]").toArray
 
+/-- What a form control shows in its box (`CSS.controlText`): its value or label on one
+line in its own colour, a placeholder in the grey of other engines (`#757575`). Nothing for
+any other element. -/
+private def controlItems (dom : Dom) (id : Nat) (s : Computed) : Array Inline :=
+  match CSS.controlText dom id with
+  | none => #[]
+  | some (text, placeholder) =>
+    let t := {s with background := none, underline := false, preformatted := false,
+      color := if placeholder then ⟨0.459,0.459,0.459⟩ else s.color, pos := {s.pos with nowrap := true}}
+    (textItems id t text).toArray
+
 /-- An inline element's background goes behind its text (CSS 2.1 §14.2). Text has no
 background of its own, so its words and spaces take the element's. -/
 private def withBackground (s : Computed) : Inline → Inline
@@ -637,7 +662,9 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
       else if s.display == .inlineBlock then #[.openAtomic id s]
       else (if s.display == .inline then #[.openInline id s false] else #[]) ++ (bidiOpen s).map .bidiMark
     for child in n.kids do out := out ++ (← inlineItems dom styles embedding pictures available fuel child)
-    if s.display == .inline && s.background.isSome then out := out.map (withBackground s)
+    -- a form control's own text (its value, label or placeholder)
+    out := out ++ controlItems dom id s
+    if s.display == .inline && s.background.isSome && !s.masked then out := out.map (withBackground s)
     return if s.display.isBlockLevel then out.push (.lineBreak s)
       else if s.display == .inlineBlock then out.push .closeAtomic
       else out ++ (bidiClose s).map .bidiMark ++ (if s.display == .inline then #[.closeInline id s] else #[])
@@ -671,11 +698,12 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
   let scale := run.fontSize/font.unitsPerEm
   for g in run.glyphs do
     for geometry in font.outline g.index do
-      let primitive : Primitive := {geometry,style := glyphStyle s run.fontSize scale,transform := glyphTransform s scale g.x g.y (font.ascent*scale)}
+      -- `rise`: text of a `sup` or `sub` (CSS 2.1 §10.8.1) drawn above or below the baseline
+      let primitive : Primitive := {geometry,style := glyphStyle s run.fontSize scale,transform := glyphTransform s scale g.x (g.y-s.rise) (font.ascent*scale)}
       out := out.push (.paint ⟨some run.source,primitive⟩)
   if s.underline && !run.glyphs.isEmpty then
     let left := (run.glyphs[0]?).map (·.x) |>.getD 0
-    let top := (run.glyphs[0]?).map (·.y) |>.getD 0
+    let top := ((run.glyphs[0]?).map (·.y) |>.getD 0)-s.rise
     let width := run.glyphs.foldl (fun w g => w+g.advance) 0
     let thickness := max 1 (run.fontSize/14)
     let baseline := top+font.ascent*scale
@@ -716,15 +744,15 @@ private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Compute
   let scale := run.fontSize/word.unitsPerEm
   let mut out := #[]
   for (glyph,position) in word.glyphs.zip run.glyphs do
-    if let some node := colourNode run.source glyph position.x position.y scale s.color then
+    if let some node := colourNode run.source glyph position.x (position.y-s.rise) scale s.color then
       out := out.push node
       continue
     for geometry in glyph.geometry do
-      let place := glyphTransform s scale position.x position.y (baseline-position.y)
+      let place := glyphTransform s scale position.x (position.y-s.rise) (baseline-position.y)
       out := out.push (.paint ⟨some run.source,{geometry,style := glyphStyle s run.fontSize scale,transform := place}⟩)
   if s.underline && width > 0 then
     let thickness := max 1 (run.fontSize/14)
-    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
+    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline-s.rise+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
   return out
 
 /-- A laid-out box moved by `(dx,dy)`: its paint in a translated group, its boxes and
@@ -1750,7 +1778,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
           return (within a+add,within b+add)
         -- an outside marker (the default) takes no room in the item's lines
         let lead := if n.lname == "li" && s.pos.listInside then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray
-          else if n.lname == "img" then altItems id s n else #[]
+          else if n.lname == "img" then altItems id s n else controlItems dom id s
         let (a,b) ← flowWidths id n.kids lead
         return (within a+add,within b+add)
     match task with
@@ -2360,7 +2388,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- A list item's marker (CSS Lists 3 §3): the first thing in the first line with
       -- `list-style-position: inside`, else outside the box beside that line (below).
       let markerItems := if n.lname == "li" then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray else #[]
-      let lead := if n.lname == "img" then altItems id s n else if s.pos.listInside then markerItems else #[]
+      let lead := if n.lname == "img" then altItems id s n else if s.pos.listInside then markerItems else controlItems dom id s
       -- CSS 2.1 §10.7: the height within `min-height` and `max-height` (px; a percentage has
       -- no definite basis here). An imposed height is the parent's and is not clamped again.
       let minHeight := match s.minHeight with | .px h => h | _ => 0

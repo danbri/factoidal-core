@@ -188,6 +188,25 @@ structure Computed where
   /-- `font-style: italic` or `oblique` (inherited): drawn with the oblique face the engine
   makes. -/
   oblique : Bool := false
+  /-- The element has a `mask-image` whose image this engine does not draw (a `url()` other
+  than a reference into the document; not inherited). CSS Masking 1 §7.1 counts an image
+  that is not shown as a transparent black layer, which hides the element. Pages use such
+  masks on empty elements whose background colour is the shape of an icon; drawn unmasked,
+  that background is a filled square. So the element's own background and border are not
+  painted (`Layout.decorations`); its content still is, unmasked, and its boxes stay in the
+  layout. -/
+  masked : Bool := false
+  /-- `vertical-align: super` (1), `sub` (-1) or neither (0) of this element (not
+  inherited); `rise` is the baseline shift it and its ancestors give its text. -/
+  shift : Int := 0
+  /-- How far the baseline of this element's text is raised, in px (inherited, summed down
+  the tree: CSS 2.1 §10.8.1 `super` and `sub`, a third and a fifth of the parent's font
+  size, as other browsers draw them). Only the glyphs move; the line box is not grown. -/
+  rise : Float := 0
+  /-- HTML §15.3.3: an element with `align=center` (and `center`) centres its block-level
+  descendants, as `text-align: -webkit-center` does in other engines. Inherited as
+  `text-align` is; any other `text-align` clears it. -/
+  centerBlocks : Bool := false
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -1060,6 +1079,21 @@ def parseLinearGradient (args : String) : Except String BackgroundGradient := do
   if stops.length < 2 then throw "linear-gradient needs two colour stops"
   return {angle,corner,stops}
 
+/-- Whether a `mask-image` or `mask` value has a layer whose image is a `url()` that is not
+a reference into the document (`url(#mask)`): an image this engine does not draw. -/
+def maskHides (value : String) : Bool :=
+  match value.toLower.splitOn "url(" with
+  | [] | [_] => false
+  | _ :: rest => rest.any fun p => (p.toList.dropWhile (fun c => c == ' ' || c == '"' || c == '\'')).head? != some '#'
+
+#guard maskHides "url(https://example.org/icon.svg)"
+#guard maskHides "url(\"data:image/svg+xml,%3Csvg%3E\") no-repeat center / 20px"
+#guard maskHides "linear-gradient(red, blue), url(a.svg)"
+#guard !maskHides "none"
+#guard !maskHides "linear-gradient(to bottom, black, transparent)"
+#guard !maskHides "url(#fade)"
+#guard !maskHides "url( '#fade' )"
+
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" =>
@@ -1112,12 +1146,20 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let (px,of) ← marginParts d.value
     return {s with margin := {s.margin with left := px}, autoMarginLeft := false, pos := s.pos.withMarginOf 3 of}
   | "text-align" => match (trim d.value).toLower with
-    | "start" => return {s with textAlign := .start}
-    | "left" => return {s with textAlign := .left}
-    | "right" => return {s with textAlign := .right}
-    | "end" => return {s with textAlign := .end_}
-    | "center" => return {s with textAlign := .center}
+    | "start" => return {s with textAlign := .start, centerBlocks := false}
+    | "left" => return {s with textAlign := .left, centerBlocks := false}
+    | "right" => return {s with textAlign := .right, centerBlocks := false}
+    | "end" => return {s with textAlign := .end_, centerBlocks := false}
+    | "center" => return {s with textAlign := .center, centerBlocks := false}
+    -- the value of other engines for HTML's `align=center` (HTML §15.3.3): text centred,
+    -- and block-level descendants too
+    | "-webkit-center" => return {s with textAlign := .center, centerBlocks := true}
     | _ => throw "unsupported CSS text-align"
+  -- CSS Masking 1 §7.1: a mask layer whose image is not drawn here (a `url()` that is not a
+  -- reference into the document) is a transparent black image: the element is not painted.
+  -- `none` and the generated images (gradients) leave it painted, as before.
+  | "mask-image" | "-webkit-mask-image" | "mask" | "-webkit-mask" =>
+    return {s with masked := maskHides d.value}
   | "direction" => match (trim d.value).toLower with
     | "ltr" => return {s with direction := .ltr}
     | "rtl" => return {s with direction := .rtl}
@@ -1268,10 +1310,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "auto" => return {s with tableFixed := false}
     | _ => throw "unsupported CSS table-layout"
   | "vertical-align" => match d.value with
-    | "top" | "text-top" => return {s with verticalAlign := .top}
-    | "middle" => return {s with verticalAlign := .middle}
-    | "bottom" | "text-bottom" => return {s with verticalAlign := .bottom}
-    | "baseline" | "sub" | "super" => return {s with verticalAlign := .baseline}
+    | "top" | "text-top" => return {s with verticalAlign := .top, shift := 0}
+    | "middle" => return {s with verticalAlign := .middle, shift := 0}
+    | "bottom" | "text-bottom" => return {s with verticalAlign := .bottom, shift := 0}
+    | "baseline" => return {s with verticalAlign := .baseline, shift := 0}
+    | "super" => return {s with verticalAlign := .baseline, shift := 1}
+    | "sub" => return {s with verticalAlign := .baseline, shift := -1}
     | _ => throw "unsupported CSS vertical-align"
   | "min-width" => return {s with minWidth := ← limit d.value}
   | "max-width" => return {s with maxWidth := ← limit d.value}
@@ -1476,7 +1520,7 @@ def ownProperties : List String :=
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
-   "font-family","background-image","column-count","column-width","columns"]
+   "font-family","background-image","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
 alignment, position and grid readers take, `content`, and the prefixed names those readers
@@ -1858,6 +1902,76 @@ def bodyMarginHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   if let some v := first ["marginwidth"] then m := {m with right := v}
   return {s with margin := m}
 
+/-- The `align` attribute value `a` (trimmed, lower case) of an HTML element named `tag`
+(HTML §15.3.3, §15.3.10): `div`, `caption`, `thead`, `tbody`, `tfoot`, `tr`, `td` and `th`
+align their text and, for `center` and `middle`, centre their block-level descendants
+(`centerBlocks`, the `-webkit-center` of other engines); `p` and `h1` to `h6` align their
+text only; a `table` with `align=center` has auto inline margins. -/
+def alignOf (tag a : String) (s : Computed) : Computed :=
+  if a == "" then s
+  else if ["div","caption","thead","tbody","tfoot","tr","td","th"].contains tag then
+    if a == "left" then {s with textAlign := .left, centerBlocks := false}
+    else if a == "right" then {s with textAlign := .right, centerBlocks := false}
+    else if a == "center" || a == "middle" then {s with textAlign := .center, centerBlocks := true}
+    else if a == "justify" then {s with textAlign := .start, centerBlocks := false}
+    else s
+  else if ["p","h1","h2","h3","h4","h5","h6"].contains tag then
+    if a == "left" then {s with textAlign := .left, centerBlocks := false}
+    else if a == "right" then {s with textAlign := .right, centerBlocks := false}
+    else if a == "center" then {s with textAlign := .center, centerBlocks := false}
+    else if a == "justify" then {s with textAlign := .start, centerBlocks := false}
+    else s
+  else if tag == "table" && a == "center" then {s with autoMarginLeft := true, autoMarginRight := true}
+  else s
+
+/-- Presentational hints of alignment, below author CSS (an author `text-align` or margin
+wins): a block-level child of a parent that centres its blocks starts with auto inline
+margins; the `center` element centres its text and its blocks (the user agent's
+`center { text-align: -webkit-center }` of other engines); then the `align` attribute
+(`alignOf`). A `table` under such a parent is centred and starts its own text at the
+start: the legacy markup that centres blocks is that of pages in quirks mode, where other
+engines reset `text-align` on tables (their quirks sheet's `table { text-align: start }`),
+and this engine does not know the document's mode. An element outside the HTML namespace,
+and any other node, is unchanged. -/
+def alignHints (n : DOM.Node) (s parent : Computed) : Computed :=
+  if n.type != .element || !(n.ns == some DOM.htmlNS || n.ns.isNone) then s else
+  let s := if parent.centerBlocks && s.display != .inline && s.display != .none then
+    {s with autoMarginLeft := true, autoMarginRight := true} else s
+  let s := if parent.centerBlocks && n.lname == "table" then {s with textAlign := .start, centerBlocks := false} else s
+  if n.lname == "center" then {s with textAlign := .center, centerBlocks := true}
+  else alignOf n.lname (attrValue n "align").trimAscii.toString.toLower s
+
+/-- Kind: property. Says: an empty `align` value changes no style. -/
+theorem alignOf_empty (tag : String) (s : Computed) : alignOf tag "" s = s := by
+  simp [alignOf]
+
+/-- Kind: property. Says: with no `align` attribute (or an empty one), a parent that does
+not centre its blocks, and an element other than `center`, the hints change nothing. Does
+not say: what an author rule does after them. -/
+theorem alignHints_plain (n : DOM.Node) (s parent : Computed) (hp : parent.centerBlocks = false)
+    (hc : n.lname ≠ "center") (ha : (attrValue n "align").trimAscii.toString.toLower = "") :
+    alignHints n s parent = s := by
+  simp [alignHints, alignOf, hp, hc, ha]
+
+/-- After the cascade of an element: its text is raised by its own `super` (a third of the
+parent's font size, CSS 2.1 §10.8.1, as other engines draw it) or lowered by its own `sub`
+(a fifth), over what its ancestors raise. Nothing else changes. -/
+def finishEffects (parent s : Computed) : Computed :=
+  let own : Float := if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
+  {s with rise := parent.rise + own}
+
+/-- Kind: property. Says: an element that is neither `sub` nor `super` raises its text as
+much as its parent does. Does not say: where the line box is (it is not grown). -/
+theorem finishEffects_rise_plain (parent s : Computed) (h : s.shift = 0) :
+    (finishEffects parent s).rise = parent.rise + 0 := by
+  simp [finishEffects, h]
+
+/-- Kind: property (a raise and nothing else). Says: the style after `finishEffects` is the
+cascade's in every field but `rise`. -/
+theorem finishEffects_only_rise (parent s : Computed) :
+    finishEffects parent s = {s with rise := (finishEffects parent s).rise} := by
+  simp [finishEffects]
+
 /-- The properties that presentational hints changed from `before` to `after`: those the
 cascade takes from no UA rule. -/
 def hintedProperties (before after : Computed) : List String :=
@@ -2093,14 +2207,120 @@ def userAgentSheet : String :=
   -- profile's choice, near the platform's
   "input{display:inline-block;padding:1px 2px;border:2px inset #767676;width:147px;height:15px;background-color:#ffffff}" ++
   "input[type=hidden]{display:none}" ++
-  "input[type=checkbox],input[type=radio]{width:13px;height:13px;margin:3px 3px 3px 4px;padding:0;border-width:0}" ++
+  -- a check box or radio button: a box with an edge, filled with the accent colour of other
+  -- engines while it is checked (the mark itself is not drawn)
+  "input[type=checkbox],input[type=radio]{width:13px;height:13px;margin:3px 3px 3px 4px;padding:0;border:1px solid #767676;box-sizing:border-box;background-color:#ffffff}" ++
+  "input[type=checkbox]:checked,input[type=radio]:checked{background-color:#0075ff;border-color:#0075ff}" ++
+  -- a push button made with `input` (HTML §4.10.5.1.18-20): sized by its label, as `button` is
+  "input[type=submit],input[type=reset],input[type=button]{width:auto;height:auto;padding:1px 6px;border:2px outset #767676;background-color:#efefef;color:#000000;text-align:center}" ++
+  "input[type=file]{width:auto;height:auto;padding:0;border-width:0;background-color:transparent}" ++
+  -- form controls draw their text at the size of other engines' controls (13.33px)
+  "input,select,textarea,button{font-size:13.333px}" ++
   "textarea{display:inline-block;padding:2px;border:1px solid #767676;width:176px;height:30px;background-color:#ffffff;white-space:pre-wrap}" ++
-  "select{display:inline-block;padding:1px 0;border:1px solid #767676;width:64px;height:17px;background-color:#ffffff}" ++
+  -- a drop-down list shows its selected option (`Layout.controlItems`), with room for its arrow
+  "select{display:inline-block;padding:1px 4px;border:1px solid #767676;background-color:#ffffff;white-space:nowrap}" ++
   "select>*{display:none}" ++
+  -- HTML §15.3.6
+  "sub,sup{font-size:smaller}" ++
   -- HTML §15.4.1: `iframe { border: 2px inset; }`
   "iframe{border:2px inset}"
 
 def userAgentRules : List Rule := (parse userAgentSheet).toOption.getD []
+
+/-- The text of an `option` as a drop-down list shows it (HTML §4.10.10): its `label`
+attribute when that is not empty, else its text with the white space collapsed. -/
+def optionLabel (dom : Dom) (o : Nat) : String :=
+  let n := dom.get o
+  let label := attrValue n "label"
+  if !label.isEmpty then label else " ".intercalate (words ((dom.textContent o).getD ""))
+
+/-- The `option` elements of a `select` (HTML §4.10.7, the list of options): its `option`
+children and those of its `optgroup` children, in tree order; 256 children read at each
+level. -/
+def selectOptions (dom : Dom) (sel : Nat) : List Nat :=
+  let isEl := fun (k : Nat) (name : String) => (dom.get k).type == .element && (dom.get k).lname == name
+  ((dom.get sel).kids.toList.take 256).flatMap fun k =>
+    if isEl k "option" then [k]
+    else if isEl k "optgroup" then ((dom.get k).kids.toList.take 256).filter (isEl · "option")
+    else []
+
+/-- The option a drop-down list shows (HTML §4.10.7, the selectedness setting algorithm):
+the last option that is selected (its `selected` attribute, or what a script set,
+`Node.checkedness`), else the first option. -/
+def shownOption (dom : Dom) (sel : Nat) : Option Nat :=
+  let opts := selectOptions dom sel
+  (opts.reverse.find? fun o => (dom.get o).checkedness.getD (hasAttribute (dom.get o) "selected")).orElse fun _ => opts.head?
+
+/-- `input` types whose box shows a line of text (HTML §4.10.5): the textual states, and an
+unknown or absent type (the Text state). -/
+def textualInputTypes : List String := ["", "text", "search", "email", "url", "tel", "password", "number"]
+/-- The known `input` types (HTML §4.10.5); any other value is the Text state. -/
+def knownInputTypes : List String :=
+  ["hidden", "text", "search", "tel", "url", "email", "password", "date", "month", "week",
+   "time", "datetime-local", "number", "range", "color", "checkbox", "radio", "file",
+   "submit", "image", "reset", "button"]
+
+/-- What a form control shows inside its box, and whether it is a placeholder (HTML §4.10):
+a text field its `value` (a password field a bullet for each character), else its
+`placeholder`; a push button made with `input` its `value`, else the label of its type
+(`Submit`, `Reset`); a file chooser its button and state; a drop-down list the label of the
+option it shows (`shownOption`); a `textarea` with no text its `placeholder`. Line breaks in
+a one-line control become spaces. `none` for every other node, and when there is nothing to
+show. The value a person types is the host's and is not shown here. -/
+def controlText (dom : Dom) (id : Nat) : Option (String × Bool) :=
+  let n := dom.get id
+  let oneLine := fun (t : String) => String.mk (t.toList.map fun c => if c == '\n' || c == '\r' || c == '\t' then ' ' else c)
+  if n.type != .element || !(n.ns == some DOM.htmlNS || n.ns.isNone) then none
+  else if n.lname == "input" then
+    let t0 := (attrValue n "type").trimAscii.toString.toLower
+    let t := if knownInputTypes.contains t0 then t0 else ""
+    let value := oneLine (attrValue n "value")
+    if t == "submit" || t == "reset" || t == "button" then
+      if hasAttribute n "value" then (if value.isEmpty then none else some (value, false))
+      else if t == "submit" then some ("Submit", false)
+      else if t == "reset" then some ("Reset", false)
+      else none
+    else if t == "file" then some ("Choose File", false)
+    else if textualInputTypes.contains t then
+      if !value.isEmpty then some ((if t == "password" then String.mk (value.toList.map fun _ => '•') else value), false)
+      else
+        let p := oneLine (attrValue n "placeholder")
+        if p.isEmpty then none else some (p, true)
+    else none
+  else if n.lname == "select" then
+    if hasAttribute n "multiple" then none
+    else (shownOption dom id).bind fun o => let l := optionLabel dom o; if l.isEmpty then none else some (l, false)
+  else if n.lname == "textarea" then
+    if n.kids.any (fun k => !(dom.get k).data.isEmpty) then none
+    else
+      let p := attrValue n "placeholder"
+      if p.isEmpty then none else some (p, true)
+  else none
+
+/-- Kind: property (a page with no form controls pays one name test an element). Says: an
+element that is not `input`, `select` or `textarea` shows no control text. -/
+theorem controlText_other (dom : Dom) (id : Nat) (hi : (dom.get id).lname ≠ "input")
+    (hs : (dom.get id).lname ≠ "select") (ht : (dom.get id).lname ≠ "textarea") :
+    controlText dom id = none := by
+  simp [controlText, hi, hs, ht]
+
+/-- The control text of the first element named `tag` of `source` (a test helper). -/
+private def controlTextOf (source tag : String) : Option (String × Bool) :=
+  let dom := DOM.parseHtmlDocument source
+  ((dom.treeOrder 0).find? fun k => (dom.get k).lname == tag).bind (controlText dom)
+
+#guard controlTextOf "<input placeholder='Search'>" "input" == some ("Search", true)
+#guard controlTextOf "<input value='hello' placeholder='Search'>" "input" == some ("hello", false)
+#guard controlTextOf "<input type=password value='abc'>" "input" == some ("•••", false)
+#guard controlTextOf "<input type=submit>" "input" == some ("Submit", false)
+#guard controlTextOf "<input type=submit value=Go>" "input" == some ("Go", false)
+#guard controlTextOf "<input type=checkbox>" "input" == none
+#guard controlTextOf "<input type=wibble placeholder=x>" "input" == some ("x", true)
+#guard controlTextOf "<select><option>One<option selected>Two<option>Three</select>" "select" == some ("Two", false)
+#guard controlTextOf "<select><optgroup label=g><option>  First   one </option></optgroup></select>" "select" == some ("First one", false)
+#guard controlTextOf "<textarea placeholder='Write'></textarea>" "textarea" == some ("Write", true)
+#guard controlTextOf "<textarea placeholder='Write'>x</textarea>" "textarea" == none
+#guard controlTextOf "<p>text</p>" "p" == none
 
 /-- A rule that matches only through `:visited` sets only colours (Selectors 4 §8.2,
 the privacy restriction that browsers apply to visited links). -/
@@ -2614,6 +2834,9 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     fontFamily := if html && monospaceTags.contains n.lname then "monospace" else parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
     lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
+    rise := parent.rise, centerBlocks := parent.centerBlocks,
+    -- HTML §15.3.6: `sub { vertical-align: sub }`, `sup { vertical-align: super }`
+    shift := if html && n.lname == "sup" then 1 else if html && n.lname == "sub" then -1 else 0,
     preformatted := parent.preformatted || ["pre","listing","xmp","plaintext"].contains n.lname,
     display := if hidden then .none else if block then .block else tableDisplay n.lname,
     margin := startMargin n.lname fontSize,
@@ -2637,7 +2860,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       initial := {initial with unicodeBidi := b}
   let preHint := initial
   if n.ns == some DOM.htmlNS || n.ns.isNone then
-    initial := bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))
+    initial := alignHints n (bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))) parent
   -- HTML §15.1: presentational hints sit above the user agent's rules (below the author's):
   -- a property a hint sets here takes no value from a rule of the UA sheet (`input` has
   -- `width: 147px` there; `<input type=image width=40>` is 40px wide)
@@ -2730,7 +2953,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   -- CSS 2.1 §9.7: an absolutely positioned or floated box is a block.
   if result.pos.isAbsolute || result.pos.float != .none then result := {result with display := result.display.blockified}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
-  return {result with underline := decoration.isSome, decorationColor := decoration}
+  return finishEffects parent {result with underline := decoration.isSome, decorationColor := decoration}
 
 /-- The style of element `id` with every rule tried (`matchedRules`): the reference. -/
 def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
