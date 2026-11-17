@@ -348,6 +348,8 @@ def cE : Nat → Expr → Nat → C Unit
           cE n v dst
           discard <| emit (.setGlobal dst x ((hash x).toNat % 1024))
       | .member o k =>
+        -- a private name resolves through the class scope (`privRk`): the evaluator runs it
+        if isPrivKey k then fail
         let base := (← get).next
         let ro ← operand n o (writes n v)
         cE n v dst
@@ -365,6 +367,8 @@ def cE : Nat → Expr → Nat → C Unit
       let base := (← get).next
       match t with
       | .member o k =>
+        -- a private name resolves through the class scope (`privRk`): the evaluator runs it
+        if isPrivKey k then fail
         let ro ← operand n o (writes n v)
         let old ← fresh
         discard <| emit (.getMember old ro k)
@@ -417,6 +421,8 @@ def cE : Nat → Expr → Nat → C Unit
       let thisR ← fresh
       let useThis ← match callee with
         | .member o k =>
+          -- a private name resolves through the class scope (`privRk`): the evaluator runs it
+          if isPrivKey k then fail
           cE n o thisR
           discard <| emit (.getMember f thisR k)
           pure true
@@ -442,6 +448,8 @@ def cE : Nat → Expr → Nat → C Unit
       discard <| emit (.new dst f argBase k (calleeName callee))
       release base
     | .member o k =>
+      -- a private name resolves through the class scope (`privRk`): the evaluator runs it
+      if isPrivKey k then fail
       let base := (← get).next
       let ro ← operand n o false
       discard <| emit (.getMember dst ro k)

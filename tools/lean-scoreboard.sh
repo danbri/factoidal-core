@@ -265,7 +265,7 @@ defjob l4schematron l4schematron parse_schematron schematron \
 # overflows the stack or loops costs that set and not the run. The long jobs list each failing
 # and unsupported case with its reason (--list-fails, --verbose), so a run's log is enough to
 # group the failures by cause.
-LONG_JOBS="l4qt4-xpath l4qt4-xquery l4xslt4 l4xsd11"
+LONG_JOBS="l4qt4-xpath l4qt4-xquery l4xslt4 l4xsd11 l4xslt4-xalan"
 defjob l4qt4-xpath l4qt4 parse_qt4_total none \
   "XPath 4.0 and Functions and Operators 4.0 (qt4tests)" "" \
   "--root third_party/testing/qt4tests --isolate 180 --list-fails"
@@ -277,6 +277,11 @@ defjob l4qt4-xquery l4qt4 parse_qt4_total none \
 defjob l4xslt4 l4xslt4 parse_qt4_total none \
   "XSLT 4.0 (xslt40-test)" "" \
   "--root third_party/testing/xslt40-test --isolate 180 --list-fails"
+# The Apache Xalan XSLT 1.0 conformance corpus (third_party/testing/xslt1-xalan, Apache-2.0),
+# run by both engines: the XSLT 1.0 engine and the XSLT 4.0 processor on 1.0 stylesheets.
+defjob l4xslt4-xalan l4xslt4 parse_xalan none \
+  "XSLT 1.0 (Xalan corpus)" "" \
+  "--xslt10 third_party/testing/xslt1-xalan"
 defjob l4xsd11 l4xsd11 parse_xsd11 none \
   "XML Schema 1.1 Structures (W3C xsdtests)" "" \
   "third_party/testing/xsd --verbose"
@@ -884,6 +889,13 @@ parse_xsd11() {
   na="$(printf '%s\n' "$line" | sed -nE 's/^.*; ([0-9]+) not applicable.*$/\1/p')"
   set -- $nums
   emit_ok "$CUR_AREA" "" "$1" "$2" "$3" "$4" "schema tests and instance tests together; other = unsupported; ${na:-0} more are not applicable (XSD 1.0 only), outside the total" "$line"
+}
+
+# l4xslt4 --xslt10: "xalan XSLT 1.0 engine: N pass, M fail (out of T); U unreadable" and the
+# same for the XSLT 4.0 processor.
+parse_xalan() {
+  row_sl "$CUR_AREA" "XSLT 1.0 engine" '^xalan XSLT 1\.0 engine: [0-9]+ pass' last "a case whose files are not readable is a failure"
+  row_sl "$CUR_AREA" "XSLT 4.0 engine" '^xalan XSLT 4\.0 engine, 1\.0 stylesheets: [0-9]+ pass' last "a case whose files are not readable is a failure"
 }
 
 parse_relaxng() {

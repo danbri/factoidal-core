@@ -1,3 +1,4 @@
+import L4Factoidal.Prim.StringFront
 import Std.Data.HashMap
 
 /-!
@@ -591,14 +592,21 @@ runs (CaseBlockEvaluation, §14.12.4): the discriminant, then the clause to star
 in source order, with `===`; else `default`; else none), then the clauses' bodies from there
 inside `do { … } while (false)`, which an unlabelled `break` leaves. `k` names the two hidden
 bindings (`%` names, which source text cannot write). None when a clause declares a lexical
-name or a function (the clauses would no longer share one scope) or holds an unlabelled
+function or class (its hoisting would differ) or holds an unlabelled
 `continue` that would stop at the `do`-`while` instead of the enclosing loop. -/
 def switchStmts (k : Nat) (labels : List String) (d : Expr) (cs : List Case) : Option Stmt :=
   let sv := s!"%sv{k}"
   let st := s!"%st{k}"
   let declares := cs.any fun c => match c with
     | .mk _ b => b.any fun s => match s with
-      | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
+      | .funDecl .. | .classDecl .. => true
+      | _ => false
+  -- a `let` or `const` of a clause belongs to the one scope of all the clauses: such a body is
+  -- not put in a block of its own, each statement is guarded by the clause's test instead (the
+  -- test reads only the start, which no statement changes)
+  let lexical := cs.any fun c => match c with
+    | .mk _ b => b.any fun s => match s with
+      | .decl .letK _ | .decl .constK _ => true
       | _ => false
   if declares || Case.anyContOut 100000 cs then none else
   let idx := cs.zipIdx
@@ -609,9 +617,11 @@ def switchStmts (k : Nat) (labels : List String) (d : Expr) (cs : List Case) : O
   let chain := idx.foldr (fun (c, i) acc => match c with
       | .mk (some t) _ => .ifS (.binary .seq (.ident sv) t) (setSt i) (some acc)
       | .mk none _ => acc) (setSt dflt)
-  let runs := idx.map fun (c, i) => match c with
-    | .mk _ b => Stmt.ifS (.logical .and (.binary .ge (.ident st) (.num 0))
-        (.binary .le (.ident st) (.num (Float.ofNat i)))) (.block b) none
+  let test (i : Nat) : Expr := .logical .and (.binary .ge (.ident st) (.num 0))
+    (.binary .le (.ident st) (.num (Float.ofNat i)))
+  let runs := idx.flatMap fun (c, i) => match c with
+    | .mk _ b => if lexical then b.map fun s => Stmt.ifS (test i) s none
+      else [Stmt.ifS (test i) (.block b) none]
   some (.block [.decl .letK [Decl.mk (.id sv) (some d), Decl.mk (.id st) (some (.num (-1)))], chain,
     labels.foldr .labeled (.doWhile (.block runs) (.bool false))])
 

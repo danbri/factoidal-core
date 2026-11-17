@@ -527,8 +527,11 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     },error=>{if(!signal?.aborted)console.error(`Native HTML: images: ${String(error instanceof Error?error.message:error)}`);})
       .finally(()=>{imagesPending=false;revision++;});
   };
-  // The first frame has what the scripts' first turn asked for.
-  if(script&&options.commands)try{await fetchListedAgain();}catch(error){
+  // The first frame has what the scripts' first turn asked for. A start in slices (the turn
+  // says startMore) is shown as it is after its first slice: what its scripts' elements ask
+  // for is fetched after that frame (fetchAdded below), as for every later turn.
+  const startMore=script?.turn.startMore===true;
+  if(script&&options.commands&&!startMore)try{await fetchListedAgain();}catch(error){
     if(signal?.aborted)throw error;
     console.error(`Native HTML: resources of script-made elements: ${String(error instanceof Error?error.message:error)}`);
   }
@@ -554,6 +557,8 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       }
     },Math.max(0,againAt-performance.now()));
   };
+  // (what arrives changes the page's revision, which the host's loop sees)
+  if(startMore)fetchAdded(()=>{});
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return Object.assign(page,{

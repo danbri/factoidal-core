@@ -360,7 +360,14 @@ Deno.test("page-load: a script turn on the page record",async()=>{
   assert.equal(takeTurn(page,{changed:false,animated:[[3,"opacity","0.5",false]]}),true);assert.deepEqual(page.commands,commands);
   assert.equal(takeTurn(page,{changed:false,animated:[[3,"opacity","0.5",false]]}),false);
   const hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
-  assert(/if\(takeTurn\(page,turn\)&&page===doc\)\{bandWanted=layered!==false&&!!L;request\(\);\}/.test(hub),"the Hub does not draw a script turn's frame on the layered path");
+  assert(/if\(takeTurn\(page,turn\)&&page===doc\)\{\s*bandWanted=layered!==false&&!!L;/.test(hub),"the Hub does not draw a script turn's frame on the layered path");
+  // scripts first (page-load.mjs scriptsFirst), the rule of every host that starts a page in slices: the
+  // turn's frame waits while the page's start has not finished, in the Hub and in the window
+  const win=await Deno.readTextFile(`${lab}run_html.ts`);
+  assert(/!first&&scriptsFirst\(\{now:performance\.now\(\),more:turn\.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs\}\)/.test(hub)&&/sliceSteps:startSliceSteps/.test(hub),
+    "the Hub does not start a page in slices with the scripts-first rule");
+  assert(/scriptsFirst\(\{now,more:document\.script\?\.turn\.startMore===true,changedAt:pageChanged,layoutMs:lastLayoutMs\}\)/.test(win)&&/sliceSteps:startSliceSteps/.test(win),
+    "the window does not start a page in slices with the scripts-first rule");
 });
 
 // @import: the engine names what it lacks, the host fetches, until nothing is lacking.
