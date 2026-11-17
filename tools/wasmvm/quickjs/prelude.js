@@ -6747,6 +6747,38 @@
     }
   };
   const imgTouch = id => { if (imgLazy.delete(id)) updateImage(id); };
+  // Images that arrive in a document with a browsing context after they were made: the
+  // content of a template cloned and inserted (HTML §4.8.4.3.3: being adopted is a relevant
+  // mutation), and the markup that innerHTML and its kin parse for a script (an img the
+  // parser makes with a source starts its request). Only an img that never asked is
+  // started: one a script made, or the page's own, already did. Each insertion asks two
+  // node questions; the subtree is searched only when the node changes document or is a
+  // parsed fragment whose markup has an img.
+  const imgFresh = new Set();
+  const isImgNode = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'img';
+  const imgLoads = doc => doc === nodeId(document) || info(doc, 12) >= 0;
+  const imgsOf = node => {
+    const t = info(node, 0);
+    if (t !== 1 && t !== 11) return [];
+    const own = t === 1 && isImgNode(node) ? [node] : [];
+    return info(node, 6) > 0 ? own.concat([...wrap(node).querySelectorAll('img')].map(nodeId)) : own;
+  };
+  const imgArrive = ks => {
+    for (const k of ks)
+      if (!imgStates.has(k) && !imgLazy.has(k) && isImgNode(k) && imgLoads(info(k, 7)) && (n0.attr(k, 'src') !== null || n0.attr(k, 'srcset') !== null)) {
+        imgWatch(); updateImage(k);
+      }
+  };
+  for (const op of ['insert', 'replace']) {
+    const f = n[op];
+    n[op] = (p, node, child) => {
+      const watch = imgFresh.delete(node) || info(node, 7) !== info(p, 7);
+      const ks = watch ? imgsOf(node) : null;
+      const r = f.call(n, p, node, child);
+      if (r === 0 && ks !== null && ks.length > 0) imgArrive(ks);
+      return r;
+    };
+  }
   {
     const P = named.HTMLImageElement.prototype;
     const ofImg = (el, k) => { imgTouch(nodeId(el)); const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };
@@ -13728,6 +13760,7 @@
   const fragmentOf = (doc, ns, name, markup, declarative = false) => {
     const f = chk(n.create((declarative ? 14 : 13) + 16 * doc, (ns ?? '') + '\u0000' + name + '\u0000' + markup));
     scanHandlers(f, false);
+    if (typeof f === 'number' && f >= 0 && /<img/i.test(markup)) imgFresh.add(f);
     return f;
   };
   const contextOf = (ctx, doc) => (info(ctx, 0) !== 1 || (info(ctx, 8) === 1 && str(ctx, 0) === 'html'))
