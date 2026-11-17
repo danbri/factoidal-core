@@ -55,6 +55,10 @@
     TYPE_MISMATCH_ERR: 17, SECURITY_ERR: 18, NETWORK_ERR: 19, ABORT_ERR: 20, URL_MISMATCH_ERR: 21,
     QUOTA_EXCEEDED_ERR: 22, TIMEOUT_ERR: 23, INVALID_NODE_TYPE_ERR: 24, DATA_CLONE_ERR: 25 };
   consts(DOMException, legacy); consts(DOMException.prototype, legacy);
+  // Web IDL §3.7.6: an operation called with fewer arguments than it requires throws.
+  const idlArgs = (got, k, iface, op) => {
+    if (got < k) throw new TypeError(`Failed to execute '${op}' on '${iface}': ${k} argument${k > 1 ? 's' : ''} required, but only ${got} present.`);
+  };
   const fail = code => {
     switch (code) {
       case -2: throw new TypeError('not a node of the right type');
@@ -1147,12 +1151,12 @@
     querySelectorAll(sel) { if (arguments.length < 1) throw new TypeError('querySelectorAll: 1 argument required'); return staticList(select(this, sel, false)); },
     // DOM §4.2.6.2 "list of elements with qualified name": in an HTML document, an HTML element
     // matches the ASCII lower case of the name.
-    getElementsByTagName(name) { const id = nodeId(this); name = String(name); const lower = name.replace(/[A-Z]/g, c => c.toLowerCase());
+    getElementsByTagName(name) { idlArgs(arguments.length, 1, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementsByTagName'); const id = nodeId(this); name = String(name); const lower = name.replace(/[A-Z]/g, c => c.toLowerCase());
       return liveCollection(() => elementsOf(id).filter(k => { if (name === '*') return true;
         const p = str(k, 5), q = p === null ? str(k, 0) : p + ':' + str(k, 0); return q === (info(k, 8) === 1 ? lower : name); })); },
-    getElementsByTagNameNS(ns, localName) { const id = nodeId(this); ns = ns === null || ns === undefined || ns === '' ? null : String(ns); localName = String(localName);
+    getElementsByTagNameNS(ns, localName) { idlArgs(arguments.length, 2, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementsByTagNameNS'); const id = nodeId(this); ns = ns === null || ns === undefined || ns === '' ? null : String(ns); localName = String(localName);
       return liveCollection(() => elementsOf(id).filter(k => (ns === '*' || str(k, 2) === ns) && (localName === '*' || str(k, 0) === localName))); },
-    getElementsByClassName(names) { const id = nodeId(this); const want = String(names).split(/[ \t\n\f\r]+/).filter(Boolean);
+    getElementsByClassName(names) { idlArgs(arguments.length, 1, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementsByClassName'); const id = nodeId(this); const want = String(names).split(/[ \t\n\f\r]+/).filter(Boolean);
       return liveCollection(() => want.length === 0 ? [] : elementsOf(id).filter(k => { const c = (n.attr(k, 'class') ?? '').split(/[ \t\n\f\r]+/); return want.every(w => c.includes(w)); })); },
   };
   const childNode = {
@@ -1238,11 +1242,11 @@
     set className(v) { chk(n.setAttr(nodeId(this), 'class', String(v))); }
     get classList() { let l = tokenLists.get(this); if (!l) tokenLists.set(this, l = tokenList(this, 'class')); return l; }
     set classList(v) { this.classList.value = v; }
-    getAttribute(name) { const r = n.attr(nodeId(this), String(name)); return typeof r === 'number' ? fail(r) : r; }
+    getAttribute(name) { idlArgs(arguments.length, 1, 'Element', 'getAttribute'); const r = n.attr(nodeId(this), String(name)); return typeof r === 'number' ? fail(r) : r; }
     // The namespaced forms pass "namespace U+0000 name" (Hosts.Dom.nsName?).
-    getAttributeNS(ns, name) { const r = n.attr(nodeId(this), nsArg(ns) + '\u0000' + String(name)); return typeof r === 'number' ? fail(r) : r; }
-    hasAttribute(name) { return this.getAttribute(name) !== null; }
-    hasAttributeNS(ns, name) { return this.getAttributeNS(ns, name) !== null; }
+    getAttributeNS(ns, name) { idlArgs(arguments.length, 2, 'Element', 'getAttributeNS'); const r = n.attr(nodeId(this), nsArg(ns) + '\u0000' + String(name)); return typeof r === 'number' ? fail(r) : r; }
+    hasAttribute(name) { idlArgs(arguments.length, 1, 'Element', 'hasAttribute'); return this.getAttribute(name) !== null; }
+    hasAttributeNS(ns, name) { idlArgs(arguments.length, 2, 'Element', 'hasAttributeNS'); return this.getAttributeNS(ns, name) !== null; }
     hasAttributes() { return this.getAttributeNames().length > 0; }
     setAttribute(name, value) {
       if (arguments.length < 2) throw new TypeError('setAttribute: 2 arguments required');
@@ -1254,7 +1258,7 @@
       const q = String(name);
       chk(n.setAttr(nodeId(this), nsArg(ns) + '\u0000' + q, ttAttr === null ? String(value) : ttAttr(this, nsArg(ns), q, value)));
     }
-    removeAttribute(name) {
+    removeAttribute(name) { idlArgs(arguments.length, 1, 'Element', 'removeAttribute');
       const k = lowerIfHtml(this, String(name)), a = attrNodes(this).find(x => x.name === k);
       if (a) detachAttr(a);
       chk(n.removeAttr(nodeId(this), String(name)));
@@ -1262,8 +1266,8 @@
       if (a && k.startsWith('on') && handlerNames.includes(k.slice(2)) && (this instanceof HTMLElement || this instanceof SVGElement || this instanceof MathMLElement))
         { const t = windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? bodyWindow(this) : this; if (t) setHandler(t, k.slice(2), null); }
     }
-    removeAttributeNS(ns, name) { const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
-    toggleAttribute(name, force) {
+    removeAttributeNS(ns, name) { idlArgs(arguments.length, 2, 'Element', 'removeAttributeNS'); const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
+    toggleAttribute(name, force) { idlArgs(arguments.length, 1, 'Element', 'toggleAttribute');
       name = String(name);
       chk(n.query(0, 3, name));
       const has = this.hasAttribute(name);
@@ -1271,11 +1275,11 @@
       if (!has && (force === undefined || force === true)) { setAttrPlain(this, name, ''); return true; }
       return has;
     }
-    getAttributeNode(name) { name = lowerIfHtml(this, String(name)); return attrNodes(this).find(a => a.name === name) ?? null; }
-    getAttributeNodeNS(ns, name) { return attrNode(this, nsArg(ns) || null, String(name)); }
+    getAttributeNode(name) { idlArgs(arguments.length, 1, 'Element', 'getAttributeNode'); name = lowerIfHtml(this, String(name)); return attrNodes(this).find(a => a.name === name) ?? null; }
+    getAttributeNodeNS(ns, name) { idlArgs(arguments.length, 2, 'Element', 'getAttributeNodeNS'); return attrNode(this, nsArg(ns) || null, String(name)); }
     setAttributeNode(attr) { return setAttrNode(this, attr); }
     setAttributeNodeNS(attr) { return setAttrNode(this, attr); }
-    removeAttributeNode(attr) {
+    removeAttributeNode(attr) { idlArgs(arguments.length, 1, 'Element', 'removeAttributeNode');
       if (!(attr instanceof Attr) || attrState.get(attr).el !== this) throw new DOMException('The attribute is not on this element.', 'NotFoundError');
       const a = attrState.get(attr);
       detachAttr(attr); chk(n.removeAttr(nodeId(this), (a.ns ?? '') + '\u0000' + a.lname)); return attr;
@@ -1285,8 +1289,8 @@
     matches(sel) { if (arguments.length < 1) throw new TypeError('matches: 1 argument required'); return selectorQuery(nodeId(this), 8, sel) === '1'; }
     webkitMatchesSelector(sel) { if (arguments.length < 1) throw new TypeError('webkitMatchesSelector: 1 argument required'); return this.matches(sel); }
     closest(sel) { if (arguments.length < 1) throw new TypeError('closest: 1 argument required'); const k = selectorQuery(nodeId(this), 9, sel); return k === null ? null : wrap(Number(k)); }
-    insertAdjacentElement(where, el) { return insertAdjacent(this, where, el); }
-    insertAdjacentText(where, text) { insertAdjacent(this, where, document.createTextNode(text)); }
+    insertAdjacentElement(where, el) { idlArgs(arguments.length, 2, 'Element', 'insertAdjacentElement'); return insertAdjacent(this, where, el); }
+    insertAdjacentText(where, text) { idlArgs(arguments.length, 2, 'Element', 'insertAdjacentText'); insertAdjacent(this, where, document.createTextNode(text)); }
   }
   // ---- Attr and NamedNodeMap (DOM §4.9.1, §4.9.2) ----------------------------------------
   // The attributes are Lean's, on their element (Hosts.Dom node_query 2 lists them). An Attr
@@ -3521,7 +3525,7 @@
     get data() { return str(nodeId(this), 3); }
     set data(v) { chk(n.setText(nodeId(this), v === null ? '' : String(v))); }
     get length() { return this.data.length; }
-    substringData(offset, count) { const d = this.data; offset >>>= 0; if (offset > d.length) throw new DOMException('offset', 'IndexSizeError'); return d.substring(offset, offset + (count >>> 0)); }
+    substringData(offset, count) { idlArgs(arguments.length, 2, 'CharacterData', 'substringData'); const d = this.data; offset >>>= 0; if (offset > d.length) throw new DOMException('offset', 'IndexSizeError'); return d.substring(offset, offset + (count >>> 0)); }
     appendData(s) { this.data = this.data + String(s); }
     insertData(offset, s) { this.replaceData(offset, 0, s); }
     deleteData(offset, count) { this.replaceData(offset, count, ''); }
@@ -3541,7 +3545,7 @@
       while (j + 1 < xs.length && info(xs[j + 1], 0) === 3) j++;
       return xs.slice(i, j + 1).map(k => str(k, 3)).join('');
     }
-    splitText(offset) {
+    splitText(offset) { idlArgs(arguments.length, 1, 'Text', 'splitText');
       const d = this.data; offset >>>= 0;
       if (offset > d.length) throw new DOMException('offset', 'IndexSizeError');
       const rest = d.slice(offset);
@@ -3564,7 +3568,7 @@
   }
   class DocumentFragment extends Node {
     constructor() { return wrap(chk(n.create(2, ''))); }
-    getElementById(id) { id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
+    getElementById(id) { idlArgs(arguments.length, 1, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementById'); id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
   }
   let readyState = 'loading';
   class Document extends Node {
@@ -3625,7 +3629,7 @@
     get anchors() { const id = nodeId(this); return liveCollection(() => elementsOf(id).filter(k => htmlEl(k) && str(k, 0) === 'a' && n.attr(k, 'name') !== null)); }
     get applets() { return liveCollection(() => []); }
     get currentScript() { return currentScript; }
-    getElementById(id) { id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
+    getElementById(id) { idlArgs(arguments.length, 1, this instanceof Document ? 'Document' : this instanceof Element ? 'Element' : 'DocumentFragment', 'getElementById'); id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
     getElementsByName(name) { if (arguments.length < 1) throw new TypeError("Failed to execute 'getElementsByName' on 'Document': 1 argument required, but only 0 present."); return staticList(elementsOf(nodeId(this)).filter(k => n.attr(k, 'name') === String(name)).map(wrap)); }
     // Each node is made in this document: kind + 16 × its node number (Hosts.Dom.createKind).
     createElement(name, options) { return wrap(chk(n.create(3 + 16 * nodeId(this), String(name)))); }
@@ -3644,12 +3648,12 @@
       const [ns2, pfx, lname] = chk(n.query(0, 4, nsArg(ns) + '\u0000' + String(qname))).split('\u0000');
       return newAttr({ el: null, ns: ns2 || null, pfx: pfx || null, lname, value: '', doc: nodeId(this) });
     }
-    createTextNode(data) { return wrap(chk(n.create(0 + 16 * nodeId(this), String(data)))); }
-    createComment(data) { return wrap(chk(n.create(1 + 16 * nodeId(this), String(data)))); }
+    createTextNode(data) { idlArgs(arguments.length, 1, 'Document', 'createTextNode'); return wrap(chk(n.create(0 + 16 * nodeId(this), String(data)))); }
+    createComment(data) { idlArgs(arguments.length, 1, 'Document', 'createComment'); return wrap(chk(n.create(1 + 16 * nodeId(this), String(data)))); }
     createDocumentFragment() { return wrap(chk(n.create(2 + 16 * nodeId(this), ''))); }
-    createProcessingInstruction(target, data) { return wrap(chk(n.create(5 + 16 * nodeId(this), String(target) + '\u0000' + String(data)))); }
-    createCDATASection(data) { return wrap(chk(n.create(6 + 16 * nodeId(this), String(data)))); }
-    createEvent(name) {
+    createProcessingInstruction(target, data) { idlArgs(arguments.length, 2, 'Document', 'createProcessingInstruction'); return wrap(chk(n.create(5 + 16 * nodeId(this), String(target) + '\u0000' + String(data)))); }
+    createCDATASection(data) { idlArgs(arguments.length, 1, 'Document', 'createCDATASection'); return wrap(chk(n.create(6 + 16 * nodeId(this), String(data)))); }
+    createEvent(name) { idlArgs(arguments.length, 1, 'Document', 'createEvent');
       const map = { event: Event, events: Event, htmlevents: Event, customevent: CustomEvent, mouseevent: MouseEvent,
         mouseevents: MouseEvent, uievent: UIEvent, uievents: UIEvent, keyboardevent: KeyboardEvent, focusevent: FocusEvent,
         svgevents: Event, messageevent: MessageEvent, hashchangeevent: HashChangeEvent, storageevent: StorageEvent,
@@ -3697,7 +3701,7 @@
       if (el) d.appendChild(el);
       return d;
     }
-    createDocumentType(name, publicId, systemId) {
+    createDocumentType(name, publicId, systemId) { idlArgs(arguments.length, 3, 'DOMImplementation', 'createDocumentType');
       return wrap(chk(n.create(9 + 16 * implDoc.get(this), String(name) + '\u0000' + String(publicId) + '\u0000' + String(systemId))));
     }
     hasFeature() { return true; }
@@ -4575,6 +4579,7 @@
       return wrap(id);
     };
     define(Document.prototype, 'createElement', function createElement(name, options = undefined) {
+      idlArgs(arguments.length, 1, 'Document', 'createElement');
       name = String(name);
       const id = chk(n.create(3 + 16 * nodeId(this), name));
       if (name.length === 6 && name.toLowerCase() === 'script') noteFreshScript(id);
