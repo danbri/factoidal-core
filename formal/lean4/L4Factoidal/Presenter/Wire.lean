@@ -35,9 +35,9 @@ def frameOf (j : Json) : Except String LayerFrame := do
     ← natField j "keepFrom", ← natField j "keepTo"⟩
 
 def stateOf (j : Json) : Except String State := do
-  return {view := ← natField j "view", scroll := ← natField j "scroll",
-    shown := ← optional frameOf ((j.field? "shown").getD .null),
-    asked := ← optional natural ((j.field? "asked").getD .null)}
+  return ⟨← natField j "view", ← natField j "scroll",
+    ← optional frameOf ((j.field? "shown").getD .null),
+    ← optional natural ((j.field? "asked").getD .null)⟩
 
 def inputOf (j : Json) : Except String Input := do
   match j.getString? "kind" with

@@ -42,3 +42,13 @@ examples, not in the engine. The executable `run` has a tail-recursive replaceme
 `run_eq_runFast` is the `@[csimp]` equality. This avoids new input-length C recursion or an
 audit exemption for the model. These two additional lemmas also have `#print axioms` commands.
 The cloud build still has to check these edits; no local lock bypass was used.
+
+## Cloud proof result
+
+Build 44142386010, Linux job 134248559685, compiled Presenter.Spec from
+19b7477e088608488440c1250c8312f71e73ffd5. All nine printed theorem dependencies
+are permitted: `run_eq_runFast` uses `propext` and `Quot.sound`; the other eight,
+including `run_synchronous_eq_stage0`, use `propext` only. No `sorryAx` occurs in
+these reports. The full build failed next on a record syntax error in Wire.stateOf;
+that constructor is repaired separately. This result proves the stated model
+refinement, not host execution, pixel parity or measured performance.

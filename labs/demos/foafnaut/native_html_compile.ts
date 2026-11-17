@@ -64,8 +64,10 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     const id=++next;pending.set(id,{resolve,reject});worker.postMessage({...request,id});
   });
   const wakeBand=createBandWake(()=>send({op:"bandWake"}),()=>alive);
-  const init=await send({op:"init",font,nativeEngine,frames,requests,...(logAll?{logAll}:{})});
-  if(!init.ok)throw new Error(init.error);
+  try{
+    const init=await send({op:"init",font,nativeEngine,frames,requests,...(logAll?{logAll}:{})});
+    if(!init.ok)throw new Error(init.error);
+  }catch(error){worker.terminate();fail(error instanceof Error?error:new Error(String(error)));throw error;}
   const invoke=async(input:boolean,name:RemoteCall,...args:unknown[])=>{
     ordinary++;
     let reply:WorkerReply;

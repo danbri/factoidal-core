@@ -107,7 +107,7 @@ if(Deno.args.includes(CHILD)){
     // overlap. The deadline bounds this child process; it is not a performance budget.
     const result=await new Deno.Command(Deno.execPath(),{
       args:["run","--no-config","--no-lock","-A","--unstable-ffi",new URL(import.meta.url).pathname,CHILD],
-      stdout:"piped",stderr:"piped",signal:AbortSignal.timeout(120_000),
+      stdout:"piped",stderr:"piped",env:{PRESENTER_TIMING_INPUT:"1"},signal:AbortSignal.timeout(120_000),
     }).output();
     const stdout=new TextDecoder().decode(result.stdout),stderr=new TextDecoder().decode(result.stderr);
     assert.equal(result.code,0,`worker integration child failed:\n${stdout}\n${stderr}`);

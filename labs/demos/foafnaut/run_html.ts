@@ -220,9 +220,9 @@ async function main() {
       return result;
     }])) as T;
   // Initialise the pure native entry before the worker enters the same dylib.
-  // Inline keeps the synchronous stage-0 engine and arithmetic as the oracle.
+  // Inline preserves the existing worker engine, GPU raster and host placement oracle.
   const presenterCall=presenterMode==="worker"&&!check?await loadPresenter(nativeEngine):undefined;
-  const engine=timed(await loadHTML(presenterMode==="inline"||check?nativeEngine:undefined));
+  const engine=timed(await loadHTML());
   const presenter=presenterCall?createPresenter(presenterCall,y=>worker?.requestBand(y)):undefined;
   const clampOffset=(place:HTMLLayers["layers"],at:number)=>presenter?presenter.inspect(place,at):inlineOffset(place,at);
   const keeps=(place:HTMLLayers["layers"],at:number)=>presenter?presenter.inspect(place,at).kept:inlineKeeps(place,at);
@@ -241,7 +241,7 @@ async function main() {
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
   let engineRan="wasm";
   const sayEngine=(where:string)=>{
-    engineRan=(worker||presenterMode==="inline")&&nativeEngine?`native ${nativeEngine}`:"wasm";
+    engineRan=worker&&nativeEngine?`native ${nativeEngine}`:"wasm";
     console.log(`engine: ${engineRan}`);
     console.log(JSON.stringify({type:"native-html-engine",t:Math.round(performance.now()),engine:engineRan,where}));
   };
@@ -287,7 +287,7 @@ async function main() {
       if(serif.started)await loadFontFile(engine,serifFontPath(),SERIF_FAMILY,"bytes","serif").catch(()=>{});
     }catch(error){if(fontFile)throw error;workerFont=undefined;}}
   };
-  if(check||presenterMode==="inline"){
+  if(check){
     sayEngine("main-thread");
     if(workerFont)try{mainFallbacks=typeof (await loadFontFile(engine,workerFont.path,workerFont.family))?.fonts==="number";}catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
   } else {

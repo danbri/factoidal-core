@@ -8,7 +8,7 @@ before starting the worker and never reads the document state.
 The existing Deno engine worker already owns layout and script execution. Worker mode
 also requests the existing Lean CPU raster sections. The main thread uploads those
 pixels and runs the Lean composite shader. It retains the window, surface and GPU device.
-Inline mode retains the synchronous engine and the existing GPU raster as the oracle.
+Inline mode retains the existing engine worker, GPU raster and host placement as the oracle.
 
 Frames use one bounded shared byte slot. Requests use one shared scalar slot. Each
 publication has a 64-bit sequence and a seqlock. Reads return busy rather than spin
@@ -46,3 +46,10 @@ the GPU queue before texture changes, using the pure Lean presenter. Frame decod
 reject the waiting call. Scroll latency is not settled against a frame drawn before the
 latest requested scroll. The test script now schedules inline/worker variants of cost,
 prefetch, partial-frame, scroll-pixel and sweep checks; these await rebuilt engines.
+
+Baseline correction: the design table describes stage 0 as a synchronous engine on the
+main thread, but the checked-in baseline already calls startCompileWorker for layout and
+scripts (main-thread Wasm is the check/failure path). `--presenter=inline` preserves that
+actual baseline; it does not introduce an artificial main-thread script stall. The
+synchronous refinement theorem states its synchronous hypothesis explicitly. Before/after
+timings must compare the existing worker/GPU path with the new worker CPU/SAB/presenter path.
