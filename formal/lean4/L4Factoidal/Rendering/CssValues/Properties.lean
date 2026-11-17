@@ -428,6 +428,19 @@ def placeContentCanon (v : String) : String :=
   if v == "baseline" || v == "first baseline" then "baseline start"
   else if v == "last baseline" then "last baseline start" else v
 
+/-- `animation-range` (Scroll-driven Animations 1 §4.2): per item, an end that is the default
+for its start is left out (`normal normal` is `normal`, `entry 0% entry 100%` is `entry`,
+`0% 100%` is `0%`, `10% normal` is `10%`). -/
+def animationRangeCanon (v : String) : String :=
+  ", ".intercalate ((v.splitOn ", ").map fun item =>
+    let isIdent := fun (w : String) => w.toList.headD '0' |>.isAlpha
+    match (item.splitOn " ").filter (· != "") with
+    | [a, "0%", b, "100%"] => if a == b && isIdent a then a else item
+    | ["0%", "100%"] => "0%"
+    | ["normal", "normal"] => "normal"
+    | [a, "normal"] => if isIdent a then item else a
+    | _ => item)
+
 /-- The canonical forms that the order of the grammar alone does not give, by property. -/
 def canonical (p v : String) : String :=
   match p with
@@ -442,6 +455,7 @@ def canonical (p v : String) : String :=
   | "font-feature-settings" => featureCanon v
   | "color-scheme" => colorSchemeCanon v
   | "place-content" => placeContentCanon v
+  | "animation-range" => animationRangeCanon v
   | "animation-timing-function" | "transition-timing-function" => easingCanon v
   | "filter" | "backdrop-filter" => filterCanon v
   | "translate" => translateCanon v
@@ -1451,6 +1465,9 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "font-feature-settings" "\"dlig\" 1, \"smcp\" on, \"dlig\" 0" == some "\"dlig\", \"smcp\", \"dlig\" 0" && specified "font-feature-settings" "\"liga\" off" == some "\"liga\" 0"
 #guard specified "color-scheme" "only light dark" == some "light dark only" && specified "color-scheme" "light only" == some "light only"
 #guard specified "place-content" "baseline" == some "baseline start"
+#guard specified "animation-range" "normal normal" == some "normal" && specified "animation-range" "entry 0% entry 100%" == some "entry"
+#guard specified "animation-range" "100px normal" == some "100px" && specified "animation-range" "entry normal" == some "entry normal"
+#guard specified "animation-range" "0% 100%" == some "0%" && specified "animation-range" "entry 50% exit 50%" == some "entry 50% exit 50%"
 #guard specified "grid-template" "none / [] 0px" == some "none / 0px" && specified "grid-template" "[] 10px [] / [] auto []" == some "10px / auto"
 #guard specified "grid-template" "\"a\" 10px [] [b] \"b\" 20px / 30px" == some "\"a\" 10px [b] \"b\" 20px / 30px"
 #guard specified "grid-template-rows" "repeat(1, [] 10px [])" == some "repeat(1, 10px)" && specified "grid" "[a] \"a\" 10px []" == some "[a] \"a\" 10px"
