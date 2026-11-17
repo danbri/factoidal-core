@@ -5496,6 +5496,143 @@
     return FormDataC = FormData;
   };
   lazy('FormData', makeFormData);
+  // ---- DataTransfer (HTML §6.11.3-§6.11.5) and FileList (File API §5): a drag data store
+  // in read/write mode, as `new DataTransfer()` makes; the drag-and-drop source of one (a
+  // user's drag) is not here yet. Formats are ASCII lowercase; "text" is "text/plain" and
+  // "url" "text/uri-list" (getData("url") is the first URL of the list).
+  let makeFileList = () => undefined;
+  {
+    let made;
+    const make = () => {
+      if (made) return made;
+      const File = makeFile();
+      const lists = new WeakMap(), stores = new WeakMap(), itemOf = new WeakMap(), itemLists = new WeakMap();
+      const illegal = () => { throw new TypeError('Illegal constructor'); };
+      const isIndex = p => typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p);
+      const indexed = (o, items) => new Proxy(o, {
+        get(t, k, r) { if (isIndex(k)) return items()[Number(k)]; return Reflect.get(t, k, r); },
+        set(t, k, v, r) { if (isIndex(k)) return false; return Reflect.set(t, k, v, r); },
+        defineProperty(t, k, d) { if (isIndex(k)) return false; return Reflect.defineProperty(t, k, d); },
+        has(t, k) { if (isIndex(k)) return Number(k) < items().length; return Reflect.has(t, k); },
+        ownKeys(t) { return [...items().keys()].map(String).concat(Reflect.ownKeys(t)); },
+        getOwnPropertyDescriptor(t, k) {
+          if (isIndex(k)) { const x = items()[Number(k)]; return x === undefined ? undefined : { value: x, enumerable: true, configurable: true, writable: false }; }
+          return Reflect.getOwnPropertyDescriptor(t, k);
+        },
+      });
+      class FileList {
+        constructor() { illegal(); }
+        get length() { return brand(lists, this, 'FileList.length').files.length; }
+        item(index) { return brand(lists, this, 'FileList.item').files[index >>> 0] ?? null; }
+      }
+      Object.defineProperty(FileList.prototype, Symbol.iterator, { value: Array.prototype.values, writable: true, configurable: true });
+      setTag(FileList, 'FileList');
+      const fileList = files => { const st = { files }, o = Object.create(FileList.prototype); lists.set(o, st); const p = indexed(o, () => st.files); lists.set(p, st); return p; };
+      // a store: its items ({ kind, type, data }) in order, and the effects
+      const S = (o, what) => brand(stores, o, 'DataTransfer.' + what);
+      const norm = f => { f = String(f).replace(/[A-Z]/g, c => c.toLowerCase()); return f === 'text' ? 'text/plain' : f === 'url' ? 'text/uri-list' : f; };
+      class DataTransferItem {
+        constructor() { illegal(); }
+        get kind() { const it = brand(itemOf, this, 'DataTransferItem.kind'); return it.removed ? '' : it.kind; }
+        get type() { const it = brand(itemOf, this, 'DataTransferItem.type'); return it.removed ? '' : it.type; }
+        getAsString(callback) {
+          const it = brand(itemOf, this, 'DataTransferItem.getAsString');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'getAsString' on 'DataTransferItem': 1 argument required, but only 0 present.");
+          if (callback === null || typeof callback !== 'function' || it.removed || it.kind !== 'string') return;
+          const data = it.data;
+          chk(n.timer(register(() => callback(data)), 0, 0));
+        }
+        getAsFile() { const it = brand(itemOf, this, 'DataTransferItem.getAsFile'); return it.removed || it.kind !== 'file' ? null : it.data; }
+      }
+      setTag(DataTransferItem, 'DataTransferItem');
+      const itemObj = it => { if (!it.obj) { it.obj = Object.create(DataTransferItem.prototype); itemOf.set(it.obj, it); } return it.obj; };
+      class DataTransferItemList {
+        constructor() { illegal(); }
+        get length() { return brand(itemLists, this, 'DataTransferItemList.length').items.length; }
+        add(data, type = undefined) {
+          const st = brand(itemLists, this, 'DataTransferItemList.add');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'add' on 'DataTransferItemList': 1 argument required, but only 0 present.");
+          if (data instanceof File) {
+            const it = { kind: 'file', type: data.type, data };
+            st.items.push(it); st.changed(); return itemObj(it);
+          }
+          if (arguments.length < 2) throw new TypeError("Failed to execute 'add' on 'DataTransferItemList': parameter 1 is not of type 'File'.");
+          const t = String(type).replace(/[A-Z]/g, c => c.toLowerCase());
+          if (st.items.some(x => x.kind === 'string' && x.type === t))
+            throw new DOMException("Failed to execute 'add' on 'DataTransferItemList': An item already exists for type '" + t + "'.", 'NotSupportedError');
+          const it = { kind: 'string', type: t, data: String(data) };
+          st.items.push(it); st.changed(); return itemObj(it);
+        }
+        remove(index) {
+          const st = brand(itemLists, this, 'DataTransferItemList.remove');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'remove' on 'DataTransferItemList': 1 argument required, but only 0 present.");
+          const i = index >>> 0;
+          if (i < st.items.length) { st.items[i].removed = true; st.items.splice(i, 1); st.changed(); }
+        }
+        clear() { const st = brand(itemLists, this, 'DataTransferItemList.clear'); for (const it of st.items) it.removed = true; st.items.length = 0; st.changed(); }
+      }
+      setTag(DataTransferItemList, 'DataTransferItemList');
+      const drops = ['none', 'copy', 'link', 'move'];
+      const alloweds = ['none', 'copy', 'copyLink', 'copyMove', 'link', 'linkMove', 'move', 'all', 'uninitialized'];
+      class DataTransfer {
+        constructor() {
+          const st = { items: [], dropEffect: 'none', effectAllowed: 'none', types: null, files: null, list: null };
+          st.changed = () => { st.types = null; st.files = null; };
+          stores.set(this, st);
+        }
+        get dropEffect() { return S(this, 'dropEffect').dropEffect; }
+        set dropEffect(v) { const st = S(this, 'dropEffect'); v = String(v); if (drops.includes(v)) st.dropEffect = v; }
+        get effectAllowed() { return S(this, 'effectAllowed').effectAllowed; }
+        set effectAllowed(v) { const st = S(this, 'effectAllowed'); v = String(v); if (alloweds.includes(v)) st.effectAllowed = v; }
+        get items() {
+          const st = S(this, 'items');
+          if (!st.list) { const o = Object.create(DataTransferItemList.prototype), p = indexed(o, () => st.items.map(itemObj)); itemLists.set(o, st); itemLists.set(p, st); st.list = p; }
+          return st.list;
+        }
+        setDragImage(image, x, y) { S(this, 'setDragImage'); if (arguments.length < 3) throw new TypeError("Failed to execute 'setDragImage' on 'DataTransfer': 3 arguments required, but only " + arguments.length + ' present.'); }
+        get types() {
+          const st = S(this, 'types');
+          if (!st.types) {
+            const t = st.items.filter(x => x.kind === 'string').map(x => x.type);
+            if (st.items.some(x => x.kind === 'file')) t.push('Files');
+            st.types = Object.freeze(t);
+          }
+          return st.types;
+        }
+        getData(format) {
+          const st = S(this, 'getData');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'getData' on 'DataTransfer': 1 argument required, but only 0 present.");
+          const f = String(format).replace(/[A-Z]/g, c => c.toLowerCase()), url = f === 'url', key = norm(f);
+          const it = st.items.find(x => x.kind === 'string' && x.type === key);
+          if (!it) return '';
+          if (url) { for (const line of it.data.split(/\r\n|\r|\n/)) if (line !== '' && line[0] !== '#') return line; return ''; }
+          return it.data;
+        }
+        setData(format, data) {
+          const st = S(this, 'setData');
+          if (arguments.length < 2) throw new TypeError("Failed to execute 'setData' on 'DataTransfer': 2 arguments required, but only " + arguments.length + ' present.');
+          const key = norm(format), i = st.items.findIndex(x => x.kind === 'string' && x.type === key);
+          if (i >= 0) { st.items[i].removed = true; st.items.splice(i, 1); }
+          st.items.push({ kind: 'string', type: key, data: String(data) }); st.changed();
+        }
+        clearData(format = undefined) {
+          const st = S(this, 'clearData');
+          if (format === undefined) { for (const x of st.items) if (x.kind === 'string') x.removed = true; st.items = st.items.filter(x => x.kind !== 'string'); }
+          else { const key = norm(format), i = st.items.findIndex(x => x.kind === 'string' && x.type === key); if (i >= 0) { st.items[i].removed = true; st.items.splice(i, 1); } }
+          st.changed();
+        }
+        get files() {
+          const st = S(this, 'files');
+          if (!st.files) st.files = fileList(st.items.filter(x => x.kind === 'file').map(x => x.data));
+          return st.files;
+        }
+      }
+      setTag(DataTransfer, 'DataTransfer');
+      return made = { DataTransfer, DataTransferItemList, DataTransferItem, FileList, fileList, lists };
+    };
+    makeFileList = make;
+    lazyGroup(['DataTransfer', 'DataTransferItemList', 'DataTransferItem', 'FileList'], make);
+  }
   // ---- FileReader (File API §6.2) ---------------------------------------------------------
   // A read is tasks of this realm: loadstart, progress, load and loadend at the reader, in that
   // order, with the result packaged when the read ends (§6.2.3). The text is Lean's decoding
@@ -16815,7 +16952,19 @@
       const root = this.getRootNode(), el = root.getElementById ? root.getElementById(id) : root.querySelector('#' + CSSns.escape(id));
       return el instanceof named.HTMLDataListElement ? el : null;
     });
-    prop(I, 'files', function () { return null; });
+    // `files` (HTML §4.10.5.1.18): a file input's FileList (empty until a script gives it one,
+    // as from a DataTransfer); null for any other type
+    const inputFiles = new WeakMap();
+    prop(I, 'files', function () {
+      if (typeState(this) !== 'file') return null;
+      let f = inputFiles.get(this);
+      if (!f) { const m = makeFileList(); if (!m) return null; f = m.fileList([]); inputFiles.set(this, f); }
+      return f;
+    }, function (v) {
+      if (typeState(this) !== 'file' || v === null) return;
+      const m = makeFileList();
+      if (m && m.lists.has(v)) inputFiles.set(this, v);
+    });
 
     // ---- the selection of a text control (HTML §4.10.20) ----
     const selState = new WeakMap();
