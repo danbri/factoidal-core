@@ -23,6 +23,9 @@ Proved here:
 * a track with fixed min and max sizing functions, min ≤ max, is at most its max
   (`sizeTracks_le_max`);
 * one size is answered for each track (`sizeTracks_size`);
+* in a definite space, the sizes do not read the contributions of an item that spans only
+  tracks with a fixed minimum and a fixed or flexible maximum (`sizeTracks_map_blankInert`),
+  so a layout need not measure such an item;
 * every loop is structural or has a fuel, so the algorithm terminates (Lean accepts the
   definitions as total; no `partial`).
 Tested only (`#guard`): the distribution of extra space across spanning items (§12.5.1)
@@ -610,8 +613,9 @@ def runPhase (tracks : Array TrackFn) (gap : Nat) (space : Space) (flexOnly : Bo
   let (w, growable) := st
   let n := tracks.size
   let mut planned : Array (Option Nat) := Array.replicate n none
-  for c in group do
-    for (i, d) in itemIncrease tracks gap w growable phase space flexOnly c do
+  -- the items are read only through what they ask (`runPhase_map_blankInert`)
+  for inc in group.map (itemIncrease tracks gap w growable phase space flexOnly) do
+    for (i, d) in inc do
       planned := planned.setIfInBounds i (some (max d ((planned.getD i none).getD 0)))
   let mut base := w.base
   let mut lim := w.lim
@@ -661,6 +665,100 @@ def resolveIntrinsic (tracks : Array TrackFn) (gap : Nat) (items : Array Contrib
   if !flexible.isEmpty then w := runGroup tracks gap space true w flexible
   return { w with lim := w.lim.mapIdx fun i l => if w.inf.getD i true then w.base.getD i 0 else l,
                   inf := w.inf.map fun _ => false }
+
+/-! ### Items whose contributions no track reads
+
+A track with a fixed min sizing function and a fixed or flexible max sizing function
+(`100px`, `minmax(0, 1fr)`) is grown by no phase of §12.5, and in a definite space §12.7
+shares the space by flex factors alone. So an item that spans only such tracks asks
+nothing of them, and the sizes do not depend on its contributions: a layout need not
+measure its min-content and max-content widths (`gridLayoutH`, 2026-11-17: the article
+column of a Wikipedia page, whose measure was about 40% of a layout). -/
+
+/-- A track that reads no item: a fixed minimum and a fixed or flexible maximum. -/
+def TrackFn.readsNoItem (t : TrackFn) : Bool :=
+  t.min.isFixed && match t.max with | .fixed _ | .fr _ => true | _ => false
+
+/-- Every track the item spans (within the grid) reads no item. -/
+def Contribution.inert (tracks : Array TrackFn) (c : Contribution) : Bool :=
+  (List.range' c.start c.span).all fun i => !decide (i < tracks.size) || (tracks.getD i default).readsNoItem
+
+/-- The item with its contributions 0 when it is inert, else the item. -/
+def Contribution.blankInert (tracks : Array TrackFn) (c : Contribution) : Contribution :=
+  if c.inert tracks then {c with minimum := 0, minContent := 0, maxContent := 0} else c
+
+/-- Kind: lemma. Says: no phase grows a track that reads no item, in any space. -/
+theorem Phase.affects_readsNoItem (p : Phase) (space : Space) (t : TrackFn) (h : t.readsNoItem = true) :
+    p.affects space t = false := by
+  rcases t with ⟨mn, mx⟩
+  cases mn <;> cases mx <;> simp [TrackFn.readsNoItem, MinFn.isFixed] at h <;> cases p <;> rfl
+
+/-- Kind: lemma. Says: an inert item asks no track for any increase, whatever its
+contributions. -/
+theorem itemIncrease_inert (tracks : Array TrackFn) (gap : Nat) (w : Working) (growable : Array Bool)
+    (phase : Phase) (space : Space) (flexOnly : Bool) (c : Contribution) (h : c.inert tracks = true) :
+    itemIncrease tracks gap w growable phase space flexOnly c = [] := by
+  have hnil : ((List.range' c.start c.span).filter (· < tracks.size)).filter (fun i =>
+      phase.affects space (tracks.getD i default) && (!flexOnly || (tracks.getD i default).isFlexible)) = [] := by
+    rw [List.filter_eq_nil_iff]
+    intro i hi
+    rw [List.mem_filter] at hi
+    have hall := List.all_eq_true.mp h i hi.1
+    have hlt : i < tracks.size := by simpa using hi.2
+    have hr : (tracks.getD i default).readsNoItem = true := by simpa [hlt] using hall
+    rw [Phase.affects_readsNoItem phase space _ hr]
+    simp
+  unfold itemIncrease
+  simp only [hnil, List.isEmpty_nil, if_true]
+
+/-- Kind: equality. Says: what an item asks of the tracks is the same with its
+contributions made 0 when it is inert. -/
+theorem itemIncrease_blankInert (tracks : Array TrackFn) (gap : Nat) (w : Working) (growable : Array Bool)
+    (phase : Phase) (space : Space) (flexOnly : Bool) (c : Contribution) :
+    itemIncrease tracks gap w growable phase space flexOnly (c.blankInert tracks) =
+      itemIncrease tracks gap w growable phase space flexOnly c := by
+  unfold Contribution.blankInert
+  split
+  · rename_i h
+    rw [itemIncrease_inert _ _ _ _ _ _ _ _ h, itemIncrease_inert _ _ _ _ _ _ _ _ (by simpa [Contribution.inert] using h)]
+  · rfl
+
+/-- Kind: equality. Says: a phase reads the items of its group only through what they ask. -/
+theorem runPhase_map_blankInert (tracks : Array TrackFn) (gap : Nat) (space : Space) (flexOnly : Bool)
+    (group : Array Contribution) :
+    runPhase tracks gap space flexOnly (group.map (Contribution.blankInert tracks)) =
+      runPhase tracks gap space flexOnly group := by
+  funext st phase
+  simp only [runPhase, Array.map_map, Function.comp_def, itemIncrease_blankInert]
+
+theorem runGroup_map_blankInert (tracks : Array TrackFn) (gap : Nat) (space : Space) (flexOnly : Bool)
+    (w : Working) (group : Array Contribution) :
+    runGroup tracks gap space flexOnly w (group.map (Contribution.blankInert tracks)) =
+      runGroup tracks gap space flexOnly w group := by
+  simp only [runGroup, runPhase_map_blankInert]
+
+@[simp] theorem blankInert_start (tracks : Array TrackFn) (c : Contribution) :
+    (c.blankInert tracks).start = c.start := by
+  unfold Contribution.blankInert; split <;> rfl
+@[simp] theorem blankInert_span (tracks : Array TrackFn) (c : Contribution) :
+    (c.blankInert tracks).span = c.span := by
+  unfold Contribution.blankInert; split <;> rfl
+
+theorem spansFlexible_blankInert (tracks : Array TrackFn) (c : Contribution) :
+    spansFlexible tracks (c.blankInert tracks) = spansFlexible tracks c := by
+  simp [spansFlexible]
+
+private theorem isEmpty_map_contribution (f : Contribution → Contribution) (a : Array Contribution) :
+    (a.map f).isEmpty = a.isEmpty := by
+  unfold Array.isEmpty; simp
+
+/-- Kind: equality. Says: §12.5 gives the same working sizes when the inert items'
+contributions are made 0. -/
+theorem resolveIntrinsic_map_blankInert (tracks : Array TrackFn) (gap : Nat) (items : Array Contribution) (space : Space) :
+    resolveIntrinsic tracks gap (items.map (Contribution.blankInert tracks)) space =
+      resolveIntrinsic tracks gap items space := by
+  simp only [resolveIntrinsic, Array.filter_map, Function.comp_def, spansFlexible_blankInert, blankInert_span,
+    runGroup_map_blankInert, Array.toList_map, List.map_map, isEmpty_map_contribution]
 
 /-- §12.6 "maximize tracks": candidates. With a definite space the free space is shared
 equally up to the growth limits; with an indefinite space or a max-content constraint
@@ -834,6 +932,17 @@ def sizeTracks (tracks : Array TrackFn) (gap : Nat) (items : Array Contribution)
   let b3 := raise tracks (·.isFlexible) false b2 (flexCand tracks gap items space b2)
   raise tracks (·.autoMax) false b3 (stretchCand tracks gap space stretch b3)
 
+/-- Kind: equality (a cost contract). Says: in a definite space, the used sizes of the
+tracks are the same when every item that spans only tracks that read no item
+(`TrackFn.readsNoItem`) has its contributions made 0; so a layout need not measure
+those items. Does not say: anything for an indefinite space or an intrinsic sizing
+constraint (§12.7 then reads the max-content contributions of items that span a flexible
+track), nor which items a layout leaves unmeasured. -/
+theorem sizeTracks_map_blankInert (tracks : Array TrackFn) (gap : Nat) (items : Array Contribution) (u : Nat) (stretch : Bool) :
+    sizeTracks tracks gap (items.map (Contribution.blankInert tracks)) (.definite u) stretch =
+      sizeTracks tracks gap items (.definite u) stretch := by
+  simp only [sizeTracks, resolveIntrinsic_map_blankInert, flexCand]
+
 /-- Kind: totality. Says: one size for each track. -/
 theorem sizeTracks_size (tracks : Array TrackFn) (gap : Nat) (items : Array Contribution) (space : Space) (stretch : Bool) :
     (sizeTracks tracks gap items space stretch).size = tracks.size := by
@@ -925,5 +1034,12 @@ private def inPx (a : Array Nat) : List Nat := a.toList.map (· / unitsPerPx)
 -- minmax(50px, 100px) grows to its max in free space, and stays at its min without
 #guard inPx (sizeTracks #[⟨.fixed (px 50), .fixed (px 100)⟩] 0 #[] (.definite (px 500)) true) == [100]
 #guard inPx (sizeTracks #[⟨.fixed (px 50), .fixed (px 100)⟩] 0 #[] (.definite (px 70)) true) == [70]
+
+-- an item that spans only `minmax(0, 1fr)` asks nothing of it; one that also spans an
+-- `auto` track is not inert
+#guard sizeTracks #[⟨.fixed 0, .fr frScale⟩] 0 #[⟨0, 1, px 9999, px 9999, px 9999⟩] (.definite (px 100)) true ==
+       sizeTracks #[⟨.fixed 0, .fr frScale⟩] 0 #[⟨0, 1, 0, 0, 0⟩] (.definite (px 100)) true
+#guard ({start := 0, span := 1} : Contribution).inert #[⟨.fixed 0, .fr frScale⟩, {}]
+#guard !({start := 0, span := 2} : Contribution).inert #[⟨.fixed 0, .fr frScale⟩, {}]
 
 end L4Factoidal.Rendering.Grid

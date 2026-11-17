@@ -1870,9 +1870,13 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   let heightHint := if ["td","th"].contains tag then nonzeroDimensionAttribute (attrValue n "height")
     else if ["table","tr"].contains tag then dimensionAttribute (attrValue n "height") else none
   if let some h := heightHint then s := {s with height := h}
-  if ["table","tr","td","th"].contains tag then
+  if ["table","thead","tbody","tfoot","tr","td","th"].contains tag then
     let bg := attrValue n "bgcolor"
     if !bg.isEmpty then if let .ok c := color bg then s := {s with background := some c}
+  -- HTML §15.3.10: a `table`'s `bordercolor` maps to the four `border-*-color` properties
+  if tag == "table" then
+    let bc := attrValue n "bordercolor"
+    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColor := some c}
   if ["tr","td","th","thead","tbody","tfoot"].contains tag then
     match (attrValue n "valign").toLower with
     | "top" => s := {s with verticalAlign := .top}
@@ -1987,6 +1991,8 @@ def alignHints (n : DOM.Node) (s parent : Computed) : Computed :=
     {s with autoMarginLeft := true, autoMarginRight := true} else s
   let s := if parent.centerBlocks && n.lname == "table" then {s with textAlign := .start, centerBlocks := false} else s
   if n.lname == "center" then {s with textAlign := .center, centerBlocks := true}
+  -- a `th` with no `align` is centred (the user agent's `th { text-align: -internal-center }`)
+  else if n.lname == "th" && !hasAttribute n "align" then {s with textAlign := .center}
   else alignOf n.lname (alignValue n) s
 
 /-- Kind: property. Says: an empty `align` value changes no style. -/
@@ -1994,12 +2000,12 @@ theorem alignOf_empty (tag : String) (s : Computed) : alignOf tag "" s = s := by
   simp [alignOf]
 
 /-- Kind: property. Says: with no `align` attribute (or an empty one), a parent that does
-not centre its blocks, and an element other than `center`, the hints change nothing. Does
+not centre its blocks, and an element other than `center` and `th`, the hints change nothing. Does
 not say: what an author rule does after them. -/
 theorem alignHints_plain (n : DOM.Node) (s parent : Computed) (hp : parent.centerBlocks = false)
-    (hc : n.lname ≠ "center") (ha : alignValue n = "") :
+    (hc : n.lname ≠ "center") (ht : n.lname ≠ "th") (ha : alignValue n = "") :
     alignHints n s parent = s := by
-  simp [alignHints, hp, hc, ha, alignOf_empty]
+  simp [alignHints, hp, hc, ht, ha, alignOf_empty]
 
 /-- Whether the element itself is clipped to nothing: `clip` with no area on an absolutely
 positioned box (CSS 2.1 §11.1.2 applies `clip` to those only), or `clip-path` with no area. -/
@@ -2928,6 +2934,18 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     if let some b := uaUnicodeBidi n.lname dirAttr (attrValue n "type").toLower then
       initial := {initial with unicodeBidi := b}
   let preHint := initial
+  -- MathML Core §2.1.2 and §2.1.3: on a MathML element `dir` is a presentational hint for
+  -- `direction` (`ltr` or `rtl`, ASCII case-insensitive; any other value none), and
+  -- `mathcolor`, `mathbackground` and `mathsize` for `color`, `background-color` and
+  -- `font-size`. The deprecated MathML 3 attributes (`color`, `background`, `fontsize` ...)
+  -- are not mapped.
+  if n.ns == some DOM.mathmlNS then
+    let dirAttr := (attrValue n "dir").toLower
+    if dirAttr == "rtl" then initial := {initial with direction := .rtl}
+    else if dirAttr == "ltr" then initial := {initial with direction := .ltr}
+    for (attr, property) in [("mathcolor", "color"), ("mathbackground", "background-color"), ("mathsize", "font-size")] do
+      let value := attrValue n attr
+      if !value.isEmpty then initial := applyOrKeep initial ⟨property, value, false⟩
   if n.ns == some DOM.htmlNS || n.ns.isNone then
     initial := alignHints n (bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))) parent
   -- HTML §15.1: presentational hints sit above the user agent's rules (below the author's):

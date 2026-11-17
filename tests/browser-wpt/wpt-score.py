@@ -442,6 +442,11 @@ def page_deps(root, path, tree):
         return out
     refs = re.findall(r"\s(?:src|href|data)\s*=\s*[\"']?([^\"' >]+)", text, re.I)
     refs += re.findall(r"importScripts\(\s*[\"']([^\"']+)[\"']", text)
+    # paths in strings that a script fetches or opens (`fetch("/fetch/api/resources/x.py")`,
+    # a template `${origin}/common/y.py?k=${k}`): only those the tree has are added. Without
+    # them a branch check whose names leave out the directory saw 404s (2026-11-17, #590:
+    # atob, FileAPI/file and sandboxing tests "worse" against a full run)
+    refs += re.findall(r"[\"'`(}]((?:\.\.?/|/)[A-Za-z0-9_.~/-]+)", text)
     for r in refs:
         r = r.strip().split("?")[0].split("#")[0]
         if not r or "{{" in r or re.match(r"^[a-z][a-z0-9+.-]*:", r, re.I):
