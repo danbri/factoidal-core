@@ -8,9 +8,9 @@ Everything here is a pure function of strings. `create` is the constructor of `U
 object is glue over them (`JS/Interp.lean`, `NativeX.urlPattern`, and the class in
 `tools/wasmvm/quickjs/prelude.js`). Section names in the comments are the Standard's.
 
-Regular expressions are compiled and run by the engine's own `JS.Re` (the Standard creates a
-RegExp with the `v` flag; `JS.Re` reads the same pattern text without the `v`-only set
-operations). No `partial`, no `sorry`.
+Regular expressions are compiled and run by the engine's own `JS.Re` with the `v` flag
+(`vi` with ignoreCase), as the Standard creates its RegExp, so class set operations (`--`,
+`&&`, nested classes) and the `v` escapes of punctuation in a class are read. No `partial`, no `sorry`.
 -/
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.JS.Regex
@@ -412,7 +412,7 @@ def compileComponent (input : String) (enc : Encode) (o : Options) : Except Stri
   if parts.any (fun p => p.type == .regexp && !regexEscapesOk p.value) then
     throw "URLPattern: the pattern's regular expression has an escape that is not valid"
   let (src, names) := regexOf parts o
-  match L4Factoidal.JS.Re.compile src (if o.ignoreCase then "ui" else "u") with
+  match L4Factoidal.JS.Re.compile src (if o.ignoreCase then "vi" else "v") with
   | .error e => throw s!"URLPattern: the pattern's regular expression is not valid ({e})"
   | .ok regex =>
     pure { pattern := patternOf parts o, regex, names, hasRegexpGroups := parts.any (·.type == .regexp) }
