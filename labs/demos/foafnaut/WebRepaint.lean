@@ -46,6 +46,18 @@ private def optEq {α : Type} (eq : α → α → Bool) : Option α → Option �
   | some a, some b => eq a b
   | none, none => true
   | _, _ => false
+/-- Two side colours that are the same colour, or both `currentColor`, or both transparent. -/
+private def sideColorEq : CSS.SideColor → CSS.SideColor → Bool
+  | .current, .current => true
+  | .transparent, .transparent => true
+  | .color a, .color b => colorEq a b
+  | _, _ => false
+private def sideColorsEq (a b : CSS.Sides CSS.SideColor) : Bool :=
+  sideColorEq a.top b.top && sideColorEq a.right b.right && sideColorEq a.bottom b.bottom && sideColorEq a.left b.left
+/-- The sides that are transparent: a side that is, or stops being, transparent paints a
+different number of shapes. -/
+private def transparentSides (a : CSS.Sides CSS.SideColor) : List Bool :=
+  [a.top,a.right,a.bottom,a.left].map fun | .transparent => true | _ => false
 
 /-- Every field of `Computed` but the colours is equal, and a background, a border and
 an underline are there in both or in neither: the two styles lay out the same and make
@@ -57,7 +69,7 @@ def sameShape (a b : Computed) : Bool :=
   match a with
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
-    _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
+    borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
     baselineShift,lineRaise⟩ =>
@@ -70,7 +82,8 @@ def sameShape (a b : Computed) : Bool :=
   lineHeight == b.lineHeight && optEq (· == ·) lineHeightFactor b.lineHeightFactor &&
   visible == b.visible && clipOverflow == b.clipOverflow && underline == b.underline &&
   decorationColor.isSome == b.decorationColor.isSome && preformatted == b.preformatted &&
-  edgesEq borderWidth b.borderWidth && (borderStyle == .none) == (b.borderStyle == .none) &&
+  edgesEq borderWidth b.borderWidth && borderStyle == b.borderStyle &&
+  transparentSides borderColor == transparentSides b.borderColor &&
   borderSpacingX == b.borderSpacingX && borderSpacingY == b.borderSpacingY &&
   borderCollapse == b.borderCollapse && captionBottom == b.captionBottom &&
   verticalAlign == b.verticalAlign && tableFixed == b.tableFixed &&
@@ -87,26 +100,27 @@ def sameShape (a b : Computed) : Bool :=
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=
   sameShape a b && colorEq a.color b.color && optEq colorEq a.background b.background &&
-  optEq colorEq a.borderColor b.borderColor && optEq colorEq a.decorationColor b.decorationColor &&
+  sideColorsEq a.borderColor b.borderColor && optEq colorEq a.decorationColor b.decorationColor &&
   a.borderStyle == b.borderStyle
 
-/-- The two colours of a border, as `Layout.borderNodes` makes them. -/
-private def borderColors (s : Computed) : Color × Color :=
-  let c := s.borderColor.getD s.color
-  match s.borderStyle with
-  | .outset => (Layout.lighter c,Layout.darker c)
-  | .inset => (Layout.darker c,Layout.lighter c)
-  | _ => (c,c)
-
+/-- The colours of a side's border, as `Layout.borderNodes` makes them: the side's colour
+and its tones (`Layout.sideTones`, for the near and the far sides). -/
+private def sideColours (s : Computed) (c : CSS.SideColor) (st : CSS.BorderStyle) : List Color :=
+  match Layout.sidePaint s c with
+  | none => []
+  | some x =>
+    let (a,b) := Layout.sideTones st true x
+    let (c',d) := Layout.sideTones st false x
+    [x,a,b,c',d,Layout.lighter x,Layout.darker x]
 /-- The colour pairs (before, after) of the paints that a node's own style makes. -/
 def ownPairs (a b : Computed) : List (Color × Color) :=
   [(a.color,b.color)] ++
   (match a.background,b.background with | some x,some y => [(x,y)] | _,_ => []) ++
   (if a.underline then [(a.decorationColor.getD a.color,b.decorationColor.getD b.color)] else []) ++
-  (if a.borderStyle == .none then [] else
-    let (an,af) := borderColors a
-    let (bn,bf) := borderColors b
-    [(an,bn),(af,bf)])
+  (if !a.hasBorder then [] else
+    (["top","right","bottom","left"].flatMap fun side =>
+      (sideColours a (a.borderColor.get side) (a.borderStyle.get side)).zip
+        (sideColours b (b.borderColor.get side) (b.borderStyle.get side))))
 
 /-- The background pair of a node, for the text of its inline descendants. -/
 private def backgroundPairs (a b : Computed) : List (Color × Color) :=

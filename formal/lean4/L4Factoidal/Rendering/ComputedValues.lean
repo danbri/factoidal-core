@@ -56,6 +56,14 @@ def display : Display → String
 
 def borderStyle : BorderStyle → String
   | .none => "none" | .solid => "solid" | .inset => "inset" | .outset => "outset"
+  | .dotted => "dotted" | .dashed => "dashed" | .double => "double" | .groove => "groove" | .ridge => "ridge"
+
+/-- A side's border colour: `currentColor` is the element's colour; `transparent` is
+`rgba(0, 0, 0, 0)` (CSS Color 4 §15.2). -/
+def sideColor (current : Color) : SideColor → String
+  | .current => color current
+  | .transparent => "rgba(0, 0, 0, 0)"
+  | .color c => color c
 
 def textAlign : TextAlign → String
   | .start => "start" | .right => "right" | .center => "center" | .left => "left" | .end_ => "end"
@@ -85,7 +93,6 @@ def values (c : Computed) : List (String × String) :=
   let edges := fun (name : String) (e : Edges) (f : Float → String) =>
     [(s!"{name}-top", f e.top), (s!"{name}-right", f e.right), (s!"{name}-bottom", f e.bottom), (s!"{name}-left", f e.left)]
   let bw := c.borderEdges
-  let bc := color (c.borderColor.getD c.color)
   [("display", display c.display), ("width", length c.width), ("height", length c.height)] ++
   edges "margin" c.margin px ++ edges "padding" c.padding px ++
   [("color", color c.color),
@@ -97,8 +104,8 @@ def values (c : Computed) : List (String × String) :=
    ("text-decoration-line", if c.underline then "underline" else "none"),
    ("border-top-width", px bw.top), ("border-right-width", px bw.right),
    ("border-bottom-width", px bw.bottom), ("border-left-width", px bw.left)] ++
-  ["top", "right", "bottom", "left"].map (fun s => (s!"border-{s}-style", borderStyle c.borderStyle)) ++
-  ["top", "right", "bottom", "left"].map (fun s => (s!"border-{s}-color", bc)) ++
+  ["top", "right", "bottom", "left"].map (fun s => (s!"border-{s}-style", borderStyle (c.borderStyle.get s))) ++
+  ["top", "right", "bottom", "left"].map (fun s => (s!"border-{s}-color", sideColor c.color (c.borderColor.get s))) ++
   [("border-spacing", if c.borderSpacingX == c.borderSpacingY then px c.borderSpacingX
       else px c.borderSpacingX ++ " " ++ px c.borderSpacingY),
    ("border-collapse", if c.borderCollapse then "collapse" else "separate"),

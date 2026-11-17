@@ -220,6 +220,22 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard (styleAt pageT "#t { border-bottom: 1px solid #ccc }").map (fun s => let e := s.borderEdges; (e.top, e.bottom)) == some (0, 1)
 #guard (styleAt pageT "#t { border: 2px solid red; border-bottom: none }").map (fun s => let e := s.borderEdges; (e.top, e.bottom)) == some (2, 0)
 #guard (styleAt pageT "#t { border-top: 1px dashed; border-bottom: 3px solid }").map (fun s => let e := s.borderEdges; (e.top, e.bottom, e.left)) == some (1, 3, 0)
+-- each side its own style and colour (CSS Backgrounds 3 §4.1, §4.2)
+#guard (styleAt pageT "#t { border: 2px solid red; border-left-color: blue; border-top-style: dashed }").map (fun s =>
+  (s.borderStyle.top == .dashed, s.borderStyle.left == .solid,
+   match s.borderColor.left, s.borderColor.top with | .color l, .color t => l.b == 1 && t.r == 1 | _, _ => false)) == some (true, true, true)
+#guard (styleAt pageT "#t { border-style: solid dotted double groove }").map (fun s =>
+  (s.borderStyle.right == .dotted, s.borderStyle.bottom == .double, s.borderStyle.left == .groove)) == some (true, true, true)
+#guard (styleAt pageT "#t { border-color: red; border-style: solid } p#t { border-color: inherit }").map (fun s =>
+  match s.borderColor.top with | .current => true | _ => false) == some true
+-- a side's width in any length unit or keyword, snapped as a border width (CSS Values 4 §6.1.1)
+#guard (styleAt pageT "#t { border-top: 72pt solid; border-bottom: thin solid; border-left: 0.5px solid; border-right: 2.7px solid }").map
+  (fun s => let e := s.borderEdges; (e.top, e.bottom, e.left, e.right)) == some (96, 1, 1, 2)
+#guard (styleAt pageT "#t { border: solid; border-width: 1in thick 0.5em }").map
+  (fun s => let e := s.borderEdges; (e.top, e.right, e.bottom, e.left)) == some (96, 5, 8, 5)
+-- a transparent border keeps its width and paints nothing
+#guard (styleAt pageT "#t { border: 1px solid transparent }").map (fun s =>
+  match s.borderColor.top with | .transparent => s.borderEdges.top == 1 | _ => false) == some true
 -- a background shorthand with no colour resets the colour
 #guard (styleAt pageT ".a { background-color: red } #t { background: none }").map (fun s => s.background.isNone) == some true
 #guard (styleAt pageT "#t { background: url(a.png) no-repeat #00f }").map (fun s => (s.background.map (·.b)).getD 0) == some 1
@@ -334,14 +350,14 @@ private def isPx (v : Float) : CSS.Length → Bool
 #guard hinted "<hr width='50%'>" "" "hr" fun s => match s.width with | .percent p => p == 0.5 | _ => false
 #guard hinted "<iframe width=300 height=100></iframe>" "" "iframe" fun s => isPx 300 s.width && isPx 100 s.height
 #guard hinted "<embed hspace=7 vspace='3.5'>" "" "embed" fun s => s.margin.left == 7 && s.margin.right == 7 && s.margin.top == 3.5
-#guard hinted "<img border=4>" "" "img" fun s => s.borderStyle == .solid && s.borderWidth.top == 4
+#guard hinted "<img border=4>" "" "img" fun s => s.borderStyle == .all .solid && s.borderWidth.top == 4
 -- `hspace` and `vspace` map to the dimension properties: a percentage is of the containing
 -- block's width (HTML §15.4.3; WPT html/rendering/dimension-attributes)
 #guard hinted "<img hspace='10%' vspace=3>" "" "img" fun s => s.margin.left == 0 && s.margin.top == 3 && s.pos.marginOf == (0,0.1,0,0.1)
 #guard hinted "<input type=image hspace='50%'>" "" "input" fun s => s.pos.marginOf == (0,0.5,0,0.5)
-#guard hinted "<input type=image border=7>" "" "input" fun s => s.borderStyle == .solid && s.borderWidth.left == 7
+#guard hinted "<input type=image border=7>" "" "input" fun s => s.borderStyle == .all .solid && s.borderWidth.left == 7
 -- the border hint is above the user agent's rules (the `input` border), as the width hints are
-#guard (hintedProperties {} {borderStyle := .solid, borderWidth := ⟨0,0,0,0⟩}).contains "border"
+#guard (hintedProperties {} {borderStyle := .all .solid, borderWidth := ⟨0,0,0,0⟩}).contains "border"
 #guard !(hintedProperties {} {}).contains "border"
 #guard hinted "<img border=4 width=+5>" "img{border-width:1px;width:9px}" "img" fun s => s.borderWidth.left == 1 && isPx 9 s.width
 #guard hinted "<table><tr><td width=0 height='0%'>x</table>" "" "td" fun s => match s.width, s.height with | .auto, .auto => true | _, _ => false
