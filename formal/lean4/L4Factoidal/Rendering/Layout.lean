@@ -218,21 +218,144 @@ agent): the colour moved 60% of the way to white, and 60% of the colour. -/
 def lighter (c : Color) : Color := ⟨c.r+(1-c.r)*0.6,c.g+(1-c.g)*0.6,c.b+(1-c.b)*0.6⟩
 def darker (c : Color) : Color := ⟨c.r*0.6,c.g*0.6,c.b*0.6⟩
 
-/-- The border of a border box at `(x,y)`, size `w` by `h`: top and bottom across the
-whole width, left and right between them. `outset` is light at the top and left and
-dark at the bottom and right; `inset` is the reverse. -/
+/-- The colour a side's border is painted with; none when it is transparent. -/
+def sidePaint (s : Computed) : SideColor → Option Color
+  | .current => some s.color
+  | .transparent => none
+  | .color c => some c
+
+/-- Two colours that paint the same pixels. -/
+def sameColour (a b : Color) : Bool := a.r == b.r && a.g == b.g && a.b == b.b
+
+/-- The colours of the outer and the inner half of one side of a border in a 3D style (CSS
+Backgrounds 3 §4.2 leaves the colours to the user agent). `near` is the top and the left
+side, lit in `outset` and `ridge`; the other two styles in a single colour. -/
+def sideTones (st : BorderStyle) (near : Bool) (c : Color) : Color × Color :=
+  match st with
+  | .outset => if near then (lighter c,lighter c) else (darker c,darker c)
+  | .inset => if near then (darker c,darker c) else (lighter c,lighter c)
+  | .groove => if near then (darker c,lighter c) else (lighter c,darker c)
+  | .ridge => if near then (lighter c,darker c) else (darker c,lighter c)
+  | _ => (c,c)
+
+/-- The most dashes or dots on one side of a border. A longer side is painted as a solid
+line (the refusal is a plainer line, never a larger scene). -/
+def maxDashes : Nat := 4096
+
+/-- The dashes (or dots) of a side `length` long, each `dash` long: as many as fit with
+gaps about as long as the dashes, with a dash at each end (the gaps take what is left).
+None: the side is painted solid (too short for two dashes, or more than `maxDashes`). -/
+def dashCount (length dash : Float) : Option Nat :=
+  if dash <= 0 || length <= 0 || !length.isFinite || !dash.isFinite then none else
+  let k := ((length+dash)/(2*dash)).floor.toUInt64.toNat
+  if k < 2 || k > maxDashes then none else some k
+
+/-- Kind: bound. Says: a side of a dashed or dotted border never has more than `maxDashes`
+dashes, whatever its length and width, and a side with dashes has at least two (so the gap
+between them is defined). Does not say: where the dashes are. -/
+theorem dashCount_le (length dash : Float) (n : Nat) (h : dashCount length dash = some n) :
+    2 ≤ n ∧ n ≤ maxDashes := by
+  unfold dashCount at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · rename_i hk
+      simp only [Option.some.injEq] at h
+      subst h
+      simp only [Bool.or_eq_true, decide_eq_true_eq, not_or, Nat.not_lt] at hk
+      omega
+
+/-- The border of a border box at `(x,y)`, size `w` by `h`, each side in its own style and
+colour (CSS Backgrounds 3 §4). A border whose painted sides all share one colour and one
+style of `solid`, `inset` and `outset` is four rectangles, top and bottom across the whole
+width and left and right between them (`outset` light at the top and left, dark at the
+bottom and right; `inset` the reverse). Any other border is painted side by side: each side
+a trapezoid that meets its neighbours on the diagonals of the corners, `double` as its outer
+and inner thirds, `groove` and `ridge` as two halves in two tones, `dashed` and `dotted` as
+dashes (dots: circles when the side is 3 px wide or more) along the side. -/
 def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
-  if !s.visible || w <= 0 || h <= 0 || s.borderStyle == .none then return #[]
-  let c := s.borderColor.getD s.color
-  let (near,far) := match s.borderStyle with
-    | .outset => (lighter c,darker c)
-    | .inset => (darker c,lighter c)
-    | _ => (c,c)
+  if !s.visible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
+  let sides : List (String × Float × BorderStyle × Option Color) :=
+    [("top",b.top,s.borderStyle.top,sidePaint s s.borderColor.top),
+     ("right",b.right,s.borderStyle.right,sidePaint s s.borderColor.right),
+     ("bottom",b.bottom,s.borderStyle.bottom,sidePaint s s.borderColor.bottom),
+     ("left",b.left,s.borderStyle.left,sidePaint s s.borderColor.left)]
+  let painted := sides.filter fun (_,width,st,_) => width > 0 && st != .none
   let rect := fun (c : Color) (x y w h : Float) =>
     if w <= 0 || h <= 0 then #[] else #[Node.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  return rect near x y w b.top ++ rect far x (y+h-b.bottom) w b.bottom ++
-    rect near x (y+b.top) b.left (h-b.top-b.bottom) ++ rect far (x+w-b.right) (y+b.top) b.right (h-b.top-b.bottom)
+  -- one colour and one of the plain styles: the four rectangles
+  match painted with
+  | [] => return #[]
+  | (_,_,st0,c0) :: rest =>
+    let plain := st0 == .solid || st0 == .inset || st0 == .outset
+    let alike := rest.all fun (_,_,st,c) => st == st0 && match c, c0 with
+      | some a, some b => sameColour a b
+      | none, none => true
+      | _, _ => false
+    if plain && alike then
+      match c0 with
+      | none => return #[]
+      | some c =>
+        let (near,far) := match st0 with
+          | .outset => (lighter c,darker c)
+          | .inset => (darker c,lighter c)
+          | _ => (c,c)
+        return rect near x y w b.top ++ rect far x (y+h-b.bottom) w b.bottom ++
+          rect near x (y+b.top) b.left (h-b.top-b.bottom) ++ rect far (x+w-b.right) (y+b.top) b.right (h-b.top-b.bottom)
+    -- side by side
+    let poly := fun (c : Color) (points : List Point) =>
+      Node.paint ⟨some id,{geometry := .polygon points,style := {fill := .solid c}}⟩
+    -- the band of a side between fractions `f0` (outer) and `f1` (inner) of its width
+    let band := fun (side : String) (f0 f1 : Float) =>
+      let at_ := fun (f : Float) =>
+        match side with
+        | "top" => (({x := x+b.left*f,y := y+b.top*f} : Point),({x := x+w-b.right*f,y := y+b.top*f} : Point))
+        | "right" => ({x := x+w-b.right*f,y := y+b.top*f},{x := x+w-b.right*f,y := y+h-b.bottom*f})
+        | "bottom" => ({x := x+w-b.right*f,y := y+h-b.bottom*f},{x := x+b.left*f,y := y+h-b.bottom*f})
+        | _ => ({x := x+b.left*f,y := y+h-b.bottom*f},{x := x+b.left*f,y := y+b.top*f})
+      let (a0,a1) := at_ f0
+      let (b0,b1) := at_ f1
+      [a0,a1,b1,b0]
+    let mut out : Array Node := #[]
+    for (side,width,st,colour) in painted do
+      let some c := colour | continue
+      let near := side == "top" || side == "left"
+      match st with
+      | .double =>
+        if width < 3 then out := out.push (poly c (band side 0 1))
+        else
+          out := out.push (poly c (band side 0 (1/3)))
+          out := out.push (poly c (band side (2/3) 1))
+      | .groove | .ridge =>
+        let (outer,inner) := sideTones st near c
+        out := out.push (poly outer (band side 0 (1/2)))
+        out := out.push (poly inner (band side (1/2) 1))
+      | .dashed | .dotted =>
+        -- along the side: top and bottom across the width, left and right between them
+        let horizontal := side == "top" || side == "bottom"
+        let (x0,y0,len) :=
+          match side with
+          | "top" => (x,y,w)
+          | "bottom" => (x,y+h-width,w)
+          | "right" => (x+w-width,y+b.top,h-b.top-b.bottom)
+          | _ => (x,y+b.top,h-b.top-b.bottom)
+        let dash := if st == .dotted then width else 3*width
+        match dashCount len dash with
+        | none => out := out.push (poly c (band side 0 1))
+        | some n =>
+          let gap := (len-n.toFloat*dash)/(n.toFloat-1)
+          for k in [0:n] do
+            let at_ := k.toFloat*(dash+gap)
+            let (dx,dy,dw,dh) := if horizontal then (x0+at_,y0,dash,width) else (x0,y0+at_,width,dash)
+            if st == .dotted && width >= 3 then
+              out := out.push (Node.paint ⟨some id,{geometry := .circle (dx+dw/2) (dy+dh/2) (width/2),style := {fill := .solid c}}⟩)
+            else out := out ++ rect c dx dy dw dh
+      | _ =>
+        let (tone,_) := sideTones st near c
+        out := out.push (poly tone (band side 0 1))
+    return out
 
 /-- Background, then border, of a border box. -/
 private def decorations (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
@@ -821,7 +944,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     let span := f.hi-f.lo
     let width := if left+span > f.hi then span-(left+span-f.hi) else span
     -- most inline boxes have nothing to paint
-    let nodes := if (s.background.isNone || reordered) && s.borderStyle == .none then #[] else
+    let nodes := if (s.background.isNone || reordered) && !s.hasBorder then #[] else
       decorations f.id {s with background := if reordered then none else s.background,
                                borderWidth := {s.borderWidth with left := if f.start then s.borderWidth.left else 0,
                                                                   right := if ended then s.borderWidth.right else 0}}
@@ -1453,7 +1576,7 @@ private def anonymousBox (base : Computed) : Computed :=
 /-- The style of an anonymous flex or grid item (a run of text): its container's
 inherited values, with no box edges, limits, or flex and alignment values of its own. -/
 private def anonymousItem (base : Computed) : Computed :=
-  {anonymousBox base with display := .block, borderStyle := .none, clipOverflow := false,
+  {anonymousBox base with display := .block, borderStyle := .all .none, clipOverflow := false,
                           minWidth := .auto, maxWidth := .auto, minHeight := .auto, maxHeight := .auto,
                           autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}}
 

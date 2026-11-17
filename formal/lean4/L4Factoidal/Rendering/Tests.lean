@@ -340,11 +340,22 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 -- An unknown pseudo-class drops its rule; the other rules stand.
 #guard ((stateAt page "a:focus{color:red} a{color:green}" "a" (active := some "a")).toOption.map (rgb255 ·.color)) == some (0,128,0)
 -- HTML §15.5.4: a button is an inline-block with a raised border; pressed, it is sunken and darker.
-#guard ((stateAt page "" "k").toOption.map fun s => (s.display == .inlineBlock,s.borderStyle == .outset,s.borderEdges.top,s.background.map rgb255)) == some (true,true,2,some (239,239,239))
-#guard ((stateAt page "" "k" (active := some "k")).toOption.map fun s => (s.borderStyle == .inset,s.background.map rgb255)) == some (true,some (200,200,200))
+#guard ((stateAt page "" "k").toOption.map fun s => (s.display == .inlineBlock,s.borderStyle.top == .outset,s.borderEdges.top,s.background.map rgb255)) == some (true,true,2,some (239,239,239))
+#guard ((stateAt page "" "k" (active := some "k")).toOption.map fun s => (s.borderStyle.top == .inset,s.background.map rgb255)) == some (true,some (200,200,200))
 #guard ((stateAt page "" "k" (hover := some "k")).toOption.map fun s => s.background.map rgb255) == some (some (229,229,229))
-#guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,s.borderColor.map rgb255)) == some (1,some (255,0,0))
+#guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,match s.borderColor.left with | .color c => some (rgb255 c) | _ => none)) == some (1,some (255,0,0))
 #guard ((stateAt "<p id='x' style='border-width:4px'>A</p>" "" "x").toOption.map (·.borderEdges.left)) == some 0
+-- borders: one colour and one plain style is four rectangles; anything else side by side
+#guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩} 0 0 10 10).size == 4
+#guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩,
+  borderColor := ⟨.color ⟨1,0,0⟩,.current,.current,.current⟩} 0 0 10 10).size == 4
+#guard (borderNodes 0 {borderStyle := .all .solid, borderWidth := ⟨2,2,2,2⟩, borderColor := .all .transparent} 0 0 10 10).size == 0
+#guard (borderNodes 0 {borderStyle := ⟨.dashed,.none,.none,.none⟩, borderWidth := ⟨2,2,2,2⟩} 0 0 100 10).size == 8
+#guard (borderNodes 0 {borderStyle := ⟨.dotted,.none,.none,.none⟩, borderWidth := ⟨4,4,4,4⟩} 0 0 100 10).size == 13
+#guard (borderNodes 0 {borderStyle := .all .double, borderWidth := ⟨3,3,3,3⟩} 0 0 20 20).size == 8
+#guard (borderNodes 0 {borderStyle := .all .groove, borderWidth := ⟨4,4,4,4⟩} 0 0 20 20).size == 8
+-- a side too long for `maxDashes` dashes is one solid trapezoid
+#guard (borderNodes 0 {borderStyle := ⟨.dotted,.none,.none,.none⟩, borderWidth := ⟨1,1,1,1⟩} 0 0 100000 10).size == 1
 
 private def runState (html css : String) (active : Option String := none) : Except String (Scene × Array Box) := do
   let dom := DOM.parseHtmlDocument html

@@ -90,9 +90,42 @@ takes part in the Unicode Bidirectional Algorithm (§2.4.2 gives the bidi
 control characters of each value). -/
 inductive UnicodeBidi where | normal | embed | isolate | bidiOverride | isolateOverride | plaintext
   deriving Repr, BEq
-/-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
-inductive BorderStyle where | none | solid | inset | outset
+/-- CSS Backgrounds 3 §4.2 line styles. `hidden` is read as `none`: the two differ only in
+the conflict resolution of collapsed table borders. -/
+inductive BorderStyle where | none | solid | inset | outset | dotted | dashed | double | groove | ridge
+  deriving Repr, DecidableEq
+/-- The colour of one side's border (CSS Backgrounds 3 §4.1): `currentColor` (the
+initial value), `transparent` (nothing is painted, the width stays), or a colour. -/
+inductive SideColor where
+  | current
+  | transparent
+  | color (c : Color)
+  deriving Repr
+/-- One value for each side of a box, in the order top, right, bottom, left. -/
+structure Sides (α : Type) where
+  top : α
+  right : α
+  bottom : α
+  left : α
   deriving Repr, BEq
+/-- The same value on the four sides. -/
+def Sides.all (a : α) : Sides α := ⟨a,a,a,a⟩
+/-- Side `side` (`"top"`, `"right"`, `"bottom"` or `"left"`) set to `a`. -/
+def Sides.set (s : Sides α) (side : String) (a : α) : Sides α :=
+  match side with
+  | "top" => {s with top := a}
+  | "right" => {s with right := a}
+  | "bottom" => {s with bottom := a}
+  | _ => {s with left := a}
+/-- The value of side `side`. -/
+def Sides.get (s : Sides α) (side : String) : α :=
+  match side with
+  | "top" => s.top
+  | "right" => s.right
+  | "bottom" => s.bottom
+  | _ => s.left
+/-- Each side's value through `f`. -/
+def Sides.map (f : α → β) (s : Sides α) : Sides β := ⟨f s.top,f s.right,f s.bottom,f s.left⟩
 /-- A `linear-gradient()` background image (CSS Images 3 §3.1): the direction as an angle in
 degrees (0 is up, 90 is right; `to bottom`, the default, is 180), or a corner (`to top
 right`: x and y each -1, 0 or 1), whose angle depends on the box; and the colour stops, each
@@ -134,9 +167,10 @@ structure Computed where
   preformatted : Bool := false
   /-- Border widths as specified; `Computed.borderEdges` is the used width (0 with no style). -/
   borderWidth : Edges := ⟨3,3,3,3⟩
-  borderStyle : BorderStyle := .none
-  /-- None: `currentColor`. -/
-  borderColor : Option Color := none
+  /-- Each side's line style (CSS Backgrounds 3 §4.2). -/
+  borderStyle : Sides BorderStyle := .all .none
+  /-- Each side's colour (CSS Backgrounds 3 §4.1). -/
+  borderColor : Sides SideColor := .all .current
   /-- `border-spacing`, horizontal and vertical (inherited). -/
   borderSpacingX : Float := 0
   borderSpacingY : Float := 0
@@ -204,9 +238,30 @@ def htmlProperties : List String :=
    "min-width","max-width","min-height","max-height","object-fit","text-align",
    "direction","unicode-bidi"]
 
-/-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
+/-- CSS Backgrounds 3 §4.3: the computed width of a side's border is 0 when its style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
-  if s.borderStyle == .none then {} else s.borderWidth
+  let w := fun (st : BorderStyle) (x : Float) => if st == .none then 0 else x
+  ⟨w s.borderStyle.top s.borderWidth.top,w s.borderStyle.right s.borderWidth.right,
+   w s.borderStyle.bottom s.borderWidth.bottom,w s.borderStyle.left s.borderWidth.left⟩
+/-- Some side has a border style other than none. -/
+def Computed.hasBorder (s : Computed) : Bool :=
+  s.borderStyle.top != .none || s.borderStyle.right != .none ||
+    s.borderStyle.bottom != .none || s.borderStyle.left != .none
+/-- Kind: invariant. Says: a side whose style is none has no border width, whatever width
+was specified (CSS Backgrounds 3 §4.3). Does not say: what a side with a style is painted
+like. -/
+theorem Computed.borderEdges_top_none (s : Computed) (h : s.borderStyle.top = .none) :
+    s.borderEdges.top = 0 := by
+  unfold Computed.borderEdges
+  rw [h]
+  rfl
+/-- Kind: invariant. Says: with no side styled, every used border width is 0, so the box
+has no border to lay out or paint. Does not say: anything about outlines. -/
+theorem Computed.borderEdges_none (s : Computed) (h : s.hasBorder = false) :
+    s.borderEdges.top = 0 ∧ s.borderEdges.right = 0 ∧ s.borderEdges.bottom = 0 ∧ s.borderEdges.left = 0 := by
+  simp only [Computed.hasBorder, Bool.or_eq_false_iff, bne_eq_false_iff_eq] at h
+  obtain ⟨⟨⟨ht, hr⟩, hb⟩, hl⟩ := h
+  simp [Computed.borderEdges, ht, hr, hb, hl]
 
 structure Declaration where
   property : String
@@ -534,6 +589,11 @@ def gradientArgs (value : String) : Option String := do
     out := out.push c
   none
 
+/-- The border shorthands that `declarationsOf` gives as their side longhands. -/
+def borderShorthands : List String :=
+  ["border", "border-width", "border-style", "border-color",
+   "border-top", "border-right", "border-bottom", "border-left"]
+
 /-- The declarations of this profile for declarations as written (`SheetReader.Decl`):
 side shorthands as their longhands (`expandSides`), `background` as the colour, the layout
 shorthands (`flex`, `flex-flow`, `gap`, `place-*`) as their longhands, so the cascade
@@ -548,8 +608,9 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     if key == "background" then
       let image := if (gradientArgs d.value).isSome then d.value else "none"
       (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
-    -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
-    if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
+    -- the border shorthands as each side's width, style and colour (CSS Backgrounds 3 §4.4),
+    -- so that the cascade orders each side's longhands
+    if borderShorthands.contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
       | some ls => (ls.map fun (n, v) => (⟨n, v, d.important⟩ : Declaration)) ++ acc
       | none => acc
@@ -954,10 +1015,6 @@ private def edgeValues (s : String) : Except String Edges := do
   | [a,b,c] => return ⟨a,b,c,b⟩
   | [a,b,c,d] => return ⟨a,b,c,d⟩
   | _ => throw "CSS edge shorthand requires one to four values"
-private def edgePixel (source : String) : Except String Float := do
-  let value ← pixels source
-  if value < 0 then throw "negative edges outside first CSS profile"
-  return value
 /-- One margin: its length and its percentage part, a fraction of the containing block's
 width that the layout resolves (`Layout.percentEdges`). A margin may be negative. -/
 private def marginParts (source : String) : Except String (Float × Float) := do
@@ -985,7 +1042,50 @@ private def borderStyle (source : String) : Except String BorderStyle :=
   | "solid" => pure .solid
   | "inset" => pure .inset
   | "outset" => pure .outset
+  | "dotted" => pure .dotted
+  | "dashed" => pure .dashed
+  | "double" => pure .double
+  | "groove" => pure .groove
+  | "ridge" => pure .ridge
   | _ => throw "unsupported CSS border style"
+/-- CSS Values 4 §6.1.1 "snap as a border width" at one device pixel per CSS pixel: a
+width under one pixel is one pixel, a larger one is rounded down to whole pixels. -/
+def snapBorderWidth (w : Float) : Float :=
+  if w <= 0 then 0 else if w < 1 then 1 else w.floor
+/-- Kind: specification. Says: a border width of one pixel or more is rounded down to whole
+pixels. Does not say: what a browser at another device pixel ratio uses. -/
+theorem snapBorderWidth_floor (w : Float) (h : ¬ w < 1) (hp : ¬ w <= 0) :
+    snapBorderWidth w = w.floor := by
+  simp [snapBorderWidth, h, hp]
+/-- Kind: specification. Says: a width of zero or less is no border at all. -/
+theorem snapBorderWidth_nonpos (w : Float) (h : w <= 0) : snapBorderWidth w = 0 := by
+  simp [snapBorderWidth, h]
+/-- One side's border width: `thin`, `medium`, `thick` (CSS Backgrounds 3 §4.3) or a length
+in px, snapped (`snapBorderWidth`); other units come back from the property table in px. -/
+private def borderWidthValue (source : String) : Except String Float := do
+  match (trim source).toLower with
+  | "thin" => return 1
+  | "medium" => return 3
+  | "thick" => return 5
+  | v =>
+    let value ← pixels v
+    if value < 0 then throw "negative border width"
+    return snapBorderWidth value
+/-- One side's border colour: `currentcolor`, `transparent` or a colour. -/
+private def sideColor (source : String) : Except String SideColor := do
+  match (trim source).toLower with
+  | "currentcolor" => return .current
+  | "transparent" => return .transparent
+  | _ => return .color (← color source)
+/-- One to four values for the four sides, as the box edge shorthands give them
+(CSS Backgrounds 3 §4: top, right, bottom, left; a missing side takes the opposite one). -/
+private def sideValues (read : String → Except String α) (source : String) : Except String (Sides α) := do
+  match ← (words source).mapM read with
+  | [a] => return ⟨a,a,a,a⟩
+  | [a,b] => return ⟨a,b,a,b⟩
+  | [a,b,c] => return ⟨a,b,c,b⟩
+  | [a,b,c,d] => return ⟨a,b,c,d⟩
+  | _ => throw "CSS side shorthand requires one to four values"
 /-- A `min-*` or `max-*` value: `none` and `auto` are `auto` here; a negative length is
 invalid (CSS 2.1 §10.4). -/
 private def limit (source : String) : Except String Length := do
@@ -1213,43 +1313,35 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if d.value == "underline" then return {s with underline := true}
     if d.value == "none" then return {s with underline := false}
     throw "unsupported CSS text decoration"
-  | "border-style" => return {s with borderStyle := ← borderStyle d.value}
-  -- One side's border. This profile has one style and one colour for the four sides: a
-  -- side's style that is the first style an element gets also leaves the sides with no
-  -- style of their own without a border (their width is 0); a side's style of none
-  -- removes that side's border.
-  | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← edgePixel d.value}}
-  | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← edgePixel d.value}}
-  | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← edgePixel d.value}}
-  | "border-left-width" => return {s with borderWidth := {s.borderWidth with left := ← edgePixel d.value}}
-  | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
-    let st ← borderStyle d.value
+  | "border-style" => return {s with borderStyle := ← sideValues borderStyle d.value}
+  -- One side's border: its width, its style and its colour (CSS Backgrounds 3 §4.1-§4.3).
+  | "border-top-width" | "border-right-width" | "border-bottom-width" | "border-left-width" =>
+    let w ← borderWidthValue d.value
     let side := ((d.property.drop 7).takeWhile (· != '-')).toString
-    let only : Edges := match side with
-      | "top" => {top := s.borderWidth.top}
-      | "right" => {right := s.borderWidth.right}
-      | "bottom" => {bottom := s.borderWidth.bottom}
-      | _ => {left := s.borderWidth.left}
-    let without : Edges := match side with
-      | "top" => {s.borderWidth with top := 0}
-      | "right" => {s.borderWidth with right := 0}
-      | "bottom" => {s.borderWidth with bottom := 0}
-      | _ => {s.borderWidth with left := 0}
-    if st == .none then return {s with borderWidth := without}
-    else if s.borderStyle == .none then return {s with borderStyle := st, borderWidth := only}
-    else return {s with borderStyle := st}
+    let e := s.borderWidth
+    return {s with borderWidth := match side with
+      | "top" => {e with top := w} | "right" => {e with right := w}
+      | "bottom" => {e with bottom := w} | _ => {e with left := w}}
+  | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
+    let side := ((d.property.drop 7).takeWhile (· != '-')).toString
+    return {s with borderStyle := s.borderStyle.set side (← borderStyle d.value)}
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
-    return {s with borderColor := some (← color d.value)}
-  | "border-width" => return {s with borderWidth := ← edgeValues d.value}
-  | "border-color" => return {s with borderColor := some (← color d.value)}
+    let side := ((d.property.drop 7).takeWhile (· != '-')).toString
+    return {s with borderColor := s.borderColor.set side (← sideColor d.value)}
+  | "border-width" =>
+    let w ← sideValues borderWidthValue d.value
+    return {s with borderWidth := ⟨w.top,w.right,w.bottom,w.left⟩}
+  | "border-color" => return {s with borderColor := ← sideValues sideColor d.value}
   | "border" =>
     -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
-    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := none}
+    let mut width : Float := 3
+    let mut style : BorderStyle := .none
+    let mut colour : SideColor := .current
     for part in words d.value do
-      if let .ok style := borderStyle part then out := {out with borderStyle := style}
-      else if let .ok w := edgePixel part then out := {out with borderWidth := ⟨w,w,w,w⟩}
-      else out := {out with borderColor := some (← color part)}
-    return out
+      if let .ok st := borderStyle part then style := st
+      else if let .ok w := borderWidthValue part then width := w
+      else colour := ← sideColor part
+    return {s with borderWidth := ⟨width,width,width,width⟩, borderStyle := .all style, borderColor := .all colour}
   | "border-spacing" =>
     match ← (words d.value).mapM pixels with
     | [a] => if a < 0 then throw "negative border-spacing" else return {s with borderSpacingX := a, borderSpacingY := a}
@@ -1407,19 +1499,20 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
     | some ds =>
       let width := ((ds.lookup "border-top-width").bind (tableComputed s.fontSize "border-top-width")).getD "3px"
       let style := (ds.lookup "border-top-style").getD "none"
-      let style := if ["none", "hidden", "solid", "inset", "outset"].contains style then style else "solid"
-      let colour := ((ds.lookup "border-top-color").bind colorHex).filter (· != "transparent")
-      value (" ".intercalate ([width, style] ++ colour.toList))
+      let colour := (ds.lookup "border-top-color").bind colorHex
+      value (" ".intercalate ([(CssValues.lineWidthKeyword width).getD width, style] ++ colour.toList))
+  | "border-top-width" | "border-right-width" | "border-bottom-width" | "border-left-width" =>
+    (tableComputed s.fontSize d.property d.value).map fun t => (CssValues.lineWidthKeyword t).getD t
   | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
-    match (CssValues.specified d.property d.value) with
-    | some w => value (if ["none", "hidden", "inset", "outset"].contains w then w else "solid")
-    | none => none
+    (CssValues.specified d.property d.value).bind fun t => if t == d.value then none else value t
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
-    (colorHex d.value).bind fun h => if h == "transparent" then none else value h
+    colorHex d.value
+  | "border-color" =>
+    (CssValues.expand "border-color" d.value).bind fun ds =>
+      (["border-top-color","border-right-color","border-bottom-color","border-left-color"].mapM fun n =>
+        (ds.lookup n).bind colorHex).map (" ".intercalate ·)
   | "border-style" =>
-    match (words d.value.toLower).head? with
-    | some w => if (CssValues.specified "border-top-style" w).isSome then value (if ["none", "hidden", "inset", "outset"].contains w then w else "solid") else none
-    | none => none
+    (CssValues.specified "border-style" d.value).bind fun t => if t == d.value then none else value t
   | "border-width" =>
     (tableComputed s.fontSize "border-width" d.value).map fun t =>
       " ".intercalate ((words t).map fun w => (CssValues.lineWidthKeyword w).getD w)
@@ -1594,6 +1687,16 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "border-style" => some {s with borderStyle := source.borderStyle}
   | "border-color" => some {s with borderColor := source.borderColor}
   | "border" => some {s with borderWidth := source.borderWidth, borderStyle := source.borderStyle, borderColor := source.borderColor}
+  | "border-top-width" => some {s with borderWidth := {s.borderWidth with top := source.borderWidth.top}}
+  | "border-right-width" => some {s with borderWidth := {s.borderWidth with right := source.borderWidth.right}}
+  | "border-bottom-width" => some {s with borderWidth := {s.borderWidth with bottom := source.borderWidth.bottom}}
+  | "border-left-width" => some {s with borderWidth := {s.borderWidth with left := source.borderWidth.left}}
+  | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
+    let side := ((property.drop 7).takeWhile (· != '-')).toString
+    some {s with borderStyle := s.borderStyle.set side (source.borderStyle.get side)}
+  | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
+    let side := ((property.drop 7).takeWhile (· != '-')).toString
+    some {s with borderColor := s.borderColor.set side (source.borderColor.get side)}
   | "border-spacing" => some {s with borderSpacingX := source.borderSpacingX, borderSpacingY := source.borderSpacingY}
   | "border-collapse" => some {s with borderCollapse := source.borderCollapse}
   | "caption-side" => some {s with captionBottom := source.captionBottom}
@@ -1823,7 +1926,7 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
       s := {s with margin := {s.margin with top := v, bottom := v}, pos := (s.pos.withMarginOf 0 vo).withMarginOf 2 vo}
   if imageInput || tag == "img" || tag == "object" then
     if let some b := pixelLengthAttribute (attrValue n "border") then
-      s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyle := .solid}
+      s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyle := .all .solid}
   return s
 
 /-- HTML §15.4.3: an `img` in a `picture` takes its `width` and `height` hints from the
@@ -2756,7 +2859,7 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     display := .inline, width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
     columnCount := none, columnWidth := none,
-    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
+    borderStyle := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColor := .all .current,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by
