@@ -441,6 +441,30 @@ def animationRangeCanon (v : String) : String :=
     | [a, "normal"] => if isIdent a then item else a
     | _ => item)
 
+/-- The items of a comma-separated list value, each without white space at its ends. -/
+def commaItems (v : String) : List (List CV) := (splitCommas (CV.parse v)).map stripWs
+
+/-- A range start or end (Scroll-driven Animations 1 §4.2, `animation-range-start` and the
+trigger ranges): per item, a range name at its default offset is the name alone (`entry 0%`
+is `entry` for a start, `exit 100%` is `exit` for an end). -/
+def rangeLonghandCanon (isEnd : Bool) (v : String) : String :=
+  ", ".intercalate ((commaItems v).map fun item =>
+    match item with
+    | [.tok (.ident a), .tok (.pct q)] =>
+      if !["normal", "auto"].contains (lower a) && q == (if isEnd then 100 else 0) then a else serialize item
+    | _ => serialize item)
+
+/-- `view-timeline-inset` (Scroll-driven Animations 1 §3.3.3): per item, two equal insets are
+one. -/
+def insetPairCanon (v : String) : String :=
+  ", ".intercalate ((commaItems v).map fun item =>
+    match item with
+    | [a, b] => if serialize [a] == serialize [b] then serialize [a] else serialize item
+    | _ => serialize item)
+
+#guard rangeLonghandCanon false "entry 0%, exit 10%" == "entry, exit 10%" && rangeLonghandCanon true "cover 100%" == "cover"
+#guard rangeLonghandCanon true "calc(10% + 10px)" == "calc(10% + 10px)" && insetPairCanon "auto auto, 1px 2px" == "auto, 1px 2px"
+
 /-- The canonical forms that the order of the grammar alone does not give, by property. -/
 def canonical (p v : String) : String :=
   match p with
@@ -456,6 +480,11 @@ def canonical (p v : String) : String :=
   | "color-scheme" => colorSchemeCanon v
   | "place-content" => placeContentCanon v
   | "animation-range" => animationRangeCanon v
+  | "animation-range-start" | "timeline-trigger-activation-range-start" | "timeline-trigger-active-range-start" =>
+    rangeLonghandCanon false v
+  | "animation-range-end" | "timeline-trigger-activation-range-end" | "timeline-trigger-active-range-end" =>
+    rangeLonghandCanon true v
+  | "view-timeline-inset" => insetPairCanon v
   | "animation-timing-function" | "transition-timing-function" => easingCanon v
   | "filter" | "backdrop-filter" => filterCanon v
   | "translate" => translateCanon v
@@ -700,6 +729,30 @@ def partsGrammar (row : Property) : Option G :=
           | none => false)
     if ok then some g else none
 
+/-- The shorthands that are comma-separated lists read item by item (Scroll-driven Animations 1
+§3.2.4 `scroll-timeline`, §3.3.5 `view-timeline`, §4.2 `animation-range`; CSS Animations 2
+`timeline-trigger` and its ranges): each item is read by the grammar inside the `#`, and each
+longhand is the list of its parts of the items. -/
+def listShorthands : List String := ["animation-range", "scroll-timeline", "view-timeline",
+  "timeline-trigger", "timeline-trigger-activation-range", "timeline-trigger-active-range"]
+
+/-- The grammar of one item of a list shorthand. -/
+def listItemG (row : Property) : Option G :=
+  if !listShorthands.contains row.name then none else
+  let item := fun (g : G) => match g with
+    | .rep inner 1 none true => some inner
+    | _ => none
+  match propG row.name with
+  | some (.oneOf alts) => alts.findSome? item
+  | some g => item g
+  | none => none
+
+/-- The start and end longhands of a range shorthand (`animation-range`, the trigger ranges). -/
+def rangeEnds (row : Property) : Option (String × String) :=
+  match row.longhands with
+  | [s, e] => if s.endsWith "-range-start" && e.endsWith "-range-end" then some (s, e) else none
+  | _ => none
+
 /-- The shape of a shorthand that has a generic one. -/
 def shapeOf (row : Property) : Option Shape :=
   let n := row.longhands.length
@@ -711,6 +764,17 @@ def shapeOf (row : Property) : Option Shape :=
   else if (row.name == "border" || row.name == "border-block" || row.name == "border-inline") && n % 3 == 0 && n ≥ 3 then
     some (.anyOrder (thirds (n / 3) row.longhands))
   else (partsGrammar row).map Shape.byGrammar
+
+/-- The end of a range item that does not write one (Scroll-driven Animations 1 §4.2): the
+start's range name (at 100%), else the end's initial value. -/
+def rangeEndDefault (endProp start : String) (initial : String → String) : String :=
+  match stripWs (CV.parse start) with
+  | .tok (.ident k) :: _ => if ["normal", "auto"].contains (lower k) then initial endProp else k
+  | _ => initial endProp
+
+/-- A range item as written: the end left out when it is the one the start implies. -/
+def rangeItemText (e sv ev : String) (initial : String → String) : String :=
+  if ev == rangeEndDefault e sv initial then sv else sv ++ " " ++ ev
 
 /-- The values of the tagged matches, in order: property name and canonical text. -/
 def tagged (out : List CV) : List (String × String) :=
@@ -978,6 +1042,24 @@ def expandF : Nat → String → String → Option (List (String × String))
               | some xys => some [("background-position-x", ", ".intercalate (xys.map (·.1))),
                   ("background-position-y", ", ".intercalate (xys.map (·.2)))]
               | none => some [(p, canonical)]
+            else if let some inner := listItemG row then
+              -- a list shorthand: each item alone, then each longhand the list of its parts
+              let one := fun (item : List CV) => do
+                let found ← (matchAll (env none) inner item).map tagged
+                let parts ← found.mapM fun (n, t) =>
+                  if row.longhands.contains n then some [(n, t)] else expandF fuel n t
+                let direct := parts.flatten
+                if direct.any (fun (n, _) => !row.longhands.contains n) then none else
+                some (row.longhands.map fun l => match direct.lookup l with
+                  | some v => v
+                  | none =>
+                    match rangeEnds row with
+                    | some (s, e) => if l == e then rangeEndDefault e ((direct.lookup s).getD "") initialSpecified else initialSpecified l
+                    | none => initialSpecified l)
+              match ((splitCommas top).map stripWs).mapM one with
+              | none => some [(p, canonical)]
+              | some rows => some (row.longhands.zipIdx.map fun (l, k) =>
+                  (l, L4Factoidal.Rendering.CssValues.canonical l (", ".intercalate (rows.map fun r => r.getD k ""))))
             else if gapRuleShorthands.contains p && isRuleList top then
               -- a list of rules (CSS Gaps 1 §4.3): each rule read alone, each longhand the
               -- list of its part, `repeat()` kept around the parts it repeats
@@ -1116,6 +1198,36 @@ def recombineF : Nat → Property → (String → String) → String
       let xs := listItems (get "background-position-x")
       let ys := listItems (get "background-position-y")
       if xs.length != ys.length then "" else ", ".intercalate ((xs.zip ys).map fun (x, y) => positionText x y)
+    else if (listItemG row).isSome then
+      let lists := vs.map listItems
+      let n := (lists.headD []).length
+      if !lists.all (·.length == n) || vs.any cssWide.contains then ""
+      else
+        let items := (List.range n).map fun i =>
+          let get1 := fun (l : String) => match row.longhands.idxOf? l with
+            | some k => (lists.getD k []).getD i ""
+            | none => ""
+          match rangeEnds row with
+          | some (s, e) => rangeItemText e (get1 s) (get1 e) initialSpecified
+          | none =>
+            if row.name == "timeline-trigger" then
+              let act := rangeItemText "timeline-trigger-activation-range-end" (get1 "timeline-trigger-activation-range-start")
+                (get1 "timeline-trigger-activation-range-end") initialSpecified
+              let active := rangeItemText "timeline-trigger-active-range-end" (get1 "timeline-trigger-active-range-start")
+                (get1 "timeline-trigger-active-range-end") initialSpecified
+              let src := get1 "timeline-trigger-source"
+              let name := get1 "timeline-trigger-name"
+              let head := " ".intercalate ((if name == "none" then [] else [name]) ++ (if src == "auto" then [] else [src]) ++
+                (if act == "normal" then [] else [act]))
+              let text := head ++ (if active == "auto" then "" else (if head == "" then "/ " else " / ") ++ active)
+              if text == "" then "none" else text
+            else
+              match row.longhands with
+              | first :: rest => " ".intercalate (get1 first :: rest.filterMap fun l =>
+                  let v := get1 l
+                  if v == initialSpecified l then none else some v)
+              | [] => ""
+        if items.any (· == "") then "" else ", ".intercalate items
     else if gapRuleShorthands.contains row.name && vs.any (fun v => isRuleList (stripWs (CV.parse v))) then
       -- a list of rules: each item put together from the same item of each longhand
       let lists := vs.map fun v => (splitCommas (stripWs (CV.parse v))).map stripWs
@@ -1224,7 +1336,7 @@ def recombineF : Nat → Property → (String → String) → String
 /-- A shorthand that `recombine` writes from its longhands: one of a generic shape, or
 `background` and `background-position` (written by layers). -/
 def recombinable (row : Property) : Bool :=
-  (shapeOf row).isSome || row.name == "background" || row.name == "background-position" || row.name == "mask"
+  (shapeOf row).isSome || (listItemG row).isSome || row.name == "background" || row.name == "background-position" || row.name == "mask"
 
 /-- The value of a shorthand of a generic shape from the values of its longhands (`get`
 answers "" for one that is not set): "" when it can not be written as one value. -/
@@ -1468,6 +1580,12 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "animation-range" "normal normal" == some "normal" && specified "animation-range" "entry 0% entry 100%" == some "entry"
 #guard specified "animation-range" "100px normal" == some "100px" && specified "animation-range" "entry normal" == some "entry normal"
 #guard specified "animation-range" "0% 100%" == some "0%" && specified "animation-range" "entry 50% exit 50%" == some "entry 50% exit 50%"
+#guard expand "animation-range" "entry 0%, exit" == some [("animation-range-start", "entry, exit"), ("animation-range-end", "entry, exit")]
+#guard expand "animation-range" "100px" == some [("animation-range-start", "100px"), ("animation-range-end", "normal")]
+#guard expand "view-timeline" "--abcd block auto auto" == some [("view-timeline-name", "--abcd"), ("view-timeline-axis", "block"), ("view-timeline-inset", "auto")]
+#guard expand "scroll-timeline" "--a y, --b" == some [("scroll-timeline-name", "--a, --b"), ("scroll-timeline-axis", "y, block")]
+#guard recombine ((lookup "animation-range").get!) (fun l => if l == "animation-range-start" then "entry, 10%" else "entry, normal") == "entry, 10%"
+#guard recombine ((lookup "view-timeline").get!) (fun l => if l == "view-timeline-name" then "--abcd" else if l == "view-timeline-axis" then "block" else "1px 2px") == "--abcd 1px 2px"
 #guard specified "grid-template" "none / [] 0px" == some "none / 0px" && specified "grid-template" "[] 10px [] / [] auto []" == some "10px / auto"
 #guard specified "grid-template" "\"a\" 10px [] [b] \"b\" 20px / 30px" == some "\"a\" 10px [b] \"b\" 20px / 30px"
 #guard specified "grid-template-rows" "repeat(1, [] 10px [])" == some "repeat(1, 10px)" && specified "grid" "[a] \"a\" 10px []" == some "[a] \"a\" 10px"

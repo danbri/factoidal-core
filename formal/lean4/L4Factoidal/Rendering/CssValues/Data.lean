@@ -705,7 +705,7 @@ def properties : Array (String × String × Bool × String × String) := #[
   ("text-wrap-mode", "wrap | nowrap", true, "wrap", ""),
   ("text-wrap-style", "auto | balance | stable | pretty", true, "auto", ""),
   ("timeline-scope", "none | <dashed-ident>#", false, "none", ""),
-  ("timeline-trigger", "none | [ <'timeline-trigger-name'> <'timeline-trigger-source'> <'timeline-trigger-activation-range'> [ / <'timeline-trigger-active-range'> ]? ]#", false, "", "timeline-trigger-name timeline-trigger-source timeline-trigger-activation-range-start timeline-trigger-activation-range-end timeline-trigger-active-range-start timeline-trigger-active-range-end"),
+  ("timeline-trigger", "none | [ <'timeline-trigger-name'>? <'timeline-trigger-source'>? <'timeline-trigger-activation-range'>? [ / <'timeline-trigger-active-range'> ]? ]#", false, "", "timeline-trigger-name timeline-trigger-source timeline-trigger-activation-range-start timeline-trigger-activation-range-end timeline-trigger-active-range-start timeline-trigger-active-range-end"),
   ("timeline-trigger-activation-range", "[ <'timeline-trigger-activation-range-start'> <'timeline-trigger-activation-range-end'>? ]#", false, "", "timeline-trigger-activation-range-start timeline-trigger-activation-range-end"),
   ("timeline-trigger-activation-range-end", "[ normal | <length-percentage> | <timeline-range-name> <length-percentage>? ]#", false, "normal", ""),
   ("timeline-trigger-activation-range-start", "[ normal | <length-percentage> | <timeline-range-name> <length-percentage>? ]#", false, "normal", ""),
