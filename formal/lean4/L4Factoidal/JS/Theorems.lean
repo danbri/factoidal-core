@@ -151,6 +151,19 @@ theorem arrayIndex?_keyOfNum (x : Float) (h : numIndex x < noIndex) :
 theorem front_keyOfNum (x : Float) (h : numIndex x < noIndex) : (keyOfNum x).front.isDigit = true := by
   rw [keyOfNum_numIndex x h]; exact front_toString_isDigit _
 
+/-- The key of an index Number does not start with the private-name mark (a digit is not it). -/
+theorem front_keyOfNum_privMark (x : Float) (h : numIndex x < noIndex) :
+    ((keyOfNum x).front == privMark) = false := by
+  have hd := front_keyOfNum x h
+  cases he : ((keyOfNum x).front == privMark) with
+  | false => rfl
+  | true =>
+    have hc : (keyOfNum x).front = privMark := by simpa using he
+    rw [hc] at hd; exact absurd hd (by decide)
+
+theorem isPrivKey_keyOfNum (x : Float) (h : numIndex x < noIndex) : isPrivKey (keyOfNum x) = false :=
+  front_keyOfNum_privMark x h
+
 /-- **Kind: refinement.** `[[Get]]` of a typed array's element by the key of a Number is the pure
 read `typedElemAt` of that index, with the heap unchanged, at every fuel but 0. -/
 theorem getV_typedElem {H : Type} (n id : Nat) (x : Float) (h : HeapOf H) (v : Value) (hx : numIndex x < noIndex)
@@ -161,7 +174,7 @@ theorem getV_typedElem {H : Type} (n id : Nat) (x : Float) (h : HeapOf H) (v : V
   cases hk : (h.obj id).kind with
   | typed ty b off len =>
     rw [hk] at hv
-    simp only [front_keyOfNum x hx, arrayIndex?_keyOfNum x hx, if_true]
+    simp only [front_keyOfNum_privMark x hx, Bool.false_eq_true, if_false, front_keyOfNum x hx, arrayIndex?_keyOfNum x hx, if_true]
     simp only [getObj, liveLen, bind, EStateM.bind, pure, EStateM.pure, get, getThe, MonadStateOf.get, EStateM.get, hk]
     rw [← hv]
   | _ => rw [hk] at hv; exact absurd hv.symm hne
@@ -307,13 +320,14 @@ theorem putV_typedNum {H : Type} (n id : Nat) (x y : Float) (strict : Bool) (h :
     (hx : numIndex x < noIndex)
     (hconv : typedConv (H := H) n ty (.num y) = pure (.num y)) :
     putV (n + 1) (.obj id) (keyOfNum x) (.num y) strict h =
-      (if numIndex x < (if typedOob (isDetached (h.obj b)) off len (elemSize ty) (bufferBytes (h.obj b)).size then 0 else len)
+      (if numIndex x < (typedLenOf (isDetached (h.obj b)) off len (elemSize ty) (bufferBytes (h.obj b)).size)
         then typedWriteV ty b off (numIndex x) (.num y) else pure ()) h := by
   rw [putV.eq_def]
   simp only [bind, EStateM.bind, setOwnData_typed h id ty b off len _ _ hk hb, getObj, pure, EStateM.pure, get, getThe,
-    MonadStateOf.get, EStateM.get, hk, arrayIndex?_keyOfNum x hx, hconv, liveLen]
-  simp only [EStateM.bind, EStateM.get, EStateM.pure, Bool.false_eq_true, if_false, hk, hconv, pure]
-  simp only [bind_pure_unit]
+    MonadStateOf.get, EStateM.get, hk, arrayIndex?_keyOfNum x hx, hconv, liveLen,
+    isPrivKey_keyOfNum x hx, Bool.false_eq_true, if_false]
+  try simp only [EStateM.bind, EStateM.get, EStateM.pure, Bool.false_eq_true, if_false, hk, hconv, pure]
+  try simp only [bind_pure_unit]
 #print axioms putV_typedNum
 
 /-- **Kind: refinement.** The form the evaluator and the register machine now write for `o[x] = v`
@@ -338,7 +352,7 @@ theorem typedSetNum_refines {H : Type} (n id : Nat) (x : Float) (v : Value) (str
         obtain ⟨⟨hx, hbig⟩, hb⟩ := hc'
         simp only [hc, if_true]
         rw [putV_typedNum (n + 1) id x y strict h ty b off len hk hb hx (typedConv_num n ty y hbig)]
-        by_cases hl : numIndex x < (if typedOob (isDetached (h.obj b)) off len (elemSize ty) (bufferBytes (h.obj b)).size = true then 0 else len)
+        by_cases hl : numIndex x < (typedLenOf (isDetached (h.obj b)) off len (elemSize ty) (bufferBytes (h.obj b)).size)
         · simp only [hl, if_true]
           unfold EStateM.bind
           cases typedWriteV ty b off (numIndex x) (Value.num y) h <;> rfl

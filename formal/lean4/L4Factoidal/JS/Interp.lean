@@ -1565,7 +1565,7 @@ def typedElemAt (h : HeapOf H) (id i : Nat) : Value :=
   match (h.obj id).kind with
   | .typed ty b off len =>
     let bo := h.obj b
-    let live := if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len
+    let live := typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size
     if i < live then typedRead ty (bufferBytes bo) (off + i * elemSize ty) else .undef
   | _ => .hole
 
@@ -1591,7 +1591,7 @@ overwrite. Called after the Array path (`setElem`) has declined, so an Array wri
     let i := numIndex x
     if i < noIndex && !typedIsBig ty && h.undoObjs.base ≤ id then
       let bo := h.obj b
-      let live := if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len
+      let live := typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size
       if i < live then typedWriteV ty b off i v
       pure true
     else pure false
