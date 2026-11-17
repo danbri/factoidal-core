@@ -113,6 +113,27 @@ test('the newest build of main is found on the last of 3 pages, and the later br
   assert(!seen.some((u) => u.includes('0123456789ab')), 'drafts are not candidates');
 });
 
+test('a page GitHub refuses (HTTP 422 past 1000 results) is left out with a note; at most 10 pages are asked for', async () => {
+  const base = github();
+  const seen = [];
+  const fetchImpl = async (url, o) => {
+    seen.push(url);
+    if (url === API + 1) {
+      const r = await base(url, o);
+      return { ...r, headers: { get: (k) => (k.toLowerCase() === 'link' ? '<https://x/r?per_page=100&page=2>; rel="next", <https://x/r?per_page=100&page=11>; rel="last"' : null) } };
+    }
+    if (url === API + 11) return { ok: false, status: 422, headers: { get: () => null }, json: async () => ({}) };
+    return base(url, o);
+  };
+  const { releases, notes } = await mainReleases({ fetchImpl, env: {} });
+  assert.equal(releases[0].tag, mac(sha('d')));
+  assert(!seen.includes(API + 11), 'page 11 is not asked for');
+  const refused = async (url, o) => (url === API + 3 ? { ok: false, status: 422, headers: { get: () => null }, json: async () => ({}) } : base(url, o));
+  const partial = await mainReleases({ fetchImpl: refused, env: {} });
+  assert(partial.notes.some((n) => /release list page 3: .*HTTP 422/.test(n)), partial.notes.join('\n'));
+  assert.equal(partial.releases[0].tag, mac(sha('c')), 'the newest of the pages read and the pointer');
+});
+
 test('a first page of 100 alone (the old lookup) would have missed it', async () => {
   const fetchImpl = github();
   const first = await (await fetchImpl(API + 1)).json();
