@@ -963,7 +963,8 @@ shadow root when open (`shadowRoot`); 21 a shadow root's host; 22 a shadow root'
 element's shadow root, open or closed; 27 1 when the arena has a shadow host (for any `node`,
 even with no document); 28 the root
 (`getRootNode()`); 30 on a frame element: 1 when its initial `about:blank` load was waiting
-and is now taken to run at once (`takeBlankLoad`), else 0. -1 none, -2 no such node. -/
+and is now taken to run at once (`takeBlankLoad`), else 0; 31 1 when the node document is in
+quirks mode (DOM §4.5 `compatMode`), else 0. -1 none, -2 no such node. -/
 def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   let d := s.dom
   let n := arg args 0
@@ -1001,6 +1002,7 @@ def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   | 27 => (s, ret (if d.hasShadow then 1 else 0))
   | 28 => (s, ret (d.root n))
   | 30 => if frameOwner x then (let (s', taken) := takeBlankLoad s n; (s', ret (if taken then 1 else 0))) else (s, ret 0)
+  | 31 => (s, ret (if (d.get (if x.type == .document then n else x.doc)).quirks then 1 else 0))
   | 29 => if frameOwner x then (s, ret (frameBits s n))
     else if x.type == .document then (s, ret (if s.parentOrigin.isSome then 128 else 0))
     else (s, ret (-1))
@@ -1187,7 +1189,7 @@ def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
 document with `html`, `head` and `body` and no doctype. -/
 def aboutBlank : Dom := Id.run do
   let el := fun (d : Dom) (name : String) => d.create { type := .element, doc := 0, ns := some htmlNS, lname := name }
-  let d : Dom := { nodes := #[{ type := .document, doc := 0 }] }
+  let d : Dom := { nodes := #[{ type := .document, doc := 0, quirks := true }] }
   let (d, html) := el d "html"
   let d := d.linkChild 0 html none
   let (d, head) := el d "head"
@@ -1266,6 +1268,19 @@ def frameArena (source : String) (xml : Bool) : Dom :=
   else if xml then xmlDocument "" source
   else parseHtmlDocument source
 
+/-- The document of frame element `el` from its source (`frameArena`): an iframe srcdoc
+document is in no-quirks mode whatever its DOCTYPE (HTML §13.2.6.4.1, "initial"). -/
+def frameArenaFor (d : Dom) (el : Nat) (source : String) (xml : Bool) : Dom :=
+  let a := frameArena source xml
+  if (attrValue? d el "srcdoc").isSome then a.setNode 0 fun y => { y with quirks := false } else a
+
+/-- Kind: functional (document mode). Says: the document of a frame element with a `srcdoc`
+attribute is never in quirks mode. -/
+theorem frameArenaFor_srcdoc (d : Dom) (el : Nat) (source : String) (xml : Bool)
+    (h : (attrValue? d el "srcdoc").isSome) (hs : 0 < (frameArena source xml).size) :
+    ((frameArenaFor d el source xml).get 0).quirks = false := by
+  simp [frameArenaFor, h, Dom.get, Dom.setNode, Array.getD, hs]
+
 /-- A frame navigation the document's load event waits for is under way: a `src` URL for the
 embedder, or a `srcdoc`. -/
 def framesLoading (s : State) : Bool :=
@@ -1337,7 +1352,7 @@ def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false
   if !isNode s.dom el then (s, none) else
   let s := s.ensureBases
   let inherited := s.documentBase (s.dom.get el).doc
-  let (d, root) := s.dom.graft (frameArena source xml)
+  let (d, root) := s.dom.graft (frameArenaFor s.dom el source xml)
   let url := navURL.getD (if (attrValue? s.dom el "srcdoc").isSome then "about:srcdoc" else "about:blank")
   let withBase := { s with
     docURLs := s.docURLs.push (root, url)
@@ -1914,7 +1929,7 @@ def Command.apply (d : Dom) : Command → Except String Dom
     return d.assignSlot sl nodes
   | .frameDocument el source xml r => do
     checkNode d el
-    made r (d.graft (frameArena source xml))
+    made r (d.graft (frameArenaFor d el source xml))
   | .importNode n doc deep r => do
     checkNode d n; checkNode d doc
     if (d.get doc).type != .document || (d.get n).type == .document then throw "script command: NotSupportedError"

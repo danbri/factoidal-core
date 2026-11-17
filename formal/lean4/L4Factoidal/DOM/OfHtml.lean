@@ -103,6 +103,9 @@ def ofTreeBuilder (dom : Array DNode) (shadow : Bool := false) : Dom := Id.run d
 `shadow` (the default: a document a browsing context loads), declarative shadow roots are
 attached; `DOMParser` passes `false` (HTML §8.5.1.1). -/
 def parseHtmlDocument (src : String) (scripting : Bool := false) (shadow : Bool := true) : Dom :=
-  ofTreeBuilder (parseDocumentState src scripting).dom shadow
+  let tb := parseDocumentState src scripting
+  let d := ofTreeBuilder tb.dom shadow
+  -- the document's mode is the parser's (HTML §13.2.6.4.1, "initial" insertion mode)
+  if tb.quirks then d.setNode 0 fun y => { y with quirks := true } else d
 
 end L4Factoidal.DOM

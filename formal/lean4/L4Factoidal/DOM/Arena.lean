@@ -118,6 +118,10 @@ structure Node where
   /-- A document's content type (DOM §4.5); "" is the default of its type, "text/html"
   or "application/xml". -/
   contentType : String := ""
+  /-- A document's mode (DOM §4.5): `true` for "quirks", `false` for "no-quirks" (and for
+  "limited-quirks", which nothing here reads). The HTML parser sets it from the DOCTYPE
+  (HTML §13.2.6.4.1); a document made by script is "no-quirks". -/
+  quirks : Bool := false
   /-- The checkedness of an `input` once its dirty checkedness flag is set (HTML §4.10.5);
   `none` while the flag is false (`DOM.Forms.checkedness`). -/
   checkedness : Option Bool := none
