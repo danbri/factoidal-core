@@ -36,6 +36,9 @@ the computed role of that node); the depth bound. Proved of the name: the order 
 first steps (`aria-labelledby` before `aria-label` before the host language) and that a
 node being computed for an `aria-labelledby` does not follow `aria-labelledby` again (the
 cycle guard). Not proved: that every exposed node of the document has an entry (tested).
+
+Also here: what a macOS element says of an entry (`Entry.macJson`, Core-AAM's AX API
+mapping), and what a live region speaks after a change (`announcements`).
 -/
 import L4Factoidal.HTML.AccessibleRole
 import L4Factoidal.JSON.Serialize
@@ -43,7 +46,8 @@ import Std.Data.HashSet
 import Std.Data.HashMap
 
 namespace L4Factoidal.HTML.AccessibleTree
-open L4Factoidal.DOM L4Factoidal.DOM.Forms L4Factoidal.HTML.AccessibleRole
+open L4Factoidal.DOM L4Factoidal.HTML.AccessibleRole
+open L4Factoidal.DOM.Forms hiding attr?
 
 /-- A border box in CSS px of the page (rounded). -/
 structure Rect where
@@ -136,7 +140,8 @@ def kind (d : Dom) (env : Env) (k : NodeId) : Kind :=
   | .element =>
     if !env.visible k then .skip else
     let role := computedRole d k
-    if childrenPresentational.contains role then .leaf
+    -- a `textarea`'s text is its value, not content
+    if childrenPresentational.contains role || isHtml d k ["textarea"] then .leaf
     else if role == "" || role == "generic" || role == "none" then
       (if focusable d k || hasGlobalAria d k then .node else .skip)
     else .node
@@ -465,7 +470,7 @@ theorem tree_spec (d : Dom) (env : Env) (root : NodeId) :
     exact ⟨h2, h3, h4, h5⟩
   · show (List.map (·.id) (walk d env maxDepth 0 root {}).out.reverse).Nodup
     rw [List.map_reverse]
-    exact List.nodup_reverse.mpr hnd
+    exact List.pairwise_reverse.mpr (List.Pairwise.imp (fun h => Ne.symm h) hnd)
 
 /-- Says: every entry of the tree is reached from the root by a path of children on which
 no node is pruned. So nothing of a pruned subtree is in the tree: not the pruned node
@@ -506,7 +511,8 @@ theorem tree_role (d : Dom) (env : Env) (root : NodeId) (e : Entry) (h : e ∈ t
     (he : (d.get e.id).type = .element) : e.role = computedRole d e.id := by
   have h1 : e.role = (entry d env e.depth e.id).role := congrArg Entry.role (tree_entry d env root e h)
   rw [h1]
-  simp [entry, he]
+  simp only [entry, he]
+  rfl
 
 /-- Says: no node of the document has two entries. -/
 theorem tree_nodup (d : Dom) (env : Env) (root : NodeId) : ((tree d env root).map (·.id)).Nodup :=
@@ -530,8 +536,10 @@ theorem labelledby_first (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool) (i
     textAlternative d (fuel + 1) k false content =
       collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
         (byIdIn d k id).map fun j => textAlternative d fuel j true true)) := by
+  have h1 : (NodeType.element == NodeType.text) = false := rfl
+  have h2 : (NodeType.element != NodeType.element) = false := rfl
   rw [textAlternative]
-  simp [he, hh, hl, hne]
+  simp [he, h1, h2, hh, hl, hne]
 
 /-- Says (step 2D before 2E and later): with no `aria-labelledby`, a non-empty `aria-label`
 is the text alternative of an element whose name is not being taken from the content of
@@ -541,8 +549,10 @@ theorem aria_label_second (d : Dom) (k : NodeId) (fuel : Nat) (v : String)
     (hl : attr? d k "aria-labelledby" = none) (hv : attr? d k "aria-label" = some v)
     (hne : v.trimAscii.toString.isEmpty = false) :
     textAlternative d (fuel + 1) k false false = v.trimAscii.toString := by
+  have h1 : (NodeType.element == NodeType.text) = false := rfl
+  have h2 : (NodeType.element != NodeType.element) = false := rfl
   rw [textAlternative]
-  simp [he, hh, hl, hv, hne]
+  simp [he, h1, h2, hh, hl, hv, hne]
 
 /-- Says (the cycle guard, step 2B's "the current node is not already part of an
 `aria-labelledby` traversal"): a node computed for an `aria-labelledby` does not follow its
@@ -564,8 +574,10 @@ theorem labelledby_once (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool)
         if !title.trimAscii.toString.isEmpty then title else
         let ph := (attr? d k "placeholder").getD ""
         if !ph.trimAscii.toString.isEmpty then ph else (attr? d k "aria-placeholder").getD "") := by
+  have h1 : (NodeType.element == NodeType.text) = false := rfl
+  have h2 : (NodeType.element != NodeType.element) = false := rfl
   rw [textAlternative]
-  simp [he]
+  simp [he, h1, h2]
 
 /-! ## The tree as JSON, for a host -/
 
@@ -588,6 +600,44 @@ def Entry.json (e : Entry) : Json :=
 open L4Factoidal.JSON in
 /-- The tree: `{"nodes": [...]}` in tree order; a host makes the nesting from `depth`. -/
 def json (entries : List Entry) : Json := .object [("nodes", .array (entries.map Entry.json))]
+
+/-! ## For a test driver (WebDriver's accessibility properties, `test_driver.get_accessibility_properties_for_element`) -/
+
+/-- The accessibility ID of a node's entry. -/
+def accId (k : NodeId) : String := "n" ++ toString k
+
+/-- The node of an accessibility ID. -/
+def ofAccId (s : String) : Option NodeId :=
+  if s.startsWith "n" then (s.drop 1).toString.toNat? else none
+
+open L4Factoidal.JSON in
+/-- The properties of the entry of node `k` in a tree: `accessibilityId`, `role`, `label`,
+its states and properties, `parent` and `children` (accessibility IDs, in order). None
+when the node has no entry. -/
+def propertiesOf (entries : List Entry) (k : NodeId) : Option Json :=
+  let all := entries.toArray
+  match all.findIdx? (·.id == k) with
+  | none => none
+  | some i =>
+    match all[i]? with
+    | none => none
+    | some e =>
+      let below := (all.extract (i + 1) all.size).toList.takeWhile (·.depth > e.depth)
+      let children := below.filter (·.depth == e.depth + 1)
+      let parent := (all.extract 0 i).toList.reverse.find? (·.depth < e.depth)
+      some (.object ([("accessibilityId", Json.string (accId e.id)), ("role", .string e.role), ("label", .string e.name)] ++
+        e.props.map (fun (p, v) => (p, Json.string v)) ++
+        (match parent with | some p => [("parent", Json.string (accId p.id))] | none => []) ++
+        [("children", .array (children.map fun c => Json.string (accId c.id)))]))
+
+open L4Factoidal.JSON in
+/-- The properties of node `k` of a document with no layout (a test driver's question): its
+entry in the tree, or, for a node the tree leaves out, its entry alone. -/
+def propertiesIn (d : Dom) (k : NodeId) : Json :=
+  let env := Env.ofMarkup d
+  match propertiesOf (tree d env (d.root k)) k with
+  | some j => j
+  | none => (propertiesOf [entry d env 0 k] k).getD .null
 
 /-! ## The tree as a page, for a person (the "Accessibility tree" view) -/
 
@@ -615,6 +665,196 @@ def viewPage (about : String) (entries : List Entry) : String :=
   "small{color:#555}q{color:#053}</style></head><body><h1>Accessibility tree</h1><p>What the built-in engine gives assistive technology for <code>" ++
   escapeHtml about ++ "</code>: " ++ toString entries.length ++ " nodes. Each line is a role, the accessible name, then the element, " ++
   "description, states and border box.</p><ul>" ++ String.join (entries.map Entry.line) ++ "</ul></body></html>"
+
+/-! ## For macOS: the AX API (Core Accessibility API Mappings 1.2 §5.4, the "AX API" column)
+
+The engine decides what an NSAccessibility element says; the window library copies it. -/
+
+/-- The AX role and subrole of a role. -/
+def macRole (role : String) : String × String :=
+  match role with
+  | "alert" => ("AXGroup", "AXApplicationAlert")
+  | "alertdialog" => ("AXGroup", "AXApplicationAlertDialog")
+  | "application" => ("AXGroup", "AXWebApplication")
+  | "article" => ("AXGroup", "AXDocumentArticle")
+  | "banner" => ("AXGroup", "AXLandmarkBanner")
+  | "button" => ("AXButton", "")
+  | "cell" | "gridcell" | "columnheader" | "rowheader" => ("AXCell", "")
+  | "checkbox" => ("AXCheckBox", "")
+  | "code" => ("AXGroup", "AXCodeStyleGroup")
+  | "combobox" => ("AXComboBox", "")
+  | "complementary" => ("AXGroup", "AXLandmarkComplementary")
+  | "contentinfo" => ("AXGroup", "AXLandmarkContentInfo")
+  | "definition" => ("AXGroup", "AXDefinition")
+  | "deletion" => ("AXGroup", "AXDeleteStyleGroup")
+  | "dialog" => ("AXGroup", "AXApplicationDialog")
+  | "document" | "graphics-document" => ("AXGroup", "AXDocument")
+  | "feed" | "group" => ("AXGroup", "AXApplicationGroup")
+  | "form" => ("AXGroup", "AXLandmarkForm")
+  | "grid" | "table" | "treegrid" => ("AXTable", "")
+  | "heading" => ("AXHeading", "")
+  | "image" => ("AXImage", "")
+  | "insertion" => ("AXGroup", "AXInsertStyleGroup")
+  | "link" => ("AXLink", "")
+  | "list" => ("AXList", "AXContentList")
+  | "listbox" => ("AXList", "")
+  | "log" => ("AXGroup", "AXApplicationLog")
+  | "main" => ("AXGroup", "AXLandmarkMain")
+  | "marquee" => ("AXGroup", "AXApplicationMarquee")
+  | "math" => ("AXGroup", "AXDocumentMath")
+  | "menu" => ("AXMenu", "")
+  | "menubar" => ("AXMenuBar", "")
+  | "menuitem" | "menuitemcheckbox" | "menuitemradio" => ("AXMenuItem", "")
+  | "meter" => ("AXLevelIndicator", "")
+  | "navigation" => ("AXGroup", "AXLandmarkNavigation")
+  | "note" => ("AXGroup", "AXDocumentNote")
+  | "option" | "text" => ("AXStaticText", "")
+  | "progressbar" => ("AXProgressIndicator", "")
+  | "radio" => ("AXRadioButton", "")
+  | "radiogroup" => ("AXRadioGroup", "")
+  | "region" => ("AXGroup", "AXLandmarkRegion")
+  | "row" => ("AXRow", "")
+  | "scrollbar" => ("AXScrollBar", "")
+  | "search" => ("AXGroup", "AXLandmarkSearch")
+  | "searchbox" => ("AXTextField", "AXSearchField")
+  | "separator" => ("AXSplitter", "")
+  | "slider" => ("AXSlider", "")
+  | "spinbutton" => ("AXIncrementor", "")
+  | "status" => ("AXGroup", "AXApplicationStatus")
+  | "subscript" => ("AXGroup", "AXSubscriptStyleGroup")
+  | "superscript" => ("AXGroup", "AXSuperscriptStyleGroup")
+  | "switch" => ("AXCheckBox", "AXSwitch")
+  | "tab" => ("AXRadioButton", "AXTabButton")
+  | "tablist" => ("AXTabGroup", "")
+  | "tabpanel" => ("AXGroup", "AXTabPanel")
+  | "term" => ("AXGroup", "AXTerm")
+  | "textbox" => ("AXTextField", "")
+  | "time" => ("AXGroup", "AXTimeGroup")
+  | "timer" => ("AXGroup", "AXApplicationTimer")
+  | "toolbar" => ("AXToolbar", "")
+  | "tooltip" => ("AXGroup", "AXUserInterfaceTooltip")
+  | "tree" => ("AXOutline", "")
+  | "treeitem" => ("AXRow", "AXOutlineRow")
+  | _ => ("AXGroup", "")
+
+/-- Roles that an assistive technology can press (the AXPress action). -/
+def pressRoles : List String :=
+  ["button", "link", "checkbox", "radio", "switch", "menuitem", "menuitemcheckbox", "menuitemradio",
+   "tab", "option", "treeitem"]
+
+/-- A decimal number as JSON takes one: an optional `-`, digits, an optional `.` and digits. -/
+def isJsonNumber (s : String) : Bool :=
+  let body := if s.startsWith "-" then (s.drop 1).toString else s
+  match body.splitOn "." with
+  | [a] => !a.isEmpty && a.all Char.isDigit && (a.length == 1 || !a.startsWith "0")
+  | [a, b] => !a.isEmpty && a.all Char.isDigit && (a.length == 1 || !a.startsWith "0") && !b.isEmpty && b.all Char.isDigit
+  | _ => false
+
+open L4Factoidal.JSON in
+/-- What the NSAccessibility element of an entry says: `role`, `subrole`, and what applies
+of `label`, `value`, `help`, `roleDescription`, `enabled`, `press`, `focus`, `focused`,
+`selected`, `expanded`, `required`. A tri-state is 0, 1 or 2 (mixed); a heading's value is
+its level; text is a static text whose value is the text. -/
+def Entry.macJson (e : Entry) : Json :=
+  let prop := fun (key : String) => e.props.lookup key
+  let (role, subrole) :=
+    if e.depth == 0 && e.role == "document" then ("AXWebArea", "")
+    else if e.role == "button" && (prop "pressed").isSome then ("AXCheckBox", "AXToggle")
+    else if e.role == "button" && (prop "haspopup").isSome then ("AXPopUpButton", "")
+    else if e.role == "textbox" && prop "multiline" == some "true" then ("AXTextArea", "")
+    else macRole e.role
+  let tri := fun (v : String) => Json.number (if v == "true" then "1" else if v == "mixed" then "2" else "0")
+  let value : Option Json :=
+    if e.role == "text" then some (.string e.name)
+    else match prop "level", prop "checked", prop "pressed", prop "valuenow", prop "valuetext", prop "value" with
+      | some l, _, _, _, _, _ => some (.number l)
+      | _, some c, _, _, _, _ => some (tri c)
+      | _, _, some p, _, _, _ => some (tri p)
+      | _, _, _, _, some t, _ => some (.string t)
+      | _, _, _, some n, _, _ => some (if isJsonNumber n then .number n else .string n)
+      | _, _, _, _, _, some v => some (.string v)
+      | _, _, _, _, _, _ => none
+  let disabled := prop "disabled" == some "true"
+  let flag := fun (key : String) (on : Bool) => if on then [(key, Json.bool true)] else []
+  .object ([("role", .string role)] ++
+    (if subrole.isEmpty then [] else [("subrole", .string subrole)]) ++
+    (if e.role == "text" || e.name.isEmpty then [] else [("label", .string e.name)]) ++
+    (match value with | some v => [("value", v)] | none => []) ++
+    (if e.description.isEmpty then [] else [("help", .string e.description)]) ++
+    (match prop "roledescription" with | some v => [("roleDescription", .string v)] | none => []) ++
+    (if disabled then [("enabled", .bool false)] else []) ++
+    flag "press" (!disabled && (pressRoles.contains e.role || e.tag == "summary")) ++
+    flag "focus" e.focusable ++ flag "focused" (prop "focused" == some "true") ++
+    flag "selected" (prop "selected" == some "true") ++ flag "expanded" (prop "expanded" == some "true") ++
+    flag "required" (prop "required" == some "true"))
+
+open L4Factoidal.JSON in
+/-- The tree for the macOS window library: each node of `json` with its `ax`. -/
+def jsonMac (entries : List Entry) : Json :=
+  .object [("nodes", .array (entries.map fun e => match e.json with
+    | .object fields => .object (fields ++ [("ax", e.macJson)])
+    | other => other))]
+
+/-! ## For a host that is a web page: the mirror element of an entry
+
+A host inside a browser (the Hub) gives screen readers a hidden element per entry. The
+engine decides what it carries: `role` (ARIA's own name for it), `aria` (the `aria-`
+attributes, named without the prefix: `label`, `description`, and the states and
+properties that ARIA has) and `text` (the text of a text node, the value of a text
+field). The host writes `role`, `aria-` + each name of `aria`, and `text` as text; it
+writes no other attribute, so nothing of a page becomes markup or script of the host page. -/
+
+/-- States of `props` that are not ARIA attributes. -/
+def notAria : List String := ["value", "url", "focused"]
+
+open L4Factoidal.JSON in
+def Entry.webJson (e : Entry) : Json :=
+  let role := if e.role == "image" then "img" else e.role
+  let aria : List (String × Json) :=
+    (if e.role == "text" || e.name.isEmpty then [] else [("label", Json.string e.name)]) ++
+    (if e.description.isEmpty then [] else [("description", Json.string e.description)]) ++
+    (e.props.filter fun (k, _) => !notAria.contains k).map fun (k, v) => (k, Json.string v)
+  let text := if e.role == "text" then some e.name else e.props.lookup "value"
+  .object ((if role.isEmpty || role == "text" then [] else [("role", Json.string role)]) ++
+    (if aria.isEmpty then [] else [("aria", Json.object aria)]) ++
+    (match text with | some t => [("text", Json.string t)] | none => []))
+
+open L4Factoidal.JSON in
+/-- The tree for a web page host: each node of `json` with its `web`. -/
+def jsonWeb (entries : List Entry) : Json :=
+  .object [("nodes", .array (entries.map fun e => match e.json with
+    | .object fields => .object (fields ++ [("web", e.webJson)])
+    | other => other))]
+
+/-! ## Live regions (WAI-ARIA 1.2 §6.6.2 `aria-live`)
+
+A live region's text is spoken when it changes. The engine keeps the regions of the last
+tree it gave and says which to speak; a host only passes the words on. -/
+
+/-- A live region of a tree: its node, `polite` or `assertive`, and its text. -/
+abbrev Region := NodeId × String × String
+
+def regions (d : Dom) (entries : List Entry) : List Region :=
+  entries.filterMap fun e => match e.props.lookup "live" with
+    | some live => if live == "polite" || live == "assertive" then
+        some (e.id, live, clip (collapse ((d.textContent e.id).getD ""))) else none
+    | none => none
+
+/-- What to speak after a change: the regions with text that were not in the last tree
+with that text, as (politeness, text). -/
+def announcements (old new : List Region) : List (String × String) :=
+  new.filterMap fun r => if r.2.2.isEmpty || old.contains r then none else some (r.2.1, r.2.2)
+
+/-- Says: a tree with the same live regions as the last one speaks nothing. -/
+theorem announcements_same (rs : List Region) : announcements rs rs = [] := by
+  unfold announcements
+  rw [List.filterMap_eq_nil_iff]
+  intro r hr
+  have hc : rs.contains r = true := List.contains_iff_mem.mpr hr
+  simp [hc]
+
+/-- Says: with no region there is nothing to speak. -/
+theorem announcements_nil (old : List Region) : announcements old [] = [] := rfl
 
 /-! ## Tests -/
 
@@ -663,6 +903,31 @@ private def shape (html : String) : List (Nat × String × String) :=
   let b := ((List.range d.size).find? fun i => (d.get i).lname == "button").getD 0
   (tree d ((Env.ofMarkup d).withBoxes #[(b, ⟨10, 20, 30, 10⟩), (b, ⟨5, 30, 10, 10⟩)])).map (·.box)) ==
   [none, some ⟨5, 20, 35, 20⟩]
+#guard (treeOf "<title>T</title><h2>Hi</h2><button aria-pressed=mixed>b</button><input type=checkbox checked disabled><div role=slider aria-valuenow=0.5 tabindex=0></div><textarea>t</textarea>").map
+    (fun e => e.macJson.toString) ==
+  ["{\"role\":\"AXWebArea\",\"label\":\"T\"}", "{\"role\":\"AXHeading\",\"label\":\"Hi\",\"value\":2}",
+   "{\"role\":\"AXStaticText\",\"value\":\"Hi\"}",
+   "{\"role\":\"AXCheckBox\",\"subrole\":\"AXToggle\",\"label\":\"b\",\"value\":2,\"press\":true,\"focus\":true}",
+   "{\"role\":\"AXCheckBox\",\"value\":1,\"enabled\":false}",
+   "{\"role\":\"AXSlider\",\"value\":0.5,\"focus\":true}",
+   "{\"role\":\"AXTextArea\",\"value\":\"t\",\"focus\":true}"]
+#guard (treeOf "<h2>Hi</h2><img alt=cat><input value=v aria-label=n>").map (·.webJson.toString) ==
+  ["{\"role\":\"document\"}", "{\"role\":\"heading\",\"aria\":{\"label\":\"Hi\",\"level\":\"2\"}}", "{\"text\":\"Hi\"}",
+   "{\"role\":\"img\",\"aria\":{\"label\":\"cat\"}}", "{\"role\":\"textbox\",\"aria\":{\"label\":\"n\"},\"text\":\"v\"}"]
+#guard isJsonNumber "12" && isJsonNumber "-0.50" && !isJsonNumber "1e3" && !isJsonNumber "" && !isJsonNumber "01" && !isJsonNumber "1." && !isJsonNumber "a"
+#guard (let d := DOM.parseHtmlDocument "<div role=status>Saved</div><div role=alert></div><p aria-live=off>x</p>"
+  let rs := regions d (tree d (Env.ofMarkup d))
+  (rs.map (·.2), announcements [] rs, announcements rs rs,
+   announcements (rs.map fun (k, l, _) => (k, l, "Saving")) rs)) ==
+  ([("polite", "Saved"), ("assertive", "")], [("polite", "Saved")], [], [("polite", "Saved")])
+#guard (let d := DOM.parseHtmlDocument "<div role=tablist aria-label=tabs><div role=tab aria-label=one></div><div role=tab aria-label=two aria-selected=true></div></div><div role=checkbox aria-checked=mixed></div>"
+  let at := fun (role : String) => ((tree d (Env.ofMarkup d)).find? (·.role == role)).map (·.id) |>.getD 0
+  let tabs := (tree d (Env.ofMarkup d)).filter (·.role == "tab") |>.map (·.id)
+  (propertiesIn d (at "tablist")).toString ==
+    "{\"accessibilityId\":\"" ++ accId (at "tablist") ++ "\",\"role\":\"tablist\",\"label\":\"tabs\",\"parent\":\"" ++ accId (at "document") ++
+      "\",\"children\":[" ++ ",".intercalate (tabs.map fun t => "\"" ++ accId t ++ "\"") ++ "]}" &&
+  tabs.length == 2 && ((propertiesIn d (at "checkbox")).toString.splitOn "\"checked\":\"mixed\"").length == 2 &&
+  ofAccId (accId 12) == some 12 && ofAccId "12" == none)
 #guard (json [{ depth := 1, id := 4, role := "button", name := "a", tag := "button", focusable := true,
     props := [("pressed", "true")], box := some ⟨1, -2, 3, 4⟩ }]).toString ==
   "{\"nodes\":[{\"id\":4,\"depth\":1,\"role\":\"button\",\"name\":\"a\",\"tag\":\"button\",\"props\":{\"pressed\":\"true\"},\"focusable\":true,\"box\":[1,-2,3,4]}]}"

@@ -2973,6 +2973,9 @@ structure Engine where
   `maxOpaqueImages` every image is taken as not origin-clean (`opaqueFull`). -/
   opaqueImages : Std.HashSet String := {}
   opaqueFull : Bool := false
+  /-- The live regions of the last accessibility tree given (`accessibilityAnswer`); none
+  until a host asks for a tree. -/
+  axLive : Option (String × List HTML.AccessibleTree.Region) := none
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -3073,30 +3076,62 @@ def accessibilityEnv (laid : Laid) : HTML.AccessibleTree.Env :=
         | none => true }
   env.withBoxes (laid.boxes.map fun b => (b.source, ⟨int b.x, int b.y, (int b.width).toNat, (int b.height).toNat⟩))
 
+/-- The first number of the chrome's accessibility nodes (`WebShell.accessible`): above the
+node numbers of any page laid out. -/
+def accessibilityChromeBase : Nat := 1073741824
+
+/-- The live regions of the last accessibility tree the engine gave: the page's source and
+its regions (`HTML.AccessibleTree.regions`). -/
+abbrev LiveKept := Option (String × List HTML.AccessibleTree.Region)
+
 /-- Op `accessibilityTree`: the accessibility tree of the page of a render request (the same
-fields as the frame's, so the kept layout answers). `{"serial", "top", "scroll", "nodes"}`:
-`nodes` as `HTML.AccessibleTree.json` gives them, each `box` in the layout's pixels from the
-top of the page; `top` is the chrome's height and `scroll` the page's scroll, so a box is
-at `y - scroll + top` in the window. `serial` is the layout's number: with `since` equal to
-it the answer is `{"serial", "unchanged": true}` and no tree is made. With `view: true` the
-answer is `{"source"}`: the tree as a page for a person (`HTML.AccessibleTree.viewPage`),
-about the request's `url`. -/
-def accessibilityAnswer (laid : Laid) (request : JSON.Json) (top scroll : Nat) : String :=
+fields as the frame's, so the kept layout answers). `{"serial", "top", "scroll", "nodes",
+"announce"}`: `nodes` as `HTML.AccessibleTree.json` gives them (with `mac: true`, each with
+its `ax`: `jsonMac`; with `web: true`, each with its `web`: `jsonWeb`), each `box` in the layout's pixels from the top of the page; `top` is
+the chrome's height and `scroll` the page's scroll, so a box is at `y - scroll + top` in
+the window. With a `shell` the chrome's controls come first (`WebShell.accessible`), each
+`fixed: true` with its box in window pixels. `announce` lists the live regions to speak, `{"live", "text"}`: those whose
+text is not what the last tree of this page had (`live` is what the engine kept of that
+tree; the first tree of a page speaks nothing). `serial` is the layout's number: with
+`since` equal to it the answer is `{"serial", "unchanged": true, "top", "scroll"}` and no tree is made. With
+`view: true` the answer is `{"source"}`: the tree as a page for a person
+(`HTML.AccessibleTree.viewPage`), about the request's `url`. Also answers what the engine
+keeps next. -/
+def accessibilityAnswer (laid : Laid) (html : String) (request : JSON.Json) (top scroll : Nat) (live : LiveKept)
+    (chrome : List HTML.AccessibleTree.Entry := []) : String × LiveKept :=
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let since := match request.field? "since" with
     | some (.number n) => n.toNat?
     | _ => none
   if laid.serial != 0 && since == some laid.serial then
-    (JSON.Json.object [("serial",number laid.serial),("unchanged",.bool true)]).toString
+    ((JSON.Json.object [("serial",number laid.serial),("unchanged",.bool true),("top",number top),
+      ("scroll",number scroll)]).toString,live)
   else
     let entries := HTML.AccessibleTree.tree laid.dom (accessibilityEnv laid)
     if request.field? "view" == some (.bool true) then
-      (JSON.Json.object [("source",.string (HTML.AccessibleTree.viewPage (str request "url") entries))]).toString
+      ((JSON.Json.object [("source",.string (HTML.AccessibleTree.viewPage (str request "url") entries))]).toString,live)
     else
-      (JSON.Json.object ([("serial",number laid.serial),("top",number top),("scroll",number scroll)] ++
-        (match HTML.AccessibleTree.json entries with
-         | .object fields => fields
-         | _ => []))).toString
+      let regions := HTML.AccessibleTree.regions laid.dom entries
+      let speak := match live with
+        | some (page,old) => if page == html then HTML.AccessibleTree.announcements old regions else []
+        | none => []
+      let pick := fun (es : List HTML.AccessibleTree.Entry) =>
+        match (if request.field? "mac" == some (.bool true) then HTML.AccessibleTree.jsonMac es
+          else if request.field? "web" == some (.bool true) then HTML.AccessibleTree.jsonWeb es
+          else HTML.AccessibleTree.json es) with
+        | .object [(_,.array items)] => items
+        | _ => []
+      -- The chrome's nodes first, marked `fixed`: their boxes are window pixels and do not scroll.
+      -- Their numbers start above every node of a page (a page that large gets no chrome nodes).
+      let fixed := if laid.dom.size < accessibilityChromeBase then
+          (pick chrome).map (fun n => match n with
+            | .object fields => JSON.Json.object (fields ++ [("fixed",.bool true)])
+            | other => other)
+        else []
+      ((JSON.Json.object ([("serial",number laid.serial),("top",number top),("scroll",number scroll),
+        ("nodes",.array (fixed ++ pick entries))] ++
+        [("announce",.array (speak.map fun (l,t) => .object [("live",.string l),("text",.string t)]))])).toString,
+       some (html,regions))
 
 /-- An operation of the engine: it reads and changes the engine's state, and reads the
 machine through `M` (`BaseIO` in the engine, `Id` in tests: time 0, no random bytes). -/
@@ -3359,7 +3394,10 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   -- The accessibility tree of the layout (`accessibilityAnswer`). Only a host with assistive
   -- technology attached asks: a frame does not make it.
   if op == "accessibilityTree" then
-    return (accessibilityAnswer laid request top ((shell.map (·.scroll)).getD 0),#[])
+    let (answer,live) := accessibilityAnswer laid html request top ((shell.map (·.scroll)).getD 0) (← get).axLive
+      ((shell.map fun value => WebShell.accessible value width accessibilityChromeBase).getD [])
+    modify fun e => {e with axLive := live}
+    return (answer,#[])
   -- Pointer positions are in window coordinates; the page starts below the chrome.
   let moved := Float.ofNat top-Float.ofNat ((shell.map (·.scroll)).getD 0)
   let chosen := (← selection request).map (fun value => WebSelection.shift value moved)

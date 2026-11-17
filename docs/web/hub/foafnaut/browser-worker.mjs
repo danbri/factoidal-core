@@ -928,7 +928,7 @@ async function gpuShow(){
       const pixels=await layerSurface.composite(width,height,offset);
       shownOffset=offset;
       const done=performance.now(),rgba=surfaceCanvas?undefined:pixels;
-      post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,
+      axFrame();post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,
         stats:{path:surfaceCanvas?'page-gpu':'page-gpu-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),
           primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,
           pageGpu:layerSurface.pageGpuStats,scripts:{...scriptStats},bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
@@ -1096,8 +1096,15 @@ function consolePage(url){
   catch{return {...sparqlNeedsEngine(url),source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body><h1>The console needs a newer engine</h1><p>The engine this page loaded does not have the console op.</p></body></html>'};}
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}],consoleSource:source};
 }
+// foafnaut:accessibility: the accessibility tree of the page shown, as a page the engine writes
+// (HTML/AccessibleTree.lean viewPage), for a person who checks what a screen reader gets.
+const accessibilityURL='foafnaut:accessibility';
+function accessibilityPage(url){
+  const answer=call(doc.source,{...renderOptions(scroll),op:'accessibilityTree',view:true,url:doc.url},width,height);
+  return {url,title:'Accessibility tree',source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+}
 function openConsole(){const source=doc;newTab();setFocus(false);consoleFrom=source;navigate(consoleURL);}
-const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url.startsWith(searchURL+'/')?searchPage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
+const pageFor=url=>url===accessibilityURL?accessibilityPage(url):url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url.startsWith(searchURL+'/')?searchPage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
 // The Hub's own browser pages as link targets (the start page offers "open in Foafnaut on the
 // Hub" and "in Textnaut on the Hub" for a reader in an ordinary browser): in this tab, a link to
 // this Foafnaut page with an address after # opens that address here, not a second Foafnaut in
@@ -1559,7 +1566,7 @@ async function draw(){
       }
       const done=performance.now();incoming=undefined;
       phase('firstFrame');
-      post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
+      axFrame();post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
         stats:{path,...(cpuMode?{cpu:true}:{}),layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
           leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),...(statsMode&&layerSurface?.lastDraw?{draws:layerSurface.lastDraw,surface:layerSurface.stats}:{}),rows:Math.round(frame.data.length/4),scripts:{...scriptStats},...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
@@ -1598,7 +1605,7 @@ async function shift(){
     const pixels=await layerSurface.composite(width,height,offset);
     shownOffset=offset;
     const done=performance.now(),rgba=surfaceCanvas?undefined:pixels;
-    post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
+    axFrame();post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
       stats:{path:surfaceCanvas?'shift':'shift-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),pixelHash:pixels?L.hashPixels(pixels):undefined,
         primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,collapse:fold,chromeMs,scripts:{...scriptStats},top:current.answer.layers.top,rows:Math.round(current.answer.page.data.length/4),bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
   }catch(error){
@@ -1859,8 +1866,30 @@ function handle(data){
   currentStamp=data.t;
   try{apply(data);}finally{currentStamp=undefined;}
 }
+// Accessibility (HTML/AccessibleTree.lean; accessibility-mirror.mjs on the page thread). A web
+// page can not see whether a screen reader runs, so a person turns this on (message
+// `accessibility`); until then no tree is asked for. Then, after each frame, the engine's tree
+// of the page on screen goes to the page thread as the engine wrote it. For the layout of its
+// last tree the engine answers `unchanged` and makes none: a scroll only moves the elements.
+let axOn=false,axSerial=0,axDoc,axTimer=0,axShown=false;
+function axTell(){if(axOn&&axShown&&!axTimer)axTimer=setTimeout(()=>{axTimer=0;axSend();},0);}
+// A frame is about to be posted: its page is the one a tree is asked for.
+function axFrame(){axShown=true;axTell();}
+function axSend(){
+  if(!axOn||!doc||typeof doc.source!=='string')return;
+  try{
+    const started=performance.now();
+    const answer=call(doc.source,{...renderOptions(scroll),op:'accessibilityTree',web:true,since:axDoc===doc?axSerial:0},width,height);
+    if(!answer.unchanged){axSerial=answer.serial;axDoc=doc;}
+    post({type:'accessibility',answer,ms:Math.round((performance.now()-started)*10)/10});
+  }catch(error){
+    // An engine with no such op: said once, and no more trees are asked for.
+    axOn=false;post({type:'accessibility',error:String(error?.message??error)});
+  }
+}
 function apply(data){
   if(data.type==='dark'){systemDark=data.dark===true;request();return;}
+  if(data.type==='accessibility'){axOn=data.on===true;axSerial=0;axDoc=undefined;if(axOn)axTell();return;}
   if(data.type==='visit'){visit(data.address);return;}
   if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);scriptResize();request();}
   if(data.type==='scroll'){closeMenu();scrollBy(data.amount);}
