@@ -17107,7 +17107,28 @@
 
     // ---- input: the members that are not plain reflection ----
     const indeterminate = new WeakMap();
-    prop(I, 'indeterminate', function () { return indeterminate.get(this) === true; }, function (v) { indeterminate.set(this, !!v); });
+    // HTML §4.10.5 cloning steps: a clone of an input takes its indeterminateness (the value
+    // and checkedness are Lean's node state, which the clone copies). Only once a script set
+    // one: the clone of a page that never did is not walked.
+    let cloneHooked = false;
+    const hookClone = () => {
+      if (cloneHooked) return;
+      cloneHooked = true;
+      const clone0 = n.clone;
+      const inputsOf = (id, deep) => {
+        const own = info(id, 0) === 1 && wrap(id) instanceof I ? [wrap(id)] : [];
+        return deep && info(id, 6) > 0 && (info(id, 0) === 1 || info(id, 0) === 11 || info(id, 0) === 9) ? own.concat([...wrap(id).querySelectorAll('input')]) : own;
+      };
+      n.clone = (id, deep) => {
+        const c = clone0.call(n, id, deep);
+        if (typeof c === 'number' && c >= 0) {
+          const a = inputsOf(id, deep), b = inputsOf(c, deep);
+          if (a.length === b.length) a.forEach((x, i) => { if (indeterminate.get(x) === true) indeterminate.set(b[i], true); });
+        }
+        return c;
+      };
+    };
+    prop(I, 'indeterminate', function () { return indeterminate.get(this) === true; }, function (v) { indeterminate.set(this, !!v); if (v) hookClone(); });
     prop(I, 'list', function () {
       const id = this.getAttribute('list');
       if (id === null || id === '') return null;
