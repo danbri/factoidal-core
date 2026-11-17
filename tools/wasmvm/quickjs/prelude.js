@@ -6676,7 +6676,11 @@
     const gen = ++imgGen;
     const hasSrc = n0.attr(id, 'src'), hasSet = n0.attr(id, 'srcset');
     const url = typeof hasSrc === 'string' || typeof hasSet === 'string' ? el.currentSrc : '';
-    const st = { gen, complete: false, w: 0, h: 0, waiters: (imgStates.get(id)?.waiters) ?? [] };
+    // a new request ends the old one: its decode() promises reject (HTML §4.8.4.3.6, "decode()"
+    // step 2.2: the current request changed)
+    const before = imgStates.get(id);
+    if (before) for (const [, rej] of before.waiters.splice(0)) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
+    const st = { gen, complete: false, w: 0, h: 0, waiters: [] };
     imgStates.set(id, st);
     const settle = ok => {
       st.complete = true;
