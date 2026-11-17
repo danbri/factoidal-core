@@ -206,6 +206,16 @@ private def paddingOf (html css : String) : Option (List Float) :=
 -- a :has() that nothing in the document can satisfy drops the selector before matching
 #guard (CSS.parse "main:has(nonexistent) span { color: red } main:has(span) span { color: blue }").toOption.map
   (fun rs => (pruneHas (DOM.parseHtmlDocument "<main><span></span></main>") rs).length) == some 1
+-- `vertical-align` shifts: a length, a percentage of the line height, sub and super, summed
+-- along the inline boxes a box is in (CSS 2.1 §10.8.1)
+#guard (styleAt "<p><span id=t>x</span></p>" "span { vertical-align: 10px }").map (·.lineRaise) == some 10
+#guard (styleAt "<p><span id=t>x</span></p>" "span { line-height: 20px; vertical-align: -50% }").map (·.lineRaise) == some (-10)
+#guard (styleAt "<p><span>a<b id=t>x</b></span></p>" "span { vertical-align: 4px } b { vertical-align: 0.5em; font-size: 10px }").map (·.lineRaise) == some 9
+#guard (styleAt "<p style='font-size: 15px'><span id=t>x</span></p>" "span { vertical-align: super }").map (·.lineRaise) == some 6
+#guard (styleAt "<div><div id=t>x</div></div>" "div { vertical-align: 7px }").map (·.lineRaise) == some 7
+#guard (styleAt "<div style='vertical-align: 7px'><div id=t>x</div></div>" "").map (·.lineRaise) == some 0
+-- a line height of zero is a line height
+#guard (styleAt pageT "#t { line-height: 0 }").map (·.lineHeight) == some 0
 -- one side's border
 #guard (styleAt pageT "#t { border-bottom: 1px solid #ccc }").map (fun s => let e := s.borderEdges; (e.top, e.bottom)) == some (0, 1)
 #guard (styleAt pageT "#t { border: 2px solid red; border-bottom: none }").map (fun s => let e := s.borderEdges; (e.top, e.bottom)) == some (2, 0)

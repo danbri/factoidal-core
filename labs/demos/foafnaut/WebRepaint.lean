@@ -59,7 +59,8 @@ def sameShape (a b : Computed) : Bool :=
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
-    autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique⟩ =>
+    autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
+    baselineShift,lineRaise⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
@@ -80,7 +81,8 @@ def sameShape (a b : Computed) : Bool :=
   autoMarginTop == b.autoMarginTop && autoMarginBottom == b.autoMarginBottom &&
   align.same b.align && flex.same b.flex && pos.same b.pos && grid.same b.grid &&
   -- the bold and the oblique face change the paints of the glyphs, not only their colour
-  fontWeight == b.fontWeight && inheritedWeight == b.inheritedWeight && oblique == b.oblique
+  fontWeight == b.fontWeight && inheritedWeight == b.inheritedWeight && oblique == b.oblique &&
+  baselineShift == b.baselineShift && lineRaise == b.lineRaise
 
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=

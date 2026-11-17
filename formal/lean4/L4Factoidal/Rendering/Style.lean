@@ -75,6 +75,16 @@ def Display.isBlockContainer (d : Display) : Bool :=
 /-- `vertical-align` as it applies to table cells (CSS 2.1 §17.5.3). -/
 inductive VerticalAlign where | baseline | top | middle | bottom
   deriving Repr, BEq
+/-- The shift of an inline box's baseline by `vertical-align` (CSS 2.1 §10.8.1): a length
+(px, up is positive), a percentage of the element's `line-height`, or `sub` and `super`,
+whose distance the user agent chooses. -/
+inductive BaselineShift where
+  | none
+  | px (v : Float)
+  | percent (f : Float)
+  | sub
+  | super
+  deriving Repr, BEq
 /-- CSS Images 3 §5.5 `object-fit`: how a replaced element's content fills its box. -/
 inductive ObjectFit where | fill | contain | cover | none | scaleDown
   deriving Repr, BEq
@@ -188,6 +198,13 @@ structure Computed where
   /-- `font-style: italic` or `oblique` (inherited): drawn with the oblique face the engine
   makes. -/
   oblique : Bool := false
+  /-- `vertical-align` as a shift of the baseline (a length, a percentage, `sub`, `super`). -/
+  baselineShift : BaselineShift := .none
+  /-- How far this box's baseline is above the baseline of the line's root inline box, in
+  px: its own shift (`baselineShift`) plus that of each inline box it is in (CSS 2.1
+  §10.8.1: an inline box is aligned in its parent inline box). 0 for a box whose parent is
+  not inline. Text takes its parent's. -/
+  lineRaise : Float := 0
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -1184,7 +1201,8 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let factor ← if d.value.endsWith "px" then pure none
       else some <$> (if d.value == "normal" then pure 1.2 else number d.value)
     let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
-    if v <= 0 then throw "line-height must be positive"
+    -- CSS 2.1 §10.8.1: zero is a line height; a negative one is invalid
+    if v < 0 then throw "line-height must not be negative"
     return {s with lineHeight := v, lineHeightFactor := factor}
   -- `white-space` and `white-space-collapse` (CSS Text 4 §3): white space and line breaks
   -- kept (`pre`, `pre-wrap`, `pre-line`, `break-spaces`, `preserve`) or collapsed
@@ -1267,12 +1285,20 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "fixed" => return {s with tableFixed := true}
     | "auto" => return {s with tableFixed := false}
     | _ => throw "unsupported CSS table-layout"
-  | "vertical-align" => match d.value with
-    | "top" | "text-top" => return {s with verticalAlign := .top}
-    | "middle" => return {s with verticalAlign := .middle}
-    | "bottom" | "text-bottom" => return {s with verticalAlign := .bottom}
-    | "baseline" | "sub" | "super" => return {s with verticalAlign := .baseline}
-    | _ => throw "unsupported CSS vertical-align"
+  | "vertical-align" => match (trim d.value).toLower with
+    | "top" | "text-top" => return {s with verticalAlign := .top, baselineShift := .none}
+    | "middle" => return {s with verticalAlign := .middle, baselineShift := .none}
+    | "bottom" | "text-bottom" => return {s with verticalAlign := .bottom, baselineShift := .none}
+    | "baseline" => return {s with verticalAlign := .baseline, baselineShift := .none}
+    | "sub" => return {s with verticalAlign := .baseline, baselineShift := .sub}
+    | "super" => return {s with verticalAlign := .baseline, baselineShift := .super}
+    | v =>
+      -- a length or a percentage of the line height (CSS 2.1 §10.8.1); other units come
+      -- back from the property table in px
+      match ← length v with
+      | .px x => return {s with verticalAlign := .baseline, baselineShift := if x == 0 then .none else .px x}
+      | .percent f => return {s with verticalAlign := .baseline, baselineShift := if f == 0 then .none else .percent f}
+      | _ => throw "unsupported CSS vertical-align"
   | "min-width" => return {s with minWidth := ← limit d.value}
   | "max-width" => return {s with maxWidth := ← limit d.value}
   | "min-height" => return {s with minHeight := ← limit d.value}
@@ -1446,6 +1472,7 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
     if (CssValues.specified "text-decoration" d.value).isSome then
       value (if (words d.value.toLower).contains "underline" then "underline" else "none")
     else none
+  | "vertical-align" => (tableComputed s.fontSize "vertical-align" d.value).bind fun t => if t == d.value then none else value t
   | "width" | "height" | "min-width" | "max-width" | "min-height" | "max-height"
   | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
   | "padding-top" | "padding-right" | "padding-bottom" | "padding-left" | "border-spacing" =>
@@ -1598,7 +1625,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "border-collapse" => some {s with borderCollapse := source.borderCollapse}
   | "caption-side" => some {s with captionBottom := source.captionBottom}
   | "table-layout" => some {s with tableFixed := source.tableFixed}
-  | "vertical-align" => some {s with verticalAlign := source.verticalAlign}
+  | "vertical-align" => some {s with verticalAlign := source.verticalAlign, baselineShift := source.baselineShift}
   | "min-width" => some {s with minWidth := source.minWidth}
   | "max-width" => some {s with maxWidth := source.maxWidth}
   | "min-height" => some {s with minHeight := source.minHeight}
@@ -2567,6 +2594,30 @@ theorem uaUnicodeBidi_dir (tag dir type : String) (hd : dir = "ltr" ∨ dir = "r
 #guard uaUnicodeBidi "textarea" "auto" "" == some .plaintext
 #guard uaUnicodeBidi "pre" "" "" == some .isolate
 
+/-- The distance `vertical-align` moves a box's baseline up from its parent's (CSS 2.1
+§10.8.1), in px: a length as given, a percentage of the box's own `line-height`, and for
+`sub` and `super` the distances a widely used engine takes (a fifth and a third of the
+parent's font size, plus one pixel). -/
+def baselineShiftPx (parent s : Computed) : Float :=
+  match s.baselineShift with
+  | .none => 0
+  | .px v => v
+  | .percent f => f*s.lineHeight
+  | .sub => -(parent.fontSize/5+1)
+  | .super => parent.fontSize/3+1
+
+/-- The raise of a box's baseline above its line's root inline box (`Computed.lineRaise`):
+its own shift, on top of its parent's raise when the parent is an inline box. -/
+def lineRaiseOf (parent s : Computed) : Float :=
+  (if parent.display == .inline then parent.lineRaise else 0)+baselineShiftPx parent s
+
+/-- Kind: specification. Says: a box with no shift of its own (`vertical-align` a keyword
+other than `sub` and `super`, or a zero length) is not moved from its parent's baseline.
+Does not say: where a `top`, `middle` or `bottom` box goes (layout places those). -/
+theorem baselineShiftPx_none (parent s : Computed) (h : s.baselineShift = .none) :
+    baselineShiftPx parent s = 0 := by
+  simp [baselineShiftPx, h]
+
 /-- Winning declarations are keyed by property, with importance, origin, specificity
 and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
 origin (`userAgentRules`) is below the author origin. Inheritance is applied first.
@@ -2730,7 +2781,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   -- CSS 2.1 §9.7: an absolutely positioned or floated box is a block.
   if result.pos.isAbsolute || result.pos.float != .none then result := {result with display := result.display.blockified}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
-  return {result with underline := decoration.isSome, decorationColor := decoration}
+  return {result with underline := decoration.isSome, decorationColor := decoration,
+                      lineRaise := lineRaiseOf parent result}
 
 /-- The style of element `id` with every rule tried (`matchedRules`): the reference. -/
 def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
@@ -2761,7 +2813,10 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by
         pos := {nowrap := parent.pos.nowrap, textTransform := parent.pos.textTransform,
-                lineBreak := parent.pos.lineBreak}}
+                lineBreak := parent.pos.lineBreak},
+        -- text sits on its parent's baseline: raised with an inline parent, on the line's
+        -- root baseline in a block (whose own `vertical-align` places the block, not its lines)
+        baselineShift := .none, lineRaise := if parent.display == .inline then parent.lineRaise else 0}
 
 /-- Visit parents before children, using a work list and bounded arena size.
 `matchesOf id` are the rules that match element `id`, in sheet order. `root` is the

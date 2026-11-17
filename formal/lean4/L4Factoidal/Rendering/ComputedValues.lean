@@ -63,6 +63,16 @@ def textAlign : TextAlign → String
 def verticalAlign : VerticalAlign → String
   | .baseline => "baseline" | .top => "top" | .middle => "middle" | .bottom => "bottom"
 
+/-- `vertical-align`: the keyword, or the shift (CSS 2.1 §10.8.1) as a length, a percentage,
+`sub` or `super`. -/
+def verticalAlignOf (c : Computed) : String :=
+  match c.baselineShift with
+  | .none => verticalAlign c.verticalAlign
+  | .px v => px v
+  | .percent f => length (.percent f)
+  | .sub => "sub"
+  | .super => "super"
+
 def objectFit : ObjectFit → String
   | .fill => "fill" | .contain => "contain" | .cover => "cover" | .none => "none" | .scaleDown => "scale-down"
 
@@ -93,7 +103,7 @@ def values (c : Computed) : List (String × String) :=
       else px c.borderSpacingX ++ " " ++ px c.borderSpacingY),
    ("border-collapse", if c.borderCollapse then "collapse" else "separate"),
    ("caption-side", if c.captionBottom then "bottom" else "top"),
-   ("vertical-align", verticalAlign c.verticalAlign),
+   ("vertical-align", verticalAlignOf c),
    ("table-layout", if c.tableFixed then "fixed" else "auto"),
    ("min-width", match c.minWidth with | .auto => "auto" | l => length l),
    ("max-width", maxLength c.maxWidth),

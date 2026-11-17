@@ -792,17 +792,18 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   for (_,item) in items do
     match item with
     | .word _ s _ _ | .space _ s | .lineBreak s =>
+      -- raised (or lowered) with its inline boxes by `vertical-align` (`lineRaise`)
       let leading := lineLeading font s
       let (a,d) := font.metricsOf s
-      ascent := max ascent (a+leading)
-      descent := max descent (d+leading)
+      ascent := max ascent (a+leading+s.lineRaise)
+      descent := max descent (d+leading-s.lineRaise)
     -- An atomic box (an inline-block, an inline flex or grid container) sits on the line by
     -- `vertical-align`: on its own baseline (`atomicBaseline`), or by its margin box.
     | .atomic _ s _ h inner => match s.verticalAlign with
       | .baseline =>
         let b := atomicBaseline s h inner
-        ascent := max ascent b
-        descent := max descent (h-b)
+        ascent := max ascent (b+s.lineRaise)
+        descent := max descent (h-b-s.lineRaise)
       | .middle =>
         ascent := max ascent (h/2+s.fontSize/4)
         descent := max descent (h/2-s.fontSize/4)
@@ -811,7 +812,9 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     -- A replaced element sits on the line by `vertical-align`, with the bottom margin edge
     -- as its baseline.
     | .replaced _ s _ h _ => match s.verticalAlign with
-      | .baseline => ascent := max ascent h
+      | .baseline =>
+        ascent := max ascent (h+s.lineRaise)
+        if s.lineRaise < 0 then descent := max descent (-s.lineRaise)
       -- CSS 2.1 §10.8.1: the middle on the baseline plus half the x-height, here half an em.
       | .middle =>
         ascent := max ascent (h/2+s.fontSize/4)
@@ -836,7 +839,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   let fragment := fun (f : InlineBox.Frame Float) (s : Computed) (ended : Bool) =>
     let b := s.borderEdges
     let (a,d) := font.metricsOf s
-    let top := y+ascent-a-s.padding.top-b.top
+    let top := y+ascent-s.lineRaise-a-s.padding.top-b.top
     let height := a+d+s.padding.top+s.padding.bottom+b.top+b.bottom
     let left := f.lo
     -- never past the box's right edge by a rounding of the subtraction: the width of a
@@ -859,9 +862,10 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     | .word source s text start =>
       -- the glyphs' frame: the profile's ascent above the baseline (the words are shaped
       -- in its metrics); the box: the content area of the first available font
-      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
+      let baseline := y+ascent-s.lineRaise
+      let top := baseline-font.ascent*s.fontSize/font.unitsPerEm
       let leading := lineLeading font s
-      let area := y+ascent-(font.metricsOf s).1
+      let area := baseline-(font.metricsOf s).1
       if reordered && s.background.isSome then
         out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) area (← itemWidth font rtl item)}
       match ← font.word s text rtl with
@@ -880,21 +884,21 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let glyphs := word.glyphs.map fun glyph =>
           ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
         let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,area-leading,width,s.lineHeight⟩}
+        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) baseline width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,area-leading,width,s.lineHeight⟩}
         extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
       let leading := lineLeading font s
-      let top := y+ascent-(font.metricsOf s).1-leading
+      let top := y+ascent-s.lineRaise-(font.metricsOf s).1-leading
       out := {out with nodes := if reordered then out.nodes ++ textBackground font source s (x+offset) (top+leading) advance else out.nodes,
                        boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
       extent := some (x+offset,x+offset+advance)
       if s.underline && s.visible then
         let thickness := max 1 (s.fontSize/14)
-        out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
+        out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent-s.lineRaise+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
     | .replaced source s width height nodes =>
       let top := match s.verticalAlign with
-        | .baseline => y+ascent-height
+        | .baseline => y+ascent-s.lineRaise-height
         | .middle => y+ascent-s.fontSize/4-height/2
         | .top => y
         | .bottom => y+ascent+descent-height
@@ -905,7 +909,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       extent := some (x+offset,x+offset+width)
     | .atomic _ s width height inner =>
       let top := match s.verticalAlign with
-        | .baseline => y+ascent-atomicBaseline s height inner
+        | .baseline => y+ascent-s.lineRaise-atomicBaseline s height inner
         | .middle => y+ascent-s.fontSize/4-height/2
         | .top => y
         | .bottom => y+ascent+descent-height
@@ -1475,7 +1479,8 @@ private def Result.shiftY (r : Result) (dy : Float) : Result :=
 its parent's, with no box edges (an anonymous box has none). -/
 private def anonymousBox (base : Computed) : Computed :=
   {base with padding := {}, margin := {}, background := none, width := .auto, height := .auto,
-             verticalAlign := .baseline, autoMarginLeft := false, autoMarginRight := false}
+             verticalAlign := .baseline, baselineShift := .none, lineRaise := 0,
+             autoMarginLeft := false, autoMarginRight := false}
 /-- The style of an anonymous flex or grid item (a run of text): its container's
 inherited values, with no box edges, limits, or flex and alignment values of its own. -/
 private def anonymousItem (base : Computed) : Computed :=
