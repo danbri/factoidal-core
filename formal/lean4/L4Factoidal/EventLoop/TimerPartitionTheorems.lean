@@ -72,11 +72,11 @@ private theorem fire_idle (st : State) (h : ∀ t ∈ st.timers, st.clock < t.du
     st.fire = (st, []) := by
   have hd : due st.clock st.timers = ([], st.timers) := by
     cases hq : st.timers with
-    | nil => simp [due, hq]
+    | nil => simp [due]
     | cons t ts =>
       have ht : t ∈ st.timers := by simp [hq]
       have hlate : ¬ t.due ≤ st.clock := Nat.not_le.mpr (h t ht)
-      simp [due, hq, List.takeWhile_cons, List.dropWhile_cons, hlate]
+      simp [due, hlate]
   cases st
   simp [State.fire, hd]
 
