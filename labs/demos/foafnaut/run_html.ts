@@ -14,6 +14,7 @@ import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.ts";
 import {defaultStateDir,hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
+import {cookieSaveQueue} from "./native_cookie_save.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
 import {fetchedAnswer,scriptFailure,scrollLimitOf,inputFirst,scrollFirst,scriptsFirst,turnSliceSteps,startSliceSteps} from "../../../docs/web/hub/foafnaut/page-load.mjs";
@@ -489,30 +490,23 @@ async function main() {
   // the engine's `keep` answer (cookies with an expiry, not passed: persistent_no_session) is
   // written, to cookieFile, mode 0600; session cookies end with the program. An engine without
   // the op: no cookies, as before.
-  let jarText="",jarSaving:ReturnType<typeof setTimeout>|undefined;
+  let jarText="";
   const cookieFile=cookieFileArg??(browserState?`${stateDir??defaultStateDir()}/cookies.txt`:undefined);
   if(cookieFile)try{jarText=await Deno.readTextFile(cookieFile);}catch{/* none yet */}
   type CookieOp=(request:Record<string,string>)=>Promise<{cookie?:string;jar?:string}|undefined>|{cookie?:string;jar?:string}|undefined;
   const cookieOp=():CookieOp|undefined=>(lean as unknown as {cookies?:CookieOp}).cookies;
   const seconds=()=>String(Math.floor(Date.now()/1000));
-  const writeJar=async()=>{
-    jarSaving=undefined;
-    if(!cookieFile)return;
-    try{
-      const kept=await cookieOp()?.({action:"keep",jar:jarText,now:seconds()});
-      if(typeof kept?.jar!=="string")return;
-      const dir=cookieFile.slice(0,cookieFile.lastIndexOf("/"));if(dir)await Deno.mkdir(dir,{recursive:true,mode:0o700});
-      await Deno.writeTextFile(cookieFile+".new",kept.jar,{mode:0o600});await Deno.rename(cookieFile+".new",cookieFile);
-    }catch(error){console.error("Native HTML: cookies not saved:",String(error));}
-  };
-  // (at most one write a second; a write that is due is made at quit)
-  const saveJar=()=>{if(cookieFile&&jarSaving===undefined)jarSaving=setTimeout(writeJar,1000);};
-  const flushJar=async()=>{if(jarSaving!==undefined){clearTimeout(jarSaving);await writeJar();}};
+  const jarSave=cookieFile?cookieSaveQueue(async()=>{
+    const kept=await cookieOp()?.({action:"keep",jar:jarText,now:seconds()});
+    if(typeof kept?.jar!=="string")return;
+    const dir=cookieFile.slice(0,cookieFile.lastIndexOf("/"));if(dir)await Deno.mkdir(dir,{recursive:true,mode:0o700});
+    await Deno.writeTextFile(cookieFile+".new",kept.jar,{mode:0o600});await Deno.rename(cookieFile+".new",cookieFile);
+  },error=>console.error("Native HTML: cookies not saved:",String(error))):undefined;
   const cookiesFor=(initiator:string):DocumentCookies|undefined=>cookieOp()?{
     request:async(url,method)=>(await cookieOp()!({action:"request",jar:jarText,now:seconds(),url,initiator,method}))?.cookie??"",
     response:async(url,setCookie)=>{
       const answer=await cookieOp()!({action:"response",jar:jarText,now:seconds(),url,setCookie:setCookie.join("\n")});
-      if(typeof answer?.jar==="string"&&answer.jar!==jarText){jarText=answer.jar;saveJar();}
+      if(typeof answer?.jar==="string"&&answer.jar!==jarText){jarText=answer.jar;jarSave?.schedule();}
     }}:undefined;
   // A start page that can not be read (no network, a name that does not resolve, a refused
   // connection) opens the window on the refusal page for it, as a later navigation would: the
@@ -546,10 +540,10 @@ async function main() {
       maxUniformBufferBindingSize:65536,maxStorageBufferBindingSize:134217728,
       maxTextureDimension2D:4096,maxBufferSize:268435456});
     console.log(`Native HTML CPU plan: ${plan.abi}; ${plan.uniform.bindingType}; ${plan.uniform.bytes} bytes`);
-    console.log("Native HTML CPU engine check complete; GPU/window not requested");return;
+    console.log("Native HTML CPU engine check complete; GPU/window not requested");await jarSave?.flush();return;
   }
   const adapter=await navigator.gpu?.requestAdapter();
-  if(!adapter){console.error("GPU BLOCKED: native HTML adapter unavailable in this launch context");Deno.exitCode=2;return;}
+  if(!adapter){console.error("GPU BLOCKED: native HTML adapter unavailable in this launch context");await jarSave?.flush();Deno.exitCode=2;return;}
   console.log("Native HTML GPU adapter:",adapter.info);
   let device:GPUDevice|undefined,native:ReturnType<typeof loadNativeWindow>|undefined;
   let running=true,dirty=true,controller:AbortController|undefined;
@@ -1239,7 +1233,10 @@ async function main() {
   // no touch-screen touches. An engine without the op has no swipes.
   const gestures=(()=>{try{return engine.gesture({action:"info"});}catch{return undefined;}})();
   // The swipe sweep needs the op; with an older engine it is not run, with exit code 4 (sweeps.sh says NOT RUN).
-  if(swipeSweep&&!gestures){console.error("Native HTML: NOT RUN: --swipe-sweep needs the engine op gesture, which this engine does not have");worker?.terminate();Deno.exitCode=4;return;}
+  if(swipeSweep&&!gestures){
+    console.error("Native HTML: NOT RUN: --swipe-sweep needs the engine op gesture, which this engine does not have");
+    await jarSave?.flush();worker?.terminate();Deno.exitCode=4;return;
+  }
   let wheelSum:{dx:number;dy:number}|undefined;
   const gestureWheel=(a:number,b:number)=>{
     const phase=b&0xff,momentum=(b>>8)&0xff,enabled=(b&65536)!==0;
@@ -2266,7 +2263,8 @@ async function main() {
     const gpuIdle=session?.halt();
     // A frame in progress ends before its session is disposed.
     try{await rendering;await shifting;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
-    await flushJar();
+    // Finish any timer-fired write and the last queued save before stopping the engine.
+    await jarSave?.flush();
     worker?.terminate();
     await browserState?.close().catch(error=>console.error("Native HTML: browser state did not close:",String(error)));
     try{summary();}catch(error){console.error("Native HTML summary failed:",String(error));}
