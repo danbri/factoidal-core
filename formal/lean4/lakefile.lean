@@ -975,3 +975,7 @@ lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 
 -- Lean shaping font adapter (https://github.com/danbri/factoidal/issues/1233). Not a default target.
 lean_exe «l4font-shape» where root := `L4Factoidal.Rendering.LeanFontShape
+
+-- Proof-only timer partition and firing completeness (issue #608).
+lean_lib TimerPartitionProofs where
+  roots := #[`L4Factoidal.EventLoop.TimerPartitionTheorems]
