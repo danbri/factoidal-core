@@ -89,11 +89,74 @@ def packParallel (rows : Rows) (prior : Buffer) : List UInt32 :=
   let dst := scatter (scanFrom 0 widths) rows prior
   readback dst 0 widths.sum
 
+/-- Invariant.
+Says: consecutive row writes compose at the first row's exclusive end.
+Does not say: that overlapping rows may be written in either order. -/
+private theorem scatterRow_append (xs ys : List UInt32) (base : Nat) (prior : Buffer) :
+    scatterRow (xs ++ ys) base prior =
+      scatterRow ys (base + xs.length) (scatterRow xs base prior) := by
+  induction xs generalizing base prior with
+  | nil => simp [scatterRow]
+  | cons x xs ih =>
+    simp only [List.cons_append, List.length_cons, scatterRow, ih]
+    rw [show base + 1 + xs.length = base + (xs.length + 1) by omega]
+
+/-- Refinement.
+Says: scattering rows at their computed starts writes the same whole memory as writing
+the CPU specification's words consecutively from the base.
+Does not say: that the buffer has a particular initial value or representation. -/
+theorem scatter_eq_scatterRow (rows : Rows) (base : Nat) (prior : Buffer) :
+    scatter (scanFrom base (counts rows)) rows prior = scatterRow (packSpec rows) base prior := by
+  induction rows generalizing base prior with
+  | nil => simp [counts, scanFrom, scatter, packSpec, scatterRow]
+  | cons row rows ih =>
+    simp only [counts, List.map_cons, scanFrom_cons, scatter, List.zip_cons_cons,
+      List.foldl_cons, packSpec, List.flatten_cons, scatterRow_append]
+    exact ih (base + row.length) (scatterRow row base prior)
+
+/-- Invariant.
+Says: a row write preserves every address below its start.
+Does not say: that the address belongs to an allocated device buffer. -/
+private theorem scatterRow_before (xs : List UInt32) (base addr : Nat) (prior : Buffer)
+    (h : addr < base) : scatterRow xs base prior addr = prior addr := by
+  induction xs generalizing base prior with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [scatterRow]
+    rw [ih (base + 1) _ (by omega)]
+    simp [Nat.ne_of_lt h]
+
+/-- Invariant.
+Says: reading the words of a consecutively written row in address order gives that row.
+Does not say: that a particular GPU performed those writes. -/
+private theorem readback_scatterRow (xs : List UInt32) (base : Nat) (prior : Buffer) :
+    readback (scatterRow xs base prior) base xs.length = xs := by
+  induction xs generalizing base prior with
+  | nil => simp [readback]
+  | cons x xs ih =>
+    let first : Buffer := fun addr => if addr = base then x else prior addr
+    change (List.range' base (xs.length + 1)).map (scatterRow xs (base + 1) first) = x :: xs
+    rw [List.range'_succ, List.map_cons]
+    change scatterRow xs (base + 1) first base ::
+      readback (scatterRow xs (base + 1) first) (base + 1) xs.length = x :: xs
+    simp only [ih, scatterRow_before xs (base + 1) base first (by omega), first, if_pos rfl]
+
+/-- Refinement.
+Says: for all rows and all prior word memories, count, exclusive scan and indexed scatter
+produce the CPU specification's complete list in the same order.
+Does not say: that a shader, driver or parallel schedule implements these stages. -/
+theorem packParallel_eq_packSpec (rows : Rows) (prior : Buffer) :
+    packParallel rows prior = packSpec rows := by
+  change readback (scatter (scanFrom 0 (counts rows)) rows prior) 0 (counts rows).sum = _
+  rw [scatter_eq_scatterRow, ← packSpec_length, readback_scatterRow]
+
 #print axioms packSpec_length
 #print axioms scanFrom_length
 #print axioms scanFrom_cons
 #print axioms scanFrom_prefix
 #print axioms admitted_total_fits
+#print axioms scatter_eq_scatterRow
+#print axioms packParallel_eq_packSpec
 
 -- Executable examples. The prior values expose missing stores.
 #guard scanFrom 0 [0, 2, 0, 1] == [0, 0, 2, 2]
