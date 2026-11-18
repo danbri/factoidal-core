@@ -1,19 +1,21 @@
-name: Static pack Lean check
+name: Paralliverse Lean check
 
 on:
   push:
     branches: [wip/604-static-pack-spec]
     paths:
-      - 'formal/lean4/L4Factoidal/GpuKernel/StaticPack.lean'
-      - 'formal/lean4/Harness/StaticPackCpu.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/**'
+      - 'formal/lean4/Harness/ParalliverseCpu.lean'
       - 'formal/lean4/lean-toolchain'
       - 'tools/lean-hygiene-audit.py'
       - 'tools/lean-partial-def-baseline.txt'
       - '.github/workflows/check-static-pack.yml'
   pull_request:
     paths:
-      - 'formal/lean4/L4Factoidal/GpuKernel/StaticPack.lean'
-      - 'formal/lean4/Harness/StaticPackCpu.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/**'
+      - 'formal/lean4/Harness/ParalliverseCpu.lean'
       - 'formal/lean4/lean-toolchain'
       - 'tools/lean-hygiene-audit.py'
       - 'tools/lean-partial-def-baseline.txt'
@@ -24,7 +26,7 @@ permissions:
   contents: read
 
 jobs:
-  static-pack:
+  paralliverse:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -47,21 +49,21 @@ jobs:
           use-mathlib-cache: false
           lake-package-directory: formal/lean4
 
-      - name: Compile StaticPack and print its reported theorem axioms
+      - name: Compile Paralliverse StaticPack and print its reported theorem axioms
         working-directory: formal/lean4
         shell: bash
         run: |
           set -euo pipefail
           unset LEAN_PATH LEAN_SRC_PATH
-          proof_dir="$RUNNER_TEMP/static-pack-evidence"
-          module=L4Factoidal/GpuKernel/StaticPack.lean
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
+          module=L4Factoidal/Paralliverse/StaticPack.lean
           olean="$proof_dir/modules/${module%.lean}.olean"
           mkdir -p "$(dirname "$olean")"
           {
             git rev-parse HEAD
             uname -sm
             cat lean-toolchain
-            sha256sum lean-toolchain "$module" Harness/StaticPackCpu.lean
+            sha256sum lean-toolchain L4Factoidal/Paralliverse.lean "$module" Harness/ParalliverseCpu.lean
           } 2>&1 | tee "$proof_dir/source.txt"
           (ulimit -v 4194304; exec timeout --kill-after=5s 30s lean --version) \
             2>&1 | tee "$proof_dir/lean-version.txt"
@@ -91,7 +93,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          proof_dir="$RUNNER_TEMP/static-pack-evidence"
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
           python3 tools/lean-hygiene-audit.py --build-log "$proof_dir/lean.log" \
             2>&1 | tee "$proof_dir/hygiene.log"
           # Require evidence for the public claims, not merely a nonempty axiom log.
@@ -100,9 +102,9 @@ jobs:
                       admitted_word_bounds scatter_eq_scatterRow scatter_frame \
                       packParallel_eq_packSpec packParallel_position packChecked_eq \
                       packWithFallback_eq_packSpec; do
-            grep -Eq "'L4Factoidal.GpuKernel.StaticPack.$name' (depends on axioms:|does not depend on any axioms)" \
+            grep -Eq "'L4Factoidal\.Paralliverse\.StaticPack\.$name' (depends on axioms:|does not depend on any axioms)" \
               "$proof_dir/lean.log" || { echo "Missing checked theorem: $name"; exit 1; }
-            printf '%s\n' "L4Factoidal.GpuKernel.StaticPack.$name" >> "$proof_dir/checked-theorems.txt"
+            printf '%s\n' "L4Factoidal.Paralliverse.StaticPack.$name" >> "$proof_dir/checked-theorems.txt"
           done
 
       - name: Run the ordinary CPU specification on fixed fixtures
@@ -111,10 +113,10 @@ jobs:
         run: |
           set -euo pipefail
           unset LEAN_SRC_PATH
-          proof_dir="$RUNNER_TEMP/static-pack-evidence"
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
           export LEAN_PATH="$proof_dir/modules"
           cpu=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/cpu-time.txt"
-               lean -j1 -s16384 -M2048 -DwarningAsError=true --run Harness/StaticPackCpu.lean)
+               lean -j1 -s16384 -M2048 -DwarningAsError=true --run Harness/ParalliverseCpu.lean)
           {
             printf 'export LEAN_PATH=%q\nulimit -v 4194304\n' "$LEAN_PATH"
             printf ' %q' "${cpu[@]}"
@@ -156,9 +158,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: static-pack-lean-evidence
+          name: paralliverse-lean-evidence
           path: |
-            ${{ runner.temp }}/static-pack-evidence/
-            !${{ runner.temp }}/static-pack-evidence/modules/**
+            ${{ runner.temp }}/paralliverse-evidence/
+            !${{ runner.temp }}/paralliverse-evidence/modules/**
           if-no-files-found: warn
           retention-days: 30

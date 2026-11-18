@@ -7,7 +7,7 @@ Its functional buffer models individual word writes to an arbitrary prior memory
 All addresses and counts are natural numbers. Capacity is measured in words.
 -/
 
-namespace L4Factoidal.GpuKernel.StaticPack
+namespace L4Factoidal.Paralliverse.StaticPack
 
 abbrev Rows := List (List UInt32)
 abbrev Buffer := Nat → UInt32
@@ -308,4 +308,4 @@ theorem packWithFallback_eq_packSpec (rows : Rows) (candidateCapacity : Option N
 #guard packWithFallback [[4, 4], [], [3]] (some 2) (fun _ => 17) == [4, 4, 3]
 
 
-end L4Factoidal.GpuKernel.StaticPack
+end L4Factoidal.Paralliverse.StaticPack

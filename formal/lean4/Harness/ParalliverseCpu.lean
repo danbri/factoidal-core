@@ -1,10 +1,10 @@
 import Lean.Data.Json
-import L4Factoidal.GpuKernel.StaticPack
+import L4Factoidal.Paralliverse.StaticPack
 
 /-! Run the ordinary stable packing specification on fixed CPU fixtures and emit JSON Lines. -/
 
 open Lean
-open L4Factoidal.GpuKernel.StaticPack (Rows packSpec)
+open L4Factoidal.Paralliverse.StaticPack (Rows packSpec)
 
 def main : IO Unit := do
   let cases : List (String × Rows) := [
