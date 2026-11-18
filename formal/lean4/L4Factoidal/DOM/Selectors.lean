@@ -308,7 +308,7 @@ def anPlusB (src : String) : Option (Int × Int) :=
 `n` is joined to it, CSS Syntax §6.2). Does not say: anything of other text. -/
 theorem anPlusB_plus_ws (c : Char) (rest : List Char) (hc : isWs c = true) :
     anPlusB (String.ofList ('+' :: c :: rest)) = none := by
-  simp [anPlusB, isWs, hc]
+  simp [anPlusB, hc, show isWs '+' = false from rfl]
 
 #print axioms anPlusB_plus_ws
 
