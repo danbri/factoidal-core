@@ -49,45 +49,46 @@ jobs:
           use-mathlib-cache: false
           lake-package-directory: formal/lean4
 
-      - name: Compile Paralliverse StaticPack and print its reported theorem axioms
+      - name: Compile fresh Paralliverse dependencies and print theorem axioms
         working-directory: formal/lean4
         shell: bash
         run: |
           set -euo pipefail
           unset LEAN_PATH LEAN_SRC_PATH
           proof_dir="$RUNNER_TEMP/paralliverse-evidence"
-          module=L4Factoidal/Paralliverse/StaticPack.lean
-          olean="$proof_dir/modules/${module%.lean}.olean"
-          mkdir -p "$(dirname "$olean")"
+          modules=(L4Factoidal/GpuKernel/Race.lean
+                   L4Factoidal/Paralliverse/StaticPack.lean
+                   L4Factoidal/Paralliverse/DSL.lean)
+          mkdir -p "$proof_dir/modules"
+          export LEAN_PATH="$proof_dir/modules"
           {
             git rev-parse HEAD
             uname -sm
             cat lean-toolchain
-            sha256sum lean-toolchain L4Factoidal/Paralliverse.lean "$module" Harness/ParalliverseCpu.lean
+            sha256sum lean-toolchain L4Factoidal/Paralliverse.lean "${modules[@]}" Harness/ParalliverseCpu.lean
           } 2>&1 | tee "$proof_dir/source.txt"
           (ulimit -v 4194304; exec timeout --kill-after=5s 30s lean --version) \
             2>&1 | tee "$proof_dir/lean-version.txt"
 
-          compile=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/time.txt"
-                   lean -j1 -s16384 -M2048 -DwarningAsError=true -o "$olean" "$module")
-          {
-            printf 'ulimit -v 4194304\n'
-            printf ' %q' "${compile[@]}"
-            printf '\n'
-          } | tee "$proof_dir/command.txt"
-
-          set +e
-          (
+          for module in "${modules[@]}"; do
+            olean="$proof_dir/modules/${module%.lean}.olean"
+            mkdir -p "$(dirname "$olean")"
+            compile=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/$(basename "$module").time.txt"
+                     lean -j1 -s16384 -M2048 -DwarningAsError=true -o "$olean" "$module")
+            {
+              printf 'ulimit -v 4194304\n'
+              printf ' %q' "${compile[@]}"
+              printf '\n'
+            } | tee -a "$proof_dir/command.txt"
+            set +e
+            (ulimit -v 4194304; exec "${compile[@]}") 2>&1 | tee -a "$proof_dir/lean.log"
+            status=("${PIPESTATUS[@]}")
             set -e
-            ulimit -v 4194304
-            exec "${compile[@]}"
-          ) 2>&1 | tee "$proof_dir/lean.log"
-          status=("${PIPESTATUS[@]}")
-          set -e
-          printf 'compile_exit=%s\ntee_exit=%s\n' "${status[@]}" | tee "$proof_dir/exit.txt"
-          test "${status[0]}" -eq 0
-          test "${status[1]}" -eq 0
-          test -s "$olean"
+            printf '%s compile_exit=%s tee_exit=%s\n' "$module" "${status[@]}" | tee -a "$proof_dir/exit.txt"
+            test "${status[0]}" -eq 0
+            test "${status[1]}" -eq 0
+            test -s "$olean"
+          done
 
       - name: Audit the source and reported axiom dependencies
         shell: bash
@@ -105,6 +106,11 @@ jobs:
             grep -Eq "'L4Factoidal\.Paralliverse\.StaticPack\.$name' (depends on axioms:|does not depend on any axioms)" \
               "$proof_dir/lean.log" || { echo "Missing checked theorem: $name"; exit 1; }
             printf '%s\n' "L4Factoidal.Paralliverse.StaticPack.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in canonical_valid count_raceFree count_visible scan_visible; do
+            grep -F "'L4Factoidal.Paralliverse.DSL.$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "L4Factoidal.Paralliverse.DSL.$name" >> "$proof_dir/checked-theorems.txt"
           done
 
       - name: Run the ordinary CPU specification on fixed fixtures
