@@ -89,6 +89,7 @@ import L4Factoidal.RDF.IsomorphismTheorems
 import L4Factoidal.RDF.IsomorphismTests
 import L4Factoidal.SPARQL.PropertyPath
 import L4Factoidal.SPARQL.Algebra
+import L4Factoidal.CompactLTJ
 import L4Factoidal.SPARQL.AlgebraSpec
 import L4Factoidal.SPARQL.AlgebraRefinement
 import L4Factoidal.SPARQL.JoinRefinement

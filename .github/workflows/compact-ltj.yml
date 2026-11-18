@@ -1,0 +1,26 @@
+name: CompactLTJ focused Lean verification
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/CompactLTJ/**'
+      - 'formal/lean4/L4Factoidal/CompactLTJ.lean'
+      - '.github/workflows/compact-ltj.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  compact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          lake-package-directory: formal/lean4
+      - name: Build CompactLTJ and proof checks
+        working-directory: formal/lean4
+        run: lake build L4Factoidal.CompactLTJ
