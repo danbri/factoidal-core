@@ -318,8 +318,58 @@ end Import
 section
 variable {M : Type} [LinearMemory M]
 
+/-- The i32 of an integer: its value modulo 2^32. Written on `Nat`, whose numbers below 2^63
+are machine words: `x % 4294967296` on `Int` is a division of big numbers (2^32 is not one of
+`Int`'s small values, which are 32 bits), and each argument and each answer of a DOM import
+went through one, so a page's reads of its DOM paid several big-number divisions each
+(`lean_int_big_emod` was 5.8% of the engine's samples in a task of a news page that reads
+the DOM in a loop). `wrap32_eq`: it is that modulo. -/
+def wrap32 (x : Int) : UInt32 :=
+  match x with
+  | .ofNat n => n.toUInt32
+  | .negSucc n => (4294967295 - n % 4294967296).toUInt32
+
+/-- Kind: equivalence. Says: `wrap32` is the integer modulo 2^32, as an i32. -/
+theorem wrap32_eq (x : Int) : wrap32 x = (Int.toNat (x % 4294967296)).toUInt32 := by
+  cases x with
+  | ofNat n =>
+    have h : Int.toNat ((n : Int) % 4294967296) = n % 4294967296 := by omega
+    show n.toUInt32 = (Int.toNat ((n : Int) % 4294967296)).toUInt32
+    rw [h]
+    apply UInt32.toNat_inj.mp
+    simp only [Nat.toUInt32, UInt32.toNat_ofNat']
+    omega
+  | negSucc n =>
+    have h : Int.toNat (Int.negSucc n % 4294967296) = 4294967295 - n % 4294967296 := by omega
+    rw [h]
+    rfl
+
+/-- The signed integer of an i32 (two's complement), without arithmetic on big integers:
+`(v : Int) - 4294967296` subtracts a big number. `signed32_eq`: it is that. -/
+def signed32 (v : UInt32) : Int :=
+  if v.toNat ≥ 2147483648 then Int.negSucc (4294967295 - v.toNat) else Int.ofNat v.toNat
+
+/-- Kind: equivalence. Says: `signed32` is the i32 read as a signed integer. -/
+theorem signed32_eq (v : UInt32) :
+    signed32 v = (if v.toNat ≥ 2147483648 then (v.toNat : Int) - 4294967296 else v.toNat) := by
+  have hv := v.toNat_lt
+  unfold signed32
+  split
+  · omega
+  · rfl
+
+#guard wrap32 0 == 0 && wrap32 5 == 5 && wrap32 (-1) == 4294967295 && wrap32 (-5) == 4294967291
+#guard wrap32 4294967296 == 0 && wrap32 4294967301 == 5 && wrap32 (-4294967296) == 0 && wrap32 (-4294967297) == 4294967295
+#guard wrap32 2147483648 == 2147483648 && wrap32 (-2147483648) == 2147483648 && wrap32 (2 ^ 70 + 3) == 3 && wrap32 (-(2 ^ 70) - 3) == 4294967293
+#guard signed32 0 == 0 && signed32 7 == 7 && signed32 2147483647 == 2147483647 && signed32 2147483648 == -2147483648 && signed32 4294967295 == -1
+
 /-- An i32 result. -/
-def ret (r : Int) : HostResult := .values #[.i32 (Int.toNat (r % 4294967296)).toUInt32]
+def ret (r : Int) : HostResult := .values #[.i32 (wrap32 r)]
+
+/-- Kind: equivalence. Says: an import's i32 result is the integer modulo 2^32, as before
+`wrap32`. -/
+theorem ret_eq (r : Int) : ret r = .values #[.i32 (Int.toNat (r % 4294967296)).toUInt32] := by
+  simp only [ret, wrap32_eq]
 
 /-- Argument `k` as an unsigned i32. -/
 def arg (args : Array Value) (k : Nat) : Nat :=
