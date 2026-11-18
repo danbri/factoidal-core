@@ -75,7 +75,7 @@ theorem scanFrom_bounds (base : Nat) (widths : List Nat) (span : Nat × Nat)
   | cons w ws ih =>
     rw [scanFrom_cons, List.zip_cons_cons, List.mem_cons] at h
     rcases h with rfl | h
-    · constructor <;> simp [Nat.add_assoc]
+    · constructor <;> simp
     · obtain ⟨lo, hi⟩ := ih (base + w) h
       constructor
       · omega

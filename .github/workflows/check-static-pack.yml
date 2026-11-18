@@ -91,6 +91,14 @@ jobs:
           proof_dir="$RUNNER_TEMP/static-pack-evidence"
           python3 tools/lean-hygiene-audit.py --build-log "$proof_dir/lean.log" \
             2>&1 | tee "$proof_dir/hygiene.log"
+          # Require evidence for the public claims, not merely a nonempty axiom log.
+          for name in packSpec_length scanFrom_length scanFrom_cons scanFrom_prefix \
+                      scan_terminal scanFrom_bounds scanFrom_disjoint admitted_total_fits \
+                      scatter_eq_scatterRow packParallel_eq_packSpec; do
+            grep -Eq "'L4Factoidal.GpuKernel.StaticPack.$name' (depends on axioms:|does not depend on any axioms)" \
+              "$proof_dir/lean.log" || { echo "Missing checked theorem: $name"; exit 1; }
+            printf '%s\n' "L4Factoidal.GpuKernel.StaticPack.$name" >> "$proof_dir/checked-theorems.txt"
+          done
 
       - name: Preserve compiler and axiom evidence
         if: always()
