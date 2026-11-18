@@ -979,3 +979,7 @@ lean_exe «l4font-shape» where root := `L4Factoidal.Rendering.LeanFontShape
 -- Proof-only timer partition and firing completeness (issue #608).
 lean_lib TimerPartitionProofs where
   roots := #[`L4Factoidal.EventLoop.TimerPartitionTheorems]
+
+-- Logical payload quota proofs (issue #610), outside runtime imports.
+lean_lib BlobQuotaProofs where
+  roots := #[`L4Factoidal.Net.BlobQuotaTheorems]

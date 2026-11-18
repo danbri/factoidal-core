@@ -1,4 +1,4 @@
-name: Timer partition Lean check
+name: Theorem review Lean check
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - 'formal/lean4/L4Factoidal/EventLoop/TimerPartitionTheorems.lean'
+      - 'formal/lean4/L4Factoidal/Net/BlobQuotaTheorems.lean'
       - '.github/workflows/check-timer-partition.yml'
   workflow_dispatch: {}
 
@@ -66,6 +67,7 @@ jobs:
                           visit(dep)
               order.append(source)
           visit('L4Factoidal.EventLoop.TimerPartitionTheorems')
+          visit('L4Factoidal.Net.BlobQuotaTheorems')
           for source in order:
               target = out / 'modules' / source.with_suffix('.olean')
               target.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +92,11 @@ jobs:
             grep -F "'L4Factoidal.EventLoop.$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.EventLoop.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in default_payload_quota add_payload_quota revoke_payload revoke_payload_quota; do
+            grep -F "'L4Factoidal.Net.BlobUrls.$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "L4Factoidal.Net.BlobUrls.$name" >> "$proof_dir/checked-theorems.txt"
           done
       - name: Preserve exact-source compiler evidence
         if: always()
