@@ -51,7 +51,9 @@ theorem Cookie.ofWire_wire (c : Cookie) (hv : c.storageOK = true) : Cookie.ofWir
   simp only [List.reverse_nil, List.nil_append]
   have expiry (e : Option Nat) : ((e.map Nat.repr).getD "").toNat? = e := by
     cases e with
-    | none => exact String.toNat?_eq_none (by decide)
+    | none =>
+      apply String.toNat?_eq_none
+      simp [Bool.eq_false_iff, String.isNat_iff]
     | some n => exact Nat.toNat?_repr n
   cases c with
   | mk name value host path secure httpOnly expires created sameSite =>
