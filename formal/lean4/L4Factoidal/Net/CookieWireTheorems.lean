@@ -36,8 +36,7 @@ theorem Wire.read_fields (sep : Char) (hsep : sep ≠ '\\') (ss done : List Stri
   | cons s ss ih =>
     change Wire.read sep (((s.toList.flatMap (Wire.escapeChar sep) ++ [sep]) ++ Wire.fields sep ss))
       false [] done = _
-    rw [List.append_assoc]
-    rw [readField sep hsep]
+    rw [List.append_assoc, List.singleton_append, readField sep hsep]
     simp [ih, List.append_assoc]
 
 /-- Kind: codec round trip.
@@ -49,11 +48,15 @@ theorem Cookie.ofWire_wire (c : Cookie) (hv : c.storageOK = true) : Cookie.ofWir
     exact hv.2.2
   unfold Cookie.ofWire Cookie.wire
   rw [String.toList_ofList, Wire.read_fields ';' (by decide)]
-  simp only [List.reverse_nil, List.nil_append, Option.bind_some]
+  simp only [List.reverse_nil, List.nil_append]
+  have expiry (e : Option Nat) : ((e.map Nat.repr).getD "").toNat? = e := by
+    cases e with
+    | none => exact String.toNat?_eq_none (by decide)
+    | some n => exact Nat.toNat?_repr n
   cases c with
   | mk name value host path secure httpOnly expires created sameSite =>
-    cases secure <;> cases httpOnly <;> cases expires <;>
-      simpa [Cookie.fromFields, Cookie.wireFields, Nat.min_eq_right hs, hv, Option.filter_some]
+    cases secure <;> cases httpOnly <;>
+      simp [Cookie.fromFields, Cookie.wireFields, expiry, Nat.min_eq_right hs, hv, Option.filter_some]
 
 /-- Kind: admission invariant.
 Says: every cookie accepted from an HTTP header can be read back after writing it.
@@ -88,7 +91,7 @@ private theorem readRowFields (cs : List Cookie) :
   induction cs with
   | nil => rfl
   | cons c cs ih =>
-    simp [Cookie.wire, Wire.read_fields ';' (by decide), ih, List.filterMap_cons]
+    simp [Cookie.wire, Wire.read_fields ';' (by decide), ih]
 
 /-- Kind: codec lemma.
 Says: validating the fields of stored cookies recovers the entire list, including its ordering.
@@ -110,7 +113,9 @@ theorem Jar.ofWire_wire_normalized (j : Jar) (hv : ∀ c ∈ j.cookies, c.storag
     Jar.ofWire j.wire =
       { cookies := j.cookies, next := j.cookies.foldl (fun n c => max n (c.created + 1)) j.next } := by
   have hrows : Jar.wireRows j.wire = (j.next.repr, j.cookies.map Cookie.wireFields) := by
-    simp [Jar.wire, Jar.wireRows, Wire.read_fields '\n' (by decide), readRowFields]
+    simp only [Jar.wire, Jar.wireRows, String.toList_ofList, Wire.read_fields '\n' (by decide),
+      List.reverse_nil, List.nil_append]
+    rw [readRowFields]
   simp [Jar.ofWire, hrows, readStoredRows j.cookies hv]
 
 /-- Kind: counter invariant.
