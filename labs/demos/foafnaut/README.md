@@ -31,7 +31,7 @@ BubblePopWASM is closest to Ladybird's arrangement: a WebAssembly engine of its 
 
 | Browser | State |
 |---|---|
-| **Foafnaut**, the windowed browser | macOS app released. Linux builds exist but are undertested. Windows has no build yet and is the nearest next target. Android, iOS, iPadOS, ESP32 and a Raspberry Pi graphics backend are under investigation, and depend on large performance gains to be viable |
+| **Foafnaut**, the windowed browser | macOS app released. Linux releases contain the CPU engine library for Textnaut and WPT, with no GPU or window; a native Linux browser window has not shipped. Windows has no build yet and is the nearest next target. Android, iOS, iPadOS, ESP32 and a Raspberry Pi graphics backend are under investigation, and depend on large performance gains to be viable |
 | **Textnaut**, in a terminal | Prototype: [textnaut/README.md](textnaut/README.md) |
 | **WWW harness**, the web page that runs the Wasm build ([on the Hub](https://danbri.github.io/factoidal/web/hub/foafnaut/)) | Live |
 
