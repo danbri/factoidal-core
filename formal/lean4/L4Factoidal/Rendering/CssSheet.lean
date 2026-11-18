@@ -150,7 +150,10 @@ def anbSource (cvs : List CV) : String :=
   let (out, _) := (trimWs cvs).foldl (fun (acc : String × Bool) cv =>
     let (s, signed) := acc
     match cv with
-    | .tok (.num v _) => (s ++ (if signed && v ≥ 0 then "+" else "") ++ serialize [cv], false)
+    -- (not after `n-`: `5n- 5` is `5n-5`, its integer has no sign of its own)
+    | .tok (.num v _) =>
+      let ndash := (String.ofList (s.toList.reverse.dropWhile (· == ' ')).reverse).endsWith "-"
+      (s ++ (if signed && v ≥ 0 && !ndash then "+" else "") ++ serialize [cv], false)
     | .tok .ws => (s ++ " ", signed)
     | .tok (.delim _) => (s ++ serialize [cv], false)
     | cv => (s ++ serialize [cv], true)) ("", false)
@@ -268,6 +271,10 @@ def declaresDefaultNs (preludes : List String) : Bool :=
 
 #guard selectorText ":nth-child(odd)" == some ":nth-child(2n+1)"
 #guard selectorText ":nth-child( +n )" == some ":nth-child(n)"
+#guard selectorText ":nth-child(+ n)" == none
+#guard selectorText ":nth-child(5n- 5)" == some ":nth-child(5n-5)"
+#guard selectorText ":nth-child(-n- 5)" == some ":nth-child(-n-5)"
+#guard selectorText ":nth-child(n + 5)" == some ":nth-child(n+5)"
 #guard selectorText "li:nth-last-of-type(-N-5)" == some "li:nth-last-of-type(-n-5)"
 #guard selectorText ":nth-child(2n+0 of .a,b)" == some ":nth-child(2n of .a, b)"
 #guard selectorText ":nth-child(5n -3)" == some ":nth-child(5n-3)" && selectorText ":nth-child(-n+ 6)" == some ":nth-child(-n+6)"
