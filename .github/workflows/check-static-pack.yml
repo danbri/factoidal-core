@@ -60,7 +60,7 @@ jobs:
             2>&1 | tee "$proof_dir/lean-version.txt"
 
           compile=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/time.txt"
-                   lean -M2048 -DwarningAsError=true -o "$RUNNER_TEMP/StaticPack.olean" "$module")
+                   lean -j1 -M2048 -DwarningAsError=true -o "$RUNNER_TEMP/StaticPack.olean" "$module")
           {
             printf 'ulimit -v 4194304\n'
             printf ' %q' "${compile[@]}"

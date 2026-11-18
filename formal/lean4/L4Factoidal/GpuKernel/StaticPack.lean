@@ -53,6 +53,46 @@ theorem scanFrom_prefix (base : Nat) (pre : List Nat) (width : Nat) (rest : List
     simpa only [List.cons_append, List.length_cons, scanFrom_cons,
       List.getElem?_cons_succ, List.sum_cons, Nat.add_assoc] using ih (base + w)
 
+/-- Invariant.
+Says: the terminal accumulator of the scan is the exclusive end of the entire output.
+Does not say: that the terminal accumulator is one of the per-row starting offsets. -/
+theorem scan_terminal (base : Nat) (widths : List Nat) :
+    (widths.scanl (· + ·) base).getLast? = some (base + widths.sum) := by
+  rw [List.getLast?_scanl]
+  induction widths generalizing base with
+  | nil => simp
+  | cons w ws ih =>
+    simpa only [List.foldl_cons, List.sum_cons, Nat.add_assoc] using ih (base + w)
+
+/-- Invariant.
+Says: every computed start and its exclusive end lie within the total span.
+Does not say: that each row writes at least one word. -/
+theorem scanFrom_bounds (base : Nat) (widths : List Nat) (span : Nat × Nat)
+    (h : span ∈ (scanFrom base widths).zip widths) :
+    base ≤ span.1 ∧ span.1 + span.2 ≤ base + widths.sum := by
+  induction widths generalizing base with
+  | nil => simp [scanFrom] at h
+  | cons w ws ih =>
+    rw [scanFrom_cons, List.zip_cons_cons, List.mem_cons] at h
+    rcases h with rfl | h
+    · constructor <;> simp [Nat.add_assoc]
+    · obtain ⟨lo, hi⟩ := ih (base + w) h
+      constructor
+      · omega
+      · simpa only [List.sum_cons, Nat.add_assoc] using hi
+
+/-- Invariant.
+Says: each earlier row ends at or before each later row starts, so their half-open
+write ranges are disjoint even when one of them is empty.
+Does not say: that a device schedule or a barrier realises these ranges. -/
+theorem scanFrom_disjoint (base : Nat) (widths : List Nat) :
+    ((scanFrom base widths).zip widths).Pairwise (fun a b => a.1 + a.2 ≤ b.1) := by
+  induction widths generalizing base with
+  | nil => simp [scanFrom]
+  | cons w ws ih =>
+    rw [scanFrom_cons, List.zip_cons_cons, List.pairwise_cons]
+    exact ⟨fun span h => (scanFrom_bounds (base + w) ws span h).1, ih (base + w)⟩
+
 /-- Admission for word addresses. Device buffer limits, launch geometry, and the
 memory available to a CPU are separate resource limits. -/
 def Admitted (rows : Rows) (capacity : Nat) : Prop :=
@@ -154,6 +194,9 @@ theorem packParallel_eq_packSpec (rows : Rows) (prior : Buffer) :
 #print axioms scanFrom_length
 #print axioms scanFrom_cons
 #print axioms scanFrom_prefix
+#print axioms scan_terminal
+#print axioms scanFrom_bounds
+#print axioms scanFrom_disjoint
 #print axioms admitted_total_fits
 #print axioms scatter_eq_scatterRow
 #print axioms packParallel_eq_packSpec
