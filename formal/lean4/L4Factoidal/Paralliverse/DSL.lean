@@ -134,11 +134,13 @@ Does not say: that a subsequent physical dispatch can see the buffer without syn
 theorem count_visible (rows : StaticPack.Rows) (prior : Mem Nat) (s : List Nat)
     (hs : s.Perm (List.range rows.length)) :
     view rows.length ((countDispatch rows).runOrder prior s) = StaticPack.counts rows := by
+  rw [(countDispatch rows).runOrder_perm (count_raceFree rows) s hs prior]
+  change view rows.length ((countDispatch rows).runOrder prior (List.range rows.length)) = _
   apply List.ext_getElem
   · simp [view, StaticPack.counts]
   · intro i _ hi
     have hr : i < rows.length := by simpa [StaticPack.counts] using hi
-    have hm := hs.mem_iff.mpr (List.mem_range.mpr hr)
+    have hm := List.mem_range.mpr hr
     simp only [view, List.getElem_map, List.getElem_range, count_at, if_pos hm,
       StaticPack.counts, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hr, Option.getD_some]
 
@@ -167,7 +169,8 @@ private theorem burst_at {α : Type} (xs : List α) (base : Nat) (prior : Mem α
       have hm : base ∉ keys (writesFrom (base + 1) xs) := by
         rw [keys_writesFrom, List.mem_range'_1]
         omega
-      rw [Nat.add_zero, applyWrites_apply, lastWrite_none _ _ hm]
+      change applyWrites (prior.write base x) (writesFrom (base + 1) xs) base = x
+      rw [applyWrites_apply _ _ base, lastWrite_none _ _ hm]
       simp [Mem.write]
     | succ i =>
       have h : i < xs.length := by simpa using hi
