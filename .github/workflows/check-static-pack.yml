@@ -25,6 +25,10 @@ jobs:
   static-pack:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # Lean reserves 1 GiB per runtime thread by default on this toolchain.
+      # A small proof module needs only a bounded 16 MiB stack per worker.
+      LEAN_STACK_SIZE_KB: 16384
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,7 +64,7 @@ jobs:
             2>&1 | tee "$proof_dir/lean-version.txt"
 
           compile=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/time.txt"
-                   lean -j1 -M2048 -DwarningAsError=true -o "$RUNNER_TEMP/StaticPack.olean" "$module")
+                   lean -j1 -s16384 -M2048 -DwarningAsError=true -o "$RUNNER_TEMP/StaticPack.olean" "$module")
           {
             printf 'ulimit -v 4194304\n'
             printf ' %q' "${compile[@]}"
