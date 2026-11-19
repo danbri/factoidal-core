@@ -2,7 +2,12 @@ name: Theorem review Lean check
 
 on:
   push:
-    branches: [wip/timer-partition-proofs]
+    branches: [main, wip/timer-partition-proofs]
+    paths:
+      - 'formal/lean4/**'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-timer-partition.yml'
   pull_request:
     paths:
       - 'formal/lean4/**'
@@ -17,7 +22,7 @@ permissions:
 jobs:
   timer-partition:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       LEAN_STACK_SIZE_KB: 16384
     steps:
@@ -72,7 +77,8 @@ jobs:
           visit('L4Factoidal.RDF.CollectionBoundTheorems')
           visit('L4Factoidal.VC.CidKeyTheorems')
           visit('L4Factoidal.Rendering.RdfViewTheorems')
-          strict = {'TimerPartitionTheorems', 'BlobQuotaTheorems', 'CollectionBoundTheorems', 'CidKeyTheorems', 'RdfViewTheorems'}
+          visit('L4Factoidal.SPARQL.StoreEndpointTheorems')
+          strict = {'TimerPartitionTheorems', 'BlobQuotaTheorems', 'CollectionBoundTheorems', 'CidKeyTheorems', 'RdfViewTheorems', 'StoreEndpointTheorems'}
           failed = False
           for source in order:
               target = out / 'modules' / source.with_suffix('.olean')
@@ -112,7 +118,9 @@ jobs:
           done
           for name in L4Factoidal.VC.Cryptosuite.resolvePublicKey_cid_document \
                       L4Factoidal.Rendering.RdfView.toDOM_graph_length_le \
-                      L4Factoidal.Rendering.RdfView.parse_graph_and_caps; do
+                      L4Factoidal.Rendering.RdfView.parse_graph_and_caps \
+                      L4Factoidal.SPARQL.StoreEndpoint.commitOutcome_defaultGraph_replay_named \
+                      L4Factoidal.SPARQL.StoreEndpoint.commitOutcome_readOnly_no_commit; do
             grep -F "'$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "$name" >> "$proof_dir/checked-theorems.txt"

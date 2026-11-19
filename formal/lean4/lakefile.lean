@@ -990,4 +990,5 @@ lean_lib CollectionBoundProofs where
 
 -- Cross-zone adapter proofs (issues #614 and #616), outside runtime imports.
 lean_lib CrossZoneProofs where
-  roots := #[`L4Factoidal.VC.CidKeyTheorems, `L4Factoidal.Rendering.RdfViewTheorems]
+  roots := #[`L4Factoidal.VC.CidKeyTheorems, `L4Factoidal.Rendering.RdfViewTheorems,
+             `L4Factoidal.SPARQL.StoreEndpointTheorems]
