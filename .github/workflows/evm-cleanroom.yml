@@ -117,3 +117,47 @@ jobs:
           path: |
             formal/lean4/evm-cleanroom/.lake/differential/
             formal/lean4/evm-cleanroom/scripts/differential/package-lock.json
+  eels-real-state:
+    # Validate real EELS post-state roots, not merely JSON structure.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compile Lean EVM and machine-check empty-code theorem
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EVMCleanroom
+      - name: Install state-test transaction/trie dependencies
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
+          npm ls --prefix scripts/eels --depth=0
+          sha256sum scripts/eels/package-lock.json
+      - name: Execute published Prague EELS state tests with Lean empty-code frames
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/eels
+          curl --fail --location --silent --show-error --retry 2 \
+            --output .lake/eels/eip7623.json \
+            "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/prague/eip7623_increase_calldata_cost/test_eip_7623.json"
+          node scripts/eels/run-lean-state-tests.mjs --fixture .lake/eels/eip7623.json --out .lake/eels/lean-state-results.json | tee .lake/eels/summary.json
+          python3 -c 'import json; x=json.load(open(".lake/eels/lean-state-results.json")); assert x["status"]=="pass" and x["passed"]>=1 and x["failed"]==0 and x["passed"]+x["unsupported"]==x["provenance"]["totalFixtureCases"],x'
+      - name: Preserve published fixture, host transition results and npm resolution
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evm-eels-state-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            formal/lean4/evm-cleanroom/.lake/eels/
+            formal/lean4/evm-cleanroom/scripts/eels/package-lock.json
