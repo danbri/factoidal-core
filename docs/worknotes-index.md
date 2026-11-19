@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-19 | [XML RSA-OAEP hashes](20261119-xmlenc-oaep-hacl.md) | PR 601 | current — checked HACL* digest selection, refusal and mixed-hash fixtures |
 | 2026-11-19 | [Paralliverse model, proofs and Hub implementation](20261119-paralliverse-progress.md) | PR 607 | current — exact compiler evidence, physical target boundary, CPU ABI and public-demo gates |
 | 2026-11-19 | [GPU pacing test clock](20261119-foafnaut-gpu-pacing-clock.md) | PR 606 | record — deterministic poll clock and exact-source native package checks passed; production gate unchanged |
 | 2026-11-19 | [Form-control border-box geometry](20261119-foafnaut-control-geometry.md) | PR 606 | record — strict script/frame and nested-control geometry/hit regressions pass in native and Wasm |

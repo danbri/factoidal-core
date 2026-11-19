@@ -1260,7 +1260,7 @@ def crypt (enc : Bool) (algName : String) (p : Args) (k : Key) (data : ByteArray
     -- (`Crypto.RsaOaep`, with its single refusal for every decoding failure), RSAEP and
     -- RSADP are HACL*'s.
     let (some r, some h) := (k.rsa, k.algo.hash) | throw .operation
-    let oh : RsaOaep.OaepHash := ⟨hashFast h, h.size⟩
+    let oh : RsaOaep.OaepHash := { hash := hashFast h, hLen := h.size }
     let label := ((p.get? "label").getD .empty).toList
     if enc then
       if k.type != .publicKey then throw .invalidAccess
