@@ -48,7 +48,7 @@ theorem resolvePublicKey_cid_document {docs : List (String × String)}
       CID.Relationship.ofName? purpose = some rel ∧
       CID.documentUrlOf vm = .ok (url, frag) ∧
       (url, text) ∈ docs ∧ JSON.parseJson? text = some j ∧
-      CID.parseDocument j = .ok d ∧ d.id = url ∧
+      CID.parseDocument j = .ok d ∧ CID.retrieveFromDocument vm rel j = .ok m ∧ d.id = url ∧
       CID.absolute d.id m.id = vm ∧ CID.absolute d.id m.controller = url ∧
       d.associated rel vm = true ∧ publicKeyOfMethod? m = some pk ∧
       ∀ t, now = some t → CID.methodInForce t m = true := by
@@ -59,7 +59,7 @@ theorem resolvePublicKey_cid_document {docs : List (String × String)}
   rw [hu] at hu'
   simp only [Except.ok.injEq, Prod.mk.injEq] at hu'
   obtain ⟨rfl, rfl⟩ := hu'
-  refine ⟨rel, m, url, frag, text, j, d, hrel, hu, hmem, hj, hdoc, hid,
+  refine ⟨rel, m, url, frag, text, j, d, hrel, hu, hmem, hj, hdoc, hr, hid,
     hmid, hctl, hassoc, hk, ?_⟩
   intro t ht
   simpa only [ht, inForceAt] using hforce

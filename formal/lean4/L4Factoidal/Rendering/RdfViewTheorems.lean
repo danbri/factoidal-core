@@ -18,12 +18,13 @@ theorem toDOM_graph_length_le {graph : Graph} {filter : Filter} {dom : Dom}
 
 /-- Kind: adapter soundness and resource bound.
 Says: a successful RDF view returns the exact strict RDF 1.1 N-Triples
-parser graph, with both the source-byte cap and the full graph cap satisfied.
+parser graph and the actual DOM adapter result, with the source-byte and full
+graph caps satisfied.
 Does not say: that the DOM preserves a particular row or paint observation. -/
 theorem parse_graph_and_caps {source : String} {filter : Filter} {graph : Graph} {dom : Dom}
     (h : parse source filter = .ok (graph, dom)) :
     source.utf8ByteSize ≤ 1048576 ∧ Syntax.parseNTriples source .rdf11 = .ok graph ∧
-      graph.length ≤ 256 := by
+      graph.length ≤ 256 ∧ toDOM graph filter = .ok dom := by
   have hstrict : Syntax.parseNTriplesDocument source .rdf11 = Syntax.parseNTriples source .rdf11 := by
     unfold Syntax.parseNTriplesDocument
     split <;> rfl
@@ -48,7 +49,7 @@ theorem parse_graph_and_caps {source : String} {filter : Filter} {graph : Graph}
         change Except.ok (parsed, rendered) = Except.ok (graph, dom) at h
         simp only [Except.ok.injEq, Prod.mk.injEq] at h
         obtain ⟨rfl, rfl⟩ := h
-        refine ⟨Nat.le_of_not_gt hlarge, ?_, toDOM_graph_length_le hdom⟩
+        refine ⟨Nat.le_of_not_gt hlarge, ?_, toDOM_graph_length_le hdom, hdom⟩
         first | rfl | exact hparse
 
 #print axioms toDOM_graph_length_le
