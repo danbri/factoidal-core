@@ -1,0 +1,47 @@
+:root {
+  color-scheme: light;
+  --paper: #f6f8f8;
+  --surface: #fff;
+  --soft-surface: #edf3f1;
+  --ink: #142b2c;
+  --muted: #4c6264;
+  --link: #145a4a;
+  --line: #cbd8d4;
+  font-family: system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; padding: 1rem clamp(1rem, 5vw, 3rem) 3rem; }
+a { color: var(--link); text-underline-offset: .19em; }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
+
+.hub-app-nav, .hub-app > main { max-width: 61rem; margin-inline: auto; }
+.hub-app-nav { display: flex; flex-wrap: wrap; gap: .55rem 1.25rem; font-size: .875rem; }
+.pack-intro { margin-block: clamp(2rem, 6vw, 4rem) 1.5rem; }
+.pack-intro h1 { margin: 0; font-size: clamp(2rem, 7vw, 3.5rem); letter-spacing: -.055em; }
+.pack-intro p { max-width: 38rem; margin: .6rem 0 0; line-height: 1.6; }
+.pack-card { min-width: 0; border: 1px solid var(--line); border-radius: .75rem; padding: 1rem; background: var(--surface); }
+.pack-heading { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1rem; }
+.pack-card h2 { margin: 0; font-size: 1.05rem; }
+.pack-heading > label { font-size: .875rem; }
+select, textarea { border: 1px solid var(--line); border-radius: .35rem; background: var(--surface); color: inherit; }
+select { margin-left: .25rem; padding: .35rem; font: inherit; }
+textarea, #cpu-output { font: .95rem/1.55 ui-monospace, monospace; }
+textarea { display: block; width: 100%; min-height: 10.4rem; margin-top: .8rem; padding: .65rem .8rem; resize: vertical; }
+.pack-note, .pack-status { margin: .55rem 0 0; font-size: .875rem; line-height: 1.4; color: var(--muted); }
+.pack-editor .pack-status { min-height: 1.25rem; }
+.pack-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; margin-block: .8rem 1.4rem; }
+#cpu-output { min-height: 3rem; max-height: 15rem; overflow: auto; margin: .65rem 0; padding: .7rem; border-radius: .35rem; background: var(--soft-surface); white-space: pre-wrap; overflow-wrap: anywhere; }
+#gpu-status { margin-top: .8rem; }
+#runtime { max-width: 46rem; line-height: 1.55; }
+#runtime summary { cursor: pointer; font-size: .875rem; font-weight: 600; }
+#runtime p, #runtime dl { font-size: .875rem; }
+#runtime dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; }
+#runtime dl[hidden] { display: none; }
+#runtime dd { margin: 0; }
+
+@media (max-width: 40rem) {
+  .pack-results { grid-template-columns: 1fr; }
+}
