@@ -96,8 +96,8 @@ theorem live_bound_preserved (tab : Table) (h : tab.live.length ≤ maxLive) :
     (∀ (id : Nat) (a : Answer), (answer tab id a).1.live.length ≤ maxLive) ∧
     (∀ id : Nat, (cancel tab id).live.length ≤ maxLive) :=
   ⟨fun page kind url referrer policy cors => start_live_bound tab page kind url referrer policy cors h,
-   fun id a => (answer_live_nonincrease tab id a).trans h,
-   fun id => (cancel_live_nonincrease tab id).trans h⟩
+   fun id a => Nat.le_trans (answer_live_nonincrease tab id a) h,
+   fun id => Nat.le_trans (cancel_live_nonincrease tab id) h⟩
 
 #print axioms start_live_bound
 #print axioms answer_live_nonincrease

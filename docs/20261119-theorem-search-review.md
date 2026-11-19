@@ -4,6 +4,16 @@ Review branch: `wip/timer-partition-proofs`. [Draft PR 609](https://github.com/d
 
 The fast discovery/proof agent uses `gpt-6.2-sol` at low reasoning. An independent `gpt-6.2-astra` reviewer at maximum reasoning checks the actual implementation, premise nonvacuity, reachable invariants, counterexamples to broader claims and host boundaries. The coordinator reads the source and the actual compiler logs. No price comparison is asserted. Discovery candidates are proposals until accepted and compiled. No runtime functions change in this PR; new proof modules have explicit Lake roots outside runtime imports. The RDF Core edit removes one unused argument in an existing proof only.
 
+## Current fully checked checkpoint
+
+Atcd7a536d10775d28dbd9eaf9a80047a9836f1e8d, [both fresh groups are green](https://github.com/danbri/factoidal-core/actions/runs/44456599524): **24 public statements**. The new `StoreEndpoint.commitOutcome_defaultGraph_replay` compiles with strict exit0 and exactly `[propext, Classical.choice, Quot.sound]`. It connects the actual admitted default commit batch, the actual replay and exact target RDF membership; it preserves the old named list without pretending the target has that ordering or multiplicity. Independent review accepted nonvacuity and the explicit host/codec boundaries.
+
+The additional Subresource candidate has three individually checked statements atb2f5f2858: start and answer report the permitted three axioms, cancel uses `[propext]`. Its final cap corollary failed only use of the unavailable `Nat.le.trans` field. It now uses `Nat.le_trans` explicitly, and the complete four-statement module awaits the next actual check. These four are not in24.
+
+A further uncompiled candidate, `VC.StatusList.validate_ok_status_range`, retains the actual checked subject, successful decompression, purpose membership, minimum population, in-bounds field, exact decoded status and numeric width bound. Strong independent review confirmed reachable fixtures, including zero/nonzero and a two-bit value. It is structural decoder provenance. The direct Wasm `vcStatusValidate` route does not verify credential signatures. The separate HTTP shim's recognized status-list path verifies the credential and list proofs before invoking that operation. The existing module preamble attributes both to the Wasm operation inaccurately; the candidate makes no signature, URL-binding or caller-checkEntry claim.
+
+Earlier compiler and discovery history below retains the state at those earlier checks. Its pending labels do not replace this current checkpoint.
+
 ## Subresource candidate
 
 `Net.SubresourceBoundTheorems` is a new uncompiled candidate about the actual
@@ -14,13 +24,17 @@ before reinserting at most one, so this covers the complete reply transition.
 The statements count per-table entries, not bytes, workers, completion or
 fairness. Actual strict compilation and independent review remain pending.
 
-## Latest checking and review
+## Earlier fully green23-statement checkpoint
+
+At4a1cce5f0a98a432f46f2e6cd9956c66af380eba, the [entire fresh check](https://github.com/danbri/factoidal-core/actions/runs/44455807362) is green:18 light statements plus5 endpoint statements. Each new leaf returns zero under strict warnings and the required-name and axiom audits pass. The endpoint reports are exactly `[propext, Classical.choice, Quot.sound]` for both scope results, both replay results and the epoch counterexample. This is actual compiler evidence, not a test substitute. The later commit bridge and four transfer-table statements are additional candidates pending their own checks; they are not in23.
+
+## Earlier18-statement checking and review
 
 The [fresh18-statement light group atba6ebf864](https://github.com/danbri/factoidal-core/actions/runs/44452790148) is green. It includes both actual blank-node prefix allocator theorems `freshPrefix_fresh` and `freshPrefix_candidate`, each reporting `[propext, Classical.choice, Quot.sound]`. For arbitrary stems and label lists, the existing n+1-candidate search finds an unused injective document prefix; its fallback is unreachable. This is not yet the whole RDF dataset-merge theorem.
 
 In the endpoint group of that same run, `StoreReplayTheorems.lean` and `LogEpochTheorems.lean` both return zero with strict warnings. The two replay results prove unconditional target membership (including duplicates) and output key uniqueness assuming only old-graph uniqueness. `acceptedLogAppend_can_fail_reopen` is a closed kernel-checked existential using actual V1 codec, append and reopen: an already-opened log with seq1/epoch2 and a writer at epoch1 accepts a seq2/epoch1 append that then fails reopen. All three report exactly `[propext, Classical.choice, Quot.sound]`. The latter is a model counterexample to a broad append/reopen claim; it is not an observed host fault. [Issue622](https://github.com/danbri/factoidal-core/issues/622) keeps the runtime epoch invariant and a conditional positive theorem open. [Issue623](https://github.com/danbri/factoidal-core/issues/623) tracks live/replay duplicate serialisation independently.
 
-The endpoint group as a whole still failed one scope helper rewrite, so the combined group is not claimed green. The latest repair is4a1cce5f0 under fresh checking. Transient error-recovery `sorryAx` output from rejected scripts is excluded from every proved claim.
+Atba6ebf864, the endpoint group failed one scope helper rewrite. The repair4a1cce5f0 subsequently passed the entire group as recorded above. Transient error-recovery `sorryAx` output from rejected scripts is excluded from every proved claim.
 
 The new `StoreCommitReplayTheorems` candidate connects the admitted `commitOutcome .defaultGraph` result to the exact computed default delta and then the actual replay: exact old named list and target default membership. It makes no target named-order, default multiplicity or physical persistence claim. Independent source review found an actual accepted default INSERT fixture. A separate source-level computation of commitOutcome admits a duplicate-bearing target; that case is not claimed as the output of the HTTP INSERT fixture. The theorem is nonvacuous. It is separately submitted for actual compilation, with its own required axiom report and an explicit non-runtime Lake root. It remains an unproved candidate until that check succeeds.
 
