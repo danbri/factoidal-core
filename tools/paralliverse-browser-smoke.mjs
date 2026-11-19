@@ -286,6 +286,20 @@ try {
   await edit("source", changed, "input");
   await observeCase(evaluate, "changed-after-zero", "custom", changedOutput);
 
+  // The visible Run button submits the current editor value even without an input event.
+  const submitted = "[[17], [], [23, 17]]";
+  await evaluate(`(() => {
+    const run = document.querySelector("#run");
+    if (!run || run.disabled || run.textContent.trim() !== "Run CPU + GPU") {
+      throw new Error("The visible Run CPU + GPU control is unavailable.");
+    }
+    document.querySelector("#source").value = ${JSON.stringify(submitted)};
+    run.click();
+  })()`);
+  await observeCase(evaluate, "manual-run", "custom", "[17, 23, 17]");
+  await edit("source", changed, "input");
+  await observeCase(evaluate, "automatic-after-manual", "custom", changedOutput);
+
   await evaluate('document.querySelector("#runtime").open = true');
   await screenshot("paralliverse.png");
   assert.deepEqual(report.pageErrors, [], "Uncaught browser or worker errors");
