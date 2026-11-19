@@ -26,8 +26,7 @@ private theorem checked_agrees {d : DigestProvider} {spec : ByteArray → ByteAr
     (agree : d.Agrees spec) {msg out} (h : d.checked msg = some out) : out = spec msg := by
   obtain ⟨v, hv, hs⟩ := Option.bind_eq_some_iff.mp h
   split at hs
-  · cases hs
-    exact agree msg v hv
+  · exact (Option.some.inj hs).symm.trans (agree msg v hv)
   · cases hs
 
 /-- Kind: invariant.
@@ -60,7 +59,11 @@ theorem mgf1Checked_length {d seed n out} (h : mgf1Checked d seed n = some out) 
   split at h
   · cases h
   · obtain ⟨_, _, hs⟩ := Option.bind_eq_some_iff.mp h
-    split at hs <;> simp_all
+    dsimp only at hs
+    split at hs
+    · rename_i hlen
+      exact (congrArg List.length (Option.some.inj hs)).symm.trans hlen
+    · cases hs
 
 /-- Kind: invariant.
 Says: one member on which the function refuses makes the option-valued traversal refuse.
@@ -126,9 +129,9 @@ theorem mgf1Checked_agrees {d : DigestProvider} {H : OaepHash}
   · cases h
   · obtain ⟨blocks, hb, hs⟩ := Option.bind_eq_some_iff.mp h
     have hblocks := mapM_agrees blockAgree hb
+    dsimp only at hs
     split at hs
-    · cases hs
-      rw [hblocks, size] <;> rfl
+    · simpa only [hblocks, size] using (Option.some.inj hs).symm
     · cases hs
 
 /-- Kind: refinement.
