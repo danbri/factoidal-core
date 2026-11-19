@@ -6,6 +6,26 @@ The fast discovery/proof agent uses `gpt-6.2-sol` at low reasoning. An independe
 
 ## Compiler evidence
 
+At `7c246a8163cbf2922ad140c7f0417ba4148a8321`, the [fresh batch](https://github.com/danbri/factoidal-core/actions/runs/44437357851) compiled sixteen public statements: timer six, blob four, RDF collection three, CID key provenance one and RDF browser-view two. Each new proof module returned zero with strict warnings. The added cross-area reports are:
+
+- `L4Factoidal.VC.Cryptosuite.resolvePublicKey_cid_document`: `[propext, Classical.choice, Quot.sound]`.
+- `L4Factoidal.Rendering.RdfView.toDOM_graph_length_le`: `[propext, Classical.choice, Quot.sound]`.
+- `L4Factoidal.Rendering.RdfView.parse_graph_and_caps`: `[propext, Classical.choice, Quot.sound]`.
+
+The overall batch failed: older `OWL/RLSemantics.lean` and `Storage/Sbm11/VarintWordTheorems.lean` exceeded the 2 GiB proof-memory cap. Missing dependency objects then prevented checking `StoreEndpointTheorems`. Those endpoint scripts remain unchecked. The next workflow separates the sixteen light statements from endpoint work, retaining fresh source-only dependency compilation. Only those two existing heavy dependencies get a 4 GiB Lean limit, 6 GiB OS ceiling and 360-second deadline on the cloud runner; new proof modules retain 2 GiB, strict warnings and 180 seconds. No local Lean run or copied olean establishes any result.
+
+The [thirteen-statement earlier run](https://github.com/danbri/factoidal-core/actions/runs/44428395824) was fully green at `a2854d51381530b9cf37abcd3e0bdb54ec112040`, including the strengthened `due_eq_filters` and `fire_eq_filter_tasks`. The raw task list equality retains order, multiplicity and every task field. Callback execution, host scheduling and fairness remain separate.
+
+## Cross-area review and rejected reasoning
+
+[CID/VC item614](https://github.com/danbri/factoidal-core/issues/614) retains the actual `CID.retrieveFromDocument vm rel j = .ok m` witness after independent review rejected a weaker statement which lost the relationship to the chosen document. It concerns supplied documents and selected method material, not network authenticity or a working host resolution path. [N-Triples/browser item616](https://github.com/danbri/factoidal-core/issues/616) retains actual `toDOM graph filter = .ok dom`, the exact strict parser graph and the whole unfiltered input/graph caps. It proves neither DOM content correctness nor rendered pixels.
+
+[Endpoint scope item618](https://github.com/danbri/factoidal-core/issues/618) follows the admitted nonempty batch through the actual `applyDeltaEntries` fold: every entry is default-only and the old named graph list stays identical. It does not infer that the target named list has identical order, that replay reproduces the whole target, or that the host durably appends bytes. The separate read-only statement excludes commits even for no-op writes. Scripts await compilation.
+
+[Replay correspondence item620](https://github.com/danbri/factoidal-core/issues/620) is being strengthened after a substantive discovery error was caught in independent review. The fast search incorrectly proposed different raw triples for language tags `en` and `EN`. In the pinned source, `WfLiteral` requires canonical tags, `Literal.langString` lowercases at construction, and `Triple.eqb_iff_eq` proves engine equality exactly matches structural equality. The two proposed fixture triples are equal. That counterexample is invalid. The intended membership theorem therefore has no uniqueness hypothesis. A separate output-uniqueness theorem needs only uniqueness of the old default graph: old `[t,t]`, target `[t]` computes no delta and preserves the duplicate list. Neither revised script has been compiled yet.
+
+The reviewer also traced an actual adapter distinction: graph-target N-Triples PUT retains duplicate parsed triples, while replay uses graph insertion and can deduplicate them. This is a source-derived conditional trace, not an executed host reproduction. Whole-dataset N-Quads PUT uses a different parser with an available set-invariant transfer theorem. These live/raw-list differences remain separate from the unconditional RDF-membership claim and will be tracked separately.
+
 At `f6e868b8fbf0844024e502d110e688f2daabc093`, the [expanded focused run](https://github.com/danbri/factoidal-core/actions/runs/44426834038) compiled all three new modules and their fresh dependencies, passed hygiene, and required all 11 public reports. The new RDF statements `L4Factoidal.RDF.listWalk_length_lt`, `listItemsBy_length_lt`, and `listItems_length_le` each report `[propext, Classical.choice, Quot.sound]`. Compiler exit was zero. The RDF independent review below accepts the tight output-cardinality claim and rejects a traversal-time or encoded-size interpretation.
 
 
