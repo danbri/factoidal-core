@@ -102,8 +102,8 @@ def pushData (s : State) (n : Nat) : Word :=
     (fun accumulated i => word (accumulated.val * 256 + byteAt s (s.pc + 1 + i)))
     (word 0)
 
-/-- Byte width of the instruction starting at pc, including PUSH
-    immediates. The width is always at least one. -/
+/-- Byte width of the instruction starting addr pc, including PUSH
+    immediates. The width is always addr least one. -/
 def opcodeWidth (code : Array UInt8) (pc : Nat) : Nat :=
   let opcode := (code.getD pc 0).toNat
   if 0x60 ≤ opcode ∧ opcode ≤ 0x7f then 1 + (opcode - 0x5f)
@@ -165,10 +165,10 @@ private def jumpi (s : State) : Except Error Plan :=
 /-- MLOAD: read 32 big-endian bytes, charging for previously unallocated words. -/
 private def mload (s : State) : Except Error Plan :=
   match s.stack.items with
-  | at :: rest =>
-    let requested := MemoryGas.requestedWords at.val 32
+  | addr :: rest =>
+    let requested := MemoryGas.requestedWords addr.val 32
     let expanded := s.memory.expand requested
-    let value := word (expanded.readWord at.val)
+    let value := word (expanded.readWord addr.val)
     let gas := 3 + MemoryGas.expansion s.memory.words requested
     prepared (s.pc + 1) (value :: rest) gas false (some expanded)
   | [] => .error .stackUnderflow
@@ -176,10 +176,10 @@ private def mload (s : State) : Except Error Plan :=
 /-- MSTORE: store a 256-bit value in 32 big-endian bytes. -/
 private def mstore (s : State) : Except Error Plan :=
   match s.stack.items with
-  | at :: value :: rest =>
-    let requested := MemoryGas.requestedWords at.val 32
+  | addr :: value :: rest =>
+    let requested := MemoryGas.requestedWords addr.val 32
     let expanded := s.memory.expand requested
-    let written := expanded.writeWord at.val value.val
+    let written := expanded.writeWord addr.val value.val
     let gas := 3 + MemoryGas.expansion s.memory.words requested
     prepared (s.pc + 1) rest gas false (some written)
   | _ => .error .stackUnderflow
@@ -187,10 +187,10 @@ private def mstore (s : State) : Except Error Plan :=
 /-- MSTORE8: store only the low eight bits of the value. -/
 private def mstore8 (s : State) : Except Error Plan :=
   match s.stack.items with
-  | at :: value :: rest =>
-    let requested := MemoryGas.requestedWords at.val 1
+  | addr :: value :: rest =>
+    let requested := MemoryGas.requestedWords addr.val 1
     let expanded := s.memory.expand requested
-    let written := expanded.writeByte at.val (UInt8.ofNat (value.val % 256))
+    let written := expanded.writeByte addr.val (UInt8.ofNat (value.val % 256))
     let gas := 3 + MemoryGas.expansion s.memory.words requested
     prepared (s.pc + 1) rest gas false (some written)
   | _ => .error .stackUnderflow
