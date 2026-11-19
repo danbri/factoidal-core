@@ -82,4 +82,62 @@ private def successfulAndHalted (r : Except Error State) : Bool :=
 #guard isError (run 1 (initial #[0x5f, 0x00])) .stepLimit
 #guard resultGas (run 2 (initial #[0x5f, 0x00])) == some 98
 
+-- MSTORE followed by MLOAD: 2 survives an actual 32-byte memory round-trip.
+-- Gas = PUSH1 (3) + PUSH1 (3) + MSTORE (3+3 expansion)
+--     + PUSH1 (3) + MLOAD (3) + STOP (0) = 18.
+private def memoryRoundTrip : Except Error State :=
+  run 8 (initial #[0x60, 0x02, 0x60, 0x00, 0x52,
+                   0x60, 0x00, 0x51, 0x00])
+
+private def resultMemoryWords (result : Except Error State) : Option Nat :=
+  match result with
+  | .ok s => some s.memory.words
+  | .error _ => none
+
+private def resultByte (result : Except Error State) (address : Nat) : Option Nat :=
+  match result with
+  | .ok s => some ((s.memory.readByte address).toNat)
+  | .error _ => none
+
+#guard resultWord memoryRoundTrip == some 2
+#guard resultMemoryWords memoryRoundTrip == some 1
+#guard resultByte memoryRoundTrip 31 == some 2
+#guard resultByte memoryRoundTrip 30 == some 0
+#guard resultGas memoryRoundTrip == some 82
+
+-- Big-endian MSTORE: the low two bytes of 0x0102 are at offsets 30 and 31.
+private def bigEndianStore : Except Error State :=
+  run 5 (initial #[0x61, 0x01, 0x02, 0x60, 0x00, 0x52, 0x00])
+#guard resultByte bigEndianStore 30 == some 1
+#guard resultByte bigEndianStore 31 == some 2
+#guard resultByte bigEndianStore 0 == some 0
+
+-- MSTORE8 keeps only the low byte (0x012c → 0x2c), at the last byte of a word.
+private def oneByteStore : Except Error State :=
+  run 8 (initial #[0x61, 0x01, 0x2c, 0x60, 0x1f, 0x53,
+                   0x60, 0x00, 0x51, 0x00])
+#guard resultWord oneByteStore == some 44
+#guard resultByte oneByteStore 31 == some 44
+#guard resultMemoryWords oneByteStore == some 1
+#guard resultGas oneByteStore == some 82
+
+-- Accessing byte 32 expands memory to *64* bytes; MSIZE reports bytes.
+#guard resultWord (run 6 (initial #[0x60, 0x01, 0x60, 0x20, 0x53,
+                                   0x59, 0x00])) == some 64
+#guard resultMemoryWords (run 6 (initial #[0x60, 0x01, 0x60, 0x20,
+                                          0x53, 0x59, 0x00])) == some 2
+#guard resultGas (run 6 (initial #[0x60, 0x01, 0x60, 0x20,
+                                  0x53, 0x59, 0x00])) == some 83
+#guard resultWord (run 2 (initial #[0x59, 0x00])) == some 0
+
+-- An initially zero-filled MLOAD starting at byte 31 touches two words.
+#guard resultWord (run 4 (initial #[0x60, 0x1f, 0x51, 0x00])) == some 0
+#guard resultMemoryWords (run 4 (initial #[0x60, 0x1f, 0x51, 0x00])) == some 2
+#guard resultGas (run 4 (initial #[0x60, 0x1f, 0x51, 0x00])) == some 88
+
+-- The interpreter refuses insufficient gas even when the memory update
+-- has already been *planned*; functional memory is committed only on success.
+#guard isError (run 5 (initial #[0x60, 0x01, 0x60, 0x00, 0x52] 8)) .outOfGas
+#guard isError (run 5 (initial (pushMax ++ #[0x51, 0x00]) 100)) .outOfGas
+
 end EVMCleanroom
