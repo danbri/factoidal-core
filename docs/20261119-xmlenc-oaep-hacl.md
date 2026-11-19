@@ -81,10 +81,31 @@ exact-head validation. Source tracing found no checked XML path converting a
 refused or short digest to a zero-padded successful mask. The generic
 `withMasks` helper itself accepts arbitrary masks; its callers retain the
 width obligation. Both writer configurations agree with their emitted metadata.
-This review did not run Lean or the executable fixtures. All seven new public
-statements remain candidates until the bounded fresh-source workflow succeeds.
-The workflow preserves generated C for the new provider and WebHacl wrappers
-so the wasm32 handling of large Nat literals can be inspected.
+At `cba8bc578`, Lean 4.33.1 compiled 26 modules from fresh source, ran the XML
+guards and printed the axioms for all seven new statements and the three
+existing OAEP theorems. The hygiene audit passed. [Compiler run and generated
+C](https://github.com/danbri/factoidal-core/actions/runs/44472399316/job/135384789246).
+
+## wasm32 bound checks
+
+At that commit, the generated bodies of `mgf1Checked` and `sha224ForXml?`
+each constructed `lean_cstr_to_nat("4294967296")`. On wasm32, the runtime
+allocates a heap object for this value. Multiplication borrowed the first
+object and comparison borrowed the second. Both bodies lost the reference
+on return. This leaves one allocation per MGF1 call with a nonzero digest
+size and one per SHA-224 call. The diagnosis comes from the generated C
+and the pinned runtime. Measuring the effect on OAEP heap use would require
+an instrumented Wasm run.
+[Lean allocation code](https://github.com/leanprover/lean4/blob/v4.33.1/src/runtime/object.cpp#L1386-L1400).
+
+The two guards now use `L4Factoidal.two32`, the existing
+`@[reducible, noinline]` constant for this wasm32 representation. The
+WebHacl guard keeps its named `u32Bound` definition and marks it
+`@[noinline]`. The compiler check for this change is that each guard reads
+a module constant that the runtime marks persistent during initialisation.
+The bounded workflow preserves generated C for both guards and the shared
+constant so this can be checked on each candidate. [Earlier wasm32 bound
+measurements](designissues/2026-09-07-wasm-packer-memory.md).
 
 The change covers XML RSA-OAEP. Pre-existing XML ECDH-ES ConcatKDF still hashes
 its shared secret with pure SHA-256, and JOSE still uses pure OAEP hash

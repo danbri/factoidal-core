@@ -5,6 +5,7 @@ native or Wasm extern with that specification remains an external trust
 assumption. RSA key validity, randomness and compiled timing are separate
 properties. -/
 import L4Factoidal.Crypto.RsaOaep
+import L4Factoidal.NatBounds
 
 namespace L4Factoidal.Crypto.RsaOaep
 
@@ -44,7 +45,7 @@ private def mgfBlock (d : DigestProvider) (seed : List UInt8) (counter : Nat) :=
 /-- RFC 8017 Appendix B.2.1. Each digest must succeed at its specified size.
 The length check also prevents a short mask from reaching the XOR operation. -/
 def mgf1Checked (d : DigestProvider) (seed : List UInt8) (n : Nat) : Option (List UInt8) :=
-  if d.size = 0 ∨ n > 4294967296 * d.size then none else
+  if d.size = 0 ∨ n > L4Factoidal.two32 * d.size then none else
     let counters := List.range ((n + d.size - 1) / d.size)
     (counters.mapM (mgfBlock d seed)).bind fun blocks =>
       let mask := blocks.flatten.take n

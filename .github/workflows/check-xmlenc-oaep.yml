@@ -148,7 +148,8 @@ jobs:
               strict = ['-DwarningAsError=true'] if name == 'L4Factoidal.Crypto.RsaOaepChecked' else []
               arguments = [*strict, '-o', str(target)]
               outputs = [target]
-              if name in ('L4Factoidal.Crypto.WebHacl', 'L4Factoidal.Crypto.RsaOaepChecked'):
+              if name in ('L4Factoidal.NatBounds', 'L4Factoidal.Crypto.WebHacl',
+                          'L4Factoidal.Crypto.RsaOaepChecked'):
                   generated = evidence / 'generated' / source.with_suffix('.c')
                   generated.parent.mkdir(parents=True, exist_ok=True)
                   arguments.extend(['-c', str(generated)])

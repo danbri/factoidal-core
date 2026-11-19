@@ -55,13 +55,14 @@ check a published SHA-224 vector. The page-facing hash registry keeps its four n
 No `sorry`, no `axiom`, no `partial`.
 -/
 import L4Factoidal.Crypto.WebCrypto
+import L4Factoidal.NatBounds
 
 namespace L4Factoidal.Crypto.WebHacl
 
 open L4Factoidal.Crypto
 
-/-- 2^32: HACL*'s C API takes every length as a `uint32_t`. -/
-def u32Bound : Nat := 4294967296
+/-- Exclusive length bound for HACL*'s C API, shared by the wasm32 guards. -/
+@[noinline] def u32Bound : Nat := L4Factoidal.two32
 
 /-! ## The hash family at the boundary -/
 
