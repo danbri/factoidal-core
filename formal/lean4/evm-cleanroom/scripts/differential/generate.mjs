@@ -38,6 +38,7 @@ const pushBytes = bytes => {
   return byteHex(0x5f + bytes.length) + Buffer.from(bytes).toString('hex');
 };
 const pushSmall = x => pushBytes([x & 255]);
+const randomBytes = n => Array.from({length:n}, () => next() & 255);
 const pushWord = () => {
   const width = choose([1, 1, 2, 4, 8, 16, 32, 32]);
   const mode = next() % 8;
@@ -62,7 +63,7 @@ for (let i = 0; i < count; i++) {
   const category = categories[i % categories.length];
   const position = choose([0,1,2,7,16,30,31,32,33,63,64,95]);
   let code;
-  let gas = '1000';
+  let gas = String(500 + (next() % 3500));
   let expectedError = null;
   switch (category) {
     case 'arithmetic':
@@ -75,7 +76,7 @@ for (let i = 0; i < count; i++) {
       code = pushWord() + pushSmall(position) + '53' + pushSmall(position) + '5100';
       break;
     case 'memory-load':
-      code = pushSmall(position) + '5100';
+      code = pushWord() + '50' + pushSmall(position) + '5100';
       break;
     case 'memory-size':
       code = pushSmall(next() & 255) + pushSmall(position) + '535900';
@@ -83,12 +84,20 @@ for (let i = 0; i < count; i++) {
     case 'stack-ops':
       code = pushWord() + pushWord() + '90805000';
       break;
-    case 'jump':
-      code = '600556605b5b00'; // PUSH1 5; JUMP; PUSH1 0x5b; JUMPDEST; STOP
+    case 'jump': {
+      const fillerWidth = choose([1,2,4,8,16,32]);
+      const filler = pushBytes(randomBytes(fillerWidth));
+      const target = 4 + fillerWidth;
+      code = pushSmall(target) + '56' + filler + '5b00';
       break;
-    case 'jumpi':
-      code = '60' + byteHex(next() & 1) + '60095760ff50005b00';
+    }
+    case 'jumpi': {
+      const fillerWidth = choose([1,2,4,8,16,32]);
+      const filler = pushBytes(randomBytes(fillerWidth));
+      const target = 8 + fillerWidth;
+      code = pushSmall(next() & 1) + pushSmall(target) + '57' + filler + '50005b00';
       break;
+    }
     case 'gas':
       code = pushWord() + '5a0100';
       break;
@@ -102,26 +111,32 @@ for (let i = 0; i < count; i++) {
       code = pushWord() + pushSmall(31) + '52' + pushSmall(32) + '5100';
       break;
     case 'out-of-gas':
-      code = '600100'; // PUSH1 requires 3 gas; make only 2 available.
-      gas = '2'; expectedError = 'outOfGas';
+      code = pushWord() + '00'; // Any PUSH requires 3 gas.
+      gas = String(next() % 3); expectedError = 'outOfGas';
       break;
     case 'stack-underflow':
-      code = '0100'; // ADD on an empty stack.
+      code = pushWord() + '0100'; // ADD with only one operand.
       expectedError = 'stackUnderflow';
       break;
     case 'invalid-jump':
-      code = '600356005b00'; // Destination 3 is STOP, not JUMPDEST.
+      code = pushSmall(choose([0,1,2,3,4,255])) + '56' + pushWord() + '5b00';
+      // No chosen destination is the actual decoded JUMPDEST after the filler.
       expectedError = 'invalidJump';
       break;
     case 'invalid-opcode':
-      code = 'fe00';
+      code = pushWord() + 'fe00';
       expectedError = 'invalidOpcode';
       break;
     case 'jumpi-invalid-unselected':
-      code = '600060ff5700'; // Invalid destination is ignored if condition=0.
+      code = pushSmall(0) + pushSmall(choose([0,1,2,3,4,255])) +
+        '57' + pushWord() + '5000'; // Invalid target, untaken branch.
       break;
-    case 'high-pointer-out-of-gas':
-      code = '7f' + 'ff'.repeat(32) + '5100';
+    case 'high-pointer-out-of-gas': {
+      const bytes = randomBytes(32);
+      bytes[0] |= 0x80;
+      code = pushBytes(bytes) + '5100';
+      break;
+    }
       expectedError = 'outOfGas';
       break;
     default:
