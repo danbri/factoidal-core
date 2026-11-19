@@ -1,0 +1,164 @@
+name: Event-loop wire admission Lean check
+
+on:
+  push:
+    branches: [main, wip/timer-partition-proofs]
+    paths:
+      - 'formal/lean4/L4Factoidal/EventLoop/**'
+      - 'formal/lean4/L4Factoidal/JSON/**'
+      - 'formal/lean4/lean-toolchain'
+      - 'labs/demos/foafnaut/WebEventLoop.lean'
+      - 'labs/demos/foafnaut/WebEventLoopStateTheorems.lean'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-eventloop-wire.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/EventLoop/**'
+      - 'formal/lean4/L4Factoidal/JSON/**'
+      - 'formal/lean4/lean-toolchain'
+      - 'labs/demos/foafnaut/WebEventLoop.lean'
+      - 'labs/demos/foafnaut/WebEventLoopStateTheorems.lean'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-eventloop-wire.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  timer-partition:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/timer-partition-proofs'
+    name: Event-loop JSON admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Compile fresh source dependencies and theorem modules
+        working-directory: formal/lean4
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/eventloop-wire-evidence
+          PROOF_MODULES: WebEventLoopStateTheorems
+          LARGER_DEPENDENCY_BUDGETS: ''
+        run: |
+          set -euo pipefail
+          unset LEAN_PATH LEAN_SRC_PATH
+          mkdir -p "$PROOF_DIR"
+          mkdir "$PROOF_DIR/modules"
+          export LEAN_PATH="$PROOF_DIR/modules"
+          {
+            git rev-parse HEAD
+            cat lean-toolchain
+            (
+              ulimit -v 4194304
+              lean --version
+            )
+          } 2>&1 | tee "$PROOF_DIR/source.txt"
+          python3 -u - <<'PY' 2>&1 | tee "$PROOF_DIR/lean.log"
+          import hashlib, os, pathlib, re, shlex, subprocess, sys
+          out = pathlib.Path(os.environ['PROOF_DIR'])
+          proof_modules = os.environ['PROOF_MODULES'].split()
+          larger_dependencies = set(os.environ.get('LARGER_DEPENDENCY_BUDGETS', '').split())
+          seen, order = set(), []
+          project = pathlib.Path.cwd()
+          lab = project.parents[1] / 'labs/demos/foafnaut'
+          lab_modules = {'WebEventLoop', 'WebEventLoopStateTheorems'}
+
+          def module_source(name):
+              if name in lab_modules:
+                  return lab / (name + '.lean')
+              return project / (name.replace('.', '/') + '.lean')
+
+          def visit(name):
+              if name in seen:
+                  return
+              seen.add(name)
+              source = module_source(name)
+              if not source.is_file():
+                  if name.startswith('L4Factoidal.') or name in lab_modules:
+                      raise SystemExit(f'Missing local dependency: {name}')
+                  return
+              for line in source.read_text().splitlines():
+                  if re.match(r'^\s*(?:public\s+)?import\s+', line):
+                      for dep in re.sub(r'^\s*(?:public\s+)?import\s+', '', line).split('--')[0].split():
+                          visit(dep)
+              order.append((name, source))
+
+          for name in proof_modules:
+              visit(name)
+          proof_sources = {module_source(name) for name in proof_modules}
+          failed = False
+          for name, source in order:
+              module_path = pathlib.Path(name.replace('.', '/'))
+              target = out / 'modules' / module_path.with_suffix('.olean')
+              timing = out / 'timings' / module_path.with_suffix('.txt')
+              target.parent.mkdir(parents=True, exist_ok=True)
+              timing.parent.mkdir(parents=True, exist_ok=True)
+              with (out / 'source.txt').open('a') as f:
+                  print(hashlib.sha256(source.read_bytes()).hexdigest(), source, file=f)
+              strict = source in proof_sources
+              if str(source) in larger_dependencies and not strict:
+                  duration, os_memory_kib, lean_memory = '360s', '6291456', '-M4096'
+              else:
+                  duration, os_memory_kib, lean_memory = '180s', '4194304', '-M2048'
+              cmd = [
+                  'timeout', '--kill-after=10s', duration, '/usr/bin/time', '-v', '-o', str(timing),
+                  'bash', '-c', 'ulimit -v "$1" && shift && exec "$@"', 'lean-limit', os_memory_kib,
+                  'lean', '-j1', '-s16384', lean_memory,
+                  *(['-DwarningAsError=true'] if strict else []), '-R', str(lab if name in lab_modules else project), '-o', str(target), str(source),
+              ]
+              print(shlex.join(cmd), flush=True)
+              result = subprocess.run(cmd)
+              print(f'{source}: compile_exit={result.returncode}', flush=True)
+              if result.returncode or not target.is_file():
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY
+      - name: Require individual theorem axiom reports
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/eventloop-wire-evidence
+          REQUIRED_THEOREMS: WebEventLoop.stateOf_inv
+        run: |
+          set -euo pipefail
+          python3 tools/lean-hygiene-audit.py --build-log "$PROOF_DIR/lean.log" \
+            2>&1 | tee "$PROOF_DIR/hygiene.log"
+          python3 - <<'PY'
+          import os, pathlib, re
+          out = pathlib.Path(os.environ['PROOF_DIR'])
+          required = os.environ['REQUIRED_THEOREMS'].split()
+          reports = re.findall(
+              r"'([^']+)' (?:depends on axioms: \[[^\]]*\]|does not depend on any axioms)",
+              (out / 'lean.log').read_text(),
+          )
+          missing = set(required) - set(reports)
+          if missing:
+              raise SystemExit('Missing axiom reports for ' + ', '.join(sorted(missing)))
+          (out / 'checked-theorems.txt').write_text('\n'.join(required) + '\n')
+          PY
+      - name: Preserve exact-source compiler evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: timer-partition-lean-evidence-eventloop-wire
+          path: |
+            ${{ runner.temp }}/eventloop-wire-evidence/
+            !${{ runner.temp }}/eventloop-wire-evidence/modules/**
+          if-no-files-found: warn
+          retention-days: 30

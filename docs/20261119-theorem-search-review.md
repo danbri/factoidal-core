@@ -4,6 +4,14 @@ Review branch: `wip/timer-partition-proofs`. [Draft PR 609](https://github.com/d
 
 The fast discovery/proof agent uses `gpt-6.2-sol` at low reasoning. An independent `gpt-6.2-astra` reviewer at maximum reasoning checks the actual implementation, premise nonvacuity, reachable invariants, counterexamples to broader claims and host boundaries. The coordinator reads the source and the actual compiler logs. No price comparison is asserted. Discovery candidates are proposals until accepted and compiled. No runtime functions change in this PR; new proof modules have explicit Lake roots outside runtime imports. The RDF Core edit removes one unused argument in an existing proof only.
 
+## Complete31 checkpoint and further candidates
+
+[The entire eeaef8886 source run](https://github.com/danbri/factoidal-core/actions/runs/44468639999) is now green: all31 public statements, both groups, strict owned compiler exits0, permitted axioms and hygiene. The later [HTTP group atfe277d794](https://github.com/danbri/factoidal-core/actions/runs/44470657748), job135379024209, separately passes `HTTP.Wire.decodeChunked_body_bound` and `frameRequest_body_bound`, both `[propext, Classical.choice, Quot.sound]`, compiler exit0 and hygiene clean. Thus33 public statements have individually compiled; the latest entire batch is still running. The first HTTP script's two implicit empty ByteArray inference failures and error-recovery output are discarded.
+
+Strong independent HTTP source review accepted nonvacuous successful fixed-length and chunked fixtures, actual StoreServe/socket and XMPP handshake paths, and the stated exclusions. The header bound applies to the starting offset of CRLFCRLF; the four delimiter bytes may extend past that offset cap. The public result retains payload decode and length, not exact chunk reconstruction or consumed bytes.
+
+[Event-loop JSON admission629](https://github.com/danbri/factoidal-core/issues/629) is a new uncompiled candidate. It connects successful actual WebEventLoop.stateOf to the model's Inv without asking the caller for that invariant. A proof-only lab leaf and narrowly scoped fresh CI mapping use the actual adapter, not a copied model. Strong independent review and actual compiler output remain required. No active-ID or provenance invariant is claimed.
+
 ## Latest actual compiler evidence — 2026-11-19 06:10 UTC
 
 At eeaef8886e817a3ddb8e28266817f51b45da15ae, the [fresh light group](https://github.com/danbri/factoidal-core/actions/runs/44468639999) job135372432812 passes all25 required reports and hygiene. The endpoint group is still running. Together with the prior complete28 checkpoint, **31 public statements have individually compiled**; this is not a claim that the latest full run is green.

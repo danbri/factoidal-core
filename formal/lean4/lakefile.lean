@@ -1009,3 +1009,8 @@ lean_lib CrossZoneProofs where
 -- HTTP wire payload provenance and configured limits (issue #628), proof-only.
 lean_lib HttpWireBoundProofs where
   roots := #[`L4Factoidal.HTTP.WireBoundTheorems]
+
+-- Actual event-loop JSON admission bridge (issue #629), proof-only lab root.
+lean_lib EventLoopWireProofs where
+  srcDir := "../../labs/demos/foafnaut"
+  roots := #[`WebEventLoopStateTheorems]
