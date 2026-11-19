@@ -1,5 +1,6 @@
 import WebEventLoop
 import L4Factoidal.EventLoop.Theorems
+import Std.Data.String.ToNat
 
 namespace WebEventLoop
 
@@ -71,19 +72,27 @@ theorem stateJson_can_exceed_stateOf_timer_bound :
   refine ⟨(Input.apply_keep (i := .call (.setTimer 3 1 false))
     (Input.apply_keep (i := .advance 4294967295) initial_inv).1).1, ?_, ?_⟩
   · decide +kernel
-  · let advanced := ((Input.advance 4294967295).apply ({} : State)).1
-    let armed := ((Input.call (.setTimer 3 1 false)).apply advanced).1
-    change stateOf (stateJson armed) = .error "eventLoop: number exceeds bound"
-    have herror : (match stateOf (stateJson armed) with
-      | .ok _ => none
-      | .error why => some why) = some "eventLoop: number exceeds bound" := by
-      dsimp only [armed, advanced]
-      decide +kernel
-    split at herror
-    · cases herror
-    · rename_i why hstate
-      rw [hstate]
-      exact congrArg Except.error (Option.some.inj herror)
+  · -- The number writer uses Nat.repr. Its decimal reader has a proved inverse.
+    let readNumber (n : Nat) : Except String Nat :=
+      match n.repr.toNat? with
+      | none => .error "eventLoop: expected a natural number"
+      | some k => if k > 4294967295 then .error "eventLoop: number exceeds bound" else .ok k
+    have read (n : Nat) : readNumber n =
+        (if n > 4294967295 then .error "eventLoop: number exceeds bound" else .ok n) := by
+      simp only [readNumber, Nat.toNat?_repr]
+    have clock : readNumber 4294967295 = .ok 4294967295 := by simp [read]
+    -- The singleton timer reader visits its id, callback, and deadline in order.
+    -- Its error passes through both the timer-list traversal and the state reader.
+    have refuse (fields : Nat → Nat → Nat → Except String Timer)
+        (collect : Timer → Except String (List Timer)) (finish : List Timer → Except String State) :
+        (((readNumber 1).bind (fun id => (readNumber 3).bind (fun cb =>
+          (readNumber 4294967296).bind (fields id cb)))).bind collect).bind finish =
+        .error "eventLoop: number exceeds bound" := by
+      simp [read, Except.bind]
+    change ((readNumber 4294967295).bind _ : Except String State) =
+      .error "eventLoop: number exceeds bound"
+    rw [clock]
+    apply refuse
 
 #print axioms stateOf_inv
 #print axioms stateJson_can_exceed_stateOf_timer_bound
