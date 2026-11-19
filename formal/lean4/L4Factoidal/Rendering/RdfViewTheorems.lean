@@ -27,7 +27,11 @@ theorem parse_graph_and_caps {source : String} {filter : Filter} {graph : Graph}
       graph.length ≤ 256 ∧ toDOM graph filter = .ok dom := by
   have hstrict : Syntax.parseNTriplesDocument source .rdf11 = Syntax.parseNTriples source .rdf11 := by
     unfold Syntax.parseNTriplesDocument
-    split <;> rfl
+    split
+    · rename_i hp
+      exact hp.symm
+    · rename_i hp
+      exact hp.symm
   unfold parse at h
   by_cases hlarge : source.utf8ByteSize > 1048576
   · rw [if_pos hlarge] at h
