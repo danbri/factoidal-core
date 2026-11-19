@@ -59,6 +59,134 @@ def Expr.eval (inputs : Inputs) (gid index : UInt32) (s : State) : Expr → Exce
   | .mul a b => do return (← a.eval inputs gid index s) * (← b.eval inputs gid index s)
   | .load b i => do read inputs b (← i.eval inputs gid index s)
 
+private inductive Bin where
+  | plus | times
+
+private def Bin.apply : Bin → UInt32 → UInt32 → UInt32
+  | .plus => (· + ·)
+  | .times => (· * ·)
+
+private inductive ExprKont where
+  | done
+  | right (op : Bin) (operand : Expr) (outer : ExprKont)
+  | combine (op : Bin) (left : UInt32) (outer : ExprKont)
+  | loadAt (binding : Binding) (outer : ExprKont)
+
+private inductive ExprControl where
+  | evaluate (expr : Expr) (k : ExprKont)
+  | resume (word : UInt32) (k : ExprKont)
+
+-- These weights are used only to prove termination.
+@[simp] private noncomputable def Expr.work : Expr → Nat
+  | .literal _ | .globalId | .index | .localWord _ => 1
+  | .add a b | .mul a b => a.work + b.work + 3
+  | .load _ i => i.work + 2
+
+@[simp] private noncomputable def ExprKont.work : ExprKont → Nat
+  | .done => 0
+  | .right _ b k => b.work + 2 + k.work
+  | .combine _ _ k | .loadAt _ k => 1 + k.work
+
+@[simp] private noncomputable def ExprControl.work : ExprControl → Nat
+  | .evaluate e k => e.work + k.work
+  | .resume _ k => k.work
+
+private def executeExpr (inputs : Inputs) (gid index : UInt32) (s : State) :
+    ExprControl → Except Fault UInt32
+  | .evaluate (.literal v) k => executeExpr inputs gid index s (.resume v k)
+  | .evaluate .globalId k => executeExpr inputs gid index s (.resume gid k)
+  | .evaluate .index k => executeExpr inputs gid index s (.resume index k)
+  | .evaluate (.localWord slot) k => executeExpr inputs gid index s (.resume (s.locals slot) k)
+  | .evaluate (.add a b) k => executeExpr inputs gid index s (.evaluate a (.right .plus b k))
+  | .evaluate (.mul a b) k => executeExpr inputs gid index s (.evaluate a (.right .times b k))
+  | .evaluate (.load binding i) k => executeExpr inputs gid index s (.evaluate i (.loadAt binding k))
+  | .resume v .done => .ok v
+  | .resume a (.right op b k) => executeExpr inputs gid index s (.evaluate b (.combine op a k))
+  | .resume b (.combine op a k) => executeExpr inputs gid index s (.resume (op.apply a b) k)
+  | .resume i (.loadAt binding k) =>
+    match read inputs binding i with
+    | .error fault => .error fault
+    | .ok v => executeExpr inputs gid index s (.resume v k)
+termination_by control => control.work
+decreasing_by all_goals simp <;> omega
+
+/-- Evaluate an expression with an explicit stack of pending operands and selected bindings. -/
+def Expr.evalTR (inputs : Inputs) (gid index : UInt32) (s : State) (e : Expr) : Except Fault UInt32 :=
+  executeExpr inputs gid index s (.evaluate e .done)
+
+/-- Kind: expression simulation.
+Says: the continuation for a binary operation evaluates its operands in order and
+combines the resulting words, propagating the first fault.
+Does not say: that the operands always evaluate successfully. -/
+private theorem binary_cont (inputs : Inputs) (gid index : UInt32) (s : State)
+    (op : Bin) (a b : Expr) (k : ExprKont)
+    (ha : ∀ q, executeExpr inputs gid index s (.evaluate a q) =
+      (a.eval inputs gid index s).bind (fun x => executeExpr inputs gid index s (.resume x q)))
+    (hb : ∀ q, executeExpr inputs gid index s (.evaluate b q) =
+      (b.eval inputs gid index s).bind (fun x => executeExpr inputs gid index s (.resume x q))) :
+    executeExpr inputs gid index s (.evaluate a (.right op b k)) =
+      ((do return op.apply (← a.eval inputs gid index s) (← b.eval inputs gid index s)) :
+        Except Fault UInt32).bind (fun x => executeExpr inputs gid index s (.resume x k)) := by
+  rw [ha]
+  cases a.eval inputs gid index s with
+  | error fault => rfl
+  | ok left =>
+    change executeExpr inputs gid index s (.resume left (.right op b k)) = _
+    rw [executeExpr, hb]
+    cases b.eval inputs gid index s with
+    | error fault => rfl
+    | ok right =>
+      change executeExpr inputs gid index s (.resume right (.combine op left k)) =
+        executeExpr inputs gid index s (.resume (op.apply left right) k)
+      rw [executeExpr]
+
+/-- Kind: expression simulation.
+Says: starting an expression in any pending continuation reads the selected
+binding and preserves the structural result, including a failing word address.
+Does not say: that arbitrary syntax has a fixed heap bound. -/
+private theorem execute_cont (inputs : Inputs) (gid index : UInt32) (s : State) (e : Expr) (k : ExprKont) :
+    executeExpr inputs gid index s (.evaluate e k) =
+      (e.eval inputs gid index s).bind (fun v => executeExpr inputs gid index s (.resume v k)) := by
+  induction e generalizing k with
+  | literal v => rw [executeExpr] <;> rfl
+  | globalId => rw [executeExpr] <;> rfl
+  | index => rw [executeExpr] <;> rfl
+  | localWord slot => rw [executeExpr] <;> rfl
+  | add a b ha hb =>
+    rw [executeExpr]
+    exact binary_cont inputs gid index s .plus a b k ha hb
+  | mul a b ha hb =>
+    rw [executeExpr]
+    exact binary_cont inputs gid index s .times a b k ha hb
+  | load binding i ih =>
+    change executeExpr inputs gid index s (.evaluate (.load binding i) k) =
+      ((i.eval inputs gid index s).bind (fun j => read inputs binding j)).bind
+        (fun v => executeExpr inputs gid index s (.resume v k))
+    rw [executeExpr, ih]
+    cases i.eval inputs gid index s with
+    | error fault => rfl
+    | ok addr =>
+      change executeExpr inputs gid index s (.resume addr (.loadAt binding k)) =
+        (read inputs binding addr).bind (fun v => executeExpr inputs gid index s (.resume v k))
+      rw [executeExpr]
+      cases read inputs binding addr <;> rfl
+
+/-- Kind: executable equivalence.
+Says: the continuation machine returns the same word or first storage fault for every
+expression, input pair, invocation ID, loop index and local state.
+Does not say: that emitted code uses a particular native stack or heap limit. -/
+theorem Expr.eval_eq_evalTR : @Expr.eval = @Expr.evalTR := by
+  funext inputs gid index s e
+  unfold Expr.evalTR
+  rw [execute_cont]
+  cases e.eval inputs gid index s with
+  | error fault => rfl
+  | ok v =>
+    change Except.ok v = executeExpr inputs gid index s (.resume v .done)
+    rw [executeExpr]
+
+#print axioms Expr.eval_eq_evalTR
+
 inductive Stmt where
   | assign (slot : Nat) (value : Expr)
   | storeWord (address value : Expr)

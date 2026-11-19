@@ -151,6 +151,7 @@ jobs:
             printf '%s\n' "L4Factoidal.Paralliverse.CountTarget.$name" >> "$proof_dir/checked-theorems.txt"
           done
           for name in L4Factoidal.Paralliverse.LoopTarget.read_ok \
+                      L4Factoidal.Paralliverse.LoopTarget.Expr.eval_eq_evalTR \
                       L4Factoidal.Paralliverse.LoopTarget.store_ok \
                       L4Factoidal.Paralliverse.LoopTarget.observe_set \
                       L4Factoidal.Paralliverse.ScanTarget.carry_add \
@@ -164,6 +165,32 @@ jobs:
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "$name" >> "$proof_dir/checked-theorems.txt"
           done
+
+      - name: Inspect the exact package-prefixed Paralliverse C
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
+          python3 - "$proof_dir/c" <<'PY'
+          import pathlib, re, sys
+          root = pathlib.Path(sys.argv[1])
+          anchors = {
+              'CountTarget': 'L4Factoidal_Paralliverse_CountTarget_Expr_evalTR',
+              'LoopTarget': 'L4Factoidal_Paralliverse_LoopTarget_Stmt_exec',
+          }
+          for module, symbol in anchors.items():
+              source = (root / f'L4Factoidal/Paralliverse/{module}.c').read_text()
+              pattern = r'^LEAN_EXPORT [^\n]*\blp_l4factoidal_' + symbol + r'\([^;\n]*\)\s*\{'
+              if not re.search(pattern, source, re.M):
+                  raise SystemExit(f'Missing real package-prefixed definition: {symbol}')
+          count = sum(len(re.findall(r'^LEAN_EXPORT [^\n]*\blp_l4factoidal_\w+\([^;\n]*\)\s*\{',
+                                    p.read_text(), re.M)) for p in root.rglob('*.c'))
+          print(f'{count} package-prefixed definitions; both positive anchors present')
+          PY
+          python3 tools/lean-tail-recursion-audit.py --ir-dir "$proof_dir/c" \
+            --lean-dir formal/lean4 --json "$proof_dir/tail-diagnostic.json" --top 20 \
+            | tee "$proof_dir/tail-diagnostic.log"
+          echo 'Diagnostic over this component only; the complete Linux recursion gate remains required.'
 
       - name: Run the ordinary CPU specification on fixed fixtures
         working-directory: formal/lean4

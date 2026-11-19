@@ -266,7 +266,7 @@ theorem decoded_scatter_lane {src : ByteArray} {rows : StaticPack.Rows} (h : Pac
     have sr : read inputs .packet (3 + 2*gid) = .ok start := by
       apply read_ok
       change (PackWire.wordView src)[(3 + 2*gid : UInt32).toNat]? = some start
-      rw [address3 gid gr.le]
+      rw [address3 gid (Nat.le_of_lt gr)]
       exact hstart
     have lr : read inputs .packet (4 + 2*gid) = .ok len := by
       apply read_ok
