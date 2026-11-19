@@ -4,6 +4,14 @@ Review branch: `wip/timer-partition-proofs`. [Draft PR 609](https://github.com/d
 
 The fast discovery/proof agent uses `gpt-6.2-sol` at low reasoning. An independent `gpt-6.2-astra` reviewer at maximum reasoning checks the actual implementation, premise nonvacuity, reachable invariants, counterexamples to broader claims and host boundaries. The coordinator reads the source and the actual compiler logs. No price comparison is asserted. Discovery candidates are proposals until accepted and compiled. No runtime functions change in this PR; new proof modules have explicit Lake roots outside runtime imports. The RDF Core edit removes one unused argument in an existing proof only.
 
+## Actual event-loop admission bridge — 2026-11-19 06:24 UTC
+
+[The lab-specific fresh check](https://github.com/danbri/factoidal-core/actions/runs/44471331242) at29d3c28cc44df4a87c8475d6feae45e00d34c9a4 compiles `WebEventLoop.stateOf_inv` with strict exit0, `[propext, Classical.choice, Quot.sound]`, expected-name audit and hygiene. Dependencies include the actual WebEventLoop source with a narrow module-path mapping, not copied definitions. Together with HTTP2 and the complete31 checkpoint,34 public statements have individually compiled. The latest combined batch remains pending.
+
+Strong independent review accepts admission→Inv. Consecutive key checks yield pairwise order via transitivity; equal keys and duplicate timer IDs are allowed. Sequence values need not independently increase when due times differ. Inv has no active-ID correspondence or historical provenance obligation. Successful admission is nonvacuous, with ordinary nonempty timer fixtures.
+
+[Numeric transport boundary630](https://github.com/danbri/factoidal-core/issues/630) is a further source-derived candidate. After advancing the empty initial loop to4294967295, arming a one-millisecond timer gives a Nat deadline4294967296. The writer emits it and the reader's explicit32-bit limit refuses it, while the ordering/sequence invariant can still hold. A closed kernel witness is being drafted; no host failure or proved counterexample is claimed yet. Runtime numeric policy and a positive writer→reader theorem stay separate.
+
 ## Complete31 checkpoint and further candidates
 
 [The entire eeaef8886 source run](https://github.com/danbri/factoidal-core/actions/runs/44468639999) is now green: all31 public statements, both groups, strict owned compiler exits0, permitted axioms and hygiene. The later [HTTP group atfe277d794](https://github.com/danbri/factoidal-core/actions/runs/44470657748), job135379024209, separately passes `HTTP.Wire.decodeChunked_body_bound` and `frameRequest_body_bound`, both `[propext, Classical.choice, Quot.sound]`, compiler exit0 and hygiene clean. Thus33 public statements have individually compiled; the latest entire batch is still running. The first HTTP script's two implicit empty ByteArray inference failures and error-recovery output are discarded.
