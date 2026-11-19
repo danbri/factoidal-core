@@ -16,8 +16,6 @@ jobs:
   browser:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      EVIDENCE: ${{ runner.temp }}/paralliverse-browser-evidence
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,9 +29,12 @@ jobs:
 
       - name: Record the exact page source
         shell: bash
+        env:
+          EVIDENCE: ${{ runner.temp }}/paralliverse-browser-evidence
         run: |
           set -euo pipefail
           mkdir -p "$EVIDENCE"
+          printf 'EVIDENCE=%s\n' "$EVIDENCE" >> "$GITHUB_ENV"
           git rev-parse HEAD | tee "$EVIDENCE/commit.txt"
           node --version | tee "$EVIDENCE/node-version.txt"
           sha256sum docs/.eleventy.js docs/_includes/hub-app.njk \
@@ -97,6 +98,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: paralliverse-browser-evidence
-          path: ${{ env.EVIDENCE }}
+          path: ${{ runner.temp }}/paralliverse-browser-evidence
           if-no-files-found: warn
           retention-days: 30
