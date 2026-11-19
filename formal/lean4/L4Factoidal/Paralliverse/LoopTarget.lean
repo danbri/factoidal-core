@@ -47,7 +47,7 @@ inductive Expr where
   | localWord (slot : Nat)
   | add (a b : Expr)
   | mul (a b : Expr)
-  | load (binding : Binding) (index : Expr)
+  | load (binding : Binding) (address : Expr)
   deriving Repr
 
 def Expr.eval (inputs : Inputs) (gid index : UInt32) (s : State) : Expr → Except Fault UInt32
@@ -61,7 +61,7 @@ def Expr.eval (inputs : Inputs) (gid index : UInt32) (s : State) : Expr → Exce
 
 inductive Stmt where
   | assign (slot : Nat) (value : Expr)
-  | storeWord (index value : Expr)
+  | storeWord (address value : Expr)
   | seq (first second : Stmt)
   | whenLt (a b : Expr) (body : Stmt)
   | forRange (maximum : Nat) (bound : Expr) (body : Stmt)

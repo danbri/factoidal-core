@@ -69,6 +69,7 @@ jobs:
                    L4Factoidal/Paralliverse/CountPacketTheorems.lean
                    L4Factoidal/Paralliverse/LoopTarget.lean
                    L4Factoidal/Paralliverse/ScanTarget.lean
+                   L4Factoidal/Paralliverse/ScatterTarget.lean
                    L4Factoidal/Paralliverse.lean
                    Wasm/ParalliverseHub.lean)
           mkdir -p "$proof_dir/modules"
@@ -141,7 +142,12 @@ jobs:
           done
           for name in L4Factoidal.Paralliverse.LoopTarget.read_ok \
                       L4Factoidal.Paralliverse.LoopTarget.store_ok \
-                      L4Factoidal.Paralliverse.ScanTarget.carry_add; do
+                      L4Factoidal.Paralliverse.LoopTarget.observe_set \
+                      L4Factoidal.Paralliverse.ScanTarget.carry_add \
+                      L4Factoidal.Paralliverse.ScanTarget.scan_memory \
+                      L4Factoidal.Paralliverse.ScanTarget.scan_visible \
+                      L4Factoidal.Paralliverse.ScatterTarget.inactive_lane \
+                      L4Factoidal.Paralliverse.ScatterTarget.copy_words; do
             grep -F "'$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "$name" >> "$proof_dir/checked-theorems.txt"
