@@ -61,22 +61,22 @@ private theorem blankPostPayload (base body label : String) (c : Char)
 
 /- These terms spell out the two requests and their expected datasets for the private
    lemmas. The public statement below still names the shipped endpoint and evaluator. -/
-local notation "postIriA" => (⟨"http://www.example/gsp/a", by decide⟩ : WfIri)
-local notation "postIriB" => (⟨"http://www.example/gsp/b", by decide⟩ : WfIri)
-local notation "postPred" => (⟨"http://ex/p", by decide⟩ : WfIri)
-local notation "postObj" => (⟨"http://ex/o", by decide⟩ : WfIri)
+local notation "postIriA" => (Subtype.mk "http://www.example/gsp/a" (by decide) : WfIri)
+local notation "postIriB" => (Subtype.mk "http://www.example/gsp/b" (by decide) : WfIri)
+local notation "postPred" => (Subtype.mk "http://ex/p" (by decide) : WfIri)
+local notation "postObj" => (Subtype.mk "http://ex/o" (by decide) : WfIri)
 local notation "postTriple" =>
-  (fun label : String => (⟨.bnode label, postPred, .iri postObj⟩ : Triple))
+  (fun label : String => Triple.mk (Subject.bnode label) postPred (Term.iri postObj))
 local notation "postNamed" =>
-  (fun (iri : WfIri) (label : String) => (⟨.iri iri, [postTriple label]⟩ : NamedGraph))
-local notation "postFirst" => (⟨[], [postNamed postIriA "m0_b"]⟩ : Dataset)
+  (fun (iri : WfIri) (label : String) => NamedGraph.mk (Subject.iri iri) [postTriple label])
+local notation "postFirst" => (Dataset.mk [] [postNamed postIriA "m0_b"])
 local notation "postFinal" =>
-  (fun label : String => (⟨[], [postNamed postIriA "m0_b", postNamed postIriB label]⟩ : Dataset))
-local notation "postEndpoint" => (⟨"www.example", "/gsp"⟩ : GraphStoreService.Endpoint)
-local notation "postHeaders" => ([("content-type", "application/n-triples")] : List (String × String))
+  (fun label : String => Dataset.mk [] [postNamed postIriA "m0_b", postNamed postIriB label])
+local notation "postEndpoint" => (GraphStoreService.Endpoint.mk "www.example" "/gsp")
+local notation "postHeaders" => [Prod.mk "content-type" "application/n-triples"]
 local notation "commitPost" => (fun (ds : Dataset) (path body : String) =>
-  (gspOutcome .allGraphs "/gsp" "www.example" (View.of ds)
-    { method := "POST", path, queryStr := "", headers := postHeaders, body }).commit.map Prod.snd)
+  Option.map Prod.snd (Outcome.commit (gspOutcome WriteScope.allGraphs "/gsp" "www.example"
+    (View.of ds) (HTTP.Request.mk "POST" path "" "HTTP/1.1" postHeaders body none))))
 local notation "postBodyB" => "_:b <http://ex/p> <http://ex/o> ."
 local notation "postBodyC" => "_:c <http://ex/p> <http://ex/o> ."
 
@@ -99,8 +99,9 @@ private theorem serveParsedPost (s : GraphStore.GraphStore) (path key body : Str
     (route : GraphStoreService.resolve postEndpoint path "" = .ok (.graph (.named key)))
     (parsed : ∀ base, GraphStoreService.payloadGraph "application/n-triples" base body = .ok g) :
     GraphStoreService.serve postEndpoint s "POST" path "" postHeaders body =
-      ({ s with named := GraphStore.replaceNamed key
-          (GraphStoreService.mergeInto (GraphStoreService.namedOrEmpty key s) g) s.named },
+      ({ s with
+          named := (GraphStore.replaceNamed key
+            (GraphStoreService.mergeInto (GraphStoreService.namedOrEmpty key s) g) s.named) },
         { status := if GraphStore.namedExists key s.named then 204 else 201 }) := by
   have methodPost : GraphStore.Method.ofString "POST" = some .post := by cbv
   have header : (((postHeaders).find? (fun kv => kv.1 == "content-type")).map (·.2)).getD "" =
@@ -123,14 +124,17 @@ private theorem secondPostCommits (body label : String)
     serveParsedPost s "/gsp/b" (postIriB).val body [postTriple label] routePostB parsed
   simp only [gspOutcome, View.of, routePostB, served] <;> rfl
 
-local notation "postTP" => (⟨.var "s", .iri postPred, .var "o"⟩ : TriplePattern)
+local notation "postTP" =>
+  (TriplePattern.mk (PatternSubject.var "s") (PatternTerm.iri postPred) (PatternTerm.var "o"))
 local notation "postQuery" =>
-  (Query.mk .ask [] (.join (.graph (.iri postIriA) (.bgp [postTP]))
-    (.graph (.iri postIriB) (.bgp [postTP]))) none [] {} none none)
+  (Query.mk QueryForm.ask []
+    (QueryPattern.join (QueryPattern.graph (PatternTerm.iri postIriA) (QueryPattern.bgp [postTP]))
+      (QueryPattern.graph (PatternTerm.iri postIriB) (QueryPattern.bgp [postTP])))
+    none [] (SolutionModifier.mk none false false none none) none none)
 local notation "postJoin" => (fun label : String =>
   SPARQL.join (evalBgp [postTP] [postTriple "m0_b"]) (evalBgp [postTP] [postTriple label]))
 local notation "postInput" =>
-  (fun label : String => (View.of (postFinal label)).evalInput emptyEnv postQuery)
+  (fun label : String => View.evalInput (View.of (postFinal label)) emptyEnv postQuery)
 
 private theorem loweredPostQuery (env : EvalEnv) : (postQuery).pattern.rewriteBnodes.lower env =
     .join (.graph (.iri postIriA) (.bgp [postTP])) (.graph (.iri postIriB) (.bgp [postTP])) := by
