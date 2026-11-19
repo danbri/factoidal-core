@@ -68,8 +68,10 @@ def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
   if hb : xs.length ≤ 1024 then
     if hg : cost ≤ s.gas then
       let nextStack : Stack := ⟨xs, hb⟩
-      .ok { s with pc := nextPC, stack := nextStack,
-          gas := s.gas - cost, halted := halt }
+      let s1 : State := { s with pc := nextPC }
+      let s2 : State := { s1 with stack := nextStack }
+      let s3 : State := { s2 with gas := s.gas - cost }
+      .ok { s3 with halted := halt }
     else .error .outOfGas
   else .error .stackOverflow
 
