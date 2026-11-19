@@ -21,7 +21,7 @@ lake build
 npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
 mkdir -p .lake/differential
 node scripts/differential/generate.mjs \
-  --seed 20261119 --count 4096 \
+  --seed 20261119 --count 10000 \
   --out .lake/differential/corpus.jsonl
 node scripts/differential/run.mjs \
   --corpus .lake/differential/corpus.jsonl \
@@ -42,17 +42,24 @@ counts, mismatches, and the first complete counterexamples. All mismatches
 are preserved as line-delimited JSON with original input and both outputs.
 
 The tested observables are status, gas remaining, program counter, halted
-flag, complete stack and memory allocation size, plus the first 32 bytes of
-memory interpreted as an unsigned big-endian word. All 256-bit numbers are
-lossless decimal strings. **Memory outside those first 32 bytes is not directly
-compared**, even if the program writes there. Add more observables before
-claiming full memory-effect conformance.
+flag, complete stack and memory allocation size, plus **the complete allocated
+memory snapshot up to 4,096 bytes**. The CLI and oracle record the number
+of observed bytes and a truncation flag. Any truncated snapshot fails the
+full-memory comparison rather than passing silently. All 256-bit numbers
+are lossless decimal strings. This still does not prove behavior of larger
+memory frames, exceptional rollback, storage or external calls.
 
 ### Strict reporting rules
 
 - Every generated case counts. No hidden exclusions or skips.
-- An independent-EVM exception in the current success-only corpus is
-  classified as a failure, never silently accepted as a pass.
+- The corpus now includes deliberately exceptional outcomes: out-of-gas
+  (including enormous offsets), stack underflow, invalid jumps and invalid
+  opcodes. Both engines must agree with the declared **error category**.
+  Exceptional gas burning and state rollback are **not compared**.
+- A generator-side category-to-expected-error sanity check prevents
+  a mislabeled exceptional case from masquerading as an EVM discrepancy.
+- Exact duplicate execution inputs are reported; the runner refuses any
+  corpus with over 5% duplicate inputs.
 - Oracle errors (host/runtime failures) are separate from EVM disagreements.
 - A missing result, non-JSON result, mismatched number of results or invalid
   corpus record makes the run fail.
@@ -69,15 +76,33 @@ claiming full memory-effect conformance.
 The generator deliberately stratifies arithmetic, big integer PUSH cases,
 memory reads/writes, 32-byte alignment/cross-boundary accesses, stack
 manipulation, conditional/unconditional jumps, gas and program-counter
-instructions. The initial corpus exercises *successful* execution paths,
-and does not establish exceptional-halt, out-of-gas, gas-refund, or
-transaction-state coverage.
+instructions, plus deliberately failing cases and an untaken JUMPI with
+an invalid destination. The current gate uses **18 categories**, including
+five exceptional categories. Error *classification* is checked independently;
+exceptional gas/state behavior, EVM returndata and transaction-state effects
+are not covered.
 
-**High-priority extensions:** independently checked exceptional outcomes;
+**High-priority extensions:** exceptional gas burn and rollback fidelity;
 dynamic opcode coverage (not merely generator categories); real EELS-generated
 state test *execution* with post-state-root comparisons; verified bytecode
 provenance for mainnet samples; automatic counterexample minimisation and
 retention; continuous regression of all previously found divergences.
+
+### Latest checked evidence
+
+[10,000-case CI run](https://github.com/danbri/factoidal-core/actions/runs/44626646466),
+seed `20261119`, corpus SHA-256
+`610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb`:
+
+- 10,000 compared; **10,000 matched; 0 engine disagreements**.
+- 9,733 distinct `(fork, bytecode, gas, fuel)` input combinations.
+- 2,775 matching exceptional outcome *categories*.
+- Zero oracle execution errors and zero unsupported cases in the deliberately
+  restricted corpus.
+
+This evidence is stronger than the original 240-case smoke test, but it
+remains *synthetic subset differential testing*. It is not a set of
+10,000 official state-root comparisons, nor a proof of consensus soundness.
 
 ### Evidence retention
 
