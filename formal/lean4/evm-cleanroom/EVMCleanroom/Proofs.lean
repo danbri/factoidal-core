@@ -191,16 +191,13 @@ theorem run_toTrace (fuel : Nat) {s out : State}
       subst out
       exact Trace.nil s
     | false =>
-      have hr : (match step s with
-        | .error e => Except.error e
-        | .ok next => run n next) = .ok out := by
-          simpa [run, hh] using h
+      simp [run, hh] at h
       cases hs : step s with
       | error e =>
-        simp [hs] at hr
+        simp [hs] at h
       | ok next =>
         have ht : run n next = .ok out := by
-          simpa [hs] using hr
+          simpa [hs] using h
         exact Trace.cons hs (ih ht)
 
 /-- Every finite interpreter trace has an exact cost-labelled witness,
