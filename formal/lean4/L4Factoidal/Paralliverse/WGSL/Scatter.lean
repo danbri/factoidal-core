@@ -50,13 +50,47 @@ def scatterModule : ScatterSurface.Module where
       .load .srcWords (.add (.localWord .word0) (.localWord .index))⟩
   }
 
+-- This certificate separates lexical reduction from grammar reduction in the kernel.
+-- Both equalities check the real implementations with the standard CI memory cap.
+private def scatterTokens : Surface.Tokens :=
+  (["@", "group", "(", "0", ")", "@", "binding", "(", "0", ")", "var", "<", "storage", ",", "read", ">",
+    "src_words", ":", "array", "<", "u32", ">", ";",
+    "@", "group", "(", "0", ")", "@", "binding", "(", "1", ")", "var", "<", "storage", ",", "read", ">",
+    "aux_words", ":", "array", "<", "u32", ">", ";",
+    "@", "group", "(", "0", ")", "@", "binding", "(", "2", ")", "var", "<", "storage", ",",
+    "read_write", ">", "dst_words", ":", "array", "<", "u32", ">", ";",
+    "@", "compute", "@", "workgroup_size", "(", "64", ",", "1", ",", "1", ")",
+    "fn", "main", "(", "@", "builtin", "(", "global_invocation_id", ")", "pv_gid", ":", "vec3", "<",
+    "u32", ">", ")", "{",
+    "if", "(", "pv_gid", ".", "x", "<", "src_words", "[", "1u", "]", ")", "{",
+    "var", "pv_l0", ":", "u32", "=", "(", "3u", "+", "(", "2u", "*", "src_words", "[", "1u", "]", ")", ")", ";",
+    "var", "pv_l1", ":", "u32", "=", "src_words", "[", "(", "3u", "+", "(", "2u", "*", "pv_gid", ".",
+    "x", ")", ")", "]", ";",
+    "pv_l0", "=", "(", "pv_l0", "+", "pv_l1", ")", ";",
+    "pv_l1", "=", "aux_words", "[", "pv_gid", ".", "x", "]", ";",
+    "let", "pv_bound", ":", "u32", "=", "src_words", "[", "(", "4u", "+", "(", "2u", "*", "pv_gid", ".",
+    "x", ")", ")", "]", ";",
+    "if", "(", "pv_bound", ">", "1024u", ")", "{", "return", ";", "}",
+    "for", "(", "var", "pv_i", ":", "u32", "=", "0u", ";", "pv_i", "<", "pv_bound", ";", "pv_i", "=",
+    "(", "pv_i", "+", "1u", ")", ")", "{",
+    "dst_words", "[", "(", "pv_l1", "+", "pv_i", ")", "]", "=", "src_words", "[", "(", "pv_l0", "+",
+    "pv_i", ")", "]", ";", "}", "}", "}"] : List String).map fun token => token.toUTF8.data.toList
+
+set_option maxRecDepth 8192 in
+/-- Kind: lexical certificate.
+Says: independently tokenizing all concrete shader bytes yields this finite token sequence.
+Does not say: that the sequence parses or that any invocation succeeds. -/
+private theorem scatter_lex_tokens : Surface.lex scatterText.toUTF8 = scatterTokens := by
+  rfl
+
 set_option maxRecDepth 8192 in
 /-- Kind: concrete syntax.
 Says: the complete static source parses to these bindings, guarded reads,
 address arithmetic, captured length, loop test, increment and indexed store.
 Does not say: that an external compiler implements the parser or its semantics. -/
 theorem parse_scatter_text : ScatterSurface.parseShader scatterText.toUTF8 = some scatterModule := by
-  rfl
+  unfold ScatterSurface.parseShader
+  rw [scatter_lex_tokens] <;> rfl
 
 /-- Kind: physical launch geometry.
 Says: the parsed size with the proposed group count yields the target's exact padded grid.
@@ -114,7 +148,7 @@ private theorem scatter_active (packet offsets prior : Array UInt32) (gid n star
     rw [UInt32.lt_iff_toNat_lt]
     change ¬1024 < len.toNat
     omega
-  unfold ScatterSurface.active
+  change (ScatterSurface.eval scatterModule packet offsets gid ⟨0, 0, 0, 0⟩ scatterModule.code.initial0).bind _ = _
   rw [bank]
   change (packet[(3 + 2 * gid : UInt32).toNat]?).bind _ = _
   rw [source]
@@ -123,7 +157,13 @@ private theorem scatter_active (packet offsets prior : Array UInt32) (gid n star
   change (packet[(4 + 2 * gid : UInt32).toNat]?).bind _ = _
   rw [width]
   change (if (1024 : UInt32) < len then _ else _) = _
-  rw [if_neg allowed, Nat.min_eq_left limit] <;> rfl
+  rw [if_neg allowed]
+  change (ScatterSurface.loop scatterModule packet offsets gid (min len.toNat 1024)
+    ⟨3 + 2 * n + start, off, len, 0⟩ ⟨prior, #[]⟩).bind
+    (fun s => some (⟨s.dst, s.writes.toList, false⟩ : ScanSurface.Outcome)) = _
+  rw [Nat.min_eq_left limit] <;>
+    cases ScatterSurface.loop scatterModule packet offsets gid len.toNat
+      ⟨3 + 2 * n + start, off, len, 0⟩ ⟨prior, #[]⟩ <;> rfl
 
 /-- Kind: address arithmetic.
 Says: a representable sum of a base word and a natural index is the shader's u32 address.
@@ -183,7 +223,8 @@ private theorem copy_surface (packet offsets : Array UInt32) (gid base off len :
       ⟨s.dst.set (off + i).toNat x hd, s.writes.push ⟨0, 2, off + i, x⟩⟩
     have step : ScatterSurface.write scatterModule packet offsets gid ⟨base, off, len, i⟩ s = some next := by
       change (packet[(base + i).toNat]?).bind (fun v => if h : (off + i).toNat < s.dst.size then
-        some ⟨s.dst.set (off + i).toNat v h, s.writes.push ⟨0, 2, off + i, v⟩⟩ else none) = _
+        some (⟨s.dst.set (off + i).toNat v h, s.writes.push ⟨0, 2, off + i, v⟩⟩ : ScatterSurface.Storage)
+        else none) = some next
       rw [read]
       exact dif_pos hd
     have size : next.dst.size = s.dst.size := by simp [next]
@@ -298,7 +339,10 @@ theorem decoded_scatter_text_lane {src : ByteArray} {rows : StaticPack.Rows} (ac
     have offVal : off.toNat = CountTarget.memory offsets gid.toNat := by simp [CountTarget.memory, offSlot]
     have bound := scatter_end rows offsets (ScatterTarget.scanned_starts rows offsets scanned) gid.toNat active
     have total : (StaticPack.counts rows).sum ≤ 1024 := PackWire.decode_total_bound accepted
-    have widthLimit : len.toNat ≤ 1024 := by rw [lenVal]; omega
+    have wordLimit : words.length ≤ 1024 := by
+      change (rows.getD gid.toNat []).length ≤ 1024
+      omega
+    have widthLimit : len.toNat ≤ 1024 := lenVal.symm ▸ wordLimit
     have hbytes : src.size ≤ 5644 := by
       by_cases over : src.size > PackWire.maxPacketBytes
       · simp [PackWire.decode, over] at accepted
@@ -315,7 +359,7 @@ theorem decoded_scatter_text_lane {src : ByteArray} {rows : StaticPack.Rows} (ac
       (by rw [absNat]; change _ < 4294967296; omega)
       (by rw [offVal]; change _ + 0 + (rows.getD gid.toNat []).length < 4294967296; omega)
       (by rw [offVal]; change _ + 0 + (rows.getD gid.toNat []).length ≤ prior.size; omega)
-      (by intro j hj; rw [absNat, Nat.zero_add]; exact (PackWire.decode_source_word accepted _ active j hj).2)
+      (by intro j hj; rw [absNat, Nat.add_zero]; exact (PackWire.decode_source_word accepted _ active j hj).2)
     have zero : UInt32.ofNat 0 = (0 : UInt32) := by decide
     rw [zero] at ran
     obtain ⟨target, targetRun, targetSize, targetMem⟩ :=
@@ -344,7 +388,8 @@ Does not say: other bindings may alias this output. -/
 private theorem project_payload (actual : List Surface.Write) (row : List (Nat × UInt32))
     (h : actual.map scatterEvent = row.map payloadEvent) : actual.map payloadWrite = row := by
   have p := congrArg (List.map (fun e : (Nat × Nat) × (Nat × UInt32) => e.2)) h
-  simpa [List.map_map, scatterEvent, payloadEvent, payloadWrite, Function.comp_def] using p
+  change actual.map (fun w : Surface.Write => (w.address.toNat, w.value)) = row
+  simpa [List.map_map, scatterEvent, payloadEvent, Function.comp_def] using p
 
 /-- Kind: dynamic write-footprint disjointness.
 Says: the actual chronological store events of two different parsed shader lanes
@@ -375,6 +420,7 @@ theorem scatter_text_traces_disjoint {src : ByteArray} {rows : StaticPack.Rows} 
     · simp [rowWrites, ai, aj, Disjoint, keys]
   · simp [rowWrites, ai, Disjoint, keys]
 
+#print axioms scatter_lex_tokens
 #print axioms parse_scatter_text
 #print axioms scatter_text_launch
 #print axioms scatter_header
