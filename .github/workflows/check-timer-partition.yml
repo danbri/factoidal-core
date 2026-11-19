@@ -91,7 +91,7 @@ jobs:
           proof_dir="$RUNNER_TEMP/timer-partition-evidence"
           python3 tools/lean-hygiene-audit.py --build-log "$proof_dir/lean.log" \
             2>&1 | tee "$proof_dir/hygiene.log"
-          for name in mem_due_now_iff mem_due_later_iff fire_no_due fire_idempotent; do
+          for name in mem_due_now_iff mem_due_later_iff fire_no_due fire_idempotent due_eq_filters fire_eq_filter_tasks; do
             grep -F "'L4Factoidal.EventLoop.$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.EventLoop.$name" >> "$proof_dir/checked-theorems.txt"
