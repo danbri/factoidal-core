@@ -25,12 +25,7 @@ theorem unicode_last_event_id_header_refused :
       (Xhr.setHeaderX opened.1 1 "Last-Event-ID" "A").2 = .ok "" := by
   dsimp only
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · decide +kernel
-  · decide +kernel
-  · decide +kernel
-  · decide +kernel
-  · decide +kernel
-  · decide +kernel
+  all_goals cbv
 
 #print axioms unicode_last_event_id_header_refused
 

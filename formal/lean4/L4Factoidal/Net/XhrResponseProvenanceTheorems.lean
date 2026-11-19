@@ -79,10 +79,11 @@ theorem give_realm_response_released (s : State) (id handle callback : Nat) (a :
     · simp only [hb, if_true] at hresp
       rw [requestError_no_response] at hresp
       cases hresp
-    · simp only [hb, if_false] at hcb
+    · simp only [hb] at hcb
       cases hcb
   | deliver t' delivered =>
     simp only [hanswer, hraw, Bool.false_eq_true, if_false, Bool.false_and] at hresp
+    simp only [hraw] at errorHere
     split at hresp
     · exact False.elim (errorHere hresp)
     · rename_i hint

@@ -1011,9 +1011,10 @@ lean_lib CrossZoneProofs where
 lean_lib HttpWireBoundProofs where
   roots := #[`L4Factoidal.HTTP.WireBoundTheorems]
 
--- Built TLI1 membership and lookup soundness (issue #634), outside runtime imports.
+-- Built TLI1 membership, lookup soundness and successful wire lookup (issue #634).
 lean_lib TermLocalIndexLookupProofs where
-  roots := #[`L4Factoidal.Storage.TermLocalIndexLookupTheorems]
+  roots := #[`L4Factoidal.Storage.TermLocalIndexLookupTheorems,
+             `L4Factoidal.Storage.TermLocalIndexWireLookupTheorems]
 
 -- Actual async XHR response, Fetch release and integrity bridge (issue #635).
 lean_lib XhrResponseProvenanceProofs where

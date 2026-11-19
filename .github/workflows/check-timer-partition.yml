@@ -75,19 +75,29 @@ jobs:
             modules: |-
               L4Factoidal.Storage.TermLocalIndex
               L4Factoidal.Storage.TermLocalIndexLookupTheorems
+              L4Factoidal.Storage.TermLocalIndexWireLookupTheorems
             larger_dependency_budgets: ''
             theorems: |-
               L4Factoidal.Storage.TermLocalIndex.mem_entriesOf_iff
               L4Factoidal.Storage.TermFold.foldTerm_eq_self
               L4Factoidal.Storage.TermLocalIndex.lookup_entriesOf_sound
+              L4Factoidal.Storage.TermLocalIndex.lookup?_eq_some_of_key_cut
+              L4Factoidal.Storage.TermLocalIndexWire.strictlyIncreasing_pairwise_key_lt
+              L4Factoidal.Storage.TermLocalIndexWire.lookup_entriesOf_at_of_encode?
+              L4Factoidal.Storage.TermLocalIndexWire.decode_lookup_entriesOf_eq_findTermId?
           - group: xhr-provenance
             job_timeout_minutes: 15
             modules: |-
               L4Factoidal.Net.XhrResponseProvenanceTheorems
-              L4Factoidal.Net.EventSourceHeaderTheorems
             larger_dependency_budgets: ''
             theorems: |-
               L4Factoidal.Net.Xhr.give_realm_response_released
+          - group: eventsource-header
+            job_timeout_minutes: 15
+            modules: |-
+              L4Factoidal.Net.EventSourceHeaderTheorems
+            larger_dependency_budgets: ''
+            theorems: |-
               L4Factoidal.Net.EventSource.unicode_last_event_id_header_refused
           - group: http-wire
             job_timeout_minutes: 15

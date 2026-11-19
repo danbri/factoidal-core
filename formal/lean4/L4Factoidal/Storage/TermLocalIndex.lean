@@ -222,6 +222,67 @@ def lookup? (entries : Array Entry) (wanted0 : Term) : Option Nat :=
   | some entry => if entry.key == key && entry.term == wanted then some entry.localId else none
   | none => none
 
+/-- Kind: binary-search correctness.
+    Says: when precisely the entries before position `i` have byte keys below
+    the requested key, a matching entry at `i` yields its stored local ID.
+    Does not say: an arbitrary array has that ordering or that a range reader
+    fetched the page containing the term. -/
+theorem lookup?_eq_some_of_key_cut (entries : Array Entry) (wanted : Term)
+    (i : Nat) (hi : i < entries.size)
+    (cut : ∀ j (hj : j < entries.size),
+      entries[j].key < serializeTerm (TermFold.foldTerm wanted) ↔ j < i)
+    (keyMatch : entries[i].key = serializeTerm (TermFold.foldTerm wanted))
+    (termMatch : entries[i].term = TermFold.foldTerm wanted) :
+    lookup? entries wanted = some entries[i].localId := by
+  have byteOrder (xs ys : List UInt8) : lessBytes xs ys = true ↔ xs < ys := by
+    induction xs generalizing ys with
+    | nil => cases ys <;> simp [lessBytes]
+    | cons x xs ih =>
+      cases ys with
+      | nil => simp [lessBytes]
+      | cons y ys =>
+        by_cases lt : x < y
+        · simp [lessBytes, lt, List.cons_lt_cons_iff]
+        · by_cases eq : x = y
+          · subst y
+            simp [lessBytes, lt, List.cons_lt_cons_iff, ih]
+          · simp [lessBytes, lt, eq, List.cons_lt_cons_iff]
+  let key := serializeTerm (TermFold.foldTerm wanted)
+  have search : ∀ fuel low high : Nat, low ≤ i → i ≤ high → high ≤ entries.size →
+      high - low ≤ fuel → lowerBoundGo entries key low high fuel = i := by
+    intro fuel
+    induction fuel with
+    | zero =>
+      intro low high hlo hhi hsize width
+      change low = i
+      omega
+    | succ fuel ih =>
+      intro low high hlo hhi hsize width
+      by_cases closed : low ≥ high
+      · rw [lowerBoundGo, if_pos closed]
+        omega
+      · let middle := low + (high - low) / 2
+        have midLt : middle < high := by dsimp [middle]; omega
+        have lowLe : low ≤ middle := by dsimp [middle]; omega
+        have inBounds := Nat.lt_of_lt_of_le midLt hsize
+        rw [lowerBoundGo, if_neg closed]
+        change (match entries[middle]? with
+          | none => low
+          | some e => if lessBytes e.key key then lowerBoundGo entries key (middle + 1) high fuel
+                      else lowerBoundGo entries key low middle fuel) = i
+        simp only [Array.getElem?_eq_getElem inBounds]
+        have test := (byteOrder entries[middle].key key).trans (cut middle inBounds)
+        by_cases below : middle < i
+        · rw [if_pos (test.mpr below)]
+          exact ih _ _ (by omega) hhi hsize (by omega)
+        · rw [if_neg (fun passes => below (test.mp passes))]
+          exact ih _ _ hlo (by omega) (by omega) (by omega)
+  have result := search (entries.size + 1) 0 entries.size (Nat.zero_le _) (Nat.le_of_lt hi)
+    (Nat.le_refl _) (by omega)
+  unfold lookup?
+  rw [result, Array.getElem?_eq_getElem hi]
+  simp [keyMatch, termMatch]
+
 /-- The direct dictionary lookup is the reference contract for a TLI1 decoder
     and range reader. -/
 def agreesWithDictionary (terms : Array Term) (wanted : Term) : Bool :=
