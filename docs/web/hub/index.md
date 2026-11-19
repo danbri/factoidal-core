@@ -43,6 +43,12 @@ WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-pla
   <li><a href="./render-scores/#svg-tiny-pixels">SVG Tiny 1.2 test suite results</a> — each W3C SVG Tiny 1.2 test drawn by the engine and compared with its reference image.</li>
 </ul>
 
+## Parallel compute
+
+<ul class="post-series">
+  <li><a href="./paralliverse/">Paralliverse</a> — editable stable packing on compiled Lean WebAssembly and WebGPU, with actual byte comparisons, separate timings and the proof's scope.</li>
+</ul>
+
 ## Pages
 
 <ul class="post-series">
