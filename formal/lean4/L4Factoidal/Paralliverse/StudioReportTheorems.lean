@@ -61,7 +61,7 @@ end ReportContract
 private theorem buffer_fields (id : Nat) (k : UInt32) (payload : List UInt32) :
     bufferJson id k payload = ReportContract.buffer id k payload := by
   unfold bufferJson WordMapGPU.packet
-  simp only [List.toList_toArray] <;> rfl
+  rfl
 
 private theorem plan_fields (plan : Plan) (input output : List UInt32) :
     ReportContract.Describes (executionPlan plan input output) plan input output := by

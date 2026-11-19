@@ -70,13 +70,29 @@ jobs:
           git -C runtime-cache-source fetch -q origin toolchain-cache
           git -C runtime-cache-source rev-parse origin/toolchain-cache > "$evidence/runtime-cache-commit.txt"
           git -C runtime-cache-source show "origin/toolchain-cache:l4wasm-work-cache-$toolchain.tar.gz" | tar -xz -C "$HOME"
-      - name: Install released assets for the other Hub routes
+      - name: Install ancestor assets for the unchanged Hub routes
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tools/fetch-builds.sh --set web --strict 2>&1 | tee "$EVIDENCE/base-web.log"
+          # The Studio runtime is rebuilt below. Other Hub routes keep their
+          # ancestor assets; refuse any source drift outside this component.
+          tools/fetch-builds.sh --set web 2>&1 | tee "$EVIDENCE/base-web.log"
+          python3 - <<'PY'
+          import json, pathlib, subprocess, os
+          manifest = json.loads(pathlib.Path('docs/web/hub/assets/l4/paralliverse/manifest.json').read_text())
+          base = manifest['sourceCommit']
+          subprocess.run(['git', 'merge-base', '--is-ancestor', base, 'HEAD'], check=True)
+          changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD', '--', 'formal/lean4', 'npm'], text=True).splitlines()
+          exact = {'formal/lean4/lakefile.lean', 'formal/lean4/Wasm/ParalliverseHub.lean',
+                   'formal/lean4/Wasm/build-paralliverse.sh', 'formal/lean4/Wasm/paralliverse-smoke.mjs'}
+          prefixes = ('formal/lean4/L4Factoidal/Paralliverse/', 'formal/lean4/Harness/Paralliverse')
+          unrelated = [p for p in changed if p not in exact and not p.startswith(prefixes)]
+          if unrelated:
+              raise SystemExit('Unrelated runtime drift: ' + ', '.join(unrelated))
+          pathlib.Path(os.environ['EVIDENCE'], 'ancestor-assets.json').write_text(json.dumps({'sourceCommit': base, 'componentChanges': changed}, indent=2))
+          PY
           tools/fetch-builds.sh --set foafnaut-web 2>&1 | tee "$EVIDENCE/base-scenes.log"
       - name: Build and exercise the exact Studio Wasm ABI
         shell: bash
@@ -86,6 +102,11 @@ jobs:
           timeout --kill-after=10s 900s bash formal/lean4/Wasm/build-paralliverse.sh "$HOME/l4wasm-work" \
             2>&1 | tee "$EVIDENCE/wasm-build.log"
           cp docs/web/hub/assets/l4/paralliverse/manifest.json "$EVIDENCE/manifest.json"
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          manifest = json.loads(pathlib.Path('docs/web/hub/assets/l4/paralliverse/manifest.json').read_text())
+          assert manifest['sourceCommit'] == subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          PY
       - name: Produce independent native Lean device fixtures
         working-directory: formal/lean4
         shell: bash
@@ -121,6 +142,9 @@ jobs:
             2>"$EVIDENCE/device.log" | tee "$EVIDENCE/device.json"
       - name: Build and exercise the real Hub page
         shell: bash
+        env:
+          REQUIRE_EXACT_PARALLIVERSE_RUNTIME: '1'
+          REQUIRE_PARALLIVERSE_STUDIO: '1'
         run: |
           set -euo pipefail
           tools/premerge.sh --changed --base origin/main 2>&1 | tee "$EVIDENCE/premerge.log"

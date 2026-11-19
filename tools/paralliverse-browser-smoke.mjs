@@ -149,6 +149,9 @@ try {
   const manifestBytes = await readFile(join(assetDir, "manifest.json"));
   const manifest = JSON.parse(manifestBytes);
   assert.match(manifest.sourceCommit ?? "", /^[0-9a-f]{40}$/);
+  if (process.env.REQUIRE_EXACT_PARALLIVERSE_RUNTIME === "1") {
+    assert.equal(manifest.sourceCommit, sourceCommit, "Exact freshly built Studio source");
+  }
   report.manifest = {sourceCommit: manifest.sourceCommit, sha256: sha256(manifestBytes), files: manifest.files};
   for (const name of ["paralliverse.mjs", "paralliverse.wasm"]) {
     const bytes = await readFile(join(assetDir, name));
@@ -290,7 +293,7 @@ try {
   const submitted = "[[17], [], [23, 17]]";
   await evaluate(`(() => {
     const run = document.querySelector("#run");
-    if (!run || run.disabled || run.textContent.trim() !== "Run CPU + GPU") {
+    if (!run || run.disabled || !run.textContent.includes("Run CPU + GPU")) {
       throw new Error("The visible Run CPU + GPU control is unavailable.");
     }
     document.querySelector("#source").value = ${JSON.stringify(submitted)};
@@ -299,6 +302,119 @@ try {
   await observeCase(evaluate, "manual-run", "custom", "[17, 23, 17]");
   await edit("source", changed, "input");
   await observeCase(evaluate, "automatic-after-manual", "custom", changedOutput);
+
+  const studioAvailable = await evaluate('Boolean(document.querySelector("#mode-studio") && !document.querySelector("#mode-studio").disabled)');
+  if (process.env.REQUIRE_PARALLIVERSE_STUDIO === "1") assert(studioAvailable, "The actual Studio runtime must be enabled");
+  if (studioAvailable) {
+    async function studioState() {
+      return evaluate(`(() => ({...(${pageState.toString()})(),
+        mode:document.querySelector('#workspace').dataset.mode,
+        program:document.querySelector('#program').value,
+        sourceIR:document.querySelector('#source-ir').textContent,
+        optimizedIR:document.querySelector('#optimized-ir').textContent,
+        frame:document.querySelector('#frame-status').textContent,
+        cells:document.querySelectorAll('#word-grid .word-cell').length,
+        copyEnabled:!document.querySelector('#copy-lean').disabled,
+        plan:document.querySelector('#gpu-plan').textContent}))()`);
+    }
+    async function studioCase(name, expected, cells) {
+      const deadline = Date.now() + deadlineMs;
+      let state;
+      do {
+        state = await studioState();
+        if (state.match !== undefined || state.inputStatus.startsWith("CPU runtime unavailable.")) break;
+        await sleep(100);
+      } while (Date.now() < deadline);
+      report.cases.push({name, expected, ...state});
+      assert.equal(state.mode, "studio", name);
+      assert.equal(state.match, "true", `${name}: ${state.inputStatus} ${state.gpuStatus}`);
+      assert.equal(state.cpu, expected, `${name}: CPU result`);
+      assert.equal(state.gpu, expected, `${name}: actual GPU result`);
+      assert.equal(state.frame, "Header + tail match", `${name}: complete buffer frame`);
+      assert.equal(state.cells, cells, `${name}: returned-word visualization`);
+      assert.equal(state.copyEnabled, true, `${name}: Lean source export`);
+      assert.match(state.cpuStatus, /Lean parse \+ CPU evaluation$/, name);
+      return state;
+    }
+    await evaluate('document.querySelector("[data-preset=wrap]").click()');
+    const wrap = await studioCase("studio-wrap", "[1, 4, 7, 0, 2147483646, 2147483649, 4294967291, 4294967294]", 8);
+    assert.match(wrap.sourceIR, /\.seq \(\.map/);
+    assert.match(wrap.optimizedIR, /^\(\.map \(\.seq/);
+    const plan = JSON.parse(wrap.plan);
+    assert.deepEqual(plan.passes.map(p => p.shaderSelector), [4, 3]);
+    assert.equal(plan.passes[0].destinationBuffer, plan.passes[1].sourceBuffer, "Direct GPU intermediate binding");
+    await evaluate('document.querySelector("[data-preset=empty]").click()');
+    await studioCase("studio-empty", "[]", 0);
+    await evaluate(`(() => {
+      const live=document.querySelector('#live'); live.checked=false; live.dispatchEvent(new Event('change'));
+      document.querySelector('#program').value='map add 1';
+      document.querySelector('#source').value='[4294967295,0,5,5]';
+      document.querySelector('#program').dispatchEvent(new Event('input',{bubbles:true}));
+    })()`);
+    assert.equal((await studioState()).cpu, "—", "Paused edits clear stale results");
+    await evaluate(`document.querySelector('#program').dispatchEvent(new KeyboardEvent('keydown',
+      {key:'Enter',ctrlKey:true,bubbles:true}))`);
+    await studioCase("studio-keyboard-paused", "[0, 1, 6, 6]", 4);
+    await evaluate(`(() => {
+      document.querySelector('#program').value=${JSON.stringify("map multiply 3\nmap add 1\nmap multiply 2")};
+      document.querySelector('#source').value='[2,2]'; document.querySelector('#run').click();
+    })()`);
+    let refused;
+    const refusalDeadline = Date.now() + deadlineMs;
+    do {
+      refused = await studioState();
+      if (refused.cpu === "[14, 14]") break;
+      await sleep(100);
+    } while (Date.now() < refusalDeadline);
+    assert.equal(refused.cpu, "[14, 14]", "CPU-only accepted program");
+    assert.equal(refused.gpu, "—", "GPU refusal produces no fabricated result");
+    assert.equal(refused.match, undefined, "Refusal is not a byte-match success");
+    assert.match(refused.gpuStatus, /supports one or two source maps/);
+    report.cases.push({name: "studio-cpu-only", ...refused});
+    await edit("program", "map add 01", "input");
+    await evaluate('document.querySelector("#run").click()');
+    const invalidDeadline = Date.now() + deadlineMs;
+    let invalid;
+    do {
+      invalid = await studioState();
+      if (invalid.inputStatus.startsWith("Invalid input.")) break;
+      await sleep(100);
+    } while (Date.now() < invalidDeadline);
+    assert.match(invalid.inputStatus, /^Invalid input\./, "Lean syntax diagnostic");
+    assert.equal(invalid.cpu, "—", "Invalid input clears old CPU result");
+    assert.equal(invalid.match, undefined, "Invalid input clears old success");
+    report.cases.push({name: "studio-malformed", ...invalid});
+    await evaluate('document.querySelector("[data-preset=wrap]").click()');
+    await studioCase("studio-recovery", "[1, 4, 7, 0, 2147483646, 2147483649, 4294967291, 4294967294]", 8);
+    await evaluate(`(() => {
+      Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__studioClipboard=text;}}});
+      document.querySelector('#copy-lean').click();
+    })()`);
+    const copied = await evaluate('window.__studioClipboard');
+    assert.match(copied, /^import L4Factoidal\.Paralliverse\.StudioProgram\n/);
+    await evaluate('document.querySelector("#share").click()');
+    let shared;
+    const shareDeadline = Date.now() + 5000;
+    do {
+      shared = await evaluate('window.__studioClipboard');
+      if (shared?.startsWith(report.url)) break;
+      await sleep(50);
+    } while (Date.now() < shareDeadline);
+    assert(shared?.includes("#pv="), "Share control emits a complete experiment link");
+    await screenshot("paralliverse-studio-desktop.png");
+    await page("Emulation.setDeviceMetricsOverride", {width: 390, height: 844, deviceScaleFactor: 1, mobile: true});
+    pageLoaded = false;
+    await page("Page.navigate", {url: shared}, deadlineMs);
+    const sharedLoadDeadline = Date.now() + deadlineMs;
+    while (!pageLoaded && Date.now() < sharedLoadDeadline) await sleep(100);
+    assert(pageLoaded, "The shared Studio page did not finish loading.");
+    const restored = await studioCase("studio-shared-mobile", "[1, 4, 7, 0, 2147483646, 2147483649, 4294967291, 4294967294]", 8);
+    assert.equal(restored.program, "map multiply 3\nmap add 1", "Shared source restores unchanged");
+    const layout = await evaluate('({viewport:innerWidth,width:document.documentElement.scrollWidth})');
+    assert(layout.width <= layout.viewport + 1, "Studio layout overflows the mobile viewport");
+    await screenshot("paralliverse-studio-mobile.png");
+    await page("Emulation.setDeviceMetricsOverride", {width: 1440, height: 1250, deviceScaleFactor: 1, mobile: false});
+  }
 
   await evaluate('document.querySelector("#runtime").open = true');
   await screenshot("paralliverse.png");
