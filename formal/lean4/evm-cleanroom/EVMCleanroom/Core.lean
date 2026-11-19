@@ -1,4 +1,4 @@
-import Std
+import EVMCleanroom.Memory
 /-!
 # Independently written, small-step EVM executable model
 
@@ -60,6 +60,7 @@ structure State where
   gas : Nat
   halted : Bool := false
   profile : Profile := .shanghaiPlus
+  memory : Memory := Memory.empty
 
 /-- An instruction plan describes effects without committing state changes.
     The dispatcher must produce one of these; all success passes through
@@ -69,23 +70,25 @@ structure Plan where
   stack : List Word
   gasCost : Nat
   halt : Bool
-  deriving Repr
+  nextMemory : Option Memory := none
 
 private def prepared (nextPC : Nat) (xs : List Word) (cost : Nat)
-    (halt : Bool := false) : Except Error Plan :=
-  .ok ⟨nextPC, xs, cost, halt⟩
+    (halt : Bool := false) (nextMemory : Option Memory := none) : Except Error Plan :=
+  .ok ⟨nextPC, xs, cost, halt, nextMemory⟩
 
 /-- A single controlled state transition. Invariant: every successful
     transition has a bounded stack and charges gas before mutation. -/
 def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
-    (halt : Bool := false) : Except Error State :=
+    (halt : Bool := false) (nextMemory : Option Memory := none) : Except Error State :=
   if hb : xs.length ≤ 1024 then
     if hg : cost ≤ s.gas then
       let nextStack : Stack := ⟨xs, hb⟩
       let s1 : State := { s with pc := nextPC }
       let s2 : State := { s1 with stack := nextStack }
       let s3 : State := { s2 with gas := s.gas - cost }
-      .ok { s3 with halted := halt }
+      let s4 : State := { s3 with halted := halt }
+      let m : Memory := nextMemory.getD s.memory
+      .ok { s4 with memory := m }
     else .error .outOfGas
   else .error .stackOverflow
 
@@ -159,6 +162,39 @@ private def jumpi (s : State) : Except Error Plan :=
     else .error (.invalidJump dest.val)
   | _ => .error .stackUnderflow
 
+/-- MLOAD: read 32 big-endian bytes, charging for previously unallocated words. -/
+private def mload (s : State) : Except Error Plan :=
+  match s.stack.items with
+  | at :: rest =>
+    let requested := MemoryGas.requestedWords at.val 32
+    let expanded := s.memory.expand requested
+    let value := word (expanded.readWord at.val)
+    let gas := 3 + MemoryGas.expansion s.memory.words requested
+    prepared (s.pc + 1) (value :: rest) gas false (some expanded)
+  | [] => .error .stackUnderflow
+
+/-- MSTORE: store a 256-bit value in 32 big-endian bytes. -/
+private def mstore (s : State) : Except Error Plan :=
+  match s.stack.items with
+  | at :: value :: rest =>
+    let requested := MemoryGas.requestedWords at.val 32
+    let expanded := s.memory.expand requested
+    let written := expanded.writeWord at.val value.val
+    let gas := 3 + MemoryGas.expansion s.memory.words requested
+    prepared (s.pc + 1) rest gas false (some written)
+  | _ => .error .stackUnderflow
+
+/-- MSTORE8: store only the low eight bits of the value. -/
+private def mstore8 (s : State) : Except Error Plan :=
+  match s.stack.items with
+  | at :: value :: rest =>
+    let requested := MemoryGas.requestedWords at.val 1
+    let expanded := s.memory.expand requested
+    let written := expanded.writeByte at.val (UInt8.ofNat (value.val % 256))
+    let gas := 3 + MemoryGas.expansion s.memory.words requested
+    prepared (s.pc + 1) rest gas false (some written)
+  | _ => .error .stackUnderflow
+
 /-- Partial instruction set. Unsupported instructions are errors, not NOPs.
     Gas costs here are those of the explicitly supported opcodes. -/
 def planStep (s : State) : Except Error Plan :=
@@ -172,9 +208,13 @@ def planStep (s : State) : Except Error Plan :=
     | 0x03 => binary s Word.sub 3                      -- SUB
     | 0x04 => binary s Word.div 5                      -- DIV
     | 0x50 => pop s                                    -- POP
+    | 0x51 => mload s                                  -- MLOAD
+    | 0x52 => mstore s                                 -- MSTORE
+    | 0x53 => mstore8 s                                -- MSTORE8
     | 0x56 => jump s                                   -- JUMP
     | 0x57 => jumpi s                                  -- JUMPI
     | 0x58 => prepared (s.pc + 1) (word s.pc :: s.stack.items) 2
+    | 0x59 => prepared (s.pc + 1) (word (32 * s.memory.words) :: s.stack.items) 2 -- MSIZE
     | 0x5a =>
       if 2 ≤ s.gas then
         prepared (s.pc + 1) (word (s.gas - 2) :: s.stack.items) 2
@@ -198,7 +238,7 @@ def planStep (s : State) : Except Error Plan :=
 def step (s : State) : Except Error State :=
   match planStep s with
   | .error e => .error e
-  | .ok p => commit s p.nextPC p.stack p.gasCost p.halt
+  | .ok p => commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory
 
 /-- Fuel-limited execution, terminating on STOP, error or exhausted fuel.
     Exceptional errors are reported; their outer transaction-level gas and
