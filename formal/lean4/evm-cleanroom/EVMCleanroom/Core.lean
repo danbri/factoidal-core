@@ -61,6 +61,20 @@ structure State where
   halted : Bool := false
   profile : Profile := .shanghaiPlus
 
+/-- An instruction plan describes effects without committing state changes.
+    The dispatcher must produce one of these; all success passes through
+    'commit'. This separation makes whole-step safety proofs compositional. -/
+structure Plan where
+  nextPC : Nat
+  stack : List Word
+  gasCost : Nat
+  halt : Bool
+  deriving Repr
+
+private def prepared (nextPC : Nat) (xs : List Word) (cost : Nat)
+    (halt : Bool := false) : Except Error Plan :=
+  .ok ⟨nextPC, xs, cost, halt⟩
+
 /-- A single controlled state transition. Invariant: every successful
     transition has a bounded stack and charges gas before mutation. -/
 def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
@@ -101,52 +115,52 @@ def validJumpdest (code : Array UInt8) (target : Nat) : Bool :=
         else scan (pc + 1) remaining
   scan 0 (code.size + 1)
 
-private def binary (s : State) (op : Word → Word → Word) (cost : Nat) : Except Error State :=
+private def binary (s : State) (op : Word → Word → Word) (cost : Nat) : Except Error Plan :=
   match s.stack.items with
-  | a :: b :: rest => commit s (s.pc + 1) (op a b :: rest) cost
+  | a :: b :: rest => prepared (s.pc + 1) (op a b :: rest) cost
   | _ => .error .stackUnderflow
 
-private def pop (s : State) : Except Error State :=
+private def pop (s : State) : Except Error Plan :=
   match s.stack.items with
-  | _ :: rest => commit s (s.pc + 1) rest 2
+  | _ :: rest => prepared (s.pc + 1) rest 2
   | [] => .error .stackUnderflow
 
-private def dup (s : State) (n : Nat) : Except Error State :=
+private def dup (s : State) (n : Nat) : Except Error Plan :=
   match s.stack.items[n - 1]? with
   | none => .error .stackUnderflow
-  | some x => commit s (s.pc + 1) (x :: s.stack.items) 3
+  | some x => prepared (s.pc + 1) (x :: s.stack.items) 3
 
-private def swap (s : State) (n : Nat) : Except Error State :=
+private def swap (s : State) (n : Nat) : Except Error Plan :=
   match s.stack.items with
   | [] => .error .stackUnderflow
   | top :: rest =>
     match rest[n - 1]? with
     | none => .error .stackUnderflow
-    | some other => commit s (s.pc + 1) (other :: rest.set (n - 1) top) 3
+    | some other => prepared (s.pc + 1) (other :: rest.set (n - 1) top) 3
 
-private def jump (s : State) : Except Error State :=
+private def jump (s : State) : Except Error Plan :=
   match s.stack.items with
   | dest :: rest =>
-    if validJumpdest s.code dest.val then commit s dest.val rest 8
+    if validJumpdest s.code dest.val then prepared dest.val rest 8
     else .error (.invalidJump dest.val)
   | [] => .error .stackUnderflow
 
-private def jumpi (s : State) : Except Error State :=
+private def jumpi (s : State) : Except Error Plan :=
   match s.stack.items with
   | dest :: condition :: rest =>
-    if condition.val == 0 then commit s (s.pc + 1) rest 10
-    else if validJumpdest s.code dest.val then commit s dest.val rest 10
+    if condition.val == 0 then prepared (s.pc + 1) rest 10
+    else if validJumpdest s.code dest.val then prepared dest.val rest 10
     else .error (.invalidJump dest.val)
   | _ => .error .stackUnderflow
 
 /-- Partial instruction set. Unsupported instructions are errors, not NOPs.
     Gas costs here are those of the explicitly supported opcodes. -/
-def step (s : State) : Except Error State :=
+def planStep (s : State) : Except Error Plan :=
   if s.halted then .error .alreadyHalted
   else
     let op := byteAt s s.pc
     match op with
-    | 0x00 => commit s (s.pc + 1) s.stack.items 0 true  -- STOP
+    | 0x00 => prepared (s.pc + 1) s.stack.items 0 true  -- STOP
     | 0x01 => binary s Word.add 3                      -- ADD
     | 0x02 => binary s Word.mul 5                      -- MUL
     | 0x03 => binary s Word.sub 3                      -- SUB
@@ -154,23 +168,30 @@ def step (s : State) : Except Error State :=
     | 0x50 => pop s                                    -- POP
     | 0x56 => jump s                                   -- JUMP
     | 0x57 => jumpi s                                  -- JUMPI
-    | 0x58 => commit s (s.pc + 1) (word s.pc :: s.stack.items) 2
+    | 0x58 => prepared (s.pc + 1) (word s.pc :: s.stack.items) 2
     | 0x5a =>
       if 2 ≤ s.gas then
-        commit s (s.pc + 1) (word (s.gas - 2) :: s.stack.items) 2
+        prepared (s.pc + 1) (word (s.gas - 2) :: s.stack.items) 2
       else .error .outOfGas
-    | 0x5b => commit s (s.pc + 1) s.stack.items 1        -- JUMPDEST
+    | 0x5b => prepared (s.pc + 1) s.stack.items 1        -- JUMPDEST
     | 0x5f =>
       if s.profile = .shanghaiPlus then
-        commit s (s.pc + 1) (word 0 :: s.stack.items) 2
+        prepared (s.pc + 1) (word 0 :: s.stack.items) 2
       else .error (.invalidOpcode op)
     | _ =>
       if 0x60 ≤ op ∧ op ≤ 0x7f then
         let n := op - 0x5f
-        commit s (s.pc + 1 + n) (pushData s n :: s.stack.items) 3
+        prepared (s.pc + 1 + n) (pushData s n :: s.stack.items) 3
       else if 0x80 ≤ op ∧ op ≤ 0x8f then dup s (op - 0x7f)
       else if 0x90 ≤ op ∧ op ≤ 0x9f then swap s (op - 0x8f)
       else .error (.invalidOpcode op)
+
+/-- The sole path to successful state mutation. The preparatory dispatcher has
+    no authority to change code or gas; commit enforces the stack bound and
+    charges the declared gas cost. -/
+def step (s : State) : Except Error State := do
+  let p ← planStep s
+  commit s p.nextPC p.stack p.gasCost p.halt
 
 /-- Fuel-limited execution, terminating on STOP, error or exhausted fuel.
     Exceptional errors are reported; their outer transaction-level gas and
