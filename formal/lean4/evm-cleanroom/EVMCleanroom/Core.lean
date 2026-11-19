@@ -210,6 +210,7 @@ def run : Nat → State → Except Error State
     else
       match step s with
       | .error e => .error e
-      | .ok next => run fuel next
+      | .ok next =>
+        if next.halted then .ok next else run fuel next
 
 end EVMCleanroom
