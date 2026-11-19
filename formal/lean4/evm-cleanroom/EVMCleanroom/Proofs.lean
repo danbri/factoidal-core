@@ -1,5 +1,5 @@
-/-! Properties about the *implemented* subset, not an Ethereum consensus proof. -/
 import EVMCleanroom.Core
+/-! Properties about the *implemented* subset, not an Ethereum consensus proof. -/
 
 namespace EVMCleanroom
 
