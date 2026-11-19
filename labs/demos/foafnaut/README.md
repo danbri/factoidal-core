@@ -49,7 +49,8 @@ This directory holds two kinds of program:
 
 - The Foafnaut browser: the window program `run_html.ts` and the HTML, CSS, SVG and
   script engine (`Web*.lean`, `formal/lean4/L4Factoidal/Rendering`). Its macOS app is
-  `foafnaut.app`, from `build-executables.sh`.
+  `foafnaut.app`, from `build-executables.sh`. The [Linux browser package](LINUX.md)
+  uses `build-linux-browser.sh` and an SDL2 window.
 - The older native graphics demos: `run_ui.ts` (springs, layout, vectors, the FOAF graph),
   `run_lean.ts` and `run_svg.ts`. Lean owns scene generation, geometry, SVG parsing/paint,
   interaction state, spring physics and responsive card layout. Deno is the native CPU/WASM

@@ -552,6 +552,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     iconPrepare:(base64:string,scale:number)=>documentCall("",{op:"iconPrepare",base64,scale}) as TabIcon,
     // A key that the macOS menu did not take: the command of Lean's key table, or null.
     pageKey:(key:number,modifiers:number)=>(documentCall("",{op:"pageKey",key,modifiers}) as {command:number|null}).command,
+    keyTable:(platform:string)=>documentCall("",{op:"keyTable",platform}) as {modifier:string;key:string;command:number}[],
     historyPush:(history:History,url:string)=>documentCall("",{op:"historyPush",history,url}) as HistoryAnswer,
     keyCommand:(platform:string,modifier:string,key:string)=>(documentCall("",{op:"keyCommand",platform,modifier,key}) as {command:number|null}).command,
     pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,
