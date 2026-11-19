@@ -41,3 +41,10 @@ jobs:
             --output /tmp/evm-shanghai-push0-state-tests.json \
             "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/shanghai/eip3855_push0/test_push0_contract_during_call_contexts.json"
           node scripts/eels-state-preflight.mjs /tmp/evm-shanghai-push0-state-tests.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="parsed-not-executed" and x["fixtures"]>=1 and x["vectors"]>=1 and x["unsupported"]==x["vectors"] and x["executed"]==0 and x["conformancePasses"]==0, x'
+      - name: Compare real Lean execution gas charges against pinned EELS Prague schedule
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output /tmp/ethereum-eels-prague-gas.py \
+            "https://raw.githubusercontent.com/ethereum/execution-specs/1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653/src/ethereum/forks/prague/vm/gas.py"
+          node scripts/check-eels-gas.mjs /tmp/ethereum-eels-prague-gas.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]>=14 and x["mismatches"]==0, x'
