@@ -67,7 +67,8 @@ def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
     (halt : Bool := false) : Except Error State :=
   if hb : xs.length ≤ 1024 then
     if hg : cost ≤ s.gas then
-      .ok { s with pc := nextPC, stack := ⟨xs, hb⟩,
+      let nextStack : Stack := ⟨xs, hb⟩
+      .ok { s with pc := nextPC, stack := nextStack,
           gas := s.gas - cost, halted := halt }
     else .error .outOfGas
   else .error .stackOverflow
