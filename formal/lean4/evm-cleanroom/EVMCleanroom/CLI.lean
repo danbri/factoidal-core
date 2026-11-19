@@ -48,11 +48,15 @@ private def errorCode : EVMCleanroom.Error → String
   | .stepLimit => "stepLimit"
 
 private def successJSON (s : EVMCleanroom.State) : String :=
-  let items := String.intercalate "," (s.stack.items.map (fun w => toString w.val))
-  "{\"status\":\"ok\",\"gasRemaining\":" ++ toString s.gas ++
-  ",\"pc\":" ++ toString s.pc ++
-  ",\"halted\":" ++ (if s.halted then "true" else "false") ++
-  ",\"stack\":[" ++ items ++ "]}"
+  -- Decimal STRING encoding is essential: a JSON number would silently
+  -- lose precision in JavaScript for EVM words above 2^53 - 1.
+  let items := String.intercalate "," (s.stack.items.map (fun w => "\"" ++ toString w.val ++ "\""))
+  "{\"schemaVersion\":2,\"status\":\"ok\",\"gasRemaining\":\"" ++ toString s.gas ++
+  "\",\"pc\":\"" ++ toString s.pc ++
+  "\",\"halted\":" ++ (if s.halted then "true" else "false") ++
+  ",\"stack\":[" ++ items ++ "]" ++
+  ",\"memorySizeBytes\":\"" ++ toString (32 * s.memory.words) ++
+  "\",\"memoryWord0\":\"" ++ toString (s.memory.readWord 0) ++ "\"}"
 
 private def errorJSON (e : EVMCleanroom.Error) : String :=
   "{\"status\":\"error\",\"error\":\"" ++ errorCode e ++ "\"}"
