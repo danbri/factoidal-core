@@ -115,7 +115,10 @@ private theorem suffix_sound (inputs : Inputs) (n : UInt32)
       omega
     have indexNat := UInt32.toNat_ofNat_of_lt' baseFits
     have here : (inputs.auxiliary[base]?).map UInt32.toNat = some x := by
-      simpa only [Nat.add_zero, List.getElem_cons_zero] using physical 0 (by simp)
+      have firstPos : 0 < (x :: xs).length := by simp
+      have first := physical 0 firstPos
+      rw [Nat.add_zero] at first
+      exact first.trans (congrArg some (List.getElem_cons_zero x xs firstPos))
     obtain ⟨w, hw, wval⟩ := Option.map_eq_some_iff.mp here
     have hread : read inputs .auxiliary (UInt32.ofNat base) = .ok w := by
       apply read_ok
@@ -150,8 +153,10 @@ private theorem suffix_sound (inputs : Inputs) (n : UInt32)
       exact done_
     · have mem : CountTarget.memory next.dst =
           (CountTarget.memory s.dst).write base (s.locals 0).toNat := by
-        apply (observe_set UInt32.toNat 0 s.dst _ (s.locals 0) dest).trans
-        rw [indexNat, CountTarget.memory]
+        have atWord : CountTarget.memory next.dst =
+            (CountTarget.memory s.dst).write (UInt32.ofNat base).toNat (s.locals 0).toNat :=
+          observe_set UInt32.toNat 0 s.dst _ (s.locals 0) dest
+        exact atWord.trans (congrArg (fun j => (CountTarget.memory s.dst).write j (s.locals 0).toNat) indexNat)
       rw [finalMem, carry, mem, List.scanl_cons, writes_cons]
 
 private def initial (prior : Array UInt32) : State := (⟨fun _ => 0, prior⟩ : State).assign 0 0
