@@ -68,8 +68,7 @@ actual linked smoke are pending. The worker has a strict UTF-8 source reader.
 The new GPU transport uses fixed positive buffers, ordered passes, an actual
 terminal copy to aligned staging and bounded payload readback. Strongest-model
 independent review checked buffer roles, zero/odd rows, allocation errors and
-device loss. It has not yet executed on a device or been connected to the public
-page. That source review does not establish GPU execution.
+device loss. It is connected in the unpublished page but has not yet executed on a device. That source review does not establish GPU execution.
 
 ## Browser CPU and release path
 
@@ -84,3 +83,20 @@ The separate products live under ignored `docs/web/hub/assets/l4/paralliverse/`,
 Independent semantic review accepted the staged model and finite count statements with their stated boundaries. Independent host review found no confirmed ABI blocker and checked heap growth with a synthetic WebAssembly memory. It found dirty-source provenance and stale service-worker risks, which were repaired. Those source controls and syntax checks are test evidence.
 
 The linked Wasm smoke, a real-browser digest-loader/tamper test, staged GPU readback, device-loss/absence handling, timing provenance and reachable deployment still need execution. Report initialisation, CPU call, upload/readback, device compute when available and comparable end-to-end samples separately. A software WebGPU run is distinct from identified hardware. Open the normal desktop Chrome tab only after the deployed demo is confirmed live.
+
+## Device execution check submitted
+
+The local pinned Deno2.9.4 request returned no adapter. This is not a device
+validation pass. A separate bounded CI job uses the proven Linux Mesa lavapipe
+Vulkan environment and the actual Hub GPU transport. Fresh native Lean produces
+the three shader strings, encoded packets and sequential packSpec byte outputs.
+Eight cases exercise one reused buffer session: changed equal-sized data, zero
+rows followed by prior data, active empty rows,65 padded rows,128 rows/1024 words
+and one maximal-width row. The checker requires an adapter and compares every
+returned byte and length, recording source, shader hashes, driver, timings and
+output digests. A missing adapter fails that check. Actual CI execution is pending.
+
+This native Lean differential is separate from the linked CPU Wasm/Node ABI,
+the browser worker and live Hub acceptance. The new scripts are under
+Harness/ParalliverseDeviceFixtures.lean and tools/paralliverse-device-smoke.mjs;
+they do not replace any kernel proof or claim hardware performance.

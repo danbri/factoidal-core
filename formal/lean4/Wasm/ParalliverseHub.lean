@@ -38,6 +38,7 @@ def callExport (op : UInt32) (src : ByteArray) : ByteArray :=
     | .error (.limit message) => (2, message.toUTF8)
   (ByteArray.empty.push status) ++ body
 
+set_option maxRecDepth 8192 in
 /-- Kind: exported byte equality.
 Says: all three valid one-byte selectors return the exact shader source under the
 existing success envelope, and the advertised input limit is one byte.

@@ -109,14 +109,15 @@ jobs:
               'dynlibs': [], 'plugins': [], 'options': {},
           }))
           PY
-            # Concrete Scatter byte/token kernel reduction exceeded the 2 GiB
-            # cap in two fresh checks; keep this one module bounded at 4 GiB.
+            # These two concrete proof reductions exceeded the 2 GiB kernel cap
+            # in fresh checks. Keep only these modules bounded at 4 GiB.
             memory_kib=4194304
             lean_memory=2048
-            if [ "$module" = L4Factoidal/Paralliverse/WGSL/Scatter.lean ]; then
-              memory_kib=6291456
-              lean_memory=4096
-            fi
+            case "$module" in
+              L4Factoidal/Paralliverse/WGSL/Scatter.lean|L4Factoidal/Paralliverse/WGSL/Pipeline.lean)
+                memory_kib=6291456
+                lean_memory=4096 ;;
+            esac
             compile=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/$(basename "$module").time.txt"
                      lean -j1 -s16384 "-M$lean_memory" -DwarningAsError=true --setup "$setup" -o "$olean" -c "$generated_c" "$module")
             {
