@@ -138,6 +138,7 @@ async function observeCase(evaluate, name, example, expected) {
 let server, chrome, chromeClosed, profile, devtools, page;
 let chromeLog = "";
 let pageLoaded = false;
+let withholdGpuApi = false;
 const requests = new Map();
 async function screenshot(name) {
   const {data} = await page("Page.captureScreenshot", {format: "png", captureBeyondViewport: true});
@@ -208,7 +209,13 @@ try {
           Promise.all([
             devtools.call("Runtime.enable", {}, workerId),
             devtools.call("Network.enable", {}, workerId),
-          ]).catch(error => report.pageErrors.push(error.message))
+          ]).then(async () => {
+            if (withholdGpuApi && params.targetInfo.type === "worker") {
+              const result = await devtools.call("Runtime.evaluate", {expression:
+                "Object.defineProperty(navigator, 'gpu', {configurable:true, value:undefined})"}, workerId);
+              if (result.exceptionDetails) throw new Error("Could not withhold the worker WebGPU API for the unavailable-state check.");
+            }
+          }).catch(error => report.pageErrors.push(error.message))
             .finally(() => devtools.call("Runtime.runIfWaitingForDebugger", {}, workerId))
             .catch(error => report.pageErrors.push(error.message));
         }
@@ -459,6 +466,32 @@ try {
     const layout = await evaluate('({viewport:innerWidth,width:document.documentElement.scrollWidth})');
     assert(layout.width <= layout.viewport + 1, "Studio layout overflows the mobile viewport");
     await screenshot("paralliverse-studio-mobile.png");
+    // This deliberately withheld API checks the unavailable UX; it is separate
+    // from all preceding real-device submissions and byte comparisons.
+    withholdGpuApi = true;
+    pageLoaded = false;
+    await page("Page.reload", {ignoreCache: true}, deadlineMs);
+    const unavailableLoadDeadline = Date.now() + deadlineMs;
+    while (!pageLoaded && Date.now() < unavailableLoadDeadline) await sleep(100);
+    assert(pageLoaded, "The CPU-only page did not finish loading.");
+    const unavailableDeadline = Date.now() + deadlineMs;
+    let cpuOnly;
+    do {
+      cpuOnly = await studioState();
+      if (cpuOnly.cpu === "[1, 4, 7, 0, 2147483646, 2147483649, 4294967291, 4294967294]" &&
+          cpuOnly.gpuStatus.includes("WebGPU is unavailable")) break;
+      await sleep(100);
+    } while (Date.now() < unavailableDeadline);
+    assert.match(cpuOnly.gpuStatus, /WebGPU is unavailable/, "Explicit API-unavailable diagnostic");
+    assert.equal(cpuOnly.gpu, "—", "Unavailable GPU has no fabricated output");
+    assert.equal(cpuOnly.match, undefined, "CPU-only execution is not presented as a GPU comparison");
+    await evaluate('document.querySelector("#view-gpu").click()');
+    assert.equal((await studioState()).cells, 0, "GPU visual never substitutes CPU output");
+    await evaluate('document.querySelector("#view-cpu").click()');
+    assert.equal((await studioState()).cells, 8, "Actual CPU output remains usable without WebGPU");
+    report.cases.push({name: "studio-withheld-gpu-api", syntheticApiUnavailable: true, ...cpuOnly});
+    await screenshot("paralliverse-studio-gpu-unavailable.png");
+    withholdGpuApi = false;
     await page("Emulation.setDeviceMetricsOverride", {width: 1440, height: 1250, deviceScaleFactor: 1, mobile: false});
   }
 
