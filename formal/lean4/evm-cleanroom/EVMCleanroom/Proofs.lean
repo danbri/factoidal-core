@@ -50,6 +50,7 @@ theorem commit_gas_exact {s out : State} {pc cost : Nat}
   split at h
   · split at h
     · cases h
+      dsimp
       omega
     · cases h
   · cases h
@@ -111,7 +112,7 @@ theorem step_has_exact_bill {s out : State} (h : step s = .ok out) :
   | ok p =>
     have hc : commit s p.nextPC p.stack p.gasCost p.halt = .ok out := by
       simpa [step, hp] using h
-    exact ⟨p, hp, commit_gas_exact hc⟩
+    exact ⟨p, rfl, commit_gas_exact hc⟩
 
 /-- Arbitrarily many successful opcode steps, without a fuel assumption. -/
 inductive Trace : State → State → Prop where
