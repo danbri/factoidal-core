@@ -175,6 +175,74 @@ theorem BilledTrace.toTrace {s out : State} {spent : Nat}
 #print axioms BilledTrace.gas_exact
 #print axioms BilledTrace.toTrace
 
+/-- Every *actual successful run* admits a finite sequence of
+    transitions from the concrete opcode interpreter. This bridge prevents
+    trace properties from applying only to fabricated abstract traces. -/
+theorem run_toTrace (fuel : Nat) {s out : State}
+    (h : run fuel s = .ok out) : Trace s out := by
+  induction fuel generalizing s out with
+  | zero =>
+    simp [run] at h
+  | succ n ih =>
+    cases hh : s.halted with
+    | true =>
+      have hsout : s = out := by
+        simpa [run, hh] using h
+      subst out
+      exact Trace.nil s
+    | false =>
+      have hr : (match step s with
+        | .error e => Except.error e
+        | .ok next => run n next) = .ok out := by
+          simpa [run, hh] using h
+      cases hs : step s with
+      | error e =>
+        simp [hs] at hr
+      | ok next =>
+        have ht : run n next = .ok out := by
+          simpa [hs] using hr
+        exact Trace.cons hs (ih ht)
+
+/-- Every finite interpreter trace has an exact cost-labelled witness,
+    without constructing arbitrary costs post hoc. The witness is built
+    from the dispatcher's Plan at each step. -/
+theorem Trace.canBill {s out : State} (h : Trace s out) :
+    ∃ spent : Nat, BilledTrace s spent out := by
+  induction h with
+  | nil s =>
+    exact ⟨0, BilledTrace.nil s⟩
+  | cons hs _ ih =>
+    obtain ⟨amount, hbill⟩ := ih
+    obtain ⟨p, hp, _⟩ := step_has_exact_bill hs
+    have hc := hs
+    simp [step, hp] at hc
+    exact ⟨p.gasCost + amount, BilledTrace.cons hp hc hbill⟩
+
+/-- Every successful executable run has a *certified exact gas bill*.
+    This is a theorem about all accepted runs, not just a manually
+    constructed billing trace. -/
+theorem run_has_exact_bill (fuel : Nat) {s out : State}
+    (h : run fuel s = .ok out) :
+    ∃ spent : Nat, BilledTrace s spent out ∧ out.gas + spent = s.gas := by
+  obtain ⟨spent, hbill⟩ := Trace.canBill (run_toTrace fuel h)
+  exact ⟨spent, hbill, BilledTrace.gas_exact hbill⟩
+
+/-- Runtime corollary: no successful execution can increase gas. -/
+theorem run_gas_nonincreasing (fuel : Nat) {s out : State}
+    (h : run fuel s = .ok out) : out.gas ≤ s.gas :=
+  Trace.gas_nonincreasing (run_toTrace fuel h)
+
+/-- Runtime corollary: executed bytecode remains unchanged. -/
+theorem run_code_unchanged (fuel : Nat) {s out : State}
+    (h : run fuel s = .ok out) : out.code = s.code :=
+  Trace.code_unchanged (run_toTrace fuel h)
+
+#print axioms run_toTrace
+#print axioms Trace.canBill
+#print axioms run_has_exact_bill
+#print axioms run_gas_nonincreasing
+#print axioms run_code_unchanged
+
 /-- Even if a PUSH1 data byte equals the JUMPDEST opcode (0x5b),
     it is not an executable instruction boundary. This holds for every
     possible immediate byte, not just a particular example. -/
