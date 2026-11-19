@@ -100,6 +100,7 @@ em++ -O3 -DNDEBUG -fwasm-exceptions --no-entry \
   -o "$BUILD/paralliverse.mjs" -sMODULARIZE=1 -sEXPORT_ES6=1 -sINVOKE_RUN=0 \
   -sEXPORTED_FUNCTIONS=_paralliverse_call_v1,_paralliverse_input_limit_v1,_malloc,_free \
   -sEXPORTED_RUNTIME_METHODS=HEAPU8 \
+  -sINCOMING_MODULE_JS_API=wasmBinary,locateFile \
   -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4MB -sENVIRONMENT=node,web,worker -sASSERTIONS=1 \
   2> "$BUILD/link.stderr" || LINK_STATUS=$?
 cat "$BUILD/link.stderr" >&2

@@ -130,3 +130,7 @@ release. It builds the actual Pages source with the route enabled only in
 disposable CI, drives compiled Wasm CPU and Chrome software WebGPU through
 the actual controls, and saves diagnostics and a screenshot. It has not run.
 The public route remains disabled.
+
+## Full build checkpoint — 2026-11-19 06:10 UTC
+
+The [ac55 full build](https://github.com/danbri/factoidal-builds/actions/runs/44465276144) passed the unchanged C/caller gates, native Linux, browser-host tests and relocated Linux browser GUI checks. Its Wasm stage reached the new linked module and failed the actual Node ABI smoke: Emscripten rejected the supplied `wasmBinary` because it was absent from `INCOMING_MODULE_JS_API`. The linker now explicitly accepts `wasmBinary` and `locateFile`, the two inputs used by the smoke and digest-verified worker. Bash syntax and whitespace checks pass; linked execution remains pending a fresh exact-source build. The public route remains disabled.
