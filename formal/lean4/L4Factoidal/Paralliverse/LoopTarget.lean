@@ -370,7 +370,7 @@ private theorem stmt_cont (inputs : Inputs) (gid : UInt32) (stmt : Stmt) (index 
 Says: every statement produces the same locals and destination or the same first
 fault, including loop-limit refusals, for arbitrary inputs, indices and state.
 Does not say: that native code or a device implements the machine with a fixed resource bound. -/
-theorem Stmt.exec_eq_execTR : @Stmt.exec = @Stmt.execTR := by
+@[csimp] theorem Stmt.exec_eq_execTR : @Stmt.exec = @Stmt.execTR := by
   funext inputs gid index s stmt
   unfold Stmt.execTR
   rw [stmt_cont]
