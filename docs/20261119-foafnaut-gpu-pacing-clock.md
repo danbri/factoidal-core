@@ -33,3 +33,10 @@ host pipeline model and its trace checker are unchanged. The reproductions
 used the TypeScript gate in this checkout and did not require a Lean build, a
 Wasm engine or GPU hardware. No native package result is claimed for this
 change.
+
+## Package check
+
+The [fresh complete package run](https://github.com/danbri/factoidal-builds/actions/runs/44456094827)
+at e089543af9d390626ffd62809f4cd7c6b94c830b passed the pure test suite
+with this fixture, alongside Linux/macOS Lean, Wasm and native checks.
+PR606 has merged; that candidate success does not itself publish a new main app.
