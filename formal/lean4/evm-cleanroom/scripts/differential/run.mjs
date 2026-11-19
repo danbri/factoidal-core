@@ -80,6 +80,19 @@ const leanResults = leanLines.map((s,i) => {
 });
 const common = new Common({chain:Mainnet,hardfork:Hardfork.Prague});
 const evm = await createEVM({common});
+// Dynamic opcode execution coverage from the INDEPENDENT reference engine.
+// These counts are not a Lean execution trace and don't prove correctness.
+const referenceOpcodeHistogram = Object.create(null);
+let referenceStepEvents = 0;
+evm.events.on('step', (data, resolve) => {
+  const opcode = data?.opcode?.code;
+  if (Number.isInteger(opcode) && opcode >= 0 && opcode <= 255) {
+    const hex = '0x' + opcode.toString(16).padStart(2, '0');
+    referenceOpcodeHistogram[hex] = (referenceOpcodeHistogram[hex] ?? 0) + 1;
+    referenceStepEvents++;
+  }
+  resolve?.();
+});
 const tested = {};
 const failures = [];
 let passes = 0, errors = 0;
@@ -185,6 +198,12 @@ const report={
   matchedExceptionalCases:matchedExceptional,
   exceptionalComparisonScope:'error category only; no gas burn, rollback or failure-state equivalence',
   byCategory:tested,
+  referenceExecutionCoverage:{
+    source:'@ethereumjs/evm step events; reference-only',
+    totalStepEvents:referenceStepEvents,
+    distinctOpcodes:Object.keys(referenceOpcodeHistogram).length,
+    opcodeHistogram:referenceOpcodeHistogram
+  },
   firstDisagreements:failures.slice(0,10),
   reportSchemaVersion:1
 };
@@ -194,6 +213,8 @@ process.stdout.write(JSON.stringify({
   mismatches:report.mismatches,oracleErrors:errors,
   uniqueExecutionInputs:distinctInputs,
   matchedExceptionalCases:matchedExceptional,
+  distinctReferenceOpcodes:Object.keys(referenceOpcodeHistogram).length,
+  referenceStepEvents,
   corpusSha256,report:options.out,failures:options.failures
 })+'\n');
 if(failures.length) process.exit(1);
