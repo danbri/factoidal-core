@@ -34,12 +34,15 @@ theorem runCPU_eq_eval (base : Atom → Type) (reference implementation : Primit
   | prod f g hf hg =>
     funext x
     simp only [runCPU, eval, hf, hg]
+    rfl
   | fanout f g hf hg =>
     funext x
     simp only [runCPU, eval, hf, hg]
+    rfl
   | map f hf =>
     funext xs
-    simp only [runCPU, eval, Par.mapChunks_eq, Array.toList_map, List.toList_toArray, hf]
+    simp only [runCPU, eval, Par.mapChunks_eq, Array.toList_map, hf]
+    rfl
 
 /-- Kind: compiler-pass and backend refinement.
 Says: running the fused syntax on the task-based CPU interpreter gives the original
