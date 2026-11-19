@@ -120,9 +120,29 @@ private theorem secondPostCommits (body label : String)
     (parsed : ∀ base, GraphStoreService.payloadGraph "application/n-triples" base body =
       .ok [postTriple label]) :
     commitPost postFirst "/gsp/b" body = some (postFinal ("m0_" ++ label)) := by
-  have served (s : GraphStore.GraphStore) :=
-    serveParsedPost s "/gsp/b" (postIriB).val body [postTriple label] routePostB parsed
-  simp only [gspOutcome, View.of, routePostB, served] <;> rfl
+  let firstStore : GraphStore.GraphStore := { named := [((postIriA).val, [postTriple "m0_b"])] }
+  have missing : GraphStore.namedExists (postIriB).val firstStore.named = false := by rfl
+  have old : GraphStoreService.namedOrEmpty (postIriB).val firstStore = [] := by rfl
+  have appendB (g : Graph) : GraphStore.replaceNamed (postIriB).val g firstStore.named =
+      firstStore.named ++ [((postIriB).val, g)] := by rfl
+  have emptyPrefix : GraphStoreService.freshPrefix "m" (Graph.bnodes []) = "m0_" := by decide +kernel
+  have merged : GraphStoreService.mergeInto [] [postTriple label] =
+      [postTriple ("m0_" ++ label)] := by
+    unfold GraphStoreService.mergeInto
+    rw [emptyPrefix] <;> rfl
+  have served (s : GraphStore.GraphStore) (hs : s = firstStore) :
+      GraphStoreService.serve postEndpoint s "POST" "/gsp/b" "" postHeaders body =
+        ({ firstStore with named := (firstStore.named ++
+            [((postIriB).val, [postTriple ("m0_" ++ label)])]) }, { status := 201 }) := by
+    rw [hs, serveParsedPost firstStore "/gsp/b" (postIriB).val body [postTriple label]
+      routePostB parsed, old, merged, appendB, missing] <;> rfl
+  have created : ∃ rest, datasetDelta postFirst (postFinal ("m0_" ++ label)) =
+      .ok (.create (.iri (postIriB).val) :: rest) := ⟨_, rfl⟩
+  obtain ⟨rest, delta⟩ := created
+  simp (disch := rfl) only [gspOutcome, View.of, routePostB, served]
+  change (commitOutcome .allGraphs postFirst (postFinal ("m0_" ++ label))
+    { status := 201 }).commit.map Prod.snd = _
+  rw [commitOutcome, delta] <;> rfl
 
 local notation "postTP" =>
   (TriplePattern.mk (PatternSubject.var "s") (PatternTerm.iri postPred) (PatternTerm.var "o"))

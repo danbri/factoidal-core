@@ -1,5 +1,7 @@
 # Overnight theorem search and independent review — 2026-11-19
 
+The dated checkpoints below retain the evidence available at each revision. The draft review records the latest inventory and links each addition to its compiler output. [Current inventory and compiler evidence](https://github.com/danbri/factoidal-core/pull/609)
+
 ## Verified XHR, EventSource and full TLI1 wire lookup — 2026-11-19 09:52 UTC
 
 **46 distinct public statements have compiled across the recorded source revisions.** The XHR result added one to the previous 39, four complete-wire results brought the count to 44, the direct RDF dictionary contract brought it to 45, and the EventSource witness added one.
@@ -10,7 +12,7 @@
 * **EventSource and its reconnect header.** The UTF-8 decoder and event parser retain and emit U+0100 as the last event ID. From the same successfully opened GET, XHR's header setter rejects that ID and accepts ASCII `A`. This is one closed parser and request-state counterexample. The browser's task scheduling and network behaviour are outside the statement. At `1cab26426`, all 43 fresh project modules returned zero and the required standard-three-axiom report and hygiene passed. [EventSource compiler evidence](https://github.com/danbri/factoidal-core/actions/runs/44497326236/job/135467748868)
 * **Independent byte checks.** A separate review read 13 published sidecar/block pairs and compared 5,570 terms across 31 pages. Seven sidecars spanned multiple pages. The theorem takes successful encoding as its premise. The full encoder admits the empty dictionary. For a nonempty request and an empty directory, the selective reader gets no page from `pageFor?` and returns an outer failure. A miss on a decoded page instead drops that term and continues the request. Construction from supported, distinct source terms alone, directory/page selection, target digest verification and persistent query results require further proofs. [Issue 634](https://github.com/danbri/factoidal-core/issues/634)
 
-The named POST/ASK witness is still under review. At `1cab26426` its proof-only notation failed elaboration. Its failed compiler output contributes zero to the inventory. [Named POST witness](https://github.com/danbri/factoidal-core/issues/633) · [Endpoint diagnostics](https://github.com/danbri/factoidal-core/actions/runs/44497326236/job/135467749208)
+At this checkpoint the named POST/ASK witness was under review. A subsequent check at `dc0559d46` compiled all 320 dependencies and left one error in the second commit projection. The public witness remained outside the count of 46. [Named POST witness](https://github.com/danbri/factoidal-core/issues/633) · [Endpoint diagnostics](https://github.com/danbri/factoidal-core/actions/runs/44501054039/job/135480621808)
 
 ## Current evidence checkpoint — 2026-11-19 08:33 UTC
 
