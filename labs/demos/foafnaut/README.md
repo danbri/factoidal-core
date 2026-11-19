@@ -8,7 +8,7 @@ map, build, test, shared-machine rules) and the
 
 | Name | What it is | State |
 |---|---|---|
-| **BubblePopKit** | The rendering engine, in the sense that WebKit is one: every build of it, native libraries and Wasm binaries | macOS and Wasm built and released; Linux builds exist, undertested |
+| **BubblePopKit** | The rendering engine, in the sense that WebKit is one: every build of it, native libraries and Wasm binaries | Native macOS and Linux x86_64 builds and a Wasm build are released |
 | **BubblePopJS** | Its JavaScript engine (engine id `bubblepop`) | The default page script engine |
 | **BubblePopWASM** | Its WebAssembly engine, which runs Wasm modules (WasmVM in the code) | Runs page Wasm and guests |
 
@@ -31,7 +31,7 @@ BubblePopWASM is closest to Ladybird's arrangement: a WebAssembly engine of its 
 
 | Browser | State |
 |---|---|
-| **Foafnaut**, the windowed browser | macOS app released. Linux builds exist but are undertested. Windows has no build yet and is the nearest next target. Android, iOS, iPadOS, ESP32 and a Raspberry Pi graphics backend are under investigation, and depend on large performance gains to be viable |
+| **Foafnaut**, the windowed browser | macOS app and [Linux x86_64 desktop browser](LINUX.md) released. The Linux build passed a window smoke test on Ubuntu 24.04 with X11/Xvfb and Mesa software Vulkan. Windows is the next desktop target. Android, iOS, iPadOS, ESP32 and a Raspberry Pi graphics backend are under investigation, and depend on large performance gains to be viable |
 | **Textnaut**, in a terminal | Prototype: [textnaut/README.md](textnaut/README.md) |
 | **WWW harness**, the web page that runs the Wasm build ([on the Hub](https://danbri.github.io/factoidal/web/hub/foafnaut/)) | Live |
 
@@ -49,7 +49,8 @@ This directory holds two kinds of program:
 
 - The Foafnaut browser: the window program `run_html.ts` and the HTML, CSS, SVG and
   script engine (`Web*.lean`, `formal/lean4/L4Factoidal/Rendering`). Its macOS app is
-  `foafnaut.app`, from `build-executables.sh`.
+  `foafnaut.app`, from `build-executables.sh`. The [Linux browser package](LINUX.md)
+  uses `build-linux-browser.sh` and an SDL2 window.
 - The older native graphics demos: `run_ui.ts` (springs, layout, vectors, the FOAF graph),
   `run_lean.ts` and `run_svg.ts`. Lean owns scene generation, geometry, SVG parsing/paint,
   interaction state, spring physics and responsive card layout. Deno is the native CPU/WASM

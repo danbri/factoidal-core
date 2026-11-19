@@ -2,7 +2,8 @@
 // browser, run off screen through the window's real event queue against a local site
 // (daily_use_server.ts): follow a link, go back, reload; see a server's "not found" page; start
 // on an address that does not answer; type in a search box and press Enter; press a form's
-// button; post a form; sign in with a cookie; open a link in a new tab; download a file.
+// button; post a form; sign in with a cookie, quit and start again still signed in; open a link
+// in a new tab; download a file.
 //
 // Each case is run_html.ts --steps (the sweep language: "tap:X,Y" in page rows, "type:TEXT",
 // "title=X", "url:X", "tabs=N:A", key letters as Command shortcuts). A case with a `gap` is a
@@ -30,8 +31,9 @@ const cases:Case[]=[
   {name:"type in a search box with no script, press Enter",start:"/search.html",steps:["hold",field,"hold","type:hello",[5,36,0],"title=Results: hello"]},
   {name:"type in a search box, press its button",start:"/search-scripted.html",steps:["hold",field,"hold","type:two words",go,"title=Results: two words"]},
   {name:"post a form",start:"/post.html",steps:["hold",field,"hold","type:hi",[5,36,0],"title=Results: posted hi"]},
-  {name:"sign in: the cookie is kept",start:"/login.html",steps:["hold",field,"hold","type:me",[5,36,0],"title=Signed in"],
-    gap:"page loads carry no cookies: no cookie jar for documents yet (docs/foafnaut-daily-use.md)"},
+  {name:"sign in: the cookie is kept",start:"/login.html",steps:["hold",field,"hold","type:me",[5,36,0],"title=Signed in"]},
+  // the same cookie file as the case before: the program was quit and started again
+  {name:"after a restart, still signed in",start:"/me",steps:["title=Signed in"]},
   {name:"a target=_blank link opens a new tab",start:"/links.html",steps:[at(75,138),"hold","tabs=2:1","title=Results: blank"],
     gap:"a link's target is not read by the window: _blank opens in the same tab (docs/foafnaut-daily-use.md)"},
   {name:"a download is saved, the page stays",start:"/links.html",steps:[at(75,218),"hold","hold","hold","url:/links.html","title=Links"],
@@ -49,11 +51,13 @@ const results:string[]=[];
 for(const c of cases){
   if(only&&c.name!==only)continue;
   const file=`${dir}/steps.json`,downloads=await Deno.makeTempDir({dir,prefix:"downloads-"});
+  // one cookie file for the whole check, as one person's browser: the sign-in case sets it,
+  // the restart case reads it
   await Deno.writeTextFile(file,JSON.stringify(c.steps));
   const start=c.start.startsWith("http")?c.start:origin+c.start;
   const t0=performance.now();
   const out=await new Deno.Command("perl",{args:["-e","alarm shift; exec @ARGV","60","deno","run","--no-check","--no-config","--no-npm","--node-modules-dir=none",
-    "--unstable-webgpu","--unstable-ffi","-A",`${lab}run_html.ts`,"--offscreen","--no-state","--follow-links","--downloads",downloads,"--url",start,"--steps",file,...args],
+    "--unstable-webgpu","--unstable-ffi","-A",`${lab}run_html.ts`,"--offscreen","--no-state","--follow-links","--downloads",downloads,"--cookie-file",`${dir}/cookies.txt`,"--url",start,"--steps",file,...args],
     stdout:"piped",stderr:"piped"}).output();
   const ms=Math.round(performance.now()-t0);
   const text=new TextDecoder().decode(out.stdout)+new TextDecoder().decode(out.stderr);

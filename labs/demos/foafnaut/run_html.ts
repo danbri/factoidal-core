@@ -2,18 +2,20 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,holdForPrefetch,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {Downloaded,inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
+import {Downloaded,inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,type DocumentCookies,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
 import {netAnswer,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
-import {loadNativeWindow} from "./native_window.ts";
+import {loadNativeWindow,type NativeEvent as UIEvent} from "./native_window.ts";
+import {linuxModifier} from "./linux_keys.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
-import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
+import {nativeSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.ts";
-import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
+import {defaultStateDir,hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
+import {cookieSaveQueue} from "./native_cookie_save.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
 import {fetchedAnswer,scriptFailure,scrollLimitOf,inputFirst,scrollFirst,scriptsFirst,turnSliceSteps,startSliceSteps} from "../../../docs/web/hub/foafnaut/page-load.mjs";
@@ -24,7 +26,6 @@ import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import {SERIF_FAMILY,serifFontHost,serifFontPath,wantsSerif} from "./serif_font.ts";
-import type {UIEvent} from "./ui_engine.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
 type BuildInfo={commit?:string;commitFull?:string;dirty?:boolean;builtAt?:string;version?:string;release?:boolean};
@@ -32,14 +33,18 @@ async function buildInfo():Promise<BuildInfo> {
   try{return JSON.parse(await Deno.readTextFile(new URL("./.build/native-html/build-info.json",import.meta.url)));}
   catch{return {};} // run from source with no app build
 }
+function siblingEngine():string|undefined {
+  const name=Deno.build.os==="linux"?"libweb-render.so":"libweb-render.dylib";
+  const path=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+name;
+  try { if(Deno.statSync(path).isFile)return path; } catch { /* no native worker installed */ }
+}
 async function main() {
   const args=[...Deno.args];
   // --version: the engine's own answer (its build facts are compiled into it), then this
   // program's build record, and the engine's line when the two disagree.
   if(args.includes("--version")){
     const info=await buildInfo();
-    const beside=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+"libweb-render.dylib";
-    let library:string|undefined;try{if(Deno.statSync(beside).isFile)library=beside;}catch{/* Wasm */}
+    const library=args.includes("--wasm-engine")?undefined:siblingEngine();
     const answer=(await loadHTML(library)).engineBuild(info.commit?{version:info.version,commit:info.commit}:{});
     console.log(answer.line);
     console.log(info.commit?`program build record: release ${info.version??"unknown"}, commit ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"program build record: none (run from source)");
@@ -53,7 +58,7 @@ async function main() {
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let accessibilityOn=false;
-  let downloadsArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
+  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -108,6 +113,9 @@ async function main() {
     else if(arg==="--state-dir"){stateDir=args.shift();if(!stateDir)throw new Error("--state-dir needs a folder");}
     // Where downloads are saved (default ~/Downloads).
     else if(arg==="--downloads"){downloadsArg=args.shift();if(!downloadsArg)throw new Error("--downloads needs a folder");}
+    // The file the browser's lasting cookies are kept in (default: cookies.txt in the data
+    // folder, when browser state is on; a sweep or check keeps cookies in memory only).
+    else if(arg==="--cookie-file"){cookieFileArg=args.shift();if(!cookieFileArg)throw new Error("--cookie-file needs a file");}
     else if(arg==="--restore-session")restoreSession=true;
     // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
     else if(arg==="--idle-checks-only")idleChecksOnly=true;
@@ -193,16 +201,13 @@ async function main() {
     say.log(JSON.stringify({type:"native-html-log-flood",t:Math.round(performance.now()),lines,top}));
     if(failOnFlood){say.error(`Native HTML: FAILED: the log gate tripped (--fail-on-flood): ${top.map(t=>t.message).join(" | ")}`);Deno.exitCode=1;}
   }});
-  // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
+  // The worker uses the requested library, the native engine beside the program, or Wasm.
   // The app goes into the Dock and Command-Tab, with its menu, before the engine loads (issue 1268).
   const early=check||offscreen||Deno.build.os!=="darwin"?undefined:await nativePreflight(()=>loadNativeWindow());
   early?.appStart();
   if(nativeEngine&&wasmEngine)throw new Error("Use one of --native-engine and --wasm-engine");
   if(wasmEngine)nativeEngine=undefined;
-  else if(!nativeEngine){
-    const beside=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+"libweb-render.dylib";
-    try{if(Deno.statSync(beside).isFile)nativeEngine=beside;}catch{/* none beside the program: Wasm */}
-  }
+  else nativeEngine??=siblingEngine();
   const engineInfo:Promise<{backend:string;path:string|null;sha256:string|null}>=nativeEngine
     ?Deno.readFile(nativeEngine).then(async bytes=>({backend:"native",path:nativeEngine!,
       sha256:[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("")}))
@@ -223,6 +228,8 @@ async function main() {
       return result;
     }])) as T;
   const engine=timed(await loadHTML());
+  const linuxKeys=Deno.build.os==="linux"
+    ?new Map(engine.keyTable("other").map(row=>[row.modifier+"/"+row.key,row.command])):undefined;
   // Downloads go to --downloads, else ~/Downloads (HOME is the one variable the app may read).
   const downloads=downloadsArg??(()=>{try{const home=Deno.env.get("HOME");return home?`${home}/Downloads`:undefined;}catch{return undefined;}})();
   const browserState=stateOff||check||sweep||commands||printPDF?undefined:
@@ -481,10 +488,33 @@ async function main() {
   let liberal=!cliStrict;
   // The start page has a script. A host that can run no page script (the Wasm engine with no
   // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
+  // The browser's cookies for page loads (WebDocument op `cookies`, Net.Cookies): the engine
+  // decides each hop's Cookie field and what a response sets; the jar is text kept here. Only
+  // the engine's `keep` answer (cookies with an expiry, not passed: persistent_no_session) is
+  // written, to cookieFile, mode 0600; session cookies end with the program. An engine without
+  // the op: no cookies, as before.
+  let jarText="";
+  const cookieFile=cookieFileArg??(browserState?`${stateDir??defaultStateDir()}/cookies.txt`:undefined);
+  if(cookieFile)try{jarText=await Deno.readTextFile(cookieFile);}catch{/* none yet */}
+  type CookieOp=(request:Record<string,string>)=>Promise<{cookie?:string;jar?:string}|undefined>|{cookie?:string;jar?:string}|undefined;
+  const cookieOp=():CookieOp|undefined=>(lean as unknown as {cookies?:CookieOp}).cookies;
+  const seconds=()=>String(Math.floor(Date.now()/1000));
+  const jarSave=cookieFile?cookieSaveQueue(async()=>{
+    const kept=await cookieOp()?.({action:"keep",jar:jarText,now:seconds()});
+    if(typeof kept?.jar!=="string")return;
+    const dir=cookieFile.slice(0,cookieFile.lastIndexOf("/"));if(dir)await Deno.mkdir(dir,{recursive:true,mode:0o700});
+    await Deno.writeTextFile(cookieFile+".new",kept.jar,{mode:0o600});await Deno.rename(cookieFile+".new",cookieFile);
+  },error=>console.error("Native HTML: cookies not saved:",String(error))):undefined;
+  const cookiesFor=(initiator:string):DocumentCookies|undefined=>cookieOp()?{
+    request:async(url,method)=>(await cookieOp()!({action:"request",jar:jarText,now:seconds(),url,initiator,method}))?.cookie??"",
+    response:async(url,setCookie)=>{
+      const answer=await cookieOp()!({action:"response",jar:jarText,now:seconds(),url,setCookie:setCookie.join("\n")});
+      if(typeof answer?.jar==="string"&&answer.jar!==jarText){jarText=answer.jar;jarSave?.schedule();}
+    }}:undefined;
   // A start page that can not be read (no network, a name that does not resolve, a refused
   // connection) opens the window on the refusal page for it, as a later navigation would: the
   // browser does not stop. A check run (--check-engine) still fails.
-  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
+  let document=await prepareHTML(lean,url,undefined,undefined,{liberal,...(url?{cookies:cookiesFor("")}:{})}).catch(error=>{
     if(!startDefault&&check)throw error;
     if(!startDefault){
       console.error("Native HTML refused:",url,String(error));
@@ -513,10 +543,10 @@ async function main() {
       maxUniformBufferBindingSize:65536,maxStorageBufferBindingSize:134217728,
       maxTextureDimension2D:4096,maxBufferSize:268435456});
     console.log(`Native HTML CPU plan: ${plan.abi}; ${plan.uniform.bindingType}; ${plan.uniform.bytes} bytes`);
-    console.log("Native HTML CPU engine check complete; GPU/window not requested");return;
+    console.log("Native HTML CPU engine check complete; GPU/window not requested");await jarSave?.flush();return;
   }
   const adapter=await navigator.gpu?.requestAdapter();
-  if(!adapter){console.error("GPU BLOCKED: native HTML adapter unavailable in this launch context");Deno.exitCode=2;return;}
+  if(!adapter){console.error("GPU BLOCKED: native HTML adapter unavailable in this launch context");await jarSave?.flush();Deno.exitCode=2;return;}
   console.log("Native HTML GPU adapter:",adapter.info);
   let device:GPUDevice|undefined,native:ReturnType<typeof loadNativeWindow>|undefined;
   let running=true,dirty=true,controller:AbortController|undefined;
@@ -624,7 +654,7 @@ async function main() {
   let keyChain:Promise<void>=Promise.resolve(),spaceSent=false;
   // (a page whose session is starting after its first press takes keys too: they wait for it)
   const pageTakesKeys=()=>scriptsOn&&(!!document.script||lazyStarts.has(document))&&scriptOps.includes("key");
-  const scriptKey=(page:typeof document,request:{text?:string;mac?:number;modifiers?:number},after?:()=>void)=>{
+  const scriptKey=(page:typeof document,request:{text?:string;mac?:number;key?:string;modifiers?:number},after?:()=>void)=>{
     const starting=lazyStarts.get(page);
     keyChain=keyChain.then(async()=>{
       if(starting)await starting;
@@ -668,7 +698,7 @@ async function main() {
       if(blocked)addEntries(page,[{source:"System",severity:"warning",feature:"form submission",where:nav.url,message:"a new tab that no press or key asked for",action:"not opened"}]);
       else{
         if(nav.target==="_blank"){newTab();leaveAddress();}
-        navigate(nav.url,true,nav.method==="post"?{method:"POST",body:nav.body??"",bodyType:nav.contentType}:undefined);
+        navigate(nav.url,true,nav.method==="post"?{method:"POST",body:nav.body??"",bodyType:nav.contentType}:undefined,page.url);
       }
     }
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
@@ -1206,7 +1236,10 @@ async function main() {
   // no touch-screen touches. An engine without the op has no swipes.
   const gestures=(()=>{try{return engine.gesture({action:"info"});}catch{return undefined;}})();
   // The swipe sweep needs the op; with an older engine it is not run, with exit code 4 (sweeps.sh says NOT RUN).
-  if(swipeSweep&&!gestures){console.error("Native HTML: NOT RUN: --swipe-sweep needs the engine op gesture, which this engine does not have");worker?.terminate();Deno.exitCode=4;return;}
+  if(swipeSweep&&!gestures){
+    console.error("Native HTML: NOT RUN: --swipe-sweep needs the engine op gesture, which this engine does not have");
+    await jarSave?.flush();worker?.terminate();Deno.exitCode=4;return;
+  }
   let wheelSum:{dx:number;dy:number}|undefined;
   const gestureWheel=(a:number,b:number)=>{
     const phase=b&0xff,momentum=(b>>8)&0xff,enabled=(b&65536)!==0;
@@ -1237,7 +1270,7 @@ async function main() {
     // The Outside page (mail, phone, messages): shown in the tab, nothing opened.
     else if(route.route==="outside")navigate(route.url);
     // A page link loads only with --follow-links; the browser's own pages always do.
-    else if(route.route!=="navigate"||follow)navigate(route.url);
+    else if(route.route!=="navigate"||follow)navigate(route.url,true,undefined,route.route==="navigate"?document.url:"");
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
     trace("native-html-go",answer);
@@ -1396,14 +1429,16 @@ async function main() {
   const saveSession=()=>browserState?.session(tabs.map((tab,index)=>{const page=index===active?document:tab.document;
     return {url:page.url,title:page.title??"",scroll:index===active?scroll:tab.scroll};}),active);
   // The settings page with the page script rows that Lean makes for the current setting.
-  const navigate=(target:string,push=true,request?:DocumentRequest)=>{
+  // `initiator`: the page that started the navigation (a link, a form), "" for an address a
+  // person typed or chose: the engine's same-site rule for cookies reads it.
+  const navigate=(target:string,push=true,request?:DocumentRequest,initiator="")=>{
     const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     // The loading state is drawn now (a chrome-only frame: the page layer is kept), so a click
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,downloads,...(request?{request}:{})})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,downloads,cookies:cookiesFor(initiator),...(request?{request}:{})})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -1477,11 +1512,6 @@ async function main() {
     native.setInputTrace(traceInput);native.setHistory(history.canBack,history.canForward);
     // VoiceOver already on (or a client already asked): accessibility trees from the first frame.
     axOn=accessibilityOn||native.axWanted();
-    // The command sweep copies text. It gives the clipboard back unless the person
-    // copied something else meanwhile.
-    const savedClipboard=commands||pasted?native.readClipboard():"";
-    // Paste a URL into the address bar through the real menu key, then press Return.
-    if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
     // The window title is the page title, as in Safari.
     const windowTitle=(page:typeof document)=>page.title||"foafnaut";
     // Off screen the backing scale is 2, as on a Retina display, so the sweeps' backing-pixel
@@ -1490,9 +1520,12 @@ async function main() {
     if(offscreen)native.createOffscreen(shotSize[0],shotSize[1],shotSize[2],windowTitle(document));
     else{
       const handles=native.create(800,500,windowTitle(document));
-      target=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
+      target=new Deno.UnsafeWindowSurface(nativeSurfaceOptions(handles,width,height));
       native.showAfterSurface();
     }
+    // A visible window uses the desktop clipboard; off-screen sweeps use their private one.
+    const savedClipboard=commands||pasted?native.readClipboard():"";
+    if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
     // A new window starts in the address bar with the address selected (issue 1268).
     focusAddress();
     // The splash: drawn by the engine over the first page while it loads, with the engine's own
@@ -1745,6 +1778,11 @@ async function main() {
         }
         if(event.kind===8&&event.a)dirty=true;
         if(event.kind===3)pointAt(event.a,event.b);
+        // SDL reports a key from the active keyboard layout. Linux has no AppKit menu to
+        // take shortcuts before the field, so use the engine's platform key table here.
+        const linuxCommand=event.key===undefined?undefined:linuxKeys?.get(
+          linuxModifier(event.b)+"/"+(event.key===" "?"Space":event.key.length===1?event.key.toLowerCase():event.key));
+        if(linuxCommand!==undefined&&((event.b&12)||event.key==="F5")){windowCommand(linuxCommand);return;}
         // The find field has the focus: keys without Command and typed text edit it (Lean).
         if(event.kind===5&&find.focused&&!(event.b&2)){findInput({key:event.a,modifiers:event.b});return;}
         if(event.kind===9&&find.focused){findInput({text:String.fromCodePoint(event.a)});return;}
@@ -1776,11 +1814,13 @@ async function main() {
         // Control-Tab. Lean's key table gives the command (issue 1268); the page sees the key
         // first, except a Command shortcut of the window.
         if(event.kind===5){
-          const id=engine.pageKey(event.a,event.b);
+          const id=event.key===undefined?engine.pageKey(event.a,event.b):linuxCommand??null;
           const command=()=>{if(id!==null)windowCommand(id);};
           if(pageTakesKeys()&&!((event.b&2)&&id!==null)){
             spaceSent=event.a===49&&!(event.b&10);
-            scriptKey(document,{mac:event.a,modifiers:event.b},command);
+            // SDL supplies committed printable text separately; a Control chord has no text.
+            const key=event.key!==undefined&&(event.b&10)?{key:event.key}:{mac:event.a};
+            scriptKey(document,{...key,modifiers:event.b},command);
           }else command();
         }
         if(event.kind===11){closeMenu();if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}
@@ -2231,6 +2271,8 @@ async function main() {
     const gpuIdle=session?.halt();
     // A frame in progress ends before its session is disposed.
     try{await rendering;await shifting;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
+    // Finish any timer-fired write and the last queued save before stopping the engine.
+    await jarSave?.flush();
     worker?.terminate();
     await browserState?.close().catch(error=>console.error("Native HTML: browser state did not close:",String(error)));
     try{summary();}catch(error){console.error("Native HTML summary failed:",String(error));}

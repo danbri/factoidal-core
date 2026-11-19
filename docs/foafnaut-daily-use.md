@@ -35,7 +35,7 @@ need a build of the branch (marked "needs the branch's engine" until one is meas
 | Press Enter in a search box: the form is submitted (GET) | daily "type in a search box ... press Enter" | **fail**: no implicit submission, and no form navigated the page itself | needs the branch's engine |
 | Press a form's button | daily "... press its button" | **fail**: the page's own navigation was not done | needs the branch's engine |
 | Submit a POST form | daily "post a form" | **fail**: POST was not planned | needs the branch's engine |
-| Sign in to a simple site; cookies kept across a restart | daily "sign in: the cookie is kept" (XFAIL) | **fail**: page loads carry no cookies | open (gap 1) |
+| Sign in to a simple site; cookies kept across a restart | daily "sign in: the cookie is kept", "after a restart, still signed in" | **fail**: page loads carry no cookies | branch `wip/daily-cookies`: the engine's jar for page loads (`Net.Cookies.navCookie`, `navSet`), redirects hop by hop, lasting cookies in `cookies.txt` (mode 0600) of the data folder; needs that branch's engine |
 | A `target=_blank` link opens a new tab | daily "a target=_blank link..." (XFAIL) | **fail**: opens in the same tab | open (gap 3) |
 | Download a file | daily "a download is saved, the page stays" | **fail**: the file is shown as a page | saved to ~/Downloads under a safe name (`safeName_safe`); said in the console only (needs the branch's engine) |
 | A page script sets the title: the tab shows it | by hand | **fail**: the tab keeps the parsed title | open |
@@ -51,12 +51,15 @@ need a build of the branch (marked "needs the branch's engine" until one is meas
    DomOps op 170 tells the embedder of a navigation of the page itself (`navigate` in a turn);
    the window starts a script session on the first press of a page with none, and makes GET and
    POST navigations. Painting the typed value is `look:`'s.
-2. **Cookies for page loads.** A sign-in that sets a cookie on a redirect is lost: documents are
-   fetched with no jar and redirects are followed inside `fetch`, so no `Set-Cookie` of a hop is
-   seen. Next: a browser-wide jar in the engine (the rules and theorems of `Net.Cookies` exist,
-   per page session today), redirects of documents hop by hop as `native_net.ts` does, and
-   persistence under the privacy rules (a cookie kept on disk only when its site asked for it to
-   outlive the session, cleared with the history).
+2. **Cookies for page loads.** On `wip/daily-cookies`: a browser-wide jar for navigations with
+   the rules and theorems of `Net.Cookies` (a cookie is its host's; `Secure` only over https;
+   `sentNav_safe`: no `Strict` cookie on a cross-site navigation, only `SameSite=None` on a
+   cross-site POST), redirects of documents hop by hop so a sign-in's `Set-Cookie` on the
+   redirect is kept, and on disk only cookies with an expiry (`persistent_no_session`: a
+   session cookie is never written); the file is read back through `Jar.ofWire`
+   (`ofWire_wellformed`). Open: the page's scripts still have their own jar per page
+   (`document.cookie` does not see the browser's cookies yet), subresources and `fetch` carry no
+   browser cookies, and there is no "clear cookies" command yet.
 3. **New-tab links.** `target=_blank` and Command-click should open a tab (with no `opener`).
 4. **Downloads.** Done on the branch: the engine decides from the type and
    `Content-Disposition` (`Net.Subresource.navigated`), the name is made safe (`safeName_safe`:

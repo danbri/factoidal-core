@@ -2465,3 +2465,6 @@ L4Factoidal_OWL_Struct_FromRdf_Ctx_dr  # (c) fuel starts at maxNesting = 512 and
 L4Factoidal_OWL_Struct_FromRdf_Ctx_ceMarkers  # (c) fuel starts at maxNesting = 512 and decreases at each nested class expression; operands visited by List.mapM
 # --- Added 2026-11-17, the accessibility tree (HTML/AccessibleTree.lean) ---
 L4Factoidal_HTML_AccessibleTree_walk*  # (c) one call per child of a node with less fuel; the fuel is maxDepth (512), so the depth is at most 512 (proved: tree_depth)
+# --- Added 2026-11-17, processing instruction attributes (DOM/PiAttributes.lean) ---
+L4Factoidal_DOM_PiAttributes_escapeList  # (s) DOM/PiAttributes.lean: the specification of unescape_escape; the executed path is the loop escapeGo (fast_eq)
+L4Factoidal_DOM_PiAttributes_unescapeList  # (s) DOM/PiAttributes.lean: the specification of unescape_escape; the executed path is the loop unescapeGo (fast_eq)

@@ -40,7 +40,14 @@ export type DocumentRequest={method?:"GET"|"POST";body?:string;bodyType?:string;
   /** Ask the engine whether the response is shown or saved (a download); `downloads` is the
   folder a saved file goes to. Only a navigation asks. */
   decide?:(response:{contentType:string;disposition:string;url:string})=>Promise<{action:string;name?:string}|undefined>|{action:string;name?:string}|undefined;
-  downloads?:string};
+  downloads?:string;
+  /** The browser's cookies (the engine decides each hop's field and what a response sets);
+  with them, redirects are followed here hop by hop so each hop's cookies are seen. */
+  cookies?:DocumentCookies};
+/** What a navigation asks of the browser's cookie jar, at each hop. */
+export type DocumentCookies={request(url:string,method:string):Promise<string>;response(url:string,setCookie:string[]):Promise<void>};
+/** The most redirects a navigation follows (Fetch §4.4 step 13). */
+const MAX_REDIRECTS=20;
 /** A navigation whose response was saved as a file (a download): the page stays. */
 export class Downloaded extends Error{constructor(readonly url:string,readonly path:string,readonly bytes:number){super(`saved ${url} as ${path}`);}}
 /** A free name in `dir` for `name` (Lean made it safe: no separator, no leading dot): the name,
@@ -65,8 +72,33 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
     // A form's POST (HTML §4.10.21.3, the body Lean serialized); a 303 (or a 301/302 after a
     // POST) is then followed with GET, as fetch's redirect steps say.
     const post=request.method==="POST"?{method:"POST",body:request.body??"",headers:{"content-type":request.bodyType??"application/x-www-form-urlencoded"}}:{};
-    const response=await fetch(parsed,{...post,signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
-    finalURL=inputURL(response.url);contentType=response.headers.get("content-type")??"";
+    const timeout=AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])]);
+    let response:Response,hopURL:string|undefined;
+    if(!request.cookies)response=await fetch(parsed,{...post,signal:timeout});
+    else {
+      // Hop by hop (redirect "manual"), so each hop carries its cookies and each response's
+      // Set-Cookie reaches the jar: a sign-in sets its cookie on the redirect after the POST.
+      // A 303, and a 301 or 302 after a POST, go on as GET with no body (Fetch §4.4 step 12).
+      let hop=parsed.href,method:"GET"|"POST"=request.method==="POST"?"POST":"GET";
+      for(let redirects=0;;redirects++){
+        const cookie=await request.cookies.request(hop,method);
+        const init:RequestInit={redirect:"manual",signal:timeout,...(method==="POST"?{method:"POST",body:request.body??""}:{}),
+          headers:{...(method==="POST"?{"content-type":request.bodyType??"application/x-www-form-urlencoded"}:{}),...(cookie?{cookie}:{})}};
+        response=await fetch(hop,init);
+        const set=response.headers.getSetCookie();
+        if(set.length)await request.cookies.response(hop,set);
+        const location=response.headers.get("location");
+        if(![301,302,303,307,308].includes(response.status)||!location)break;
+        await response.body?.cancel();
+        if(redirects>=MAX_REDIRECTS)throw new Error(`more than ${MAX_REDIRECTS} redirects: ${url}`);
+        const next=new URL(location,hop);
+        if(next.protocol!=="http:"&&next.protocol!=="https:")throw new Error(`a redirect to ${next.protocol} is not followed: ${url}`);
+        if(response.status===303||(method==="POST"&&(response.status===301||response.status===302)))method="GET";
+        hop=next.href;
+      }
+      hopURL=hop;
+    }
+    finalURL=inputURL(hopURL??response.url);contentType=response.headers.get("content-type")??"";
     // For a script fetch, Lean decides with this header whether the answer is a script (nosniff).
     contentTypeOptions=response.headers.get("x-content-type-options")??"";
     // A page's error status with a body is shown (the server's "not found" page); with none, or
@@ -345,15 +377,16 @@ export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compi
   compile(...a:Parameters<HTMLEngine["compile"]>):Promise<ReturnType<HTMLEngine["compile"]>>;
   selectedText(...a:Parameters<HTMLEngine["selectedText"]>):Promise<ReturnType<HTMLEngine["selectedText"]>>;
   findInPage(...a:Parameters<HTMLEngine["findInPage"]>):Promise<ReturnType<HTMLEngine["findInPage"]>>;
-})&{decodeDocument?:PageDecoder;download?:(request:{contentType:string;disposition:string;url:string})=>unknown};
+})&{decodeDocument?:PageDecoder;download?:(request:{contentType:string;disposition:string;url:string})=>unknown;cookies?:unknown};
 /** How a page is accepted. `liberal`: liberal mode (WebAccept.lean, --be-liberal-in-what-we-accept
 and the Settings checkbox): Lean skips what it may skip and says so, and this host passes on
 the fetches that failed instead of refusing the page. */
-export type AcceptOptions={liberal?:boolean;request?:DocumentRequest;downloads?:string};
+export type AcceptOptions={liberal?:boolean;request?:DocumentRequest;downloads?:string;cookies?:DocumentCookies};
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
   const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c,pageDecoding.fallback,pageDecoding.locale):undefined;
   const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array;status?:number}=inline===undefined
-    ?await readSource(url,signal,decode,{errorPages:true,...(engine.download&&accept.downloads?{decide:r=>engine.download!(r) as {action:string;name?:string}|undefined,downloads:accept.downloads}:{}),...accept.request})
+    ?await readSource(url,signal,decode,{errorPages:true,...(engine.download&&accept.downloads?{decide:r=>engine.download!(r) as {action:string;name?:string}|undefined,downloads:accept.downloads}:{}),
+      ...(accept.cookies?{cookies:accept.cookies}:{}),...accept.request})
     :{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // The page's console (native_console.ts): System entries now, script lines later.
   const page={};
