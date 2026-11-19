@@ -86,7 +86,10 @@ jobs:
           subprocess.run(['git', 'merge-base', '--is-ancestor', base, 'HEAD'], check=True)
           changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD', '--', 'formal/lean4', 'npm'], text=True).splitlines()
           exact = {'formal/lean4/lakefile.lean', 'formal/lean4/Wasm/ParalliverseHub.lean',
-                   'formal/lean4/Wasm/build-paralliverse.sh', 'formal/lean4/Wasm/paralliverse-smoke.mjs'}
+                   'formal/lean4/Wasm/build-paralliverse.sh', 'formal/lean4/Wasm/paralliverse-smoke.mjs',
+                   # These parent-PR changes contain model theorems only.
+                   'formal/lean4/L4Factoidal/Storage/Sbm11/OrderedScanTheorems.lean',
+                   'formal/lean4/L4Factoidal/Storage/Sbm11/ParallelScanTheorems.lean'}
           prefixes = ('formal/lean4/L4Factoidal/Paralliverse/', 'formal/lean4/Harness/Paralliverse')
           unrelated = [p for p in changed if p not in exact and not p.startswith(prefixes)]
           if unrelated:

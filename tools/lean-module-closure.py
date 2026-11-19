@@ -49,6 +49,8 @@ def local_imports(text):
         match = re.fullmatch(r'\s*(?:public\s+)?import\s+([\w.\s]+)', line)
         if match:
             yield from match[1].split()
+        elif line.strip() and line.strip() not in ('prelude', 'module'):
+            break  # Imports cannot follow a Lean declaration.
 
 
 def closure(lean_dir, roots):
