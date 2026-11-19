@@ -38,12 +38,14 @@ reports theorem dependencies. These are distinct forms of evidence.
    whole-step theorems, arbitrarily long execution traces, exact cost-labelled
    traces, a bridge from actual `run` executions to those traces, and
    a universal PUSH1 jump-target boundary lemma.
-3. [`EVMCleanroom/JumpProofs.lean`](EVMCleanroom/JumpProofs.lean):
-   declarative instruction boundaries and a general soundness theorem:
-   for *any* bytecode array, an accepted JUMPDEST is a real instruction
-   boundary holding opcode 0x5b, skipping all PUSH1..32 immediate bytes.
-   The relation and decoder share the opcode-width function; completeness
-   and independent EELS equivalence are not yet proved.
+3. [`EVMCleanroom/JumpProofs.lean`](EVMCleanroom/JumpProofs.lean) and
+   [`EVMCleanroom/JumpCompleteness.lean`](EVMCleanroom/JumpCompleteness.lean):
+   declarative instruction boundaries, forward decoding paths and general
+   **soundness and completeness** theorems. For arbitrary bytecode arrays,
+   the locally accepted JUMPDEST positions are exactly the in-bounds
+   decoded boundaries holding opcode 0x5b, skipping PUSH1..32 immediates.
+   The relation and decoder share the opcode-width function; independent
+   EELS equivalence is not yet proved.
 4. [`EVMCleanroom/MemoryGas.lean`](EVMCleanroom/MemoryGas.lean): independent
    EVM memory-expansion price model, monotonicity and path-independence
    proofs for *arbitrarily many* memory-growth events, and zero-length
@@ -115,8 +117,8 @@ gas burn, rollback and state effects. Differential tests against pinned
 official fixtures should support the proof effort but must not be
 misrepresented as proofs.
 
-After that: byte-addressed memory with MLOAD/MSTORE, complete JUMPDEST
-soundness/completeness for all PUSH widths, storage and gas refunds,
+After that: byte-addressed memory with MLOAD/MSTORE, independently checked
+JUMPDEST conformance to EELS, storage and gas refunds,
 nested calls, contract creation, account state, receipts, fork transitions
 and ultimately a full execution client.
 
