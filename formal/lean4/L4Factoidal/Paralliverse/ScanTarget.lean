@@ -115,7 +115,7 @@ private theorem suffix_sound (inputs : Inputs) (n : UInt32)
       omega
     have indexNat := UInt32.toNat_ofNat_of_lt' baseFits
     have here : (inputs.auxiliary[base]?).map UInt32.toNat = some x := by
-      simpa using physical 0 (by simp)
+      simpa only [Nat.add_zero, List.getElem_cons_zero] using physical 0 (by simp)
     obtain ⟨w, hw, wval⟩ := Option.map_eq_some_iff.mp here
     have hread : read inputs .auxiliary (UInt32.ofNat base) = .ok w := by
       apply read_ok
@@ -151,7 +151,7 @@ private theorem suffix_sound (inputs : Inputs) (n : UInt32)
     · have mem : CountTarget.memory next.dst =
           (CountTarget.memory s.dst).write base (s.locals 0).toNat := by
         apply (observe_set UInt32.toNat 0 s.dst _ (s.locals 0) dest).trans
-        rw [indexNat]
+        rw [indexNat, CountTarget.memory]
       rw [finalMem, carry, mem, List.scanl_cons, writes_cons]
 
 private def initial (prior : Array UInt32) : State := (⟨fun _ => 0, prior⟩ : State).assign 0 0
@@ -206,7 +206,8 @@ theorem scan_memory (inputs : Inputs) (n : Nat) (prior : Array UInt32)
   obtain ⟨t, done_, size, mem⟩ := suffix_sound inputs w head bound xs 0 (initial prior)
     (by omega) room budget reads
   have doneLoop : suffix inputs w.toNat 0 (initial prior) = .ok t := by
-    simpa only [len, wval] using done_
+    have zero : UInt32.ofNat 0 = 0 := by decide
+    simpa only [len, wval, zero] using done_
   refine ⟨t.dst, ?_, size, ?_⟩
   · rw [run_suffix _ _ w head bound, doneLoop] <;> rfl
   · change CountTarget.memory t.dst = applyWrites (CountTarget.memory prior)

@@ -108,7 +108,7 @@ theorem copy_words (inputs : Inputs) (gid : UInt32) (words : List UInt32) (k : N
       apply read_ok
       change inputs.packet[(s.locals 0 + UInt32.ofNat k).toNat]? = some x
       rw [sa]
-      simpa using source 0 (by simp)
+      simpa only [Nat.add_zero, List.getElem_cons_zero] using source 0 (by simp)
     have hd : (s.locals 1 + UInt32.ofNat k).toNat < s.dst.size := by rw [da]; omega
     let next : State := {s with dst := s.dst.set (s.locals 1 + UInt32.ofNat k).toNat x hd}
     have step : body.exec inputs gid (UInt32.ofNat k) s = .ok next := body_ok _ _ _ _ _ rd hd
@@ -133,7 +133,8 @@ theorem copy_words (inputs : Inputs) (gid : UInt32) (words : List UInt32) (k : N
     · change iterate _ (xs.length + 1) _ s = _
       rw [iterate, step]
       change iterate _ xs.length (UInt32.ofNat k + 1) next = _
-      rw [← UInt32.ofNat_add k 1]
+      have bump : UInt32.ofNat k + 1 = UInt32.ofNat (k + 1) := (UInt32.ofNat_add k 1).symm
+      rw [bump]
       exact hrun
     · rw [hmem, stored, writes_cons] <;> rfl
 
