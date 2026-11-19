@@ -47,6 +47,18 @@ private def errorCode : EVMCleanroom.Error → String
   | .alreadyHalted => "alreadyHalted"
   | .stepLimit => "stepLimit"
 
+/-- Bounded, lossless memory snapshot. The result records whether the snapshot
+    covers ALL allocated memory, so callers cannot silently count truncated
+    observations as a complete memory comparison. -/
+private def hexDigit (n : Nat) : Char :=
+  Char.ofNat (if n < 10 then 48 + n else 87 + n)
+
+private def memoryHex (s : EVMCleanroom.State) (limit : Nat) : String :=
+  let observed := min (32 * s.memory.words) limit
+  String.ofList ((List.range observed).flatMap (fun address =>
+    let b := (s.memory.readByte address).toNat
+    [hexDigit (b / 16), hexDigit (b % 16)]))
+
 private def successJSON (s : EVMCleanroom.State) : String :=
   -- Decimal STRING encoding is essential: a JSON number would silently
   -- lose precision in JavaScript for EVM words above 2^53 - 1.
@@ -56,7 +68,10 @@ private def successJSON (s : EVMCleanroom.State) : String :=
   "\",\"halted\":" ++ (if s.halted then "true" else "false") ++
   ",\"stack\":[" ++ items ++ "]" ++
   ",\"memorySizeBytes\":\"" ++ toString (32 * s.memory.words) ++
-  "\",\"memoryWord0\":\"" ++ toString (s.memory.readWord 0) ++ "\"}"
+  "\",\"memoryWord0\":\"" ++ toString (s.memory.readWord 0) ++
+  "\",\"memoryObservedBytes\":\"" ++ toString (min (32 * s.memory.words) 4096) ++
+  "\",\"memoryTruncated\":" ++ (if 4096 < 32 * s.memory.words then "true" else "false") ++
+  ",\"memoryHex\":\"" ++ memoryHex s 4096 ++ "\"}"
 
 private def errorJSON (e : EVMCleanroom.Error) : String :=
   "{\"status\":\"error\",\"error\":\"" ++ errorCode e ++ "\"}"
