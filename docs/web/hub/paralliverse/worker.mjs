@@ -83,6 +83,12 @@ export function connectCpu(module) {
     },
     studio(program, source) {
       if (!studioLimit) throw new InputError("This runtime does not include the program Studio.", "unavailable");
+      if (typeof program !== "string" || typeof source !== "string") {
+        throw new InputError("Program and input must be text.", "invalid");
+      }
+      if (program.length > capabilities.programLimit || source.length > studioLimit) {
+        throw new InputError("The Studio request exceeds its byte limit.", "limit");
+      }
       const bytes = new Uint8Array(studioLimit);
       const request = `${program}\0${source}`;
       const {read, written} = encoder.encodeInto(request, bytes);

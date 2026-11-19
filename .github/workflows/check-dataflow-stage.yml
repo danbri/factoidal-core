@@ -43,6 +43,11 @@ on:
         required: false
         type: boolean
         default: false
+      example_markdown:
+        description: Optional repository Markdown whose Lean examples must compile
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -184,6 +189,7 @@ jobs:
           PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
           RUNTIME_FIXTURE: ${{ inputs.runtime_fixture }}
           GENERATED_EXAMPLE: ${{ inputs.generated_example }}
+          EXAMPLE_MARKDOWN: ${{ inputs.example_markdown }}
         run: |
           set -euo pipefail
           unset LEAN_SRC_PATH
@@ -200,6 +206,24 @@ jobs:
             test -s "$PROOF_DIR/generated-example.lean"
             timeout --kill-after=10s 180s lean "${args[@]}" "$PROOF_DIR/generated-example.lean" \
               2>&1 | tee "$PROOF_DIR/generated-example.log"
+          fi
+          if [ -n "$EXAMPLE_MARKDOWN" ]; then
+            python3 - <<'PY'
+          import os, pathlib, re
+          source = pathlib.Path('../..', os.environ['EXAMPLE_MARKDOWN'])
+          examples = re.findall(r'```lean\n(.*?)\n```', source.read_text(), re.S)
+          if not examples:
+              raise SystemExit('No Lean examples in ' + str(source))
+          out = pathlib.Path(os.environ['PROOF_DIR'], 'guide-examples')
+          out.mkdir()
+          for i, code in enumerate(examples, 1):
+              (out / f'example-{i}.lean').write_text(code + '\n')
+          print(f'Compiling {len(examples)} developer-guide Lean examples')
+          PY
+            for example in "$PROOF_DIR/guide-examples/"*.lean; do
+              timeout --kill-after=10s 180s lean "${args[@]}" "$example" \
+                2>&1 | tee -a "$PROOF_DIR/guide-examples.log"
+            done
           fi
       - name: Preserve exact-source compiler evidence
         if: always()

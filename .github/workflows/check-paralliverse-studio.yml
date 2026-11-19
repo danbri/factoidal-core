@@ -89,6 +89,7 @@ jobs:
         Wasm.ParalliverseHub Harness.ParalliverseStudioFixtures Harness.ParalliverseHubFixtures
       runtime_fixture: Harness.ParalliverseStudioFixtures
       generated_example: true
+      example_markdown: docs/20261119-paralliverse-studio-guide.md
       theorems: >-
         L4Factoidal.Paralliverse.Studio.runCPU_eq_source
         L4Factoidal.Paralliverse.Studio.pipeline_affine
