@@ -139,10 +139,12 @@ private theorem secondPostCommits (body label : String)
   have created : ∃ rest, datasetDelta postFirst (postFinal ("m0_" ++ label)) =
       .ok (.create (.iri (postIriB).val) :: rest) := ⟨_, rfl⟩
   obtain ⟨rest, delta⟩ := created
-  simp (disch := rfl) only [gspOutcome, View.of, routePostB, served]
-  change (commitOutcome .allGraphs postFirst (postFinal ("m0_" ++ label))
-    { status := 201 }).commit.map Prod.snd = _
-  rw [commitOutcome, delta] <;> rfl
+  simp only [gspOutcome, View.of, routePostB]
+  rw [served] <;> first
+    | exact (rfl : firstStore = firstStore)
+    | change (commitOutcome .allGraphs postFirst (postFinal ("m0_" ++ label))
+        { status := 201 }).commit.map Prod.snd = _
+      rw [commitOutcome, delta] <;> rfl
 
 local notation "postTP" =>
   (TriplePattern.mk (PatternSubject.var "s") (PatternTerm.iri postPred) (PatternTerm.var "o"))
