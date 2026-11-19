@@ -320,7 +320,8 @@ try {
   server?.closeAllConnections();
   await writeFile(join(evidenceDir, "chrome.log"), chromeLog);
   await writeFile(join(evidenceDir, "browser.json"), JSON.stringify(report, null, 2) + "\n");
-  if (profile) await rm(profile, {recursive: true, force: true});
+  // Chrome's subprocesses may briefly finish writing after its main process exits.
+  if (profile) await rm(profile, {recursive: true, force: true, maxRetries: 5, retryDelay: 100});
 }
 
 if (report.error) console.error(report.error);

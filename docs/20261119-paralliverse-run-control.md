@@ -8,5 +8,7 @@ The browser acceptance script adds explicit submission without an input event an
 
 Local syntax and diff checks passed. Exact-source browser acceptance and live deployment evidence are to be recorded on the PR before claiming publication. Local desktop CUA was unavailable in this session; it is not claimed as verification.
 
+The first exact-source browser job completed the browser script but failed while deleting its temporary Chrome profile with ENOTEMPTY. Cleanup now uses bounded filesystem retries for late child-process writes; the full acceptance is rerun. Local premerge passed host type checks and FOUNDATION gates, but sandbox restrictions blocked the three native_net tests from listening on loopback. The browser workflow now runs the applicable premerge checks in its Linux runner before acceptance. No local premerge pass is claimed.
+
 The dispatch delay is still 150 ms for automatic input and zero for explicit Run/change. No engine/GPU speed improvement is claimed.
 
