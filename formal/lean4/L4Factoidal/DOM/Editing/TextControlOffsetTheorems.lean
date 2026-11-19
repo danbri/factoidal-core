@@ -43,7 +43,9 @@ private theorem forIn_at_boundary (cs : List Char) (i units index : Nat) (h : i 
   | zero =>
     cases cs with
     | nil => rfl
-    | cons c cs => simp [List.forIn_cons]
+    | cons c cs =>
+      simp [List.forIn_cons]
+      rfl
   | succ i ih =>
     cases cs with
     | nil => simp at h
@@ -67,7 +69,11 @@ Does not say: that an offset between the two units of a surrogate pair
 survives decoding and re-encoding. -/
 theorem indexOfUnits_unitsOfIndex (cs : List Char) (i : Nat) (h : i ≤ cs.length) :
     indexOfUnits cs (unitsOfIndex cs i) = i := by
-  exact forIn_at_boundary cs i 0 0 h
+  have hb := forIn_at_boundary cs i 0 0 h
+  rw [Nat.zero_add] at hb
+  unfold indexOfUnits unitsOfIndex
+  unfold advanceUnits L4Factoidal.DOM.Range.unitsOf at hb
+  exact hb
 
 /-- Kind: text-edit result and UTF-16 representation invariant.
 Says: a successful edit on a valid selection returns UTF-16 selection offsets
@@ -88,8 +94,11 @@ theorem textEdit_result_utf16 (multiline : Bool) (command : String)
     indexOfUnits_unitsOfIndex _ _ hstart, indexOfUnits_unitsOfIndex _ _ hstop⟩
   have hfull := foldl_take_units_mono r.chars 0 r.stop r.chars.length hstop
   rw [List.take_of_length_le (Nat.le_refl r.chars.length)] at hfull
-  simpa only [L4Factoidal.DOM.Range.utf16Length, String.foldl_eq_foldl_toList, String.toList_ofList]
-    using hfull
+  rw [L4Factoidal.DOM.Range.utf16Length, String.foldl_eq_foldl_toList, String.toList_ofList]
+  unfold unitsOfIndex
+  unfold advanceUnits L4Factoidal.DOM.Range.unitsOf at hfull
+  unfold L4Factoidal.DOM.Range.unitsOf
+  exact hfull
 
 #print axioms indexOfUnits_unitsOfIndex
 #print axioms textEdit_result_utf16
