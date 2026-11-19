@@ -58,6 +58,28 @@ if (report&&generator&&evidence.corpus) {
   if (report.matchedExceptionalCases > report.declaredExceptionalCases) {
     problems.push('matched exceptional count exceeds declared exceptions');
   }
+  if (report.corpus?.uniqueExecutionInputs < report.compared * 0.95) {
+    problems.push('under 95% distinct execution inputs');
+  }
+  const coverage=report.referenceExecutionCoverage;
+  const hist=coverage?.opcodeHistogram;
+  const values=hist && typeof hist === 'object' &&
+    !Array.isArray(hist) ? Object.values(hist) : [];
+  if (!coverage || !Number.isSafeInteger(coverage.totalStepEvents) ||
+      !Number.isSafeInteger(coverage.distinctOpcodes) ||
+      values.length !== coverage.distinctOpcodes ||
+      values.some(n => !Number.isSafeInteger(n) || n <= 0) ||
+      values.reduce((a,b) => a + b,0) !== coverage.totalStepEvents) {
+    problems.push('missing or inconsistent executed-opcode coverage');
+  } else if (report.compared >= 1000 &&
+      (coverage.distinctOpcodes < 20 || coverage.totalStepEvents < report.compared)) {
+    problems.push('executed-opcode coverage below CI minimum');
+  }
+  const isPass = report.passed === report.compared &&
+    report.mismatches === 0 && report.oracleErrors === 0 && report.unsupported === 0;
+  if ((report.status === 'pass') !== isPass) {
+    problems.push('report pass/fail status inconsistent with counts');
+  }
 }
 let revision='unknown';
 try{revision=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();}
