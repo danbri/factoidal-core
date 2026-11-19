@@ -39,7 +39,7 @@ exposed to the axiom audit in the dedicated workflow:
 | Successful *actual runs* correspond to these traces and bills | `run_toTrace`, `Trace.canBill`, `run_has_exact_bill` | Bridges the fuel-limited executable driver, not EELS |
 | All successful actual runs preserve code and never increase gas | `run_code_unchanged`, `run_gas_nonincreasing` | Derived from the preceding bridge |
 | A PUSH1 payload is never a jump destination, for **any** payload byte | `push1_payload_not_jumpdest`, `push1_following_jumpdest` | Local PUSH1 semantics |
-| Accepted JUMPDESTs occur only at decoded opcode boundaries, for **arbitrary bytecode**, including PUSH1–32 immediate skipping | `validJumpdest_sound`, `scanJumpdest_sound`, `opcodeWidth_bounds` | Sound against independently stated *relation* `InstructionStart`, but relation shares opcode-width definition; external conformance and completeness unproved |
+| Accepted JUMPDESTs occur **exactly** at in-bounds decoded opcode boundaries, for **arbitrary bytecode** including PUSH1–32 immediate skipping | `validJumpdest_sound`, `validJumpdest_complete`, `scanJumpdest_sound`, `ForwardPath.scan_accepts`, `opcodeWidth_bounds` | Local soundness and completeness; decoder and relation share opcode-width definition, so independent EELS equivalence remains unproved |
 | EVM memory cost is monotone | `MemoryGas.cost_monotone` | Mathematical memory pricing only |
 | Memory expansion cannot be undercharged by subdivision | `MemoryGas.expansion_path_independent`, `MemoryGas.ExpansionTrace.exact_total` | Every finite monotone allocation sequence; not yet connected to opcodes |
 | Empty memory access costs no expansion gas at any offset | `MemoryGas.zero_length_access_free` | Including offset `2^256-1` |
@@ -96,8 +96,9 @@ or EELS semantics.
    declarative instruction boundary with opcode `0x5b`, for arbitrary
    byte arrays and PUSH1–32 immediate widths. But the declarative
    boundary relation shares `opcodeWidth` with the executable scanner;
-   neither *completeness* of this scanner nor independent refinement to
-   EELS is proven.
+   *completeness* of the scanner is now also proved (in
+   `JumpCompleteness.lean`), but independent refinement to EELS remains
+   unproved.
 8. **No strict legal clean-room certification.** Implementation files were
    independently written from public specification descriptions, not
    copied from existing clients or Lean EVM formalizations. The project
@@ -113,10 +114,9 @@ or EELS semantics.
    `execution-spec-tests` vectors and metamorphic differential tests.
 3. Integrate byte-addressed memory and the proven expansion function
    into MLOAD/MSTORE/MSTORE8, with proved expansion/rollback accounting.
-4. Prove *completeness* of the jump-destination parser for any
-   in-bounds declarative JUMPDEST and independently check opcode-width
-   semantics against EELS. Soundness against the local `InstructionStart`
-   relation has already been proved for all bytecode arrays.
+4. Independently check the shared opcode-width semantics and JUMPDEST
+   behaviour against EELS. Local soundness and completeness have both
+   been proved for all finite bytecode arrays.
 5. Extend the state to accounts, storage, calls, return/revert data,
    exceptional-halting semantics and fork-parameterized gas.
 6. If/when optimized implementations are introduced, prove they refine
