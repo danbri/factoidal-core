@@ -37,6 +37,11 @@ jobs:
           lake exe evm-subset $(python3 -c 'print("7f" + "ff"*32 + "00")') 100 3 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["stack"] == [str((1<<256)-1)] and x["gasRemaining"]=="97", x'
           lake exe evm-subset 01 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"stackUnderflow"}, x'
           lake exe evm-subset 6001 2 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"outOfGas"}, x'
+      - name: Batch execute independent bytecode cases in a single Lean process
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          printf '600260030100\t100\t10\n600160005260005100\t100\t10\n' > /tmp/evm-subset-batch.tsv
+          lake exe evm-subset --batch /tmp/evm-subset-batch.tsv | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin]; assert len(rows)==2 and rows[0]["stack"]==["5"] and rows[1]["stack"]==["1"] and rows[1]["memoryWord0"]=="1", rows'
       - name: Inspect pinned published EELS state-test fixtures (NOT a conformance run)
         working-directory: formal/lean4/evm-cleanroom
         run: |
