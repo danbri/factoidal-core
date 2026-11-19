@@ -7,6 +7,7 @@ on:
       - 'formal/lean4/L4Factoidal/Paralliverse.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/**'
       - 'formal/lean4/Harness/ParalliverseCpu.lean'
+      - 'formal/lean4/Harness/ParalliverseHubFixtures.lean'
       - 'formal/lean4/Wasm/ParalliverseHub.lean'
       - 'formal/lean4/lean-toolchain'
       - 'tools/lean-hygiene-audit.py'
@@ -17,6 +18,7 @@ on:
       - 'formal/lean4/L4Factoidal/Paralliverse.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/**'
       - 'formal/lean4/Harness/ParalliverseCpu.lean'
+      - 'formal/lean4/Harness/ParalliverseHubFixtures.lean'
       - 'formal/lean4/Wasm/ParalliverseHub.lean'
       - 'formal/lean4/lean-toolchain'
       - 'tools/lean-hygiene-audit.py'
@@ -69,7 +71,7 @@ jobs:
             git rev-parse HEAD
             uname -sm
             cat lean-toolchain
-            sha256sum lean-toolchain L4Factoidal/Paralliverse.lean "${modules[@]}" Harness/ParalliverseCpu.lean
+            sha256sum lean-toolchain L4Factoidal/Paralliverse.lean "${modules[@]}" Harness/ParalliverseCpu.lean Harness/ParalliverseHubFixtures.lean
           } 2>&1 | tee "$proof_dir/source.txt"
           (ulimit -v 4194304; exec timeout --kill-after=5s 30s lean --version) \
             2>&1 | tee "$proof_dir/lean-version.txt"
@@ -112,7 +114,7 @@ jobs:
             printf '%s\n' "L4Factoidal.Paralliverse.StaticPack.$name" >> "$proof_dir/checked-theorems.txt"
           done
           for name in canonical_valid count_raceFree count_visible scan_visible \
-                      scatter_raceFree scatter_seq_eq; do
+                      scatter_raceFree scatter_seq_eq eval_packProgram_memory eval_packProgram_eq_packSpec; do
             grep -F "'L4Factoidal.Paralliverse.DSL.$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.Paralliverse.DSL.$name" >> "$proof_dir/checked-theorems.txt"
@@ -164,6 +166,17 @@ jobs:
               sys.exit(f"CPU fixture mismatch\nExpected {expected!r}\nActual {actual!r}")
           print(f"{len(actual)} CPU runtime fixtures passed")
           PY
+
+      - name: Run the actual bounded Hub CPU protocol fixtures
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
+          export LEAN_PATH="$proof_dir/modules"
+          (ulimit -v 4194304; timeout --kill-after=10s 180s lean -j1 -s16384 -M2048 \
+            -DwarningAsError=true --run Harness/ParalliverseHubFixtures.lean) \
+            2>&1 | tee "$proof_dir/hub-cpu-fixtures.log"
 
       - name: Preserve compiler, axiom and CPU fixture evidence
         if: always()

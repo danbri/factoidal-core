@@ -270,12 +270,69 @@ theorem scatter_seq_eq (rows : StaticPack.Rows) (o : Mem Nat) (prior : Mem UInt3
   unfold StaticPack.scatter
   rw [← scatter_jobs, List.foldl_map]
 
+/-- Invariant.
+Says: the first n slots of a completed scan are its row starts and slot n is the total.
+Does not say: that the initial offset memory had a particular terminal value. -/
+private theorem scan_parts (widths : List Nat) (offsets : Mem Nat)
+    (h : view (widths.length + 1) offsets = widths.scanl (· + ·) 0) :
+    view widths.length offsets = StaticPack.scanFrom 0 widths ∧ offsets widths.length = widths.sum := by
+  have hv : view (widths.length + 1) offsets = view widths.length offsets ++ [offsets widths.length] := by
+    simp [view, List.range_succ]
+  rw [hv] at h
+  constructor
+  · unfold StaticPack.scanFrom
+    rw [← h]
+    have hlen : (view widths.length offsets).length = widths.length := by simp [view]
+    rw [List.take_append_of_le_length hlen.symm.le, List.take_of_length_le hlen.le]
+  · have ht := congrArg List.getLast? h
+    rw [List.getLast?_concat, StaticPack.scan_terminal] at ht
+    simpa using ht
+
+/-- Refinement.
+Says: for every valid set of invocation orders and every initial memory, the completed
+program has the same whole word memory as sequential scatter and reads the total from
+the terminal slot of the completed scan.
+Does not say: that a host implements the model's between-dispatch visibility. -/
+theorem eval_packProgram_memory (e : Env) (hs : Valid e.rows.length e.orders) :
+    (eval e packProgram ()).words =
+      StaticPack.scatter (StaticPack.scanFrom 0 (StaticPack.counts e.rows)) e.rows e.initial.words ∧
+    (eval e packProgram ()).total = (StaticPack.counts e.rows).sum := by
+  let countsMem := (countDispatch e.rows).runOrder e.initial.counts e.orders.count
+  let offsets := (scanDispatch e.rows.length countsMem).runOrder e.initial.offsets e.orders.scan
+  have hc : view e.rows.length countsMem = StaticPack.counts e.rows :=
+    count_visible e.rows e.initial.counts e.orders.count hs.1
+  have hfull : view (e.rows.length + 1) offsets = (StaticPack.counts e.rows).scanl (· + ·) 0 := by
+    change view _ ((scanDispatch e.rows.length countsMem).runOrder e.initial.offsets e.orders.scan) = _
+    rw [scan_visible _ _ _ _ hs.2.1, hc]
+  have hlen : (StaticPack.counts e.rows).length = e.rows.length := by simp [StaticPack.counts]
+  have hparts := scan_parts (StaticPack.counts e.rows) offsets (by simpa only [hlen] using hfull)
+  rw [hlen] at hparts
+  change (scatterDispatch e.rows offsets).runOrder e.initial.words e.orders.scatter = _ ∧
+    offsets e.rows.length = _
+  constructor
+  · rw [(scatterDispatch e.rows offsets).runOrder_perm (scatter_raceFree _ _ hparts.1) _ hs.2.2 _,
+      scatter_seq_eq, hparts.1]
+  · exact hparts.2
+
+/-- Refinement.
+Says: for all rows, all initial buffers and every permitted invocation order in each
+dispatch, reading the typed program's result gives the ordinary CPU packing specification.
+Does not say: that a WGSL compiler, device, or finer-grained interleaving realises this model. -/
+theorem eval_packProgram_eq_packSpec (e : Env) (hs : Valid e.rows.length e.orders) :
+    (eval e packProgram ()).read = StaticPack.packSpec e.rows := by
+  obtain ⟨hm, ht⟩ := eval_packProgram_memory e hs
+  unfold Packed.read
+  rw [hm, ht]
+  exact StaticPack.packParallel_eq_packSpec e.rows e.initial.words
+
 #print axioms canonical_valid
 #print axioms count_raceFree
 #print axioms count_visible
 #print axioms scan_visible
 #print axioms scatter_raceFree
 #print axioms scatter_seq_eq
+#print axioms eval_packProgram_memory
+#print axioms eval_packProgram_eq_packSpec
 
 -- Probe the actual memories, including a scan whose inputs are supplied independently.
 #guard view 4 ((scanDispatch 3 (fun i => [2, 0, 1].getD i 9)).runOrder (fun _ => 8) [0]) == [0, 2, 2, 3]
@@ -285,5 +342,10 @@ theorem scatter_seq_eq (rows : StaticPack.Rows) (o : Mem Nat) (prior : Mem UInt3
 #guard (eval ⟨[[], [9, 8], [], [9]], ⟨fun _ => 4, fun _ => 7, fun _ => 23⟩,
   ⟨[2, 0, 3, 1], [0], [1, 3, 0, 2]⟩⟩ packProgram ()).read == [9, 8, 9]
 #guard view 2 ((countDispatch [[7], []]).runOrder (fun _ => 3) [0]) == [1, 3]
+#guard
+  let e : Env := ⟨[[], [0xffffffff, 4], [4]], ⟨fun _ => 6, fun _ => 8, fun _ => 17⟩,
+    ⟨[2, 0, 1], [0], [1, 0, 2]⟩⟩
+  let result := eval e packProgram ()
+  result.total == 3 && view 5 result.words == [0xffffffff, 4, 4, 17, 17]
 
 end L4Factoidal.Paralliverse.DSL
