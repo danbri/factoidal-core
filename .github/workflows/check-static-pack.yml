@@ -153,6 +153,7 @@ jobs:
           done
           for name in L4Factoidal.Paralliverse.LoopTarget.read_ok \
                       L4Factoidal.Paralliverse.LoopTarget.Expr.eval_eq_evalTR \
+                      L4Factoidal.Paralliverse.LoopTarget.Stmt.exec_eq_execTR \
                       L4Factoidal.Paralliverse.LoopTarget.store_ok \
                       L4Factoidal.Paralliverse.LoopTarget.observe_set \
                       L4Factoidal.Paralliverse.ScanTarget.carry_add \

@@ -175,7 +175,7 @@ private theorem execute_cont (inputs : Inputs) (gid index : UInt32) (s : State) 
 Says: the continuation machine returns the same word or first storage fault for every
 expression, input pair, invocation ID, loop index and local state.
 Does not say: that emitted code uses a particular native stack or heap limit. -/
-theorem Expr.eval_eq_evalTR : @Expr.eval = @Expr.evalTR := by
+@[csimp] theorem Expr.eval_eq_evalTR : @Expr.eval = @Expr.evalTR := by
   funext inputs gid index s e
   unfold Expr.evalTR
   rw [execute_cont]
@@ -217,6 +217,159 @@ def Stmt.exec (inputs : Inputs) (gid index : UInt32) (s : State) : Stmt → Exce
     if n.toNat ≤ maximum then
       iterate (fun i st => body.exec inputs gid i st) n.toNat 0 s
     else throw (.loopLimit n.toNat maximum)
+
+private inductive Pending where
+  | done
+  | run (index : UInt32) (stmt : Stmt) (rest : Pending)
+  | iterations (remaining : Nat) (next : UInt32) (body : Stmt) (rest : Pending)
+
+-- These upper bounds are used in the termination proof. The worker schedules
+-- one iteration at a time and carries the actual remaining count.
+@[simp] private noncomputable def Stmt.work : Stmt → Nat
+  | .assign .. | .storeWord .. => 1
+  | .seq a b => a.work + b.work + 1
+  | .whenLt _ _ body => body.work + 1
+  | .forRange maximum _ body => maximum * (body.work + 1) + 2
+
+@[simp] private noncomputable def Pending.work : Pending → Nat
+  | .done => 0
+  | .run _ stmt rest => stmt.work + rest.work
+  | .iterations remaining _ body rest => remaining * (body.work + 1) + 1 + rest.work
+
+/-- Kind: termination.
+Says: scheduling an admitted number of iterations decreases the loop's work bound.
+Does not say: that the bound is computed during execution. -/
+private theorem enter_loop_lt (actual maximum unit tail : Nat) (h : actual ≤ maximum) :
+    actual * unit + 1 + tail < maximum * unit + 2 + tail := by
+  have hm := Nat.mul_le_mul_right unit h
+  omega
+
+private def executeStmt (inputs : Inputs) (gid : UInt32) : Pending → State → Except Fault State
+  | .done, s => .ok s
+  | .run index (.assign slot value) rest, s =>
+    match value.eval inputs gid index s with
+    | .error fault => .error fault
+    | .ok v => executeStmt inputs gid rest (s.assign slot v)
+  | .run index (.storeWord address value) rest, s =>
+    match (do store s (← address.eval inputs gid index s) (← value.eval inputs gid index s)) with
+    | .error fault => .error fault
+    | .ok next => executeStmt inputs gid rest next
+  | .run index (.seq a b) rest, s =>
+    executeStmt inputs gid (.run index a (.run index b rest)) s
+  | .run index (.whenLt a b body) rest, s =>
+    match a.eval inputs gid index s with
+    | .error fault => .error fault
+    | .ok x =>
+      match b.eval inputs gid index s with
+      | .error fault => .error fault
+      | .ok y =>
+        if x < y then executeStmt inputs gid (.run index body rest) s
+        else executeStmt inputs gid rest s
+  | .run index (.forRange maximum bound body) rest, s =>
+    match bound.eval inputs gid index s with
+    | .error fault => .error fault
+    | .ok n =>
+      if h : n.toNat ≤ maximum then executeStmt inputs gid (.iterations n.toNat 0 body rest) s
+      else .error (.loopLimit n.toNat maximum)
+  | .iterations 0 _ _ rest, s => executeStmt inputs gid rest s
+  | .iterations (remaining + 1) next body rest, s =>
+    executeStmt inputs gid (.run next body (.iterations remaining (next + 1) body rest)) s
+termination_by pending _ => pending.work
+decreasing_by
+  all_goals first
+    | exact enter_loop_lt _ _ _ _ (by assumption)
+    | (simp <;> omega)
+    | (simp [Nat.succ_mul] <;> omega)
+
+/-- Execute a statement with a private stack of pending statements and loop iterations. -/
+def Stmt.execTR (inputs : Inputs) (gid index : UInt32) (s : State) (stmt : Stmt) : Except Fault State :=
+  executeStmt inputs gid (.run index stmt .done) s
+
+/-- Kind: iteration simulation.
+Says: consecutive scheduled iterations pass their resulting states and successive
+word indices to the body in the same order as the source iterator.
+Does not say: that a loop with a failing body completes all iterations. -/
+private theorem iterations_cont (inputs : Inputs) (gid : UInt32) (body : Stmt)
+    (hbody : ∀ index s rest, executeStmt inputs gid (.run index body rest) s =
+      (body.exec inputs gid index s).bind (executeStmt inputs gid rest))
+    (remaining : Nat) (next : UInt32) (s : State) (rest : Pending) :
+    executeStmt inputs gid (.iterations remaining next body rest) s =
+      (iterate (fun i st => body.exec inputs gid i st) remaining next s).bind (executeStmt inputs gid rest) := by
+  induction remaining generalizing next s with
+  | zero => rw [executeStmt] <;> rfl
+  | succ remaining ih =>
+    rw [executeStmt, hbody]
+    change (body.exec inputs gid next s).bind
+        (executeStmt inputs gid (.iterations remaining (next + 1) body rest)) =
+      ((body.exec inputs gid next s).bind (fun st =>
+        iterate (fun i st => body.exec inputs gid i st) remaining (next + 1) st)).bind
+          (executeStmt inputs gid rest)
+    cases body.exec inputs gid next s with
+    | error fault => rfl
+    | ok st => exact ih (next + 1) st
+
+/-- Kind: statement simulation.
+Says: starting a statement with any pending work passes the same resulting state
+to that work or returns the source statement's first fault.
+Does not say: that a caller supplied a bounded program or a particular initial state. -/
+private theorem stmt_cont (inputs : Inputs) (gid : UInt32) (stmt : Stmt) (index : UInt32)
+    (s : State) (rest : Pending) : executeStmt inputs gid (.run index stmt rest) s =
+      (stmt.exec inputs gid index s).bind (executeStmt inputs gid rest) := by
+  induction stmt generalizing index s rest with
+  | assign slot value =>
+    rw [executeStmt, Stmt.exec]
+    cases value.eval inputs gid index s <;> rfl
+  | storeWord address value => rw [executeStmt] <;> rfl
+  | seq a b ha hb =>
+    rw [executeStmt, ha]
+    change (a.exec inputs gid index s).bind (executeStmt inputs gid (.run index b rest)) =
+      ((a.exec inputs gid index s).bind (fun st => b.exec inputs gid index st)).bind (executeStmt inputs gid rest)
+    cases a.exec inputs gid index s with
+    | error fault => rfl
+    | ok st => exact hb index st rest
+  | whenLt a b body ih =>
+    rw [executeStmt, Stmt.exec]
+    cases a.eval inputs gid index s with
+    | error fault => rfl
+    | ok x =>
+      cases b.eval inputs gid index s with
+      | error fault => rfl
+      | ok y =>
+        change (if x < y then executeStmt inputs gid (.run index body rest) s else executeStmt inputs gid rest s) =
+          (if x < y then body.exec inputs gid index s else .ok s).bind (executeStmt inputs gid rest)
+        by_cases h : x < y
+        · simp only [if_pos h]
+          exact ih index s rest
+        · simp only [if_neg h] <;> rfl
+  | forRange maximum bound body ih =>
+    rw [executeStmt, Stmt.exec]
+    cases bound.eval inputs gid index s with
+    | error fault => rfl
+    | ok n =>
+      change (if n.toNat ≤ maximum then executeStmt inputs gid (.iterations n.toNat 0 body rest) s
+        else .error (.loopLimit n.toNat maximum)) =
+          (if n.toNat ≤ maximum then iterate (fun i st => body.exec inputs gid i st) n.toNat 0 s
+            else .error (.loopLimit n.toNat maximum)).bind (executeStmt inputs gid rest)
+      by_cases h : n.toNat ≤ maximum
+      · simp only [if_pos h]
+        exact iterations_cont inputs gid body ih n.toNat 0 s rest
+      · simp only [if_neg h] <;> rfl
+
+/-- Kind: executable equivalence.
+Says: every statement produces the same locals and destination or the same first
+fault, including loop-limit refusals, for arbitrary inputs, indices and state.
+Does not say: that native code or a device implements the machine with a fixed resource bound. -/
+theorem Stmt.exec_eq_execTR : @Stmt.exec = @Stmt.execTR := by
+  funext inputs gid index s stmt
+  unfold Stmt.execTR
+  rw [stmt_cont]
+  cases stmt.exec inputs gid index s with
+  | error fault => rfl
+  | ok next =>
+    change Except.ok next = executeStmt inputs gid .done next
+    rw [executeStmt]
+
+#print axioms Stmt.exec_eq_execTR
 
 /-- Kind: storage semantics.
 Says: a present word at the addressed slot is the value of the checked input read.
