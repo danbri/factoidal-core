@@ -196,9 +196,17 @@ theorem run_toTrace (fuel : Nat) {s out : State}
       | error e =>
         simp [hs] at h
       | ok next =>
-        have ht : run n next = .ok out := by
-          simpa [hs] using h
-        exact Trace.cons hs (ih ht)
+        simp [hs] at h
+        cases hn : next.halted with
+        | true =>
+          have hout : next = out := by
+            simpa [hn] using h
+          subst out
+          exact Trace.cons hs (Trace.nil next)
+        | false =>
+          have ht : run n next = .ok out := by
+            simpa [hn] using h
+          exact Trace.cons hs (ih ht)
 
 /-- Every finite interpreter trace has an exact cost-labelled witness,
     without constructing arbitrary costs post hoc. The witness is built
