@@ -4,6 +4,12 @@ Review branch: `wip/timer-partition-proofs`. [Draft PR 609](https://github.com/d
 
 The fast discovery/proof agent uses `gpt-6.2-sol` at low reasoning. An independent `gpt-6.2-astra` reviewer at maximum reasoning checks the actual implementation, premise nonvacuity, reachable invariants, counterexamples to broader claims and host boundaries. The coordinator reads the source and the actual compiler logs. No price comparison is asserted. Discovery candidates are proposals until accepted and compiled. No runtime functions change in this PR; new proof modules have explicit Lake roots outside runtime imports. The RDF Core edit removes one unused argument in an existing proof only.
 
+## Named Graph Store POST candidate
+
+[Item631](https://github.com/danbri/factoidal-core/issues/631) connects a successful actual named POST handler result to the successful actual RDF payload parser, exact unchanged default and non-target named-entry sequence, target presence including an empty graph, and RDF membership of the old graph union the payload renamed with the actual selected prefix. It infers parsing success from response status and proves that multipart errors cannot masquerade as success; no successful-parser premise is supplied.
+
+Coordinator source review checked the actual serve branch and replaceNamed/lookupNamed definitions. The filtered frame retains duplicates and order without assuming unique graph names. Nonempty create/merge and repeated source blank-node fixtures exist in the actual handler. These fixtures and source review are not proof. Strict bounded compilation and strongest independent review remain pending. The statement excludes target raw-list multiplicity, freshness across other graphs, full RDF syntax conformance, whole endpoint adaptation and durable I/O. The public theorem is `GraphStoreService.serve_post_named_denotation`, outside runtime imports.
+
 ## Actual event-loop admission bridge — 2026-11-19 06:24 UTC
 
 [The lab-specific fresh check](https://github.com/danbri/factoidal-core/actions/runs/44471331242) at29d3c28cc44df4a87c8475d6feae45e00d34c9a4 compiles `WebEventLoop.stateOf_inv` with strict exit0, `[propext, Classical.choice, Quot.sound]`, expected-name audit and hygiene. Dependencies include the actual WebEventLoop source with a narrow module-path mapping, not copied definitions. Together with HTTP2 and the complete31 checkpoint,34 public statements have individually compiled. The latest combined batch remains pending.

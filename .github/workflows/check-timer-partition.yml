@@ -41,6 +41,7 @@ jobs:
               L4Factoidal.VC.StatusListRangeTheorems
               L4Factoidal.Rendering.RdfViewTheorems
               L4Factoidal.SPARQL.GraphStoreMergeTheorems
+              L4Factoidal.SPARQL.GraphStorePostTheorems
             larger_dependency_budgets: ''
             theorems: |-
               L4Factoidal.EventLoop.mem_due_now_iff
@@ -68,6 +69,7 @@ jobs:
               L4Factoidal.Rendering.RdfView.parse_graph_and_caps
               L4Factoidal.SPARQL.GraphStoreService.freshPrefix_fresh
               L4Factoidal.SPARQL.GraphStoreService.freshPrefix_candidate
+              L4Factoidal.SPARQL.GraphStoreService.serve_post_named_denotation
           - group: http-wire
             job_timeout_minutes: 15
             modules: |-
