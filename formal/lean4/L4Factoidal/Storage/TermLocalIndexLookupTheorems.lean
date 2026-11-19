@@ -48,7 +48,7 @@ theorem lookup_entriesOf_sound (terms : Array Term) (wanted : Term) (id : Nat)
   split at found <;> try contradiction
   rename_i matched
   have same : entry.term = TermFold.foldTerm wanted :=
-    beq_iff_eq.mp (Bool.and_eq_true.mp matched).2
+    beq_iff_eq.mp (Bool.and_eq_true_iff.mp matched).2
   rw [← Option.some.inj found, ← same.trans (TermFold.foldTerm_eq_self wanted)]
   exact ((mem_entriesOf_iff terms entry).mp member).1
 

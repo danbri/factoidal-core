@@ -80,6 +80,13 @@ jobs:
               L4Factoidal.Storage.TermLocalIndex.mem_entriesOf_iff
               L4Factoidal.Storage.TermFold.foldTerm_eq_self
               L4Factoidal.Storage.TermLocalIndex.lookup_entriesOf_sound
+          - group: xhr-provenance
+            job_timeout_minutes: 15
+            modules: |-
+              L4Factoidal.Net.XhrResponseProvenanceTheorems
+            larger_dependency_budgets: ''
+            theorems: |-
+              L4Factoidal.Net.Xhr.give_realm_response_released
           - group: http-wire
             job_timeout_minutes: 15
             modules: |-

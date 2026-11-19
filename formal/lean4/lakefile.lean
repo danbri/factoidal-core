@@ -1015,6 +1015,10 @@ lean_lib HttpWireBoundProofs where
 lean_lib TermLocalIndexLookupProofs where
   roots := #[`L4Factoidal.Storage.TermLocalIndexLookupTheorems]
 
+-- Actual async XHR response, Fetch release and integrity bridge (issue #635).
+lean_lib XhrResponseProvenanceProofs where
+  roots := #[`L4Factoidal.Net.XhrResponseProvenanceTheorems]
+
 -- Actual event-loop JSON admission bridge (issue #629), proof-only lab root.
 lean_lib EventLoopWireProofs where
   srcDir := "../../labs/demos/foafnaut"
