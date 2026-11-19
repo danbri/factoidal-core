@@ -78,9 +78,27 @@ theorem Memory.readByte_write_other (m : Memory) (written queried : Nat)
 
 /-- Materializing 32 bytes cannot itself increase the paid-for allocation.
     All such expansion is accounted for separately in the opcode gas plan. -/
+private theorem foldWordBytes_preserves_words (positions : List Nat)
+    (m : Memory) (start value : Nat) :
+    (positions.foldl
+      (fun acc i => acc.writeByte (start + i)
+        (UInt8.ofNat ((value / (256 ^ (31 - i))) % 256))) m).words = m.words := by
+  induction positions generalizing m with
+  | nil => rfl
+  | cons i rest ih =>
+    change (rest.foldl
+      (fun acc j => acc.writeByte (start + j)
+        (UInt8.ofNat ((value / (256 ^ (31 - j))) % 256)))
+      (m.writeByte (start + i)
+        (UInt8.ofNat ((value / (256 ^ (31 - i))) % 256)))).words = m.words
+    exact (ih (m := m.writeByte (start + i)
+      (UInt8.ofNat ((value / (256 ^ (31 - i))) % 256)))).trans
+      (Memory.writeByte_preserves_words m (start + i)
+        (UInt8.ofNat ((value / (256 ^ (31 - i))) % 256)))
+
 theorem Memory.writeWord_preserves_words (m : Memory) (start value : Nat) :
     (m.writeWord start value).words = m.words := by
-  simp [Memory.writeWord, Memory.writeByte]
+  exact foldWordBytes_preserves_words (List.range 32) m start value
 
 #print axioms Memory.readByte_write_other
 #print axioms Memory.writeWord_preserves_words
