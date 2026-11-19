@@ -1,0 +1,164 @@
+name: Dataflow stage equivalence check
+
+on:
+  push:
+    branches: [main, wip/604-static-pack-spec]
+    paths:
+      - 'formal/lean4/L4Factoidal/Dataflow/Stage.lean'
+      - 'formal/lean4/L4Factoidal/Dataflow/Pipeline.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Dataflow/Stage.lean'
+      - 'formal/lean4/L4Factoidal/Dataflow/Pipeline.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dataflow-stage:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/604-static-pack-spec'
+    name: Lean proofs (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
+    strategy:
+      matrix:
+        include:
+          - group: dataflow-stage
+            job_timeout_minutes: 30
+            modules: L4Factoidal.Dataflow.Pipeline
+            larger_dependency_budgets: |-
+              L4Factoidal/OWL/RLSemantics.lean
+              L4Factoidal/Storage/Sbm11/VarintWordTheorems.lean
+            theorems: L4Factoidal.Dataflow.Pipeline.toStage_eq_direct
+    env:
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Compile fresh source dependencies and theorem modules
+        working-directory: formal/lean4
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
+          PROOF_MODULES: ${{ matrix.modules }}
+          LARGER_DEPENDENCY_BUDGETS: ${{ matrix.larger_dependency_budgets }}
+        run: |
+          set -euo pipefail
+          unset LEAN_PATH LEAN_SRC_PATH
+          mkdir -p "$PROOF_DIR"
+          mkdir "$PROOF_DIR/modules"
+          export LEAN_PATH="$PROOF_DIR/modules"
+          {
+            git rev-parse HEAD
+            cat lean-toolchain
+            (
+              ulimit -v 4194304
+              lean --version
+            )
+          } 2>&1 | tee "$PROOF_DIR/source.txt"
+          python3 -u - <<'PY' 2>&1 | tee "$PROOF_DIR/lean.log"
+          import hashlib, os, pathlib, re, shlex, subprocess, sys
+          out = pathlib.Path(os.environ['PROOF_DIR'])
+          proof_modules = os.environ['PROOF_MODULES'].split()
+          larger_dependencies = set(os.environ.get('LARGER_DEPENDENCY_BUDGETS', '').split())
+          seen, order = set(), []
+
+          def module_source(name):
+              return pathlib.Path(name.replace('.', '/') + '.lean')
+
+          def visit(name):
+              if name in seen:
+                  return
+              seen.add(name)
+              source = module_source(name)
+              if not source.is_file():
+                  if name.startswith('L4Factoidal.'):
+                      raise SystemExit(f'Missing local dependency: {name}')
+                  return
+              for line in source.read_text().splitlines():
+                  if re.match(r'^\s*(?:public\s+)?import\s+', line):
+                      for dep in re.sub(r'^\s*(?:public\s+)?import\s+', '', line).split('--')[0].split():
+                          visit(dep)
+              order.append(source)
+
+          for name in proof_modules:
+              visit(name)
+          proof_sources = {module_source(name) for name in proof_modules}
+          failed = False
+          for source in order:
+              target = out / 'modules' / source.with_suffix('.olean')
+              timing = out / 'timings' / source.with_suffix('.txt')
+              target.parent.mkdir(parents=True, exist_ok=True)
+              timing.parent.mkdir(parents=True, exist_ok=True)
+              with (out / 'source.txt').open('a') as f:
+                  print(hashlib.sha256(source.read_bytes()).hexdigest(), source, file=f)
+              strict = source in proof_sources
+              if str(source) in larger_dependencies and not strict:
+                  duration, os_memory_kib, lean_memory = '360s', '6291456', '-M4096'
+              else:
+                  duration, os_memory_kib, lean_memory = '180s', '4194304', '-M2048'
+              cmd = [
+                  'timeout', '--kill-after=10s', duration, '/usr/bin/time', '-v', '-o', str(timing),
+                  'bash', '-c', 'ulimit -v "$1" && shift && exec "$@"', 'lean-limit', os_memory_kib,
+                  'lean', '-j1', '-s16384', lean_memory,
+                  *(['-DwarningAsError=true'] if strict else []), '-o', str(target), str(source),
+              ]
+              print(shlex.join(cmd), flush=True)
+              result = subprocess.run(cmd)
+              print(f'{source}: compile_exit={result.returncode}', flush=True)
+              if result.returncode or not target.is_file():
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY
+      - name: Require individual theorem axiom reports
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
+          REQUIRED_THEOREMS: ${{ matrix.theorems }}
+        run: |
+          set -euo pipefail
+          python3 tools/lean-hygiene-audit.py --build-log "$PROOF_DIR/lean.log" \
+            2>&1 | tee "$PROOF_DIR/hygiene.log"
+          python3 - <<'PY'
+          import os, pathlib, re
+          out = pathlib.Path(os.environ['PROOF_DIR'])
+          required = os.environ['REQUIRED_THEOREMS'].split()
+          reports = re.findall(
+              r"'([^']+)' (?:depends on axioms: \[[^\]]*\]|does not depend on any axioms)",
+              (out / 'lean.log').read_text(),
+          )
+          missing = set(required) - set(reports)
+          if missing:
+              raise SystemExit('Missing axiom reports for ' + ', '.join(sorted(missing)))
+          (out / 'checked-theorems.txt').write_text('\n'.join(required) + '\n')
+          PY
+      - name: Preserve exact-source compiler evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: timer-partition-lean-evidence-${{ matrix.group }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.group }}-evidence/
+            !${{ runner.temp }}/${{ matrix.group }}-evidence/modules/**
+          if-no-files-found: warn
+          retention-days: 30

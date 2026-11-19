@@ -1,0 +1,102 @@
+name: Paralliverse browser acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      core_ref:
+        description: Core ref with a matching published web release
+        required: true
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      EVIDENCE: ${{ runner.temp }}/paralliverse-browser-evidence
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.core_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Record the exact page source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          git rev-parse HEAD | tee "$EVIDENCE/commit.txt"
+          node --version | tee "$EVIDENCE/node-version.txt"
+          sha256sum docs/.eleventy.js docs/_includes/hub-app.njk \
+            docs/web/hub/paralliverse/{index.njk,style.css,app.mjs,worker.mjs,gpu.mjs} \
+            tools/paralliverse-browser-smoke.mjs | tee "$EVIDENCE/source.sha256"
+
+      - name: Install the matching published web release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tools/fetch-builds.sh --set web --strict 2>&1 | tee "$EVIDENCE/fetch-web.log"
+          manifest=docs/web/hub/assets/l4/paralliverse/manifest.json
+          if [ ! -s "$manifest" ]; then
+            echo "The installed web release has no Paralliverse runtime manifest." >&2
+            exit 1
+          fi
+          cp "$manifest" "$EVIDENCE/manifest.json"
+          cp .factoidal-builds/web.tag "$EVIDENCE/web-release.txt"
+          runtime_commit="$(jq -er '.sourceCommit | select(test("^[0-9a-f]{40}$"))' "$manifest")"
+          test "$(cat "$EVIDENCE/web-release.txt")" = "build-${runtime_commit:0:12}-web"
+          git merge-base --is-ancestor "$runtime_commit" HEAD
+          git diff --exit-code "$runtime_commit" HEAD -- formal/lean4 npm
+
+      - name: Install the scene runtimes used by Pages
+        if: ${{ hashFiles('docs/web/hub/html-webgpu/index.njk', 'docs/web/hub/svg-webgpu/index.njk') != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tools/fetch-builds.sh --set foafnaut-web 2>&1 | tee "$EVIDENCE/fetch-foafnaut-web.log"
+
+      - name: Install Eleventy from the vendored cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          third_party/eleventy/install.sh docs 2>&1 | tee "$EVIDENCE/eleventy-install.log"
+
+      - name: Build the Pages checkout for browser testing
+        working-directory: docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Enable the route in this disposable checkout while the public route is gated.
+          sed -i 's@^permalink: false$@permalink: /web/hub/paralliverse/index.html@' web/hub/paralliverse/index.njk
+          npx --offline @11ty/eleventy --quiet --output=_site 2>&1 | tee "$EVIDENCE/eleventy-build.log"
+          test -s _site/web/hub/paralliverse/index.html
+          cmp web/hub/assets/l4/paralliverse/manifest.json _site/web/hub/assets/l4/paralliverse/manifest.json
+
+      - name: Check the compiled Wasm and Chrome WebGPU results
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 240s node tools/paralliverse-browser-smoke.mjs \
+            docs/_site "$EVIDENCE" "$(cat "$EVIDENCE/commit.txt")" 2>&1 | tee "$EVIDENCE/smoke.log"
+
+      - name: Preserve browser acceptance records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paralliverse-browser-evidence
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: warn
+          retention-days: 30

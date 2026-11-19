@@ -571,6 +571,8 @@ grep -q "from './l4factoidal-core.mjs';" "$ASSETS/l4factoidal-core.js" \
 ls -l "$ASSETS"
 echo
 echo "wasm bytes: $(wc -c < "$ASSETS/l4factoidal.wasm") (full), $(wc -c < "$ASSETS/l4factoidal-core.wasm") (core)"
+# The opt-in Hub example has its own narrow CPU module and ABI smoke gate.
+bash "$LEAN_DIR/Wasm/build-paralliverse.sh" "$WORK" "$ASSETS/paralliverse"
 # ---------------------------------------------------------------------
 say "step 9 — companion npm package + Pages mirror + provenance"
 NPMLEAN="$LEAN_DIR/../../npm/factoidal-lean"

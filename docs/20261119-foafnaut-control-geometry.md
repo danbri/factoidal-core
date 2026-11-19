@@ -52,3 +52,15 @@ rectangles, own-node pointer hits, the enclosing 324 by 27 px wrapper and a
 typechecked. The patched Lean engine and all runtime expectations await a fresh
 exact-source package build. No timing or allocation improvement is claimed;
 the existing anonymous text-source metadata cost is still unmeasured.
+
+## Validated checkpoint
+
+The [complete exact-source Linux and macOS run](https://github.com/danbri/factoidal-builds/actions/runs/44456094827) at
+`e089543af9d390626ffd62809f4cd7c6b94c830b` passed, including the new nested
+control geometry/hit tests in both Wasm and native. The two framing theorem
+reports use only the permitted axioms. Native package/relocation, unchanged
+size budget and offscreen pixel gates pass. The dylib is61,477,280 bytes.
+Two physical-window parity tests remain explicitly ignored; no physical-display
+or allocation/timing claim follows. [PR606](https://github.com/danbri/factoidal-core/pull/606)
+merged as182c86e477a823864c00f69c0bebdc3f9d6aeb18. Public main-bundle
+publication is tracked separately from the successful candidate package.

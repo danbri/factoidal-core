@@ -1,4 +1,4 @@
-# Static verified parallel computation — v0.1 engineering handoff
+# Paralliverse v0.1 engineering handoff
 
 **Status:** design and scope agreement (2026-11-18), not an implementation or proof claim.  
 **Tracking issue:** [#604](https://github.com/danbri/factoidal-core/issues/604).  
@@ -7,6 +7,8 @@
 ## Executive decision
 
 Create a **pure Lean 4, ahead-of-time, theorem-backed parallel computation utility** within `factoidal-core` for now. Its design, semantics and public API must not depend on Foafnaut, SVG, DOM, HTML, rendering, or a particular GPU host. It may later be extracted into a separate Lake package.
+
+**Naming.** Paralliverse names both the library and its static parallel DSL. The public Lean entry point is `L4Factoidal.Paralliverse`, and the component lives under `formal/lean4/L4Factoidal/Paralliverse/`.
 
 For v0.1, **static compile-time compilation and proofs only**. The ordinary executable Lean 4 function is the specification and CPU fallback; the GPU implementation is a separately built, optional fast path with machine-checked correctness claims over a formally defined model. The CPU implementation must continue to compile and run in environments without WebGPU.
 
@@ -97,7 +99,7 @@ Backend-specific translation validation or verified lowering for SPIR-V, MSL and
 
 ## Initial source layout
 
-Keep the implementation under `formal/lean4/L4Factoidal/GpuKernel/` or an adjacent **generic** utility namespace. Existing reusable modules:
+Keep the implementation under the generic `L4Factoidal.Paralliverse` namespace. Existing reusable modules:
 
 - `GpuKernel/Expr.lean` — restricted arithmetic IR, `Nat` and `u32` meanings;
 - `GpuKernel/Race.lean` — pure write-footprint model and scheduling-independent results;
@@ -105,7 +107,7 @@ Keep the implementation under `formal/lean4/L4Factoidal/GpuKernel/` or an adjace
 - `GpuKernel/Resident.lean` — GPU residency model (orthogonal to pure packing);
 - `Par/Chunked.lean` — CPU task chunking and proved equality to sequential `Array.map`.
 
-Candidate new logical modules: `GpuKernel/PackSpec.lean`, `GpuKernel/Scan.lean`, `GpuKernel/StableScatter.lean`, `GpuKernel/Pipeline.lean` and an isolated test runner. **These are a proposal, not existing files.** No imported Foafnaut modules in any of them.
+The initial word-packing specification, staged model and proofs live in `Paralliverse/StaticPack.lean`, with an isolated CPU fixture runner in `Harness/ParalliverseCpu.lean`. Candidate later modules include `Paralliverse/DSL.lean`, `Paralliverse/Scan.lean`, `Paralliverse/StableScatter.lean`, and `Paralliverse/Pipeline.lean`. Keep their imports independent of Foafnaut.
 
 For the first pass, use core Lean only and the repository's existing Lean toolchain; don't introduce Mathlib or upgrade the browser's toolchain merely to establish the prototype.
 

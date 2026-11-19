@@ -48,6 +48,9 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "engine.mjs", "worker.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/html-webgpu/${name}`);
   }
+  for (const name of ["app.mjs", "worker.mjs", "gpu.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/paralliverse/${name}`);
+  }
   // Every module of the Hub browser, so a new one is never left off the site (page-gpu.mjs,
   // and before it browser-state.mjs, were missing from a list of names).
   eleventyConfig.addPassthroughCopy("web/hub/foafnaut/*.mjs");
