@@ -40,6 +40,140 @@ theorem commit_code_unchanged {s out : State} {pc cost : Nat}
     · cases h
   · cases h
 
+/-- Exact successful gas accounting: the declared opcode cost is
+    deducted, never rounded or silently refunded. -/
+theorem commit_gas_exact {s out : State} {pc cost : Nat}
+    {xs : List Word} {halt : Bool}
+    (h : commit s pc xs cost halt = .ok out) :
+    out.gas + cost = s.gas := by
+  unfold commit at h
+  split at h
+  · split at h
+    · cases h
+      omega
+    · cases h
+  · cases h
+
+/-- A successful commit cannot silently switch the active fork profile. -/
+theorem commit_profile_unchanged {s out : State} {pc cost : Nat}
+    {xs : List Word} {halt : Bool}
+    (h : commit s pc xs cost halt = .ok out) :
+    out.profile = s.profile := by
+  unfold commit at h
+  split at h
+  · split at h
+    · cases h
+      rfl
+    · cases h
+  · cases h
+
+/-- The *whole* opcode dispatcher preserves bytecode, not just the
+    low-level commit helper. All successful instruction execution passes
+    through a single checked state-transition boundary. -/
+theorem step_code_unchanged {s out : State} (h : step s = .ok out) :
+    out.code = s.code := by
+  cases hp : planStep s with
+  | error e =>
+    simp [step, hp] at h
+  | ok p =>
+    have hc : commit s p.nextPC p.stack p.gasCost p.halt = .ok out := by
+      simpa [step, hp] using h
+    exact commit_code_unchanged hc
+
+/-- Every successful opcode step consumes a nonnegative amount of gas. -/
+theorem step_gas_nonincreasing {s out : State} (h : step s = .ok out) :
+    out.gas ≤ s.gas := by
+  cases hp : planStep s with
+  | error e =>
+    simp [step, hp] at h
+  | ok p =>
+    have hc : commit s p.nextPC p.stack p.gasCost p.halt = .ok out := by
+      simpa [step, hp] using h
+    exact commit_gas_nonincreasing hc
+
+/-- A valid opcode transition preserves the fork selector. -/
+theorem step_profile_unchanged {s out : State} (h : step s = .ok out) :
+    out.profile = s.profile := by
+  cases hp : planStep s with
+  | error e =>
+    simp [step, hp] at h
+  | ok p =>
+    have hc : commit s p.nextPC p.stack p.gasCost p.halt = .ok out := by
+      simpa [step, hp] using h
+    exact commit_profile_unchanged hc
+
+/-- A successful opcode step always has a reconstructible, exact gas bill. -/
+theorem step_has_exact_bill {s out : State} (h : step s = .ok out) :
+    ∃ p : Plan, planStep s = .ok p ∧ out.gas + p.gasCost = s.gas := by
+  cases hp : planStep s with
+  | error e =>
+    simp [step, hp] at h
+  | ok p =>
+    have hc : commit s p.nextPC p.stack p.gasCost p.halt = .ok out := by
+      simpa [step, hp] using h
+    exact ⟨p, hp, commit_gas_exact hc⟩
+
+/-- Arbitrarily many successful opcode steps, without a fuel assumption. -/
+inductive Trace : State → State → Prop where
+  | nil (s : State) : Trace s s
+  | cons {s mid out : State} (h : step s = .ok mid)
+      (tail : Trace mid out) : Trace s out
+
+/-- Gas can never increase along a finite sequence of successful steps. -/
+theorem Trace.gas_nonincreasing {s out : State} (h : Trace s out) :
+    out.gas ≤ s.gas := by
+  induction h with
+  | nil _ => exact Nat.le_refl _
+  | cons hs _ ih =>
+    exact Nat.le_trans ih (step_gas_nonincreasing hs)
+
+/-- Bytecode is invariant along arbitrarily long successful traces. -/
+theorem Trace.code_unchanged {s out : State} (h : Trace s out) :
+    out.code = s.code := by
+  induction h with
+  | nil _ => rfl
+  | cons hs _ ih =>
+    exact ih.trans (step_code_unchanged hs)
+
+/-- An independent *billing witness* records the exact instruction plans,
+    not merely the observed difference in initial/final gas. -/
+inductive BilledTrace : State → Nat → State → Prop where
+  | nil (s : State) : BilledTrace s 0 s
+  | cons {s mid out : State} {p : Plan} {spent : Nat}
+      (hp : planStep s = .ok p)
+      (hc : commit s p.nextPC p.stack p.gasCost p.halt = .ok mid)
+      (tail : BilledTrace mid spent out) :
+      BilledTrace s (p.gasCost + spent) out
+
+/-- Global conservation of gas on any billed execution trace. -/
+theorem BilledTrace.gas_exact {s out : State} {spent : Nat}
+    (h : BilledTrace s spent out) :
+    out.gas + spent = s.gas := by
+  induction h with
+  | nil _ => simp
+  | cons _ hc _ ih =>
+    have hcost := commit_gas_exact hc
+    omega
+
+/-- Erasing billing evidence gives a real interpreter execution trace. -/
+theorem BilledTrace.toTrace {s out : State} {spent : Nat}
+    (h : BilledTrace s spent out) : Trace s out := by
+  induction h with
+  | nil s => exact Trace.nil s
+  | cons hp hc _ ih =>
+    apply Trace.cons
+    · simpa [step, hp] using hc
+    · exact ih
+
+#print axioms commit_gas_exact
+#print axioms step_code_unchanged
+#print axioms step_gas_nonincreasing
+#print axioms step_has_exact_bill
+#print axioms Trace.gas_nonincreasing
+#print axioms Trace.code_unchanged
+#print axioms BilledTrace.gas_exact
+#print axioms BilledTrace.toTrace
+
 #print axioms word_add_comm
 #print axioms commit_stack_bounded
 #print axioms commit_gas_nonincreasing
