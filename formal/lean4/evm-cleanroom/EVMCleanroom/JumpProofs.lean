@@ -29,8 +29,12 @@ inductive InstructionStart (code : Array UInt8) : Nat → Prop where
     instruction encoding. -/
 theorem opcodeWidth_bounds (code : Array UInt8) (pc : Nat) :
     1 ≤ opcodeWidth code pc ∧ opcodeWidth code pc ≤ 33 := by
-  unfold opcodeWidth
-  split <;> omega
+  dsimp [opcodeWidth]
+  by_cases h : 0x60 ≤ (code.getD pc 0).toNat ∧
+      (code.getD pc 0).toNat ≤ 0x7f
+  · simp [h]
+    omega
+  · simp [h]
 
 /-- Following an opcode boundary strictly advances the byte position. -/
 theorem next_opcode_advances (code : Array UInt8) (pc : Nat) :
