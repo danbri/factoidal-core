@@ -48,6 +48,11 @@ for (const x of cases) {
   if (seen.has(x.id)) throw Error('duplicate corpus id: ' + x.id);
   seen.add(x.id);
 }
+const distinctInputs = new Set(cases.map(x => [x.hardfork, x.hex, x.gas, x.fuel].join(':'))).size;
+const duplicateInputCount = cases.length - distinctInputs;
+if (distinctInputs / cases.length < 0.95) {
+  throw Error('corpus repeats over 5% of exact execution inputs; refuse inflated pass counts');
+}
 const batchInput = cases.map(x => [x.hex, x.gas, x.fuel].join('\t')).join('\n') + '\n';
 const batchPath = options.out + '.lean-input.tsv';
 mkdirSync(dirname(options.out), {recursive:true});
@@ -156,7 +161,8 @@ const report={
   scope:'restricted opcode subset; NOT state-test or mainnet replay',
   oracle:{name:'@ethereumjs/evm',version:'10.1.3',hardfork:'Prague'},
   lean:{command:'lake exe evm-subset --batch'},
-  corpus:{sha256:corpusSha256,count:cases.length,kind:'synthetic-bytecode'},
+  corpus:{sha256:corpusSha256,count:cases.length,uniqueExecutionInputs:distinctInputs,
+    duplicatedExecutionInputs:duplicateInputCount,kind:'synthetic-bytecode'},
   compared:cases.length,
   passed:passes,
   mismatches:failures.length-errors,
@@ -173,6 +179,8 @@ writeFileSync(options.out, JSON.stringify(report,null,2)+'\n');
 process.stdout.write(JSON.stringify({
   status:report.status,compared:report.compared,passed:report.passed,
   mismatches:report.mismatches,oracleErrors:errors,
+  uniqueExecutionInputs:distinctInputs,
+  matchedExceptionalCases:matchedExceptional,
   corpusSha256,report:options.out,failures:options.failures
 })+'\n');
 if(failures.length) process.exit(1);
