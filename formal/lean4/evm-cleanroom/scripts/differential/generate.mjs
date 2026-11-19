@@ -57,6 +57,15 @@ const categories = [
   'out-of-gas', 'stack-underflow', 'invalid-jump', 'invalid-opcode',
   'jumpi-invalid-unselected', 'high-pointer-out-of-gas'
 ];
+// Independent metadata check: a category labelled as exceptional must
+// actually declare its expected error. Prevents unreachable label assignments.
+const categoryError = {
+  'out-of-gas': 'outOfGas',
+  'stack-underflow': 'stackUnderflow',
+  'invalid-jump': 'invalidJump',
+  'invalid-opcode': 'invalidOpcode',
+  'high-pointer-out-of-gas': 'outOfGas'
+};
 const rows = [];
 const hist = {};
 for (let i = 0; i < count; i++) {
@@ -140,6 +149,9 @@ for (let i = 0; i < count; i++) {
     }
     default:
       throw Error('generator category not handled: ' + category);
+  }
+  if ((categoryError[category] ?? null) !== expectedError) {
+    throw Error('incorrect expected-error metadata for category: ' + category);
   }
   hist[category] = (hist[category] ?? 0) + 1;
   rows.push({
