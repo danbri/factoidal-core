@@ -57,6 +57,12 @@ theorem stateOf_inv (j : JSON.Json) (st : State) (h : stateOf j = .ok st) : Inv 
     cases h
     exact inv_of_timer_guard _ hguard
 
+section
+
+-- Preserve the writer's decimal representation until the reader applies its proved inverse.
+attribute [local cbv_opaque] Nat.repr String.toNat?
+attribute [local cbv_eval] Nat.toNat?_repr
+
 /-- Kind: executable writer and reader counterexample (factoidal-core issue 630).
 Says: advancing the empty model to the largest accepted clock and arming a
 one-unit timer keeps the model invariant but produces a due time outside the
@@ -72,27 +78,13 @@ theorem stateJson_can_exceed_stateOf_timer_bound :
   refine ⟨(Input.apply_keep (i := .call (.setTimer 3 1 false))
     (Input.apply_keep (i := .advance 4294967295) initial_inv).1).1, ?_, ?_⟩
   · decide +kernel
-  · -- The number writer uses Nat.repr. Its decimal reader has a proved inverse.
-    let readNumber (n : Nat) : Except String Nat :=
-      match n.repr.toNat? with
-      | none => .error "eventLoop: expected a natural number"
-      | some k => if k > 4294967295 then .error "eventLoop: number exceeds bound" else .ok k
-    have read (n : Nat) : readNumber n =
-        (if n > 4294967295 then .error "eventLoop: number exceeds bound" else .ok n) := by
-      simp only [readNumber, Nat.toNat?_repr]
-    have clock : readNumber 4294967295 = .ok 4294967295 := by simp [read]
-    -- The singleton timer reader visits its id, callback, and deadline in order.
-    -- Its error passes through both the timer-list traversal and the state reader.
-    have refuse (fields : Nat → Nat → Nat → Except String Timer)
-        (collect : Timer → Except String (List Timer)) (finish : List Timer → Except String State) :
-        (((readNumber 1).bind (fun id => (readNumber 3).bind (fun cb =>
-          (readNumber 4294967296).bind (fields id cb)))).bind collect).bind finish =
-        .error "eventLoop: number exceeds bound" := by
-      simp [read, Except.bind]
-    change ((readNumber 4294967295).bind _ : Except String State) =
-      .error "eventLoop: number exceeds bound"
-    rw [clock]
-    apply refuse
+  · have timersField (s : State) : (stateJson s).field? "timers" =
+        some (.array (s.timers.map timerJson)) := by
+      simp [stateJson, JSON.Json.field?, List.find?]
+    simp only [stateOf, timersField]
+    cbv
+
+end
 
 #print axioms stateOf_inv
 #print axioms stateJson_can_exceed_stateOf_timer_bound
