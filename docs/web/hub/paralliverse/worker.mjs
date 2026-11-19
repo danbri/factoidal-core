@@ -170,7 +170,9 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
   }, error => self.postMessage({type: "unavailable", message: error.message}));
 
   self.postMessage({type: "gpu", state: "checking"});
-  const gpuRuntime = runtime.then(async ({cpu}) => {
+  let gpuRuntime;
+  function getGpuRuntime() {
+    return gpuRuntime ??= runtime.then(async ({cpu}) => {
     if (!self.navigator.gpu) {
       self.postMessage({type: "gpu", state: "api-unavailable", message: "WebGPU is unavailable in this browser."});
       return null;
@@ -195,8 +197,11 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     if (!gpuDisabled) self.postMessage({type: "gpu", state: error.state || "program-unavailable", message: error.message});
     return null;
   });
+  }
 
-  const wordGpuRuntime = runtime.then(async ({cpu}) => {
+  let wordGpuRuntime;
+  function getWordGpuRuntime() {
+    return wordGpuRuntime ??= runtime.then(async ({cpu}) => {
     if (!cpu.studioLimit) return null;
     self.postMessage({type: "gpu", mode: "studio", state: "checking"});
     const sources = {3: cpu.shaderSource(3), 4: cpu.shaderSource(4)};
@@ -220,6 +225,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       state: error.state || "program-unavailable", message: error.message});
     return null;
   });
+  }
 
   function outputBytes(words) {
     const bytes = new Uint8Array(words.length * 4);
@@ -258,7 +264,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
           if (id !== latest) return;
           self.postMessage({type: "studio-result", id, result, cpuMs});
           if (!result.gpuEligible) return;
-          const gpu = await wordGpuRuntime;
+          const gpu = await getWordGpuRuntime();
           if (!gpu || wordGpuDisabled || id !== latest) return;
           try {
             await boundedGpu(gpu, result.executionPlan);
@@ -283,7 +289,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
         const packed = cpu.packCpu(packet);
         const cpuMs = performance.now() - started;
         self.postMessage({type: "result", id, packed, prepareMs: prepared - preparing, cpuMs});
-        const gpu = await gpuRuntime;
+        const gpu = await getGpuRuntime();
         if (!gpu || gpuDisabled || id !== latest) return;
         try {
           await gpu.run(packet); // One untimed GPU warm-up, using the same independent packet.

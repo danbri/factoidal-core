@@ -322,7 +322,7 @@ try {
       let state;
       do {
         state = await studioState();
-        if (state.match !== undefined || state.inputStatus.startsWith("CPU runtime unavailable.")) break;
+        if ((state.match !== undefined && state.cpu === expected) || state.inputStatus.startsWith("CPU runtime unavailable.")) break;
         await sleep(100);
       } while (Date.now() < deadline);
       report.cases.push({name, expected, ...state});
@@ -442,9 +442,15 @@ try {
     } while (Date.now() < shareDeadline);
     assert(shared?.includes("#pv="), "Share control emits a complete experiment link");
     await screenshot("paralliverse-studio-desktop.png");
+    await edit("program", "map add 1", "input");
+    await edit("source", "[4]", "input");
+    await evaluate('document.querySelector("#run").click()');
+    await studioCase("studio-before-shared-link", "[5]", 1);
+    await page("Page.navigate", {url: shared}, deadlineMs);
+    await studioCase("studio-shared-same-document", "[1, 4, 7, 0, 2147483646, 2147483649, 4294967291, 4294967294]", 8);
     await page("Emulation.setDeviceMetricsOverride", {width: 390, height: 844, deviceScaleFactor: 1, mobile: true});
     pageLoaded = false;
-    await page("Page.navigate", {url: shared}, deadlineMs);
+    await page("Page.reload", {ignoreCache: true}, deadlineMs);
     const sharedLoadDeadline = Date.now() + deadlineMs;
     while (!pageLoaded && Date.now() < sharedLoadDeadline) await sleep(100);
     assert(pageLoaded, "The shared Studio page did not finish loading.");

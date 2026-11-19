@@ -546,7 +546,7 @@ function shareExperiment() {
 }
 
 function readSharedExperiment() {
-  if (!location.hash.startsWith("#pv=")) return;
+  if (!location.hash.startsWith("#pv=")) return false;
   try {
     const encoded = location.hash.slice(4);
     if (encoded.length > Math.ceil(shareLimit / 3) * 4) throw new Error("The shared experiment is too large.");
@@ -566,13 +566,22 @@ function readSharedExperiment() {
     example.value = "custom";
     markPreset(null);
     $("action-status").textContent = "Shared experiment loaded. Lean will check its program and input before execution.";
+    return true;
   } catch (error) {
     $("action-status").textContent = `Could not open this experiment link. ${error.message}`;
+    return false;
   }
 }
 
 readSharedExperiment();
 const worker = createWorker();
+
+window.addEventListener("hashchange", () => {
+  if (readSharedExperiment()) {
+    stopSignal("Playback stopped when a shared experiment opened.");
+    schedule(0, true);
+  }
+});
 
 if (worker) {
   worker.addEventListener("message", ({data}) => {

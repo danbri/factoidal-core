@@ -98,6 +98,7 @@ jobs:
           PY
           tools/fetch-builds.sh --set foafnaut-web 2>&1 | tee "$EVIDENCE/base-scenes.log"
       - name: Build and exercise the exact Studio Wasm ABI
+        id: studio-runtime
         working-directory: formal/lean4
         shell: bash
         run: |
@@ -172,7 +173,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
       - name: Preserve the built runtime
-        if: success()
+        if: always() && steps.studio-runtime.conclusion == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: paralliverse-studio-runtime
