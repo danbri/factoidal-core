@@ -38,7 +38,7 @@ counters, memory sizes and 256-bit words as **lossless decimal strings**:
 ```sh
 cd formal/lean4/evm-cleanroom
 lake exe evm-subset 600260030100 100 10
-# {"schemaVersion":2,"status":"ok","gasRemaining":"91","pc":"6","halted":true,"stack":["5"],"memorySizeBytes":"0","memoryWord0":"0"}
+# {"schemaVersion":2,"status":"ok","gasRemaining":"91","pc":"6","halted":true,"stack":["5"],"memorySizeBytes":"0","memoryWord0":"0","memoryObservedBytes":"0","memoryTruncated":false,"memoryHex":""}
 ```
 
 Machine input errors are distinct from EVM execution errors. This interface
@@ -65,6 +65,35 @@ The CI assertion requires all 14 cases to match. A further
 the pinned EELS memory-gas formula and compares observed memory size,
 word contents and gas. These are independent **narrow reference checks**,
 not a formal semantics refinement or an executed official state-test fixture.
+
+### Independent execution differential gate
+
+The [differential laboratory](scripts/differential/README.md) now compares
+the Lean executable with the independently maintained **EthereumJS EVM 10.1.3**
+under **Prague** rules. The reference and every transitive npm dependency
+are pinned by a committed integrity-checked `package-lock.json`; CI uses
+`npm ci`, not fresh dependency resolution.
+
+[Passing 10,000-case CI run](https://github.com/danbri/factoidal-core/actions/runs/44626646466)
+(seed `20261119`, corpus SHA-256
+`610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb`):
+
+- **10,000 compared / 10,000 matched**; **9,733 unique execution inputs**;
+  **2,775 matching deliberately exceptional outcomes**.
+- The comparison includes **complete memory bytes up to 4,096 allocated
+  bytes**, with explicit observed-length and truncation flags; truncated
+  snapshots cannot count as full matches.
+- The other observables are result status, exact error category (on errors),
+  gas remaining, program counter, halted flag, complete stack and allocated
+  memory size. All large values use exact decimal strings.
+- Complete input JSONL, generated SHA-256, exact dependency lock, report and
+  counterexamples are archived as CI artifacts.
+
+These are **single-frame synthetic bytecode experiments**, not historical
+mainnet transactions or official EELS-generated state-test executions.
+Only the *error category*, not state/rollback/gas-burn equivalence, is
+currently compared on exceptional executions. Shared semantic mistakes
+remain possible despite agreement between the two implementations.
 
 See [ROADMAP.md](ROADMAP.md) for acceptance gates G0–G6, real mainnet witness
 requirements, deployed-contract verification and independent review.
