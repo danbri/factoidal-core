@@ -100,6 +100,20 @@ def main (args : List String) : IO UInt32 := do
     | .error _ => throw (IO.userError s!"{path} is not JSON")
   let keys := (fx.field? "keys").getD (.array [])
   let mut s : Score := {}
+  let sha224 := (nativePrims.oaepDigest .sha224 "abc".toUTF8).map L4Factoidal.Crypto.bytesToHex
+  s := s.ok (sha224 == some "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7")
+    "HACL* SHA-224: FIPS 180-4 abc"
+  let interopText ← IO.FS.readFile ((path.parent.getD ".") / "openssl-oaep.json")
+  let .ok interop := parseJson interopText | throw (IO.userError "invalid OpenSSL OAEP fixtures")
+  let some cases := (interop.field? "cases").bind Json.asArray? | throw (IO.userError "missing OpenSSL OAEP cases")
+  let some testKeys := interop.field? "keys" | throw (IO.userError "missing OpenSSL OAEP keys")
+  let some expected := interop.getString? "expected" | throw (IO.userError "missing OpenSSL OAEP plaintext")
+  if cases.length != 2 then throw (IO.userError "expected two independent OpenSSL OAEP wraps")
+  for c in cases do
+    let some name := c.getString? "name" | throw (IO.userError "missing OpenSSL OAEP case name")
+    let some doc := c.getString? "document" | throw (IO.userError "missing OpenSSL OAEP document")
+    let r := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string doc), ("keys", testKeys)])
+    s := s.ok (sameDoc r expected) s!"OpenSSL OAEP {name}"
   -- Santuario's EncryptedData, decrypted.
   for c in ((fx.field? "cases").bind Json.asArray?).getD [] do
     let name := (c.getString? "name").getD "?"

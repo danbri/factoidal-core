@@ -34,13 +34,12 @@ were added in the same way (kids `oracle-RSA-3072`, `oracle-RSA-4096`), for
 WRAP.2 to WRAP.4. A case's `key` in `cases.json` names the one key the
 harnesses give it, because the documents name their keys by certificate only.
 
-`cases.json` gives the outcome each case has in the profile of
-`formal/lean4/L4Factoidal/XML/Enc.lean`: WRAP.1, WRAP.3 and WRAP.4 decrypt
-(natively and in the wasm; WRAP.3 and WRAP.4 since 2026-11-17, in a wasm built
-from that commit or later); AGRMNT.1 decrypts where AES Key Wrap is available
-(the wasm with WebCrypto); the others are refused by the allowlist (AES-192,
-P-521, finite field Diffie-Hellman, PBKDF2, no `Type`). Run by `lake exe l4xmlenc-probe`
-(section `w3c`) and `node --test tests/xmlenc/wasm.mjs`.
+`cases.json` records the expected outcomes of the XML Encryption profile.
+The native and Wasm harnesses require WRAP.1, WRAP.3 and WRAP.4 to recover
+`plaintext.xml`. AGRMNT.1 requires AES Key Wrap on the JavaScript host.
+The remaining cases expect the named refusals for AES-192, P-521, finite
+field Diffie-Hellman, PBKDF2 or an absent `Type`. Run `lake exe l4xmlenc-probe`
+and `node --test tests/xmlenc/wasm.mjs` using a Wasm build of the same source.
 
 Not used: the IBM and Microsoft key derivation cases DRV.2 to DRV.4 (PBKDF2
 and `xenc11:DerivedKey`, outside the profile, like DRV.1), the Microsoft

@@ -106,7 +106,8 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 import L4Factoidal.XML.DSig
 import L4Factoidal.XML.Parser
 import L4Factoidal.Crypto.CipherCall
-import L4Factoidal.Crypto.RsaOaep
+import L4Factoidal.Crypto.RsaOaepChecked
+import L4Factoidal.Crypto.WebHacl
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.X25519
 import L4Factoidal.Crypto.ConcatKdf
@@ -160,7 +161,20 @@ def cbcRefusal : String :=
 
 /-! ## Primitives, keys, options, failures -/
 
-/-- The public-key primitives: HACL* natively (`nativePrims`), any
+/-- A label hash or an MGF1 hash for RSA-OAEP (§5.5.2). -/
+inductive OaepDigest where
+  | sha1 | sha224 | sha256 | sha384 | sha512
+  deriving BEq, Repr, DecidableEq
+
+/-- HACL* on native and Wasm. Every refusal stays a refusal. -/
+def OaepDigest.hacl? : OaepDigest → ByteArray → Option ByteArray
+  | .sha1 => WebHacl.hash? .sha1
+  | .sha224 => WebHacl.sha224ForXml?
+  | .sha256 => WebHacl.hash? .sha256
+  | .sha384 => WebHacl.hash? .sha384
+  | .sha512 => WebHacl.hash? .sha512
+
+/-- The public-key and OAEP digest primitives: HACL* natively (`nativePrims`), any
 functions in a test. -/
 structure Prims where
   /-- `c^d mod n` (`RsaOaep.RsaOp`, arguments `n d c`). -/
@@ -175,6 +189,8 @@ structure Prims where
   x25519 : ByteArray → ByteArray → Option ByteArray
   /-- X25519: scalar to public u-coordinate. -/
   x25519Public : ByteArray → Option ByteArray
+  /-- Both OAEP hashes use the checked backend, including MGF1 on the seed. -/
+  oaepDigest : OaepDigest → ByteArray → Option ByteArray := OaepDigest.hacl?
 
 /-- HACL* (`RsaOaep.rsaPrivateOp`, `Rsa.rsaPublicOp`, `P256`, `X25519`). -/
 def nativePrims : Prims where
@@ -438,12 +454,7 @@ def dataAlgOf (opts : Opts) (m : El) : M DataAlg :=
       else if u == aes192Gcm || u == aes192Cbc then refuse "AES-192 is not supported"
       else refuse s!"the data encryption algorithm {u} is not supported"
 
-/-- A hash function of RSA-OAEP key transport (§5.5.2): the `ds:DigestMethod`
-(the label hash) or the hash of the `xenc11:MGF` mask generation function. -/
-inductive OaepDigest where
-  | sha1 | sha224 | sha256 | sha384 | sha512
-  deriving BEq, Repr, DecidableEq
-
+/-- The pure specification used by the hash-record equations and build-time tests. -/
 def OaepDigest.fn : OaepDigest → ByteArray → ByteArray
   | .sha1 => L4Factoidal.Crypto.sha1
   | .sha224 => L4Factoidal.Crypto.sha224
@@ -454,6 +465,9 @@ def OaepDigest.fn : OaepDigest → ByteArray → ByteArray
 /-- The output length in octets. -/
 def OaepDigest.len : OaepDigest → Nat
   | .sha1 => 20 | .sha224 => 28 | .sha256 => 32 | .sha384 => 48 | .sha512 => 64
+
+def Prims.oaepProvider (p : Prims) (d : OaepDigest) : RsaOaep.DigestProvider :=
+  { size := d.len, run := p.oaepDigest d }
 
 /-- The digest method identifiers: §5.7 of XML Encryption 1.1 (SHA-1,
 SHA-256, SHA-384, SHA-512) and SHA-224 of RFC 6931 §2.1.2, which XML
@@ -722,7 +736,8 @@ def unwrapKey (cipher : Cipher) (prims : Prims) (keys : Keys) (ek : El) (keyLen 
         | .unnamed => pure none
         | .agreement _ => refuse "RSA-OAEP key transport with a key agreement is not supported"
       let k ← pick "RSA" name? keys.rsa (·.kid)
-      match RsaOaep.oaepDecrypt (oaepHashOf dig mgf) prims.rsaPrivate k.n k.d p.cipherValue label with
+      match RsaOaep.oaepDecryptChecked (prims.oaepProvider dig) (prims.oaepProvider mgf)
+          prims.rsaPrivate k.n k.d p.cipherValue label with
       | some cek => if cek.size == keyLen then pure cek else .error .decryptFailed
       | none => .error .decryptFailed
   | .kw len =>
@@ -1006,7 +1021,8 @@ def paddedHex (s : String) : String := "00" ++ hexOf s.toUTF8
 def encryptedKeyNode (cipher : Cipher) (prims : Prims) (r : Recipient) (cek rand : ByteArray) : M Node := do
   match r with
   | .rsa kid n e sha256 =>
-      let ct ← match RsaOaep.oaepEncrypt (KeyAlg.oaepHash sha256) prims.rsaPublic n e cek ByteArray.empty rand with
+      let digest := prims.oaepProvider (if sha256 then .sha256 else .sha1)
+      let ct ← match RsaOaep.oaepEncryptChecked digest digest prims.rsaPublic n e cek ByteArray.empty rand with
         | some c => pure c
         | none => refuse "RSA-OAEP encryption was refused (the key must be 2048, 3072 or 4096 bits)"
       let method :=

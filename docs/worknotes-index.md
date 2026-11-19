@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-19 | [XML RSA-OAEP hashes](20261119-xmlenc-oaep-hacl.md) | PR 601 | current — checked HACL* digest selection, refusal and mixed-hash fixtures |
 | 2026-11-19 | [Foafnaut Linux desktop browser release](20261119-foafnaut-linux-browser-release.md) | this commit | record — published x86_64 archive, source and hashes, X11 window smoke evidence |
 | 2026-11-19 | [Processing-instruction attributes](20261119-processing-instruction-attributes.md) | issue 612 | current — lossless framing, XML pseudo-attributes and explicit parser bounds; lifecycle gaps in issue 615 |
 | 2026-11-17 | [XML Signature: DSA, ECDSA P-384/P-521 and 1024-bit RSA — status, use, libraries](designissues/2026-11-17-xmldsig-dsa-p384-p521-status.md) | https://github.com/danbri/factoidal/issues/1165 | record — owner decisions of 2026-11-17 (1223 and 1224 deferred, 1227 behind an opt-in); standards status, real use, verified libraries, with sources |

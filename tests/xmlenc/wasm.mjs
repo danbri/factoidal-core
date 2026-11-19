@@ -109,6 +109,16 @@ for (const c of w3c.cases) {
   });
 }
 
+const oaepInterop = JSON.parse(readFileSync(join(root, 'tests', 'xmlenc', 'openssl-oaep.json'), 'utf8'));
+assert.deepEqual(oaepInterop.cases.map((c) => c.name), ['sha224 / MGF1-sha512', 'sha384 / MGF1-sha224']);
+for (const c of oaepInterop.cases) {
+  test(`OpenSSL OAEP ${c.name}: the checked Wasm hashes recover the plaintext`, async () => {
+    const res = await decrypt({document: c.document, keys: oaepInterop.keys});
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.canonical, canonical(oaepInterop.expected));
+  });
+}
+
 test('an altered ciphertext and a wrong key give the one decryption error', async () => {
   const c = fixtures.cases.find((x) => x.name === 'gcm128-kek-kw128');
   const parts = c.document.split('<xenc:CipherValue>');

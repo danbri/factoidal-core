@@ -60,6 +60,7 @@ def stubCipher : Cipher where
       | _ => .error .refused
 
 def stubPrims : Prims where
+  oaepDigest d m := some (d.fn m)
   rsaPrivate n _ c := if c.size == n.size then some c else none
   rsaPublic n _ m := if m.size == n.size then some m else none
   p256Public sk := some (sha256 sk ++ sha256 sk)
@@ -265,6 +266,24 @@ def oaepRound (enc dec : L4Factoidal.Crypto.RsaOaep.OaepHash) (seedLen : Nat) : 
 #guard oaepRound (oaepHashOf .sha512 .sha1) (oaepHashOf .sha512 .sha1) 64 == some oaepMsg
 #guard (oaepRound (oaepHashOf .sha512 .sha1) (oaepHashOf .sha512 .sha512) 64).isNone
 #guard (oaepRound (oaepHashOf .sha384 .sha1) (oaepHashOf .sha256 .sha1) 48).isNone
+
+-- Exercise the XML caller with a valid OAEP ciphertext. For SHA-1 the
+-- second decoding mask hashes the 20-byte seed plus four counter bytes.
+def checkedDigestFailure (bad : ByteArray → Bool) (answer : Option ByteArray) : Bool :=
+  match encryptCard (rsaSpec false) with
+  | .error _ => false
+  | .ok doc =>
+      let p := { stubPrims with oaepDigest := fun d m =>
+        if bad m then answer else some (d.fn m) }
+      failsWith (decrypt stubCipher p keys {} doc) isDecryptFailed
+
+#guard checkedDigestFailure (fun m => m.size == 0) none
+#guard checkedDigestFailure (fun m => m.size == 24 && m.data.toList.getLast? == some 1) none
+#guard checkedDigestFailure (fun m => m.size == 24 && m.data.toList.getLast? == some 1) (some (bytes 1 7))
+#guard (RsaOaep.mgf1Checked { size := 0, run := fun _ => some ByteArray.empty } [] 4).isNone
+#guard (RsaOaep.mgf1Checked { size := 20, run := fun _ => some ByteArray.empty } [] 21).isNone
+#guard WebHacl.HashAlg.ofName? "SHA-224" == none
+
 #guard failsWith (decryptText (edDoc aes128Gcm (ekWith "http://www.w3.org/2001/04/xmlenc#kw-tripledes") cvData))
   (refusedHas "not supported")
 -- No Type, another Type.
