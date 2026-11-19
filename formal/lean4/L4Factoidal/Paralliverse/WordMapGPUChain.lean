@@ -32,7 +32,7 @@ theorem selected_two_grid {p : Program WordProgram.Op WordProgram.words WordProg
       runGrid second xs.length mid.dst prior secondOrder = some out ∧
       mid.dst.toList = intermediate.toList.take 2 ++ xs.map first.apply ++
         intermediate.toList.drop (2 + xs.length) ∧
-      out.dst.toList = prior.toList.take 2 ++ Program.eval WordProgram.base (@WordProgram.reference) p xs ++
+      out.dst.toList = (prior.toList.take 2).append (Program.eval WordProgram.base (@WordProgram.reference) p xs) ++
         prior.toList.drop (2 + xs.length) ∧
       mid.trace = firstOrder.map (footprint first xs) ∧
       out.trace = secondOrder.map (footprint second (xs.map first.apply)) := by
@@ -81,9 +81,9 @@ theorem affine_grid_eq_cpu (factor offset : UInt32) (initial : DSL.Initial) (wor
     ∃ mid out,
       runTwo ⟨.multiply, factor⟩ ⟨.add, offset⟩ xs.length src intermediate prior firstOrder secondOrder =
         some (mid, out) ∧
-      out.dst.toList = prior.toList.take 2 ++
-        Program.runCPU WordProgram.base (WordProgram.implementation initial) workers
-          (Program.fuseMaps (WordProgram.affine factor offset)) xs ++ prior.toList.drop (2 + xs.length) := by
+      out.dst.toList = (prior.toList.take 2).append
+        (Program.runCPU WordProgram.base (WordProgram.implementation initial) workers
+          (Program.fuseMaps (WordProgram.affine factor offset)) xs) ++ prior.toList.drop (2 + xs.length) := by
   obtain ⟨mid, out, ran, _, _, _, finalFrame, _, _⟩ :=
     selected_two_grid (select_affine factor offset) xs tail src intermediate prior firstOrder secondOrder
       small layout seed middleRoom room order₁ order₂

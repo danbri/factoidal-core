@@ -23,7 +23,7 @@ def sourceTerm {a b : Shape Unit} : Program WordProgram.Op a b → String
   | .fanout f g => "(.fanout " ++ sourceTerm f ++ " " ++ sourceTerm g ++ ")"
   | .map f => "(.map " ++ sourceTerm f ++ ")"
 
-private def leanExample (term : String) : String :=
+def leanExample (term : String) : String :=
   "import L4Factoidal.Paralliverse.StudioProgram\n\nopen L4Factoidal.Paralliverse\n\n" ++
   "def studioExample : Studio.WordPipeline :=\n  " ++ term ++ "\n"
 
@@ -53,7 +53,7 @@ private def tagName : KernelTag → String
   | .multiply => "multiply"
 
 private def number (n : Nat) : Json := .number (toString n)
-private def wordsJson (xs : List UInt32) : Json := .array (xs.map fun w => number w.toNat)
+def wordsJson (xs : List UInt32) : Json := .array (xs.map fun w => number w.toNat)
 
 def capabilities : Json :=
   .object [("schemaVersion", number 1), ("programLimit", number maxProgramBytes),
@@ -70,12 +70,12 @@ The final header and each spare tail word make accidental overwrites observable.
 private def tailWord (id : Nat) : UInt32 := 0xD00D0000 + UInt32.ofNat id
 private def endCoefficient : UInt32 := 0xF00DF00D
 
-private def bufferJson (id : Nat) (coefficient : UInt32) (payload : List UInt32) : Json :=
+def bufferJson (id : Nat) (coefficient : UInt32) (payload : List UInt32) : Json :=
   let initial := (WordMapGPU.packet coefficient payload [tailWord id]).toList
   .object [("id", number id), ("header", wordsJson (initial.take 2)),
     ("tail", wordsJson [tailWord id]), ("initialWords", wordsJson initial)]
 
-private def executionPlan (plan : Plan) (input output : List UInt32) : Json :=
+def executionPlan (plan : Plan) (input output : List UInt32) : Json :=
   let passes := plan.passes
   let finalId := passes.length
   let scratch := List.replicate input.length (0xC0DECAFE : UInt32)

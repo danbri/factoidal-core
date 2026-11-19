@@ -85,6 +85,7 @@ jobs:
       timeout_minutes: 10
       modules: >-
         L4Factoidal.Paralliverse.StudioProgram L4Factoidal.Paralliverse.Studio
+        L4Factoidal.Paralliverse.StudioReportTheorems
         Wasm.ParalliverseHub Harness.ParalliverseStudioFixtures Harness.ParalliverseHubFixtures
       runtime_fixture: Harness.ParalliverseStudioFixtures
       generated_example: true
@@ -96,6 +97,9 @@ jobs:
         L4Factoidal.Paralliverse.Studio.parseProgram_over_limit
         L4Factoidal.Paralliverse.Studio.parseRequest_over_limit
         L4Factoidal.Paralliverse.Studio.evaluate_correct
+        L4Factoidal.Paralliverse.Studio.report_source_fields
+        L4Factoidal.Paralliverse.Studio.report_selected_plan
+        L4Factoidal.Paralliverse.Studio.report_refused_plan
         L4Factoidal.Paralliverse.Hub.studio_exports
         L4Factoidal.Paralliverse.Hub.capability_exports
         L4Factoidal.Paralliverse.Hub.shader_source_exports

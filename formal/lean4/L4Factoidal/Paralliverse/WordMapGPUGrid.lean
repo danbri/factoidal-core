@@ -111,7 +111,7 @@ private theorem grid_pass (pass : Pass) (xs tail : List UInt32) (src prior : Arr
     intro i active
     exact perm.mem_iff.mpr (List.mem_range.mpr (Nat.lt_of_lt_of_le active (word_grid_bounds _ small).1))
   obtain ⟨out, actual, dst, trace⟩ :=
-    simulate pass xs tail src small layout lanes (CountTarget.grid xs.length) ⟨prior, []⟩ length.le room
+    simulate pass xs tail src small layout lanes (CountTarget.grid xs.length) ⟨prior, []⟩ (by omega) room
   refine ⟨out, ?_, ?_, trace⟩
   · unfold runGrid
     rw [parse_shader]
@@ -131,13 +131,13 @@ theorem selected_grid {p : Program WordProgram.Op WordProgram.words WordProgram.
     (layout : src.toList = UInt32.ofNat xs.length :: pass.coefficient :: (xs ++ tail))
     (room : 2 + xs.length ≤ prior.size) (order : CountTarget.ValidGrid xs.length lanes) :
     ∃ out, runGrid pass xs.length src prior lanes = some out ∧
-      out.dst.toList = prior.toList.take 2 ++ Program.eval WordProgram.base (@WordProgram.reference) p xs ++
+      out.dst.toList = (prior.toList.take 2).append (Program.eval WordProgram.base (@WordProgram.reference) p xs) ++
         prior.toList.drop (2 + xs.length) ∧ out.trace = lanes.map (footprint pass xs) := by
   have source := (select?_eq_some_iff p _).mp selected
   rw [source]
   change ∃ out, runGrid pass xs.length src prior lanes = some out ∧
-    out.dst.toList = prior.toList.take 2 ++
-      Program.eval WordProgram.base (@WordProgram.reference) pass.program xs ++
+    out.dst.toList = (prior.toList.take 2).append
+      (Program.eval WordProgram.base (@WordProgram.reference) pass.program xs) ++
       prior.toList.drop (2 + xs.length) ∧ out.trace = lanes.map (footprint pass xs)
   rw [eval_pass]
   exact grid_pass pass xs tail src prior lanes small layout room order

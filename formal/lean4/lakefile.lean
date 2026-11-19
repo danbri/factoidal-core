@@ -382,6 +382,7 @@ lean_lib ParalliverseProgramDataflowProofs where
 -- Typed partial GPU lowering and the bounded developer Studio (issues 646, 647).
 lean_lib ParalliverseStudioProofs where
   roots := #[`L4Factoidal.Paralliverse.WordMapGPUChain, `L4Factoidal.Paralliverse.Studio,
+    `L4Factoidal.Paralliverse.StudioReportTheorems,
     `Wasm.ParalliverseHub, `Harness.ParalliverseWordMapGPUModel,
     `Harness.ParalliverseStudioFixtures]
 
