@@ -4,3 +4,7 @@ defaultTargets = ["EVMCleanroom"]
 
 [[lean_lib]]
 name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-subset"
+root = "EVMCleanroom.CLI"
