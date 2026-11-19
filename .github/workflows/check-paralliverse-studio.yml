@@ -1,0 +1,36 @@
+name: Paralliverse Studio proofs
+
+on:
+  push:
+    branches: [main, wip/paralliverse-studio]
+    paths:
+      - 'formal/lean4/**'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-paralliverse-studio.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/**'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-paralliverse-studio.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  selector:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-selector
+      timeout_minutes: 10
+      modules: L4Factoidal.Paralliverse.WordMapGPU
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.selectUnary?_eq_some_iff
+        L4Factoidal.Paralliverse.WordMapGPU.select?_eq_some_iff
+        L4Factoidal.Paralliverse.WordMapGPU.select_affine
+        L4Factoidal.Paralliverse.WordMapGPU.select_fused_affine
