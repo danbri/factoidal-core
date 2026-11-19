@@ -32,4 +32,17 @@ Purity matters. For source values `[0, 1]`, suppose the first operation fails on
 
 ## Evidence and limits
 
-The issue tracks fresh, bounded Lean compilation and individual axiom reports. Executable examples cover empty and repeated words, wraparound, nested lists, product, fanout, reverse-order receipts and the effectful counterexample. The physical GPU evidence for the existing packing workload is recorded separately in the project issue. This milestone concerns typed syntax, pure source semantics, one syntactic rewrite and the Lean CPU task evaluator. General shader emission, target-specific admission, task progress and measured speed require further work. [Exact-source evidence](https://github.com/danbri/factoidal-core/issues/644) · [Existing GPU work](https://github.com/danbri/factoidal-core/issues/604)
+All eight public declarations below compiled at `d2f52e0d6a175a8b1654bf1315d2b6acd16f1a95` with Lean 4.33.1 in [fresh-source run 44594683425](https://github.com/danbri/factoidal-core/actions/runs/44594683425). The three lanes compiled 4, 9 and 81 source modules respectively; every compiler exit was zero. Each mandatory individual axiom report and each hygiene audit passed. Permitted axioms were only `propext`, `Classical.choice` and `Quot.sound`; the first fusion result needed only `propext` and `Quot.sound`, and the syntax equation only `propext`.
+
+| Namespace | Checked declaration |
+| --- | --- |
+| `Program` | `eval_fuseMaps` |
+| `Program` | `runCPU_eq_eval` |
+| `Program` | `runCPU_fuseMaps_eq_eval` |
+| `Program` | `collect_mapCPU_eq_eval` |
+| `WordProgram` | `fuseMaps_packedAffine` |
+| `WordProgram` | `runCPU_affine` |
+| `WordProgram` | `runCPU_packedAffine` |
+| `Program` | `asStage_run_iff` |
+
+These namespaces are within `L4Factoidal.Paralliverse`. The nine executable guards also passed, separately from those universal proofs. They cover empty and repeated words, wraparound, nested lists, product, fanout, reverse-order receipts and the effectful counterexample. The physical GPU evidence for the existing packing workload is recorded separately in the project issue. This milestone concerns typed syntax, pure source semantics, one syntactic rewrite and the Lean CPU task evaluator. General shader emission, target-specific admission, task progress and measured speed require further work. [Exact-source evidence](https://github.com/danbri/factoidal-core/issues/644) · [Next typed GPU lowering milestone](https://github.com/danbri/factoidal-core/issues/646) · [Existing GPU work](https://github.com/danbri/factoidal-core/issues/604)
