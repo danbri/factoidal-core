@@ -61,10 +61,11 @@ for (const item of tests) {
   let data;
   try { data = JSON.parse(proc.stdout.trim().split('\n').at(-1)); }
   catch { errors++; checks.push({name:item.name,status:'error',reason:'non-JSON executable output'}); continue; }
-  const spent = initialGas - data.gasRemaining;
-  const pass = data.status === 'ok' && data.halted === true && spent === expected;
+  const spent = BigInt(initialGas) - BigInt(data.gasRemaining);
+  const pass = data.schemaVersion === 2 &&
+    data.status === 'ok' && data.halted === true && spent === BigInt(expected);
   if (!pass) errors++;
-  checks.push({name:item.name,status:pass?'pass':'fail',expectedGas:expected,observedGas:spent,reportedStatus:data.status});
+  checks.push({name:item.name,status:pass?'pass':'fail',expectedGas:expected,observedGas:Number(spent),reportedStatus:data.status});
 }
 const report = {
   status:errors?'mismatch':'pass',
