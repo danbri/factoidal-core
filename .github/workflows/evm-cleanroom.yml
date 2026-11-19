@@ -28,3 +28,9 @@ jobs:
           build: true
           axiom-audit: true
           axiom-audit-root: EVMCleanroom
+      - name: Execute restricted EVM CLI and check emitted JSON
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset 600260030100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"ok","gasRemaining":91,"pc":6,"halted":True,"stack":[5]}, x'
+          lake exe evm-subset 01 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"stackUnderflow"}, x'
+          lake exe evm-subset 6001 2 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"outOfGas"}, x'
