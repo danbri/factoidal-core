@@ -189,9 +189,10 @@ def planStep (s : State) : Except Error Plan :=
 /-- The sole path to successful state mutation. The preparatory dispatcher has
     no authority to change code or gas; commit enforces the stack bound and
     charges the declared gas cost. -/
-def step (s : State) : Except Error State := do
-  let p ← planStep s
-  commit s p.nextPC p.stack p.gasCost p.halt
+def step (s : State) : Except Error State :=
+  match planStep s with
+  | .error e => .error e
+  | .ok p => commit s p.nextPC p.stack p.gasCost p.halt
 
 /-- Fuel-limited execution, terminating on STOP, error or exhausted fuel.
     Exceptional errors are reported; their outer transaction-level gas and
