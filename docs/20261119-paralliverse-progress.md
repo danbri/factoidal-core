@@ -100,3 +100,33 @@ This native Lean differential is separate from the linked CPU Wasm/Node ABI,
 the browser worker and live Hub acceptance. The new scripts are under
 Harness/ParalliverseDeviceFixtures.lean and tools/paralliverse-device-smoke.mjs;
 they do not replace any kernel proof or claim hardware performance.
+
+## Checked complete text and device checkpoint
+
+[Strict6a1fd7842](https://github.com/danbri/factoidal-core/actions/runs/44462235622)
+passes the combined parsed-text pipeline and both individual-store adapters,
+all three generic permutation/prefix results and the actual shader-export ABI
+theorem. The complete text readback and concrete interleaving results report
+`[propext, Classical.choice, Quot.sound]`; generic store results and the ABI
+result use `[propext, Quot.sound]`. All owned modules return zero, with clean
+hygiene and both CPU fixture groups. Earlier resource-recovery reports are
+not counted.
+
+The [same-source actual WebGPU execution check](https://github.com/danbri/factoidal-core/actions/runs/44462235672)
+passes all8 native-Lean differential fixtures on Mesa llvmpipe LLVM20.1.2,
+reported fallback=true. Every prefix byte and actual output length matched,
+including reuse and both1024-word cases. This is software Vulkan execution,
+not a hardware correctness proof or a browser-Wasm result.
+
+The first full6a build still stopped at the Dataflow recursion audit because
+its source scanner recognises inline `@[csimp]` annotations but not the
+standalone attribute command used for the checked constructor equality. The
+same already-proved replacement now uses the existing inline style. The
+unchanged scanner positively resolves the exact full name to toStageDirect;
+no allowance or audit rule changed. Fresh complete C/caller gates remain.
+
+The manual browser acceptance workflow waits for an official matching web
+release. It builds the actual Pages source with the route enabled only in
+disposable CI, drives compiled Wasm CPU and Chrome software WebGPU through
+the actual controls, and saves diagnostics and a screenshot. It has not run.
+The public route remains disabled.

@@ -400,7 +400,7 @@ def toStageDirect (p : Pipeline S A) (h : ∀ c ∈ p, ∀ n ∈ c.sig.assumptio
 Says: composing the component stages and using the pipeline's run and contract
 directly give equal stages for every pipeline and every proof of its assumptions.
 Does not say: how a component executes or how much stack its own run uses. -/
-theorem toStage_eq_direct : @toStage = @toStageDirect := by
+@[csimp] theorem toStage_eq_direct : @toStage = @toStageDirect := by
   have eq_of_fields {ε α β : Type} {s t : Stage ε α β}
       (hrun : s.run = t.run) (hcontract : s.contract = t.contract) : s = t := by
     rcases s with ⟨runS, contractS, _⟩
@@ -414,9 +414,6 @@ theorem toStage_eq_direct : @toStage = @toStageDirect := by
   apply eq_of_fields
   · exact funext (toStage_run _ _)
   · exact toStage_contract _ _
-
--- Activated only after the fresh strict check of ae9c130fa passed this equality.
-attribute [csimp] toStage_eq_direct
 
 /-- The guarantee's assumptions are those of the report of the signatures
 (what the wasm op `pipelineCheck` returns). -/

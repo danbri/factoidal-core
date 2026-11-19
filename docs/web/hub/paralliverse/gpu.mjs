@@ -153,7 +153,9 @@ export async function connectGpu(sources, onLost = () => {}) {
     return {run, initMs: performance.now() - initialising,
       adapter: info?.description || [info?.vendor, info?.architecture, info?.device].filter(Boolean).join(" ") || "Name unavailable",
       isFallbackAdapter: info?.isFallbackAdapter ?? adapter.isFallbackAdapter ?? null,
-      deviceTimestamps: "Not collected; timings use the worker clock.",
+      deviceTimestamps: adapter.features.has("timestamp-query")
+        ? "Timestamp-query available, not collected; timings use the worker clock."
+        : "Timestamp-query unavailable; timings use the worker clock.",
       close() {
         for (const buffer of Object.values(buffers)) buffer.destroy();
         device.destroy();
