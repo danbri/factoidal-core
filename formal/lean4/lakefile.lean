@@ -379,6 +379,12 @@ lean_lib ParalliverseProgramProofs where
 lean_lib ParalliverseProgramDataflowProofs where
   roots := #[`L4Factoidal.Paralliverse.ProgramDataflow]
 
+-- Typed partial GPU lowering and the bounded developer Studio (issues 646, 647).
+lean_lib ParalliverseStudioProofs where
+  roots := #[`L4Factoidal.Paralliverse.WordMapGPUChain, `L4Factoidal.Paralliverse.Studio,
+    `Wasm.ParalliverseHub, `Harness.ParalliverseWordMapGPUModel,
+    `Harness.ParalliverseStudioFixtures]
+
 -- The opt-in CPU fixture runner emits JSON Lines.
 lean_exe «paralliverse-cpu» where root := `Harness.ParalliverseCpu
 

@@ -1,4 +1,5 @@
 import L4Factoidal.Paralliverse.WGSL.ShaderText
+import L4Factoidal.Paralliverse.WGSL.Dispatch
 import L4Factoidal.Paralliverse.WGSL.ScatterSurface
 import L4Factoidal.Paralliverse.ScatterTarget
 
@@ -81,10 +82,6 @@ theorem scatter_text_launch (n : Nat) :
     (ScatterSurface.parseShader scatterText.toUTF8).map (fun m => (((n + 63) / 64) * m.sizeX, m.sizeY, m.sizeZ)) =
       some (CountTarget.grid n, 1, 1) := by
   rw [parse_scatter_text] <;> rfl
-
-/-- Both the binding and word write of an actual event. -/
-def scatterEvent (w : Surface.Write) : (Nat × Nat) × (Nat × UInt32) :=
-  ((w.group, w.slot), (w.address.toNat, w.value))
 
 def payloadEvent (w : Nat × UInt32) : (Nat × Nat) × (Nat × UInt32) := ((0, 2), w)
 

@@ -49,7 +49,8 @@ theorem eval_pass (pass : Pass) (xs : List UInt32) :
     Program.eval WordProgram.base (@WordProgram.reference) pass.program xs = xs.map pass.apply := by
   cases pass with | mk tag k => cases tag <;> rfl
 
-/-- The expected destination and actual storage log for one physical invocation. -/
+/-- Expected destination and stores of one lane when its buffers meet the
+capacity and layout premises of `run_module_lane`. -/
 def laneEffect (pass : Pass) (xs : List UInt32) (prior : Array UInt32) (gid : UInt32) :
     Surface.Outcome :=
   if h : gid.toNat < xs.length then

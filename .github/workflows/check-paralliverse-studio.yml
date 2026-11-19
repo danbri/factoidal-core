@@ -67,6 +67,16 @@ jobs:
         L4Factoidal.Paralliverse.WordMapGPU.word_grid_bounds
         L4Factoidal.Paralliverse.WordMapGPU.word_canonical_valid
         L4Factoidal.Paralliverse.WordMapGPU.selected_grid
+  chain:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-chain
+      timeout_minutes: 15
+      modules: L4Factoidal.Paralliverse.WordMapGPUChain Harness.ParalliverseWordMapGPUModel
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.selected_two_grid
+        L4Factoidal.Paralliverse.WordMapGPU.affine_grid_eq_cpu
   studio:
     if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
     uses: ./.github/workflows/check-dataflow-stage.yml

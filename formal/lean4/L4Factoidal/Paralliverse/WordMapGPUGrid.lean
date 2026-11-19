@@ -1,5 +1,6 @@
 import L4Factoidal.Paralliverse.WordMapGPUFrame
-import L4Factoidal.Paralliverse.WGSL.Pipeline
+import L4Factoidal.Paralliverse.CountTarget
+import L4Factoidal.Paralliverse.WGSL.Dispatch
 
 /-! End-to-end finite dispatch of typed word maps, from the actual exported
 shader bytes to every output word and every chronological lane record. -/

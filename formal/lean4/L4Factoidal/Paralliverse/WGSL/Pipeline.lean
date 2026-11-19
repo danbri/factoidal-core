@@ -1,4 +1,5 @@
 import L4Factoidal.Paralliverse.PipelineTarget
+import L4Factoidal.Paralliverse.WGSL.Dispatch
 import L4Factoidal.Paralliverse.WGSL.Count
 import L4Factoidal.Paralliverse.WGSL.Scan
 import L4Factoidal.Paralliverse.WGSL.Scatter
@@ -13,34 +14,6 @@ and the order of the real stores inside a lane, including their bindings and val
 
 namespace L4Factoidal.Paralliverse.WGSL
 namespace TextPipeline
-
-structure LaneTrace where
-  gid : UInt32
-  returnedEarly : Bool
-  stores : List ((Nat × Nat) × (Nat × UInt32))
-
-def observed (gid : UInt32) (r : ScanSurface.Outcome) : LaneTrace :=
-  ⟨gid, r.returnedEarly, r.writes.map scatterEvent⟩
-
-structure GridState where
-  dst : Array UInt32
-  reversed : List LaneTrace
-
-def GridState.trace (s : GridState) : List LaneTrace := s.reversed.reverse
-
-def GridState.record (s : GridState) (gid : UInt32) (r : ScanSurface.Outcome) : GridState :=
-  ⟨r.dst, observed gid r :: s.reversed⟩
-
-/-- Stop as soon as a lane fails or the caller supplies more IDs than the budget. -/
-def dispatch (step : Array UInt32 → UInt32 → Option ScanSurface.Outcome) :
-    List UInt32 → Nat → GridState → Option GridState
-  | [], _, s => some s
-  | gid :: rest, fuel, s =>
-    match fuel with
-    | 0 => none
-    | k + 1 => do
-      let r ← step s.dst gid
-      dispatch step rest k (s.record gid r)
 
 private def countStep (m : Surface.Module) (packet dst : Array UInt32) (gid : UInt32) :
     Option ScanSurface.Outcome :=

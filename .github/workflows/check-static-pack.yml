@@ -89,6 +89,8 @@ jobs:
                    L4Factoidal/Paralliverse.lean
                    Wasm/ParalliverseHub.lean)
           mkdir -p "$proof_dir/modules" "$proof_dir/c" "$proof_dir/setup"
+          python3 ../../tools/lean-module-closure.py --lean-dir . "${modules[@]}" > "$proof_dir/module-closure.txt"
+          mapfile -t modules < "$proof_dir/module-closure.txt"
           export LEAN_PATH="$proof_dir/modules"
           {
             git rev-parse HEAD

@@ -24,7 +24,39 @@ private def n (v : Nat) : Json := .number (toString v)
 private def numbers (ns : List Nat) : Json := .array (ns.map n)
 private def affine := "map multiply 3\nmap add 1"
 
+private def shaderRecord (tag : WordMapGPU.KernelTag) : IO Json := do
+  let bytes := Hub.callExport 2 ⟨#[tag.shaderSelector]⟩
+  unless bytes.data[0]? == some 0 do throw (IO.userError "Shader export refused")
+  let some source := String.fromUTF8? (bytes.extract 1 bytes.size) | throw (IO.userError "Invalid shader UTF-8")
+  return .object [("selector", n tag.shaderSelector.toNat), ("source", .string source)]
+
+private def varied (length : Nat) : List Nat :=
+  (List.range length).map fun i => if i % 7 == 0 then 0xFFFFFFFF else i * 17 + 13
+
+private def deviceCases : List (String × String × List Nat) :=
+  [("empty-add", "map add 7", []),
+   ("single-multiply", "map multiply 9", [13]),
+   ("full-group-64", "map add 17", varied 64),
+   ("padded-group-65", "map multiply 3", varied 65),
+   ("beyond-pack-row-limit-129", "map multiply 11\nmap add 7", varied 129),
+   ("word-limit-1024", "map add 19\nmap multiply 5", varied 1024),
+   ("u32-wrap", "map add 4294967295", [0, 1, 0xFFFFFFFF, 0x80000000]),
+   ("duplicate-words", "map multiply 5", [3, 3, 0xFFFFFFFF, 0, 3, 3]),
+   ("multiply-then-add", "map multiply 3\nmap add 5", [0, 2, 0xFFFFFFFF, 2])]
+
+private def emitDevice : IO Unit := do
+  let sources ← [WordMapGPU.KernelTag.add, .multiply].mapM shaderRecord
+  IO.println (toStringCompact (.object [("kind", .string "shaders"), ("schemaVersion", n 1),
+    ("sources", .array sources), ("caseCount", n deviceCases.length)]))
+  for (name, program, input) in deviceCases do
+    let result ← response program (toStringCompact (numbers input))
+    checked "device fixture must have a selected plan" (result.getBool? "gpuEligible" == some true)
+    IO.println (toStringCompact (.object [("name", .string name), ("result", result)]))
+
 def main (args : List String) : IO Unit := do
+  if args == ["--emit-device"] then
+    emitDevice
+    return
   let result ← response affine "[4294967295,2,2]"
   if args == ["--emit-example"] then
     let some code := result.getString? "leanSource" | throw (IO.userError "Missing Lean example")

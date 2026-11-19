@@ -62,6 +62,7 @@ theorem shader_source_exports :
 
 #print axioms shader_source_exports
 
+set_option maxRecDepth 8192 in
 /-- Kind: exported operation correspondence.
 Says: both word-map shader selectors return the fixed source bytes and every
 Studio request enters the Lean Studio evaluator under its advertised byte cap.
