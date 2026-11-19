@@ -8,12 +8,17 @@ umask 077
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
   cat <<'HELP'
 Usage: bash run-foafnaut-linux-podman.sh [Foafnaut arguments]
+Reclaim unused VM disk blocks: bash run-foafnaut-linux-podman.sh --reclaim-space
 Example: bash run-foafnaut-linux-podman.sh --url https://example.org/
+Input tracing: FOAFNAUT_TRACE_INPUT=1 bash run-foafnaut-linux-podman.sh
+Stock renderer: FOAFNAUT_FULL_RENDERER=1 bash run-foafnaut-linux-podman.sh
 
 Installs Podman/XQuartz if missing, creates a dedicated Linux VM, provisions
 QEMU x86-64 execution on Apple Silicon, verifies the pinned browser archive,
 and opens the Linux browser through SSH X11 forwarding and software Vulkan.
 No xhost changes, XQuartz TCP settings, or Mac home-directory container mount.
+Defaults to a small local page, bitmap fonts and single-frame rendering without
+the animated splash. Logs are saved in ~/Library/Caches/factoidal-linux-browser.
 
 The VM, image and verified archive are reused. The temporary container and SSH
 keys are removed on exit. A VM started by this script is stopped on exit.
@@ -28,6 +33,32 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [[ $(uname -s) == Darwin ]] || die 'This launcher is for macOS.'
 [[ $EUID != 0 ]] || die 'Run as your normal Mac user, without sudo.'
 command -v brew >/dev/null || die 'Install Homebrew from https://brew.sh, then rerun.'
+if [[ ${1:-} == --reclaim-space ]]; then
+  [[ $# == 1 ]] || die '--reclaim-space takes no other arguments.'
+  command -v podman >/dev/null || die 'Podman is not installed; there is no VM to trim.'
+  trim_machine=foafnaut-linux-x11
+  podman machine inspect "$trim_machine" >/dev/null \
+    || die 'The existing foafnaut-linux-x11 VM could not be found; no new VM was created.'
+  trim_started=0
+  finish_trim() {
+    local rc=$?
+    trap - EXIT INT TERM
+    if (( trim_started )); then podman machine stop "$trim_machine" || true; fi
+    printf '\nMac free space after trim:\n'
+    df -h /
+    exit "$rc"
+  }
+  trap finish_trim EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [[ $(podman machine inspect --format '{{.State}}' "$trim_machine") != running ]]; then
+    podman machine start "$trim_machine"
+    trim_started=1
+  fi
+  say 'Discarding unused guest filesystem blocks. No files, images or containers are deleted.'
+  podman machine ssh "$trim_machine" sudo fstrim -av
+  exit 0
+fi
 command -v podman >/dev/null || brew install podman
 [[ -x /opt/X11/bin/xdpyinfo && -x /opt/X11/bin/xauth ]] || brew install --cask xquartz
 [[ -x /opt/X11/bin/xdpyinfo && -x /opt/X11/bin/xauth ]] || die 'XQuartz installation did not provide its X11 tools.'
@@ -35,10 +66,10 @@ command -v podman >/dev/null || brew install podman
 state_dir="$HOME/Library/Caches/factoidal-linux-browser"
 mkdir -p "$state_dir"
 check_space() {
-  local available
+  local available minimum=${1:-4}
   available=$(df -Pk "$state_dir" | awk 'END {print $4}')
   [[ $available =~ ^[0-9]+$ ]] || die 'Could not check available disk space.'
-  (( available >= 6 * 1024 * 1024 )) || die 'Need at least 6 GiB free; no existing VM or image was deleted.'
+  (( available >= minimum * 1024 * 1024 )) || die "Need at least $minimum GiB free; no existing VM or image was deleted."
 }
 check_space
 scratch=$(mktemp -d "$state_dir/session.XXXXXX")
@@ -92,6 +123,7 @@ volumes=[]
 CONF
 export CONTAINERS_CONF_OVERRIDE="$scratch/containers.conf"
 if ! podman machine inspect "$machine" >/dev/null 2>&1; then
+  check_space 6
   say 'Creating reusable Podman VM: 4 CPUs, 4 GiB RAM, 16 GiB logical sparse disk.'
   podman machine init --cpus 4 --memory 4096 --disk-size 16 "$machine"
 fi
@@ -109,10 +141,12 @@ pm() { podman --connection "$machine" "$@"; }
 if [[ $(uname -m) == arm64 ]]; then
   say 'Registering x86-64 QEMU execution inside the Linux VM.'
   # Privilege is confined to this Linux VM; it registers the guest kernel's binfmt handler.
+  if ! podman --connection "$machine-root" image exists docker.io/tonistiigi/binfmt:latest; then check_space 6; fi
   podman --connection "$machine-root" run --rm --privileged --platform linux/arm64 \
     docker.io/tonistiigi/binfmt:latest --install amd64
 fi
 say 'Checking that Linux x86-64 executables really run.'
+if ! pm image exists docker.io/library/ubuntu:24.04; then check_space 6; fi
 [[ $(pm run --rm --platform linux/amd64 docker.io/library/ubuntu:24.04 uname -m) == x86_64 ]] \
   || die 'The x86-64 execution check failed.'
 check_space
@@ -122,6 +156,7 @@ archive="$state_dir/$release.tar.gz"
 expected=d9c0a151ad916768a5d3607d650212f23fe1617dc38730b550ac4746489ac7e4
 archive_ok() { [[ -f $archive && $(shasum -a 256 "$archive" | awk '{print $1}') == "$expected" ]]; }
 if ! archive_ok; then
+  check_space 6
   say 'Downloading the pinned Linux browser (about 60 MB).'
   curl --fail --location --retry 3 --output "$scratch/browser.download" \
     "https://github.com/danbri/factoidal-builds/releases/download/$release/foafnaut-browser-linux-x86_64.tar.gz"
@@ -166,6 +201,7 @@ CONTAINERFILE
 image_hash=$(shasum -a 256 "$scratch/build/Containerfile" | cut -c1-12)
 image="localhost/foafnaut-linux-x11:7d4794f49f5d-$image_hash"
 if ! pm image exists "$image"; then
+  check_space 6
   say 'Building the reusable Ubuntu/X11/software-Vulkan image.'
   pm build --platform linux/amd64 --tag "$image" --file "$scratch/build/Containerfile" "$scratch/build"
 fi
@@ -202,7 +238,25 @@ if ! DISPLAY="$x_display" ssh "${ssh_opts[@]}" "$target" \
   'exec /usr/local/bin/foafnaut-display sh -ec "xdpyinfo >/dev/null; vulkaninfo --summary; timeout 90s vkcube --c 2"'; then
   die 'X11/software-Vulkan presentation failed; the browser was not started. See the errors above.'
 fi
-remote=(exec /usr/local/bin/foafnaut-display /opt/foafnaut-linux-x86_64/foafnaut "$@")
+if (( $# == 0 )); then
+  # A small first page avoids compiling/rendering the large bundled demo index.
+  pm exec --user foafnaut "$container" /bin/sh -c 'printf "%s\n" \
+    "<!doctype html><html><head><title>Foafnaut Linux</title></head><body>" \
+    "<h1>Foafnaut on Linux</h1><p>This page is rendered by the Linux browser.</p>" \
+    "<p>Click the window, then press Control-L to enter a URL. Space or Page Down scrolls.</p>" \
+    "<p><a href=\"https://example.org/\">Open Example Domain</a></p></body></html>" \
+    > /tmp/foafnaut-start.html'
+  set -- --html /tmp/foafnaut-start.html
+fi
+browser_args=(--no-state --no-splash --single-frame --bitmap-font --perf-summary)
+if [[ ${FOAFNAUT_FULL_RENDERER:-0} == 1 ]]; then browser_args=(--no-state --perf-summary); fi
+if [[ ${FOAFNAUT_TRACE_INPUT:-0} == 1 ]]; then browser_args+=(--trace-input); fi
+remote=(exec /usr/local/bin/foafnaut-display /opt/foafnaut-linux-x86_64/foafnaut "${browser_args[@]}" "$@")
 printf -v remote_command '%q ' "${remote[@]}"
 say 'Launching the Linux browser. Close its window or press Control-C here to finish.'
-DISPLAY="$x_display" ssh "${ssh_opts[@]}" "$target" "$remote_command"
+say "Browser log: $state_dir/last-launch.log"
+set +e
+DISPLAY="$x_display" ssh "${ssh_opts[@]}" "$target" "$remote_command" 2>&1 | tee "$state_dir/last-launch.log"
+result=${PIPESTATUS[0]}
+set -e
+exit "$result"
