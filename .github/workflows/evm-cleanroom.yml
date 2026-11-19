@@ -1,0 +1,30 @@
+name: EVM cleanroom Lean seed
+
+on:
+  push:
+    branches: ["feat/lean-evm-cleanroom-seed"]
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-cleanroom.yml"
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-cleanroom.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Lean and check proof declarations and guards
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EVMCleanroom
