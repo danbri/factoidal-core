@@ -147,7 +147,7 @@ private theorem projectNonemptyDelta (old new : Dataset) (reply : HTTP.Response)
     {entry : L4Factoidal.Storage.DeltaEntry} {rest : List L4Factoidal.Storage.DeltaEntry}
     (delta : datasetDelta old new = .ok (entry :: rest)) :
     (commitOutcome .allGraphs old new reply).commit.map Prod.snd = some new := by
-  rw [commitOutcome, delta] <;> rfl
+  rw [commitOutcome, delta] <;> first | rfl | decide
 
 private theorem secondProjectedCommit (label : String) :
     (commitOutcome .allGraphs postFirst (postFinal label) { status := 201 }).commit.map Prod.snd =
@@ -155,13 +155,27 @@ private theorem secondProjectedCommit (label : String) :
   obtain ⟨_, delta⟩ := secondDeltaCreates label
   exact projectNonemptyDelta postFirst (postFinal label) { status := 201 } delta
 
+private theorem secondResponseNames (label : String) :
+    ((postNextStore label).named.mapM fun kv =>
+      if h : isIri kv.1 then some (NamedGraph.mk (.iri ⟨kv.1, h⟩) kv.2) else none) =
+        some ((postFinal label).named) := by
+  have nameGraph (i : WfIri) (g : Graph) :
+      (if h : isIri i.val then some (NamedGraph.mk (.iri ⟨i.val, h⟩) g) else none) =
+        some (NamedGraph.mk (.iri i) g) := by
+    rw [dif_pos i.property]
+  simp only [List.mapM_cons, nameGraph postIriA [postTriple "m0_b"],
+    nameGraph postIriB [postTriple label]] <;> rfl
+
 private theorem secondPostCommits (body label : String)
     (parsed : ∀ base, GraphStoreService.payloadGraph "application/n-triples" base body =
       .ok [postTriple label]) :
     commitPost postFirst "/gsp/b" body = some (postFinal ("m0_" ++ label)) := by
   simp only [gspOutcome, View.of, routePostB]
   rewrite [secondParsedServe body label parsed]
-  · exact secondProjectedCommit ("m0_" ++ label)
+  · have writes : ¬ (("POST" == "GET" || "POST" == "HEAD" || decide ((201 : Nat) ≥ 300)) = true) :=
+      by decide +kernel
+    rewrite [if_neg writes, secondResponseNames ("m0_" ++ label)]
+    exact secondProjectedCommit ("m0_" ++ label)
   · rfl
 
 local notation "postTP" =>
