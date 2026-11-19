@@ -988,6 +988,10 @@ lean_lib BlobQuotaProofs where
 lean_lib SubresourceBoundProofs where
   roots := #[`L4Factoidal.Net.SubresourceBoundTheorems]
 
+-- Text-control UTF-16 boundary correspondence (issue #627), outside runtime imports.
+lean_lib TextControlOffsetProofs where
+  roots := #[`L4Factoidal.DOM.Editing.TextControlOffsetTheorems]
+
 -- Collection result cardinality proofs (issue #611).
 lean_lib CollectionBoundProofs where
   roots := #[`L4Factoidal.RDF.CollectionBoundTheorems]

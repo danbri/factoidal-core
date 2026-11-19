@@ -60,9 +60,9 @@ theorem validate_ok_status_range {entry : Entry} {slc : Json} {result : Result}
     by_cases hpurpose : (purposesOf subj).contains entry.statusPurpose = true
     · simp only [hpurpose, Bool.not_true, Bool.false_eq_true, if_false] at h
       cases hbits : expand ((subj.getString? "encodedList").getD "") with
-      | error why => simp [hbits, bind, Except.bind] at h
+      | error why => simp [hbits] at h
       | ok bits =>
-        simp only [hbits, bind, Except.bind] at h
+        simp only [hbits] at h
         by_cases hshort : bits.size * 8 / entry.statusSize < minimumNumberOfEntries
         · simp only [hshort, if_true] at h
           cases h
@@ -72,7 +72,7 @@ theorem validate_ok_status_range {entry : Entry} {slc : Json} {result : Result}
             cases h
           · simp only [hout, if_false] at h
             cases h
-            exact ⟨subj, bits, by simp [hsubj], List.contains_iff_mem.mp hpurpose, hbits,
+            exact ⟨subj, bits, rfl, List.contains_iff_mem.mp hpurpose, hbits,
               Nat.le_of_not_gt hshort, Nat.le_of_not_gt hout, rfl,
               readStatus_lt_power bits (entry.statusListIndex * entry.statusSize) entry.statusSize,
               rfl, rfl⟩

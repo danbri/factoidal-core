@@ -35,6 +35,7 @@ jobs:
               L4Factoidal.EventLoop.TimerPartitionTheorems
               L4Factoidal.Net.BlobQuotaTheorems
               L4Factoidal.Net.SubresourceBoundTheorems
+              L4Factoidal.DOM.Editing.TextControlOffsetTheorems
               L4Factoidal.RDF.CollectionBoundTheorems
               L4Factoidal.VC.CidKeyTheorems
               L4Factoidal.VC.StatusListRangeTheorems
@@ -56,6 +57,8 @@ jobs:
               L4Factoidal.Net.Subresource.answer_live_nonincrease
               L4Factoidal.Net.Subresource.cancel_live_nonincrease
               L4Factoidal.Net.Subresource.live_bound_preserved
+              L4Factoidal.DOM.Editing.indexOfUnits_unitsOfIndex
+              L4Factoidal.DOM.Editing.textEdit_result_utf16
               L4Factoidal.RDF.listWalk_length_lt
               L4Factoidal.RDF.listItemsBy_length_lt
               L4Factoidal.RDF.listItems_length_le
