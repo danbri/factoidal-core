@@ -77,6 +77,36 @@ theorem previously_allocated_access_free (oldWords offset length : Nat)
     accessCost oldWords offset length = 0 := by
   simp [accessCost, expansion, Nat.max_eq_left h]
 
+/-- A sequence of arbitrary length of non-shrinking memory allocations,
+    annotated with the incremental gas charged at each stage. -/
+inductive ExpansionTrace : Nat → Nat → Nat → Prop where
+  | nil (words : Nat) : ExpansionTrace words 0 words
+  | cons {before next final spent : Nat}
+      (h : before ≤ next) (tail : ExpansionTrace next spent final) :
+      ExpansionTrace before (expansion before next + spent) final
+
+/-- An expansion trace cannot shrink the memory high-water mark. -/
+theorem ExpansionTrace.final_ge_initial {before final spent : Nat}
+    (h : ExpansionTrace before spent final) : before ≤ final := by
+  induction h with
+  | nil _ => exact Nat.le_refl _
+  | cons hgrow _ ih => exact Nat.le_trans hgrow ih
+
+/-- Fully general gas conservation across *any finite number* of memory
+    expansions. Intermediate allocation granularity is irrelevant: the
+    charged sum is determined uniquely by the initial and final sizes. -/
+theorem ExpansionTrace.exact_total {before final spent : Nat}
+    (h : ExpansionTrace before spent final) :
+    spent = expansion before final := by
+  induction h with
+  | nil _ => simp [expansion_self]
+  | cons hgrow tail ih =>
+    rw [ih]
+    exact expansion_path_independent hgrow (ExpansionTrace.final_ge_initial tail)
+
+#print axioms ExpansionTrace.final_ge_initial
+#print axioms ExpansionTrace.exact_total
+
 -- Boundary tests for the nonlinear pricing and 32-byte rounding.
 #guard cost 0 == 0
 #guard cost 1 == 3
