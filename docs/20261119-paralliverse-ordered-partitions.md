@@ -34,13 +34,16 @@ The pack result concerns a mathematical word buffer and the logical result of Le
 
 ## Compiled theorems
 
-Lean 4.33.1 compiled all five public declarations at `1d9ff69dea734895bed51d67111ebc8611702466`. The fresh packing and scan jobs compiled six and 137 modules respectively. All compiler exits were zero. Each declaration reported exactly `[propext, Classical.choice, Quot.sound]` and both hygiene checks passed. The compiler used one thread, a 2 GiB Lean cap, a 4 GiB operating-system cap and a 180-second limit per source. [Packing log](https://github.com/danbri/factoidal-core/actions/runs/44565616036/job/135706402087) · [Scan log](https://github.com/danbri/factoidal-core/actions/runs/44565616036/job/135706401512)
+Lean 4.33.1 compiled all five public declarations at `4956af6cc69a9155456b94e2b2b827a3801d7471`. The fresh packing and scan jobs compiled six and 141 modules respectively. All compiler exits were zero. Each declaration reported exactly `[propext, Classical.choice, Quot.sound]` and both hygiene checks passed. The compiler used one thread, a 2 GiB Lean cap, a 4 GiB operating-system cap and a 180-second limit per source. [Packing log](https://github.com/danbri/factoidal-core/actions/runs/44566901613/job/135711022833) · [Scan log](https://github.com/danbri/factoidal-core/actions/runs/44566901613/job/135711023500)
 
-| Module | New public declarations |
+All names in the table start with `L4Factoidal.`.
+
+| Import | Public declaration within `L4Factoidal` |
 | --- | --- |
-| `L4Factoidal.Paralliverse.Ordered` | `collect?_eq_some_iff`, `mapM_eq_of_collect?` |
-| `L4Factoidal.Paralliverse.StaticPack` | `collect_mapChunks_pack` |
-| `L4Factoidal.Storage.Sbm11.ParallelScanTheorems` | `parallel_acc_eq_of_selected`, `scan_rangeBounds_eq_collected` |
+| `Paralliverse.Ordered` | `Paralliverse.Ordered.collect?_eq_some_iff`, `Paralliverse.Ordered.mapM_eq_of_collect?` |
+| `Paralliverse.OrderedPackTheorems` | `Paralliverse.StaticPack.collect_mapChunks_pack` |
+| `Storage.Sbm11.ParallelScanTheorems` | `Storage.Sbm11.ParallelScanTheorems.parallel_acc_eq_of_selected` |
+| `Storage.Sbm11.OrderedScanTheorems` | `Storage.Sbm11.ParallelScanTheorems.scan_rangeBounds_eq_collected` |
 
 The pre-existing `parallel_acc_eq` also passed strict compilation with the same axiom report. The optional Lake target is `ParalliverseOrderedProofs`. Its modules are independent of the browser demonstration.
 
@@ -48,4 +51,4 @@ The pre-existing `parallel_acc_eq` also passed strict compilation with the same 
 
 Nine guards passed in the packing job above. Seven exercise the collector directly. One reverses the results of actual CPU packing tasks with an empty part and repeated words. One reverses the native driver's three bounds over five block positions. [Example source](../formal/lean4/Harness/ParalliverseOrderedGuards.lean)
 
-A separate storage guard decodes the eleven-block PRB1 fixture, selects key `3`, and returns four ranges in reverse. It checks that the selection starts after the first block, ends before the last block, and produces all sixteen expected projected tuples with their duplicates. The per-block evaluator in this guard is `blockOut`. The general theorem above uses `scanAccOf`. The issue records the result of each head's fresh run. [Storage example](../formal/lean4/Harness/ParalliverseOrderedScanGuards.lean) · [Verification record](https://github.com/danbri/factoidal-core/issues/641)
+The tenth guard passed in the scan job above. It decoded the eleven-block PRB1 fixture, selected key `3`, and returned four ranges in reverse. The selection started after the first block, ended before the last block, and produced all sixteen expected projected tuples with their duplicates. The per-block evaluator in this guard is `blockOut`. The general theorem above uses `scanAccOf`. [Storage example](../formal/lean4/Harness/ParalliverseOrderedScanGuards.lean) · [Verification record](https://github.com/danbri/factoidal-core/issues/641)

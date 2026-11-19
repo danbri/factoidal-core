@@ -3,6 +3,12 @@ Copyright (c) 2026 Dan Brickley. All rights reserved.
 Released under the Apache 2.0 license.
 -/
 
+/-!
+Import this module for the collector and its sequential evaluation theorem. The CPU packing
+application is in `L4Factoidal.Paralliverse.OrderedPackTheorems`. The selected-block scan
+application is in `L4Factoidal.Storage.Sbm11.OrderedScanTheorems`.
+-/
+
 namespace L4Factoidal.Paralliverse.Ordered
 
 /-- Restore planned task order. Every ordinal below `n` must occur exactly once.
