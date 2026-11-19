@@ -31,7 +31,10 @@ jobs:
       - name: Execute restricted EVM CLI and check emitted JSON
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          lake exe evm-subset 600260030100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"ok","gasRemaining":91,"pc":6,"halted":True,"stack":[5]}, x'
+          lake exe evm-subset 600260030100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"schemaVersion":2,"status":"ok","gasRemaining":"91","pc":"6","halted":True,"stack":["5"],"memorySizeBytes":"0","memoryWord0":"0"}, x'
+          lake exe evm-subset 600260005260005100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert (x["stack"],x["memoryWord0"],x["memorySizeBytes"],x["gasRemaining"]) == (["2"],"2","32","82"), x'
+          lake exe evm-subset 61012c601f5360005100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert (x["stack"],x["memoryWord0"],x["gasRemaining"]) == (["44"],"44","82"), x'
+          lake exe evm-subset $(python3 -c 'print("7f" + "ff"*32 + "00")') 100 3 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["stack"] == [str((1<<256)-1)] and x["gasRemaining"]=="97", x'
           lake exe evm-subset 01 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"stackUnderflow"}, x'
           lake exe evm-subset 6001 2 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"outOfGas"}, x'
       - name: Inspect pinned published EELS state-test fixtures (NOT a conformance run)
