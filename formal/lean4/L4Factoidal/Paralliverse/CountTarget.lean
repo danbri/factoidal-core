@@ -157,7 +157,7 @@ private theorem execute_cont (packet : Array UInt32) (gid : UInt32) (e : Expr) (
 Says: the continuation machine and structural evaluator return the same word or
 the same fault for every packet, global ID and expression.
 Does not say: that a compiler produces a native jump or a particular stack limit. -/
-theorem Expr.eval_eq_evalTR : @Expr.eval = @Expr.evalTR := by
+@[csimp] theorem Expr.eval_eq_evalTR : @Expr.eval = @Expr.evalTR := by
   funext packet gid e
   unfold Expr.evalTR
   rw [execute_cont]

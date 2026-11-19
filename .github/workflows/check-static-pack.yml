@@ -72,7 +72,7 @@ jobs:
                    L4Factoidal/Paralliverse/ScatterTarget.lean
                    L4Factoidal/Paralliverse.lean
                    Wasm/ParalliverseHub.lean)
-          mkdir -p "$proof_dir/modules" "$proof_dir/c"
+          mkdir -p "$proof_dir/modules" "$proof_dir/c" "$proof_dir/setup"
           export LEAN_PATH="$proof_dir/modules"
           {
             git rev-parse HEAD
@@ -87,9 +87,16 @@ jobs:
           for module in "${modules[@]}"; do
             olean="$proof_dir/modules/${module%.lean}.olean"
             generated_c="$proof_dir/c/${module%.lean}.c"
-            mkdir -p "$(dirname "$olean")" "$(dirname "$generated_c")"
+            setup="$proof_dir/setup/${module%.lean}.json"
+            mkdir -p "$(dirname "$olean")" "$(dirname "$generated_c")" "$(dirname "$setup")"
+            python3 - "$module" "$setup" <<'PY'
+          import json, pathlib, sys
+          pathlib.Path(sys.argv[2]).write_text(json.dumps({
+              'name': sys.argv[1][:-5].replace('/', '.'), 'package': 'l4factoidal',
+          }))
+          PY
             compile=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/$(basename "$module").time.txt"
-                     lean -j1 -s16384 -M2048 -DwarningAsError=true -o "$olean" -c "$generated_c" "$module")
+                     lean -j1 -s16384 -M2048 -DwarningAsError=true --setup "$setup" -o "$olean" -c "$generated_c" "$module")
             {
               printf 'ulimit -v 4194304\n'
               printf ' %q' "${compile[@]}"
@@ -148,7 +155,9 @@ jobs:
                       L4Factoidal.Paralliverse.ScanTarget.scan_memory \
                       L4Factoidal.Paralliverse.ScanTarget.scan_visible \
                       L4Factoidal.Paralliverse.ScatterTarget.inactive_lane \
-                      L4Factoidal.Paralliverse.ScatterTarget.copy_words; do
+                      L4Factoidal.Paralliverse.ScatterTarget.copy_words \
+                      L4Factoidal.Paralliverse.ScatterTarget.scanned_starts \
+                      L4Factoidal.Paralliverse.ScatterTarget.decoded_scatter_lane; do
             grep -F "'$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "$name" >> "$proof_dir/checked-theorems.txt"
