@@ -295,6 +295,10 @@ extern_lib libl4hostread pkg := do
 
 @[default_target] lean_lib L4Factoidal
 
+-- Persistence proofs stay outside the browser's runtime import closure.
+lean_lib CookieWireProofs where
+  roots := #[`L4Factoidal.Net.CookieWireTheorems]
+
 -- The WebAssembly engine (issue 1244): spec relations generated from SpecTec, the
 -- executable engine, and the theorems between them. Its own library, so the main
 -- library and the l4wasm closure do not grow until something imports it.

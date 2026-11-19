@@ -862,6 +862,14 @@ function scriptTurn(page,turn,first=false){
   for(const line of turn.errors)console.warn('page error:',line);
   addEntries(page,[...turn.logs.map(message=>({source:'page',severity:'log',message})),...turn.errors.map(message=>({source:'page',severity:'error',message}))]);
   if(page.script)page.script.turn=turn;
+  // A navigation of the page itself that Lean planned (a form submitted, HTML §4.10.21.3): a GET
+  // in this tab loads its URL, as the window does. POST and a new tab are the window's for now:
+  // said in the console (a page request here can carry no body yet).
+  if(turn.navigate&&page===doc){
+    if(turn.navigate.method==='get'&&!turn.navigate.target)navigate(turn.navigate.url);
+    else addEntries(page,[{source:'System',severity:'warning',feature:'form submission',where:turn.navigate.url,
+      message:`${turn.navigate.method.toUpperCase()}${turn.navigate.target?' to a new tab':''} is not made on the Hub yet`,action:'not sent'}]);
+  }
   netRequests(page,turn);
   // The start turn comes before the page is shown: its commands make the objects.
   if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);

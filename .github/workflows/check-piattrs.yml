@@ -1,0 +1,104 @@
+name: PI attributes Lean check
+
+on:
+  push:
+    branches: [wip/piattrs-closeout]
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/DOM/PiAttributes.lean'
+      - '.github/workflows/check-piattrs.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  piattrs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Compile fresh source dependencies and cookie theorems
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset LEAN_PATH LEAN_SRC_PATH
+          proof_dir="$RUNNER_TEMP/piattrs-evidence"
+          mkdir -p "$proof_dir/modules"
+          export LEAN_PATH="$proof_dir/modules"
+          export PROOF_DIR="$proof_dir"
+          {
+            git rev-parse HEAD
+            cat lean-toolchain
+            lean --version
+          } 2>&1 | tee "$proof_dir/source.txt"
+          (ulimit -v 4194304; python3 -u - <<'PY'
+          import hashlib, os, pathlib, re, shlex, subprocess, sys
+          out = pathlib.Path(os.environ['PROOF_DIR'])
+          seen, order = set(), []
+          def visit(name):
+              if name in seen:
+                  return
+              seen.add(name)
+              source = pathlib.Path(name.replace('.', '/') + '.lean')
+              if not source.is_file():
+                  if name.startswith('L4Factoidal.'):
+                      raise SystemExit(f'Missing local dependency: {name}')
+                  return
+              for line in source.read_text().splitlines():
+                  if re.match(r'^\s*(?:public\s+)?import\s+', line):
+                      for dep in re.sub(r'^\s*(?:public\s+)?import\s+', '', line).split('--')[0].split():
+                          visit(dep)
+              order.append(source)
+          visit('L4Factoidal.DOM.PiAttributes')
+          for source in order:
+              target = out / 'modules' / source.with_suffix('.olean')
+              target.parent.mkdir(parents=True, exist_ok=True)
+              with (out / 'source.txt').open('a') as f:
+                  print(hashlib.sha256(source.read_bytes()).hexdigest(), source, file=f)
+              cmd = ['timeout', '--kill-after=10s', '180s', '/usr/bin/time', '-v', '-o', str(out / (source.stem + '-time.txt')), 'lean', '-j1', '-s16384', '-M2048', *(['-DwarningAsError=true'] if source.stem == 'PiAttributes' else []), '-o', str(target), str(source)]
+              print(shlex.join(cmd), flush=True)
+              result = subprocess.run(cmd)
+              print(f'{source}: compile_exit={result.returncode}', flush=True)
+              if result.returncode or not target.is_file():
+                  sys.exit(result.returncode or 1)
+          PY
+          ) 2>&1 | tee "$proof_dir/lean.log"
+      - name: Require individual theorem axiom reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/piattrs-evidence"
+          python3 tools/lean-hygiene-audit.py --build-log "$proof_dir/lean.log" \
+            2>&1 | tee "$proof_dir/hygiene.log"
+          for name in unescape_escape escapeGo_eq unescapeGo_eq fast_eq parseList_zero \
+                      parseList_length parse_length set_invalid remove_absent toggle_force_no_change; do
+            grep -F "'L4Factoidal.DOM.PiAttributes.$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "L4Factoidal.DOM.PiAttributes.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+      - name: Preserve exact-source compiler evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: piattrs-lean-evidence
+          path: |
+            ${{ runner.temp }}/piattrs-evidence/
+            !${{ runner.temp }}/piattrs-evidence/modules/**
+          if-no-files-found: warn
+          retention-days: 30

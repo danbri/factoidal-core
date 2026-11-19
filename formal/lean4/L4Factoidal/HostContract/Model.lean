@@ -115,6 +115,10 @@ def ops : List OpSpec :=
     ⟨"wasmSpecSample", .query, []⟩, ⟨"scriptPlan", .query, []⟩, ⟨"scriptChoices", .query, []⟩,
     ⟨"encodingChoices", .query, []⟩, ⟨"searchPage", .query, []⟩, ⟨"searchChoices", .query, []⟩,
     ⟨"searchSetting", .query, []⟩, ⟨"outsidePage", .query, []⟩,
+    -- what a navigation response does (show or save as a download): decided from its headers
+    ⟨"download", .query, []⟩,
+    -- the complete cookie jar is request data; the host keeps it between calls and on disk
+    ⟨"cookies", .query, []⟩,
     -- the browser's own controls (WebShell): answers from the request
     ⟨"shellText", .query, []⟩, ⟨"shellKey", .query, [.keyboard]⟩, ⟨"shellEdit", .query, [.keyboard]⟩,
     ⟨"shellHit", .query, [.pointer]⟩, ⟨"shellActions", .query, []⟩, ⟨"shellSubmit", .query, []⟩,
@@ -134,13 +138,20 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 69
+#guard opNames.length == 71
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state
 
 /-- The capabilities an operation needs; unknown operations are refused before this is read. -/
 def needsOf (name : String) : List Cap := ((opSpec? name).map (·.needs)).getD []
+
+/-- Kind: contract classification. Says: cookie-jar calculations are registered as queries
+with no host capability needed to calculate the answer. Does not say: that the host's cookie
+storage or network use is pure, or that its persistence obeys the cookie policy. -/
+theorem cookies_contract : kindOf "cookies" = .query ∧ needsOf "cookies" = [] := by decide
+
+#print axioms cookies_contract
 
 /-- Request fields with which a host relaxes an engine policy (record
 docs/designissues/2026-11-14-engine-integration.md, "Theorems across the seams"): `hostCors`

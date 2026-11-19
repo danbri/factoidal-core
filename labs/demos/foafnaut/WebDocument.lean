@@ -3276,6 +3276,27 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   -- A document's subresource requests go through the engine's network rules, step by step.
   if str request "op" == "subresource" then
     return (← stepState fun e => let (e, r) := e.subresource request; (e, .ok r),#[])
+  -- What a navigation's response does: shown as a page, or saved as a download under a safe
+  -- name (`Net.Subresource.navigated`, theorem `safeName_safe`). The host asks before it reads
+  -- the body.
+  -- The browser's cookies for page loads (`Net.Cookies`: `navCookie`, `navSet`, `Jar.persistent`,
+  -- theorems `sentNav_safe`, `persistent_no_session`): the host keeps the jar as text and asks
+  -- at each hop of a navigation; it writes to disk only what `keep` answers.
+  if str request "op" == "cookies" then
+    let jar := Net.Cookies.Jar.ofWire (str request "jar")
+    let now := (str request "now").toNat?.getD 0
+    let answer := match str request "action" with
+      | "request" => JSON.Json.object [("cookie", .string (Net.Cookies.navCookie jar (str request "url") (str request "initiator") now (str request "method")))]
+      | "response" => JSON.Json.object [("jar", .string (Net.Cookies.navSet jar (str request "url") now
+          (((str request "setCookie").splitOn "\n").filter fun f => !f.isEmpty)).wire)]
+      | "keep" => JSON.Json.object [("jar", .string (jar.persistent now).wire)]
+      | _ => JSON.Json.object [("error", .string "cookies: the action is request, response or keep")]
+    return (answer.toString, #[])
+  if str request "op" == "download" then
+    let answer := match Net.Subresource.navigated (str request "contentType") (str request "disposition") (str request "url") with
+      | .show => JSON.Json.object [("action", .string "show")]
+      | .save name => JSON.Json.object [("action", .string "save"), ("name", .string name)]
+    return (answer.toString, #[])
   if str request "op" == "imageLoad" then
     return (← stepState fun e => let (h,r) := loadImage e.holds request; ({e with holds := h},r),#[])
   -- The ops of held images and frame work: a host asks this before it calls them (issue 1274).

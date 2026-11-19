@@ -867,9 +867,19 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     | none => return "0"
     | some p =>
       -- the rules for choosing a navigable: "" and `_self` the form's own frame; a name, the
-      -- first frame of that name. The page itself, `_parent`, `_top` and `_blank` would leave
-      -- or open a top-level document: not done here.
+      -- first frame of that name. A form of the page itself whose target is "", `_self`,
+      -- `_parent` or `_top` navigates the page, and `_blank` a new top-level page: the
+      -- embedder is told (`pageNavigation`, said once as a turn's `navigate`). A form in a frame
+      -- with `_parent`, `_top` or `_blank` is not done here.
       let tl := L4Factoidal.DOM.Dom.asciiLower p.target
+      if doc == 0 && ["", "_self", "_parent", "_top", "_blank"].contains tl then
+        let nav : PageNavigation :=
+          { url := p.url, method := p.method, body := p.body, contentType := p.contentType,
+            target := if tl == "_blank" then "_blank" else "" }
+        set { st with pageNavigation := some nav }
+        return "1"
+      -- a frame's navigation is a GET (no request bodies for frames yet)
+      if p.method != "get" then return "0"
       let target := if tl == "" || tl == "_self" then docEl
         else if tl.startsWith "_" then none
         else (st.frames.find? fun (fr : Nat × Nat) => attrValue? d fr.1 "name" == some p.target).map (·.1)
@@ -1219,6 +1229,11 @@ def textKeyOf (s : State) (k : L4Factoidal.DOM.Editing.KeyInput) : Option (Nat �
       (L4Factoidal.DOM.Editing.textKeyCommandIn multiline k).map fun (c, v) => (f, c, v)
     else none
   | none => none
+
+/-- Implicit submission (`DOM.FormControls.implicitSubmission`) of Enter in the focused
+element, if it is a field that has it. -/
+def implicitOf (s : State) : Option L4Factoidal.DOM.FormControls.Implicit :=
+  (focusedElement s.dom).bind (L4Factoidal.DOM.FormControls.implicitSubmission s.dom)
 
 /-- The focus is in a text control or the selection in an editing host: the keys that
 scroll a page (space, the arrows, Page Up and Down, Home, End) edit or move the caret

@@ -91,6 +91,9 @@ export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCou
   /** The values of the page's running animations and transitions at this turn: [node, longhand, computed text, isTransition]. */
   animated?:[number,string,string,boolean][];
   navigations?:{nodeId:number;url:string}[];frameLoads?:number;
+  /** A navigation of the page itself that Lean planned (a form's submission): the URL, the
+   * method, and for POST the body and its type; target `_blank` for a new tab. Said once. */
+  navigate?:{url:string;method:"get"|"post";body?:string;contentType?:string;target?:string};
   /** Requests the page asked for (XMLHttpRequest): the policy is the engine's; the host only makes them. */
   netRequests?:NetWire[];
   netCancels?:number[];
@@ -420,6 +423,17 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     searchPage:(request:{argument:string;tabs:{url:string;title:string}[];resources:unknown[];state:boolean;search:string})=>
       documentCall("",{...request,op:"searchPage"}) as {title:string;source:string},
     outsidePage:(url:string,hub=false,textnaut=false)=>{try{return documentCall("",{op:"outsidePage",url,hub,textnaut}) as {title:string;source:string};}catch{return undefined;}},
+    /** What a navigation's response does (WebDocument op `download`, Net.Subresource.navigated):
+    shown, or saved under the name Lean made safe. Undefined for an engine from before the op
+    (every response is then shown, as before). */
+    /** The browser's cookies for page loads (WebDocument op `cookies`, Net.Cookies): the jar is
+    text the host keeps; `request` gives a hop's Cookie field, `response` the jar after its
+    Set-Cookie fields, `keep` the part that may be written to disk. Undefined for an engine from
+    before the op (page loads then carry no cookies, as before). */
+    cookies:(request:{action:"request"|"response"|"keep";jar:string;now:string;url?:string;initiator?:string;method?:string;setCookie?:string})=>{
+      try{return documentCall("",{...request,op:"cookies"}) as {cookie?:string;jar?:string;error?:string};}catch{return undefined;}},
+    download:(request:{contentType:string;disposition:string;url:string})=>{
+      try{return documentCall("",{...request,op:"download"}) as {action:"show"}|{action:"save";name:string};}catch{return undefined;}},
     decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
       if(!backends.decode)return undefined;
       const answer=backends.decode(bytes,charset,fallback,locale),i=answer.indexOf("\n");
@@ -544,6 +558,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     iconPrepare:(base64:string,scale:number)=>documentCall("",{op:"iconPrepare",base64,scale}) as TabIcon,
     // A key that the macOS menu did not take: the command of Lean's key table, or null.
     pageKey:(key:number,modifiers:number)=>(documentCall("",{op:"pageKey",key,modifiers}) as {command:number|null}).command,
+    keyTable:(platform:string)=>documentCall("",{op:"keyTable",platform}) as {modifier:string;key:string;command:number}[],
     historyPush:(history:History,url:string)=>documentCall("",{op:"historyPush",history,url}) as HistoryAnswer,
     keyCommand:(platform:string,modifier:string,key:string)=>(documentCall("",{op:"keyCommand",platform,modifier,key}) as {command:number|null}).command,
     pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,

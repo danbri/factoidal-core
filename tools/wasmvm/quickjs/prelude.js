@@ -3560,7 +3560,55 @@
   class Comment extends CharacterData {
     constructor(data = '') { return wrap(chk(n.create(1, String(data)))); }
   }
-  class ProcessingInstruction extends CharacterData { get target() { return str(nodeId(this), 0); } }
+  // A processing instruction's attributes (WICG "declarative partial updates"): read from its
+  // data and written back into it, by Lean (DOM/PiAttributes.lean, web_api op 172), so each
+  // change is a change of the data (one characterData record). A page that does not call
+  // them pays nothing.
+  const piId = pi => {
+    const id = nodeId(pi);
+    if (info(id, 0) !== 7) throw new TypeError('Illegal invocation: ProcessingInstruction');
+    return id;
+  };
+  const piString = value => {
+    if (typeof value === 'symbol') throw new TypeError('A Symbol cannot be converted to a DOMString');
+    return String(value);
+  };
+  const piOp = (mode, id, args = [], flags = 0) =>
+    api(172, [mode, str(id, 3), ...args], flags, false, 'ProcessingInstruction attributes');
+  class ProcessingInstruction extends CharacterData {
+    get target() { return str(nodeId(this), 0); }
+    hasAttributes() { return piOp('a', piId(this)) === '1'; }
+    getAttributeNames() { return splitPrefixed(piOp('p', piId(this))); }
+    getAttribute(name) {
+      const id = piId(this);
+      idlArgs(arguments.length, 1, 'ProcessingInstruction', 'getAttribute');
+      return splitPrefixed(piOp('g', id, [piString(name)]))[0] ?? null;
+    }
+    hasAttribute(name) {
+      const id = piId(this);
+      idlArgs(arguments.length, 1, 'ProcessingInstruction', 'hasAttribute');
+      return piOp('g', id, [piString(name)]) !== '';
+    }
+    setAttribute(name, value) {
+      const id = piId(this);
+      idlArgs(arguments.length, 2, 'ProcessingInstruction', 'setAttribute');
+      chk(n.setText(id, piOp('s', id, [piString(name), piString(value)])));
+    }
+    removeAttribute(name) {
+      const id = piId(this);
+      idlArgs(arguments.length, 1, 'ProcessingInstruction', 'removeAttribute');
+      const [updated] = splitPrefixed(piOp('r', id, [piString(name)]));
+      if (updated !== undefined) chk(n.setText(id, updated));
+    }
+    toggleAttribute(name, force = undefined) {
+      const id = piId(this);
+      idlArgs(arguments.length, 1, 'ProcessingInstruction', 'toggleAttribute');
+      const flags = force === undefined ? 0 : force ? 3 : 1;
+      const [present, updated] = splitPrefixed(piOp('t', id, [piString(name)], flags));
+      if (updated !== undefined) chk(n.setText(id, updated));
+      return present === '1';
+    }
+  }
   class DocumentType extends Node {
     get name() { return str(nodeId(this), 0); }
     get publicId() { return str(nodeId(this), 7) ?? ''; }
@@ -19214,6 +19262,9 @@
     dispatch(target, type, flags) {
       // not an event: the default action of a press, which only Lean asks for
       if (type === '@focus') { pressFocus(target); return ''; }
+      // Enter in a field of a form with no submit button (HTML §4.10.21.2; Lean decided,
+      // DOM.FormControls.implicitSubmission): the form is submitted from itself
+      if (type === '@submit') { const f = wrap(target); if (f) submitForm(f, f); return ''; }
       // the default action of a key in a text control (Lean chose the control and the
       // command, Hosts.PageEvents.key): the command runs on its value (op 179) and fires input
       if (type === '@edit') {
