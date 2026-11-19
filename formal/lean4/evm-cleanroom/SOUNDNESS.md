@@ -70,6 +70,26 @@ auditor's configured standard axiom allowlist. It does **not** verify
 Lean's kernel, code generation, deployed binaries, external dependencies
 or EELS semantics.
 
+## External checks (not proof of conformance)
+
+CI now runs an externally callable Lean bytecode executable, checks success,
+stack underflow, out-of-gas and exact-STOP fuel exhaustion behaviour. The
+`run_toTrace` theorem was updated to cover halting on the last fuel step.
+
+The CI additionally parses a genuine published EELS-generated state-test
+fixture (Shanghai/PUSH0, from an EthereumJS mirror pinned by SHA) and
+deliberately reports **zero executed state tests and zero conformance passes**.
+No post-state root, account effect or receipt is compared by that parser.
+
+A different CI step executes 14 supported bytecode scenarios in the actual
+Lean interpreter and compares **gas deductions only** to the static opcode
+charges in EELS Prague `vm/gas.py` at
+`1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653`.
+That step must pass to keep the PR green. It does not validate exceptional
+outcomes, dynamic costs, world-state, memory expansion or general EELS
+semantics. The external EELS file is an independently maintained reference,
+while selection of our 14 scenarios remains our responsibility.
+
 ## What is not established
 
 1. **No Ethereum specification equivalence.** There is no theorem of the
