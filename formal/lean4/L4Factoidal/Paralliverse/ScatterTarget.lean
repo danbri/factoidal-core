@@ -313,10 +313,137 @@ theorem decoded_scatter_lane {src : ByteArray} {rows : StaticPack.Rows} (h : Pac
   · exact ⟨prior, inactive_lane inputs gid n prior hn (fun hg => active (branch.mp hg)),
       rfl, (if_neg active).symm⟩
 
+/-- Execute each physical lane on the finite destination returned by its predecessor.
+The packet and completed offsets stay immutable throughout the dispatch. -/
+def dispatch (inputs : Inputs) (lanes : List UInt32) (prior : Array UInt32) :
+    Except Fault (Array UInt32) :=
+  lanes.foldlM (fun dst gid => lane inputs gid dst) prior
+
+/-- Kind: dispatch simulation.
+Says: every sequence of physical scatter lanes on an accepted packet and a completed
+scan succeeds and preserves size. Its whole output memory equals the DSL writes of
+its active lanes in the supplied order, including partial and repeated invocations.
+Does not say: that an arbitrary lane list covers the grid. -/
+theorem decoded_scatter_dispatch {src : ByteArray} {rows : StaticPack.Rows}
+    (h : PackWire.decode src = .ok rows) (offsets prior : Array UInt32) (lanes : List UInt32)
+    (offsetCap : rows.length + 1 ≤ offsets.size)
+    (scanned : DSL.view (rows.length + 1) (CountTarget.memory offsets) =
+      (StaticPack.counts rows).scanl (· + ·) 0)
+    (room : (StaticPack.counts rows).sum ≤ prior.size) :
+    ∃ out, dispatch ⟨PackWire.wordView src, offsets⟩ lanes prior = .ok out ∧
+      out.size = prior.size ∧ wordMemory out =
+        (DSL.scatterDispatch rows (CountTarget.memory offsets)).runOrder (wordMemory prior)
+          (CountTarget.activeOrder rows.length lanes) := by
+  induction lanes generalizing prior with
+  | nil => exact ⟨prior, rfl, rfl, rfl⟩
+  | cons gid rest ih =>
+    obtain ⟨next, step, size, effect⟩ := decoded_scatter_lane h offsets prior gid offsetCap scanned room
+    have nextRoom : (StaticPack.counts rows).sum ≤ next.size := by rw [size]; exact room
+    obtain ⟨out, remaining, finalSize, finalMem⟩ := ih next nextRoom
+    refine ⟨out, ?_, finalSize.trans size, ?_⟩
+    · change (lane ⟨PackWire.wordView src, offsets⟩ gid prior).bind
+        (fun dst => dispatch ⟨PackWire.wordView src, offsets⟩ rest dst) = .ok out
+      rw [step]
+      exact remaining
+    · by_cases active : gid.toNat < rows.length
+      · have order : CountTarget.activeOrder rows.length (gid :: rest) =
+            gid.toNat :: CountTarget.activeOrder rows.length rest := by
+          simp [CountTarget.activeOrder, active]
+        rw [finalMem, effect, if_pos active, order] <;> rfl
+      · have order : CountTarget.activeOrder rows.length (gid :: rest) =
+            CountTarget.activeOrder rows.length rest := by simp [CountTarget.activeOrder, active]
+        rw [finalMem, effect, if_neg active, order]
+
+/-- Kind: finite target refinement.
+Says: every permutation of the rounded physical scatter grid completes without fault,
+preserves the destination size and gives the DSL's entire sequential scatter memory.
+The completed scan supplies the disjoint row footprints used for this equality.
+Does not say: that a shader compiler or device implements the instruction semantics. -/
+theorem decoded_scatter_grid_eq_dsl {src : ByteArray} {rows : StaticPack.Rows}
+    (h : PackWire.decode src = .ok rows) (offsets prior : Array UInt32) (lanes : List UInt32)
+    (offsetCap : rows.length + 1 ≤ offsets.size)
+    (scanned : DSL.view (rows.length + 1) (CountTarget.memory offsets) =
+      (StaticPack.counts rows).scanl (· + ·) 0)
+    (room : (StaticPack.counts rows).sum ≤ prior.size) (order : CountTarget.ValidGrid rows.length lanes) :
+    ∃ out, dispatch ⟨PackWire.wordView src, offsets⟩ lanes prior = .ok out ∧
+      out.size = prior.size ∧ wordMemory out =
+        (DSL.scatterDispatch rows (CountTarget.memory offsets)).runSeq (wordMemory prior) := by
+  obtain ⟨out, run, size, effect⟩ := decoded_scatter_dispatch h offsets prior lanes offsetCap scanned room
+  have active := CountTarget.activeOrder_perm (PackWire.decode_row_count_le h) order
+  have disjoint := DSL.scatter_raceFree rows _ (scanned_starts rows offsets scanned)
+  exact ⟨out, run, size, effect.trans
+    ((DSL.scatterDispatch rows (CountTarget.memory offsets)).runOrder_perm disjoint _ active _)⟩
+
+/-- Kind: finite observation.
+Says: extracting an in-bounds prefix from an array reads precisely those successive
+words in its memory view.
+Does not say: that an arbitrary requested prefix fits the array. -/
+private theorem extract_readback (a : Array UInt32) (n : Nat) (fits : n ≤ a.size) :
+    (a.extract 0 n).toList = StaticPack.readback (wordMemory a) 0 n := by
+  apply List.ext_getElem
+  · simp only [Array.length_toList, Array.size_extract, Nat.min_eq_left fits, Nat.sub_zero,
+      StaticPack.readback, List.length_map, List.length_range']
+  · intro i _ hi
+    have hn : i < n := by simpa only [StaticPack.readback, List.length_map, List.length_range'] using hi
+    have ha := Nat.lt_of_lt_of_le hn fits
+    simp only [Array.getElem_toList, Array.getElem_extract, StaticPack.readback, List.getElem_map,
+      List.getElem_range', Nat.one_mul, Nat.zero_add, wordMemory, Array.getElem?_eq_getElem ha,
+      Option.getD_some]
+
+/-- Kind: finite target readback.
+Says: every valid padded scatter grid produces a finite array of the original size.
+The actual terminal offset selects exactly the CPU specification's words in the
+array. Every destination slot from that offset onwards retains its prior value.
+Does not say: that GPU readback, synchronisation or execution realises the model. -/
+theorem decoded_scatter_grid_eq_packSpec {src : ByteArray} {rows : StaticPack.Rows}
+    (h : PackWire.decode src = .ok rows) (offsets prior : Array UInt32) (lanes : List UInt32)
+    (offsetCap : rows.length + 1 ≤ offsets.size)
+    (scanned : DSL.view (rows.length + 1) (CountTarget.memory offsets) =
+      (StaticPack.counts rows).scanl (· + ·) 0)
+    (room : (StaticPack.counts rows).sum ≤ prior.size) (order : CountTarget.ValidGrid rows.length lanes) :
+    ∃ (out : Array UInt32) (terminal : UInt32),
+      dispatch ⟨PackWire.wordView src, offsets⟩ lanes prior = .ok out ∧ out.size = prior.size ∧
+      offsets[rows.length]? = some terminal ∧ terminal.toNat = (StaticPack.counts rows).sum ∧
+      (out.extract 0 terminal.toNat).toList = StaticPack.packSpec rows ∧
+      ∀ i, terminal.toNat ≤ i → out[i]? = prior[i]? := by
+  obtain ⟨out, run, size, memory⟩ :=
+    decoded_scatter_grid_eq_dsl h offsets prior lanes offsetCap scanned room order
+  rw [DSL.scatter_seq_eq, scanned_starts rows offsets scanned] at memory
+  have last := congrArg List.getLast? scanned
+  have splitLast : DSL.view (rows.length + 1) (CountTarget.memory offsets) =
+      DSL.view rows.length (CountTarget.memory offsets) ++ [CountTarget.memory offsets rows.length] := by
+    simp [DSL.view, List.range_succ]
+  rw [splitLast, List.getLast?_concat, StaticPack.scan_terminal] at last
+  have inBounds : rows.length < offsets.size := by omega
+  have slot := Array.getElem?_eq_getElem inBounds
+  have total : offsets[rows.length].toNat = (StaticPack.counts rows).sum := by
+    simpa [CountTarget.memory, slot] using last
+  refine ⟨out, offsets[rows.length], run, size, slot, total, ?_, ?_⟩
+  · have fits : (StaticPack.counts rows).sum ≤ out.size := by rw [size]; exact room
+    rw [total, extract_readback _ _ fits, memory]
+    simpa only [StaticPack.packParallel, ← List.sum_eq_foldl_nat] using
+      StaticPack.packParallel_eq_packSpec rows (wordMemory prior)
+  · intro i hi
+    rw [total] at hi
+    have frame : wordMemory out i = wordMemory prior i := by
+      rw [memory]
+      exact StaticPack.scatter_frame rows 0 i (wordMemory prior) (Or.inr (by simpa using hi))
+    by_cases hp : i < prior.size
+    · have ho : i < out.size := by rw [size]; exact hp
+      rw [Array.getElem?_eq_getElem ho, Array.getElem?_eq_getElem hp]
+      simpa only [wordMemory, Array.getElem?_eq_getElem ho, Array.getElem?_eq_getElem hp,
+        Option.getD_some, Option.some.injEq] using frame
+    · have hp' : prior.size ≤ i := Nat.le_of_not_gt hp
+      have ho' : out.size ≤ i := by rw [size]; exact hp'
+      rw [Array.getElem?_eq_none ho', Array.getElem?_eq_none hp']
+
 #print axioms inactive_lane
 #print axioms copy_words
 #print axioms scanned_starts
 #print axioms decoded_scatter_lane
+#print axioms decoded_scatter_dispatch
+#print axioms decoded_scatter_grid_eq_dsl
+#print axioms decoded_scatter_grid_eq_packSpec
 
 -- Alternate offsets and an inactive lane exercise the actual checked bindings.
 #guard match lane ⟨#[1, 2, 4, 3, 1, 0, 2, 8, 9, 99, 7], #[2, 0]⟩ 0 #[17, 17, 17, 17] with

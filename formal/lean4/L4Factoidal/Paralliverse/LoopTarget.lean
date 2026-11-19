@@ -269,7 +269,7 @@ private def executeStmt (inputs : Inputs) (gid : UInt32) : Pending → State →
     match bound.eval inputs gid index s with
     | .error fault => .error fault
     | .ok n =>
-      if h : n.toNat ≤ maximum then executeStmt inputs gid (.iterations n.toNat 0 body rest) s
+      if _h : n.toNat ≤ maximum then executeStmt inputs gid (.iterations n.toNat 0 body rest) s
       else .error (.loopLimit n.toNat maximum)
   | .iterations 0 _ _ rest, s => executeStmt inputs gid rest s
   | .iterations (remaining + 1) next body rest, s =>
@@ -319,7 +319,18 @@ private theorem stmt_cont (inputs : Inputs) (gid : UInt32) (stmt : Stmt) (index 
   | assign slot value =>
     rw [executeStmt, Stmt.exec]
     cases value.eval inputs gid index s <;> rfl
-  | storeWord address value => rw [executeStmt] <;> rfl
+  | storeWord address value =>
+    rw [executeStmt, Stmt.exec] <;> cases address.eval inputs gid index s with
+    | error fault => rfl
+    | ok i =>
+      cases value.eval inputs gid index s with
+      | error fault => rfl
+      | ok v =>
+        change (match store s i v with
+          | .error fault => .error fault
+          | .ok next => executeStmt inputs gid rest next) =
+            (store s i v).bind (executeStmt inputs gid rest)
+        cases store s i v <;> rfl
   | seq a b ha hb =>
     rw [executeStmt, ha]
     change (a.exec inputs gid index s).bind (executeStmt inputs gid (.run index b rest)) =

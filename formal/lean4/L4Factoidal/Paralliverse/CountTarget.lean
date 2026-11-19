@@ -357,6 +357,17 @@ private theorem active_range (n m : Nat) (h : n ≤ m) :
     rw [Nat.add_succ, List.range_succ, List.filter_append, ih (by omega)]
     simp [inactive]
 
+/-- Kind: launch schedule refinement.
+Says: removing padded lanes from a valid finite launch leaves exactly one copy
+of every active row ID, in some order.
+Does not say: which order a device uses or when its writes become visible. -/
+theorem activeOrder_perm {n : Nat} {lanes : List UInt32}
+    (bound : n ≤ PackWire.maxRows) (order : ValidGrid n lanes) :
+    (activeOrder n lanes).Perm (List.range n) := by
+  have active := List.Perm.filter (fun i => decide (i < n)) order
+  rw [active_range _ _ (grid_bounds _ bound).1] at active
+  exact active
+
 /-- Kind: finite target refinement.
 Says: on every permitted ordering of the padded physical launch, count finishes
 without a buffer fault. The entire resulting finite destination, including any
@@ -379,6 +390,7 @@ theorem count_grid_eq_dsl (packet prior : Array UInt32) (rows : StaticPack.Rows)
 #print axioms dispatch_count
 #print axioms grid_bounds
 #print axioms canonical_valid
+#print axioms activeOrder_perm
 #print axioms count_grid_eq_dsl
 
 end L4Factoidal.Paralliverse.CountTarget
