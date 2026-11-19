@@ -89,7 +89,7 @@ for tracked implementation milestones.
    The relation and decoder share the opcode-width function; independent
    EELS equivalence is not yet proved.
 4. [`EVMCleanroom/Memory.lean`](EVMCleanroom/Memory.lean): sparse
-   zero-filled byte memory, big-endian reads/writes and basic proofs.
+   zero-filled byte memory, big-endian reads/writes, read-after-write and noninterference proofs, and a theorem that 32-byte writes cannot change allocation size.
 5. [`EVMCleanroom/MemoryGas.lean`](EVMCleanroom/MemoryGas.lean): independent
    EVM memory-expansion price model, monotonicity and path-independence
    proofs for *arbitrarily many* memory-growth events, and zero-length
