@@ -991,5 +991,5 @@ lean_lib CollectionBoundProofs where
 -- Cross-zone adapter proofs (issues #614, #616, #618, #620 and #621), outside runtime imports.
 lean_lib CrossZoneProofs where
   roots := #[`L4Factoidal.VC.CidKeyTheorems, `L4Factoidal.Rendering.RdfViewTheorems,
-             `L4Factoidal.SPARQL.StoreEndpointTheorems, `L4Factoidal.SPARQL.StoreReplayTheorems,
+             `L4Factoidal.SPARQL.StoreEndpointTheorems, `L4Factoidal.SPARQL.StoreReplayTheorems, `L4Factoidal.SPARQL.StoreCommitReplayTheorems,
              `L4Factoidal.SPARQL.GraphStoreMergeTheorems, `L4Factoidal.SPARQL.LogEpochTheorems]
