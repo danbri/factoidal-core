@@ -175,6 +175,22 @@ theorem BilledTrace.toTrace {s out : State} {spent : Nat}
 #print axioms BilledTrace.gas_exact
 #print axioms BilledTrace.toTrace
 
+/-- Even if a PUSH1 data byte equals the JUMPDEST opcode (0x5b),
+    it is not an executable instruction boundary. This holds for every
+    possible immediate byte, not just a particular example. -/
+theorem push1_payload_not_jumpdest (payload : UInt8) :
+    validJumpdest #[0x60, payload, 0x5b] 1 = false := by
+  rfl
+
+/-- The genuine JUMPDEST just after that immediate is executable.
+    Together these are the minimal witness to PUSH-aware jump analysis. -/
+theorem push1_following_jumpdest (payload : UInt8) :
+    validJumpdest #[0x60, payload, 0x5b] 2 = true := by
+  rfl
+
+#print axioms push1_payload_not_jumpdest
+#print axioms push1_following_jumpdest
+
 #print axioms word_add_comm
 #print axioms commit_stack_bounded
 #print axioms commit_gas_nonincreasing
