@@ -19,8 +19,8 @@ inductive Op : Shape Unit → Shape Unit → Type where
 /-- The ordinary reference functions. Word arithmetic has `UInt32` wraparound. -/
 def reference {a b : Shape Unit} : Op a b → Shape.Value base a → Shape.Value base b
   | .pack, xs => StaticPack.packSpec xs
-  | .multiply factor, x => x * factor
-  | .add offset, x => x + offset
+  | .multiply factor, x => UInt32.mul x factor
+  | .add offset, x => UInt32.add x offset
 
 /-- The packing implementation runs the existing count, scan and scatter program.
 Its canonical order is valid for every input length. -/
@@ -29,8 +29,8 @@ def implementation (prior : DSL.Initial) {a b : Shape Unit} :
   | .pack, xs =>
     let e : DSL.Env := ⟨xs, prior, DSL.canonical xs.length⟩
     (DSL.eval e DSL.packProgram ()).read
-  | .multiply factor, x => x * factor
-  | .add offset, x => x + offset
+  | .multiply factor, x => UInt32.mul x factor
+  | .add offset, x => UInt32.add x offset
 
 /-- Kind: primitive refinement.
 Says: the closed backend's actual packing primitive and its modular arithmetic
@@ -71,8 +71,9 @@ Does not say: that the source term already contains a single map. -/
 private theorem eval_affine (factor offset : UInt32) (xs : List UInt32) :
     Program.eval base (@reference) (affine factor offset) xs =
       xs.map (fun x => x * factor + offset) := by
-  simp only [affine, Program.eval, List.map_map] <;>
-    (apply List.map_congr_left; intro x _; simp [Function.comp_def, Program.eval, reference])
+  simp only [affine, Program.eval]
+  change (xs.map (fun x : UInt32 => x * factor)).map (fun x : UInt32 => x + offset) = _
+  exact List.map_map (f := fun x : UInt32 => x * factor) (g := fun x : UInt32 => x + offset) (l := xs)
 
 /-- Kind: standalone non-packing refinement.
 Says: on arbitrary words, the fused task-based CPU program computes the modular
