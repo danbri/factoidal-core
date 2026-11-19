@@ -5,9 +5,9 @@ on:
     branches: [wip/timer-partition-proofs]
   pull_request:
     paths:
-      - 'formal/lean4/L4Factoidal/EventLoop/TimerPartitionTheorems.lean'
-      - 'formal/lean4/L4Factoidal/Net/BlobQuotaTheorems.lean'
-      - 'formal/lean4/L4Factoidal/RDF/CollectionBoundTheorems.lean'
+      - 'formal/lean4/**'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
       - '.github/workflows/check-timer-partition.yml'
   workflow_dispatch: {}
 
@@ -70,7 +70,10 @@ jobs:
           visit('L4Factoidal.EventLoop.TimerPartitionTheorems')
           visit('L4Factoidal.Net.BlobQuotaTheorems')
           visit('L4Factoidal.RDF.CollectionBoundTheorems')
-          strict = {'TimerPartitionTheorems', 'BlobQuotaTheorems', 'CollectionBoundTheorems'}
+          visit('L4Factoidal.VC.CidKeyTheorems')
+          visit('L4Factoidal.Rendering.RdfViewTheorems')
+          strict = {'TimerPartitionTheorems', 'BlobQuotaTheorems', 'CollectionBoundTheorems', 'CidKeyTheorems', 'RdfViewTheorems'}
+          failed = False
           for source in order:
               target = out / 'modules' / source.with_suffix('.olean')
               target.parent.mkdir(parents=True, exist_ok=True)
@@ -81,7 +84,8 @@ jobs:
               result = subprocess.run(cmd)
               print(f'{source}: compile_exit={result.returncode}', flush=True)
               if result.returncode or not target.is_file():
-                  sys.exit(result.returncode or 1)
+                  failed = True
+          sys.exit(1 if failed else 0)
           PY
           ) 2>&1 | tee "$proof_dir/lean.log"
       - name: Require individual theorem axiom reports
@@ -105,6 +109,13 @@ jobs:
             grep -F "'L4Factoidal.RDF.$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.RDF.Collections.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in L4Factoidal.VC.Cryptosuite.resolvePublicKey_cid_document \
+                      L4Factoidal.Rendering.RdfView.toDOM_graph_length_le \
+                      L4Factoidal.Rendering.RdfView.parse_graph_and_caps; do
+            grep -F "'$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "$name" >> "$proof_dir/checked-theorems.txt"
           done
       - name: Preserve exact-source compiler evidence
         if: always()

@@ -987,3 +987,7 @@ lean_lib BlobQuotaProofs where
 -- Collection result cardinality proofs (issue #611).
 lean_lib CollectionBoundProofs where
   roots := #[`L4Factoidal.RDF.CollectionBoundTheorems]
+
+-- Cross-zone adapter proofs (issues #614 and #616), outside runtime imports.
+lean_lib CrossZoneProofs where
+  roots := #[`L4Factoidal.VC.CidKeyTheorems, `L4Factoidal.Rendering.RdfViewTheorems]
