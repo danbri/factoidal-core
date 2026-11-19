@@ -104,8 +104,7 @@ that a contract meets a financial or security invariant.
    state-test schema; always preserve unsupported tests in the denominator.
 4. Add a genuinely separate reference transition relation (do not reuse
    our current opcode dispatch to define the reference's result).
-5. Start with a fork-scoped arithmetic/flow subset and **then** add
-   memory bytes, MLOAD/MSTORE/RETURN/REVERT, storage, CALL and accounts.
+5. The first fork-scoped memory slice now executes MLOAD, MSTORE, MSTORE8 and MSIZE, with narrow external EELS gas checks. Next implement RETURN/REVERT and exceptional gas handling, storage, CALL and accounts; prove EELS refinement for each supported operation.
 6. Select fixed public mainnet transactions with small reproducible
    state witnesses, advance first to genuine state-test replay, then
    mainnet block/transaction replay.
