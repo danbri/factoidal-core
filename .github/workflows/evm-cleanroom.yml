@@ -85,14 +85,14 @@ jobs:
       - name: Install independent EthereumJS EVM 10.1.3
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          npm install --prefix scripts/differential --ignore-scripts --no-audit --no-fund
+          npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
           npm ls --prefix scripts/differential --depth=0
           sha256sum scripts/differential/package-lock.json
       - name: Generate versioned synthetic corpus and compare independent runtimes
         working-directory: formal/lean4/evm-cleanroom
         run: |
           mkdir -p .lake/differential
-          node scripts/differential/generate.mjs --seed 20261119 --count 240 --out .lake/differential/corpus.jsonl | tee .lake/differential/generator.json
+          node scripts/differential/generate.mjs --seed 20261119 --count 4096 --out .lake/differential/corpus.jsonl | tee .lake/differential/generator.json
           node scripts/differential/run.mjs --corpus .lake/differential/corpus.jsonl --out .lake/differential/report.json --failures .lake/differential/failures.jsonl
       - name: Archive exact corpus, dependencies, results and disagreements
         if: always()
