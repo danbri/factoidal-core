@@ -77,6 +77,37 @@ for (const t of tests) {
   results.push({control:t.name,detected:true,reproduced:true,caseId:t.base.id,
     differing:actual,report:reportPath});
 }
+// Third negative control: valid, successful EVM execution whose allocated
+// memory exceeds our 4 KiB observation window. Both engines may agree on
+// their visible prefix, but we MUST refuse a full-conformance pass.
+const largeMemory={
+  schemaVersion:1,id:'harness-memory-truncation',
+  kind:'synthetic-bytecode',category:'selftest-memory-truncation',
+  hardfork:'prague',hex:'6110005100',gas:'1000',fuel:'6',
+  expectedDisposition:'ok'
+};
+const truncInput=resolve(outputDir,'truncated-memory.jsonl');
+const truncReport=resolve(outputDir,'truncated-memory.report.json');
+const truncFailures=resolve(outputDir,'truncated-memory.failures.jsonl');
+writeFileSync(truncInput,JSON.stringify(largeMemory)+'\n');
+const truncProc=spawnSync(process.execPath,[runner,
+  '--corpus',truncInput,'--out',truncReport,'--failures',truncFailures
+],{encoding:'utf8',timeout:120000,maxBuffer:1024*1024});
+if(truncProc.status!==1||truncProc.error){
+  throw Error('truncated-memory control not rejected: exit='+truncProc.status+
+    ' stderr='+truncProc.stderr);
+}
+const trunc=JSON.parse(readFileSync(truncReport,'utf8'));
+const truncCases=readFileSync(truncFailures,'utf8').trim().split('\n').map(JSON.parse);
+if(trunc.status!=='incomplete'||trunc.compared!==1||trunc.passed!==0||
+   trunc.mismatches!==0||trunc.oracleErrors!==0||trunc.unsupported!==1||
+   truncCases.length!==1||truncCases[0]?.kind!=='unsupported'||
+   truncCases[0]?.reason!=='memory-snapshot-truncated'){
+  throw Error('truncated memory not classified as unsupported: '+JSON.stringify(trunc).slice(0,900));
+}
+results.push({control:'truncated-memory-is-unsupported',detected:true,
+  caseId:largeMemory.id,classification:'unsupported',report:truncReport});
+
 const output={status:'pass',kind:'harness-negative-controls',
   controls:results,allDetected:true};
 writeFileSync(resolve(outputDir,'selftest-summary.json'),JSON.stringify(output,null,2)+'\n');
