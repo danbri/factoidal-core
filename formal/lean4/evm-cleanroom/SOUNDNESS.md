@@ -12,12 +12,13 @@ independent specification refinement.
 - `Word` is a natural-number residue below `2^256`; `word` reduces
   arbitrary naturals modulo that modulus.
 - `Stack` carries a proof that its list has at most 1,024 items.
-- `State` contains bytecode, program counter, stack, gas, halted flag and
-  a coarse pre-/post-Shanghai profile.
+- `State` contains bytecode, program counter, stack, gas, halted flag,
+  a coarse pre-/post-Shanghai profile and sparse functional byte memory.
 - `planStep` calculates the next program counter, stack, gas cost and halt
   bit, or refuses a locally invalid instruction.
 - `commit` checks the stack limit and available gas; `step` either rejects
-  a plan or applies it through this one controlled boundary.
+  a plan or applies it through this one controlled boundary. Planned
+  memory changes are applied only after a successful gas check.
 - `run` is fuel-limited and reports `stepLimit` if fuel is exhausted.
   Errors discard the local state in the result type. No transaction
   rollback or exceptional-halt gas-consumption rules are represented.
@@ -40,6 +41,7 @@ exposed to the axiom audit in the dedicated workflow:
 | All successful actual runs preserve code and never increase gas | `run_code_unchanged`, `run_gas_nonincreasing` | Derived from the preceding bridge |
 | A PUSH1 payload is never a jump destination, for **any** payload byte | `push1_payload_not_jumpdest`, `push1_following_jumpdest` | Local PUSH1 semantics |
 | Accepted JUMPDESTs occur **exactly** at in-bounds decoded opcode boundaries, for **arbitrary bytecode** including PUSH1–32 immediate skipping | `validJumpdest_sound`, `validJumpdest_complete`, `scanJumpdest_sound`, `ForwardPath.scan_accepts`, `opcodeWidth_bounds` | Local soundness and completeness; decoder and relation share opcode-width definition, so independent EELS equivalence remains unproved |
+| Memory expands monotonically; byte stores preserve the high-water mark; stores can be read back at allocated addresses | `Memory.expand_monotone`, `Memory.writeByte_preserves_words`, `Memory.readByte_after_write`, `Memory.empty_expand_zero` | About sparse functional byte semantics, not a proof of all MLOAD/MSTORE effects |
 | EVM memory cost is monotone | `MemoryGas.cost_monotone` | Mathematical memory pricing only |
 | Memory expansion cannot be undercharged by subdivision | `MemoryGas.expansion_path_independent`, `MemoryGas.ExpansionTrace.exact_total` | Every finite monotone allocation sequence; not yet connected to opcodes |
 | Empty memory access costs no expansion gas at any offset | `MemoryGas.zero_length_access_free` | Including offset `2^256-1` |
@@ -85,9 +87,11 @@ A different CI step executes 14 supported bytecode scenarios in the actual
 Lean interpreter and compares **gas deductions only** to the static opcode
 charges in EELS Prague `vm/gas.py` at
 `1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653`.
-That step must pass to keep the PR green. It does not validate exceptional
-outcomes, dynamic costs, world-state, memory expansion or general EELS
-semantics. The external EELS file is an independently maintained reference,
+That step must pass to keep the PR green. A separate runner exercises
+six MLOAD/MSTORE/MSTORE8/MSIZE scenarios and extreme-offset refusal,
+comparing *actual* Lean results with EELS-derived dynamic memory pricing
+and expected byte contents. Both external checks are narrow: they do not
+establish a formal refinement theorem or execute full state tests. The external EELS file is an independently maintained reference,
 while selection of our 14 scenarios remains our responsibility.
 
 ## What is not established
@@ -96,10 +100,10 @@ while selection of our 14 scenarios remains our responsibility.
    form `step_lean ≈ step_EELS`, no EELS differential-test runner, and
    no complete opcode semantics. A perfectly proved wrong price or wrong
    opcode result remains a wrong Ethereum implementation.
-2. **No complete gas or exception model.** Memory expansion prices are
-   formalized separately but `MLOAD`/`MSTORE` and memory bytes are absent.
-   State rollback, exceptional gas burning, refunds, warm/cold storage
-   access and calls remain outside the model.
+2. **No complete gas or exception model.** Byte-addressed memory,
+   MLOAD/MSTORE/MSTORE8/MSIZE and expansion pricing are implemented, but
+   not formally refined to EELS. State rollback, exceptional gas burning,
+   refunds, warm/cold storage access and calls remain outside the model.
 3. **No complete protocol fork model.** The profile gates only PUSH0.
    Correct execution of the historical chain requires every relevant
    hard-fork transition, including other gas and opcode changes.
@@ -132,8 +136,8 @@ while selection of our 14 scenarios remains our responsibility.
    success and failure conditions.
 2. Pin upstream reference commits and run actual generated
    `execution-spec-tests` vectors and metamorphic differential tests.
-3. Integrate byte-addressed memory and the proven expansion function
-   into MLOAD/MSTORE/MSTORE8, with proved expansion/rollback accounting.
+3. Establish opcode-level EELS refinement for implemented memory reads,
+   writes and expansion charges, including exception and rollback semantics.
 4. Independently check the shared opcode-width semantics and JUMPDEST
    behaviour against EELS. Local soundness and completeness have both
    been proved for all finite bytecode arrays.
