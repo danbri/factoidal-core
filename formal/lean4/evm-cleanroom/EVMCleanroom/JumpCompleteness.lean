@@ -75,7 +75,7 @@ theorem ForwardPath.scan_accepts {code : Array UInt8}
     | zero => omega
     | succ remaining =>
       simp [scanJumpdest, Nat.not_le_of_gt htarget]
-      exact hopcode
+      simpa only [Array.getD] using hopcode
   | @step pc target count hin rest ih =>
     cases fuel with
     | zero => omega
