@@ -83,7 +83,7 @@ const evm = await createEVM({common});
 const tested = {};
 const failures = [];
 let passes = 0, errors = 0;
-const fields = ['status','gasRemaining','pc','halted','stack','memorySizeBytes','memoryWord0'];
+const fields = ['status','gasRemaining','pc','halted','stack','memorySizeBytes','memoryWord0','memoryObservedBytes','memoryTruncated','memoryHex'];
 const normalizeError = error => {
   const s=String(error).toLowerCase();
   if (s.includes('out of gas')) return 'outOfGas';
@@ -116,14 +116,22 @@ for (let i = 0; i < cases.length; ++i) {
       const words=BigInt(rs.memoryWordCount);
       const word0=words===0n ? 0n :
         BigInt('0x' + Buffer.from(rs.memory.read(0,32)).toString('hex'));
+      const allocatedBytes=32n * words;
+      const cap=4096n;
+      const observedBytes=allocatedBytes < cap ? allocatedBytes : cap;
+      const snapshotHex=observedBytes===0n ? '' :
+        Buffer.from(rs.memory.read(0, Number(observedBytes))).toString('hex');
       expected={
         status:'ok',
         gasRemaining:(gasLimit-BigInt(result.executionGasUsed)).toString(),
         pc:BigInt(rs.programCounter).toString(),
         halted:true,
         stack,
-        memorySizeBytes:(32n * words).toString(),
-        memoryWord0:word0.toString()
+        memorySizeBytes:allocatedBytes.toString(),
+        memoryWord0:word0.toString(),
+        memoryObservedBytes:observedBytes.toString(),
+        memoryTruncated:allocatedBytes > cap,
+        memoryHex:snapshotHex
       };
     }
   } catch(e) {
@@ -134,6 +142,11 @@ for (let i = 0; i < cases.length; ++i) {
   const observed=leanResults[i];
   const comparisonFields=expected.status === 'ok' ? fields : ['status','error'];
   const differing=comparisonFields.filter(field => JSON.stringify(expected[field]) !== JSON.stringify(observed[field]));
+  // A successful large-memory execution cannot be counted as fully compared
+  // when the independently observed memory snapshot was truncated.
+  if (expected.status==='ok' && (expected.memoryTruncated || observed.memoryTruncated)) {
+    differing.push('memory-snapshot-truncated');
+  }
   // Deliberate EVM exceptions are legitimate test expectations, but they
   // count only if BOTH independent engines agree with the declared category.
   if (item.expectedDisposition === 'error') {
