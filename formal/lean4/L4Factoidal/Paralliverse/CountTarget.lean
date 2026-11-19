@@ -109,7 +109,7 @@ private theorem exec_header (packet dst : Array UInt32) (gid n : UInt32)
   change (loadWord packet 1).bind (fun word =>
     if gid < word then (loadWord packet (4 + 2 * gid)).bind (fun v => storeWord dst gid v)
     else .ok dst) = _
-  rw [hn]
+  simp only [hn, Except.bind]
 
 /-- Kind: instruction-level refinement.
 Says: every physical u32 lane executes without a fault given valid source words
@@ -180,6 +180,7 @@ theorem dispatch_count (packet prior : Array UInt32) (rows : StaticPack.Rows)
       · have order : activeOrder rows.length (gid :: rest) =
             gid.toNat :: activeOrder rows.length rest := by simp [activeOrder, active]
         rw [finalMem, effect, if_pos active, order]
+        simp [Dispatch.runOrder, DSL.countDispatch, applyWrites]
       · have order : activeOrder rows.length (gid :: rest) =
             activeOrder rows.length rest := by simp [activeOrder, active]
         rw [finalMem, effect, if_neg active, order]
@@ -229,7 +230,7 @@ private theorem active_range (n m : Nat) (h : n ≤ m) :
     exact decide_eq_true (List.mem_range.mp hi)
   | succ k ih =>
     have inactive : ¬ n + k < n := by omega
-    rw [Nat.add_succ, List.range_succ, List.filter_append, ih]
+    rw [Nat.add_succ, List.range_succ, List.filter_append, ih (by omega)]
     simp [inactive]
 
 /-- Kind: finite target refinement.

@@ -21,7 +21,8 @@ private theorem readU32_fits (src : ByteArray) (i : Nat) : readU32 src i < UInt3
   have h1 : src[4*i + 1]!.toNat < 256 := UInt8.toNat_lt _
   have h2 : src[4*i + 2]!.toNat < 256 := UInt8.toNat_lt _
   have h3 : src[4*i + 3]!.toNat < 256 := UInt8.toNat_lt _
-  unfold readU32
+  change src[4*i]!.toNat + 256 * src[4*i + 1]!.toNat +
+    65536 * src[4*i + 2]!.toNat + 16777216 * src[4*i + 3]!.toNat < 4294967296
   omega
 
 /-- Bridge.
@@ -51,7 +52,9 @@ private theorem accepted {src : ByteArray} {rows : Rows} (h : decode src = .ok r
   split at h <;> try contradiction
   split at h <;> try contradiction
   split at h <;> try contradiction
+  dsimp only at h
   split at h <;> try contradiction
+  try dsimp only at h
   split at h <;> try contradiction
   split at h <;> try contradiction
   exact ⟨by omega, by omega, by omega, by omega, ⟨_, by assumption, (Except.ok.inj h).symm⟩⟩
