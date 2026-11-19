@@ -38,7 +38,8 @@ exposed to the axiom audit in the dedicated workflow:
 | Billed traces conserve all spent gas | `BilledTrace.gas_exact`, `BilledTrace.toTrace` | Bill constructed from opcode plans |
 | Successful *actual runs* correspond to these traces and bills | `run_toTrace`, `Trace.canBill`, `run_has_exact_bill` | Bridges the fuel-limited executable driver, not EELS |
 | All successful actual runs preserve code and never increase gas | `run_code_unchanged`, `run_gas_nonincreasing` | Derived from the preceding bridge |
-| A PUSH1 payload is not a jump destination for **any** payload byte | `push1_payload_not_jumpdest`, `push1_following_jumpdest` | General PUSH1 lemma, not a proof of full PUSH1–32 decoder correctness |
+| A PUSH1 payload is never a jump destination, for **any** payload byte | `push1_payload_not_jumpdest`, `push1_following_jumpdest` | Local PUSH1 semantics |
+| Accepted JUMPDESTs occur only at decoded opcode boundaries, for **arbitrary bytecode**, including PUSH1–32 immediate skipping | `validJumpdest_sound`, `scanJumpdest_sound`, `opcodeWidth_bounds` | Sound against independently stated *relation* `InstructionStart`, but relation shares opcode-width definition; external conformance and completeness unproved |
 | EVM memory cost is monotone | `MemoryGas.cost_monotone` | Mathematical memory pricing only |
 | Memory expansion cannot be undercharged by subdivision | `MemoryGas.expansion_path_independent`, `MemoryGas.ExpansionTrace.exact_total` | Every finite monotone allocation sequence; not yet connected to opcodes |
 | Empty memory access costs no expansion gas at any offset | `MemoryGas.zero_length_access_free` | Including offset `2^256-1` |
@@ -90,9 +91,13 @@ or EELS semantics.
 6. **No production-security guarantee.** IO, resource exhaustion,
    implementation side channels, peer attacks and host-runtime behaviour
    remain unmodelled. The program uses Lean's trusted runtime to execute.
-7. **No full JUMPDEST soundness/completeness result.** The generic theorem
-   currently covers a PUSH1 payload. A theorem for arbitrary PUSH1–32
-   streams remains a separate obligation.
+7. **JUMPDEST soundness is internal, not external conformance.**
+   `validJumpdest_sound` proves every locally accepted jump target is a
+   declarative instruction boundary with opcode `0x5b`, for arbitrary
+   byte arrays and PUSH1–32 immediate widths. But the declarative
+   boundary relation shares `opcodeWidth` with the executable scanner;
+   neither *completeness* of this scanner nor independent refinement to
+   EELS is proven.
 8. **No strict legal clean-room certification.** Implementation files were
    independently written from public specification descriptions, not
    copied from existing clients or Lean EVM formalizations. The project
@@ -108,8 +113,10 @@ or EELS semantics.
    `execution-spec-tests` vectors and metamorphic differential tests.
 3. Integrate byte-addressed memory and the proven expansion function
    into MLOAD/MSTORE/MSTORE8, with proved expansion/rollback accounting.
-4. Prove the jump-destination parser sound and complete for *all*
-   bytecode sequences including all PUSH1–32 immediate widths.
+4. Prove *completeness* of the jump-destination parser for any
+   in-bounds declarative JUMPDEST and independently check opcode-width
+   semantics against EELS. Soundness against the local `InstructionStart`
+   relation has already been proved for all bytecode arrays.
 5. Extend the state to accounts, storage, calls, return/revert data,
    exceptional-halting semantics and fork-parameterized gas.
 6. If/when optimized implementations are introduced, prove they refine
