@@ -93,11 +93,11 @@ theorem decoded_pipeline {src : ByteArray} {rows : StaticPack.Rows} (h : PackWir
     rwa [nVal]
   let result : Packed := ⟨⟨counted, offsets, words⟩, terminal⟩
   refine ⟨result, ?_, readback, countSize, offsetSize, wordsSize, countMem, offsetMem, endSlot, total, tail⟩
-  unfold run
+  dsimp only [run]
   rw [countRun]
   change (ScanTarget.run scanInputs prior.offsets).bind _ = _
   rw [scanRun]
-  change (ScatterTarget.dispatch inputs scatterLanes prior.words).bind _ = _
+  change (ScatterTarget.dispatch ⟨PackWire.wordView src, offsets⟩ scatterLanes prior.words).bind _ = _
   rw [scatterRun]
   change (LoopTarget.read inputs .packet 1).bind _ = _
   rw [readN]
