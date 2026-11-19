@@ -85,6 +85,7 @@ jobs:
               L4Factoidal.Storage.TermLocalIndexWire.strictlyIncreasing_pairwise_key_lt
               L4Factoidal.Storage.TermLocalIndexWire.lookup_entriesOf_at_of_encode?
               L4Factoidal.Storage.TermLocalIndexWire.decode_lookup_entriesOf_eq_findTermId?
+              L4Factoidal.Storage.TermLocalIndexWire.dictInjective_entriesOf_of_encode?
           - group: xhr-provenance
             job_timeout_minutes: 15
             modules: |-

@@ -2,6 +2,7 @@
 Lookup in the complete TLI1 bytes produced for a PTD1 dictionary.
 https://github.com/danbri/factoidal-core/issues/634
 -/
+import L4Factoidal.RDF.DictInjective
 import L4Factoidal.Storage.TermLocalIndexLookupTheorems
 import L4Factoidal.Storage.TermLocalIndexWireTheorems
 
@@ -123,9 +124,31 @@ theorem decode_lookup_entriesOf_eq_findTermId? (terms : Array Term) (target byte
       simpa only [TermFold.foldTerm_eq_self, beq_iff_eq] using same
     simpa only [atId] using lookup_entriesOf_at_of_encode? terms target bytes encoded id inRange
 
+/-- Kind: dictionary refinement.
+    Says: once the full TLI1 encoder accepts the built index, lookup and
+    the original PTD1 array positions satisfy the RDF dictionary contract.
+    Every stored term has one in-use ID and both round trips hold.
+    Does not say: every source dictionary can be encoded, or that a
+    directory and an authenticated range read select its matching page. -/
+theorem dictInjective_entriesOf_of_encode? (terms : Array Term) (target bytes : ByteArray)
+    (encoded : encode? ⟨target, entriesOf terms⟩ = some bytes) :
+    DictInjective (lookup? (entriesOf terms)) (fun n => terms[n]?) (· ∈ terms) (· < terms.size) := by
+  apply DictInjective.ofRoundTrip
+  · intro t member
+    obtain ⟨i, hi, atI⟩ := Array.mem_iff_getElem.mp member
+    refine ⟨i, hi, ?_⟩
+    rw [← atI]
+    exact lookup_entriesOf_at_of_encode? terms target bytes encoded i hi
+  · intro t i _ hit
+    exact lookup_entriesOf_sound terms t i hit
+  · intro i hi
+    exact ⟨terms[i], Array.getElem_mem hi, Array.getElem?_eq_getElem hi,
+      lookup_entriesOf_at_of_encode? terms target bytes encoded i hi⟩
+
 #print axioms L4Factoidal.Storage.TermLocalIndex.lookup?_eq_some_of_key_cut
 #print axioms L4Factoidal.Storage.TermLocalIndexWire.strictlyIncreasing_pairwise_key_lt
 #print axioms L4Factoidal.Storage.TermLocalIndexWire.lookup_entriesOf_at_of_encode?
 #print axioms L4Factoidal.Storage.TermLocalIndexWire.decode_lookup_entriesOf_eq_findTermId?
+#print axioms L4Factoidal.Storage.TermLocalIndexWire.dictInjective_entriesOf_of_encode?
 
 end L4Factoidal.Storage.TermLocalIndexWire

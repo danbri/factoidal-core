@@ -2,6 +2,7 @@ import L4Factoidal.Net.EventSource
 import L4Factoidal.Net.Xhr
 import Init.Data.String.Lemmas.Modify
 import Init.Data.String.Lemmas.Pattern.Find.Pred
+import Init.Data.String.Lemmas.Pattern.TakeDrop.Pred
 
 namespace L4Factoidal.Net.EventSource
 
@@ -22,9 +23,11 @@ private theorem split_skip_positions {s sep : String} {base : String.Pos.Raw} {a
     obtain ⟨first, tail⟩ := Bool.and_eq_true_iff.mp walk
     obtain ⟨inside, differs, advance⟩ := of_decide_eq_true first
     rw [List.getLastD_cons] at suffix
+    have nextPos : (String.Pos.Raw.mk pos).next s = ⟨j⟩ := by
+      simpa only [String.Pos.Raw.unoffsetBy_zero] using advance
     have next := ih (pos := j) tail suffix
     rw [String.splitOnAux]
-    simpa [inside, differs, advance] using next
+    simpa [inside, differs, nextPos] using next
 
 private theorem split_at_separator {s sep : String} {base mark : String.Pos.Raw} {acc answer : List String}
     (after : String.Pos.Raw) (piece : String)
@@ -54,12 +57,20 @@ private theorem sample_mime_parts :
   apply split_at_end
   cbv
 
+private theorem sample_mime_trim : "text/event-stream".trimAscii.toString = "text/event-stream" := by
+  have first : "text/event-stream".toSlice.startsWith Char.isWhitespace = false := by
+    rw [String.Slice.startsWith_bool_eq_head?, String.copy_toSlice] <;> cbv
+  have last : "text/event-stream".toSlice.endsWith Char.isWhitespace = false := by
+    rw [String.Slice.endsWith_bool_eq_getLast?, String.copy_toSlice] <;> cbv
+  change (("text/event-stream".toSlice.dropWhile Char.isWhitespace).dropEndWhile Char.isWhitespace).copy = _
+  rw [String.Slice.dropWhile_eq_self first, String.Slice.dropEndWhile_eq_self last, String.copy_toSlice]
+
+private theorem sample_mime_lower : "text/event-stream".toLower = "text/event-stream" := by
+  apply String.toList_injective
+  simp only [String.toLower, String.toList_map] <;> cbv
+
 private theorem sample_mime : isStream 200 "text/event-stream; charset=utf-8" = true := by
-  have trim : "text/event-stream".trimAscii.toString = "text/event-stream" := by cbv
-  have lower : "text/event-stream".toLower = "text/event-stream" := by
-    apply String.toList_inj.mp
-    simp only [String.toLower, String.toList_map] <;> cbv
-  simp [isStream, sample_mime_parts, trim, lower]
+  simp only [isStream, sample_mime_parts, List.headD_cons, sample_mime_trim, sample_mime_lower] <;> rfl
 
 private theorem sample_utf8 :
     Encoding.utf8DecodeWithoutBOM "id: Ā\ndata: x\n\n".toUTF8 = "id: Ā\ndata: x\n\n" := by
@@ -112,10 +123,23 @@ private theorem sample_host_parts : "example.test".splitOn "." = ["example", "te
   apply split_at_end
   cbv
 
-attribute [local cbv_eval] sample_host_parts
+private theorem sample_host_decode :
+    Encoding.utf8DecodeWithoutBOM (URL.percentDecode "example.test".toUTF8) = "example.test" := by cbv
+
+private theorem sample_domain : URL.domainParser "example.test" false = some "example.test" := by
+  have ascii : "example.test".toList.all (fun c => c.toNat < 0x80) = true := by cbv
+  have lower : URL.asciiLowerStr "example.test" = "example.test" := by
+    apply String.toList_injective
+    simp only [URL.asciiLowerStr, String.toList_map] <;> cbv
+  have safe : "example.test".toList.any URL.isForbiddenDomain = false := by cbv
+  have nonempty : "example.test".isEmpty = false := rfl
+  simp [URL.domainParser, ascii, lower, safe, nonempty]
 
 private theorem sample_host : URL.parseHost "example.test" false = some (.domain "example.test") := by
-  cbv
+  have bare : "example.test".startsWith "[" = false := by cbv
+  have domainName : URL.endsInANumber "example.test" = false := by
+    simp only [URL.endsInANumber, sample_host_parts] <;> cbv
+  simp [URL.parseHost, bare, sample_host_decode, sample_domain, domainName]
 
 attribute [local cbv_eval] sample_host
 
