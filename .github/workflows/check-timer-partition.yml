@@ -63,6 +63,7 @@ jobs:
             modules: |-
               L4Factoidal.SPARQL.StoreEndpointTheorems
               L4Factoidal.SPARQL.StoreReplayTheorems
+              L4Factoidal.SPARQL.LogEpochTheorems
             # Both existing dependencies exceeded Lean's 2 GiB cap on a fresh build.
             larger_dependency_budgets: |-
               L4Factoidal/OWL/RLSemantics.lean
@@ -72,6 +73,7 @@ jobs:
               L4Factoidal.SPARQL.StoreEndpoint.commitOutcome_readOnly_no_commit
               L4Factoidal.SPARQL.StoreEndpoint.graphDelta_default_replay_mem
               L4Factoidal.SPARQL.StoreEndpoint.graphDelta_default_replay_default
+              L4Factoidal.SPARQL.StoreEndpoint.acceptedLogAppend_can_fail_reopen
     env:
       LEAN_STACK_SIZE_KB: 16384
     steps:

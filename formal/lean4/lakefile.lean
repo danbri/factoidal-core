@@ -992,4 +992,4 @@ lean_lib CollectionBoundProofs where
 lean_lib CrossZoneProofs where
   roots := #[`L4Factoidal.VC.CidKeyTheorems, `L4Factoidal.Rendering.RdfViewTheorems,
              `L4Factoidal.SPARQL.StoreEndpointTheorems, `L4Factoidal.SPARQL.StoreReplayTheorems,
-             `L4Factoidal.SPARQL.GraphStoreMergeTheorems]
+             `L4Factoidal.SPARQL.GraphStoreMergeTheorems, `L4Factoidal.SPARQL.LogEpochTheorems]
