@@ -273,8 +273,7 @@ def checkedDigestFailure (bad : ByteArray → Bool) (answer : Option ByteArray) 
   match encryptCard (rsaSpec false) with
   | .error _ => false
   | .ok doc =>
-      let p := { stubPrims with oaepDigest := fun d m =>
-        if bad m then answer else some (d.fn m) }
+      let p := { stubPrims with oaepDigest := fun d m => if bad m then answer else some (d.fn m) }
       failsWith (decrypt stubCipher p keys {} doc) isDecryptFailed
 
 #guard checkedDigestFailure (fun m => m.size == 0) none
