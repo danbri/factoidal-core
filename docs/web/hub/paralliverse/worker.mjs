@@ -215,6 +215,10 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       wordGpuDisabled = true;
       self.postMessage({type: "gpu", mode: "studio", state: "device-lost", message});
     });
+    if (wordGpuDisabled) {
+      gpu.close();
+      return null;
+    }
     self.postMessage({type: "gpu", mode: "studio", state: "ready", adapter: gpu.adapter,
       isFallbackAdapter: gpu.isFallbackAdapter, initMs: performance.now() - started,
       deviceTimestamps: "Whole-call worker timings; device timestamps are not collected.",
@@ -273,7 +277,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
             const expected = outputBytes(result.output);
             const matches = observed.fullMatches && expected.byteLength === observed.packed.byteLength &&
               expected.every((byte, index) => byte === observed.packed[index]);
-            if (id !== latest) return;
+            if (wordGpuDisabled || id !== latest) return;
             self.postMessage({type: "gpu-result", mode: "studio", id, ...observed, matches}, [observed.packed.buffer]);
           } catch (error) {
             wordGpuDisabled = true;
@@ -297,7 +301,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
           const result = await gpu.run(packet);
           const matches = packed.byteLength === result.packed.byteLength &&
             packed.every((byte, index) => byte === result.packed[index]);
-          if (id !== latest) return;
+          if (gpuDisabled || id !== latest) return;
           self.postMessage({type: "gpu-result", id, ...result, matches}, [result.packed.buffer]);
         } catch (error) {
           gpuDisabled = true;

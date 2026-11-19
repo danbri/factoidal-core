@@ -44,6 +44,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Check device-loss event interleavings
+        run: node --test tests/hub/paralliverse-studio-device-loss.test.mjs
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.4

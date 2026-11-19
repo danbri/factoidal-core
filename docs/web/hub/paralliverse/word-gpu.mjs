@@ -77,6 +77,7 @@ export async function connectWordGpu(sources, onLost = () => {}) {
       pipelines.set(selector, await device.createComputePipelineAsync({layout: "auto",
         compute: {module: shader, entryPoint: "main"}}));
     }
+    if (lost) throw lost;
   } catch (error) {
     device.destroy();
     throw error;

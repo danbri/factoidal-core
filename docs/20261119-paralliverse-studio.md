@@ -136,6 +136,16 @@ counted as a pass. A deliberately withheld-WebGPU API scenario is an additional
 UX test; its final result and subsequent landing/publication are recorded in
 the issue so this source record does not claim an unrun gate.
 
+A later independent review reproduced an initialization race where device loss
+could be followed by an incorrect ready event. The initializer now rejects that
+loss, the worker checks loss again before publishing readiness, and neither
+backend publishes a completed result after its loss callback. Five isolated
+event-ordering tests exercise the real initializer/worker code with synthetic
+device timing. Before repair only the ordinary initialization case passed;
+after repair all five pass. These tests check host state publication, not GPU
+numerical correctness. The repaired exact-source physical and Linux results are
+recorded in the issue before landing.
+
 The standalone CPU Wasm is 1,535,005 bytes, compared with 1,459,362 bytes in the
 live source-7005 module before this change: 75,643 additional bytes, about 5.2%.
 No comparative latency benchmark is established. The page reports actual

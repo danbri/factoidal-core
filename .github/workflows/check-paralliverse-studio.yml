@@ -5,6 +5,9 @@ on:
     branches: [main, wip/paralliverse-studio]
     paths:
       - 'formal/lean4/**'
+      - 'docs/web/hub/paralliverse/worker.mjs'
+      - 'docs/web/hub/paralliverse/word-gpu.mjs'
+      - 'tests/hub/paralliverse-studio-device-loss.test.mjs'
       - 'tools/lean-hygiene-audit.py'
       - 'tools/lean-partial-def-baseline.txt'
       - '.github/workflows/check-dataflow-stage.yml'
@@ -12,6 +15,9 @@ on:
   pull_request:
     paths:
       - 'formal/lean4/**'
+      - 'docs/web/hub/paralliverse/worker.mjs'
+      - 'docs/web/hub/paralliverse/word-gpu.mjs'
+      - 'tests/hub/paralliverse-studio-device-loss.test.mjs'
       - 'tools/lean-hygiene-audit.py'
       - 'tools/lean-partial-def-baseline.txt'
       - '.github/workflows/check-dataflow-stage.yml'
@@ -22,6 +28,19 @@ permissions:
   contents: read
 
 jobs:
+  transport:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/hub/paralliverse-studio-device-loss.test.mjs
   selector:
     if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
     uses: ./.github/workflows/check-dataflow-stage.yml
