@@ -131,7 +131,7 @@ theorem mgf1Checked_agrees {d : DigestProvider} {H : OaepHash}
     have hblocks := mapM_agrees blockAgree hb
     dsimp only at hs
     split at hs
-    · simpa only [hblocks, size] using (Option.some.inj hs).symm
+    · simpa only [mgf1, List.flatMap_def, hblocks, size] using (Option.some.inj hs).symm
     · cases hs
 
 /-- Kind: refinement.
