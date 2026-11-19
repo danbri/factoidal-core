@@ -1,4 +1,5 @@
 import EVMCleanroom.Core
+import EVMCleanroom.TxAccounting
 
 /-!
 A minimal machine-readable entry point for the *restricted* EVM model.
@@ -103,8 +104,55 @@ private def runBatchFile (path : String) : IO UInt32 := do
         IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX<TAB>GAS<TAB>FUEL\"}"
   if count == 0 || malformed > 0 then return 2 else return 0
 
+/-- Transaction fee and nonce results for the explicitly restricted
+    EIP-7623 host. Numeric fields are decimal strings, not JS floats. -/
+private def txFeeJSON (p : TxAccounting.Settlement) : String :=
+  "{\"schemaVersion\":1,\"status\":\"ok\",\"intrinsicGas\":\"" ++
+  toString p.intrinsic ++ "\",\"floorGas\":\"" ++ toString p.floor ++
+  "\",\"chargedGas\":\"" ++ toString p.charged ++
+  "\",\"effectivePrice\":\"" ++ toString p.price ++
+  "\",\"senderAfterBalance\":\"" ++ toString p.senderAfterBalance ++
+  "\",\"senderAfterNonce\":\"" ++ toString p.senderAfterNonce ++
+  "\",\"minerReward\":\"" ++ toString p.minerReward ++
+  "\",\"baseFeeBurn\":\"" ++ toString p.baseFeeBurn ++ "\"}"
+
+/-- All arguments must be decimal nonnegative integers except MODE: 0
+    means legacy/access-list gas price, 1 means EIP-1559 fee market. -/
+private def txFeeMain (args : List String) : IO UInt32 := do
+  match args with
+  | [z, nz, a, keys, limit, cap, priority, base, balance, nonce, used, mode] =>
+    if mode != "0" && mode != "1" then
+      IO.println "{\"status\":\"inputError\",\"message\":\"mode must be 0 or 1\"}"
+      return 2
+    match z.toNat?, nz.toNat?, a.toNat?, keys.toNat?,
+          limit.toNat?, cap.toNat?, priority.toNat?, base.toNat?,
+          balance.toNat?, nonce.toNat?, used.toNat? with
+    | some z, some nz, some a, some keys, some limit, some cap,
+      some priority, some base, some balance, some nonce, some used =>
+      let p : TxAccounting.Input := {
+        zeros := z, nonzeros := nz, accessAddresses := a,
+        accessKeys := keys, gasLimit := limit, gasPriceCap := cap,
+        priorityCap := priority, baseFee := base,
+        senderBalance := balance, senderNonce := nonce,
+        executionUsed := used, feeMarket := mode == "1"
+      }
+      match TxAccounting.settle p with
+      | .ok result =>
+        IO.println (txFeeJSON result)
+        return 0
+      | .error reason =>
+        IO.println ("{\"status\":\"error\",\"reason\":\"" ++ reason ++ "\"}")
+        return 0
+    | _, _, _, _, _, _, _, _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"message\":\"invalid decimal fee parameter\"}"
+      return 2
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"expected 12 transaction parameters\"}"
+    return 2
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
+  | "--tx-fee" :: rest => txFeeMain rest
   | ["--batch", path] => runBatchFile path
   | [hex, gasStr, fuelStr] =>
     match parseBytecode hex, gasStr.toNat?, fuelStr.toNat? with
