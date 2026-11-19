@@ -93,6 +93,8 @@ jobs:
           import json, pathlib, sys
           pathlib.Path(sys.argv[2]).write_text(json.dumps({
               'name': sys.argv[1][:-5].replace('/', '.'), 'package': 'l4factoidal',
+              'isModule': False, 'imports': None, 'importArts': {},
+              'dynlibs': [], 'plugins': [], 'options': {},
           }))
           PY
             compile=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/$(basename "$module").time.txt"
