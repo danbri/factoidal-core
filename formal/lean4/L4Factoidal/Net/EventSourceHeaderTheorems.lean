@@ -1,18 +1,65 @@
 import L4Factoidal.Net.EventSource
 import L4Factoidal.Net.Xhr
+import Init.Data.String.Lemmas.Modify
 import Init.Data.String.Lemmas.Pattern.Find.Pred
 
 namespace L4Factoidal.Net.EventSource
 
 open L4Factoidal.WHATWG
 
+-- Certify just the byte positions the shipped legacy splitter visits.
+private theorem split_skip_positions {s sep : String} {base : String.Pos.Raw} {acc answer : List String}
+    {pos : Nat} (rest : List Nat)
+    (walk : (List.zipWith (fun i j : Nat =>
+      let p : String.Pos.Raw := ⟨i⟩
+      decide (p.atEnd s = false ∧ (p.get s == (0 : String.Pos.Raw).get sep) = false ∧
+        (p.unoffsetBy 0).next s = ⟨j⟩)) (pos :: rest) rest).all id = true)
+    (suffix : String.splitOnAux s sep base ⟨rest.getLastD pos⟩ 0 acc = answer) :
+    String.splitOnAux s sep base ⟨pos⟩ 0 acc = answer := by
+  induction rest generalizing pos with
+  | nil => exact suffix
+  | cons j js ih =>
+    obtain ⟨first, tail⟩ := Bool.and_eq_true_iff.mp walk
+    obtain ⟨inside, differs, advance⟩ := of_decide_eq_true first
+    rw [List.getLastD_cons] at suffix
+    have next := ih (pos := j) tail suffix
+    rw [String.splitOnAux]
+    simpa [inside, differs, advance] using next
+
+private theorem split_at_separator {s sep : String} {base mark : String.Pos.Raw} {acc answer : List String}
+    (after : String.Pos.Raw) (piece : String)
+    (shape : mark.atEnd s = false ∧ (mark.get s == (0 : String.Pos.Raw).get sep) = true ∧
+      ((0 : String.Pos.Raw).next sep).atEnd sep = true ∧ mark.next s = after ∧
+      base.extract s (after.unoffsetBy ((0 : String.Pos.Raw).next sep)) = piece)
+    (suffix : String.splitOnAux s sep after after 0 (piece :: acc) = answer) :
+    String.splitOnAux s sep base mark 0 acc = answer := by
+  obtain ⟨inside, hit, complete, advance, emit⟩ := shape
+  rw [String.splitOnAux]
+  simpa [inside, hit, complete, advance, emit] using suffix
+
+private theorem split_at_end {s sep head tail : String} {base pos : String.Pos.Raw}
+    (shape : pos.atEnd s = true ∧ base.extract s pos = tail) :
+    String.splitOnAux s sep base pos 0 [head] = [head, tail] := by
+  rw [String.splitOnAux, if_pos shape.1, shape.2] <;> rfl
+
 private theorem sample_mime_parts :
     "text/event-stream; charset=utf-8".splitOn ";" = ["text/event-stream", " charset=utf-8"] := by
+  rw [String.splitOn, if_neg (by decide)]
+  apply split_skip_positions [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  · cbv
+  apply split_at_separator ⟨18⟩ "text/event-stream"
+  · cbv
+  apply split_skip_positions [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+  · cbv
+  apply split_at_end
   cbv
 
 private theorem sample_mime : isStream 200 "text/event-stream; charset=utf-8" = true := by
-  simp only [isStream, sample_mime_parts, List.headD_cons]
-  cbv
+  have trim : "text/event-stream".trimAscii.toString = "text/event-stream" := by cbv
+  have lower : "text/event-stream".toLower = "text/event-stream" := by
+    apply String.toList_inj.mp
+    simp only [String.toLower, String.toList_map] <;> cbv
+  simp [isStream, sample_mime_parts, trim, lower]
 
 private theorem sample_utf8 :
     Encoding.utf8DecodeWithoutBOM "id: Ā\ndata: x\n\n".toUTF8 = "id: Ā\ndata: x\n\n" := by
@@ -23,8 +70,27 @@ private theorem sample_lines :
 
 private theorem sample_no_bom : "id: Ā\ndata: x\n\n".startsWith "﻿" = false := by cbv
 
-private theorem sample_id_parts : "id: Ā".splitOn ":" = ["id", " Ā"] := by cbv
-private theorem sample_data_parts : "data: x".splitOn ":" = ["data", " x"] := by cbv
+private theorem sample_id_parts : "id: Ā".splitOn ":" = ["id", " Ā"] := by
+  rw [String.splitOn, if_neg (by decide)]
+  apply split_skip_positions [1, 2]
+  · cbv
+  apply split_at_separator ⟨3⟩ "id"
+  · cbv
+  apply split_skip_positions [4, 6]
+  · cbv
+  apply split_at_end
+  cbv
+
+private theorem sample_data_parts : "data: x".splitOn ":" = ["data", " x"] := by
+  rw [String.splitOn, if_neg (by decide)]
+  apply split_skip_positions [1, 2, 3, 4]
+  · cbv
+  apply split_at_separator ⟨5⟩ "data"
+  · cbv
+  apply split_skip_positions [6, 7]
+  · cbv
+  apply split_at_end
+  cbv
 
 attribute [local cbv_eval] sample_id_parts sample_data_parts
 
@@ -34,6 +100,19 @@ private theorem sample_parse :
        [{ type := "message", data := "x", lastEventId := "Ā" }]) := by
   simp only [parse, sample_no_bom, Bool.false_eq_true, if_false, sample_lines]
   cbv
+
+private theorem sample_host_parts : "example.test".splitOn "." = ["example", "test"] := by
+  rw [String.splitOn, if_neg (by decide)]
+  apply split_skip_positions [1, 2, 3, 4, 5, 6, 7]
+  · cbv
+  apply split_at_separator ⟨8⟩ "example"
+  · cbv
+  apply split_skip_positions [9, 10, 11, 12]
+  · cbv
+  apply split_at_end
+  cbv
+
+attribute [local cbv_eval] sample_host_parts
 
 private theorem sample_host : URL.parseHost "example.test" false = some (.domain "example.test") := by
   cbv

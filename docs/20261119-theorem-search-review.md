@@ -1,5 +1,15 @@
 # Overnight theorem search and independent review — 2026-11-19
 
+## Verified XHR and full TLI1 wire lookup — 2026-11-19 09:15 UTC
+
+**44 distinct public statements have compiled across the recorded source revisions.** The previous checkpoint had 39. The XHR result added one. Four new TLI1 wire results bring the inventory to 44.
+
+* **Asynchronous XHR, Fetch and integrity.** For a matched live main-phase, non-raw transfer, if the real XHR transition returns a callback and stores a response at its handle, the submitted Fetch transition delivered that response, released the host answer and passed the integrity check. All 42 fresh project modules returned zero at `204337859`. [XHR proof and compiler evidence](https://github.com/danbri/factoidal-core/actions/runs/44492567117/job/135451614619)
+* **Encoded dictionary lookup.** Given successful full TLI1 encoding of the built dictionary, looking up any RDF term in the decoded bytes returns its direct PTD1 first ID or the same absence. Intermediate results establish the binary-search cut, strict ordering from the wire guard and lookup of each original array position. At `b2839a65f`, all 20 fresh project modules returned zero, including the strict storage implementation and both dedicated proof leaves. All seven required storage names reported `propext`, `Classical.choice` and `Quot.sound`. Both jobs passed the required-name and hygiene audits. [Storage compiler evidence](https://github.com/danbri/factoidal-core/actions/runs/44494170541/job/135457024941)
+* **Independent byte checks.** A separate review read 13 published sidecar/block pairs and compared 5,570 terms across 31 pages. Seven sidecars spanned multiple pages. The theorem takes successful encoding as its premise. Construction from supported, distinct source terms alone, directory/page selection, target digest verification and persistent query results require further proofs. [Issue 634](https://github.com/danbri/factoidal-core/issues/634)
+
+The named POST/ASK and EventSource parser/header witnesses are still under review. Their failed compiler output contributes zero to the inventory. [Named POST witness](https://github.com/danbri/factoidal-core/issues/633) · [EventSource witness](https://github.com/danbri/factoidal-core/issues/636)
+
 ## Current evidence checkpoint — 2026-11-19 08:33 UTC
 
 **39 now checked:** the [17-module first dictionary batch at32b175a46](https://github.com/danbri/factoidal-core/actions/runs/44487909155/job/135435901106) passed strict core/leaf exits zero, all three required-name reports with standard three axioms, and hygiene. This adds `TermLocalIndex.mem_entriesOf_iff`, `TermFold.foldTerm_eq_self` and `TermLocalIndex.lookup_entriesOf_sound` to the36 statements below. It establishes membership and hit soundness, not completeness. The first XHR635 leaf failed on elaboration, record syntax and error-branch matching; error-recovery sorryAx reports are discarded. Strongest-model repair is submitted next with its public statement unchanged.
