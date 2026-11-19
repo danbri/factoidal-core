@@ -30,10 +30,14 @@ inductive InstructionStart (code : Array UInt8) : Nat → Prop where
 theorem opcodeWidth_bounds (code : Array UInt8) (pc : Nat) :
     1 ≤ opcodeWidth code pc ∧ opcodeWidth code pc ≤ 33 := by
   constructor
-  · dsimp [opcodeWidth]
-    split_ifs <;> omega
-  · dsimp [opcodeWidth]
-    split_ifs <;> omega
+  · unfold opcodeWidth
+    split
+    · omega
+    · omega
+  · unfold opcodeWidth
+    split
+    · omega
+    · omega
 
 /-- Following an opcode boundary strictly advances the byte position. -/
 theorem next_opcode_advances (code : Array UInt8) (pc : Nat) :
