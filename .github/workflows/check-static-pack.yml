@@ -64,6 +64,8 @@ jobs:
                    L4Factoidal/Paralliverse/StaticPack.lean
                    L4Factoidal/Paralliverse/DSL.lean
                    L4Factoidal/Paralliverse/PackWire.lean
+                   L4Factoidal/Paralliverse/PackWireTheorems.lean
+                   L4Factoidal/Paralliverse/CountTarget.lean
                    Wasm/ParalliverseHub.lean)
           mkdir -p "$proof_dir/modules"
           export LEAN_PATH="$proof_dir/modules"
@@ -118,6 +120,17 @@ jobs:
             grep -F "'L4Factoidal.Paralliverse.DSL.$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.Paralliverse.DSL.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in wordView_at decode_row_count decode_row_count_le decode_extent \
+                      decode_header_word decode_descriptor_length_word; do
+            grep -F "'L4Factoidal.Paralliverse.PackWire.$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "L4Factoidal.Paralliverse.PackWire.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in descriptor_word_address count_lane dispatch_count grid_bounds canonical_valid count_grid_eq_dsl; do
+            grep -F "'L4Factoidal.Paralliverse.CountTarget.$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "L4Factoidal.Paralliverse.CountTarget.$name" >> "$proof_dir/checked-theorems.txt"
           done
 
       - name: Run the ordinary CPU specification on fixed fixtures

@@ -100,7 +100,8 @@ private def pushU32 (dst : ByteArray) (word : Nat) : ByteArray :=
   let dst := dst.push (UInt8.ofNat ((word / 65536) % 256))
   dst.push (UInt8.ofNat ((word / 16777216) % 256))
 
-private def readU32 (src : ByteArray) (word : Nat) : Nat :=
+/-- Read a little-endian word. The caller checks that all four bytes are present. -/
+def readU32 (src : ByteArray) (word : Nat) : Nat :=
   let i := 4 * word
   src[i]!.toNat + 256 * src[i + 1]!.toNat +
     65536 * src[i + 2]!.toNat + 16777216 * src[i + 3]!.toNat
@@ -126,35 +127,44 @@ def encode (rows : Rows) : Except Error ByteArray := do
       dst := pushU32 dst word.toNat
   return dst
 
+/-- Start and length in bank words, stored in the descriptor for logical row i. -/
+def descriptorAt (src : ByteArray) (i : Nat) : Nat × Nat :=
+  (readU32 src (3 + 2 * i), readU32 src (4 + 2 * i))
+
+/-- Check the descriptors in input order and retain their spans. The range error for
+a descriptor precedes its cumulative word-limit error. -/
+def readSpans (src : ByteArray) (bankSize : Nat) :
+    List Nat → Nat → List (Nat × Nat) → Except Error (List (Nat × Nat))
+  | [], _, rev => .ok rev.reverse
+  | i :: rest, used, rev =>
+    let span := descriptorAt src i
+    if span.1 + span.2 > bankSize then .error (.invalid "A row source range exceeds the bank.")
+    else if used + span.2 > maxWords then .error (.limit "Use at most 1024 words.")
+    else readSpans src bankSize rest (used + span.2) (span :: rev)
+
+/-- Extract the words of one checked descriptor in local-index order. -/
+def readSpan (src : ByteArray) (bankBase : Nat) (span : Nat × Nat) : List UInt32 :=
+  (List.range span.2).map fun j => UInt32.ofNat (readU32 src (bankBase + span.1 + j))
+
 /-- Read the physical packet. Validate every descriptor and the combined row
 length before extracting words, including when descriptors share source spans. -/
-def decode (src : ByteArray) : Except Error Rows := do
-  if src.size > maxPacketBytes then throw (.limit "The packet exceeds its byte limit.")
-  if src.size < 12 then throw (.invalid "The packet header is truncated.")
-  if readU32 src 0 != version then throw (.invalid "The packet version is unsupported.")
-  let rowCount := readU32 src 1
-  let bankSize := readU32 src 2
-  if rowCount > maxRows || bankSize > maxBankWords then
-    throw (.limit "The packet exceeds its row or bank limit.")
-  let bankBase := 3 + 2 * rowCount
-  if src.size != 4 * (bankBase + bankSize) then
-    throw (.invalid "The packet size does not match its header.")
-  let mut spans : List (Nat × Nat) := []
-  let mut words := 0
-  for i in [:rowCount] do
-    let start := readU32 src (3 + 2 * i)
-    let len := readU32 src (4 + 2 * i)
-    if start + len > bankSize then throw (.invalid "A row source range exceeds the bank.")
-    words := words + len
-    if words > maxWords then throw (.limit "Use at most 1024 words.")
-    spans := (start, len) :: spans
-  let mut rows : Rows := []
-  for (start, len) in spans do
-    let mut row : List UInt32 := []
-    for j in [:len] do
-      row := UInt32.ofNat (readU32 src (bankBase + start + j)) :: row
-    rows := row.reverse :: rows
-  return rows
+def decode (src : ByteArray) : Except Error Rows :=
+  if src.size > maxPacketBytes then .error (.limit "The packet exceeds its byte limit.")
+  else if src.size < 12 then .error (.invalid "The packet header is truncated.")
+  else if readU32 src 0 ≠ version then .error (.invalid "The packet version is unsupported.")
+  else
+    let rowCount := readU32 src 1
+    let bankSize := readU32 src 2
+    if rowCount > maxRows ∨ bankSize > maxBankWords then
+      .error (.limit "The packet exceeds its row or bank limit.")
+    else
+      let bankBase := 3 + 2 * rowCount
+      if src.size ≠ 4 * (bankBase + bankSize) then
+        .error (.invalid "The packet size does not match its header.")
+      else
+        match readSpans src bankSize (List.range rowCount) 0 [] with
+        | .error e => .error e
+        | .ok spans => .ok (spans.map (readSpan src bankBase))
 
 def prepare (src : ByteArray) : Except Error ByteArray := do
   encode (← parseEditor src)
