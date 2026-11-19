@@ -164,6 +164,36 @@ theorem entriesOf_eq_spec (terms : Array Term) : entriesOf terms = entriesOfSpec
   congr 1
   simp [decorate, Function.comp_def]
 
+/-- Kind: representation invariant.
+    Says: the built index contains precisely the entries with the original
+    dictionary position, the term at that position and its serialised key.
+    Does not say: the search finds a particular entry or the wire encoder
+    admits the dictionary. -/
+theorem mem_entriesOf_iff (terms : Array Term) (entry : Entry) :
+    entry ∈ entriesOf terms ↔
+      terms[entry.localId]? = some entry.term ∧ entry.key = serializeTerm entry.term := by
+  let makeEntry : Term × Nat → Entry := fun p => ⟨serializeTerm p.1, p.1, p.2⟩
+  have enumerate (xs : List Term) (start : Nat) :
+      entriesGo start xs = (xs.zipIdx start).map makeEntry := by
+    induction xs generalizing start with
+    | nil => rfl
+    | cons t ts ih => simp only [entriesGo, List.zipIdx_cons, List.map_cons, makeEntry, ih]
+  rw [entriesOf_eq_spec, entriesOfSpec, Array.mem_mergeSort, List.mem_toArray, enumerate,
+    List.mem_map]
+  constructor
+  · rintro ⟨⟨t, i⟩, present, rfl⟩
+    refine ⟨?_, rfl⟩
+    simpa only [Array.getElem?_toList] using (List.mem_zipIdx_iff_getElem?.mp present)
+  · rintro ⟨position, bytes⟩
+    refine ⟨(entry.term, entry.localId), ?_, ?_⟩
+    · apply List.mem_zipIdx_iff_getElem?.mpr
+      simpa only [Array.getElem?_toList] using position
+    · cases entry with
+      | mk key term localId =>
+        change key = serializeTerm term at bytes
+        subst key
+        rfl
+
 private def lowerBoundGo (entries : Array Entry) (key : List UInt8) (low high : Nat) : Nat → Nat
   | 0 => low
   | fuel + 1 =>

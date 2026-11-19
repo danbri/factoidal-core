@@ -70,6 +70,16 @@ jobs:
               L4Factoidal.SPARQL.GraphStoreService.freshPrefix_fresh
               L4Factoidal.SPARQL.GraphStoreService.freshPrefix_candidate
               L4Factoidal.SPARQL.GraphStoreService.serve_post_named_denotation
+          - group: storage-tli
+            job_timeout_minutes: 20
+            modules: |-
+              L4Factoidal.Storage.TermLocalIndex
+              L4Factoidal.Storage.TermLocalIndexLookupTheorems
+            larger_dependency_budgets: ''
+            theorems: |-
+              L4Factoidal.Storage.TermLocalIndex.mem_entriesOf_iff
+              L4Factoidal.Storage.TermFold.foldTerm_eq_self
+              L4Factoidal.Storage.TermLocalIndex.lookup_entriesOf_sound
           - group: http-wire
             job_timeout_minutes: 15
             modules: |-

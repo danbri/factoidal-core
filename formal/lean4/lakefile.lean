@@ -1011,6 +1011,10 @@ lean_lib CrossZoneProofs where
 lean_lib HttpWireBoundProofs where
   roots := #[`L4Factoidal.HTTP.WireBoundTheorems]
 
+-- Built TLI1 membership and lookup soundness (issue #634), outside runtime imports.
+lean_lib TermLocalIndexLookupProofs where
+  roots := #[`L4Factoidal.Storage.TermLocalIndexLookupTheorems]
+
 -- Actual event-loop JSON admission bridge (issue #629), proof-only lab root.
 lean_lib EventLoopWireProofs where
   srcDir := "../../labs/demos/foafnaut"
