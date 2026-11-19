@@ -61,8 +61,36 @@ private def successJSON (s : EVMCleanroom.State) : String :=
 private def errorJSON (e : EVMCleanroom.Error) : String :=
   "{\"status\":\"error\",\"error\":\"" ++ errorCode e ++ "\"}"
 
+/-- Execute multiple independent cases in one Lean process. Each nonempty
+    input line contains HEX, GAS, FUEL separated by TABs. The output has
+    exactly one JSON result per input record, preserving input order. -/
+private def runBatchFile (path : String) : IO UInt32 := do
+  let source ← IO.FS.readFile path
+  let mut count : Nat := 0
+  let mut malformed : Nat := 0
+  for line in source.splitOn "\n" do
+    if line != "" then
+      count := count + 1
+      let fields := line.splitOn "\t"
+      match fields with
+      | [hex, gasStr, fuelStr] =>
+        match parseBytecode hex, gasStr.toNat?, fuelStr.toNat? with
+        | .ok code, some gas, some fuel =>
+          let s : EVMCleanroom.State := { code := code, gas := gas }
+          match EVMCleanroom.run fuel s with
+          | .ok out => IO.println (successJSON out)
+          | .error e => IO.println (errorJSON e)
+        | _, _, _ =>
+          malformed := malformed + 1
+          IO.println "{\"status\":\"inputError\",\"message\":\"invalid batch record\"}"
+      | _ =>
+        malformed := malformed + 1
+        IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX<TAB>GAS<TAB>FUEL\"}"
+  if count == 0 || malformed > 0 then return 2 else return 0
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
+  | ["--batch", path] => runBatchFile path
   | [hex, gasStr, fuelStr] =>
     match parseBytecode hex, gasStr.toNat?, fuelStr.toNat? with
     | .ok code, some gas, some fuel =>
