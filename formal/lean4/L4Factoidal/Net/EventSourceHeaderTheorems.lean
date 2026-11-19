@@ -1,22 +1,44 @@
 import L4Factoidal.Net.EventSource
 import L4Factoidal.Net.Xhr
+import Init.Data.String.Lemmas.Pattern.Find.Pred
 
 namespace L4Factoidal.Net.EventSource
 
 open L4Factoidal.WHATWG
 
+private theorem sample_mime_parts :
+    "text/event-stream; charset=utf-8".splitOn ";" = ["text/event-stream", " charset=utf-8"] := by
+  cbv
+
 private theorem sample_mime : isStream 200 "text/event-stream; charset=utf-8" = true := by
+  simp only [isStream, sample_mime_parts, List.headD_cons]
   cbv
 
 private theorem sample_utf8 :
     Encoding.utf8DecodeWithoutBOM "id: Ā\ndata: x\n\n".toUTF8 = "id: Ā\ndata: x\n\n" := by
   cbv
 
+private theorem sample_lines :
+    lines "id: Ā\ndata: x\n\n" = (["id: Ā", "data: x", ""], "") := by cbv
+
+private theorem sample_no_bom : "id: Ā\ndata: x\n\n".startsWith "﻿" = false := by cbv
+
+private theorem sample_id_parts : "id: Ā".splitOn ":" = ["id", " Ā"] := by cbv
+private theorem sample_data_parts : "data: x".splitOn ":" = ["data", " x"] := by cbv
+
+attribute [local cbv_eval] sample_id_parts sample_data_parts
+
 private theorem sample_parse :
     parse {} "id: Ā\ndata: x\n\n" =
       ({ idBuffer := "Ā", lastEventId := "Ā" },
        [{ type := "message", data := "x", lastEventId := "Ā" }]) := by
+  simp only [parse, sample_no_bom, Bool.false_eq_true, if_false, sample_lines]
   cbv
+
+private theorem sample_host : URL.parseHost "example.test" false = some (.domain "example.test") := by
+  cbv
+
+attribute [local cbv_eval] sample_host
 
 private theorem sample_url : (URL.parseUrl "https://example.test/events" none).isSome = true := by
   cbv
@@ -39,11 +61,14 @@ private theorem sample_headers (s : Xhr.State) (x : Xhr.Xhr)
     (present : s.get? 1 = some x) (ready : x.state = 1) (idle : x.sendFlag = false) :
     (Xhr.setHeaderX s 1 "Last-Event-ID" "Ā").2 = .error Xhr.errType ∧
       (Xhr.setHeaderX s 1 "Last-Event-ID" "A").2 = .ok "" := by
-  have wide : "Ā".any (fun (c : Char) => c.toNat > 255) = true := by cbv
-  have narrow : "A".any (fun (c : Char) => c.toNat > 255) = false := by cbv
+  have wide : "Ā".any (fun (c : Char) => c.toNat > 255) = true := by
+    simp only [String.any, String.contains_prop_eq] <;> cbv
+  have narrow : "A".any (fun (c : Char) => c.toNat > 255) = false := by
+    simp only [String.any, String.contains_prop_eq] <;> cbv
   have name : Xhr.isToken "Last-Event-ID" = true := by cbv
   have trim : PageFetch.trimWs "A" = "A" := by cbv
-  have clean : "A".any (fun (c : Char) => c == '\x00' || c == '\n' || c == '\r') = false := by cbv
+  have clean : "A".any (fun (c : Char) => c == '\x00' || c == '\n' || c == '\r') = false := by
+    simp only [String.any, String.contains_bool_eq] <;> cbv
   constructor
   · simp [Xhr.setHeaderX, present, ready, idle, wide]
   · simp [Xhr.setHeaderX, present, ready, idle, narrow, name, trim, clean] <;> split <;> rfl

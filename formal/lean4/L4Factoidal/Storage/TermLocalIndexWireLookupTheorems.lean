@@ -65,8 +65,13 @@ theorem lookup_entriesOf_at_of_encode? (terms : Array Term) (target bytes : Byte
   have sorted := strictlyIncreasing_pairwise_key_lt entries.toList ordered
   have increasing (j k : Nat) (hj : j < entries.size) (hk : k < entries.size) (lt : j < k) :
       entries[j].key < entries[k].key := by
-    simpa only [Array.getElem_toList] using
-      (List.pairwise_iff_getElem.mp sorted j k (by simpa using hj) (by simpa using hk) lt)
+    have lj : j < entries.toList.length := by simpa using hj
+    have lk : k < entries.toList.length := by simpa using hk
+    calc
+      entries[j].key = (entries.toList[j]'lj).key :=
+        congrArg Entry.key (Array.getElem_toList (xs := entries) lj).symm
+      _ < (entries.toList[k]'lk).key := List.pairwise_iff_getElem.mp sorted j k lj lk lt
+      _ = entries[k].key := congrArg Entry.key (Array.getElem_toList (xs := entries) lk)
   let original : Entry := ⟨serializeTerm terms[id], terms[id], id⟩
   have member : original ∈ entries :=
     (mem_entriesOf_iff terms original).mpr ⟨Array.getElem?_eq_getElem inRange, rfl⟩
@@ -109,7 +114,7 @@ theorem decode_lookup_entriesOf_eq_findTermId? (terms : Array Term) (target byte
         reference
       have present := Array.mem_of_getElem? (lookup_entriesOf_sound terms wanted id indexed)
       have absent := (Array.findIdx?_eq_none_iff.mp miss) wanted present
-      simpa using absent
+      simp at absent
   | some id =>
     have hit : terms.findIdx? (fun t => TermFold.foldTerm t == TermFold.foldTerm wanted) = some id :=
       reference
