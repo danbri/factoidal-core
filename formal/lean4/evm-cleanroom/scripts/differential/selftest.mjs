@@ -74,8 +74,28 @@ for (const t of tests) {
   if(reproduced.status!=='reproduced'||reproduced.caseId!==failures[0].id){
     throw Error('replayed counterexample no longer matches its archive: '+t.name);
   }
-  results.push({control:t.name,detected:true,reproduced:true,caseId:t.base.id,
-    differing:actual,report:reportPath});
+  let minimized=false;
+  if(t.name==='wrong-expected-error'){
+    const minimizer=fileURLToPath(new URL('./minimize.mjs',import.meta.url));
+    const minimizedDir=resolve(outputDir,t.name+'-minimized');
+    const minProc=spawnSync(process.execPath,[minimizer,
+      '--failures',failurePath,'--id',failures[0].id,
+      '--out',minimizedDir,'--max-runs','12'
+    ],{encoding:'utf8',timeout:180000,maxBuffer:1024*1024});
+    if(minProc.status!==0||minProc.error){
+      throw Error('bounded minimizer failed: '+minProc.stderr+
+        ' exit='+minProc.status+' error='+minProc.error);
+    }
+    const data=JSON.parse(readFileSync(resolve(minimizedDir,'minimization.json'),'utf8'));
+    if(data.status!=='reproduced'||data.id!==failures[0].id||
+       data.attempts>12||data.minimizedBytes>data.originalBytes||
+       data.signature.differing.length!==actual.length){
+      throw Error('minimizer changed the mismatch signature or exceeded the bound');
+    }
+    minimized=true;
+  }
+  results.push({control:t.name,detected:true,reproduced:true,minimized,
+    caseId:t.base.id,differing:actual,report:reportPath});
 }
 // Third negative control: valid, successful EVM execution whose allocated
 // memory exceeds our 4 KiB observation window. Both engines may agree on
