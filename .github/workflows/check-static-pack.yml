@@ -105,15 +105,23 @@ jobs:
               'dynlibs': [], 'plugins': [], 'options': {},
           }))
           PY
+            # Concrete Scatter byte/token kernel reduction exceeded the 2 GiB
+            # cap in two fresh checks; keep this one module bounded at 4 GiB.
+            memory_kib=4194304
+            lean_memory=2048
+            if [ "$module" = L4Factoidal/Paralliverse/WGSL/Scatter.lean ]; then
+              memory_kib=6291456
+              lean_memory=4096
+            fi
             compile=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/$(basename "$module").time.txt"
-                     lean -j1 -s16384 -M2048 -DwarningAsError=true --setup "$setup" -o "$olean" -c "$generated_c" "$module")
+                     lean -j1 -s16384 "-M$lean_memory" -DwarningAsError=true --setup "$setup" -o "$olean" -c "$generated_c" "$module")
             {
-              printf 'ulimit -v 4194304\n'
+              printf 'ulimit -v %s\n' "$memory_kib"
               printf ' %q' "${compile[@]}"
               printf '\n'
             } | tee -a "$proof_dir/command.txt"
             set +e
-            (ulimit -v 4194304; exec "${compile[@]}") 2>&1 | tee -a "$proof_dir/lean.log"
+            (ulimit -v "$memory_kib"; exec "${compile[@]}") 2>&1 | tee -a "$proof_dir/lean.log"
             status=("${PIPESTATUS[@]}")
             set -e
             printf '%s compile_exit=%s tee_exit=%s\n' "$module" "${status[@]}" | tee -a "$proof_dir/exit.txt"

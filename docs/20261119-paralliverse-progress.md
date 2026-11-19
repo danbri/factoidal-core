@@ -17,6 +17,31 @@ The generated-C component diagnostic checks real `lp_l4factoidal_` definitions. 
 
 Five ordinary CPU fixtures and bounded Hub protocol fixtures exercise empty/mixed rows, duplicates, maximum u32, padded/reordered storage, malformed packets and exact/one-off limits. These runtime tests are separate from universal theorems. A fresh integrated-main full Linux build and the actual linked CPU Wasm/Node smoke are the next gates.
 
+## Integrated build and remaining proof gates
+
+The integrated688bac00a Linux build compiled the full library but stopped at
+the C recursion gate before CPU Wasm. Its sole new report is the unchanged
+`Dataflow.Pipeline.toStage` helper. The classifier's global short-name set
+now treats the nonrecursive indexed `Paralliverse.DSL.Stage` as recursive and
+classifies the distinct Dataflow Stage result as depth-sensitive. The helper
+is genuinely non-tail if executed; source review found only its own recursive
+call and proof uses. Source inspection is not a complete emitted-C reach audit,
+so no specification-only allowance was added.
+
+Instead a direct Stage constructor uses the existing tail-recursive
+`Pipeline.run`, its contract and the existing soundness theorem. A universal
+whole-function equality candidate `Pipeline.toStage_eq_direct` is submitted
+to a separate fresh dependency-closure check. Compiler substitution remains
+disabled until the theorem actually compiles with permitted axioms. The next
+full C and caller-reach gate remains required after substitution.
+
+The first Scatter text proof check rejected elaboration errors and a concrete
+parse reduction at the 2 GiB kernel limit. The repaired second check rejected
+only the lexer/parser reductions at that limit; no recovery self-axiom report
+is accepted. The next check gives only Scatter a 4 GiB Lean cap inside a 6 GiB
+OS ceiling, retaining one worker, the fixed stack and180-second deadline. All
+other new modules keep the earlier limits. Scatter equivalence is still pending.
+
 ## Model and physical boundary
 
 `packSpec` is ordinary row flattening. The DSL computes count memory, reads it in a completed serial scan, writes n+1 offsets including the terminal, then scatters using the completed offset memory. It reads the final output length from the actual terminal slot. Its evaluator does not return a reference answer in place of executing those stages. A canonical valid schedule exists even for zero rows.
