@@ -2,7 +2,7 @@ name: Paralliverse Lean check
 
 on:
   push:
-    branches: [wip/604-static-pack-spec]
+    branches: [main]
     paths:
       - 'formal/lean4/L4Factoidal/Paralliverse.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/**'

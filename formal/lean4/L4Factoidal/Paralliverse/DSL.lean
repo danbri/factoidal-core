@@ -323,7 +323,8 @@ theorem eval_packProgram_eq_packSpec (e : Env) (hs : Valid e.rows.length e.order
   obtain ⟨hm, ht⟩ := eval_packProgram_memory e hs
   unfold Packed.read
   rw [hm, ht]
-  exact StaticPack.packParallel_eq_packSpec e.rows e.initial.words
+  simpa only [StaticPack.packParallel, ← List.sum_eq_foldl_nat] using
+    StaticPack.packParallel_eq_packSpec e.rows e.initial.words
 
 #print axioms canonical_valid
 #print axioms count_raceFree
