@@ -141,7 +141,7 @@ jobs:
         run: |
           npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
           npm ls --prefix scripts/eels --depth=0
-          sha256sum scripts/eels/package-lock.json
+          printf '2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7  scripts/eels/package-lock.json\n' | sha256sum --check
       - name: Execute published Prague EELS state tests with Lean empty-code frames
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -149,8 +149,13 @@ jobs:
           curl --fail --location --silent --show-error --retry 2 \
             --output .lake/eels/eip7623.json \
             "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/prague/eip7623_increase_calldata_cost/test_eip_7623.json"
+          printf '9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4  .lake/eels/eip7623.json\n' | sha256sum --check
           node scripts/eels/run-lean-state-tests.mjs --fixture .lake/eels/eip7623.json --out .lake/eels/lean-state-results.json | tee .lake/eels/summary.json
-          python3 -c 'import json; x=json.load(open(".lake/eels/lean-state-results.json")); assert x["status"]=="pass" and x["passed"]>=1 and x["failed"]==0 and x["passed"]+x["unsupported"]==x["provenance"]["totalFixtureCases"],x'
+          python3 -c 'import json; x=json.load(open(".lake/eels/lean-state-results.json")); assert x["status"]=="pass" and x["passed"]==4 and x["failed"]==0 and x["unsupported"]==2 and x["passed"]+x["unsupported"]==x["provenance"]["totalFixtureCases"] and all(case.get("computedStateRoot")==case.get("expectedStateRoot") for case in x["cases"] if case["status"]=="pass"),x'
+      - name: Reject tampered EELS post-root and account-state expectations
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/selftest.mjs .lake/eels/eip7623.json .lake/eels/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==2 and all(c["detected"] for c in x["checks"]),x'
       - name: Preserve published fixture, host transition results and npm resolution
         if: always()
         uses: actions/upload-artifact@v4
