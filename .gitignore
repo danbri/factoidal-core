@@ -155,6 +155,7 @@ npm/factoidal/node_modules/
 /docs/fstar-extracted/*.wasm.assets/
 /docs/fstar-extracted/*_results.log
 /docs/web/hub/assets/l4/l4factoidal.wasm
+/docs/web/hub/assets/l4/paralliverse/
 /docs/web/hub/assets/l4/l4factoidal.mjs
 /docs/web/hub/assets/l4/l4factoidal-core.wasm
 /docs/web/hub/assets/l4/l4factoidal-core.mjs
