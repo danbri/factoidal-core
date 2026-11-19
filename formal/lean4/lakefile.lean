@@ -1005,3 +1005,7 @@ lean_lib CrossZoneProofs where
   roots := #[`L4Factoidal.VC.CidKeyTheorems, `L4Factoidal.VC.StatusListRangeTheorems, `L4Factoidal.Rendering.RdfViewTheorems,
              `L4Factoidal.SPARQL.StoreEndpointTheorems, `L4Factoidal.SPARQL.StoreReplayTheorems, `L4Factoidal.SPARQL.StoreCommitReplayTheorems,
              `L4Factoidal.SPARQL.GraphStoreMergeTheorems, `L4Factoidal.SPARQL.LogEpochTheorems]
+
+-- HTTP wire payload provenance and configured limits (issue #628), proof-only.
+lean_lib HttpWireBoundProofs where
+  roots := #[`L4Factoidal.HTTP.WireBoundTheorems]

@@ -68,6 +68,14 @@ jobs:
               L4Factoidal.Rendering.RdfView.parse_graph_and_caps
               L4Factoidal.SPARQL.GraphStoreService.freshPrefix_fresh
               L4Factoidal.SPARQL.GraphStoreService.freshPrefix_candidate
+          - group: http-wire
+            job_timeout_minutes: 15
+            modules: |-
+              L4Factoidal.HTTP.WireBoundTheorems
+            larger_dependency_budgets: ''
+            theorems: |-
+              L4Factoidal.HTTP.Wire.decodeChunked_body_bound
+              L4Factoidal.HTTP.Wire.frameRequest_body_bound
           - group: store-endpoint
             job_timeout_minutes: 45
             modules: |-

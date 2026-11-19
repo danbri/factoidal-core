@@ -4,13 +4,25 @@ Review branch: `wip/timer-partition-proofs`. [Draft PR 609](https://github.com/d
 
 The fast discovery/proof agent uses `gpt-6.2-sol` at low reasoning. An independent `gpt-6.2-astra` reviewer at maximum reasoning checks the actual implementation, premise nonvacuity, reachable invariants, counterexamples to broader claims and host boundaries. The coordinator reads the source and the actual compiler logs. No price comparison is asserted. Discovery candidates are proposals until accepted and compiled. No runtime functions change in this PR; new proof modules have explicit Lake roots outside runtime imports. The RDF Core edit removes one unused argument in an existing proof only.
 
-## Newer fully green28-statement checkpoint
+## Latest actual compiler evidence — 2026-11-19 06:10 UTC
+
+At eeaef8886e817a3ddb8e28266817f51b45da15ae, the [fresh light group](https://github.com/danbri/factoidal-core/actions/runs/44468639999) job135372432812 passes all25 required reports and hygiene. The endpoint group is still running. Together with the prior complete28 checkpoint, **31 public statements have individually compiled**; this is not a claim that the latest full run is green.
+
+- `L4Factoidal.DOM.Editing.indexOfUnits_unitsOfIndex`: compile_exit0, `[propext, Quot.sound]`.
+- `L4Factoidal.DOM.Editing.textEdit_result_utf16`: compile_exit0, `[propext, Classical.choice, Quot.sound]`.
+- `L4Factoidal.VC.StatusList.validate_ok_status_range`: compile_exit0, `[propext, Classical.choice, Quot.sound]`.
+
+The strongest independent review accepted the two text-control statements. In `a😀b`, scalar boundaries are0,1,3,4; an interior UTF-16 offset2 normalises to3, so the theorem explicitly does not claim an inverse there. The result theorem bounds the actual textEdit selection by actual UTF-16 length, not the host numeric conversion or full op179 wire.
+
+[HTTP framing item628](https://github.com/danbri/factoidal-core/issues/628) is an additional uncompiled candidate connecting actual Content-Length/chunk decoding to the delivered Request's UTF-8 body and configured payload limit. Header terminator admission is retained. Socket buffering, trailer bytes, peak allocation, runtime and the consumed-byte relation remain separate. It has a proof-only Lake root and its own fresh bounded CI group. No executable function changes.
+
+## Earlier fully green28-statement checkpoint
 
 [Both fresh groups at7bddd328334df20ede1a7f993aa091acc512bcd6](https://github.com/danbri/factoidal-core/actions/runs/44461304737) pass28 public statements, adding all four transfer-table bounds to the earlier24. The VC candidate at7697 failed only five unused simp arguments under strict warnings; the script now omits them and retains its statement and linter settings. It is not counted until its complete strict check passes.
 
 The additional text-control candidate [627](https://github.com/danbri/factoidal-core/issues/627) concerns actual scalar-boundary UTF-16 conversions and the result of actual textEdit. It explicitly excludes an arbitrary-offset inverse, which fails inside a surrogate pair. Both new statements await strict compilation and independent review. No runtime edit or whole host wire correctness claim is added.
 
-## Current fully checked checkpoint
+## Earlier fully checked24-statement checkpoint
 
 Atcd7a536d10775d28dbd9eaf9a80047a9836f1e8d, [both fresh groups are green](https://github.com/danbri/factoidal-core/actions/runs/44456599524): **24 public statements**. The new `StoreEndpoint.commitOutcome_defaultGraph_replay` compiles with strict exit0 and exactly `[propext, Classical.choice, Quot.sound]`. It connects the actual admitted default commit batch, the actual replay and exact target RDF membership; it preserves the old named list without pretending the target has that ordering or multiplicity. Independent review accepted nonvacuity and the explicit host/codec boundaries.
 
