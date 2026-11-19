@@ -95,6 +95,10 @@ jobs:
           mkdir -p .lake/differential
           node scripts/differential/generate.mjs --seed 20261119 --count 10000 --out .lake/differential/corpus.jsonl | tee .lake/differential/generator.json
           node scripts/differential/run.mjs --corpus .lake/differential/corpus.jsonl --out .lake/differential/report.json --failures .lake/differential/failures.jsonl
+      - name: Verify comparator detects deliberately false expectations
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/selftest.mjs .lake/differential/corpus.jsonl .lake/differential/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["allDetected"] and len(x["controls"])==2, x'
       - name: Archive exact corpus, dependencies, results and disagreements
         if: always()
         uses: actions/upload-artifact@v4
