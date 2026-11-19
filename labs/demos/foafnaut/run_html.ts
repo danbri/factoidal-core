@@ -8,10 +8,11 @@ import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
 import {netAnswer,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
-import {loadNativeWindow} from "./native_window.ts";
+import {loadNativeWindow,type NativeEvent as UIEvent} from "./native_window.ts";
+import {linuxModifier} from "./linux_keys.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
-import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
+import {nativeSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.ts";
 import {defaultStateDir,hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cookieSaveQueue} from "./native_cookie_save.ts";
@@ -25,7 +26,6 @@ import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import {SERIF_FAMILY,serifFontHost,serifFontPath,wantsSerif} from "./serif_font.ts";
-import type {UIEvent} from "./ui_engine.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
 type BuildInfo={commit?:string;commitFull?:string;dirty?:boolean;builtAt?:string;version?:string;release?:boolean};
@@ -33,14 +33,18 @@ async function buildInfo():Promise<BuildInfo> {
   try{return JSON.parse(await Deno.readTextFile(new URL("./.build/native-html/build-info.json",import.meta.url)));}
   catch{return {};} // run from source with no app build
 }
+function siblingEngine():string|undefined {
+  const name=Deno.build.os==="linux"?"libweb-render.so":"libweb-render.dylib";
+  const path=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+name;
+  try { if(Deno.statSync(path).isFile)return path; } catch { /* no native worker installed */ }
+}
 async function main() {
   const args=[...Deno.args];
   // --version: the engine's own answer (its build facts are compiled into it), then this
   // program's build record, and the engine's line when the two disagree.
   if(args.includes("--version")){
     const info=await buildInfo();
-    const beside=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+"libweb-render.dylib";
-    let library:string|undefined;try{if(Deno.statSync(beside).isFile)library=beside;}catch{/* Wasm */}
+    const library=args.includes("--wasm-engine")?undefined:siblingEngine();
     const answer=(await loadHTML(library)).engineBuild(info.commit?{version:info.version,commit:info.commit}:{});
     console.log(answer.line);
     console.log(info.commit?`program build record: release ${info.version??"unknown"}, commit ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"program build record: none (run from source)");
@@ -197,16 +201,13 @@ async function main() {
     say.log(JSON.stringify({type:"native-html-log-flood",t:Math.round(performance.now()),lines,top}));
     if(failOnFlood){say.error(`Native HTML: FAILED: the log gate tripped (--fail-on-flood): ${top.map(t=>t.message).join(" | ")}`);Deno.exitCode=1;}
   }});
-  // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
+  // The worker uses the requested library, the native engine beside the program, or Wasm.
   // The app goes into the Dock and Command-Tab, with its menu, before the engine loads (issue 1268).
   const early=check||offscreen||Deno.build.os!=="darwin"?undefined:await nativePreflight(()=>loadNativeWindow());
   early?.appStart();
   if(nativeEngine&&wasmEngine)throw new Error("Use one of --native-engine and --wasm-engine");
   if(wasmEngine)nativeEngine=undefined;
-  else if(!nativeEngine){
-    const beside=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+"libweb-render.dylib";
-    try{if(Deno.statSync(beside).isFile)nativeEngine=beside;}catch{/* none beside the program: Wasm */}
-  }
+  else nativeEngine??=siblingEngine();
   const engineInfo:Promise<{backend:string;path:string|null;sha256:string|null}>=nativeEngine
     ?Deno.readFile(nativeEngine).then(async bytes=>({backend:"native",path:nativeEngine!,
       sha256:[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("")}))
@@ -227,6 +228,8 @@ async function main() {
       return result;
     }])) as T;
   const engine=timed(await loadHTML());
+  const linuxKeys=Deno.build.os==="linux"
+    ?new Map(engine.keyTable("other").map(row=>[row.modifier+"/"+row.key,row.command])):undefined;
   // Downloads go to --downloads, else ~/Downloads (HOME is the one variable the app may read).
   const downloads=downloadsArg??(()=>{try{const home=Deno.env.get("HOME");return home?`${home}/Downloads`:undefined;}catch{return undefined;}})();
   const browserState=stateOff||check||sweep||commands||printPDF?undefined:
@@ -651,7 +654,7 @@ async function main() {
   let keyChain:Promise<void>=Promise.resolve(),spaceSent=false;
   // (a page whose session is starting after its first press takes keys too: they wait for it)
   const pageTakesKeys=()=>scriptsOn&&(!!document.script||lazyStarts.has(document))&&scriptOps.includes("key");
-  const scriptKey=(page:typeof document,request:{text?:string;mac?:number;modifiers?:number},after?:()=>void)=>{
+  const scriptKey=(page:typeof document,request:{text?:string;mac?:number;key?:string;modifiers?:number},after?:()=>void)=>{
     const starting=lazyStarts.get(page);
     keyChain=keyChain.then(async()=>{
       if(starting)await starting;
@@ -1509,11 +1512,6 @@ async function main() {
     native.setInputTrace(traceInput);native.setHistory(history.canBack,history.canForward);
     // VoiceOver already on (or a client already asked): accessibility trees from the first frame.
     axOn=accessibilityOn||native.axWanted();
-    // The command sweep copies text. It gives the clipboard back unless the person
-    // copied something else meanwhile.
-    const savedClipboard=commands||pasted?native.readClipboard():"";
-    // Paste a URL into the address bar through the real menu key, then press Return.
-    if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
     // The window title is the page title, as in Safari.
     const windowTitle=(page:typeof document)=>page.title||"foafnaut";
     // Off screen the backing scale is 2, as on a Retina display, so the sweeps' backing-pixel
@@ -1522,9 +1520,12 @@ async function main() {
     if(offscreen)native.createOffscreen(shotSize[0],shotSize[1],shotSize[2],windowTitle(document));
     else{
       const handles=native.create(800,500,windowTitle(document));
-      target=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
+      target=new Deno.UnsafeWindowSurface(nativeSurfaceOptions(handles,width,height));
       native.showAfterSurface();
     }
+    // A visible window uses the desktop clipboard; off-screen sweeps use their private one.
+    const savedClipboard=commands||pasted?native.readClipboard():"";
+    if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
     // A new window starts in the address bar with the address selected (issue 1268).
     focusAddress();
     // The splash: drawn by the engine over the first page while it loads, with the engine's own
@@ -1777,6 +1778,11 @@ async function main() {
         }
         if(event.kind===8&&event.a)dirty=true;
         if(event.kind===3)pointAt(event.a,event.b);
+        // SDL reports a key from the active keyboard layout. Linux has no AppKit menu to
+        // take shortcuts before the field, so use the engine's platform key table here.
+        const linuxCommand=event.key===undefined?undefined:linuxKeys?.get(
+          linuxModifier(event.b)+"/"+(event.key===" "?"Space":event.key.length===1?event.key.toLowerCase():event.key));
+        if(linuxCommand!==undefined&&((event.b&12)||event.key==="F5")){windowCommand(linuxCommand);return;}
         // The find field has the focus: keys without Command and typed text edit it (Lean).
         if(event.kind===5&&find.focused&&!(event.b&2)){findInput({key:event.a,modifiers:event.b});return;}
         if(event.kind===9&&find.focused){findInput({text:String.fromCodePoint(event.a)});return;}
@@ -1808,11 +1814,13 @@ async function main() {
         // Control-Tab. Lean's key table gives the command (issue 1268); the page sees the key
         // first, except a Command shortcut of the window.
         if(event.kind===5){
-          const id=engine.pageKey(event.a,event.b);
+          const id=event.key===undefined?engine.pageKey(event.a,event.b):linuxCommand??null;
           const command=()=>{if(id!==null)windowCommand(id);};
           if(pageTakesKeys()&&!((event.b&2)&&id!==null)){
             spaceSent=event.a===49&&!(event.b&10);
-            scriptKey(document,{mac:event.a,modifiers:event.b},command);
+            // SDL supplies committed printable text separately; a Control chord has no text.
+            const key=event.key!==undefined&&(event.b&10)?{key:event.key}:{mac:event.a};
+            scriptKey(document,{...key,modifiers:event.b},command);
           }else command();
         }
         if(event.kind===11){closeMenu();if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}
