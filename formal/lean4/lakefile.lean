@@ -984,6 +984,10 @@ lean_lib TimerPartitionProofs where
 lean_lib BlobQuotaProofs where
   roots := #[`L4Factoidal.Net.BlobQuotaTheorems]
 
+-- Live subresource table bounds (issue #625), outside runtime imports.
+lean_lib SubresourceBoundProofs where
+  roots := #[`L4Factoidal.Net.SubresourceBoundTheorems]
+
 -- Collection result cardinality proofs (issue #611).
 lean_lib CollectionBoundProofs where
   roots := #[`L4Factoidal.RDF.CollectionBoundTheorems]

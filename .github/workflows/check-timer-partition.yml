@@ -34,6 +34,7 @@ jobs:
             modules: |-
               L4Factoidal.EventLoop.TimerPartitionTheorems
               L4Factoidal.Net.BlobQuotaTheorems
+              L4Factoidal.Net.SubresourceBoundTheorems
               L4Factoidal.RDF.CollectionBoundTheorems
               L4Factoidal.VC.CidKeyTheorems
               L4Factoidal.Rendering.RdfViewTheorems
@@ -50,6 +51,10 @@ jobs:
               L4Factoidal.Net.BlobUrls.add_payload_quota
               L4Factoidal.Net.BlobUrls.revoke_payload
               L4Factoidal.Net.BlobUrls.revoke_payload_quota
+              L4Factoidal.Net.Subresource.start_live_bound
+              L4Factoidal.Net.Subresource.answer_live_nonincrease
+              L4Factoidal.Net.Subresource.cancel_live_nonincrease
+              L4Factoidal.Net.Subresource.live_bound_preserved
               L4Factoidal.RDF.listWalk_length_lt
               L4Factoidal.RDF.listItemsBy_length_lt
               L4Factoidal.RDF.listItems_length_le

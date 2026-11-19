@@ -4,6 +4,16 @@ Review branch: `wip/timer-partition-proofs`. [Draft PR 609](https://github.com/d
 
 The fast discovery/proof agent uses `gpt-6.2-sol` at low reasoning. An independent `gpt-6.2-astra` reviewer at maximum reasoning checks the actual implementation, premise nonvacuity, reachable invariants, counterexamples to broader claims and host boundaries. The coordinator reads the source and the actual compiler logs. No price comparison is asserted. Discovery candidates are proposals until accepted and compiled. No runtime functions change in this PR; new proof modules have explicit Lake roots outside runtime imports. The RDF Core edit removes one unused argument in an existing proof only.
 
+## Subresource candidate
+
+`Net.SubresourceBoundTheorems` is a new uncompiled candidate about the actual
+transfer table transitions. The start cap is conditional on an inherited cap;
+answer and cancel counts are unconditionally nonincreasing, with duplicate IDs
+allowed. A reply that redirects or advances a preflight removes its found entry
+before reinserting at most one, so this covers the complete reply transition.
+The statements count per-table entries, not bytes, workers, completion or
+fairness. Actual strict compilation and independent review remain pending.
+
 ## Latest checking and review
 
 The [fresh18-statement light group atba6ebf864](https://github.com/danbri/factoidal-core/actions/runs/44452790148) is green. It includes both actual blank-node prefix allocator theorems `freshPrefix_fresh` and `freshPrefix_candidate`, each reporting `[propext, Classical.choice, Quot.sound]`. For arbitrary stems and label lists, the existing n+1-candidate search finds an unused injective document prefix; its fallback is unreachable. This is not yet the whole RDF dataset-merge theorem.
@@ -12,7 +22,7 @@ In the endpoint group of that same run, `StoreReplayTheorems.lean` and `LogEpoch
 
 The endpoint group as a whole still failed one scope helper rewrite, so the combined group is not claimed green. The latest repair is4a1cce5f0 under fresh checking. Transient error-recovery `sorryAx` output from rejected scripts is excluded from every proved claim.
 
-The new `StoreCommitReplayTheorems` candidate connects the admitted `commitOutcome .defaultGraph` result to the exact computed default delta and then the actual replay: exact old named list and target default membership. It makes no target named-order, default multiplicity or physical persistence claim. Independent source review found actual accepted default INSERT examples, including target duplicates; the theorem is nonvacuous. It is separately submitted for actual compilation, with its own required axiom report and an explicit non-runtime Lake root. It remains an unproved candidate until that check succeeds.
+The new `StoreCommitReplayTheorems` candidate connects the admitted `commitOutcome .defaultGraph` result to the exact computed default delta and then the actual replay: exact old named list and target default membership. It makes no target named-order, default multiplicity or physical persistence claim. Independent source review found an actual accepted default INSERT fixture. A separate source-level computation of commitOutcome admits a duplicate-bearing target; that case is not claimed as the output of the HTTP INSERT fixture. The theorem is nonvacuous. It is separately submitted for actual compilation, with its own required axiom report and an explicit non-runtime Lake root. It remains an unproved candidate until that check succeeds.
 
 ## Compiler evidence
 
