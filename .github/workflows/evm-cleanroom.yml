@@ -51,3 +51,11 @@ jobs:
             --output /tmp/ethereum-eels-prague-gas.py \
             "https://raw.githubusercontent.com/ethereum/execution-specs/1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653/src/ethereum/forks/prague/vm/gas.py"
           node scripts/check-eels-gas.mjs /tmp/ethereum-eels-prague-gas.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]>=14 and x["mismatches"]==0, x'
+
+      - name: Compare memory opcodes and expansion gas to pinned EELS semantics
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output /tmp/ethereum-eels-prague-memory.py \
+            "https://raw.githubusercontent.com/ethereum/execution-specs/1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653/src/ethereum/forks/prague/vm/instructions/memory.py"
+          node scripts/check-eels-memory.mjs /tmp/ethereum-eels-prague-gas.py /tmp/ethereum-eels-prague-memory.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==6 and x["mismatches"]==0, x'
