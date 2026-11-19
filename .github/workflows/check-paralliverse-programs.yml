@@ -4,22 +4,16 @@ on:
   push:
     branches: [main, wip/paralliverse-typed-programs]
     paths:
-      - 'formal/lean4/L4Factoidal/Paralliverse/Program*.lean'
-      - 'formal/lean4/Harness/ParalliverseProgram*Guards.lean'
-      - 'formal/lean4/L4Factoidal/Paralliverse/Ordered.lean'
-      - 'formal/lean4/L4Factoidal/Par/Chunked.lean'
-      - 'formal/lean4/lean-toolchain'
+      # The optional Dataflow bridge has transitive dependencies outside this directory.
+      - 'formal/lean4/**'
       - 'tools/lean-hygiene-audit.py'
       - 'tools/lean-partial-def-baseline.txt'
       - '.github/workflows/check-dataflow-stage.yml'
       - '.github/workflows/check-paralliverse-programs.yml'
   pull_request:
     paths:
-      - 'formal/lean4/L4Factoidal/Paralliverse/Program*.lean'
-      - 'formal/lean4/Harness/ParalliverseProgram*Guards.lean'
-      - 'formal/lean4/L4Factoidal/Paralliverse/Ordered.lean'
-      - 'formal/lean4/L4Factoidal/Par/Chunked.lean'
-      - 'formal/lean4/lean-toolchain'
+      # The optional Dataflow bridge has transitive dependencies outside this directory.
+      - 'formal/lean4/**'
       - 'tools/lean-hygiene-audit.py'
       - 'tools/lean-partial-def-baseline.txt'
       - '.github/workflows/check-dataflow-stage.yml'
