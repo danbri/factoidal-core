@@ -58,7 +58,23 @@ for (const t of tests) {
     throw Error('negative control did not produce expected counterexample: '+
       t.name+' report='+JSON.stringify(report).slice(0,2000));
   }
-  results.push({control:t.name,detected:true,caseId:t.base.id,
+  // Independently replay the archived JSONL mismatch and require that the
+  // same reason is reproduced. A saved failure is not useful unless it can be
+  // turned back into a one-case regression deterministically.
+  const reproduce=fileURLToPath(new URL('./reproduce.mjs',import.meta.url));
+  const replayDir=resolve(outputDir,t.name+'-replay');
+  const replay=spawnSync(process.execPath,[reproduce,
+    '--failures',failurePath,'--id',failures[0].id,'--out',replayDir
+  ], {encoding:'utf8',timeout:120000,maxBuffer:1024*1024});
+  if(replay.status!==0||replay.error){
+    throw Error('single-case counterexample reproduction failed: '+t.name+
+      ' exit='+replay.status+' stderr='+replay.stderr);
+  }
+  const reproduced=JSON.parse(readFileSync(resolve(replayDir,'reproduction.json'),'utf8'));
+  if(reproduced.status!=='reproduced'||reproduced.caseId!==failures[0].id){
+    throw Error('replayed counterexample no longer matches its archive: '+t.name);
+  }
+  results.push({control:t.name,detected:true,reproduced:true,caseId:t.base.id,
     differing:actual,report:reportPath});
 }
 const output={status:'pass',kind:'harness-negative-controls',
