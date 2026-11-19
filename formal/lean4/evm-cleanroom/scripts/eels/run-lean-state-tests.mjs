@@ -5,7 +5,7 @@
  * state transition and EthereumJS's Merkle-state serializer.
  *
  * Supported:
- *   Prague, valid legacy signed type-0 tx, no target code, no value,
+ *   Prague, valid signed type-0/1/2 tx, no target code, no value,
  *   one sender account and no storage, empty data or calldata.
  *   Fee floor from EIP-7623; transaction nonces and fee redistribution.
  *
@@ -63,9 +63,10 @@ for(const [id,record] of Object.entries(data)){
     reject(id,'not-single-Prague-state-test-vector');continue;
   }
   // The host transition defined below is deliberately NOT a general
-  // Ethereum transaction processor. Only positive type-0 EIP-7623 tests
-  // may enter. No silent fallback to EthereumJS runTx for unsupported cases.
-  if(!id.endsWith('type_0_protected]') && !id.endsWith('type_0_unprotected]')){
+  // Ethereum transaction processor. Only positive type-0/1/2 EIP-7623
+  // tests enter. No silent fallback to EthereumJS runTx.
+  if(!id.endsWith('type_0_protected]') && !id.endsWith('type_0_unprotected]') &&
+     !id.endsWith('type_1]') && !id.endsWith('type_2]')){
     reject(id,'transaction-family-not-yet-modelled');continue;
   }
   const tx=record.transaction,pre=record.pre,env=record.env;
@@ -81,7 +82,7 @@ for(const [id,record] of Object.entries(data)){
   if(a[0].toLowerCase()!==tx.sender.toLowerCase()||
     a[1].code!=='0x' || Object.keys(a[1].storage||{}).length!==0 ||
     parseHexInt(tx.value[0],'value')!==0n ||
-    Object.keys(entry.state).length!==2 ||
+    (Object.keys(entry.state).length<1 || Object.keys(entry.state).length>2) ||
     !(tx.sender.toLowerCase() in Object.fromEntries(Object.keys(entry.state).map(k=>[k.toLowerCase(),true])))){
     reject(id,'requires-nonempty-code-or-storage-or-unsupported-account-set');continue;
   }
@@ -101,12 +102,15 @@ for(const {id,record,post} of eligible){
     const parsed=createTxFromRLP(hexToBytes(txBytes),{common});
     const recovered=parsed.getSenderAddress().toString().toLowerCase();
     if(recovered!==addr)throw Error('signature recovered wrong sender');
-    if(parsed.type!==0)throw Error('expected legacy transaction');
+    if(![0,1,2].includes(parsed.type))throw Error('unsupported signed transaction type');
+    if(parsed.accessList?.length)throw Error('nonempty EIP-2930 access list unsupported');
     if(parsed.to?.toString().toLowerCase()!==fixtureTx.to.toLowerCase())
       throw Error('signed destination differs from fixture');
     if(parsed.nonce!==parseHexInt(fixtureTx.nonce,'nonce')||
        parsed.gasLimit!==parseHexInt(fixtureTx.gasLimit[0],'gasLimit')||
-       parsed.gasPrice!==parseHexInt(fixtureTx.gasPrice,'gasPrice')||
+       ((parsed.type<=1 && parsed.gasPrice!==parseHexInt(fixtureTx.gasPrice,'gasPrice')) ||
+        (parsed.type===2 && (parsed.maxFeePerGas!==parseHexInt(fixtureTx.maxFeePerGas,'maxFeePerGas') ||
+          parsed.maxPriorityFeePerGas!==parseHexInt(fixtureTx.maxPriorityFeePerGas,'maxPriorityFeePerGas'))))||
        parsed.value!==0n||
        !sameBytes(parsed.data,fixtureTx.data[0])){
       throw Error('signed transaction bytes disagree with fixture metadata');
@@ -134,8 +138,9 @@ for(const {id,record,post} of eligible){
       throw Error('Lean does not stop without changing empty EVM frame');
     const executionGas=frameGas-BigInt(vmResult.gasRemaining);
     const charged=intrinsic+executionGas>floor?intrinsic+executionGas:floor;
-    const price=parsed.gasPrice;
     const baseFee=parseHexInt(env.currentBaseFee,'baseFee');
+    const price=parsed.type===2 ?
+      (parsed.maxFeePerGas < baseFee+parsed.maxPriorityFeePerGas ? parsed.maxFeePerGas : baseFee+parsed.maxPriorityFeePerGas) : parsed.gasPrice;
     if(price<baseFee)throw Error('gas price below base fee');
     const startingBalance=parseHexInt(account.balance,'balance');
     const startingNonce=parseHexInt(account.nonce,'nonce');
@@ -154,25 +159,27 @@ for(const {id,record,post} of eligible){
       createAccount({nonce:startingNonce,balance:startingBalance}));
     await stateVM.stateManager.putAccount(senderAddress,
       createAccount({nonce:startingNonce+1n,balance:afterBalance}));
-    await stateVM.stateManager.putAccount(minerAddress,
-      createAccount({nonce:0n,balance:minerFee}));
+    if(minerFee>0n){
+      await stateVM.stateManager.putAccount(minerAddress,
+        createAccount({nonce:0n,balance:minerFee}));
+    }
     const root=bytesToHex(await stateVM.stateManager.getStateRoot());
     const postSender=Object.entries(post.state).find(([k])=>k.toLowerCase()===addr)?.[1];
     const postMiner=Object.entries(post.state).find(([k])=>k.toLowerCase()===miner)?.[1];
-    if(!postSender||!postMiner)throw Error('post account set mismatch');
+    if(!postSender || (minerFee>0n)!==Boolean(postMiner) ||
+       Object.keys(post.state).length!==(minerFee>0n ? 2 : 1))
+      throw Error('post account set mismatch');
     const accountsMatch=BigInt(postSender.balance)===afterBalance &&
       BigInt(postSender.nonce)===startingNonce+1n &&
-      BigInt(postMiner.balance)===minerFee &&
-      BigInt(postMiner.nonce)===0n &&
-      postSender.code==='0x' && postMiner.code==='0x' &&
-      !Object.keys(postSender.storage||{}).length &&
-      !Object.keys(postMiner.storage||{}).length;
+      (!postMiner || (BigInt(postMiner.balance)===minerFee && BigInt(postMiner.nonce)===0n &&
+        postMiner.code==='0x' && !Object.keys(postMiner.storage||{}).length)) &&
+      postSender.code==='0x' && !Object.keys(postSender.storage||{}).length;
     if(root.toLowerCase()!==post.hash.toLowerCase()||
        post.logs.toLowerCase()!==emptyLogHash||!accountsMatch)
       throw Error('official post-state mismatch: root='+root+
         ', expected='+post.hash+', accountsMatch='+accountsMatch);
     passed++;
-    cases.push({id,status:'pass',fork:'Prague',transactionType:0,
+    cases.push({id,status:'pass',fork:'Prague',transactionType:parsed.type,
       gasLimit:parsed.gasLimit.toString(),intrinsicGas:intrinsic.toString(),
       calldataFloorGas:floor.toString(),chargedGas:charged.toString(),
       leanExecutionGas:executionGas.toString(),coinbaseReward:minerFee.toString(),
@@ -195,7 +202,7 @@ const results={
   cases,
   limits:{
     notGeneralEVM:true,
-    supported:'Prague legacy type-0 EIP-7623 valid no-code, zero-value transactions',
+    supported:'Prague EIP-7623 valid signed type-0/1/2, zero-value no-code transactions without access lists',
     trusted:['EthereumJS RLP/signature recovery','EthereumJS account/Merkle Patricia trie serializer','JS host fee/nonce transition','Lean interpreter runtime/compiler'],
     notVerified:['signature recovery','EIP-7623 host fee formula','MPT hashing','post state root encoding','full EVM/transaction semantics']
   }
