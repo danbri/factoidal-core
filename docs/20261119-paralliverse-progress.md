@@ -134,3 +134,9 @@ The public route remains disabled.
 ## Full build checkpoint — 2026-11-19 06:10 UTC
 
 The [ac55 full build](https://github.com/danbri/factoidal-builds/actions/runs/44465276144) passed the unchanged C/caller gates, native Linux, browser-host tests and relocated Linux browser GUI checks. Its Wasm stage reached the new linked module and failed the actual Node ABI smoke: Emscripten rejected the supplied `wasmBinary` because it was absent from `INCOMING_MODULE_JS_API`. The linker now explicitly accepts `wasmBinary` and `locateFile`, the two inputs used by the smoke and digest-verified worker. Bash syntax and whitespace checks pass; linked execution remains pending a fresh exact-source build. The public route remains disabled.
+
+## Checked runtime publication and browser workflow
+
+[All a458 Linux gates](https://github.com/danbri/factoidal-builds/actions/runs/44469930225) passed, including actual linked CPU Wasm/Node fixtures,53 host checks with0 failures, web gates and relocated Linux GUI. PR607 merged as c9b4e07358437579427f580ae7b40d079d590ca5 with the public route disabled. The existing publisher's fresh current-main comparison accepted a458 as an ancestor and published [the exact checked web release](https://github.com/danbri/factoidal-builds/releases/tag/build-a458a3fa48d6-web), without rebuilding it.
+
+The release's build-info lists the Paralliverse manifest,88,428-byte glue and1,459,362-byte Wasm. Its Wasm SHA-256 is b42f549e9781463589722e34447931530d5fb616a04c6003858757749f10ff5c. The first browser dispatch was rejected before execution: GitHub does not allow runner.temp in job-level env. Evidence setup now uses that expression only at step scope and passes its value to subsequent steps through GITHUB_ENV. No runtime or proof changes are made. Actual browser acceptance remains pending and the public route remains disabled.
