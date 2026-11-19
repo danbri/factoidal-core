@@ -103,7 +103,17 @@ for(const {id,record,post} of eligible){
     const recovered=parsed.getSenderAddress().toString().toLowerCase();
     if(recovered!==addr)throw Error('signature recovered wrong sender');
     if(![0,1,2].includes(parsed.type))throw Error('unsupported signed transaction type');
-    if(parsed.accessList?.length)throw Error('nonempty EIP-2930 access list unsupported');
+    const accessList=parsed.accessList??[];
+    if(!Array.isArray(accessList))throw Error('invalid EIP-2930 access list representation');
+    let storageKeys=0;
+    for(const item of accessList){
+      if(!Array.isArray(item) || item.length!==2 ||
+         !(item[0] instanceof Uint8Array) || !Array.isArray(item[1]) ||
+         item[0].length!==20 || item[1].some(key=>!(key instanceof Uint8Array) || key.length!==32))
+        throw Error('unsupported EIP-2930 access list shape');
+      storageKeys+=item[1].length;
+    }
+    const accessListGas=2400n*BigInt(accessList.length)+1900n*BigInt(storageKeys);
     if(parsed.to?.toString().toLowerCase()!==fixtureTx.to.toLowerCase())
       throw Error('signed destination differs from fixture');
     if(parsed.nonce!==parseHexInt(fixtureTx.nonce,'nonce')||
@@ -120,7 +130,7 @@ for(const {id,record,post} of eligible){
     const calldata=parsed.data;
     const zeroCount=calldata.reduce((n,b)=>n+(b===0?1:0),0);
     const nonzeroCount=calldata.length-zeroCount;
-    const intrinsic=21000n+4n*BigInt(zeroCount)+16n*BigInt(nonzeroCount);
+    const intrinsic=21000n+4n*BigInt(zeroCount)+16n*BigInt(nonzeroCount)+accessListGas;
     const floor=21000n+10n*(BigInt(zeroCount)+4n*BigInt(nonzeroCount));
     if(parsed.gasLimit<intrinsic || parsed.gasLimit<floor)
       throw Error('this case is not a valid transaction under EIP-7623');
@@ -181,7 +191,7 @@ for(const {id,record,post} of eligible){
     passed++;
     cases.push({id,status:'pass',fork:'Prague',transactionType:parsed.type,
       gasLimit:parsed.gasLimit.toString(),intrinsicGas:intrinsic.toString(),
-      calldataFloorGas:floor.toString(),chargedGas:charged.toString(),
+      calldataFloorGas:floor.toString(),accessListGas:accessListGas.toString(),chargedGas:charged.toString(),
       leanExecutionGas:executionGas.toString(),coinbaseReward:minerFee.toString(),
       expectedStateRoot:post.hash,computedStateRoot:root,
       observedLogsHash:emptyLogHash,
@@ -202,7 +212,7 @@ const results={
   cases,
   limits:{
     notGeneralEVM:true,
-    supported:'Prague EIP-7623 valid signed type-0/1/2, zero-value no-code transactions without access lists',
+    supported:'Prague EIP-7623 valid signed type-0/1/2, zero-value no-code transactions, with EIP-2930 access-list intrinsic gas',
     trusted:['EthereumJS RLP/signature recovery','EthereumJS account/Merkle Patricia trie serializer','JS host fee/nonce transition','Lean interpreter runtime/compiler'],
     notVerified:['signature recovery','EIP-7623 host fee formula','MPT hashing','post state root encoding','full EVM/transaction semantics']
   }
