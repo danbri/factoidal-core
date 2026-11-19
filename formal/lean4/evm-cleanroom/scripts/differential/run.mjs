@@ -35,7 +35,9 @@ const cases = corpusContent.split('\n').filter(s => s.length).map((s, i) => {
   if (x.schemaVersion !== 1 || x.kind !== 'synthetic-bytecode' ||
       x.hardfork !== 'prague' || typeof x.id !== 'string' ||
       !/^(?:[0-9a-f]{2})+$/.test(x.hex) ||
-      !/^\d+$/.test(x.gas) || !/^\d+$/.test(x.fuel)) {
+      !/^\d+$/.test(x.gas) || !/^\d+$/.test(x.fuel) ||
+      !['ok','error'].includes(x.expectedDisposition) ||
+      (x.expectedDisposition === 'error' && typeof x.expectedError !== 'string')) {
     throw Error('malformed or unsupported synthetic corpus record at line ' + (i + 1));
   }
   return x;
@@ -77,6 +79,17 @@ const tested = {};
 const failures = [];
 let passes = 0, errors = 0;
 const fields = ['status','gasRemaining','pc','halted','stack','memorySizeBytes','memoryWord0'];
+const normalizeError = error => {
+  const s=String(error).toLowerCase();
+  if (s.includes('out of gas')) return 'outOfGas';
+  if (s.includes('stack underflow')) return 'stackUnderflow';
+  if (s.includes('stack overflow')) return 'stackOverflow';
+  if (s.includes('invalid jump')) return 'invalidJump';
+  if (s.includes('invalid opcode')) return 'invalidOpcode';
+  return 'unclassified:' + String(error).slice(0,100);
+};
+let expectedExceptional = 0;
+let matchedExceptional = 0;
 for (let i = 0; i < cases.length; ++i) {
   const item = cases[i];
   tested[item.category] = (tested[item.category] ?? 0) + 1;
@@ -89,7 +102,7 @@ for (let i = 0; i < cases.length; ++i) {
     });
     const rs=result.runState;
     if (result.exceptionError) {
-      expected={status:'error',error:String(result.exceptionError.error ?? result.exceptionError)};
+      expected={status:'error',error:normalizeError(result.exceptionError.error ?? result.exceptionError)};
     } else if (!rs) {
       throw Error('EthereumJS runCode did not expose runState');
     } else {
@@ -116,11 +129,22 @@ for (let i = 0; i < cases.length; ++i) {
   const observed=leanResults[i];
   const comparisonFields=expected.status === 'ok' ? fields : ['status','error'];
   const differing=comparisonFields.filter(field => JSON.stringify(expected[field]) !== JSON.stringify(observed[field]));
-  // All generated cases are supposed to halt successfully. Neither unsupported
-  // features nor reference exceptions can be silently counted as passes.
-  if(expected.status !== 'ok') differing.push('unexpected-reference-exception');
+  // Deliberate EVM exceptions are legitimate test expectations, but they
+  // count only if BOTH independent engines agree with the declared category.
+  if (item.expectedDisposition === 'error') {
+    expectedExceptional++;
+    if (expected.status !== 'error' || expected.error !== item.expectedError) {
+      differing.push('reference-disagrees-with-declared-error');
+    }
+    if (observed.status !== 'error' || observed.error !== item.expectedError) {
+      differing.push('lean-disagrees-with-declared-error');
+    }
+  } else if (expected.status !== 'ok') {
+    differing.push('unexpected-reference-exception');
+  }
   if (differing.length === 0) {
     passes++;
+    if (item.expectedDisposition === 'error') matchedExceptional++;
   } else {
     failures.push({id:item.id,category:item.category,kind:'mismatch',input:item,expected,observed,differing});
   }
@@ -138,6 +162,9 @@ const report={
   mismatches:failures.length-errors,
   oracleErrors:errors,
   unsupported:0,
+  declaredExceptionalCases:expectedExceptional,
+  matchedExceptionalCases:matchedExceptional,
+  exceptionalComparisonScope:'error category only; no gas burn, rollback or failure-state equivalence',
   byCategory:tested,
   firstDisagreements:failures.slice(0,10),
   reportSchemaVersion:1
