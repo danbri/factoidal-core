@@ -1,5 +1,5 @@
-/-! Executable smoke and edge tests. Each #guard is checked by Lean. -/
 import EVMCleanroom.Core
+/-! Executable smoke and edge tests. Each #guard is checked by Lean. -/
 
 namespace EVMCleanroom
 
