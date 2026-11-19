@@ -46,7 +46,14 @@ def main : IO Unit := do
   expectTag "out of range span" (Hub.callExport 1 (PackWire.outputWords [1, 1, 1, 1, 1, 5])) 1
   let overlap := PackWire.outputWords ([1, 2, 600, 0, 600, 0, 600] ++ List.replicate 600 0)
   expectTag "overlapping spans exceed total words" (Hub.callExport 1 overlap) 2
-  expectTag "unknown operation" (Hub.callExport 2 ByteArray.empty) 1
+  unless Hub.inputLimit 2 == 1 && Hub.inputLimit 9 == 0 do
+    throw (IO.userError "unexpected shader or unknown-operation input limit")
+  for (selector, source) in ([(0, WGSL.countText), (1, WGSL.scanText), (2, WGSL.scatterText)] : List (UInt8 × String)) do
+    expectBytes s!"shader selector {selector}" (Hub.callExport 2 ⟨#[selector]⟩) (0 :: source.toUTF8.data.toList)
+  expectTag "missing shader selector" (Hub.callExport 2 ByteArray.empty) 1
+  expectTag "two-byte shader selector" (Hub.callExport 2 ⟨#[0, 1]⟩) 1
+  expectTag "unknown shader selector" (Hub.callExport 2 ⟨#[3]⟩) 1
+  expectTag "unknown operation" (Hub.callExport 9 ByteArray.empty) 1
 
   let text := "[" ++ String.intercalate "," (List.replicate PackWire.maxRows "[]") ++ "]"
   checkEdit "at row limit" text []

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {resolve} from "node:path";
 import {pathToFileURL} from "node:url";
@@ -8,7 +9,60 @@ if (process.argv.length !== 3) throw new Error("Usage: node paralliverse-smoke.m
 const dir = pathToFileURL(`${resolve(process.argv[2])}/`);
 const {default: create} = await import(new URL("paralliverse.mjs", dir));
 const wasmBinary = await readFile(new URL("paralliverse.wasm", dir));
-const cpu = connectCpu(await create({wasmBinary}));
+const wasm = await create({wasmBinary});
+const cpu = connectCpu(wasm);
+
+// Inspect the wire envelope as well as the public string returned by the adapter.
+function rawCall(operation, bytes) {
+  const scratch = wasm._malloc(8 + bytes.byteLength) >>> 0;
+  assert.ok(scratch);
+  let owned = 0;
+  try {
+    wasm.HEAPU8.set(bytes, scratch + 8);
+    const status = wasm._paralliverse_call_v1(operation, scratch + 8, bytes.byteLength, scratch, scratch + 4);
+    const heap = wasm.HEAPU8;
+    const returned = new DataView(heap.buffer, scratch, 8);
+    const pointer = returned.getUint32(0, true);
+    const length = returned.getUint32(4, true);
+    if (status !== 0) {
+      assert.equal(pointer, 0);
+      assert.equal(length, 0);
+      return {status, envelope: null};
+    }
+    assert.ok(pointer > 0 && length > 0 && pointer + length <= heap.byteLength);
+    owned = pointer;
+    return {status, envelope: heap.slice(pointer, pointer + length)};
+  } finally {
+    if (owned) wasm._free(owned);
+    wasm._free(scratch);
+  }
+}
+
+const shaderFixtures = [
+  [0, 333, "f63599d07b97c7eb43d9f337b02cd781bffe9d021a804447ed6ccd789824c656"],
+  [1, 570, "433d5edf323796d7b4a151b35c2c88a4f0a273fcb81bfd3d0cfc0f4fe2274f2a"],
+  [2, 741, "7be7b827ba131c1c2cf63eaa4d3b95917361bcf1280cd1694c431cce21a070a8"],
+];
+assert.equal(wasm._paralliverse_input_limit_v1(2), 1);
+for (const [selector, length, digest] of shaderFixtures) {
+  const {status, envelope} = rawCall(2, Uint8Array.of(selector));
+  assert.equal(status, 0);
+  assert.equal(envelope[0], 0);
+  const bytes = envelope.subarray(1);
+  assert.equal(bytes.byteLength, length);
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), digest);
+  const shader = cpu.shaderSource(selector);
+  assert.equal(typeof shader, "string");
+  assert.deepEqual(new TextEncoder().encode(shader), bytes);
+}
+for (const request of [new Uint8Array(), Uint8Array.of(3)]) {
+  const {status, envelope} = rawCall(2, request);
+  assert.equal(status, 0);
+  assert.equal(envelope[0], 1);
+}
+assert.deepEqual(rawCall(2, Uint8Array.of(0, 1)), {status: 1, envelope: null});
+assert.equal(wasm._paralliverse_input_limit_v1(9), 0);
+assert.deepEqual(rawCall(9, new Uint8Array()), {status: -1, envelope: null});
 
 const words = values => {
   const bytes = new Uint8Array(values.length * 4);

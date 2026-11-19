@@ -1,8 +1,10 @@
 const PREPARE = 0;
 const PACK_CPU = 1;
+const SHADER_SOURCE = 2;
 const runtimeBase = new URL("../assets/l4/paralliverse/", import.meta.url);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const shaderDecoder = new TextDecoder("utf-8", {fatal: true});
 
 export class InputError extends Error {
   constructor(message, kind) {
@@ -55,6 +57,15 @@ export function connectCpu(module) {
       const {read, written} = encoder.encodeInto(source, editorBytes);
       if (read !== source.length) throw new InputError("The input exceeds its byte limit.", "limit");
       return call(PREPARE, editorBytes.subarray(0, written));
+    },
+    shaderSource(selector) {
+      if (module._paralliverse_input_limit_v1(SHADER_SOURCE) !== 1) {
+        throw new Error("The Lean GPU shader export is unavailable in this runtime.");
+      }
+      if (!Number.isInteger(selector) || selector < 0 || selector > 2) {
+        throw new RangeError("The shader selector is unsupported.");
+      }
+      return shaderDecoder.decode(call(SHADER_SOURCE, new Uint8Array([selector])));
     },
     packCpu(packet) {
       if (packet.byteLength > packetLimit) throw new InputError("The packet exceeds its byte limit.", "limit");

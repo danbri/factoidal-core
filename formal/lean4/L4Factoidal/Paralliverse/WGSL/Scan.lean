@@ -1,3 +1,4 @@
+import L4Factoidal.Paralliverse.WGSL.ShaderText
 import L4Factoidal.Paralliverse.WGSL.ScanSurface
 import L4Factoidal.Paralliverse.CountPacketTheorems
 import L4Factoidal.Paralliverse.ScanTarget
@@ -5,22 +6,6 @@ import L4Factoidal.Paralliverse.ScanTarget
 /-! # The concrete single-invocation WGSL scan -/
 
 namespace L4Factoidal.Paralliverse.WGSL
-
-def scanText : String := r#"@group(0) @binding(0) var<storage, read> src_words : array<u32>;
-@group(0) @binding(1) var<storage, read> aux_words : array<u32>;
-@group(0) @binding(2) var<storage, read_write> dst_words : array<u32>;
-@compute @workgroup_size(1, 1, 1)
-fn main(@builtin(global_invocation_id) pv_gid : vec3<u32>) {
-  var pv_l0 : u32 = 0u;
-  let pv_bound : u32 = src_words[1u];
-  if (pv_bound > 128u) { return; }
-  for (var pv_i : u32 = 0u; pv_i < pv_bound; pv_i = (pv_i + 1u)) {
-    dst_words[pv_i] = pv_l0;
-    pv_l0 = (pv_l0 + aux_words[pv_i]);
-  }
-  dst_words[src_words[1u]] = pv_l0;
-}
-"#
 
 def scanModule : ScanSurface.Module where
   first := ⟨0, 0, .read, .srcWords⟩

@@ -31,16 +31,14 @@ so no specification-only allowance was added.
 Instead a direct Stage constructor uses the existing tail-recursive
 `Pipeline.run`, its contract and the existing soundness theorem. A universal
 whole-function equality candidate `Pipeline.toStage_eq_direct` is submitted
-to a separate fresh dependency-closure check. Compiler substitution remains
-disabled until the theorem actually compiles with permitted axioms. The next
-full C and caller-reach gate remains required after substitution.
+to a separate fresh dependency-closure check. The [fresh strict check at ae9c130fa](https://github.com/danbri/factoidal-core/actions/runs/44458557948) compiled `Pipeline.toStage_eq_direct` with `[propext, Quot.sound]`. Compiler substitution is now enabled after that result. The next full C and caller-reach gate remains required.
 
 The first Scatter text proof check rejected elaboration errors and a concrete
 parse reduction at the 2 GiB kernel limit. The repaired second check rejected
 only the lexer/parser reductions at that limit; no recovery self-axiom report
 is accepted. The next check gives only Scatter a 4 GiB Lean cap inside a 6 GiB
 OS ceiling, retaining one worker, the fixed stack and180-second deadline. All
-other new modules keep the earlier limits. Scatter equivalence is still pending.
+other new modules keep the earlier limits. The [resulting ae9c130fa check](https://github.com/danbri/factoidal-core/actions/runs/44458557901) passed all71 required reports, including Scatter source parsing, actual whole-buffer lane equality and disjoint actual store traces. No recovery axioms occur in the accepted reports.
 
 ## Model and physical boundary
 
@@ -51,6 +49,27 @@ The mathematical DSL uses total natural-addressed memories. Stage completion, im
 The version-1 input packet is little-endian: version, row count and bank size, then logical `(start,length)` descriptors and a distinct word bank. The encoder reverses physical row storage and inserts nonzero padding, so GPU input cannot simply be the packed output. The decoder checks the whole header, extent, all source spans and combined output count before materialising rows. A proof-oriented descriptor traversal replaces the former mutable loops. Existing CPU fixtures exercise that change; a universal equality to the former implementation is not claimed. The decoder properties proved above concern the current executable implementation and arbitrary accepted producers.
 
 The bounded demo accepts 128 rows, 1,024 output words and 16 KiB editor input. These are demo limits, not the mathematical library's throughput or generality limit. Accepted-packet source/count/scan/scatter composition is checked in the finite instruction model. Count and Scan emitted-text semantics are checked independently; Scatter text semantics, whole-pipeline emitted-text composition and real GPU execution remain required work. No physical GPU correctness or speed gain follows from the current proofs.
+
+## Whole-text composition and individual-store candidates
+
+The next snapshot adds an actual parsed-text Count→Scan→Scatter program,
+chronological per-lane store logs and terminal readback. Its proof candidates
+connect that program to packSpec without putting a target interpreter into
+the program itself. Generic unique-address individual-store permutation and
+prefix theorems, plus an adapter to the actual recorded scatter events, address
+the gap between completed-lane schedules and arbitrary individual stores.
+These new scripts still await strict checking. The Race module's prose now
+explicitly avoids claiming that arbitrary racy interleavings equal whole lanes.
+
+The three byte-identical shader literals now live in dependency-light
+`WGSL/ShaderText.lean`, shared by the proof modules and CPU ABI. Operation2
+returns a source selected by one request byte; an ABI equality theorem and
+actual linked smoke are pending. The worker has a strict UTF-8 source reader.
+The new GPU transport uses fixed positive buffers, ordered passes, an actual
+terminal copy to aligned staging and bounded payload readback. Strongest-model
+independent review checked buffer roles, zero/odd rows, allocation errors and
+device loss. It has not yet executed on a device or been connected to the public
+page. That source review does not establish GPU execution.
 
 ## Browser CPU and release path
 

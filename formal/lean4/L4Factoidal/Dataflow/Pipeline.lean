@@ -415,6 +415,9 @@ theorem toStage_eq_direct : @toStage = @toStageDirect := by
   · exact funext (toStage_run _ _)
   · exact toStage_contract _ _
 
+-- Activated only after the fresh strict check of ae9c130fa passed this equality.
+attribute [csimp] toStage_eq_direct
+
 /-- The guarantee's assumptions are those of the report of the signatures
 (what the wasm op `pipelineCheck` returns). -/
 theorem guarantee_assumptions (conv : W → W → Bool) (p : Pipeline S A) :

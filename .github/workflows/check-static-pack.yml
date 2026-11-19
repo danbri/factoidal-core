@@ -62,12 +62,14 @@ jobs:
           unset LEAN_PATH LEAN_SRC_PATH
           proof_dir="$RUNNER_TEMP/paralliverse-evidence"
           modules=(L4Factoidal/GpuKernel/Race.lean
+                   L4Factoidal/GpuKernel/TraceInterleavingTheorems.lean
                    L4Factoidal/Paralliverse/StaticPack.lean
                    L4Factoidal/Paralliverse/DSL.lean
                    L4Factoidal/Paralliverse/PackWire.lean
                    L4Factoidal/Paralliverse/PackWireTheorems.lean
                    L4Factoidal/Paralliverse/CountTarget.lean
                    L4Factoidal/Paralliverse/CountPacketTheorems.lean
+                   L4Factoidal/Paralliverse/WGSL/ShaderText.lean
                    L4Factoidal/Paralliverse/WGSL/Surface.lean
                    L4Factoidal/Paralliverse/WGSL/ScanSurface.lean
                    L4Factoidal/Paralliverse/WGSL/ScatterSurface.lean
@@ -78,6 +80,8 @@ jobs:
                    L4Factoidal/Paralliverse/ScatterTarget.lean
                    L4Factoidal/Paralliverse/WGSL/Scatter.lean
                    L4Factoidal/Paralliverse/PipelineTarget.lean
+                   L4Factoidal/Paralliverse/WGSL/Pipeline.lean
+                   L4Factoidal/Paralliverse/WGSL/TraceInterleaving.lean
                    L4Factoidal/Paralliverse.lean
                    Wasm/ParalliverseHub.lean)
           mkdir -p "$proof_dir/modules" "$proof_dir/c" "$proof_dir/setup"
@@ -166,7 +170,10 @@ jobs:
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.Paralliverse.CountTarget.$name" >> "$proof_dir/checked-theorems.txt"
           done
-          for name in L4Factoidal.Paralliverse.LoopTarget.read_ok \
+          for name in L4Factoidal.GpuKernel.keys_flatten_nodup \
+                      L4Factoidal.GpuKernel.applyWrites_perm_prefix \
+                      L4Factoidal.GpuKernel.applyWrites_perm_of_nodup_keys \
+                      L4Factoidal.Paralliverse.LoopTarget.read_ok \
                       L4Factoidal.Paralliverse.LoopTarget.Expr.eval_eq_evalTR \
                       L4Factoidal.Paralliverse.LoopTarget.Stmt.exec_eq_execTR \
                       L4Factoidal.Paralliverse.LoopTarget.store_ok \
@@ -193,7 +200,14 @@ jobs:
                       L4Factoidal.Paralliverse.WGSL.scatter_text_launch \
                       L4Factoidal.Paralliverse.WGSL.inactive_scatter_text \
                       L4Factoidal.Paralliverse.WGSL.decoded_scatter_text_lane \
-                      L4Factoidal.Paralliverse.WGSL.scatter_text_traces_disjoint; do
+                      L4Factoidal.Paralliverse.WGSL.scatter_text_traces_disjoint \
+                      L4Factoidal.Paralliverse.WGSL.TextPipeline.decoded_count_text_grid \
+                      L4Factoidal.Paralliverse.WGSL.TextPipeline.decoded_scatter_text_grid \
+                      L4Factoidal.Paralliverse.WGSL.decoded_text_pipeline \
+                      L4Factoidal.Paralliverse.WGSL.decoded_text_pipeline_eq_packSpec \
+                      L4Factoidal.Paralliverse.WGSL.decoded_scatter_text_store_interleavings \
+                      L4Factoidal.Paralliverse.WGSL.decoded_text_pipeline_store_interleavings \
+                      L4Factoidal.Paralliverse.Hub.shader_source_exports; do
             grep -F "'$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "$name" >> "$proof_dir/checked-theorems.txt"

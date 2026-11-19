@@ -1,23 +1,12 @@
+import L4Factoidal.Paralliverse.WGSL.ShaderText
 import L4Factoidal.Paralliverse.WGSL.Surface
 import L4Factoidal.Paralliverse.CountPacketTheorems
 
 /-! # A static count shader and the meaning of its concrete bytes
 
-Only the fixed count program is exported here. The surface parser and interpreter
-have no dependency on this source, the packing DSL, or the count target. -/
+The independent surface parser and interpreter execute the static source exported by the Hub. -/
 
 namespace L4Factoidal.Paralliverse.WGSL
-
-/-- AOT source for the count stage. The asset writer must use these exact UTF-8 bytes. -/
-def countText : String := r#"@group(0) @binding(0) var<storage, read> src_words : array<u32>;
-@group(0) @binding(2) var<storage, read_write> dst_words : array<u32>;
-@compute @workgroup_size(64, 1, 1)
-fn main(@builtin(global_invocation_id) pv_gid : vec3<u32>) {
-  if (pv_gid.x < src_words[1u]) {
-    dst_words[pv_gid.x] = src_words[(4u + (2u * pv_gid.x))];
-  }
-}
-"#
 
 def countModule : Surface.Module where
   first := ⟨0, 0, .read, .srcWords⟩

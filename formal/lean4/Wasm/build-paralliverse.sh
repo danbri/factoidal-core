@@ -11,11 +11,12 @@ ASSETS="$(cd "$ASSETS" && pwd)"
 BUILD="$(mktemp -d "$RUNTIME/paralliverse.XXXXXX")"
 trap 'rm -rf "$BUILD"' EXIT
 
-MODULES=(L4Factoidal/Paralliverse/StaticPack L4Factoidal/Paralliverse/PackWire Wasm/ParalliverseHub)
+MODULES=(L4Factoidal/Paralliverse/StaticPack L4Factoidal/Paralliverse/PackWire
+         L4Factoidal/Paralliverse/WGSL/ShaderText Wasm/ParalliverseHub)
 SOURCES=(formal/lean4/lean-toolchain formal/lean4/Wasm/build-wasm.sh
          formal/lean4/Wasm/build-paralliverse.sh formal/lean4/Wasm/paralliverse_shim.c
          formal/lean4/Wasm/paralliverse-smoke.mjs tools/wasm32-nat-literals.py
-         docs/web/hub/paralliverse/worker.mjs)
+         docs/web/hub/paralliverse/worker.mjs docs/web/hub/paralliverse/gpu.mjs)
 for module in "${MODULES[@]}"; do SOURCES+=("formal/lean4/$module.lean"); done
 
 # Capture the exact inputs before compiling. An unrelated generated file can
