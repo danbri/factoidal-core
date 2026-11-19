@@ -70,4 +70,16 @@ private def resultGas (result : Except Error State) : Option Nat :=
 #guard resultGas (run 8 (initial #[0x60, 0x05, 0x56, 0x00, 0x00, 0x5b, 0x00] 100)) ==
   some 88
 
+-- A bounded driver must accept a STOP using exactly its last fuel unit.
+-- Previously, run 1 STOP incorrectly returned stepLimit.
+private def successfulAndHalted (r : Except Error State) : Bool :=
+  match r with
+  | .ok s => s.halted
+  | .error _ => false
+
+#guard successfulAndHalted (run 1 (initial #[0x00]))
+#guard successfulAndHalted (run 2 (initial #[0x5f, 0x00]))
+#guard isError (run 1 (initial #[0x5f, 0x00])) .stepLimit
+#guard resultGas (run 2 (initial #[0x5f, 0x00])) == some 98
+
 end EVMCleanroom
