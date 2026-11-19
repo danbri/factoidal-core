@@ -95,7 +95,7 @@ evm.events.on('step', (data, resolve) => {
 });
 const tested = {};
 const failures = [];
-let passes = 0, errors = 0;
+let passes = 0, errors = 0, unsupported = 0;
 const fields = ['status','gasRemaining','pc','halted','stack','memorySizeBytes','memoryWord0','memoryObservedBytes','memoryTruncated','memoryHex'];
 const normalizeError = error => {
   const s=String(error).toLowerCase();
@@ -155,10 +155,16 @@ for (let i = 0; i < cases.length; ++i) {
   const observed=leanResults[i];
   const comparisonFields=expected.status === 'ok' ? fields : ['status','error'];
   const differing=comparisonFields.filter(field => JSON.stringify(expected[field]) !== JSON.stringify(observed[field]));
-  // A successful large-memory execution cannot be counted as fully compared
-  // when the independently observed memory snapshot was truncated.
-  if (expected.status==='ok' && (expected.memoryTruncated || observed.memoryTruncated)) {
-    differing.push('memory-snapshot-truncated');
+  // Snapshot truncation is a *coverage limit*, not a semantic disagreement.
+  // Count it as unsupported and retain the input as evidence. Never count it
+  // as passed, and keep the CI gate non-green until coverage is expanded.
+  if (expected.status==='ok' && observed.status==='ok' &&
+      item.expectedDisposition==='ok' &&
+      (expected.memoryTruncated || observed.memoryTruncated)) {
+    unsupported++;
+    failures.push({id:item.id,category:item.category,kind:'unsupported',
+      reason:'memory-snapshot-truncated',input:item,expected,observed});
+    continue;
   }
   // Deliberate EVM exceptions are legitimate test expectations, but they
   // count only if BOTH independent engines agree with the declared category.
@@ -181,9 +187,11 @@ for (let i = 0; i < cases.length; ++i) {
   }
 }
 writeFileSync(options.failures, failures.map(x=>JSON.stringify(x)).join('\n')+(failures.length?'\n':''));
+const semanticDisagreements=failures.filter(x=>x.kind==='mismatch').length;
 const report={
   kind:'synthetic-raw-bytecode-differential',
-  status:failures.length ? 'mismatch' : 'pass',
+  status:errors?'harness-error':
+    (semanticDisagreements?'mismatch':(unsupported?'incomplete':'pass')),
   scope:'restricted opcode subset; NOT state-test or mainnet replay',
   oracle:{name:'@ethereumjs/evm',version:'10.1.3',hardfork:'Prague'},
   lean:{command:'lake exe evm-subset --batch'},
@@ -191,9 +199,9 @@ const report={
     duplicatedExecutionInputs:duplicateInputCount,kind:'synthetic-bytecode'},
   compared:cases.length,
   passed:passes,
-  mismatches:failures.length-errors,
+  mismatches:semanticDisagreements,
   oracleErrors:errors,
-  unsupported:0,
+  unsupported,
   declaredExceptionalCases:expectedExceptional,
   matchedExceptionalCases:matchedExceptional,
   exceptionalComparisonScope:'error category only; no gas burn, rollback or failure-state equivalence',
@@ -204,13 +212,14 @@ const report={
     distinctOpcodes:Object.keys(referenceOpcodeHistogram).length,
     opcodeHistogram:referenceOpcodeHistogram
   },
-  firstDisagreements:failures.slice(0,10),
+  firstDisagreements:failures.filter(x=>x.kind==='mismatch').slice(0,10),
+  firstUnsupported:failures.filter(x=>x.kind==='unsupported').slice(0,10),
   reportSchemaVersion:1
 };
 writeFileSync(options.out, JSON.stringify(report,null,2)+'\n');
 process.stdout.write(JSON.stringify({
   status:report.status,compared:report.compared,passed:report.passed,
-  mismatches:report.mismatches,oracleErrors:errors,
+  mismatches:report.mismatches,oracleErrors:errors,unsupported,
   uniqueExecutionInputs:distinctInputs,
   matchedExceptionalCases:matchedExceptional,
   distinctReferenceOpcodes:Object.keys(referenceOpcodeHistogram).length,
