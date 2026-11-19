@@ -13,9 +13,14 @@ private theorem payloadGraph_of_ntriples_ok (base body : String) (g : Graph)
     decide +kernel
   have rdf : GraphStoreService.parseRdfAs "application/n-triples" base body = some (.ok g) := by
     change some ((Syntax.parseNTriples body).mapError (·.msg)) = some (.ok g)
-    rw [parsed]
+    rw [parsed] <;> rfl
   unfold GraphStoreService.payloadGraph
-  rw [media, rdf]
+  rw [media]
+  change (match GraphStoreService.parseRdfAs "application/n-triples" base body with
+    | none => Except.error 415
+    | some (.error _) => .error 400
+    | some (.ok graph) => .ok graph) = .ok g
+  rw [rdf] <;> rfl
 
 /-- Parse the witnesses' final line without a trailing newline through the RDF 1.1 reader.
     The IRI token theorems keep the parser's well-founded scanning loop opaque. -/
@@ -54,6 +59,131 @@ private theorem blankPostPayload (base body label : String) (c : Char)
   rw [spelling, Syntax.parseLinesAcc, blank]
   simp only [read] <;> rfl
 
+/- These terms spell out the two requests and their expected datasets for the private
+   lemmas. The public statement below still names the shipped endpoint and evaluator. -/
+local notation "postIriA" => (⟨"http://www.example/gsp/a", by decide⟩ : WfIri)
+local notation "postIriB" => (⟨"http://www.example/gsp/b", by decide⟩ : WfIri)
+local notation "postPred" => (⟨"http://ex/p", by decide⟩ : WfIri)
+local notation "postObj" => (⟨"http://ex/o", by decide⟩ : WfIri)
+local notation "postTriple" =>
+  (fun label : String => (⟨.bnode label, postPred, .iri postObj⟩ : Triple))
+local notation "postNamed" =>
+  (fun (iri : WfIri) (label : String) => (⟨.iri iri, [postTriple label]⟩ : NamedGraph))
+local notation "postFirst" => (⟨[], [postNamed postIriA "m0_b"]⟩ : Dataset)
+local notation "postFinal" =>
+  (fun label : String => (⟨[], [postNamed postIriA "m0_b", postNamed postIriB label]⟩ : Dataset))
+local notation "postEndpoint" => (⟨"www.example", "/gsp"⟩ : GraphStoreService.Endpoint)
+local notation "postHeaders" => ([("content-type", "application/n-triples")] : List (String × String))
+local notation "commitPost" => (fun (ds : Dataset) (path body : String) =>
+  (gspOutcome .allGraphs "/gsp" "www.example" (View.of ds)
+    { method := "POST", path, queryStr := "", headers := postHeaders, body }).commit.map Prod.snd)
+local notation "postBodyB" => "_:b <http://ex/p> <http://ex/o> ."
+local notation "postBodyC" => "_:c <http://ex/p> <http://ex/o> ."
+
+private theorem parsePostB (base : String) :
+    GraphStoreService.payloadGraph "application/n-triples" base postBodyB = .ok [postTriple "b"] :=
+  blankPostPayload base postBodyB "b" 'b' (by decide +kernel) (fun _ => rfl)
+
+private theorem parsePostC (base : String) :
+    GraphStoreService.payloadGraph "application/n-triples" base postBodyC = .ok [postTriple "c"] :=
+  blankPostPayload base postBodyC "c" 'c' (by decide +kernel) (fun _ => rfl)
+
+private theorem routePostA : GraphStoreService.resolve postEndpoint "/gsp/a" "" =
+    .ok (.graph (.named (postIriA).val)) := by cbv
+
+private theorem routePostB : GraphStoreService.resolve postEndpoint "/gsp/b" "" =
+    .ok (.graph (.named (postIriB).val)) := by cbv
+
+/-- Project the admitted named-POST arm while the request body and graph store are variables. -/
+private theorem serveParsedPost (s : GraphStore.GraphStore) (path key body : String) (g : Graph)
+    (route : GraphStoreService.resolve postEndpoint path "" = .ok (.graph (.named key)))
+    (parsed : ∀ base, GraphStoreService.payloadGraph "application/n-triples" base body = .ok g) :
+    GraphStoreService.serve postEndpoint s "POST" path "" postHeaders body =
+      ({ s with named := GraphStore.replaceNamed key
+          (GraphStoreService.mergeInto (GraphStoreService.namedOrEmpty key s) g) s.named },
+        { status := if GraphStore.namedExists key s.named then 204 else 201 }) := by
+  have methodPost : GraphStore.Method.ofString "POST" = some .post := by cbv
+  have header : (((postHeaders).find? (fun kv => kv.1 == "content-type")).map (·.2)).getD "" =
+      "application/n-triples" := rfl
+  simp only [GraphStoreService.serve, route, methodPost, header, parsed]
+
+private theorem firstPostCommits :
+    commitPost Dataset.empty "/gsp/a" postBodyB = some postFirst := by
+  have served (s : GraphStore.GraphStore) :=
+    serveParsedPost s "/gsp/a" (postIriA).val postBodyB [postTriple "b"] routePostA parsePostB
+  simp only [gspOutcome, View.of, routePostA, served] <;> rfl
+
+/-- The create entry for the new graph suffices to expose a nonempty delta. Projecting
+    the committed dataset avoids evaluating a hash delta for the unchanged first graph. -/
+private theorem secondPostCommits (body label : String)
+    (parsed : ∀ base, GraphStoreService.payloadGraph "application/n-triples" base body =
+      .ok [postTriple label]) :
+    commitPost postFirst "/gsp/b" body = some (postFinal ("m0_" ++ label)) := by
+  have served (s : GraphStore.GraphStore) :=
+    serveParsedPost s "/gsp/b" (postIriB).val body [postTriple label] routePostB parsed
+  simp only [gspOutcome, View.of, routePostB, served] <;> rfl
+
+local notation "postTP" => (⟨.var "s", .iri postPred, .var "o"⟩ : TriplePattern)
+local notation "postQuery" =>
+  (Query.mk .ask [] (.join (.graph (.iri postIriA) (.bgp [postTP]))
+    (.graph (.iri postIriB) (.bgp [postTP]))) none [] {} none none)
+local notation "postJoin" => (fun label : String =>
+  SPARQL.join (evalBgp [postTP] [postTriple "m0_b"]) (evalBgp [postTP] [postTriple label]))
+local notation "postInput" =>
+  (fun label : String => (View.of (postFinal label)).evalInput emptyEnv postQuery)
+
+private theorem loweredPostQuery (env : EvalEnv) : (postQuery).pattern.rewriteBnodes.lower env =
+    .join (.graph (.iri postIriA) (.bgp [postTP])) (.graph (.iri postIriB) (.bgp [postTP])) := by
+  rfl
+
+private theorem postDatasetSet (label : String) : (postFinal label).IsSet := by
+  constructor
+  · exact List.nodup_nil
+  · change [Subject.iri postIriA, Subject.iri postIriB].Nodup
+    decide +kernel
+  · intro ng h
+    change ng ∈ [postNamed postIriA "m0_b", postNamed postIriB label] at h
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at h
+    rcases h with rfl | rfl <;> exact List.pairwise_singleton _ _
+
+private theorem postQueryOrdinary (label : String) : ¬ Dataflow.shippedAssumed (postInput label) := by
+  rintro ⟨_, h | ⟨⟨sel, hf⟩, _⟩⟩
+  · apply h
+    change Storage.BackendRefinement.NativeFrag (postQuery).pattern.rewriteBnodes
+    cbv <;> constructor <;> trivial
+  · change QueryForm.ask = .select sel at hf
+    cases hf
+
+private theorem postReference (label : String) :
+    Dataflow.referenceAnswer (postInput label) = .ask (!(postJoin label).isEmpty) := by
+  let env : EvalEnv := { emptyEnv with dataset := some (postFinal label) }
+  have getA : (postFinal label).lookupNamedIri (postIriA).val = some [postTriple "m0_b"] := by rfl
+  have getB : (postFinal label).lookupNamedIri (postIriB).val = some [postTriple label] := by rfl
+  apply congrArg Dataflow.Answer.ask
+  change formHasSolution env [] postQuery
+    (((postQuery).pattern.rewriteBnodes.lower env).evalIn (postFinal label) []) = _
+  rw [StoreDataset.formHasSolution_no_modifiers _ _ postQuery _ (by rfl), loweredPostQuery]
+  simp only [GraphPattern.evalIn, getA, getB, evalBgpIdx_eq_evalBgp, hashJoin_eq_join]
+
+private theorem servedPostAsk (label : String) :
+    evalPayload emptyEnv (View.of (postFinal label)) postQuery =
+      .boolean (!(postJoin label).isEmpty) := by
+  let env : EvalEnv := { emptyEnv with dataset := some (postFinal label) }
+  have wf : (postInput label).Wf :=
+    Dataflow.EvalInput.wf_indexed env (postFinal label) postQuery (postDatasetSet label) rfl
+  have agreement := Dataflow.EvalContract.agrees wf (by rfl)
+    (Dataflow.shippedRun_sound (postInput label) wf (postQueryOrdinary label))
+  rw [postReference] at agreement
+  change payloadOfAnswer (Dataflow.shippedRun (postInput label)) = _
+  generalize Dataflow.shippedRun (postInput label) = output at agreement ⊢
+  cases output with
+  | select _ _ => exact False.elim agreement
+  | ask _ => exact congrArg ProtocolService.Payload.boolean agreement
+  | graph _ => exact False.elim agreement
+
+private theorem samePostJoin : (!(postJoin "m0_b").isEmpty) = true := by decide +kernel
+private theorem apartPostJoin : (!(postJoin "m0_c").isEmpty) = false := by decide +kernel
+
 /-- Kind: named Graph Store POST and served SPARQL ASK counterexample
 (factoidal-core issue 633).
 Says: two admitted N-Triples POSTs to different named graphs can assign the
@@ -85,88 +215,15 @@ theorem namedPosts_cross_graph_label_observable :
     observe "_:b <http://ex/p> <http://ex/o> ." = some (["m0_b"], ["m0_b"], true) ∧
     observe "_:c <http://ex/p> <http://ex/o> ." = some (["m0_b"], ["m0_c"], false) := by
   intro post a b p tp q observe
-  let obj : WfIri := ⟨"http://ex/o", by decide⟩
-  let triple (label : String) : Triple := ⟨.bnode label, p, .iri obj⟩
-  let named (iri : WfIri) (label : String) : NamedGraph := ⟨.iri iri, [triple label]⟩
-  let firstDs : Dataset := ⟨[], [named a "m0_b"]⟩
-  let finalDs (label : String) : Dataset := ⟨[], [named a "m0_b", named b label]⟩
-
-  have routeA : GraphStoreService.resolve ⟨"www.example", "/gsp"⟩ "/gsp/a" "" =
-      .ok (.graph (.named "http://www.example/gsp/a")) := by cbv
-  have routeB : GraphStoreService.resolve ⟨"www.example", "/gsp"⟩ "/gsp/b" "" =
-      .ok (.graph (.named "http://www.example/gsp/b")) := by cbv
-  have methodPost : GraphStore.Method.ofString "POST" = some .post := by cbv
-  have media : (([("content-type", "application/n-triples")].find?
-      (fun kv => kv.1 == "content-type")).map (·.2)).getD "" = "application/n-triples" := by rfl
-  have parseB (base : String) : GraphStoreService.payloadGraph "application/n-triples" base
-      "_:b <http://ex/p> <http://ex/o> ." = .ok [triple "b"] := by
-    exact blankPostPayload base "_:b <http://ex/p> <http://ex/o> ." "b" 'b'
-      (by decide +kernel) (fun _ => rfl)
-  have parseC (base : String) : GraphStoreService.payloadGraph "application/n-triples" base
-      "_:c <http://ex/p> <http://ex/o> ." = .ok [triple "c"] := by
-    exact blankPostPayload base "_:c <http://ex/p> <http://ex/o> ." "c" 'c'
-      (by decide +kernel) (fun _ => rfl)
-  have writeA : post Dataset.empty "/gsp/a" "_:b <http://ex/p> <http://ex/o> ." =
-      some firstDs := by
-    simp only [post, gspOutcome, View.of, GraphStoreService.serve, routeA, methodPost, media, parseB]
-    dsimp +zetaDelta only <;> cbv
-  have writeB : post firstDs "/gsp/b" "_:b <http://ex/p> <http://ex/o> ." =
-      some (finalDs "m0_b") := by
-    simp only [post, gspOutcome, View.of, GraphStoreService.serve, routeB, methodPost, media, parseB]
-    dsimp +zetaDelta only <;> cbv
-  have writeC : post firstDs "/gsp/b" "_:c <http://ex/p> <http://ex/o> ." =
-      some (finalDs "m0_c") := by
-    simp only [post, gspOutcome, View.of, GraphStoreService.serve, routeB, methodPost, media, parseC]
-    dsimp +zetaDelta only <;> cbv
-
-  have lowered (env : EvalEnv) : q.pattern.rewriteBnodes.lower env =
-      .join (.graph (.iri a) (.bgp [tp])) (.graph (.iri b) (.bgp [tp])) := by
-    dsimp only [q, tp] <;> cbv
-  let joined (label : String) := SPARQL.join (evalBgp [tp] [triple "m0_b"])
-    (evalBgp [tp] [triple label])
-  have rendered (label : String) : evalPayload emptyEnv (View.of (finalDs label)) q =
-      .boolean (!(joined label).isEmpty) := by
-    let env : EvalEnv := { emptyEnv with dataset := some (finalDs label) }
-    let inp := (View.of (finalDs label)).evalInput emptyEnv q
-    have setDs : (finalDs label).IsSet := by
-      constructor
-      · exact List.nodup_nil
-      · change [Subject.iri a, Subject.iri b].Nodup
-        dsimp only [a, b] <;> decide +kernel
-      · intro ng h
-        change ng ∈ [named a "m0_b", named b label] at h
-        simp only [List.mem_cons, List.not_mem_nil, or_false] at h
-        rcases h with rfl | rfl <;> exact List.pairwise_singleton _ _
-    have wf : inp.Wf := Dataflow.EvalInput.wf_indexed env (finalDs label) q setDs rfl
-    have ordinary : ¬ Dataflow.shippedAssumed inp := by
-      rintro ⟨_, h | ⟨⟨sel, hf⟩, _⟩⟩
-      · apply h
-        change Storage.BackendRefinement.NativeFrag q.pattern.rewriteBnodes
-        dsimp only [q, tp] <;> cbv <;> constructor <;> trivial
-      · change QueryForm.ask = .select sel at hf
-        cases hf
-    have agreement := Dataflow.EvalContract.agrees wf (by rfl)
-      (Dataflow.shippedRun_sound inp wf ordinary)
-    have getA : (finalDs label).lookupNamedIri a.val = some [triple "m0_b"] := by
-      dsimp +zetaDelta only <;> cbv
-    have getB : (finalDs label).lookupNamedIri b.val = some [triple label] := by
-      dsimp +zetaDelta only <;> cbv
-    have reference : Dataflow.referenceAnswer inp = .ask (!(joined label).isEmpty) := by
-      apply congrArg Dataflow.Answer.ask
-      change formHasSolution env [] q
-        ((q.pattern.rewriteBnodes.lower env).evalIn (finalDs label) []) = _
-      rw [StoreDataset.formHasSolution_no_modifiers _ _ q _ (by rfl), lowered]
-      simp only [GraphPattern.evalIn, getA, getB, evalBgpIdx_eq_evalBgp, hashJoin_eq_join, joined]
-    rw [reference] at agreement
-    change payloadOfAnswer (Dataflow.shippedRun inp) = _
-    generalize Dataflow.shippedRun inp = output at agreement ⊢
-    cases output with
-    | select _ _ => exact False.elim agreement
-    | ask _ => exact congrArg ProtocolService.Payload.boolean agreement
-    | graph _ => exact False.elim agreement
-
-  simp only [observe, Option.bind_eq_bind, writeA, Option.bind_some, writeB, writeC, rendered]
-  dsimp +zetaDelta only <;> cbv <;> constructor <;> trivial
+  have writeA : post Dataset.empty "/gsp/a" postBodyB = some postFirst := firstPostCommits
+  have writeB : post postFirst "/gsp/b" postBodyB = some (postFinal "m0_b") :=
+    secondPostCommits postBodyB "b" parsePostB
+  have writeC : post postFirst "/gsp/b" postBodyC = some (postFinal "m0_c") :=
+    secondPostCommits postBodyC "c" parsePostC
+  have rendered (label : String) : evalPayload emptyEnv (View.of (postFinal label)) q =
+      .boolean (!(postJoin label).isEmpty) := servedPostAsk label
+  simp only [observe, Option.bind_eq_bind, writeA, Option.bind_some, writeB, writeC, rendered,
+    samePostJoin, apartPostJoin] <;> exact ⟨rfl, rfl⟩
 
 #print axioms namedPosts_cross_graph_label_observable
 

@@ -127,19 +127,19 @@ private theorem sample_host_decode :
     Encoding.utf8DecodeWithoutBOM (URL.percentDecode "example.test".toUTF8) = "example.test" := by cbv
 
 private theorem sample_domain : URL.domainParser "example.test" false = some "example.test" := by
-  have ascii : "example.test".toList.all (fun c => c.toNat < 0x80) = true := by cbv
   have lower : URL.asciiLowerStr "example.test" = "example.test" := by
     apply String.toList_injective
     simp only [URL.asciiLowerStr, String.toList_map] <;> cbv
   have safe : "example.test".toList.any URL.isForbiddenDomain = false := by cbv
-  have nonempty : "example.test".isEmpty = false := rfl
-  simp [URL.domainParser, ascii, lower, safe, nonempty]
+  simpa [URL.domainParser, lower] using safe
 
 private theorem sample_host : URL.parseHost "example.test" false = some (.domain "example.test") := by
   have bare : "example.test".startsWith "[" = false := by cbv
   have domainName : URL.endsInANumber "example.test" = false := by
     simp only [URL.endsInANumber, sample_host_parts] <;> cbv
-  simp [URL.parseHost, bare, sample_host_decode, sample_domain, domainName]
+  have decoded : Encoding.utf8DecodeWithoutBOM (URL.percentDecode "example.test".toByteArray) =
+      "example.test" := sample_host_decode
+  simp [URL.parseHost, bare, decoded, sample_domain, domainName]
 
 attribute [local cbv_eval] sample_host
 
