@@ -37,6 +37,7 @@ jobs:
               L4Factoidal.Net.SubresourceBoundTheorems
               L4Factoidal.RDF.CollectionBoundTheorems
               L4Factoidal.VC.CidKeyTheorems
+              L4Factoidal.VC.StatusListRangeTheorems
               L4Factoidal.Rendering.RdfViewTheorems
               L4Factoidal.SPARQL.GraphStoreMergeTheorems
             larger_dependency_budgets: ''
@@ -59,6 +60,7 @@ jobs:
               L4Factoidal.RDF.listItemsBy_length_lt
               L4Factoidal.RDF.listItems_length_le
               L4Factoidal.VC.Cryptosuite.resolvePublicKey_cid_document
+              L4Factoidal.VC.StatusList.validate_ok_status_range
               L4Factoidal.Rendering.RdfView.toDOM_graph_length_le
               L4Factoidal.Rendering.RdfView.parse_graph_and_caps
               L4Factoidal.SPARQL.GraphStoreService.freshPrefix_fresh
