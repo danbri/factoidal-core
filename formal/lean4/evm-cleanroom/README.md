@@ -53,6 +53,14 @@ Until transaction execution and state-root comparison exist, the entire
 fixture denominator remains unsupported. A parsed fixture is not a passed
 fixture.
 
+A separate `scripts/check-eels-gas.mjs` test executes **14 actual Lean
+bytecode programs** and compares their measured gas deductions with the
+opcode gas tiers from EELS Prague's `vm/gas.py`, pinned to execution-specs
+commit `1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653`. This is
+real *external reference checking of static opcode gas costs*, not official
+state-test consumption, transaction replay, or a general EVM semantics proof.
+The CI assertion requires all 14 cases to match.
+
 See [ROADMAP.md](ROADMAP.md) for acceptance gates G0–G6, real mainnet witness
 requirements, deployed-contract verification and independent review.
 See [issues #649–#652](https://github.com/danbri/factoidal-core/issues/649)
