@@ -172,6 +172,12 @@ done
 for module in "${LAB_MODULES[@]}"; do SOURCES+=("$BUILD/ir/$module.c"); done
 if [ "$MODE" = --source-only ]; then echo 'WEB_RENDER_SOURCE_RC=0'; exit 0; fi
 TOOLCHAIN=$(lean --print-prefix)
+# Public C entry points of web_render_shim.c, with the linker's leading underscores.
+SHIM_EXPORTS=(
+  _web_render_call _web_render_rdf_call _web_render_font_call _web_render_font_requests_call
+  _web_document_call _web_document_call_bin _web_document_font_call_bin _web_document_image_call_bin
+  _web_document_decode_call_bin _web_document_decode2_call_bin _web_render_hit _web_render_free
+)
 # Fails the build if GNU MP reached a linked binary (issue 393).
 assert_no_gmp(){
   if nm "$1" 2>/dev/null | grep -q '__gmp'; then
@@ -245,7 +251,12 @@ if [ "$MODE" = --native ]; then
   LIBRARY_OBJECTS=()
   for object in "${OBJECTS[@]}"; do [ "$(basename "$object")" = WebRenderCLI.o ] || LIBRARY_OBJECTS+=("$object"); done
   case "$(uname -s)" in
-    Darwin) LIBRARY="$BUILD/engines/libweb-render.dylib"; SHARED=(-dynamiclib -Wl,-dead_strip -lc++);;
+    Darwin)
+      LIBRARY="$BUILD/engines/libweb-render.dylib"
+      SHARED=(-dynamiclib -Wl,-dead_strip -lc++)
+      # Exports are dead-strip roots. Keep the shim ABI and let ld discard unused engine internals.
+      for symbol in "${SHIM_EXPORTS[@]}"; do SHARED+=("-Wl,-exported_symbol,$symbol"); done
+      ;;
     Linux) LIBRARY="$BUILD/engines/libweb-render.so";;
     *) LIBRARY="";;
   esac
@@ -356,7 +367,8 @@ else
   # the same time to first frame and a few percent less stack per call (2026-11-09).
   em++ -O3 -DNDEBUG -fwasm-exceptions --no-entry "${OBJECTS[@]}" "${CORE_OBJECTS[@]}" "$RUNTIME/rt-obj/"*.o \
     -o "$BUILD/engines/web-render.mjs" -sMODULARIZE=1 -sEXPORT_ES6=1 -sINVOKE_RUN=0 \
-    -sEXPORTED_FUNCTIONS=_web_render_call,_web_render_rdf_call,_web_render_font_call,_web_render_font_requests_call,_web_document_call,_web_document_call_bin,_web_document_font_call_bin,_web_document_image_call_bin,_web_document_decode_call_bin,_web_document_decode2_call_bin,_web_render_hit,_web_render_free,_malloc,_free -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,HEAPU8,stackSave,stackRestore \
+    -sEXPORTED_FUNCTIONS="$(IFS=,; printf '%s' "${SHIM_EXPORTS[*]},_malloc,_free")" \
+    -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,HEAPU8,stackSave,stackRestore \
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4MB -sENVIRONMENT=node,web,worker -sASSERTIONS=1
   emcc "${FLAGS[@]}" -c "$LAB/render_plan_shim.c" -o "$BUILD/obj-wasm/render_plan_shim.o"
   em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "$BUILD/obj-wasm/RenderPlan.o" "$BUILD/obj-wasm/render_plan_shim.o" "${CORE_OBJECTS[@]}" "$RUNTIME/rt-obj/"*.o \

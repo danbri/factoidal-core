@@ -16,6 +16,10 @@ worknote, kept as the record of a decision or a measurement),
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
 | 2026-11-19 | [Theorem search and independent review](20261119-theorem-search-review.md) | PR 609 | current — compiler evidence, nonvacuous premises, rejected broader claims and next obligations |
+| 2026-11-19 | [GPU pacing test clock](20261119-foafnaut-gpu-pacing-clock.md) | pending | current — deterministic poll clock retains pacing bounds; production gate unchanged; fresh package validation pending |
+| 2026-11-19 | [Form-control border-box geometry](20261119-foafnaut-control-geometry.md) | pending | current — anonymous text keeps sizing and paint ownership; strict script/frame geometry and native regression await rebuilt engines |
+| 2026-11-19 | [Foafnaut Linux desktop browser release](20261119-foafnaut-linux-browser-release.md) | this commit | record — published x86_64 archive, source and hashes, X11 window smoke evidence |
+| 2026-11-19 | [Processing-instruction attributes](20261119-processing-instruction-attributes.md) | issue 612 | current — lossless framing, XML pseudo-attributes and explicit parser bounds; lifecycle gaps in issue 615 |
 | 2026-11-17 | [XML Signature: DSA, ECDSA P-384/P-521 and 1024-bit RSA — status, use, libraries](designissues/2026-11-17-xmldsig-dsa-p384-p521-status.md) | https://github.com/danbri/factoidal/issues/1165 | record — owner decisions of 2026-11-17 (1223 and 1224 deferred, 1227 behind an opt-in); standards status, real use, verified libraries, with sources |
 | 2026-11-16 | [Script-set base URLs](20261116-base-href.md) | | current — frozen document bases, URL reflection, proofs and original regressions |
 | 2026-11-16 | [Memory-management overhead in BubblePopJS: a limit of the strategy, or of how the code is written and built?](designissues/2026-11-16-lean-memory-overhead.md) | https://github.com/danbri/factoidal-core/issues/471 | current — verdict (not fundamental; one compiler limit on result cells), idiom microbenchmark, allocation sources by function, C build variants (LTO with the runtime 0.85, PGO), page A/B, toolchains 4.33.1 and 4.35.0, undo-log size, ranked levers |
