@@ -70,11 +70,13 @@ jobs:
                    L4Factoidal/Paralliverse/CountPacketTheorems.lean
                    L4Factoidal/Paralliverse/WGSL/Surface.lean
                    L4Factoidal/Paralliverse/WGSL/ScanSurface.lean
+                   L4Factoidal/Paralliverse/WGSL/ScatterSurface.lean
                    L4Factoidal/Paralliverse/WGSL/Count.lean
                    L4Factoidal/Paralliverse/LoopTarget.lean
                    L4Factoidal/Paralliverse/ScanTarget.lean
                    L4Factoidal/Paralliverse/WGSL/Scan.lean
                    L4Factoidal/Paralliverse/ScatterTarget.lean
+                   L4Factoidal/Paralliverse/WGSL/Scatter.lean
                    L4Factoidal/Paralliverse/PipelineTarget.lean
                    L4Factoidal/Paralliverse.lean
                    Wasm/ParalliverseHub.lean)
@@ -178,7 +180,12 @@ jobs:
                       L4Factoidal.Paralliverse.WGSL.decoded_count_text_lane \
                       L4Factoidal.Paralliverse.WGSL.parse_scan_text \
                       L4Factoidal.Paralliverse.WGSL.scan_text_launch \
-                      L4Factoidal.Paralliverse.WGSL.decoded_count_scan_text; do
+                      L4Factoidal.Paralliverse.WGSL.decoded_count_scan_text \
+                      L4Factoidal.Paralliverse.WGSL.parse_scatter_text \
+                      L4Factoidal.Paralliverse.WGSL.scatter_text_launch \
+                      L4Factoidal.Paralliverse.WGSL.inactive_scatter_text \
+                      L4Factoidal.Paralliverse.WGSL.decoded_scatter_text_lane \
+                      L4Factoidal.Paralliverse.WGSL.scatter_text_traces_disjoint; do
             grep -F "'$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "$name" >> "$proof_dir/checked-theorems.txt"
