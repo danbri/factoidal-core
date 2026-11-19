@@ -2,7 +2,7 @@ name: Paralliverse Lean check
 
 on:
   push:
-    branches: [main]
+    branches: [main, wip/604-static-pack-spec]
     paths:
       - 'formal/lean4/L4Factoidal/Paralliverse.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/**'
@@ -31,6 +31,7 @@ permissions:
 
 jobs:
   paralliverse:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/604-static-pack-spec'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
