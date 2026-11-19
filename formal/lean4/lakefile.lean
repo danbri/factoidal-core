@@ -301,7 +301,8 @@ lean_lib CookieWireProofs where
 
 -- Opt-in theorem-only bridge from the real wire reader to persistence (issue 653).
 lean_lib CookieRestartWireProofs where
-  roots := #[`L4Factoidal.Net.CookieRestartWireTheorems]
+  roots := #[`L4Factoidal.Net.CookieRestartWireTheorems,
+    `L4Factoidal.Net.CookieRestartNavigationTheorems]
 
 -- The WebAssembly engine (issue 1244): spec relations generated from SpecTec, the
 -- executable engine, and the theorems between them. Its own library, so the main

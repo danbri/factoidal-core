@@ -29,3 +29,13 @@ jobs:
       theorems: >-
         L4Factoidal.Net.Cookies.Jar.ofWire_storage_invariants
         L4Factoidal.Net.Cookies.Jar.restart_ofWire
+  navigation:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/cookie-restart-wire-theorems'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: cookie-restart-navigation
+      timeout_minutes: 10
+      modules: L4Factoidal.Net.CookieRestartNavigationTheorems
+      theorems: >-
+        L4Factoidal.Net.Cookies.navCookies_restart_filter
+        L4Factoidal.Net.Cookies.navCookies_restart_forward
