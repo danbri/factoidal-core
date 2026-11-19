@@ -71,8 +71,8 @@ Does not say: that the source term already contains a single map. -/
 private theorem eval_affine (factor offset : UInt32) (xs : List UInt32) :
     Program.eval base (@reference) (affine factor offset) xs =
       xs.map (fun x => x * factor + offset) := by
-  change (xs.map (fun x => x * factor)).map (fun x => x + offset) = _
-  exact List.map_map
+  simp only [affine, Program.eval, List.map_map] <;>
+    (apply List.map_congr_left; intro x _; simp [Function.comp_def, Program.eval, reference])
 
 /-- Kind: standalone non-packing refinement.
 Says: on arbitrary words, the fused task-based CPU program computes the modular
