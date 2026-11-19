@@ -1,71 +1,123 @@
-# Clean-room EVM in Lean 4 (initial seed)
+# Lean 4 EVM — independently authored, machine-checked seed
 
-**Prototype. This is not a complete Ethereum implementation.** The goal is to
-start a genuinely independent executable semantics, with small machine-checked
-proofs and a test harness, then refine it against the Ethereum Execution Layer
-Specifications (EELS).
+**Status: prototype, not a complete Ethereum Virtual Machine or mainnet
+client.** This stand-alone project develops a deliberately restricted EVM
+interpreter and checks its internal correctness properties in Lean 4.
+Correctness with respect to Ethereum's external specifications is the next,
+separate obligation.
 
-This is a **standalone Lake project**, under `formal/lean4/evm-cleanroom`, pinned
-to the same Lean 4.33.1 toolchain as Factoidal. It does not modify or depend on
-the large `L4Factoidal` build.
+Read **[SOUNDNESS.md](SOUNDNESS.md)** before making any security or
+compatibility claim. It is an explicit ledger of theorem scope, tested
+examples, trusted boundaries and missing proof obligations.
 
-## Run
+The code is isolated under `formal/lean4/evm-cleanroom` and uses the same
+Lean 4.33.1 release as Factoidal without depending on its large Lean library.
+
+## Build and inspect
 
 ```sh
 cd formal/lean4/evm-cleanroom
 lake build
-lake env lean EVMCleanroom/Tests.lean
 lake env lean EVMCleanroom/Proofs.lean
+lake env lean EVMCleanroom/MemoryGas.lean
+lake env lean EVMCleanroom/Tests.lean
 ```
 
-The `#guard` cases run inside Lean. The four printed `#print axioms`
-commands make assumptions inspectable.
+The dedicated GitHub Actions workflow
+[`evm-cleanroom.yml`](../../../.github/workflows/evm-cleanroom.yml)
+builds the default library and runs an axiom audit.
+`#guard` executes examples during the Lean build; `#print axioms`
+reports theorem dependencies. These are distinct forms of evidence.
 
-## Implemented subset
+## Reading order
 
-* A 256-bit bounded natural word type with modular arithmetic.
-* A 1024-element bounded stack (the limit is a proof field).
-* A bytecode array, instruction pointer, gas, and a halted state.
-* `STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `POP`, `JUMP`, `JUMPI`,
-  `PC`, `GAS`, `JUMPDEST`, `PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`.
-* `PUSH0` is gated by a deliberately coarse pre-/post-Shanghai profile.
-* Instruction-gas charging, stack underflow/overflow checks, bad-jump checking,
-  including exclusion of `JUMPDEST` bytes inside PUSH immediates.
-* Proof declarations: modular addition commutativity, word/stack bounds,
-  gas nonincrease and code immutability for successful `commit` calls.
+1. [`EVMCleanroom/Core.lean`](EVMCleanroom/Core.lean): bounded 256-bit
+   words, 1,024-element stack, local state, instruction planning, gas
+   charging, restricted opcode dispatch and fuel-limited `run`.
+2. [`EVMCleanroom/Proofs.lean`](EVMCleanroom/Proofs.lean): helper and
+   whole-step theorems, arbitrarily long execution traces, exact cost-labelled
+   traces, a bridge from actual `run` executions to those traces, and
+   a universal PUSH1 jump-target boundary lemma.
+3. [`EVMCleanroom/MemoryGas.lean`](EVMCleanroom/MemoryGas.lean): independent
+   EVM memory-expansion price model, monotonicity and path-independence
+   proofs for *arbitrarily many* memory-growth events, and zero-length
+   memory-access corner cases.
+4. [`EVMCleanroom/Tests.lean`](EVMCleanroom/Tests.lean): executable
+   regression vectors and 256-bit arithmetic edge cases derived from
+   official Ethereum execution-specification test expectations.
+5. [`SOUNDNESS.md`](SOUNDNESS.md): exact trusted boundary and missing
+   conformance theorem.
 
-Unsupported opcodes fail explicitly. `Except Error State` is *not* a model of
-transaction-level rollback or exceptional-halt gas consumption.
+## Interpreter design
 
-## Major omissions
+`planStep : State → Except Error Plan` calculates effects but cannot
+commit state updates. `step` accepts those plans only through
+`commit`, which enforces the stack bound and gas charge. A supported
+instruction can therefore be reasoned about as two separate obligations:
 
-Memory and memory-expansion gas, storage and gas refunds, warm/cold accesses,
-precompiles, environmental opcodes, logs, calldata, calls, contract creation,
-REVERT, return-data, transactions/receipts/account state, cryptography,
-state tries, external consensus, network protocols, execution Engine API,
-EOF and historical fork handling. There is **no EELS differential conformance
-claim** or mainnet-compatibility claim.
+- Its planned effects and price match the corresponding EVM specification.
+  **This remains to be independently established.**
+- Every successfully committed plan preserves code and fork profile,
+  enforces bounded stack, and deducts exactly its declared price.
+  **This is already machine checked.**
 
-Theorem statements are about the *local implementation*, not yet an
-equivalence proof with the Ethereum Yellow Paper, EELS, Solidity or real
-execution clients. The proof files require a successful Lean build to count as
-machine checked. No external axioms or `sorry` are intended.
+`run_toTrace`, `Trace.canBill` and `run_has_exact_bill` connect the
+real fuel-limited interpreter to its formal trace semantics and prove that
+all successful executions have a reconstructible exact gas bill.
 
-## Follow-on steps
+Memory pricing uses the EELS formula
 
-1. Obtain passing Lean CI and audit each `#print axioms`.
-2. Prove per-opcode `step` preservation, not only the shared commit helper.
-3. Differentially compare every covered opcode against pinned EELS-generated
-   official fixtures and add adversarial boundary cases.
-4. Define EVM memory, gas expansion and transactional state semantics
-   precisely before implementing additional opcodes.
-5. Prove a future optimised implementation refines this simple semantics.
+```text
+C_mem(words) = 3 * words + floor(words² / 512)
+```
 
-References:
-- https://github.com/ethereum/execution-specs (CC0)
-- https://github.com/ethereum/EthLib
-- https://ethereum.org/developers/docs/evm/opcodes/
-- https://ethereum.github.io/yellowpaper/paper.pdf
+Theorem `MemoryGas.ExpansionTrace.exact_total` proves that any finite,
+non-shrinking allocation sequence incurs exactly the same total
+memory-expansion gas as expanding directly to its final size. A zero-length
+access never grows memory, even at offset `2^256 - 1`.
 
-No client or formalisation implementation code was copied. The new files should
-follow the parent repository's licensing policy.
+**Memory byte contents and MLOAD/MSTORE execution are not implemented yet**:
+this proof is about the pricing model, not about a complete memory subsystem.
+
+## Opcode coverage
+
+`STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `POP`,
+`JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`,
+`PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`.
+
+`PUSH0` is gated by a coarse pre-/post-Shanghai profile. Unsupported
+opcodes return explicit errors rather than executing as NOPs.
+
+The arithmetic tests include expected values from the official
+[execution-spec-tests `addFiller.yml`](https://github.com/ethereum/execution-spec-tests/blob/main/tests/static/state_tests/VMTests/vmArithmeticTest/addFiller.yml).
+They compare local stack results with those published expectations; they
+do **not** run complete official account-state fixtures.
+
+## Next proof milestone
+
+A second, separately developed EELS/EthLib-compatible transition
+semantics is needed, followed by a theorem of the following shape
+(for exactly specified fork profiles and admitted opcodes):
+
+```text
+Lean interpreter step(s) = success(s')
+      ⇒ EELS-compatible transition(s, s')
+```
+
+It must account for both success and exceptional outcomes, including
+gas burn, rollback and state effects. Differential tests against pinned
+official fixtures should support the proof effort but must not be
+misrepresented as proofs.
+
+After that: byte-addressed memory with MLOAD/MSTORE, complete JUMPDEST
+soundness/completeness for all PUSH widths, storage and gas refunds,
+nested calls, contract creation, account state, receipts, fork transitions
+and ultimately a full execution client.
+
+Sources: [EELS](https://github.com/ethereum/execution-specs),
+[EthLib](https://github.com/ethereum/EthLib),
+[Yellow Paper](https://ethereum.github.io/yellowpaper/paper.pdf),
+[EVMYulLean](https://github.com/NethermindEth/EVMYulLean).
+
+No Ethereum client or existing EVM formalization source code was copied
+into this seed. No legal clean-room certification has been performed.
