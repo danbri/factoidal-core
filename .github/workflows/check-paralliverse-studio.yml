@@ -34,3 +34,15 @@ jobs:
         L4Factoidal.Paralliverse.WordMapGPU.select?_eq_some_iff
         L4Factoidal.Paralliverse.WordMapGPU.select_affine
         L4Factoidal.Paralliverse.WordMapGPU.select_fused_affine
+  shader:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-shader
+      timeout_minutes: 10
+      modules: L4Factoidal.Paralliverse.WordMapGPUSurface
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.parse_shader
+        L4Factoidal.Paralliverse.WordMapGPU.packet_layout
+        L4Factoidal.Paralliverse.WordMapGPU.eval_pass
+        L4Factoidal.Paralliverse.WordMapGPU.run_module_lane
