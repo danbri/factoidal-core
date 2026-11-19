@@ -1727,7 +1727,7 @@ def drawMade (dom : DOM.Dom) (made : DOM.Dom × Array Rendering.CSS.Computed) (f
     (embedding : Rendering.Layout.Embedding) (width rows : Nat) (pictures : Rendering.Layout.Pictures) :
     Except String ((Rendering.Scene × Array Rendering.Layout.Box) × Array Rendering.CSS.Computed) := do
   let drawn ← Rendering.Layout.renderStyled (Rendering.Generated.flattenContents made.1 made.2) made.2 font embedding width rows pictures
-  return ((drawn.1,drawn.2.filter (·.source < dom.size)),made.2.extract 0 dom.size)
+  return ((drawn.1,Rendering.Layout.pageBoxes dom.size drawn.2),made.2.extract 0 dom.size)
 
 /-- Kind: correctness of the shared cascade. Says: the layout of a page whose cascade is made
 first (`layOutDOMIn`, so that the fonts can know whether the page has serif text) is the
