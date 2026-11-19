@@ -98,12 +98,15 @@ theorem eval_fuseMaps (base : Atom → Type) (ops : PrimitiveEval base sig)
   | prod f g hf hg =>
     funext x
     simp only [fuseMaps, eval, hf, hg]
+    rfl
   | fanout f g hf hg =>
     funext x
     simp only [fuseMaps, eval, hf, hg]
+    rfl
   | map f hf =>
     funext x
     simp only [fuseMaps, eval, hf]
+    rfl
 
 #print axioms eval_fuseMaps
 

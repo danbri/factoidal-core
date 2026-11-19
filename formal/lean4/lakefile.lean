@@ -372,7 +372,12 @@ lean_lib ParalliverseOrderedProofs where
 
 -- Typed, backend-neutral static programs and the task-based CPU refinement (issue 644).
 lean_lib ParalliverseProgramProofs where
-  roots := #[`L4Factoidal.Paralliverse.Program, `L4Factoidal.Paralliverse.ProgramCPU]
+  roots := #[`L4Factoidal.Paralliverse.Program, `L4Factoidal.Paralliverse.ProgramCPU,
+    `L4Factoidal.Paralliverse.ProgramWords, `Harness.ParalliverseProgramGuards]
+
+-- Optional bridge to the existing Dataflow contracts, without a generic-core dependency.
+lean_lib ParalliverseProgramDataflowProofs where
+  roots := #[`L4Factoidal.Paralliverse.ProgramDataflow]
 
 -- The opt-in CPU fixture runner emits JSON Lines.
 lean_exe «paralliverse-cpu» where root := `Harness.ParalliverseCpu

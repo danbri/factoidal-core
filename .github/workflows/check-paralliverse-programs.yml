@@ -43,3 +43,23 @@ jobs:
         L4Factoidal.Paralliverse.Program.runCPU_eq_eval
         L4Factoidal.Paralliverse.Program.runCPU_fuseMaps_eq_eval
         L4Factoidal.Paralliverse.Program.collect_mapCPU_eq_eval
+  words:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-typed-programs'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: typed-program-words
+      timeout_minutes: 10
+      modules: >-
+        L4Factoidal.Paralliverse.ProgramWords Harness.ParalliverseProgramGuards
+      theorems: >-
+        L4Factoidal.Paralliverse.WordProgram.fuseMaps_packedAffine
+        L4Factoidal.Paralliverse.WordProgram.runCPU_affine
+        L4Factoidal.Paralliverse.WordProgram.runCPU_packedAffine
+  dataflow:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-typed-programs'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: typed-program-dataflow
+      timeout_minutes: 15
+      modules: L4Factoidal.Paralliverse.ProgramDataflow
+      theorems: L4Factoidal.Paralliverse.Program.asStage_run_iff
