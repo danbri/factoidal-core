@@ -4,6 +4,12 @@
 
 ## What has actually compiled
 
+The later [strict fresh check](https://github.com/danbri/factoidal-core/actions/runs/44439844032) passed at `164103c03af51bf6e3ff50966414390c40ae4ff2`, with 49 required individual theorem reports, clean hygiene and both ordinary CPU and bounded Hub protocol fixtures. It adds the accepted-byte/count adapter, four source-span/admission lemmas, the bounded storage instruction interpreter, a real serial scan and the first guarded scatter slice. In particular `ScanTarget.scan_memory` and `scan_visible` cover every offset including the terminal slot and preserve the destination tail. `ScatterTarget.copy_words` proves the actual bounded copy loop's whole destination; `inactive_lane` establishes padded-lane inactivity. Complete accepted-packet scatter dispatch remains pending.
+
+The three scan results and scatter copy result report `[propext, Quot.sound]`; inactive scatter and loop input read require no axioms, loop store uses `[propext]`, and observing a finite store uses `[propext, Quot.sound]`. All other reports remain within the three permitted axioms. The earlier failed scan/scatter scripts were repaired and checked; error-recovery reports containing `sorryAx` were rejected.
+
+The full build of earlier `2cdd1538e` failed its generated-C recursion gate on the structural expression evaluator and a right-fold sum, before linking the new CPU Wasm sidecar. A generic explicit-continuation expression evaluator and its unconditional semantic-equivalence script are now under strict check; compiler replacement is not enabled until that proof compiles. The staged readback length uses the existing proved natural-sum/foldl equality. This is not a blanket recursion waiver or a measured speed claim. The newer loop interpreter also needs inspection in the fresh generated-C audit. Focused CI now retains its own exact-source C for diagnosis; the whole-library gate remains required.
+
 At `9b01b038096add11f62e57768b186510aee28b5e`, the [focused Lean 4.33.1 check](https://github.com/danbri/factoidal-core/actions/runs/44428608515) compiled fresh dependencies and these four modules with strict warnings, bounded resources and individual axiom reports:
 
 - `Paralliverse.StaticPack`: 15 results, including exact staged/scatter equality with independent `packSpec`, stable positions, unchanged surrounding memory and checked fallback.
@@ -11,7 +17,7 @@ At `9b01b038096add11f62e57768b186510aee28b5e`, the [focused Lean 4.33.1 check](h
 - `Paralliverse.PackWireTheorems`: six results connecting accepted bytes to finite little-endian words, exact packet extent, row count and each descriptor's decoded row length.
 - `Paralliverse.CountTarget`: six results for unsigned, checked finite-buffer instructions, culminating in `count_grid_eq_dsl`. Padded lanes are inert; all permitted physical lane permutations finish without a buffer fault, preserve destination size and agree with the whole DSL count memory, including its initial tail.
 
-Only `propext`, `Classical.choice` and `Quot.sound` occur in the reports. The workflow requires every expected fully qualified name; a nonempty compiler log is insufficient. Earlier failed proof attempts and Lean's error-recovery `sorryAx` output are not evidence. The subsequent `CountPacketTheorems` adapter composes byte acceptance with count execution; its two new statements require their own fresh check.
+Only `propext`, `Classical.choice` and `Quot.sound` occur in the reports. The workflow requires every expected fully qualified name; a nonempty compiler log is insufficient. Earlier failed proof attempts and Lean's error-recovery `sorryAx` output are not evidence. The subsequent `CountPacketTheorems` adapter composes byte acceptance with count execution; its two statements passed the later check above.
 
 Five ordinary CPU fixtures and the bounded Hub protocol fixtures passed in [run 44426385728](https://github.com/danbri/factoidal-core/actions/runs/44426385728). These are runtime tests, separately from the universal theorems. The protocol tests cover empty and mixed rows, duplicates, maximum u32, padded/reordered source storage, malformed packets and exact/one-off limits. They do not replace an encoder round-trip or a complete physical packing proof.
 
@@ -23,7 +29,7 @@ The mathematical DSL uses total natural-addressed memories. Stage completion, im
 
 The version-1 input packet is little-endian: version, row count and bank size, then logical `(start,length)` descriptors and a distinct word bank. The encoder reverses physical row storage and inserts nonzero padding, so GPU input cannot simply be the packed output. The decoder checks the whole header, extent, all source spans and combined output count before materialising rows. A proof-oriented descriptor traversal replaces the former mutable loops. Existing CPU fixtures exercise that change; a universal equality to the former implementation is not claimed. The decoder properties proved above concern the current executable implementation and arbitrary accepted producers.
 
-The bounded demo accepts 128 rows, 1,024 output words and 16 KiB editor input. These are demo limits, not the mathematical library's throughput or generality limit. Complete source-word correspondence, physical scan/scatter safety and simulation, target lowering, emitted-text semantics and real GPU execution remain required work. No physical GPU correctness or speed gain follows from the current proofs.
+The bounded demo accepts 128 rows, 1,024 output words and 16 KiB editor input. These are demo limits, not the mathematical library's throughput or generality limit. Source-word correspondence and the serial scan are checked; complete accepted-packet scatter dispatch, lowering composition, emitted-text semantics and real GPU execution remain required work. No physical GPU correctness or speed gain follows from the current proofs.
 
 ## Browser CPU and release path
 

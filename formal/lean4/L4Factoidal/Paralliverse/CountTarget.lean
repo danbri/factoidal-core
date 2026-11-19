@@ -45,6 +45,130 @@ def Expr.eval (packet : Array UInt32) (gid : UInt32) : Expr → Except Fault UIn
   | .mul a b => do return (← a.eval packet gid) * (← b.eval packet gid)
   | .load idx => do loadWord packet (← idx.eval packet gid)
 
+private inductive Bin where
+  | plus | times
+
+private def Bin.apply : Bin → UInt32 → UInt32 → UInt32
+  | .plus => (· + ·)
+  | .times => (· * ·)
+
+/-- Private evaluation context. The first operand is evaluated before the saved right operand. -/
+private inductive Kont where
+  | done
+  | right (op : Bin) (operand : Expr) (outer : Kont)
+  | combine (op : Bin) (left : UInt32) (outer : Kont)
+  | loadAt (outer : Kont)
+
+private inductive Control where
+  | evaluate (expr : Expr) (k : Kont)
+  | resume (word : UInt32) (k : Kont)
+
+-- Only the termination proof uses these weights. The interpreter never traverses
+-- a supplied expression to compute fuel before beginning its first instruction.
+@[simp] private noncomputable def Expr.work : Expr → Nat
+  | .literal _ | .globalId => 1
+  | .add a b | .mul a b => a.work + b.work + 3
+  | .load i => i.work + 2
+
+@[simp] private noncomputable def Kont.work : Kont → Nat
+  | .done => 0
+  | .right _ b k => b.work + 2 + k.work
+  | .combine _ _ k | .loadAt k => 1 + k.work
+
+@[simp] private noncomputable def Control.work : Control → Nat
+  | .evaluate e k => e.work + k.work
+  | .resume _ k => k.work
+
+private def executeExpr (packet : Array UInt32) (gid : UInt32) : Control → Except Fault UInt32
+  | .evaluate (.literal x) k => executeExpr packet gid (.resume x k)
+  | .evaluate .globalId k => executeExpr packet gid (.resume gid k)
+  | .evaluate (.add a b) k => executeExpr packet gid (.evaluate a (.right .plus b k))
+  | .evaluate (.mul a b) k => executeExpr packet gid (.evaluate a (.right .times b k))
+  | .evaluate (.load i) k => executeExpr packet gid (.evaluate i (.loadAt k))
+  | .resume v .done => .ok v
+  | .resume a (.right op b k) => executeExpr packet gid (.evaluate b (.combine op a k))
+  | .resume b (.combine op a k) => executeExpr packet gid (.resume (op.apply a b) k)
+  | .resume i (.loadAt k) =>
+    match loadWord packet i with
+    | .error fault => .error fault
+    | .ok v => executeExpr packet gid (.resume v k)
+termination_by state => state.work
+decreasing_by all_goals simp <;> omega
+
+/-- Evaluate any count-fragment expression with an explicit continuation stack. -/
+def Expr.evalTR (packet : Array UInt32) (gid : UInt32) (e : Expr) : Except Fault UInt32 :=
+  executeExpr packet gid (.evaluate e .done)
+
+/-- Kind: expression simulation.
+Says: binary continuations apply the same unsigned operation to the same
+left and right results, preserving the order of any faults.
+Does not say: that either operand must be in bounds. -/
+private theorem binary_cont (packet : Array UInt32) (gid : UInt32) (op : Bin) (a b : Expr) (k : Kont)
+    (ha : ∀ q, executeExpr packet gid (.evaluate a q) =
+      (a.eval packet gid).bind (fun x => executeExpr packet gid (.resume x q)))
+    (hb : ∀ q, executeExpr packet gid (.evaluate b q) =
+      (b.eval packet gid).bind (fun x => executeExpr packet gid (.resume x q))) :
+    executeExpr packet gid (.evaluate a (.right op b k)) =
+      ((do return op.apply (← a.eval packet gid) (← b.eval packet gid)) : Except Fault UInt32).bind
+        (fun x => executeExpr packet gid (.resume x k)) := by
+  rw [ha]
+  cases a.eval packet gid with
+  | error fault => rfl
+  | ok left =>
+    change executeExpr packet gid (.resume left (.right op b k)) = _
+    rw [executeExpr, hb]
+    cases b.eval packet gid with
+    | error fault => rfl
+    | ok right =>
+      change executeExpr packet gid (.resume right (.combine op left k)) =
+        executeExpr packet gid (.resume (op.apply left right) k)
+      rw [executeExpr]
+
+/-- Kind: expression simulation.
+Says: evaluating any expression with any pending continuation produces exactly the
+structural result passed to that continuation, including the original read fault.
+Does not say: that interpreting an arbitrary expression uses bounded heap space. -/
+private theorem execute_cont (packet : Array UInt32) (gid : UInt32) (e : Expr) (k : Kont) :
+    executeExpr packet gid (.evaluate e k) =
+      (e.eval packet gid).bind (fun v => executeExpr packet gid (.resume v k)) := by
+  induction e generalizing k with
+  | literal x => rw [executeExpr] <;> rfl
+  | globalId => rw [executeExpr] <;> rfl
+  | add a b ha hb =>
+    rw [executeExpr]
+    exact binary_cont packet gid .plus a b k ha hb
+  | mul a b ha hb =>
+    rw [executeExpr]
+    exact binary_cont packet gid .times a b k ha hb
+  | load i ih =>
+    change executeExpr packet gid (.evaluate (.load i) k) =
+      ((i.eval packet gid).bind (fun j => loadWord packet j)).bind
+        (fun v => executeExpr packet gid (.resume v k))
+    rw [executeExpr, ih]
+    cases i.eval packet gid with
+    | error fault => rfl
+    | ok index =>
+      change executeExpr packet gid (.resume index (.loadAt k)) =
+        (loadWord packet index).bind (fun v => executeExpr packet gid (.resume v k))
+      rw [executeExpr]
+      cases loadWord packet index <;> rfl
+
+/-- Kind: executable equivalence.
+Says: the continuation machine and structural evaluator return the same word or
+the same fault for every packet, global ID and expression.
+Does not say: that a compiler produces a native jump or a particular stack limit. -/
+theorem Expr.eval_eq_evalTR : @Expr.eval = @Expr.evalTR := by
+  funext packet gid e
+  unfold Expr.evalTR
+  rw [execute_cont]
+  cases e.eval packet gid with
+  | error fault => rfl
+  | ok v =>
+    change Except.ok v = executeExpr packet gid (.resume v .done)
+    rw [executeExpr]
+
+#print axioms Expr.eval_eq_evalTR
+
 def Stmt.exec (packet : Array UInt32) (gid : UInt32) (dst : Array UInt32) :
     Stmt → Except Fault (Array UInt32)
   | .store idx value => do storeWord dst (← idx.eval packet gid) (← value.eval packet gid)

@@ -139,7 +139,7 @@ def readback (dst : Buffer) (base length : Nat) : List UInt32 :=
 def packParallel (rows : Rows) (prior : Buffer) : List UInt32 :=
   let widths := counts rows
   let dst := scatter (scanFrom 0 widths) rows prior
-  readback dst 0 widths.sum
+  readback dst 0 (widths.foldl (· + ·) 0)
 
 /-- Invariant.
 Says: consecutive row writes compose at the first row's exclusive end.
@@ -227,8 +227,8 @@ produce the CPU specification's complete list in the same order.
 Does not say: that a shader, driver or parallel schedule implements these stages. -/
 theorem packParallel_eq_packSpec (rows : Rows) (prior : Buffer) :
     packParallel rows prior = packSpec rows := by
-  change readback (scatter (scanFrom 0 (counts rows)) rows prior) 0 (counts rows).sum = _
-  rw [scatter_eq_scatterRow, ← packSpec_length, readback_scatterRow]
+  change readback (scatter (scanFrom 0 (counts rows)) rows prior) 0 ((counts rows).foldl (· + ·) 0) = _
+  rw [← List.sum_eq_foldl_nat, scatter_eq_scatterRow, ← packSpec_length, readback_scatterRow]
 
 /-- Invariant.
 Says: the local word at index k in a row appears at the prefix word count plus k
