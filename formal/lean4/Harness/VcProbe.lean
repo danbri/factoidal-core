@@ -37,7 +37,8 @@ calls the HACL* externs, and prints. Seven sections, each one score line:
      bytes) and a 1 MiB deterministic pseudo-random buffer. The storage
      host passes the HACL* hasher into `Storage/BlockMerkle.lean` for
      Merkle admission, so this equality is what makes that substitution
-     sound; the probe exits non-zero when it breaks.
+     sound; the probe exits non-zero when it breaks. This section also runs
+     the SHA-224 known-answer check for the XML Encryption HACL* binding.
 
   6. `vc-credential-structural` — the VCDM 2.0 data-model fixtures of
      `third_party/testing/vc/tests/input` (w3c/vc-data-model-2.0-test-suite,
@@ -68,6 +69,7 @@ runners do.
 -/
 import L4Factoidal.Crypto.Ed25519
 import L4Factoidal.Crypto.SHA2Native
+import L4Factoidal.Crypto.WebHacl
 import Harness.NativeHasher
 import L4Factoidal.VC.DataIntegrity
 import L4Factoidal.VC.Tests
@@ -535,6 +537,10 @@ private def streamDigestWith (fold : L4Factoidal.Crypto.BlockFold256) (n : Nat)
 def runSha256Native : IO Tally := do
   IO.println "\n=== 5. SHA-256 via HACL* extern — differential against pure Lean ==="
   let t ← IO.mkRef ({} : Tally)
+  let sha224 := (WebHacl.sha224ForXml? "abc".toUTF8).map bytesToHex
+  check t "HACL* SHA-224 for XML Encryption, FIPS 180-4 abc"
+    (sha224 == some "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7")
+    (sha224.getD "digest refused")
   let cases : List (String × ByteArray) :=
     [ ("empty message", ByteArray.empty)
     , ("FIPS 180-4 \"abc\"", "abc".toUTF8)

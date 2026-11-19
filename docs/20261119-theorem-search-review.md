@@ -2,6 +2,12 @@
 
 The dated checkpoints below retain the evidence available at each revision. The draft review records the latest inventory and links each addition to its compiler output. [Current inventory and compiler evidence](https://github.com/danbri/factoidal-core/pull/609)
 
+## All 47 declarations checked together — 2026-11-19 11:51 UTC
+
+At `1b479b9780ad967cc8ec0557abbe8c177a9da4ca`, six proof groups checked 45 distinct public declarations and the event-loop job checked two more. Every project module exited zero. All seven jobs passed their individual axiom-report and hygiene checks. The reports used `propext`, `Classical.choice` and `Quot.sound`, or a subset. [Six-group compiler run](https://github.com/danbri/factoidal-core/actions/runs/44515214500) · [Event-loop compiler output](https://github.com/danbri/factoidal-core/actions/runs/44515241716/job/135529477778)
+
+The 47th declaration, `L4Factoidal.SPARQL.StoreEndpoint.namedPosts_cross_graph_label_observable`, follows two N-Triples POSTs through the actual graph-store handler and its committed datasets. When both payloads use `_:b`, both graphs contain the subject label `m0_b` and the shipped cross-graph ASK evaluator returns `true`. Changing only the second payload to `_:c` stores `m0_c` there and changes the answer to `false`. The endpoint job compiled all 321 project modules and reported the three permitted axioms for this witness. The query is typed. Network service, durable log replay and textual query parsing remain outside the statement. [Checked source](https://github.com/danbri/factoidal-core/blob/1b479b9780ad967cc8ec0557abbe8c177a9da4ca/formal/lean4/L4Factoidal/SPARQL/StoreEndpointNamedPostScopeTheorems.lean#L245-L275) · [Endpoint compiler output](https://github.com/danbri/factoidal-core/actions/runs/44515214500/job/135529372147)
+
 ## Verified XHR, EventSource and full TLI1 wire lookup — 2026-11-19 09:52 UTC
 
 **46 distinct public statements have compiled across the recorded source revisions.** The XHR result added one to the previous 39, four complete-wire results brought the count to 44, the direct RDF dictionary contract brought it to 45, and the EventSource witness added one.
@@ -406,4 +412,3 @@ Additional obligations that would change what a reader can rely on:
 3. A work claim needs a counter, bounds for successful and failed walks, a lookup-cost model and a bound on term/seen operations. A smaller graph-theoretic item bound would require showing that each visited non-nil cell uses distinct first and rest triples.
 
 I made no repository changes and did not execute Lean. The exact-head focused run displayed a failure during this review; the strict rerun and individual axiom output are required before recording these as checked. [First focused run at this commit](https://github.com/danbri/factoidal-core/actions/runs/44425923867)
-

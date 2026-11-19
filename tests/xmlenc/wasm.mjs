@@ -95,7 +95,9 @@ const w3c = JSON.parse(readFileSync(join(w3cDir, 'cases.json'), 'utf8'));
 const w3cKeys = JSON.parse(readFileSync(join(w3cDir, 'keys.json'), 'utf8'));
 for (const c of w3c.cases) {
   test(`W3C ${c.id}: ${c.outcome}`, async () => {
-    const res = await decrypt({ document: readFileSync(join(w3cDir, c.file), 'utf8'), keys: w3cKeys });
+    // `key` names the one key a case is given (the documents name RSA keys by certificate only).
+    const caseKeys = c.key ? w3cKeys.filter((k) => k.kid === c.key) : w3cKeys;
+    const res = await decrypt({ document: readFileSync(join(w3cDir, c.file), 'utf8'), keys: caseKeys });
     if (c.outcome === 'ok') {
       assert.equal(res.ok, true, res.error);
       assert.equal(res.canonical, canonical(readFileSync(join(w3cDir, c.expected), 'utf8')));
@@ -104,6 +106,16 @@ for (const c of w3c.cases) {
       assert.ok(res.error.includes(c.reason), res.error);
       assert.notEqual(res.error, DECRYPTION_ERROR);
     }
+  });
+}
+
+const oaepInterop = JSON.parse(readFileSync(join(root, 'tests', 'xmlenc', 'openssl-oaep.json'), 'utf8'));
+assert.deepEqual(oaepInterop.cases.map((c) => c.name), ['sha224 / MGF1-sha512', 'sha384 / MGF1-sha224']);
+for (const c of oaepInterop.cases) {
+  test(`OpenSSL OAEP ${c.name}: the checked Wasm hashes recover the plaintext`, async () => {
+    const res = await decrypt({document: c.document, keys: oaepInterop.keys});
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.canonical, canonical(oaepInterop.expected));
   });
 }
 

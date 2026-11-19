@@ -60,6 +60,7 @@ def stubCipher : Cipher where
       | _ => .error .refused
 
 def stubPrims : Prims where
+  oaepDigest d m := some (d.fn m)
   rsaPrivate n _ c := if c.size == n.size then some c else none
   rsaPublic n _ m := if m.size == n.size then some m else none
   p256Public sk := some (sha256 sk ++ sha256 sk)
@@ -228,10 +229,60 @@ def ekRsa : String := ekWith rsaOaepMgf1p
 -- AES-192, unknown algorithms, mixed OAEP hashes.
 #guard failsWith (decryptText (edDoc aes192Gcm ekRsa cvData)) (refusedHas "AES-192")
 #guard failsWith (decryptText (edDoc "urn:example:cipher" ekRsa cvData)) (refusedHas "not supported")
-#guard failsWith (decryptText (edDoc aes128Gcm (ekWith rsaOaepMgf1p
-  ("<ds:DigestMethod Algorithm=\"" ++ sha256Digest ++ "\"/>")) cvData)) (refusedHas "SHA-1 digest only")
-#guard failsWith (decryptText (edDoc aes128Gcm (ekWith rsaOaep11
-  ("<ds:DigestMethod Algorithm=\"" ++ sha256Digest ++ "\"/>")) cvData)) (refusedHas "mgf1sha256")
+-- RSA-OAEP digests and MGF1 hashes (§5.5.2). A digest or MGF this profile
+-- does not know is refused by name; a known one passes the allowlist, and the
+-- stub RSA operation then refuses the 3-octet ciphertext: the one error.
+def digestEl (u : String) : String := "<ds:DigestMethod Algorithm=\"" ++ u ++ "\"/>"
+def mgfEl (u : String) : String :=
+  "<xenc11:MGF xmlns:xenc11=\"" ++ xenc11Ns ++ "\" Algorithm=\"" ++ u ++ "\"/>"
+#guard failsWith (decryptText (edDoc aes128Gcm (ekWith rsaOaep11 (digestEl "urn:example:md5")) cvData))
+  (refusedHas "digest method urn:example:md5")
+#guard failsWith (decryptText (edDoc aes128Gcm (ekWith rsaOaep11 (mgfEl "urn:example:mgf")) cvData))
+  (refusedHas "mask generation function urn:example:mgf")
+-- `rsa-oaep-mgf1p` fixes MGF1 with SHA-1, so it has no `xenc11:MGF` child.
+#guard failsWith (decryptText (edDoc aes128Gcm (ekWith rsaOaepMgf1p (mgfEl mgf1Sha1)) cvData))
+  (refusedHas "unsupported child")
+#guard OaepDigest.all.all fun d =>
+  failsWith (decryptText (edDoc aes128Gcm (ekWith rsaOaepMgf1p (digestEl d.digestUri)) cvData)) isDecryptFailed
+#guard OaepDigest.all.all fun d => OaepDigest.all.all fun g =>
+  failsWith (decryptText (edDoc aes128Gcm (ekWith rsaOaep11 (digestEl d.digestUri ++ mgfEl g.mgfUri)) cvData))
+    isDecryptFailed
+#guard OaepDigest.all.all fun d =>
+  OaepDigest.ofDigestUri? d.digestUri == some d && OaepDigest.ofMgfUri? d.mgfUri == some d
+#guard OaepDigest.all.all fun d => (d.fn ByteArray.empty).size == d.len
+
+-- EME-OAEP with a label hash that differs from the MGF1 hash (W3C WRAP.3:
+-- SHA-384 with MGF1-SHA-1; WRAP.4: SHA-512 with MGF1-SHA-1 and a label),
+-- through the identity as the RSA operation: the round trip holds, and
+-- decoding with MGF1 over the label hash instead fails.
+def oaepN : ByteArray := bytes 512 11
+def oaepMsg : ByteArray := "a 32-octet content encryption k.".toUTF8
+def oaepLabel : ByteArray := "dummy123".toUTF8
+def oaepRound (enc dec : L4Factoidal.Crypto.RsaOaep.OaepHash) (seedLen : Nat) : Option ByteArray :=
+  (L4Factoidal.Crypto.RsaOaep.oaepEncrypt enc stubPrims.rsaPublic oaepN ByteArray.empty oaepMsg oaepLabel
+      (bytes seedLen 12)).bind
+    fun c => L4Factoidal.Crypto.RsaOaep.oaepDecrypt dec stubPrims.rsaPrivate oaepN ByteArray.empty c oaepLabel
+#guard oaepRound (oaepHashOf .sha384 .sha1) (oaepHashOf .sha384 .sha1) 48 == some oaepMsg
+#guard oaepRound (oaepHashOf .sha512 .sha1) (oaepHashOf .sha512 .sha1) 64 == some oaepMsg
+#guard (oaepRound (oaepHashOf .sha512 .sha1) (oaepHashOf .sha512 .sha512) 64).isNone
+#guard (oaepRound (oaepHashOf .sha384 .sha1) (oaepHashOf .sha256 .sha1) 48).isNone
+
+-- Exercise the XML caller with a valid OAEP ciphertext. For SHA-1 the
+-- second decoding mask hashes the 20-byte seed plus four counter bytes.
+def checkedDigestFailure (bad : ByteArray → Bool) (answer : Option ByteArray) : Bool :=
+  match encryptCard (rsaSpec false) with
+  | .error _ => false
+  | .ok doc =>
+      let p := { stubPrims with oaepDigest := fun d m => if bad m then answer else some (d.fn m) }
+      failsWith (decrypt stubCipher p keys {} doc) isDecryptFailed
+
+#guard checkedDigestFailure (fun m => m.size == 0) none
+#guard checkedDigestFailure (fun m => m.size == 24 && m.data.toList.getLast? == some 1) none
+#guard checkedDigestFailure (fun m => m.size == 24 && m.data.toList.getLast? == some 1) (some (bytes 1 7))
+#guard (RsaOaep.mgf1Checked { size := 0, run := fun _ => some ByteArray.empty } [] 4).isNone
+#guard (RsaOaep.mgf1Checked { size := 20, run := fun _ => some ByteArray.empty } [] 21).isNone
+#guard WebHacl.HashAlg.ofName? "SHA-224" == none
+
 #guard failsWith (decryptText (edDoc aes128Gcm (ekWith "http://www.w3.org/2001/04/xmlenc#kw-tripledes") cvData))
   (refusedHas "not supported")
 -- No Type, another Type.

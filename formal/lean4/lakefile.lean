@@ -360,6 +360,17 @@ lean_lib BubblePopRealm where
 -- The event sequences that labs/demos/foafnaut/frame_cost_test.ts replays.
 lean_exe «frame-cost-cases» where root := `Harness.FrameCostCases
 
+-- Paralliverse's stable word-packing specification, staged model and proofs (issue #604).
+@[default_target] lean_lib Paralliverse where
+  roots := #[`L4Factoidal.Paralliverse]
+
+-- The opt-in CPU fixture runner emits JSON Lines.
+lean_exe «paralliverse-cpu» where root := `Harness.ParalliverseCpu
+
+-- The browser's narrow byte ABI and its opt-in native fixture runner.
+lean_lib ParalliverseHub where roots := #[`Wasm.ParalliverseHub]
+lean_exe «paralliverse-hub-fixtures» where root := `Harness.ParalliverseHubFixtures
+
 -- The GPU API of page scripts: the WGSL subset, the commands Lean validates, and their
 -- theorems (docs/designissues/2026-11-08-page-gpu.md). Only Lean core.
 @[default_target] lean_lib PageGpu where

@@ -1,0 +1,65 @@
+---
+layout: hub-app.njk
+title: Paralliverse
+appBase: /web/hub/paralliverse
+appSource: https://github.com/danbri/factoidal-core/tree/main/formal/lean4/L4Factoidal/Paralliverse
+appEngineLabel: Runtime details
+appEngineUrl: '#runtime'
+# The matching released runtime passed compiled-Wasm CPU/WebGPU browser acceptance.
+permalink: /web/hub/paralliverse/index.html
+---
+<header class="pack-intro">
+  <h1>Paralliverse</h1>
+  <p>Stable packing joins rows of unsigned 32-bit words. It keeps the order and duplicates, and skips empty rows. Edit the rows to run the Lean function in your browser.</p>
+</header>
+
+<section class="pack-card pack-editor" aria-labelledby="input-heading">
+  <div class="pack-heading">
+    <h2 id="input-heading"><label for="source">Input rows</label></h2>
+    <label for="example">Example <select id="example">
+      <option value="custom" disabled>Custom input</option>
+      <option value="mixed" selected>Mixed rows</option>
+      <option value="empty">Empty rows</option>
+      <option value="none">Zero rows</option>
+    </select></label>
+  </div>
+  <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="input-help">[
+  [],
+  [8, 3],
+  [],
+  [8, 0],
+  [4294967295, 3]
+]</textarea>
+  <div class="pack-actions">
+    <button id="run" type="button" disabled>Run CPU + GPU</button>
+    <p class="pack-note">Updates automatically as you type. Run again at any time.</p>
+  </div>
+  <p class="pack-note" id="input-help">Enter a JSON array of rows, using decimal integers from 0 to 4294967295. Each input can contain up to 128 rows and 1,024 words.</p>
+  <p class="pack-status" id="input-status" role="status">Loading the CPU runtime…</p>
+</section>
+
+<div class="pack-results">
+  <section class="pack-card" aria-labelledby="cpu-heading">
+    <h2 id="cpu-heading">CPU · Lean WebAssembly</h2>
+    <pre id="cpu-output" aria-label="CPU packed words">—</pre>
+    <p id="cpu-status" class="pack-status" role="status">Waiting for input.</p>
+  </section>
+  <section class="pack-card" aria-labelledby="gpu-heading">
+    <h2 id="gpu-heading">GPU · WebGPU</h2>
+    <pre id="gpu-output" aria-label="GPU packed words">—</pre>
+    <p id="gpu-status" class="pack-status" role="status">Checking WebGPU availability…</p>
+  </section>
+</div>
+<p id="comparison-status" class="pack-status" role="status"></p>
+
+<details id="runtime">
+  <summary>Runtime details</summary>
+  <p>The worker sends the editor bytes to Lean. Lean validates them, writes the input packet, decodes it, calls <code>StaticPack.packSpec</code>, and writes the packed words. The CPU call time includes packet decoding, result encoding, and copies across the WebAssembly boundary.</p>
+  <p>The GPU runs the Count, Scan and Scatter shader sources returned by Lean over the same input packet. Lean deliberately reorders and pads source storage. The GPU result comes from its actual terminal offset and payload readback; every returned byte is compared with the CPU result.</p>
+  <p>GPU end-to-end time includes upload, command encoding, queue execution, terminal and payload readback, and validation. It excludes shader/device initialisation and the untimed warm-up. The phase times use the worker clock, and do not isolate device compute time. CPU call and GPU end-to-end measurements include different transport costs; no speedup ratio is inferred.</p>
+  <p>Lean equivalence theorems concern the admitted input and formal shader execution model. Browser shader compilation, driver, hardware and physical command submission remain outside those proofs. The live byte comparison is a runtime check.</p>
+  <dl id="runtime-data" hidden></dl>
+  <p><a href="https://github.com/danbri/factoidal-core/issues/604">Packing proofs and WebGPU work</a></p>
+</details>
+
+<noscript><p>This demo uses a JavaScript worker to run the WebAssembly module.</p></noscript>

@@ -237,6 +237,14 @@ jobs:
         working-directory: formal/lean4
         run: lake exe l4c14n
 
+      # XML Encryption 1.1 natively (HACL* RSA-OAEP, P-256, X25519; Vale
+      # AES-GCM): the Apache Santuario fixtures and the W3C interop cases of
+      # tests/xmlenc/w3c (https://github.com/danbri/factoidal/issues/1165,
+      # track B item 5). Exits non-zero on a failure.
+      - name: XML Encryption (lake exe l4xmlenc-probe)
+        working-directory: formal/lean4
+        run: lake exe l4xmlenc-probe
+
       # XPointer Framework, element() and xmlns() (2003) and xpointer() (2002
       # draft) over the 98 pointers of the W3C XInclude test suite in
       # third_party/testing/xinclude (https://github.com/danbri/factoidal/issues/1165,

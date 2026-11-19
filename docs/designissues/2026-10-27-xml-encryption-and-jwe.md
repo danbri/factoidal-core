@@ -76,9 +76,10 @@ Accepted, by allowlist; everything else is refused, never skipped:
   `xmlenc#aes128-cbc` and `xmlenc#aes256-cbc` only when the caller opts in,
   because CBC without a MAC is malleable (Jager and Somorovsky, "How to Break
   XML Encryption", CCS 2011);
-* key transport: `xmlenc#rsa-oaep-mgf1p` (SHA-1 digest and MGF1),
-  `xmlenc11#rsa-oaep` with SHA-256; refused: `xmlenc#rsa-1_5`
-  (Bleichenbacher);
+* key transport uses `xmlenc#rsa-oaep-mgf1p` or `xmlenc11#rsa-oaep`. The
+  reader accepts the digest and MGF combinations described below. The writer
+  produces the SHA-1 or SHA-256 equal-hash configurations. The profile
+  refuses `xmlenc#rsa-1_5` (Bleichenbacher).
 * key wrap: `xmlenc#kw-aes128`, `xmlenc#kw-aes256`;
 * key agreement: `xmlenc11#ECDH-ES` on P-256 and X25519, with
   `xmlenc11#ConcatKDF` over SHA-256 (OtherInfo not a whole number of octets:
@@ -131,8 +132,15 @@ rulings):
   block appended; Lean removes the §5.2 padding. Checked against Santuario's
   `aes128-cbc` in `tests/xmlenc/wasm.mjs`.
 * RSA-OAEP with the same hash for the digest and MGF1 only (SHA-1 or
-  SHA-256): `rsa-oaep-mgf1p` with a SHA-256 digest and the W3C cases
-  WRAP.3 and WRAP.4 (SHA-384 or SHA-512 with MGF1-SHA-1) are refused.
+  SHA-256) until 2026-11-17. Since then (track B item 5, part 1, of
+  https://github.com/danbri/factoidal/issues/1165): every digest of §5.5.2
+  and §5.7 (SHA-1, SHA-224, SHA-256, SHA-384, SHA-512) with either
+  algorithm, and for `xmlenc11#rsa-oaep` any `mgf1sha*` MGF, independent of
+  the digest. `Enc.oaepHashOf` describes the pure specification. The XML
+  runtime supplies HACL* through `Enc.Prims.oaepProvider` for both digests.
+  It refuses a missing or wrong-sized digest before applying that mask.
+  W3C WRAP.3 and WRAP.4 exercise mixed digests. WRAP.2 also needs AES-192.
+  [Checked hash provider and fixture provenance](../20261119-xmlenc-oaep-hacl.md).
 * X25519 key agreement: `xmlenc11#ECDH-ES` with an X25519 originator key,
   and `http://www.w3.org/2021/04/xmldsig-more#x25519` (RFC 9231), which
   Santuario 4 writes; the originator key is a `dsig11:DEREncodedKeyValue`

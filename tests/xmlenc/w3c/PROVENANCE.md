@@ -28,15 +28,18 @@ document states for the Working Group's material.
 `oracle/EC-P256_SHA256WithECDSA.p12` (password `passwd`, as the test-case
 document gives), converted to JWKs with
 `openssl pkcs12 -legacy -nocerts -nodes` and Node's
-`KeyObject.export({format: "jwk"})`. They are published test keys.
+`KeyObject.export({format: "jwk"})`. They are published test keys. On 2026-11-17 the keys of
+`oracle/RSA-3072_SHA256WithRSA.p12` and `oracle/RSA-4096_SHA256WithRSA.p12`
+were added in the same way (kids `oracle-RSA-3072`, `oracle-RSA-4096`), for
+WRAP.2 to WRAP.4. A case's `key` in `cases.json` names the one key the
+harnesses give it, because the documents name their keys by certificate only.
 
-`cases.json` gives the outcome each case has in the profile of
-`formal/lean4/L4Factoidal/XML/Enc.lean`: WRAP.1 decrypts (natively and in
-the wasm); AGRMNT.1 decrypts where AES Key Wrap is available (the wasm with
-WebCrypto); the others are refused by the allowlist (AES-192, OAEP with
-SHA-384 or SHA-512 digests and MGF1-SHA-1, P-521, finite
-field Diffie-Hellman, PBKDF2, no `Type`). Run by `lake exe l4xmlenc-probe`
-(section `w3c`) and `node --test tests/xmlenc/wasm.mjs`.
+`cases.json` records the expected outcomes of the XML Encryption profile.
+The native and Wasm harnesses require WRAP.1, WRAP.3 and WRAP.4 to recover
+`plaintext.xml`. AGRMNT.1 requires AES Key Wrap on the JavaScript host.
+The remaining cases expect the named refusals for AES-192, P-521, finite
+field Diffie-Hellman, PBKDF2 or an absent `Type`. Run `lake exe l4xmlenc-probe`
+and `node --test tests/xmlenc/wasm.mjs` using a Wasm build of the same source.
 
 Not used: the IBM and Microsoft key derivation cases DRV.2 to DRV.4 (PBKDF2
 and `xenc11:DerivedKey`, outside the profile, like DRV.1), the Microsoft
