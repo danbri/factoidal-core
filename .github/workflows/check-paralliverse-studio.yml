@@ -46,3 +46,46 @@ jobs:
         L4Factoidal.Paralliverse.WordMapGPU.packet_layout
         L4Factoidal.Paralliverse.WordMapGPU.eval_pass
         L4Factoidal.Paralliverse.WordMapGPU.run_module_lane
+  frame:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-frame
+      timeout_minutes: 10
+      modules: L4Factoidal.Paralliverse.WordMapGPUFrame
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.lane_size
+        L4Factoidal.Paralliverse.WordMapGPU.foldLanes_frame
+  grid:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-grid
+      timeout_minutes: 15
+      modules: L4Factoidal.Paralliverse.WordMapGPUGrid
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.word_grid_bounds
+        L4Factoidal.Paralliverse.WordMapGPU.word_canonical_valid
+        L4Factoidal.Paralliverse.WordMapGPU.selected_grid
+  studio:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-frontend-lean
+      timeout_minutes: 10
+      modules: >-
+        L4Factoidal.Paralliverse.StudioProgram L4Factoidal.Paralliverse.Studio
+        Wasm.ParalliverseHub Harness.ParalliverseStudioFixtures Harness.ParalliverseHubFixtures
+      runtime_fixture: Harness.ParalliverseStudioFixtures
+      generated_example: true
+      theorems: >-
+        L4Factoidal.Paralliverse.Studio.runCPU_eq_source
+        L4Factoidal.Paralliverse.Studio.pipeline_affine
+        L4Factoidal.Paralliverse.Studio.three_maps_refused
+        L4Factoidal.Paralliverse.Studio.Script.command_count
+        L4Factoidal.Paralliverse.Studio.parseProgram_over_limit
+        L4Factoidal.Paralliverse.Studio.parseRequest_over_limit
+        L4Factoidal.Paralliverse.Studio.evaluate_correct
+        L4Factoidal.Paralliverse.Hub.studio_exports
+        L4Factoidal.Paralliverse.Hub.capability_exports
+        L4Factoidal.Paralliverse.Hub.shader_source_exports

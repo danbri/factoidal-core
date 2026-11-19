@@ -33,6 +33,16 @@ on:
       timeout_minutes:
         required: true
         type: number
+      runtime_fixture:
+        description: Optional executable fixture module from the same fresh source closure
+        required: false
+        type: string
+        default: ''
+      generated_example:
+        description: Also compile the fixture's --emit-example Lean output
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -166,6 +176,31 @@ jobs:
               raise SystemExit('Missing axiom reports for ' + ', '.join(sorted(missing)))
           (out / 'checked-theorems.txt').write_text('\n'.join(required) + '\n')
           PY
+      - name: Execute the fresh fixture and check generated Lean source
+        if: inputs.runtime_fixture != ''
+        working-directory: formal/lean4
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
+          RUNTIME_FIXTURE: ${{ inputs.runtime_fixture }}
+          GENERATED_EXAMPLE: ${{ inputs.generated_example }}
+        run: |
+          set -euo pipefail
+          unset LEAN_SRC_PATH
+          export LEAN_PATH="$PROOF_DIR/modules"
+          module="${RUNTIME_FIXTURE//.//}.lean"
+          test -f "$module"
+          ulimit -v 4194304
+          args=(-j1 -s16384 -M2048 -DwarningAsError=true)
+          timeout --kill-after=10s 180s lean "${args[@]}" --run "$module" \
+            2>&1 | tee "$PROOF_DIR/runtime.log"
+          if [ "$GENERATED_EXAMPLE" = true ]; then
+            timeout --kill-after=10s 180s lean "${args[@]}" --run "$module" --emit-example \
+              > "$PROOF_DIR/generated-example.lean"
+            test -s "$PROOF_DIR/generated-example.lean"
+            timeout --kill-after=10s 180s lean "${args[@]}" "$PROOF_DIR/generated-example.lean" \
+              2>&1 | tee "$PROOF_DIR/generated-example.log"
+          fi
       - name: Preserve exact-source compiler evidence
         if: always()
         uses: actions/upload-artifact@v4
