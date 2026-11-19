@@ -15,13 +15,7 @@ private theorem get_set_same (s : State) (handle : Nat) (x : Xhr) :
   · change (s.xhrs.set! (handle - 1) x)[handle - 1]? =
       (s.xhrs[handle - 1]?).map (fun _ => x)
     rw [Array.set!, Array.getElem?_setIfInBounds]
-    by_cases hin : handle - 1 < s.xhrs.size
-    · have hget : s.xhrs[handle - 1]? = some s.xhrs[handle - 1] :=
-        getElem?_pos _ _ hin
-      simp [hin, hget]
-    · have hget : s.xhrs[handle - 1]? = none :=
-        Array.getElem?_eq_none (Nat.le_of_not_gt hin)
-      simp [hin, hget]
+    by_cases hin : handle - 1 < s.xhrs.size <;> simp [hin]
 
 /-- Kind: XHR error-state invariant.
 Says: the request-error transition for a detached transfer leaves no
@@ -60,11 +54,20 @@ theorem give_realm_response_released (s : State) (id handle callback : Nat) (a :
       Integrity.okFor x.integrity r.tainting r.body = true := by
   simp only [give, hws, hlive, hx] at hcb hresp
   dsimp only
+  let finished : State :=
+    { s with
+      cookies := t.storeCookies s.cookies a
+      live := s.live.filter (·.1 != id) }
+  have errorHere :
+      ((requestError finished handle { x with transfer := none } "error").get? handle).bind
+        Xhr.response ≠ some r := by
+    intro exposed
+    have impossible := (requestError_no_response finished handle x "error").symm.trans exposed
+    cases impossible
   cases hanswer : onAnswer { t with jar := t.storeCookies s.cookies a } a with
   | fail reason =>
     simp only [hanswer] at hresp
-    rw [requestError_no_response] at hresp
-    cases hresp
+    exact False.elim (errorHere hresp)
   | send sent wire =>
     simp only [hanswer] at hcb hresp
     let noted := ({ s with cookies := t.storeCookies s.cookies a } : State).notePin sent
@@ -81,23 +84,25 @@ theorem give_realm_response_released (s : State) (id handle callback : Nat) (a :
   | deliver t' delivered =>
     simp only [hanswer, hraw, Bool.false_eq_true, if_false, Bool.false_and] at hresp
     split at hresp
-    · rw [requestError_no_response] at hresp
-      cases hresp
+    · exact False.elim (errorHere hresp)
     · rename_i hint
       split at hresp
-      · rw [requestError_no_response] at hresp
-        cases hresp
+      · exact False.elim (errorHere hresp)
       · have hpass : Integrity.okFor x.integrity delivered.tainting delivered.body = true := by
           cases hok : Integrity.okFor x.integrity delivered.tainting delivered.body
           · exact False.elim (hint (by simp [hok]))
           · rfl
         have hrealm : x.forRealm delivered = delivered := by
           simp [Xhr.forRealm, Xhr.hidesScript, hraw]
-        let next : Xhr := { x.withAnswer delivered with transfer := none, uploadComplete := true,
-          events := x.events ++ responseEvents x (x.forRealm delivered) }
-        have hget := get_set_same s handle next
-        rw [hx] at hget
-        change ((s.set handle next).get? handle).bind Xhr.response = some r at hresp
+        let next : Xhr :=
+          { (x.withAnswer delivered) with
+            transfer := none
+            uploadComplete := true
+            events := x.events ++ responseEvents x (x.forRealm delivered) }
+        have previous : finished.get? handle = some x := hx
+        have hget := get_set_same finished handle next
+        rw [previous] at hget
+        change ((finished.set handle next).get? handle).bind Xhr.response = some r at hresp
         rw [hget] at hresp
         change some (x.forRealm delivered) = some r at hresp
         rw [hrealm] at hresp

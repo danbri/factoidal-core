@@ -1019,6 +1019,10 @@ lean_lib TermLocalIndexLookupProofs where
 lean_lib XhrResponseProvenanceProofs where
   roots := #[`L4Factoidal.Net.XhrResponseProvenanceTheorems]
 
+-- Actual SSE parser and reconnect header boundary (issue #636), proof-only.
+lean_lib EventSourceHeaderProofs where
+  roots := #[`L4Factoidal.Net.EventSourceHeaderTheorems]
+
 -- Actual event-loop JSON admission bridge (issue #629), proof-only lab root.
 lean_lib EventLoopWireProofs where
   srcDir := "../../labs/demos/foafnaut"

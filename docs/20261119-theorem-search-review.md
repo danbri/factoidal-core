@@ -1,6 +1,10 @@
 # Overnight theorem search and independent review — 2026-11-19
 
-## Current evidence checkpoint — 2026-11-19 08:29 UTC
+## Current evidence checkpoint — 2026-11-19 08:33 UTC
+
+**39 now checked:** the [17-module first dictionary batch at32b175a46](https://github.com/danbri/factoidal-core/actions/runs/44487909155/job/135435901106) passed strict core/leaf exits zero, all three required-name reports with standard three axioms, and hygiene. This adds `TermLocalIndex.mem_entriesOf_iff`, `TermFold.foldTerm_eq_self` and `TermLocalIndex.lookup_entriesOf_sound` to the36 statements below. It establishes membership and hit soundness, not completeness. The first XHR635 leaf failed on elaboration, record syntax and error-branch matching; error-recovery sorryAx reports are discarded. Strongest-model repair is submitted next with its public statement unchanged.
+
+[EventSource636](https://github.com/danbri/factoidal-core/issues/636) is an uncompiled closed parser/header counterexample. The real UTF-8 decoder and SSE parser retain and emit U+0100 as the last ID; the actual XHR setter rejects it but accepts ASCII on the same successfully opened request. Independent coordinator source review traced WebApi code162 to the JSON ID, and the real QuickJS prelude reconnect to Last-Event-ID/setRequestHeader (with a caught setup error). The theorem does not prove JavaScript execution, a scheduled reconnect or an observed network failure. This is separate from XHR635 response provenance.
 
 **36 public statements actually compiled:** [complete33 atfe277d794](https://github.com/danbri/factoidal-core/actions/runs/44470657748), [event-loop admission and numeric-bound counterexample atfe6a74278](https://github.com/danbri/factoidal-core/actions/runs/44474817265/job/135392681327), and [named POST denotation at85598d74b](https://github.com/danbri/factoidal-core/actions/runs/44479842485/job/135409130207). The earlier checkpoints below are historical. Each counted module has strict zero exit and permitted individual axiom reports; no failing-module error-recovery report counts.
 

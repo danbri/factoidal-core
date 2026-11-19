@@ -84,9 +84,11 @@ jobs:
             job_timeout_minutes: 15
             modules: |-
               L4Factoidal.Net.XhrResponseProvenanceTheorems
+              L4Factoidal.Net.EventSourceHeaderTheorems
             larger_dependency_budgets: ''
             theorems: |-
               L4Factoidal.Net.Xhr.give_realm_response_released
+              L4Factoidal.Net.EventSource.unicode_last_event_id_header_refused
           - group: http-wire
             job_timeout_minutes: 15
             modules: |-
