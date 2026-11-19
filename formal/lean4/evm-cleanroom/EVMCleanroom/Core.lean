@@ -1,3 +1,4 @@
+import Std
 /-!
 # Independently written, small-step EVM executable model
 
@@ -6,7 +7,6 @@ Specification references: Ethereum Yellow Paper §9; Ethereum execution-specs.
 Only a fork-insensitive opcode subset plus Shanghai's PUSH0 is admitted.
 No code was copied from an Ethereum client or other EVM formalization.
 -/
-import Std
 
 namespace EVMCleanroom
 
