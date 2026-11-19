@@ -29,6 +29,35 @@ builds the default library and runs an axiom audit.
 `#guard` executes examples during the Lean build; `#print axioms`
 reports theorem dependencies. These are distinct forms of evidence.
 
+## External executable interface and first official-fixture integration
+
+The CLI executes **only the currently supported opcode subset** with supplied
+bytecode, gas and step fuel:
+
+```sh
+cd formal/lean4/evm-cleanroom
+lake exe evm-subset 600260030100 100 10
+# {"status":"ok","gasRemaining":91,"pc":6,"halted":true,"stack":[5]}
+```
+
+Machine input errors are distinct from EVM execution errors. This interface
+does **not** decode signed transactions or access account state, and the
+counter used for execution fuel is a harness limit, *not* Ethereum gas.
+
+The standalone `scripts/eels-state-preflight.mjs` checks the envelope of
+**genuine published EELS state-test JSON**. CI downloads a version-pinned
+Shanghai/PUSH0 fixture from the EthereumJS mirror, identifies its test
+vectors, pre-state accounts and expected post-state/log hashes, then
+deliberately reports **zero executed / zero conformance passes**.
+Until transaction execution and state-root comparison exist, the entire
+fixture denominator remains unsupported. A parsed fixture is not a passed
+fixture.
+
+See [ROADMAP.md](ROADMAP.md) for acceptance gates G0–G6, real mainnet witness
+requirements, deployed-contract verification and independent review.
+See [issues #649–#652](https://github.com/danbri/factoidal-core/issues/649)
+for tracked implementation milestones.
+
 ## Reading order
 
 1. [`EVMCleanroom/Core.lean`](EVMCleanroom/Core.lean): bounded 256-bit
