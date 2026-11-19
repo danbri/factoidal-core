@@ -278,7 +278,10 @@ private theorem scan_sync (inputs : LoopTarget.Inputs) (n : UInt32) (prior : Arr
   · rw [target_start inputs n prior header small, targetLoop]
     change (ScanTarget.terminal.exec inputs 0 0 last).map LoopTarget.State.dst = _
     rw [targetEnd] <;> rfl
-  · simpa only [ended, Array.size_set] using size
+  · calc
+      (ended n last seen room).dst.size = last.dst.size := by simp [ended]
+      _ = (initial prior).dst.size := size
+      _ = prior.size := rfl
   · exact keys_push seen n _ n.toNat rfl keys
 
 /-- Kind: accepted packet and text refinement.
