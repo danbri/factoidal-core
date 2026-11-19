@@ -78,6 +78,7 @@ jobs:
           (ulimit -v 4194304; exec timeout --kill-after=5s 30s lean --version) \
             2>&1 | tee "$proof_dir/lean-version.txt"
 
+          failed=0
           for module in "${modules[@]}"; do
             olean="$proof_dir/modules/${module%.lean}.olean"
             mkdir -p "$(dirname "$olean")"
@@ -93,10 +94,11 @@ jobs:
             status=("${PIPESTATUS[@]}")
             set -e
             printf '%s compile_exit=%s tee_exit=%s\n' "$module" "${status[@]}" | tee -a "$proof_dir/exit.txt"
-            test "${status[0]}" -eq 0
-            test "${status[1]}" -eq 0
-            test -s "$olean"
+            if [ "${status[0]}" -ne 0 ] || [ "${status[1]}" -ne 0 ] || [ ! -s "$olean" ]; then
+              failed=1
+            fi
           done
+          test "$failed" -eq 0
 
       - name: Audit the source and reported axiom dependencies
         shell: bash
