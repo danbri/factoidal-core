@@ -101,7 +101,7 @@ jobs:
       - name: Verify comparator detects deliberately false expectations
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          node scripts/differential/selftest.mjs .lake/differential/corpus.jsonl .lake/differential/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["allDetected"] and len(x["controls"])==2, x'
+          node scripts/differential/selftest.mjs .lake/differential/corpus.jsonl .lake/differential/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["allDetected"] and len(x["controls"])==3 and sum(c.get("reproduced",False) for c in x["controls"])==2 and any(c.get("classification")=="unsupported" for c in x["controls"]), x'
       - name: Build and validate content-addressed evidence manifest
         if: always()
         working-directory: formal/lean4/evm-cleanroom
