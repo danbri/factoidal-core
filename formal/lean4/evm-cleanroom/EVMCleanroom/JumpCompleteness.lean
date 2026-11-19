@@ -56,8 +56,8 @@ theorem ForwardPath.count_le_distance {code : Array UInt8}
   induction h with
   | refl _ =>
     omega
-  | step hin rest ih =>
-    have hwidth := (opcodeWidth_bounds code _).1
+  | @step pc target n hin rest ih =>
+    have hwidth := (opcodeWidth_bounds code pc).1
     omega
 
 /-- Every in-range JUMPDEST at the end of a forward instruction path is
@@ -74,7 +74,8 @@ theorem ForwardPath.scan_accepts {code : Array UInt8}
     cases fuel with
     | zero => omega
     | succ remaining =>
-      simp [scanJumpdest, Nat.not_le_of_gt htarget, hopcode]
+      simp [scanJumpdest, Nat.not_le_of_gt htarget]
+      exact hopcode
   | @step pc target count hin rest ih =>
     cases fuel with
     | zero => omega
