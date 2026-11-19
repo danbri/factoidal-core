@@ -16,11 +16,9 @@ private theorem defaultEntries_of_scopeRefusal_none {entries : List DeltaEntry}
   have hn : (entries.any fun entry => match entry with
       | .add _ (some _) | .remove _ (some _) | .clear (some _) | .drop _ | .create _ => true
       | _ => false) = false := by
-    unfold scopeRefusal at h
-    split at h
-    · cases h
-    · rename_i hguard
-      simpa using hguard
+    apply Bool.eq_false_iff.mpr
+    intro hguard
+    simp [scopeRefusal, hguard] at h
   have hentry := List.any_eq_false.mp hn e he
   cases e with
   | add _ g | remove _ g | clear g =>

@@ -20,6 +20,12 @@ private theorem replay_raw_contains (g : Graph) (s : Std.HashSet Triple) (t : Tr
       List.mem_cons, eq_comm (a := u) (b := t), or_assoc]
     exact or_left_comm
 
+private theorem replay_raw_empty_contains (g : Graph) (t : Triple) :
+    (g.foldl (fun acc u => acc.insert u) (∅ : Std.HashSet Triple)).contains t = true ↔
+      t ∈ g := by
+  rw [replay_raw_contains g ∅ t, Std.HashSet.contains_empty]
+  simp
+
 /-- Kind: replay invariant.
 Says: a batch of default removals preserves existing key uniqueness and
 removes exactly the triples in the removal list.
@@ -44,7 +50,10 @@ private theorem replay_default_removes (ds : Dataset) (removed : Graph) :
     · intro t
       rw [(ih next).2 t, hnext]
       simp only [Graph.remove, List.mem_filter, Bool.not_eq_true', Bool.eq_false_iff,
-        Triple.eqb_iff_eq, List.mem_cons, not_or, and_assoc]
+        List.mem_cons, not_or, and_assoc]
+      change (t ∈ ds.default ∧ ¬(t.eqb u = true) ∧ t ∉ us) ↔
+        (t ∈ ds.default ∧ t ≠ u ∧ t ∉ us)
+      rw [Triple.eqb_iff_eq t u]
 
 /-- Kind: replay invariant.
 Says: a batch of default additions preserves existing key uniqueness and
@@ -87,9 +96,9 @@ private theorem replay_graphDelta_default (ds : Dataset) (target : Graph) :
   change (ds.default.KeyNodup →
     (applyDeltaEntries ds (graphDelta none ds.default target)).default.KeyNodup) ∧ _
   by_cases hclear : (target.isEmpty && !ds.default.isEmpty) = true
-  · have hempty : target = [] := List.isEmpty_iff.mp (Bool.and_eq_true.mp hclear).1
+  · have hempty : target = [] := List.isEmpty_iff.mp (Bool.and_eq_true_iff.mp hclear).1
     have hdelta : graphDelta none ds.default target = [.clear none] := by
-      simp only [graphDelta, if_pos hclear]
+      simp only [graphDelta, if_pos hclear] <;> rfl
     rw [hdelta]
     change (ds.default.KeyNodup → Graph.KeyNodup []) ∧
       (∀ t, Graph.mem t [] = Graph.mem t target)
@@ -103,11 +112,15 @@ private theorem replay_graphDelta_default (ds : Dataset) (target : Graph) :
         removed.map (fun u => .remove u none) ++ added.map (fun u => .add u none) := by
       simp only [graphDelta, if_neg hclear] <;> rfl
     have hremoved (u : Triple) : u ∈ removed ↔ u ∈ ds.default ∧ u ∉ target := by
-      simp only [removed, List.mem_filter, Bool.not_eq_true', Bool.eq_false_iff,
-        replay_raw_contains, Std.HashSet.contains_empty, Bool.false_eq_true, false_or]
+      simp only [removed, List.mem_filter, Bool.not_eq_true', Bool.eq_false_iff]
+      change (u ∈ ds.default ∧
+        ¬((target.foldl (fun acc v => acc.insert v) (∅ : Std.HashSet Triple)).contains u = true)) ↔ _
+      rw [replay_raw_empty_contains target u]
     have hadded (u : Triple) : u ∈ added ↔ u ∈ target ∧ u ∉ ds.default := by
-      simp only [added, List.mem_filter, Bool.not_eq_true', Bool.eq_false_iff,
-        replay_raw_contains, Std.HashSet.contains_empty, Bool.false_eq_true, false_or]
+      simp only [added, List.mem_filter, Bool.not_eq_true', Bool.eq_false_iff]
+      change (u ∈ target ∧
+        ¬((ds.default.foldl (fun acc v => acc.insert v) (∅ : Std.HashSet Triple)).contains u = true)) ↔ _
+      rw [replay_raw_empty_contains ds.default u]
     let kept := applyDeltaEntries ds (removed.map (fun u => .remove u none))
     have hremoves := replay_default_removes ds removed
     have hadds := replay_default_adds kept added

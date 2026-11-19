@@ -2,7 +2,7 @@ name: Theorem review Lean check
 
 on:
   push:
-    branches: [main, wip/timer-partition-proofs]
+    branches: [main]
     paths:
       - 'formal/lean4/**'
       - 'tools/lean-hygiene-audit.py'
@@ -36,6 +36,7 @@ jobs:
               L4Factoidal.RDF.CollectionBoundTheorems
               L4Factoidal.VC.CidKeyTheorems
               L4Factoidal.Rendering.RdfViewTheorems
+              L4Factoidal.SPARQL.GraphStoreMergeTheorems
             larger_dependency_budgets: ''
             theorems: |-
               L4Factoidal.EventLoop.mem_due_now_iff
@@ -54,6 +55,8 @@ jobs:
               L4Factoidal.VC.Cryptosuite.resolvePublicKey_cid_document
               L4Factoidal.Rendering.RdfView.toDOM_graph_length_le
               L4Factoidal.Rendering.RdfView.parse_graph_and_caps
+              L4Factoidal.SPARQL.GraphStoreService.freshPrefix_fresh
+              L4Factoidal.SPARQL.GraphStoreService.freshPrefix_candidate
           - group: store-endpoint
             job_timeout_minutes: 45
             modules: |-
