@@ -370,6 +370,10 @@ lean_lib ParalliverseOrderedProofs where
     `L4Factoidal.Storage.Sbm11.OrderedScanTheorems, `Harness.ParalliverseOrderedGuards,
     `Harness.ParalliverseOrderedScanGuards]
 
+-- Typed, backend-neutral static programs and the task-based CPU refinement (issue 644).
+lean_lib ParalliverseProgramProofs where
+  roots := #[`L4Factoidal.Paralliverse.Program, `L4Factoidal.Paralliverse.ProgramCPU]
+
 -- The opt-in CPU fixture runner emits JSON Lines.
 lean_exe «paralliverse-cpu» where root := `Harness.ParalliverseCpu
 

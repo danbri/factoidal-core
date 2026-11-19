@@ -1,0 +1,45 @@
+name: Paralliverse typed program proofs
+
+on:
+  push:
+    branches: [main, wip/paralliverse-typed-programs]
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/Program*.lean'
+      - 'formal/lean4/Harness/ParalliverseProgram*Guards.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/Ordered.lean'
+      - 'formal/lean4/L4Factoidal/Par/Chunked.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-paralliverse-programs.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/Program*.lean'
+      - 'formal/lean4/Harness/ParalliverseProgram*Guards.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/Ordered.lean'
+      - 'formal/lean4/L4Factoidal/Par/Chunked.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-paralliverse-programs.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-typed-programs'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: typed-program-core
+      timeout_minutes: 10
+      modules: >-
+        L4Factoidal.Paralliverse.Program L4Factoidal.Paralliverse.ProgramCPU
+      theorems: >-
+        L4Factoidal.Paralliverse.Program.eval_fuseMaps
+        L4Factoidal.Paralliverse.Program.runCPU_eq_eval
+        L4Factoidal.Paralliverse.Program.runCPU_fuseMaps_eq_eval
+        L4Factoidal.Paralliverse.Program.collect_mapCPU_eq_eval
