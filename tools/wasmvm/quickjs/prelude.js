@@ -3564,50 +3564,49 @@
   // data and written back into it, by Lean (DOM/PiAttributes.lean, web_api op 172), so each
   // change is a change of the data (one characterData record). A page that does not call
   // them pays nothing.
-  const piOp = (mode, pi, name = '', value = '') => apiCall(172, [mode, pi.data, name, value], 0, false);
-  const piAttrs = pi => {
-    const r = piOp('p', pi);
-    if (typeof r !== 'string' || r === '') return [];
-    const f = r.split('\u0000'), out = [];
-    for (let i = 0; i + 1 < f.length; i += 2) out.push([f[i], f[i + 1]]);
-    return out;
+  const piId = pi => {
+    const id = nodeId(pi);
+    if (info(id, 0) !== 7) throw new TypeError('Illegal invocation: ProcessingInstruction');
+    return id;
   };
-  const piInvalid = () => new DOMException('The string contains invalid characters.', 'InvalidCharacterError');
+  const piString = value => {
+    if (typeof value === 'symbol') throw new TypeError('A Symbol cannot be converted to a DOMString');
+    return String(value);
+  };
+  const piOp = (mode, id, args = [], flags = 0) =>
+    api(172, [mode, str(id, 3), ...args], flags, false, 'ProcessingInstruction attributes');
   class ProcessingInstruction extends CharacterData {
     get target() { return str(nodeId(this), 0); }
-    hasAttributes() { return piAttrs(this).length > 0; }
-    getAttributeNames() { return piAttrs(this).map(a => a[0]); }
+    hasAttributes() { return piOp('a', piId(this)) === '1'; }
+    getAttributeNames() { return splitPrefixed(piOp('p', piId(this))); }
     getAttribute(name) {
-      if (arguments.length < 1) throw new TypeError("Failed to execute 'getAttribute': 1 argument required");
-      name = String(name); const a = piAttrs(this).find(a => a[0] === name); return a === undefined ? null : a[1];
+      const id = piId(this);
+      idlArgs(arguments.length, 1, 'ProcessingInstruction', 'getAttribute');
+      return splitPrefixed(piOp('g', id, [piString(name)]))[0] ?? null;
     }
     hasAttribute(name) {
-      if (arguments.length < 1) throw new TypeError("Failed to execute 'hasAttribute': 1 argument required");
-      name = String(name); return piAttrs(this).some(a => a[0] === name);
+      const id = piId(this);
+      idlArgs(arguments.length, 1, 'ProcessingInstruction', 'hasAttribute');
+      return piOp('g', id, [piString(name)]) !== '';
     }
     setAttribute(name, value) {
-      if (arguments.length < 2) throw new TypeError("Failed to execute 'setAttribute': 2 arguments required");
-      const r = piOp('s', this, String(name), String(value));
-      if (typeof r !== 'string') throw piInvalid();
-      this.data = r;
+      const id = piId(this);
+      idlArgs(arguments.length, 2, 'ProcessingInstruction', 'setAttribute');
+      chk(n.setText(id, piOp('s', id, [piString(name), piString(value)])));
     }
     removeAttribute(name) {
-      if (arguments.length < 1) throw new TypeError("Failed to execute 'removeAttribute': 1 argument required");
-      const r = piOp('r', this, String(name));
-      if (typeof r === 'string' && r !== this.data) this.data = r;
+      const id = piId(this);
+      idlArgs(arguments.length, 1, 'ProcessingInstruction', 'removeAttribute');
+      const [updated] = splitPrefixed(piOp('r', id, [piString(name)]));
+      if (updated !== undefined) chk(n.setText(id, updated));
     }
     toggleAttribute(name, force = undefined) {
-      if (arguments.length < 1) throw new TypeError("Failed to execute 'toggleAttribute': 1 argument required");
-      name = String(name);
-      const r = piOp('r', this, name);
-      if (typeof r !== 'string') throw piInvalid();
-      if (this.hasAttribute(name)) {
-        if (force === undefined || !force) { this.data = r; return false; }
-        return true;
-      }
-      if (force !== undefined && !force) return false;
-      this.setAttribute(name, '');
-      return true;
+      const id = piId(this);
+      idlArgs(arguments.length, 1, 'ProcessingInstruction', 'toggleAttribute');
+      const flags = force === undefined ? 0 : force ? 3 : 1;
+      const [present, updated] = splitPrefixed(piOp('t', id, [piString(name)], flags));
+      if (updated !== undefined) chk(n.setText(id, updated));
+      return present === '1';
     }
   }
   class DocumentType extends Node {

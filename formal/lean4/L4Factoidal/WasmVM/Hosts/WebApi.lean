@@ -635,14 +635,29 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
   | 171 => pure' do match L4Factoidal.Rendering.Observe.margin? (← strArg fs 0) with
     | some m => ofStr (L4Factoidal.Rendering.Observe.marginText m)
     | none => .error (-3)
-  -- 172: the attributes of a processing instruction's data (`DOM/PiAttributes.lean`): mode
-  -- `p` reads them, `s` and `r` give the data after `setAttribute` and `removeAttribute`;
-  -- an invalid attribute name is -3 (InvalidCharacterError).
+  -- 172: processing-instruction attributes. Lists and optional strings use UTF-16
+  -- length prefixes, including the optional replacement data from remove and toggle.
   | 172 => pure' do
-    let arg := fun (i : Nat) => (strArg fs i).toOption.getD ""
-    match L4Factoidal.DOM.PiAttributes.op (← strArg fs 0) (arg 1) (arg 2) (arg 3) with
-    | some r => ofStr r
-    | none => .error (-3)
+    let mode ← strArg fs 0
+    let data ← strArg fs 1
+    match mode with
+    | "a" => ofStr (if ((L4Factoidal.DOM.PiAttributes.parse data).getD []).isEmpty then "0" else "1")
+    | "p" => ofStr (lengthPrefixed (((L4Factoidal.DOM.PiAttributes.parse data).getD []).map Prod.fst))
+    | "g" => ofStr (lengthPrefixed (L4Factoidal.DOM.PiAttributes.get data (← strArg fs 2)).toList)
+    | "s" =>
+      match L4Factoidal.DOM.PiAttributes.set data (← strArg fs 2) (← strArg fs 3) with
+      | some updated => ofStr updated
+      | none => .error (-3)
+    | "r" =>
+      let updated := L4Factoidal.DOM.PiAttributes.remove data (← strArg fs 2)
+      ofStr (lengthPrefixed (updated.filter (· != data)).toList)
+    | "t" =>
+      let force := if flag flags 0 then some (flag flags 1) else none
+      match L4Factoidal.DOM.PiAttributes.toggle data (← strArg fs 2) force with
+      | some (present, updated) =>
+        ofStr (lengthPrefixed ((if present then "1" else "0") :: updated.toList))
+      | none => .error (-3)
+    | _ => .error (-20)
   | 21 => pure' (match strArg fs 0 with
     | .ok d => match Base64.btoa d with | some r => ofStr r | none => .error (-3)
     | .error _ => .error (-3))
