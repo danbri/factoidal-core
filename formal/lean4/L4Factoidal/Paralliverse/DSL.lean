@@ -283,7 +283,7 @@ private theorem scan_parts (widths : List Nat) (offsets : Mem Nat)
   · unfold StaticPack.scanFrom
     rw [← h]
     have hlen : (view widths.length offsets).length = widths.length := by simp [view]
-    rw [List.take_append_of_le_length hlen.symm.le, List.take_of_length_le hlen.le]
+    rw [List.take_append_of_le_length (by omega), List.take_of_length_le (by omega)]
   · have ht := congrArg List.getLast? h
     rw [List.getLast?_concat, StaticPack.scan_terminal] at ht
     simpa using ht
