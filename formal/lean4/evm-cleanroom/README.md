@@ -38,14 +38,20 @@ reports theorem dependencies. These are distinct forms of evidence.
    whole-step theorems, arbitrarily long execution traces, exact cost-labelled
    traces, a bridge from actual `run` executions to those traces, and
    a universal PUSH1 jump-target boundary lemma.
-3. [`EVMCleanroom/MemoryGas.lean`](EVMCleanroom/MemoryGas.lean): independent
+3. [`EVMCleanroom/JumpProofs.lean`](EVMCleanroom/JumpProofs.lean):
+   declarative instruction boundaries and a general soundness theorem:
+   for *any* bytecode array, an accepted JUMPDEST is a real instruction
+   boundary holding opcode 0x5b, skipping all PUSH1..32 immediate bytes.
+   The relation and decoder share the opcode-width function; completeness
+   and independent EELS equivalence are not yet proved.
+4. [`EVMCleanroom/MemoryGas.lean`](EVMCleanroom/MemoryGas.lean): independent
    EVM memory-expansion price model, monotonicity and path-independence
    proofs for *arbitrarily many* memory-growth events, and zero-length
    memory-access corner cases.
-4. [`EVMCleanroom/Tests.lean`](EVMCleanroom/Tests.lean): executable
+5. [`EVMCleanroom/Tests.lean`](EVMCleanroom/Tests.lean): executable
    regression vectors and 256-bit arithmetic edge cases derived from
    official Ethereum execution-specification test expectations.
-5. [`SOUNDNESS.md`](SOUNDNESS.md): exact trusted boundary and missing
+6. [`SOUNDNESS.md`](SOUNDNESS.md): exact trusted boundary and missing
    conformance theorem.
 
 ## Interpreter design
