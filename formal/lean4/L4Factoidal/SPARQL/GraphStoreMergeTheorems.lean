@@ -77,7 +77,7 @@ private theorem freshPrefix_spec (stem : String) (labels : List BNodeId) :
     have ha : (labels.any (fun l => l.startsWith (candidatePrefix stem k))) = false := by
       simpa [unused] using hu
     intro l hl
-    exact Bool.not_eq_true.mp (List.any_eq_false.mp ha l hl)
+    exact Bool.eq_false_iff.mpr (List.any_eq_false.mp ha l hl)
 
 /-- Kind: allocator postcondition.
 Says: no supplied label starts with the prefix chosen by the graph store.
