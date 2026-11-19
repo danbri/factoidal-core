@@ -94,6 +94,37 @@ and expected byte contents. Both external checks are narrow: they do not
 establish a formal refinement theorem or execute full state tests. The external EELS file is an independently maintained reference,
 while selection of our 14 scenarios remains our responsibility.
 
+## Independent execution differential evidence
+
+The draft PR now checks the *actual* Lean executable against the independently
+maintained **EthereumJS EVM 10.1.3** using **Prague** rules and a committed
+integrity-pinned npm lockfile (SHA-256
+`cc95a62e125486d2de9a28cb5fc61c098b955aa22c2dd0b3dc0b19f2df770425`).
+
+[CI run 44626646466](https://github.com/danbri/factoidal-core/actions/runs/44626646466)
+compared **10,000 synthetic bytecode cases**, **9,733 distinct exact
+execution inputs**, with **zero disagreements and oracle execution errors**.
+The corpus includes **2,775 expected exceptional cases**; for those
+the compared property is **exception category only**, not gas-burn,
+rollback, frame post-state or receipt equivalence.
+
+Successful cases compare gas remaining, program counter, halted flag, full
+stack, memory allocation size, and all allocated memory bytes up to a
+**4,096-byte explicit observation cap**. The runner refuses to count
+truncated-memory results as full matches. The corpus hash is
+`610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb`,
+seed `20261119`. Complete cases, expected and observed outputs,
+dependency versions and any mismatches are retained as CI artifacts.
+
+This is **not** a proof that all Ethereum bytecode behaves correctly.
+Synthetic tests may miss entire opcode families; two independently written
+interpreters may still share a misunderstanding of an EIP; the Lean
+formal invariants are still largely stated over the *local* semantics.
+The externally maintained EELS execution tests continue to be
+*parsed but not executed*: **zero official state-test passes claimed**.
+See [differential methodology](scripts/differential/README.md) and
+[roadmap](ROADMAP.md).
+
 ## What is not established
 
 1. **No Ethereum specification equivalence.** There is no theorem of the
