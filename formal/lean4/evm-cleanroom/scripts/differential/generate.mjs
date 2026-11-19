@@ -135,10 +135,9 @@ for (let i = 0; i < count; i++) {
       const bytes = randomBytes(32);
       bytes[0] |= 0x80;
       code = pushBytes(bytes) + '5100';
-      break;
-    }
       expectedError = 'outOfGas';
       break;
+    }
     default:
       throw Error('generator category not handled: ' + category);
   }
