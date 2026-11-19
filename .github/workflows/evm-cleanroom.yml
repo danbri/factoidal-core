@@ -99,12 +99,17 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           node scripts/differential/selftest.mjs .lake/differential/corpus.jsonl .lake/differential/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["allDetected"] and len(x["controls"])==2, x'
+      - name: Build and validate content-addressed evidence manifest
+        if: always()
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/evidence-manifest.mjs .lake/differential | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="consistent", x'
       - name: Archive exact corpus, dependencies, results and disagreements
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: evm-differential-${{ github.run_id }}
-          retention-days: 14
+          retention-days: 30
           if-no-files-found: warn
           path: |
             formal/lean4/evm-cleanroom/.lake/differential/
