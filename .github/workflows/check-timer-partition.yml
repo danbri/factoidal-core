@@ -2,7 +2,7 @@ name: Theorem review Lean check
 
 on:
   push:
-    branches: [main]
+    branches: [main, wip/timer-partition-proofs]
     paths:
       - 'formal/lean4/**'
       - 'tools/lean-hygiene-audit.py'
@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   timer-partition:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/timer-partition-proofs'
     name: Lean proofs (${{ matrix.group }})
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.job_timeout_minutes }}
