@@ -114,37 +114,55 @@ private theorem firstPostCommits :
     serveParsedPost s "/gsp/a" (postIriA).val postBodyB [postTriple "b"] routePostA parsePostB
   simp only [gspOutcome, View.of, routePostA, served] <;> rfl
 
-/-- The create entry for the new graph suffices to expose a nonempty delta. Projecting
-    the committed dataset avoids evaluating a hash delta for the unchanged first graph. -/
+local notation "postFirstStore" =>
+  (GraphStore.GraphStore.mk [] [Prod.mk (Subtype.val postIriA) [postTriple "m0_b"]])
+local notation "postNextStore" => (fun label : String =>
+  GraphStore.GraphStore.mk [] [Prod.mk (Subtype.val postIriA) [postTriple "m0_b"],
+    Prod.mk (Subtype.val postIriB) [postTriple label]])
+
+private theorem postMergedIntoEmpty (label : String) :
+    GraphStoreService.mergeInto [] [postTriple label] = [postTriple ("m0_" ++ label)] := by
+  have emptyPrefix : GraphStoreService.freshPrefix "m" (Graph.bnodes []) = "m0_" := by decide +kernel
+  unfold GraphStoreService.mergeInto
+  rw [emptyPrefix] <;> rfl
+
+private theorem secondParsedServe (body label : String)
+    (parsed : ∀ base, GraphStoreService.payloadGraph "application/n-triples" base body =
+      .ok [postTriple label]) (s : GraphStore.GraphStore) (hs : s = postFirstStore) :
+    GraphStoreService.serve postEndpoint s "POST" "/gsp/b" "" postHeaders body =
+      (postNextStore ("m0_" ++ label), { status := 201 }) := by
+  have missing : GraphStore.namedExists (postIriB).val (postFirstStore).named = false := by rfl
+  have old : GraphStoreService.namedOrEmpty (postIriB).val postFirstStore = [] := by rfl
+  have appendB (g : Graph) : GraphStore.replaceNamed (postIriB).val g (postFirstStore).named =
+      (postFirstStore).named ++ [((postIriB).val, g)] := by rfl
+  rw [hs, serveParsedPost postFirstStore "/gsp/b" (postIriB).val body [postTriple label]
+    routePostB parsed, old, postMergedIntoEmpty, appendB, missing] <;> rfl
+
+/-- The create entry precedes any hash delta for the unchanged first graph. -/
+private theorem secondDeltaCreates (label : String) :
+    ∃ rest, datasetDelta postFirst (postFinal label) =
+      .ok (.create (.iri (postIriB).val) :: rest) := ⟨_, rfl⟩
+
+private theorem projectNonemptyDelta (old new : Dataset) (reply : HTTP.Response)
+    {entry : L4Factoidal.Storage.DeltaEntry} {rest : List L4Factoidal.Storage.DeltaEntry}
+    (delta : datasetDelta old new = .ok (entry :: rest)) :
+    (commitOutcome .allGraphs old new reply).commit.map Prod.snd = some new := by
+  rw [commitOutcome, delta] <;> rfl
+
+private theorem secondProjectedCommit (label : String) :
+    (commitOutcome .allGraphs postFirst (postFinal label) { status := 201 }).commit.map Prod.snd =
+      some (postFinal label) := by
+  obtain ⟨_, delta⟩ := secondDeltaCreates label
+  exact projectNonemptyDelta postFirst (postFinal label) { status := 201 } delta
+
 private theorem secondPostCommits (body label : String)
     (parsed : ∀ base, GraphStoreService.payloadGraph "application/n-triples" base body =
       .ok [postTriple label]) :
     commitPost postFirst "/gsp/b" body = some (postFinal ("m0_" ++ label)) := by
-  let firstStore : GraphStore.GraphStore := { named := [((postIriA).val, [postTriple "m0_b"])] }
-  have missing : GraphStore.namedExists (postIriB).val firstStore.named = false := by rfl
-  have old : GraphStoreService.namedOrEmpty (postIriB).val firstStore = [] := by rfl
-  have appendB (g : Graph) : GraphStore.replaceNamed (postIriB).val g firstStore.named =
-      firstStore.named ++ [((postIriB).val, g)] := by rfl
-  have emptyPrefix : GraphStoreService.freshPrefix "m" (Graph.bnodes []) = "m0_" := by decide +kernel
-  have merged : GraphStoreService.mergeInto [] [postTriple label] =
-      [postTriple ("m0_" ++ label)] := by
-    unfold GraphStoreService.mergeInto
-    rw [emptyPrefix] <;> rfl
-  have served (s : GraphStore.GraphStore) (hs : s = firstStore) :
-      GraphStoreService.serve postEndpoint s "POST" "/gsp/b" "" postHeaders body =
-        ({ firstStore with named := (firstStore.named ++
-            [((postIriB).val, [postTriple ("m0_" ++ label)])]) }, { status := 201 }) := by
-    rw [hs, serveParsedPost firstStore "/gsp/b" (postIriB).val body [postTriple label]
-      routePostB parsed, old, merged, appendB, missing] <;> rfl
-  have created : ∃ rest, datasetDelta postFirst (postFinal ("m0_" ++ label)) =
-      .ok (.create (.iri (postIriB).val) :: rest) := ⟨_, rfl⟩
-  obtain ⟨rest, delta⟩ := created
   simp only [gspOutcome, View.of, routePostB]
-  rw [served] <;> first
-    | exact (rfl : firstStore = firstStore)
-    | change (commitOutcome .allGraphs postFirst (postFinal ("m0_" ++ label))
-        { status := 201 }).commit.map Prod.snd = _
-      rw [commitOutcome, delta] <;> rfl
+  rewrite [secondParsedServe body label parsed]
+  · exact secondProjectedCommit ("m0_" ++ label)
+  · rfl
 
 local notation "postTP" =>
   (TriplePattern.mk (PatternSubject.var "s") (PatternTerm.iri postPred) (PatternTerm.var "o"))
