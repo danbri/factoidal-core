@@ -59,7 +59,8 @@ Does not say: that the input buffer or the decoder's peak allocation fits that l
 theorem decodeChunked_body_bound {b body : ByteArray} {pos limit endPos : Nat}
     (h : decodeChunked b pos limit = .ok (some (body, endPos))) :
     body.size ≤ limit :=
-  chunk_go_body_bound (Nat.zero_le limit) h
+  chunk_go_body_bound (acc := ByteArray.empty)
+    (by simpa only [ByteArray.size_empty] using Nat.zero_le limit) h
 
 /-- Kind: request body decoding provenance.
 Says: a request emitted by UTF-8 decoding carries the decoded payload in its
@@ -122,7 +123,8 @@ theorem frameRequest_body_bound {b : ByteArray} {headLimit bodyLimit consumed : 
                 exact decoded_body_of_finish (seed := seed) (decodeChunked_body_bound hchunk) h
           · split at h
             · cases h
-            · exact decoded_body_of_finish (seed := seed) (Nat.zero_le bodyLimit) h
+            · exact decoded_body_of_finish (seed := seed) (payload := ByteArray.empty)
+                (by simpa only [ByteArray.size_empty] using Nat.zero_le bodyLimit) h
             · rename_i len _
               split at h
               · cases h
