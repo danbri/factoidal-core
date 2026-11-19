@@ -69,4 +69,20 @@ theorem Memory.empty_expand_zero (targetWords address : Nat) :
 #print axioms Memory.readByte_after_write
 #print axioms Memory.empty_expand_zero
 
+/-- Writing to one byte cannot affect a different byte, even if memory
+    is sparse and the target lies outside the current allocation. -/
+theorem Memory.readByte_write_other (m : Memory) (written queried : Nat)
+    (value : UInt8) (h : queried ≠ written) :
+    (m.writeByte written value).readByte queried = m.readByte queried := by
+  simp [Memory.readByte, Memory.writeByte, h]
+
+/-- Materializing 32 bytes cannot itself increase the paid-for allocation.
+    All such expansion is accounted for separately in the opcode gas plan. -/
+theorem Memory.writeWord_preserves_words (m : Memory) (start value : Nat) :
+    (m.writeWord start value).words = m.words := by
+  simp [Memory.writeWord, Memory.writeByte]
+
+#print axioms Memory.readByte_write_other
+#print axioms Memory.writeWord_preserves_words
+
 end EVMCleanroom
