@@ -1268,19 +1268,62 @@ private def append (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height,
    pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
    lastBaseline := b.lastBaseline <|> a.lastBaseline, work := a.work+b.work, rough := a.rough || b.rough}
-/-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
-widest line (at most the room); its content is laid out at the origin inside its
-border and padding. Its bottom margin edge sits on the line's baseline, as a
-replaced element does here. -/
-private def atomicBox (font : FontProfile) (id : Nat) (s : Computed) (items : Array Inline)
-    (available : Float) : Except String Inline := do
+
+/-- An inline-block's border and decorations around its already positioned content. -/
+def framedAtomic (id : Nat) (s : Computed) (w h : Float) (inner : Result) : Inline :=
+  let m := s.margin
+  let box : Box := ⟨id,m.left,m.top,w,h⟩
+  .atomic id s (m.left+w+m.right) (m.top+h+m.bottom)
+    {inner with nodes := decorations id s m.left m.top w h ++ inner.nodes, boxes := #[box] ++ inner.boxes}
+
+/-- Kind: frame. Says: framing an inline-block retains its own border box followed by
+all positioned child boxes in order, with the child's glyph runs and baselines.
+Does not say: which dimensions or glyph positions layout computes. -/
+theorem framedAtomic_preserves (id : Nat) (s : Computed) (w h : Float) (inner : Result) :
+    match framedAtomic id s w h inner with
+    | .atomic owner _ _ _ r =>
+      owner = id ∧ r.boxes = #[⟨id,s.margin.left,s.margin.top,w,h⟩] ++ inner.boxes ∧
+        r.runs = inner.runs ∧ r.baseline = inner.baseline ∧ r.lastBaseline = inner.lastBaseline
+    | _ => False := ⟨rfl,rfl,rfl,rfl,rfl⟩
+
+/-- Kind: sizing. Says: the enclosing line measures the framed inline-block as one
+item of its margin-box width. Does not say: how its content width was chosen. -/
+theorem framedAtomic_lineWidth (font : FontProfile) (rtl : Option Bool) (id : Nat)
+    (s : Computed) (w h : Float) (inner : Result) :
+    itemWidth font rtl (framedAtomic id s w h inner) = .ok (s.margin.left+w+s.margin.right) := rfl
+
+#print axioms framedAtomic_preserves
+#print axioms framedAtomic_lineWidth
+
+/-- An open inline-block. Its line width supplies the containing width of a nested
+inline-block. The preceding siblings receive the finished box as one inline item. -/
+private structure AtomicFrame where
+  source : Nat
+  style : Computed
+  before : Array Inline
+  fixed : Option Float
+  lineWidth : Float
+
+private def AtomicFrame.opened (id : Nat) (s : Computed) (before : Array Inline)
+    (available : Float) : AtomicFrame :=
   let b := s.borderEdges
   let p := s.padding
   let m := s.margin
   let room := max 0 (available-m.left-m.right-b.left-b.right-p.left-p.right)
   let fixed := CSS.resolve available s.width
-  let content ← inlineLayout font items 0 0 (fixed.getD room) (some {s with textAlign := .left})
-  let used := fixed.getD (content.boxes.foldl (fun w box => max w (box.x+box.width)) 0)
+  ⟨id,s,before,fixed,fixed.getD room⟩
+
+/-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
+widest line (at most the room); its content is laid out at the origin inside its
+border and padding. Its bottom margin edge sits on the line's baseline, as a
+replaced element does here. -/
+private def atomicBox (font : FontProfile) (frame : AtomicFrame) (items : Array Inline) : Except String Inline := do
+  let s := frame.style
+  let b := s.borderEdges
+  let p := s.padding
+  let m := s.margin
+  let content ← inlineLayout font items 0 0 frame.lineWidth (some {s with textAlign := .left})
+  let used := frame.fixed.getD (content.boxes.foldl (fun w box => max w (box.x+box.width)) 0)
   -- Lines are aligned in the width the box has (`text-align`), once it is known.
   let leftAligned := s.textAlign == .left || (s.textAlign == .start && s.direction == .ltr) ||
     (s.textAlign == .end_ && s.direction == .rtl)
@@ -1291,33 +1334,27 @@ private def atomicBox (font : FontProfile) (id : Nat) (s : Computed) (items : Ar
   let w := b.left+p.left+used+p.right+b.right
   let h := b.top+p.top+height+p.bottom+b.bottom
   let inner := shiftResult (m.left+b.left+p.left) (m.top+b.top+p.top) content
-  let box : Box := ⟨id,m.left,m.top,w,h⟩
-  return .atomic id s (m.left+w+m.right) (m.top+h+m.bottom)
-    {inner with nodes := decorations id s m.left m.top w h ++ inner.nodes, boxes := #[box] ++ inner.boxes}
+  return framedAtomic frame.source s w h inner
 
-/-- Each outermost `openAtomic .. closeAtomic` becomes one `atomic` item. An
-inline-block inside another is laid out inline in it (its bounds are dropped). One
-pass over the items: a loop. -/
+/-- Each matched inline-block becomes one atomic item in its parent's line. The stack
+holds one frame per open bound, limited by the DOM depth budget of `inlineItems`. -/
 def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Except String (Array Inline) := do
   let mut out : Array Inline := #[]
-  let mut depth : Nat := 0
-  let mut opened : Option (Nat × Computed) := none
-  let mut inside : Array Inline := #[]
+  let mut frames : List AtomicFrame := []
   for item in items do
     match item with
     | .openAtomic id s =>
-      if depth == 0 then
-        opened := some (id,s)
-        inside := #[]
-      depth := depth+1
+      let room := match frames with | parent :: _ => parent.lineWidth | [] => available
+      frames := AtomicFrame.opened id s out room :: frames
+      out := #[]
     | .closeAtomic =>
-      if depth == 1 then
-        if let some (id,s) := opened then out := out.push (← atomicBox font id s inside available)
-        opened := none
-      depth := depth-1
-    | other => if depth == 0 then out := out.push other else inside := inside.push other
+      if let frame :: parents := frames then
+        let child ← atomicBox font frame out
+        out := frame.before.push child
+        frames := parents
+    | other => out := out.push other
   -- Bounds always pair in `inlineItems`; an unpaired open keeps its content inline.
-  return if depth == 0 then out else out ++ inside
+  return frames.foldl (fun rest frame => frame.before ++ rest) out
 
 /-- What goes before a list item (CSS Lists 3 §3.1 `list-style-type`): nothing with
 `none`; its number with a numbering style, or by default in an ordered list; else a

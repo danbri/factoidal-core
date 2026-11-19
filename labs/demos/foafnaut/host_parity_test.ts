@@ -247,6 +247,50 @@ Deno.test({name:"host parity: anonymous control text paints and sizes the contro
   }finally{native.scriptSession("",{action:"close"});}
 });
 
+// A nested inline-block needs a border box even when it has no value to paint.
+// The package has both engines. The same check also runs against a standalone Wasm build.
+for(const backend of engine?["Wasm","native"]:["Wasm"]){
+  Deno.test(`host parity: nested control border boxes and pointer hits in ${backend}`,async()=>{
+    const {loadHTML}=await import("./native_html_engine.ts");
+    const api=await loadHTML(backend==="native"?library:undefined);
+    const source=`<!doctype html><style>body{margin:0}input{vertical-align:top}</style><span
+      id="wrap" style="display:inline-block;padding:3px 7px"><input id="q" value="x"><input id="empty"></span>
+      <span style="display:inline-block;width:200px"><input id="half" style="width:50%"></span>
+      <script>
+        for(const id of ["q","empty"]){
+          const r=document.getElementById(id).getBoundingClientRect();
+          const hit=document.elementFromPoint(r.x+3,r.y+3);
+          console.log(JSON.stringify([id,[r.x,r.y,r.width,r.height],hit&&hit.id]));
+        }
+      </script>`;
+    const width=800,height=600,url="https://example.test/nested-controls";
+    const layout={url,liberal:true,textScalePercent:100,zoomUnit:100};
+    try{
+      const turn=api.scriptSession(source,{action:"start",engine:"bubblepop",url,width,height,layout});
+      assert.deepEqual(turn.errors,[]);
+      assert.equal(turn.logs.length,2);
+      const frame=api.compile(source,width,height,{...layout,binary:false,checks:false});
+      const facts=api.inspect(source,layout) as unknown as {nodes:{id:number;attributes:Record<string,string>}[]};
+      const idOf=(name:string)=>facts.nodes.find(n=>n.attributes?.id===name)!.id;
+      const boxes=frame.webRender.boxes as number[][];
+      const boxesOf=(name:string)=>boxes.filter(b=>b[0]===idOf(name)).map(b=>b.slice(1));
+      const [wrap]=boxesOf("wrap");
+      assert(wrap,"the parent inline-block has a border box");
+      const runs=frame.webRender.glyphRuns as {source:number;text:string}[];
+      for(const [index,name] of ["q","empty"].entries()){
+        const [id,rect,hit]=JSON.parse(turn.logs[index]);
+        assert.equal(id,name);
+        assert.deepEqual(boxesOf(name),[[wrap[0]+7+155*index,wrap[1]+3,155,21]]);
+        assert.deepEqual(boxesOf(name),[rect]);
+        assert.equal(hit,name);
+        assert.deepEqual(runs.filter(run=>run.source===idOf(name)).map(run=>run.text),index===0?["x"]:[]);
+      }
+      assert.deepEqual(wrap.slice(2),[324,27],"the parent fits both fields and its padding");
+      assert.deepEqual(boxesOf("half").map(r=>r[2]),[108],"half the parent content width plus padding and borders");
+    }finally{api.scriptSession("",{action:"close"});}
+  });
+}
+
 // ---- the hosts' sources: the shared steps are used, not written again -----------------------------
 Deno.test("host parity: the hosts take their page steps from page-load.mjs",async()=>{
   const hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
