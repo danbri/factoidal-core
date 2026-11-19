@@ -245,7 +245,7 @@ theorem lookup?_eq_some_of_key_cut (entries : Array Entry) (wanted : Term)
         · simp [lessBytes, lt, List.cons_lt_cons_iff]
         · by_cases eq : x = y
           · subst y
-            simp [lessBytes, lt, List.cons_lt_cons_iff, ih]
+            simp [lessBytes, lt, ih]
           · simp [lessBytes, lt, eq, List.cons_lt_cons_iff]
   let key := serializeTerm (TermFold.foldTerm wanted)
   have search : ∀ fuel low high : Nat, low ≤ i → i ≤ high → high ≤ entries.size →
@@ -279,9 +279,12 @@ theorem lookup?_eq_some_of_key_cut (entries : Array Entry) (wanted : Term)
           exact ih _ _ hlo (by omega) (by omega) (by omega)
   have result := search (entries.size + 1) 0 entries.size (Nat.zero_le _) (Nat.le_of_lt hi)
     (Nat.le_refl _) (by omega)
-  unfold lookup?
+  change (match entries[lowerBoundGo entries key 0 entries.size (entries.size + 1)]? with
+    | some e => if e.key == key && e.term == TermFold.foldTerm wanted then some e.localId else none
+    | none => none) = _
   rw [result, Array.getElem?_eq_getElem hi]
-  simp [keyMatch, termMatch]
+  have keys : entries[i].key = key := keyMatch
+  simp [keys, termMatch]
 
 /-- The direct dictionary lookup is the reference contract for a TLI1 decoder
     and range reader. -/

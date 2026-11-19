@@ -1,9 +1,58 @@
 import L4Factoidal.SPARQL.StoreEndpoint
+import L4Factoidal.Syntax.NTriplesRoundTrip
 
 namespace L4Factoidal.SPARQL.StoreEndpoint
 
 open L4Factoidal.RDF
 open L4Factoidal.SPARQL
+
+private theorem payloadGraph_of_ntriples_ok (base body : String) (g : Graph)
+    (parsed : Syntax.parseNTriples body = .ok g) :
+    GraphStoreService.payloadGraph "application/n-triples" base body = .ok g := by
+  have media : Protocol.contentTypeBase "application/n-triples" = "application/n-triples" := by
+    decide +kernel
+  have rdf : GraphStoreService.parseRdfAs "application/n-triples" base body = some (.ok g) := by
+    change some ((Syntax.parseNTriples body).mapError (·.msg)) = some (.ok g)
+    rw [parsed]
+  unfold GraphStoreService.payloadGraph
+  rw [media, rdf]
+
+/-- Parse the witnesses' final line without a trailing newline through the RDF 1.1 reader.
+    The IRI token theorems keep the parser's well-founded scanning loop opaque. -/
+private theorem blankPostPayload (base body label : String) (c : Char)
+    (chars : body.toList = '_' :: ':' :: c :: " <http://ex/p> <http://ex/o> .".toList)
+    (subject : ∀ rest : List Char, Syntax.readSubject 0 ('_' :: ':' :: c :: ' ' :: rest) =
+      .ok (.bnode label, 3, ' ' :: rest)) :
+    GraphStoreService.payloadGraph "application/n-triples" base body =
+      .ok [⟨.bnode label, ⟨"http://ex/p", by decide⟩, .iri ⟨"http://ex/o", by decide⟩⟩] := by
+  let p : WfIri := ⟨"http://ex/p", by decide⟩
+  let o : WfIri := ⟨"http://ex/o", by decide⟩
+  let rest := ':' :: c :: ' ' :: '<' ::
+    (p.val.toList ++ '>' :: ' ' :: '<' :: (o.val.toList ++ ['>', ' ', '.']))
+  have suffix : " <http://ex/p> <http://ex/o> .".toList =
+      ' ' :: '<' :: (p.val.toList ++ '>' :: ' ' :: '<' :: (o.val.toList ++ ['>', ' ', '.'])) := by
+    dsimp only [p, o] <;> decide +kernel
+  have spelling : body.toList = '_' :: rest := by rw [chars, suffix]
+  have predSafe : Syntax.NTriplesRoundTrip.iriPrintSafe p.val = true := by
+    dsimp only [p] <;> decide +kernel
+  have objSafe : Syntax.NTriplesRoundTrip.iriPrintSafe o.val = true := by
+    dsimp only [o] <;> decide +kernel
+  have blank (pos : Nat) (xs : List Char) : Syntax.skipWs pos ('_' :: xs) = (pos, '_' :: xs) := rfl
+  have iri (pos : Nat) (xs : List Char) :
+      Syntax.skipWs pos (' ' :: '<' :: xs) = (pos + 1, '<' :: xs) := rfl
+  have dot (pos : Nat) : Syntax.skipWs pos [' ', '.'] = (pos + 1, ['.']) := rfl
+  have line : ∃ n, Syntax.readTriple11 0 ('_' :: rest) =
+      .ok ((⟨.bnode label, p, .iri o⟩ : Triple), n, []) := by
+    dsimp only [rest]
+    simp only [Syntax.readTriple11, blank, subject, iri,
+      Syntax.NTriplesRoundTrip.readPredicate_printSafe _ p _ predSafe,
+      Syntax.NTriplesRoundTrip.readObject11_printSafe _ o _ objSafe, dot]
+    exact ⟨_, rfl⟩
+  obtain ⟨n, read⟩ := line
+  apply payloadGraph_of_ntriples_ok
+  unfold Syntax.parseNTriples
+  rw [spelling, Syntax.parseLinesAcc, blank]
+  simp only [read] <;> rfl
 
 /-- Kind: named Graph Store POST and served SPARQL ASK counterexample
 (factoidal-core issue 633).
@@ -51,10 +100,12 @@ theorem namedPosts_cross_graph_label_observable :
       (fun kv => kv.1 == "content-type")).map (·.2)).getD "" = "application/n-triples" := by rfl
   have parseB (base : String) : GraphStoreService.payloadGraph "application/n-triples" base
       "_:b <http://ex/p> <http://ex/o> ." = .ok [triple "b"] := by
-    dsimp +zetaDelta only <;> cbv
+    exact blankPostPayload base "_:b <http://ex/p> <http://ex/o> ." "b" 'b'
+      (by decide +kernel) (fun _ => rfl)
   have parseC (base : String) : GraphStoreService.payloadGraph "application/n-triples" base
       "_:c <http://ex/p> <http://ex/o> ." = .ok [triple "c"] := by
-    dsimp +zetaDelta only <;> cbv
+    exact blankPostPayload base "_:c <http://ex/p> <http://ex/o> ." "c" 'c'
+      (by decide +kernel) (fun _ => rfl)
   have writeA : post Dataset.empty "/gsp/a" "_:b <http://ex/p> <http://ex/o> ." =
       some firstDs := by
     simp only [post, gspOutcome, View.of, GraphStoreService.serve, routeA, methodPost, media, parseB]

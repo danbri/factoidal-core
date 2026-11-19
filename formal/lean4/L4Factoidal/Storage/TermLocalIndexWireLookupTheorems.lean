@@ -28,7 +28,7 @@ theorem strictlyIncreasing_pairwise_key_lt (entries : List Entry)
         · simp [lessKey, lt, List.cons_lt_cons_iff]
         · by_cases eq : x = y
           · subst y
-            simp [lessKey, lt, List.cons_lt_cons_iff, ih]
+            simp [lessKey, lt, ih]
           · simp [lessKey, lt, eq, List.cons_lt_cons_iff]
   induction entries with
   | nil => exact .nil
