@@ -52,7 +52,9 @@ const pushWord = () => {
 const categories = [
   'arithmetic', 'memory-word', 'memory-byte', 'memory-load',
   'memory-size', 'stack-ops', 'jump', 'jumpi',
-  'gas', 'pc', 'push', 'memory-cross-word'
+  'gas', 'pc', 'push', 'memory-cross-word',
+  'out-of-gas', 'stack-underflow', 'invalid-jump', 'invalid-opcode',
+  'jumpi-invalid-unselected', 'high-pointer-out-of-gas'
 ];
 const rows = [];
 const hist = {};
@@ -60,6 +62,8 @@ for (let i = 0; i < count; i++) {
   const category = categories[i % categories.length];
   const position = choose([0,1,2,7,16,30,31,32,33,63,64,95]);
   let code;
+  let gas = '1000';
+  let expectedError = null;
   switch (category) {
     case 'arithmetic':
       code = pushWord() + pushWord() + byteHex(choose([0x01,0x02,0x03,0x04])) + '00';
@@ -97,6 +101,29 @@ for (let i = 0; i < count; i++) {
     case 'memory-cross-word':
       code = pushWord() + pushSmall(31) + '52' + pushSmall(32) + '5100';
       break;
+    case 'out-of-gas':
+      code = '600100'; // PUSH1 requires 3 gas; make only 2 available.
+      gas = '2'; expectedError = 'outOfGas';
+      break;
+    case 'stack-underflow':
+      code = '0100'; // ADD on an empty stack.
+      expectedError = 'stackUnderflow';
+      break;
+    case 'invalid-jump':
+      code = '600356005b00'; // Destination 3 is STOP, not JUMPDEST.
+      expectedError = 'invalidJump';
+      break;
+    case 'invalid-opcode':
+      code = 'fe00';
+      expectedError = 'invalidOpcode';
+      break;
+    case 'jumpi-invalid-unselected':
+      code = '600060ff5700'; // Invalid destination is ignored if condition=0.
+      break;
+    case 'high-pointer-out-of-gas':
+      code = '7f' + 'ff'.repeat(32) + '5100';
+      expectedError = 'outOfGas';
+      break;
     default:
       throw Error('generator category not handled: ' + category);
   }
@@ -108,8 +135,10 @@ for (let i = 0; i < count; i++) {
     category,
     hardfork: 'prague',
     hex: code,
-    gas: '1000',
-    fuel: '64'
+    gas,
+    fuel: '64',
+    expectedDisposition: expectedError ? 'error' : 'ok',
+    ...(expectedError ? {expectedError} : {})
   });
 }
 const corpusText = rows.map(row => JSON.stringify(row)).join('\n') + '\n';
