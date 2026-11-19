@@ -30,11 +30,11 @@ inductive InstructionStart (code : Array UInt8) : Nat → Prop where
 theorem opcodeWidth_bounds (code : Array UInt8) (pc : Nat) :
     1 ≤ opcodeWidth code pc ∧ opcodeWidth code pc ≤ 33 := by
   constructor
-  · unfold opcodeWidth
+  · dsimp [opcodeWidth]
     split
     · omega
     · omega
-  · unfold opcodeWidth
+  · dsimp [opcodeWidth]
     split
     · omega
     · omega
