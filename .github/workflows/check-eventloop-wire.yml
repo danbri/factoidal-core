@@ -134,7 +134,9 @@ jobs:
         shell: bash
         env:
           PROOF_DIR: ${{ runner.temp }}/eventloop-wire-evidence
-          REQUIRED_THEOREMS: WebEventLoop.stateOf_inv
+          REQUIRED_THEOREMS: |-
+            WebEventLoop.stateOf_inv
+            WebEventLoop.stateJson_can_exceed_stateOf_timer_bound
         run: |
           set -euo pipefail
           python3 tools/lean-hygiene-audit.py --build-log "$PROOF_DIR/lean.log" \

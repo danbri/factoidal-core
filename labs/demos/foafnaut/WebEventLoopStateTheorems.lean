@@ -56,6 +56,36 @@ theorem stateOf_inv (j : JSON.Json) (st : State) (h : stateOf j = .ok st) : Inv 
     cases h
     exact inv_of_timer_guard _ hguard
 
+/-- Kind: executable writer and reader counterexample (factoidal-core issue 630).
+Says: advancing the empty model to the largest accepted clock and arming a
+one-unit timer keeps the model invariant but produces a due time outside the
+reader's bound. The reader refuses the actual writer's state.
+Does not say: that a deployed host reached this clock or that callback
+execution at this boundary was observed. -/
+theorem stateJson_can_exceed_stateOf_timer_bound :
+    let advanced := ((Input.advance 4294967295).apply ({} : State)).1
+    let armed := ((Input.call (.setTimer 3 1 false)).apply advanced).1
+    Inv armed ∧ armed.timers.map Timer.due = [4294967296] ∧
+      stateOf (stateJson armed) = .error "eventLoop: number exceeds bound" := by
+  dsimp only
+  refine ⟨(Input.apply_keep (i := .call (.setTimer 3 1 false))
+    (Input.apply_keep (i := .advance 4294967295) initial_inv).1).1, ?_, ?_⟩
+  · decide +kernel
+  · let advanced := ((Input.advance 4294967295).apply ({} : State)).1
+    let armed := ((Input.call (.setTimer 3 1 false)).apply advanced).1
+    change stateOf (stateJson armed) = .error "eventLoop: number exceeds bound"
+    have herror : (match stateOf (stateJson armed) with
+      | .ok _ => none
+      | .error why => some why) = some "eventLoop: number exceeds bound" := by
+      dsimp only [armed, advanced]
+      decide +kernel
+    split at herror
+    · cases herror
+    · rename_i why hstate
+      rw [hstate]
+      exact congrArg Except.error (Option.some.inj herror)
+
 #print axioms stateOf_inv
+#print axioms stateJson_can_exceed_stateOf_timer_bound
 
 end WebEventLoop
