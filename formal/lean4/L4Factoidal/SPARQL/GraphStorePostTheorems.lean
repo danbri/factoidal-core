@@ -123,21 +123,38 @@ theorem serve_post_named_denotation (ep : Endpoint) (store : GraphStore)
       get (.named key) out = some merged ∧
       ∀ t : Triple, Graph.mem t merged =
         (Graph.mem t old || Graph.mem t (prefixBnodes (freshPrefix "m" (Graph.bnodes old)) payload)) := by
-  simp only [serve, hr, hm] at hs ⊢
-  cases hparse : payloadGraph
-      ((headers.find? (fun kv => kv.1 == "content-type")).map (·.2) |>.getD "")
-      (ep.iriOf path ++ (if qs.isEmpty then "" else "?" ++ qs)) body with
-  | error code =>
-    have hlarge := payloadGraph_error_ge hparse
-    simp only [hparse] at hs
-    omega
-  | ok payload =>
-    simp only [hparse] at ⊢
-    refine ⟨payload, mergeInto (namedOrEmpty key store) payload, ?_, rfl,
-      replaceNamed_filter_other _ _ _, lookupNamed_replaceNamed _ _ _, ?_⟩
-    · first | exact hparse | rfl
-    · intro t
-      exact mem_graph_union _ _ t
+  let contentType := ((headers.find? (fun kv => kv.1 == "content-type")).map (·.2)).getD ""
+  let base := ep.iriOf path ++ (if qs.isEmpty then "" else "?" ++ qs)
+  let parsed := payloadGraph contentType base body
+  have hserve : serve ep store method path qs headers body =
+      (match parsed with
+      | .error code => (store, { status := code })
+      | .ok payload =>
+        ({ store with named := replaceNamed key (mergeInto (namedOrEmpty key store) payload) store.named },
+          { status := if namedExists key store.named then 204 else 201 })) := by
+    unfold parsed contentType base
+    simp only [serve, hr, hm]
+  have hsuccess : ∃ payload : Graph, parsed = .ok payload := by
+    cases hparse : parsed with
+    | error code =>
+      have hlarge :=
+        payloadGraph_error_ge (contentType := contentType) (base := base) (body := body) hparse
+      have hs' : code < 300 := by
+        rw [hserve, hparse] at hs
+        exact hs
+      exact False.elim (Nat.not_lt_of_ge (Nat.le_trans (by decide : 300 ≤ 400) hlarge) hs')
+    | ok payload => exact ⟨payload, rfl⟩
+  obtain ⟨payload, hparse⟩ := hsuccess
+  let merged := mergeInto (namedOrEmpty key store) payload
+  have hout : (serve ep store method path qs headers body).1 =
+      { store with named := replaceNamed key merged store.named } := by
+    rw [hserve, hparse]
+  dsimp only
+  rw [hout]
+  refine ⟨payload, merged, hparse, rfl, replaceNamed_filter_other _ _ _,
+    lookupNamed_replaceNamed _ _ _, ?_⟩
+  intro t
+  exact mem_graph_union _ _ t
 
 #print axioms serve_post_named_denotation
 
