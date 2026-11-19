@@ -299,6 +299,10 @@ extern_lib libl4hostread pkg := do
 lean_lib CookieWireProofs where
   roots := #[`L4Factoidal.Net.CookieWireTheorems]
 
+-- Opt-in theorem-only bridge from the real wire reader to persistence (issue 653).
+lean_lib CookieRestartWireProofs where
+  roots := #[`L4Factoidal.Net.CookieRestartWireTheorems]
+
 -- The WebAssembly engine (issue 1244): spec relations generated from SpecTec, the
 -- executable engine, and the theorems between them. Its own library, so the main
 -- library and the l4wasm closure do not grow until something imports it.

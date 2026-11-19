@@ -1,0 +1,31 @@
+name: Cookie restart wire proofs
+
+on:
+  push:
+    branches: [main, wip/cookie-restart-wire-theorems]
+    paths:
+      - 'formal/lean4/L4Factoidal/Net/Cookie*.lean'
+      - 'formal/lean4/L4Factoidal/Net/Cookies.lean'
+      - '.github/workflows/check-cookie-restart-wire.yml'
+      - '.github/workflows/check-dataflow-stage.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Net/Cookie*.lean'
+      - '.github/workflows/check-cookie-restart-wire.yml'
+      - '.github/workflows/check-dataflow-stage.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  reader:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/cookie-restart-wire-theorems'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: cookie-restart-reader
+      timeout_minutes: 10
+      modules: L4Factoidal.Net.CookieRestartWireTheorems
+      theorems: >-
+        L4Factoidal.Net.Cookies.Jar.ofWire_storage_invariants
+        L4Factoidal.Net.Cookies.Jar.restart_ofWire
