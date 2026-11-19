@@ -199,10 +199,83 @@ theorem scan_visible (n : Nat) (countsMem prior : Mem Nat) (s : List Nat) (hs : 
   simpa only [List.length_scanl, view, List.length_map, List.length_range] using
     view_burst ((view n countsMem).scanl (· + ·) 0) prior
 
+/-- Invariant.
+Says: the end of an earlier row is at or before the visible start of a later row.
+Does not say: that consecutive empty rows have distinct starts. -/
+private theorem ordered_offsets (rows : StaticPack.Rows) (o : Mem Nat)
+    (ho : view rows.length o = StaticPack.scanFrom 0 (StaticPack.counts rows))
+    (i j : Nat) (hi : i < rows.length) (hj : j < rows.length) (hij : i < j) :
+    o i + (rows.getD i []).length ≤ o j := by
+  have hp := StaticPack.scanFrom_disjoint 0 (StaticPack.counts rows)
+  rw [← ho] at hp
+  have hlen : ((view rows.length o).zip (StaticPack.counts rows)).length = rows.length := by
+    simp [view, StaticPack.counts]
+  have bound := List.pairwise_iff_getElem.mp hp i j
+    (by simpa only [hlen] using hi) (by simpa only [hlen] using hj) hij
+  simpa only [view, StaticPack.counts, List.getElem_zip, List.getElem_map, List.getElem_range,
+    List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi, Option.getD_some] using bound
+
+/-- Invariant.
+Says: scatter invocations given the computed row starts have disjoint word-write footprints.
+Does not say: that scatter with arbitrary or stale offsets is race-free. -/
+theorem scatter_raceFree (rows : StaticPack.Rows) (o : Mem Nat)
+    (ho : view rows.length o = StaticPack.scanFrom 0 (StaticPack.counts rows)) :
+    (scatterDispatch rows o).RaceFree := by
+  intro t u ht hu hne addr ha hb
+  change addr ∈ keys (writesFrom (o t) (rows.getD t [])) at ha
+  change addr ∈ keys (writesFrom (o u) (rows.getD u [])) at hb
+  rw [keys_writesFrom, List.mem_range'_1] at ha hb
+  rcases Nat.lt_or_gt_of_ne hne with h | h
+  · have := ordered_offsets rows o ho t u ht hu h
+    omega
+  · have := ordered_offsets rows o ho u t hu ht h
+    omega
+
+/-- Bridge.
+Says: Race.applyWrites on a row's addressed words gives the StaticPack row-write memory.
+Does not say: that writes to overlapping ranges commute. -/
+private theorem burst_scatterRow (row : List UInt32) (base : Nat) (prior : Mem UInt32) :
+    applyWrites prior (writesFrom base row) = StaticPack.scatterRow row base prior := by
+  induction row generalizing base prior with
+  | nil => simp [writesFrom, applyWrites, StaticPack.scatterRow]
+  | cons x xs ih =>
+    have hw : writesFrom base (x :: xs) = (base, x) :: writesFrom (base + 1) xs := by
+      simp [writesFrom, List.range'_succ]
+    rw [hw]
+    change applyWrites (prior.write base x) (writesFrom (base + 1) xs) =
+      StaticPack.scatterRow xs (base + 1) (prior.write base x)
+    exact ih (base + 1) _
+
+/-- Invariant.
+Says: visiting every row ID in order pairs each source row with its supplied start.
+Does not say: that those starts are suitable for concurrent writes. -/
+private theorem scatter_jobs (rows : StaticPack.Rows) (o : Mem Nat) :
+    (List.range rows.length).map (fun t => (o t, rows.getD t [])) =
+      (view rows.length o).zip rows := by
+  apply List.ext_getElem
+  · simp [view]
+  · intro i hi _
+    have h : i < rows.length := by simpa using hi
+    simp [view, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h]
+
+/-- Refinement.
+Says: canonical row-ID order writes exactly the whole StaticPack scatter memory, even for
+arbitrary supplied starts, overlapping ranges and an arbitrary prior memory.
+Does not say: that every other order works with overlapping ranges. -/
+theorem scatter_seq_eq (rows : StaticPack.Rows) (o : Mem Nat) (prior : Mem UInt32) :
+    (scatterDispatch rows o).runSeq prior = StaticPack.scatter (view rows.length o) rows prior := by
+  change (List.range rows.length).foldl
+    (fun m t => applyWrites m (writesFrom (o t) (rows.getD t []))) prior = _
+  simp only [burst_scatterRow]
+  unfold StaticPack.scatter
+  rw [← scatter_jobs, List.foldl_map]
+
 #print axioms canonical_valid
 #print axioms count_raceFree
 #print axioms count_visible
 #print axioms scan_visible
+#print axioms scatter_raceFree
+#print axioms scatter_seq_eq
 
 -- Probe the actual memories, including a scan whose inputs are supplied independently.
 #guard view 4 ((scanDispatch 3 (fun i => [2, 0, 1].getD i 9)).runOrder (fun _ => 8) [0]) == [0, 2, 2, 3]

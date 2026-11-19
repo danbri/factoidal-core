@@ -7,6 +7,7 @@ on:
       - 'formal/lean4/L4Factoidal/Paralliverse.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/**'
       - 'formal/lean4/Harness/ParalliverseCpu.lean'
+      - 'formal/lean4/Wasm/ParalliverseHub.lean'
       - 'formal/lean4/lean-toolchain'
       - 'tools/lean-hygiene-audit.py'
       - 'tools/lean-partial-def-baseline.txt'
@@ -16,6 +17,7 @@ on:
       - 'formal/lean4/L4Factoidal/Paralliverse.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/**'
       - 'formal/lean4/Harness/ParalliverseCpu.lean'
+      - 'formal/lean4/Wasm/ParalliverseHub.lean'
       - 'formal/lean4/lean-toolchain'
       - 'tools/lean-hygiene-audit.py'
       - 'tools/lean-partial-def-baseline.txt'
@@ -58,7 +60,9 @@ jobs:
           proof_dir="$RUNNER_TEMP/paralliverse-evidence"
           modules=(L4Factoidal/GpuKernel/Race.lean
                    L4Factoidal/Paralliverse/StaticPack.lean
-                   L4Factoidal/Paralliverse/DSL.lean)
+                   L4Factoidal/Paralliverse/DSL.lean
+                   L4Factoidal/Paralliverse/PackWire.lean
+                   Wasm/ParalliverseHub.lean)
           mkdir -p "$proof_dir/modules"
           export LEAN_PATH="$proof_dir/modules"
           {
@@ -107,7 +111,8 @@ jobs:
               "$proof_dir/lean.log" || { echo "Missing checked theorem: $name"; exit 1; }
             printf '%s\n' "L4Factoidal.Paralliverse.StaticPack.$name" >> "$proof_dir/checked-theorems.txt"
           done
-          for name in canonical_valid count_raceFree count_visible scan_visible; do
+          for name in canonical_valid count_raceFree count_visible scan_visible \
+                      scatter_raceFree scatter_seq_eq; do
             grep -F "'L4Factoidal.Paralliverse.DSL.$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.Paralliverse.DSL.$name" >> "$proof_dir/checked-theorems.txt"
