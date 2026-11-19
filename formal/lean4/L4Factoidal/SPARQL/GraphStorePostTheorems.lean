@@ -134,6 +134,7 @@ theorem serve_post_named_denotation (ep : Endpoint) (store : GraphStore)
           { status := if namedExists key store.named then 204 else 201 })) := by
     unfold parsed contentType base
     simp only [serve, hr, hm]
+    rfl
   have hsuccess : ∃ payload : Graph, parsed = .ok payload := by
     cases hparse : parsed with
     | error code =>
