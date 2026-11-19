@@ -92,7 +92,7 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           mkdir -p .lake/differential
-          node scripts/differential/generate.mjs --seed 20261119 --count 4096 --out .lake/differential/corpus.jsonl | tee .lake/differential/generator.json
+          node scripts/differential/generate.mjs --seed 20261119 --count 10000 --out .lake/differential/corpus.jsonl | tee .lake/differential/generator.json
           node scripts/differential/run.mjs --corpus .lake/differential/corpus.jsonl --out .lake/differential/report.json --failures .lake/differential/failures.jsonl
       - name: Archive exact corpus, dependencies, results and disagreements
         if: always()
