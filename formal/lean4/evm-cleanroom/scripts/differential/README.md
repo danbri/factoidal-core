@@ -44,8 +44,9 @@ are preserved as line-delimited JSON with original input and both outputs.
 The tested observables are status, gas remaining, program counter, halted
 flag, complete stack and memory allocation size, plus **the complete allocated
 memory snapshot up to 4,096 bytes**. The CLI and oracle record the number
-of observed bytes and a truncation flag. Any truncated snapshot fails the
-full-memory comparison rather than passing silently. All 256-bit numbers
+of observed bytes and a truncation flag. Any truncated snapshot is retained as **unsupported**, making the run
+incomplete and failing CI; it is not a semantic mismatch or a pass.
+All 256-bit numbers
 are lossless decimal strings. This still does not prove behavior of larger
 memory frames, exceptional rollback, storage or external calls.
 
@@ -82,21 +83,27 @@ five exceptional categories. Error *classification* is checked independently;
 exceptional gas/state behavior, EVM returndata and transaction-state effects
 are not covered.
 
+EthereumJS `step` events provide a separate **dynamic instruction coverage**
+histogram. These are actual reference-EVM opcode executions, not merely
+syntactic occurrences or generated-case categories, and not Lean-side traces.
+CI validates histogram totals and minimum variety in the evidence manifest.
+
 **High-priority extensions:** exceptional gas burn and rollback fidelity;
-dynamic opcode coverage (not merely generator categories); real EELS-generated
-state test *execution* with post-state-root comparisons; verified bytecode
-provenance for mainnet samples; automatic counterexample minimisation and
-retention; continuous regression of all previously found divergences.
+actual Lean-side instruction traces; real EELS-generated state test *execution*
+with post-state-root comparisons; verified bytecode provenance for mainnet
+samples; semantic coverage-driven generator expansion; review and retention of
+minimised concrete disagreements as permanent regression cases.
 
 ### Latest checked evidence
 
-[10,000-case CI run](https://github.com/danbri/factoidal-core/actions/runs/44626646466),
+[10,000-case CI run with dynamic coverage](https://github.com/danbri/factoidal-core/actions/runs/44627665734),
 seed `20261119`, corpus SHA-256
 `610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb`:
 
 - 10,000 compared; **10,000 matched; 0 engine disagreements**.
 - 9,733 distinct `(fork, bytecode, gas, fuel)` input combinations.
 - 2,775 matching exceptional outcome *categories*.
+- 40,289 dynamic EthereumJS opcode-step events across 24 different opcodes.
 - Zero oracle execution errors and zero unsupported cases in the deliberately
   restricted corpus.
 
@@ -104,11 +111,49 @@ This evidence is stronger than the original 240-case smoke test, but it
 remains *synthetic subset differential testing*. It is not a set of
 10,000 official state-root comparisons, nor a proof of consensus soundness.
 
+### Counterexample lifecycle and harness self-tests
+
+The CI comparator has three independent negative controls: two cases with
+deliberately falsified expected outcomes (which must fail and reproduce with
+identical discrepancy reasons), plus a memory-access case whose successful
+execution exceeds the 4 KiB snapshot limit (which must be **unsupported**,
+never accepted as a pass). A bounded delta-debugger is also exercised on
+a deliberately falsified case, requiring the same mismatch signature.
+
+To re-execute any saved mismatch in isolation:
+
+```sh
+node scripts/differential/reproduce.mjs \
+  --failures .lake/differential/failures.jsonl \
+  --id synthetic-20261119-000017 \
+  --out .lake/reproduced
+```
+
+To seek a smaller counterexample while preserving the same disagreement
+signature, hard fork, gas and fuel:
+
+```sh
+node scripts/differential/minimize.mjs \
+  --failures .lake/differential/failures.jsonl \
+  --id synthetic-20261119-000017 \
+  --out .lake/minimized --max-runs 64
+```
+
+The IDs above are examples; a real mismatch must exist in the supplied
+archive. Neither a reduced input nor a synthetic negative control is an
+independently confirmed Ethereum semantic bug. Human review is required.
+
 ### Evidence retention
 
 CI archives the exact JSONL corpus, its SHA-256 manifest, the committed
-dependency lockfile, machine-readable report and full mismatch records as a
-GitHub Actions artifact. PR builds use a fixed seed and count, while larger
+dependency lockfile, machine-readable report, dynamic opcode histogram,
+negative controls, minimisation/reproduction evidence and full mismatch
+records as a GitHub Actions artifact. The `evidence-manifest.json` links
+the source commit, Lean toolchain, npm dependency lock and report/input
+files by hashes. CI verifies the full outcome partition and the dynamic
+opcode histogram. The generator SHA-256 is pinned in the workflow; any
+change to the 10k-case corpus requires an explicit reviewed hash update.
+Artifacts are retained for 30 days. PR builds use a fixed seed and count, while larger
 local runs can use new seeds and much higher counts. Generator count is
 explicitly bounded to 100,000 records per invocation so resources and corpus
 provenance remain manageable.
