@@ -32,12 +32,13 @@ reports theorem dependencies. These are distinct forms of evidence.
 ## External executable interface and first official-fixture integration
 
 The CLI executes **only the currently supported opcode subset** with supplied
-bytecode, gas and step fuel:
+bytecode, gas and step fuel. Its version-2 JSON output encodes gas, program
+counters, memory sizes and 256-bit words as **lossless decimal strings**:
 
 ```sh
 cd formal/lean4/evm-cleanroom
 lake exe evm-subset 600260030100 100 10
-# {"status":"ok","gasRemaining":91,"pc":6,"halted":true,"stack":[5]}
+# {"schemaVersion":2,"status":"ok","gasRemaining":"91","pc":"6","halted":true,"stack":["5"],"memorySizeBytes":"0","memoryWord0":"0"}
 ```
 
 Machine input errors are distinct from EVM execution errors. This interface
@@ -59,7 +60,11 @@ opcode gas tiers from EELS Prague's `vm/gas.py`, pinned to execution-specs
 commit `1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653`. This is
 real *external reference checking of static opcode gas costs*, not official
 state-test consumption, transaction replay, or a general EVM semantics proof.
-The CI assertion requires all 14 cases to match.
+The CI assertion requires all 14 cases to match. A further
+`check-eels-memory.mjs` script exercises six memory-opcode cases against
+the pinned EELS memory-gas formula and compares observed memory size,
+word contents and gas. These are independent **narrow reference checks**,
+not a formal semantics refinement or an executed official state-test fixture.
 
 See [ROADMAP.md](ROADMAP.md) for acceptance gates G0–G6, real mainnet witness
 requirements, deployed-contract verification and independent review.
@@ -83,14 +88,16 @@ for tracked implementation milestones.
    decoded boundaries holding opcode 0x5b, skipping PUSH1..32 immediates.
    The relation and decoder share the opcode-width function; independent
    EELS equivalence is not yet proved.
-4. [`EVMCleanroom/MemoryGas.lean`](EVMCleanroom/MemoryGas.lean): independent
+4. [`EVMCleanroom/Memory.lean`](EVMCleanroom/Memory.lean): sparse
+   zero-filled byte memory, big-endian reads/writes and basic proofs.
+5. [`EVMCleanroom/MemoryGas.lean`](EVMCleanroom/MemoryGas.lean): independent
    EVM memory-expansion price model, monotonicity and path-independence
    proofs for *arbitrarily many* memory-growth events, and zero-length
    memory-access corner cases.
-5. [`EVMCleanroom/Tests.lean`](EVMCleanroom/Tests.lean): executable
+6. [`EVMCleanroom/Tests.lean`](EVMCleanroom/Tests.lean): executable
    regression vectors and 256-bit arithmetic edge cases derived from
    official Ethereum execution-specification test expectations.
-6. [`SOUNDNESS.md`](SOUNDNESS.md): exact trusted boundary and missing
+7. [`SOUNDNESS.md`](SOUNDNESS.md): exact trusted boundary and missing
    conformance theorem.
 
 ## Interpreter design
@@ -121,13 +128,15 @@ non-shrinking allocation sequence incurs exactly the same total
 memory-expansion gas as expanding directly to its final size. A zero-length
 access never grows memory, even at offset `2^256 - 1`.
 
-**Memory byte contents and MLOAD/MSTORE execution are not implemented yet**:
-this proof is about the pricing model, not about a complete memory subsystem.
+**MLOAD, MSTORE, MSTORE8 and MSIZE are now executable**, including dynamic
+memory-expansion gas and zero-initialised sparse byte storage. Plans prepare
+functional memory changes, which are applied only following successful gas
+charging. This does not prove EELS equivalence or world-state rollback.
 
 ## Opcode coverage
 
 `STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `POP`,
-`JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`,
+`JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`, `MLOAD`, `MSTORE`, `MSTORE8`, `MSIZE`,
 `PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`.
 
 `PUSH0` is gated by a coarse pre-/post-Shanghai profile. Unsupported
@@ -154,8 +163,8 @@ gas burn, rollback and state effects. Differential tests against pinned
 official fixtures should support the proof effort but must not be
 misrepresented as proofs.
 
-After that: byte-addressed memory with MLOAD/MSTORE, independently checked
-JUMPDEST conformance to EELS, storage and gas refunds,
+After that: independently reviewed EELS memory-opcode refinement,
+RETURN/REVERT, JUMPDEST conformance to EELS, storage and gas refunds,
 nested calls, contract creation, account state, receipts, fork transitions
 and ultimately a full execution client.
 
