@@ -67,6 +67,8 @@ jobs:
                    L4Factoidal/Paralliverse/PackWireTheorems.lean
                    L4Factoidal/Paralliverse/CountTarget.lean
                    L4Factoidal/Paralliverse/CountPacketTheorems.lean
+                   L4Factoidal/Paralliverse/LoopTarget.lean
+                   L4Factoidal/Paralliverse/ScanTarget.lean
                    L4Factoidal/Paralliverse.lean
                    Wasm/ParalliverseHub.lean)
           mkdir -p "$proof_dir/modules"
@@ -126,7 +128,8 @@ jobs:
             printf '%s\n' "L4Factoidal.Paralliverse.DSL.$name" >> "$proof_dir/checked-theorems.txt"
           done
           for name in wordView_at decode_row_count decode_row_count_le decode_extent \
-                      decode_header_word decode_descriptor_length_word; do
+                      decode_header_word decode_descriptor_length_word decode_descriptor_span \
+                      decode_source_word decode_total_bound decode_admitted; do
             grep -F "'L4Factoidal.Paralliverse.PackWire.$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.Paralliverse.PackWire.$name" >> "$proof_dir/checked-theorems.txt"
@@ -135,6 +138,13 @@ jobs:
             grep -F "'L4Factoidal.Paralliverse.CountTarget.$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.Paralliverse.CountTarget.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in L4Factoidal.Paralliverse.LoopTarget.read_ok \
+                      L4Factoidal.Paralliverse.LoopTarget.store_ok \
+                      L4Factoidal.Paralliverse.ScanTarget.carry_add; do
+            grep -F "'$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "$name" >> "$proof_dir/checked-theorems.txt"
           done
 
       - name: Run the ordinary CPU specification on fixed fixtures

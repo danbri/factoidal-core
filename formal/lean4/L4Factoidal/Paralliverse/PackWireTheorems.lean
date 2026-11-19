@@ -137,12 +137,114 @@ theorem decode_descriptor_length_word {src : ByteArray} {rows : Rows} (h : decod
   rw [wordView_at _ _ hb, Option.map_some, UInt32.toNat_ofNat_of_lt' (readU32_fits _ _), row_at h i hi]
   simp [readSpan, descriptorAt]
 
+/-- Invariant.
+Says: a successful walk from a bounded initial count has checked every source range
+and included every visited length in its cumulative word limit.
+Does not say: that overlapping source spans count only once. -/
+private theorem spans_safe (src : ByteArray) (bank : Nat) (ids : List Nat) (used : Nat)
+    (rev spans : List (Nat × Nat)) (hu : used ≤ maxWords)
+    (h : readSpans src bank ids used rev = .ok spans) :
+    (∀ i ∈ ids, (descriptorAt src i).1 + (descriptorAt src i).2 ≤ bank) ∧
+    used + (ids.map (fun i => (descriptorAt src i).2)).sum ≤ maxWords := by
+  induction ids generalizing used rev with
+  | nil => simpa using hu
+  | cons i ids ih =>
+    simp only [readSpans] at h
+    split at h <;> try contradiction
+    rename_i hspan
+    split at h <;> try contradiction
+    rename_i htotal
+    obtain ⟨ranges, total⟩ := ih _ _ (Nat.le_of_not_gt htotal) h
+    constructor
+    · intro j hj
+      rcases List.mem_cons.mp hj with rfl | hrest
+      · exact Nat.le_of_not_gt hspan
+      · exact ranges j hrest
+    · simpa only [List.map_cons, List.sum_cons, Nat.add_assoc] using total
+
+/-- Invariant.
+Says: decoder acceptance checks all descriptor IDs from zero and bounds their total length.
+Does not say: that the physical bank consists of only the words those IDs reference. -/
+private theorem accepted_limits {src : ByteArray} {rows : Rows} (h : decode src = .ok rows) :
+    (∀ i < readU32 src 1, (descriptorAt src i).1 + (descriptorAt src i).2 ≤ readU32 src 2) ∧
+    ((List.range (readU32 src 1)).map (fun i => (descriptorAt src i).2)).sum ≤ maxWords := by
+  obtain ⟨spans, hv, _⟩ := (accepted h).plan
+  obtain ⟨ranges, total⟩ := spans_safe _ _ _ 0 [] spans (Nat.zero_le _) hv
+  exact ⟨fun i hi => ranges i (List.mem_range.mpr hi), by simpa using total⟩
+
+/-- Bridge.
+Says: the physical descriptor-start slot supplies the decoded row's bank start and
+its exclusive end is within the declared bank, including for an empty span at its end.
+Does not say: that row starts are monotone or identify distinct source regions. -/
+theorem decode_descriptor_span {src : ByteArray} {rows : Rows} (h : decode src = .ok rows)
+    (i : Nat) (hi : i < rows.length) :
+    ((wordView src)[3 + 2*i]?).map UInt32.toNat = some (descriptorAt src i).1 ∧
+    (descriptorAt src i).1 + (descriptorAt src i).2 ≤ readU32 src 2 := by
+  have he := decode_extent h
+  have hb : 4 * (3 + 2*i) + 3 < src.size := by omega
+  constructor
+  · rw [wordView_at _ _ hb, Option.map_some, UInt32.toNat_ofNat_of_lt' (readU32_fits _ _)] <;> rfl
+  · exact (accepted_limits h).1 i (by simpa only [decode_row_count h] using hi)
+
+/-- Bridge.
+Says: all four byte addresses of a logical row word are in bounds and the corresponding
+finite bank lookup returns exactly the word at that local index in the decoded row.
+Does not say: that the bank has been copied unchanged into a GPU binding. -/
+theorem decode_source_word {src : ByteArray} {rows : Rows} (h : decode src = .ok rows)
+    (i : Nat) (hi : i < rows.length) (j : Nat) (hj : j < (rows.getD i []).length) :
+    let addr := 3 + 2*rows.length + (descriptorAt src i).1 + j
+    (∀ b : Fin 4, 4*addr + b.val < src.size) ∧
+    (wordView src)[addr]? = some (rows.getD i [])[j] := by
+  let addr := 3 + 2*rows.length + (descriptorAt src i).1 + j
+  change (∀ b : Fin 4, 4*addr + b.val < src.size) ∧ (wordView src)[addr]? = _
+  have hlen : (rows.getD i []).length = (descriptorAt src i).2 := by
+    rw [row_at h i hi]
+    simp [readSpan]
+  have hj' : j < (descriptorAt src i).2 := hlen ▸ hj
+  have he := decode_extent h
+  have hs := (decode_descriptor_span h i hi).2
+  have hbytes : 4*addr + 3 < src.size := by
+    dsimp only [addr]
+    omega
+  constructor
+  · intro b
+    have hb := b.isLt
+    omega
+  · have hrg : j < (List.range (descriptorAt src i).2).length := by simpa using hj'
+    rw [← List.getElem?_eq_getElem hj, row_at h i hi, wordView_at _ _ hbytes]
+    simp only [readSpan, List.getElem?_map, List.getElem?_eq_getElem hrg,
+      List.getElem_range, Option.map_some, addr, decode_row_count h]
+
+/-- Invariant.
+Says: all logical row lengths of an accepted packet sum to at most the word limit,
+including repeated reads when rows overlap in the bank.
+Does not say: that the declared bank length equals the packed output length. -/
+theorem decode_total_bound {src : ByteArray} {rows : Rows} (h : decode src = .ok rows) :
+    (StaticPack.counts rows).sum ≤ maxWords := by
+  have ht := (accepted_limits h).2
+  rw [accepted_rows h]
+  simpa only [StaticPack.counts, List.map_map, Function.comp_def, readSpan,
+    List.length_map, List.length_range] using ht
+
+/-- Bridge.
+Says: decoder acceptance establishes the static packing word-address admission
+at capacity maxWords.
+Does not say: that a device binding or dispatch satisfies its physical limits. -/
+theorem decode_admitted {src : ByteArray} {rows : Rows} (h : decode src = .ok rows) :
+    StaticPack.Admitted rows maxWords :=
+  ⟨Nat.lt_of_le_of_lt (decode_row_count_le h) (by decide : maxRows < UInt32.size),
+    decode_total_bound h, by decide⟩
+
 #print axioms wordView_at
 #print axioms decode_row_count
 #print axioms decode_row_count_le
 #print axioms decode_extent
 #print axioms decode_header_word
 #print axioms decode_descriptor_length_word
+#print axioms decode_descriptor_span
+#print axioms decode_source_word
+#print axioms decode_total_bound
+#print axioms decode_admitted
 
 -- Hand-written descriptors share a source word and include an empty span at the bank end.
 #guard match decode (outputWords [1, 3, 3, 2, 1, 1, 2, 3, 0, 42, 7, 9]) with
