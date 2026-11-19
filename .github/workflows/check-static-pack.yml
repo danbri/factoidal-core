@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, wip/604-static-pack-spec]
     paths:
+      - 'formal/lean4/L4Factoidal/GpuKernel/Race.lean'
+      - 'formal/lean4/L4Factoidal/GpuKernel/TraceInterleavingTheorems.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/**'
       - 'formal/lean4/Harness/ParalliverseCpu.lean'
@@ -15,6 +17,8 @@ on:
       - '.github/workflows/check-static-pack.yml'
   pull_request:
     paths:
+      - 'formal/lean4/L4Factoidal/GpuKernel/Race.lean'
+      - 'formal/lean4/L4Factoidal/GpuKernel/TraceInterleavingTheorems.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/**'
       - 'formal/lean4/Harness/ParalliverseCpu.lean'
