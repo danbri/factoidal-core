@@ -386,6 +386,46 @@ try {
     report.cases.push({name: "studio-malformed", ...invalid});
     await evaluate('document.querySelector("[data-preset=wrap]").click()');
     await studioCase("studio-recovery", "[1, 4, 7, 0, 2147483646, 2147483649, 4294967291, 4294967294]", 8);
+    if (await evaluate('Boolean(document.querySelector("#signal-play"))')) {
+      await evaluate('document.querySelector("#signal-play").click()');
+      const animationDeadline = Date.now() + deadlineMs;
+      let frames;
+      do {
+        frames = await evaluate(`({completed:Number(document.querySelector('#signal-phase').dataset.completed),
+          status:document.querySelector('#signal-status').textContent,
+          target:document.querySelector('#visual-surface').dataset.target,
+          program:document.querySelector('#program').value,
+          stopped:document.querySelector('#signal-stop').disabled})`);
+        if (frames.completed === 32 || frames.status.startsWith("Playback stopped")) break;
+        await sleep(100);
+      } while (Date.now() < animationDeadline);
+      assert.equal(frames.completed, 32, `Bounded signal playback: ${frames.status}`);
+      assert.equal(frames.target, "gpu", "Signal view uses the actual GPU readback");
+      assert.equal(frames.program, "map multiply 257\nmap add 248", "Only acknowledged phases advance");
+      assert.equal(frames.stopped, true, "Playback ends after its finite frame budget");
+      const animated = await studioState();
+      assert.equal(animated.match, "true", "Last animated CPU/GPU comparison");
+      assert.equal(animated.gpu, animated.cpu, "Last animated physical result");
+      assert.equal(animated.cells, 64, "Animation renders the returned GPU words");
+      assert.equal(animated.frame, "Header + tail match", "Animation preserves full buffer frames");
+      report.cases.push({name: "studio-signal-32-frames", frames, ...animated});
+      await screenshot("paralliverse-studio-signal.png");
+      await evaluate('document.querySelector("#signal-step").click()');
+      const stepDeadline = Date.now() + deadlineMs;
+      let step;
+      do {
+        step = await evaluate('Number(document.querySelector("#signal-phase").dataset.completed)');
+        if (step === 1) break;
+        await sleep(100);
+      } while (Date.now() < stepDeadline);
+      assert.equal(step, 1, "Single step waits for one matching GPU readback");
+      await evaluate('document.querySelector("#view-cpu").click()');
+      assert.equal(await evaluate('document.querySelector("#visual-surface").dataset.target'), "cpu");
+      await evaluate('document.querySelector("#view-gpu").click()');
+      assert.equal(await evaluate('document.querySelector("#visual-surface").dataset.target'), "gpu");
+      await evaluate('document.querySelector("[data-preset=wrap]").click()');
+      await studioCase("studio-after-playback", "[1, 4, 7, 0, 2147483646, 2147483649, 4294967291, 4294967294]", 8);
+    }
     await evaluate(`(() => {
       Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__studioClipboard=text;}}});
       document.querySelector('#copy-lean').click();

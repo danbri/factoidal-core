@@ -13,7 +13,9 @@ map add 1
 
 Enter a flat JSON array of unsigned decimal words, for example `[0, 1, 4294967295]`. Choose **Run CPU + GPU**, or press Command/Control + Enter. Live updates run after edits; turn them off to inspect a result before the next run. Editing while paused clears the old result and waits for an explicit run.
 
-The coloured field presents the actual CPU output, with one cell per returned word. Its colour mapping is only a display convention. The numeric CPU and GPU results remain visible below it. A match is an actual byte comparison from that run. An empty output is a successful zero-word result, not an unavailable result.
+Use **CPU result** or **GPU readback** to choose the coloured field's source. Each view keeps its own actual returned words; the GPU view waits for GPU readback. One cell represents one returned word, and its colour mapping is only a display convention. The numeric CPU and GPU results remain visible below it. A match is an actual byte comparison from that run. An empty output is a successful zero-word result, not an unavailable result.
+
+**Signal loom** can request a bounded sequence of 32 phases. Choose **Play 32 frames**, **Step one frame** or **Stop**. The input fixture stays fixed while the requested add operand moves through 0, 8, …, 248 after actual matching GPU results. Each phase still goes through Lean and GPU execution. The next request is scheduled only after the current request's GPU comparison succeeds. Stop, edits, mode changes, a refusal or a runtime/device failure stop the sequence; a previously submitted frame can finish. Playback starts only by an explicit action. These presentation controls are host behaviour, separate from the program-equivalence theorems.
 
 The browser editor accepts the bounded command language above. Lean parses it and constructs the typed program. It does not compile arbitrary Lean source in the browser. Commands are case-sensitive; spaces and tabs separate tokens, surrounding whitespace and blank lines are accepted, and comments are not part of this command grammar. Operands are unsigned decimal `UInt32` values; an operand with leading zeros other than `0` is rejected.
 
@@ -157,6 +159,7 @@ The optional `Program.asStage` adapter exposes a fused CPU program through the e
 | Word GPU launch | Workgroup size 64; at most sixteen workgroups |
 | Packing input | At most 128 rows and 1,024 logical words |
 | Share link | At most 16 KiB of encoded experiment state before base64 |
+| Signal loom playback | At most 32 phase requests per explicit Play action; one current frame awaiting acknowledgement |
 
 The program and request byte-limit checks precede their parser work. Syntax errors identify the relevant command line. Larger valid CPU pipelines get a GPU refusal rather than a fabricated GPU output. Empty programs, unsupported commands, invalid words and exceeded input limits get diagnostics. The current constraints are explicit boundaries of this implementation, not restrictions on all possible Paralliverse extensions.
 

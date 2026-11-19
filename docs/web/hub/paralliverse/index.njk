@@ -27,7 +27,7 @@ permalink: /web/hub/paralliverse/index.html
 </header>
 
 <section class="example-gallery" aria-labelledby="examples-heading">
-  <div class="section-heading"><h2 id="examples-heading">Start with an experiment</h2><span class="section-aside">Then make it yours.</span></div>
+  <div class="section-heading"><h2 id="examples-heading">Start with an experiment</h2><a class="text-link" href="https://github.com/danbri/factoidal-core/blob/main/docs/20261119-paralliverse-studio-guide.md">Lean API guide ↗</a></div>
   <div class="example-cards">
     <button class="example-card" type="button" data-preset="signal" data-needs-studio disabled><span class="example-icon signal-icon" aria-hidden="true">▥</span><span><strong>Signal loom</strong><small>A field of words, transformed.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="wrap" data-needs-studio disabled><span class="example-icon" aria-hidden="true">↻</span><span><strong>At the word boundary</strong><small>Watch unsigned arithmetic wrap.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
@@ -81,7 +81,14 @@ map add 1</textarea>
 
   <section class="pack-card visual-card" aria-labelledby="visual-heading">
     <div class="panel-heading"><h2 id="visual-heading">The returned words</h2><span class="panel-index">02 / OBSERVE</span></div>
-    <div class="visual-surface" id="visual-surface" data-state="waiting">
+    <div class="visual-toolbar">
+      <div class="visual-target" role="group" aria-label="Visual output source">
+        <button id="view-cpu" type="button" aria-pressed="true">CPU result</button>
+        <button id="view-gpu" type="button" aria-pressed="false">GPU readback</button>
+      </div>
+      <span id="visual-source" class="visual-source">Actual CPU output</span>
+    </div>
+    <div class="visual-surface" id="visual-surface" data-state="waiting" data-target="cpu">
       <div class="word-grid" id="word-grid" role="img" aria-label="The visual output will appear after a successful CPU run."><p>Actual output appears here.<br><span>Every cell represents one returned word.</span></p></div>
     </div>
     <div class="visual-metrics">
@@ -90,6 +97,15 @@ map add 1</textarea>
       <div><span class="metric-label">Buffer frame</span><strong id="frame-status">Waiting</strong></div>
     </div>
     <p id="visual-caption" class="pack-note">The view uses the CPU result. Colour is a display mapping, not another implementation of the program. Full numeric results are below.</p>
+    <div class="signal-controls">
+      <div class="signal-heading"><strong>Signal loom</strong><span id="signal-phase" data-completed="0">32 phases · actual GPU results</span></div>
+      <div class="signal-buttons">
+        <button id="signal-play" class="secondary-button" type="button" disabled><span aria-hidden="true">▶</span> Play 32 frames</button>
+        <button id="signal-stop" class="secondary-button" type="button" disabled>Stop</button>
+        <button id="signal-step" class="secondary-button" type="button" disabled>Step one frame</button>
+      </div>
+      <p id="signal-status" class="pack-note" role="status">Starts on request. Each phase waits for an actual matching GPU readback.</p>
+    </div>
   </section>
 </div>
 

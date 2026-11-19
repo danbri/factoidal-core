@@ -46,6 +46,12 @@ let timer;
 let lastStudioResult = null;
 let pendingShare = null;
 let requestedSharedMode = false;
+let visualTarget = "cpu";
+let lastCPUWords = null;
+let lastGPUWords = null;
+let signalRun = null;
+let signalTimer;
+let nextSignalPhase = 0;
 
 function setPill(id, text, state) {
   const pill = $(id);
@@ -82,6 +88,8 @@ function setEmptyView(message = "Actual output appears here.", detail = "Every c
 }
 
 function clearResult() {
+  lastCPUWords = null;
+  lastGPUWords = null;
   cpuOutput.textContent = "—";
   gpuOutput.textContent = "—";
   comparison.textContent = "";
@@ -97,10 +105,11 @@ function clearResult() {
   $("source-ir").textContent = mode === "studio" ? "Waiting for Lean to prepare the program…" : "Stable packing · Count → Scan → Scatter";
   $("optimized-ir").textContent = mode === "studio" ? "The source and fused tree will appear after checking." : "The packing program has a fixed three-stage GPU plan.";
   $("gpu-plan").textContent = "No prepared word-program plan for this input.";
-  setEmptyView();
+  renderSelectedWordView();
 }
 
 function unavailable(message) {
+  stopSignal("Playback stopped because the CPU runtime is unavailable.");
   editorLimit = 0;
   studioLimit = 0;
   cpuUnavailable = true;
@@ -111,6 +120,7 @@ function unavailable(message) {
   setPill("runtime-pill", "CPU unavailable", "unavailable");
   $("mode-studio").disabled = true;
   for (const button of document.querySelectorAll("[data-needs-studio]")) button.disabled = true;
+  syncSignalControls();
 }
 
 function createWorker() {
@@ -139,11 +149,13 @@ function showCurrentGpuState() {
   if (mode === "studio" && lastStudioResult && !lastStudioResult.gpuEligible) {
     gpuStatus.textContent = lastStudioResult.refusal || "This program is not in the supported GPU fragment.";
   }
+  syncSignalControls();
 }
 
 function selectMode(next, {scheduleRun = true, preserveInput = false} = {}) {
   if (next !== "pack" && next !== "studio") return;
   if (next !== mode) {
+    stopSignal("Playback stopped when the experiment changed.");
     inputs[mode] = source.value;
     mode = next;
     if (!preserveInput) source.value = inputs[mode];
@@ -162,37 +174,42 @@ function selectMode(next, {scheduleRun = true, preserveInput = false} = {}) {
   if (scheduleRun) schedule(0);
 }
 
-function schedule(delay = 150, manual = false) {
+function schedule(delay = 150, manual = false, signalFrame = false) {
+  if (!signalFrame) stopSignal("Playback stopped for a new request.");
   const id = ++generation;
   clearTimeout(timer);
   clearResult();
   if (!readyForMode()) {
+    if (signalFrame) stopSignal("Playback stopped because the runtime is unavailable.");
     if (!cpuUnavailable) {
       inputStatus.textContent = editorLimit && mode === "studio"
         ? "This runtime supports packing. Word studio needs the extended runtime."
         : "Waiting for the CPU runtime. Your edits will run when it is ready.";
     }
-    return;
+    return id;
   }
   if (!manual && !live.checked) {
     inputStatus.textContent = "Edits are ready. Choose Run CPU + GPU, or press Command/Control + Enter.";
-    return;
+    return id;
   }
   inputStatus.textContent = "Checking input…";
   timer = setTimeout(() => {
     const limit = mode === "studio" ? studioLimit : editorLimit;
     if (source.value.length > limit) {
       inputStatus.textContent = `Input limit. Use at most ${limit} UTF-8 bytes.`;
+      if (signalFrame) stopSignal("Playback stopped at the input limit.");
       return;
     }
     if (mode === "studio" && (program.value.length > programLimit || encoder.encode(program.value).byteLength > programLimit)) {
       inputStatus.textContent = `Program limit. Use at most ${programLimit} UTF-8 bytes.`;
+      if (signalFrame) stopSignal("Playback stopped at the program limit.");
       return;
     }
     worker.postMessage(mode === "studio"
       ? {id, mode: "studio", program: program.value, source: source.value}
       : {id, source: source.value});
   }, delay);
+  return id;
 }
 
 function edit() {
@@ -268,14 +285,138 @@ function showWordView(words) {
     cells.append(cell);
   });
   grid.replaceChildren(cells);
-  grid.setAttribute("aria-label", `${words.length} output words, shown as coloured cells. The complete numeric result follows in the CPU output.`);
+  grid.setAttribute("aria-label", `${words.length} ${visualTarget.toUpperCase()} output words, shown as coloured cells. The complete numeric result follows in the ${visualTarget.toUpperCase()} output.`);
   $("visual-surface").dataset.state = "filled";
+}
+
+function renderSelectedWordView() {
+  const words = visualTarget === "gpu" ? lastGPUWords : lastCPUWords;
+  $("view-cpu").setAttribute("aria-pressed", String(visualTarget === "cpu"));
+  $("view-gpu").setAttribute("aria-pressed", String(visualTarget === "gpu"));
+  $("visual-surface").dataset.target = visualTarget;
+  $("visual-source").textContent = visualTarget === "gpu" ? "Actual GPU readback" : "Actual CPU output";
+  $("visual-caption").textContent = visualTarget === "gpu"
+    ? "This view uses actual GPU readback. Colour is a display mapping of the returned words. Full numeric results are below."
+    : "This view uses the CPU result. Colour is a display mapping of the returned words. Full numeric results are below.";
+  if (words !== null) {
+    showWordView(words);
+  } else {
+    $("word-count").textContent = "—";
+    if (visualTarget === "gpu" && mode === "studio" && lastStudioResult && !lastStudioResult.gpuEligible) {
+      setEmptyView("No GPU result for this program.", lastStudioResult.refusal || "The GPU selector declined this source.");
+    } else if (visualTarget === "gpu" && !["checking", "ready"].includes(gpuStates[mode])) {
+      setEmptyView("GPU readback is unavailable.", "The CPU result remains available in its own view.");
+    } else {
+      setEmptyView(visualTarget === "gpu" ? "Waiting for actual GPU readback." : "Waiting for actual CPU output.", "Every cell will represent one returned word.");
+    }
+  }
+}
+
+function chooseVisualTarget(target) {
+  if (target !== "cpu" && target !== "gpu") return;
+  visualTarget = target;
+  renderSelectedWordView();
+}
+
+function signalAvailable() {
+  return !cpuUnavailable && studioLimit > 0 && gpuStates.studio === "ready";
+}
+
+function syncSignalControls() {
+  $("signal-play").disabled = !signalAvailable() || signalRun !== null;
+  $("signal-step").disabled = !signalAvailable() || signalRun !== null;
+  $("signal-stop").disabled = signalRun === null;
+}
+
+function stopSignal(message, {cancelPending = false} = {}) {
+  clearTimeout(signalTimer);
+  signalTimer = undefined;
+  if (!signalRun) return;
+  const stopped = signalRun;
+  signalRun = null;
+  if (cancelPending) clearTimeout(timer);
+  $("signal-phase").textContent = `Stopped · ${stopped.completed} / ${stopped.limit} frames`;
+  $("signal-status").textContent = message || "Playback stopped.";
+  syncSignalControls();
+}
+
+function submitSignalFrame() {
+  const active = signalRun;
+  if (!active || active.awaiting) return;
+  if (!signalAvailable() || mode !== "studio") {
+    stopSignal("Playback stopped because the word GPU is unavailable.");
+    return;
+  }
+  // This changes requested input parameters only. Lean computes every output.
+  program.value = `map multiply 257\nmap add ${active.phase}`;
+  active.awaiting = true;
+  active.id = schedule(0, true, true);
+  $("signal-phase").textContent = `${active.completed} / ${active.limit} matched · phase ${active.phase}`;
+  $("signal-phase").dataset.phase = String(active.phase);
+}
+
+function startSignal(kind) {
+  if (!signalAvailable()) return;
+  stopSignal("Playback restarted.", {cancelPending: true});
+  clearTimeout(timer);
+  inputs.studio = presets.signal.source;
+  selectMode("studio", {scheduleRun: false});
+  source.value = presets.signal.source;
+  inputs.studio = source.value;
+  markPreset("signal");
+  chooseVisualTarget("gpu");
+  signalRun = {kind, limit: kind === "play" ? 32 : 1, completed: 0,
+    phase: kind === "play" ? 0 : nextSignalPhase, awaiting: false, id: 0};
+  $("signal-phase").dataset.completed = "0";
+  $("signal-status").textContent = kind === "play"
+    ? "Playing up to 32 frames. Each next phase waits for a matching GPU readback."
+    : "Requesting one frame and comparing the actual GPU result.";
+  syncSignalControls();
+  submitSignalFrame();
+}
+
+function acknowledgeSignalFrame(data) {
+  const active = signalRun;
+  if (!active || !active.awaiting) return;
+  if (active.id !== generation || mode !== "studio") {
+    stopSignal("Playback stopped when the current request changed.");
+    return;
+  }
+  if (data.id !== active.id) return;
+  if (data.matches !== true) {
+    stopSignal("Playback stopped because the CPU and GPU results did not match.");
+    return;
+  }
+  active.awaiting = false;
+  active.completed += 1;
+  nextSignalPhase = (active.phase + 8) % 256;
+  $("signal-phase").dataset.completed = String(active.completed);
+  $("signal-phase").textContent = `${active.completed} / ${active.limit} matched · phase ${active.phase}`;
+  if (active.completed === active.limit) {
+    signalRun = null;
+    $("signal-status").textContent = active.kind === "play"
+      ? "All 32 frames completed with matching GPU readbacks."
+      : "One frame completed with a matching GPU readback.";
+    syncSignalControls();
+    return;
+  }
+  active.phase = nextSignalPhase;
+  signalTimer = setTimeout(() => {
+    signalTimer = undefined;
+    if (signalRun !== active) return;
+    if (active.id !== generation) {
+      stopSignal("Playback stopped when the current request changed.");
+      return;
+    }
+    submitSignalFrame();
+  }, 80);
 }
 
 function showResult({packed, prepareMs, cpuMs}) {
   const words = unpackWords(packed);
   const count = showWords(cpuOutput, words);
-  showWordView(words);
+  lastCPUWords = words;
+  renderSelectedWordView();
   cpuStatus.textContent = `${count} ${count === 1 ? "word" : "words"} · ${duration(cpuMs)} CPU call`;
   inputStatus.textContent = `Input prepared in ${duration(prepareMs)}. One untimed warm-up precedes each measured CPU/GPU sample.`;
   $("pass-count").textContent = "3";
@@ -291,7 +432,7 @@ function showStudioResult({result, cpuMs}) {
     throw new Error("The studio response has no typed program description.");
   }
   const count = showWords(cpuOutput, words);
-  showWordView(words);
+  lastCPUWords = words;
   cpuStatus.textContent = `${count} ${count === 1 ? "word" : "words"} · ${duration(cpuMs)} Lean parse + CPU evaluation`;
   $("source-ir").textContent = result.sourceIR;
   $("optimized-ir").textContent = result.optimizedIR;
@@ -299,6 +440,7 @@ function showStudioResult({result, cpuMs}) {
     ? (result.refusal || "The GPU selector declined this program.")
     : JSON.stringify(result.executionPlan, null, 2);
   lastStudioResult = result;
+  renderSelectedWordView();
   $("copy-lean").disabled = false;
   $("download-lean").disabled = false;
   if (result.gpuEligible) {
@@ -307,6 +449,7 @@ function showStudioResult({result, cpuMs}) {
     inputStatus.textContent = "Lean prepared the typed program and CPU result. The source and fused trees are shown below.";
     if (gpuStates[mode] === "ready") gpuStatus.textContent = "Computing the Lean-selected plan and reading back…";
   } else {
+    stopSignal("Playback stopped because the GPU selector declined the program.");
     $("pass-count").textContent = "CPU only";
     $("frame-status").textContent = "Not submitted";
     inputStatus.textContent = "Lean evaluated this program on the CPU. The GPU selector declined it.";
@@ -318,6 +461,8 @@ function showStudioResult({result, cpuMs}) {
 function showGpuResult(data) {
   const words = unpackWords(data.packed);
   const count = showWords(gpuOutput, words);
+  lastGPUWords = words;
+  renderSelectedWordView();
   const timing = `${count} ${count === 1 ? "word" : "words"} · ${duration(data.endToEndMs)} GPU end to end.`;
   gpuStatus.textContent = timing + (mode === "pack"
     ? ` Upload/encode/submit ${duration(data.encodeSubmitMs)}; queue and terminal ${duration(data.queueAndTerminalMs)}; payload readback ${duration(data.payloadReadbackMs)}.`
@@ -436,6 +581,10 @@ if (worker) {
         case "gpu":
           gpuStates[data.mode || "pack"] = data.state;
           gpuMessages[data.mode || "pack"] = data;
+          if (data.mode === "studio" && data.state !== "ready") {
+            stopSignal("Playback stopped because the word GPU is unavailable.");
+          }
+          syncSignalControls();
           if (data.state === "ready") {
             showGpuProvenance(data);
           }
@@ -443,20 +592,26 @@ if (worker) {
           if ((data.mode || "pack") !== mode) break;
           showCurrentGpuState();
           if (data.state !== "ready" && data.state !== "checking") {
+            lastGPUWords = null;
             gpuOutput.textContent = "—";
             comparison.textContent = "";
             comparison.removeAttribute("data-match");
             if (mode === "studio") $("frame-status").textContent = "Not submitted";
+            renderSelectedWordView();
           }
           break;
         case "gpu-result":
-          if (data.id === generation && (data.mode || "pack") === mode) showGpuResult(data);
+          if (data.id === generation && (data.mode || "pack") === mode) {
+            showGpuResult(data);
+            if (mode === "studio") acknowledgeSignalFrame(data);
+          }
           break;
         case "ready":
           editorLimit = data.editorLimit;
           studioLimit = data.studioLimit || 0;
           programLimit = data.programLimit || 512;
           updateRunButton();
+          syncSignalControls();
           $("mode-studio").disabled = !studioLimit;
           for (const button of document.querySelectorAll("[data-needs-studio]")) button.disabled = !studioLimit;
           $("studio-capability").textContent = studioLimit
@@ -464,7 +619,7 @@ if (worker) {
             : "This published runtime supports stable packing. Word studio requires the extended runtime.";
           setPill("runtime-pill", studioLimit ? "Typed runtime ready" : "Packing runtime ready", "ready");
           showProvenance(data.provenance);
-          if (requestedSharedMode && pendingShare?.mode === "studio" && !studioLimit) {
+          if (requestedSharedMode && pendingShare?.mode === "studio" && mode === "studio" && !studioLimit) {
             inputStatus.textContent = "This shared word program needs the extended runtime. Stable packing remains available.";
           } else schedule(0, true);
           break;
@@ -479,6 +634,7 @@ if (worker) {
           break;
         case "failure":
           if (data.id !== generation) break;
+          stopSignal("Playback stopped because the current request failed.");
           if (data.kind === "invalid" || data.kind === "limit") {
             inputStatus.textContent = `${data.kind === "limit" ? "Input limit" : "Invalid input"}. ${data.message}`;
             setEmptyView("The input was not accepted.", "Edit the program or input, then run again.");
@@ -502,8 +658,8 @@ if (worker) {
   live.addEventListener("change", () => {
     if (live.checked) schedule(0, true);
     else {
+      stopSignal("Playback stopped when live updates were paused.", {cancelPending: true});
       clearTimeout(timer);
-      ++generation;
       inputStatus.textContent = "Live updates paused. Choose Run CPU + GPU to execute your edits.";
     }
   });
@@ -526,6 +682,17 @@ if (worker) {
     }
   });
 }
+
+$("view-cpu").addEventListener("click", () => chooseVisualTarget("cpu"));
+$("view-gpu").addEventListener("click", () => chooseVisualTarget("gpu"));
+$("signal-play").addEventListener("click", () => startSignal("play"));
+$("signal-step").addEventListener("click", () => startSignal("step"));
+$("signal-stop").addEventListener("click", () => {
+  stopSignal("Playback stopped. A submitted frame can finish.", {cancelPending: true});
+  inputStatus.textContent = "Playback stopped. Choose Run CPU + GPU to execute the current input.";
+  if (cpuOutput.textContent === "—") cpuStatus.textContent = "Playback stopped.";
+  if (gpuOutput.textContent === "—") gpuStatus.textContent = "Playback stopped.";
+});
 
 $("copy-lean").addEventListener("click", () => {
   if (lastStudioResult) copyText(lastStudioResult.leanSource, "Lean source copied from the runtime response.");
