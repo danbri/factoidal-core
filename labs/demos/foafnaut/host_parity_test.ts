@@ -216,6 +216,37 @@ for(const fixture of Object.keys(expected.fixtures)) {
   });
 }
 
+Deno.test({name:"host parity: anonymous control text paints and sizes the control without adding a DOM box",
+  ignore:!engine},async()=>{
+  const {loadHTML}=await import("./native_html_engine.ts");
+  const native=await loadHTML(library);
+  const source=`<!doctype html><style>body{margin:0;line-height:40px}</style>
+    <input id="field" value="two words" style="vertical-align:top">
+    <input id="short" type="submit" value="X">
+    <input id="long" type="submit" value="Long label">
+    <script>
+      const r=document.getElementById("field").getBoundingClientRect();
+      console.log(JSON.stringify([r.x,r.y,r.width,r.height]));
+    </script>`;
+  const width=800,height=600,url="https://example.test/form";
+  const layout={url,liberal:true,textScalePercent:100,zoomUnit:100};
+  try{
+    const turn=native.scriptSession(source,{action:"start",engine:"bubblepop",url,width,height,layout});
+    assert.deepEqual(turn.errors,[]);
+    const frame=native.compile(source,width,height,{...layout,binary:false,checks:false});
+    const facts=native.inspect(source,layout) as unknown as {nodes:{id:number;attributes:Record<string,string>}[]};
+    const boxes=frame.webRender.boxes as number[][];
+    const runs=frame.webRender.glyphRuns as {source:number;text:string}[];
+    const node=(id:string)=>facts.nodes.find(n=>n.attributes?.id===id)!.id;
+    const boxesOf=(id:string)=>boxes.filter(box=>box[0]===node(id)).map(box=>box.slice(1));
+    const rect=JSON.parse(turn.logs[0]);
+    assert.equal(rect[3],21,"the field has a 15 px content box, 2 px of padding and 4 px of border");
+    assert.deepEqual(boxesOf("field"),[rect]);
+    assert.deepEqual(runs.filter(run=>run.source===node("field")).map(run=>run.text),["two","words"]);
+    assert(boxesOf("long")[0][2]>boxesOf("short")[0][2],"the button's label contributes to its intrinsic width");
+  }finally{native.scriptSession("",{action:"close"});}
+});
+
 // ---- the hosts' sources: the shared steps are used, not written again -----------------------------
 Deno.test("host parity: the hosts take their page steps from page-load.mjs",async()=>{
   const hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);

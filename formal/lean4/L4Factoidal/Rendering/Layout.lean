@@ -452,9 +452,22 @@ def autoMarginShift (s : Computed) (available outer : Float) : Float :=
 private def horizontalEdges (s : Computed) : Float :=
   s.margin.left+s.margin.right+s.borderEdges.left+s.borderEdges.right+s.padding.left+s.padding.right
 
+/-- The owner of a text item, for paint and for layout fragments. A control's
+anonymous label is painted for the control, with no node of its own in the arena.
+Its fragments use the first index outside the layout arena. They still take space,
+for example when sizing an auto-width button. -/
+structure TextSource where
+  paint : Nat
+  geometry : Nat
+  deriving Repr
+
+def TextSource.node (id : Nat) : TextSource := ⟨id,id⟩
+
+def TextSource.control (dom : Dom) (id : Nat) : TextSource := ⟨id,dom.size⟩
+
 inductive Inline where
-  | word (source : Nat) (style : Computed) (text : String) (start : Nat)
-  | space (source : Nat) (style : Computed)
+  | word (source : TextSource) (style : Computed) (text : String) (start : Nat)
+  | space (source : TextSource) (style : Computed)
   | lineBreak (style : Computed)
   /-- A replaced element (`img`, inline `svg`): its margin box and paint at the origin. -/
   | replaced (source : Nat) (style : Computed) (width height : Float) (nodes : List Node)
@@ -528,7 +541,7 @@ def lineBreakMode (s : Computed) : Unicode.LineBreak.Mode :=
   | .normal => .normal
   | .loose => .loose
 
-private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
+private def textItems (id : TextSource) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
   let mut word := ""
   let mut start := 0
@@ -572,10 +585,10 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
 /-- What an `img` with no picture shows: its `alt` text in brackets, nothing for
 `alt=""` (an image that adds nothing), and `[image]` with no `alt`. -/
 private def altItems (id : Nat) (s : Computed) (n : DOM.Node) : Array Inline :=
-  if !CSS.hasAttribute n "alt" then (textItems id s "[image]").toArray
+  if !CSS.hasAttribute n "alt" then (textItems (.node id) s "[image]").toArray
   else
     let alt := CSS.attrValue n "alt"
-    if alt.isEmpty then #[] else (textItems id s s!"[{alt}]").toArray
+    if alt.isEmpty then #[] else (textItems (.node id) s s!"[{alt}]").toArray
 
 /-- What a form control shows in its box (`CSS.controlText`): its value or label on one
 line in its own colour, a placeholder in the grey of other engines (`#757575`). Nothing for
@@ -587,7 +600,7 @@ private def controlItems (dom : Dom) (id : Nat) (s : Computed) : Array Inline :=
     let grey : Color := ⟨0.459,0.459,0.459⟩
     let pos := {s.pos with nowrap := true}
     let t : Computed := {s with background := none, underline := false, preformatted := false, color := (if placeholder then grey else s.color), pos := pos}
-    (textItems id t text).toArray
+    (textItems (.control dom id) t text).toArray
 
 /-- An inline element's background goes behind its text (CSS 2.1 §14.2). Text has no
 background of its own, so its words and spaces take the element's. -/
@@ -631,7 +644,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     let n := dom.get id
     let s := styles[id]!
     if s.display == .none then return #[]
-    if n.type == .text then return (textItems id s n.data).toArray
+    if n.type == .text then return (textItems (.node id) s n.data).toArray
     if n.type != .element then return #[]
     if s.pos.isAbsolute then return #[.outOfFlow id]
     -- A replaced element with a picture: an `img`, and later a `video` or `canvas`.
@@ -866,7 +879,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
       let leading := lineLeading font s
       if reordered && s.background.isSome then
-        out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) top (← itemWidth font rtl item)}
+        out := {out with nodes := out.nodes ++ textBackground font source.paint s (x+offset) top (← itemWidth font rtl item)}
       match ← font.word s text rtl with
       | none =>
         -- A character this font has no glyph for shows as a question mark.
@@ -874,27 +887,27 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let advance := font.advance*s.fontSize/font.unitsPerEm
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
-        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,top-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
+        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
+        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source.geometry,x+offset,top-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
         extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
       | some word =>
         let scale := s.fontSize/word.unitsPerEm
         let width := word.advance*s.fontSize/font.unitsPerEm
         let glyphs := word.glyphs.map fun glyph =>
           ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
-        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,top-leading,width,s.lineHeight⟩}
+        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
+        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source.geometry,x+offset,top-leading,width,s.lineHeight⟩}
         extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
       let leading := lineLeading font s
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
-      out := {out with nodes := if reordered then out.nodes ++ textBackground font source s (x+offset) (top+leading) advance else out.nodes,
-                       boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
+      out := {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes,
+                       boxes := out.boxes.push ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩}
       extent := some (x+offset,x+offset+advance)
       if s.underline && s.visible then
         let thickness := max 1 (s.fontSize/14)
-        out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
+        out := {out with nodes := out.nodes.push (.paint ⟨some source.paint,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
     | .replaced source s width height nodes =>
       let top := match s.verticalAlign with
         | .baseline => y+ascent-height
@@ -955,7 +968,7 @@ private def preformatted : Inline → Bool
 
 /-- No line break before `item` (CSS Text 3 §3 `white-space: nowrap`): the space before
 it is text that does not wrap, or with no space there the item itself is. -/
-private def heldByNowrap (space : Option (Nat × Computed)) : Inline → Bool
+private def heldByNowrap (space : Option (TextSource × Computed)) : Inline → Bool
   | .word _ s _ _ => match space with
     | some (_,spaceStyle) => spaceStyle.pos.nowrap
     | none => s.pos.nowrap
@@ -1104,7 +1117,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
     else (line, #[])
   let mut out : Result := {}
   let mut cursorX : Float := 0
-  let mut pendingSpace : Option (Nat × Computed) := none
+  let mut pendingSpace : Option (TextSource × Computed) := none
   let mut pendingK : Nat := 0
   let mut line : Array (Float × Inline) := #[]
   let mut lineIdx : Array Nat := #[]
@@ -1653,7 +1666,7 @@ theorem compressInline_fixed (id : Nat) (s : Computed) (ow oh : Float) (nodes : 
   simp [compressInline, h]
 
 /-- Words, spaces and every item that is not a replaced atom are not changed. -/
-theorem compressInline_word (id : Nat) (s : Computed) (text : String) (start : Nat) :
+theorem compressInline_word (id : TextSource) (s : Computed) (text : String) (start : Nat) :
     compressInline (.word id s text start) = .word id s text start := rfl
 
 /-- Min-content and max-content widths (CSS Sizing 3 §5), margins included for a box.
@@ -1778,7 +1791,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
           let (a,b) ← gridIntrinsic children s (collectItems dom styles id)
           return (within a+add,within b+add)
         -- an outside marker (the default) takes no room in the item's lines
-        let lead := if n.lname == "li" && s.pos.listInside then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray
+        let lead := if n.lname == "li" && s.pos.listInside then (textItems (.node id) s (listMarker dom font s.pos.listStyle id)).toArray
           else if n.lname == "img" then altItems id s n else controlItems dom id s
         let (a,b) ← flowWidths id n.kids lead
         return (within a+add,within b+add)
@@ -2388,7 +2401,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         return replaced sw sh (fun cx cy => [.group none (translate cx cy) nodes]) {s with background := none}
       -- A list item's marker (CSS Lists 3 §3): the first thing in the first line with
       -- `list-style-position: inside`, else outside the box beside that line (below).
-      let markerItems := if n.lname == "li" then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray else #[]
+      let markerItems := if n.lname == "li" then (textItems (.node id) s (listMarker dom font s.pos.listStyle id)).toArray else #[]
       let lead := if n.lname == "img" then altItems id s n else if s.pos.listInside then markerItems else controlItems dom id s
       -- CSS 2.1 §10.7: the height within `min-height` and `max-height` (px; a percentage has
       -- no definite basis here). An imposed height is the parent's and is not clamped again.
@@ -2640,9 +2653,10 @@ def isInlineBox (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
 /-- The boxes that link regions are cut from: the boxes of text, of replaced elements and
 of block-level and atomic boxes. The box of an inline box is left out: what is inside it
 has boxes of its own, so a link has a region for each piece of its content, as it had
-before inline boxes had boxes. -/
+before inline boxes had boxes. Anonymous control text has no node from which to take
+a link target. -/
 def linkSources (dom : Dom) (styles : Array Computed) (boxes : Array Box) : Array Box :=
-  boxes.filter fun b => !isInlineBox dom styles b.source
+  boxes.filter fun b => b.source < dom.size && !isInlineBox dom styles b.source
 
 /-- Link fragments come from the same visible layout boxes as glyphs and
 replaced elements. Collapsed spaces produce boxes only when retained on a line.
@@ -2701,6 +2715,30 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
     throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
   return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)
 
+/-- The boxes of the original page's nodes, used by script geometry and frame
+answers. The limit also excludes generated content and anonymous control text. -/
+def pageBoxes (nodes : Nat) (boxes : Array Box) : Array Box :=
+  boxes.filter (·.source < nodes)
+
+/-- Kind: equivalence. Says: page geometry retains exactly the boxes sourced to a
+node in the original page. Does not say: which boxes the layout emits. -/
+theorem mem_pageBoxes {nodes : Nat} {boxes : Array Box} {b : Box} :
+    b ∈ pageBoxes nodes boxes ↔ b ∈ boxes ∧ b.source < nodes := by
+  simp [pageBoxes, Array.mem_filter]
+
+/-- Kind: separation. Says: a control label's anonymous text fragment is never
+reported as a box of the page. Does not say: how the text is shaped, laid out or painted. -/
+theorem controlText_geometry_excluded (dom : Dom) (id pageSize : Nat) (h : pageSize ≤ dom.size)
+    (b : Box) (boxes : Array Box) (source : b.source = (TextSource.control dom id).geometry) :
+    b ∉ pageBoxes pageSize boxes := by
+  intro mem
+  have lt := (mem_pageBoxes.mp mem).2
+  rw [source] at lt
+  exact Nat.not_lt_of_ge h lt
+
+#print axioms mem_pageBoxes
+#print axioms controlText_geometry_excluded
+
 /-- The scene of a page and the boxes of its nodes. A page with shadow trees is laid out
 on its flat tree (`DOM.Dom.flat`), with `treeScope` its node tree for selectors
 (`CSS.TreeScope`). The tree that is laid out has the page's `::before` and `::after`
@@ -2712,7 +2750,7 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
     (pictures : Pictures := noPictures) (treeScope : Option CSS.TreeScope := none) : Except String (Scene × Array Box) := do
   let made ← Generated.styled treeScope dom rules textScale state
   let drawn ← renderStyled (Generated.flattenContents made.1 made.2) made.2 font embedding width height pictures
-  return (drawn.1,drawn.2.filter (·.source < dom.size))
+  return (drawn.1,pageBoxes dom.size drawn.2)
 
 /-- `render`, and with its answer the computed styles of the page's own nodes: those the
 layout was made with (`Generated.styled`). A caller that reads styles of the laid out page
@@ -2724,7 +2762,7 @@ def renderWithStyles (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (e
     Except String ((Scene × Array Box) × Array Computed) := do
   let made ← Generated.styled treeScope dom rules textScale state
   let drawn ← renderStyled (Generated.flattenContents made.1 made.2) made.2 font embedding width height pictures
-  return ((drawn.1,drawn.2.filter (·.source < dom.size)),made.2.extract 0 dom.size)
+  return ((drawn.1,pageBoxes dom.size drawn.2),made.2.extract 0 dom.size)
 
 /-- Kind: correctness of the shared styles. Says: on a page whose sheet makes no
 generated content, the layout is the layout of the styles of `CSS.computeFor`, and the
@@ -2738,7 +2776,7 @@ theorem renderWithStyles_unused (dom : Dom) (rules : List CSS.Rule) (font : Font
     renderWithStyles dom rules font embedding width height textScale state pictures treeScope =
       (CSS.computeFor treeScope dom rules textScale state).bind fun styles =>
         (renderStyled (Generated.flattenContents dom styles) styles font embedding width height pictures).bind fun drawn =>
-          Except.ok ((drawn.1,drawn.2.filter (·.source < dom.size)),styles.extract 0 dom.size) := by
+          Except.ok ((drawn.1,pageBoxes dom.size drawn.2),styles.extract 0 dom.size) := by
   unfold renderWithStyles
   rw [Generated.styled_unused treeScope dom rules textScale state h]
   cases CSS.computeFor treeScope dom rules textScale state <;> rfl
