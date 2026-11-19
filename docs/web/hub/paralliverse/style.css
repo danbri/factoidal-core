@@ -28,6 +28,10 @@ a { color: var(--link); text-underline-offset: .19em; }
 .pack-heading > label { font-size: .875rem; }
 select, textarea { border: 1px solid var(--line); border-radius: .35rem; background: var(--surface); color: inherit; }
 select { margin-left: .25rem; padding: .35rem; font: inherit; }
+.pack-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem 1rem; margin-top: .8rem; }
+.pack-actions .pack-note { margin: 0; }
+button { border: 1px solid var(--link); border-radius: .35rem; padding: .55rem .9rem; background: var(--link); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: .55; cursor: wait; }
 textarea, #cpu-output, #gpu-output { font: .95rem/1.55 ui-monospace, monospace; }
 textarea { display: block; width: 100%; min-height: 10.4rem; margin-top: .8rem; padding: .65rem .8rem; resize: vertical; }
 .pack-note, .pack-status { margin: .55rem 0 0; font-size: .875rem; line-height: 1.4; color: var(--muted); }

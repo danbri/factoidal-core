@@ -1,5 +1,6 @@
 const source = document.querySelector("#source");
 const example = document.querySelector("#example");
+const run = document.querySelector("#run");
 const inputStatus = document.querySelector("#input-status");
 const cpuStatus = document.querySelector("#cpu-status");
 const gpuStatus = document.querySelector("#gpu-status");
@@ -12,6 +13,7 @@ const examples = {mixed: source.value, empty: "[[], [], []]", none: "[]"};
 const duration = value => `${value.toFixed(2)} ms`;
 let generation = 0;
 let editorLimit = 0;
+let cpuUnavailable = false;
 let gpuState = "checking";
 let timer;
 
@@ -36,6 +38,8 @@ function createWorker() {
 
 function unavailable(message) {
   editorLimit = 0;
+  cpuUnavailable = true;
+  run.disabled = true;
   clearTimeout(timer);
   clearResult();
   inputStatus.textContent = `CPU runtime unavailable. ${message}`;
@@ -46,7 +50,10 @@ const worker = createWorker();
 function schedule(delay = 150) {
   const id = ++generation;
   clearTimeout(timer);
-  if (!editorLimit) return;
+  if (!editorLimit) {
+    if (!cpuUnavailable) inputStatus.textContent = "Waiting for the CPU runtime. Your edited rows will run when it is ready.";
+    return;
+  }
   clearResult();
   inputStatus.textContent = "Checking input…";
   timer = setTimeout(() => {
@@ -141,6 +148,7 @@ if (worker) {
         break;
       case "ready":
         editorLimit = data.editorLimit;
+        run.disabled = false;
         showProvenance(data.provenance);
         schedule(0);
         break;
@@ -167,6 +175,14 @@ if (worker) {
   source.addEventListener("input", () => {
     example.value = "custom";
     schedule();
+  });
+  source.addEventListener("change", () => {
+    example.value = "custom";
+    schedule(0);
+  });
+  run.addEventListener("click", () => {
+    example.value = "custom";
+    schedule(0);
   });
   example.addEventListener("change", () => {
     source.value = examples[example.value];
