@@ -6,7 +6,7 @@
 
 A coordinator assigns ordinal `0` through `n - 1` to a fixed list of tasks. Each successful reply carries its ordinal and a value. How can a coordinator combine the values in planned order when replies arrive in completion order? For stable word packing and ordered query scans, concatenating in completion order can change the answer.
 
-The proposed opt-in `Ordered.collect?` sorts the replies by ordinal and compares the resulting ordinals with `List.range n`. The value type needs no equality or ordering operation. The exact success condition is
+The opt-in `Ordered.collect?` sorts the replies by ordinal and compares the resulting ordinals with `List.range n`. The value type needs no equality or ordering operation. The exact success condition is
 
 ```lean
 collect? n replies = some values ↔
@@ -19,7 +19,7 @@ The second obligation connects ordinals to actual tasks. For a list `tasks`, an 
 
 ## Two existing computations
 
-* **Stable packing.** Each element of an array holds one part of an input, in source order. `Par.mapChunks workers (fun part => packParallel part prior) parts` is the existing CPU task map applied to the count, exclusive-scan, scatter and readback model. Attach the planned ordinals to those answers and permit any permutation. The proposed theorem states that collecting and flattening produces `packSpec parts.toList.flatten` for every worker count, partition, and prior word memory. The proof uses the existing CPU mapping and packing equalities and associativity of ordered concatenation. [CPU task map](../formal/lean4/L4Factoidal/Par/Chunked.lean) · [Packing definitions and refinement](../formal/lean4/L4Factoidal/Paralliverse/StaticPack.lean)
+* **Stable packing.** Each element of an array holds one part of an input, in source order. `Par.mapChunks workers (fun part => packParallel part prior) parts` is the existing CPU task map applied to the count, exclusive-scan, scatter and readback model. Attach the planned ordinals to those answers and permit any permutation. Collecting and flattening produces `packSpec parts.toList.flatten` for every worker count, partition, and prior word memory. The proof uses the existing CPU mapping and packing equalities and associativity of ordered concatenation. [CPU task map](../formal/lean4/L4Factoidal/Par/Chunked.lean) · [Packing theorem](../formal/lean4/L4Factoidal/Paralliverse/OrderedPackTheorems.lean)
 * **SBM11 ordered block scans.** The native query driver forms `rangeBounds c metas.size` after asking its store for the metadata matching the query key. Its first range runs on the caller. It spawns the others and appends their tables in planned order. The theorem uses `metasFor fullMetadata.toArray spec.key`, these same range bounds, and each range's `boundsList`. The per-task evaluator `scanAccOf` uses the existing `scanBlockM` loop. Concatenating the collected rows gives the single list scan over the selected metadata. [Driver](../formal/lean4/Harness/Sbm11Query.lean) · [Metadata selection](../formal/lean4/L4Factoidal/Storage/Sbm11/PrmRangeTheorems.lean) · [Range construction](../formal/lean4/L4Factoidal/Storage/Sbm11/ParallelScan.lean) · [Ordered scan theorem](../formal/lean4/L4Factoidal/Storage/Sbm11/OrderedScanTheorems.lean)
 
 A key may select an interior slice whose first block starts after PRB1 header byte 6. The complete permutation passes `prmAdmitted`. Requiring that check again on the selected slice would exclude such queries. The split-scan proof needs the selected blocks' row bounds and successful decodes. The new `parallel_acc_eq_of_selected` separates the complete permutation from its selected metadata. Membership transfers the row bounds and successful decodes to each selected block. The existing `parallel_acc_eq` retains its statement. [Split-scan proof](../formal/lean4/L4Factoidal/Storage/Sbm11/ParallelScanTheorems.lean) · [Selection membership](../formal/lean4/L4Factoidal/Storage/Sbm11/MetaCountTheorems.lean)
@@ -32,4 +32,20 @@ An ordinal identifies a position within the coordinator's selected job. A networ
 
 The pack result concerns a mathematical word buffer and the logical result of Lean's `Task.spawn`. The scan result uses the `Store Id` instance and ordered lists of rows. Its existing premises require a supported scan specification and denotation, permutation reads that match the given byte array, admitted metadata, decodable blocks, and a disabled overlay. Native IO, table allocation, statistics, Web Workers, remote transports, shaders and device execution need their own evidence.
 
-The examples above describe intended outcomes. Kernel evidence requires fresh compilation of each named theorem and its axiom report. The functional scope is the optional collector. Both existing workloads retain their entry points.
+## Compiled theorems
+
+Lean 4.33.1 compiled all five public declarations at `1d9ff69dea734895bed51d67111ebc8611702466`. The fresh packing and scan jobs compiled six and 137 modules respectively. All compiler exits were zero. Each declaration reported exactly `[propext, Classical.choice, Quot.sound]` and both hygiene checks passed. The compiler used one thread, a 2 GiB Lean cap, a 4 GiB operating-system cap and a 180-second limit per source. [Packing log](https://github.com/danbri/factoidal-core/actions/runs/44565616036/job/135706402087) · [Scan log](https://github.com/danbri/factoidal-core/actions/runs/44565616036/job/135706401512)
+
+| Module | New public declarations |
+| --- | --- |
+| `L4Factoidal.Paralliverse.Ordered` | `collect?_eq_some_iff`, `mapM_eq_of_collect?` |
+| `L4Factoidal.Paralliverse.StaticPack` | `collect_mapChunks_pack` |
+| `L4Factoidal.Storage.Sbm11.ParallelScanTheorems` | `parallel_acc_eq_of_selected`, `scan_rangeBounds_eq_collected` |
+
+The pre-existing `parallel_acc_eq` also passed strict compilation with the same axiom report. The optional Lake target is `ParalliverseOrderedProofs`. Its modules are independent of the browser demonstration.
+
+## Executable examples
+
+Nine guards passed in the packing job above. Seven exercise the collector directly. One reverses the results of actual CPU packing tasks with an empty part and repeated words. One reverses the native driver's three bounds over five block positions. [Example source](../formal/lean4/Harness/ParalliverseOrderedGuards.lean)
+
+A separate storage guard decodes the eleven-block PRB1 fixture, selects key `3`, and returns four ranges in reverse. It checks that the selection starts after the first block, ends before the last block, and produces all sixteen expected projected tuples with their duplicates. The per-block evaluator in this guard is `blockOut`. The general theorem above uses `scanAccOf`. The issue records the result of each head's fresh run. [Storage example](../formal/lean4/Harness/ParalliverseOrderedScanGuards.lean) · [Verification record](https://github.com/danbri/factoidal-core/issues/641)

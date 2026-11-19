@@ -5,7 +5,7 @@ on:
     branches: [main, wip/paralliverse-ordered-partitions]
     paths:
       - 'formal/lean4/L4Factoidal/Paralliverse/Ordered*.lean'
-      - 'formal/lean4/Harness/ParalliverseOrderedGuards.lean'
+      - 'formal/lean4/Harness/ParalliverseOrdered*Guards.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/StaticPack.lean'
       - 'formal/lean4/L4Factoidal/Par/Chunked.lean'
       - 'formal/lean4/L4Factoidal/Storage/Sbm11/**'
@@ -17,7 +17,7 @@ on:
   pull_request:
     paths:
       - 'formal/lean4/L4Factoidal/Paralliverse/Ordered*.lean'
-      - 'formal/lean4/Harness/ParalliverseOrderedGuards.lean'
+      - 'formal/lean4/Harness/ParalliverseOrdered*Guards.lean'
       - 'formal/lean4/L4Factoidal/Paralliverse/StaticPack.lean'
       - 'formal/lean4/L4Factoidal/Par/Chunked.lean'
       - 'formal/lean4/L4Factoidal/Storage/Sbm11/**'
@@ -53,7 +53,7 @@ jobs:
       timeout_minutes: 35
       modules: >-
         L4Factoidal.Paralliverse.Ordered L4Factoidal.Storage.Sbm11.ParallelScanTheorems
-        L4Factoidal.Storage.Sbm11.OrderedScanTheorems
+        L4Factoidal.Storage.Sbm11.OrderedScanTheorems Harness.ParalliverseOrderedScanGuards
       theorems: >-
         L4Factoidal.Paralliverse.Ordered.collect?_eq_some_iff
         L4Factoidal.Paralliverse.Ordered.mapM_eq_of_collect?

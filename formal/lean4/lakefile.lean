@@ -367,7 +367,8 @@ lean_exe «frame-cost-cases» where root := `Harness.FrameCostCases
 -- Opt-in ordered collection and its CPU pack and SBM11 scan refinements (issue 641).
 lean_lib ParalliverseOrderedProofs where
   roots := #[`L4Factoidal.Paralliverse.Ordered, `L4Factoidal.Paralliverse.OrderedPackTheorems,
-    `L4Factoidal.Storage.Sbm11.OrderedScanTheorems, `Harness.ParalliverseOrderedGuards]
+    `L4Factoidal.Storage.Sbm11.OrderedScanTheorems, `Harness.ParalliverseOrderedGuards,
+    `Harness.ParalliverseOrderedScanGuards]
 
 -- The opt-in CPU fixture runner emits JSON Lines.
 lean_exe «paralliverse-cpu» where root := `Harness.ParalliverseCpu
