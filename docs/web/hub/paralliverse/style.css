@@ -28,19 +28,22 @@ a { color: var(--link); text-underline-offset: .19em; }
 .pack-heading > label { font-size: .875rem; }
 select, textarea { border: 1px solid var(--line); border-radius: .35rem; background: var(--surface); color: inherit; }
 select { margin-left: .25rem; padding: .35rem; font: inherit; }
-textarea, #cpu-output { font: .95rem/1.55 ui-monospace, monospace; }
+textarea, #cpu-output, #gpu-output { font: .95rem/1.55 ui-monospace, monospace; }
 textarea { display: block; width: 100%; min-height: 10.4rem; margin-top: .8rem; padding: .65rem .8rem; resize: vertical; }
 .pack-note, .pack-status { margin: .55rem 0 0; font-size: .875rem; line-height: 1.4; color: var(--muted); }
 .pack-editor .pack-status { min-height: 1.25rem; }
 .pack-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; margin-block: .8rem 1.4rem; }
-#cpu-output { min-height: 3rem; max-height: 15rem; overflow: auto; margin: .65rem 0; padding: .7rem; border-radius: .35rem; background: var(--soft-surface); white-space: pre-wrap; overflow-wrap: anywhere; }
+#cpu-output, #gpu-output { min-height: 3rem; max-height: 15rem; overflow: auto; margin: .65rem 0; padding: .7rem; border-radius: .35rem; background: var(--soft-surface); white-space: pre-wrap; overflow-wrap: anywhere; }
 #gpu-status { margin-top: .8rem; }
 #runtime { max-width: 46rem; line-height: 1.55; }
 #runtime summary { cursor: pointer; font-size: .875rem; font-weight: 600; }
 #runtime p, #runtime dl { font-size: .875rem; }
 #runtime dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; }
 #runtime dl[hidden] { display: none; }
-#runtime dd { margin: 0; }
+#runtime dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+#comparison-status { margin-bottom: 1.4rem; }
+#comparison-status[data-match="true"] { color: #145a4a; }
+#comparison-status[data-match="false"] { color: #9b2020; font-weight: 600; }
 
 @media (max-width: 40rem) {
   .pack-results { grid-template-columns: 1fr; }

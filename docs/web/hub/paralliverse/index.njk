@@ -42,13 +42,18 @@ permalink: false
   </section>
   <section class="pack-card" aria-labelledby="gpu-heading">
     <h2 id="gpu-heading">GPU · WebGPU</h2>
+    <pre id="gpu-output" aria-label="GPU packed words">—</pre>
     <p id="gpu-status" class="pack-status" role="status">Checking WebGPU availability…</p>
   </section>
 </div>
+<p id="comparison-status" class="pack-status" role="status"></p>
 
 <details id="runtime">
   <summary>Runtime details</summary>
   <p>The worker sends the editor bytes to Lean. Lean validates them, writes the input packet, decodes it, calls <code>StaticPack.packSpec</code>, and writes the packed words. The CPU call time includes packet decoding, result encoding, and copies across the WebAssembly boundary.</p>
+  <p>The GPU runs the Count, Scan and Scatter shader sources returned by Lean over the same input packet. Lean deliberately reorders and pads source storage. The GPU result comes from its actual terminal offset and payload readback; every returned byte is compared with the CPU result.</p>
+  <p>GPU end-to-end time includes upload, command encoding, queue execution, terminal and payload readback, and validation. It excludes shader/device initialisation and the untimed warm-up. The phase times use the worker clock, and do not isolate device compute time. CPU call and GPU end-to-end measurements include different transport costs; no speedup ratio is inferred.</p>
+  <p>Lean equivalence theorems concern the admitted input and formal shader execution model. Browser shader compilation, driver, hardware and physical command submission remain outside those proofs. The live byte comparison is a runtime check.</p>
   <dl id="runtime-data" hidden></dl>
   <p><a href="https://github.com/danbri/factoidal-core/issues/604">Packing proofs and WebGPU work</a></p>
 </details>

@@ -4,17 +4,24 @@ const inputStatus = document.querySelector("#input-status");
 const cpuStatus = document.querySelector("#cpu-status");
 const gpuStatus = document.querySelector("#gpu-status");
 const cpuOutput = document.querySelector("#cpu-output");
+const gpuOutput = document.querySelector("#gpu-output");
+const comparison = document.querySelector("#comparison-status");
 const runtimeData = document.querySelector("#runtime-data");
 
 const examples = {mixed: source.value, empty: "[[], [], []]", none: "[]"};
 const duration = value => `${value.toFixed(2)} ms`;
 let generation = 0;
 let editorLimit = 0;
+let gpuState = "checking";
 let timer;
 
 function clearResult() {
   cpuOutput.textContent = "—";
+  gpuOutput.textContent = "—";
+  comparison.textContent = "";
+  comparison.removeAttribute("data-match");
   cpuStatus.textContent = "Waiting for input.";
+  if (gpuState === "ready") gpuStatus.textContent = "Waiting for input.";
 }
 
 function createWorker() {
@@ -71,26 +78,66 @@ function showProvenance({sourceCommit, bytes, fetchMs, initMs}) {
   runtimeData.hidden = false;
 }
 
-function showResult({packed, prepareMs, cpuMs}) {
-  if (packed.byteLength % 4 !== 0) {
-    unavailable("The packed output has an invalid word length.");
-    return;
-  }
+function showWords(output, packed) {
+  if (packed.byteLength % 4 !== 0) throw new Error("The packed output has an invalid word length.");
   const result = new DataView(packed.buffer, packed.byteOffset, packed.byteLength);
   const count = packed.byteLength / 4;
   const words = Array.from({length: count}, (_, index) => result.getUint32(index * 4, true));
-  cpuOutput.textContent = `[${words.join(", ")}]`;
+  output.textContent = `[${words.join(", ")}]`;
+  return count;
+}
+
+function showResult({packed, prepareMs, cpuMs}) {
+  const count = showWords(cpuOutput, packed);
   cpuStatus.textContent = `${count} ${count === 1 ? "word" : "words"} · ${duration(cpuMs)} CPU call`;
-  inputStatus.textContent = `Input prepared in ${duration(prepareMs)}.`;
+  inputStatus.textContent = `Input prepared in ${duration(prepareMs)}. One untimed warm-up precedes each measured CPU/GPU sample.`;
+  if (gpuState === "ready") gpuStatus.textContent = "Computing and reading back…";
+}
+
+function showGpuResult({packed, matches, endToEndMs, encodeSubmitMs, queueAndTerminalMs, payloadReadbackMs}) {
+  const count = showWords(gpuOutput, packed);
+  gpuStatus.textContent = `${count} ${count === 1 ? "word" : "words"} · ${duration(endToEndMs)} GPU end to end. ` +
+    `Upload/encode/submit ${duration(encodeSubmitMs)}; queue and terminal ${duration(queueAndTerminalMs)}; payload readback ${duration(payloadReadbackMs)}.`;
+  comparison.textContent = matches ? "Exact CPU/GPU byte match." : "CPU/GPU mismatch. The two actual results are shown above.";
+  comparison.dataset.match = String(matches);
+}
+
+function showGpuProvenance(data) {
+  const entries = [
+    ["GPU adapter", data.adapter],
+    ["Fallback adapter", data.isFallbackAdapter === null ? "Not reported" : String(data.isFallbackAdapter)],
+    ["GPU initialisation", duration(data.initMs)],
+    ["Device timestamps", data.deviceTimestamps],
+    ...data.sourceHashes.map((hash, index) => [["Count", "Scan", "Scatter"][index] + " source SHA-256", hash]),
+  ];
+  for (const [label, value] of entries) {
+    const term = document.createElement("dt");
+    const definition = document.createElement("dd");
+    term.textContent = label;
+    definition.textContent = value;
+    runtimeData.append(term, definition);
+  }
 }
 
 if (worker) {
   worker.addEventListener("message", ({data}) => {
     switch (data.type) {
       case "gpu":
-        gpuStatus.textContent = data.state === "api-unavailable"
-          ? "WebGPU is unavailable in this browser."
-          : "The Lean-generated GPU program is unavailable in this build.";
+        gpuState = data.state;
+        if (data.state === "ready") {
+          showGpuProvenance(data);
+          gpuStatus.textContent = "Ready to compute with the Lean-exported shader program.";
+        } else if (data.state === "checking") {
+          gpuStatus.textContent = "Initialising WebGPU and compiling the Lean-exported shaders…";
+        } else {
+          gpuOutput.textContent = "—";
+          comparison.textContent = "";
+          comparison.removeAttribute("data-match");
+          gpuStatus.textContent = data.message || "The GPU program is unavailable.";
+        }
+        break;
+      case "gpu-result":
+        if (data.id === generation) showGpuResult(data);
         break;
       case "ready":
         editorLimit = data.editorLimit;

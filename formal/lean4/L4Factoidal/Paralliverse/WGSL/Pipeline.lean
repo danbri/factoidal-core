@@ -262,21 +262,13 @@ theorem decoded_text_pipeline {src : ByteArray} {rows : StaticPack.Rows} (accept
     TextPipeline.decoded_scatter_text_grid accepted scan.dst prior.words scatterLanes offsetRoom
       scanned wordsCap scatterOrder
   obtain ⟨n, header, nVal⟩ := Option.map_eq_some_iff.mp (PackWire.decode_header_word accepted)
-  have packetHead : packet[1]? = some n := header
-  have terminalRead : scan.dst[n.toNat]? = some terminal := by rwa [nVal]
+  have terminalRead : scan.dst[n.toNat]? = some terminal :=
+    (congrArg (fun i : Nat => scan.dst[i]?) nVal).trans terminalSlot
   let packed : PipelineTarget.Packed := ⟨⟨c.dst, scan.dst, d.dst⟩, terminal⟩
   let result : TextPipeline.Result := ⟨packed, c.trace, scan.writes, scan.returnedEarly, d.trace⟩
   have textRun : TextPipeline.run src prior countLanes scatterLanes = some result := by
-    dsimp only [TextPipeline.run]
-    rw [countTextRun]
-    change (ScanSurface.runText scanText.toUTF8 packet c.dst prior.offsets).bind _ = _
-    rw [scanTextRun]
-    change (TextPipeline.scatterGrid scatterText.toUTF8 packet scan.dst prior.words scatterLanes).bind _ = _
-    rw [scatterTextRun]
-    change (packet[1]?).bind _ = _
-    rw [packetHead]
-    change (scan.dst[n.toNat]?).bind _ = _
-    rw [terminalRead] <;> rfl
+    simp only [TextPipeline.run, Option.bind_eq_bind, countTextRun, Option.bind_some, scanTextRun,
+      scatterTextRun, header, terminalRead] <;> rfl
   let inputs : LoopTarget.Inputs := ⟨packet, scan.dst⟩
   have scattered : ScatterTarget.dispatch inputs scatterLanes prior.words = .ok d.dst := scatterTargetRun
   have readN : LoopTarget.read inputs .packet 1 = .ok n := LoopTarget.read_ok inputs .packet 1 n header

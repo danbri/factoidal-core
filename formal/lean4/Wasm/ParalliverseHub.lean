@@ -20,7 +20,7 @@ def call (op : UInt32) (src : ByteArray) : Except PackWire.Error ByteArray := do
     return PackWire.outputWords (StaticPack.packSpec rows)
   else if op == 2 then
     if src.size != 1 then throw (.invalid "Shader selection requires exactly one byte.")
-    match src.data[0]? with
+    match (src.data[0]? : Option UInt8) with
     | some 0 => return WGSL.countText.toUTF8
     | some 1 => return WGSL.scanText.toUTF8
     | some 2 => return WGSL.scatterText.toUTF8

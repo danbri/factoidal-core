@@ -130,27 +130,73 @@ async function loadRuntime() {
 
 if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope) {
   let latest = 0;
+  let gpuDisabled = false;
+  let queue = Promise.resolve();
   const runtime = loadRuntime();
   runtime.then(({cpu, provenance}) => {
     self.postMessage({type: "ready", editorLimit: cpu.editorLimit, provenance});
   }, error => self.postMessage({type: "unavailable", message: error.message}));
 
-  self.postMessage({type: "gpu", state: self.navigator.gpu ? "bundle-unavailable" : "api-unavailable"});
-
-  self.onmessage = async ({data: {id, source}}) => {
-    latest = id;
-    try {
-      const {cpu} = await runtime;
-      if (id !== latest) return;
-      const preparing = performance.now();
-      const packet = cpu.prepare(source);
-      const started = performance.now();
-      // A WebGPU runner consumes this same prepared packet, independently of the CPU result.
-      const packed = cpu.packCpu(packet);
-      self.postMessage({type: "result", id, packed, prepareMs: started - preparing,
-        cpuMs: performance.now() - started}, [packed.buffer]);
-    } catch (error) {
-      self.postMessage({type: "failure", id, kind: error.kind, message: error.message});
+  self.postMessage({type: "gpu", state: "checking"});
+  const gpuRuntime = runtime.then(async ({cpu}) => {
+    if (!self.navigator.gpu) {
+      self.postMessage({type: "gpu", state: "api-unavailable", message: "WebGPU is unavailable in this browser."});
+      return null;
     }
+    const started = performance.now();
+    const sources = [0, 1, 2].map(selector => cpu.shaderSource(selector));
+    const sourceHashes = await Promise.all(sources.map(async source => {
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(source)));
+      return Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("");
+    }));
+    const {connectGpu} = await import("./gpu.mjs");
+    const gpu = await connectGpu(sources, message => {
+      gpuDisabled = true;
+      self.postMessage({type: "gpu", state: "device-lost", message});
+    });
+    if (gpuDisabled) return null;
+    self.postMessage({type: "gpu", state: "ready", adapter: gpu.adapter,
+      isFallbackAdapter: gpu.isFallbackAdapter, initMs: performance.now() - started,
+      deviceTimestamps: gpu.deviceTimestamps, sourceHashes});
+    return gpu;
+  }).catch(error => {
+    if (!gpuDisabled) self.postMessage({type: "gpu", state: error.state || "program-unavailable", message: error.message});
+    return null;
+  });
+
+  self.onmessage = ({data: {id, source}}) => {
+    latest = id;
+    // Only one request owns the reusable GPU buffers; stale queued inputs are skipped.
+    queue = queue.then(async () => {
+      if (id !== latest) return;
+      try {
+        const {cpu} = await runtime;
+        if (id !== latest) return;
+        const preparing = performance.now();
+        const packet = cpu.prepare(source);
+        const prepared = performance.now();
+        cpu.packCpu(packet); // One untimed CPU warm-up for this input.
+        const started = performance.now();
+        const packed = cpu.packCpu(packet);
+        const cpuMs = performance.now() - started;
+        self.postMessage({type: "result", id, packed, prepareMs: prepared - preparing, cpuMs});
+        const gpu = await gpuRuntime;
+        if (!gpu || gpuDisabled || id !== latest) return;
+        try {
+          await gpu.run(packet); // One untimed GPU warm-up, using the same independent packet.
+          if (gpuDisabled || id !== latest) return;
+          const result = await gpu.run(packet);
+          const matches = packed.byteLength === result.packed.byteLength &&
+            packed.every((byte, index) => byte === result.packed[index]);
+          if (id !== latest) return;
+          self.postMessage({type: "gpu-result", id, ...result, matches}, [result.packed.buffer]);
+        } catch (error) {
+          gpuDisabled = true;
+          self.postMessage({type: "gpu", state: "execution-failed", message: error.message});
+        }
+      } catch (error) {
+        self.postMessage({type: "failure", id, kind: error.kind, message: error.message});
+      }
+    });
   };
 }
