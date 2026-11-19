@@ -7,6 +7,7 @@ on:
     paths:
       - 'formal/lean4/L4Factoidal/EventLoop/TimerPartitionTheorems.lean'
       - 'formal/lean4/L4Factoidal/Net/BlobQuotaTheorems.lean'
+      - 'formal/lean4/L4Factoidal/RDF/CollectionBoundTheorems.lean'
       - '.github/workflows/check-timer-partition.yml'
   workflow_dispatch: {}
 
@@ -68,6 +69,7 @@ jobs:
               order.append(source)
           visit('L4Factoidal.EventLoop.TimerPartitionTheorems')
           visit('L4Factoidal.Net.BlobQuotaTheorems')
+          visit('L4Factoidal.RDF.CollectionBoundTheorems')
           for source in order:
               target = out / 'modules' / source.with_suffix('.olean')
               target.parent.mkdir(parents=True, exist_ok=True)
@@ -97,6 +99,11 @@ jobs:
             grep -F "'L4Factoidal.Net.BlobUrls.$name' " "$proof_dir/lean.log" \
               | grep -Eq '(depends on axioms:|does not depend on any axioms)'
             printf '%s\n' "L4Factoidal.Net.BlobUrls.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in listWalk_length_lt listItemsBy_length_lt listItems_length_le; do
+            grep -F "'L4Factoidal.RDF.Collections.$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "L4Factoidal.RDF.Collections.$name" >> "$proof_dir/checked-theorems.txt"
           done
       - name: Preserve exact-source compiler evidence
         if: always()

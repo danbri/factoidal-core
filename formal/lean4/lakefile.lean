@@ -983,3 +983,7 @@ lean_lib TimerPartitionProofs where
 -- Logical payload quota proofs (issue #610), outside runtime imports.
 lean_lib BlobQuotaProofs where
   roots := #[`L4Factoidal.Net.BlobQuotaTheorems]
+
+-- Collection result cardinality proofs (issue #611).
+lean_lib CollectionBoundProofs where
+  roots := #[`L4Factoidal.RDF.CollectionBoundTheorems]
