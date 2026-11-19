@@ -130,35 +130,60 @@ for(const {id,record,post} of eligible){
     const calldata=parsed.data;
     const zeroCount=calldata.reduce((n,b)=>n+(b===0?1:0),0);
     const nonzeroCount=calldata.length-zeroCount;
-    const intrinsic=21000n+4n*BigInt(zeroCount)+16n*BigInt(nonzeroCount)+accessListGas;
-    const floor=21000n+10n*(BigInt(zeroCount)+4n*BigInt(nonzeroCount));
-    if(parsed.gasLimit<intrinsic || parsed.gasLimit<floor)
-      throw Error('this case is not a valid transaction under EIP-7623');
-    const frameGas=parsed.gasLimit-intrinsic;
+    const startingBalance=parseHexInt(account.balance,'balance');
+    const startingNonce=parseHexInt(account.nonce,'nonce');
+    if(startingNonce!==parsed.nonce)throw Error('invalid sender nonce');
+    const baseFee=parseHexInt(env.currentBaseFee,'baseFee');
+    const cap=parsed.type===2 ? parsed.maxFeePerGas : parsed.gasPrice;
+    const priority=parsed.type===2 ? parsed.maxPriorityFeePerGas : 0n;
+
+    // Execute the actual Lean EVM first. With no destination code, one STOP
+    // step has zero execution-gas cost; this property is machine-checked in
+    // EVMCleanroom/EELSBridge.lean for every starting gas amount.
+    const frameGas=parsed.gasLimit;
     const lean=spawnSync('lake',['exe','evm-subset','',frameGas.toString(),'1'],{
       encoding:'utf8',timeout:30000,maxBuffer:1024*1024
     });
     if(lean.error || lean.status!==0)
       throw Error('Lean executable error: '+String(lean.error||lean.stderr));
-    const lines=lean.stdout.trim().split('\n');
-    const vmResult=JSON.parse(lines.at(-1));
+    const vmResult=JSON.parse(lean.stdout.trim().split('\n').at(-1));
     if(vmResult.status!=='ok' || vmResult.halted!==true ||
        vmResult.gasRemaining!==frameGas.toString() ||
        vmResult.stack?.length!==0 || vmResult.memorySizeBytes!=='0')
       throw Error('Lean does not stop without changing empty EVM frame');
     const executionGas=frameGas-BigInt(vmResult.gasRemaining);
-    const charged=intrinsic+executionGas>floor?intrinsic+executionGas:floor;
-    const baseFee=parseHexInt(env.currentBaseFee,'baseFee');
-    const price=parsed.type===2 ?
-      (parsed.maxFeePerGas < baseFee+parsed.maxPriorityFeePerGas ? parsed.maxFeePerGas : baseFee+parsed.maxPriorityFeePerGas) : parsed.gasPrice;
-    if(price<baseFee)throw Error('gas price below base fee');
-    const startingBalance=parseHexInt(account.balance,'balance');
-    const startingNonce=parseHexInt(account.nonce,'nonce');
-    if(startingNonce!==parsed.nonce ||
-       startingBalance < charged*price)
-      throw Error('invalid sender balance/nonce');
-    const afterBalance=startingBalance-charged*price;
-    const minerFee=charged*(price-baseFee);
+
+    // The actual transaction fee/nonce transition ALSO comes from Lean.
+    // JS only supplies decoded, independently checked transaction fields.
+    const inputs=[
+      zeroCount,nonzeroCount,accessList.length,storageKeys,
+      parsed.gasLimit.toString(),cap.toString(),priority.toString(),
+      baseFee.toString(),startingBalance.toString(),startingNonce.toString(),
+      executionGas.toString(),parsed.type===2?'1':'0'
+    ].map(String);
+    const feeProcess=spawnSync('lake',['exe','evm-subset','--tx-fee',...inputs],{
+      encoding:'utf8',timeout:30000,maxBuffer:1024*1024
+    });
+    if(feeProcess.error || feeProcess.status!==0)
+      throw Error('Lean settlement executable error: '+String(feeProcess.error||feeProcess.stderr));
+    const settlement=JSON.parse(feeProcess.stdout.trim().split('\n').at(-1));
+    if(settlement.status!=='ok')
+      throw Error('Lean settlement refused the signed transaction: '+JSON.stringify(settlement));
+    const intrinsic=BigInt(settlement.intrinsicGas);
+    const floor=BigInt(settlement.floorGas);
+    const charged=BigInt(settlement.chargedGas);
+    const price=BigInt(settlement.effectivePrice);
+    const afterBalance=BigInt(settlement.senderAfterBalance);
+    const afterNonce=BigInt(settlement.senderAfterNonce);
+    const minerFee=BigInt(settlement.minerReward);
+    const baseFeeBurn=BigInt(settlement.baseFeeBurn);
+    // A second implementation checks the calldata/access-list gas schedule;
+    // official state-root comparison below is the stronger external check.
+    const independentIntrinsic=21000n+4n*BigInt(zeroCount)+
+      16n*BigInt(nonzeroCount)+accessListGas;
+    if(intrinsic!==independentIntrinsic || afterNonce!==startingNonce+1n ||
+       minerFee+baseFeeBurn!==charged*price || charged>parsed.gasLimit)
+      throw Error('Lean settlement violates the independently computed input accounting constraints');
     // Build the state root from the Lean-derived gas outcome and independently
     // specified fee/nonce transitions. EthereumJS does NOT execute this tx:
     // it provides only Account serialization and the MPT state-root primitive.
@@ -168,7 +193,7 @@ for(const {id,record,post} of eligible){
     await stateVM.stateManager.putAccount(senderAddress,
       createAccount({nonce:startingNonce,balance:startingBalance}));
     await stateVM.stateManager.putAccount(senderAddress,
-      createAccount({nonce:startingNonce+1n,balance:afterBalance}));
+      createAccount({nonce:afterNonce,balance:afterBalance}));
     if(minerFee>0n){
       await stateVM.stateManager.putAccount(minerAddress,
         createAccount({nonce:0n,balance:minerFee}));
@@ -180,7 +205,7 @@ for(const {id,record,post} of eligible){
        Object.keys(post.state).length!==(minerFee>0n ? 2 : 1))
       throw Error('post account set mismatch');
     const accountsMatch=BigInt(postSender.balance)===afterBalance &&
-      BigInt(postSender.nonce)===startingNonce+1n &&
+      BigInt(postSender.nonce)===afterNonce &&
       (!postMiner || (BigInt(postMiner.balance)===minerFee && BigInt(postMiner.nonce)===0n &&
         postMiner.code==='0x' && !Object.keys(postMiner.storage||{}).length)) &&
       postSender.code==='0x' && !Object.keys(postSender.storage||{}).length;
@@ -192,10 +217,11 @@ for(const {id,record,post} of eligible){
     cases.push({id,status:'pass',fork:'Prague',transactionType:parsed.type,
       gasLimit:parsed.gasLimit.toString(),intrinsicGas:intrinsic.toString(),
       calldataFloorGas:floor.toString(),accessListGas:accessListGas.toString(),chargedGas:charged.toString(),
+      baseFeeBurn:baseFeeBurn.toString(),
       leanExecutionGas:executionGas.toString(),coinbaseReward:minerFee.toString(),
       expectedStateRoot:post.hash,computedStateRoot:root,
       observedLogsHash:emptyLogHash,
-      proofBoundary:'Lean empty bytecode EVM execution; JS fee/nonce host transition; EthereumJS MPT state root and tx decoding.'});
+      proofBoundary:'Lean empty bytecode execution AND Lean fee/nonce settlement; JS decodes signed transaction and serializes EthereumJS Merkle state roots.'});
   }catch(e){
     failed++;
     cases.push({id,status:'fail',reason:String(e)});
@@ -212,8 +238,8 @@ const results={
   cases,
   limits:{
     notGeneralEVM:true,
-    supported:'Prague EIP-7623 valid signed type-0/1/2, zero-value no-code transactions, with EIP-2930 access-list intrinsic gas',
-    trusted:['EthereumJS RLP/signature recovery','EthereumJS account/Merkle Patricia trie serializer','JS host fee/nonce transition','Lean interpreter runtime/compiler'],
+    supported:'Prague EIP-7623 valid signed type-0/1/2 zero-value no-code transactions; Lean fee/nonce/account-balance settlement',
+    trusted:['EthereumJS RLP/signature recovery','EthereumJS account/Merkle Patricia trie serializer','JS host transaction field extraction','Lean interpreter/runtime/compiler'],
     notVerified:['signature recovery','EIP-7623 host fee formula','MPT hashing','post state root encoding','full EVM/transaction semantics']
   }
 };
