@@ -99,21 +99,27 @@ def pushData (s : State) (n : Nat) : Word :=
     (fun accumulated i => word (accumulated.val * 256 + byteAt s (s.pc + 1 + i)))
     (word 0)
 
-/-- Valid JUMPDESTs are opcode bytes, *not* 0x5b bytes embedded inside
-    PUSH immediates. Fuel is bounded by bytecode length. -/
+/-- Byte width of the instruction starting at pc, including PUSH
+    immediates. The width is always at least one. -/
+def opcodeWidth (code : Array UInt8) (pc : Nat) : Nat :=
+  let opcode := (code.getD pc 0).toNat
+  if 0x60 ≤ opcode ∧ opcode ≤ 0x7f then 1 + (opcode - 0x5f)
+  else 1
+
+/-- Executable decoder for JUMPDEST recognition. The next candidate
+    program counter advances over PUSH immediate data as an indivisible
+    instruction. Fuel bounds scanning even on malformed or empty code. -/
+def scanJumpdest (code : Array UInt8) (target : Nat) : Nat → Nat → Bool
+  | _, 0 => false
+  | pc, remaining + 1 =>
+    if pc ≥ code.size then false
+    else if pc == target then (code.getD pc 0).toNat == 0x5b
+    else scanJumpdest code target (pc + opcodeWidth code pc) remaining
+
+/-- Valid JUMPDESTs are opcode boundaries, *not* 0x5b bytes embedded
+    inside PUSH immediates. -/
 def validJumpdest (code : Array UInt8) (target : Nat) : Bool :=
-  let rec scan (pc fuel : Nat) : Bool :=
-    match fuel with
-    | 0 => false
-    | remaining + 1 =>
-      if pc ≥ code.size then false
-      else
-        let opcode := (code.getD pc 0).toNat
-        if pc == target then opcode == 0x5b
-        else if 0x60 ≤ opcode ∧ opcode ≤ 0x7f then
-          scan (pc + 1 + (opcode - 0x5f)) remaining
-        else scan (pc + 1) remaining
-  scan 0 (code.size + 1)
+  scanJumpdest code target 0 (code.size + 1)
 
 private def binary (s : State) (op : Word → Word → Word) (cost : Nat) : Except Error Plan :=
   match s.stack.items with
