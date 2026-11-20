@@ -5,7 +5,8 @@ import {
 } from '../index.mjs';
 import {
   DATA,QUERY_ALL,QUERY_SAFE,QUERY_DENIED,QUERY_WITH_PROVENANCE,
-  FUNCTION_IRI,registerEthereumDerivedWasm,functionProvenanceTurtle
+  FUNCTION_IRI,registerEthereumDerivedWasm,functionProvenanceTurtle,
+  DATA_256,QUERY_ALL_256,FUNCTION_IRI_256,registerEthereumDerivedWasm256
 } from '../../../labs/ethereum-wasm-sparql/demo.mjs';
 import {EVM_TRANSFER_GUARD_HEX} from '../../../labs/ethereum-wasm-sparql/evm-to-wasm.mjs';
 
@@ -59,5 +60,30 @@ test('changing one EVM opcode changes SPARQL answers via a freshly compiled wasm
     assert.deepEqual(subjects(allowed),['bob-to-carol','carol-to-dave']);
   }finally{
     await unregisterExtensionFunction(FUNCTION_IRI);
+  }
+});
+
+
+test('Factoidal SPARQL calls EVM-derived WASM with all 256 unsigned bits preserved',async()=>{
+  const evidence=await registerEthereumDerivedWasm256({registerExtensionFunction});
+  try{
+    assert.equal(evidence.wasmBytes,91);
+    assert.equal(evidence.wasmSignature,'(i64×8)->i64');
+    const rows=await query(DATA_256,QUERY_ALL_256);
+    assert.equal(rows.length,8);
+    const byName=new Map(rows.map(row=>[
+      row.get('proposal').value.split('/').at(-1),
+      row.get('allowed256')?.value
+    ]));
+    assert.equal(byName.get('alice-to-bob'),'true');
+    assert.equal(byName.get('bob-to-carol'),'false');
+    assert.equal(byName.get('carol-to-dave'),'true');
+    assert.equal(byName.get('whale-to-alice'),'true');
+    assert.equal(byName.get('out-of-range'),'true'); // 2^64 now valid
+    assert.equal(byName.get('huge-allowed'),'true'); // 2^255 versus 2^200
+    assert.equal(byName.get('huge-denied'),'false');
+    assert.equal(byName.get('uint256-outside'),undefined); // 2^256 refused
+  }finally{
+    await unregisterExtensionFunction(FUNCTION_IRI_256);
   }
 });
