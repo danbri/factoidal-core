@@ -140,4 +140,60 @@ private def oneByteStore : Except Error State :=
 #guard isError (run 5 (initial #[0x60, 0x01, 0x60, 0x00, 0x52] 8)) .outOfGas
 #guard isError (run 5 (initial (pushMax ++ #[0x51, 0x00]) 100)) .outOfGas
 
+
+-- London/Prague one-account stateful EVM execution (EIP-2200/2929/3529).
+private def storageInitial (code : Array UInt8) (gas : Nat)
+    (value : Nat := 0) : State :=
+  { code := code, gas := gas, storage := Storage.withInitial 0 value }
+
+private def storageValue (r : Except Error State) : Option Nat :=
+  match r with
+  | .ok s => some (s.storage.current 0)
+  | .error _ => none
+
+private def storageRefund (r : Except Error State) : Option Int :=
+  match r with
+  | .ok s => some s.storage.refund
+  | .error _ => none
+
+-- Cold SLOAD charges 2100, then warming makes another read cost 100.
+private def oneSload :=
+  run 5 (storageInitial #[0x60, 0x00, 0x54, 0x00] 10000 7)
+#guard resultWord oneSload == some 7
+#guard resultGas oneSload == some 7897
+#guard storageValue oneSload == some 7
+#guard resultGas (run 8 (storageInitial
+  #[0x60, 0x00, 0x54, 0x60, 0x00, 0x54, 0x00] 10000 7)) == some 7794
+
+-- Zero to one: cold SSTORE costs 2100 + 20000, four instructions cost 6.
+private def oneSstore :=
+  run 6 (storageInitial #[0x60, 0x01, 0x60, 0x00, 0x55, 0x00] 30000)
+#guard storageValue oneSstore == some 1
+#guard storageRefund oneSstore == some 0
+#guard resultGas oneSstore == some 7894
+
+-- Reset to original zero: second write costs 100 and earns 19900
+-- in the *uncapped* frame-refund counter.
+private def writeThenRestore :=
+  run 10 (storageInitial
+    #[0x60, 0x01, 0x60, 0x00, 0x55,
+      0x60, 0x00, 0x60, 0x00, 0x55, 0x00] 50000)
+#guard storageValue writeThenRestore == some 0
+#guard storageRefund writeThenRestore == some 19900
+#guard resultGas writeThenRestore == some 27788
+
+-- Clearing a nonzero original: cold cost 5000, refund 4800.
+private def clearOriginal :=
+  run 6 (storageInitial #[0x60, 0x00, 0x60, 0x00, 0x55, 0x00] 10000 7)
+#guard storageValue clearOriginal == some 0
+#guard storageRefund clearOriginal == some 4800
+#guard resultGas clearOriginal == some 4994
+
+-- The EIP-2200 stipend guard and static-mode protection block writes.
+#guard isError (run 6 (storageInitial
+  #[0x60, 0x01, 0x60, 0x00, 0x55, 0x00] 2306)) .outOfGas
+#guard isError (run 6 { (storageInitial
+  #[0x60, 0x01, 0x60, 0x00, 0x55, 0x00] 30000) with readOnly := true })
+  .writeProtection
+
 end EVMCleanroom
