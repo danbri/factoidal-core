@@ -38,6 +38,14 @@ jobs:
           lake exe evm-subset $(python3 -c 'print("7f" + "ff"*32 + "00")') 100 3 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["stack"] == [str((1<<256)-1)] and x["gasRemaining"]=="97", x'
           lake exe evm-subset 01 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"stackUnderflow"}, x'
           lake exe evm-subset 6001 2 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"outOfGas"}, x'
+      - name: Execute one-account storage and refund regressions
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --storage 60005400 10000 5 0 7 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="7" and x["gasRemaining"]=="7897" and x["warm"] is True, x'
+          lake exe evm-subset --storage 600160005500 30000 6 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="1" and x["gasRemaining"]=="7894" and x["refund"]=="0", x'
+          lake exe evm-subset --storage 6001600055600060005500 50000 10 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="0" and x["gasRemaining"]=="27788" and x["refund"]=="19900", x'
+          lake exe evm-subset --storage 600060005500 10000 6 0 7 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="0" and x["gasRemaining"]=="4994" and x["refund"]=="4800", x'
+          lake exe evm-subset --storage 600160005500 2306 6 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"outOfGas"}, x'
       - name: Batch execute independent bytecode cases in a single Lean process
         working-directory: formal/lean4/evm-cleanroom
         run: |
