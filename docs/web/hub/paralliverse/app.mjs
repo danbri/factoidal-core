@@ -15,7 +15,8 @@ const gpuOutput = $("gpu-output");
 const comparison = $("comparison-status");
 const runtimeData = $("runtime-data");
 const initialPackInput = source.value;
-const examples = {mixed: initialPackInput, empty: "[[], [], []]", none: "[]"};
+const examples = {mixed: initialPackInput, empty: "[[], [], []]", none: "[]",
+  city: "[[1, 3], [1, 2], [3]]"};
 // These are literal input fixtures. Transformation and preparation happen in Lean.
 const presets = {
   signal: {
@@ -498,11 +499,12 @@ function showGpuProvenance(data) {
 }
 
 function applyPreset(name) {
-  if (name === "pack") {
-    inputs.pack = examples.mixed;
+  if (name === "pack" || name === "city") {
+    const fixture = name === "city" ? examples.city : examples.mixed;
+    inputs.pack = fixture;
     selectMode("pack", {scheduleRun: false});
-    source.value = examples.mixed;
-    example.value = "mixed";
+    source.value = fixture;
+    example.value = name === "city" ? "custom" : "mixed";
   } else {
     const preset = presets[name];
     if (!preset || !studioLimit) return;
