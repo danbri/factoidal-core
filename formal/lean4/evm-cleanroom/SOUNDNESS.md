@@ -72,6 +72,22 @@ auditor's configured standard axiom allowlist. It does **not** verify
 Lean's kernel, code generation, deployed binaries, external dependencies
 or EELS semantics.
 
+## Versioned claim evidence
+
+The selected claims, exact source and fixture revisions, per-theorem printed
+axioms, preconditions, trusted components and CI evidence are recorded in
+[`evidence/claim-manifest-v1.json`](evidence/claim-manifest-v1.json). This is
+a dated evidence snapshot, not a claim that later source revisions are proved.
+
+Replay snapshot: 4 passed, 0 failed, 2 unsupported, 6 total.
+
+The six fixture `_info` records identify upstream test source `tests-v5.4.0`
+(resolved commit `4f68564f47c7e577ad6cbb570858316f5ff0e7bb`), filling
+transition tool `2.18.0rc6` and EIP-7623 revision
+`744f2075ba5deee9c1040eb089104d55bd89960d`. The CI gate checks
+these fields against the pinned fixture bytes; this does **not** establish
+the exact generating EELS executable revision, which remains unverified.
+
 ## Genuine EELS state-test execution (scoped)
 
 The [EELS replay runner](scripts/eels/README.md) executes **four of six
@@ -143,15 +159,16 @@ This is **not** a proof that all Ethereum bytecode behaves correctly.
 Synthetic tests may miss entire opcode families; two independently written
 interpreters may still share a misunderstanding of an EIP; the Lean
 formal invariants are still largely stated over the *local* semantics.
-The externally maintained EELS execution tests continue to be
-*parsed but not executed*: **zero official state-test passes claimed**.
+The Shanghai PUSH0 fixture in the separate preflight is parsed but not
+executed. The Prague EIP-7623 replay above has four restricted passes;
+these are not full-suite or general EVM conformance.
 See [differential methodology](scripts/differential/README.md) and
 [roadmap](ROADMAP.md).
 
 ## What is not established
 
 1. **No Ethereum specification equivalence.** There is no theorem of the
-   form `step_lean ≈ step_EELS`, no EELS differential-test runner, and
+   form `step_lean ≈ step_EELS`, no general EELS execution differential runner, and
    no complete opcode semantics. A perfectly proved wrong price or wrong
    opcode result remains a wrong Ethereum implementation.
 2. **No complete gas or exception model.** Byte-addressed memory,
@@ -161,9 +178,11 @@ See [differential methodology](scripts/differential/README.md) and
 3. **No complete protocol fork model.** The profile gates only PUSH0.
    Correct execution of the historical chain requires every relevant
    hard-fork transition, including other gas and opcode changes.
-4. **No world-state or chain semantics.** Accounts, storage, transaction
-   validity, roots, receipts, precompiles, nested calls, cryptography,
-   fork choice, networking and consensus clients are not implemented.
+4. **No general world-state or chain semantics.** The restricted replay
+   constructs account balances, nonces and state roots using Lean settlement
+   and the trusted host. General account and storage transitions, transaction
+   validity, receipts, precompiles, nested calls, cryptography, fork choice,
+   networking and consensus clients are not implemented.
 5. **No compiler verification.** We do not compile Solidity/Yul, and
    cannot infer validity of Solidity contracts or Ethereum transactions.
 6. **No production-security guarantee.** IO, resource exhaustion,
@@ -188,8 +207,9 @@ See [differential methodology](scripts/differential/README.md) and
    denotation, identify matching fork configurations, then prove
    `step_refines_reference` **per covered opcode**, including precise
    success and failure conditions.
-2. Pin upstream reference commits and run actual generated
-   `execution-spec-tests` vectors and metamorphic differential tests.
+2. Establish the fixture generator revision and expand actual generated
+   `execution-spec-tests` replay beyond the restricted four cases, alongside
+   metamorphic differential tests.
 3. Establish opcode-level EELS refinement for implemented memory reads,
    writes and expansion charges, including exception and rollback semantics.
 4. Independently check the shared opcode-width semantics and JUMPDEST

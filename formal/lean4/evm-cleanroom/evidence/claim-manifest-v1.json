@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "scope": "Snapshot of selected claims; not a complete assurance case. Statements are summaries; Lean declarations are authoritative.",
+  "implementation_repository": "https://github.com/danbri/factoidal-core",
+  "evidence_source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+  "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44642532159",
+  "lean_version": "4.33.1",
+  "specification_revision": null,
+  "specification_revision_note": "Fixture _info names upstream execution-specs test source tests-v5.4.0 (Git tag independently resolved to 4f68564f47c7e577ad6cbb570858316f5ff0e7bb) and filling tool 2.18.0rc6. This is test-source provenance, NOT proof of the exact generator executable revision or formal EELS semantic refinement.",
+  "replay": {
+    "id": "eels-prague-eip7623-restricted",
+    "fixture_url": "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/prague/eip7623_increase_calldata_cost/test_eip_7623.json",
+    "fixture_mirror_commit": "3c4287ae3aea1f45af9288629834f0584fcde69a",
+    "fixture_sha256": "9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4",
+    "result_snapshot": "evidence/eels-prague-results-44642532159.json",
+    "result_sha256": "377d3c2c1d55cc0ab022248adf14e6590be6671f2db0415bc42f6d4b7235bad3",
+    "ci_artifact": "https://github.com/danbri/factoidal-core/actions/runs/44642532159/artifacts/14586762784",
+    "dependency_lock": "scripts/eels/package-lock.json",
+    "dependency_lock_sha256": "2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7",
+    "fork": "Prague",
+    "counts": {
+      "total": 6,
+      "executed": 4,
+      "passed": 4,
+      "failed": 0,
+      "unsupported": 2
+    },
+    "cases": [
+      {
+        "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_3]",
+        "status": "unsupported",
+        "reason": "transaction-family-not-yet-modelled"
+      },
+      {
+        "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_4]",
+        "status": "unsupported",
+        "reason": "transaction-family-not-yet-modelled"
+      },
+      {
+        "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_0_protected]",
+        "status": "pass",
+        "expected_state_root": "0x52d6c2f082cd3c20beaea5073d919e7bc2f6470a7ba163178ef1ab85b2591922"
+      },
+      {
+        "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_0_unprotected]",
+        "status": "pass",
+        "expected_state_root": "0xfb1c83fa69725db9b4e2d14b832c5307efea9716da8b5acfa0b847aa4a6ea4dd"
+      },
+      {
+        "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_1]",
+        "status": "pass",
+        "expected_state_root": "0xfcc56f5a3890ad0d8f2e74d503a8a7802fc03bff56ab314d80694832d5e6716c"
+      },
+      {
+        "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_2]",
+        "status": "pass",
+        "expected_state_root": "0x43cd1537e14c9820b4b3829e8622a8f20333d165fc8979de58a4e6b2dff67985"
+      }
+    ],
+    "trusted_components": [
+      "Lean compiler, runtime, executable and OS",
+      "JavaScript host input mapping, account construction, comparator and arithmetic cross-checks",
+      "Node.js and its dependencies",
+      "EthereumJS 10.1.3 transaction RLP decoding and signature recovery (@ethereumjs/tx and transitive cryptography)",
+      "EthereumJS 10.1.3 account encoding and MPT hashing (@ethereumjs/util and @ethereumjs/vm and transitive dependencies)",
+      "Published fixture and its provenance"
+    ],
+    "limits": [
+      "Empty bytecode; zero-value restricted signed transactions, type 0/1/2",
+      "No formal refinement to EELS, no general account or transaction validation, receipt or rollback semantics",
+      "Type 3 blob and type 4 authorisation transactions unsupported",
+      "Published empty logs hash is compared to a fixed empty-log hash; general log/receipt execution is not checked",
+      "Fixture is a mirror, generator revision not established"
+    ],
+    "review_status": "not independently reviewed",
+    "reproduce": "See scripts/eels/README.md; run replay and scripts/eels/selftest.mjs; then python3 scripts/check-assurance.py --result .lake/eels/lean-state-results.json",
+    "upstream_test_source": {
+      "test_source_repository": "https://github.com/ethereum/execution-specs",
+      "fixture_reported_tag": "tests-v5.4.0",
+      "resolved_tag_commit": "4f68564f47c7e577ad6cbb570858316f5ff0e7bb",
+      "source_path": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py",
+      "filling_transition_tool": "2.18.0rc6",
+      "reference_spec_version": "744f2075ba5deee9c1040eb089104d55bd89960d",
+      "interpretation": "All six fixture _info records name these values; tag commit independently resolved and source file fetched. Exact generator revision and binary are not proved."
+    }
+  },
+  "theorems": [
+    {
+      "id": "EVMCleanroom.empty_code_halts_without_spending_gas",
+      "kind": "lean_theorem",
+      "statement_summary": "For every gas value, run 1 on emptyFrame returns haltedEmptyFrame with the same gas.",
+      "source_path": "EVMCleanroom/EELSBridge.lean",
+      "source_sha256": "81f05522e07e32442dd099b220fa3e5e822791b4eaef237bee9a173b97caa0d9",
+      "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+      "axioms_printed": [
+        "propext"
+      ],
+      "assumptions_and_limits": "The initial state is emptyFrame; one unit of fuel; no surrounding transaction theorem.",
+      "fork_scope": "local model; no external fork equivalence proved",
+      "review_status": "not independently reviewed",
+      "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
+      "reproduce": "lake build (from formal/lean4/evm-cleanroom)",
+      "current_source_sha256": "6b67c2516f14b3ec0afedae2f9890949879616f33769d9bc69f4e2671f9d08f8",
+      "current_source_note": "Only the module comment changed from the CI evidence revision; the theorem and executable code are unchanged. Source sha256 records the CI revision."
+    },
+    {
+      "id": "EVMCleanroom.TxAccounting.settle_charged_bounded",
+      "kind": "lean_theorem",
+      "statement_summary": "If settle p = .ok out, out.charged ≤ p.gasLimit.",
+      "source_path": "EVMCleanroom/TxAccounting.lean",
+      "source_sha256": "d233c963c21dbeb0b80d20436b1af784a271cf702e61c07db395cd2183add340",
+      "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "assumptions_and_limits": "Conditional on successful local settlement.",
+      "fork_scope": "local model; no external fork equivalence proved",
+      "review_status": "not independently reviewed",
+      "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
+      "reproduce": "lake build (from formal/lean4/evm-cleanroom)"
+    },
+    {
+      "id": "EVMCleanroom.TxAccounting.sender_balance_conservation",
+      "kind": "lean_theorem",
+      "statement_summary": "The unchecked sender balance plus charged fee equals the input sender balance.",
+      "source_path": "EVMCleanroom/TxAccounting.lean",
+      "source_sha256": "d233c963c21dbeb0b80d20436b1af784a271cf702e61c07db395cd2183add340",
+      "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+      "axioms_printed": [
+        "propext"
+      ],
+      "assumptions_and_limits": "Assumes chargedGas p * effectivePrice p ≤ p.senderBalance; applies to settleUnchecked.",
+      "fork_scope": "local model; no external fork equivalence proved",
+      "review_status": "not independently reviewed",
+      "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
+      "reproduce": "lake build (from formal/lean4/evm-cleanroom)"
+    },
+    {
+      "id": "EVMCleanroom.TxAccounting.sender_nonce_advances",
+      "kind": "lean_theorem",
+      "statement_summary": "Unchecked settlement sets sender nonce to p.senderNonce + 1.",
+      "source_path": "EVMCleanroom/TxAccounting.lean",
+      "source_sha256": "d233c963c21dbeb0b80d20436b1af784a271cf702e61c07db395cd2183add340",
+      "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+      "axioms_printed": [],
+      "assumptions_and_limits": "Unconditional property of settleUnchecked; not proof of transaction validity.",
+      "fork_scope": "local model; no external fork equivalence proved",
+      "review_status": "not independently reviewed",
+      "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
+      "reproduce": "lake build (from formal/lean4/evm-cleanroom)"
+    },
+    {
+      "id": "EVMCleanroom.TxAccounting.fee_conservation",
+      "kind": "lean_theorem",
+      "statement_summary": "Unchecked miner reward plus base-fee burn equals charged gas times effective price.",
+      "source_path": "EVMCleanroom/TxAccounting.lean",
+      "source_sha256": "d233c963c21dbeb0b80d20436b1af784a271cf702e61c07db395cd2183add340",
+      "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+      "axioms_printed": [
+        "propext"
+      ],
+      "assumptions_and_limits": "Assumes p.baseFee ≤ effectivePrice p; applies to settleUnchecked.",
+      "fork_scope": "local model; no external fork equivalence proved",
+      "review_status": "not independently reviewed",
+      "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
+      "reproduce": "lake build (from formal/lean4/evm-cleanroom)"
+    },
+    {
+      "id": "EVMCleanroom.MemoryGas.ExpansionTrace.exact_total",
+      "kind": "lean_theorem",
+      "statement_summary": "For any finite ExpansionTrace before spent final, spent = expansion before final.",
+      "source_path": "EVMCleanroom/MemoryGas.lean",
+      "source_sha256": "10d207ec0f249cda28b23ef186abe08f2bcf1690bc3c3d8a78906e755cbf7c75",
+      "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "assumptions_and_limits": "Trace contains monotone expansions; no theorem connects it to actual opcodes.",
+      "fork_scope": "local model; no external fork equivalence proved",
+      "review_status": "not independently reviewed",
+      "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
+      "reproduce": "lake build (from formal/lean4/evm-cleanroom)"
+    },
+    {
+      "id": "EVMCleanroom.validJumpdest_sound",
+      "kind": "lean_theorem",
+      "statement_summary": "Every locally accepted destination is an in-bounds declarative instruction boundary containing JUMPDEST.",
+      "source_path": "EVMCleanroom/JumpProofs.lean",
+      "source_sha256": "33a3f83f764bdcb79521fd0500a902800f24609a2450b1b238b51c039229fb75",
+      "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+      "axioms_printed": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ],
+      "assumptions_and_limits": "Local scanner and relation share opcodeWidth; not independent EELS refinement.",
+      "fork_scope": "local model; no external fork equivalence proved",
+      "review_status": "not independently reviewed",
+      "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
+      "reproduce": "lake build (from formal/lean4/evm-cleanroom)"
+    },
+    {
+      "id": "EVMCleanroom.validJumpdest_complete",
+      "kind": "lean_theorem",
+      "statement_summary": "Any in-bounds InstructionStart containing 0x5b is accepted by validJumpdest.",
+      "source_path": "EVMCleanroom/JumpCompleteness.lean",
+      "source_sha256": "7ef391e14beb497cf5fe2ce00402249c163a7bd33a88702fd23ff494895208f7",
+      "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+      "axioms_printed": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ],
+      "assumptions_and_limits": "Local scanner and relation share opcodeWidth; not independent EELS refinement.",
+      "fork_scope": "local model; no external fork equivalence proved",
+      "review_status": "not independently reviewed",
+      "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
+      "reproduce": "lake build (from formal/lean4/evm-cleanroom)"
+    },
+    {
+      "id": "EVMCleanroom.run_has_exact_bill",
+      "kind": "lean_theorem",
+      "statement_summary": "A successful fuel-limited run has an exact local bill relating final and initial gas.",
+      "source_path": "EVMCleanroom/Proofs.lean",
+      "source_sha256": "77cc635aade98d65c5afc0aea11952e8db6cab609e84443ad73e1c8d89bc45d7",
+      "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "assumptions_and_limits": "Gas charges are those of local planStep; no proof of Ethereum pricing.",
+      "fork_scope": "local model; no external fork equivalence proved",
+      "review_status": "not independently reviewed",
+      "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
+      "reproduce": "lake build (from formal/lean4/evm-cleanroom)"
+    }
+  ]
+}

@@ -61,7 +61,7 @@ From `formal/lean4/evm-cleanroom/`:
 lake build
 
 # The CI workflow installs a separately pinned npm dependency resolution:
-npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
+npm ci --prefix scripts/eels --ignore-scripts --no-audit --no-fund
 printf '2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7  scripts/eels/package-lock.json\n' |
   sha256sum --check
 
@@ -83,9 +83,8 @@ node scripts/eels/selftest.mjs \
 The self-test deliberately changes an expected EELS state root and an
 expected sender balance. The replay runner must reject both, with exact
 negative-control reports. CI archives the fixture, the result JSON, these
-counterexamples and the generated dependency lock. The lockfile is currently
-**validated by a fixed SHA-256 in CI but not committed**; commit it as a
-separate reproducibility improvement before claiming a fully hermetic build.
+counterexamples and the generated dependency lock. The dependency lock is committed and validated by SHA-256 in CI. This does
+not make the toolchain or build hermetic.
 
 ## Acceptance boundaries
 
