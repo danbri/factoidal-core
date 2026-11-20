@@ -26,6 +26,17 @@ class EvidenceControls(unittest.TestCase):
             lambda x: x['cases'][0].update(status='pass'),
             lambda x: x['provenance'].update(sha256='0'*64),
             lambda x: x['cases'][0].update(reason='other'),
+            # Roots alone are insufficient: fees/log hashes/proof claims
+            # and reported trust boundaries are also recorded evidence.
+            lambda x: x['cases'][2].update(chargedGas='1'),
+            lambda x: x['cases'][2].update(baseFeeBurn='0'),
+            lambda x: x['cases'][2].update(observedLogsHash='0x'+'00'*32),
+            lambda x: x['cases'][2].update(proofBoundary='verified end-to-end'),
+            lambda x: x['cases'][2].pop('intrinsicGas'),
+            lambda x: x['cases'][2].update(extraNewField=True),
+            lambda x: x.update(schemaVersion=999),
+            lambda x: x['provenance'].update(pragueFork=False),
+            lambda x: x['limits'].update(notGeneralEVM=False),
         ]
         for mutate in mutations:
             with self.subTest(mutation=mutate):
