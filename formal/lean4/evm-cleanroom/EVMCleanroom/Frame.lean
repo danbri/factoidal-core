@@ -25,6 +25,15 @@ Ethereum execution-specs Prague vm/instructions/control_flow.py.
 
 namespace EVMCleanroom.Frame
 
+inductive RawOutcome where
+  | stopped (state : State)
+  | returned (state : State) (offset length : Nat)
+  | reverted (state : State) (offset length : Nat)
+  | exceptional (reason : Error)
+  | unsupported (reason : Error)
+
+/-- After rollback, exceptional outcomes carry the restored state and zero
+    remaining gas. RawOutcome keeps the pre-checkpoint result separate. -/
 inductive Outcome where
   | stopped (state : State)
   | returned (state : State) (offset length : Nat)
@@ -35,14 +44,14 @@ inductive Outcome where
 /-- Implementation cannot safely declare an unimplemented but valid
     instruction to be an Ethereum consensus-invalid opcode. The designated
     INVALID byte 0xfe is the only opcode treated as definitely invalid here. -/
-private def errorOutcome (e : Error) : Outcome :=
+private def errorOutcome (e : Error) : RawOutcome :=
   match e with
   | .unsupportedFork => .unsupported e
   | .stepLimit => .unsupported e
   | .invalidOpcode byte =>
-    if byte == 0xfe then .exceptional { code := #[], gas := 0 } e
+    if byte == 0xfe then .exceptional e
     else .unsupported e
-  | _ => .exceptional { code := #[], gas := 0 } e
+  | _ => .exceptional e
 
 /-- Execute RETURN or REVERT: memory expansion is charged before the
     instruction is committed. No return-byte buffer is allocated here. -/
@@ -59,7 +68,7 @@ private def haltWithData (s : State) : Except Error (State × Nat × Nat) :=
 
 /-- Execute at most fuel instructions, collecting explicit halt outcomes.
     Only supported instructions may be accepted as successful execution. -/
-def execute : Nat → State → Outcome
+def execute : Nat → State → RawOutcome
   | 0, _ => .unsupported .stepLimit
   | fuel + 1, s =>
     if s.halted then .stopped s
@@ -92,7 +101,7 @@ def run (fuel : Nat) (initial : State) : Outcome :=
   | .returned out offset length => .returned out offset length
   | .reverted out offset length =>
       .reverted (restore initial out) offset length
-  | .exceptional _ e =>
+  | .exceptional e =>
       .exceptional { initial with gas := 0, halted := true } e
   | .unsupported e => .unsupported e
 
@@ -129,7 +138,7 @@ theorem run_revert_atomic (fuel : Nat) (initial final : State)
     simp [run, he] at h
     cases h
     exact ⟨rfl, rfl, rfl, rfl⟩
-  | exceptional state e => simp [run, he] at h
+  | exceptional e => simp [run, he] at h
   | unsupported e => simp [run, he] at h
 
 /-- Exceptional execution has zero remaining frame gas, and cannot commit
@@ -145,7 +154,7 @@ theorem run_exception_atomic (fuel : Nat) (initial final : State)
   | stopped state => simp [run, he] at h
   | returned state off len => simp [run, he] at h
   | reverted state off len => simp [run, he] at h
-  | exceptional state e =>
+  | exceptional e =>
     simp [run, he] at h
     cases h
     exact ⟨rfl, rfl, rfl⟩
