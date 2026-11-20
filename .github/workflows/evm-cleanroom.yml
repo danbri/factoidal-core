@@ -97,6 +97,10 @@ jobs:
           npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
           npm ls --prefix scripts/differential --depth=0
           sha256sum scripts/differential/package-lock.json
+      - name: Differentially execute independent storage histories against EthereumJS Prague
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/storage.mjs | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["mismatches"]==0 and x["matched"]>=100 and "refund" in x["observedFields"],x'
       - name: Generate versioned synthetic corpus and compare independent runtimes
         working-directory: formal/lean4/evm-cleanroom
         run: |
