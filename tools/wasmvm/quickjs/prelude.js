@@ -17990,7 +17990,7 @@
       if (height !== undefined) img.setAttribute('height', String(height >>> 0));
       return img;
     };
-    ImageFactory.prototype = named.HTMLImageElement.prototype; def('Image', ImageFactory);
+    Object.defineProperty(ImageFactory, 'prototype', { value: named.HTMLImageElement.prototype, writable: false, enumerable: false, configurable: false }); def('Image', ImageFactory);
 
     // ---- textarea, output, fieldset ----
     prop(T, 'value', function () { return this.textContent.replace(/\r\n?/g, '\n'); }, function (v) {

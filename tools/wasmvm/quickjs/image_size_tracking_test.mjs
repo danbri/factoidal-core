@@ -41,6 +41,27 @@ test('a refused replacement does not discard earlier acknowledged size tracking'
   assert.equal(h.live.get(4),'37 23');
 });
 
+test('Image constructor preserves its shared prototype with an immutable descriptor',()=>{
+  const start=prelude.indexOf('    const ImageFactory = function Image(');
+  const end=prelude.indexOf("def('Image', ImageFactory);",start)+"def('Image', ImageFactory);".length;
+  assert.ok(start>=0&&end>start);
+  const prototype={},attributes=[];
+  let registered;
+  const context=vm.createContext({named:{HTMLImageElement:{prototype}},scriptDocument:null,
+    document:{createElement(name){assert.equal(name,'img');return Object.assign(Object.create(prototype),{setAttribute:(...args)=>attributes.push(args)});}},
+    def(_name,value){registered=value;}});
+  vm.runInContext(prelude.slice(start,end)+'\n globalThis.imageFactory=ImageFactory;',context);
+  const factory=registered,descriptor=Object.getOwnPropertyDescriptor(factory,'prototype');
+  assert.equal(descriptor.value,prototype);
+  assert.equal(descriptor.writable,false);
+  assert.equal(descriptor.enumerable,false);
+  assert.equal(descriptor.configurable,false);
+  assert.equal(Reflect.set(factory,'prototype',{}),false);
+  const image=new factory(17,23);
+  assert.equal(Object.getPrototypeOf(image),prototype);
+  assert.deepEqual(attributes,[['width','17'],['height','23']]);
+});
+
 test('one URL changing from 1x to 2x to 1x clears and restores its layout dimensions',async()=>{
   const start=prelude.indexOf('  const imgSelection = id => {');
   const end=prelude.indexOf('  const imgWatch = () => {',start);
