@@ -7386,7 +7386,7 @@
     const f = deferredLoad; deferredLoad = null;
     chk(n.timer(register(f), 0, 0));
   };
-  const imgAttrs = new Set(['src', 'srcset', 'sizes', 'crossorigin', 'referrerpolicy']);
+  const imgAttrs = new Set(['src', 'srcset', 'sizes', 'crossorigin', 'referrerpolicy', 'loading']);
   const imgFire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
   const imgSelection = id => {
     const d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;

@@ -73,7 +73,7 @@ function mutationWatcher(htmlDocument=true){
   const updates=[];
   let lazy=false;
   const context=vm.createContext({Set,String,Promise,imgPendingUpdates:new Set(),
-    imgWatching:false,imgAttrs:new Set(['src','srcset','sizes','crossorigin','referrerpolicy']),
+    imgWatching:false,imgAttrs:new Set(['src','srcset','sizes','crossorigin','referrerpolicy','loading']),
     n:{setAttr(){return 0;},removeAttr(){return 0;}},
     info(_id,k){return k===0?1:k===8?(htmlDocument?1:0):0;},
     htmlEl(){return true;},str(){return 'img';},updateImage(id){updates.push([id,lazy]);}});
@@ -107,6 +107,15 @@ test('a source write is observed after synchronous loading=lazy setup',async()=>
   h.setLazy(true);
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(h.updates,[[4,true]]);
+});
+test('changing a deferred image to loading=eager schedules its request',async()=>{
+  const h=mutationWatcher();
+  h.n.setAttr(4,'loading','lazy');
+  h.setLazy(true);
+  h.n.setAttr(4,'loading','eager');
+  h.setLazy(false);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(h.updates,[[4,false]]);
 });
 test('loading=lazy defers a request until script demands image state',()=>{
   const start=prelude.indexOf('  const updateImage = (id, force = false) => {');
