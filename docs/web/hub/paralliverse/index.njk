@@ -34,6 +34,17 @@ permalink: /web/hub/paralliverse/index.html
     <button class="example-card" type="button" data-preset="duplicates" data-needs-studio disabled><span class="example-icon" aria-hidden="true">≋</span><span><strong>Repeated words</strong><small>Multiplicity stays visible.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="empty" data-needs-studio disabled><span class="example-icon" aria-hidden="true">∅</span><span><strong>Nothing in, nothing out</strong><small>Empty inputs are real inputs.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="pack" aria-pressed="true"><span class="example-icon" aria-hidden="true">▤</span><span><strong>Stable packing</strong><small>Rows become one ordered stream.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
+    <button class="example-card" type="button" data-preset="city"><span class="example-icon" aria-hidden="true">▦</span><span><strong>Painted City · tile fixture</strong><small>Three tiles, ordered memberships A/B/C; actual Lean and GPU packing.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
+  </div>
+</section>
+
+<section class="future-experiments" aria-labelledby="future-heading">
+  <div class="section-heading"><h2 id="future-heading">Four application worlds</h2><p class="pack-note">Painted City has a runnable tile-membership fixture. The remaining workloads need new Lean primitives and backend proofs; these are tracked designs, not executable examples yet.</p></div>
+  <div class="future-grid">
+    <article><h3>Painted City</h3><p>Choose the tile fixture above. IDs 1=A, 2=B, 3=C. Tiles [A,C], [A,B], [C] pack to [A,C,A,B,C] in painter order.</p><a href="https://github.com/danbri/factoidal-core/issues/663">Geometry/binning implementation ↗</a></article>
+    <article><h3>Life Across Worlds</h3><p>Partitioned cellular automata, neighbourhood halos and synchronized generations.</p><a href="https://github.com/danbri/factoidal-core/issues/664">Stencil backend work ↗</a></article>
+    <article><h3>Query Constellation</h3><p>Shardborough BGP ranges, partial bindings and out-of-order remote-worker replies.</p><a href="https://github.com/danbri/factoidal-core/issues/665">Query worker work ↗</a></article>
+    <article><h3>Fractal Tapestry</h3><p>Bounded pixel tasks, tile scheduling and precise numerical comparisons.</p><a href="https://github.com/danbri/factoidal-core/issues/666">Pixel backend work ↗</a></article>
   </div>
 </section>
 
