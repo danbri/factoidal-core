@@ -67,6 +67,8 @@ jobs:
             larger_dependency_budgets: |-
               L4Factoidal/OWL/RLSemantics.lean
               L4Factoidal/Storage/Sbm11/VarintWordTheorems.lean
+            larger_stack_dependencies: |-
+              L4Factoidal/JS/Str.lean
             theorems: ${{ inputs.theorems || 'L4Factoidal.Dataflow.Pipeline.toStage_eq_direct' }}
     env:
       LEAN_STACK_SIZE_KB: 16384
@@ -91,6 +93,7 @@ jobs:
           PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
           PROOF_MODULES: ${{ matrix.modules }}
           LARGER_DEPENDENCY_BUDGETS: ${{ matrix.larger_dependency_budgets }}
+          LARGER_STACK_DEPENDENCIES: ${{ matrix.larger_stack_dependencies }}
         run: |
           set -euo pipefail
           unset LEAN_PATH LEAN_SRC_PATH
@@ -110,6 +113,7 @@ jobs:
           out = pathlib.Path(os.environ['PROOF_DIR'])
           proof_modules = os.environ['PROOF_MODULES'].split()
           larger_dependencies = set(os.environ.get('LARGER_DEPENDENCY_BUDGETS', '').split())
+          larger_stack = set(os.environ.get('LARGER_STACK_DEPENDENCIES', '').split())
           seen, order = set(), []
 
           def module_source(name):
@@ -146,10 +150,11 @@ jobs:
                   duration, os_memory_kib, lean_memory = '360s', '6291456', '-M4096'
               else:
                   duration, os_memory_kib, lean_memory = '180s', '4194304', '-M2048'
+              stack_kib = '262144' if str(source) in larger_stack else '16384'
               cmd = [
                   'timeout', '--kill-after=10s', duration, '/usr/bin/time', '-v', '-o', str(timing),
                   'bash', '-c', 'ulimit -v "$1" && shift && exec "$@"', 'lean-limit', os_memory_kib,
-                  'lean', '-j1', '-s16384', lean_memory,
+                  'lean', '-j1', f'-s{stack_kib}', lean_memory,
                   *(['-DwarningAsError=true'] if strict else []), '-o', str(target), str(source),
               ]
               print(shlex.join(cmd), flush=True)
