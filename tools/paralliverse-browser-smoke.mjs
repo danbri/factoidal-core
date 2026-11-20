@@ -348,6 +348,57 @@ try {
   const cityChanged = await observeCase(evaluate, "city-membership-toggle", "custom", "[1, 2, 3, 1, 2, 3]");
   assert.notEqual(cityInitial.input, cityChanged.input);
 
+  // Query Constellation: the actual full Lean/Wasm SPARQL runtime must execute
+  // both separate triple patterns and the joined BGP, then the existing
+  // compiled Lean CPU + WebGPU packing path must preserve the returned IDs.
+  async function observeBgp(n, expected) {
+    await evaluate('(() => { document.querySelector("#bgp-size").value="' + n +
+      '"; document.querySelector("#bgp-size").dispatchEvent(new Event("change", {bubbles:true})); document.querySelector("#bgp-run").click(); })()');
+    const deadline = Date.now() + 110_000;
+    let state;
+    while (Date.now() < deadline) {
+      state = await evaluate('(() => ({status:document.querySelector("#bgp-status").textContent, ' +
+        'stats:document.querySelector("#bgp-stats").textContent, ' +
+        'patterns:document.querySelector("#bgp-query").textContent, ' +
+        'lexical:document.querySelector("#bgp-sample").textContent, ' +
+        'rows:document.querySelectorAll("#bgp-answers tbody tr").length, ' +
+        'gpuPackAvailable:!document.querySelector("#bgp-pack").disabled, ' +
+        'bridge:document.querySelector("#bgp-id-bridge").textContent}))()');
+      if (state.status.startsWith("Lean/Wasm completed") ||
+          state.status.startsWith("Lean query failed") ||
+          state.status.startsWith("SPARQL worker failed")) break;
+      await sleep(200);
+    }
+    assert.match(state.status, new RegExp("Lean/Wasm completed " + (4*n).toLocaleString() +
+      " triples; " + expected + " BGP solution mappings"), JSON.stringify(state));
+    assert.equal(state.rows, 16, "The first 16 binding pairs are shown as terms and IDs");
+    assert.equal(state.gpuPackAvailable, true);
+    assert.match(state.patterns, /\?person ex:knows \?colleague/);
+    assert.match(state.patterns, /\?colleague ex:worksOn ex:Atlas/);
+    assert.match(state.lexical, /<https:\/\/example\.org\/paralliverse\/person\//);
+    assert.match(state.bridge, /NOT SBM11 64-bit dictionary IDs/);
+    report.cases.push({name:"bgp-lean-" + n, expectedBindings:expected, ...state});
+    return state;
+  }
+  await observeBgp(64, 32);
+  await observeBgp(1024, 512);
+  await evaluate('document.querySelector("#bgp-pack").click()');
+  const packedDeadline = Date.now() + 90_000;
+  let packed;
+  while (Date.now() < packedDeadline) {
+    packed = await evaluate('(() => ({match:document.querySelector("#comparison-status").dataset.match, ' +
+      'cpu:document.querySelector("#cpu-output").textContent, ' +
+      'gpu:document.querySelector("#gpu-output").textContent, ' +
+      'status:document.querySelector("#input-status").textContent}))()');
+    if (packed.match === "true" || packed.match === "false") break;
+    await sleep(200);
+  }
+  assert.equal(packed.match, "true", "BGP result IDs must pack identically on real Lean CPU and WebGPU");
+  assert.equal(JSON.parse(packed.cpu).length, 1024, "All 512 binding pairs are packed");
+  assert.equal(packed.gpu, packed.cpu, "The GPU readback is the same 1024-word payload");
+  report.cases.push({name: "bgp-1024-real-cpu-webgpu-pack", words: 1024,
+    match: packed.match, gpuEqualsCpu: packed.gpu === packed.cpu});
+
   const studioAvailable = await evaluate('Boolean(document.querySelector("#mode-studio") && !document.querySelector("#mode-studio").disabled)');
   if (process.env.REQUIRE_PARALLIVERSE_STUDIO === "1") assert(studioAvailable, "The actual Studio runtime must be enabled");
   if (studioAvailable) {
