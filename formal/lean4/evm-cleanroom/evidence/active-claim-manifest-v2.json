@@ -26,7 +26,7 @@
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
     "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
     "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
-    "EVMCleanroom/OpcodeCall.lean": "9b757026bb2ce10cd66807d336785f47683435b7",
+    "EVMCleanroom/OpcodeCall.lean": "2b5e6850136389f2f0b8110362f4d04c96121c53",
     "EVMCleanroom/OpcodeCallTests.lean": "f21b88906aa548ae3f9fdab336270f8fca98c81c",
     "scripts/differential/call-opcode.mjs": "4395991df100769b1fc2aae11278295f35f3f61f"
   },
@@ -143,6 +143,16 @@
       "scope": "Arbitrary monotone memory expansion sequences telescope to exact final gas",
       "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement",
       "source_symbol": "ExpansionTrace.exact_total"
+    },
+    {
+      "name": "EVMCleanroom.OpcodeCall.run_exception_world_atomic",
+      "source": "EVMCleanroom/OpcodeCall.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "For all admitted depth-one parent CALL bytecode and every account/slot, a parent exceptional result cannot leak any modified account, transaction-original storage or refund",
+      "provenance": "New source theorem, awaiting CI axiom audit and independent review; exact printed axioms to reconcile after build"
     }
   ],
   "external_evidence": {
@@ -215,7 +225,7 @@
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
   "active_extension": {
     "name": "restricted-Lean-F1-CALL-bytecode",
-    "status": "pending-new-head-CI",
+    "status": "pending-proved-whole-world-rollback-new-head-CI",
     "stacked_on": "https://github.com/danbri/factoidal-core/pull/668",
     "scope": "One-depth zero-value parent CALL instruction; all calldata, memory offsets and returndata zero; caller and callee are regular non-precompile distinct addresses, no CALL in child",
     "tested_observables": [
