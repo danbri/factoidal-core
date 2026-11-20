@@ -1,4 +1,5 @@
 import EVMCleanroom.Core
+import EVMCleanroom.Storage
 import EVMCleanroom.EELSBridge
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.JumpProofs
