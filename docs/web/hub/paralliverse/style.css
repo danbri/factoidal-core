@@ -233,3 +233,14 @@ summary { cursor: pointer; }
 .future-grid a { display: inline-block; font-size: .62rem; }
 @media(max-width: 810px) { .future-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 @media(max-width: 465px) { .future-grid { grid-template-columns: 1fr; } .future-grid p { min-height: 0; } }
+
+
+.city-lab { margin: .7rem 0 0; padding: .7rem; border: 1px solid #c8d7bd; border-radius: .45rem; background: #f1f7ea; }
+.city-lab[hidden] { display: none; }
+.city-lab h3 { font-size: .75rem; color: #2a533a; margin: 0; }
+.city-tiles { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .4rem; margin-top: .55rem; }
+.city-tiles fieldset { min-width: 0; border: 1px solid #bbceae; border-radius: .35rem; background: white; padding: .35rem; display: flex; flex-wrap: wrap; gap: .35rem; }
+.city-tiles legend { font-size: .62rem; font-weight: 700; color: #31533e; }
+.city-tiles label { font: .7rem ui-monospace,monospace; white-space: nowrap; cursor: pointer; }
+.city-tiles input { accent-color: #376b42; }
+@media (max-width: 480px) { .city-tiles { grid-template-columns: 1fr; } }
