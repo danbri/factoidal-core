@@ -14,7 +14,7 @@
 
 `EVMCleanroom.OpcodeCall.run_exception_world_atomic`: for **any restricted input parent/child bytecode, parent fuel and child fuel, and every account address and storage key**, if `OpcodeCall.run` returns an exceptional **parent** outcome, then the result exposes the same account map and original storage snapshot as at call entry, the same refund, and the same storage-slot warmth. The parent call address is warm, reflecting the parent entry effect.
 
-This property is enforced by the executable `settleParent` checkpoint barrier and proved about the actual `run` function; it is *not* an independent EELS semantic-refinement theorem. It depends on Lean's `propext` and no `sorryAx` in the initial CI proof; the strengthened version is subject to the latest CI. `CallGas.schedule_conserves` and `CallGas.resumed_gas_exact` separately prove the EIP-150 budget law for any admitted numbers.
+This property is enforced by the executable `settleParent` checkpoint barrier and proved about the actual `run` function; it is *not* an independent EELS semantic-refinement theorem. The strengthened theorem passed [CI run 44744680044](https://github.com/danbri/factoidal-core/actions/runs/44744680044) with exact printed axioms `[propext, Quot.sound]` and no `sorryAx`. These are standard Lean axioms, not external Ethereum assumptions. `CallGas.schedule_conserves` and `CallGas.resumed_gas_exact` separately prove the EIP-150 budget law for any admitted numbers.
 
 ## Independent client verification
 
