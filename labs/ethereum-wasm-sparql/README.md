@@ -37,6 +37,12 @@ Factoidal/Comunica-style registerExtensionFunction API.
       BIND(evm:canTransfer(?balance, ?amount) AS ?allowed)
     }
 
+A further query joins every calculated Boolean to RDF provenance triples
+for the function IRI itself: the exact source EVM SHA-256, generated WASM
+SHA-256, and an explicit assuranceStatus of
+"differential-tested-not-proved". Query answers expose their computational
+provenance without asserting a nonexistent proof.
+
 The companion FILTER query returns three proposals: Alice, Carol, and a
 uint64-boundary case. Bob proposes spending more than his sample balance,
 and is rejected. A fifth row with a 2^64 balance is explicitly
@@ -58,6 +64,15 @@ This checks 400 input pairs against a separately implemented test-only EVM
 uint256 bytecode evaluator, including 64-bit boundaries, plus negative
 tests of unsupported opcodes and input-domain errors.
 
+The separately gated, integrity-pinned EthereumJS 10.1.3 Cancun suite
+executes the *actual source EVM runtime bytecode* against another 400 ABI
+input pairs (not the symbolic compiler tree):
+
+    npm ci --prefix labs/ethereum-wasm-sparql --ignore-scripts --no-audit --no-fund
+    node --test labs/ethereum-wasm-sparql/ethereumjs-oracle.test.mjs
+
+Both 400-case gates passed in GitHub Actions run 44787504225.
+
 To execute Factoidal queries as well, install Factoidal's normal Lean WASM
 engine assets using the repository web-release mechanism (or an npm
 package installation), then:
@@ -65,7 +80,9 @@ package installation), then:
     node labs/ethereum-wasm-sparql/run.mjs
     node --test npm/factoidal/test/ethereum-wasm-sparql.test.mjs
 
-The end-to-end npm test is also gated by the existing npm package suite.
+The end-to-end npm test is also gated by the existing npm package suite; its
+first execution passed both new SPARQL tests in run 44787504468 (2,144 total
+npm tests passed, zero failed or skipped).
 
 ## Assurance boundaries
 
@@ -102,3 +119,5 @@ The end-to-end npm test is also gated by the existing npm package suite.
 The Ethereum implementation remains separately under development in
 draft PRs #642, #655–#669 and #676. This demo does not substitute for
 complete contract execution, world-state replay or client interoperability.
+
+Formal semantic-preservation proof work is tracked in issue #678.
