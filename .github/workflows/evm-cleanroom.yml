@@ -46,6 +46,14 @@ jobs:
           lake exe evm-subset --storage 6001600055600060005500 50000 10 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="0" and x["gasRemaining"]=="27788" and x["refund"]=="19900", x'
           lake exe evm-subset --storage 600060005500 10000 6 0 7 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="0" and x["gasRemaining"]=="4994" and x["refund"]=="4800", x'
           lake exe evm-subset --storage 600160005500 2306 6 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"outOfGas"}, x'
+      - name: Check RETURN/REVERT with gas-preserving storage checkpoint rollback
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --frame-storage 600160005560006000fd 30000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="reverted" and x["current"]=="0" and x["gasRemaining"]=="7888" and x["refund"]=="0" and x["warm"] is False and x["returnDataHex"]=="",x'
+          lake exe evm-subset --frame-storage 600160005560006000f3 30000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="returned" and x["current"]=="1" and x["gasRemaining"]=="7888" and x["warm"] is True,x'
+          lake exe evm-subset --frame-storage 602a60005360016000f3 30000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="returned" and x["returnDataHex"]=="2a" and x["gasRemaining"]=="29982",x'
+          lake exe evm-subset --frame-storage 60016000556001600055 23000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="exceptional" and x["error"]=="outOfGas" and x["gasRemaining"]=="0" and x["current"]=="0",x'
+          lake exe evm-subset --frame-storage f100 30000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="unsupported" and x["error"]=="invalidOpcode",x'
       - name: Batch execute independent bytecode cases in a single Lean process
         working-directory: formal/lean4/evm-cleanroom
         run: |
