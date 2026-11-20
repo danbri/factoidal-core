@@ -53,7 +53,7 @@ theorem cell_address_safe (g : Grid) (h : Admitted g) (x y : Nat) :
   calc
     (y % g.height) * g.width + (x % g.width)
         < (y % g.height) * g.width + g.width := Nat.add_lt_add_left hx _
-    _ = ((y % g.height) + 1) * g.width := by omega
+    _ = ((y % g.height) + 1) * g.width := by simp [Nat.add_mul]
     _ ≤ g.height * g.width :=
       Nat.mul_le_mul_right _ (Nat.succ_le_of_lt hy)
     _ = g.width * g.height := Nat.mul_comm _ _
