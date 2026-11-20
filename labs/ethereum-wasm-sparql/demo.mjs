@@ -40,6 +40,34 @@ export const QUERY_DENIED = [
   '} ORDER BY ?proposal',
 ].join('\n');
 
+
+export const QUERY_WITH_PROVENANCE = [
+  'PREFIX ex: <https://example.org/ethereum-demo/>',
+  'PREFIX evm: <urn:factoidal:ethereum-wasm#>',
+  'SELECT ?proposal ?allowed ?evmHash ?wasmHash ?assurance WHERE {',
+  '  ?proposal a ex:TransferProposal ; ex:balance ?balance ; ex:amount ?amount .',
+  '  BIND(evm:canTransfer(?balance, ?amount) AS ?allowed)',
+  '  evm:canTransfer evm:sourceSha256 ?evmHash ;',
+  '                  evm:wasmSha256 ?wasmHash ;',
+  '                  evm:assuranceStatus ?assurance .',
+  '} ORDER BY ?proposal',
+].join('\n');
+
+/** The same function IRI is both SPARQL callable and described in RDF. */
+export function functionProvenanceTurtle(evidence) {
+  for(const key of ['evmSha256','wasmSha256']) {
+    if(!/^[a-f0-9]{64}$/.test(evidence?.[key]??'')) {
+      throw new TypeError('provenance requires validated SHA-256: '+key);
+    }
+  }
+  return [
+    '@prefix evm: <urn:factoidal:ethereum-wasm#> .',
+    'evm:canTransfer evm:sourceSha256 "'+evidence.evmSha256+'" ;',
+    '                evm:wasmSha256 "'+evidence.wasmSha256+'" ;',
+    '                evm:assuranceStatus "differential-tested-not-proved" .',
+  ].join('\n');
+}
+
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
 export async function registerEthereumDerivedWasm(api, hex=EVM_TRANSFER_GUARD_HEX) {
