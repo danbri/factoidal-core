@@ -1,4 +1,5 @@
 import EVMCleanroom.Core
+import EVMCleanroom.Frame
 import EVMCleanroom.TxAccounting
 
 /-!
@@ -200,10 +201,70 @@ private def storageBatchMain (path : String) : IO UInt32 := do
       if result != 0 then malformed := malformed + 1
   if count == 0 || malformed > 0 then return 2 else return 0
 
+/-- Frame CLI additionally reports RETURN/REVERT and restored storage.
+    Return data above 4096 bytes is an explicit unsupported observation. -/
+private def frameDataHex (s : State) (offset length : Nat) : String :=
+  String.ofList ((List.range length).flatMap (fun i =>
+    let b := (s.memory.readByte (offset + i)).toNat
+    [hexDigit (b / 16), hexDigit (b % 16)]))
+
+private def frameStateJSON (kind : String) (s : State) (key : Nat)
+    (extra : String := "") : String :=
+  "{\"schemaVersion\":1,\"status\":\"" ++ kind ++
+  "\",\"gasRemaining\":\"" ++ toString s.gas ++
+  "\",\"original\":\"" ++ toString (s.storage.original key) ++
+  "\",\"current\":\"" ++ toString (s.storage.current key) ++
+  "\",\"refund\":\"" ++ toString s.storage.refund ++
+  "\",\"warm\":" ++ (if s.storage.warm key then "true" else "false") ++
+  extra ++ "}"
+
+private def frameOutcomeJSON (o : Frame.Outcome) (key : Nat) : String :=
+  match o with
+  | .stopped s => frameStateJSON "stopped" s key
+  | .returned s offset length =>
+    if length > 4096 then
+      "{\"status\":\"unsupported\",\"reason\":\"return-data-observation-limit\"}"
+    else
+      frameStateJSON "returned" s key
+        (",\"returnDataHex\":\"" ++ frameDataHex s offset length ++ "\"")
+  | .reverted s offset length =>
+    if length > 4096 then
+      "{\"status\":\"unsupported\",\"reason\":\"revert-data-observation-limit\"}"
+    else
+      frameStateJSON "reverted" s key
+        (",\"returnDataHex\":\"" ++ frameDataHex s offset length ++ "\"")
+  | .exceptional s e =>
+    frameStateJSON "exceptional" s key
+      (",\"error\":\"" ++ errorCode e ++ "\"")
+  | .unsupported e =>
+    "{\"status\":\"unsupported\",\"error\":\"" ++ errorCode e ++ "\"}"
+
+private def frameStorageMain (args : List String) : IO UInt32 := do
+  match args with
+  | [hex, gasStr, fuelStr, keyStr, originalStr] =>
+    match parseBytecode hex, gasStr.toNat?, fuelStr.toNat?,
+          keyStr.toNat?, originalStr.toNat? with
+    | .ok code, some gas, some fuel, some key, some original =>
+      if key ≥ modulus || original ≥ modulus then
+        IO.println "{\"status\":\"inputError\",\"message\":\"storage words must be below 2^256\"}"
+        return 2
+      let s : State :=
+        { code := code, gas := gas,
+          storage := Storage.withInitial key original }
+      IO.println (frameOutcomeJSON (Frame.run fuel s) key)
+      return 0
+    | _, _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX GAS FUEL KEY ORIGINAL_VALUE\"}"
+      return 2
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"usage: --frame-storage HEX GAS FUEL KEY ORIGINAL_VALUE\"}"
+    return 2
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
   | "--tx-fee" :: rest => txFeeMain rest
   | "--storage" :: rest => storageMain rest
+  | "--frame-storage" :: rest => frameStorageMain rest
   | ["--storage-batch", path] => storageBatchMain path
   | ["--batch", path] => runBatchFile path
   | [hex, gasStr, fuelStr] =>

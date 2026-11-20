@@ -1,5 +1,7 @@
 import EVMCleanroom.Core
 import EVMCleanroom.Storage
+import EVMCleanroom.Frame
+import EVMCleanroom.FrameTests
 import EVMCleanroom.EELSBridge
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.JumpProofs

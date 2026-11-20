@@ -10,6 +10,11 @@ Read **[SOUNDNESS.md](SOUNDNESS.md)** before making any security or
 compatibility claim. It is an explicit ledger of theorem scope, tested
 examples, trusted boundaries and missing proof obligations.
 
+**Updated stacked implementation (20 Nov 2026):** see
+[FRAME_STORAGE.md](FRAME_STORAGE.md) for the new one-account SLOAD/SSTORE,
+RETURN/REVERT frame runner, storage rollback theorems and EthereumJS
+differential gates. SOUNDNESS.md retains the earlier PR #642 scope.
+
 The code is isolated under `formal/lean4/evm-cleanroom` and uses the same
 Lean 4.33.1 release as Factoidal without depending on its large Lean library.
 
@@ -189,7 +194,9 @@ charging. This does not prove EELS equivalence or world-state rollback.
 
 `STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `POP`,
 `JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`, `MLOAD`, `MSTORE`, `MSTORE8`, `MSIZE`,
-`PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`.
+`PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`.
+A separate `Frame.run` handles `RETURN` and `REVERT`; those opcodes are
+not yet dispatched by the legacy `Core.run` interface.
 
 `PUSH0` is gated by a coarse pre-/post-Shanghai profile. Unsupported
 opcodes return explicit errors rather than executing as NOPs.
@@ -216,9 +223,9 @@ official fixtures should support the proof effort but must not be
 misrepresented as proofs.
 
 After that: independently reviewed EELS memory-opcode refinement,
-RETURN/REVERT, JUMPDEST conformance to EELS, storage and gas refunds,
-nested calls, contract creation, account state, receipts, fork transitions
-and ultimately a full execution client.
+JUMPDEST conformance to EELS, external semantic refinement of the new
+storage/frame slices, **nested calls and world-state rollback**, contract
+creation, receipts, fork transitions and ultimately a full execution client.
 
 Sources: [EELS](https://github.com/ethereum/execution-specs),
 [EthLib](https://github.com/ethereum/EthLib),
