@@ -120,6 +120,27 @@ test('a completed plain-src image is available to another detached image in the 
   assert.deepEqual(requests,['/cached.png','/cached.png']);
 });
 
+test('a completed selected image is reused inside an empty picture',async()=>{
+  const start=prelude.indexOf('  const imgSelection = id => {');
+  const end=prelude.indexOf('  const imgWatch = () => {',start);
+  const events=[],timers=[],states=new Map(),available=new Map();
+  available.set(JSON.stringify([9,'/cached-picture.png','no-cors','include']),{w:37,h:23});
+  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(id,k)=>k===7?9:k===1?(id===2?10:-1):k===12?-1:k===0?1:0,
+    viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(_id,name)=>name==='src'?'/cached-picture.png':null},
+    wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:(id)=>id===10?'picture':'img',
+    n:{query(_id,op,payload){if(op===195)return '0/cached-picture.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    imgGen:0,imgStates:states,imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay:()=>{},
+    chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
+    corsSettings:()=>({mode:'no-cors',credentials:'include'}),elementFetch(){assert.fail('completed picture image should be reused');}});
+  vm.runInContext(prelude.slice(start,end)+'\n globalThis.update=updateImage;',context);
+  context.update(2);
+  assert.equal(states.get(2).w,37);
+  assert.equal(states.get(2).h,23);
+  assert.equal(states.get(2).available,true);
+  for(const timer of timers.splice(0))timer();
+  assert.deepEqual(events,['load']);
+});
+
 test('a valid image response is accepted when its HTTP status is an error',async()=>{
   const start=prelude.indexOf('  const imgSelection = id => {');
   const end=prelude.indexOf('  const imgWatch = () => {',start);

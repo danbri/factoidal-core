@@ -7463,7 +7463,7 @@
     const parent = info(id, 1);
     const inPicture = parent >= 0 && info(parent, 0) === 1 && htmlEl(parent) && str(parent, 0) === 'picture';
     const plainSrc = !inPicture && typeof rawSrc === 'string' && n0.attr(id, 'srcset') === null && selection.url === resolveURL(rawSrc, info(id, 7) > 0 ? docURL(info(id, 7)) : undefined);
-    const available = plainSrc ? imgAvailable.get(availableKey) : null;
+    const available = (plainSrc || inPicture) ? imgAvailable.get(availableKey) : null;
     if (available) {
       st.w = available.w; st.h = available.h;
       st.available = true;
