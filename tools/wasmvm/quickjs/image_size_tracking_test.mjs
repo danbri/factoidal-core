@@ -120,6 +120,52 @@ test('a completed plain-src image is available to another detached image in the 
   assert.deepEqual(requests,['/cached.png','/cached.png']);
 });
 
+test('a completed superseded fetch seeds availability without settling its stale element request',async()=>{
+  const start=prelude.indexOf('  const imgSelection = id => {');
+  const end=prelude.indexOf('  const imgWatch = () => {',start);
+  const src=new Map([[1,'/old.png'],[2,'/old.png']]),pending=[],timers=[],events=[];
+  const states=new Map(),available=new Map();
+  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
+    viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(id,name)=>name==='src'?src.get(id)??null:null},
+    wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:()=>'',
+    n:{query(id,op){if(op===195)return '0'+src.get(id);assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    imgGen:0,imgStates:states,imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay:()=>{},
+    chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
+    corsSettings:()=>({mode:'no-cors',credentials:'include'}),
+    elementFetch(url){return new Promise(resolve=>pending.push({url,resolve}));}});
+  vm.runInContext(prelude.slice(start,end)+'\n globalThis.update=updateImage;',context);
+  context.update(1);
+  src.set(1,'/new.png');context.update(1);
+  assert.deepEqual(pending.map(x=>x.url),['/old.png','/new.png']);
+  pending[0].resolve({status:200,bytes:new TextEncoder().encode('37 23')});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(available.has(JSON.stringify([9,'/old.png','no-cors','include'])),true);
+  assert.equal(states.get(1).url,'/new.png');
+  assert.deepEqual(events,[]);
+  context.update(2);
+  assert.equal(states.get(2).w,37);
+  assert.deepEqual(pending.map(x=>x.url),['/old.png','/new.png']);
+});
+
+test('decode waiters observe a replaced request on the DOM task source',()=>{
+  const start=prelude.indexOf('  const imgSelection = id => {');
+  const end=prelude.indexOf('  const imgWatch = () => {',start);
+  const timers=[];let rejected=0;
+  const states=new Map([[4,{gen:0,url:'/old.png',waiters:[[()=>{},()=>rejected++]],layoutSized:false}]]);
+  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
+    viewport:()=>[800,600],resolveURL:s=>s,n0:{attr:()=>null},wrap:()=>({getAttribute:()=>null}),
+    n:{query(_id,op){if(op===195)return '0/new.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    imgGen:0,imgStates:states,imgAvailable:new Map(),imgFire(){},imgUndelay(){},chk(){},register:f=>f,
+    cspBlocksRequest:()=>false,flushViolations(){},corsSettings:()=>({mode:'no-cors',credentials:'include'}),
+    elementFetch:()=>new Promise(()=>{})});
+  vm.runInContext(prelude.slice(start,end)+'\n globalThis.update=updateImage;',context);
+  context.update(4);
+  assert.equal(rejected,0);
+  assert.equal(timers.length,1);
+  timers[0]();
+  assert.equal(rejected,1);
+});
+
 function mutationWatcher(htmlDocument=true){
   const start=prelude.indexOf('  const imgWatch = () => {');
   const end=prelude.indexOf('  noteImg = id => imgWatch();',start);

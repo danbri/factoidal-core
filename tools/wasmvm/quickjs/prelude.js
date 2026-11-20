@@ -7421,10 +7421,15 @@
     const hasSrc = n0.attr(id, 'src');
     const selection = imgSelection(id);
     const url = selection?.url ?? '';
-    // a new request ends the old one: its decode() promises reject (HTML §4.8.4.3.6, "decode()"
-    // step 2.2: the current request changed)
+    // A new request changes the current request. decode() observes that change
+    // on the DOM-manipulation task source, after this mutation turn can finish.
     const before = imgStates.get(id);
-    if (before) for (const [, rej] of before.waiters.splice(0)) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
+    if (before?.waiters.length) {
+      const staleWaiters = before.waiters.splice(0);
+      chk(n.timer(register(() => {
+        for (const [, rej] of staleWaiters) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
+      }), 0, 0));
+    }
     const st = { gen, url, unitDensity: selection?.unitDensity ?? false, complete: false, w: 0, h: 0, waiters: [], layoutSized: before?.layoutSized ?? false };
     imgStates.set(id, st);
     const cors = corsSettings(el);
@@ -7476,17 +7481,20 @@
         try { imgClearSize(id, st); } catch (error) { refused(error); return; }
         imgUndelay(id); return;
       }
-      if (imgStates.get(id)?.gen !== gen) return;
       let size = '';
       // the engine answers an image's natural size, never its bytes (Net.Xhr.imageRaw)
       if (r !== null && r.status >= 200 && r.status < 300) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
       if (size === '') { if (imgStates.get(id)?.gen === gen) settle(false); return; }
       const [w, h] = size.split(' ').map(Number);
+      // A completed image can enter the document's available-image list even
+      // if this element's request was superseded while the fetch was in flight.
+      // Do not publish partial/in-flight responses or settle the stale request.
       if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
         imgAvailable.delete(availableKey);
         imgAvailable.set(availableKey, {w, h});
         if (imgAvailable.size > 512) imgAvailable.delete(imgAvailable.keys().next().value);
       }
+      if (imgStates.get(id)?.gen !== gen) return;
       st.w = w; st.h = h;
       // The decoder returns physical pixels. They are CSS pixels only for a 1x
       // request. Clear the preceding request's size when this one needs correction.
