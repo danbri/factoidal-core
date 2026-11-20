@@ -1,0 +1,47 @@
+name: Paralliverse glyph-mask stencil proof
+
+on:
+  push:
+    branches: [main, feat/672-glyph-mask-typed-stencil]
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/GlyphMask.lean'
+      - '.github/workflows/check-paralliverse-glyph.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/GlyphMask.lean'
+      - '.github/workflows/check-paralliverse-glyph.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  glyph:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Build glyph stencil and typed program from source
+        working-directory: formal/lean4
+        run: timeout --kill-after=10s 300s lake build L4Factoidal.Paralliverse.GlyphMask
+      - name: Strict kernel compilation and axiom inventory
+        shell: bash
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 180s lake env lean -j1 -s16384 -M2048 -DwarningAsError=true \
+            L4Factoidal/Paralliverse/GlyphMask.lean 2>&1 | tee /tmp/paralliverse-glyph.log
+          ! grep -E 'sorryAx|declaration uses sorry|error:' /tmp/paralliverse-glyph.log
