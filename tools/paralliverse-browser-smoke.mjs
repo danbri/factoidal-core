@@ -349,8 +349,8 @@ try {
   assert.notEqual(cityInitial.input, cityChanged.input);
 
   // Query Constellation: the actual full Lean/Wasm SPARQL runtime must execute
-  // both separate triple patterns and the joined BGP, then the existing
-  // compiled Lean CPU + WebGPU packing path must preserve the returned IDs.
+  // both separate triple patterns and the joined BGP; the real GPU must
+  // independently filter input triples and emit the same bag of bindings.
   async function observeBgp(n, expected) {
     await evaluate('(() => { document.querySelector("#bgp-size").value="' + n +
       '"; document.querySelector("#bgp-size").dispatchEvent(new Event("change", {bubbles:true})); document.querySelector("#bgp-run").click(); })()');
@@ -362,7 +362,7 @@ try {
         'patterns:document.querySelector("#bgp-query").textContent, ' +
         'lexical:document.querySelector("#bgp-sample").textContent, ' +
         'rows:document.querySelectorAll("#bgp-answers tbody tr").length, ' +
-        'gpuPackAvailable:!document.querySelector("#bgp-pack").disabled, ' +
+        'gpuQueryAvailable:!document.querySelector("#bgp-gpu-run").disabled, ' +
         'bridge:document.querySelector("#bgp-id-bridge").textContent}))()');
       if (state.status.startsWith("Lean/Wasm completed") ||
           state.status.startsWith("Lean query failed") ||
@@ -372,7 +372,7 @@ try {
     assert.match(state.status, new RegExp("Lean/Wasm completed " + (4*n).toLocaleString() +
       " triples; " + expected + " BGP solution mappings"), JSON.stringify(state));
     assert.equal(state.rows, 20, "A bounded page shows 20 real Lean BGP binding pairs");
-    assert.equal(state.gpuPackAvailable, true);
+    assert.equal(state.gpuQueryAvailable, true, "A real BGP GPU backend must be selectable");
     assert.match(state.patterns, /\?person ex:knows \?colleague/);
     assert.match(state.patterns, /\?colleague ex:worksOn ex:Atlas/);
     assert.match(state.lexical, /<https:\/\/example\.org\/paralliverse\/person\//);
@@ -380,35 +380,52 @@ try {
     report.cases.push({name:"bgp-lean-" + n, expectedBindings:expected, ...state});
     return state;
   }
+  async function runActualGpuBgp(people, expected) {
+    await evaluate('document.querySelector("#bgp-gpu-run").click()');
+    const until = Date.now() + 110_000;
+    let state;
+    while (Date.now() < until) {
+      state = await evaluate('(() => ({match:document.querySelector("#bgp-comparison").dataset.match, ' +
+        'summary:document.querySelector("#bgp-comparison").textContent, ' +
+        'gpuStatus:document.querySelector("#bgp-gpu-status").textContent, ' +
+        'gpuOutput:document.querySelector("#bgp-gpu-observation").textContent, ' +
+        'stage:document.querySelector("#bgp-step-status").textContent}))()');
+      if (state.match === "true" || state.match === "false" ||
+          state.gpuStatus.startsWith("GPU BGP unavailable")) break;
+      await sleep(200);
+    }
+    assert.equal(state.match, "true", JSON.stringify(state));
+    assert.match(state.summary, new RegExp("Exact SPARQL bag equivalence: " + expected));
+    assert.match(state.gpuStatus, /Actual GPU BGP completed/);
+    assert.match(state.gpuOutput, /Actual WebGPU BGP/);
+    await evaluate('document.querySelector("#bgp-step-gpu").click()');
+    await evaluate('document.querySelector("#bgp-step-next").click()');
+    const countStage = await evaluate('document.querySelector("#bgp-step-detail").textContent');
+    assert.match(countStage, /Read back .* actual GPU counts/);
+    await evaluate('document.querySelector("#bgp-step-next").click()');
+    const offsetStage = await evaluate('document.querySelector("#bgp-step-detail").textContent');
+    assert.match(offsetStage, /offsets, terminal total/);
+    await evaluate('document.querySelector("#bgp-step-cpu").click()');
+    const cpuStage = await evaluate('document.querySelector("#bgp-step-detail").textContent');
+    assert.match(cpuStage, /Parse lexical RDF/);
+    report.cases.push({name:"bgp-" + people + "-actual-gpu-join-vs-lean", ...state,
+      countsReadBack:true,offsetsReadBack:true});
+  }
   await observeBgp(64, 32);
+  await runActualGpuBgp(64, 32);
   await observeBgp(1024, 512);
   await evaluate('document.querySelector("#bgp-next").click()');
   const page2 = await evaluate('(() => ({status:document.querySelector("#bgp-page-status").textContent, ' +
     'first:document.querySelector("#bgp-answers tbody tr td")?.textContent, ' +
     'rows:document.querySelectorAll("#bgp-answers tbody tr").length}))()');
   assert.match(page2.status, /Page 2 of 26/);
-  assert.equal(page2.first, "21", "Second page starts with the 21st actual Lean solution mapping");
+  assert.equal(page2.first, "21", "Second page starts with the 21st actual Lean mapping");
   assert.equal(page2.rows, 20);
   await evaluate('document.querySelector("#bgp-prev").click()');
   assert.equal(await evaluate('document.querySelector("#bgp-answers tbody tr td")?.textContent'),
-    "1", "Returning to first page preserves original source order");
-  report.cases.push({name: "bgp-512-bindings-page-navigation", ...page2});
-  await evaluate('document.querySelector("#bgp-pack").click()');
-  const packedDeadline = Date.now() + 90_000;
-  let packed;
-  while (Date.now() < packedDeadline) {
-    packed = await evaluate('(() => ({match:document.querySelector("#comparison-status").dataset.match, ' +
-      'cpu:document.querySelector("#cpu-output").textContent, ' +
-      'gpu:document.querySelector("#gpu-output").textContent, ' +
-      'status:document.querySelector("#input-status").textContent}))()');
-    if (packed.match === "true" || packed.match === "false") break;
-    await sleep(200);
-  }
-  assert.equal(packed.match, "true", "BGP result IDs must pack identically on real Lean CPU and WebGPU");
-  assert.equal(JSON.parse(packed.cpu).length, 1024, "All 512 binding pairs are packed");
-  assert.equal(packed.gpu, packed.cpu, "The GPU readback is the same 1024-word payload");
-  report.cases.push({name: "bgp-1024-real-cpu-webgpu-pack", words: 1024,
-    match: packed.match, gpuEqualsCpu: packed.gpu === packed.cpu});
+    "1", "Page navigation keeps Lean's result order");
+  report.cases.push({name:"bgp-512-bindings-page-navigation",...page2});
+  await runActualGpuBgp(1024, 512);
 
   const studioAvailable = await evaluate('Boolean(document.querySelector("#mode-studio") && !document.querySelector("#mode-studio").disabled)');
   if (process.env.REQUIRE_PARALLIVERSE_STUDIO === "1") assert(studioAvailable, "The actual Studio runtime must be enabled");
