@@ -121,6 +121,67 @@ npm tests passed, zero failed or skipped).
   Source code/bytecode, WASM hash, input-domain and theorem status are
   reported separately. Query text cannot upload executable code.
 
+## Substantive pure EVM computation: transfer eligibility
+
+The original canTransfer(balance,amount) simply compared two numbers.
+The new 45-byte EVM runtime examines **seven unsigned uint256 inputs**:
+
+    eligible = balance >= amount
+            && allowance >= amount
+            && currentBlock >= unlockBlock
+            && paused == 0
+            && frozen == 0
+
+These are explicit RDF-supplied state snapshots, not independently authenticated
+live Ethereum account/contract state. Satisfying this illustrative policy
+does not imply an actual ERC-20 transfer would succeed.
+
+### Complete EVM bytecode and disassembly
+
+    600435604435901015602435604435901015166064356084359010151660a435151660c43515165f5260205ff3
+
+    60 04 35 60 44 35 90 10 15
+      CALLDATALOAD(balance); CALLDATALOAD(amount); SWAP1; LT; ISZERO
+      # Balance >= amount
+    60 24 35 60 44 35 90 10 15 16
+      CALLDATALOAD(allowance); CALLDATALOAD(amount); SWAP1; LT; ISZERO; AND
+      # Allowance sufficient AND previous condition
+    60 64 35 60 84 35 90 10 15 16
+      CALLDATALOAD(currentBlock); CALLDATALOAD(unlockBlock); SWAP1; LT; ISZERO; AND
+      # Block height >= unlock height AND previous
+    60 a4 35 15 16
+      CALLDATALOAD(paused); ISZERO; AND
+    60 c4 35 15 16
+      CALLDATALOAD(frozen); ISZERO; AND
+    5f 52 60 20 5f f3
+      PUSH0; MSTORE; PUSH1 0x20; PUSH0; RETURN
+
+Offsets 0x04, 0x24, 0x44, 0x64, 0x84, 0xa4 and 0xc4 are the ABI
+argument positions after the 4-byte selector. The runtime bytecode is
+hand-authored, not deployed contract code or Solidity compiler output.
+
+The EVM stack-symbolic compiler in evm-policy.mjs emits import-free
+WebAssembly with signature (i64 × 28) → i64. Each EVM 256-bit word is
+carried as four unsigned 64-bit limbs. Multi-limb unsigned comparisons
+and zero tests preserve the complete 256-bit domain.
+
+Run the complete wasmAdd-style example:
+
+    node labs/ethereum-wasm-sparql/policy-like-wasmAdd.mjs
+
+It compiles source EVM bytecode, instantiates the generated WASM,
+registers the resulting predicate in Factoidal, runs the RDF/SPARQL query,
+and prints the compiled opcode trace and computed results.
+
+The independent suites compare 400 complete seven-word inputs against
+a separate declarative Boolean policy and another 400 against the pinned
+EthereumJS Cancun EVM executing the original 45-byte program.
+Factoidal BIND/FILTER integration and source-opcode mutation are tested
+separately; an EVM→WASM semantic-refinement theorem remains unproved.
+
+More intrinsically Ethereum-specific future examples include an
+AMM getAmountOut quote with uint256 fee arithmetic, vesting claims at a
+specified block, and Merkle proof verification for an airdrop.
 ## Next demonstrations
 
 1. RDF over official EELS fixture IDs, expected post-state roots, forks
