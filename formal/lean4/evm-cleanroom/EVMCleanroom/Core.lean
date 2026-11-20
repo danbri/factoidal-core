@@ -1,4 +1,5 @@
 import EVMCleanroom.Memory
+import EVMCleanroom.Storage
 /-!
 # Independently written, small-step EVM executable model
 
@@ -34,6 +35,7 @@ inductive Error where
   | invalidOpcode (opcode : Nat)
   | invalidJump (destination : Nat)
   | alreadyHalted
+  | writeProtection
   | stepLimit
   deriving Repr, DecidableEq
 
@@ -61,6 +63,8 @@ structure State where
   halted : Bool := false
   profile : Profile := .shanghaiPlus
   memory : Memory := Memory.empty
+  storage : Storage := Storage.empty
+  readOnly : Bool := false
 
 /-- An instruction plan describes effects without committing state changes.
     The dispatcher must produce one of these; all success passes through
@@ -71,15 +75,18 @@ structure Plan where
   gasCost : Nat
   halt : Bool
   nextMemory : Option Memory := none
+  nextStorage : Option Storage := none
 
 private def prepared (nextPC : Nat) (xs : List Word) (cost : Nat)
-    (halt : Bool := false) (nextMemory : Option Memory := none) : Except Error Plan :=
-  .ok ⟨nextPC, xs, cost, halt, nextMemory⟩
+    (halt : Bool := false) (nextMemory : Option Memory := none)
+    (nextStorage : Option Storage := none) : Except Error Plan :=
+  .ok ⟨nextPC, xs, cost, halt, nextMemory, nextStorage⟩
 
 /-- A single controlled state transition. Invariant: every successful
     transition has a bounded stack and charges gas before mutation. -/
 def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
-    (halt : Bool := false) (nextMemory : Option Memory := none) : Except Error State :=
+    (halt : Bool := false) (nextMemory : Option Memory := none)
+    (nextStorage : Option Storage := none) : Except Error State :=
   if hb : xs.length ≤ 1024 then
     if hg : cost ≤ s.gas then
       let nextStack : Stack := ⟨xs, hb⟩
@@ -88,7 +95,8 @@ def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
       let s3 : State := { s2 with gas := s.gas - cost }
       let s4 : State := { s3 with halted := halt }
       let m : Memory := nextMemory.getD s.memory
-      .ok { s4 with memory := m }
+      let st : Storage := nextStorage.getD s.storage
+      .ok { s4 with memory := m, storage := st }
     else .error .outOfGas
   else .error .stackOverflow
 
@@ -195,6 +203,31 @@ private def mstore8 (s : State) : Except Error Plan :=
     prepared (s.pc + 1) rest gas false (some written)
   | _ => .error .stackUnderflow
 
+/-- EIP-2929 warm/cold SLOAD. A failed gas check cannot warm the slot. -/
+private def sload (s : State) : Except Error Plan :=
+  match s.stack.items with
+  | key :: rest =>
+    let price := s.storage.readCost key.val
+    let next := s.storage.touch key.val
+    prepared (s.pc + 1) (word (s.storage.current key.val) :: rest)
+      price false none (some next)
+  | [] => .error .stackUnderflow
+
+/-- EIP-2200 + 2929 + 3529 SSTORE for one account in a transaction.
+    Static frames cannot write and <=2300 gas cannot execute SSTORE.
+    The original value must be the value at the *start of the transaction*.
+    Refund deltas can be negative; the transaction-level cap is not here. -/
+private def sstore (s : State) : Except Error Plan :=
+  match s.stack.items with
+  | key :: value :: rest =>
+    if s.readOnly then .error .writeProtection
+    else if s.gas ≤ 2300 then .error .outOfGas
+    else
+      let price := s.storage.storeCharge key.val value.val
+      let next := s.storage.store key.val value.val price.refundDelta
+      prepared (s.pc + 1) rest price.gas false none (some next)
+  | _ => .error .stackUnderflow
+
 /-- Partial instruction set. Unsupported instructions are errors, not NOPs.
     Gas costs here are those of the explicitly supported opcodes. -/
 def planStep (s : State) : Except Error Plan :=
@@ -211,6 +244,8 @@ def planStep (s : State) : Except Error Plan :=
     | 0x51 => mload s                                  -- MLOAD
     | 0x52 => mstore s                                 -- MSTORE
     | 0x53 => mstore8 s                                -- MSTORE8
+    | 0x54 => sload s                                  -- SLOAD
+    | 0x55 => sstore s                                 -- SSTORE
     | 0x56 => jump s                                   -- JUMP
     | 0x57 => jumpi s                                  -- JUMPI
     | 0x58 => prepared (s.pc + 1) (word s.pc :: s.stack.items) 2
@@ -238,7 +273,7 @@ def planStep (s : State) : Except Error Plan :=
 def step (s : State) : Except Error State :=
   match planStep s with
   | .error e => .error e
-  | .ok p => commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory
+  | .ok p => commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage
 
 /-- Fuel-limited execution, terminating on STOP, error or exhausted fuel.
     Exceptional errors are reported; their outer transaction-level gas and
