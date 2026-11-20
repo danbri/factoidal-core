@@ -182,6 +182,7 @@ jobs:
           curl --fail --location --silent --show-error --retry 2 \
             --output .lake/eels/push0-contracts.json \
             "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/shanghai/eip3855_push0/test_push0_contracts.json"
+          printf '1eb74ceb4d3a4fefaa93f907e85f4d3632cc3f376448488fe04e84fc5c50cfba  .lake/eels/push0-contracts.json\n' | sha256sum --check
           node scripts/eels/run-lean-contract-state-tests.mjs \
             --fixture .lake/eels/push0-contracts.json \
             --out .lake/eels/lean-contract-results.json | tee .lake/eels/contract-summary.json
