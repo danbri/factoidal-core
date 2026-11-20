@@ -124,6 +124,32 @@ map add 1</textarea>
 </div>
 <p id="comparison-status" class="comparison-status" role="status"></p>
 
+<section class="pack-card execution-stepper" aria-labelledby="execution-stepper-heading">
+  <div class="panel-heading">
+    <div><p class="eyebrow">Recorded execution</p><h2 id="execution-stepper-heading">Step through the CPU or GPU path</h2></div>
+    <span class="panel-index">03 / STEP</span>
+  </div>
+  <p class="pack-note">Select a backend and navigate the phases represented by its actual run and Lean-supplied plan. This replays recorded evidence; it does not pause a running CPU thread or GPU invocation. Intermediate GPU buffers are not read back.</p>
+  <div class="step-toolbar">
+    <div class="visual-target" role="group" aria-label="Execution path to inspect">
+      <button type="button" data-step-target="cpu" aria-pressed="true">CPU · Lean/Wasm</button>
+      <button type="button" data-step-target="gpu" aria-pressed="false">GPU · WebGPU</button>
+    </div>
+    <div class="step-controls">
+      <button type="button" id="step-prev" class="secondary-button" disabled>Previous</button>
+      <button type="button" id="step-next" class="secondary-button">Next step</button>
+    </div>
+  </div>
+  <ol id="step-list" class="step-list" aria-label="Selected execution stages"></ol>
+  <p id="step-status" class="step-status" role="status">Awaiting a recorded run.</p>
+  <pre id="step-observation" class="step-observation">Run a computation to inspect the evidence.</pre>
+  <div class="step-diff">
+    <strong>What differs between CPU and GPU?</strong>
+    <p>CPU runs the Lean specification or fused task interpreter; GPU submits a different program and requires actual readback.</p>
+    <p id="step-difference" role="status">Outputs have not yet been compared.</p>
+  </div>
+</section>
+
 <section class="pack-card inspect-card" aria-labelledby="inspect-heading">
   <div class="panel-heading"><div><p class="eyebrow">Look inside</p><h2 id="inspect-heading">From source to execution</h2></div><span class="panel-index">03 / INSPECT</span></div>
   <p id="inspection-help" class="pack-note">Word studio reveals the source tree and the result of the proved pure map-fusion pass. Packing uses the existing Count, Scan and Scatter program.</p>
