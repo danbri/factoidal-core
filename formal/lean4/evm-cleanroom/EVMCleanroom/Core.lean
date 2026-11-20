@@ -36,6 +36,7 @@ inductive Error where
   | invalidJump (destination : Nat)
   | alreadyHalted
   | writeProtection
+  | unsupportedFork
   | stepLimit
   deriving Repr, DecidableEq
 
@@ -95,7 +96,15 @@ def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
       let s3 : State := { s2 with gas := s.gas - cost }
       let s4 : State := { s3 with halted := halt }
       let m : Memory := nextMemory.getD s.memory
-      let st : Storage := nextStorage.getD s.storage
+      let planned : Storage := nextStorage.getD s.storage
+      -- No opcode may alter transaction-original storage. Static frames can
+      -- warm slots but cannot change current storage or the refund counter.
+      let st : Storage := {
+        planned with
+        original := s.storage.original
+        current := if s.readOnly then s.storage.current else planned.current
+        refund := if s.readOnly then s.storage.refund else planned.refund
+      }
       .ok { s4 with memory := m, storage := st }
     else .error .outOfGas
   else .error .stackOverflow
@@ -205,7 +214,8 @@ private def mstore8 (s : State) : Except Error Plan :=
 
 /-- EIP-2929 warm/cold SLOAD. A failed gas check cannot warm the slot. -/
 private def sload (s : State) : Except Error Plan :=
-  match s.stack.items with
+  if s.profile = .preShanghai then .error .unsupportedFork
+  else match s.stack.items with
   | key :: rest =>
     let price := s.storage.readCost key.val
     let next := s.storage.touch key.val
@@ -218,7 +228,8 @@ private def sload (s : State) : Except Error Plan :=
     The original value must be the value at the *start of the transaction*.
     Refund deltas can be negative; the transaction-level cap is not here. -/
 private def sstore (s : State) : Except Error Plan :=
-  match s.stack.items with
+  if s.profile = .preShanghai then .error .unsupportedFork
+  else match s.stack.items with
   | key :: value :: rest =>
     if s.readOnly then .error .writeProtection
     else if s.gas ≤ 2300 then .error .outOfGas
