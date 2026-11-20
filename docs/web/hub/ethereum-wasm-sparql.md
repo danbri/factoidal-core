@@ -73,16 +73,18 @@ This cell generates actual Turtle from the editable proposals:
 ```observable-js
 proposalTurtle = {
   const fields = ["balance", "allowance", "amount", "currentBlock", "unlockBlock", "paused", "frozen"];
+  // Use a named dependency, not ...proposals, so the Hub's reactive
+  // cell analyser can see changes to the upstream editable RDF proposals.
+  const entries = proposals.map(p =>
+    "ex:" + p.id + " a ex:Proposal ; " +
+    fields.map(k => {
+      if (!/^(0|[1-9][0-9]*)$/.test(p[k])) throw Error("Noncanonical integer: " + k);
+      return 'ex:' + k + ' "' + p[k] + '"^^xsd:integer';
+    }).join(" ; ") + " .");
   return [
     "@prefix ex: <https://example.org/ethereum-demo/> .",
-    "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .",
-    ...proposals.map(p =>
-      "ex:" + p.id + " a ex:Proposal ; " +
-      fields.map(k => {
-        if (!/^(0|[1-9][0-9]*)$/.test(p[k])) throw Error("Noncanonical integer: " + k);
-        return 'ex:' + k + ' "' + p[k] + '"^^xsd:integer';
-      }).join(" ; ") + " .")
-  ].join("\n");
+    "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> ."
+  ].concat(entries).join("\n");
 }
 ```
 
