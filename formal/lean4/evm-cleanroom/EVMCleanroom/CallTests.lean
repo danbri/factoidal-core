@@ -25,47 +25,47 @@ private def successful := callZeroValue 20 initial 1 50000 30000
 private def reverting := callZeroValue 20 initial 2 50000 30000
 private def exceptional := callZeroValue 20 initial 3 50000 30000
 
-private def gasRemaining (o : Outcome) : Option Nat :=
+private def gasRemaining (o : WorldCall.Outcome) : Option Nat :=
   match o with
   | .childSuccess _ gas => some gas
   | .childReverted _ gas => some gas
   | .childExceptional _ gas _ => some gas
   | _ => none
 
-private def committedSlot (o : Outcome) (address key : Nat) : Option Nat :=
+private def committedSlot (o : WorldCall.Outcome) (address key : Nat) : Option Nat :=
   match o with
   | .childSuccess w _ => some ((w.accounts address).storage key)
   | .childReverted w _ => some ((w.accounts address).storage key)
   | .childExceptional w _ _ => some ((w.accounts address).storage key)
   | _ => none
 
-private def warmAddr (o : Outcome) (address : Nat) : Bool :=
+private def warmAddr (o : WorldCall.Outcome) (address : Nat) : Bool :=
   match o with
   | .childSuccess w _ => w.warmAddresses address
   | .childReverted w _ => w.warmAddresses address
   | .childExceptional w _ _ => w.warmAddresses address
   | _ => false
 
-private def warmSlot (o : Outcome) (address key : Nat) : Bool :=
+private def warmSlot (o : WorldCall.Outcome) (address key : Nat) : Bool :=
   match o with
   | .childSuccess w _ => w.warmSlots address key
   | .childReverted w _ => w.warmSlots address key
   | .childExceptional w _ _ => w.warmSlots address key
   | _ => false
 
-private def refunded (o : Outcome) : Option Int :=
+private def refunded (o : WorldCall.Outcome) : Option Int :=
   match o with
   | .childSuccess w _ => some w.refund
   | .childReverted w _ => some w.refund
   | .childExceptional w _ _ => some w.refund
   | _ => none
 
-private def isChildException (o : Outcome) : Bool :=
+private def isChildException (o : WorldCall.Outcome) : Bool :=
   match o with
   | .childExceptional _ _ (.invalidOpcode _) => true
   | _ => false
 
-private def isCallerOOG (o : Outcome) : Bool :=
+private def isCallerOOG (o : WorldCall.Outcome) : Bool :=
   match o with
   | .callerOutOfGas => true
   | _ => false
@@ -99,7 +99,7 @@ private def isCallerOOG (o : Outcome) : Bool :=
 
 -- Once warm, target is billed at 100 rather than 2,600; a repeated
 -- same-value SSTORE costs 100, plus two PUSH1s (6).
-private def secondCall : Option Outcome :=
+private def secondCall : Option WorldCall.Outcome :=
   match successful with
   | .childSuccess w _ => some (callZeroValue 20 w 1 50000 30000)
   | _ => none
