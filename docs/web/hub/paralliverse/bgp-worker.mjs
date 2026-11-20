@@ -81,11 +81,13 @@ async function execute(size, requestId) {
       engine: "Lean l4factoidal.wasm; local browser Web Worker",
       execution: "3 actual Lean dataset opens, two individual-pattern queries, and one complete BGP query",
       noRemoteWorkers: true,
-      gpuBgpSupported: false,
+      gpuBgpSupported: "separate bounded integer-query profile; check actual GPU availability",
       query: QUERY,
       input: {
         people: size,
         tripleCount: fixture.triples,
+        integerGraph: fixture.integerGraph,
+        queryConstants: fixture.queryConstants,
         blocks: [
           {name: "knows", triples: fixture.sourceCounts.knows},
           {name: "worksOn", triples: fixture.sourceCounts.projects},
