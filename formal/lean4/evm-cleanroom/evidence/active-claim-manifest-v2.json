@@ -148,10 +148,11 @@
       "name": "EVMCleanroom.OpcodeCall.run_exception_world_atomic",
       "source": "EVMCleanroom/OpcodeCall.lean",
       "axioms_printed": [
-        "propext"
+        "propext",
+        "Quot.sound"
       ],
       "scope": "All admitted depth-one parent CALL bytecode: exceptional outcomes restore every account, transaction-original storage, refunds, and storage-slot warmth, while the entry parent address remains warm.",
-      "provenance": "CI proof+axiom audit on code revision 24c40cff67cbfb2032d747f9761236f06066301d (theorem before warmth strengthening), plus pending new-head CI for strengthened statement"
+      "provenance": "Strengthened theorem compiled and axioms printed in https://github.com/danbri/factoidal-core/actions/runs/44744680044, original source authoring branch 2026-11-20; applies only to the local supported CALL driver"
     }
   ],
   "external_evidence": {
@@ -224,7 +225,7 @@
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
   "active_extension": {
     "name": "restricted-Lean-F1-CALL-bytecode",
-    "status": "pending-enhanced-parent-rollback-CI",
+    "status": "passed-local-lean-proof-and-differential-CI",
     "stacked_on": "https://github.com/danbri/factoidal-core/pull/668",
     "scope": "One-depth zero-value parent CALL instruction; all calldata, memory offsets and returndata zero; caller and callee are regular non-precompile distinct addresses, no CALL in child",
     "tested_observables": [
@@ -241,6 +242,13 @@
       "No EELS-independent semantic refinement",
       "No value stipends, account creation, returndata or precompiles"
     ],
-    "claim_type": "implementation slice with pending independent differential and Lean CI, not a verified complete EVM"
+    "claim_type": "implementation slice with pending independent differential and Lean CI, not a verified complete EVM",
+    "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44744680044",
+    "external_differential": {
+      "count": 5,
+      "passed": 5,
+      "reference": "EthereumJS 10.1.3 Cancun",
+      "comparison": "Identical complete parent and child bytecodes, including f1, parent exception rollback"
+    }
   }
 }
