@@ -29,6 +29,29 @@ builds the default library and runs an axiom audit.
 `#guard` executes examples during the Lean build; `#print axioms`
 reports theorem dependencies. These are distinct forms of evidence.
 
+## First verified-machine EELS state-test replay
+
+The [restricted EELS replay lab](scripts/eels/README.md) now **executes**
+four genuine EELS-generated Prague state tests, using Lean for both the
+empty-code frame and type-0/1/2 EIP-7623 transaction fee, balance and nonce
+arithmetic. The JavaScript host checks signed transaction metadata and uses
+EthereumJS only for transaction decoding and Merkle Patricia trie account
+serialization. All four calculated state roots and complete expected account
+sets match the pinned official fixture; the EIP-4844 and EIP-7702 cases
+are explicitly unsupported (4 pass, 0 fail, 2 unsupported).
+
+Axiom-audited Lean theorems cover zero-gas empty-code termination, exact
+sender debit accounting, gas bounds, nonce advancement and fee conservation
+**relative to our model**. No external Ethereum semantic-refinement theorem
+or verified trie implementation is claimed.
+
+CI also modifies the expected EELS state root and an account balance in
+negative controls: both tampered fixtures must be rejected. The fixture and
+generated npm dependency lock are pinned to SHA-256 values in the workflow.
+
+This is **not** historical mainnet replay, nonempty deployed-contract
+execution, Solidity correctness or general EELS conformance.
+
 ## External executable interface and first official-fixture integration
 
 The CLI executes **only the currently supported opcode subset** with supplied
@@ -50,9 +73,9 @@ The standalone `scripts/eels-state-preflight.mjs` checks the envelope of
 Shanghai/PUSH0 fixture from the EthereumJS mirror, identifies its test
 vectors, pre-state accounts and expected post-state/log hashes, then
 deliberately reports **zero executed / zero conformance passes**.
-Until transaction execution and state-root comparison exist, the entire
-fixture denominator remains unsupported. A parsed fixture is not a passed
-fixture.
+The **preflight** still correctly reports zero executed cases; the separate
+EELS replay tool described above now executes a restricted official subset.
+Parsing alone is never counted as an execution pass.
 
 A separate `scripts/check-eels-gas.mjs` test executes **14 actual Lean
 bytecode programs** and compares their measured gas deductions with the
