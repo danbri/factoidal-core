@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createEVM } from '@ethereumjs/evm'
 import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
-import { createAddressFromString, hexToBytes } from '@ethereumjs/util'
+import { Account, createAddressFromString, hexToBytes } from '@ethereumjs/util'
 
 const hexByte = n => n.toString(16).padStart(2, '0')
 const store = n => '60' + hexByte(n) + '600055'
@@ -69,6 +69,7 @@ try {
   for (let i = 0; i < records.length; i++) {
     const c = records[i], actual = outputs[i]
     const evm = await createEVM({ common })
+    await evm.stateManager.putAccount(address, new Account())
     if (c.original !== 0) {
       await evm.stateManager.putStorage(address, keyBytes, new Uint8Array([c.original]))
     }
