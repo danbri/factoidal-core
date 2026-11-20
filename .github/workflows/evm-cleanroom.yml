@@ -212,6 +212,17 @@ jobs:
         run: |
           python3 scripts/check-active-ledger.py --contract-result .lake/eels/lean-contract-results.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["currentContractReplayChecked"],x'
           python3 scripts/test-active-ledger.py
+      - name: Execute real EELS Cancun CALL-context returndata to storage state root
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output .lake/eels/push0-call-contexts.json \
+            "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/shanghai/eip3855_push0/test_push0_contract_during_call_contexts.json"
+          sha256sum .lake/eels/push0-call-contexts.json
+          node scripts/eels/run-lean-call-context.mjs \
+            --fixture .lake/eels/push0-call-contexts.json \
+            --out .lake/eels/lean-call-context-results.json | tee .lake/eels/call-context-summary.json
+          python3 -c 'import json; x=json.load(open(".lake/eels/lean-call-context-results.json")); c=x["counts"]; assert x["status"]=="pass" and c["passed"]==1 and c["failed"]==0 and c["unsupported"]==3 and c["CancunCases"]==4 and c["otherForkNotExecuted"]==12 and all(z["computedStateRoot"]==z["expectedStateRoot"] for z in x["cases"] if z["status"]=="pass"),x'
       - name: Reject falsified nonempty EELS contract roots, storage and signer
         working-directory: formal/lean4/evm-cleanroom
         run: |
