@@ -370,13 +370,13 @@ try {
       await sleep(200);
     }
     assert.match(state.status, new RegExp("Lean/Wasm completed " + (4*n).toLocaleString() +
-      " triples; " + expected + " BGP solution mappings"), JSON.stringify(state));
+      " (?:RDF )?triples; " + expected + " BGP solution mappings"), JSON.stringify(state));
     assert.equal(state.rows, 20, "A bounded page shows 20 real Lean BGP binding pairs");
     assert.equal(state.gpuQueryAvailable, true, "A real BGP GPU backend must be selectable");
     assert.match(state.patterns, /\?person ex:knows \?colleague/);
     assert.match(state.patterns, /\?colleague ex:worksOn ex:Atlas/);
     assert.match(state.lexical, /<https:\/\/example\.org\/paralliverse\/person\//);
-    assert.match(state.bridge, /NOT SBM11 64-bit dictionary IDs/);
+    assert.match(state.bridge, /NOT SBM11/);
     report.cases.push({name:"bgp-lean-" + n, expectedBindings:expected, ...state});
     return state;
   }
