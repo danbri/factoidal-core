@@ -166,12 +166,12 @@ export function mountBgpStudio() {
         ref.input.queryConstants);
       if(id!==state.id||ref!==state.reference)return;
       const checked=compareBGPResults(ref.bindings,result.pairs);
-      const outcome={plan:gpuPlan.value,result,comparison:checked,error:null};
+      const outcome={plan,result,comparison:checked,error:null};
       state.gpu=outcome;
       comparison.textContent=checked.summary;
       comparison.dataset.match=String(checked.equal);
       const discrepancies=checked.differingPairs.slice(0,8);
-      gpuObservation.textContent="Actual WebGPU BGP ("+gpuPlan.value+" plan): "+result.triples+" source triples; "+
+      gpuObservation.textContent="Actual WebGPU BGP ("+plan+" plan): "+result.triples+" source triples; "+
         result.solutionCount+" output bindings.\n"+
         "First 12 GPU-computed solutions (IDs and lexical RDF):\n"+
         JSON.stringify(result.pairs.slice(0,12).map(([p,c])=>({
@@ -179,7 +179,7 @@ export function mountBgpStudio() {
           person:shortTerm(personIri(p-1)),
           colleague:shortTerm(personIri(c-1)),
         })),null,2)+
-        (gpuPlan.value==="compacted"
+        (plan==="compacted"
           ?"\\nActual GPU projections: "+result.leftCount+" knows rows, "+
             result.rightCount+" Atlas rows; candidate comparisons per join pass: "+
             (result.leftCount*result.rightCount)+
@@ -188,7 +188,7 @@ export function mountBgpStudio() {
           :"\\nFused GPU probe: each qualifying source triple scans the whole source graph.")+
         (discrepancies.length?"\\nDifferent solution multiplicities: "+
           JSON.stringify(discrepancies):"");
-      gpuStatus.textContent="Actual GPU BGP completed ("+gpuPlan.value+" plan) on "+
+      gpuStatus.textContent="Actual GPU BGP completed ("+plan+" plan) on "+
         (result.adapter||"unidentified adapter")+
         (result.isFallbackAdapter===true?" (software fallback)":"")+
         " · "+result.solutionCount+" solution mappings.";
@@ -284,6 +284,18 @@ export function mountBgpStudio() {
     state.stage++;showStages();
   });
   button.addEventListener("click",startCPU);
+  gpuPlan.addEventListener("change",()=>{
+    // A previously returned GPU answer belongs to the selected algorithm
+    // that was actually executed, never silently to a new selector value.
+    if(state.gpu?.result){
+      state.gpu=null;
+      comparison.dataset.match="pending";
+      comparison.textContent="Plan changed. Run the newly selected WebGPU query.";
+      gpuObservation.textContent="No result from this newly selected GPU plan yet.";
+      gpuStatus.textContent="Execute the "+gpuPlan.value+" query plan to compare.";
+      state.stage=0;showStages();
+    }
+  });
   gpuButton.addEventListener("click",runGPU);
   scale.addEventListener("change",()=>{
     reset();status.textContent="Input size changed. Re-run both BGP engines.";
