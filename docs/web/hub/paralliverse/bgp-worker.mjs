@@ -4,7 +4,7 @@
 // No SPARQL algebra, graph matching or joins are implemented in JavaScript.
 // NOT an SBM11 block worker, GPU query, remote process or Kubernetes cluster.
 import {makeFixture, packBindingPairs, QUERY, PATTERN_KNOWS, PATTERN_ATLAS,
-  shortTerm, checkScale} from "./bgp-fixtures.mjs";
+  shortTerm, personWord, checkScale} from "./bgp-fixtures.mjs";
 import {loadL4} from "../assets/l4/l4factoidal.js";
 
 let enginePromise;
@@ -68,12 +68,12 @@ async function execute(size, requestId) {
     const matches = query(merged.handle, QUERY, "joined BGP");
     const joinMs = performance.now() - fullStart;
     const packed = packBindingPairs(matches, size);
-    const preview = matches.slice(0, 16).map((row, index) => ({
+    const bindings = matches.map((row, index) => ({
       ordinal: index + 1,
       person: shortTerm(row.person.value),
       colleague: shortTerm(row.colleague.value),
-      personId: packed.packedRows.length ? Number(row.person.value.slice(-4)) + 1 : null,
-      colleagueId: packed.packedRows.length ? Number(row.colleague.value.slice(-4)) + 1 : null,
+      personId: personWord(row.person.value, size),
+      colleagueId: personWord(row.colleague.value, size),
     }));
 
     return {
@@ -98,7 +98,8 @@ async function execute(size, requestId) {
         atlas: summarize(right, ["colleague"]),
       },
       bgp: summarize(matches, ["person", "colleague"]),
-      preview,
+      bindings,
+      preview: bindings.slice(0, 16),
       pack: packed,
       timing: {
         openAndScanMs: scansMs,
