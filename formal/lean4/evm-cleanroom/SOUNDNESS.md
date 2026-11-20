@@ -72,6 +72,29 @@ auditor's configured standard axiom allowlist. It does **not** verify
 Lean's kernel, code generation, deployed binaries, external dependencies
 or EELS semantics.
 
+## Genuine EELS state-test execution (scoped)
+
+The [EELS replay runner](scripts/eels/README.md) executes **four of six
+published Prague EIP-7623 state-test cases**, verifying the computed
+Merkle state root and expected account state. Two cases requiring blob fees
+and EIP-7702 authorisation remain explicitly unsupported.
+
+Lean performs the empty-code frame execution and restricted type-0/1/2
+transaction fee/nonce/balance settlement. Theorems
+`empty_code_halts_without_spending_gas`,
+`TxAccounting.settle_charged_bounded`,
+`TxAccounting.sender_balance_conservation`,
+`TxAccounting.sender_nonce_advances` and
+`TxAccounting.fee_conservation` are machine checked against the Lean model.
+
+This is **not** an end-to-end formally verified state transition:
+EthereumJS signed-envelope parsing and MPT serialization are trusted, while
+the host handles account set construction and field mapping. The model has
+not been independently proved to implement EELS's transaction rules,
+and no ordinary historical mainnet transaction or nonempty contract code has
+been replayed through this fixture runner. CI includes two deliberately
+tampered post-state negative controls to check that the comparator fails.
+
 ## External checks (not proof of conformance)
 
 CI now runs an externally callable Lean bytecode executable, checks success,
@@ -80,7 +103,7 @@ stack underflow, out-of-gas and exact-STOP fuel exhaustion behaviour. The
 
 The CI additionally parses a genuine published EELS-generated state-test
 fixture (Shanghai/PUSH0, from an EthereumJS mirror pinned by SHA) and
-deliberately reports **zero executed state tests and zero conformance passes**.
+deliberately reports **zero executed state tests** in that *preflight-only* job. A separate restricted EELS replay runner (documented above) now executes four cases and checks real state roots.
 No post-state root, account effect or receipt is compared by that parser.
 
 A different CI step executes 14 supported bytecode scenarios in the actual
