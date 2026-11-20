@@ -479,8 +479,15 @@ function showGpuResult(data) {
   gpuStatus.textContent = timing + (mode === "pack"
     ? ` Upload/encode/submit ${duration(data.encodeSubmitMs)}; queue and terminal ${duration(data.queueAndTerminalMs)}; payload readback ${duration(data.payloadReadbackMs)}.`
     : ` ${data.passCount ?? "Selected"} passes. Final payload and buffer-frame checks are reported below.`);
-  comparison.textContent = data.matches ? "Exact CPU/GPU byte match." : "CPU/GPU mismatch. The two actual results are shown above.";
-  comparison.dataset.match = String(data.matches);
+  const payloadMatches = data.matches === true;
+  const fullFrameMatches = mode !== "studio" || (data.fullMatches === true && data.canariesMatch === true);
+  const completeMatch = payloadMatches && fullFrameMatches;
+  comparison.textContent = completeMatch
+    ? (mode === "studio" ? "Exact CPU/GPU payload and complete GPU buffer-frame match." : "Exact CPU/GPU byte match.")
+    : payloadMatches && !fullFrameMatches
+      ? "CPU/GPU payloads match, but the full GPU buffer frame (header or tail) does not. See the stepper."
+      : "CPU/GPU mismatch. The two actual results are shown above.";
+  comparison.dataset.match = String(completeMatch);
   if (mode === "studio") {
     $("frame-status").textContent = data.fullMatches === true && data.canariesMatch === true
       ? "Header + tail match"
