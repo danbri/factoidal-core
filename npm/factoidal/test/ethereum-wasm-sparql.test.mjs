@@ -4,8 +4,8 @@ import {
   query,registerExtensionFunction,unregisterExtensionFunction
 } from '../index.mjs';
 import {
-  DATA,QUERY_ALL,QUERY_SAFE,QUERY_DENIED,FUNCTION_IRI,
-  registerEthereumDerivedWasm
+  DATA,QUERY_ALL,QUERY_SAFE,QUERY_DENIED,QUERY_WITH_PROVENANCE,
+  FUNCTION_IRI,registerEthereumDerivedWasm,functionProvenanceTurtle
 } from '../../../labs/ethereum-wasm-sparql/demo.mjs';
 import {EVM_TRANSFER_GUARD_HEX} from '../../../labs/ethereum-wasm-sparql/evm-to-wasm.mjs';
 
@@ -37,6 +37,14 @@ test('Factoidal joins RDF proposals and actually invokes EVM-derived WASM in SEL
       'alice-to-bob','carol-to-dave','whale-to-alice'
     ]);
     assert.deepEqual(subjects(denied),['bob-to-carol']);
+    const augmented=DATA+'\n'+functionProvenanceTurtle(evidence);
+    const evidenceRows=await query(augmented,QUERY_WITH_PROVENANCE);
+    assert.equal(evidenceRows.length,5);
+    for(const row of evidenceRows){
+      assert.equal(row.get('evmHash').value,evidence.evmSha256);
+      assert.equal(row.get('wasmHash').value,evidence.wasmSha256);
+      assert.equal(row.get('assurance').value,'differential-tested-not-proved');
+    }
   }finally{
     await unregisterExtensionFunction(FUNCTION_IRI);
   }
