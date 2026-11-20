@@ -207,11 +207,6 @@ jobs:
             --fixture .lake/eels/push0-contracts.json \
             --out .lake/eels/lean-contract-results.json | tee .lake/eels/contract-summary.json
           python3 -c 'import json; x=json.load(open(".lake/eels/lean-contract-results.json")); t=x["totals"]; assert x["status"]=="pass" and t["passed"]==6 and t["failed"]==0 and t["unsupported"]==0 and t["forkCases"]==6 and t["fixtureCases"]==24 and all(c["computedStateRoot"]==c["expectedStateRoot"] for c in x["cases"] if c["status"]=="pass"),x'
-      - name: Verify active v2 assurance and falsification controls against fresh Cancun replay
-        working-directory: formal/lean4/evm-cleanroom
-        run: |
-          python3 scripts/check-active-ledger.py --contract-result .lake/eels/lean-contract-results.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["currentContractReplayChecked"],x'
-          python3 scripts/test-active-ledger.py
       - name: Execute real EELS Cancun CALL-context returndata to storage state root
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -223,6 +218,11 @@ jobs:
             --fixture .lake/eels/push0-call-contexts.json \
             --out .lake/eels/lean-call-context-results.json | tee .lake/eels/call-context-summary.json
           python3 -c 'import json; x=json.load(open(".lake/eels/lean-call-context-results.json")); c=x["counts"]; assert x["status"]=="pass" and c["passed"]==1 and c["failed"]==0 and c["unsupported"]==3 and c["CancunCases"]==4 and c["otherForkNotExecuted"]==12 and all(z["computedStateRoot"]==z["expectedStateRoot"] for z in x["cases"] if z["status"]=="pass"),x'
+      - name: Verify active source evidence against both EELS Cancun replay families
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/check-active-ledger.py --contract-result .lake/eels/lean-contract-results.json --call-result .lake/eels/lean-call-context-results.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["currentContractReplayChecked"] and x["currentCallReplayChecked"],x'
+          python3 scripts/test-active-ledger.py
       - name: Reject forged CALL-context storage, root, signer and returned byte
         working-directory: formal/lean4/evm-cleanroom
         run: |
