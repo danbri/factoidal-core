@@ -380,8 +380,9 @@ try {
     report.cases.push({name:"bgp-lean-" + n, expectedBindings:expected, ...state});
     return state;
   }
-  async function runActualGpuBgp(people, expected) {
-    await evaluate('document.querySelector("#bgp-gpu-run").click()');
+  async function runActualGpuBgp(people, expected, plan) {
+    await evaluate('(() => { document.querySelector("#bgp-gpu-plan").value="' + plan +
+      '"; document.querySelector("#bgp-gpu-run").click(); })()');
     const until = Date.now() + 110_000;
     let state;
     while (Date.now() < until) {
@@ -399,6 +400,14 @@ try {
     assert.match(state.gpuStatus, /Actual GPU BGP completed/);
     assert.match(state.gpuOutput, /Actual WebGPU BGP/);
     await evaluate('document.querySelector("#bgp-step-gpu").click()');
+    if(plan === "compacted") {
+      await evaluate('document.querySelector("#bgp-step-next").click()');
+      const flagStage = await evaluate('document.querySelector("#bgp-step-detail").textContent');
+      assert.match(flagStage, /Actual GPU-compacted relation sizes/);
+      await evaluate('document.querySelector("#bgp-step-next").click()');
+      const scatterStage = await evaluate('document.querySelector("#bgp-step-detail").textContent');
+      assert.match(scatterStage, /Actual GPU knows bindings/);
+    }
     await evaluate('document.querySelector("#bgp-step-next").click()');
     const countStage = await evaluate('document.querySelector("#bgp-step-detail").textContent');
     assert.match(countStage, /Read back .* actual GPU counts/);
@@ -408,11 +417,12 @@ try {
     await evaluate('document.querySelector("#bgp-step-cpu").click()');
     const cpuStage = await evaluate('document.querySelector("#bgp-step-detail").textContent');
     assert.match(cpuStage, /Parse lexical RDF/);
-    report.cases.push({name:"bgp-" + people + "-actual-gpu-join-vs-lean", ...state,
+    report.cases.push({name:"bgp-" + people + "-" + plan + "-gpu-join-vs-lean", ...state,
       countsReadBack:true,offsetsReadBack:true});
   }
   await observeBgp(64, 32);
-  await runActualGpuBgp(64, 32);
+  await runActualGpuBgp(64, 32, "compacted");
+  await runActualGpuBgp(64, 32, "fused");
   await observeBgp(1024, 512);
   await evaluate('document.querySelector("#bgp-next").click()');
   const page2 = await evaluate('(() => ({status:document.querySelector("#bgp-page-status").textContent, ' +
@@ -425,7 +435,8 @@ try {
   assert.equal(await evaluate('document.querySelector("#bgp-answers tbody tr td")?.textContent'),
     "1", "Page navigation keeps Lean's result order");
   report.cases.push({name:"bgp-512-bindings-page-navigation",...page2});
-  await runActualGpuBgp(1024, 512);
+  await runActualGpuBgp(1024, 512, "compacted");
+  await runActualGpuBgp(1024, 512, "fused");
 
   const studioAvailable = await evaluate('Boolean(document.querySelector("#mode-studio") && !document.querySelector("#mode-studio").disabled)');
   if (process.env.REQUIRE_PARALLIVERSE_STUDIO === "1") assert(studioAvailable, "The actual Studio runtime must be enabled");
