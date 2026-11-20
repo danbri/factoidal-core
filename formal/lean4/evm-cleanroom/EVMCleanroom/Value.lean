@@ -82,6 +82,27 @@ theorem pay_preserves_original {w out : TxWorld} {sender recipient amount : Nat}
     cases h
     rfl
 
+/-- Every *accepted, checked* two-account transfer conserves the combined
+    balance. Self-transfers are exact identity transitions. This theorem
+    applies to the public pay operation, not merely payUnchecked. -/
+theorem pay_conserves_pair {w out : TxWorld} {sender recipient amount : Nat}
+    (h : pay w sender recipient amount = .ok out) :
+    (out.accounts sender).balance + (out.accounts recipient).balance =
+      (w.accounts sender).balance + (w.accounts recipient).balance := by
+  unfold pay at h
+  split at h <;> try contradiction
+  split at h <;> try contradiction
+  split at h <;> try contradiction
+  · cases h
+    rfl
+  · split at h <;> try contradiction
+    cases h
+    apply payUnchecked_conserves_pair
+    · omega
+    · omega
+
+#print axioms pay_conserves_pair
+
 #print axioms payUnchecked_conserves_pair
 #print axioms payUnchecked_other
 #print axioms payUnchecked_preserves_original
