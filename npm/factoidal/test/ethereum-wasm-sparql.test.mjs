@@ -9,6 +9,9 @@ import {
   DATA_256,QUERY_ALL_256,FUNCTION_IRI_256,registerEthereumDerivedWasm256
 } from '../../../labs/ethereum-wasm-sparql/demo.mjs';
 import {EVM_TRANSFER_GUARD_HEX} from '../../../labs/ethereum-wasm-sparql/evm-to-wasm.mjs';
+import {EVM_POLICY_HEX} from '../../../labs/ethereum-wasm-sparql/evm-policy.mjs';
+import {POLICY_IRI,POLICY_DATA,POLICY_QUERY,POLICY_FILTER_QUERY,
+  registerEthereumPolicyWasm} from '../../../labs/ethereum-wasm-sparql/demo.mjs';
 
 function subjects(rows) {
   return rows.map(row=>row.get('proposal').value.split('/').at(-1)).sort();
@@ -85,5 +88,43 @@ test('Factoidal SPARQL calls EVM-derived WASM with all 256 unsigned bits preserv
     assert.equal(byName.get('uint256-outside'),undefined); // 2^256 refused
   }finally{
     await unregisterExtensionFunction(FUNCTION_IRI_256);
+  }
+});
+
+
+test('Factoidal joins seven RDF state inputs into actual EVM-derived 256-bit WASM policy',async()=>{
+  const evidence=await registerEthereumPolicyWasm({registerExtensionFunction});
+  try{
+    assert.equal(evidence.opcodeTrace.filter(x=>x.opcode==='CALLDATALOAD').length,8);
+    assert.equal(evidence.opcodeTrace.filter(x=>x.opcode==='AND').length,4);
+    assert.equal(evidence.wasmSignature,'(i64×28)->i64');
+    assert.equal(evidence.assurance,'differential-tested-not-proved');
+    const rows=await query(POLICY_DATA,POLICY_QUERY);
+    assert.equal(rows.length,8);
+    const byName=new Map(rows.map(r=>[
+      r.get('proposal').value.split('/').at(-1),
+      r.get('eligible')?.value
+    ]));
+    assert.deepEqual(Object.fromEntries(byName),{
+      'allowed':'true','overdraft':'false','allowance-exhausted':'false',
+      'timelocked':'false','paused':'false','frozen':'false',
+      'full-256-bit-allowed':'true','out-of-evm-range':undefined
+    });
+    const accepted=await query(POLICY_DATA,POLICY_FILTER_QUERY);
+    assert.deepEqual(subjects(accepted),['allowed','full-256-bit-allowed']);
+  }finally{
+    await unregisterExtensionFunction(POLICY_IRI);
+  }
+});
+
+test('source EVM SWAP1 mutation changes policy decisions in Factoidal',async()=>{
+  const changed=EVM_POLICY_HEX.replace('604435901015','6044351015');
+  assert.notEqual(changed,EVM_POLICY_HEX);
+  await registerEthereumPolicyWasm({registerExtensionFunction},changed);
+  try{
+    const rows=await query(POLICY_DATA,POLICY_FILTER_QUERY);
+    assert.deepEqual(subjects(rows),['overdraft']);
+  }finally{
+    await unregisterExtensionFunction(POLICY_IRI);
   }
 });
