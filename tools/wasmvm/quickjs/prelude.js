@@ -7376,6 +7376,7 @@
   // 166). The request starts when the element gets a source (parsed with one, or a script sets
   // src, srcset, sizes, crossorigin or referrerpolicy); a page with no img pays nothing.
   const imgStates = new Map();   // node -> { gen, url, complete, w, h, waiters }
+  const imgAvailable = new Map(); // document + URL + request mode -> decoded intrinsic size
   let imgGen = 0, imgWatching = false;
   // HTML §4.8.4.3: the images of the page's start delay its load event (the window's `load`
   // waits until each has its load or error event)
@@ -7426,6 +7427,8 @@
     if (before) for (const [, rej] of before.waiters.splice(0)) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
     const st = { gen, url, unitDensity: selection?.unitDensity ?? false, complete: false, w: 0, h: 0, waiters: [], layoutSized: before?.layoutSized ?? false };
     imgStates.set(id, st);
+    const cors = corsSettings(el);
+    const availableKey = JSON.stringify([info(id, 7), url, cors.mode, cors.credentials]);
     const refused = error => {
       // No automatic retry after a resource refusal: retain tracking, reject this
       // generation's decode waiters and report the refusal instead of a load event.
@@ -7451,19 +7454,39 @@
       return;
     }
     if (cspBlocksRequest('img-src', url, '', false, id)) { flushViolations(); Promise.resolve().then(() => { if (imgStates.get(id)?.gen === gen) settle(false); }); return; }
-    const cors = corsSettings(el);
+    const rawSrc = n0.attr(id, 'src');
+    const parent = info(id, 1);
+    const inPicture = parent >= 0 && info(parent, 0) === 1 && htmlEl(parent) && str(parent, 0) === 'picture';
+    const plainSrc = !inPicture && typeof rawSrc === 'string' && n0.attr(id, 'srcset') === null && selection.url === resolveURL(rawSrc, info(id, 7) > 0 ? docURL(info(id, 7)) : undefined);
+    const available = plainSrc ? imgAvailable.get(availableKey) : null;
+    if (available) {
+      st.w = available.w; st.h = available.h;
+      st.available = true;
+      try { if (st.unitDensity) imgWriteSize(id, st, `${st.w} ${st.h}`); else imgClearSize(id, st); }
+      catch (error) { refused(error); return; }
+      // Reuse the already-decoded resource, but settle on a task. A relevant
+      // mutation in this turn must still be able to replace this request first.
+      chk(n.timer(register(() => { if (imgStates.get(id)?.gen === gen) settle(true); }), 0, 0));
+      return;
+    }
     elementFetch(url, { destination: 'image', ...cors, referrerPolicy: (el.getAttribute('referrerpolicy') ?? '').toLowerCase() }).then(r => {
-      if (imgStates.get(id)?.gen !== gen) return;
       if (r === undefined) {
+        if (imgStates.get(id)?.gen !== gen) return;
         st.complete = true;
         try { imgClearSize(id, st); } catch (error) { refused(error); return; }
         imgUndelay(id); return;
       }
+      if (imgStates.get(id)?.gen !== gen) return;
       let size = '';
       // the engine answers an image's natural size, never its bytes (Net.Xhr.imageRaw)
       if (r !== null && r.status >= 200 && r.status < 300) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
-      if (size === '') { settle(false); return; }
+      if (size === '') { if (imgStates.get(id)?.gen === gen) settle(false); return; }
       const [w, h] = size.split(' ').map(Number);
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        imgAvailable.delete(availableKey);
+        imgAvailable.set(availableKey, {w, h});
+        if (imgAvailable.size > 512) imgAvailable.delete(imgAvailable.keys().next().value);
+      }
       st.w = w; st.h = h;
       // The decoder returns physical pixels. They are CSS pixels only for a 1x
       // request. Clear the preceding request's size when this one needs correction.
@@ -7489,7 +7512,7 @@
       // An already available image is reused when a picture mutation leaves its selected
       // URL unchanged. An in-flight request, however, is replaced by the relevant mutation
       // even when its URL is the same; decode() must reject that earlier request.
-      if (before.complete && url === before.url && unitDensity === before.unitDensity) return;
+      if ((before.complete || before.available) && url === before.url && unitDensity === before.unitDensity) return;
       if (url !== before.url || unitDensity !== before.unitDensity) {
         imgPendingUpdates.delete(id);
         updateImage(id, true);
@@ -7498,7 +7521,7 @@
       Promise.resolve().then(() => {
         if (imgStates.get(id) !== before) return;
         const now = imgSelection(id);
-        if (before.complete && (now?.url ?? '') === before.url && (now?.unitDensity ?? false) === before.unitDensity) return;
+        if ((before.complete || before.available) && (now?.url ?? '') === before.url && (now?.unitDensity ?? false) === before.unitDensity) return;
         imgPendingUpdates.delete(id);
         updateImage(id, true);
       });
@@ -7543,9 +7566,13 @@
       const separator = name.indexOf('\u0000');
       const local = separator >= 0 ? name.slice(separator + 1) : name;
       const isHtmlAttr = separator >= 0 ? separator === 0 : info(id, 8) === 1;
-      if (!isHtmlAttr || !['srcset', 'sizes', 'media', 'type', 'width', 'height'].includes(local.toLowerCase())) return;
+      const attr = separator < 0 && isHtmlAttr ? local.toLowerCase() : local;
+      if (!isHtmlAttr || !['srcset', 'sizes', 'media', 'type', 'width', 'height'].includes(attr)) return;
       const parent = info(id, 1);
-      if (isPicture(parent)) for (const image of pictureImages(parent)) refreshPictureImage(image);
+      if (isPicture(parent)) {
+        const siblings = kids(parent), index = siblings.indexOf(id);
+        if (index >= 0) for (const image of siblings.slice(index + 1).filter(isImg)) refreshPictureImage(image);
+      }
     };
     n.setAttr = (id, name, value) => {
       const r = setAttr0(id, name, value);

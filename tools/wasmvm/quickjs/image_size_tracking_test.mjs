@@ -45,25 +45,58 @@ test('one URL changing from 1x to 2x to 1x clears and restores its layout dimens
   const start=prelude.indexOf('  const imgSelection = id => {');
   const end=prelude.indexOf('  const imgWatch = () => {',start);
   assert.ok(start>=0&&end>start);
-  const commands=[], events=[], requests=[];
+  const commands=[], events=[], requests=[], timers=[];
   let selected='';
-  const context=vm.createContext({DOMException,devicePixelRatio:1,info:()=>0,viewport:()=>[800,600],
+  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,viewport:()=>[800,600],
     n0:{attr:()=>null},wrap:()=>({getAttribute:()=>null}),resolveURL:s=>s,
+    imgGen:0,imgStates:new Map(),imgAvailable:new Map(),imgFire:(_el,event)=>events.push(event),imgUndelay:()=>{},
+    chk(){},register:f=>f,
     n:{query(_id,op,payload){
       if(op===195){assert.equal(payload,'request\x001\x00800\x00600');return selected;}
       assert.equal(op,163);commands.push(payload);return '';
-    }},imgGen:0,imgStates:new Map(),imgFire:(_el,event)=>events.push(event),imgUndelay:()=>{},
-    cspBlocksRequest:()=>false,corsSettings:()=>({}),elementFetch(url){
+    },timer(f){timers.push(f);return ''; }},
+    cspBlocksRequest:()=>false,flushViolations(){},corsSettings:()=>({mode:'no-cors',credentials:'include'}),elementFetch(url){
       requests.push(url);return Promise.resolve({status:200,bytes:new TextEncoder().encode('19 11')});
     }});
   vm.runInContext(prelude.slice(start,end)+'\n globalThis.update=updateImage;',context);
   for(const marker of ['1','0','1']){
     selected=marker+'b.png';context.update(4);
     await new Promise(resolve=>setImmediate(resolve));
+    for(const timer of timers.splice(0))timer();
   }
   assert.deepEqual(commands,['19 11','','19 11']);
   assert.deepEqual(requests,['b.png','b.png','b.png']);
   assert.deepEqual(events,['load','load','load']);
+});
+
+test('a completed plain-src image is available to another detached image in the same document',async()=>{
+  const start=prelude.indexOf('  const imgSelection = id => {');
+  const end=prelude.indexOf('  const imgWatch = () => {',start);
+  const requests=[],events=[],timers=[],states=new Map(),available=new Map();
+  let mode='no-cors';
+  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
+    viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(_id,name)=>name==='src'?'/cached.png':null},
+    wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:()=>'',
+    n:{query(_id,op,payload){if(op===195)return '0/cached.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    imgGen:0,imgStates:states,imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay:()=>{},
+    chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
+    corsSettings:()=>({mode,credentials:mode==='no-cors'?'include':'same-origin'}),
+    elementFetch(url){requests.push(url);return Promise.resolve({status:200,bytes:new TextEncoder().encode('37 23')});}});
+  vm.runInContext(prelude.slice(start,end)+'\n globalThis.update=updateImage;',context);
+  context.update(1);
+  await new Promise(resolve=>setImmediate(resolve));
+  for(const timer of timers.splice(0))timer();
+  context.update(2);
+  assert.equal(states.get(2).w,37);
+  assert.equal(states.get(2).h,23);
+  assert.deepEqual(requests,['/cached.png']);
+  assert.deepEqual(events,['load']);
+  for(const timer of timers.splice(0))timer();
+  assert.deepEqual(events,['load','load']);
+  mode='cors';
+  context.update(3);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(requests,['/cached.png','/cached.png']);
 });
 
 function mutationWatcher(htmlDocument=true){
@@ -203,6 +236,15 @@ test('changing a source candidate in a picture reselects its image',()=>{
   h.selected.set(2,'blue.png');h.states.set(2,{complete:true,url:'green.png',unitDensity:false});
   h.n.setAttr(3,'srcset','blue.png');
   assert.deepEqual(h.updates,[[2,true]]);
+});
+test('source attribute mutation refreshes only following image siblings and preserves namespace case',()=>{
+  const h=pictureMutationWatcher();h.add(1,'picture');h.add(2,'img',1);h.add(3,'source',1);h.add(4,'img',1);
+  for(const id of [2,4]){h.selected.set(id,'blue.png');h.states.set(id,{complete:true,url:'green.png',unitDensity:false});}
+  h.n.setAttr(3,'srcset','blue.png');
+  assert.deepEqual(h.updates,[[4,true]]);
+  h.updates.length=0;
+  h.n.setAttr(3,'\0SRCSET','ignored.png');
+  assert.deepEqual(h.updates,[]);
 });
 test('changing the selected density rechecks layout even when the URL is unchanged',()=>{
   const h=pictureMutationWatcher();h.add(1,'picture');h.add(2,'img');
