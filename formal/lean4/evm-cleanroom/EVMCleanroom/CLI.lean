@@ -186,10 +186,24 @@ private def storageMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"message\":\"usage: --storage HEX GAS FUEL KEY ORIGINAL_VALUE\"}"
     return 2
 
+/-- Independently execute TAB-separated storage fixtures in a single Lean process.
+    Reject any invalid row rather than counting it as an execution result. -/
+private def storageBatchMain (path : String) : IO UInt32 := do
+  let source ← IO.FS.readFile path
+  let mut count : Nat := 0
+  let mut malformed : Nat := 0
+  for line in source.splitOn "\n" do
+    if line != "" then
+      count := count + 1
+      let result ← storageMain (line.splitOn "\t")
+      if result != 0 then malformed := malformed + 1
+  if count == 0 || malformed > 0 then return 2 else return 0
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
   | "--tx-fee" :: rest => txFeeMain rest
   | "--storage" :: rest => storageMain rest
+  | ["--storage-batch", path] => storageBatchMain path
   | ["--batch", path] => runBatchFile path
   | [hex, gasStr, fuelStr] =>
     match parseBytecode hex, gasStr.toNat?, fuelStr.toNat? with
