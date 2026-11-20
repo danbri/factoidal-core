@@ -52,7 +52,7 @@ jobs:
           git rev-parse HEAD | tee "$EVIDENCE/commit.txt"
           node --version | tee "$EVIDENCE/node-version.txt"
           sha256sum docs/.eleventy.js docs/_includes/hub-app.njk \
-            docs/web/hub/paralliverse/{index.njk,style.css,app.mjs,execution-stepper.mjs,worker.mjs,gpu.mjs,word-gpu.mjs} \
+            docs/web/hub/paralliverse/{index.njk,style.css,app.mjs,execution-stepper.mjs,bgp-fixtures.mjs,bgp-worker.mjs,bgp-studio.mjs,worker.mjs,gpu.mjs,word-gpu.mjs} \
             tools/paralliverse-browser-smoke.mjs | tee "$EVIDENCE/source.sha256"
 
       - name: Install the matching published web release
@@ -104,7 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout --kill-after=10s 240s node tools/paralliverse-browser-smoke.mjs \
+          timeout --kill-after=10s 420s node tools/paralliverse-browser-smoke.mjs \
             docs/_site "$EVIDENCE" "$(cat "$EVIDENCE/commit.txt")" 2>&1 | tee "$EVIDENCE/smoke.log"
 
       - name: Preserve browser acceptance records

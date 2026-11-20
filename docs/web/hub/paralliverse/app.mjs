@@ -1,4 +1,5 @@
 import {mountExecutionStepper} from "./execution-stepper.mjs";
+import {mountBgpStudio} from "./bgp-studio.mjs";
 
 const $ = id => document.getElementById(id);
 const executionStepper = mountExecutionStepper();
@@ -759,3 +760,22 @@ $("download-lean").addEventListener("click", () => {
   $("action-status").textContent = "Downloaded the Lean source returned by this runtime.";
 });
 $("share").addEventListener("click", shareExperiment);
+
+
+// The BGP has a separate, independently loaded Lean SPARQL/Wasm worker.
+// Only the *result identifiers* are passed to Paralliverse's already proved
+// stable packing backend; no JavaScript implementation of the BGP join exists.
+mountBgpStudio({
+  onPack({rows, querySize, bindings}) {
+    selectMode("pack", {scheduleRun: false});
+    cityLab.hidden = true;
+    source.value = JSON.stringify(rows);
+    inputs.pack = source.value;
+    example.value = "custom";
+    markPreset(null);
+    schedule(0, true);
+    inputStatus.textContent = "BGP returned " + bindings + " bindings from " + querySize +
+      " people. Only their fixture-mapped u32 pairs are being packed by Lean CPU and WebGPU; the GPU did not execute SPARQL.";
+    $("workspace").scrollIntoView({block: "start", behavior: "auto"});
+  },
+});
