@@ -5,9 +5,12 @@ import EVMCleanroom.OpcodeCall
 namespace EVMCleanroom.ReturnDataTests
 
 private def buffer : Array UInt8 := #[0x2a]
+private def inputStack (offset length dest : Nat) : Stack :=
+  ⟨[word dest, word offset, word length], by simp⟩
+
 private def input (offset length dest : Nat) (gas : Nat := 100) : State :=
   { code := #[0x3e], gas := gas,
-    stack := ⟨[word dest, word offset, word length], by decide⟩ }
+    stack := inputStack offset length dest }
 
 private def copiedByte (r : Except Error State) (addr : Nat) : Option Nat :=
   match r with
