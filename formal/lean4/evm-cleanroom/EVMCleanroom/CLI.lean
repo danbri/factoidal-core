@@ -1,5 +1,6 @@
 import EVMCleanroom.Core
 import EVMCleanroom.Frame
+import EVMCleanroom.Call
 import EVMCleanroom.TxAccounting
 
 /-!
@@ -260,11 +261,55 @@ private def frameStorageMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"message\":\"usage: --frame-storage HEX GAS FUEL KEY ORIGINAL_VALUE\"}"
     return 2
 
+/-- Zero-value child-call slice, *not* actual CALL opcode dispatch. The
+    input gas is the parent's balance after the gas spent on CALL arguments.
+    Usage: --call-slice HEX TARGET PARENT_GAS REQUESTED_GAS FUEL -/
+private def callSliceMain (args : List String) : IO UInt32 := do
+  match args with
+  | [hex, targetStr, parentStr, requestedStr, fuelStr] =>
+    match parseBytecode hex, targetStr.toNat?, parentStr.toNat?,
+      requestedStr.toNat?, fuelStr.toNat? with
+    | .ok childCode, some target, some parentGas, some requested, some fuel =>
+      if target ≥ World.addressBound then
+        IO.println "{\"status\":\"inputError\",\"reason\":\"bad-address\"}"
+        return 2
+      let accounts : Nat → World.Account := fun addr =>
+        if addr == target then { code := childCode } else {}
+      let w := World.beginTransaction accounts
+      let outcome := WorldCall.callZeroValue fuel w target parentGas requested
+      let observable : String → World.TxWorld → Nat → String := fun status world gas =>
+        "{\"schemaVersion\":1,\"status\":\"" ++ status ++
+        "\",\"gasRemaining\":\"" ++ toString gas ++
+        "\",\"slot0\":\"" ++ toString ((world.accounts target).storage 0) ++
+        "\",\"warmAddress\":" ++
+        (if world.warmAddresses target then "true" else "false") ++
+        ",\"warmSlot\":" ++ (if world.warmSlots target 0 then "true" else "false") ++
+        ",\"refund\":\"" ++ toString world.refund ++ "\"}"
+      match outcome with
+      | .childSuccess world gas => IO.println (observable "success" world gas)
+      | .childReverted world gas => IO.println (observable "revert" world gas)
+      | .childExceptional world gas reason =>
+        IO.println (observable "exception" world gas)
+        -- Exception reason is reported separately from the contract's
+        -- returned CALL success flag; execution remains a legitimate case.
+      | .callerOutOfGas => IO.println "{\"status\":\"callerOutOfGas\"}"
+      | .invalidAddress => IO.println "{\"status\":\"inputError\",\"reason\":\"bad-address\"}"
+      | .invalidChildGas => IO.println "{\"status\":\"unsupported\",\"reason\":\"bad-child-gas\"}"
+      | .unsupported _ => IO.println "{\"status\":\"unsupported\",\"reason\":\"unimplemented-child-opcode\"}"
+      return 0
+    | _, _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"reason\":\"expected HEX TARGET PARENT_GAS REQUESTED_GAS FUEL\"}"
+      return 2
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"reason\":\"usage: --call-slice HEX TARGET PARENT_GAS REQUESTED_GAS FUEL\"}"
+    return 2
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
   | "--tx-fee" :: rest => txFeeMain rest
   | "--storage" :: rest => storageMain rest
   | "--frame-storage" :: rest => frameStorageMain rest
+  | "--call-slice" :: rest => callSliceMain rest
   | ["--storage-batch", path] => storageBatchMain path
   | ["--batch", path] => runBatchFile path
   | [hex, gasStr, fuelStr] =>
