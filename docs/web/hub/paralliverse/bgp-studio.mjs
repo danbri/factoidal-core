@@ -12,6 +12,9 @@ export function mountBgpStudio({onPack}) {
   const left = $("bgp-left");
   const right = $("bgp-right");
   const answers = $("bgp-answers");
+  const prev = $("bgp-prev");
+  const next = $("bgp-next");
+  const pageStatus = $("bgp-page-status");
   const ledger = $("bgp-ledger");
   const idBridge = $("bgp-id-bridge");
   const sizes = $("bgp-stats");
@@ -20,16 +23,17 @@ export function mountBgpStudio({onPack}) {
   $("bgp-pattern-one").textContent = PATTERN_KNOWS;
   $("bgp-pattern-two").textContent = PATTERN_ATLAS;
 
-  const state = {worker: null, id: 0, result: null};
+  const state = {worker: null, id: 0, result: null, page: 0};
+  const PAGE_SIZE = 20;
   let messages = [];
   const log = message => {
     messages.push(message);
     ledger.textContent = messages.map((s, i) => String(i + 1) + ". " + s).join("\n");
   };
-  const renderTable = (target, rows, columns) => {
+  const renderTable = (target, rows, columns, start, total) => {
     const table = document.createElement("table");
     const caption = document.createElement("caption");
-    caption.textContent = "First " + rows.length + " Lean-returned binding rows";
+    caption.textContent = "Lean-returned bindings " + (start + 1) + "–" + (start + rows.length) + " of " + total;
     table.append(caption);
     const head = document.createElement("thead"), tr = document.createElement("tr");
     for (const column of columns) {
@@ -52,9 +56,27 @@ export function mountBgpStudio({onPack}) {
     target.replaceChildren(table);
   };
 
+  function showPage() {
+    const all = state.result?.bindings;
+    if (!Array.isArray(all)) return;
+    const start = state.page * PAGE_SIZE;
+    renderTable(answers, all.slice(start, start + PAGE_SIZE),
+      ["ordinal", "person", "colleague", "personId", "colleagueId"],
+      start, all.length);
+    pageStatus.textContent = "Page " + (state.page + 1) + " of " +
+      Math.max(1, Math.ceil(all.length / PAGE_SIZE)) +
+      " · " + all.length + " complete Lean bindings";
+    prev.disabled = state.page === 0;
+    next.disabled = start + PAGE_SIZE >= all.length;
+  }
+
   const reset = () => {
     state.id++;
     state.result = null;
+    state.page = 0;
+    prev.disabled = true;
+    next.disabled = true;
+    pageStatus.textContent = "No bindings yet";
     pack.disabled = true;
     button.disabled = false;
     messages = [];
@@ -78,9 +100,8 @@ export function mountBgpStudio({onPack}) {
     preview.textContent = result.input.sample.join("\n");
     left.textContent = result.scans.knows.preview.map(r => r.person + " → " + r.colleague).join("\n");
     right.textContent = result.scans.atlas.preview.map(r => r.colleague).join("\n");
-    renderTable(answers, result.preview, [
-      "ordinal", "person", "colleague", "personId", "colleagueId",
-    ]);
+    state.page = 0;
+    showPage();
     idBridge.textContent = "Fixture-only bijective term mapping: " + result.pack.mapping +
       ". These are NOT SBM11 64-bit dictionary IDs. " +
       result.pack.sourcePairs + " binding pairs become " + result.pack.words +
@@ -132,6 +153,14 @@ export function mountBgpStudio({onPack}) {
   open.addEventListener("click", () => {
     pane.scrollIntoView({block: "start", behavior: "auto"});
     button.focus({preventScroll: true});
+  });
+  prev.addEventListener("click", () => {
+    if (state.result && state.page > 0) { state.page--; showPage(); }
+  });
+  next.addEventListener("click", () => {
+    if (state.result && (state.page + 1) * PAGE_SIZE < state.result.bindings.length) {
+      state.page++; showPage();
+    }
   });
   button.addEventListener("click", start);
   scale.addEventListener("change", () => {
