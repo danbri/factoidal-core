@@ -33,7 +33,7 @@ test("fixture person dictionary is injective, finite, and not a claimed SBM11 te
   assert.equal(Math.max(...ids), 1024);
   assert.throws(() => personWord(BASE + "object", 1024), /fixture person IRI/);
   assert.throws(() => personWord(personIri(2048), 1024), /outside the fixture/);
-  assert.throws(() => personWord(personIri(1), 64.5), /outside the fixture|fixture person/);
+  assert.throws(() => personWord(personIri(65), 64), /outside the fixture/);
 });
 
 test("512 BGP bindings fit the existing 128-row/1024-u32 packing profile", () => {
