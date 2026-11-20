@@ -7407,8 +7407,15 @@
     st.layoutSized = size !== '';
   };
   const imgClearSize = (id, st) => { if (st.layoutSized) imgWriteSize(id, st, ''); };
-  const updateImage = id => {
+  const updateImage = (id, force = false) => {
     const el = wrap(id);
+    // A lazy request waits until script asks for image state (the current engine's
+    // bounded demand trigger). Attribute writes are coalesced below so setting src
+    // and then loading=lazy in one script turn does not start an eager request.
+    if (!force && String(el.getAttribute('loading') ?? '').toLowerCase() === 'lazy') {
+      imgLazy.add(id);
+      return;
+    }
     const gen = ++imgGen;
     const hasSrc = n0.attr(id, 'src');
     const selection = imgSelection(id);
@@ -7480,8 +7487,14 @@
       // needs the document-mode check for ordinary setAttribute/removeAttribute.
       return imgAttrs.has(name.toLowerCase()) && info(id, 8) === 1;
     };
-    n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0 && watched(id, name) && isImg(id)) updateImage(id); return r; };
-    n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && watched(id, name) && isImg(id)) updateImage(id); return r; };
+    const schedule = id => {
+      imgPendingUpdates.add(id);
+      Promise.resolve().then(() => {
+        if (imgPendingUpdates.delete(id)) updateImage(id);
+      });
+    };
+    n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0 && watched(id, name) && isImg(id)) schedule(id); return r; };
+    n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && watched(id, name) && isImg(id)) schedule(id); return r; };
   };
   noteImg = id => imgWatch();
   // The page's own images: the first `imgStartMax` request at once (a host that draws the page
@@ -7489,6 +7502,7 @@
   // a script reads their state (complete, naturalWidth, naturalHeight, decode()).
   const imgStartMax = 16;
   const imgLazy = new Set();
+  const imgPendingUpdates = new Set();
   const imgStart = () => {
     const imgs = document.getElementsByTagName('img');
     if (imgs.length === 0) return;
@@ -7496,10 +7510,14 @@
     let k = 0;
     for (const el of imgs) {
       const id = nodeId(el);
-      if (k++ < imgStartMax) { imgDelay.add(id); updateImage(id); } else imgLazy.add(id);
+      const lazy = String(el.getAttribute('loading') ?? '').toLowerCase() === 'lazy';
+      if (!lazy && k++ < imgStartMax) { imgDelay.add(id); updateImage(id); } else imgLazy.add(id);
     }
   };
-  const imgTouch = id => { if (imgLazy.delete(id)) updateImage(id); };
+  const imgTouch = id => {
+    if (imgPendingUpdates.delete(id)) updateImage(id, true);
+    else if (imgLazy.delete(id)) updateImage(id, true);
+  };
   {
     const P = named.HTMLImageElement.prototype;
     const ofImg = (el, k) => { imgTouch(nodeId(el)); const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };

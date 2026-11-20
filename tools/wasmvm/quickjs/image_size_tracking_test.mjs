@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 const prelude=readFileSync(new URL('./prelude.js',import.meta.url),'utf8');
 function sizeTransport(){
   const start=prelude.indexOf('  const imgWriteSize = ');
-  const end=prelude.indexOf('  const updateImage = id => {',start);
+  const end=prelude.indexOf('  const updateImage = (id, force = false) => {',start);
   assert.ok(start>=0&&end>start);
   const commands=[],live=new Map();
   let limit=1;
@@ -71,29 +71,52 @@ function mutationWatcher(htmlDocument=true){
   const end=prelude.indexOf('  noteImg = id => imgWatch();',start);
   assert.ok(start>=0&&end>start);
   const updates=[];
-  const context=vm.createContext({Set,String,
+  let lazy=false;
+  const context=vm.createContext({Set,String,Promise,imgPendingUpdates:new Set(),
     imgWatching:false,imgAttrs:new Set(['src','srcset','sizes','crossorigin','referrerpolicy']),
     n:{setAttr(){return 0;},removeAttr(){return 0;}},
     info(_id,k){return k===0?1:k===8?(htmlDocument?1:0):0;},
-    htmlEl(){return true;},str(){return 'img';},updateImage(id){updates.push(id);}});
+    htmlEl(){return true;},str(){return 'img';},updateImage(id){updates.push([id,lazy]);}});
   vm.runInContext(prelude.slice(start,end)+'\n imgWatch();',context);
-  return {n:context.n,updates};
+  return {n:context.n,updates,setLazy(v){lazy=v;}};
 }
-test('null-namespace source removals trigger exactly the image source lifecycle',()=>{
+test('null-namespace source removals trigger exactly one image update per script turn',async()=>{
   const h=mutationWatcher();
   h.n.removeAttr(4,'\0src');
   h.n.removeAttr(4,'\0srcset');
   h.n.removeAttr(4,'urn:other\0src');
   h.n.removeAttr(4,'\0SRC');
-  assert.deepEqual(h.updates,[4,4]);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(h.updates,[[4,false]]);
 });
-test('ordinary HTML attributes fold case while namespace and XML local names do not',()=>{
+test('ordinary HTML attributes fold case while namespace and XML local names do not',async()=>{
   const h=mutationWatcher();
   h.n.setAttr(4,'SRC','a.png');
   h.n.setAttr(4,'\0SRC','other.png');
-  assert.deepEqual(h.updates,[4]);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(h.updates,[[4,false]]);
   const x=mutationWatcher(false);
   x.n.setAttr(4,'SRC','other.png');
   x.n.setAttr(4,'src','a.png');
-  assert.deepEqual(x.updates,[4]);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(x.updates,[[4,false]]);
+});
+test('a source write is observed after synchronous loading=lazy setup',async()=>{
+  const h=mutationWatcher();
+  h.n.setAttr(4,'src','/image.png');
+  h.setLazy(true);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(h.updates,[[4,true]]);
+});
+test('loading=lazy defers a request until script demands image state',()=>{
+  const start=prelude.indexOf('  const updateImage = (id, force = false) => {');
+  const end=prelude.indexOf('  const imgWatch = () => {',start);
+  assert.ok(start>=0&&end>start);
+  const lazy=new Set(),calls=[];
+  const context=vm.createContext({Set,String,imgLazy:lazy,wrap(){return {getAttribute(){return 'lazy';}};},
+    imgSelection(){calls.push('selected');return null;}});
+  vm.runInContext(prelude.slice(start,end)+'\n globalThis.update=updateImage;',context);
+  context.update(4);
+  assert.deepEqual([...lazy],[4]);
+  assert.deepEqual(calls,[]);
 });
