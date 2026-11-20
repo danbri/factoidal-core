@@ -254,7 +254,7 @@ policyProvenance = {
 ```
 
 ```observable-js
-provenanceTurtle = proposalTurtle + [
+provenanceTurtle = proposalTurtle + "\n" + [
   "@prefix evm: <urn:factoidal:ethereum-wasm#> .",
   'evm:eligiblePolicy evm:sourceSha256 "' + policyProvenance.evmSha256 + '" ;',
   ' evm:wasmSha256 "' + policyProvenance.wasmSha256 + '" ;',
