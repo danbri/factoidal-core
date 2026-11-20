@@ -5,11 +5,13 @@
 import {QUERY,PATTERN_KNOWS,PATTERN_ATLAS,SIZES,personIri,shortTerm}
   from "./bgp-fixtures.mjs";
 import {runIntegerBgpGpu} from "./integer-bgp-gpu.mjs";
+import {runCompactedBgpGpu} from "./integer-bgp-compact-gpu.mjs";
 import {compareBGPResults,makeBgpTrace} from "./bgp-comparison.mjs";
 
 export function mountBgpStudio() {
   const $=id=>document.getElementById(id);
   const pane=$("bgp-studio"),scale=$("bgp-size"),button=$("bgp-run"),
+    gpuPlan=$("bgp-gpu-plan"),
     gpuButton=$("bgp-gpu-run"),status=$("bgp-status"),
     gpuStatus=$("bgp-gpu-status"),sample=$("bgp-sample"),
     left=$("bgp-left"),right=$("bgp-right"),answers=$("bgp-answers"),
@@ -158,16 +160,18 @@ export function mountBgpStudio() {
     comparison.dataset.match="pending";
     comparison.textContent="WebGPU query running; no comparison until GPU readback.";
     try{
-      const result=await runIntegerBgpGpu(ref.input.integerGraph,
+      const plan=gpuPlan.value;
+      const runner=plan==="compacted"?runCompactedBgpGpu:runIntegerBgpGpu;
+      const result=await runner(ref.input.integerGraph,
         ref.input.queryConstants);
       if(id!==state.id||ref!==state.reference)return;
       const checked=compareBGPResults(ref.bindings,result.pairs);
-      const outcome={result,comparison:checked,error:null};
+      const outcome={plan:gpuPlan.value,result,comparison:checked,error:null};
       state.gpu=outcome;
       comparison.textContent=checked.summary;
       comparison.dataset.match=String(checked.equal);
       const discrepancies=checked.differingPairs.slice(0,8);
-      gpuObservation.textContent="Actual WebGPU BGP: "+result.triples+" source triples; "+
+      gpuObservation.textContent="Actual WebGPU BGP ("+gpuPlan.value+" plan): "+result.triples+" source triples; "+
         result.solutionCount+" output bindings.\n"+
         "First 12 GPU-computed solutions (IDs and lexical RDF):\n"+
         JSON.stringify(result.pairs.slice(0,12).map(([p,c])=>({
@@ -175,9 +179,16 @@ export function mountBgpStudio() {
           person:shortTerm(personIri(p-1)),
           colleague:shortTerm(personIri(c-1)),
         })),null,2)+
-        (discrepancies.length?"\nDifferent solution multiplicities: "+
+        (gpuPlan.value==="compacted"
+          ?"\\nActual GPU projections: "+result.leftCount+" knows rows, "+
+            result.rightCount+" Atlas rows; candidate comparisons per join pass: "+
+            (result.leftCount*result.rightCount)+
+            ". First 8 left rows: "+JSON.stringify(result.leftRows.slice(0,8))+
+            ". First 8 right keys: "+JSON.stringify(result.rightRows.slice(0,8))
+          :"\\nFused GPU probe: each qualifying source triple scans the whole source graph.")+
+        (discrepancies.length?"\\nDifferent solution multiplicities: "+
           JSON.stringify(discrepancies):"");
-      gpuStatus.textContent="Actual GPU BGP completed on "+
+      gpuStatus.textContent="Actual GPU BGP completed ("+gpuPlan.value+" plan) on "+
         (result.adapter||"unidentified adapter")+
         (result.isFallbackAdapter===true?" (software fallback)":"")+
         " · "+result.solutionCount+" solution mappings.";
