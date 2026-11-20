@@ -7489,9 +7489,9 @@
     };
     const schedule = id => {
       imgPendingUpdates.add(id);
-      Promise.resolve().then(() => {
+      chk(n.timer(register(() => {
         if (imgPendingUpdates.delete(id)) updateImage(id);
-      });
+      }), 0, 0));
     };
     n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0 && watched(id, name) && isImg(id)) schedule(id); return r; };
     n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && watched(id, name) && isImg(id)) schedule(id); return r; };
