@@ -1,6 +1,7 @@
 import EVMCleanroom.Core
 import EVMCleanroom.Frame
 import EVMCleanroom.Call
+import EVMCleanroom.OpcodeCall
 import EVMCleanroom.TxAccounting
 
 /-!
@@ -304,12 +305,61 @@ private def callSliceMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"reason\":\"usage: --call-slice HEX TARGET PARENT_GAS REQUESTED_GAS FUEL\"}"
     return 2
 
+/-- Run genuine parent bytecode containing CALL (0xf1) against one child.
+    Deliberately restricted: value/data/returndata zero and one child frame.
+    Usage: --call-opcode PARENT_HEX CHILD_HEX TARGET GAS PARENT_FUEL CHILD_FUEL -/
+private def callOpcodeMain (args : List String) : IO UInt32 := do
+  match args with
+  | [parentHex, childHex, targetStr, gasStr, parentFuelStr, childFuelStr] =>
+    match parseBytecode parentHex, parseBytecode childHex, targetStr.toNat?,
+      gasStr.toNat?, parentFuelStr.toNat?, childFuelStr.toNat? with
+    | .ok parentCode, .ok childCode, some target, some gas,
+      some parentFuel, some childFuel =>
+      let parentAddress : Nat := 0xc1
+      if target ≥ World.addressBound || target < 10 || target == parentAddress then
+        IO.println "{\"status\":\"inputError\",\"reason\":\"unsupported-address\"}"
+        return 2
+      let accounts : Nat → World.Account := fun addr =>
+        if addr == parentAddress then { code := parentCode }
+        else if addr == target then { code := childCode }
+        else {}
+      let initial := World.beginTransaction accounts
+      let result := OpcodeCall.run parentFuel childFuel initial parentAddress gas
+      match result with
+      | .stopped world parent =>
+        let flag := parent.stack.items.head?.map Word.val
+        let flagField := match flag with
+          | some n => "\"" ++ toString n ++ "\""
+          | none => "null"
+        IO.println ("{\"schemaVersion\":1,\"status\":\"stopped\",\"gasRemaining\":\"" ++
+          toString parent.gas ++ "\",\"flag\":" ++ flagField ++
+          ",\"slot0\":\"" ++ toString ((world.accounts target).storage 0) ++
+          "\",\"warmAddress\":" ++
+          (if world.warmAddresses target then "true" else "false") ++
+          ",\"warmSlot\":" ++
+          (if world.warmSlots target 0 then "true" else "false") ++
+          ",\"refund\":\"" ++ toString world.refund ++ "\"}")
+      | .exceptional world reason =>
+        IO.println ("{\"schemaVersion\":1,\"status\":\"exceptional\",\"error\":\"" ++
+          errorCode reason ++ "\",\"gasRemaining\":\"0\",\"slot0\":\"" ++
+          toString ((world.accounts target).storage 0) ++ "\"}")
+      | .unsupported why =>
+        IO.println ("{\"status\":\"unsupported\",\"reason\":\"" ++ why ++ "\"}")
+      return 0
+    | _, _, _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"reason\":\"invalid call-opcode parameters\"}"
+      return 2
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX TARGET GAS PARENT_FUEL CHILD_FUEL\"}"
+    return 2
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
   | "--tx-fee" :: rest => txFeeMain rest
   | "--storage" :: rest => storageMain rest
   | "--frame-storage" :: rest => frameStorageMain rest
   | "--call-slice" :: rest => callSliceMain rest
+  | "--call-opcode" :: rest => callOpcodeMain rest
   | ["--storage-batch", path] => storageBatchMain path
   | ["--batch", path] => runBatchFile path
   | [hex, gasStr, fuelStr] =>
