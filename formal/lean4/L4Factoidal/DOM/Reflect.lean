@@ -276,7 +276,7 @@ HTMLMediaElement autoplay . b
 HTMLMediaElement loop . b
 HTMLMediaElement controls . b
 HTMLMediaElement defaultMuted muted b
-HTMLAudioElement,HTMLVideoElement loading . e eager eager lazy,eager
+HTMLImageElement,HTMLIFrameElement,HTMLAudioElement,HTMLVideoElement loading . e eager eager lazy,eager
 HTMLVideoElement width . ul 0
 HTMLVideoElement height . ul 0
 HTMLVideoElement poster . u
@@ -814,6 +814,8 @@ theorem clampTo_idem (lo hi k : Nat) (h : lo ≤ hi) : clampTo lo hi (clampTo lo
 -- HTMLOrSVGElement (HTML §3.2.6) is on SVG and MathML elements too (MathML Core §2.1.3)
 #guard (rowsOf "MathMLElement").splitOn "\x00" |>.any (·.endsWith " tabIndex i tabindex")
 #guard (rowsOf "SVGElement").splitOn "\x00" |>.any (·.endsWith " autofocus b autofocus")
+#guard (rowsOf "HTMLImageElement").splitOn "\x00" |>.any (·.endsWith " loading e loading")
+#guard (rowsOf "HTMLIFrameElement").splitOn "\x00" |>.any (·.endsWith " loading e loading")
 #guard (tableText.splitOn "\n").all fun line =>
   match (line.splitOn " ").filter (· != "") with
   | _ :: _ :: _ :: rest => (parseKind rest).isSome
