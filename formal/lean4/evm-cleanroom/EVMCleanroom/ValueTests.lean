@@ -39,6 +39,13 @@ private def isTransferError (result : Except TransferError TxWorld)
 #guard isTransferError (pay initial (2 ^ 160) 2 0) .invalidAddress
 #guard isTransferError (pay initial 1 2 (modulus - 200)) .insufficientBalance
 
+private def invalidHugeAccounts (a : Nat) : Account :=
+  if a == 1 then { balance := modulus }
+  else if a == 2 then { balance := 1 }
+  else {}
+#guard isTransferError
+  (pay (beginTransaction invalidHugeAccounts) 1 2 1) .invalidBalance
+
 private def nearMaxAccounts (a : Nat) : Account :=
   if a == 1 then { balance := 100 }
   else if a == 2 then { balance := modulus - 2 }
