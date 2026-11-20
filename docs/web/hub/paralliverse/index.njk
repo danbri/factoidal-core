@@ -34,6 +34,7 @@ permalink: /web/hub/paralliverse/index.html
     <button class="example-card" type="button" data-preset="duplicates" data-needs-studio disabled><span class="example-icon" aria-hidden="true">≋</span><span><strong>Repeated words</strong><small>Multiplicity stays visible.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="empty" data-needs-studio disabled><span class="example-icon" aria-hidden="true">∅</span><span><strong>Nothing in, nothing out</strong><small>Empty inputs are real inputs.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="pack" aria-pressed="true"><span class="example-icon" aria-hidden="true">▤</span><span><strong>Stable packing</strong><small>Rows become one ordered stream.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
+    <button class="example-card" type="button" data-preset="city"><span class="example-icon" aria-hidden="true">▦</span><span><strong>Painted City · tile fixture</strong><small>Three tiles, ordered memberships A/B/C; actual Lean and GPU packing.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
   </div>
 </section>
 
@@ -71,6 +72,27 @@ map add 1</textarea>
   [4294967295, 3]
 ]</textarea>
     <p class="pack-note" id="input-help">JSON rows of unsigned 32-bit decimal integers. Up to 128 rows and 1,024 words. Empty rows and repeated values are preserved by the input model.</p>
+    <section id="city-lab" class="city-lab" aria-label="Painted City tile membership editor" hidden>
+      <h3>Painted City · choose which objects touch each tile</h3>
+      <p class="pack-note">A=1, B=2, C=3. Check memberships in painter order; the resulting rows are input to the real Lean Count → Scan → Scatter program. This editor selects memberships; it does not calculate geometric intersections.</p>
+      <div class="city-tiles">
+        <fieldset><legend>Tile 0</legend>
+          <label><input type="checkbox" data-city-tile="0" value="1" checked> A</label>
+          <label><input type="checkbox" data-city-tile="0" value="2"> B</label>
+          <label><input type="checkbox" data-city-tile="0" value="3" checked> C</label>
+        </fieldset>
+        <fieldset><legend>Tile 1</legend>
+          <label><input type="checkbox" data-city-tile="1" value="1" checked> A</label>
+          <label><input type="checkbox" data-city-tile="1" value="2" checked> B</label>
+          <label><input type="checkbox" data-city-tile="1" value="3"> C</label>
+        </fieldset>
+        <fieldset><legend>Tile 2</legend>
+          <label><input type="checkbox" data-city-tile="2" value="1"> A</label>
+          <label><input type="checkbox" data-city-tile="2" value="2"> B</label>
+          <label><input type="checkbox" data-city-tile="2" value="3" checked> C</label>
+        </fieldset>
+      </div>
+    </section>
     <div class="run-toolbar">
       <button id="run" class="primary-button" type="button" disabled><span aria-hidden="true">▶</span> Run CPU + GPU</button>
       <label class="live-control" for="live"><input id="live" type="checkbox" checked> Live updates</label>
@@ -124,6 +146,32 @@ map add 1</textarea>
 </div>
 <p id="comparison-status" class="comparison-status" role="status"></p>
 
+<section class="pack-card execution-stepper" aria-labelledby="execution-stepper-heading">
+  <div class="panel-heading">
+    <div><p class="eyebrow">Recorded execution</p><h2 id="execution-stepper-heading">Step through the CPU or GPU path</h2></div>
+    <span class="panel-index">03 / STEP</span>
+  </div>
+  <p class="pack-note">Select a backend and navigate the phases represented by its actual run and Lean-supplied plan. This replays recorded evidence; it does not pause a running CPU thread or GPU invocation. Intermediate GPU buffers are not read back.</p>
+  <div class="step-toolbar">
+    <div class="visual-target" role="group" aria-label="Execution path to inspect">
+      <button type="button" data-step-target="cpu" aria-pressed="true">CPU · Lean/Wasm</button>
+      <button type="button" data-step-target="gpu" aria-pressed="false">GPU · WebGPU</button>
+    </div>
+    <div class="step-controls">
+      <button type="button" id="step-prev" class="secondary-button" disabled>Previous</button>
+      <button type="button" id="step-next" class="secondary-button">Next step</button>
+    </div>
+  </div>
+  <ol id="step-list" class="step-list" aria-label="Selected execution stages"></ol>
+  <p id="step-status" class="step-status" role="status">Awaiting a recorded run.</p>
+  <pre id="step-observation" class="step-observation">Run a computation to inspect the evidence.</pre>
+  <div class="step-diff">
+    <strong>What differs between CPU and GPU?</strong>
+    <p>CPU runs the Lean specification or fused task interpreter; GPU submits a different program and requires actual readback.</p>
+    <p id="step-difference" role="status">Outputs have not yet been compared.</p>
+  </div>
+</section>
+
 <section class="pack-card inspect-card" aria-labelledby="inspect-heading">
   <div class="panel-heading"><div><p class="eyebrow">Look inside</p><h2 id="inspect-heading">From source to execution</h2></div><span class="panel-index">03 / INSPECT</span></div>
   <p id="inspection-help" class="pack-note">Word studio reveals the source tree and the result of the proved pure map-fusion pass. Packing uses the existing Count, Scan and Scatter program.</p>
@@ -139,6 +187,16 @@ map add 1</textarea>
     <p id="action-status" class="pack-note" role="status"></p>
   </div>
   <label class="share-fallback" id="share-fallback" hidden>Copy this link <input id="share-link" readonly type="text"></label>
+</section>
+
+<section class="future-experiments" aria-labelledby="future-heading">
+  <div class="section-heading"><h2 id="future-heading">Four application worlds</h2><p class="pack-note">Painted City has a runnable tile-membership fixture. The remaining workloads need new Lean primitives and backend proofs; these are tracked designs, not executable examples yet.</p></div>
+  <div class="future-grid">
+    <article><h3>Painted City</h3><p>Choose the tile fixture above. IDs 1=A, 2=B, 3=C. Tiles [A,C], [A,B], [C] pack to [A,C,A,B,C] in painter order.</p><a href="https://github.com/danbri/factoidal-core/issues/663">Geometry/binning implementation ↗</a></article>
+    <article><h3>Life Across Worlds</h3><p>Partitioned cellular automata, neighbourhood halos and synchronized generations.</p><a href="https://github.com/danbri/factoidal-core/issues/664">Stencil backend work ↗</a></article>
+    <article><h3>Query Constellation</h3><p>Shardborough BGP ranges, partial bindings and out-of-order remote-worker replies.</p><a href="https://github.com/danbri/factoidal-core/issues/665">Query worker work ↗</a></article>
+    <article><h3>Fractal Tapestry</h3><p>Bounded pixel tasks, tile scheduling and precise numerical comparisons.</p><a href="https://github.com/danbri/factoidal-core/issues/666">Pixel backend work ↗</a></article>
+  </div>
 </section>
 
 <section class="proof-section" id="proofs" aria-labelledby="proof-heading">

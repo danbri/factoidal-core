@@ -277,6 +277,30 @@ try {
     assert.match(mixed.runtime[`${stage} source SHA-256`] ?? "", /^[0-9a-f]{64}$/);
   }
   report.runtime = mixed.runtime;
+
+  // The evidence stepper must distinguish backend paths and show actual results.
+  const stepper = await evaluate(`(() => {
+    const heading = document.getElementById("execution-stepper-heading")?.textContent;
+    document.querySelector('[data-step-target="gpu"]').click();
+    const gpu = [...document.querySelectorAll("#step-list .step-item")].map(node => node.textContent);
+    document.querySelector("#step-next").click();
+    document.querySelector("#step-next").click();
+    const selectedGpuStage = document.querySelector("#step-observation")?.textContent;
+    document.querySelector('[data-step-target="cpu"]').click();
+    const cpu = [...document.querySelectorAll("#step-list .step-item")].map(node => node.textContent);
+    return {heading, gpu, cpu, selectedGpuStage,
+      difference: document.querySelector("#step-difference")?.textContent};
+  })()`);
+  assert.match(stepper.heading, /Step through the CPU or GPU path/);
+  assert.deepEqual(stepper.gpu, [
+    "1. Upload prepared packet", "2. Count", "3. Scan",
+    "4. Stable scatter", "5. Actual GPU readback"]);
+  assert.deepEqual(stepper.cpu, [
+    "1. Lean packet preparation", "2. Lean sequential specification", "3. Actual CPU output"]);
+  assert.match(stepper.selectedGpuStage, /One invocation computes/);
+  assert.match(stepper.difference, /Exact payload equality: 6 words/);
+  report.cases.push({name: "recorded-cpu-gpu-stepper", ...stepper});
+
   const {gpu: browserGpu} = await devtools.call("SystemInfo.getInfo");
   report.browserGraphics = {
     devices: browserGpu.devices, webgpuStatus: browserGpu.featureStatus?.webgpu,
@@ -309,6 +333,20 @@ try {
   await observeCase(evaluate, "manual-run", "custom", "[17, 23, 17]");
   await edit("source", changed, "input");
   await observeCase(evaluate, "automatic-after-manual", "custom", changedOutput);
+
+  // This is a membership editor, not host-side geometry. Both actual backends
+  // must perform the packing; changing a tile membership changes the result.
+  await evaluate('document.querySelector("[data-preset=city]").click()');
+  const cityInitial = await observeCase(evaluate, "city-memberships", "custom", "[1, 3, 1, 2, 3]");
+  assert.equal(await evaluate('document.querySelector("#city-lab").hidden'), false);
+  await evaluate(`(() => {
+    const item = [...document.querySelectorAll("#city-lab input[data-city-tile]")]
+      .find(x => x.dataset.cityTile === "0" && x.value === "2");
+    if (!item) throw Error("The Painted City tile control was not found");
+    item.click();
+  })()`);
+  const cityChanged = await observeCase(evaluate, "city-membership-toggle", "custom", "[1, 2, 3, 1, 2, 3]");
+  assert.notEqual(cityInitial.input, cityChanged.input);
 
   const studioAvailable = await evaluate('Boolean(document.querySelector("#mode-studio") && !document.querySelector("#mode-studio").disabled)');
   if (process.env.REQUIRE_PARALLIVERSE_STUDIO === "1") assert(studioAvailable, "The actual Studio runtime must be enabled");

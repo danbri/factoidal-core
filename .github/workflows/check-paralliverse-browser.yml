@@ -1,6 +1,12 @@
 name: Paralliverse browser acceptance
 
 on:
+  pull_request:
+    paths:
+      - 'docs/web/hub/paralliverse/**'
+      - 'docs/.eleventy.js'
+      - 'tools/paralliverse-browser-smoke.mjs'
+      - '.github/workflows/check-paralliverse-browser.yml'
   workflow_dispatch:
     inputs:
       core_ref:
@@ -19,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.core_ref }}
+          ref: ${{ inputs.core_ref || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -46,7 +52,7 @@ jobs:
           git rev-parse HEAD | tee "$EVIDENCE/commit.txt"
           node --version | tee "$EVIDENCE/node-version.txt"
           sha256sum docs/.eleventy.js docs/_includes/hub-app.njk \
-            docs/web/hub/paralliverse/{index.njk,style.css,app.mjs,worker.mjs,gpu.mjs} \
+            docs/web/hub/paralliverse/{index.njk,style.css,app.mjs,execution-stepper.mjs,worker.mjs,gpu.mjs,word-gpu.mjs} \
             tools/paralliverse-browser-smoke.mjs | tee "$EVIDENCE/source.sha256"
 
       - name: Install the matching published web release
