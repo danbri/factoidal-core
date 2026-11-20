@@ -120,6 +120,28 @@ test('a completed plain-src image is available to another detached image in the 
   assert.deepEqual(requests,['/cached.png','/cached.png']);
 });
 
+test('a valid image response is accepted when its HTTP status is an error',async()=>{
+  const start=prelude.indexOf('  const imgSelection = id => {');
+  const end=prelude.indexOf('  const imgWatch = () => {',start);
+  const events=[],timers=[],states=new Map(),available=new Map();
+  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
+    viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(_id,name)=>name==='src'?'/error-status.png':null},
+    wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:()=>'div',
+    n:{query(_id,op){if(op===195)return '0/error-status.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    imgGen:0,imgStates:states,imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay:()=>{},
+    chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
+    corsSettings:()=>({mode:'no-cors',credentials:'include'}),
+    elementFetch:()=>Promise.resolve({status:404,bytes:new TextEncoder().encode('19 11')})});
+  vm.runInContext(prelude.slice(start,end)+'\n globalThis.update=updateImage;',context);
+  context.update(1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(states.get(1).complete,true);
+  assert.equal(states.get(1).w,19);
+  assert.equal(states.get(1).h,11);
+  assert.deepEqual(events,['load']);
+  assert.equal(available.has(JSON.stringify([9,'/error-status.png','no-cors','include'])),true);
+});
+
 test('a completed superseded fetch seeds availability without settling its stale element request',async()=>{
   const start=prelude.indexOf('  const imgSelection = id => {');
   const end=prelude.indexOf('  const imgWatch = () => {',start);

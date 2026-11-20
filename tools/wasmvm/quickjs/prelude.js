@@ -7483,7 +7483,10 @@
       }
       let size = '';
       // the engine answers an image's natural size, never its bytes (Net.Xhr.imageRaw)
-      if (r !== null && r.status >= 200 && r.status < 300) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
+      // HTML's image algorithm ignores the HTTP status when deciding whether the
+      // response body is a valid image. Net.Xhr.imageRaw has already reduced a
+      // decodable response to its natural dimensions, including error responses.
+      if (r !== null) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
       if (size === '') { if (imgStates.get(id)?.gen === gen) settle(false); return; }
       const [w, h] = size.split(' ').map(Number);
       // A completed image can enter the document's available-image list even
