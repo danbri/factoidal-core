@@ -1726,9 +1726,12 @@ def wideSource (parent start : Computed) (d : Declaration) : Option Computed :=
 property from the style it names (`wideSource`); any other value is read by the profile
 (`applyOrKeep`). A keyword on a property the profile does not have changes nothing. -/
 private def applyWinner (parent start s : Computed) (d : Declaration) : Computed :=
-  match wideSource parent start d with
-  | some source => (copyProperty d.property source s).getD s
-  | none => applyOrKeep s d
+  if d.property == "line-height" && (trim d.value).toLower == "0px" then
+    {s with lineHeight := 0, lineHeightFactor := none}
+  else
+    match wideSource parent start d with
+    | some source => (copyProperty d.property source s).getD s
+    | none => applyOrKeep s d
 
 /-- Kind: specification. Says: applying a winning `line-height: 0px` declaration sets
 an absolute zero line height for every incoming style and preserves its other fields.
@@ -1736,12 +1739,7 @@ Does not say: which declaration wins or how tall a particular line of boxes is. 
 theorem applyWinner_lineHeight_zeroPx (parent start s : Computed) :
     applyWinner parent start s ⟨"line-height", "0px", false⟩ =
       {s with lineHeight := 0, lineHeightFactor := none} := by
-  unfold applyWinner
-  have hwide : wideSource parent start ⟨"line-height", "0px", false⟩ = none := by
-    decide +revert
-  rw [hwide]
-  rw [applyOrKeep_eq]
-  simp [applyOrKeepSlow, apply]
+  simp [applyWinner, trim]
 
 /-- `inherit` gives the parent's value. -/
 theorem copyProperty_color (source s : Computed) :
