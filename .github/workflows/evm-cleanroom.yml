@@ -151,7 +151,7 @@ jobs:
             "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/prague/eip7623_increase_calldata_cost/test_eip_7623.json"
           printf '9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4  .lake/eels/eip7623.json\n' | sha256sum --check
           node scripts/eels/run-lean-state-tests.mjs --fixture .lake/eels/eip7623.json --out .lake/eels/lean-state-results.json | tee .lake/eels/summary.json
-          python3 scripts/check-assurance.py --result .lake/eels/lean-state-results.json
+          python3 scripts/check-assurance.py --result .lake/eels/lean-state-results.json --fixture .lake/eels/eip7623.json
           python3 scripts/test-assurance.py
       - name: Reject tampered EELS post-root and account-state expectations
         working-directory: formal/lean4/evm-cleanroom
