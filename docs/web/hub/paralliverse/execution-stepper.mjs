@@ -150,7 +150,7 @@ export function mountExecutionStepper() {
   const update = patch => {Object.assign(state, patch); render();};
   render();
   return {
-    reset(mode) {update({mode, cpuWords: null, studio: null, gpuWords: null, gpuMeta: null, position: 0});},
+    reset(mode, gpuState = "checking") {update({mode, gpuState, cpuWords: null, studio: null, gpuWords: null, gpuMeta: null, position: 0});},
     cpuPack(words) {update({mode: "pack", cpuWords: words, studio: null});},
     cpuStudio(report) {update({mode: "studio", cpuWords: report.output, studio: report});},
     gpu(words, metadata) {update({gpuWords: words, gpuMeta: metadata});},
