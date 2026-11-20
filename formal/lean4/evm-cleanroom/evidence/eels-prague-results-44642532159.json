@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "kind": "EELS-state-test-real-execution-restricted-Lean",
+  "status": "pass",
+  "provenance": {
+    "source": "EELS-generated fixtures (EthereumJS mirror)",
+    "sha256": "9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4",
+    "format": "state_test",
+    "totalFixtureCases": 6,
+    "pragueFork": true
+  },
+  "actualLeanStateTestsExecuted": 4,
+  "passed": 4,
+  "failed": 0,
+  "unsupported": 2,
+  "cases": [
+    {
+      "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_3]",
+      "status": "unsupported",
+      "reason": "transaction-family-not-yet-modelled"
+    },
+    {
+      "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_4]",
+      "status": "unsupported",
+      "reason": "transaction-family-not-yet-modelled"
+    },
+    {
+      "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_0_protected]",
+      "status": "pass",
+      "fork": "Prague",
+      "transactionType": 0,
+      "gasLimit": "21010",
+      "intrinsicGas": "21004",
+      "calldataFloorGas": "21010",
+      "accessListGas": "0",
+      "chargedGas": "21010",
+      "baseFeeBurn": "147070",
+      "leanExecutionGas": "0",
+      "coinbaseReward": "63030",
+      "expectedStateRoot": "0x52d6c2f082cd3c20beaea5073d919e7bc2f6470a7ba163178ef1ab85b2591922",
+      "computedStateRoot": "0x52d6c2f082cd3c20beaea5073d919e7bc2f6470a7ba163178ef1ab85b2591922",
+      "observedLogsHash": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+      "proofBoundary": "Lean empty bytecode execution AND Lean fee/nonce settlement; JS decodes signed transaction and serializes EthereumJS Merkle state roots."
+    },
+    {
+      "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_0_unprotected]",
+      "status": "pass",
+      "fork": "Prague",
+      "transactionType": 0,
+      "gasLimit": "21010",
+      "intrinsicGas": "21004",
+      "calldataFloorGas": "21010",
+      "accessListGas": "0",
+      "chargedGas": "21010",
+      "baseFeeBurn": "147070",
+      "leanExecutionGas": "0",
+      "coinbaseReward": "63030",
+      "expectedStateRoot": "0xfb1c83fa69725db9b4e2d14b832c5307efea9716da8b5acfa0b847aa4a6ea4dd",
+      "computedStateRoot": "0xfb1c83fa69725db9b4e2d14b832c5307efea9716da8b5acfa0b847aa4a6ea4dd",
+      "observedLogsHash": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+      "proofBoundary": "Lean empty bytecode execution AND Lean fee/nonce settlement; JS decodes signed transaction and serializes EthereumJS Merkle state roots."
+    },
+    {
+      "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_1]",
+      "status": "pass",
+      "fork": "Prague",
+      "transactionType": 1,
+      "gasLimit": "28170",
+      "intrinsicGas": "28168",
+      "calldataFloorGas": "28170",
+      "accessListGas": "4300",
+      "chargedGas": "28170",
+      "baseFeeBurn": "197190",
+      "leanExecutionGas": "0",
+      "coinbaseReward": "84510",
+      "expectedStateRoot": "0xfcc56f5a3890ad0d8f2e74d503a8a7802fc03bff56ab314d80694832d5e6716c",
+      "computedStateRoot": "0xfcc56f5a3890ad0d8f2e74d503a8a7802fc03bff56ab314d80694832d5e6716c",
+      "observedLogsHash": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+      "proofBoundary": "Lean empty bytecode execution AND Lean fee/nonce settlement; JS decodes signed transaction and serializes EthereumJS Merkle state roots."
+    },
+    {
+      "id": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_2]",
+      "status": "pass",
+      "fork": "Prague",
+      "transactionType": 2,
+      "gasLimit": "28170",
+      "intrinsicGas": "28168",
+      "calldataFloorGas": "28170",
+      "accessListGas": "4300",
+      "chargedGas": "28170",
+      "baseFeeBurn": "197190",
+      "leanExecutionGas": "0",
+      "coinbaseReward": "0",
+      "expectedStateRoot": "0x43cd1537e14c9820b4b3829e8622a8f20333d165fc8979de58a4e6b2dff67985",
+      "computedStateRoot": "0x43cd1537e14c9820b4b3829e8622a8f20333d165fc8979de58a4e6b2dff67985",
+      "observedLogsHash": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+      "proofBoundary": "Lean empty bytecode execution AND Lean fee/nonce settlement; JS decodes signed transaction and serializes EthereumJS Merkle state roots."
+    }
+  ],
+  "limits": {
+    "notGeneralEVM": true,
+    "supported": "Prague EIP-7623 valid signed type-0/1/2 zero-value no-code transactions; Lean fee/nonce/account-balance settlement",
+    "trusted": [
+      "EthereumJS RLP/signature recovery",
+      "EthereumJS account/Merkle Patricia trie serializer",
+      "JS host transaction field extraction",
+      "Lean interpreter/runtime/compiler"
+    ],
+    "notVerified": [
+      "signature recovery",
+      "EIP-7623 host fee formula",
+      "MPT hashing",
+      "post state root encoding",
+      "full EVM/transaction semantics"
+    ]
+  }
+}

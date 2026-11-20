@@ -1,0 +1,9 @@
+# EVM assurance ledger review — 20 November 2026
+
+Reviewed PR #642 at d1694a331c87b7b0df356bfa9b9882b6d31de872 and issue #654. Workflow run 44642532159, job 135976912852, reports four restricted Prague fixture executions passed, zero failed, two unsupported; all four reported post-state roots match. The separate Shanghai PUSH0 job only parses. The EELS artifact contains the fixture, individual result, two negative-control reports and generated npm lock. The fixture mirror commit is pinned, but the upstream generator revision has not been established.
+
+The manifest is a selected, versioned evidence snapshot, not a complete Ethereum assurance case. Axiom lists are transcribed from that CI run's `#print axioms` outputs. `source_sha256` identifies the exact theorem file in that revision; `current_source_sha256` is used only for a comment-only correction. No independent proof of EELS refinement or general account semantics is claimed.
+
+The consistency gate validates pinned source file and evidence hashes, enumerated fixture identities, classifications, roots, counts and the managed SOUNDNESS summary. It rejects fixture loss or reclassification unless the reviewed baseline is intentionally updated. It is not a natural-language contradiction detector, proof checker, fixture provenance verifier or independent runner. The CI replay job runs the gate against newly produced results. The controls exercise changed totals, missing case, wrong root, changed status, fixture hash and unsupported reason.
+
+This environment has no `lake` command on PATH. The new gate and its negative controls were run locally against the archived CI result; no new Lean build, npm installation or EELS replay was performed here. The workflow evidence is from the cited original commit, not these uncommitted changes. No changes have been published.

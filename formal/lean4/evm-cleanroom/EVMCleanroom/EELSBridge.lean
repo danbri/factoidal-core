@@ -4,9 +4,9 @@ import EVMCleanroom.Core
 
 This only establishes that our interpreter's machine-level execution of
 the empty bytecode is a zero-gas STOP and does not mutate its stack or memory.
-The surrounding Ethereum transaction rules (EIP-7623 fee floor, signatures,
-balances, nonces, trie roots) remain in the **unverified host** and must be
-reviewed and independently checked. It is NOT an Ethereum state-transition
+Restricted fee, balance and nonce arithmetic is implemented in TxAccounting;
+signature parsing, field mapping and trie roots remain in the unverified host.
+No EELS correspondence is proved for these parts. It is NOT an Ethereum state-transition
 or Solidity compiler correctness proof.
 -/
 
