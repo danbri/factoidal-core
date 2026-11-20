@@ -167,3 +167,84 @@ export async function instantiateEvmPredicate(hex = EVM_TRANSFER_GUARD_HEX) {
   };
   return {compiled,evaluate};
 }
+
+
+/** Full unsigned EVM uint256 comparison represented as four i64 limbs. */
+export const MAX_UINT256=(1n<<256n)-1n;
+
+export function parseUint256Term(term) {
+  if(term!==null&&typeof term==='object') {
+    if(term.type!=='literal'||![
+      'http://www.w3.org/2001/XMLSchema#integer',
+      'http://www.w3.org/2001/XMLSchema#nonNegativeInteger',
+    ].includes(term.datatype)) {
+      throw new TypeError('SPARQL EVM uint256 input must be an explicitly typed integer literal');
+    }
+  }
+  const text=term&&typeof term==='object'&&'value' in term?term.value:term;
+  if(typeof text!=='string'||!/^(?:0|[1-9][0-9]*)$/.test(text))
+    throw new RangeError('EVM uint256 input must be canonical nonnegative decimal');
+  const n=BigInt(text);
+  if(n>MAX_UINT256)throw new RangeError('integer outside uint256 EVM domain');
+  return n;
+}
+export function uint256ToLimbs(value) {
+  const n=parseUint256Term(value);
+  return [192n,128n,64n,0n].map(shift=>(n>>shift)&MAX_UINT64);
+}
+
+// Unlike simply casting a uint256 to i64, lexicographic unsigned limb
+// comparison preserves every possible EVM LT result (relative to the
+// caller's correctly marshalled 256-bit arguments).
+function emitUnsigned256Less(left,right) {
+  if(left.op!=='argument'||right.op!=='argument')
+    fail('256-bit translation requires direct ABI argument operands');
+  const get=(arg,limb)=>[0x20,...uleb(4*arg.index+limb)]; // local.get
+  const lt=limb=>[...get(left,limb),...get(right,limb),0x54]; // i64.lt_u -> i32
+  const eq=limb=>[...get(left,limb),...get(right,limb),0x51]; // i64.eq -> i32
+  function cmp(limb) {
+    if(limb===3)return lt(limb);
+    // (aHi < bHi) OR ((aHi == bHi) AND (aLo < bLo))
+    return [...lt(limb),...eq(limb),...cmp(limb+1),0x71,0x72];
+  }
+  return [...cmp(0),0xad]; // i64.extend_i32_u
+}
+function emit256(expr) {
+  if(expr.op==='ltUnsigned')return emitUnsigned256Less(expr.a,expr.b);
+  if(expr.op==='isZero')return [...emit256(expr.arg),0x50,0xad];
+  fail('256-bit translation only admits unsigned ABI comparison and ISZERO');
+}
+
+/** Source EVM stack operations become an import-free 8-parameter WASM module.
+ * This is finite differential evidence, NOT a Lean-refinement theorem yet.
+ */
+export function compileEvmToWasm256(hex) {
+  const decoded=decodePurePredicate(hex);
+  const body=[0,...emit256(decoded.expression),0x0b];
+  const name=[...new TextEncoder().encode('evaluate')];
+  return {
+    bytes:Uint8Array.from([
+      0,97,115,109,1,0,0,0,
+      ...section(1,[1,0x60,8,...Array(8).fill(0x7e),1,0x7e]),
+      ...section(3,[1,0]),
+      ...section(7,[1,...vec(name),0,0]),
+      ...section(10,[1,...vec(body)]),
+    ]),
+    expression:decoded.expression,operations:decoded.operations,
+    inputDomain:'uint256 × uint256 as four unsigned i64 limbs per EVM word',
+    wasmSignature:'(i64×8)->i64',
+  };
+}
+export async function instantiateEvmPredicate256(hex=EVM_TRANSFER_GUARD_HEX) {
+  const compiled=compileEvmToWasm256(hex);
+  if(!WebAssembly.validate(compiled.bytes))
+    throw Error('generated uint256 WASM failed validation');
+  const {instance}=await WebAssembly.instantiate(compiled.bytes);
+  const evaluate=(balance,amount)=>{
+    const args=[...uint256ToLimbs(balance),...uint256ToLimbs(amount)];
+    const result=instance.exports.evaluate(...args);
+    if(result!==0n&&result!==1n)throw Error('non-Boolean EVM predicate result');
+    return result===1n;
+  };
+  return {compiled,evaluate};
+}
