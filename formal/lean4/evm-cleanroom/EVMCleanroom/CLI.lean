@@ -47,6 +47,7 @@ private def errorCode : EVMCleanroom.Error → String
   | .invalidJump _ => "invalidJump"
   | .alreadyHalted => "alreadyHalted"
   | .writeProtection => "writeProtection"
+  | .unsupportedFork => "unsupportedFork"
   | .stepLimit => "stepLimit"
 
 /-- Bounded, lossless memory snapshot. The result records whether the snapshot
