@@ -46,6 +46,7 @@ private def errorCode : EVMCleanroom.Error → String
   | .invalidOpcode _ => "invalidOpcode"
   | .invalidJump _ => "invalidJump"
   | .alreadyHalted => "alreadyHalted"
+  | .writeProtection => "writeProtection"
   | .stepLimit => "stepLimit"
 
 /-- Bounded, lossless memory snapshot. The result records whether the snapshot
@@ -150,9 +151,45 @@ private def txFeeMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"message\":\"expected 12 transaction parameters\"}"
     return 2
 
+/-- Explicitly scoped, single-account storage execution mode.
+    No transaction fees, receipts, prestate trie or rollback are implied.
+    Syntax: --storage HEX GAS FUEL KEY ORIGINAL_VALUE. -/
+private def storageJSON (s : State) (key : Nat) : String :=
+  "{\"schemaVersion\":1,\"status\":\"ok\",\"gasRemaining\":\"" ++ toString s.gas ++
+  "\",\"halted\":" ++ (if s.halted then "true" else "false") ++
+  ",\"slot\":\"" ++ toString key ++
+  "\",\"original\":\"" ++ toString (s.storage.original key) ++
+  "\",\"current\":\"" ++ toString (s.storage.current key) ++
+  "\",\"warm\":" ++ (if s.storage.warm key then "true" else "false") ++
+  ",\"refund\":\"" ++ toString s.storage.refund ++ "\"}"
+
+private def storageMain (args : List String) : IO UInt32 := do
+  match args with
+  | [hex, gasStr, fuelStr, keyStr, originalStr] =>
+    match parseBytecode hex, gasStr.toNat?, fuelStr.toNat?,
+          keyStr.toNat?, originalStr.toNat? with
+    | .ok code, some gas, some fuel, some key, some original =>
+      if key ≥ modulus || original ≥ modulus then
+        IO.println "{\"status\":\"inputError\",\"message\":\"storage words must be below 2^256\"}"
+        return 2
+      let s : State :=
+        { code := code, gas := gas,
+          storage := Storage.withInitial key original }
+      match run fuel s with
+      | .ok out => IO.println (storageJSON out key)
+      | .error e => IO.println (errorJSON e)
+      return 0
+    | _, _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX GAS FUEL KEY ORIGINAL_VALUE\"}"
+      return 2
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"usage: --storage HEX GAS FUEL KEY ORIGINAL_VALUE\"}"
+    return 2
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
   | "--tx-fee" :: rest => txFeeMain rest
+  | "--storage" :: rest => storageMain rest
   | ["--batch", path] => runBatchFile path
   | [hex, gasStr, fuelStr] =>
     match parseBytecode hex, gasStr.toNat?, fuelStr.toNat? with
