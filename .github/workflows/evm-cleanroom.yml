@@ -223,6 +223,10 @@ jobs:
             --fixture .lake/eels/push0-call-contexts.json \
             --out .lake/eels/lean-call-context-results.json | tee .lake/eels/call-context-summary.json
           python3 -c 'import json; x=json.load(open(".lake/eels/lean-call-context-results.json")); c=x["counts"]; assert x["status"]=="pass" and c["passed"]==1 and c["failed"]==0 and c["unsupported"]==3 and c["CancunCases"]==4 and c["otherForkNotExecuted"]==12 and all(z["computedStateRoot"]==z["expectedStateRoot"] for z in x["cases"] if z["status"]=="pass"),x'
+      - name: Reject forged CALL-context storage, root, signer and returned byte
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/call-context-selftest.mjs .lake/eels/push0-call-contexts.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==5 and all(c["rejected"] for c in x["cases"]),x'
       - name: Reject falsified nonempty EELS contract roots, storage and signer
         working-directory: formal/lean4/evm-cleanroom
         run: |
