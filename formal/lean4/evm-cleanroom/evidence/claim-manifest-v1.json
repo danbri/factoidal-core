@@ -6,7 +6,7 @@
   "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44642532159",
   "lean_version": "4.33.1",
   "specification_revision": null,
-  "specification_revision_note": "Generated fixture mirror is pinned below; its generating execution-specs commit has not been independently established. No EELS refinement is claimed.",
+  "specification_revision_note": "Fixture _info names upstream execution-specs test source tests-v5.4.0 (Git tag independently resolved to 4f68564f47c7e577ad6cbb570858316f5ff0e7bb) and filling tool 2.18.0rc6. This is test-source provenance, NOT proof of the exact generator executable revision or formal EELS semantic refinement.",
   "replay": {
     "id": "eels-prague-eip7623-restricted",
     "fixture_url": "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/prague/eip7623_increase_calldata_cost/test_eip_7623.json",
@@ -73,7 +73,16 @@
       "Fixture is a mirror, generator revision not established"
     ],
     "review_status": "not independently reviewed",
-    "reproduce": "See scripts/eels/README.md; run replay and scripts/eels/selftest.mjs; then python3 scripts/check-assurance.py --result .lake/eels/lean-state-results.json"
+    "reproduce": "See scripts/eels/README.md; run replay and scripts/eels/selftest.mjs; then python3 scripts/check-assurance.py --result .lake/eels/lean-state-results.json",
+    "upstream_test_source": {
+      "test_source_repository": "https://github.com/ethereum/execution-specs",
+      "fixture_reported_tag": "tests-v5.4.0",
+      "resolved_tag_commit": "4f68564f47c7e577ad6cbb570858316f5ff0e7bb",
+      "source_path": "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py",
+      "filling_transition_tool": "2.18.0rc6",
+      "reference_spec_version": "744f2075ba5deee9c1040eb089104d55bd89960d",
+      "interpretation": "All six fixture _info records name these values; tag commit independently resolved and source file fetched. Exact generator revision and binary are not proved."
+    }
   },
   "theorems": [
     {
@@ -97,7 +106,7 @@
     {
       "id": "EVMCleanroom.TxAccounting.settle_charged_bounded",
       "kind": "lean_theorem",
-      "statement_summary": "If settle p = .ok out, out.charged \u2264 p.gasLimit.",
+      "statement_summary": "If settle p = .ok out, out.charged ≤ p.gasLimit.",
       "source_path": "EVMCleanroom/TxAccounting.lean",
       "source_sha256": "d233c963c21dbeb0b80d20436b1af784a271cf702e61c07db395cd2183add340",
       "source_commit": "d1694a331c87b7b0df356bfa9b9882b6d31de872",
@@ -121,7 +130,7 @@
       "axioms_printed": [
         "propext"
       ],
-      "assumptions_and_limits": "Assumes chargedGas p * effectivePrice p \u2264 p.senderBalance; applies to settleUnchecked.",
+      "assumptions_and_limits": "Assumes chargedGas p * effectivePrice p ≤ p.senderBalance; applies to settleUnchecked.",
       "fork_scope": "local model; no external fork equivalence proved",
       "review_status": "not independently reviewed",
       "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
@@ -151,7 +160,7 @@
       "axioms_printed": [
         "propext"
       ],
-      "assumptions_and_limits": "Assumes p.baseFee \u2264 effectivePrice p; applies to settleUnchecked.",
+      "assumptions_and_limits": "Assumes p.baseFee ≤ effectivePrice p; applies to settleUnchecked.",
       "fork_scope": "local model; no external fork equivalence proved",
       "review_status": "not independently reviewed",
       "evidence": "CI run 44642532159, job 135976912852, #print axioms and axiom audit",
