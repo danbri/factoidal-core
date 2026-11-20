@@ -20,6 +20,11 @@ This property is enforced by the executable `settleParent` checkpoint barrier an
 
 `scripts/differential/call-opcode.mjs` executes **identical complete parent bytecode containing `0xf1` and identical child bytecode** using the pinned EthereumJS Cancun reference and Lean. Five cases: successful child SSTORE, child REVERT, child exceptional INVALID, empty child, and parent INVALID after an otherwise successful child (full outer rollback). Compare actual gas remaining, CALL stack success flag and child persistent storage. The first three inherited CI jobs and new five-case comparison passed at [run 44743999711](https://github.com/danbri/factoidal-core/actions/runs/44743999711).
 
+## Deterministic adversarial gas boundary matrix
+
+`scripts/differential/call-opcode-matrix.mjs` tests 6 parent gas levels × 5 requested child-gas levels × 4 child programs = **120 distinct complete-parent-bytecode executions**, with values on both sides of cold-access gas exhaustion and the EIP-150 forwarding cap. Each case compares actual Lean `0xf1` against independent EthereumJS Cancun parent `CALL` execution: execution status, remaining gas, child slot-zero storage, and success flag when applicable. Any unknown/unsupported case, unavailable reference output or mismatch fails the job.
+
+All **120/120 passed with no mismatches** in [CI run 44745202928](https://github.com/danbri/factoidal-core/actions/runs/44745202928). This is testing, not a universal semantics proof; the machine-checked gas and rollback theorems provide a separate formal argument relative to our local model.
 ## Explicit gaps
 
 Arbitrary nested depth/reentrancy; CALL with value, stipends or new accounts; account address warming initialization from transaction envelope; calldata, memory expansion/copy and returndata; other call-family opcodes; precompiles; caller/contract context; gas refund caps; logs/receipts; fork-dependent changes; state-root authentication and actual EELS CALL-state fixture execution; mainnet block replay; independent spec refinement. The current trusted components include Lean compiler/runtime, EthereumJS test oracle and fixture/host wiring. No blanket Ethereum correctness claim follows.
