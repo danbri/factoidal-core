@@ -7,11 +7,13 @@ on:
       - 'formal/lean4/L4Factoidal/Rendering/**'
       - 'formal/lean4/L4Factoidal/WasmVM/Hosts/Dom/**'
       - '.github/workflows/check-wpt-image-css-proofs.yml'
+      - '.github/workflows/check-dataflow-stage.yml'
   pull_request:
     paths:
       - 'formal/lean4/L4Factoidal/Rendering/**'
       - 'formal/lean4/L4Factoidal/WasmVM/Hosts/Dom/**'
       - '.github/workflows/check-wpt-image-css-proofs.yml'
+      - '.github/workflows/check-dataflow-stage.yml'
   workflow_dispatch: {}
 
 permissions:
