@@ -79,7 +79,7 @@ function mutationWatcher(htmlDocument=true){
     info(_id,k){return k===0?1:k===8?(htmlDocument?1:0):0;},
     htmlEl(){return true;},str(){return 'img';},updateImage(id){updates.push([id,lazy]);}});
   vm.runInContext(prelude.slice(start,end)+'\n imgWatch();',context);
-  return {n:context.n,updates,setLazy(v){lazy=v;},flush(){for(const timer of timers.splice(0))timer();}};
+  return {n:context.n,updates,setLazy(v){lazy=v;},timerCount(){return timers.length;},flush(){for(const timer of timers.splice(0))timer();}};
 }
 test('null-namespace source removals trigger exactly one image update per script turn',()=>{
   const h=mutationWatcher();
@@ -87,6 +87,7 @@ test('null-namespace source removals trigger exactly one image update per script
   h.n.removeAttr(4,'\0srcset');
   h.n.removeAttr(4,'urn:other\0src');
   h.n.removeAttr(4,'\0SRC');
+  assert.equal(h.timerCount(),1);
   h.flush();
   assert.deepEqual(h.updates,[[4,false]]);
 });
@@ -94,6 +95,7 @@ test('ordinary HTML attributes fold case while namespace and XML local names do 
   const h=mutationWatcher();
   h.n.setAttr(4,'SRC','a.png');
   h.n.setAttr(4,'\0SRC','other.png');
+  assert.equal(h.timerCount(),1);
   h.flush();
   assert.deepEqual(h.updates,[[4,false]]);
   const x=mutationWatcher(false);
@@ -106,6 +108,7 @@ test('a source write is observed after synchronous loading=lazy setup',()=>{
   const h=mutationWatcher();
   h.n.setAttr(4,'src','/image.png');
   h.setLazy(true);
+  assert.equal(h.timerCount(),1);
   h.flush();
   assert.deepEqual(h.updates,[[4,true]]);
 });
@@ -115,6 +118,7 @@ test('changing a deferred image to loading=eager schedules its request',()=>{
   h.setLazy(true);
   h.n.setAttr(4,'loading','eager');
   h.setLazy(false);
+  assert.equal(h.timerCount(),1);
   h.flush();
   assert.deepEqual(h.updates,[[4,false]]);
 });

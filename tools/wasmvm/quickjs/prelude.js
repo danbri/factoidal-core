@@ -7488,6 +7488,7 @@
       return imgAttrs.has(name.toLowerCase()) && info(id, 8) === 1;
     };
     const schedule = id => {
+      if (imgPendingUpdates.has(id)) return;
       imgPendingUpdates.add(id);
       chk(n.timer(register(() => {
         if (imgPendingUpdates.delete(id)) updateImage(id);
