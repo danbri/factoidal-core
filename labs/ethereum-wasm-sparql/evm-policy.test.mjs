@@ -54,7 +54,7 @@ test('actual EVM policy opcodes compile deterministically into zero-import full-
   assert.deepEqual(first.bytes,second.bytes);
   assert.equal(first.evmByteLength,45);
   assert.deepEqual(first.argumentNames,POLICY_ARGS);
-  assert.equal(first.operations.filter(x=>x.opcode==='CALLDATALOAD').length,7+2);
+  assert.equal(first.operations.filter(x=>x.opcode==='CALLDATALOAD').length,8);
   assert.deepEqual(first.operations.slice(-4).map(x=>x.opcode),
     ['MSTORE','PUSH1','PUSH0','RETURN']);
   const module=new WebAssembly.Module(first.bytes);
