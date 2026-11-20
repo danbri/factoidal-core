@@ -35,6 +35,7 @@ jobs:
           node --check docs/web/hub/paralliverse/bgp-studio.mjs
           node --check docs/web/hub/paralliverse/bgp-comparison.mjs
           node --check docs/web/hub/paralliverse/integer-bgp-gpu.mjs
+          node --check docs/web/hub/paralliverse/integer-bgp-compact-gpu.mjs
           node --check docs/web/hub/paralliverse/app.mjs
       - name: Test lexical triples, generated scales and exact ID conversion
         run: node --test tests/hub/paralliverse_bgp_test.mjs tests/hub/paralliverse_bgp_gpu_comparison_test.mjs
