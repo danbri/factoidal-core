@@ -62,7 +62,7 @@ private def refunded (o : Outcome) : Option Int :=
 
 private def isChildException (o : Outcome) : Bool :=
   match o with
-  | .childExceptional _ _ .invalidOpcode _ => true
+  | .childExceptional _ _ (.invalidOpcode _) => true
   | _ => false
 
 private def isCallerOOG (o : Outcome) : Bool :=
