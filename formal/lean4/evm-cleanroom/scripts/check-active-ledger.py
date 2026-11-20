@@ -99,20 +99,64 @@ def check_contract_report(manifest, report):
         actual[name] = case["computedStateRoot"]
     require(actual == reference, "Cancun fixture coverage changed")
 
+def check_call_report(manifest, report):
+    """Pin the selected genuine EELS CALL-context post-root and coverage.
+
+    This guards a reported *test outcome*, not independent semantic proof
+    or the correctness of its EthereumJS state-trie serializer.
+    """
+    e = manifest["external_evidence"]["official_cancun_call_return_data"]
+    require(report["schemaVersion"] == 1 and report["status"] == "pass" and
+            report["kind"] == "EELS-Cancun-CALL-return-data-state-root-replay",
+            "CALL-context report schema/outcome changed")
+    require(report["provenance"]["fixtureSha256"] == e["fixture_sha256"] and
+            report["provenance"]["mirrorCommit"] == e["fixture_mirror_commit"],
+            "CALL-context fixture provenance changed")
+    counts = report["counts"]
+    for key, expected in e["counts"].items():
+        require(counts[key] == expected, "CALL-context count changed: " + key)
+    require(len(report["cases"]) == e["counts"]["CancunCases"],
+            "CALL-context case inventory size changed")
+    actual_ids = {c["id"] for c in report["cases"]}
+    require(len(actual_ids) == len(report["cases"]) and
+            actual_ids == set(e["case_ids"]),
+            "CALL-context case identities changed")
+    passing = [c for c in report["cases"] if c["status"] == "pass"]
+    unsupported = [c for c in report["cases"] if c["status"] == "unsupported"]
+    require(len(passing) == 1 and len(unsupported) == 3 and
+            not any(c["status"] == "fail" for c in report["cases"]),
+            "CALL-context dispositions changed")
+    case = passing[0]
+    require(case["id"] == e["passing_id"] and
+            case["expectedStateRoot"] == e["expected_state_root"] ==
+            case["computedStateRoot"],
+            "CALL-context published post-state root changed")
+    require(case["parentSlots"] == {"0x00": "1", "0x01": "255"} and
+            case["returndataCopied"] == "0xff",
+            "CALL-context return-data/storage evidence changed")
+    for c in unsupported:
+        require(c["reason"] == "CALLCODE-DELEGATECALL-STATICCALL-not-implemented",
+                "unsupported CALL-family classification changed")
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--contract-result", type=Path,
                         help="check current EELS Cancun replay against pinned IDs/roots")
+    parser.add_argument("--call-result", type=Path,
+                        help="check current EELS CALL-context replay against pinned case/root")
     args = parser.parse_args()
     manifest = json.loads(MANIFEST.read_text())
     blobs = check_inventory(manifest)
     check_theorems(manifest, blobs)
     if args.contract_result:
         check_contract_report(manifest, json.loads(args.contract_result.read_text()))
+    if args.call_result:
+        check_call_report(manifest, json.loads(args.call_result.read_text()))
     print(json.dumps({"status":"active-sources-consistent",
        "files":len(blobs),
        "selectedTheorems":len(manifest["theorem_inventory"]),
-       "currentContractReplayChecked":bool(args.contract_result)}))
+       "currentContractReplayChecked":bool(args.contract_result),
+       "currentCallReplayChecked":bool(args.call_result)}))
 
 if __name__ == "__main__":
     try:

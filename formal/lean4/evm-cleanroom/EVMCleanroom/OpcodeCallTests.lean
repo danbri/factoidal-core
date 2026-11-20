@@ -88,4 +88,49 @@ private def isParentExceptional (o : OpcodeCall.Outcome) : Bool :=
 #guard isParentExceptional parentInvalid
 #guard childStorage parentInvalid == some 0
 
+
+-- Genuine child RETURN bytes must reach the parent's RETURNDATACOPY,
+-- survive a 31-byte offset, be read through MLOAD and reach storage slot 1.
+private def returnChild : Array UInt8 :=
+  #[0x60,0x2a,0x60,0x00,0x53,0x60,0x01,0x60,0x00,0xf3]
+
+private def parentCopy : Array UInt8 :=
+  #[0x5f,0x5f,0x5f,0x5f,0x5f,0x60,0xc3,0x61,0x75,0x30,0xf1,
+    0x60,0x01,0x60,0x00,0x60,0x1f,0x3e,
+    0x60,0x00,0x51,0x60,0x01,0x55,0x00]
+
+private def returnCopy := runPair parentCopy returnChild
+
+private def parentSlot1 (o : OpcodeCall.Outcome) : Option Nat :=
+  match o with
+  | .stopped w _ => some ((w.accounts 0xc1).storage 1)
+  | _ => none
+
+private def parentMemoryByte (o : OpcodeCall.Outcome) (addr : Nat) : Option Nat :=
+  match o with
+  | .stopped _ parent => some (parent.memory.readByte addr).toNat
+  | _ => none
+
+#guard gasRemaining returnCopy == some 25239
+#guard resultWord returnCopy == some 1
+#guard parentMemoryByte returnCopy 31 == some 42
+#guard parentSlot1 returnCopy == some 42
+
+private def parentReturnSize : Array UInt8 :=
+  #[0x5f,0x5f,0x5f,0x5f,0x5f,0x60,0xc3,0x61,0x75,0x30,0xf1,0x3d,0x00]
+
+#guard resultWord (runPair parentReturnSize returnChild) == some 1
+#guard gasRemaining (runPair parentReturnSize returnChild) == some 47364
+
+private def parentBadReturnCopy : Array UInt8 :=
+  #[0x5f,0x5f,0x5f,0x5f,0x5f,0x60,0xc3,0x61,0x75,0x30,0xf1,
+    0x60,0x01,0x60,0x01,0x60,0x00,0x3e,0x00]
+
+private def isBadReturnCopy (o : OpcodeCall.Outcome) : Bool :=
+  match o with
+  | .exceptional _ .returnDataOutOfBounds => true
+  | _ => false
+
+#guard isBadReturnCopy (runPair parentBadReturnCopy returnChild)
+
 end EVMCleanroom.OpcodeCallTests

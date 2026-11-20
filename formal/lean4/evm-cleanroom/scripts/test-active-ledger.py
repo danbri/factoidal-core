@@ -59,5 +59,32 @@ class ActiveLedgerControls(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     check.check_contract_report(MANIFEST,m)
 
+    def test_falsified_call_context_rejected(self):
+        path = ROOT / ".lake/eels/lean-call-context-results.json"
+        if not path.exists():
+            self.skipTest("CALL-context replay produced by dedicated EELS job")
+        baseline = json.loads(path.read_text())
+        check.check_call_report(MANIFEST, baseline)
+        passing = next(c for c in baseline["cases"] if c["status"] == "pass")
+        mutations = [
+            lambda x: next(c for c in x["cases"] if c["status"]=="pass"
+                ).update(computedStateRoot="0x"+"00"*32),
+            lambda x: next(c for c in x["cases"] if c["status"]=="pass"
+                )["parentSlots"].update({"0x01":"0"}),
+            lambda x: next(c for c in x["cases"] if c["status"]=="pass"
+                ).update(returndataCopied="0x00"),
+            lambda x: x["counts"].update(passed=0),
+            lambda x: x["cases"].pop(),
+            lambda x: x["provenance"].update(fixtureSha256="0"*64),
+            lambda x: next(c for c in x["cases"] if c["status"]=="unsupported"
+                ).update(status="pass"),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                m=copy.deepcopy(baseline)
+                mutation(m)
+                with self.assertRaises(ValueError):
+                    check.check_call_report(MANIFEST, m)
+
 if __name__ == "__main__":
     unittest.main()

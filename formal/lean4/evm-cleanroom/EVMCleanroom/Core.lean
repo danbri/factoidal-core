@@ -38,6 +38,7 @@ inductive Error where
   | invalidJump (destination : Nat)
   | alreadyHalted
   | writeProtection
+  | returnDataOutOfBounds
   | unsupportedFork
   | stepLimit
   deriving Repr, DecidableEq

@@ -1,4 +1,5 @@
 import EVMCleanroom.Call
+import EVMCleanroom.CallData
 
 /-!
 # First actual bytecode-driven CALL opcode (0xf1) in Lean
@@ -27,7 +28,7 @@ namespace EVMCleanroom.OpcodeCall
 open EVMCleanroom.World
 
 inductive Advance where
-  | ok (world : TxWorld) (parent : State)
+  | ok (world : TxWorld) (parent : State) (returnData : Array UInt8)
   | exceptional (reason : Error)
   | unsupported (why : String)
 
@@ -35,13 +36,14 @@ inductive Advance where
     actual EVM CALL success word and advance PC past opcode 0xf1.
     Child storage is in the world; this parent has a distinct address. -/
 private def resumeParent (world : TxWorld) (parentAddress : Nat)
-    (s : State) (rest : List Word) (remaining flag : Nat) : Advance :=
+    (s : State) (rest : List Word) (remaining flag : Nat)
+    (returnData : Array UInt8) : Advance :=
   if remaining > s.gas then .unsupported "child-returned-more-than-parent-gas"
   else
     match commit s (s.pc + 1) (word flag :: rest) (s.gas - remaining) with
     | .error e => .exceptional e
     | .ok next =>
-      .ok (commitFrame world parentAddress next) next
+      .ok (commitFrame world parentAddress next) next returnData
 
 /-- The seven stack operands are (top first): gas, address, value,
     calldata offset, calldata length, return offset, return length.
@@ -57,18 +59,18 @@ private def stepCall (working : TxWorld) (parentAddress childFuel : Nat)
             target.val ≥ addressBound then
       .unsupported "precompile-selfcall-or-out-of-range-address"
     else
-      match WorldCall.callZeroValue childFuel working
+      match WorldCallData.callZeroValue childFuel working
             target.val s.gas gas.val with
-      | .childSuccess out remaining =>
-        resumeParent out parentAddress s rest remaining 1
-      | .childReverted out remaining =>
-        resumeParent out parentAddress s rest remaining 0
+      | .childSuccess out remaining data =>
+        resumeParent out parentAddress s rest remaining 1 data
+      | .childReverted out remaining data =>
+        resumeParent out parentAddress s rest remaining 0 data
       | .childExceptional out remaining _ =>
-        resumeParent out parentAddress s rest remaining 0
+        resumeParent out parentAddress s rest remaining 0 #[]
       | .callerOutOfGas => .exceptional .outOfGas
       | .invalidAddress => .unsupported "invalid-address"
       | .invalidChildGas => .unsupported "untrusted-child-gas"
-      | .unsupported _ => .unsupported "unimplemented-child-instruction"
+      | .unsupported why => .unsupported why
   | _ => .exceptional .stackUnderflow
 
 inductive Outcome where
@@ -79,24 +81,32 @@ inductive Outcome where
 /-- The complete working-world snapshot is discarded if the parent
     exceptionally halts. Child failure alone does not trigger this. -/
 def drive (entry : TxWorld) (parentAddress childFuel : Nat) :
-    Nat → TxWorld → State → Outcome
-  | 0, _, _ => .unsupported "parent-simulation-fuel-exhausted"
-  | fuel + 1, working, s =>
+    Nat → TxWorld → State → Array UInt8 → Outcome
+  | 0, _, _, _ => .unsupported "parent-simulation-fuel-exhausted"
+  | fuel + 1, working, s, returnData =>
     if s.halted then .stopped working s
     else
       let operation : Advance :=
         if byteAt s s.pc == 0xf1 then
           stepCall working parentAddress childFuel s
+        else if byteAt s s.pc == 0x3d then
+          match commit s (s.pc + 1) (word returnData.size :: s.stack.items) 2 with
+          | .ok next => .ok (commitFrame working parentAddress next) next returnData
+          | .error e => .exceptional e
+        else if byteAt s s.pc == 0x3e then
+          match ReturnData.copy s returnData with
+          | .ok next => .ok (commitFrame working parentAddress next) next returnData
+          | .error e => .exceptional e
         else
           match step s with
           | .ok next =>
-            .ok (commitFrame working parentAddress next) next
+            .ok (commitFrame working parentAddress next) next returnData
           | .error e =>
             .exceptional e
       match operation with
-      | .ok nextWorld next =>
+      | .ok nextWorld next nextData =>
         if next.halted then .stopped nextWorld next
-        else drive entry parentAddress childFuel fuel nextWorld next
+        else drive entry parentAddress childFuel fuel nextWorld next nextData
       | .exceptional (.invalidOpcode opcode) =>
         if opcode == 0xfe then .exceptional entry (.invalidOpcode opcode)
         else .unsupported "unimplemented-parent-opcode"
@@ -137,7 +147,7 @@ def run (parentFuel childFuel : Nat) (world : TxWorld)
   else
     let entry := WorldCall.warmTarget world parentAddress
     settleParent entry (drive entry parentAddress childFuel parentFuel entry
-      (frameInput entry parentAddress parentGas))
+      (frameInput entry parentAddress parentGas) #[])
 
 /-- Entering the parent transaction cannot mutate any account or
     transaction-original storage simply by warming the parent address. -/
