@@ -28,7 +28,8 @@
     "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
     "EVMCleanroom/OpcodeCall.lean": "1d7e86a88649914d45ab38b4ccdcd04e419510ca",
     "EVMCleanroom/OpcodeCallTests.lean": "f21b88906aa548ae3f9fdab336270f8fca98c81c",
-    "scripts/differential/call-opcode.mjs": "4395991df100769b1fc2aae11278295f35f3f61f"
+    "scripts/differential/call-opcode.mjs": "4395991df100769b1fc2aae11278295f35f3f61f",
+    "scripts/differential/call-opcode-matrix.mjs": "2a111c8fce567935159d41c85e12dbd519c2f57d"
   },
   "theorem_inventory": [
     {
@@ -249,6 +250,14 @@
       "passed": 5,
       "reference": "EthereumJS 10.1.3 Cancun",
       "comparison": "Identical complete parent and child bytecodes, including f1, parent exception rollback"
+    },
+    "boundary_matrix": {
+      "status": "pending-new-head-CI",
+      "compared": 120,
+      "oracle": "EthereumJS 10.1.3 Cancun",
+      "inputs": "six parent gas limits × five forwarded gas requests × four child behaviours",
+      "unsupported": 0,
+      "proof_relationship": "external evidence challenging EIP-150 and storage/exception semantics, not universal proof"
     }
   }
 }
