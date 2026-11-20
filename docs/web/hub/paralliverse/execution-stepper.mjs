@@ -75,13 +75,16 @@ export function buildExecutionTrace({mode = "pack", cpuWords = null, studio = nu
           gpu: i < gpu.length ? gpu[i] : null});
       }
     }
-    matches = mismatches.length === 0;
-    difference = matches
-      ? "Exact payload equality: " + cpu.length + " words returned by each actual backend."
-      : String(mismatches.length) + " differing positions; first difference at word " +
-        mismatches[0].index + " (CPU " + mismatches[0].cpu + "; GPU " + mismatches[0].gpu + ").";
-    if (mode === "studio" && gpuMeta && gpuMeta.fullMatches === false) {
-      difference += " Full GPU buffer frame also differs from the Lean-expected frame.";
+    const payloadMatches = mismatches.length === 0;
+    const frameMismatch = mode === "studio" && gpuMeta &&
+      (gpuMeta.fullMatches === false || gpuMeta.canariesMatch === false);
+    matches = payloadMatches && !frameMismatch;
+    difference = !payloadMatches
+      ? String(mismatches.length) + " differing payload positions; first at word " +
+        mismatches[0].index + " (CPU " + mismatches[0].cpu + "; GPU " + mismatches[0].gpu + ")."
+      : "Exact payload equality: " + cpu.length + " words returned by each actual backend.";
+    if (frameMismatch) {
+      difference += " WARNING: The actual GPU's complete buffer frame differs from Lean's expected headers, payload or untouched tail.";
     }
   } else if (studio && studio.gpuEligible === false) {
     difference = "No GPU comparison: Lean explicitly refused this source program.";
