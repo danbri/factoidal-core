@@ -53,25 +53,51 @@ export function makeBgpTrace(cpu, gpu) {
         JSON.stringify(cpu.bindings.slice(0,5)) : "Awaiting Lean."},
   ];
   const result = gpu?.result ?? null;
-  const gpuStages = [
-    {title: "Encode and upload input triples", observed: Boolean(result),
-      note: cpu
-        ? cpu.input.integerGraph.length+" u32 triples generated alongside source RDF. "+
-          (result ? "GPU invocation completed." : "GPU has not executed yet.")
-        : "Awaiting matching CPU source triples."},
-    {title: "GPU join predicate and count", observed: Boolean(result),
-      note: result ? "Read back "+result.counts.length+" actual GPU counts. First 24: "+
-        JSON.stringify(result.counts.slice(0,24)) : "No GPU counts returned."},
-    {title: "GPU exclusive prefix scan", observed: Boolean(result),
-      note: result ? "Read back "+result.offsets.length+" offsets, terminal total "+
-        result.offsets.at(-1)+". First 24: "+JSON.stringify(result.offsets.slice(0,24))
-        : "No GPU offsets returned."},
-    {title: "GPU join probe and emit", observed: Boolean(result),
-      note: result ? result.solutionCount+" binding pairs emitted on the WebGPU device."
-        : "GPU join emission has not happened."},
-    {title: "GPU readback vs Lean SPARQL", observed: Boolean(result && gpu?.comparison),
-      note: gpu?.comparison?.summary ??
-        (gpu?.error ? "GPU unavailable/refused: "+gpu.error : "No GPU query result has been read back.")},
+  const compacted = gpu?.plan === "compacted";
+  const readback = {title: "GPU readback vs Lean SPARQL",
+    observed: Boolean(result && gpu?.comparison),
+    note: gpu?.comparison?.summary ??
+      (gpu?.error ? "GPU unavailable/refused: "+gpu.error :
+        "No GPU query result has been read back.")};
+  const counts = {title: "GPU join predicate and match counts",
+    observed: Boolean(result),
+    note: result ? "Read back "+result.counts.length+" actual GPU counts. First 24: "+
+      JSON.stringify(result.counts.slice(0,24)) : "No GPU counts returned."};
+  const offsets = {title: "GPU exclusive join-prefix scan",
+    observed: Boolean(result),
+    note: result ? "Read back "+result.offsets.length+" offsets, terminal total "+
+      result.offsets.at(-1)+". First 24: "+JSON.stringify(result.offsets.slice(0,24))
+      : "No GPU offsets returned."};
+  const header = {title: "Encode and upload input triples", observed: Boolean(result),
+    note: cpu ? cpu.input.integerGraph.length+" distinct u32 input triples from "+
+      "the lexical RDF source. "+(result ? "WebGPU query returned." : "GPU has not executed yet.")
+      : "Awaiting matching lexical RDF source."};
+  const gpuStages = compacted ? [
+    header,
+    {title: "GPU pattern flags and projection scans", observed: Boolean(result),
+      note: result ? "Actual GPU-compacted relation sizes: "+
+        result.leftCount+" knows pairs, "+result.rightCount+" Atlas subjects. "+
+        "Left starts: "+JSON.stringify(result.projectionOffsets.knows.slice(0,15))+
+        "; right starts: "+JSON.stringify(result.projectionOffsets.atlas.slice(0,15))
+        : "No GPU projection flags or offsets returned."},
+    {title: "GPU stable scatter of selected triples", observed: Boolean(result),
+      note: result ? "Actual GPU knows bindings, first 10: "+
+        JSON.stringify(result.leftRows.slice(0,10))+
+        "; Atlas subject IDs, first 10: "+JSON.stringify(result.rightRows.slice(0,10))
+        : "No GPU pattern-projection buffers returned."},
+    counts, offsets,
+    {title: "GPU join emit: compacted rows", observed: Boolean(result),
+      note: result ? result.solutionCount+" actual GPU BGP bindings from "+
+        result.leftCount+"×"+result.rightCount+" candidate comparisons."
+        : "No GPU BGP emission returned."},
+    readback,
+  ] : [
+    header,counts,offsets,
+    {title: "GPU fused join probe and emit", observed: Boolean(result),
+      note: result ? result.solutionCount+" pairs emitted by GPU, "+
+        "probing original source triples. The two patterns were fused." :
+        "No GPU-emitted bindings returned."},
+    readback,
   ];
   return {cpuStages,gpuStages};
 }
