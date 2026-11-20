@@ -37,11 +37,10 @@ structure Budget where
 /-- All amounts are gas units, not transaction ETH balances. -/
 def schedule (available requested : Nat) (wasWarm : Bool) :
     Except Error Budget :=
-  let charge := accessCharge wasWarm
-  if h : charge ≤ available then
-    let remaining := available - charge
+  if accessCharge wasWarm ≤ available then
+    let remaining := available - accessCharge wasWarm
     let forwarded := min requested (maxForwarded remaining)
-    .ok ⟨charge, forwarded, remaining - forwarded⟩
+    .ok ⟨accessCharge wasWarm, forwarded, remaining - forwarded⟩
   else .error .outOfGas
 
 /-- A pure EIP-150 cap can never exceed available gas. -/
@@ -56,7 +55,7 @@ theorem mandatoryReserve (available requested : Nat) :
     available / 64 ≤ available - min requested (maxForwarded available) := by
   have hcap : min requested (maxForwarded available) ≤ maxForwarded available :=
     Nat.min_le_right _ _
-  unfold maxForwarded at hcap
+  unfold maxForwarded at hcap ⊢
   omega
 
 /-- No gas is created or lost simply by constructing a CALL budget.
@@ -98,10 +97,10 @@ theorem resumed_gas_bounded {available requested : Nat} {wasWarm : Bool}
 #guard accessCharge true == 100
 #guard maxForwarded 6400 == 6300
 #guard maxForwarded 63 == 63
-#guard schedule 10000 10000 false == .ok ⟨2600,7285,115⟩
-#guard schedule 10000 10000 true == .ok ⟨100,9746,154⟩
-#guard schedule 2599 0 false == .error .outOfGas
-#guard schedule 10000 500 false == .ok ⟨2600,500,6900⟩
+#guard decide (schedule 10000 10000 false = .ok ⟨2600,7285,115⟩)
+#guard decide (schedule 10000 10000 true = .ok ⟨100,9746,154⟩)
+#guard decide (schedule 2599 0 false = .error .outOfGas)
+#guard decide (schedule 10000 500 false = .ok ⟨2600,500,6900⟩)
 
 #print axioms maxForwarded_bounded
 #print axioms mandatoryReserve
