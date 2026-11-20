@@ -145,6 +145,12 @@ map add 1</textarea>
       <option value="1024">1,024 people · 4,096 triples</option>
     </select></label>
     <button type="button" class="primary-button" id="bgp-run">Run BGP in Lean/Wasm</button>
+    <label for="bgp-gpu-plan">GPU plan
+      <select id="bgp-gpu-plan" aria-label="BGP GPU lowering">
+        <option value="compacted" selected>Select/compact → equijoin</option>
+        <option value="fused">Fused source-triple probe</option>
+      </select>
+    </label>
     <button type="button" class="secondary-button" id="bgp-gpu-run" disabled>Run BGP on WebGPU</button>
   </div>
   <p class="pack-status" id="bgp-status" role="status">Choose a dataset size and run the Lean SPARQL query.</p>
