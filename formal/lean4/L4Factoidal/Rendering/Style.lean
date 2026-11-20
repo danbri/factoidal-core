@@ -1268,11 +1268,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if v <= 0 then throw "font-size must be positive"
     return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
   | "line-height" =>
-    let factor ← if d.value.endsWith "px" then pure none
-      else some <$> (if d.value == "normal" then pure 1.2 else number d.value)
-    let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
-    if v < 0 then throw "line-height must be non-negative"
-    return {s with lineHeight := v, lineHeightFactor := factor}
+    if (trim d.value).toLower == "0px" then
+      return {s with lineHeight := 0, lineHeightFactor := none}
+    else
+      let factor ← if d.value.endsWith "px" then pure none
+        else some <$> (if d.value == "normal" then pure 1.2 else number d.value)
+      let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
+      if v < 0 then throw "line-height must be non-negative"
+      return {s with lineHeight := v, lineHeightFactor := factor}
   -- `white-space` and `white-space-collapse` (CSS Text 4 §3): white space and line breaks
   -- kept (`pre`, `pre-wrap`, `pre-line`, `break-spaces`, `preserve`) or collapsed
   | "white-space" | "white-space-collapse" =>
