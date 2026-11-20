@@ -50,6 +50,7 @@ private def errorCode : EVMCleanroom.Error → String
   | .invalidJump _ => "invalidJump"
   | .alreadyHalted => "alreadyHalted"
   | .writeProtection => "writeProtection"
+  | .returnDataOutOfBounds => "returnDataOutOfBounds"
   | .unsupportedFork => "unsupportedFork"
   | .stepLimit => "stepLimit"
 
