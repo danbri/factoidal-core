@@ -72,6 +72,27 @@ map add 1</textarea>
   [4294967295, 3]
 ]</textarea>
     <p class="pack-note" id="input-help">JSON rows of unsigned 32-bit decimal integers. Up to 128 rows and 1,024 words. Empty rows and repeated values are preserved by the input model.</p>
+    <section id="city-lab" class="city-lab" aria-label="Painted City tile membership editor" hidden>
+      <h3>Painted City · choose which objects touch each tile</h3>
+      <p class="pack-note">A=1, B=2, C=3. Check memberships in painter order; the resulting rows are input to the real Lean Count → Scan → Scatter program. This editor selects memberships; it does not calculate geometric intersections.</p>
+      <div class="city-tiles">
+        <fieldset><legend>Tile 0</legend>
+          <label><input type="checkbox" data-city-tile="0" value="1" checked> A</label>
+          <label><input type="checkbox" data-city-tile="0" value="2"> B</label>
+          <label><input type="checkbox" data-city-tile="0" value="3" checked> C</label>
+        </fieldset>
+        <fieldset><legend>Tile 1</legend>
+          <label><input type="checkbox" data-city-tile="1" value="1" checked> A</label>
+          <label><input type="checkbox" data-city-tile="1" value="2" checked> B</label>
+          <label><input type="checkbox" data-city-tile="1" value="3"> C</label>
+        </fieldset>
+        <fieldset><legend>Tile 2</legend>
+          <label><input type="checkbox" data-city-tile="2" value="1"> A</label>
+          <label><input type="checkbox" data-city-tile="2" value="2"> B</label>
+          <label><input type="checkbox" data-city-tile="2" value="3" checked> C</label>
+        </fieldset>
+      </div>
+    </section>
     <div class="run-toolbar">
       <button id="run" class="primary-button" type="button" disabled><span aria-hidden="true">▶</span> Run CPU + GPU</button>
       <label class="live-control" for="live"><input id="live" type="checkbox" checked> Live updates</label>
