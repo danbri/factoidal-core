@@ -94,7 +94,7 @@ function setEmptyView(message = "Actual output appears here.", detail = "Every c
 }
 
 function clearResult() {
-  executionStepper.reset(mode);
+  executionStepper.reset(mode, gpuStates[mode]);
   lastCPUWords = null;
   lastGPUWords = null;
   cpuOutput.textContent = "—";
