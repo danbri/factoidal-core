@@ -129,6 +129,8 @@ wasmAdd = {
 }
 ```
 
+For a more substantial example, [compile EVM bytecode into WASM and invoke it from SPARQL](../ethereum-wasm-sparql/). The linked interactive page includes a full uint256 predicate, a five-condition policy, editable RDF/SPARQL, opcode mutation and source/WASM provenance.
+
 ## SERVICE
 
 `registerServiceEndpoint` binds an endpoint IRI to a dataset in the page.
