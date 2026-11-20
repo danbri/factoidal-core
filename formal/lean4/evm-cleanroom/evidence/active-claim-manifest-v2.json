@@ -226,7 +226,7 @@
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
   "active_extension": {
     "name": "restricted-Lean-F1-CALL-bytecode",
-    "status": "passed-local-lean-proof-and-differential-CI",
+    "status": "verified-scope-restricted-CI-plus-axiom-audit",
     "stacked_on": "https://github.com/danbri/factoidal-core/pull/668",
     "scope": "One-depth zero-value parent CALL instruction; all calldata, memory offsets and returndata zero; caller and callee are regular non-precompile distinct addresses, no CALL in child",
     "tested_observables": [
@@ -244,7 +244,7 @@
       "No value stipends, account creation, returndata or precompiles"
     ],
     "claim_type": "implementation slice with pending independent differential and Lean CI, not a verified complete EVM",
-    "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44744680044",
+    "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44745202928",
     "external_differential": {
       "count": 5,
       "passed": 5,
@@ -252,12 +252,14 @@
       "comparison": "Identical complete parent and child bytecodes, including f1, parent exception rollback"
     },
     "boundary_matrix": {
-      "status": "pending-new-head-CI",
+      "status": "passed-120-of-120-in-CI",
       "compared": 120,
       "oracle": "EthereumJS 10.1.3 Cancun",
       "inputs": "six parent gas limits × five forwarded gas requests × four child behaviours",
       "unsupported": 0,
-      "proof_relationship": "external evidence challenging EIP-150 and storage/exception semantics, not universal proof"
+      "proof_relationship": "external evidence challenging EIP-150 and storage/exception semantics, not universal proof",
+      "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44745202928",
+      "mismatches": 0
     }
   }
 }
