@@ -7388,19 +7388,49 @@
   };
   const imgAttrs = new Set(['src', 'srcset', 'sizes', 'crossorigin', 'referrerpolicy']);
   const imgFire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
+  const imgSelection = id => {
+    const d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
+    let size;
+    if (frame >= 0) { const b = layoutOf(wrap(frame)); size = [b[6], b[7]]; } else size = viewport();
+    const answer = n.query(id, 195, 'request\u0000' + globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1]);
+    if (typeof answer !== 'string' || answer === '') return null;
+    const url = frame >= 0 ? resolveURL(answer.slice(1), docURL(d)) : resolveURL(answer.slice(1));
+    return url === null ? null : {url, unitDensity: answer[0] === '1'};
+  };
+  const imgWriteSize = (id, st, size) => {
+    const r = n.query(id, 163, size);
+    if (r !== '') {
+      if (typeof r === 'number') failD(r);
+      throw new DOMException('The image dimensions were refused.', 'QuotaExceededError');
+    }
+    // A refused host command changes neither the arena nor our tracking of it.
+    st.layoutSized = size !== '';
+  };
+  const imgClearSize = (id, st) => { if (st.layoutSized) imgWriteSize(id, st, ''); };
   const updateImage = id => {
     const el = wrap(id);
     const gen = ++imgGen;
-    const hasSrc = n0.attr(id, 'src'), hasSet = n0.attr(id, 'srcset');
-    const url = typeof hasSrc === 'string' || typeof hasSet === 'string' ? el.currentSrc : '';
+    const hasSrc = n0.attr(id, 'src');
+    const selection = imgSelection(id);
+    const url = selection?.url ?? '';
     // a new request ends the old one: its decode() promises reject (HTML §4.8.4.3.6, "decode()"
     // step 2.2: the current request changed)
     const before = imgStates.get(id);
     if (before) for (const [, rej] of before.waiters.splice(0)) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
-    const st = { gen, complete: false, w: 0, h: 0, waiters: [] };
+    const st = { gen, complete: false, w: 0, h: 0, waiters: [], layoutSized: before?.layoutSized ?? false };
     imgStates.set(id, st);
+    const refused = error => {
+      // No automatic retry after a resource refusal: retain tracking, reject this
+      // generation's decode waiters and report the refusal instead of a load event.
+      st.complete = true; st.w = 0; st.h = 0;
+      for (const [, rej] of st.waiters.splice(0)) rej(error);
+      imgUndelay(id); report(error);
+    };
     const settle = ok => {
       st.complete = true;
+      // the layout's size of the img (Lean's Node.natural, op 163): the image's natural size
+      // once it loaded, cleared when its request failed
+      if (!ok) { try { imgClearSize(id, st); } catch (error) { refused(error); return; } }
       for (const [res, rej] of st.waiters.splice(0)) ok ? res() : rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
       imgFire(el, ok ? 'load' : 'error');
       imgUndelay(id);
@@ -7408,6 +7438,7 @@
     if (url === '') {
       // no source: broken; an empty src attribute fires error (step 13)
       st.complete = true;
+      try { imgClearSize(id, st); } catch (error) { imgUndelay(id); throw error; }
       if (typeof hasSrc === 'string') Promise.resolve().then(() => { if (imgStates.get(id)?.gen === gen) settle(false); });
       else imgUndelay(id);
       return;
@@ -7416,13 +7447,21 @@
     const cors = corsSettings(el);
     elementFetch(url, { destination: 'image', ...cors, referrerPolicy: (el.getAttribute('referrerpolicy') ?? '').toLowerCase() }).then(r => {
       if (imgStates.get(id)?.gen !== gen) return;
-      if (r === undefined) { st.complete = true; imgUndelay(id); return; }
+      if (r === undefined) {
+        st.complete = true;
+        try { imgClearSize(id, st); } catch (error) { refused(error); return; }
+        imgUndelay(id); return;
+      }
       let size = '';
       // the engine answers an image's natural size, never its bytes (Net.Xhr.imageRaw)
       if (r !== null && r.status >= 200 && r.status < 300) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
       if (size === '') { settle(false); return; }
       const [w, h] = size.split(' ').map(Number);
       st.w = w; st.h = h;
+      // The decoder returns physical pixels. They are CSS pixels only for a 1x
+      // request. Clear the preceding request's size when this one needs correction.
+      try { if (selection.unitDensity) imgWriteSize(id, st, size); else imgClearSize(id, st); }
+      catch (error) { refused(error); return; }
       settle(true);
     });
   };
@@ -7431,8 +7470,18 @@
     imgWatching = true;
     const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
     const isImg = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'img';
-    n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0 && imgAttrs.has(String(name).toLowerCase()) && isImg(id)) updateImage(id); return r; };
-    n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && imgAttrs.has(String(name).toLowerCase()) && isImg(id)) updateImage(id); return r; };
+    const watched = (id, name) => {
+      name = String(name);
+      const separator = name.indexOf('\u0000');
+      // Namespace operations preserve local-name case, including in HTML documents.
+      if (separator >= 0) return separator === 0 && imgAttrs.has(name.slice(1));
+      if (imgAttrs.has(name)) return true;
+      // Unrelated attributes need no extra host calls. Only a folded candidate
+      // needs the document-mode check for ordinary setAttribute/removeAttribute.
+      return imgAttrs.has(name.toLowerCase()) && info(id, 8) === 1;
+    };
+    n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0 && watched(id, name) && isImg(id)) updateImage(id); return r; };
+    n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && watched(id, name) && isImg(id)) updateImage(id); return r; };
   };
   noteImg = id => imgWatch();
   // The page's own images: the first `imgStartMax` request at once (a host that draws the page
@@ -14821,6 +14870,7 @@
       for (const line of (rows ?? '').split('\u0000')) {
         if (line === '') continue;
         const [row, idl, k, content] = line.split(' ');
+        const imageSource = P === named.HTMLImageElement && imgAttrs.has(content);
         if (k === 'N') {
           // nonce hiding (HTML §2.6.5): the IDL attribute is the element's internal slot, which a
           // change of the content attribute sets
@@ -14857,7 +14907,7 @@
             // one host call: Lean decides and sets the content attribute (with no observer or
             // custom element to tell, and no URL, whose iframe src navigates); else the decision,
             // then setAttribute
-            if (!observed.size && !ceActive && k !== 'u') {
+            if (!observed.size && !ceActive && k !== 'u' && !imageSource) {
               const id = ids.get(this);
               if (id === undefined || id >= WINDOW) throw new TypeError("parameter is not of type 'Node'");
               const r = n.query(id, 167, row + '\u0000' + reflectConv[k](v));
@@ -18546,12 +18596,7 @@
   // children of a `picture` (HTML.ImageSource, node_query 195) for the device pixel ratio and
   // the viewport of the element's document, resolved against that document's URL.
   Object.defineProperty(named.HTMLImageElement.prototype, 'currentSrc', { get() {
-    const id = nodeId(this), d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
-    let size;
-    if (frame >= 0) { const b = layoutOf(wrap(frame)); size = [b[6], b[7]]; } else size = viewport();
-    const r = n.query(id, 195, globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1]);
-    if (typeof r !== 'string' || r === '') return '';
-    return (frame >= 0 ? resolveURL(r.slice(1), docURL(d)) : resolveURL(r.slice(1))) ?? '';
+    return imgSelection(nodeId(this))?.url ?? '';
   }, configurable: true, enumerable: true });
   // `width` and `height` of an img (HTML §4.8.4.4): the rendered size of the image in CSS
   // pixels (the content box of Lean's layout, measure op 21), else its natural size, which

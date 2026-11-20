@@ -53,6 +53,7 @@ native_coordinates() {
     -lm -o "$LAB/.build/native-coordinates-test" && "$LAB/.build/native-coordinates-test"
 }
 check native_coordinates_test.c native_coordinates
+check "image_size_tracking_test.mjs" node --test "$LAB/../../../tools/wasmvm/quickjs/image_size_tracking_test.mjs"
 # The status note is rendered by this engine; its HTML must match its Markdown.
 check "status-to-html.py" python3 "$LAB/../../../tools/status-to-html.py" "$LAB/../../../docs/web/hub/foafnaut2525-status.md" \
   "$LAB/web-render/fixtures/status.html" --check
