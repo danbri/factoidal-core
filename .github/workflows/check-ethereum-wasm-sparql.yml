@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: '22'
       - name: Check actual EVM source -> binary WASM plus input rejection
-        run: node --test labs/ethereum-wasm-sparql/evm-to-wasm.test.mjs labs/ethereum-wasm-sparql/evm-to-wasm-256.test.mjs
+        run: node --test labs/ethereum-wasm-sparql/evm-to-wasm.test.mjs labs/ethereum-wasm-sparql/evm-to-wasm-256.test.mjs labs/ethereum-wasm-sparql/evm-policy.test.mjs
 
   # The existing npm package suite and dataflow workflow runs the live
   # Factoidal extension-function integration tests with the Lean WASM
@@ -40,4 +40,4 @@ jobs:
       - name: Install independently maintained EVM implementation from integrity-pinned lock
         run: npm ci --prefix labs/ethereum-wasm-sparql --ignore-scripts --no-audit --no-fund
       - name: Execute raw EVM bytecode and compare 400 uint64 plus 400 uint256 WASM outcomes
-        run: node --test labs/ethereum-wasm-sparql/ethereumjs-oracle.test.mjs
+        run: node --test labs/ethereum-wasm-sparql/ethereumjs-oracle.test.mjs labs/ethereum-wasm-sparql/evm-policy-ethereumjs.test.mjs
