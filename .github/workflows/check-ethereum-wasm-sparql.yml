@@ -27,3 +27,17 @@ jobs:
   # The existing npm package suite and dataflow workflow runs the live
   # Factoidal extension-function integration tests with the Lean WASM
   # engine installed from the newest ancestor web-release artifacts.
+
+  independent-ethereumjs:
+    name: Compare generated WASM with pinned EthereumJS Cancun on 400 inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install independently maintained EVM implementation from integrity-pinned lock
+        run: npm ci --prefix labs/ethereum-wasm-sparql --ignore-scripts --no-audit --no-fund
+      - name: Execute raw EVM runtime bytecode and compare 400 WASM outcomes
+        run: node --test labs/ethereum-wasm-sparql/ethereumjs-oracle.test.mjs
