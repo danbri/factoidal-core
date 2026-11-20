@@ -1,4 +1,7 @@
+import {mountExecutionStepper} from "./execution-stepper.mjs";
+
 const $ = id => document.getElementById(id);
+const executionStepper = mountExecutionStepper();
 const source = $("source");
 const program = $("program");
 const example = $("example");
@@ -88,6 +91,7 @@ function setEmptyView(message = "Actual output appears here.", detail = "Every c
 }
 
 function clearResult() {
+  executionStepper.reset(mode);
   lastCPUWords = null;
   lastGPUWords = null;
   cpuOutput.textContent = "—";
@@ -416,6 +420,7 @@ function showResult({packed, prepareMs, cpuMs}) {
   const words = unpackWords(packed);
   const count = showWords(cpuOutput, words);
   lastCPUWords = words;
+  executionStepper.cpuPack(words);
   renderSelectedWordView();
   cpuStatus.textContent = `${count} ${count === 1 ? "word" : "words"} · ${duration(cpuMs)} CPU call`;
   inputStatus.textContent = `Input prepared in ${duration(prepareMs)}. One untimed warm-up precedes each measured CPU/GPU sample.`;
@@ -440,6 +445,7 @@ function showStudioResult({result, cpuMs}) {
     ? (result.refusal || "The GPU selector declined this program.")
     : JSON.stringify(result.executionPlan, null, 2);
   lastStudioResult = result;
+  executionStepper.cpuStudio(result);
   renderSelectedWordView();
   $("copy-lean").disabled = false;
   $("download-lean").disabled = false;
@@ -462,6 +468,7 @@ function showGpuResult(data) {
   const words = unpackWords(data.packed);
   const count = showWords(gpuOutput, words);
   lastGPUWords = words;
+  executionStepper.gpu(words, data);
   renderSelectedWordView();
   const timing = `${count} ${count === 1 ? "word" : "words"} · ${duration(data.endToEndMs)} GPU end to end.`;
   gpuStatus.textContent = timing + (mode === "pack"
@@ -599,9 +606,11 @@ if (worker) {
           }
           // A late device event for another mode cannot erase the current result.
           if ((data.mode || "pack") !== mode) break;
+          executionStepper.gpuState(data.state);
           showCurrentGpuState();
           if (data.state !== "ready" && data.state !== "checking") {
             lastGPUWords = null;
+            executionStepper.invalidateGpu();
             gpuOutput.textContent = "—";
             comparison.textContent = "";
             comparison.removeAttribute("data-match");
