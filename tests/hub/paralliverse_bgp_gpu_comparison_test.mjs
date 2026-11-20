@@ -50,10 +50,10 @@ test("All lexical RDF triples encode to exactly the GPU input graph", () => {
   for(const n of SIZES){
     const fixture=makeFixture(n);
     const lexical=[fixture.blocks.knows,fixture.blocks.projects,fixture.blocks.labels]
-      .flatMap(block=>block.trim().split("\\n"));
+      .flatMap(block=>block.trim().split("\n"));
     assert.equal(lexical.length,fixture.integerGraph.length);
     const mapped=lexical.map(line=>{
-      const m=/^<([^>]+)> <([^>]+)> (?:<([^>]+)>|"Person ([0-9]+)") \\.$/.exec(line);
+      const m=/^<([^>]+)> <([^>]+)> (?:<([^>]+)>|"Person ([0-9]+)") \.$/.exec(line);
       assert.ok(m,"Expected a complete N-Triples fixture statement: "+line);
       const object=m[3] ? termId(m[3]) : LABEL_BASE+Number(m[4]);
       return [termId(m[1]),termId(m[2]),object];
