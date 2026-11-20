@@ -81,6 +81,13 @@ a dated evidence snapshot, not a claim that later source revisions are proved.
 
 Replay snapshot: 4 passed, 0 failed, 2 unsupported, 6 total.
 
+The six fixture `_info` records identify upstream test source `tests-v5.4.0`
+(resolved commit `4f68564f47c7e577ad6cbb570858316f5ff0e7bb`), filling
+transition tool `2.18.0rc6` and EIP-7623 revision
+`744f2075ba5deee9c1040eb089104d55bd89960d`. The CI gate checks
+these fields against the pinned fixture bytes; this does **not** establish
+the exact generating EELS executable revision, which remains unverified.
+
 ## Genuine EELS state-test execution (scoped)
 
 The [EELS replay runner](scripts/eels/README.md) executes **four of six
