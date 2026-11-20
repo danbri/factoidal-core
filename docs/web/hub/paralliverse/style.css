@@ -244,3 +244,27 @@ summary { cursor: pointer; }
 .city-tiles label { font: .7rem ui-monospace,monospace; white-space: nowrap; cursor: pointer; }
 .city-tiles input { accent-color: #376b42; }
 @media (max-width: 480px) { .city-tiles { grid-template-columns: 1fr; } }
+
+
+/* Query Constellation. Lexical terms and real SPARQL result tables remain readable. */
+.bgp-studio { margin: 1rem 0 1.4rem; scroll-margin-top: 1rem; }
+.bgp-studio .panel-heading h2 { font-size: 1rem; }
+.bgp-studio h3 { margin: 1rem 0 .45rem; font-size: .79rem; color: #2e523e; }
+.bgp-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; margin: .8rem 0; }
+.bgp-controls label { color: var(--muted); font-size: .74rem; }
+.bgp-controls select { margin-left: .4rem; padding: .5rem; font-size: .73rem; }
+.bgp-two { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: .85rem; margin-top: .6rem; }
+.bgp-two > div { min-width: 0; }
+.bgp-code, .bgp-result, #bgp-ledger { background: #f0f5ed; padding: .8rem; margin: .35rem 0; border-radius: .4rem; color: #28452f; font: .69rem/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bgp-result { background: #f7f9f4; max-height: 10rem; }
+.bgp-code { max-height: 13rem; }
+.bgp-table { max-height: 23rem; overflow: auto; margin-top: .4rem; border: 1px solid #d8e5d4; border-radius: .5rem; }
+.bgp-table table { border-collapse: collapse; width: 100%; font: .69rem ui-monospace,Consolas,monospace; }
+.bgp-table caption { text-align: left; padding: .65rem; background: #f0f5ed; color: #305b40; }
+.bgp-table th, .bgp-table td { padding: .45rem .55rem; border-bottom: 1px solid #e4ece0; text-align: left; overflow-wrap: anywhere; }
+.bgp-table th { position: sticky; top: 0; background: #eaf3e6; }
+.bgp-table tbody tr:nth-child(even) { background: #f6faf4; }
+.bgp-table td:nth-child(4), .bgp-table td:nth-child(5) { color: #45655a; }
+.bgp-trace { border-top: 1px solid #e2ebdf; margin-top: .9rem; padding: .65rem 0; }
+.bgp-trace summary { font-size: .72rem; font-weight: 650; }
+@media (max-width: 780px) { .bgp-two { grid-template-columns: 1fr; } .bgp-table table { font-size: .63rem; } }
