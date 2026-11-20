@@ -97,10 +97,22 @@ theorem resumed_gas_bounded {available requested : Nat} {wasWarm : Bool}
 #guard accessCharge true == 100
 #guard maxForwarded 6400 == 6300
 #guard maxForwarded 63 == 63
-#guard decide (schedule 10000 10000 false = .ok ⟨2600,7285,115⟩)
-#guard decide (schedule 10000 10000 true = .ok ⟨100,9746,154⟩)
-#guard decide (schedule 2599 0 false = .error .outOfGas)
-#guard decide (schedule 10000 500 false = .ok ⟨2600,500,6900⟩)
+private def matchesBudget (out : Except Error Budget)
+    (charge forwarded reserve : Nat) : Bool :=
+  match out with
+  | .ok b => b.accessCharge == charge &&
+      b.forwarded == forwarded && b.reserve == reserve
+  | .error _ => false
+
+private def isOutOfGas (out : Except Error Budget) : Bool :=
+  match out with
+  | .error .outOfGas => true
+  | _ => false
+
+#guard matchesBudget (schedule 10000 10000 false) 2600 7285 115
+#guard matchesBudget (schedule 10000 10000 true) 100 9746 154
+#guard isOutOfGas (schedule 2599 0 false)
+#guard matchesBudget (schedule 10000 500 false) 2600 500 6900
 
 #print axioms maxForwarded_bounded
 #print axioms mandatoryReserve
