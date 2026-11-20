@@ -1,0 +1,43 @@
+name: Ethereum bytecode to WASM to SPARQL demo
+
+on:
+  pull_request:
+    paths:
+      - 'labs/ethereum-wasm-sparql/**'
+      - 'npm/factoidal/test/ethereum-wasm-sparql.test.mjs'
+      - '.github/workflows/check-ethereum-wasm-sparql.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  compiler:
+    name: Deterministic EVM-to-WASM compilation and 400 differential vectors
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check actual EVM source -> binary WASM plus input rejection
+        run: node --test labs/ethereum-wasm-sparql/evm-to-wasm.test.mjs labs/ethereum-wasm-sparql/evm-to-wasm-256.test.mjs labs/ethereum-wasm-sparql/evm-policy.test.mjs
+
+  # The existing npm package suite and dataflow workflow runs the live
+  # Factoidal extension-function integration tests with the Lean WASM
+  # engine installed from the newest ancestor web-release artifacts.
+
+  independent-ethereumjs:
+    name: Compare 64/256-bit WASM with pinned EthereumJS Cancun on 800 ABI inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install independently maintained EVM implementation from integrity-pinned lock
+        run: npm ci --prefix labs/ethereum-wasm-sparql --ignore-scripts --no-audit --no-fund
+      - name: Execute raw EVM bytecode and compare 400 uint64 plus 400 uint256 WASM outcomes
+        run: node --test labs/ethereum-wasm-sparql/ethereumjs-oracle.test.mjs labs/ethereum-wasm-sparql/evm-policy-ethereumjs.test.mjs
