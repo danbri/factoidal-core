@@ -3,6 +3,17 @@
 // The browser worker executes each pattern and the joined BGP in Lean/Wasm.
 export const BASE = "https://example.org/paralliverse/";
 export const SIZES = Object.freeze([64, 256, 1024]);
+export const TERM_IDS = Object.freeze({
+  knows: 0xff000001,
+  worksOn: 0xff000002,
+  Atlas: 0xff000003,
+  Orion: 0xff000004,
+  label: 0xff000005,
+});
+export const LABEL_BASE = 0x80000000;
+// Person IRIs: [1..n]. Predicates and project IRIs: [0xff000001..5].
+// Person label literals: 0x80000000+i. The ranges are disjoint and
+// the graph, including all literal identities, is a true RDF set.
 export const QUERY = [
   "PREFIX ex: <" + BASE + ">",
   "SELECT ?person ?colleague WHERE {",
@@ -37,6 +48,7 @@ export function shortTerm(iri) {
 export function makeFixture(n) {
   checkScale(n);
   const knows = [], projects = [], labels = [];
+  const knowsIds = [], projectsIds = [], labelIds = [];
   const e = iri => "<" + iri + ">";
   const predKnows = e(BASE + "knows"), predProject = e(BASE + "worksOn");
   const predLabel = e(BASE + "label");
@@ -44,9 +56,13 @@ export function makeFixture(n) {
   for (let i = 0; i < n; i++) {
     const person = e(personIri(i));
     knows.push(person + " " + predKnows + " " + e(personIri((i + 1) % n)) + " .");
+    knowsIds.push([i+1, TERM_IDS.knows, ((i+1)%n)+1]);
     knows.push(person + " " + predKnows + " " + e(personIri((i + 7) % n)) + " .");
+    knowsIds.push([i+1, TERM_IDS.knows, ((i+7)%n)+1]);
     projects.push(person + " " + predProject + " " + (i % 4 === 0 ? atlas : orion) + " .");
+    projectsIds.push([i+1, TERM_IDS.worksOn, i%4===0 ? TERM_IDS.Atlas : TERM_IDS.Orion]);
     labels.push(person + " " + predLabel + ' "Person ' + i + '" .');
+    labelIds.push([i+1, TERM_IDS.label, LABEL_BASE+i]);
   }
   return {
     people: n,
@@ -58,6 +74,9 @@ export function makeFixture(n) {
       labels: labels.join("\n") + "\n",
     },
     example: [...knows.slice(0, 3), projects[0], projects[1], labels[0]],
+    // Same iteration produces lexical and integer triple representations.
+    integerGraph: [...knowsIds, ...projectsIds, ...labelIds],
+    queryConstants: {knows: TERM_IDS.knows, works: TERM_IDS.worksOn, atlas: TERM_IDS.Atlas},
   };
 }
 
