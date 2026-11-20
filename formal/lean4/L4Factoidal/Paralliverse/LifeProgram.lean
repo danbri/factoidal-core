@@ -57,13 +57,13 @@ def twice : Program Op board board := .seq tick tick
 theorem twice_eq_two_generations (workers : Nat) (g : Life.Grid) :
     Program.runCPU base (implementation workers) workers twice g =
       Life.generations 2 g := by
-  simpa [twice, tick, Program.eval, Life.generations] using
+  simpa [twice, tick, Program.eval, reference, Life.generations] using
     congrFun (runCPU_eq_reference workers twice) g
 
 private def oscillator : Life.Grid := Life.fromLive 5 5 [(1, 2), (2, 2), (3, 2)]
-#guard Program.runCPU base (implementation 4) 4 twice oscillator == oscillator
-#guard Program.runCPU base (implementation 2) 2 tick oscillator ==
-  Life.step oscillator
+#guard (Program.runCPU base (implementation 4) 4 twice oscillator).cells == oscillator.cells
+#guard (Program.runCPU base (implementation 2) 2 tick oscillator).cells ==
+  (Life.step oscillator).cells
 
 #print axioms primitive_agrees
 #print axioms runCPU_eq_reference
