@@ -5,6 +5,8 @@ const executionStepper = mountExecutionStepper();
 const source = $("source");
 const program = $("program");
 const example = $("example");
+const cityLab = $("city-lab");
+const cityChecks = [...cityLab.querySelectorAll("input[data-city-tile]")];
 const run = $("run");
 const live = $("live");
 const inputStatus = $("input-status");
@@ -159,6 +161,7 @@ function showCurrentGpuState() {
 
 function selectMode(next, {scheduleRun = true, preserveInput = false} = {}) {
   if (next !== "pack" && next !== "studio") return;
+  cityLab.hidden = true;
   if (next !== mode) {
     stopSignal("Playback stopped when the experiment changed.");
     inputs[mode] = source.value;
@@ -218,6 +221,7 @@ function schedule(delay = 150, manual = false, signalFrame = false) {
 }
 
 function edit() {
+  cityLab.hidden = true;
   inputs[mode] = source.value;
   example.value = "custom";
   markPreset(null);
@@ -505,6 +509,13 @@ function applyPreset(name) {
     selectMode("pack", {scheduleRun: false});
     source.value = fixture;
     example.value = name === "city" ? "custom" : "mixed";
+    if (name === "city") {
+      const initial = [[1, 3], [1, 2], [3]];
+      for (const item of cityChecks) {
+        item.checked = initial[Number(item.dataset.cityTile)].includes(Number(item.value));
+      }
+      cityLab.hidden = false;
+    }
   } else {
     const preset = presets[name];
     if (!preset || !studioLimit) return;
@@ -670,8 +681,19 @@ if (worker) {
     gpuStatus.textContent = "WebGPU status unavailable because the worker stopped.";
     setPill("adapter-pill", "WebGPU unavailable", "unavailable");
   });
+  cityLab.addEventListener("change", event => {
+    if (!event.target.matches("input[data-city-tile]")) return;
+    const rows = [0, 1, 2].map(tile => cityChecks
+      .filter(item => Number(item.dataset.cityTile) === tile && item.checked)
+      .map(item => Number(item.value)));
+    source.value = JSON.stringify(rows);
+    inputs.pack = source.value;
+    example.value = "custom";
+    markPreset("city");
+    schedule(0, true);
+  });
   source.addEventListener("input", edit);
-  source.addEventListener("change", () => { inputs[mode] = source.value; example.value = "custom"; markPreset(null); schedule(0); });
+  source.addEventListener("change", () => { cityLab.hidden = true; inputs[mode] = source.value; example.value = "custom"; markPreset(null); schedule(0); });
   program.addEventListener("input", edit);
   program.addEventListener("change", () => { markPreset(null); schedule(0); });
   run.addEventListener("click", () => { example.value = "custom"; schedule(0, true); });
