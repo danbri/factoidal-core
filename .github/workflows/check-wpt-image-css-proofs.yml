@@ -38,5 +38,5 @@ jobs:
     with:
       group: wpt-css-zero-line-height
       modules: L4Factoidal.Rendering.CascadeTests L4Factoidal.Rendering.Style
-      theorems: L4Factoidal.Rendering.Style.applyWinner_lineHeight_zeroPx
+      theorems: L4Factoidal.Rendering.CSS.applyWinner_lineHeight_zeroPx
       timeout_minutes: 45
