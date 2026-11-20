@@ -7375,7 +7375,7 @@
   // error events, its natural size (Lean's HTML.ImageSize from the file's first bytes, web_api
   // 166). The request starts when the element gets a source (parsed with one, or a script sets
   // src, srcset, sizes, crossorigin or referrerpolicy); a page with no img pays nothing.
-  const imgStates = new Map();   // node -> { gen, complete, w, h, waiters }
+  const imgStates = new Map();   // node -> { gen, url, complete, w, h, waiters }
   let imgGen = 0, imgWatching = false;
   // HTML §4.8.4.3: the images of the page's start delay its load event (the window's `load`
   // waits until each has its load or error event)
@@ -7424,7 +7424,7 @@
     // step 2.2: the current request changed)
     const before = imgStates.get(id);
     if (before) for (const [, rej] of before.waiters.splice(0)) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
-    const st = { gen, complete: false, w: 0, h: 0, waiters: [], layoutSized: before?.layoutSized ?? false };
+    const st = { gen, url, unitDensity: selection?.unitDensity ?? false, complete: false, w: 0, h: 0, waiters: [], layoutSized: before?.layoutSized ?? false };
     imgStates.set(id, st);
     const refused = error => {
       // No automatic retry after a resource refusal: retain tracking, reject this
@@ -7476,7 +7476,51 @@
     if (imgWatching) return;
     imgWatching = true;
     const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
+    const insert0 = n.insert, remove0 = n.remove, replace0 = n.replace;
     const isImg = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'img';
+    const isSource = id => id >= 0 && info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'source';
+    const isPicture = id => id >= 0 && info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'picture';
+    const refreshPictureImage = id => {
+      const before = imgStates.get(id);
+      if (!before) return;
+      const selected = imgSelection(id);
+      const url = selected?.url ?? '';
+      const unitDensity = selected?.unitDensity ?? false;
+      // An already available image is reused when a picture mutation leaves its selected
+      // URL unchanged. An in-flight request, however, is replaced by the relevant mutation
+      // even when its URL is the same; decode() must reject that earlier request.
+      if (before.complete && url === before.url && unitDensity === before.unitDensity) return;
+      if (url !== before.url || unitDensity !== before.unitDensity) {
+        imgPendingUpdates.delete(id);
+        updateImage(id, true);
+        return;
+      }
+      Promise.resolve().then(() => {
+        if (imgStates.get(id) !== before) return;
+        const now = imgSelection(id);
+        if (before.complete && (now?.url ?? '') === before.url && (now?.unitDensity ?? false) === before.unitDensity) return;
+        imgPendingUpdates.delete(id);
+        updateImage(id, true);
+      });
+    };
+    const pictureImages = picture => {
+      if (!isPicture(picture)) return [];
+      return kids(picture).filter(isImg);
+    };
+    const pictureTreeChanged = (parent, added, oldParent = -1, removed = []) => {
+      const touched = new Set();
+      const refresh = id => {
+        if (isImg(id) && !touched.has(id)) { touched.add(id); refreshPictureImage(id); }
+      };
+      if (isPicture(oldParent)) {
+        if ([...added, ...removed].some(isSource)) for (const id of pictureImages(oldParent)) refresh(id);
+        for (const id of [...added, ...removed]) refresh(id);
+      }
+      if (isPicture(parent)) {
+        if ([...added, ...removed].some(isSource)) for (const id of pictureImages(parent)) refresh(id);
+        for (const id of [...added, ...removed]) refresh(id);
+      }
+    };
     const watched = (id, name) => {
       name = String(name);
       const separator = name.indexOf('\u0000');
@@ -7494,8 +7538,44 @@
         if (imgPendingUpdates.delete(id)) updateImage(id);
       }), 0, 0));
     };
-    n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0 && watched(id, name) && isImg(id)) schedule(id); return r; };
-    n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && watched(id, name) && isImg(id)) schedule(id); return r; };
+    const sourceAttrChanged = (id, name) => {
+      name = String(name);
+      const separator = name.indexOf('\u0000');
+      const local = separator >= 0 ? name.slice(separator + 1) : name;
+      const isHtmlAttr = separator >= 0 ? separator === 0 : info(id, 8) === 1;
+      if (!isHtmlAttr || !['srcset', 'sizes', 'media', 'type', 'width', 'height'].includes(local.toLowerCase())) return;
+      const parent = info(id, 1);
+      if (isPicture(parent)) for (const image of pictureImages(parent)) refreshPictureImage(image);
+    };
+    n.setAttr = (id, name, value) => {
+      const r = setAttr0(id, name, value);
+      if (r === 0) { if (watched(id, name) && isImg(id)) schedule(id); if (isSource(id)) sourceAttrChanged(id, name); }
+      return r;
+    };
+    n.removeAttr = (id, name) => {
+      const r = removeAttr0(id, name);
+      if (r === 0) { if (watched(id, name) && isImg(id)) schedule(id); if (isSource(id)) sourceAttrChanged(id, name); }
+      return r;
+    };
+    n.insert = (parent, node, child) => {
+      const oldParent = info(node, 1);
+      const moved = info(node, 0) === 11 ? kids(node) : [node];
+      const r = insert0(parent, node, child);
+      if (r === 0) pictureTreeChanged(parent, moved, oldParent);
+      return r;
+    };
+    n.remove = (parent, child) => {
+      const r = remove0(parent, child);
+      if (r === 0) pictureTreeChanged(parent, [], parent, [child]);
+      return r;
+    };
+    n.replace = (parent, node, child) => {
+      const oldParent = info(node, 1);
+      const moved = info(node, 0) === 11 ? kids(node) : [node];
+      const r = replace0(parent, node, child);
+      if (r === 0) pictureTreeChanged(parent, moved, oldParent, [child]);
+      return r;
+    };
   };
   noteImg = id => imgWatch();
   // The page's own images: the first `imgStartMax` request at once (a host that draws the page
