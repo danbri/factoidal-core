@@ -51,6 +51,13 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "execution-stepper.mjs", "worker.mjs", "gpu.mjs", "word-gpu.mjs", "bgp-fixtures.mjs", "bgp-worker.mjs", "bgp-studio.mjs", "bgp-comparison.mjs", "integer-bgp-gpu.mjs", "integer-bgp-compact-gpu.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/paralliverse/${name}`);
   }
+  // Publish the *same* audited browser-safe EVM→WASM compiler sources that
+  // the Node differential suite tests (no second handwritten implementation).
+  for (const name of ["evm-to-wasm.mjs", "evm-policy.mjs"]) {
+    eleventyConfig.addPassthroughCopy({
+      [`../labs/ethereum-wasm-sparql/${name}`]: `web/hub/ethereum-wasm-sparql/${name}`
+    });
+  }
   // Every module of the Hub browser, so a new one is never left off the site (page-gpu.mjs,
   // and before it browser-state.mjs, were missing from a list of names).
   eleventyConfig.addPassthroughCopy("web/hub/foafnaut/*.mjs");
