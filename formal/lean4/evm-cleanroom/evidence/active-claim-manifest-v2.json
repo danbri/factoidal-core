@@ -19,13 +19,16 @@
     "EVMCleanroom/MemoryGas.lean": "35840f83cb5141c454943546827fe6c93d2f1569",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "2c091346beb90a54e9866848187d21606b8b7e5a",
-    "EVMCleanroom.lean": "a8b1bcfe99a9057510ac0a96b3608d8219e72fc9",
+    "EVMCleanroom/CLI.lean": "8b32ff66d2c74fbc057b3a7bf38186f79cc73820",
+    "EVMCleanroom.lean": "a3d98c374498d0369f08789f3a603900206a045c",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
     "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
-    "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8"
+    "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
+    "EVMCleanroom/OpcodeCall.lean": "9b757026bb2ce10cd66807d336785f47683435b7",
+    "EVMCleanroom/OpcodeCallTests.lean": "f21b88906aa548ae3f9fdab336270f8fca98c81c",
+    "scripts/differential/call-opcode.mjs": "4395991df100769b1fc2aae11278295f35f3f61f"
   },
   "theorem_inventory": [
     {
@@ -209,5 +212,25 @@
     "Actual mainnet replay, Engine API and beacon-chain consensus",
     "Independent expert review"
   ],
-  "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates"
+  "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
+  "active_extension": {
+    "name": "restricted-Lean-F1-CALL-bytecode",
+    "status": "pending-new-head-CI",
+    "stacked_on": "https://github.com/danbri/factoidal-core/pull/668",
+    "scope": "One-depth zero-value parent CALL instruction; all calldata, memory offsets and returndata zero; caller and callee are regular non-precompile distinct addresses, no CALL in child",
+    "tested_observables": [
+      "parent remaining gas",
+      "CALL success stack word",
+      "child persistent storage",
+      "parent exceptional rollback",
+      "target warm address"
+    ],
+    "limitations": [
+      "Not arbitrary nesting",
+      "No full transaction state roots or receipts for CALL",
+      "No EELS-independent semantic refinement",
+      "No value stipends, account creation, returndata or precompiles"
+    ],
+    "claim_type": "implementation slice with pending independent differential and Lean CI, not a verified complete EVM"
+  }
 }
