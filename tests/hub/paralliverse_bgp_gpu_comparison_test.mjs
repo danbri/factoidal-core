@@ -32,6 +32,36 @@ for (const n of SIZES) {
   });
 }
 
+// Check the *entire* generated lexical graph against its integer-coded
+// representation, rather than trusting that two parallel generators agree.
+test("All lexical RDF triples encode to exactly the GPU input graph", () => {
+  const termId = iri => {
+    const base="https://example.org/paralliverse/";
+    assert.ok(iri.startsWith(base));
+    const part=iri.slice(base.length);
+    if(part.startsWith("person/")) {
+      const raw=part.slice("person/".length);
+      assert.match(raw,/^[0-9]{4}$/);
+      return Number(raw)+1;
+    }
+    assert.ok(Object.hasOwn(TERM_IDS,part),"Unexpected fixture term "+part);
+    return TERM_IDS[part];
+  };
+  for(const n of SIZES){
+    const fixture=makeFixture(n);
+    const lexical=[fixture.blocks.knows,fixture.blocks.projects,fixture.blocks.labels]
+      .flatMap(block=>block.trim().split("\\n"));
+    assert.equal(lexical.length,fixture.integerGraph.length);
+    const mapped=lexical.map(line=>{
+      const m=/^<([^>]+)> <([^>]+)> (?:<([^>]+)>|"Person ([0-9]+)") \\.$/.exec(line);
+      assert.ok(m,"Expected a complete N-Triples fixture statement: "+line);
+      const object=m[3] ? termId(m[3]) : LABEL_BASE+Number(m[4]);
+      return [termId(m[1]),termId(m[2]),object];
+    });
+    assert.deepEqual(mapped,fixture.integerGraph,"Full RDF text/u32 graph agreement at "+n);
+  }
+});
+
 test("BGP comparator checks solution MULTISET, not ORDER BY position", () => {
   const lean=[
     {personId:2,colleagueId:7},
