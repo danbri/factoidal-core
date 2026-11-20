@@ -2,8 +2,6 @@
   "schema_version": 2,
   "claim_status": "active-code-selected-evidence",
   "produced_on": "2026-11-20",
-  "reference_implementation_commit": "03c83338a0b0305a3003c24d14a5b398d795ee0b",
-  "reference_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44741089115",
   "historical_ledger": "https://github.com/danbri/factoidal-core/pull/658",
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
@@ -261,5 +259,10 @@
       "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44745202928",
       "mismatches": 0
     }
-  }
+  },
+  "baseline_implementation_commit": "03c83338a0b0305a3003c24d14a5b398d795ee0b",
+  "baseline_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44741089115",
+  "active_implementation_evidence_commit": "2f27b3f61b0fc1ee14f0e3a8356c170b18d0167c",
+  "active_implementation_evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44745202928",
+  "commit_provenance_note": "Historical baseline 03c83338 is NOT the revision checked by the new 120-case CALL differential; active implementation evidence is pinned to 2f27b3f and 44745202928. Subsequent manifest/document-only commits do not rewrite earlier executed code claims. Any executable source change must update all monitored blobs and rerun CI."
 }
