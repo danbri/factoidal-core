@@ -45,6 +45,20 @@ def cellAt (g : Grid) (x y : Nat) : Bool :=
   if g.width == 0 || g.height == 0 then false
   else (g.cells[(y % g.height) * g.width + (x % g.width)]?).getD false
 
+/-- Every admitted toroidal coordinate denotes a real cell in the input snapshot. -/
+theorem cell_address_safe (g : Grid) (h : Admitted g) (x y : Nat) :
+    (y % g.height) * g.width + (x % g.width) < g.cells.size := by
+  have hx : x % g.width < g.width := Nat.mod_lt x h.1
+  have hy : y % g.height < g.height := Nat.mod_lt y h.2.1
+  calc
+    (y % g.height) * g.width + (x % g.width)
+        < (y % g.height) * g.width + g.width := Nat.add_lt_add_left hx _
+    _ = ((y % g.height) + 1) * g.width := by omega
+    _ ≤ g.height * g.width :=
+      Nat.mul_le_mul_right _ (Nat.succ_le_of_lt hy)
+    _ = g.width * g.height := Nat.mul_comm _ _
+    _ = g.cells.size := h.2.2.symm
+
 /-- Exactly eight neighbour positions. Repeated positions count separately on tiny tori. -/
 def neighbourCount (g : Grid) (i : Nat) : Nat :=
   let x := i % g.width
@@ -152,6 +166,7 @@ private def vertical : Grid := fromLive 5 5 [(2, 1), (2, 2), (2, 3)]
 #guard (generationsCPU 4 2 horizontal).cells == horizontal.cells
 #guard (step (fromLive 1 1 [])).cells == #[false]
 
+#print axioms cell_address_safe
 #print axioms sequential_size
 #print axioms step_admitted
 #print axioms generations_admitted
