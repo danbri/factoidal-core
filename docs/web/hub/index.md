@@ -46,7 +46,7 @@ WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-pla
 ## Parallel compute
 
 <ul class="post-series">
-  <li><a href="./paralliverse/">Paralliverse</a> — editable stable packing on compiled Lean WebAssembly and WebGPU, with actual byte comparisons, separate timings and the proof's scope.</li>
+  <li><a href="./paralliverse/">Paralleliverse</a> — typed parallel-computation Studio: a real RDF/SPARQL BGP evaluated independently by Lean/Wasm and two WebGPU join plans, with lexical triples, intermediate GPU relations, solution-bag comparisons and source-scoped evidence; plus word-map and packing experiments.</li>
 </ul>
 
 ## Pages

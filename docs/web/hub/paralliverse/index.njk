@@ -1,6 +1,6 @@
 ---
 layout: hub-app.njk
-title: Paralliverse
+title: Paralleliverse
 appBase: /web/hub/paralliverse
 appSource: https://github.com/danbri/factoidal-core/tree/main/formal/lean4/L4Factoidal/Paralliverse
 appEngineLabel: Runtime details
@@ -9,9 +9,9 @@ permalink: /web/hub/paralliverse/index.html
 ---
 <header class="studio-hero">
   <div class="hero-copy">
-    <p class="eyebrow"><span class="brand-symbol" aria-hidden="true">∥</span> A playground for pure parallel programs</p>
-    <h1>Paralliverse<span class="title-dot" aria-hidden="true">.</span></h1>
-    <p class="hero-description">A typed program. Two ways to run it. Explore the data, inspect the rewrite, and compare the bytes returned by your CPU and GPU.</p>
+    <p class="eyebrow"><span class="brand-symbol" aria-hidden="true">∥</span> A playground for pure parallel programs · previously Paralliverse</p>
+    <h1>Paralleliverse<span class="title-dot" aria-hidden="true">.</span></h1>
+    <p class="hero-description">Explore typed parallel computation beyond number maps. Evaluate a fixed SPARQL basic graph pattern on Lean/Wasm and actual WebGPU, inspect each query stage, and compare the returned bindings.</p>
     <div class="hero-badges" aria-label="Runtime status">
       <span class="status-pill" id="runtime-pill"><i aria-hidden="true"></i> Loading runtime</span>
       <span class="status-pill" id="adapter-pill"><i aria-hidden="true"></i> Checking WebGPU</span>
@@ -19,23 +19,24 @@ permalink: /web/hub/paralliverse/index.html
     </div>
   </div>
   <div class="hero-diagram" aria-hidden="true">
-    <div class="diagram-code"><span>program</span><code>List u32 → List u32</code></div>
+    <div class="diagram-code"><span>typed program</span><code>RDF triples → select → equijoin</code></div>
     <div class="diagram-branches"><span></span><span></span></div>
     <div class="diagram-targets"><span><b>CPU</b><small>WebAssembly</small></span><span><b>GPU</b><small>WebGPU</small></span></div>
-    <p>Run independently. Compare the result.</p>
+    <p>Two independent queries. Compare solution bags.</p>
   </div>
 </header>
 
 <section class="example-gallery" aria-labelledby="examples-heading">
   <div class="section-heading"><h2 id="examples-heading">Start with an experiment</h2><a class="text-link" href="https://github.com/danbri/factoidal-core/blob/main/docs/20261119-paralliverse-studio-guide.md">Lean API guide ↗</a></div>
   <div class="example-cards">
+    <button class="example-card" type="button" id="bgp-open"><span class="example-icon" aria-hidden="true">⋈</span><span><strong>Query Constellation · BGP on CPU + GPU</strong><small>4,096 RDF triples · two real GPU join plans · inspect bindings and intermediates.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="signal" data-needs-studio disabled><span class="example-icon signal-icon" aria-hidden="true">▥</span><span><strong>Signal loom</strong><small>A field of words, transformed.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="wrap" data-needs-studio disabled><span class="example-icon" aria-hidden="true">↻</span><span><strong>At the word boundary</strong><small>Watch unsigned arithmetic wrap.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="duplicates" data-needs-studio disabled><span class="example-icon" aria-hidden="true">≋</span><span><strong>Repeated words</strong><small>Multiplicity stays visible.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="empty" data-needs-studio disabled><span class="example-icon" aria-hidden="true">∅</span><span><strong>Nothing in, nothing out</strong><small>Empty inputs are real inputs.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="pack" aria-pressed="true"><span class="example-icon" aria-hidden="true">▤</span><span><strong>Stable packing</strong><small>Rows become one ordered stream.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
     <button class="example-card" type="button" data-preset="city"><span class="example-icon" aria-hidden="true">▦</span><span><strong>Painted City · tile fixture</strong><small>Three tiles, ordered memberships A/B/C; actual Lean and GPU packing.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
-    <button class="example-card" type="button" id="bgp-open"><span class="example-icon" aria-hidden="true">⋈</span><span><strong>Query Constellation · SPARQL BGP</strong><small>64–1,024 people, up to 4,096 RDF triples. Read patterns and actual Lean bindings.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
+    
   </div>
 </section>
 
@@ -137,7 +138,7 @@ map add 1</textarea>
     <div><p class="eyebrow">Query Constellation · RDF dataflow</p><h2 id="bgp-heading">Read the query. Inspect the bindings. Follow the IDs.</h2></div>
     <span class="panel-index">02 / BGP</span>
   </div>
-  <p class="pack-note">The <strong>Lean SPARQL 1.1 engine</strong> evaluates this complete basic graph pattern in a separate browser Web Worker. The two individual patterns also run in Lean. No GPU SPARQL or remote Kubernetes worker is claimed.</p>
+  <p class="pack-note"><strong>Two independent engines evaluate the query itself.</strong> The full Lean SPARQL 1.1 engine evaluates the lexical RDF BGP on CPU. The experimental WebGPU backend evaluates the same fixed BGP fragment over a collision-free, integer-coded version of the <em>input triples</em>. Both return actual bindings. This is not general SPARQL-on-GPU or remote Kubernetes execution.</p>
   <div class="bgp-controls">
     <label for="bgp-size">Dataset <select id="bgp-size">
       <option value="64">64 people · 256 triples</option>
@@ -145,9 +146,37 @@ map add 1</textarea>
       <option value="1024">1,024 people · 4,096 triples</option>
     </select></label>
     <button type="button" class="primary-button" id="bgp-run">Run BGP in Lean/Wasm</button>
-    <button type="button" class="secondary-button" id="bgp-pack" disabled>Pack result IDs on CPU + GPU</button>
+    <label for="bgp-gpu-plan">GPU plan
+      <select id="bgp-gpu-plan" aria-label="BGP GPU lowering">
+        <option value="compacted" selected>Select/compact → equijoin</option>
+        <option value="fused">Fused source-triple probe</option>
+      </select>
+    </label>
+    <button type="button" class="secondary-button" id="bgp-gpu-run" disabled>Run BGP on WebGPU</button>
   </div>
   <p class="pack-status" id="bgp-status" role="status">Choose a dataset size and run the Lean SPARQL query.</p>
+  <p class="pack-status" id="bgp-gpu-status" role="status">GPU query not yet run. The CPU query and GPU query must each execute.</p>
+  <div class="bgp-query-evidence" aria-labelledby="bgp-comparison-heading">
+    <div class="panel-heading"><h3 id="bgp-comparison-heading">Independent BGP execution · CPU versus GPU</h3><span class="target-format">query results</span></div>
+    <p id="bgp-comparison" data-match="pending" role="status">No actual GPU bindings yet. Matching numeric IDs alone is not a substitute for BGP evaluation.</p>
+    <div class="bgp-two">
+      <div><h3>Lean/Wasm · lexical SPARQL</h3><pre id="bgp-cpu-observation" class="bgp-result">Awaiting the full Lean query.</pre></div>
+      <div><h3>WebGPU · integer BGP</h3><pre id="bgp-gpu-observation" class="bgp-result">Awaiting actual GPU predicate and join execution.</pre></div>
+    </div>
+    <div class="step-toolbar">
+      <div class="visual-target" role="group" aria-label="BGP backend step inspection">
+        <button type="button" id="bgp-step-cpu" aria-pressed="true">Lean CPU query</button>
+        <button type="button" id="bgp-step-gpu" aria-pressed="false">WebGPU query</button>
+      </div>
+      <div class="step-controls">
+        <button type="button" class="secondary-button" id="bgp-step-prev" disabled>Previous stage</button>
+        <button type="button" class="secondary-button" id="bgp-step-next">Next stage</button>
+      </div>
+    </div>
+    <p class="step-status" id="bgp-step-status" role="status">No BGP query run.</p>
+    <pre id="bgp-step-detail" class="step-observation">The CPU BGP parses RDF and evaluates two patterns. The GPU BGP probes integer triples, counts, scans and emits bindings.</pre>
+  </div>
+
   <div class="bgp-two">
     <div><h3>Two triple patterns, with a shared variable</h3>
       <pre id="bgp-query" class="bgp-code">Loading SPARQL source…</pre>
@@ -175,12 +204,12 @@ map add 1</textarea>
     </div>
   </div>
   <div id="bgp-answers" class="bgp-table" aria-live="polite"></div>
-  <p id="bgp-id-bridge" class="pack-note">The GPU does not execute SPARQL; optionally encode the returned fixture terms as unique u32 values for the independently checked packing demo.</p>
+  <p id="bgp-id-bridge" class="pack-note">Lexical RDF and integer-coded triples are two representations of the same input graph. The GPU does the BGP join on integers, then its solution bindings are mapped back to readable RDF terms.</p>
   <details class="bgp-trace">
     <summary>Execution and trust boundary</summary>
     <pre id="bgp-ledger">No query executed.</pre>
     <p id="bgp-context" class="pack-note"></p>
-    <p class="pack-note">The query is a local Lean/Wasm execution over generated RDF. The two individual scans and complete join are each evaluated in Lean; they are not distributed remote tasks. The fixture term-to-word dictionary is a teaching adapter, not Shardborough's internal 64-bit term-ID encoding. GPU execution, when requested, handles only the encoded packing rows.</p>
+    <p class="pack-note">The full Lean SPARQL BGP and the restricted WebGPU BGP are independent query executions over equivalent RDF input. The fixture dictionary gives person IRIs, predicates, project IRIs and label literals nonoverlapping u32 ranges, but is not Shardborough's internal 64-bit term-ID encoding. GPU output order can differ from SPARQL ORDER BY; the comparator checks solution mappings as a bag, including multiplicities. No remote workers or full SPARQL semantics are claimed.</p>
   </details>
 </section>
 
@@ -247,7 +276,7 @@ map add 1</textarea>
   <div class="future-grid">
     <article><h3>Painted City</h3><p>Choose the tile fixture above. IDs 1=A, 2=B, 3=C. Tiles [A,C], [A,B], [C] pack to [A,C,A,B,C] in painter order.</p><a href="https://github.com/danbri/factoidal-core/issues/663">Geometry/binning implementation ↗</a></article>
     <article><h3>Life Across Worlds</h3><p>Partitioned cellular automata, neighbourhood halos and synchronized generations.</p><a href="https://github.com/danbri/factoidal-core/issues/664">Stencil backend work ↗</a></article>
-    <article><h3>Query Constellation</h3><p>A runnable local Lean/Wasm BGP over up to 4,096 triples appears above. Shardborough range workers and remote execution remain planned.</p><a href="https://github.com/danbri/factoidal-core/issues/665">Distributed query worker work ↗</a></article>
+    <article><h3>Query Constellation</h3><p>Two runnable BGP engines: full Lean/Wasm SPARQL and actual WebGPU integer filtering and join. Shardborough range workers remain planned.</p><a href="https://github.com/danbri/factoidal-core/issues/665">Distributed query worker work ↗</a></article>
     <article><h3>Fractal Tapestry</h3><p>Bounded pixel tasks, tile scheduling and precise numerical comparisons.</p><a href="https://github.com/danbri/factoidal-core/issues/666">Pixel backend work ↗</a></article>
   </div>
 </section>
