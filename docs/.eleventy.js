@@ -48,7 +48,7 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "engine.mjs", "worker.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/html-webgpu/${name}`);
   }
-  for (const name of ["app.mjs", "execution-stepper.mjs", "worker.mjs", "gpu.mjs", "word-gpu.mjs", "bgp-fixtures.mjs", "bgp-worker.mjs", "bgp-studio.mjs", "style.css"]) {
+  for (const name of ["app.mjs", "execution-stepper.mjs", "worker.mjs", "gpu.mjs", "word-gpu.mjs", "bgp-fixtures.mjs", "bgp-worker.mjs", "bgp-studio.mjs", "bgp-comparison.mjs", "integer-bgp-gpu.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/paralliverse/${name}`);
   }
   // Every module of the Hub browser, so a new one is never left off the site (page-gpu.mjs,
