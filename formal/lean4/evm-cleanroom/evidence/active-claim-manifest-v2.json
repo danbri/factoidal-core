@@ -26,7 +26,7 @@
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
     "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
     "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
-    "EVMCleanroom/OpcodeCall.lean": "2b5e6850136389f2f0b8110362f4d04c96121c53",
+    "EVMCleanroom/OpcodeCall.lean": "1d7e86a88649914d45ab38b4ccdcd04e419510ca",
     "EVMCleanroom/OpcodeCallTests.lean": "f21b88906aa548ae3f9fdab336270f8fca98c81c",
     "scripts/differential/call-opcode.mjs": "4395991df100769b1fc2aae11278295f35f3f61f"
   },
@@ -148,11 +148,10 @@
       "name": "EVMCleanroom.OpcodeCall.run_exception_world_atomic",
       "source": "EVMCleanroom/OpcodeCall.lean",
       "axioms_printed": [
-        "propext",
-        "Quot.sound"
+        "propext"
       ],
-      "scope": "For all admitted depth-one parent CALL bytecode and every account/slot, a parent exceptional result cannot leak any modified account, transaction-original storage or refund",
-      "provenance": "New source theorem, awaiting CI axiom audit and independent review; exact printed axioms to reconcile after build"
+      "scope": "All admitted depth-one parent CALL bytecode: exceptional outcomes restore every account, transaction-original storage, refunds, and storage-slot warmth, while the entry parent address remains warm.",
+      "provenance": "CI proof+axiom audit on code revision 24c40cff67cbfb2032d747f9761236f06066301d (theorem before warmth strengthening), plus pending new-head CI for strengthened statement"
     }
   ],
   "external_evidence": {
@@ -225,7 +224,7 @@
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
   "active_extension": {
     "name": "restricted-Lean-F1-CALL-bytecode",
-    "status": "pending-proved-whole-world-rollback-new-head-CI",
+    "status": "pending-enhanced-parent-rollback-CI",
     "stacked_on": "https://github.com/danbri/factoidal-core/pull/668",
     "scope": "One-depth zero-value parent CALL instruction; all calldata, memory offsets and returndata zero; caller and callee are regular non-precompile distinct addresses, no CALL in child",
     "tested_observables": [
@@ -233,7 +232,8 @@
       "CALL success stack word",
       "child persistent storage",
       "parent exceptional rollback",
-      "target warm address"
+      "target warm address",
+      "machine-checked whole-world atomic exception rollback and preserved warm-slot state"
     ],
     "limitations": [
       "Not arbitrary nesting",
