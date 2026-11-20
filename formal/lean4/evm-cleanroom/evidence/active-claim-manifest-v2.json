@@ -138,7 +138,8 @@
         "Quot.sound"
       ],
       "scope": "Arbitrary monotone memory expansion sequences telescope to exact final gas",
-      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement",
+      "source_symbol": "ExpansionTrace.exact_total"
     }
   ],
   "external_evidence": {
@@ -157,7 +158,15 @@
       "unsupported": 0,
       "other_fork_cases_not_executed": 18,
       "fixture_sha256": "1eb74ceb4d3a4fefaa93f907e85f4d3632cc3f376448488fe04e84fc5c50cfba",
-      "scope": "Cancun PUSH0 nonempty code, storage mutation, EVM stack overflow rollback and gas; single-slot restricted host, trusted EthereumJS trie and signer"
+      "scope": "Cancun PUSH0 nonempty code, storage mutation, EVM stack overflow rollback and gas; single-slot restricted host, trusted EthereumJS trie and signer",
+      "published_case_roots": {
+        "before_jumpdest": "0x2031018a1ebb4c7c5af89b289e5c5212a88dfbea9325d29ed1f45810ac5ee72b",
+        "fill_stack": "0x783370df19b0e84d7c3bab42d9bbb76d4ad2256da28a70d955b3c934153eb8e3",
+        "gas_cost": "0x4d5baee52ab2bf714e92889a2d27fdcd6cd0acc5ea62a1456a7ff3d67f4ee3ee",
+        "key_sstore": "0xb95bd0e0540aec285dea33237ca7589e37b18ab71e9093eb42087f78a065f1d4",
+        "stack_overflow": "0x7cf83ac5c483648b8e9fe95517a142ca295953b9fcb5124d18df3893bc6632f2",
+        "storage_overwrite": "0xcb862dcf57b90bcf5cc6730dcc42f51cadb587893918bce63c016d8c2c98ac14"
+      }
     },
     "ethereumjs_raw_bytecode": {
       "compared": 10000,
