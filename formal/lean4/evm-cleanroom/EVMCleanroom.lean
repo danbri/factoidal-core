@@ -6,6 +6,9 @@ import EVMCleanroom.World
 import EVMCleanroom.WorldTests
 import EVMCleanroom.Value
 import EVMCleanroom.ValueTests
+import EVMCleanroom.CallGas
+import EVMCleanroom.Call
+import EVMCleanroom.CallTests
 import EVMCleanroom.EELSBridge
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.JumpProofs

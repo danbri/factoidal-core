@@ -33,6 +33,7 @@ structure TxWorld where
   accounts : Nat → Account
   original : Nat → Nat → Nat
   warmSlots : Nat → Nat → Bool := fun _ _ => false
+  warmAddresses : Nat → Bool := fun _ => false
   refund : Int := 0
 
 def beginTransaction (accounts : Nat → Account) : TxWorld :=
