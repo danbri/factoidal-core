@@ -19,6 +19,8 @@ private def resultWord (result : Except Error State) : Option Nat :=
 
 -- PUSH1 2; PUSH1 3; ADD; STOP.
 #guard resultWord (run 10 (initial #[0x60, 0x02, 0x60, 0x03, 0x01, 0x00])) == some 5
+-- Bitwise OR is a genuine EVM opcode used by official large-stack PUSH0 tests.
+#guard resultWord (run 6 (initial #[0x60,0x01,0x60,0x02,0x17,0x00])) == some 3
 -- Noncommutative operand order: 7 - 2 = 5.
 #guard resultWord (run 10 (initial #[0x60, 0x02, 0x60, 0x07, 0x03, 0x00])) == some 5
 -- PUSH0 is available post-Shanghai, but not pre-Shanghai.
@@ -61,6 +63,8 @@ private def resultGas (result : Except Error State) : Option Nat :=
   match result with
   | .ok s => some s.gas
   | .error _ => none
+
+#guard resultGas (run 6 (initial #[0x60,0x01,0x60,0x02,0x17,0x00])) == some 91
 
 -- PUSH32 + PUSH32 + ADD + STOP consumes 3 + 3 + 3 + 0 gas.
 #guard resultGas (run 8 (initial (pushMax ++ pushMax ++ #[0x01, 0x00]) 100)) ==
