@@ -135,8 +135,11 @@ theorem run_revert_atomic (fuel : Nat) (initial final : State)
   | stopped state => simp [run, he] at h
   | returned state off len => simp [run, he] at h
   | reverted state off len =>
-    simp [run, he] at h
-    cases h
+    have hh : Outcome.reverted (restore initial state) off len =
+        Outcome.reverted final offset length := by
+      simpa [run, he] using h
+    injection hh with hs _ _
+    subst final
     exact ⟨rfl, rfl, rfl, rfl⟩
   | exceptional e => simp [run, he] at h
   | unsupported e => simp [run, he] at h
@@ -155,8 +158,11 @@ theorem run_exception_atomic (fuel : Nat) (initial final : State)
   | returned state off len => simp [run, he] at h
   | reverted state off len => simp [run, he] at h
   | exceptional e =>
-    simp [run, he] at h
-    cases h
+    have hh : Outcome.exceptional { initial with gas := 0, halted := true } e =
+        Outcome.exceptional final reason := by
+      simpa [run, he] using h
+    injection hh with hs _
+    subst final
     exact ⟨rfl, rfl, rfl⟩
   | unsupported e => simp [run, he] at h
 
