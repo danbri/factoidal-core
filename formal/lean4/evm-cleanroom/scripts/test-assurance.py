@@ -45,5 +45,28 @@ class EvidenceControls(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     check.check_result(result, replay)
 
+class FixtureMetadataControls(unittest.TestCase):
+    def test_fixture_metadata_falsification(self):
+        raw = root/'.lake/eels/eip7623.json'
+        if not raw.is_file():
+            self.skipTest('pinned EELS fixture not downloaded; CI fetches it before this test')
+        fixture = json.loads(raw.read_text())
+        check.check_fixture(fixture, replay)
+        ident = next(iter(fixture))
+        passing = next(c['id'] for c in replay['cases'] if c['status'] == 'pass')
+        mutations = [
+            lambda x: x[ident]['_info'].update({'filling-transition-tool':'untrusted'}),
+            lambda x: x[ident]['_info'].update({'reference-spec-version':'0'*40}),
+            lambda x: x[ident]['_info'].update({'url':'https://example.org/fake-source'}),
+            lambda x: x[passing]['post']['Prague'][0].update({'hash':'0x'+'00'*32}),
+            lambda x: x.pop(ident),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                candidate = copy.deepcopy(fixture)
+                mutate(candidate)
+                with self.assertRaises(ValueError):
+                    check.check_fixture(candidate, replay)
+
 if __name__ == '__main__':
     unittest.main()
