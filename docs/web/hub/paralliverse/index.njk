@@ -166,7 +166,14 @@ map add 1</textarea>
       <pre class="bgp-result" id="bgp-right">Awaiting actual Lean bindings…</pre>
     </div>
   </div>
-  <h3>Joined BGP bindings · real Lean query result</h3>
+  <div class="bgp-page-heading">
+    <h3>Joined BGP bindings · real Lean query result</h3>
+    <div class="bgp-page-controls" role="group" aria-label="Browse BGP solution mappings">
+      <button type="button" class="secondary-button" id="bgp-prev" disabled>Previous 20</button>
+      <span id="bgp-page-status" aria-live="polite">No bindings yet</span>
+      <button type="button" class="secondary-button" id="bgp-next" disabled>Next 20</button>
+    </div>
+  </div>
   <div id="bgp-answers" class="bgp-table" aria-live="polite"></div>
   <p id="bgp-id-bridge" class="pack-note">The GPU does not execute SPARQL; optionally encode the returned fixture terms as unique u32 values for the independently checked packing demo.</p>
   <details class="bgp-trace">
