@@ -114,6 +114,53 @@ theorem step_has_exact_bill {s out : State} (h : step s = .ok out) :
       simpa [step, hp] using h
     exact ⟨p, rfl, commit_gas_exact hc⟩
 
+
+/-- A successful commit cannot rewrite the transaction-original slot map,
+    regardless of the instruction's proposed storage update. -/
+theorem commit_original_unchanged {s out : State} {pc cost : Nat}
+    {xs : List Word} {halt : Bool} {nextMemory : Option Memory}
+    {nextStorage : Option Storage}
+    (h : commit s pc xs cost halt nextMemory nextStorage = .ok out)
+    (key : Nat) :
+    out.storage.original key = s.storage.original key := by
+  unfold commit at h
+  split at h
+  · split at h
+    · cases h
+      rfl
+    · cases h
+  · cases h
+
+/-- Even a malformed plan cannot alter current storage via a successful
+    commit inside a read-only frame. Warming reads remains permissible. -/
+theorem commit_static_current_unchanged {s out : State} {pc cost : Nat}
+    {xs : List Word} {halt : Bool} {nextMemory : Option Memory}
+    {nextStorage : Option Storage}
+    (h : commit s pc xs cost halt nextMemory nextStorage = .ok out)
+    (hs : s.readOnly = true) (key : Nat) :
+    out.storage.current key = s.storage.current key := by
+  unfold commit at h
+  split at h
+  · split at h
+    · cases h
+      simp [hs]
+    · cases h
+  · cases h
+
+/-- All successful actual opcode steps preserve the transaction's
+    original storage snapshot; the property does not rely on preselected
+    opcode examples. -/
+theorem step_original_unchanged {s out : State}
+    (h : step s = .ok out) (key : Nat) :
+    out.storage.original key = s.storage.original key := by
+  cases hp : planStep s with
+  | error e => simp [step, hp] at h
+  | ok p =>
+    have hc : commit s p.nextPC p.stack p.gasCost p.halt
+      p.nextMemory p.nextStorage = .ok out := by
+      simpa [step, hp] using h
+    exact commit_original_unchanged hc key
+
 /-- Arbitrarily many successful opcode steps, without a fuel assumption. -/
 inductive Trace : State → State → Prop where
   | nil (s : State) : Trace s s
@@ -135,6 +182,17 @@ theorem Trace.code_unchanged {s out : State} (h : Trace s out) :
   | nil _ => rfl
   | cons hs _ ih =>
     exact ih.trans (step_code_unchanged hs)
+
+
+/-- The original slot map is immutable over arbitrarily long successful
+    execution traces, even when many SSTOREs change the current values. -/
+theorem Trace.original_unchanged {s out : State}
+    (h : Trace s out) (key : Nat) :
+    out.storage.original key = s.storage.original key := by
+  induction h with
+  | nil _ => rfl
+  | cons hs _ ih =>
+    exact (ih key).trans (step_original_unchanged hs key)
 
 /-- An independent *billing witness* records the exact instruction plans,
     not merely the observed difference in initial/final gas. -/
@@ -247,6 +305,20 @@ theorem run_code_unchanged (fuel : Nat) {s out : State}
 #print axioms run_has_exact_bill
 #print axioms run_gas_nonincreasing
 #print axioms run_code_unchanged
+
+
+/-- Every *successful executable run*, including runs with SSTORE, keeps
+    the starting transaction-original values at every slot. -/
+theorem run_original_unchanged (fuel : Nat) {s out : State}
+    (h : run fuel s = .ok out) (key : Nat) :
+    out.storage.original key = s.storage.original key :=
+  Trace.original_unchanged (run_toTrace fuel h) key
+
+#print axioms commit_original_unchanged
+#print axioms commit_static_current_unchanged
+#print axioms step_original_unchanged
+#print axioms Trace.original_unchanged
+#print axioms run_original_unchanged
 
 /-- Even if a PUSH1 data byte equals the JUMPDEST opcode (0x5b),
     it is not an executable instruction boundary. This holds for every
