@@ -159,7 +159,9 @@ theorem run_exception_world_atomic (parentFuel childFuel : Nat)
         .exceptional result reason) :
     result.accounts addr = world.accounts addr ∧
     result.original addr slot = world.original addr slot ∧
-    result.refund = world.refund := by
+    result.refund = world.refund ∧
+    result.warmSlots addr slot = world.warmSlots addr slot ∧
+    result.warmAddresses parentAddress = true := by
   unfold run at h
   by_cases hv : parentAddress ≥ addressBound || parentAddress < 10
   · simp [hv] at h
@@ -169,7 +171,9 @@ theorem run_exception_world_atomic (parentFuel childFuel : Nat)
     subst result
     exact ⟨WorldCall.warmTarget_accounts world parentAddress addr,
       WorldCall.warmTarget_original world parentAddress addr slot,
-      WorldCall.warmTarget_refund world parentAddress⟩
+      WorldCall.warmTarget_refund world parentAddress,
+      WorldCall.warmTarget_slotWarmth world parentAddress addr slot,
+      WorldCall.warmTarget_own world parentAddress⟩
 
 #print axioms settleParent_exception_restores
 #print axioms run_exception_world_atomic
