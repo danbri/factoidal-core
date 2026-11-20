@@ -7,8 +7,7 @@ namespace EVMCleanroom.ReturnDataTests
 private def buffer : Array UInt8 := #[0x2a]
 private def input (offset length dest : Nat) (gas : Nat := 100) : State :=
   { code := #[0x3e], gas := gas,
-    stack := { items := [word dest, word offset, word length],
-      bounded := by decide } }
+    stack := ⟨[word dest, word offset, word length], by decide⟩ }
 
 private def copiedByte (r : Except Error State) (addr : Nat) : Option Nat :=
   match r with
