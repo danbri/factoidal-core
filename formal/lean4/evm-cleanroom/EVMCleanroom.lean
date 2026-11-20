@@ -9,6 +9,8 @@ import EVMCleanroom.ValueTests
 import EVMCleanroom.CallGas
 import EVMCleanroom.Call
 import EVMCleanroom.CallTests
+import EVMCleanroom.OpcodeCall
+import EVMCleanroom.OpcodeCallTests
 import EVMCleanroom.EELSBridge
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.JumpProofs
