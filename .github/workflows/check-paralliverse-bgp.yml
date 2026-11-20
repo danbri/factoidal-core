@@ -6,11 +6,13 @@ on:
     paths:
       - 'docs/web/hub/paralliverse/**'
       - 'tests/hub/paralliverse_bgp_test.mjs'
+      - 'tests/hub/paralliverse_bgp_gpu_comparison_test.mjs'
       - '.github/workflows/check-paralliverse-bgp.yml'
   pull_request:
     paths:
       - 'docs/web/hub/paralliverse/**'
       - 'tests/hub/paralliverse_bgp_test.mjs'
+      - 'tests/hub/paralliverse_bgp_gpu_comparison_test.mjs'
       - '.github/workflows/check-paralliverse-bgp.yml'
   workflow_dispatch: {}
 
@@ -31,6 +33,8 @@ jobs:
           node --check docs/web/hub/paralliverse/bgp-fixtures.mjs
           node --check docs/web/hub/paralliverse/bgp-worker.mjs
           node --check docs/web/hub/paralliverse/bgp-studio.mjs
+          node --check docs/web/hub/paralliverse/bgp-comparison.mjs
+          node --check docs/web/hub/paralliverse/integer-bgp-gpu.mjs
           node --check docs/web/hub/paralliverse/app.mjs
       - name: Test lexical triples, generated scales and exact ID conversion
-        run: node --test tests/hub/paralliverse_bgp_test.mjs
+        run: node --test tests/hub/paralliverse_bgp_test.mjs tests/hub/paralliverse_bgp_gpu_comparison_test.mjs
