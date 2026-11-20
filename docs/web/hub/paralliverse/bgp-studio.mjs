@@ -91,6 +91,10 @@ export function mountBgpStudio({onPack}) {
   };
 
   function finish(result) {
+    if (result?.schemaVersion !== 1 || !Array.isArray(result.bindings) ||
+        result.bindings.length !== result.bgp?.count || result.bindings.length > 512) {
+      throw new Error("Incompatible or incomplete Lean BGP response.");
+    }
     state.result = result;
     status.textContent = "Lean/Wasm completed " + result.input.tripleCount.toLocaleString() +
       " triples; " + result.bgp.count + " BGP solution mappings.";
@@ -122,11 +126,22 @@ export function mountBgpStudio({onPack}) {
     const id = ++state.id;
     messages = [];
     state.result = null;
+    state.page = 0;
+    prev.disabled = true;
+    next.disabled = true;
+    pageStatus.textContent = "Running…";
+    answers.replaceChildren();
     pack.disabled = true;
     button.disabled = true;
     status.textContent = "Preparing " + n + " people (" + (n * 4) + " generated RDF triples)…";
     if (!state.worker) {
-      state.worker = new Worker(new URL("./bgp-worker.mjs", import.meta.url), {type: "module"});
+      try {
+        state.worker = new Worker(new URL("./bgp-worker.mjs", import.meta.url), {type: "module"});
+      } catch (error) {
+        status.textContent = "Cannot start SPARQL worker: " + (error?.message || String(error));
+        button.disabled = false;
+        return;
+      }
       state.worker.addEventListener("message", ({data}) => {
         if (data.id !== state.id) return;
         if (data.type === "bgp-phase") {
@@ -144,6 +159,8 @@ export function mountBgpStudio({onPack}) {
         status.textContent = "SPARQL worker failed: " + (error.message || "Module load error.");
         button.disabled = false;
         pack.disabled = true;
+        state.worker?.terminate();
+        state.worker = null;
       });
     }
     state.worker.postMessage({id, people: n});
