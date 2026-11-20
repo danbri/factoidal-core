@@ -1,6 +1,12 @@
 name: Paralliverse browser acceptance
 
 on:
+  pull_request:
+    paths:
+      - 'docs/web/hub/paralliverse/**'
+      - 'docs/.eleventy.js'
+      - 'tools/paralliverse-browser-smoke.mjs'
+      - '.github/workflows/check-paralliverse-browser.yml'
   workflow_dispatch:
     inputs:
       core_ref:
@@ -19,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.core_ref }}
+          ref: ${{ inputs.core_ref || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
