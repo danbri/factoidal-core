@@ -30,7 +30,12 @@
     "scripts/differential/call-opcode-matrix.mjs": "2a111c8fce567935159d41c85e12dbd519c2f57d",
     "EVMCleanroom/ReturnData.lean": "a85af169c09a0bcc3c449baa903106a9be35de99",
     "EVMCleanroom/ReturnDataTests.lean": "b66d01002dcff2be53d5efa99587a26f5e96db44",
-    "EVMCleanroom/CallData.lean": "2d236a3b6a67be554783d6bee224641e99f85e9e"
+    "EVMCleanroom/CallData.lean": "2d236a3b6a67be554783d6bee224641e99f85e9e",
+    "scripts/differential/returndata.mjs": "0f0fb8dfba1894fc9e8b1346481374d8dff7b09f",
+    "scripts/eels/run-lean-call-context.mjs": "c54a04241621d653c19ebba398b53f0e324a3c7c",
+    "scripts/eels/call-context-selftest.mjs": "51960a4b81c633d364d8aee8a5e08563aa73a0fb",
+    "scripts/check-active-ledger.py": "0d3d231c3e7083d7add32e82f5b80eb5bbcba017",
+    "scripts/test-active-ledger.py": "2d73eee51a9cdee76011e80f9c7912ccabf729af"
   },
   "theorem_inventory": [
     {
@@ -159,16 +164,21 @@
     {
       "name": "EVMCleanroom.ReturnData.copy_has_exact_bill",
       "source": "EVMCleanroom/ReturnData.lean",
-      "axioms_printed": [],
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
       "scope": "Every accepted EIP-211 copy step has an exact opcode, word-copy and memory-expansion gas bill",
-      "provenance": "New theorem submitted for Lean kernel and axiom CI audit; exact axioms to be recorded from passing check"
+      "provenance": "Lean axiom audit on source from EELS runner CI 44783238964; proof of local ReturnData.copy gas-bill reconstruction"
     },
     {
       "name": "EVMCleanroom.ReturnData.copy_original_unchanged",
       "source": "EVMCleanroom/ReturnData.lean",
-      "axioms_printed": [],
+      "axioms_printed": [
+        "propext"
+      ],
       "scope": "Return-data copy through actual gas-checked commit preserves transaction original storage",
-      "provenance": "New theorem submitted for Lean kernel and axiom CI audit; exact axioms to be recorded from passing check"
+      "provenance": "Lean axiom audit on source from EELS runner CI 44783238964; proof of local storage-original preservation"
     }
   ],
   "external_evidence": {
@@ -220,6 +230,38 @@
       "passed": 4,
       "reference": "EthereumJS 10.1.3 Cancun real parent CALL bytecode",
       "scope": "Lean *scheduler API*, not Lean 0xF1 opcode; zero value, single depth, no calldata/returndata"
+    },
+    "official_cancun_call_return_data": {
+      "fixture_mirror_commit": "3c4287ae3aea1f45af9288629834f0584fcde69a",
+      "fixture_sha256": "a20350b0b4bc0f0d6e6bbcaa5b4cc24f5b2bfc3537ea37ab343767feeecb5e05",
+      "fixture_path": "stable/state_tests/shanghai/eip3855_push0/test_push0_contract_during_call_contexts.json",
+      "passing_id": "tests/shanghai/eip3855_push0/test_push0.py::TestPush0CallContext::test_push0_contract_during_call_contexts[fork_Cancun-state_test-call]",
+      "case_ids": [
+        "tests/shanghai/eip3855_push0/test_push0.py::TestPush0CallContext::test_push0_contract_during_call_contexts[fork_Cancun-state_test-call]",
+        "tests/shanghai/eip3855_push0/test_push0.py::TestPush0CallContext::test_push0_contract_during_call_contexts[fork_Cancun-state_test-callcode]",
+        "tests/shanghai/eip3855_push0/test_push0.py::TestPush0CallContext::test_push0_contract_during_call_contexts[fork_Cancun-state_test-delegatecall]",
+        "tests/shanghai/eip3855_push0/test_push0.py::TestPush0CallContext::test_push0_contract_during_call_contexts[fork_Cancun-state_test-staticcall]"
+      ],
+      "expected_state_root": "0x87c138760a85e3e5ee9236ff3bf895b5bf32c210153a800dc18bd0fae7be425c",
+      "counts": {
+        "totalFixtureCases": 16,
+        "CancunCases": 4,
+        "passed": 1,
+        "failed": 0,
+        "unsupported": 3,
+        "otherForkNotExecuted": 12
+      },
+      "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44783238964",
+      "trust_boundaries": [
+        "Lean CALL/RETURN/RETURNDATACOPY/MLOAD/SSTORE and restricted fee settlement",
+        "Trusted EthereumJS signer/RLP, code hash/storage/world MPT and host mapping"
+      ],
+      "not_claimed": [
+        "CALLCODE/DELEGATECALL/STATICCALL",
+        "General nested call semantics",
+        "Source-to-bytecode theorem or EELS semantic refinement",
+        "Mainnet replay"
+      ]
     }
   },
   "trust_boundaries": [
@@ -256,7 +298,7 @@
       "Not arbitrary nesting",
       "No full transaction state roots or receipts for CALL",
       "No EELS-independent semantic refinement",
-      "No value stipends, account creation, returndata or precompiles"
+      "No value stipends, account creation or precompiles; bounded returndata is supported in the later extension"
     ],
     "claim_type": "implementation slice with pending independent differential and Lean CI, not a verified complete EVM",
     "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44745202928",
@@ -283,13 +325,16 @@
   "active_implementation_evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44745202928",
   "commit_provenance_note": "Historical baseline 03c83338 is NOT the revision checked by the new 120-case CALL differential; active implementation evidence is pinned to 2f27b3f and 44745202928. Subsequent manifest/document-only commits do not rewrite earlier executed code claims. Any executable source change must update all monitored blobs and rerun CI.",
   "active_extension_return_data": {
-    "status": "pending-independent-CI",
-    "claims": [
-      "EIP-211 parent RETURNDATASIZE and RETURNDATACOPY",
-      "full child RETURN/REVERT bytes preserved for parent",
-      "memory expansion and source-bound checks even on length 0"
-    ],
-    "selected_fixture": "EELS generated Cancun PUSH0 call context; not yet executed via official EELS runner",
-    "caveat": "Bounded 4 KiB return-data observation; larger returns explicitly unsupported, not valid Ethereum failures."
+    "status": "passed-Lean-axiom-audit-independent-differential-and-scoped-EELS-CALL-state-root",
+    "scope": "one-level zero-value CALL; full child RETURN/REVERT bytes up to 4096, RETURNDATASIZE/COPY parent; zero CALL input/output regions; two storage keys reconstructed by host",
+    "evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44783238964",
+    "differential_evidence": {
+      "compared": 5,
+      "matched": 5,
+      "oracle": "@ethereumjs/evm@10.1.3 Cancun",
+      "scope": "identical complete bytecode, returndata in parent storage, strict source bounds, REVERT/exception behavior"
+    },
+    "selected_fixture": "stable/state_tests/shanghai/eip3855_push0/test_push0_contract_during_call_contexts.json",
+    "caveat": "One CALL-context fixture passes, three other Cancun call families unsupported, 12 other-fork cases not checked. Trusted RLP/signature recovery and code/storage/world MPT and Keccak hashing. No independent EELS refinement."
   }
 }
