@@ -1736,7 +1736,10 @@ Does not say: which declaration wins or how tall a particular line of boxes is. 
 theorem applyWinner_lineHeight_zeroPx (parent start s : Computed) :
     applyWinner parent start s ⟨"line-height", "0px", false⟩ =
       {s with lineHeight := 0, lineHeightFactor := none} := by
-  simp [applyWinner, wideSource, applyOrKeep, applyOrKeepSlow, apply, appliedName]
+  unfold applyWinner
+  simp only [wideSource]
+  rw [applyOrKeep_eq]
+  simp [applyOrKeepSlow, apply]
 
 /-- `inherit` gives the parent's value. -/
 theorem copyProperty_color (source s : Computed) :
