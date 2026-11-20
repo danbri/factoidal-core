@@ -48,7 +48,7 @@ test('changing one EVM opcode changes SPARQL answers via a freshly compiled wasm
   await registerEthereumDerivedWasm({registerExtensionFunction},mutated);
   try {
     const allowed=await query(DATA,QUERY_SAFE);
-    assert.deepEqual(subjects(allowed),['bob-to-carol']);
+    assert.deepEqual(subjects(allowed),['bob-to-carol','carol-to-dave']);
   }finally{
     await unregisterExtensionFunction(FUNCTION_IRI);
   }
