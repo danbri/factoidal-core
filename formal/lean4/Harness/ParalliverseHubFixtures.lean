@@ -52,7 +52,7 @@ def main : IO Unit := do
     expectBytes s!"shader selector {selector}" (Hub.callExport 2 ⟨#[selector]⟩) (0 :: source.toUTF8.data.toList)
   expectTag "missing shader selector" (Hub.callExport 2 ByteArray.empty) 1
   expectTag "two-byte shader selector" (Hub.callExport 2 ⟨#[0, 1]⟩) 1
-  expectTag "unknown shader selector" (Hub.callExport 2 ⟨#[3]⟩) 1
+  expectTag "unknown shader selector" (Hub.callExport 2 ⟨#[5]⟩) 1
   expectTag "unknown operation" (Hub.callExport 9 ByteArray.empty) 1
 
   let text := "[" ++ String.intercalate "," (List.replicate PackWire.maxRows "[]") ++ "]"

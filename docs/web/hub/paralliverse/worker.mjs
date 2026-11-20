@@ -1,6 +1,8 @@
 const PREPARE = 0;
 const PACK_CPU = 1;
 const SHADER_SOURCE = 2;
+const STUDIO = 3;
+const CAPABILITIES = 4;
 const runtimeBase = new URL("../assets/l4/paralliverse/", import.meta.url);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -16,6 +18,7 @@ export class InputError extends Error {
 export function connectCpu(module) {
   const editorLimit = module._paralliverse_input_limit_v1(PREPARE);
   const packetLimit = module._paralliverse_input_limit_v1(PACK_CPU);
+  const studioLimit = module._paralliverse_input_limit_v1(STUDIO);
   if (!editorLimit || !packetLimit) throw new Error("Lean CPU initialisation failed.");
   const editorBytes = new Uint8Array(editorLimit);
 
@@ -51,8 +54,15 @@ export function connectCpu(module) {
     }
   }
 
+  const capabilities = studioLimit ? JSON.parse(decoder.decode(call(CAPABILITIES, new Uint8Array()))) : null;
+  if (capabilities && (capabilities.schemaVersion !== 1 || capabilities.studioLimit !== studioLimit ||
+      !Number.isInteger(capabilities.programLimit) || capabilities.programLimit < 1)) {
+    throw new Error("The Studio runtime capabilities are incompatible.");
+  }
   return {
     editorLimit,
+    studioLimit,
+    capabilities,
     prepare(source) {
       const {read, written} = encoder.encodeInto(source, editorBytes);
       if (read !== source.length) throw new InputError("The input exceeds its byte limit.", "limit");
@@ -62,7 +72,7 @@ export function connectCpu(module) {
       if (module._paralliverse_input_limit_v1(SHADER_SOURCE) !== 1) {
         throw new Error("The Lean GPU shader export is unavailable in this runtime.");
       }
-      if (!Number.isInteger(selector) || selector < 0 || selector > 2) {
+      if (!Number.isInteger(selector) || selector < 0 || selector > (studioLimit ? 4 : 2)) {
         throw new RangeError("The shader selector is unsupported.");
       }
       return shaderDecoder.decode(call(SHADER_SOURCE, new Uint8Array([selector])));
@@ -70,6 +80,26 @@ export function connectCpu(module) {
     packCpu(packet) {
       if (packet.byteLength > packetLimit) throw new InputError("The packet exceeds its byte limit.", "limit");
       return call(PACK_CPU, packet);
+    },
+    studio(program, source) {
+      if (!studioLimit) throw new InputError("This runtime does not include the program Studio.", "unavailable");
+      if (typeof program !== "string" || typeof source !== "string") {
+        throw new InputError("Program and input must be text.", "invalid");
+      }
+      if (program.length > capabilities.programLimit || source.length > studioLimit) {
+        throw new InputError("The Studio request exceeds its byte limit.", "limit");
+      }
+      const bytes = new Uint8Array(studioLimit);
+      const request = `${program}\0${source}`;
+      const {read, written} = encoder.encodeInto(request, bytes);
+      if (read !== request.length) throw new InputError("The Studio request exceeds its byte limit.", "limit");
+      const result = JSON.parse(decoder.decode(call(STUDIO, bytes.subarray(0, written))));
+      if (result.schemaVersion !== 1 || !Array.isArray(result.input) || !Array.isArray(result.output) ||
+          result.input.length > capabilities.wordLimit || result.output.length > capabilities.wordLimit ||
+          typeof result.gpuEligible !== "boolean") {
+        throw new Error("The Studio runtime returned an incompatible report.");
+      }
+      return result;
     },
   };
 }
@@ -131,14 +161,18 @@ async function loadRuntime() {
 if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope) {
   let latest = 0;
   let gpuDisabled = false;
+  let wordGpuDisabled = false;
   let queue = Promise.resolve();
   const runtime = loadRuntime();
   runtime.then(({cpu, provenance}) => {
-    self.postMessage({type: "ready", editorLimit: cpu.editorLimit, provenance});
+    self.postMessage({type: "ready", editorLimit: cpu.editorLimit, studioLimit: cpu.studioLimit,
+      programLimit: cpu.capabilities?.programLimit ?? 0, capabilities: cpu.capabilities, provenance});
   }, error => self.postMessage({type: "unavailable", message: error.message}));
 
   self.postMessage({type: "gpu", state: "checking"});
-  const gpuRuntime = runtime.then(async ({cpu}) => {
+  let gpuRuntime;
+  function getGpuRuntime() {
+    return gpuRuntime ??= runtime.then(async ({cpu}) => {
     if (!self.navigator.gpu) {
       self.postMessage({type: "gpu", state: "api-unavailable", message: "WebGPU is unavailable in this browser."});
       return null;
@@ -163,8 +197,62 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     if (!gpuDisabled) self.postMessage({type: "gpu", state: error.state || "program-unavailable", message: error.message});
     return null;
   });
+  }
 
-  self.onmessage = ({data: {id, source}}) => {
+  let wordGpuRuntime;
+  function getWordGpuRuntime() {
+    return wordGpuRuntime ??= runtime.then(async ({cpu}) => {
+    if (!cpu.studioLimit) return null;
+    self.postMessage({type: "gpu", mode: "studio", state: "checking"});
+    const sources = {3: cpu.shaderSource(3), 4: cpu.shaderSource(4)};
+    const sourceHashes = await Promise.all([3, 4].map(async selector => {
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(sources[selector])));
+      return Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("");
+    }));
+    const {connectWordGpu} = await import("./word-gpu.mjs");
+    const started = performance.now();
+    const gpu = await connectWordGpu(sources, message => {
+      wordGpuDisabled = true;
+      self.postMessage({type: "gpu", mode: "studio", state: "device-lost", message});
+    });
+    if (wordGpuDisabled) {
+      gpu.close();
+      return null;
+    }
+    self.postMessage({type: "gpu", mode: "studio", state: "ready", adapter: gpu.adapter,
+      isFallbackAdapter: gpu.isFallbackAdapter, initMs: performance.now() - started,
+      deviceTimestamps: "Whole-call worker timings; device timestamps are not collected.",
+      sourceNames: ["Word add", "Word multiply"], sourceHashes});
+    return gpu;
+  }).catch(error => {
+    if (!wordGpuDisabled) self.postMessage({type: "gpu", mode: "studio",
+      state: error.state || "program-unavailable", message: error.message});
+    return null;
+  });
+  }
+
+  function outputBytes(words) {
+    const bytes = new Uint8Array(words.length * 4);
+    const view = new DataView(bytes.buffer);
+    words.forEach((word, i) => view.setUint32(4 * i, word, true));
+    return bytes;
+  }
+
+  async function boundedGpu(gpu, plan) {
+    let timeout;
+    try {
+      return await Promise.race([gpu.run(plan), new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          gpu.close();
+          reject(new Error("The GPU submission exceeded its 15-second host deadline."));
+        }, 15000);
+      })]);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  self.onmessage = ({data: {id, source, mode = "pack", program = ""}}) => {
     latest = id;
     // Only one request owns the reusable GPU buffers; stale queued inputs are skipped.
     queue = queue.then(async () => {
@@ -172,6 +260,31 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       try {
         const {cpu} = await runtime;
         if (id !== latest) return;
+        if (mode === "studio") {
+          cpu.studio(program, source); // Untimed parse/evaluation warm-up on this input.
+          const started = performance.now();
+          const result = cpu.studio(program, source);
+          const cpuMs = performance.now() - started;
+          if (id !== latest) return;
+          self.postMessage({type: "studio-result", id, result, cpuMs});
+          if (!result.gpuEligible) return;
+          const gpu = await getWordGpuRuntime();
+          if (!gpu || wordGpuDisabled || id !== latest) return;
+          try {
+            await boundedGpu(gpu, result.executionPlan);
+            if (wordGpuDisabled || id !== latest) return;
+            const observed = await boundedGpu(gpu, result.executionPlan);
+            const expected = outputBytes(result.output);
+            const matches = observed.fullMatches && expected.byteLength === observed.packed.byteLength &&
+              expected.every((byte, index) => byte === observed.packed[index]);
+            if (wordGpuDisabled || id !== latest) return;
+            self.postMessage({type: "gpu-result", mode: "studio", id, ...observed, matches}, [observed.packed.buffer]);
+          } catch (error) {
+            wordGpuDisabled = true;
+            self.postMessage({type: "gpu", mode: "studio", state: "execution-failed", message: error.message});
+          }
+          return;
+        }
         const preparing = performance.now();
         const packet = cpu.prepare(source);
         const prepared = performance.now();
@@ -180,7 +293,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
         const packed = cpu.packCpu(packet);
         const cpuMs = performance.now() - started;
         self.postMessage({type: "result", id, packed, prepareMs: prepared - preparing, cpuMs});
-        const gpu = await gpuRuntime;
+        const gpu = await getGpuRuntime();
         if (!gpu || gpuDisabled || id !== latest) return;
         try {
           await gpu.run(packet); // One untimed GPU warm-up, using the same independent packet.
@@ -188,14 +301,14 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
           const result = await gpu.run(packet);
           const matches = packed.byteLength === result.packed.byteLength &&
             packed.every((byte, index) => byte === result.packed[index]);
-          if (id !== latest) return;
+          if (gpuDisabled || id !== latest) return;
           self.postMessage({type: "gpu-result", id, ...result, matches}, [result.packed.buffer]);
         } catch (error) {
           gpuDisabled = true;
           self.postMessage({type: "gpu", state: "execution-failed", message: error.message});
         }
       } catch (error) {
-        self.postMessage({type: "failure", id, kind: error.kind, message: error.message});
+        self.postMessage({type: "failure", id, mode, kind: error.kind, message: error.message});
       }
     });
   };

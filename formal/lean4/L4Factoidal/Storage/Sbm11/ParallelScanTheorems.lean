@@ -69,29 +69,32 @@ theorem mapM_except_ok {α β ε : Type} (f : α → Except ε β) (g : α → �
     rw [mapM_except_ok f g xs (fun y hy => h y (by simp [hy]))]
     rfl
 
-/-- **Parallel scan equals single scan (list form).** For a list `L` of
-    selected blocks of an admitted permutation, split into chunks of at most
-    `c` blocks, the chunk scans (each from an empty accumulator, in chunk
-    order) concatenate to the single scan's accumulator over `L`. -/
-theorem parallel_acc_eq (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (fill : Bool)
+/-- Kind: refinement.
+Says: chunked real block scans give the single list scan for any supplied metadata
+drawn from an admitted, decodable permutation, including interior selections.
+Does not say: which metadata range a file reader selects, or how IO workers run. -/
+theorem parallel_acc_eq_of_selected (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (fill : Bool)
     (den : Chunk → List (List Nat)) (hden : DenOk spec fill den)
-    (prb : ByteArray) (ms : List BlockMeta)
+    (prb : ByteArray) (fullMetadata ms : List BlockMeta)
     (hprb : ∀ off len, st.prb spec.perm off len = pure (prb.extract off (off + len)))
-    (hadm : prmAdmitted spec.perm ms = true)
-    (hblocks : ∀ b ∈ ms, ∃ cols, decodeBlockAt prb b b.offset = .ok cols)
+    (hadm : prmAdmitted spec.perm fullMetadata = true)
+    (hselected : ∀ b ∈ ms, b ∈ fullMetadata)
+    (hblocks : ∀ b ∈ fullMetadata, ∃ cols, decodeBlockAt prb b b.offset = .ok cols)
     (sortVar : Option String) (ox : OvCtx) (hon : ox.on = false)
     (L : List Nat) (hL : ∀ k ∈ L, k < ms.length) (c : Nat) :
     ((chunksOf c L).mapM (scanAccOf st spec fill den ms sortVar ox)).map List.flatten
       = scanAccOf st spec fill den ms sortVar ox L := by
-  have hch : chainGo prbHeaderBytes ms = true := by
+  have hch : chainGo prbHeaderBytes fullMetadata = true := by
     simp only [prmAdmitted, Bool.and_eq_true] at hadm
     exact hadm.1.1.2
   have hfits : ∀ b ∈ ms, b.rows ≤ two64 := by
     intro b hb
-    have := chainGo_fits ms _ hch b hb
+    have := chainGo_fits fullMetadata _ hch b (hselected b hb)
     simp only [metaFits, Bool.and_eq_true, decide_eq_true_eq] at this
     obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨_, _⟩, _⟩, h32⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩ := this
     exact Nat.le_of_lt (Nat.lt_of_lt_of_le h32 (by decide))
+  have hdec : ∀ b ∈ ms, ∃ cols, decodeBlockAt prb b b.offset = .ok cols :=
+    fun b hb => hblocks b (hselected b hb)
   -- every chunk is a sub-list of L
   have hsub : ∀ X ∈ chunksOf c L, ∀ k ∈ X, k < ms.length :=
     fun X hX k hk => hL k (mem_of_mem_chunksOf c L hX hk)
@@ -99,7 +102,7 @@ theorem parallel_acc_eq (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) 
       scanAccOf st spec fill den ms sortVar ox X
         = .ok (X.flatMap (fun k => blockOut spec prb ms[k]!)) := by
     intro X hX
-    obtain ⟨s', h1, h2, _⟩ := forIn_blocks st spec hspec fill den hden prb ms hprb hfits hblocks
+    obtain ⟨s', h1, h2, _⟩ := forIn_blocks st spec hspec fill den hden prb ms hprb hfits hdec
       sortVar ox hon X (hsub X hX) chunkInit
     have h2' : s'.acc = X.flatMap (fun k => blockOut spec prb ms[k]!) := by
       rw [h2]; rfl
@@ -107,7 +110,7 @@ theorem parallel_acc_eq (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) 
     rw [h1]
     show Except.ok s'.acc = _
     rw [h2']
-  obtain ⟨s', h1, h2, _⟩ := forIn_blocks st spec hspec fill den hden prb ms hprb hfits hblocks
+  obtain ⟨s', h1, h2, _⟩ := forIn_blocks st spec hspec fill den hden prb ms hprb hfits hdec
     sortVar ox hon L hL chunkInit
   have h2' : s'.acc = L.flatMap (fun k => blockOut spec prb ms[k]!) := by
     rw [h2]; rfl
@@ -127,6 +130,24 @@ theorem parallel_acc_eq (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) 
         flatMap_flatMap_flatten _ _
     _ = L.flatMap (fun k => blockOut spec prb ms[k]!) := by rw [chunksOf_flatten]
 
+/-- **Parallel scan equals single scan (list form).** For a list `L` of
+    selected blocks of an admitted permutation, split into chunks of at most
+    `c` blocks, the chunk scans (each from an empty accumulator, in chunk
+    order) concatenate to the single scan's accumulator over `L`. -/
+theorem parallel_acc_eq (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (fill : Bool)
+    (den : Chunk → List (List Nat)) (hden : DenOk spec fill den)
+    (prb : ByteArray) (ms : List BlockMeta)
+    (hprb : ∀ off len, st.prb spec.perm off len = pure (prb.extract off (off + len)))
+    (hadm : prmAdmitted spec.perm ms = true)
+    (hblocks : ∀ b ∈ ms, ∃ cols, decodeBlockAt prb b b.offset = .ok cols)
+    (sortVar : Option String) (ox : OvCtx) (hon : ox.on = false)
+    (L : List Nat) (hL : ∀ k ∈ L, k < ms.length) (c : Nat) :
+    ((chunksOf c L).mapM (scanAccOf st spec fill den ms sortVar ox)).map List.flatten
+      = scanAccOf st spec fill den ms sortVar ox L := by
+  exact parallel_acc_eq_of_selected st spec hspec fill den hden prb ms ms hprb hadm
+    (fun _ hb => hb) hblocks sortVar ox hon L hL c
+
+#print axioms parallel_acc_eq_of_selected
 #print axioms parallel_acc_eq
 
 end L4Factoidal.Storage.Sbm11.ParallelScanTheorems

@@ -42,6 +42,8 @@ const shaderFixtures = [
   [0, 333, "f63599d07b97c7eb43d9f337b02cd781bffe9d021a804447ed6ccd789824c656"],
   [1, 570, "433d5edf323796d7b4a151b35c2c88a4f0a273fcb81bfd3d0cfc0f4fe2274f2a"],
   [2, 741, "7be7b827ba131c1c2cf63eaa4d3b95917361bcf1280cd1694c431cce21a070a8"],
+  [3, 351, "6966a94b9742332b2d74bf239e121b8f2bceb721a510e4401b307b12c85e7124"],
+  [4, 351, "aac20e3beac46418720354b1faa1d4d3c8fd98841d9a2437a32b920b9dd23076"],
 ];
 assert.equal(wasm._paralliverse_input_limit_v1(2), 1);
 for (const [selector, length, digest] of shaderFixtures) {
@@ -55,7 +57,7 @@ for (const [selector, length, digest] of shaderFixtures) {
   assert.equal(typeof shader, "string");
   assert.deepEqual(new TextEncoder().encode(shader), bytes);
 }
-for (const request of [new Uint8Array(), Uint8Array.of(3)]) {
+for (const request of [new Uint8Array(), Uint8Array.of(5)]) {
   const {status, envelope} = rawCall(2, request);
   assert.equal(status, 0);
   assert.equal(envelope[0], 1);
@@ -94,4 +96,23 @@ assert.throws(() => cpu.packCpu(words([1, 1, 1, 1, 1, 5])), errorKind("invalid")
 assert.throws(() => cpu.packCpu(words([1, 0])), errorKind("invalid"));
 assert.throws(() => cpu.prepare("[[" + "0,".repeat(1024) + "0]]"), errorKind("limit"));
 assert.throws(() => cpu.prepare(" ".repeat(cpu.editorLimit + 1)), errorKind("limit"));
+assert.equal(cpu.capabilities.programLimit, 512);
+assert.equal(cpu.capabilities.commandLimit, 16);
+const studio = cpu.studio("map multiply 3\nmap add 1", "[4294967295,2,2]");
+assert.deepEqual(studio.output, [4294967294, 7, 7]);
+assert.equal(studio.optimizedIR, "(.map (.seq (.prim (.multiply 3)) (.prim (.add 1))))");
+assert.equal(studio.gpuEligible, true);
+assert.deepEqual(studio.executionPlan.passes.map(x => x.shaderSelector), [4, 3]);
+assert.equal(studio.executionPlan.passes[0].destinationBuffer, studio.executionPlan.passes[1].sourceBuffer);
+assert.deepEqual(studio.executionPlan.expectedWords, [3, 0xF00DF00D, 4294967294, 7, 7, 0xD00D0002]);
+const cpuOnly = cpu.studio("map multiply 3\nmap add 1\nmap multiply 2", "[2]");
+assert.deepEqual(cpuOnly.output, [14]);
+assert.equal(cpuOnly.gpuEligible, false);
+assert.equal(cpuOnly.executionPlan, null);
+assert.ok(cpuOnly.refusal);
+assert.deepEqual(cpu.studio("map add 1", "[]").output, []);
+assert.throws(() => cpu.studio("map add 01", "[]"), errorKind("invalid"));
+assert.throws(() => cpu.studio("map add 1", "[4294967296]"), errorKind("invalid"));
+assert.throws(() => cpu.studio("map add 1\n".repeat(17), "[]"), errorKind("limit"));
+assert.throws(() => cpu.studio(" ".repeat(513), "[]"), errorKind("limit"));
 console.log("Paralliverse linked Wasm CPU fixtures passed");

@@ -364,6 +364,28 @@ lean_exe «frame-cost-cases» where root := `Harness.FrameCostCases
 @[default_target] lean_lib Paralliverse where
   roots := #[`L4Factoidal.Paralliverse]
 
+-- Opt-in ordered collection and its CPU pack and SBM11 scan refinements (issue 641).
+lean_lib ParalliverseOrderedProofs where
+  roots := #[`L4Factoidal.Paralliverse.Ordered, `L4Factoidal.Paralliverse.OrderedPackTheorems,
+    `L4Factoidal.Storage.Sbm11.OrderedScanTheorems, `Harness.ParalliverseOrderedGuards,
+    `Harness.ParalliverseOrderedScanGuards]
+
+-- Typed, backend-neutral static programs and the task-based CPU refinement (issue 644).
+lean_lib ParalliverseProgramProofs where
+  roots := #[`L4Factoidal.Paralliverse.Program, `L4Factoidal.Paralliverse.ProgramCPU,
+    `L4Factoidal.Paralliverse.ProgramWords, `Harness.ParalliverseProgramGuards]
+
+-- Optional bridge to the existing Dataflow contracts, without a generic-core dependency.
+lean_lib ParalliverseProgramDataflowProofs where
+  roots := #[`L4Factoidal.Paralliverse.ProgramDataflow]
+
+-- Typed partial GPU lowering and the bounded developer Studio (issues 646, 647).
+lean_lib ParalliverseStudioProofs where
+  roots := #[`L4Factoidal.Paralliverse.WordMapGPUChain, `L4Factoidal.Paralliverse.Studio,
+    `L4Factoidal.Paralliverse.StudioReportTheorems,
+    `Wasm.ParalliverseHub, `Harness.ParalliverseWordMapGPUModel,
+    `Harness.ParalliverseStudioFixtures]
+
 -- The opt-in CPU fixture runner emits JSON Lines.
 lean_exe «paralliverse-cpu» where root := `Harness.ParalliverseCpu
 

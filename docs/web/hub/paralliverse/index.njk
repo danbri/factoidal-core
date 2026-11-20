@@ -5,61 +5,159 @@ appBase: /web/hub/paralliverse
 appSource: https://github.com/danbri/factoidal-core/tree/main/formal/lean4/L4Factoidal/Paralliverse
 appEngineLabel: Runtime details
 appEngineUrl: '#runtime'
-# The matching released runtime passed compiled-Wasm CPU/WebGPU browser acceptance.
 permalink: /web/hub/paralliverse/index.html
 ---
-<header class="pack-intro">
-  <h1>Paralliverse</h1>
-  <p>Stable packing joins rows of unsigned 32-bit words. It keeps the order and duplicates, and skips empty rows. Edit the rows to run the Lean function in your browser.</p>
+<header class="studio-hero">
+  <div class="hero-copy">
+    <p class="eyebrow"><span class="brand-symbol" aria-hidden="true">∥</span> A playground for pure parallel programs</p>
+    <h1>Paralliverse<span class="title-dot" aria-hidden="true">.</span></h1>
+    <p class="hero-description">A typed program. Two ways to run it. Explore the data, inspect the rewrite, and compare the bytes returned by your CPU and GPU.</p>
+    <div class="hero-badges" aria-label="Runtime status">
+      <span class="status-pill" id="runtime-pill"><i aria-hidden="true"></i> Loading runtime</span>
+      <span class="status-pill" id="adapter-pill"><i aria-hidden="true"></i> Checking WebGPU</span>
+      <a class="text-link" href="#proofs">What is proved <span aria-hidden="true">↗</span></a>
+    </div>
+  </div>
+  <div class="hero-diagram" aria-hidden="true">
+    <div class="diagram-code"><span>program</span><code>List u32 → List u32</code></div>
+    <div class="diagram-branches"><span></span><span></span></div>
+    <div class="diagram-targets"><span><b>CPU</b><small>WebAssembly</small></span><span><b>GPU</b><small>WebGPU</small></span></div>
+    <p>Run independently. Compare the result.</p>
+  </div>
 </header>
 
-<section class="pack-card pack-editor" aria-labelledby="input-heading">
-  <div class="pack-heading">
-    <h2 id="input-heading"><label for="source">Input rows</label></h2>
-    <label for="example">Example <select id="example">
-      <option value="custom" disabled>Custom input</option>
-      <option value="mixed" selected>Mixed rows</option>
-      <option value="empty">Empty rows</option>
-      <option value="none">Zero rows</option>
-    </select></label>
+<section class="example-gallery" aria-labelledby="examples-heading">
+  <div class="section-heading"><h2 id="examples-heading">Start with an experiment</h2><a class="text-link" href="https://github.com/danbri/factoidal-core/blob/main/docs/20261119-paralliverse-studio-guide.md">Lean API guide ↗</a></div>
+  <div class="example-cards">
+    <button class="example-card" type="button" data-preset="signal" data-needs-studio disabled><span class="example-icon signal-icon" aria-hidden="true">▥</span><span><strong>Signal loom</strong><small>A field of words, transformed.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
+    <button class="example-card" type="button" data-preset="wrap" data-needs-studio disabled><span class="example-icon" aria-hidden="true">↻</span><span><strong>At the word boundary</strong><small>Watch unsigned arithmetic wrap.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
+    <button class="example-card" type="button" data-preset="duplicates" data-needs-studio disabled><span class="example-icon" aria-hidden="true">≋</span><span><strong>Repeated words</strong><small>Multiplicity stays visible.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
+    <button class="example-card" type="button" data-preset="empty" data-needs-studio disabled><span class="example-icon" aria-hidden="true">∅</span><span><strong>Nothing in, nothing out</strong><small>Empty inputs are real inputs.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
+    <button class="example-card" type="button" data-preset="pack" aria-pressed="true"><span class="example-icon" aria-hidden="true">▤</span><span><strong>Stable packing</strong><small>Rows become one ordered stream.</small></span><span class="card-arrow" aria-hidden="true">↗</span></button>
   </div>
-  <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="input-help">[
+</section>
+
+<div class="workspace-heading">
+  <div class="mode-control" role="group" aria-label="Computation">
+    <button id="mode-studio" type="button" aria-pressed="false" disabled>Word studio <span class="small-tag">DSL</span></button>
+    <button id="mode-pack" type="button" aria-pressed="true">Stable packing</button>
+  </div>
+  <p id="studio-capability" class="pack-note">Word studio activates when the extended runtime is ready.</p>
+</div>
+
+<div class="studio-workspace" data-mode="pack" id="workspace">
+  <section class="pack-card editor-card" aria-labelledby="editor-heading">
+    <div class="panel-heading"><h2 id="editor-heading">The experiment</h2><span class="panel-index">01 / EDIT</span></div>
+    <div id="program-panel" hidden>
+      <div class="field-heading"><label for="program">Program</label><span class="type-label">List UInt32 → List UInt32</span></div>
+      <textarea id="program" class="program-editor" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="program-help">map multiply 3
+map add 1</textarea>
+      <p class="pack-note" id="program-help">Paralliverse DSL: one <code>map add n</code> or <code>map multiply n</code> per line. Lean parses and checks up to 16 commands. This editor accepts that bounded DSL, not arbitrary Lean source.</p>
+    </div>
+    <div class="field-heading input-heading">
+      <label id="input-heading" for="source">Input rows</label>
+      <label id="pack-examples" class="sample-label" for="example">Sample <select id="example">
+        <option value="custom" disabled>Custom input</option>
+        <option value="mixed" selected>Mixed rows</option>
+        <option value="empty">Empty rows</option>
+        <option value="none">Zero rows</option>
+      </select></label>
+    </div>
+    <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="input-help">[
   [],
   [8, 3],
   [],
   [8, 0],
   [4294967295, 3]
 ]</textarea>
-  <div class="pack-actions">
-    <button id="run" type="button" disabled>Run CPU + GPU</button>
-    <p class="pack-note">Updates automatically as you type. Run again at any time.</p>
-  </div>
-  <p class="pack-note" id="input-help">Enter a JSON array of rows, using decimal integers from 0 to 4294967295. Each input can contain up to 128 rows and 1,024 words.</p>
-  <p class="pack-status" id="input-status" role="status">Loading the CPU runtime…</p>
-</section>
+    <p class="pack-note" id="input-help">JSON rows of unsigned 32-bit decimal integers. Up to 128 rows and 1,024 words. Empty rows and repeated values are preserved by the input model.</p>
+    <div class="run-toolbar">
+      <button id="run" class="primary-button" type="button" disabled><span aria-hidden="true">▶</span> Run CPU + GPU</button>
+      <label class="live-control" for="live"><input id="live" type="checkbox" checked> Live updates</label>
+      <span class="shortcut" aria-hidden="true"><kbd>⌘</kbd><span>/</span><kbd>Ctrl</kbd><span>+</span><kbd>↵</kbd></span>
+    </div>
+    <p class="pack-status" id="input-status" role="status">Loading the CPU runtime…</p>
+  </section>
 
+  <section class="pack-card visual-card" aria-labelledby="visual-heading">
+    <div class="panel-heading"><h2 id="visual-heading">The returned words</h2><span class="panel-index">02 / OBSERVE</span></div>
+    <div class="visual-toolbar">
+      <div class="visual-target" role="group" aria-label="Visual output source">
+        <button id="view-cpu" type="button" aria-pressed="true">CPU result</button>
+        <button id="view-gpu" type="button" aria-pressed="false">GPU readback</button>
+      </div>
+      <span id="visual-source" class="visual-source">Actual CPU output</span>
+    </div>
+    <div class="visual-surface" id="visual-surface" data-state="waiting" data-target="cpu">
+      <div class="word-grid" id="word-grid" role="img" aria-label="The visual output will appear after a successful CPU run."><p>Actual output appears here.<br><span>Every cell represents one returned word.</span></p></div>
+    </div>
+    <div class="visual-metrics">
+      <div><span class="metric-label">Returned words</span><strong id="word-count">—</strong></div>
+      <div><span class="metric-label">Planned GPU passes</span><strong id="pass-count">—</strong></div>
+      <div><span class="metric-label">Buffer frame</span><strong id="frame-status">Waiting</strong></div>
+    </div>
+    <p id="visual-caption" class="pack-note">The view uses the CPU result. Colour is a display mapping, not another implementation of the program. Full numeric results are below.</p>
+    <div class="signal-controls">
+      <div class="signal-heading"><strong>Signal loom</strong><span id="signal-phase" data-completed="0">32 phases · actual GPU results</span></div>
+      <div class="signal-buttons">
+        <button id="signal-play" class="secondary-button" type="button" disabled><span aria-hidden="true">▶</span> Play 32 frames</button>
+        <button id="signal-stop" class="secondary-button" type="button" disabled>Stop</button>
+        <button id="signal-step" class="secondary-button" type="button" disabled>Step one frame</button>
+      </div>
+      <p id="signal-status" class="pack-note" role="status">Starts on request. Each phase waits for an actual matching GPU readback.</p>
+    </div>
+  </section>
+</div>
+
+<div class="results-heading"><h2>Independent execution</h2><p>Real results. Transport costs included. No inferred speedup.</p></div>
 <div class="pack-results">
-  <section class="pack-card" aria-labelledby="cpu-heading">
-    <h2 id="cpu-heading">CPU · Lean WebAssembly</h2>
-    <pre id="cpu-output" aria-label="CPU packed words">—</pre>
+  <section class="pack-card result-card" aria-labelledby="cpu-heading">
+    <div class="panel-heading"><h2 id="cpu-heading"><span class="target-dot cpu-dot" aria-hidden="true"></span>CPU <small>Lean WebAssembly</small></h2><span class="target-format">.wasm</span></div>
+    <pre id="cpu-output" aria-label="CPU output words">—</pre>
     <p id="cpu-status" class="pack-status" role="status">Waiting for input.</p>
   </section>
-  <section class="pack-card" aria-labelledby="gpu-heading">
-    <h2 id="gpu-heading">GPU · WebGPU</h2>
-    <pre id="gpu-output" aria-label="GPU packed words">—</pre>
+  <section class="pack-card result-card" aria-labelledby="gpu-heading">
+    <div class="panel-heading"><h2 id="gpu-heading"><span class="target-dot gpu-dot" aria-hidden="true"></span>GPU <small>WebGPU</small></h2><span class="target-format">.wgsl</span></div>
+    <pre id="gpu-output" aria-label="GPU output words">—</pre>
     <p id="gpu-status" class="pack-status" role="status">Checking WebGPU availability…</p>
   </section>
 </div>
-<p id="comparison-status" class="pack-status" role="status"></p>
+<p id="comparison-status" class="comparison-status" role="status"></p>
 
-<details id="runtime">
-  <summary>Runtime details</summary>
-  <p>The worker sends the editor bytes to Lean. Lean validates them, writes the input packet, decodes it, calls <code>StaticPack.packSpec</code>, and writes the packed words. The CPU call time includes packet decoding, result encoding, and copies across the WebAssembly boundary.</p>
-  <p>The GPU runs the Count, Scan and Scatter shader sources returned by Lean over the same input packet. Lean deliberately reorders and pads source storage. The GPU result comes from its actual terminal offset and payload readback; every returned byte is compared with the CPU result.</p>
-  <p>GPU end-to-end time includes upload, command encoding, queue execution, terminal and payload readback, and validation. It excludes shader/device initialisation and the untimed warm-up. The phase times use the worker clock, and do not isolate device compute time. CPU call and GPU end-to-end measurements include different transport costs; no speedup ratio is inferred.</p>
-  <p>Lean equivalence theorems concern the admitted input and formal shader execution model. Browser shader compilation, driver, hardware and physical command submission remain outside those proofs. The live byte comparison is a runtime check.</p>
+<section class="pack-card inspect-card" aria-labelledby="inspect-heading">
+  <div class="panel-heading"><div><p class="eyebrow">Look inside</p><h2 id="inspect-heading">From source to execution</h2></div><span class="panel-index">03 / INSPECT</span></div>
+  <p id="inspection-help" class="pack-note">Word studio reveals the source tree and the result of the proved pure map-fusion pass. Packing uses the existing Count, Scan and Scatter program.</p>
+  <div class="ir-panels">
+    <div><h3>Source program</h3><pre id="source-ir">Select Word studio to inspect a typed program.</pre></div>
+    <div><h3>After pure map fusion</h3><pre id="optimized-ir">The rewrite preserves pure results. It makes no timing claim.</pre></div>
+  </div>
+  <details class="plan-details"><summary>Inspect the GPU execution plan</summary><pre id="gpu-plan">A prepared word program will show its Lean-produced buffers and passes here.</pre></details>
+  <div class="export-toolbar">
+    <button id="copy-lean" class="secondary-button" type="button" disabled>Copy Lean source <span aria-hidden="true">↗</span></button>
+    <button id="download-lean" class="secondary-button" type="button" disabled>Download .lean</button>
+    <button id="share" class="secondary-button" type="button">Share this experiment</button>
+    <p id="action-status" class="pack-note" role="status"></p>
+  </div>
+  <label class="share-fallback" id="share-fallback" hidden>Copy this link <input id="share-link" readonly type="text"></label>
+</section>
+
+<section class="proof-section" id="proofs" aria-labelledby="proof-heading">
+  <div class="section-heading"><h2 id="proof-heading">Three different kinds of evidence</h2><a class="text-link" href="https://github.com/danbri/factoidal-core/issues/604">Development record ↗</a></div>
+  <div class="evidence-grid">
+    <article><span class="evidence-label">KERNEL-CHECKED</span><h3>Pure programs preserve their meaning</h3><p>The typed DSL's fusion and CPU-refinement theorems were compiled by Lean. The theorem hypotheses and primitive interpretations define their scope.</p><a href="https://github.com/danbri/factoidal-core/pull/645">Read the eight checked statements ↗</a></article>
+    <article><span class="evidence-label">SHADER MODEL</span><h3>Concrete bytes have modelled behaviour</h3><p>The shader proofs concern parsed source and finite buffers. Each supported GPU fragment has its own admission and buffer requirements.</p><a href="https://github.com/danbri/factoidal-core/issues/646">Read the word-map obligations ↗</a></article>
+    <article><span class="evidence-label">LIVE COMPARISON</span><h3>Your two outputs are compared</h3><p>The green result reports an actual byte comparison from this run. It tests the browser, runtime and device path; it does not prove the compiler or driver.</p><a href="#comparison-status">See this run's result ↑</a></article>
+  </div>
+</section>
+
+<details id="runtime" class="runtime-details">
+  <summary>Runtime, provenance and measurement details</summary>
+  <p>The worker sends editor bytes to Lean. Lean parses the input and program, builds the typed computation, evaluates the CPU result and produces the execution plan. The page presents those results and submits the selected GPU passes. It contains no JavaScript implementation of the word transformations or stable packing.</p>
+  <p>In stable packing, Lean deliberately reorders and pads source storage. The GPU runs the Count, Scan and Scatter sources exported by Lean. Its result comes from the actual terminal offset and payload readback, and every returned byte is compared with the CPU result.</p>
+  <p>The word studio's CPU timing includes parsing, checking, evaluation and response encoding. Packing reports preparation and CPU-call times separately. GPU end-to-end time includes transport, command submission, queue execution and readback. These are worker-clock measurements, not isolated device compute times; no speedup ratio is inferred.</p>
+  <p>For supported word programs, the plan keeps an intermediate buffer on the GPU between passes. The final comparison also checks the header and spare words against the expected complete buffer. Unsupported programs can still have a CPU result, with an explicit GPU refusal.</p>
+  <p>Lean equivalence theorems concern the admitted inputs and formal execution models. Browser shader compilation, the driver, hardware and physical command ordering remain outside those proofs.</p>
   <dl id="runtime-data" hidden></dl>
-  <p><a href="https://github.com/danbri/factoidal-core/issues/604">Packing proofs and WebGPU work</a></p>
 </details>
 
-<noscript><p>This demo uses a JavaScript worker to run the WebAssembly module.</p></noscript>
+<noscript><p>This studio uses a JavaScript worker to run the WebAssembly module and submit GPU commands.</p></noscript>

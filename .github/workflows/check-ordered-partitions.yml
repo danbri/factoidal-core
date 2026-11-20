@@ -1,0 +1,62 @@
+name: Paralliverse ordered partition proofs
+
+on:
+  push:
+    branches: [main, wip/paralliverse-ordered-partitions]
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/Ordered*.lean'
+      - 'formal/lean4/Harness/ParalliverseOrdered*Guards.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/StaticPack.lean'
+      - 'formal/lean4/L4Factoidal/Par/Chunked.lean'
+      - 'formal/lean4/L4Factoidal/Storage/Sbm11/**'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-ordered-partitions.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/Ordered*.lean'
+      - 'formal/lean4/Harness/ParalliverseOrdered*Guards.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/StaticPack.lean'
+      - 'formal/lean4/L4Factoidal/Par/Chunked.lean'
+      - 'formal/lean4/L4Factoidal/Storage/Sbm11/**'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-ordered-partitions.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  packing:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-ordered-partitions'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: ordered-packing
+      timeout_minutes: 10
+      modules: >-
+        L4Factoidal.Paralliverse.Ordered L4Factoidal.Paralliverse.OrderedPackTheorems
+        Harness.ParalliverseOrderedGuards
+      theorems: >-
+        L4Factoidal.Paralliverse.Ordered.collect?_eq_some_iff
+        L4Factoidal.Paralliverse.Ordered.mapM_eq_of_collect?
+        L4Factoidal.Paralliverse.StaticPack.collect_mapChunks_pack
+  scan:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-ordered-partitions'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: ordered-sbm11-scan
+      timeout_minutes: 35
+      modules: >-
+        L4Factoidal.Paralliverse.Ordered L4Factoidal.Storage.Sbm11.ParallelScanTheorems
+        L4Factoidal.Storage.Sbm11.OrderedScanTheorems Harness.ParalliverseOrderedScanGuards
+      theorems: >-
+        L4Factoidal.Paralliverse.Ordered.collect?_eq_some_iff
+        L4Factoidal.Paralliverse.Ordered.mapM_eq_of_collect?
+        L4Factoidal.Storage.Sbm11.ParallelScanTheorems.parallel_acc_eq
+        L4Factoidal.Storage.Sbm11.ParallelScanTheorems.parallel_acc_eq_of_selected
+        L4Factoidal.Storage.Sbm11.ParallelScanTheorems.scan_rangeBounds_eq_collected
