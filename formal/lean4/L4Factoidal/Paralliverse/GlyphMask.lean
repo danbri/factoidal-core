@@ -64,8 +64,9 @@ def boldSpec (m : Mask) : Mask :=
 
 /-- Actual Lean task-based CPU implementation with arbitrary worker count. -/
 def boldCPU (workers : Nat) (m : Mask) : Mask :=
-  {m with alpha := L4Factoidal.Par.mapChunks workers (boldAt m)
-    (Array.range (m.width * m.height))}
+  let xs := Array.range (m.width * m.height)
+  let ys := L4Factoidal.Par.mapChunks workers (boldAt m) xs
+  {m with alpha := ys}
 
 /-- Task decomposition preserves every output cell for every input and worker count. -/
 theorem boldCPU_eq_boldSpec (workers : Nat) (m : Mask) :
@@ -78,12 +79,12 @@ theorem boldSpec_size (m : Mask) :
   simp [boldSpec]
 
 /-- Positive/zero alpha values are not implicitly reordered or packed. -/
-private def example : Mask :=
+private def centerDot : Mask :=
   {width := 3, height := 3, alpha := #[0,0,0, 0,255,0, 0,0,0]}
-#guard (boldSpec example).alpha == #[255,255,255,255,255,255,255,255,255]
-#guard (boldCPU 1 example).alpha == (boldSpec example).alpha
-#guard (boldCPU 4 example).alpha == (boldSpec example).alpha
-#guard (boldCPU 16 example).alpha == (boldSpec example).alpha
+#guard (boldSpec centerDot).alpha == #[255,255,255,255,255,255,255,255,255]
+#guard (boldCPU 1 centerDot).alpha == (boldSpec centerDot).alpha
+#guard (boldCPU 4 centerDot).alpha == (boldSpec centerDot).alpha
+#guard (boldCPU 16 centerDot).alpha == (boldSpec centerDot).alpha
 #guard (boldSpec {width := 0, height := 0, alpha := #[]}).alpha == #[]
 
 /-- Closed primitive language: whole-mask neighbourhood operations. -/
@@ -128,12 +129,12 @@ def twice : Program Op maskShape maskShape := .seq bold bold
 def compare : Program Op maskShape (.pair maskShape maskShape) :=
   .fanout .identity bold
 
-#guard (Program.runCPU base (implementation 8) 8 bold example).alpha ==
-  (boldSpec example).alpha
-#guard (Program.runCPU base (implementation 8) 8 compare example).1.alpha ==
-  example.alpha
-#guard (Program.runCPU base (implementation 8) 8 compare example).2.alpha ==
-  (boldSpec example).alpha
+#guard (Program.runCPU base (implementation 8) 8 bold centerDot).alpha ==
+  (boldSpec centerDot).alpha
+#guard (Program.runCPU base (implementation 8) 8 compare centerDot).1.alpha ==
+  centerDot.alpha
+#guard (Program.runCPU base (implementation 8) 8 compare centerDot).2.alpha ==
+  (boldSpec centerDot).alpha
 
 #print axioms boldCPU_eq_boldSpec
 #print axioms boldSpec_size
