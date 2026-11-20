@@ -143,7 +143,7 @@ theorem commit_static_current_unchanged {s out : State} {pc cost : Nat}
   split at h
   · split at h
     · cases h
-      simp [hs]
+      simp
     · cases h
   · cases h
 
@@ -192,7 +192,7 @@ theorem Trace.original_unchanged {s out : State}
   induction h with
   | nil _ => rfl
   | cons hs _ ih =>
-    exact (ih key).trans (step_original_unchanged hs key)
+    exact ih.trans (step_original_unchanged hs key)
 
 /-- An independent *billing witness* records the exact instruction plans,
     not merely the observed difference in initial/final gas. -/
