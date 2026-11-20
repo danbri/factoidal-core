@@ -1,0 +1,204 @@
+{
+  "schema_version": 2,
+  "claim_status": "active-code-selected-evidence",
+  "produced_on": "2026-11-20",
+  "reference_implementation_commit": "03c83338a0b0305a3003c24d14a5b398d795ee0b",
+  "reference_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44741089115",
+  "historical_ledger": "https://github.com/danbri/factoidal-core/pull/658",
+  "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
+  "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
+  "source_blobs": {
+    "EVMCleanroom/Core.lean": "baca70d4ac04fb2eabf84719a794ad006017c37e",
+    "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
+    "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
+    "EVMCleanroom/Frame.lean": "db48e3382b8885f8c74b42a6d2b6cfb88b193da3",
+    "EVMCleanroom/World.lean": "7d2b5145d13fc92fba560933719aafd0b88e8362",
+    "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
+    "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
+    "EVMCleanroom/Call.lean": "e721f872271c6b6832dbc34422d836b2391dce98",
+    "EVMCleanroom/MemoryGas.lean": "35840f83cb5141c454943546827fe6c93d2f1569",
+    "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
+    "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
+    "EVMCleanroom/CLI.lean": "2c091346beb90a54e9866848187d21606b8b7e5a",
+    "EVMCleanroom.lean": "a8b1bcfe99a9057510ac0a96b3608d8219e72fc9",
+    "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
+    "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
+    "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
+    "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
+    "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8"
+  },
+  "theorem_inventory": [
+    {
+      "name": "EVMCleanroom.run_original_unchanged",
+      "source": "EVMCleanroom/Proofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Original storage snapshot immutable on all accepted Core.run executions",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.Frame.run_revert_atomic",
+      "source": "EVMCleanroom/Frame.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Single-frame REVERT restores local storage, warmth and refund",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.Frame.run_exception_atomic",
+      "source": "EVMCleanroom/Frame.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Single-frame exceptional outcomes consume gas and restore storage",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.World.runAt_revert_world_unchanged",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Projected frame REVERT leaves entry world unchanged",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.World.runAt_exception_world_unchanged",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Projected exceptional frame leaves entry world unchanged",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.World.pay_conserves_pair",
+      "source": "EVMCleanroom/Value.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "All accepted checked value transfers conserve the two participants' combined balances",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.World.pay_preserves_original",
+      "source": "EVMCleanroom/Value.lean",
+      "axioms_printed": [],
+      "scope": "Checked value transfers do not alter transaction-original storage",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.CallGas.mandatoryReserve",
+      "source": "EVMCleanroom/CallGas.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Call forwarding retains EIP-150 1/64 gas reserve",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.CallGas.schedule_conserves",
+      "source": "EVMCleanroom/CallGas.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "EIP-2929 call access charge plus forwarded and reserved gas exactly equals incoming gas",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.CallGas.resumed_gas_exact",
+      "source": "EVMCleanroom/CallGas.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Parent final gas plus child-used and access charge equals incoming gas if child does not return excess gas",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.CallGas.resumed_gas_bounded",
+      "source": "EVMCleanroom/CallGas.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Parent cannot gain gas on resumed call",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    },
+    {
+      "name": "EVMCleanroom.MemoryGas.ExpansionTrace.exact_total",
+      "source": "EVMCleanroom/MemoryGas.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Arbitrary monotone memory expansion sequences telescope to exact final gas",
+      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+    }
+  ],
+  "external_evidence": {
+    "official_prague_empty_code": {
+      "executed": 4,
+      "passed": 4,
+      "failed": 0,
+      "unsupported": 2,
+      "fixture_sha256": "9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4",
+      "scope": "Prague EIP-7623 restricted type0/1/2 no-contract-code; trusted JS trie and signer"
+    },
+    "official_cancun_nonempty_contract": {
+      "executed": 6,
+      "passed": 6,
+      "failed": 0,
+      "unsupported": 0,
+      "other_fork_cases_not_executed": 18,
+      "fixture_sha256": "1eb74ceb4d3a4fefaa93f907e85f4d3632cc3f376448488fe04e84fc5c50cfba",
+      "scope": "Cancun PUSH0 nonempty code, storage mutation, EVM stack overflow rollback and gas; single-slot restricted host, trusted EthereumJS trie and signer"
+    },
+    "ethereumjs_raw_bytecode": {
+      "compared": 10000,
+      "passed": 10000,
+      "reference": "EthereumJS 10.1.3 Prague",
+      "scope": "restricted raw-bytecode subset; exceptional category only"
+    },
+    "ethereumjs_storage": {
+      "compared": 136,
+      "passed": 136,
+      "reference": "EthereumJS 10.1.3 Prague",
+      "scope": "single-account and slot storage histories"
+    },
+    "ethereumjs_frame": {
+      "compared": 13,
+      "passed": 13,
+      "reference": "EthereumJS 10.1.3 Prague",
+      "scope": "single-frame return/revert and exceptional rollback"
+    },
+    "ethereumjs_call_scheduler": {
+      "compared": 4,
+      "passed": 4,
+      "reference": "EthereumJS 10.1.3 Cancun real parent CALL bytecode",
+      "scope": "Lean *scheduler API*, not Lean 0xF1 opcode; zero value, single depth, no calldata/returndata"
+    }
+  },
+  "trust_boundaries": [
+    "Formal Lean definitions reviewed independently of implementation only in future; theorem correctness relative to local model",
+    "Lean kernel, compiler, runtime, executable and host OS",
+    "EthereumJS RLP, signature recovery, Keccak/code hash, account/storage MPT serialization",
+    "JavaScript fixture classification and expected-output comparisons",
+    "Pinned EELS test fixtures and their limited provenance",
+    "Reference client implementations and pinned dependencies"
+  ],
+  "missing": [
+    "Full EELS semantic refinement proofs",
+    "Actual CALL/CREATE opcode interpreter with frame journal, value and returndata",
+    "Independent MPT/RLP/Keccak in Lean",
+    "Receipts, logs and complete transaction/block validity",
+    "Actual mainnet replay, Engine API and beacon-chain consensus",
+    "Independent expert review"
+  ],
+  "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates"
+}
