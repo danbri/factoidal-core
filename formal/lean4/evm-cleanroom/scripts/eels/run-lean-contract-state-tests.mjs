@@ -25,7 +25,7 @@ const SOURCE_PATH = 'stable/state_tests/shanghai/eip3855_push0/test_push0_contra
 const SOURCE_URL = 'https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/' +
   MIRROR_COMMIT + '/' + SOURCE_PATH
 const EMPTY_LOG_HASH = '0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347'
-const SUPPORTED = new Set(['before_jumpdest', 'key_sstore', 'storage_overwrite', 'gas_cost'])
+const SUPPORTED = new Set(['before_jumpdest', 'key_sstore', 'storage_overwrite', 'gas_cost', 'fill_stack', 'stack_overflow'])
 const OPT = {}
 for(let i=2;i<process.argv.length;i+=2){
   if(!process.argv[i]?.startsWith('--') || process.argv[i+1]===undefined)
@@ -64,7 +64,7 @@ const runLean=(args)=>{
   })
   if(p.error||p.status!==0) throw Error('Lean executable failed: '+String(p.error??p.stderr).slice(-4000))
   const output=JSON.parse(p.stdout.trim().split('\n').at(-1))
-  if(output.status!=='ok'&&output.status!=='stopped')
+  if(output.status!=='ok'&&output.status!=='stopped'&&output.status!=='exceptional')
     throw Error('Lean refuses selected fixture: '+JSON.stringify(output))
   return output
 }
@@ -122,9 +122,13 @@ for(const id of selected){
     // Lean actually executes the nonempty contract, including SSTORE, jumps,
     // gas and its implicit STOP beyond bytecode end.
     const state=runLean(['--frame-storage',contractPre.code,
-       available.toString(),'256','0','0'])
-    if(state.status!=='stopped' || state.original!=='0' || state.refund!=='0')
-      throw Error('frame does not stop cleanly without refund')
+       available.toString(),'4096','0','0'])
+    const isExpectedException = suffix === 'stack_overflow'
+    if((isExpectedException ?
+        (state.status!=='exceptional' || state.error!=='stackOverflow' ||
+         state.gasRemaining!=='0') : state.status!=='stopped') ||
+       state.original!=='0' || state.refund!=='0')
+      throw Error('Lean frame outcome/refund differs from expected successful or exceptional category')
     const remaining=BigInt(state.gasRemaining)
     const slot0=BigInt(state.current)
     if(remaining>available || slot0 >= (1n<<256n))
@@ -201,6 +205,8 @@ for(const id of selected){
     passed++
     cases.push({id,status:'pass',fork:'Cancun',
       contractCode:contractPre.code,
+      outcome:state.status,
+      exception:state.status==='exceptional'?state.error:null,
       slot0:slot0.toString(),
       intrinsicGas:intrinsic.toString(),leanExecutionGas:used.toString(),
       chargedGas:charged.toString(),
