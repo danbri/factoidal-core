@@ -17,6 +17,7 @@ namespace EVMCleanroom.World
 
 inductive TransferError where
   | invalidAddress
+  | invalidBalance
   | insufficientBalance
   | recipientOverflow
   deriving Repr, DecidableEq
@@ -61,6 +62,8 @@ theorem payUnchecked_preserves_original (w : TxWorld)
     A self-transfer leaves account state unchanged after checking funds. -/
 def pay (w : TxWorld) (sender recipient amount : Nat) : Except TransferError TxWorld :=
   if sender ≥ addressBound || recipient ≥ addressBound then .error .invalidAddress
+  else if (w.accounts sender).balance ≥ modulus ||
+          (w.accounts recipient).balance ≥ modulus then .error .invalidBalance
   else if amount > (w.accounts sender).balance then .error .insufficientBalance
   else if sender = recipient then .ok w
   else if (w.accounts recipient).balance + amount ≥ modulus then
@@ -73,6 +76,7 @@ theorem pay_preserves_original {w out : TxWorld} {sender recipient amount : Nat}
     (h : pay w sender recipient amount = .ok out) (address key : Nat) :
     out.original address key = w.original address key := by
   unfold pay at h
+  split at h <;> try contradiction
   split at h <;> try contradiction
   split at h <;> try contradiction
   split at h <;> try contradiction
@@ -90,6 +94,7 @@ theorem pay_conserves_pair {w out : TxWorld} {sender recipient amount : Nat}
     (out.accounts sender).balance + (out.accounts recipient).balance =
       (w.accounts sender).balance + (w.accounts recipient).balance := by
   unfold pay at h
+  split at h <;> try contradiction
   split at h <;> try contradiction
   split at h <;> try contradiction
   split at h <;> try contradiction
