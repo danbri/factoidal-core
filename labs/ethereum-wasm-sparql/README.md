@@ -21,10 +21,18 @@ balance >= amount.
     PUSH1 0x20 ; PUSH0 ; RETURN
 
 The compiler symbolically executes the EVM stack **with respect to the
-program, not the query inputs** and emits a deterministic, 49-byte,
-import-free WebAssembly module exporting evaluate(i64,i64)->i64. It is
-registered as urn:factoidal:ethereum-wasm#canTransfer through the public
-Factoidal/Comunica-style registerExtensionFunction API.
+program, not the query inputs**. It now emits two deterministic, import-free
+WebAssembly modules from the same EVM source:
+
+- **49 bytes**: a uint64-restricted evaluate(i64,i64)->i64, registered as
+  urn:factoidal:ethereum-wasm#canTransfer.
+- **91 bytes**: a full unsigned uint256 predicate with four i64 limbs per
+  input word, i.e. evaluate(i64 x 8)->i64, registered as
+  urn:factoidal:ethereum-wasm#canTransfer256. The generated WASM uses
+  unsigned lexicographic comparisons rather than silently narrowing 256 bits.
+
+Both are callable through the public Factoidal/Comunica-style
+registerExtensionFunction API.
 
 ## SPARQL query
 
@@ -43,6 +51,10 @@ SHA-256, and an explicit assuranceStatus of
 "differential-tested-not-proved". Query answers expose their computational
 provenance without asserting a nonexistent proof.
 
+The second query invokes evm:canTransfer256 over full-width values such as
+2^255 and 2^200. In that mode the earlier 2^64 case is valid; a new
+2^256 case remains an explicit SPARQL expression error.
+
 The companion FILTER query returns three proposals: Alice, Carol, and a
 uint64-boundary case. Bob proposes spending more than his sample balance,
 and is rejected. A fifth row with a 2^64 balance is explicitly
@@ -59,19 +71,22 @@ precomputed outputs.
 Node >=22:
 
     node --test labs/ethereum-wasm-sparql/evm-to-wasm.test.mjs
+    node --test labs/ethereum-wasm-sparql/evm-to-wasm-256.test.mjs
 
 This checks 400 input pairs against a separately implemented test-only EVM
 uint256 bytecode evaluator, including 64-bit boundaries, plus negative
 tests of unsupported opcodes and input-domain errors.
 
 The separately gated, integrity-pinned EthereumJS 10.1.3 Cancun suite
-executes the *actual source EVM runtime bytecode* against another 400 ABI
-input pairs (not the symbolic compiler tree):
+executes the *actual source EVM runtime bytecode* against 400 uint64 and
+400 full uint256 ABI input pairs (not the symbolic compiler tree):
 
     npm ci --prefix labs/ethereum-wasm-sparql --ignore-scripts --no-audit --no-fund
     node --test labs/ethereum-wasm-sparql/ethereumjs-oracle.test.mjs
 
-Both 400-case gates passed in GitHub Actions run 44787504225.
+The initial two 400-case uint64 gates passed in GitHub Actions run
+44787504225. The expanded full-uint256 comparison runs in the same
+independently pinned EthereumJS workflow; see the current PR checks.
 
 To execute Factoidal queries as well, install Factoidal's normal Lean WASM
 engine assets using the repository web-release mechanism (or an npm
@@ -86,9 +101,11 @@ npm tests passed, zero failed or skipped).
 
 ## Assurance boundaries
 
-- EVM words are **256-bit**. This first WASM emitter is deliberately
-  limited to two unsigned 64-bit inputs, supported constant immediates
-  and comparison/Boolean operations. No arbitrary uint256 equivalence.
+- EVM words are **256-bit**. The original emitter deliberately accepts
+  uint64 inputs; the new full-width emitter uses four unsigned 64-bit
+  limbs for each EVM word. Both refuse out-of-domain values. The latter
+  does **not** turn this into a general EVM bytecode compiler: only the
+  stated symbolic comparison/Boolean fragment is lowered.
 - Supported source instructions: PUSH0, PUSH1..32 with bounded constants,
   CALLDATALOAD at static offsets 4/36, SWAP1, LT, ISZERO, one MSTORE(0),
   and RETURN(0,32). Unsupported opcode, dynamic offset, invalid ABI shape,
@@ -120,4 +137,5 @@ The Ethereum implementation remains separately under development in
 draft PRs #642, #655–#669 and #676. This demo does not substitute for
 complete contract execution, world-state replay or client interoperability.
 
-Formal semantic-preservation proof work is tracked in issue #678.
+Formal semantic-preservation proof work, including the 8-limb unsigned
+comparison lowering, is tracked in issue #678.
