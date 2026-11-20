@@ -4,6 +4,8 @@ import EVMCleanroom.Frame
 import EVMCleanroom.FrameTests
 import EVMCleanroom.World
 import EVMCleanroom.WorldTests
+import EVMCleanroom.Value
+import EVMCleanroom.ValueTests
 import EVMCleanroom.EELSBridge
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.JumpProofs
