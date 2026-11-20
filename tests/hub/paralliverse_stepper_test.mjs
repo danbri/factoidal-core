@@ -53,3 +53,18 @@ test('two actual GPU pass descriptors remain sourced from Lean plan', () => {
   assert.match(trace.gpuSteps[2].detail, /Source buffer 1 → destination buffer 2/);
   assert.equal(trace.matches, true);
 });
+
+test('whole-GPU-buffer mismatch is not painted green despite identical payloads', () => {
+  const studio = {
+    sourceIR: '.map (.prim (.add 1))', optimizedIR: '.map (.prim (.add 1))',
+    input: [1], output: [2], steps: [{kernel: 'add', operand: 1}],
+    gpuEligible: true, executionPlan: {wordCount: 1, workgroups: 1,
+      buffers: [{}, {}], passes: [{kernel: 'add', operand: 1, shaderSelector: 3,
+        sourceBuffer: 0, destinationBuffer: 1}]},
+  };
+  const trace = buildExecutionTrace({mode: 'studio', studio,
+    cpuWords: [2], gpuWords: [2], gpuMeta: {fullMatches: false, canariesMatch: false}});
+  assert.equal(trace.matches, false);
+  assert.deepEqual(trace.mismatches, []);
+  assert.match(trace.difference, /complete buffer frame differs/);
+});
