@@ -1,6 +1,7 @@
 /** SPARQL 1.1 §17.6 extension function executing WASM generated from EVM code. */
 import {createHash} from 'node:crypto';
-import {EVM_TRANSFER_GUARD_HEX, instantiateEvmPredicate} from './evm-to-wasm.mjs';
+import {EVM_TRANSFER_GUARD_HEX,instantiateEvmPredicate,
+  instantiateEvmPredicate256} from './evm-to-wasm.mjs';
 
 export const FUNCTION_IRI='urn:factoidal:ethereum-wasm#canTransfer';
 export const DATA = [
@@ -89,5 +90,50 @@ export async function registerEthereumDerivedWasm(api, hex=EVM_TRANSFER_GUARD_HE
     evmOperations:compiled.operations,
     numericDomain:compiled.inputDomain,
     semanticsStatus:'restricted compiler differentially tested; no Lean EVM→WASM refinement theorem',
+  };
+}
+
+
+export const FUNCTION_IRI_256='urn:factoidal:ethereum-wasm#canTransfer256';
+const veryLarge=(1n<<255n).toString();
+const medium=(1n<<200n).toString();
+const outside=(1n<<256n).toString();
+export const DATA_256=DATA+'\n'+[
+  '@prefix ex: <https://example.org/ethereum-demo/> .',
+  '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
+  'ex:huge-allowed a ex:TransferProposal ; ex:balance "'+veryLarge+
+    '"^^xsd:integer ; ex:amount "'+medium+'"^^xsd:integer .',
+  'ex:huge-denied a ex:TransferProposal ; ex:balance "'+medium+
+    '"^^xsd:integer ; ex:amount "'+veryLarge+'"^^xsd:integer .',
+  'ex:uint256-outside a ex:TransferProposal ; ex:balance "'+outside+
+    '"^^xsd:integer ; ex:amount "1"^^xsd:integer .',
+].join('\n');
+
+export const QUERY_ALL_256=[
+  'PREFIX ex: <https://example.org/ethereum-demo/>',
+  'PREFIX evm: <urn:factoidal:ethereum-wasm#>',
+  'SELECT ?proposal ?balance ?amount ?allowed256 WHERE {',
+  '  ?proposal a ex:TransferProposal ; ex:balance ?balance ; ex:amount ?amount .',
+  '  BIND(evm:canTransfer256(?balance, ?amount) AS ?allowed256)',
+  '} ORDER BY ?proposal',
+].join('\n');
+
+export async function registerEthereumDerivedWasm256(api,hex=EVM_TRANSFER_GUARD_HEX){
+  if(typeof api?.registerExtensionFunction!=='function')
+    throw new TypeError('requires the real @factoidal/core SPARQL extension API');
+  const {compiled,evaluate}=await instantiateEvmPredicate256(hex);
+  await api.registerExtensionFunction(FUNCTION_IRI_256,args=>{
+    if(!Array.isArray(args)||args.length!==2)
+      throw new TypeError('EVM uint256 predicate expects two typed integers');
+    return evaluate(args[0],args[1]);
+  });
+  return {
+    evmBytecode:hex,
+    evmSha256:sha256(Buffer.from(hex.replace(/^0x/,''),'hex')),
+    wasmSha256:sha256(compiled.bytes),
+    wasmBytes:compiled.bytes.length,
+    wasmSignature:compiled.wasmSignature,
+    inputDomain:compiled.inputDomain,
+    semanticsStatus:'full uint256 comparison differentially tested; not a Lean EVM→WASM theorem',
   };
 }
