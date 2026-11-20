@@ -25,6 +25,21 @@ a production node pairs with an independently validated consensus client.
 
 Do not promote any success in A to B or C without separate evidence.
 
+## Current completed sub-milestone: official Prague state roots
+
+On 19 November 2026 the restricted EELS runner passed **4/6** published
+EIP-7623 Prague state tests, with the remaining two explicitly unsupported.
+Lean now computes the empty-code EVM result and scoped transaction fee/nonce/
+balance transitions. The host validates signed transaction metadata and uses
+EthereumJS MPT serialization; the resulting official EELS post-state root
+and account-set expectations match for the supported inputs.
+
+The two negative controls (altered expected root and sender balance) are
+rejected. This is a *first slice of G1*, not completion of G1/G2/G3:
+nonempty contract code, persistent storage, exceptional outcomes, actual
+historical mainnet state witnesses, official receipts and EELS semantic
+refinement remain open. See [scripts/eels/README.md](scripts/eels/README.md).
+
 ## Acceptance gates (ordered by dependencies, not by excitement)
 
 | Gate | Work | Demonstrable exit criterion |
