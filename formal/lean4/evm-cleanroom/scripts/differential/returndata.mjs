@@ -56,7 +56,8 @@ for(const c of cases){
    const stack=ex.runState?.stack?.getStack()
    if(!Array.isArray(stack))throw Error('independent reference stack unavailable')
    expected.flag=stack.length?stack.at(-1).toString():null
-   expected.parentMemoryByte31=(ex.runState.memory.read(31,1)[0]??0).toString()
+   expected.parentMemoryByte31=BigInt(ex.runState.memoryWordCount)*32n>31n ?
+     (ex.runState.memory.read(31,1)[0]??0).toString() : '0'
  }
  const different=Object.keys(expected).filter(k=>expected[k]!==actual[k])
  if(different.length)failed.push({case:c.name,different,expected,actual,
