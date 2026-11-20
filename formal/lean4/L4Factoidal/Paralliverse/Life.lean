@@ -41,7 +41,7 @@ def Admitted (g : Grid) : Prop :=
   0 < g.width ∧ 0 < g.height ∧ g.cells.size = g.width * g.height
 
 /-- Toroidal read: total even for an unadmitted empty dimension. -/
-def at (g : Grid) (x y : Nat) : Bool :=
+def cellAt (g : Grid) (x y : Nat) : Bool :=
   if g.width == 0 || g.height == 0 then false
   else (g.cells[(y % g.height) * g.width + (x % g.width)]?).getD false
 
@@ -57,7 +57,7 @@ def neighbourCount (g : Grid) (i : Nat) : Nat :=
     [(left, up), (x, up), (right, up),
      (left, y), (right, y),
      (left, down), (x, down), (right, down)]
-  around.foldl (fun count pos => count + (if g.at pos.1 pos.2 then 1 else 0)) 0
+  around.foldl (fun count pos => count + (if g.cellAt pos.1 pos.2 then 1 else 0)) 0
 
 /-- Standard B3/S23 transition over the previous complete snapshot. -/
 def nextCell (g : Grid) (i : Nat) : Bool :=
