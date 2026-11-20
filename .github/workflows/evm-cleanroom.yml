@@ -218,7 +218,7 @@ jobs:
           curl --fail --location --silent --show-error --retry 2 \
             --output .lake/eels/push0-call-contexts.json \
             "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/shanghai/eip3855_push0/test_push0_contract_during_call_contexts.json"
-          sha256sum .lake/eels/push0-call-contexts.json
+          printf 'a20350b0b4bc0f0d6e6bbcaa5b4cc24f5b2bfc3537ea37ab343767feeecb5e05  .lake/eels/push0-call-contexts.json\n' | sha256sum --check
           node scripts/eels/run-lean-call-context.mjs \
             --fixture .lake/eels/push0-call-contexts.json \
             --out .lake/eels/lean-call-context-results.json | tee .lake/eels/call-context-summary.json
