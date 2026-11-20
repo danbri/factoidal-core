@@ -6,7 +6,7 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "baca70d4ac04fb2eabf84719a794ad006017c37e",
+    "EVMCleanroom/Core.lean": "9e542f15ff0da1837b81495a5c82e363f70ea10a",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "db48e3382b8885f8c74b42a6d2b6cfb88b193da3",
@@ -17,17 +17,20 @@
     "EVMCleanroom/MemoryGas.lean": "35840f83cb5141c454943546827fe6c93d2f1569",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "8b32ff66d2c74fbc057b3a7bf38186f79cc73820",
-    "EVMCleanroom.lean": "a3d98c374498d0369f08789f3a603900206a045c",
+    "EVMCleanroom/CLI.lean": "a3c48198e885f11d23f639df31e163a685ef3257",
+    "EVMCleanroom.lean": "42ed7da4585e8ba9a0d7c3209ebe81763e64d9dd",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
     "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
     "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
-    "EVMCleanroom/OpcodeCall.lean": "1d7e86a88649914d45ab38b4ccdcd04e419510ca",
-    "EVMCleanroom/OpcodeCallTests.lean": "f21b88906aa548ae3f9fdab336270f8fca98c81c",
+    "EVMCleanroom/OpcodeCall.lean": "ec5724aedd1bd762dfa97ac6eb42a93fef63a7c5",
+    "EVMCleanroom/OpcodeCallTests.lean": "51514e01fefc5ef6c9d7ada73dd210a6d7cbf05c",
     "scripts/differential/call-opcode.mjs": "4395991df100769b1fc2aae11278295f35f3f61f",
-    "scripts/differential/call-opcode-matrix.mjs": "2a111c8fce567935159d41c85e12dbd519c2f57d"
+    "scripts/differential/call-opcode-matrix.mjs": "2a111c8fce567935159d41c85e12dbd519c2f57d",
+    "EVMCleanroom/ReturnData.lean": "a85af169c09a0bcc3c449baa903106a9be35de99",
+    "EVMCleanroom/ReturnDataTests.lean": "c8fed5bbc579db3204934600c7de032689a3f0b0",
+    "EVMCleanroom/CallData.lean": "2d236a3b6a67be554783d6bee224641e99f85e9e"
   },
   "theorem_inventory": [
     {
@@ -152,6 +155,20 @@
       ],
       "scope": "All admitted depth-one parent CALL bytecode: exceptional outcomes restore every account, transaction-original storage, refunds, and storage-slot warmth, while the entry parent address remains warm.",
       "provenance": "Strengthened theorem compiled and axioms printed in https://github.com/danbri/factoidal-core/actions/runs/44744680044, original source authoring branch 2026-11-20; applies only to the local supported CALL driver"
+    },
+    {
+      "name": "EVMCleanroom.ReturnData.copy_has_exact_bill",
+      "source": "EVMCleanroom/ReturnData.lean",
+      "axioms_printed": [],
+      "scope": "Every accepted EIP-211 copy step has an exact opcode, word-copy and memory-expansion gas bill",
+      "provenance": "New theorem submitted for Lean kernel and axiom CI audit; exact axioms to be recorded from passing check"
+    },
+    {
+      "name": "EVMCleanroom.ReturnData.copy_original_unchanged",
+      "source": "EVMCleanroom/ReturnData.lean",
+      "axioms_printed": [],
+      "scope": "Return-data copy through actual gas-checked commit preserves transaction original storage",
+      "provenance": "New theorem submitted for Lean kernel and axiom CI audit; exact axioms to be recorded from passing check"
     }
   ],
   "external_evidence": {
@@ -264,5 +281,15 @@
   "baseline_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44741089115",
   "active_implementation_evidence_commit": "2f27b3f61b0fc1ee14f0e3a8356c170b18d0167c",
   "active_implementation_evidence_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44745202928",
-  "commit_provenance_note": "Historical baseline 03c83338 is NOT the revision checked by the new 120-case CALL differential; active implementation evidence is pinned to 2f27b3f and 44745202928. Subsequent manifest/document-only commits do not rewrite earlier executed code claims. Any executable source change must update all monitored blobs and rerun CI."
+  "commit_provenance_note": "Historical baseline 03c83338 is NOT the revision checked by the new 120-case CALL differential; active implementation evidence is pinned to 2f27b3f and 44745202928. Subsequent manifest/document-only commits do not rewrite earlier executed code claims. Any executable source change must update all monitored blobs and rerun CI.",
+  "active_extension_return_data": {
+    "status": "pending-independent-CI",
+    "claims": [
+      "EIP-211 parent RETURNDATASIZE and RETURNDATACOPY",
+      "full child RETURN/REVERT bytes preserved for parent",
+      "memory expansion and source-bound checks even on length 0"
+    ],
+    "selected_fixture": "EELS generated Cancun PUSH0 call context; not yet executed via official EELS runner",
+    "caveat": "Bounded 4 KiB return-data observation; larger returns explicitly unsupported, not valid Ethereum failures."
+  }
 }
