@@ -1737,7 +1737,8 @@ theorem applyWinner_lineHeight_zeroPx (parent start s : Computed) :
     applyWinner parent start s ⟨"line-height", "0px", false⟩ =
       {s with lineHeight := 0, lineHeightFactor := none} := by
   unfold applyWinner
-  have hwide : wideSource parent start ⟨"line-height", "0px", false⟩ = none := by decide
+  have hwide : wideSource parent start ⟨"line-height", "0px", false⟩ = none := by
+    decide +revert
   rw [hwide]
   rw [applyOrKeep_eq]
   simp [applyOrKeepSlow, apply]
