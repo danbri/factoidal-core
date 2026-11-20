@@ -371,7 +371,7 @@ try {
     }
     assert.match(state.status, new RegExp("Lean/Wasm completed " + (4*n).toLocaleString() +
       " triples; " + expected + " BGP solution mappings"), JSON.stringify(state));
-    assert.equal(state.rows, 16, "The first 16 binding pairs are shown as terms and IDs");
+    assert.equal(state.rows, 20, "A bounded page shows 20 real Lean BGP binding pairs");
     assert.equal(state.gpuPackAvailable, true);
     assert.match(state.patterns, /\?person ex:knows \?colleague/);
     assert.match(state.patterns, /\?colleague ex:worksOn ex:Atlas/);
@@ -382,6 +382,17 @@ try {
   }
   await observeBgp(64, 32);
   await observeBgp(1024, 512);
+  await evaluate('document.querySelector("#bgp-next").click()');
+  const page2 = await evaluate('(() => ({status:document.querySelector("#bgp-page-status").textContent, ' +
+    'first:document.querySelector("#bgp-answers tbody tr td")?.textContent, ' +
+    'rows:document.querySelectorAll("#bgp-answers tbody tr").length}))()');
+  assert.match(page2.status, /Page 2 of 26/);
+  assert.equal(page2.first, "21", "Second page starts with the 21st actual Lean solution mapping");
+  assert.equal(page2.rows, 20);
+  await evaluate('document.querySelector("#bgp-prev").click()');
+  assert.equal(await evaluate('document.querySelector("#bgp-answers tbody tr td")?.textContent'),
+    "1", "Returning to first page preserves original source order");
+  report.cases.push({name: "bgp-512-bindings-page-navigation", ...page2});
   await evaluate('document.querySelector("#bgp-pack").click()');
   const packedDeadline = Date.now() + 90_000;
   let packed;
