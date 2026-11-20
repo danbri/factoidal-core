@@ -1,0 +1,52 @@
+name: Paralliverse Life Lean reference
+
+on:
+  push:
+    branches: [main, feat/664-life-lean-reference]
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/Life.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/LifeProgram.lean'
+      - '.github/workflows/check-paralliverse-life.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/Life.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/LifeProgram.lean'
+      - '.github/workflows/check-paralliverse-life.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  life:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Compile exact Life module and all imported theorems
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 360s lake build L4Factoidal.Paralliverse.LifeProgram
+      - name: Fresh strict source check, guards, axiom inventory
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 180s lake env lean -j1 -s16384 -M2048 -DwarningAsError=true L4Factoidal/Paralliverse/Life.lean 2>&1 | tee /tmp/paralliverse-life-proof.log
+          timeout --kill-after=10s 180s lake env lean -j1 -s16384 -M2048 -DwarningAsError=true L4Factoidal/Paralliverse/LifeProgram.lean 2>&1 | tee -a /tmp/paralliverse-life-proof.log
+          ! grep -E 'sorryAx|declaration uses sorry|error:' /tmp/paralliverse-life-proof.log
