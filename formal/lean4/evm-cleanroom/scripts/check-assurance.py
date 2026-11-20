@@ -20,6 +20,22 @@ def require(ok, message):
         raise ValueError(message)
 
 def check_result(result, replay):
+    # This is a frozen evidence snapshot. A new replay is checked against
+    # *every observable recorded in the committed, SHA-pinned reference*, not
+    # just the four final roots. Otherwise a regression in fee accounting,
+    # log hashes, or provenance could silently retain a green badge.
+    snapshot_path = ROOT / replay['result_snapshot']
+    require(digest(snapshot_path) == replay['result_sha256'],
+            'reference snapshot hash mismatch')
+    baseline = json.loads(snapshot_path.read_text())
+    require(set(result) == set(baseline), 'result schema fields changed')
+    require(result['schemaVersion'] == baseline['schemaVersion'],
+            'result schema version changed')
+    require(result['kind'] == baseline['kind'], 'result kind changed')
+    require(result['provenance'] == baseline['provenance'],
+            'replay provenance changed')
+    require(result['limits'] == baseline['limits'],
+            'declared observation/trust limits changed')
     counts = replay['counts']
     require(result['provenance']['sha256'] == replay['fixture_sha256'], 'fixture hash mismatch')
     require(result['provenance']['totalFixtureCases'] == counts['total'], 'fixture total mismatch')
@@ -37,6 +53,11 @@ def check_result(result, replay):
     for case in cases:
         old = expected[case['id']]
         require(case['status'] == old['status'], 'case classification changed: '+case['id'])
+        reference = next(c for c in baseline['cases'] if c['id'] == case['id'])
+        changed = sorted(k for k in set(case) | set(reference)
+                         if case.get(k) != reference.get(k))
+        require(not changed, 'case observable changed: '+case['id']+
+                ' fields='+','.join(changed))
         if case['status'] == 'pass':
             require(case.get('expectedStateRoot') == old['expected_state_root'] == case.get('computedStateRoot'), 'state root changed: '+case['id'])
         else:
