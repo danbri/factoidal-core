@@ -128,6 +128,11 @@ export function mountBgpStudio({onPack}) {
     state.worker.postMessage({id, people: n});
   }
 
+  const open = $("bgp-open");
+  open.addEventListener("click", () => {
+    pane.scrollIntoView({block: "start", behavior: "auto"});
+    button.focus({preventScroll: true});
+  });
   button.addEventListener("click", start);
   scale.addEventListener("change", () => {
     reset();
