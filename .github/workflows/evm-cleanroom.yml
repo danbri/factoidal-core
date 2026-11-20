@@ -109,6 +109,10 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           node scripts/differential/storage.mjs | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["mismatches"]==0 and x["matched"]>=100 and "refund" in x["observedFields"],x'
+      - name: Differentially verify RETURN/REVERT and atomic rollback against EthereumJS runCall
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/frame.mjs | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["mismatches"]==0 and x["matched"]>=13 and "returnDataHex" in x["fields"], x'
       - name: Generate versioned synthetic corpus and compare independent runtimes
         working-directory: formal/lean4/evm-cleanroom
         run: |
