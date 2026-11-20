@@ -36,7 +36,7 @@ def planCopy (s : State) (buffer : Array UInt8) : Except Error Plan :=
   match s.stack.items with
   | dest :: source :: length :: rest =>
     if !sourceInBounds buffer.size source.val length.val then
-      .error (.invalidOpcode 0x3e) -- superseded by specific error in Core
+      .error .returnDataOutOfBounds
     else
       let words := MemoryGas.requestedWords dest.val length.val
       let expanded := s.memory.expand words
