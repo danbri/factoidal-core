@@ -63,9 +63,42 @@ def check_result(result, replay):
         else:
             require(case.get('reason') == old['reason'], 'unsupported reason changed: '+case['id'])
 
+def check_fixture(fixture, replay):
+    """Verify reported test-source provenance in the actual pinned bytes.
+
+    This checks fixture metadata and expected hashes, not the provenance
+    of the filling-tool binary or its faithful implementation of EELS.
+    """
+    source = replay['upstream_test_source']
+    expected = {c['id']: c for c in replay['cases']}
+    require(isinstance(fixture, dict) and set(fixture) == set(expected),
+            'fixture case inventory differs from manifest')
+    for case_id, record in fixture.items():
+        info = record.get('_info', {})
+        expected_url = (source['test_source_repository'] + '/blob/' +
+                        source['fixture_reported_tag'] + '/' +
+                        source['source_path'])
+        require(str(info.get('url', '')).split('#')[0] == expected_url,
+                'fixture test source differs: ' + case_id)
+        require(info.get('filling-transition-tool') ==
+                source['filling_transition_tool'], 'fixture filling tool differs: ' + case_id)
+        require(info.get('reference-spec-version') ==
+                source['reference_spec_version'], 'fixture reference EIP changed: ' + case_id)
+        require(info.get('fixture-format') == 'state_test',
+                'fixture format changed: ' + case_id)
+        post = record.get('post', {}).get(replay['fork'], [])
+        require(len(post) == 1, 'fixture Prague vector count changed: ' + case_id)
+        require(post[0].get('hash') is not None,
+                'fixture missing expected root: ' + case_id)
+        if expected[case_id]['status'] == 'pass':
+            require(post[0]['hash'] == expected[case_id]['expected_state_root'],
+                    'fixture expected root differs: ' + case_id)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--result', type=pathlib.Path, help='also compare a fresh runner result')
+    parser.add_argument('--fixture', type=pathlib.Path,
+                        help='also verify downloaded EELS fixture bytes and _info metadata')
     args = parser.parse_args()
     manifest = json.loads((ROOT/'evidence/claim-manifest-v1.json').read_text())
     require(manifest['schema_version'] == 1, 'unsupported manifest schema')
@@ -77,12 +110,19 @@ def main():
     check_result(json.loads((ROOT/replay['result_snapshot']).read_text()), replay)
     if args.result:
         check_result(json.loads(args.result.read_text()), replay)
+    if args.fixture:
+        raw_fixture = args.fixture.read_bytes()
+        require(hashlib.sha256(raw_fixture).hexdigest() == replay['fixture_sha256'],
+                'downloaded fixture bytes do not match pinned SHA-256')
+        check_fixture(json.loads(raw_fixture), replay)
     counts = replay['counts']
     text = (ROOT/'SOUNDNESS.md').read_text()
     expected = f"Replay snapshot: {counts['passed']} passed, {counts['failed']} failed, {counts['unsupported']} unsupported, {counts['total']} total."
     require(expected in text, 'SOUNDNESS replay summary does not match manifest')
     require('zero official state-test passes claimed' not in text, 'obsolete global zero-passes claim')
-    print('assurance snapshot consistent' + ('; fresh replay matches' if args.result else ''))
+    print('assurance snapshot consistent' +
+          ('; fresh replay matches' if args.result else '') +
+          ('; EELS fixture metadata verified' if args.fixture else ''))
 
 if __name__ == '__main__':
     try:
