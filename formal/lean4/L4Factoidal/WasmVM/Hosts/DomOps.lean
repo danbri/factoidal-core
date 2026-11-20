@@ -1107,8 +1107,10 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     if q.startsWith "request\x00" then
       match q.splitOn "\x00" with
       | [_, dpr, w, h] =>
-        let env : HTML.ImageSource.Env := { dpr := HTML.ImageSource.ratOf dpr,
-          viewportW := HTML.ImageSource.ratOf w, viewportH := HTML.ImageSource.ratOf h }
+        let env : HTML.ImageSource.Env :=
+          { dpr := HTML.ImageSource.ratOf dpr
+            viewportW := HTML.ImageSource.ratOf w
+            viewportH := HTML.ImageSource.ratOf h }
         match HTML.ImageSource.selected d n env with
         | some (url, density) => return (if density == 1 then "1" else "0") ++ url
         | none => return ""
@@ -1444,7 +1446,7 @@ theorem imageNatural_refusal_preserves (s : State) (id : Nat) (q : String) (e : 
   | error _ => simp [domOp, runEq]
   | ok result =>
     rcases result with ⟨answer, next⟩
-    simp [domOp, runEq] at refused
+    simp_all [domOp]
 
 #print axioms imageNatural_refusal_preserves
 

@@ -2024,7 +2024,8 @@ theorem Command.apply_setNatural (d : Dom) (n : Nat) (z : Option (Nat × Nat))
     (hn : n < d.size) (hi : Forms.isHtml d n ["img"] = true)
     (hz : z.any (fun (w, h) => w > maxNatural || h > maxNatural) = false) :
     Command.apply d (.setNatural n z) = .ok (d.setNode n fun x => { x with natural := z }) := by
-  simp [Command.apply, checkNode, hn, hi, hz, Except.map]
+  simp [Command.apply, checkNode, hn, hi, hz]
+  rfl
 
 /-- Kind: resource-bound refusal.
 Says: oversized request dimensions are refused before any DOM update.
@@ -2033,7 +2034,8 @@ theorem Command.apply_setNatural_refused (d : Dom) (n : Nat) (z : Option (Nat ×
     (hn : n < d.size) (hi : Forms.isHtml d n ["img"] = true)
     (hz : z.any (fun (w, h) => w > maxNatural || h > maxNatural) = true) :
     Command.apply d (.setNatural n z) = .error "script command: natural size exceeds bound" := by
-  simp [Command.apply, checkNode, hn, hi, hz, Except.map]
+  simp [Command.apply, checkNode, hn, hi, hz]
+  rfl
 
 #print axioms Command.apply_setNatural
 #print axioms Command.apply_setNatural_refused
