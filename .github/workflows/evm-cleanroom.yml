@@ -129,6 +129,10 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           node scripts/differential/call-opcode-matrix.mjs | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==120 and x["passed"]==120 and x["mismatches"]==0 and x["unsupported"]==0,x'
+      - name: Compare true child RETURN/REVERT bytes and parent EIP-211 copy to EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/returndata.mjs | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["count"]==5 and x["matched"]==5 and x["mismatches"]==0,x'
       - name: Generate versioned synthetic corpus and compare independent runtimes
         working-directory: formal/lean4/evm-cleanroom
         run: |
