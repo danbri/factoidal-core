@@ -52,7 +52,7 @@ jobs:
           git rev-parse HEAD | tee "$EVIDENCE/commit.txt"
           node --version | tee "$EVIDENCE/node-version.txt"
           sha256sum docs/.eleventy.js docs/_includes/hub-app.njk \
-            docs/web/hub/paralliverse/{index.njk,style.css,app.mjs,execution-stepper.mjs,bgp-fixtures.mjs,bgp-worker.mjs,bgp-studio.mjs,bgp-comparison.mjs,integer-bgp-gpu.mjs,worker.mjs,gpu.mjs,word-gpu.mjs} \
+            docs/web/hub/paralliverse/{index.njk,style.css,app.mjs,execution-stepper.mjs,bgp-fixtures.mjs,bgp-worker.mjs,bgp-studio.mjs,bgp-comparison.mjs,integer-bgp-gpu.mjs,integer-bgp-compact-gpu.mjs,worker.mjs,gpu.mjs,word-gpu.mjs} \
             tools/paralliverse-browser-smoke.mjs | tee "$EVIDENCE/source.sha256"
 
       - name: Install the matching published web release
