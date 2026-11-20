@@ -78,7 +78,16 @@ theorem runCPU_eq_sequential (workers : Nat) (g : Grid) :
     runCPU workers g = sequential g := by
   simp only [runCPU, sequential, Par.mapChunks_eq]
 
+/-- The specification writes precisely one new cell per admitted logical position. -/
+theorem sequential_size (g : Grid) :
+    (sequential g).size = g.width * g.height := by
+  simp [sequential]
+
 def step (g : Grid) : Grid := {g with cells := sequential g}
+
+/-- A completed synchronous generation retains valid dimensions and cell count. -/
+theorem step_admitted (g : Grid) (h : Admitted g) : Admitted (step g) := by
+  exact ⟨h.1, h.2.1, by simpa [step] using sequential_size g⟩
 
 def stepCPU (workers : Nat) (g : Grid) : Grid :=
   {g with cells := runCPU workers g}
@@ -112,6 +121,18 @@ theorem generationsCPU_eq_generations (workers : Nat) :
       rw [stepCPU_eq_step]
       exact ih _
 
+/-- Every finite sequence of generations preserves the grid's admission contract. -/
+theorem generations_admitted (n : Nat) :
+    ∀ (g : Grid), Admitted g → Admitted (generations n g) := by
+  induction n with
+  | zero =>
+      intro g h
+      exact h
+  | succ n ih =>
+      intro g h
+      change Admitted (generations n (step g))
+      exact ih _ (step_admitted g h)
+
 /-- Construct a small fixture with explicitly listed live cells. -/
 def fromLive (width height : Nat) (live : List (Nat × Nat)) : Grid :=
   { width, height,
@@ -131,6 +152,9 @@ private def vertical : Grid := fromLive 5 5 [(2, 1), (2, 2), (2, 3)]
 #guard (generationsCPU 4 2 horizontal).cells == horizontal.cells
 #guard (step (fromLive 1 1 [])).cells == #[false]
 
+#print axioms sequential_size
+#print axioms step_admitted
+#print axioms generations_admitted
 #print axioms runCPU_eq_sequential
 #print axioms stepCPU_eq_step
 #print axioms generationsCPU_eq_generations
