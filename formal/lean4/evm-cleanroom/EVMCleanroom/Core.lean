@@ -27,6 +27,8 @@ def Word.add (a b : Word) : Word := word (a.val + b.val)
 def Word.mul (a b : Word) : Word := word (a.val * b.val)
 def Word.sub (a b : Word) : Word := word (a.val + modulus - b.val)
 def Word.div (a b : Word) : Word := word (a.val / b.val)
+/-- Unsigned EVM bitwise OR over 256-bit words. -/
+def Word.bitOr (a b : Word) : Word := word (Nat.lor a.val b.val)
 
 inductive Error where
   | stackUnderflow
@@ -251,6 +253,7 @@ def planStep (s : State) : Except Error Plan :=
     | 0x02 => binary s Word.mul 5                      -- MUL
     | 0x03 => binary s Word.sub 3                      -- SUB
     | 0x04 => binary s Word.div 5                      -- DIV
+    | 0x17 => binary s Word.bitOr 3                    -- OR
     | 0x50 => pop s                                    -- POP
     | 0x51 => mload s                                  -- MLOAD
     | 0x52 => mstore s                                 -- MSTORE
