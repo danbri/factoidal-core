@@ -186,6 +186,10 @@ jobs:
             --fixture .lake/eels/push0-contracts.json \
             --out .lake/eels/lean-contract-results.json | tee .lake/eels/contract-summary.json
           python3 -c 'import json; x=json.load(open(".lake/eels/lean-contract-results.json")); t=x["totals"]; assert x["status"]=="pass" and t["passed"]==4 and t["failed"]==0 and t["unsupported"]==2 and t["forkCases"]==6 and t["fixtureCases"]==24 and all(c["computedStateRoot"]==c["expectedStateRoot"] for c in x["cases"] if c["status"]=="pass"),x'
+      - name: Reject falsified nonempty EELS contract roots, storage and signer
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/contract-selftest.mjs .lake/eels/push0-contracts.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==4 and all(c["rejected"] for c in x["controls"]),x'
       - name: Reject tampered EELS post-root and account-state expectations
         working-directory: formal/lean4/evm-cleanroom
         run: |
