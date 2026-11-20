@@ -275,3 +275,14 @@ summary { cursor: pointer; }
 .bgp-page-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; }
 .bgp-page-controls .secondary-button { padding: .33rem .5rem; }
 #bgp-page-status { color: #506b57; font: .65rem ui-monospace, Consolas, monospace; }
+
+/* The BGP's comparison belongs to two actual query engines, not packing. */
+.bgp-query-evidence { margin: 1rem 0; padding: .8rem; border: 1px solid #cbded1; border-radius: .5rem; background: #f9fcf9; }
+.bgp-query-evidence .panel-heading h3 { margin: 0; font-size: .83rem; }
+.bgp-query-evidence #bgp-comparison { font-size: .76rem; margin: .6rem 0; overflow-wrap: anywhere; }
+#bgp-comparison[data-match="true"] { color: #216638; font-weight: 700; }
+#bgp-comparison[data-match="false"] { color: #ae3429; font-weight: 700; }
+#bgp-comparison[data-match="pending"] { color: #556f61; }
+.bgp-query-evidence .bgp-result { max-height: 13rem; min-height: 6rem; }
+.bgp-query-evidence .step-toolbar { margin-top: .8rem; }
+.bgp-query-evidence .step-observation { min-height: 5rem; max-height: 12rem; }
