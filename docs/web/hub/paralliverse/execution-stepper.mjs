@@ -152,5 +152,6 @@ export function mountExecutionStepper() {
     cpuStudio(report) {update({mode: "studio", cpuWords: report.output, studio: report});},
     gpu(words, metadata) {update({gpuWords: words, gpuMeta: metadata});},
     gpuState(value) {update({gpuState: value});},
+    invalidateGpu() {update({gpuWords: null, gpuMeta: null});},
   };
 }
