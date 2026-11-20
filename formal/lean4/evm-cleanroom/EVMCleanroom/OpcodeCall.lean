@@ -105,6 +105,29 @@ def drive (entry : TxWorld) (parentAddress childFuel : Nat) :
       | .exceptional e => .exceptional entry e
       | .unsupported why => .unsupported why
 
+/-- The outermost executable commit barrier. Even if a future driver
+    implementation accidentally exposes a partially updated world on an
+    exceptional parent outcome, no such world can escape through run. -/
+def settleParent (entry : TxWorld) : Outcome → Outcome
+  | .exceptional _ reason => .exceptional entry reason
+  | other => other
+
+/-- A successful proof of this local property applies to *all* outcomes
+    produced by the depth-1 bytecode driver, not just test examples. -/
+theorem settleParent_exception_restores {entry result : TxWorld}
+    {reason : Error} {out : Outcome}
+    (h : settleParent entry out = .exceptional result reason) :
+    result = entry := by
+  cases out with
+  | stopped w s => simp [settleParent] at h
+  | unsupported why => simp [settleParent] at h
+  | exceptional w error =>
+    have hh : Outcome.exceptional entry error =
+        Outcome.exceptional result reason := by
+      simpa [settleParent] using h
+    injection hh with hw _
+    exact hw.symm
+
 /-- Frame entry recipient is transaction-warm as required by EIP-2929.
     The target's warmth is still determined by the transaction snapshot. -/
 def run (parentFuel childFuel : Nat) (world : TxWorld)
@@ -113,8 +136,8 @@ def run (parentFuel childFuel : Nat) (world : TxWorld)
     .unsupported "parent-address-is-not-a-regular-account"
   else
     let entry := WorldCall.warmTarget world parentAddress
-    drive entry parentAddress childFuel parentFuel entry
-      (frameInput entry parentAddress parentGas)
+    settleParent entry (drive entry parentAddress childFuel parentFuel entry
+      (frameInput entry parentAddress parentGas))
 
 /-- Entering the parent transaction cannot mutate any account or
     transaction-original storage simply by warming the parent address. -/
@@ -125,6 +148,31 @@ theorem entry_preserves_accounts (w : TxWorld) (parentAddress other : Nat) :
 theorem entry_preserves_original (w : TxWorld) (parentAddress other key : Nat) :
     ((WorldCall.warmTarget w parentAddress).original other key) =
       w.original other key := WorldCall.warmTarget_original w parentAddress other key
+
+/-- Actual executable parent-level exceptional rollback, even after
+    earlier successful child CALL(s). Applies to every address and storage
+    slot for all bytecode admitted by the restricted dispatcher. -/
+theorem run_exception_world_atomic (parentFuel childFuel : Nat)
+    (world result : TxWorld) (parentAddress parentGas addr slot : Nat)
+    (reason : Error)
+    (h : run parentFuel childFuel world parentAddress parentGas =
+        .exceptional result reason) :
+    result.accounts addr = world.accounts addr ∧
+    result.original addr slot = world.original addr slot ∧
+    result.refund = world.refund := by
+  unfold run at h
+  by_cases hv : parentAddress ≥ addressBound || parentAddress < 10
+  · simp [hv] at h
+  · simp only [if_neg hv] at h
+    have he : result = WorldCall.warmTarget world parentAddress :=
+      settleParent_exception_restores h
+    subst result
+    exact ⟨WorldCall.warmTarget_accounts world parentAddress addr,
+      WorldCall.warmTarget_original world parentAddress addr slot,
+      WorldCall.warmTarget_refund world parentAddress⟩
+
+#print axioms settleParent_exception_restores
+#print axioms run_exception_world_atomic
 
 #print axioms entry_preserves_accounts
 #print axioms entry_preserves_original
