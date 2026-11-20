@@ -4,7 +4,8 @@ import {createEVM} from '@ethereumjs/evm';
 import {Common, Hardfork, Mainnet} from '@ethereumjs/common';
 import {hexToBytes} from '@ethereumjs/util';
 import {
- EVM_TRANSFER_GUARD_HEX,MAX_UINT64,instantiateEvmPredicate
+ EVM_TRANSFER_GUARD_HEX,MAX_UINT64,MAX_UINT256,
+ instantiateEvmPredicate,instantiateEvmPredicate256
 } from './evm-to-wasm.mjs';
 
 // EthereumJS is a separately maintained Ethereum implementation.
@@ -66,4 +67,38 @@ test('generated EVM-bytecode WASM matches pinned EthereumJS Cancun EVM on 400 AB
  });
  assert.equal(resultWord(reference.returnValue),1n);
  assert.throws(()=>wasm.evaluate(beyond.toString(),'1'),RangeError);
+});
+
+
+test('full 256-bit WASM matches actual EthereumJS Cancun on 400 complete uint256 ABI inputs',async()=>{
+ const wasm=await instantiateEvmPredicate256();
+ const evm=await createEVM({common:new Common({chain:Mainnet,hardfork:Hardfork.Cancun})});
+ const code=hexToBytes('0x'+EVM_TRANSFER_GUARD_HEX);
+ const edges=[0n,1n,2n,3n,5n,10n,2n**64n-1n,
+   2n**64n,2n**128n-1n,2n**128n,2n**192n,MAX_UINT256];
+ const pairs=[];
+ for(const b of edges)for(const a of edges)pairs.push([b,a]);
+ let seed=0x6127n;
+ const next=()=>{
+   let n=0n;
+   for(let j=0;j<4;j++){
+     seed^=seed<<13n;seed^=seed>>7n;seed^=seed<<17n;
+     seed&=MAX_UINT64;
+     n=(n<<64n)|seed;
+   }
+   return n;
+ };
+ for(let i=0;i<256;i++)pairs.push([next(),next()]);
+ assert.equal(pairs.length,400);
+ for(const [balance,amount] of pairs){
+   const result=await evm.runCode({
+     code,data:encode(balance,amount),gasLimit:100000n
+   });
+   assert.equal(result.exceptionError,undefined,'EthereumJS error at '+balance+' '+amount);
+   const actual=resultWord(result.returnValue);
+   assert(actual===0n||actual===1n,'non-Boolean ABI return');
+   assert.equal(wasm.evaluate(balance.toString(),amount.toString()),
+     actual===1n,'full-width EVM→WASM mismatch '+balance+' '+amount);
+ }
+ assert.throws(()=>wasm.evaluate((MAX_UINT256+1n).toString(),'0'),RangeError);
 });
