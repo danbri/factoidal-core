@@ -1,5 +1,6 @@
 /** SPARQL 1.1 §17.6 extension function executing WASM generated from EVM code. */
 import {createHash} from 'node:crypto';
+import {EVM_POLICY_HEX,instantiateEvmPolicy,POLICY_ARGS} from './evm-policy.mjs';
 import {EVM_TRANSFER_GUARD_HEX,instantiateEvmPredicate,
   instantiateEvmPredicate256} from './evm-to-wasm.mjs';
 
@@ -135,5 +136,71 @@ export async function registerEthereumDerivedWasm256(api,hex=EVM_TRANSFER_GUARD_
     wasmSignature:compiled.wasmSignature,
     inputDomain:compiled.inputDomain,
     semanticsStatus:'full uint256 comparison differentially tested; not a Lean EVM→WASM theorem',
+  };
+}
+
+
+// An illustrative, pure policy inspired by token/allowance/timelock checks.
+// These values are RDF-supplied snapshots, NOT authenticated on-chain state.
+export const POLICY_IRI='urn:factoidal:ethereum-wasm#eligiblePolicy';
+const two255=(1n<<255n).toString(),two200=(1n<<200n).toString();
+const two256=(1n<<256n).toString();
+function proposal(id,{balance,allowance,amount,currentBlock,unlockBlock,paused,frozen}){
+  const data={balance,allowance,amount,currentBlock,unlockBlock,paused,frozen};
+  return [
+    'ex:'+id+' a ex:ProposedTransfer ;',
+    Object.entries(data).map(([key,v])=>' ex:'+key+' "'+v+'"^^xsd:integer')
+      .join(' ;\n')+' .',
+  ].join('\n');
+}
+export const POLICY_DATA=[
+  '@prefix ex: <https://example.org/ethereum-demo/> .',
+  '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
+  proposal('allowed',{balance:100,allowance:80,amount:70,currentBlock:1000,unlockBlock:500,paused:0,frozen:0}),
+  proposal('overdraft',{balance:40,allowance:80,amount:70,currentBlock:1000,unlockBlock:500,paused:0,frozen:0}),
+  proposal('allowance-exhausted',{balance:100,allowance:30,amount:70,currentBlock:1000,unlockBlock:500,paused:0,frozen:0}),
+  proposal('timelocked',{balance:100,allowance:80,amount:70,currentBlock:400,unlockBlock:500,paused:0,frozen:0}),
+  proposal('paused',{balance:100,allowance:80,amount:70,currentBlock:1000,unlockBlock:500,paused:1,frozen:0}),
+  proposal('frozen',{balance:100,allowance:80,amount:70,currentBlock:1000,unlockBlock:500,paused:0,frozen:1}),
+  proposal('full-256-bit-allowed',{balance:two255,allowance:two255,amount:two200,currentBlock:1000,unlockBlock:500,paused:0,frozen:0}),
+  proposal('out-of-evm-range',{balance:two256,allowance:two255,amount:70,currentBlock:1000,unlockBlock:500,paused:0,frozen:0}),
+].join('\n');
+
+export const POLICY_QUERY=[
+  'PREFIX ex: <https://example.org/ethereum-demo/>',
+  'PREFIX evm: <urn:factoidal:ethereum-wasm#>',
+  'SELECT ?proposal ?balance ?allowance ?amount ?block ?unlock ?paused ?frozen ?eligible WHERE {',
+  '  ?proposal a ex:ProposedTransfer ; ex:balance ?balance ;',
+  '    ex:allowance ?allowance ; ex:amount ?amount ;',
+  '    ex:currentBlock ?block ; ex:unlockBlock ?unlock ;',
+  '    ex:paused ?paused ; ex:frozen ?frozen .',
+  '  BIND(evm:eligiblePolicy(?balance,?allowance,?amount,?block,?unlock,?paused,?frozen) AS ?eligible)',
+  '} ORDER BY ?proposal',
+].join('\n');
+export const POLICY_FILTER_QUERY=POLICY_QUERY
+  .replace('SELECT ?proposal ?balance ?allowance ?amount ?block ?unlock ?paused ?frozen ?eligible',
+    'SELECT ?proposal')
+  .replace('BIND(evm:eligiblePolicy(?balance,?allowance,?amount,?block,?unlock,?paused,?frozen) AS ?eligible)',
+    'FILTER(evm:eligiblePolicy(?balance,?allowance,?amount,?block,?unlock,?paused,?frozen))');
+
+export async function registerEthereumPolicyWasm(api,hex=EVM_POLICY_HEX){
+  if(typeof api?.registerExtensionFunction!=='function')
+    throw new TypeError('a Factoidal SPARQL extension registry is required');
+  const {compiled,evaluate}=await instantiateEvmPolicy(hex);
+  await api.registerExtensionFunction(POLICY_IRI,args=>{
+    if(!Array.isArray(args)||args.length!==POLICY_ARGS.length)
+      throw new TypeError('expected '+POLICY_ARGS.join(', '));
+    return evaluate(...args);
+  });
+  return {
+    functionIRI:POLICY_IRI,
+    evmCode:hex,
+    sourceEvmSha256:sha256(Buffer.from(hex,'hex')),
+    generatedWasmSha256:sha256(compiled.bytes),
+    wasmSize:compiled.bytes.length,
+    numericDomain:compiled.inputDomain,
+    wasmSignature:compiled.wasmSignature,
+    opcodeTrace:compiled.operations,
+    assurance:'differential-tested-not-proved',
   };
 }
