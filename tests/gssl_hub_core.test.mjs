@@ -55,8 +55,8 @@ test("public Hub route is explicitly exploratory, linked, and uses same runtime"
   const hub=read("docs/web/hub/index.md");
   const spec=read("docs/specs/gssl-0.1.md");
   assert.match(page,/permalink: \/web\/hub\/gssl\//);
-  assert.match(page,/not.*general Lean→WGSL compiler/i);
-  assert.match(page,/does not.*proof/i);
+  assert.match(page,/Neither constitutes a general Lean→WGSL compiler or a formal proof/i);
+  assert.match(page,/GPU hardware execution/i);
   assert.match(page,/issues\/691/);
   assert.match(page,/docs\/specs\/gssl-0\.1\.md/);
   assert.match(app, /from "\.\.\/\.\.\/\.\.\/npm\/factoidal\/lib\/gpu-resident\.mjs"/);
@@ -68,6 +68,6 @@ test("public Hub route is explicitly exploratory, linked, and uses same runtime"
   assert.match(hub,/href="\.\/gssl\//);
   assert.match(spec,/PROVED/);
   assert.match(spec,/PROPOSED/);
-  assert.match(spec,/not.*a general GSSL text parser/i);
+  assert.match(spec,/no general GSSL parser/i);
   assert.match(spec,/SPARQL.*NOT ready/i);
 });
