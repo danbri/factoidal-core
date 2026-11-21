@@ -41,8 +41,8 @@ theorem resolve_eq_indexed (bgp : Bgp) (graph : Graph) (candidate : Option Solut
   | false => simp [resolve, hs]
   | true =>
       cases hc : candidate with
-      | none => simp [resolve, hs, hc]
-      | some rows => simp [resolve, hs, hc, correct rows hs hc]
+      | none => simp [resolve, hs]
+      | some rows => simp [resolve, hs, correct rows hs hc]
 
 /-- Unsupported syntax always takes the existing engine path, regardless of
 any offered candidate. -/
