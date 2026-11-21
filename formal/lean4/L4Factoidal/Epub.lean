@@ -103,7 +103,10 @@ def openBook (bytes : ByteArray) : Except String Book := do
     if !safePath entry.name then throw "EPUB has an invalid member path"
     if (entries.get? entry.name).isSome then throw "EPUB has a duplicate member"
     entries := entries.insert entry.name entry.bytes
-  let file := fun (path : String) => (entries.get? path).toExcept ("EPUB missing archive member: " ++ path)
+  let file := fun (path : String) =>
+    match entries.get? path with
+    | some bytes => .ok bytes
+    | none => .error ("EPUB missing archive member: " ++ path)
   let mime ← file "mimetype"
   if mime != "application/epub+zip".toUTF8 then throw "EPUB mimetype is incorrect"
   if (entries.get? "META-INF/encryption.xml").isSome then throw "Encrypted EPUB resources are unsupported"
