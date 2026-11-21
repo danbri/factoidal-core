@@ -1,6 +1,7 @@
 import EVMCleanroom.Core
 import EVMCleanroom.Frame
 import EVMCleanroom.Call
+import EVMCleanroom.CallOpcode
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.PragueEnvelope
 
@@ -402,6 +403,53 @@ private def pragueAuthorizeMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"message\":\"expected 8 Prague authorization fields\"}"
     return 2
 
+/-- Run the actual 0xf1 instruction in parent bytecode under a scoped Cancun
+    frame model; no arbitrary transaction envelope/receipt is inferred.
+    Usage: --call-opcode PARENT_HEX CHILD_HEX GAS FUEL.
+    Parent address = 0xc1, child address = 0xc3, no initial storage. -/
+private def callOpcodeMain (args : List String) : IO UInt32 := do
+  match args with
+  | [parentHex, childHex, gasStr, fuelStr] =>
+    match parseBytecode parentHex, parseBytecode childHex,
+      gasStr.toNat?, fuelStr.toNat? with
+    | .ok parentCode, .ok childCode, some gas, some fuel =>
+      let parentAddress : Nat := 0xc1
+      let childAddress : Nat := 0xc3
+      let accounts : Nat → World.Account := fun address =>
+        if address == parentAddress then { code := parentCode }
+        else if address == childAddress then { code := childCode }
+        else {}
+      let world := World.beginTransaction accounts
+      let serialize : String → World.TxWorld → State → String := fun status outcome s =>
+        let stack := String.intercalate ","
+          (s.stack.items.map (fun w => "\"" ++ toString w.val ++ "\""))
+        "{\"schemaVersion\":1,\"status\":\"" ++ status ++
+        "\",\"gasRemaining\":\"" ++ toString s.gas ++
+        "\",\"pc\":\"" ++ toString s.pc ++
+        "\",\"stack\":[" ++ stack ++
+        "],\"slot0\":\"" ++ toString ((outcome.accounts childAddress).storage 0) ++
+        "\",\"warmAddress\":" ++
+        (if outcome.warmAddresses childAddress then "true" else "false") ++
+        ",\"warmSlot\":" ++
+        (if outcome.warmSlots childAddress 0 then "true" else "false") ++
+        ",\"refund\":\"" ++ toString outcome.refund ++ "\"}"
+      match CallOpcode.run fuel world parentAddress gas with
+      | .stopped final s => IO.println (serialize "stopped" final s)
+      | .returned final s => IO.println (serialize "returned" final s)
+      | .reverted final s => IO.println (serialize "reverted" final s)
+      | .exceptional final s reason =>
+        let state := serialize "exceptional" final s
+        IO.println (state.dropEnd 1 ++ ",\"reason\":\"" ++ errorCode reason ++ "\"}")
+      | .indeterminate reason =>
+        IO.println ("{\"status\":\"indeterminate\",\"reason\":\"" ++ errorCode reason ++ "\"}")
+      return 0
+    | _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX GAS FUEL\"}"
+      return 2
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"reason\":\"usage: --call-opcode PARENT_HEX CHILD_HEX GAS FUEL\"}"
+    return 2
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
   | "--prague-tx-fee" :: rest => pragueFeeMain rest
@@ -409,6 +457,7 @@ def cliMain (args : List String) : IO UInt32 := do
   | "--tx-fee" :: rest => txFeeMain rest
   | "--storage" :: rest => storageMain rest
   | "--frame-storage" :: rest => frameStorageMain rest
+  | "--call-opcode" :: rest => callOpcodeMain rest
   | "--call-slice" :: rest => callSliceMain rest
   | ["--storage-batch", path] => storageBatchMain path
   | ["--batch", path] => runBatchFile path
