@@ -28,7 +28,7 @@
     "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
     "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
     "scripts/check-axiom-output.py": "8d0cabed81fa593b90062c600bb4a9e3a3c0430b",
-    "scripts/differential/osaka-clz.mjs": "254e78a51653d1a3fd9be43db61f13014d06194f"
+    "scripts/differential/osaka-clz.mjs": "75c466fdfef537ee1ab79874263ee8bba59ef251"
   },
   "theorem_inventory": [
     {
@@ -213,6 +213,6 @@
     "Independent expert review"
   ],
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
-  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 277-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated.",
-  "fork_scope_note": "The Osaka profile only enables opcode 0x1e (EIP-7939) in the otherwise restricted interpreter. It is NOT a fork-complete Osaka/Fusaka EVM or an EL/CL node. Historical Shanghai-to-Prague profile tests stay on their original default; never relabel earlier EELS roots as Osaka conformance."
+  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated.",
+  "fork_scope_note": "The Osaka profile only enables opcode 0x1e (EIP-7939) in the otherwise restricted interpreter. It is NOT a fork-complete Osaka/Fusaka EVM or an EL/CL node. Historical Shanghai-to-Prague profile tests stay on their original default; never relabel earlier EELS roots as Osaka conformance. The CLZ differential gate includes an input for every possible 0..256 leading-zero result and both sides of powers-of-two bit-length transitions."
 }
