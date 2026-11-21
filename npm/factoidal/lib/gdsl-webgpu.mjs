@@ -4,6 +4,8 @@
 // Observational evidence only; no general Lean/WGSL refinement theorem.
 import {checkPVGraph,CORE_OPERATORS,MAX_BUFFER_WORDS} from "./gdsl-graph.mjs";
 import {createGsslResidentSession} from "./gpu-resident.mjs";
+import {requirePVGraphLeanAdmission,assertPVGraphLeanOutput}
+  from "./pvgraph-lean-admission.mjs";
 
 const CODES=Object.freeze({
   "u32.map.add":1,"u32.map.mul":2,"u32.map.xor":3,
@@ -79,7 +81,7 @@ function ports(op){
  * A caller-supplied generic resident session may be reused across graphs.
  * With no session supplied, one is created and always closed on return.
  */
-export async function runPVGraphGPU(doc,bindings,{session=null,
+export async function runPVGraphGPU(doc,bindings,{admission=null,session=null,
     registry=CORE_OPERATORS,readbackMaxWords=256}={}){
   const g=checkPVGraph(doc,{registry});
   if(!Number.isSafeInteger(readbackMaxWords)||readbackMaxWords<1||
@@ -100,6 +102,10 @@ export async function runPVGraphGPU(doc,bindings,{session=null,
       unsupported.map(n=>n.op).join(","));
   const bound=new Map(inputs.map(n=>[n.id,readInput(
     bindings[n.params.name],n.params.type)]));
+  // Mandatory: real native-Lean-checked admission of this exact program
+  // AND input content. No GPU adapter/session/buffer is created beforehand.
+  // A caller-created {approved:true} object, a hash, or stale permit fails.
+  const leanState=await requirePVGraphLeanAdmission(admission,g,bindings);
   const prefix="gdsl-"+await hashGraph(g)+"-";
   let owned=false;
   if(!session){
@@ -191,7 +197,11 @@ export async function runPVGraphGPU(doc,bindings,{session=null,
       }
       results[name]=info.type==="scalar<u32>"?words[0]:words;
     }
-    return {status:"observed-not-proven",outputs:results,trace,
+    // The final observed device value must match the independent Lean
+    // interpreter; mismatch is a failed execution, never certified success.
+    assertPVGraphLeanOutput(leanState,results);
+    return {status:"observed-not-proven",leanAdmission:"native-checked",
+      outputs:results,trace,
       gpuDispatches:dispatched,pvgraph:g,resident:session.status()};
   }finally{
     if(owned){try{session.close();}catch{}}
