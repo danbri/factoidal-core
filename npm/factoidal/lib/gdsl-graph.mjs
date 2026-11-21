@@ -171,12 +171,15 @@ function copyGraph(doc){
       doc.links.length>MAX_LINKS)
     fail("Graph exceeds node/link limits.");
   const nodes=doc.nodes.map(n=>{
-    if(!object(n)||!object(n.params))fail("Invalid node declaration.");
+    if(!object(n)||!object(n.params)||
+      !eq(Object.keys(n).sort(),["id","op","params"]))
+      fail("Node declaration must contain exactly id, op and params.");
     return {id:n.id,op:n.op,params:{...n.params}};
   });
   const links=doc.links.map(l=>{
-    if(!object(l)||!object(l.from)||!object(l.to))
-      fail("Invalid link declaration.");
+    if(!object(l)||!object(l.from)||!object(l.to)||
+      !eq(Object.keys(l).sort(),["from","kind","to","type"]))
+      fail("Link declaration must contain exactly from,to,kind,type.");
     return {from:{...l.from},to:{...l.to},kind:l.kind,type:l.type};
   });
   return {version:doc.version,nodes,links};
@@ -194,7 +197,7 @@ export function checkGraph(doc,{registry=CORE_OPERATORS}={}){
     namesIn=new Set(),namesOut=new Set();
   let outputs=0;
   for(const [i,node] of graph.nodes.entries()){
-    if(has(nodeMap,node.id))fail("Duplicate node ID "+node.id);
+    if(nodeMap.has(node.id))fail("Duplicate node ID "+node.id);
     const s=validateNode(node,registry);
     if(node.op==="core.input"){
       if(namesIn.has(node.params.name))fail("Duplicate graph input name.");
@@ -297,7 +300,7 @@ export function runCPU(doc,bindings,{registry=CORE_OPERATORS}={}){
   if(supplied.size!==actualInputs.length ||
      actualInputs.some(n=>!supplied.has(n.params.name)))
     fail("All and only declared input names must be bound.");
-  const values=new Map(),outputs={},trace=[];
+  const values=new Map(),outputs=Object.create(null),trace=[];
   for(const node of checked.nodes){
     const s=schema(node,registry);
     let result;
@@ -380,7 +383,7 @@ export function fromSexpr(text,{registry=CORE_OPERATORS}={}){
     if(form[0]==="node"){
       if(form.length<3||typeof form[1]!=="string"||
         typeof form[2]!=="string")fail("Malformed node form.");
-      const params={};
+      const params=Object.create(null);
       for(const item of form.slice(3)){
         if(!Array.isArray(item)||item.length!==3||item[0]!=="param"||
           typeof item[1]!=="string"||has(params,item[1]))
