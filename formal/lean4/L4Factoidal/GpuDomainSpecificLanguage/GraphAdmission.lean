@@ -98,32 +98,32 @@ def Document.schemasValid (d : Document) : Bool :=
 /-- The complete current graph check, unlike linksAdmitted alone.
     Every component is decidable and executable on finite documents. -/
 def Document.admitted (d : Document) : Bool :=
-  d.uniqueNodeIds &&
-  d.uniquePortNames &&
-  d.uniqueProducers &&
-  d.allInputsBound &&
-  d.hasEndpoints &&
-  d.schemasValid &&
+  (Document.uniqueNodeIds d) &&
+  (Document.uniquePortNames d) &&
+  (Document.uniqueProducers d) &&
+  (Document.allInputsBound d) &&
+  (Document.hasEndpoints d) &&
+  (Document.schemasValid d) &&
   d.linksAdmitted
 
 /-- The checker rejects duplicate node names. -/
-theorem admitted_unique_node_ids (d : Document) (h : d.admitted = true) :
+theorem admitted_unique_node_ids (d : Document) (h : (Document.admitted d) = true) :
     (d.nodes.map Node.id).Nodup := by
-  have hn : d.uniqueNodeIds = true := by
+  have hn : (Document.uniqueNodeIds d) = true := by
     simp only [Document.admitted, Bool.and_eq_true] at h
     exact h.1.1.1.1.1.1
   simpa [Document.uniqueNodeIds] using hn
 
 /-- The checker rejects double producers of a destination port. -/
-theorem admitted_unique_producers (d : Document) (h : d.admitted = true) :
+theorem admitted_unique_producers (d : Document) (h : (Document.admitted d) = true) :
     (d.links.map Link.target).Nodup := by
-  have hp : d.uniqueProducers = true := by
+  have hp : (Document.uniqueProducers d) = true := by
     simp only [Document.admitted, Bool.and_eq_true] at h
     exact h.1.1.1.1.2
   simpa [Document.uniqueProducers] using hp
 
 /-- Each checked edge has correct types and forward-only order. -/
-theorem admitted_edges (d : Document) (h : d.admitted = true)
+theorem admitted_edges (d : Document) (h : (Document.admitted d) = true)
     (l : Link) (hl : l ∈ d.links) :
     linkAdmitted d.nodes l = true := by
   have hc : d.linksAdmitted = true := by
@@ -132,14 +132,14 @@ theorem admitted_edges (d : Document) (h : d.admitted = true)
   exact linksAdmitted_sound d hc l hl
 
 /-- The checker also requires every declared input port to be wired. -/
-theorem admitted_all_input_ports_bound (d : Document) (h : d.admitted = true) :
-    d.allInputsBound = true := by
+theorem admitted_all_input_ports_bound (d : Document) (h : (Document.admitted d) = true) :
+    (Document.allInputsBound d) = true := by
   simp only [Document.admitted, Bool.and_eq_true] at h
   exact h.1.1.1.2
 
 /-- The checker also rejects unsupported/misdeclared common op signatures. -/
-theorem admitted_core_signatures (d : Document) (h : d.admitted = true) :
-    d.schemasValid = true := by
+theorem admitted_core_signatures (d : Document) (h : (Document.admitted d) = true) :
+    (Document.schemasValid d) = true := by
   simp only [Document.admitted, Bool.and_eq_true] at h
   exact h.1.2
 
@@ -164,13 +164,13 @@ private def e3 : Link :=
 private def good : Document :=
   ⟨[input,mapped,reduced,output],[e1,e2,e3]⟩
 
-#guard good.admitted
-#guard !({good with nodes := [input,input,mapped,reduced,output]}).admitted
-#guard !({good with links := [e1,e1,e2,e3]}).admitted
-#guard !({good with links := [e1,e3]}).admitted
-#guard !({good with links := [e1,e2,{e3 with dataType := buf}]}).admitted
-#guard !({good with nodes := [input,reduced,mapped,output]}).admitted
-#guard !({good with nodes := [input,{mapped with op := "unregistered.map"},reduced,output]}).admitted
+#guard (Document.admitted good)
+#guard !(Document.admitted ({good with nodes := [input,input,mapped,reduced,output]}))
+#guard !(Document.admitted ({good with links := [e1,e1,e2,e3]}))
+#guard !(Document.admitted ({good with links := [e1,e3]}))
+#guard !(Document.admitted ({good with links := [e1,e2,{e3 with dataType := buf}]}))
+#guard !(Document.admitted ({good with nodes := [input,reduced,mapped,output]}))
+#guard !(Document.admitted ({good with nodes := [input,{mapped with op := "unregistered.map"},reduced,output]}))
 
 #print axioms admitted_unique_node_ids
 #print axioms admitted_unique_producers
