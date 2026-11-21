@@ -44,6 +44,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/gssl-u64"
           git rev-parse HEAD | tee "$RUNNER_TEMP/gssl-u64/commit.txt"
           sha256sum tools/gssl-sbm11-webgpu.mjs \
+            tools/gssl-sbm11-dense-u32.mjs \
             tools/gssl-sbm11-webgpu-smoke.mjs \
             formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/Sbm11U64Lanes.lean \
             tests/gssl_sbm11_u64_test.mjs | tee "$RUNNER_TEMP/gssl-u64/source.sha256"
