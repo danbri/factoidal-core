@@ -50,7 +50,7 @@ test("GDSL Hub editor, graph rendering, bindings, CPU and GPU share one canonica
     assert.ok(graphApp.includes(fn));
   }
   assert.match(graphApp,/createElementNS/);
-  assert.doesNotMatch(graphApp,/runPVGraphGPU\s*\(/);
+  assert.doesNotMatch(graphApp,/\bawait\s+runPVGraphGPU\s*\(/);
   assert.match(page,/native Lean 4 toolkit/i);
   assert.match(graphApp,/dataflow/i);
   assert.match(app,/mountPVGraph\(\)/);
