@@ -24,10 +24,11 @@ class MockGPUBuffer {
 }
 function mockDevice({slowFence=false,compileFailure=false}={}) {
   const stats={created:0,shaderCompiles:0,writes:0,submissions:0,destroyed:0,dispatches:0};
-  let resume=()=>{};
+  let resume=()=>{}, signalLost=()=>{};
+  const lost=new Promise(resolve=>{signalLost=resolve;});
   const fence=()=>slowFence?new Promise(resolve=>{resume=resolve;}):Promise.resolve();
   const device={
-    lost:new Promise(()=>{}),
+    lost,
     createBuffer({size,usage}){
       stats.created++;
       return new MockGPUBuffer(size,usage);
@@ -87,7 +88,7 @@ function mockDevice({slowFence=false,compileFailure=false}={}) {
     },
     destroy(){stats.destroyed++;},
   };
-  return {device,stats,resume:()=>resume()};
+  return {device,stats,resume:()=>resume(),lose:()=>signalLost({reason:'destroyed'})};
 }
 const source="// mock-add-one\n@compute @workgroup_size(1) fn main() {}";
 
@@ -193,4 +194,39 @@ test("compilation diagnostics do not register a failed kernel",async()=>{
   await assert.rejects(s.compile("bad","@compute fn main() {}"),/deliberate error/);
   assert.equal(s.status().kernelCount,0);
   s.close();
+});
+
+test("changed buffer usage replaces the resource and re-upload is not confused with a cache hit",async()=>{
+  const {device}=mockDevice();
+  const s=await createGsslResidentSession({device,byteBudget:32});
+  const small=GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST;
+  await s.upload("x",new Uint32Array([99]),{usage:small});
+  assert.equal(s.status().usedBytes,4);
+  await assert.rejects(s.inspect("x",{countWords:1}),/COPY_SRC/);
+  const replacement=await s.upload("x",new Uint32Array([99]),
+    {usage:small|GPUBufferUsage.COPY_SRC});
+  assert.equal(replacement.uploaded,true);
+  assert.equal(s.status().usedBytes,4);
+  assert.deepEqual((await s.inspect("x",{countWords:1})).words,[99]);
+  s.close();
+});
+
+test("host write failure poisons cached version; close is possible after device loss",async()=>{
+  const {device,lose}=mockDevice();
+  const s=await createGsslResidentSession({device,byteBudget:32});
+  await s.upload("x",new Uint32Array([1]));
+  const originalWrite=device.queue.writeBuffer;
+  device.queue.writeBuffer=()=>{throw Error("driver rejected host write");};
+  await assert.rejects(s.upload("x",new Uint32Array([2])),/driver rejected/);
+  const resource=s.status().resources.find(r=>r.id==="x");
+  assert.equal(resource.dirty,true);
+  assert.equal(resource.initialized,false);
+  assert.equal(resource.sha256,null);
+  device.queue.writeBuffer=originalWrite;
+  await s.upload("x",new Uint32Array([1]));
+  assert.deepEqual((await s.inspect("x",{countWords:1})).words,[1]);
+  lose();await Promise.resolve();await Promise.resolve();
+  assert.equal(s.status().lost,true);
+  s.close();s.close();
+  assert.equal(s.status().closed,true);
 });
