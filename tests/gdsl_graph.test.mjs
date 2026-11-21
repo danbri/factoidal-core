@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   GDSL_VERSION,MAX_NODES,MAX_LINKS,CORE_OPERATORS,
-  createOperatorRegistry,graph,checkPVGraph,toPVSexpr,fromPVSexpr,runPVGraphCPU
+  createOperatorRegistry,PVGraph,checkPVGraph,toPVSexpr,fromPVSexpr,runPVGraphCPU
 } from "../npm/factoidal/lib/gdsl-graph.mjs";
 import {example,listExamples}
   from "../npm/factoidal/lib/gdsl-examples.mjs";
