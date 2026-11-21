@@ -96,7 +96,7 @@ in the **same node model**.
 The checker is presently a bounded, tested JavaScript implementation,
 not a machine-checked Lean refinement of the serialized format.
 
-## 3. Two notations, **not** two DSLs
+## 3. Three authoring notations, **not** three DSLs
 
 ### 3.1 JavaScript computational PVGraph constructor
 
@@ -149,7 +149,54 @@ extra language constructs**.
 apply to every domain profile. Source text is a program **description**,
 not host JavaScript to evaluate.
 
-### 3.3 The one API
+### 3.3 Native Lean 4 authoring
+
+Lean code can use ordinary dependent types, `do` notation, and reusable
+functions to **construct the same serialized PVGraph**, without a separate
+S-expression or JavaScript parser executing during elaboration:
+
+```lean
+import L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
+open L4Factoidal.GpuDomainSpecificLanguage.PVGraph
+open L4Factoidal.GpuDomainSpecificLanguage.PVGraph.Builder
+
+def glyphPV : Lean.Json := build do
+  let advances ← input "advances" .buffer
+  let spaced ← mapAdd advances 1 (some "spacing")
+  let pens ← scanSum spaced (some "penPositions")
+  let width ← reduceSum spaced (some "lineWidth")
+  output "penPositions" pens (some "penOut")
+  output "lineWidth" width (some "widthOut")
+
+-- An actual compile-time test of the serialized document, not of a
+-- separate handwritten mathematical example.
+#guard (match PVGraph.admit? glyphPV with
+  | .ok _ => true
+  | .error _ => false)
+```
+
+The builder is **notation over canonical `gdsl/0.2` JSON**, not a new
+abstract syntax tree. `Wire .buffer` and `Wire .scalar` prevent accidentally
+passing a scalar to a buffer-only *typed convenience*, and `UInt32` parameters
+are bounded by construction. The generic `op` remains available for
+registered operations; as with JS, its declared ports and signature are
+checked by admission, not trusted from the authoring code.
+
+For projects preferring compile-time rejection, a fixed Lean definition can
+be checked with `#guard` as above or a theorem. Calls that build dynamic
+data must use `buildAndAdmit?` and inspect its `Except` result. Merely
+compiling a Lean declaration that returns `Json` does **not** assert that
+the document is admitted. This distinction is intentional.
+
+Likewise, JS and S-expressions do **not** have to be parsed by the Lean
+elaborator. A host can convert either notation to the **same** canonical
+JSON and submit that exact document to the existing Lean checker. Equality
+of the JS/S-expression front ends with Lean is presently tested on finite
+shared fixtures, **not universally proved**. An eventual Lean elaborator
+macro may improve ergonomics, but must elaborate to these same constructors
+and pass through the same certificate boundary.
+
+### 3.4 The one API
 
 \`\`\`text
 PVGraph(registry?)      PVGraph constructor; add input, op, output
@@ -403,6 +450,9 @@ the universal operator set.
 - [All five builder examples](../../npm/factoidal/lib/gdsl-examples.mjs)
 - [Generic GPU-resident device API](../../npm/factoidal/lib/gpu-resident.mjs)
 - [Lean typed composition theorem](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage.lean)
+- [Native Lean PVGraph authoring builders](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraphBuilder.lean)
+- [Cross-language Lean fixtures](../../formal/lean4/Harness/PVGraphBuilderSmoke.lean)
+- [JS/S-expression/Lean PVGraph comparison](../../tools/pvgraph-lean-builder-diff.mjs)
 - [Whole-graph Lean admission theorems](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphAdmission.lean)
 - [Shared Lean u32 semantics](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphWords.lean)
 - [Exact-JSON Lean graph decoder](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphJson.lean)
