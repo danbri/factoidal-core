@@ -2,10 +2,10 @@
 // Same graph is constructed via JS and round-tripped through S-expressions.
 // The independent JS reference is checked against the device output, but
 // this is NOT an unrestricted WGSL compiler nor a Lean proof of hardware.
-import {checkGraph,runCPU,toSexpr,fromSexpr}
+import {checkPVGraph,runPVGraphCPU,toPVSexpr,fromPVSexpr}
   from "../npm/factoidal/lib/gdsl-graph.mjs";
 import {example,listExamples} from "../npm/factoidal/lib/gdsl-examples.mjs";
-import {runGraphGPU} from "../npm/factoidal/lib/gdsl-webgpu.mjs";
+import {runPVGraphGPU} from "../npm/factoidal/lib/gdsl-webgpu.mjs";
 import {createGsslResidentSession}
   from "../npm/factoidal/lib/gpu-resident.mjs";
 
@@ -22,12 +22,12 @@ const same=(a,b)=>JSON.stringify(Object.entries(a).sort())===
 try{
   for(const meta of listExamples()){
     const e=example(meta.id);
-    const sexpr=toSexpr(e.graph);
-    const reparsed=fromSexpr(sexpr);
-    if(JSON.stringify(checkGraph(reparsed))!==JSON.stringify(e.graph))
+    const sexpr=toPVSexpr(e.pvgraph);
+    const reparsed=fromPVSexpr(sexpr);
+    if(JSON.stringify(checkPVGraph(reparsed))!==JSON.stringify(e.pvgraph))
       throw Error(meta.id+": canonical S-expression round-trip mismatch.");
-    const expected=runCPU(reparsed,e.input).outputs;
-    const gpu=await runGraphGPU(reparsed,e.input,{session:s});
+    const expected=runPVGraphCPU(reparsed,e.input).outputs;
+    const gpu=await runPVGraphGPU(reparsed,e.input,{session:s});
     if(!same(expected,gpu.outputs))
       throw Error(meta.id+": actual GPU readback differs from CPU dataflow result.");
     report.cases.push({
@@ -44,19 +44,19 @@ try{
   const e=example("signal");
   const uploadsBefore=s.status().uploads;
   const pipelinesBefore=s.status().createdPipelines;
-  const again=await runGraphGPU(e.graph,e.input,{session:s});
+  const again=await runPVGraphGPU(e.pvgraph,e.input,{session:s});
   if(again.resident.uploads!==uploadsBefore ||
      again.resident.createdPipelines!==pipelinesBefore)
     throw Error("Repeated graph reuploaded unchanged source or compiled a new pipeline.");
   report.unmodifiedGraphReuse=true;
   // Exercise zero and high-bit cases on the *same* canonical graph API.
-  const before=runCPU(example("font").graph,{advances:[]}).outputs;
-  const gpuEmpty=await runGraphGPU(example("font").graph,{advances:[]},{session:s});
+  const before=runPVGraphCPU(example("font").pvgraph,{advances:[]}).outputs;
+  const gpuEmpty=await runPVGraphGPU(example("font").pvgraph,{advances:[]},{session:s});
   if(!same(before,gpuEmpty.outputs))throw Error("Empty input differs on GPU.");
   const extreme=[0,1,0x80000000,0xffffffff];
   const high=example("image");
-  const expectedHigh=runCPU(high.graph,{pixels:extreme}).outputs;
-  const observedHigh=await runGraphGPU(high.graph,{pixels:extreme},{session:s});
+  const expectedHigh=runPVGraphCPU(high.pvgraph,{pixels:extreme}).outputs;
+  const observedHigh=await runPVGraphGPU(high.pvgraph,{pixels:extreme},{session:s});
   if(!same(expectedHigh,observedHigh.outputs))throw Error("u32 overflow differs on GPU.");
   report.emptyAndHighBits=true;
   report.status="pass";
