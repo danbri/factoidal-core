@@ -280,6 +280,52 @@ Mesa/Deno WebGPU results for five graph examples, plus empty and
 high-bit cases and resource reuse. This is **test evidence**, not
 universal refinement or a verified compiler.
 
+### 7.1 Whole-graph Lean checker and independent interpreter
+
+The initial `Graph.linksAdmitted_sound` statement covered only
+individual typed, forward-only edges. The subsequent core-profile
+`GraphAdmission` module introduces a complete finite, executable
+checker for the shared graph model. Its independently audited theorems
+cover unique node IDs, a single producer for each destination port,
+all declared inputs connected, correct typed/forward edges, and
+registered common `u32` operator signatures.
+
+`GraphWords` is an independent executable Lean interpretation of the
+ten shared `u32` primitives. It establishes map-length preservation,
+inclusive-scan length preservation and broadcast shape preservation
+without assuming GPU runtime behaviour. Inputs and outputs are
+distinguished as `scalar` versus `buffer`.
+
+`GraphJson.decode?` parses the **actual** `gdsl/0.2`
+`{version,nodes,links}` JSON document into the Lean graph model;
+it checks exact object fields, valid identifiers, complete operator
+parameter schemas, bounded sizes and input/output names. An unrelated
+`GraphEvaluate.evaluate?` then evaluates this admitted JSON
+graph, using the Lean primitive interpreter and following the actual
+named typed links.
+
+The CI corpus checks two independent cross-language paths:
+
+- **Graph admission:** 99 common JSON graphs, 11 accepted and 88
+  rejected identically by JavaScript and native Lean.
+- **Executable semantics:** 96 same-JSON-graph-and-input cases, 89
+  accepted with exactly equal outputs and 7 rejected by both.
+  Cases include signal processing, font advances, motion, pixel
+  words, scalar/buffer broadcasting, mismatched zip shapes, empty
+  inputs and high unsigned values.
+
+These are **real native Lean executions**, not a JavaScript reimplementation
+branded as a proof. However, they remain *differential tests*:
+there is not yet a theorem showing `fromSexpr` and the JavaScript
+`checkGraph/runCPU` refine their Lean counterparts for every
+possible input, nor a theorem that WGSL and the driver implement this
+Lean interpreter.
+
+The Lean JSON bridge currently admits the **shared core operator
+registry**, not arbitrary domain-specific extensions. Each extension
+needs a checked signature and corresponding semantics before
+receiving the same assurance.
+
 ## 8. Integer width is an execution encoding
 
 Global/long-lived 64-bit identifiers can pass through a
@@ -313,5 +359,10 @@ the universal operator set.
 - [All five builder examples](../../npm/factoidal/lib/gdsl-examples.mjs)
 - [Generic GPU-resident device API](../../npm/factoidal/lib/gpu-resident.mjs)
 - [Lean typed composition theorem](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage.lean)
+- [Whole-graph Lean admission theorems](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphAdmission.lean)
+- [Shared Lean u32 semantics](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphWords.lean)
+- [Exact-JSON Lean graph decoder](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphJson.lean)
+- [Independent Lean JSON-graph evaluator](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphEvaluate.lean)
+- [Actual JS vs Lean admission and semantics CI](https://github.com/danbri/factoidal-core/actions/runs/44944066469/job/136967365524)
 - [Existing GPU residency model](../../formal/lean4/L4Factoidal/GpuKernel/Resident.lean)
 - [GDSL issue and domain release gate](https://github.com/danbri/factoidal-core/issues/691)
