@@ -67,7 +67,8 @@ private def constant? (n : Node) (raw : Json) : Except String (Option UInt32) :=
 /-- Deterministic evaluation of the common accepted acyclic node/link graph,
     using the separately defined UInt32 primitive semantics. -/
 def evaluate? (rawGraph rawBindings : Json) : Except String Json := do
-  let d ← GraphJson.decode? rawGraph
+  let certified ← GraphJson.decodeCertified? rawGraph
+  let d := certified.graph
   let rawNodes ← (← rawGraph.getObjVal? "nodes").getArr?
   let mut inputs : List String := []
   for raw in rawNodes do
