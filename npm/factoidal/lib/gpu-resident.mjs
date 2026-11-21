@@ -116,17 +116,18 @@ export async function createGsslResidentSession({
     try{
       const checksum=await digest(bytes);
       const old=buffers.get(id);
+      const targetUsage=usage??old?.usage??DEFAULT_USAGE();
+      if(!(targetUsage&gpu().COPY_DST)||!(targetUsage&gpu().STORAGE))
+        throw new Error("Uploads require COPY_DST and STORAGE.");
       if(old && old.bytes===bytes.length && old.sha256===checksum &&
-        old.initialized && !old.dirty){
+        old.usage===targetUsage && old.initialized && !old.dirty){
         reuses++;
         return {id,sha256:checksum,uploaded:false,revision:old.revision};
       }
-      if(old && old.bytes===bytes.length && !(old.usage&gpu().COPY_DST))
+      const replacing=!old||old.bytes!==bytes.length||old.usage!==targetUsage;
+      if(!replacing && !(old.usage&gpu().COPY_DST))
         throw new Error("Existing buffer is not host-writable.");
-      const targetUsage=usage??DEFAULT_USAGE();
-      if(!(targetUsage&gpu().COPY_DST)||!(targetUsage&gpu().STORAGE))
-        throw new Error("Uploads require COPY_DST and STORAGE.");
-      if(!old || old.bytes!==bytes.length){
+      if(replacing){
         if(usedBytes-(old?.bytes??0)+bytes.length>byteBudget)
           throw new RangeError("GPU resident byte budget exceeded.");
         // Allocate first; a failure leaves the old usable buffer unchanged.
@@ -138,7 +139,12 @@ export async function createGsslResidentSession({
           sha256:checksum,initialized:true,dirty:false,revision:(old?.revision??0)+1});
         usedBytes+=bytes.length;
       }else{
-        device.queue.writeBuffer(old.buffer,0,bytes);
+        // If the host write throws, never treat old contents as clean.
+        try{device.queue.writeBuffer(old.buffer,0,bytes);}
+        catch(error){
+          old.sha256=null;old.dirty=true;old.initialized=false;
+          throw error;
+        }
         old.sha256=checksum;old.initialized=true;old.dirty=false;old.revision++;
       }
       uploads++;generation++;
@@ -262,11 +268,13 @@ export async function createGsslResidentSession({
   }
   function close(){
     if(closed)return;
-    assertIdle();
+    if(busy)throw new Error("Resident session busy; concurrent actions refused.");
     closed=true;
-    for(const id of [...buffers.keys()])free(id);
+    for(const id of [...buffers.keys()]){
+      try{free(id);}catch{} // after device loss, still dispose everything possible
+    }
     kernels.clear();
-    if(owned)device.destroy();
+    if(owned){try{device.destroy();}catch{}}
   }
   return {allocate,upload,compile,dispatch,inspect,release,status,close};
 }
