@@ -130,11 +130,11 @@ theorem fanout_second (v : Value) : (fanout v).2 = v := by rfl
 
 #guard (scan [1,2,3,4]) == [1,3,6,10]
 #guard (sum [1,2,3,4]) == (10 : UInt32)
-#guard decide (execute .mapMul [.buffer [1,2,3]] (some 3)).toOption =
-  some (.buffer [3,6,9])
-#guard decide (execute .reduceSum [.buffer []]).toOption = some (.scalar 0)
-#guard decide (execute .broadcast [.scalar 7, .buffer [1,2,3]]).toOption =
-  some (.buffer [7,7,7])
+#guard decide ((execute .mapMul [.buffer [1,2,3]] (some 3)).toOption =
+  some (.buffer [3,6,9]))
+#guard decide ((execute .reduceSum [.buffer []]).toOption = some (.scalar 0))
+#guard decide ((execute .broadcast [.scalar 7, .buffer [1,2,3]]).toOption =
+  some (.buffer [7,7,7]))
 #guard (match execute .zipAdd [.buffer [1,2], .buffer [3]] with
   | .error e => e == "GDSL zip lengths differ"
   | .ok _ => false)
