@@ -7,3 +7,4 @@ export {
 export {example,listExamples} from "./lib/gdsl-examples.mjs";
 export {GDSL_GRAPH_WGSL,runPVGraphGPU} from "./lib/gdsl-webgpu.mjs";
 export {createGsslResidentSession} from "./lib/gpu-resident.mjs";
+export {admitPVGraphWithLean} from "./lib/pvgraph-lean-admission.mjs";
