@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'formal/lean4/L4Factoidal/SPARQL/**'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/**'
       - '.github/workflows/check-gssl-sparql-fastpath.yml'
   workflow_dispatch: {}
 permissions:
@@ -16,6 +17,8 @@ jobs:
       modules: >-
         L4Factoidal.SPARQL.GsslFastPath L4Factoidal.SPARQL.GsslFastPathTests
         L4Factoidal.SPARQL.GsslBgpRefinement
+        L4Factoidal.SPARQL.GsslCertifiedFastPath
+        L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin
       theorems: >-
         L4Factoidal.SPARQL.GsslFastPath.resolve_eq_indexed
         L4Factoidal.SPARQL.GsslFastPath.unsupported_fallback
@@ -26,3 +29,9 @@ jobs:
         L4Factoidal.SPARQL.GsslBgpRefinement.rightSelect_eq_evalTP
         L4Factoidal.SPARQL.GsslBgpRefinement.relationalPlan_eq_rdfPlan
         L4Factoidal.SPARQL.GsslBgpRefinement.relationalPlan_eq_evalBgpIdx
+        L4Factoidal.SPARQL.GsslCertifiedFastPath.resolve_eq_indexed
+        L4Factoidal.SPARQL.GsslCertifiedFastPath.certifiedRdfPlan_eq_indexed
+        L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.rowMatches_encode
+        L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.joinRows_encode
+        L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.checkAgreement_sound
+        L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.joinRows_encode_checked
