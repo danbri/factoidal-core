@@ -65,6 +65,7 @@ theorem admitted_identity (dict : Dictionary) (scope : List Term)
     (identityCode? dict term).bind (decodeTerm? dict) = some term := by
   simp only [admit, Bool.and_eq_true] at valid
   have h := List.all_eq_true.mp valid.1 term ht
+  unfold identityRoundTrip at h
   exact decide_eq_true_eq.mp h
 
 theorem admitted_equality (dict : Dictionary) (scope : List Term)
@@ -142,8 +143,8 @@ def checkGraphRoundTrip (dict : Dictionary) (g : Graph) : Bool :=
 
 theorem checkGraphRoundTrip_sound (dict : Dictionary) (g : Graph)
     (valid : checkGraphRoundTrip dict g = true) :
-    (encodeGraph? dict g).bind (decodeGraph? dict) = some g :=
-by
+    (encodeGraph? dict g).bind (decodeGraph? dict) = some g := by
+  unfold checkGraphRoundTrip at valid
   exact decide_eq_true_eq.mp valid
 
 def checkBindingRoundTrip (dict : Dictionary) (b : L4Factoidal.SPARQL.Binding) : Bool :=
