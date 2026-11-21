@@ -112,3 +112,6 @@ def main : IO Unit := do
     | some encoded => IO.println encoded
 
 end Harness.GsslSbm11SourceDevice
+
+/-- Lean --run entrypoint; the namespaced main is kept for reuse. -/
+def main : IO Unit := Harness.GsslSbm11SourceDevice.main
