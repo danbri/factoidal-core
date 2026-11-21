@@ -2,11 +2,14 @@
 // Only a fixed, trusted WGSL kernel and admitted opcodes, never arbitrary
 // user-authored WGSL. Pure CPU semantics belong to gdsl-graph.mjs.
 // Observational evidence only; no general Lean/WGSL refinement theorem.
-import {checkPVGraph,CORE_OPERATORS,MAX_BUFFER_WORDS} from "./gdsl-graph.mjs";
+import {checkPVGraph,createOperatorRegistry,MAX_BUFFER_WORDS} from "./gdsl-graph.mjs";
 import {createGsslResidentSession} from "./gpu-resident.mjs";
 import {requirePVGraphLeanAdmission,assertPVGraphLeanOutput}
   from "./pvgraph-lean-admission.mjs";
 
+// The GPU admission boundary must not trust the exported mutable
+// CORE_OPERATORS Map or any caller-supplied domain registry.
+const VERIFIED_CORE=createOperatorRegistry();
 const CODES=Object.freeze({
   "u32.map.add":1,"u32.map.mul":2,"u32.map.xor":3,
   "u32.zip.add":4,"u32.zip.xor":5,"u32.scan.sum":6,
@@ -82,8 +85,10 @@ function ports(op){
  * With no session supplied, one is created and always closed on return.
  */
 export async function runPVGraphGPU(doc,bindings,{admission=null,session=null,
-    registry=CORE_OPERATORS,readbackMaxWords=256}={}){
-  const g=checkPVGraph(doc,{registry});
+    registry,readbackMaxWords=256}={}){
+  if(registry!==undefined)throw new TypeError(
+    "PVGraph GPU refuses arbitrary operator registries; each extension needs Lean admission.");
+  const g=checkPVGraph(doc,{registry:VERIFIED_CORE});
   if(!Number.isSafeInteger(readbackMaxWords)||readbackMaxWords<1||
       readbackMaxWords>256)
     throw new RangeError("GDSL diagnostic readback bound is 1..256.");
@@ -190,7 +195,7 @@ export async function runPVGraphGPU(doc,bindings,{admission=null,session=null,
         workgroups:[Math.max(1,Math.ceil(count/64)),1,1],
       });
       dispatched++;
-      const type=registry.get(node.op).outputs.out;
+      const type=VERIFIED_CORE.get(node.op).outputs.out;
       values.set(node.id,{id,length:count,type});
       trace.push({id:node.id,op:node.op,status:"gpu-compute",length:count});
     }
