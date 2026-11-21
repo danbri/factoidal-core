@@ -1,4 +1,5 @@
 import L4Factoidal.WasmVM.Hosts.Dom
+import L4Factoidal.WasmVM.Hosts.DomOps
 import L4Factoidal.DOM.OfHtml
 
 /-!
@@ -69,5 +70,70 @@ def frames (n : Nat) : List Command :=
 #guard check page [.setAttribute A "x" "1", .removeAttributeNS A "" "x", .setAttribute A "x" "3"] == (true, 3)
 -- Normalize reads the data.
 #guard check page [.setTextContent T "", .normalize P, .setTextContent T "z"] == (true, 3)
+
+-- Request dimensions are bounded and the replayed arena retains or clears them.
+private def naturalImageArena : Dom := { nodes := #[{ lname := "img", ns := some htmlNS }] }
+#guard match Command.apply naturalImageArena (.setNatural 0 (some (65535, 20))) with
+  | .ok d => (d.get 0).natural == some (65535, 20)
+  | .error _ => false
+#guard match Command.apply naturalImageArena (.setNatural 0 (some (65536, 20))) with
+  | .error reason => reason == "script command: natural size exceeds bound"
+  | .ok _ => false
+#guard match Command.apply naturalImageArena (.setNatural 0 (some (20, 65536))) with
+  | .error reason => reason == "script command: natural size exceeds bound"
+  | .ok _ => false
+#guard match Command.apply naturalImageArena (.setNatural 0 (some (40, 20))) with
+  | .ok d => match Command.apply d (.setNatural 0 none) with
+    | .ok cleared => (cleared.get 0).natural == none
+    | .error _ => false
+  | .error _ => false
+#guard
+  let html := "<img id=i>"
+  let id := ((parseHtmlDocument html).getElementById 0 "i").getD 0
+  (check html [.setNatural id (some (40, 20)), .setAttribute id "width" "80", .setNatural id none]).1
+#guard match Command.apply naturalImageArena (.setNatural 0 (some (40, 20))) with
+  | .ok d =>
+    let (cloned, id) := d.cloneSingle 0 none
+    (cloned.get id).natural == none
+  | .error _ => false
+
+-- Exercise the actual op163 parser and recorder, starting with known dimensions.
+private def imageOpState : State := { dom := naturalImageArena, commandLimit := 2 }
+private def imageOpSized : State := (domOp imageOpState 0 163 "37 23").1
+private def sameImageRecord (a b : State) : Bool :=
+  toString (repr a.dom.nodes) == toString (repr b.dom.nodes) &&
+  toString (repr a.commands) == toString (repr b.commands) && a.changes == b.changes
+private def imageOpRefuses (s : State) (id : Nat) (q : String) (code : Int := -2) : Bool :=
+  let (next, answer) := domOp s id 163 q
+  match answer with
+  | .error e => e == code && sameImageRecord s next
+  | .ok _ => false
+#guard (imageOpSized.dom.get 0).natural == some (37, 23)
+#guard ["37 bad", "37  23", "1 2 3", "-1 2", "+1 2", "1", " 1 2", "1 2 ", "1\t2",
+  "0000000000 1", "65536 1", "1 65536"].all (fun q => imageOpRefuses imageOpSized 0 q)
+#guard imageOpRefuses { imageOpSized with dom := { nodes := #[{ lname := "div", ns := some htmlNS }] } } 0 "1 2"
+#guard imageOpRefuses imageOpSized 1 "1 2"
+#guard match (domOp imageOpSized 0 163 "65535 65535").2 with
+  | .ok _ => true
+  | .error _ => false
+#guard match domOp imageOpSized 0 163 "" with
+  | (cleared, .ok _) => (cleared.dom.get 0).natural == none && cleared.commands.size == 2 &&
+      same (some cleared.dom) (replay imageOpState.dom cleared.commands.toList)
+  | _ => false
+#guard same (some imageOpSized.dom) (replay imageOpState.dom imageOpSized.commands.toList)
+-- At a one-command limit, a fresh clear is refused: live metadata and replay agree.
+#guard imageOpRefuses { imageOpSized with commandLimit := 1 } 0 "" (-5)
+#guard same (some imageOpSized.dom) (replay imageOpState.dom imageOpSized.commands.toList)
+
+-- Capture the density of the actual selected source, including a width descriptor.
+-- The ordinary currentSrc wire keeps its original presence marker for any density.
+private def imageSelectionOp (srcset env : String) : Except Int String :=
+  let d := naturalImageArena.setNode 0 fun x =>
+    { x with attrs := #[{ lname := "srcset", value := srcset }] }
+  (domOp { imageOpState with dom := d } 0 195 env).2
+#guard (imageSelectionOp "a.png 1x" "request\x001\x00800\x00600").toOption == some "1a.png"
+#guard (imageSelectionOp "a.png 2x" "request\x001\x00800\x00600").toOption == some "0a.png"
+#guard (imageSelectionOp "a.png 1600w" "request\x001\x00800\x00600").toOption == some "0a.png"
+#guard (imageSelectionOp "a.png 2x" "1\x00800\x00600").toOption == some "1a.png"
 
 end L4Factoidal.WasmVM.Tests.DomCommands

@@ -109,7 +109,7 @@ theorem unitChar_toNat (c : Char) (h : c.toNat < 0x10000) : unitChar c.toNat = c
   have : isSurrogate c.toNat = false := by unfold isSurrogate; simp; omega
   simp [unitChar, this]
 
-set_option maxRecDepth 20000 in
+set_option maxRecDepth 50000 in
 /-- A character of a Unicode text that is not one of the kept characters is its UTF-16
 encoding, and that encoding decodes to it. -/
 theorem decodeUnits_charUnits (c : Char) (rest : List Nat) (hc : isLoneChar c = false) :

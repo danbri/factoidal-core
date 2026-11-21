@@ -417,7 +417,7 @@ def selContainsNode (s : State) (node : Nat) (partial_ : Bool) : Bool :=
 /-! ## The ops -/
 
 /-- The ops that change the tree (`Hosts.Page` counts them as writes for layout reads). -/
-def treeOps : List Nat := [112, 113, 114, 116, 119, 120, 149, 167]
+def treeOps : List Nat := [112, 113, 114, 116, 119, 120, 149, 163, 167]
 
 /-- The op of an input's value (`169`): it writes unless it reads ("v"). -/
 def valueOp : Nat := 169
@@ -474,6 +474,27 @@ def eventHandlerLike (name : String) : Bool :=
 
 #guard eventHandlerLike "onclick" && eventHandlerLike "onx" && !eventHandlerLike "on" &&
   !eventHandlerLike "onClick" && !eventHandlerLike "xon" && !eventHandlerLike "on-x" && !eventHandlerLike "one1"
+
+/-! The image-size transport has three outcomes: an empty payload clears, a
+bounded decimal pair sets, and any other nonempty payload is refused. -/
+def imageNaturalArg? (q : String) : Option (Option (Nat × Nat)) := do
+  if q.isEmpty then return none
+  -- "65535 65535" is the longest admitted producer payload. Check before toNat?.
+  if q.utf8ByteSize > 11 then none else
+  match q.splitOn " " with
+  | [a, b] =>
+    if a.isEmpty || b.isEmpty || !(a.toList.all Char.isDigit) || !(b.toList.all Char.isDigit) then none else
+    let w ← a.toNat?
+    let h ← b.toNat?
+    if w > maxNatural || h > maxNatural then none else return some (w, h)
+  | _ => none
+
+/-- Kind: transport boundary.
+Says: the empty producer payload decodes to the explicit clear form.
+Does not say: a host command budget admits the resulting clear. -/
+theorem imageNaturalArg_empty : imageNaturalArg? "" = some none := by rfl
+
+#print axioms imageNaturalArg_empty
 
 /-- Op `op` of `node_query` from 100, on the node or range number `id`, with argument `q`.
 
@@ -532,6 +553,16 @@ the session history (`HTML.SessionHistory.answer`); 199 the tables (`HTML.TableD
 whether a protocol handler call may go on (`HTML.ProtocolHandler.answer`). One op changes the tree: 193 sanitizes the children of
 node `id` (`sanitizeM`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
+  -- Parse this bounded transport before the general numeric argument decoder.
+  if op == 163 then
+    let d ← dom
+    let n ← nodeArg d id
+    if !L4Factoidal.DOM.Forms.isHtml d n ["img"] then throw (-2)
+    let z ← match imageNaturalArg? q with
+      | some z => pure z
+      | none => throw (-2)
+    if (d.get n).natural != z then exec (.setNatural n z)
+    return ""
   let xs := nums q
   let d ← dom
   match op with
@@ -1069,8 +1100,22 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     | _ => throw (-2)
   -- 194: the decisions of Trusted Types for document `id` (`HTML.TrustedTypes.answer`)
   | 194 => return L4Factoidal.HTML.TrustedTypes.answer d id q
-  -- 195: the image an `img` element asks for (`HTML.ImageSource.answer`)
-  | 195 => let n ← nodeArg d id; return L4Factoidal.HTML.ImageSource.answer d n q
+  -- 195: a URL for currentSrc, or the request URL with its unit-density flag.
+  -- The request keeps this flag from the same source selection as its URL.
+  | 195 =>
+    let n ← nodeArg d id
+    if q.startsWith "request\x00" then
+      match q.splitOn "\x00" with
+      | [_, dpr, w, h] =>
+        let env : HTML.ImageSource.Env :=
+          { dpr := HTML.ImageSource.ratOf dpr
+            viewportW := HTML.ImageSource.ratOf w
+            viewportH := HTML.ImageSource.ratOf h }
+        match HTML.ImageSource.selected d n env with
+        | some (url, density) => return (if density == 1 then "1" else "0") ++ url
+        | none => return ""
+      | _ => return ""
+    return HTML.ImageSource.answer d n q
   -- 196: the entry list of form `id` for `new FormData(form, submitter)` (`HTML.FormEntries.answer`)
   | 196 => let n ← nodeArg d id; return L4Factoidal.HTML.FormEntries.answer d n q
   -- 197: the session history of the page's document (`HTML.SessionHistory.answer`): `q` is an
@@ -1391,5 +1436,18 @@ def domOp (s : State) (id op : Nat) (q : String) : State × Except Int String :=
   match (domOpM id op q).run s with
   | .ok (a, s') => (s', .ok a)
   | .error e => (s, .error e)
+
+/-- Kind: entry-point refusal preservation.
+Says: a refused image-dimensions operation leaves the whole host state unchanged.
+Does not say: an image transition elsewhere can always clear under its command budget. -/
+theorem imageNatural_refusal_preserves (s : State) (id : Nat) (q : String) (e : Int)
+    (refused : (domOp s id 163 q).2 = .error e) : (domOp s id 163 q).1 = s := by
+  cases runEq : (domOpM id 163 q).run s with
+  | error _ => simp [domOp, runEq]
+  | ok result =>
+    rcases result with ⟨answer, next⟩
+    simp_all [domOp]
+
+#print axioms imageNatural_refusal_preserves
 
 end L4Factoidal.WasmVM.Hosts.Dom

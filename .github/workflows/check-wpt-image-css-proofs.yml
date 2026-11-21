@@ -1,0 +1,44 @@
+name: WPT image and CSS proof closures
+
+on:
+  push:
+    branches: [wip/wpt-imgsize-closeout]
+    paths:
+      - 'formal/lean4/L4Factoidal/Rendering/**'
+      - 'formal/lean4/L4Factoidal/WasmVM/Hosts/Dom/**'
+      - 'formal/lean4/L4Factoidal/WasmVM/Hosts/Dom.lean'
+      - '.github/workflows/check-wpt-image-css-proofs.yml'
+      - '.github/workflows/check-dataflow-stage.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Rendering/**'
+      - 'formal/lean4/L4Factoidal/WasmVM/Hosts/Dom/**'
+      - 'formal/lean4/L4Factoidal/WasmVM/Hosts/Dom.lean'
+      - '.github/workflows/check-wpt-image-css-proofs.yml'
+      - '.github/workflows/check-dataflow-stage.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  image-sizing:
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: wpt-image-sizing
+      modules: L4Factoidal.Rendering.ReplacedTests L4Factoidal.WasmVM.Tests.DomCommands
+      theorems: >-
+        L4Factoidal.Rendering.Layout.blankReplaced_img_none
+        L4Factoidal.Rendering.Layout.blankReplaced_img_some
+        L4Factoidal.WasmVM.Hosts.Dom.Command.apply_setNatural
+        L4Factoidal.WasmVM.Hosts.Dom.Command.apply_setNatural_refused
+        L4Factoidal.WasmVM.Hosts.Dom.imageNaturalArg_empty
+        L4Factoidal.WasmVM.Hosts.Dom.imageNatural_refusal_preserves
+      timeout_minutes: 45
+  css-zero-line-height:
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: wpt-css-zero-line-height
+      modules: L4Factoidal.Rendering.CascadeTests L4Factoidal.Rendering.Style
+      theorems: L4Factoidal.Rendering.CSS.applyWinner_lineHeight_zeroPx
+      timeout_minutes: 45

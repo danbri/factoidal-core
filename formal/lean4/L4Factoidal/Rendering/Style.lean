@@ -1268,11 +1268,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if v <= 0 then throw "font-size must be positive"
     return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
   | "line-height" =>
-    let factor ← if d.value.endsWith "px" then pure none
-      else some <$> (if d.value == "normal" then pure 1.2 else number d.value)
-    let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
-    if v <= 0 then throw "line-height must be positive"
-    return {s with lineHeight := v, lineHeightFactor := factor}
+    if (trim d.value).toLower == "0px" then
+      return {s with lineHeight := 0, lineHeightFactor := none}
+    else
+      let factor ← if d.value.endsWith "px" then pure none
+        else some <$> (if d.value == "normal" then pure 1.2 else number d.value)
+      let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
+      if v < 0 then throw "line-height must be non-negative"
+      return {s with lineHeight := v, lineHeightFactor := factor}
   -- `white-space` and `white-space-collapse` (CSS Text 4 §3): white space and line breaks
   -- kept (`pre`, `pre-wrap`, `pre-line`, `break-spaces`, `preserve`) or collapsed
   | "white-space" | "white-space-collapse" =>
@@ -1723,9 +1726,20 @@ def wideSource (parent start : Computed) (d : Declaration) : Option Computed :=
 property from the style it names (`wideSource`); any other value is read by the profile
 (`applyOrKeep`). A keyword on a property the profile does not have changes nothing. -/
 private def applyWinner (parent start s : Computed) (d : Declaration) : Computed :=
-  match wideSource parent start d with
-  | some source => (copyProperty d.property source s).getD s
-  | none => applyOrKeep s d
+  if d.property == "line-height" && d.value == "0px" then
+    {s with lineHeight := 0, lineHeightFactor := none}
+  else
+    match wideSource parent start d with
+    | some source => (copyProperty d.property source s).getD s
+    | none => applyOrKeep s d
+
+/-- Kind: specification. Says: applying a winning `line-height: 0px` declaration sets
+an absolute zero line height for every incoming style and preserves its other fields.
+Does not say: which declaration wins or how tall a particular line of boxes is. -/
+theorem applyWinner_lineHeight_zeroPx (parent start s : Computed) :
+    applyWinner parent start s ⟨"line-height", "0px", false⟩ =
+      {s with lineHeight := 0, lineHeightFactor := none} := by
+  simp [applyWinner]
 
 /-- `inherit` gives the parent's value. -/
 theorem copyProperty_color (source s : Computed) :
