@@ -72,6 +72,8 @@ private theorem rightRow_matches_engine (colleague : VarName)
     cases hp : works == t.p <;>
     cases t.o <;>
     simp_all [rdfKey_beq]
+  all_goals
+    split <;> simp_all [rdfKey_beq]
 
 /-- Stable right-side selection of a graph is equivalent to the engine's
     second-pattern matcher when its join variable is already bound. -/
