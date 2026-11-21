@@ -4,6 +4,7 @@ on:
     paths:
       - 'npm/factoidal/lib/gdsl-*.mjs'
       - 'npm/factoidal/lib/pvgraph-lean-admission.mjs'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraph.lean'
       - 'tests/gdsl_graph.test.mjs'
       - 'tools/gdsl-graph-device-smoke.mjs'
       - 'tools/pvgraph-native-admission-smoke.mjs'
@@ -61,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           timeout --kill-after=10s 420s lake build \
-            L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
+            L4Factoidal.GpuDomainSpecificLanguage.PVGraph
       - name: Run native Lean PVGraph admission and anti-forgery tests
         shell: bash
         run: |
