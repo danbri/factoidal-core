@@ -51,18 +51,18 @@ Every domain adds operators to this shared graph instead of defining
 a new GDSL syntax or execution architecture.
 
 ```js
-import {graph,runCPU,toSexpr} from "@factoidal/core/gdsl";
+import {PVGraph,runPVGraphCPU,toPVSexpr} from "@factoidal/core/gdsl";
 
-const g=graph();
+const g=PVGraph();
 const pixels=g.input("pixels");
 const scale=g.op("u32.map.mul",{x:pixels},{value:3});
 const bias=g.op("u32.map.add",{x:pixels},{value:1});
 const result=g.op("u32.zip.add",{a:scale,b:bias});
 g.output("result",result);
 
-console.log(runCPU(g.build(),{pixels:[2,3,5,7]}).outputs.result);
+console.log(runPVGraphCPU(g.build(),{pixels:[2,3,5,7]}).outputs.result);
 // [9, 13, 21, 29]
-console.log(toSexpr(g.build())); // identical graph in common notation
+console.log(toPVSexpr(g.build())); // identical graph in common notation
 ```
 
 A common CPU interpreter and a fixed-kernel experimental WebGPU executor
