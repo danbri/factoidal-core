@@ -22,3 +22,7 @@ jobs:
         L4Factoidal.SPARQL.GsslFastPath.missing_fallback
         L4Factoidal.SPARQL.GsslBgpRefinement.rdfPlan_eq_evalBgpIdx
         L4Factoidal.SPARQL.GsslBgpRefinement.resolve_rdfPlan
+        L4Factoidal.SPARQL.GsslBgpRefinement.rightMatch_eq_tpMatch
+        L4Factoidal.SPARQL.GsslBgpRefinement.rightSelect_eq_evalTP
+        L4Factoidal.SPARQL.GsslBgpRefinement.relationalPlan_eq_rdfPlan
+        L4Factoidal.SPARQL.GsslBgpRefinement.relationalPlan_eq_evalBgpIdx
