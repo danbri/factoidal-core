@@ -52,7 +52,7 @@ export interface GdslCpuResult {
 export function runPVGraphCPU(doc:PVGraphDocument,
   bindings:Record<string,number|number[]|Uint32Array>,
   options?:{registry?:GdslRegistry}):GdslCpuResult;
-export const GDSL_GRAPH_WGSL:string;
+export const GDSL_PVGRAPH_WGSL:string;
 export interface GdslGpuResult {
   status:"observed-not-proven";leanAdmission:"native-checked";
   outputs:Record<string,number|number[]>;
