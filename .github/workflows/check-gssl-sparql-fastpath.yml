@@ -21,6 +21,7 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin
         L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement
+        L4Factoidal.GpuDomainSpecificLanguage.RdfDualCodec
       theorems: >-
         L4Factoidal.SPARQL.GsslFastPath.resolve_eq_indexed
         L4Factoidal.SPARQL.GsslFastPath.unsupported_fallback
@@ -40,3 +41,7 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook.join_eq_of_check
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement.rdfJoin_eq_relationalPlan
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement.encodedJoin_eq_evalBgpIdx
+        L4Factoidal.GpuDomainSpecificLanguage.RdfDualCodec.admitted_identity
+        L4Factoidal.GpuDomainSpecificLanguage.RdfDualCodec.admitted_equality
+        L4Factoidal.GpuDomainSpecificLanguage.RdfDualCodec.checkGraphRoundTrip_sound
+        L4Factoidal.GpuDomainSpecificLanguage.RdfDualCodec.checkBindingRoundTrip_sound
