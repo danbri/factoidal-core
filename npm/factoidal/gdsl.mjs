@@ -8,3 +8,7 @@ export {example,listExamples} from "./lib/gdsl-examples.mjs";
 export {GDSL_PVGRAPH_WGSL,runPVGraphGPU} from "./lib/gdsl-webgpu.mjs";
 export {createGsslResidentSession} from "./lib/gpu-resident.mjs";
 export {admitPVGraphWithLean} from "./lib/pvgraph-lean-admission.mjs";
+
+// Lean/Wasm-authoritative PVGraph binding. The older synchronous PVGraph()
+// is retained for compatibility during migration and is NOT this binding.
+export {createPVGraphWasm} from "./lib/gdsl-wasm-builder.mjs";
