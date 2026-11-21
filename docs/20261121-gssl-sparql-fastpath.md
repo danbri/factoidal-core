@@ -15,6 +15,12 @@ the theorem's explicit premise that it is the exact indexed-engine result.
 The code itself does not validate that premise and must not be wired into
 production as though an arbitrary host or GPU result satisfied it.
 
+`GsslBgpRefinement.rdfPlan` selects the first predicate relation and feeds its
+RDF bindings to the existing second-pattern matcher. Its theorem connects this
+plan to `evalBgpIdx` for all graphs and distinct variable names. This is a
+source-level RDF refinement: its second stage still uses the CPU RDF matcher;
+it does not execute GSSL or establish integer encoding and device correctness.
+
 The refinement must preserve the exact list of bindings, their internal
 association-list representation and multiplicities. `evalBgpIdx_eq_evalBgp`
 already relates this engine path to the sequential BGP evaluator. The stronger
