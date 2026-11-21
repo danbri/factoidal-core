@@ -44,6 +44,15 @@ private def generic : M Unit := do
   output "rgbaWords" masked (some "rgbaOut")
   output "checksum" checksum (some "checksumOut")
 
+/-- Auto-generated node IDs are intentionally aligned with the JS
+    computational PVGraph constructor: n1, n2, result3, result4. -/
+private def generated : M Unit := do
+  let samples ← input "samples"
+  let adjusted ← mapMul samples 3
+  let total ← reduceSum adjusted
+  output "adjusted" adjusted
+  output "sum" total
+
 /-- Neither a typed wire nor a Lean source file can bypass admission:
     two nodes with the same ID must still be refused. -/
 private def duplicateNode : M Unit := do
@@ -56,6 +65,7 @@ private def duplicateNode : M Unit := do
 #guard (match buildAndAdmit? motion with | .ok _ => true | .error _ => false)
 #guard (match buildAndAdmit? basic with | .ok _ => true | .error _ => false)
 #guard (match buildAndAdmit? generic with | .ok _ => true | .error _ => false)
+#guard (match buildAndAdmit? generated with | .ok _ => true | .error _ => false)
 #guard (match buildAndAdmit? duplicateNode with
   | .ok _ => false
   | .error _ => true)
@@ -69,7 +79,9 @@ private def fixtures : List (String × M Unit × Json) := [
   ("basic", basic, Json.mkObj
     [("template", toJson ([0,1,2,3,4,5,6,7] : List Nat))]),
   ("generic", generic, Json.mkObj
-    [("pixels", toJson ([4280303744,4284518528,4290826464,4294967295,0] : List Nat))])
+    [("pixels", toJson ([4280303744,4284518528,4290826464,4294967295,0] : List Nat))]),
+  ("generated", generated, Json.mkObj
+    [("samples", toJson ([1,2,3,4294967295] : List Nat))])
 ]
 
 private def runFixture (name : String) (program : M Unit) (bindings : Json) :
