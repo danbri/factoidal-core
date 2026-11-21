@@ -8,7 +8,7 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "baca70d4ac04fb2eabf84719a794ad006017c37e",
+    "EVMCleanroom/Core.lean": "71da30eb2d4f59195c0eef322cb36a0a24bae200",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "db48e3382b8885f8c74b42a6d2b6cfb88b193da3",
@@ -19,7 +19,7 @@
     "EVMCleanroom/MemoryGas.lean": "35840f83cb5141c454943546827fe6c93d2f1569",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "2c091346beb90a54e9866848187d21606b8b7e5a",
+    "EVMCleanroom/CLI.lean": "b10e151af492dc6dc87b2504b24f785ba62e2aeb",
     "EVMCleanroom.lean": "a8b1bcfe99a9057510ac0a96b3608d8219e72fc9",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
@@ -27,7 +27,8 @@
     "scripts/differential/call-boundary.mjs": "d2ddd1fd22f7139e0c50b1e82f6143db0c07d42a",
     "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
     "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
-    "scripts/check-axiom-output.py": "8d0cabed81fa593b90062c600bb4a9e3a3c0430b"
+    "scripts/check-axiom-output.py": "8d0cabed81fa593b90062c600bb4a9e3a3c0430b",
+    "scripts/differential/osaka-clz.mjs": "75c466fdfef537ee1ab79874263ee8bba59ef251"
   },
   "theorem_inventory": [
     {
@@ -142,6 +143,25 @@
       "scope": "Arbitrary monotone memory expansion sequences telescope to exact final gas",
       "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement",
       "source_symbol": "ExpansionTrace.exact_total"
+    },
+    {
+      "name": "EVMCleanroom.Word.leadingZeros_le",
+      "source_symbol": "Word.leadingZeros_le",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "For every representable 256-bit input word, the local EIP-7939 CLZ result is at most 256.",
+      "source": "EVMCleanroom/Core.lean",
+      "provenance": "Printed by pinned Lean 4 v4.33.1 and axiom-audited on exact Core source blob 71da30eb2d4f59195c0eef322cb36a0a24bae200, CI 44930949167; not an external Ethereum semantic-refinement theorem."
+    },
+    {
+      "name": "EVMCleanroom.Word.leadingZeros_zero",
+      "source_symbol": "Word.leadingZeros_zero",
+      "axioms_printed": [],
+      "scope": "Local EIP-7939 CLZ applied to zero returns exactly 256, with no additional theorem axioms.",
+      "source": "EVMCleanroom/Core.lean",
+      "provenance": "Printed by pinned Lean 4 v4.33.1 and axiom-audited on exact Core source blob 71da30eb2d4f59195c0eef322cb36a0a24bae200, CI 44930949167; not an external Ethereum semantic-refinement theorem."
     }
   ],
   "external_evidence": {
@@ -212,5 +232,6 @@
     "Independent expert review"
   ],
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
-  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job."
+  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text.",
+  "fork_scope_note": "The Osaka profile only enables opcode 0x1e (EIP-7939) in the otherwise restricted interpreter. It is NOT a fork-complete Osaka/Fusaka EVM or an EL/CL node. Historical Shanghai-to-Prague profile tests stay on their original default; never relabel earlier EELS roots as Osaka conformance. The CLZ differential gate includes an input for every possible 0..256 leading-zero result and both sides of powers-of-two bit-length transitions."
 }
