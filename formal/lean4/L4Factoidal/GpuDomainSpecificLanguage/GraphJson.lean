@@ -171,10 +171,32 @@ def decode? (j : Json) : Except String Document := do
   if Document.admitted d then pure d
   else fail "Common typed graph admission failed"
 
+/-- The accepted document comes with the *actual proposition* that
+    whole-graph admission succeeded. This is not a theorem about any JS
+    parser, only an explicit Lean proof object returned with the graph. -/
+structure AdmittedGraph where
+  graph : Document
+  admitted : Document.admitted graph = true
+
+/-- An executable parser whose success result carries the admission proof.
+    No proof field can be fabricated by untrusted serialized input. -/
+def decodeCertified? (j : Json) : Except String AdmittedGraph := do
+  let d ← decode? j
+  if h : Document.admitted d = true then
+    return ⟨d,h⟩
+  else
+    fail "Graph admission certificate not available"
+
+/-- The certificate is a checked proposition about every returned graph. -/
+theorem certified_sound (c : AdmittedGraph) :
+    Document.admitted c.graph = true := c.admitted
+
+#print axioms certified_sound
+
 /-!
-The parser's result is guarded by `Document.admitted`, but no
-parser-refinement theorem is claimed in this file. Cross-language
-differential acceptance tests are a separate obligation.
+The certificate does not yet prove JS `fromSexpr/checkGraph` correctness,
+nor a WebGPU backend's refinement. Cross-language differential evidence
+is necessary but remains finite.
 -/
 
 end L4Factoidal.GpuDomainSpecificLanguage.GraphJson
