@@ -157,7 +157,7 @@ S-expression or JavaScript parser executing during elaboration:
 
 ```lean
 import L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
-open L4Factoidal.GpuDomainSpecificLanguage.PVGraph
+open L4Factoidal.GpuDomainSpecificLanguage
 open L4Factoidal.GpuDomainSpecificLanguage.PVGraph.Builder
 
 def glyphPV : Lean.Json := build do
