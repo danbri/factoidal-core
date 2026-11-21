@@ -2,7 +2,7 @@ name: EVM cleanroom Lean seed
 
 on:
   push:
-    branches: ["feat/lean-evm-cleanroom-seed"]
+    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121"]
     paths:
       - "formal/lean4/evm-cleanroom/**"
       - ".github/workflows/evm-cleanroom.yml"
@@ -100,7 +100,7 @@ jobs:
           node scripts/check-eels-memory.mjs /tmp/ethereum-eels-prague-gas.py /tmp/ethereum-eels-prague-memory.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==6 and x["mismatches"]==0, x'
   differential:
     # PR-only avoids installing a second Lean/npm toolchain for both push and PR.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -174,7 +174,7 @@ jobs:
             formal/lean4/evm-cleanroom/scripts/differential/package-lock.json
   eels-real-state:
     # Validate real EELS post-state roots, not merely JSON structure.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -207,6 +207,10 @@ jobs:
           printf '9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4  .lake/eels/eip7623.json\n' | sha256sum --check
           node scripts/eels/run-lean-prague-all-types.mjs --fixture .lake/eels/eip7623.json --out .lake/eels/lean-prague-all-results.json | tee .lake/eels/summary.json
           python3 -c 'import json; x=json.load(open(".lake/eels/lean-prague-all-results.json")); assert x["status"]=="pass" and x["passed"]==6 and x["failed"]==0 and x["unsupported"]==0 and x["actualLeanStateTestsExecuted"]==6 and len(x["cases"])==6 and all(c["computedStateRoot"]==c["expectedStateRoot"] for c in x["cases"]),x'
+      - name: Compare all six Prague cases to content-pinned EELS roots and falsify ledger reports
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/check-prague-six-ledger.py .lake/eels/lean-prague-all-results.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="six-published-prague-roots-confirmed" and x["passed"]==6 and x["unsupported"]==0 and x["adversarialLedgerMutationsRejected"]==6,x'
       - name: Execute genuine nonempty EELS Cancun contracts using Lean and reconstruct state roots
         working-directory: formal/lean4/evm-cleanroom
         run: |
