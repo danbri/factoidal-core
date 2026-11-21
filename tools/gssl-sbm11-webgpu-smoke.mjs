@@ -4,6 +4,8 @@ import {
   runSbm11BgpGpu,referenceBgp64,compareExactRows,compareBags64,
   COUNT,SCAN,EMIT,
 } from "./gssl-sbm11-webgpu.mjs";
+import {denseRemap64,decodeDensePairs} from "./gssl-sbm11-dense-u32.mjs";
+import {runIntegerBgpGpu} from "../docs/web/hub/paralliverse/integer-bgp-gpu.mjs";
 const SHA=Deno.args[0];
 if(!/^[a-f0-9]{40}$/.test(SHA??""))
   throw new Error("Usage: gssl-sbm11-webgpu-smoke.mjs EXACT_HEAD_SHA");
@@ -56,11 +58,21 @@ try{
       throw new Error(name+": GPU readback does not match independent UInt64 oracle.");
     if(got.solutionCount!==cpu.length)
       throw new Error(name+": output count mismatch.");
+    const denseStart=performance.now();
+    const dense=denseRemap64(graph,query);
+    const denseResult=await runIntegerBgpGpu(dense.triples,dense.queryConstants);
+    const decodedDense=decodeDensePairs(denseResult.pairs,dense);
+    if(!compareExactRows(cpu,decodedDense)||!compareBags64(cpu,decodedDense))
+      throw new Error(name+": dense-u32 WebGPU result disagrees with the full-width CPU oracle.");
+    const denseEndToEndMs=performance.now()-denseStart;
     report.cases.push({name,triples:graph.length,pairs:cpu.length,adapter:got.adapter,
       isFallbackAdapter:got.isFallbackAdapter,
       elapsedMs:Math.round(got.elapsedMs*100)/100,
       exactOrdered:true,exactBag:true,
-      returnedCounts:got.counts.length,returnedOffsets:got.offsets.length});
+      returnedCounts:got.counts.length,returnedOffsets:got.offsets.length,
+      denseU32:{dictionarySize:dense.dictionarySize,
+        actualWebGPU:true,orderedEqual:true,
+        elapsedMs:Math.round(denseEndToEndMs*100)/100}});
   }
   let refused=false;
   try{await runSbm11BgpGpu(tests[1][1],query,{maxSolutions:0});}
