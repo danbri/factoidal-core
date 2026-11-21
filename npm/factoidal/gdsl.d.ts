@@ -54,16 +54,22 @@ export function runPVGraphCPU(doc:PVGraphDocument,
   options?:{registry?:GdslRegistry}):GdslCpuResult;
 export const GDSL_GRAPH_WGSL:string;
 export interface GdslGpuResult {
-  status:"observed-not-proven";
+  status:"observed-not-proven";leanAdmission:"native-checked";
   outputs:Record<string,number|number[]>;
   trace:{id:string;op:string;status:string;length:number}[];
   gpuDispatches:number;
   pvgraph:PVGraphDocument;
   resident:Record<string,unknown>;
 }
+declare const pvGraphAdmissionBrand:unique symbol;
+/** Opaque, input-bound token that only an actual native Lean evaluation can mint. */
+export type PVGraphLeanAdmission = {readonly [pvGraphAdmissionBrand]:true};
+export function admitPVGraphWithLean(doc:PVGraphDocument,
+  bindings:Record<string,number|number[]|Uint32Array>,
+  options?:{leanCwd?:string}):Promise<PVGraphLeanAdmission>;
 export function runPVGraphGPU(doc:PVGraphDocument,
   bindings:Record<string,number|number[]|Uint32Array>,
-  options?:{session?:unknown;registry?:GdslRegistry;readbackMaxWords?:number}):
+  options?:{admission?:PVGraphLeanAdmission;session?:unknown;registry?:GdslRegistry;readbackMaxWords?:number}):
   Promise<GdslGpuResult>;
 export interface GdslExample {
   title:string;description:string;domain:string;id:string;
