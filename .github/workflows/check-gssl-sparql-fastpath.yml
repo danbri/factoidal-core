@@ -19,6 +19,7 @@ jobs:
         L4Factoidal.SPARQL.GsslBgpRefinement
         L4Factoidal.SPARQL.GsslCertifiedFastPath
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin
+        L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook
       theorems: >-
         L4Factoidal.SPARQL.GsslFastPath.resolve_eq_indexed
         L4Factoidal.SPARQL.GsslFastPath.unsupported_fallback
@@ -35,3 +36,4 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.joinRows_encode
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.checkAgreement_sound
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.joinRows_encode_checked
+        L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook.join_eq_of_check
