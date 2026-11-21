@@ -5,6 +5,6 @@ export {
   createOperatorRegistry,checkPVGraph,PVGraph,toPVSexpr,fromPVSexpr,runPVGraphCPU,
 } from "./lib/gdsl-graph.mjs";
 export {example,listExamples} from "./lib/gdsl-examples.mjs";
-export {GDSL_GRAPH_WGSL,runPVGraphGPU} from "./lib/gdsl-webgpu.mjs";
+export {GDSL_PVGRAPH_WGSL,runPVGraphGPU} from "./lib/gdsl-webgpu.mjs";
 export {createGsslResidentSession} from "./lib/gpu-resident.mjs";
 export {admitPVGraphWithLean} from "./lib/pvgraph-lean-admission.mjs";
