@@ -153,6 +153,7 @@ structure Computed where
   minHeight : Length := .auto
   maxHeight : Length := .auto
   objectFit : ObjectFit := .fill
+  objectPosition : Option (Length × Length) := none
   /-- `text-align` (inherited): where the lines of a block container sit. -/
   textAlign : TextAlign := .start
   /-- `direction` (inherited), from CSS or the HTML `dir` attribute. -/
@@ -228,7 +229,7 @@ def htmlProperties : List String :=
    "line-height","visibility","overflow","text-decoration","text-decoration-line",
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
-   "min-width","max-width","min-height","max-height","object-fit","text-align",
+   "min-width","max-width","min-height","max-height","object-fit","object-position","text-align",
    "direction","unicode-bidi"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
@@ -946,6 +947,28 @@ def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
   | .vh n => .px (n*height).floor
   | other => other
+/-- A font size or other positive float as a rational, to a thousandth. -/
+def ratOfFloat (x : Float) : Rat :=
+  if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
+
+/-- Read one axis of a position validated by the CSS property grammar. -/
+private def objectPositionAxis (s : String) : Option Length :=
+  match s with
+  | "left" | "top" => some (.percent 0)
+  | "center" => some (.percent 0.5)
+  | "right" | "bottom" => some (.percent 1)
+  | _ =>
+    let edge := (s.splitOn " ").headD ""
+    if edge == "left" || edge == "top" then
+      (length (s.drop (edge.length + 1)).toString).toOption
+    else if edge == "right" || edge == "bottom" then
+      match (length (s.drop (edge.length + 1)).toString).toOption with
+      | some (.px n) => some (.calc 1 (-n))
+      | some (.percent p) => some (.percent (1-p))
+      | some (.calc p n) => some (.calc (1-p) (-n))
+      | _ => none
+    else (length s).toOption
+
 private def pixels (s : String) : Except String Float := do
   match ← length s with | .px n => return n | _ => throw "box edges require px in this CSS profile"
 private def color (source : String) : Except String Color := do
@@ -1366,6 +1389,13 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "max-width" => return {s with maxWidth := ← limit d.value}
   | "min-height" => return {s with minHeight := ← limit d.value}
   | "max-height" => return {s with maxHeight := ← limit d.value}
+  | "object-position" =>
+    let some value := CssValues.specified d.property d.value | throw "invalid CSS object-position"
+    let value := CssValues.computed { num := { fontSize := ratOfFloat s.fontSize } } d.property value
+    let some (x,y) := CssValues.positionXY value | throw "unsupported CSS object-position"
+    let some x := objectPositionAxis x | throw "unsupported horizontal object-position"
+    let some y := objectPositionAxis y | throw "unsupported vertical object-position"
+    return {s with objectPosition := some (x,y)}
   | "object-fit" => match (trim d.value).toLower with
     | "fill" => return {s with objectFit := .fill}
     | "contain" => return {s with objectFit := .contain}
@@ -1425,10 +1455,6 @@ def colorHex (value : String) : Option String :=
       | "rgba", [r, g, b, a] => if a == 0 then some "transparent" else some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
       | _, _ => none
     | _ => none
-
-/-- A font size or other positive float as a rational, to a thousandth. -/
-def ratOfFloat (x : Float) : Rat :=
-  if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
 
 /-- The computed value of `value` for `property` by the property table, with lengths in px
 against font size `fontSize`; `none` when it is not a value of the property. -/
@@ -1564,7 +1590,7 @@ def ownProperties : List String :=
    "border-top-style","border-right-style","border-bottom-style","border-left-style",
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
-   "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
+   "vertical-align","min-width","max-width","min-height","max-height","object-fit","object-position","font-weight","font-style",
    "font-family","background-image","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
@@ -1693,6 +1719,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "min-height" => some {s with minHeight := source.minHeight}
   | "max-height" => some {s with maxHeight := source.maxHeight}
   | "object-fit" => some {s with objectFit := source.objectFit}
+  | "object-position" => some {s with objectPosition := source.objectPosition}
   | "text-align" => some {s with textAlign := source.textAlign}
   | "direction" => some {s with direction := source.direction}
   | "unicode-bidi" => some {s with unicodeBidi := source.unicodeBidi}
