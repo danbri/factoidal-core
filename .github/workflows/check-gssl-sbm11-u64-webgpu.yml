@@ -6,6 +6,7 @@ on:
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/Sbm11U64Lanes.lean'
       - 'formal/lean4/L4Factoidal/Storage/DeltaLog.lean'
       - 'tools/gssl-sbm11-webgpu.mjs'
+      - 'tools/gssl-sbm11-dense-u32.mjs'
       - 'tools/gssl-sbm11-webgpu-smoke.mjs'
       - 'tests/gssl_sbm11_u64_test.mjs'
       - '.github/workflows/check-gssl-sbm11-u64-webgpu.yml'
@@ -36,6 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           node --check tools/gssl-sbm11-webgpu.mjs
+          node --check tools/gssl-sbm11-dense-u32.mjs
           node --check tools/gssl-sbm11-webgpu-smoke.mjs
           node --check tests/gssl_sbm11_u64_test.mjs
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
