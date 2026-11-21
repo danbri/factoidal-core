@@ -121,6 +121,11 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           node scripts/differential/call-slice.mjs | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["failed"]==0 and x["passed"]==4 and x["compared"]==4,x'
+      - name: Differentially challenge CALL gas cap, cold OOG and child rollback at 102 boundaries
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node scripts/differential/call-boundary.mjs | tee .lake/differential/call-boundary.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==102 and x["matched"]==102 and x["mismatches"]==0 and x["parentOOGCases"]==6 and x["successCases"]>0 and x["childFailureCases"]>0 and x["oracleGasMutationDetected"],x'
       - name: Generate versioned synthetic corpus and compare independent runtimes
         working-directory: formal/lean4/evm-cleanroom
         run: |
