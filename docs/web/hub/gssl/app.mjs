@@ -25,10 +25,13 @@ const setStatus=(message,kind="neutral")=>{
 };
 function readInput(){
   const words=parseWords(source.value);
-  const paramsA=[uint32(Number($("mul1").value),"First multiplier"),
-    uint32(Number($("add1").value),"First addend")];
-  const paramsB=[uint32(Number($("mul2").value),"Second multiplier"),
-    uint32(Number($("add2").value),"Second addend")];
+  const field=(id,label)=>{
+    const value=$(id).value.trim();
+    if(!value)throw new TypeError(label+" must be present.");
+    return uint32(Number(value),label);
+  };
+  const paramsA=[field("mul1","First multiplier"),field("add1","First addend")];
+  const paramsB=[field("mul2","Second multiplier"),field("add2","Second addend")];
   return {words,paramsA,paramsB};
 }
 function reference(input){
@@ -107,32 +110,8 @@ async function ensureSession(length){
     allocatedWords=length;
   }
 }
-async function runGPU(){
-  if(active)return;
-  setBusy(true);
-  try{
-    const input=readInput();
-    const cpu=reference(input);
-    clearComparison();
-    showBars(cpu.output,"cpu");
-    setStatus("Checking device and preparing retained resources…");
-    await ensureSession(input.words.length);
-    await session.compile("affine-u32",WGSL);
-    const [u0,u1,u2]=await Promise.all([
-      // upload() serializes via a busy flag; await sequentially below.
-    ]);
-  }catch(error){
-    gpuOutput.textContent="No GPU result.";
-    comparison.dataset.match="pending";
-    comparison.textContent="GPU execution unavailable or refused.";
-    setStatus(error?.message||String(error),"error");
-  }finally{
-    stats();
-    setBusy(false);
-  }
-}
-// Filled below with strictly sequential calls. Do not overlap this host API's
-// upload, compile, dispatch or inspect methods: their exclusivity is deliberate.
+// Calls are intentionally serialized; do not overlap this host API's
+// upload, compile, dispatch or inspect methods.
 async function runGPUSequential(){
   if(active)return;
   setBusy(true);
@@ -242,6 +221,10 @@ runCpu.addEventListener("click",()=>{
     showBars(cpu.output,"cpu");
     setStatus("Independent JavaScript CPU reference complete (no GPU command submitted).","success");
   }catch(error){
+    cpuOutput.textContent="Invalid input; no reference computed.";
+    gpuOutput.textContent="Not executed for these inputs.";
+    comparison.textContent="Input refused; no equality is claimed.";
+    comparison.dataset.match="pending";
     setStatus(error?.message||String(error),"error");
   }
 });
