@@ -1,0 +1,168 @@
+name: EVM cleanroom Lean seed
+
+on:
+  push:
+    branches: ["feat/lean-evm-cleanroom-seed"]
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-cleanroom.yml"
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-cleanroom.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Lean and check proof declarations and guards
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EVMCleanroom
+      - name: Execute restricted EVM CLI and check emitted JSON
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset 600260030100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"schemaVersion":2,"status":"ok","gasRemaining":"91","pc":"6","halted":True,"stack":["5"],"memorySizeBytes":"0","memoryWord0":"0","memoryObservedBytes":"0","memoryTruncated":False,"memoryHex":""}, x'
+          lake exe evm-subset 600260005260005100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert (x["stack"],x["memoryWord0"],x["memorySizeBytes"],x["gasRemaining"]) == (["2"],"2","32","82"), x'
+          lake exe evm-subset 61012c601f5360005100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert (x["stack"],x["memoryWord0"],x["gasRemaining"]) == (["44"],"44","82"), x'
+          lake exe evm-subset 600160405300 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); m=bytes.fromhex(x["memoryHex"]); assert len(m)==96 and m[:64]==bytes(64) and m[64]==1 and m[65:]==bytes(31) and x["memoryTruncated"] is False, x'
+          lake exe evm-subset $(python3 -c 'print("7f" + "ff"*32 + "00")') 100 3 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["stack"] == [str((1<<256)-1)] and x["gasRemaining"]=="97", x'
+          lake exe evm-subset 01 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"stackUnderflow"}, x'
+          lake exe evm-subset 6001 2 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"outOfGas"}, x'
+      - name: Batch execute independent bytecode cases in a single Lean process
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          printf '600260030100\t100\t10\n600160005260005100\t100\t10\n' > /tmp/evm-subset-batch.tsv
+          lake exe evm-subset --batch /tmp/evm-subset-batch.tsv | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin]; assert len(rows)==2 and rows[0]["stack"]==["5"] and rows[1]["stack"]==["1"] and rows[1]["memoryWord0"]=="1", rows'
+      - name: Inspect pinned published EELS state-test fixtures (NOT a conformance run)
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output /tmp/evm-shanghai-push0-state-tests.json \
+            "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/shanghai/eip3855_push0/test_push0_contract_during_call_contexts.json"
+          node scripts/eels-state-preflight.mjs /tmp/evm-shanghai-push0-state-tests.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="parsed-not-executed" and x["fixtures"]>=1 and x["vectors"]>=1 and x["unsupported"]==x["vectors"] and x["executed"]==0 and x["conformancePasses"]==0, x'
+      - name: Compare real Lean execution gas charges against pinned EELS Prague schedule
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output /tmp/ethereum-eels-prague-gas.py \
+            "https://raw.githubusercontent.com/ethereum/execution-specs/1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653/src/ethereum/forks/prague/vm/gas.py"
+          node scripts/check-eels-gas.mjs /tmp/ethereum-eels-prague-gas.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]>=14 and x["mismatches"]==0, x'
+
+      - name: Compare memory opcodes and expansion gas to pinned EELS semantics
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output /tmp/ethereum-eels-prague-memory.py \
+            "https://raw.githubusercontent.com/ethereum/execution-specs/1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653/src/ethereum/forks/prague/vm/instructions/memory.py"
+          node scripts/check-eels-memory.mjs /tmp/ethereum-eels-prague-gas.py /tmp/ethereum-eels-prague-memory.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==6 and x["mismatches"]==0, x'
+  differential:
+    # PR-only avoids installing a second Lean/npm toolchain for both push and PR.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build Lean for independent differential execution
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          auto-config: false
+      - name: Install independent EthereumJS EVM 10.1.3
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
+          npm ls --prefix scripts/differential --depth=0
+          sha256sum scripts/differential/package-lock.json
+      - name: Generate versioned synthetic corpus and compare independent runtimes
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node scripts/differential/generate.mjs --seed 20261119 --count 10000 --out .lake/differential/corpus.jsonl | tee .lake/differential/generator.json
+          # The fixture corpus itself is versioned evidence. Changes in bytes
+          # require an explicit reviewed update to this committed SHA-256.
+          printf '610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb  .lake/differential/corpus.jsonl\n' | sha256sum --check
+          node scripts/differential/run.mjs --corpus .lake/differential/corpus.jsonl --out .lake/differential/report.json --failures .lake/differential/failures.jsonl
+      - name: Verify comparator detects deliberately false expectations
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/selftest.mjs .lake/differential/corpus.jsonl .lake/differential/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["allDetected"] and len(x["controls"])==3 and sum(c.get("reproduced",False) for c in x["controls"])==2 and sum(c.get("minimized",False) for c in x["controls"])==1 and any(c.get("classification")=="unsupported" for c in x["controls"]), x'
+      - name: Build and validate content-addressed evidence manifest
+        if: always()
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/evidence-manifest.mjs .lake/differential | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="consistent", x'
+      - name: Archive exact corpus, dependencies, results and disagreements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evm-differential-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            formal/lean4/evm-cleanroom/.lake/differential/
+            formal/lean4/evm-cleanroom/scripts/differential/package-lock.json
+  eels-real-state:
+    # Validate real EELS post-state roots, not merely JSON structure.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compile Lean EVM and machine-check empty-code theorem
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EVMCleanroom
+      - name: Install state-test transaction/trie dependencies
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
+          npm ls --prefix scripts/eels --depth=0
+          printf '2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7  scripts/eels/package-lock.json\n' | sha256sum --check
+      - name: Execute published Prague EELS state tests with Lean empty-code frames
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/eels
+          curl --fail --location --silent --show-error --retry 2 \
+            --output .lake/eels/eip7623.json \
+            "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/prague/eip7623_increase_calldata_cost/test_eip_7623.json"
+          printf '9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4  .lake/eels/eip7623.json\n' | sha256sum --check
+          node scripts/eels/run-lean-state-tests.mjs --fixture .lake/eels/eip7623.json --out .lake/eels/lean-state-results.json | tee .lake/eels/summary.json
+          python3 -c 'import json; x=json.load(open(".lake/eels/lean-state-results.json")); assert x["status"]=="pass" and x["passed"]==4 and x["failed"]==0 and x["unsupported"]==2 and x["passed"]+x["unsupported"]==x["provenance"]["totalFixtureCases"] and all(case.get("computedStateRoot")==case.get("expectedStateRoot") for case in x["cases"] if case["status"]=="pass"),x'
+      - name: Reject tampered EELS post-root and account-state expectations
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/selftest.mjs .lake/eels/eip7623.json .lake/eels/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==2 and all(c["detected"] for c in x["checks"]),x'
+      - name: Preserve published fixture, host transition results and npm resolution
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evm-eels-state-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            formal/lean4/evm-cleanroom/.lake/eels/
+            formal/lean4/evm-cleanroom/scripts/eels/package-lock.json
