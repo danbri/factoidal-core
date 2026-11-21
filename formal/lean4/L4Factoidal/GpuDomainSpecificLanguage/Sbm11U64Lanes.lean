@@ -153,8 +153,8 @@ theorem readRecord_recordWords (t : IdTriple) :
     readRecord? (recordWords t) = some t := by
   cases t with
   | mk s p o =>
-      change some ⟨join (split s), join (split p), join (split o)⟩ =
-        some ⟨s, p, o⟩
+      change some (IdTriple.mk (join (split s)) (join (split p)) (join (split o))) =
+        some (IdTriple.mk s p o)
       rw [join_split s, join_split p, join_split o]
 
 theorem recordWords_length (t : IdTriple) : (recordWords t).length = 6 := by
