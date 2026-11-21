@@ -78,7 +78,7 @@ private theorem admitted_code (dict : Dictionary) (scope : List Term)
   cases hc : identityCode? dict term with
   | none => simp [hc] at h
   | some code =>
-      refine ⟨code, hc, ?_⟩
+      refine ⟨code, rfl, ?_⟩
       simpa [hc] using h
 
 /-- Injectivity of the finite *admitted* identity codebook. -/
@@ -220,7 +220,7 @@ private def good : Dictionary :=
    {term := .iri b, identity := 2}]
 private def bad : Dictionary :=
   [{term := .iri a, identity := 1},
-   {term := .iri b, identity := 1, equality := 10}]
+   {term := .iri b, identity := 1}]
 
 #guard admit good [.iri a, .iri b]
 #guard !(admit bad [.iri a, .iri b])
@@ -235,4 +235,4 @@ private def bad : Dictionary :=
 #print axioms checkGraphRoundTrip_sound
 #print axioms checkBindingRoundTrip_sound
 
-end L4Factoidal.GpuDomainSpecificLanguage.RdfDualCodec
+end L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec
