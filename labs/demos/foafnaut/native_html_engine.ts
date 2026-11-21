@@ -434,6 +434,11 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       try{return documentCall("",{...request,op:"cookies"}) as {cookie?:string;jar?:string;error?:string};}catch{return undefined;}},
     download:(request:{contentType:string;disposition:string;url:string})=>{
       try{return documentCall("",{...request,op:"download"}) as {action:"show"}|{action:"save";name:string};}catch{return undefined;}},
+    epubReader:(bytes:Uint8Array)=>{
+      let text="";
+      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      return documentCall(btoa(text),{op:"epubReader"}) as {source:string};
+    },
     decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
       if(!backends.decode)return undefined;
       const answer=backends.decode(bytes,charset,fallback,locale),i=answer.indexOf("\n");

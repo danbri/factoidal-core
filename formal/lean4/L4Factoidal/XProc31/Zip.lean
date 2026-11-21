@@ -82,7 +82,7 @@ private def checkExtra (bytes : ByteArray) (start count : Nat) : Except Error Un
 /-- Decode all entries using central-directory sizes, including entries whose
 local headers defer those sizes to a data descriptor. The aggregate expanded
 size is bounded before decompression. -/
-def read (bytes : ByteArray) (maxBytes : Nat := Codec.maxInflated) : Except Error Archive := do
+def read (bytes : ByteArray) (maxBytes : Nat := Codec.maxInflated) (maxEntries : Nat := 65534) : Except Error Archive := do
   let some ending := findEnd bytes | throw (.malformed "ZIP end of central directory not found")
   if ending >= 20 && u32 bytes (ending-20) == 0x07064b50 then throw (.unsupported "ZIP64 archive")
   let count := u16 bytes (ending+10)
@@ -92,6 +92,7 @@ def read (bytes : ByteArray) (maxBytes : Nat := Codec.maxInflated) : Except Erro
     throw (.unsupported "ZIP64 archive")
   if u16 bytes (ending+4) != 0 || u16 bytes (ending+6) != 0 || u16 bytes (ending+8) != count then
     throw (.unsupported "multi-disk ZIP archive")
+  if count > maxEntries then throw (.unsupported "ZIP member-count limit")
   if centralStart + centralSize > ending then throw (.malformed "ZIP central directory exceeds archive bounds")
   -- The archive comment has no UTF-8 flag; accept ASCII conservatively.
   let comment ← textField (bytes.extract (ending+22) bytes.size) false
@@ -151,7 +152,7 @@ def read (bytes : ByteArray) (maxBytes : Nat := Codec.maxInflated) : Except Erro
         throw (.malformed "ZIP data descriptor disagrees with central directory")
     let raw := bytes.extract dataStart (dataStart+compressedSize)
     let data ← if method == 0 then pure raw else do
-      let (decoded, consumed) ← (Codec.inflateAt raw 0).mapError Error.malformed
+      let (decoded, consumed) ← (Codec.inflateAt raw 0 expandedSize).mapError Error.malformed
       if consumed != raw.size then throw (.malformed "trailing bytes in ZIP DEFLATE stream")
       pure decoded
     if data.size != expandedSize then throw (.malformed "ZIP expanded size mismatch")

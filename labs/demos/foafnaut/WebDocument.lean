@@ -1,4 +1,5 @@
 import WebRenderFontRequests
+import L4Factoidal.Epub
 import L4Factoidal.DOM.OfXml
 import WebRenderScript
 import WebXslt
@@ -3274,6 +3275,13 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     (request : JSON.Json) (width height : Nat) : DocM M (String × Array ByteArray) := do
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
+  if str request "op" == "epubReader" then
+    -- The host transports bytes. The EPUB reader sets all limits and generates passive HTML.
+    if html.utf8ByteSize > (Epub.maxArchiveBytes + 2) / 3 * 4 then throw "EPUB archive size limit exceeded"
+    let some archive := XML.Enc.base64Decode? html | throw "Invalid EPUB byte transport"
+    let book ← Epub.openBook archive
+    let page ← book.readerHtml
+    return ((JSON.Json.object [("source", .string page)]).toString, #[])
   if str request "op" == "fontLoad" then
     return (← stepState fun e => let (h,r) := loadFont e.holds request; ({e with holds := h},r),#[])
   -- A document's subresource requests go through the engine's network rules, step by step.
