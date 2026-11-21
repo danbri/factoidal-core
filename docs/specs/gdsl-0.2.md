@@ -115,7 +115,7 @@ g.output("result",mixed);
 
 const program = g.build();  // a single checked graph document
 const {outputs} = runCPU(program,{samples:[2,3,5,7]});
-console.log(outputs.result); // [16,20,28,36]
+console.log(outputs.result); // [13,17,25,33]
 console.log(toSexpr(program));
 \`\`\`
 
