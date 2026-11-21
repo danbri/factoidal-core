@@ -46,7 +46,7 @@ WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-pla
 ## Parallel compute
 
 <ul class="post-series">
-  <li><a href="./gssl/">GDSL graph workbench</a> — one shared typed dataflow language across signal, font, motion, image and numeric examples; JS graph builders and S-expressions both run through the same CPU/WebGPU graph checker. The page also includes an experimental general-purpose GPU device lab: two actual compute passes, persistent intermediate buffers, upload reuse, bounded buffer inspection and a draft language specification. This is not the assured SPARQL accelerator.</li>
+  <li><a href="./gssl/">GDSL graph workbench</a> — one shared typed dataflow language across signal, font, motion, image and numeric examples; Lean/Wasm provides construction, admission and reference evaluation through one API; no JavaScript PVGraph interpreter or checker is used. The page also includes an experimental general-purpose GPU device lab: two actual compute passes, persistent intermediate buffers, upload reuse, bounded buffer inspection and a draft language specification. This is not the assured SPARQL accelerator.</li>
   <li><a href="./paralliverse/">Paralleliverse</a> — typed parallel-computation Studio: a real RDF/SPARQL BGP evaluated independently by Lean/Wasm and two WebGPU join plans, with lexical triples, intermediate GPU relations, solution-bag comparisons and source-scoped evidence; plus word-map and packing experiments.</li>
 </ul>
 
