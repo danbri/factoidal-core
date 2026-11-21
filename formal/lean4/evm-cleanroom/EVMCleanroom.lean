@@ -11,6 +11,7 @@ import EVMCleanroom.Call
 import EVMCleanroom.CallTests
 import EVMCleanroom.EELSBridge
 import EVMCleanroom.TxAccounting
+import EVMCleanroom.PragueEnvelope
 import EVMCleanroom.JumpProofs
 import EVMCleanroom.JumpCompleteness
 import EVMCleanroom.MemoryGas
