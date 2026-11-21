@@ -25,7 +25,7 @@ permalink: /web/hub/gssl/
   </div>
 </header>
 
-<main class="gssl-layout" id="workbench">
+<div class="gssl-layout" id="workbench">
   <section class="panel" aria-labelledby="input-title">
     <div class="panel-head"><h2 id="input-title">Input and program parameters</h2><span>01 · PREPARE</span></div>
     <p>Enter 1–64 unsigned 32-bit integers. The first and second passes apply separate affine transformations modulo 2<sup>32</sup>; the shader stays identical.</p>
@@ -92,7 +92,7 @@ permalink: /web/hub/gssl/
 
   <section class="panel" aria-labelledby="evidence-title" id="spec">
     <div class="panel-head"><h2 id="evidence-title">GSSL 0.1 · Spec and assurance</h2><span>04 · BOUNDARY</span></div>
-    <p><strong>Current core:</strong> typed `identity`, `prim`, `seq`, `prod`, `fanout` and `map`; pure interpretations and theorems for map fusion and primitive agreement.</p>
+    <p><strong>Current core:</strong> typed <code>identity</code>, <code>prim</code>, <code>seq</code>, <code>prod</code>, <code>fanout</code> and <code>map</code>; pure interpretations and theorems for map fusion and primitive agreement.</p>
     <p><strong>Current device profile:</strong> bounded named GPU buffers, exact-byte upload reuse, trusted WGSL compilation, dispatch, fences and opt-in diagnostics.</p>
     <p><strong>Not yet provided:</strong> a general GSSL text parser; generic verified kernel IR and WGSL lowering; proof of shader compiler, driver or hardware; an authenticated SPARQL GPU worklet.</p>
     <div class="spec-links">
@@ -108,5 +108,5 @@ permalink: /web/hub/gssl/
       <p>User parameters change the contents of the parameter buffers; this page does not compile arbitrary pasted WGSL.</p>
     </details>
   </section>
-</main>
+</div>
 <noscript>The CPU/GPU comparison requires JavaScript. GPU execution also requires a WebGPU-capable browser on a secure origin.</noscript>
