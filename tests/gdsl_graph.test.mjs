@@ -6,7 +6,7 @@ import {
 } from "../npm/factoidal/lib/gdsl-graph.mjs";
 import {example,listExamples}
   from "../npm/factoidal/lib/gdsl-examples.mjs";
-import {GDSL_GRAPH_WGSL,runPVGraphGPU}
+import {GDSL_PVGRAPH_WGSL,runPVGraphGPU}
   from "../npm/factoidal/lib/gdsl-webgpu.mjs";
 
 const copy=x=>JSON.parse(JSON.stringify(x));
@@ -116,9 +116,9 @@ test("canonical registry supports every basic operation independent of a domain"
     "u32.reduce.sum","u32.scalar.const","u32.scalar.add","u32.broadcast"]){
     assert.ok(CORE_OPERATORS.has(name),name);
   }
-  assert.match(GDSL_GRAPH_WGSL,/arrayLength|config\[1\]|let n=config\[1\]/);
-  assert.match(GDSL_GRAPH_WGSL,/op==6u\|\|op==7u/);
-  assert.doesNotMatch(GDSL_GRAPH_WGSL,/\bu64\b/);
+  assert.match(GDSL_PVGRAPH_WGSL,/arrayLength|config\[1\]|let n=config\[1\]/);
+  assert.match(GDSL_PVGRAPH_WGSL,/op==6u\|\|op==7u/);
+  assert.doesNotMatch(GDSL_PVGRAPH_WGSL,/\bu64\b/);
 });
 
 test("PVGraph GPU is fail-closed without native Lean admission, including forged flags",async()=>{
