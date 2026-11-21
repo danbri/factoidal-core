@@ -25,7 +25,7 @@ open Lean
 open L4Factoidal.GpuDomainSpecificLanguage.Graph
 open L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission
 
-private def fail (msg : String) : Except String α :=
+private def fail {α : Type} (msg : String) : Except String α :=
   .error ("GDSL JSON: " ++ msg)
 
 /-- Compare the entire object with precisely the named keys; do not
