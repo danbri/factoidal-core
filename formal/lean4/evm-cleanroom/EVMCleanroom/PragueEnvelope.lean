@@ -168,7 +168,7 @@ theorem settleUnchecked_fee_conservation (p : Input)
     chargedGas p * (effectivePrice p - p.baseFee) +
       chargedGas p * p.baseFee + blobBurn p =
       chargedGas p * ((effectivePrice p - p.baseFee) + p.baseFee) +
-      blobBurn p := by omega
+      blobBurn p := by rw [Nat.mul_add]
     _ = totalChargedWei p := by simp [totalChargedWei, ht]
 
 /- EIP-7702 authorization changes are separate from the transaction fee
@@ -232,11 +232,13 @@ theorem authorizeUnchecked_new_refund (a : AuthorizationInput)
   simp [authorizeUnchecked, h]
 
 #guard blobBaseFeeAtZero == 1
-#guard (blobGas { zeros := 0, nonzeros := 0, accessAddresses := 0,
-    accessKeys := 0, gasLimit := 0, gasPriceCap := 0, priorityCap := 0,
-    baseFee := 0, senderBalance := 0, senderNonce := 0, executionUsed := 0,
-    txType := 3, blobCount := 1, maxFeePerBlobGas := 1, excessBlobGas := 0,
-    authorizationCount := 0, existingAuthorizations := 0 }) == 131072
+private def blobExample : Input := {
+  zeros := 0, nonzeros := 0, accessAddresses := 0, accessKeys := 0,
+  gasLimit := 0, gasPriceCap := 0, priorityCap := 0, baseFee := 0,
+  senderBalance := 0, senderNonce := 0, executionUsed := 0,
+  txType := 3, blobCount := 1, maxFeePerBlobGas := 1, excessBlobGas := 0,
+  authorizationCount := 0, existingAuthorizations := 0 }
+#guard blobGas blobExample == 131072
 #guard (delegationCode 1).size == 23
 #guard (delegationCode 1).getD 0 0 == 0xef
 #guard (delegationCode 1).getD 1 0 == 0x01
