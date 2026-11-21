@@ -164,8 +164,7 @@ theorem settle_parent_revert_atomic (entry : TxWorld) (initial : State)
     result = entry := by
   cases raw <;> simp [settle] at h
   case reverted _ =>
-    injection h with hw _
-    exact hw.symm
+    exact h.1.symm
 
 /-- Exceptional parent execution likewise discards earlier child commits. -/
 theorem settle_parent_exception_atomic (entry : TxWorld) (initial : State)
@@ -175,8 +174,7 @@ theorem settle_parent_exception_atomic (entry : TxWorld) (initial : State)
     result = entry := by
   cases raw <;> simp [settle] at h
   case exceptional _ =>
-    injection h with hw _ _
-    exact hw.symm
+    exact h.1.symm
 
 #print axioms settle_parent_revert_atomic
 #print axioms settle_parent_exception_atomic
