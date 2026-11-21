@@ -20,6 +20,8 @@ RDF bindings to the existing second-pattern matcher. Its theorem connects this
 plan to `evalBgpIdx` for all graphs and distinct variable names. This is a
 source-level RDF refinement: its second stage still uses the CPU RDF matcher;
 it does not execute GSSL or establish integer encoding and device correctness.
+`resolve_rdfPlan` applies that result to the candidate/fallback boundary,
+without assuming correctness of the concrete RDF plan.
 
 The refinement must preserve the exact list of bindings, their internal
 association-list representation and multiplicities. `evalBgpIdx_eq_evalBgp`
