@@ -76,14 +76,14 @@ private def connect {kind : ValueKind}
   modify fun st =>
     { st with links := linkJson source target inputPort :: st.links }
 
-private def chooseId (requested : Option String) (prefix : String := "n") : M String := do
+private def chooseId (requested : Option String) (idPrefix : String := "n") : M String := do
   match requested with
   | some id => return id
   | none =>
       let st ← get
       let n := st.next + 1
       set { st with next := n }
-      return s!"{prefix}{n}"
+      return s!"{idPrefix}{n}"
 
 /-- Named external binding, represented as the same core.input node as JS. -/
 def input (name : String) (kind : ValueKind := .buffer)
