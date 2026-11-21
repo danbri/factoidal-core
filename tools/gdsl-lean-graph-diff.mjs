@@ -3,22 +3,22 @@
 // This is TEST EVIDENCE, not an all-input proof of parser correctness.
 import {readFileSync,writeFileSync} from "node:fs";
 import {example} from "../npm/factoidal/lib/gdsl-examples.mjs";
-import {checkGraph} from "../npm/factoidal/lib/gdsl-graph.mjs";
+import {checkPVGraph} from "../npm/factoidal/lib/gdsl-graph.mjs";
 
 const clone=x=>JSON.parse(JSON.stringify(x));
 const cases=[];
 function add(name,graph){
   if(cases.some(x=>x.case===name))throw Error("duplicate case "+name);
   let admitted;
-  try{checkGraph(graph);admitted=true;}
+  try{checkPVGraph(graph);admitted=true;}
   catch{admitted=false;}
-  cases.push({case:name,graph,admitted});
+  cases.push({case:name,pvgraph,admitted});
 }
 function edit(name,doc,mutate){
   const d=clone(doc);mutate(d);add(name,d);
 }
 for(const domain of ["signal","font","motion","image","basic"]){
-  const base=example(domain).graph;
+  const base=example(domain).pvgraph;
   add(domain+"-positive",base);
   edit(domain+"-duplicate-id",base,d=>d.nodes[1].id=d.nodes[0].id);
   edit(domain+"-duplicate-producer",base,d=>d.links.push(clone(d.links[0])));
@@ -36,7 +36,7 @@ for(const domain of ["signal","font","motion","image","basic"]){
   edit(domain+"-missing-nodes",base,d=>delete d.nodes);
   edit(domain+"-no-output",base,d=>d.nodes.pop());
 }
-const signal=example("signal").graph;
+const signal=example("signal").pvgraph;
 edit("signal-unknown-param",signal,d=>d.nodes[1].params.unexpected=9);
 edit("signal-negative-u32",signal,d=>d.nodes[1].params.value=-1);
 edit("signal-overflow-u32",signal,d=>d.nodes[1].params.value=4294967296);
@@ -76,7 +76,7 @@ for(const n of [0,1,2147483648,4294967295]){
   add("signal-u32-"+n,d);
 }
 {
-  const d=clone(example("font").graph);
+  const d=clone(example("font").pvgraph);
   d.nodes[0].id="Valid_Id.2";
   for(const l of d.links){
     if(l.from.node==="advances")l.from.node="Valid_Id.2";
@@ -84,7 +84,7 @@ for(const n of [0,1,2147483648,4294967295]){
   }
   add("font-ascii-identifier",d);
 }
-const all=cases.map(({case:id,graph})=>({case:id,graph}));
+const all=cases.map(({case:id,pvgraph})=>({case:id,pvgraph}));
 const expected=cases.map(({case:id,admitted})=>({case:id,admitted}));
 
 function lines(xs){return xs.map(x=>JSON.stringify(x)).join("\n")+"\n";}
