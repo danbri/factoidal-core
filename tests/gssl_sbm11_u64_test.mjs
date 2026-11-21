@@ -4,6 +4,7 @@ import {
   parseId,splitId,joinId,isSbm11TaggedId,packTriples64,unpackTriples64,
   referenceBgp64,compareExactRows,compareBags64,COUNT,SCAN,EMIT,
 } from "../tools/gssl-sbm11-webgpu.mjs";
+import {denseRemap64,decodeDensePairs} from "../tools/gssl-sbm11-dense-u32.mjs";
 
 const IRI=0x2000000000000000n;
 const BNODE=0x1000000000000000n;
@@ -86,4 +87,24 @@ test("full-size fixture retains exact global high-tag IDs",()=>{
   assert.equal(words.length,graph.length*6);
   const result=referenceBgp64(graph,CONST);
   assert.equal(result.length,256);
+});
+
+test("query-local dense remapping is reversible for full-width SBM11 IDs",()=>{
+  const high1=0x200000000000002an, high2=0x900000000000002an;
+  const graph=[
+    [high1,KP,high2],
+    [high2,WP,ATLAS],
+    [high1,IRI+0x105n,LITERAL+0xabcdefn],
+  ];
+  const dense=denseRemap64(graph,CONST);
+  assert.notEqual(dense.codeOf(high1),dense.codeOf(high2));
+  assert.equal(dense.decode(dense.codeOf(high1)),high1);
+  assert.equal(dense.decode(dense.codeOf(high2)),high2);
+  assert.deepEqual(dense.triples[0],[
+    dense.codeOf(high1),dense.codeOf(KP),dense.codeOf(high2)]);
+  assert.deepEqual(decodeDensePairs([[dense.codeOf(high1),dense.codeOf(high2)]],dense),
+    [[high1,high2]]);
+  assert.throws(()=>dense.decode(0),/unbound/);
+  assert.throws(()=>dense.decode(0xffffffff),/Unrecognized/);
+  assert.throws(()=>denseRemap64(graph,CONST,{maxTerms:2}),/capacity/);
 });
