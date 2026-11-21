@@ -18,6 +18,7 @@ jobs:
         L4Factoidal.SPARQL.GsslFastPath L4Factoidal.SPARQL.GsslFastPathTests
         L4Factoidal.SPARQL.GsslBgpRefinement
         L4Factoidal.SPARQL.GsslCertifiedFastPath
+        L4Factoidal.SPARQL.GsslSnapshotLease
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin
         L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement
@@ -35,6 +36,11 @@ jobs:
         L4Factoidal.SPARQL.GsslBgpRefinement.relationalPlan_eq_evalBgpIdx
         L4Factoidal.SPARQL.GsslCertifiedFastPath.resolve_eq_indexed
         L4Factoidal.SPARQL.GsslCertifiedFastPath.certifiedRdfPlan_eq_indexed
+        L4Factoidal.SPARQL.GsslSnapshotLease.fresh_accept
+        L4Factoidal.SPARQL.GsslSnapshotLease.stale_refused
+        L4Factoidal.SPARQL.GsslSnapshotLease.missing_refused
+        L4Factoidal.SPARQL.GsslSnapshotLease.resolveGuarded_eq_indexed
+        L4Factoidal.SPARQL.GsslSnapshotLease.stale_fallback
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.rowMatches_encode
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.joinRows_encode
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin.checkAgreement_sound
