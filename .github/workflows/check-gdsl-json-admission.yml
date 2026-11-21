@@ -1,0 +1,126 @@
+name: GDSL JS-Lean JSON agreement (real native Lean)
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/Graph*.lean'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraph.lean'
+      - 'formal/lean4/Harness/GdslGraphCheck.lean'
+      - 'tools/gdsl-lean-graph-diff.mjs'
+      - 'tools/gdsl-lean-eval-diff.mjs'
+      - 'formal/lean4/Harness/GdslGraphEval.lean'
+      - 'npm/factoidal/lib/gdsl-graph.mjs'
+      - 'npm/factoidal/lib/gdsl-examples.mjs'
+      - '.github/workflows/check-gdsl-json-admission.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Generate exact JS accepted/rejected corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          mkdir -p "$RUNNER_TEMP/gdsl-lean-json"
+          node --check tools/gdsl-lean-graph-diff.mjs
+          node tools/gdsl-lean-graph-diff.mjs emit \
+            "$RUNNER_TEMP/gdsl-lean-json/cases.jsonl" \
+            "$RUNNER_TEMP/gdsl-lean-json/js-verdicts.jsonl" \
+            | tee "$RUNNER_TEMP/gdsl-lean-json/case-counts.json"
+          sha256sum formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphAdmission.lean \
+            formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphJson.lean \
+            formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphWords.lean \
+            formal/lean4/Harness/GdslGraphCheck.lean \
+            formal/lean4/Harness/GdslGraphEval.lean \
+            formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphEvaluate.lean \
+            npm/factoidal/lib/gdsl-graph.mjs \
+            tools/gdsl-lean-graph-diff.mjs \
+            tools/gdsl-lean-eval-diff.mjs \
+            "$RUNNER_TEMP/gdsl-lean-json/cases.jsonl" \
+            > "$RUNNER_TEMP/gdsl-lean-json/sources.sha256"
+          git rev-parse HEAD > "$RUNNER_TEMP/gdsl-lean-json/commit.txt"
+      - name: Build real GDSL Lean JSON parser from this commit
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 420s lake build \
+            L4Factoidal.GpuDomainSpecificLanguage.GraphJson \
+            L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate \
+            L4Factoidal.GpuDomainSpecificLanguage.PVGraph
+      - name: Compare the same canonical graph bytes in Lean and JS
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! timeout --kill-after=10s 120s lake env lean --run \
+            Harness/GdslGraphCheck.lean \
+            "$RUNNER_TEMP/gdsl-lean-json/cases.jsonl" \
+            > "$RUNNER_TEMP/gdsl-lean-json/lean-verdicts.jsonl" \
+            2> "$RUNNER_TEMP/gdsl-lean-json/lean-check.stderr"; then
+            head -n 60 "$RUNNER_TEMP/gdsl-lean-json/lean-check.stderr"
+            head -n 30 "$RUNNER_TEMP/gdsl-lean-json/lean-verdicts.jsonl"
+            exit 1
+          fi
+          cd ../..
+          node tools/gdsl-lean-graph-diff.mjs compare \
+            "$RUNNER_TEMP/gdsl-lean-json/js-verdicts.jsonl" \
+            "$RUNNER_TEMP/gdsl-lean-json/lean-verdicts.jsonl" \
+            | tee "$RUNNER_TEMP/gdsl-lean-json/compared.json"
+      - name: Generate independent JS semantic corpus over shared canonical graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check tools/gdsl-lean-eval-diff.mjs
+          node tools/gdsl-lean-eval-diff.mjs emit \
+            "$RUNNER_TEMP/gdsl-lean-json/eval-cases.jsonl" \
+            "$RUNNER_TEMP/gdsl-lean-json/js-eval.jsonl" \
+            | tee "$RUNNER_TEMP/gdsl-lean-json/eval-counts.json"
+      - name: Run exact same graph and input values in native Lean
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! timeout --kill-after=10s 120s lake env lean --run \
+            Harness/GdslGraphEval.lean \
+            "$RUNNER_TEMP/gdsl-lean-json/eval-cases.jsonl" \
+            > "$RUNNER_TEMP/gdsl-lean-json/lean-eval.jsonl" \
+            2> "$RUNNER_TEMP/gdsl-lean-json/lean-eval.stderr"; then
+            head -n 60 "$RUNNER_TEMP/gdsl-lean-json/lean-eval.stderr"
+            head -n 30 "$RUNNER_TEMP/gdsl-lean-json/lean-eval.jsonl"
+            exit 1
+          fi
+          cd ../..
+          node tools/gdsl-lean-eval-diff.mjs compare \
+            "$RUNNER_TEMP/gdsl-lean-json/js-eval.jsonl" \
+            "$RUNNER_TEMP/gdsl-lean-json/lean-eval.jsonl" \
+            | tee "$RUNNER_TEMP/gdsl-lean-json/evaluation-compared.json"
+      - name: Preserve source-verifiable cross-language evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdsl-json-real-lean-differential
+          path: ${{ runner.temp }}/gdsl-lean-json/
+          if-no-files-found: warn
+          retention-days: 30

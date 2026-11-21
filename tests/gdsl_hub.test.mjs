@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import path from "node:path";
-import {example,listExamples,fromSexpr,runCPU}
+import {example,listExamples,fromPVSexpr,runPVGraphCPU}
   from "../npm/factoidal/gdsl.mjs";
 
 const dir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");
@@ -12,10 +12,10 @@ test("GDSL 0.2 replaces the separate syntax proposal in earlier specification",(
   const spec=text("docs/specs/gdsl-0.2.md");
   const older=text("docs/specs/gssl-0.1.md");
   const residency=text("docs/20261121-gssl-residency-worklets.md");
-  assert.match(spec,/Every GDSL domain uses the same canonical dataflow graph/);
+  assert.match(spec,/Every GDSL domain uses the same canonical PVGraph dataflow document/);
   assert.match(spec,/register.*operator/i);
   assert.match(spec,/S-expressions/);
-  assert.match(spec,/JavaScript computational graph constructor/);
+  assert.match(spec,/JavaScript computational PVGraph constructor/);
   assert.match(spec,/typed.*link/i);
   assert.match(spec,/same graph/i);
   assert.match(older,/Superseded for new language design/);
@@ -25,11 +25,11 @@ test("GDSL 0.2 replaces the separate syntax proposal in earlier specification",(
 test("all five domain examples generate valid common graphs, parser and results",()=>{
   for(const info of listExamples()){
     const e=example(info.id);
-    assert.deepEqual(fromSexpr(e.sexpr),e.graph);
-    assert.ok(e.graph.nodes.some(n=>n.op==="core.input"));
-    assert.ok(e.graph.nodes.some(n=>n.op==="core.output"));
-    assert.ok(e.graph.links.length>0);
-    assert.ok(Object.keys(runCPU(e.graph,e.input).outputs).length>0);
+    assert.deepEqual(fromPVSexpr(e.sexpr),e.pvgraph);
+    assert.ok(e.pvgraph.nodes.some(n=>n.op==="core.input"));
+    assert.ok(e.pvgraph.nodes.some(n=>n.op==="core.output"));
+    assert.ok(e.pvgraph.links.length>0);
+    assert.ok(Object.keys(runPVGraphCPU(e.pvgraph,e.input).outputs).length>0);
   }
 });
 test("GDSL Hub editor, graph rendering, bindings, CPU and GPU share one canonical API",()=>{
@@ -45,13 +45,15 @@ test("GDSL Hub editor, graph rendering, bindings, CPU and GPU share one canonica
     assert.match(page,new RegExp('id="'+id+'"'));
   assert.match(page,/docs\/specs\/gdsl-0\.2\.md/);
   assert.match(graphApp,/from "\.\.\/\.\.\/\.\.\/npm\/factoidal\/gdsl\.mjs"/);
-  for(const fn of ["fromSexpr","toSexpr","runCPU","runGraphGPU",
-    "createGsslResidentSession"]){
+  for(const fn of ["fromPVSexpr","toPVSexpr","runPVGraphCPU","PVGraph",
+    "createElementNS"]){
     assert.ok(graphApp.includes(fn));
   }
   assert.match(graphApp,/createElementNS/);
+  assert.doesNotMatch(graphApp,/\bawait\s+runPVGraphGPU\s*\(/);
+  assert.match(page,/native Lean 4 toolkit/i);
   assert.match(graphApp,/dataflow/i);
-  assert.match(app,/mountGdslGraph\(\)/);
+  assert.match(app,/mountPVGraph\(\)/);
   assert.match(site,/web\/hub\/gssl/);
   assert.match(site,/"gdsl.mjs"/);
   assert.match(home,/href="\.\/gssl\//);

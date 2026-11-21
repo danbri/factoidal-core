@@ -2,15 +2,20 @@
 // Only a fixed, trusted WGSL kernel and admitted opcodes, never arbitrary
 // user-authored WGSL. Pure CPU semantics belong to gdsl-graph.mjs.
 // Observational evidence only; no general Lean/WGSL refinement theorem.
-import {checkGraph,CORE_OPERATORS,MAX_BUFFER_WORDS} from "./gdsl-graph.mjs";
+import {checkPVGraph,createOperatorRegistry,MAX_BUFFER_WORDS} from "./gdsl-graph.mjs";
 import {createGsslResidentSession} from "./gpu-resident.mjs";
+import {requirePVGraphLeanAdmission,assertPVGraphLeanOutput}
+  from "./pvgraph-lean-admission.mjs";
 
+// The GPU admission boundary must not trust the exported mutable
+// CORE_OPERATORS Map or any caller-supplied domain registry.
+const VERIFIED_CORE=createOperatorRegistry();
 const CODES=Object.freeze({
   "u32.map.add":1,"u32.map.mul":2,"u32.map.xor":3,
   "u32.zip.add":4,"u32.zip.xor":5,"u32.scan.sum":6,
   "u32.reduce.sum":7,"u32.scalar.add":8,"u32.broadcast":9,
 });
-export const GDSL_GRAPH_WGSL=String.raw`
+export const GDSL_PVGRAPH_WGSL=String.raw`
 @group(0) @binding(0) var<storage, read> inputA: array<u32>;
 @group(0) @binding(1) var<storage, read> inputB: array<u32>;
 @group(0) @binding(2) var<storage, read_write> result: array<u32>;
@@ -79,9 +84,11 @@ function ports(op){
  * A caller-supplied generic resident session may be reused across graphs.
  * With no session supplied, one is created and always closed on return.
  */
-export async function runGraphGPU(doc,bindings,{session=null,
-    registry=CORE_OPERATORS,readbackMaxWords=256}={}){
-  const g=checkGraph(doc,{registry});
+export async function runPVGraphGPU(doc,bindings,{admission=null,session=null,
+    registry,readbackMaxWords=256}={}){
+  if(registry!==undefined)throw new TypeError(
+    "PVGraph GPU refuses arbitrary operator registries; each extension needs Lean admission.");
+  const g=checkPVGraph(doc,{registry:VERIFIED_CORE});
   if(!Number.isSafeInteger(readbackMaxWords)||readbackMaxWords<1||
       readbackMaxWords>256)
     throw new RangeError("GDSL diagnostic readback bound is 1..256.");
@@ -100,6 +107,17 @@ export async function runGraphGPU(doc,bindings,{session=null,
       unsupported.map(n=>n.op).join(","));
   const bound=new Map(inputs.map(n=>[n.id,readInput(
     bindings[n.params.name],n.params.type)]));
+  // Snapshot the *actual words the GPU will upload* before asynchronous
+  // SHA-256 checking. The caller may mutate the original JS arrays during
+  // WebCrypto or device initialization; their later values must not be the
+  // ones that were verified instead of the copied GPU input.
+  const boundInputs=Object.fromEntries(inputs.map(n=>[
+    n.params.name,n.params.type==="scalar<u32>"?
+      bound.get(n.id)[0]:bound.get(n.id).slice()
+  ]));
+  // Mandatory: independently executed native-Lean admission of the exact
+  // PVGraph and input snapshot. Fail before creating any GPU resources.
+  const leanState=await requirePVGraphLeanAdmission(admission,g,boundInputs);
   const prefix="gdsl-"+await hashGraph(g)+"-";
   let owned=false;
   if(!session){
@@ -120,7 +138,7 @@ export async function runGraphGPU(doc,bindings,{session=null,
     await session.upload(id,new Uint32Array(words.length?words:[0]));
   }
   try{
-    await session.compile("gdsl-v02-graph",GDSL_GRAPH_WGSL);
+    await session.compile("gdsl-v02-graph",GDSL_PVGRAPH_WGSL);
     const dummy=prefix+"zero";
     await upload(dummy,[0]);
     for(const node of g.nodes){
@@ -177,7 +195,7 @@ export async function runGraphGPU(doc,bindings,{session=null,
         workgroups:[Math.max(1,Math.ceil(count/64)),1,1],
       });
       dispatched++;
-      const type=registry.get(node.op).outputs.out;
+      const type=VERIFIED_CORE.get(node.op).outputs.out;
       values.set(node.id,{id,length:count,type});
       trace.push({id:node.id,op:node.op,status:"gpu-compute",length:count});
     }
@@ -191,8 +209,12 @@ export async function runGraphGPU(doc,bindings,{session=null,
       }
       results[name]=info.type==="scalar<u32>"?words[0]:words;
     }
-    return {status:"observed-not-proven",outputs:results,trace,
-      gpuDispatches:dispatched,graph:g,resident:session.status()};
+    // The final observed device value must match the independent Lean
+    // interpreter; mismatch is a failed execution, never certified success.
+    assertPVGraphLeanOutput(leanState,results);
+    return {status:"observed-not-proven",leanAdmission:"native-checked",
+      outputs:results,trace,
+      gpuDispatches:dispatched,pvgraph:g,resident:session.status()};
   }finally{
     if(owned){try{session.close();}catch{}}
   }

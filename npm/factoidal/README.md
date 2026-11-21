@@ -51,25 +51,45 @@ Every domain adds operators to this shared graph instead of defining
 a new GDSL syntax or execution architecture.
 
 ```js
-import {graph,runCPU,toSexpr} from "@factoidal/core/gdsl";
+import {PVGraph,runPVGraphCPU,toPVSexpr} from "@factoidal/core/gdsl";
 
-const g=graph();
+const g=PVGraph();
 const pixels=g.input("pixels");
 const scale=g.op("u32.map.mul",{x:pixels},{value:3});
 const bias=g.op("u32.map.add",{x:pixels},{value:1});
 const result=g.op("u32.zip.add",{a:scale,b:bias});
 g.output("result",result);
 
-console.log(runCPU(g.build(),{pixels:[2,3,5,7]}).outputs.result);
+console.log(runPVGraphCPU(g.build(),{pixels:[2,3,5,7]}).outputs.result);
 // [9, 13, 21, 29]
-console.log(toSexpr(g.build())); // identical graph in common notation
+console.log(toPVSexpr(g.build())); // identical graph in common notation
 ```
 
-A common CPU interpreter and a fixed-kernel experimental WebGPU executor
-use the *same graph*, including non-SPARQL examples for signals, glyph
-advances, particle motion, pixel masking and scalar broadcasting.
-The WebGPU executor returns `observed-not-proven`, not an assurance
-claim about the WGSL compiler or physical GPU.
+A common JavaScript CPU interpreter and fixed-kernel WebGPU backend use
+the *same PVGraph*, including signal, glyph, particle, pixel and scalar
+examples. **The PVGraph GPU API is fail-closed:** an unverified graph
+cannot dispatch to WebGPU. Development verification currently requires
+a local Lean 4.33.1 toolkit and the matching `formal/lean4/` sources;
+there is no browser runtime verifier yet.
+
+```js
+import {admitPVGraphWithLean,runPVGraphGPU}
+  from "@factoidal/core/gdsl";
+
+const pvgraph = g.build();
+const inputs = {pixels:[2,3,5,7]};
+const admission = await admitPVGraphWithLean(pvgraph, inputs);
+const observed = await runPVGraphGPU(pvgraph, inputs, {admission});
+// observed.status === "observed-not-proven"
+```
+
+Lean checks the actual serialized PVGraph, produces an input-bound
+admission, and independently evaluates the expected outputs. GPU readback
+must agree. A forged approval object, missing toolkit, stale inputs or
+unsupported operator refuses execution; **the WGSL compiler and device
+remain outside the Lean theorem boundary**. The separate low-level
+`@factoidal/core/gpu-resident` API is deliberately not a certified
+PVGraph executor.
 
 Specification: [GDSL 0.2](../../docs/specs/gdsl-0.2.md).
 This npm subpath appears in the next published package release; the
