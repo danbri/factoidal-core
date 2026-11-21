@@ -1,91 +1,90 @@
-// All examples use the same GDSL 0.2 graph constructor, typed ports,
-// graph document and S-expression grammar. No application-owned parser.
-import {PVGraph,toPVSexpr} from "./gdsl-graph.mjs";
+// PVGraph examples are recipes for the Lean/Wasm builder.
+// All operator and link semantics, admission and evaluation live in Lean.
+import {createPVGraphWasm} from "./gdsl-wasm-builder.mjs";
+const B="buffer<u32>", S="scalar<u32>";
+const op=(g,name,args,params={},resultType=B,id)=>g.op(name,args,params,{resultType,id});
 
-function createSignalLoom(){
-  const g=PVGraph();
-  const waves=g.input("waves");
-  const harmonics=g.op("u32.map.mul",{x:waves},{value:257},{id:"harmonics"});
-  const bias=g.op("u32.map.add",{x:waves},{value:31},{id:"bias"});
-  const mixed=g.op("u32.zip.xor",{a:harmonics,b:bias},{},{id:"interference"});
-  const scan=g.op("u32.scan.sum",{x:mixed},{},{id:"phase"});
-  const total=g.op("u32.reduce.sum",{x:mixed},{},{id:"intensity"});
-  g.output("bands",mixed);
-  g.output("phase",scan);
-  g.output("intensity",total,"scalar<u32>");
-  return {title:"Signal interference loom",domain:"signal",
-    description:"Fan out one signal into two paths, multiply and bias, braid by XOR, then form prefix phases and total energy.",
+const presets={
+  signal:{
+    title:"Signal interference loom",domain:"signal",
+    description:"Scale and offset waves, combine them with XOR, then scan and reduce.",
     input:{waves:[1,2,3,5,8,13,21,34,55,89,144,233]},
-    pvgraph:g.build()};
-}
-function createGlyphLayout(){
-  const g=PVGraph();
-  const advances=g.input("advances");
-  const adjusted=g.op("u32.map.add",{x:advances},{value:1},{id:"spacing"});
-  const x=g.op("u32.scan.sum",{x:adjusted},{},{id:"penPositions"});
-  const width=g.op("u32.reduce.sum",{x:adjusted},{},{id:"lineWidth"});
-  g.output("penPositions",x);
-  g.output("lineWidth",width,"scalar<u32>");
-  return {title:"Glyph pen positioning",domain:"font",
-    description:"Turn glyph advance widths into cumulative pen positions and a line width. Real typographic shaping remains a separate domain operator.",
+    author(g){
+      const x=g.input("waves");
+      const a=op(g,"u32.map.mul",{x},{value:257},B,"harmonics");
+      const b=op(g,"u32.map.add",{x},{value:31},B,"bias");
+      const mixed=op(g,"u32.zip.xor",{a,b}, {},B,"interference");
+      const phase=op(g,"u32.scan.sum",{x:mixed},{},B,"phase");
+      const total=op(g,"u32.reduce.sum",{x:mixed},{},S,"intensity");
+      g.output("bands",mixed);
+      g.output("phase",phase);
+      g.output("intensity",total);
+    }
+  },
+  font:{
+    title:"Glyph pen positioning",domain:"font",
+    description:"Accumulate glyph advance widths and compute line width.",
     input:{advances:[8,5,9,0,6,7,5,8,3,9]},
-    pvgraph:g.build()};
-}
-function createParticleMotion(){
-  const g=PVGraph();
-  const positions=g.input("positions");
-  const velocities=g.input("velocities");
-  const delta=g.op("u32.map.mul",{x:velocities},{value:4},{id:"motionDelta"});
-  const next=g.op("u32.zip.add",{a:positions,b:delta},{},{id:"nextPositions"});
-  const aggregate=g.op("u32.reduce.sum",{x:next},{},{id:"total"});
-  g.output("positionsAfterStep",next);
-  g.output("positionChecksum",aggregate,"scalar<u32>");
-  return {title:"Particle motion step",domain:"motion",
-    description:"Scale per-particle velocities by a time step, add them elementwise to positions, and reduce for inspection.",
+    author(g){
+      const x=g.input("advances");
+      const spaced=op(g,"u32.map.add",{x},{value:1},B,"spacing");
+      const pens=op(g,"u32.scan.sum",{x:spaced},{},B,"penPositions");
+      const width=op(g,"u32.reduce.sum",{x:spaced},{},S,"lineWidth");
+      g.output("penPositions",pens);
+      g.output("lineWidth",width);
+    }
+  },
+  motion:{
+    title:"Particle motion step",domain:"motion",
+    description:"Advance positions by scaled velocities and compute a checksum.",
     input:{positions:[100,200,300,400,500,600,700,800],
       velocities:[2,4,1,8,3,0,5,7]},
-    pvgraph:g.build()};
-}
-function createPixelMasks(){
-  const g=PVGraph();
-  const pixels=g.input("pixels");
-  const altered=g.op("u32.map.xor",{x:pixels},{value:0x00ff00ff},{id:"maskChannels"});
-  const total=g.op("u32.reduce.sum",{x:altered},{},{id:"checksum"});
-  g.output("rgbaWords",altered);
-  g.output("checksum",total,"scalar<u32>");
-  return {title:"Pixel channel mask",domain:"image",
-    description:"Transform packed 32-bit pixel words and compute a checksum. Actual colour management and rendering belong to separate operators.",
-    input:{pixels:[0xff204080,0xff607080,0xffc0d0e0,0xffffffff,0x00000000]},
-    pvgraph:g.build()};
-}
-function createConstantShape(){
-  const g=PVGraph();
-  const template=g.input("template");
-  const constant=g.op("u32.scalar.const",{},{value:29},{id:"constant"});
-  const band=g.op("u32.broadcast",{value:constant,shape:template},{},{id:"broadcast"});
-  const added=g.op("u32.zip.add",{a:template,b:band},{},{id:"offset"});
-  g.output("result",added);
-  return {title:"Scalar-to-buffer broadcast",domain:"basic",
-    description:"Create a typed scalar, broadcast it over the input shape and add through an explicit buffer link.",
+    author(g){
+      const positions=g.input("positions");
+      const velocities=g.input("velocities");
+      const delta=op(g,"u32.map.mul",{x:velocities},{value:4},B,"motionDelta");
+      const next=op(g,"u32.zip.add",{a:positions,b:delta},{},B,"nextPositions");
+      const total=op(g,"u32.reduce.sum",{x:next},{},S,"total");
+      g.output("positionsAfterStep",next);
+      g.output("positionChecksum",total);
+    }
+  },
+  image:{
+    title:"Pixel channel mask",domain:"image",
+    description:"XOR packed RGBA words and calculate a checksum.",
+    input:{pixels:[0xff204080,0xff607080,0xffc0d0e0,0xffffffff,0]},
+    author(g){
+      const x=g.input("pixels");
+      const masked=op(g,"u32.map.xor",{x},{value:0x00ff00ff},B,"maskChannels");
+      const total=op(g,"u32.reduce.sum",{x:masked},{},S,"checksum");
+      g.output("rgbaWords",masked);
+      g.output("checksum",total);
+    }
+  },
+  basic:{
+    title:"Scalar-to-buffer broadcast",domain:"basic",
+    description:"Broadcast a scalar over a buffer's shape and add it.",
     input:{template:[0,1,2,3,4,5,6,7]},
-    pvgraph:g.build()};
-}
-const factories={
-  signal:createSignalLoom,
-  font:createGlyphLayout,
-  motion:createParticleMotion,
-  image:createPixelMasks,
-  basic:createConstantShape,
+    author(g){
+      const template=g.input("template");
+      const value=op(g,"u32.scalar.const",{}, {value:29},S,"constant");
+      const band=op(g,"u32.broadcast",{value,shape:template},{},B,"broadcast");
+      const result=op(g,"u32.zip.add",{a:template,b:band},{},B,"offset");
+      g.output("result",result);
+    }
+  }
 };
+
 export function listExamples(){
-  return Object.entries(factories).map(([id,fn])=>{
-    const {title,description,domain}=fn();
-    return {id,title,description,domain};
-  });
+  return Object.entries(presets).map(([id,p])=>({
+    id,title:p.title,description:p.description,domain:p.domain
+  }));
 }
-export function example(id){
-  if(!Object.prototype.hasOwnProperty.call(factories,id))
-    throw new RangeError("Unknown GDSL example "+String(id));
-  const x=factories[id]();
-  return {...x,id,sexpr:toPVSexpr(x.pvgraph)};
+export async function example(id,loadEngine){
+  if(!Object.hasOwn(presets,id))throw new RangeError("Unknown PVGraph example "+id);
+  const preset=presets[id],g=await createPVGraphWasm(loadEngine);
+  preset.author(g);
+  const pvgraph=await g.build();
+  return {id,title:preset.title,description:preset.description,
+    domain:preset.domain,input:preset.input,pvgraph};
 }
