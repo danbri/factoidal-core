@@ -42,6 +42,20 @@ RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
 `@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
 and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
+## Experimental GPU-resident compute resources
+
+The optional `@factoidal/core/gpu-resident` subpath exports
+`createGsslResidentSession`, a **generic WebGPU compute resource**
+manager independent of RDF, SPARQL and the Lean/Wasm engine. It retains
+buffers and compiled compute pipelines between dispatches, skips exact-byte
+identical reuploads, tracks a memory budget and permits bounded diagnostic
+readback. It is experimental and takes only trusted WGSL. It does **not**
+verify GPU shader semantics or provide a SPARQL result cache.
+
+See [GSSL residency and worklets](../../docs/20261121-gssl-residency-worklets.md)
+in the source repository. The new subpath becomes available when this
+source is included in a published npm release.
+
 ## What it does
 
 - Syntaxes: N-Triples, N-Quads, Turtle, TriG, RDF/XML, JSON-LD; RDF 1.1 and 1.2

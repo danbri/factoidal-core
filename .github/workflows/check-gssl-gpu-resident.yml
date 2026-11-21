@@ -1,0 +1,83 @@
+name: GSSL generic GPU-resident runtime
+
+on:
+  pull_request:
+    paths:
+      - 'tools/gssl-gpu-resident.mjs'
+      - 'npm/factoidal/lib/gpu-resident.mjs'
+      - 'npm/factoidal/gpu-resident.d.ts'
+      - 'npm/factoidal/package.json'
+      - 'npm/factoidal/test/gpu-resident.test.mjs'
+      - 'tools/gssl-gpu-resident-device-smoke.mjs'
+      - 'tests/gssl_gpu_resident_test.mjs'
+      - '.github/workflows/check-gssl-gpu-resident.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  resident:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.4
+      - name: Verify exact source and hash evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          node --check tools/gssl-gpu-resident.mjs
+          node --check npm/factoidal/lib/gpu-resident.mjs
+          node --check npm/factoidal/test/gpu-resident.test.mjs
+          node --check tools/gssl-gpu-resident-device-smoke.mjs
+          node --check tests/gssl_gpu_resident_test.mjs
+          mkdir -p "$RUNNER_TEMP/gssl-resident"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/gssl-resident/commit.txt"
+          sha256sum tools/gssl-gpu-resident.mjs \
+            npm/factoidal/lib/gpu-resident.mjs \
+            npm/factoidal/gpu-resident.d.ts \
+            npm/factoidal/package.json \
+            npm/factoidal/test/gpu-resident.test.mjs \
+            tools/gssl-gpu-resident-device-smoke.mjs \
+            tests/gssl_gpu_resident_test.mjs | tee "$RUNNER_TEMP/gssl-resident/source.sha256"
+      - name: Test generic API with deterministic GPU mocks
+        run: node --test tests/gssl_gpu_resident_test.mjs
+      - name: Check experimental package subpath
+        run: node --test npm/factoidal/test/gpu-resident.test.mjs
+      - name: Install Mesa Vulkan software adapter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+          dpkg-query -W libvulkan1 mesa-vulkan-drivers
+      - name: Execute two passes with retained resources and inspect actual GPU buffer
+        shell: bash
+        run: |
+          set -euo pipefail
+          driver="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$driver"
+          export DENO_WEBGPU_BACKEND=vulkan VK_DRIVER_FILES="$driver"
+          export XDG_RUNTIME_DIR
+          XDG_RUNTIME_DIR="$(mktemp -d "$RUNNER_TEMP/gssl-resident-xdg.XXXXXX")"
+          timeout --kill-after=10s 240s deno run --no-config --no-npm --unstable-webgpu \
+            tools/gssl-gpu-resident-device-smoke.mjs "$SOURCE_COMMIT" \
+            | tee "$RUNNER_TEMP/gssl-resident/device.json"
+      - name: Preserve exact-source host and device record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gssl-generic-resident-evidence
+          path: ${{ runner.temp }}/gssl-resident/
+          if-no-files-found: warn
+          retention-days: 30
