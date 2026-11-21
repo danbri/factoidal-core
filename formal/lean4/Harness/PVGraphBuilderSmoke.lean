@@ -75,8 +75,8 @@ private def fixtures : List (String × M Unit × Json) := [
 private def runFixture (name : String) (program : M Unit) (bindings : Json) :
     Except String Json := do
   let source := build program
-  let _ ← PVGraph.admit? source
-  let outputs ← PVGraph.evaluate? source bindings
+  let _ ← L4Factoidal.GpuDomainSpecificLanguage.PVGraph.admit? source
+  let outputs ← L4Factoidal.GpuDomainSpecificLanguage.PVGraph.evaluate? source bindings
   return Json.mkObj [
     ("case", toJson name), ("pvgraph", source),
     ("bindings", bindings), ("outputs", outputs)]
