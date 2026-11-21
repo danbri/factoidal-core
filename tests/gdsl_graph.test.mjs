@@ -67,13 +67,13 @@ test("sexpr refusals have bounded grammar, no evaluation of JavaScript",()=>{
   for(const wrong of [
     s.slice(0,-1),
     s+")",
-    s.replace("(gdsl gdsl/0.2","(gdsl gdsl/0.1"),
+    s.replace("(pvgraph gdsl/0.2","(pvgraph gdsl/0.1"),
     s.replace("(link ","(wrong "),
     s.replace("u32.zip.add","u32.unknown"),
     s.replace("buffer u32","event u32"),
     s.replace("(param value 4)","(param value 4294967296)"),
     s.replace("(param value 4)","(param value 4) (param value 4)"),
-    "(gdsl gdsl/0.2 (node x core.input (param name "+'"'+"__proto__"+'"'+" ) (param type "+'"'+"buffer<u32>"+'"'+")))",
+    "(pvgraph gdsl/0.2 (node x core.input (param name "+'"'+"__proto__"+'"'+" ) (param type "+'"'+"buffer<u32>"+'"'+")))",
   ])assert.throws(()=>fromPVSexpr(wrong));
   assert.throws(()=>fromPVSexpr("(".repeat(10000)),/oversized|token limit|nesting/);
 });
