@@ -1,9 +1,9 @@
-name: GSSL 0.1 draft and exploratory Hub workbench
+name: GSSL low-level GPU resource diagnostic
 
 on:
   pull_request:
     paths:
-      - 'docs/specs/gssl-0.1.md'
+      - 'docs/specs/gdsl-0.2.md'
       - 'docs/web/hub/gssl/**'
       - 'docs/web/hub/index.md'
       - 'docs/.eleventy.js'
@@ -43,7 +43,7 @@ jobs:
           node --check npm/factoidal/lib/gpu-resident.mjs
           mkdir -p "$RUNNER_TEMP/gssl-hub"
           git rev-parse HEAD > "$RUNNER_TEMP/gssl-hub/commit.txt"
-          sha256sum docs/specs/gssl-0.1.md \
+          sha256sum docs/specs/gdsl-0.2.md \
             docs/web/hub/gssl/index.njk \
             docs/web/hub/gssl/lab-core.mjs \
             docs/web/hub/gssl/app.mjs \
@@ -105,7 +105,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gssl-draft-hub-evidence
+          name: gssl-device-hub-evidence
           path: ${{ runner.temp }}/gssl-hub/
           if-no-files-found: warn
           retention-days: 30
