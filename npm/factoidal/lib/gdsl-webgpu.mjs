@@ -2,7 +2,7 @@
 // Only a fixed, trusted WGSL kernel and admitted opcodes, never arbitrary
 // user-authored WGSL. Pure CPU semantics belong to gdsl-graph.mjs.
 // Observational evidence only; no general Lean/WGSL refinement theorem.
-import {checkGraph,CORE_OPERATORS,MAX_BUFFER_WORDS} from "./gdsl-graph.mjs";
+import {checkPVGraph,CORE_OPERATORS,MAX_BUFFER_WORDS} from "./gdsl-graph.mjs";
 import {createGsslResidentSession} from "./gpu-resident.mjs";
 
 const CODES=Object.freeze({
@@ -79,9 +79,9 @@ function ports(op){
  * A caller-supplied generic resident session may be reused across graphs.
  * With no session supplied, one is created and always closed on return.
  */
-export async function runGraphGPU(doc,bindings,{session=null,
+export async function runPVGraphGPU(doc,bindings,{session=null,
     registry=CORE_OPERATORS,readbackMaxWords=256}={}){
-  const g=checkGraph(doc,{registry});
+  const g=checkPVGraph(doc,{registry});
   if(!Number.isSafeInteger(readbackMaxWords)||readbackMaxWords<1||
       readbackMaxWords>256)
     throw new RangeError("GDSL diagnostic readback bound is 1..256.");
@@ -192,7 +192,7 @@ export async function runGraphGPU(doc,bindings,{session=null,
       results[name]=info.type==="scalar<u32>"?words[0]:words;
     }
     return {status:"observed-not-proven",outputs:results,trace,
-      gpuDispatches:dispatched,graph:g,resident:session.status()};
+      gpuDispatches:dispatched,pvgraph:g,resident:session.status()};
   }finally{
     if(owned){try{session.close();}catch{}}
   }
