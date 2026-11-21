@@ -134,3 +134,24 @@ summary{cursor:pointer;color:var(--accent);font-weight:700;margin-bottom:.85rem}
   .inspect-controls label:first-child{grid-column:1/-1}
   .panel-head{align-items:start}
 }
+
+/* GDSL 0.2: identical typed graph notation across every domain example. */
+.gdsl-graph-panel{grid-column:1/-1}
+.gdsl-preset{display:flex;gap:1rem;align-items:end;justify-content:space-between;flex-wrap:wrap;margin:.7rem 0 1rem}
+.gdsl-preset label{min-width:17rem}
+.gdsl-preset select{width:100%}
+.gdsl-preset p{flex:1;min-width:15rem;margin:.2rem 0}
+.gdsl-editors{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.gdsl-editors>div{min-width:0}
+.gdsl-editors textarea{min-height:9rem;font-size:.82rem}
+.gdsl-code{min-height:22rem;max-height:34rem;overflow:auto;font-size:.77rem}
+.gdsl-canvas{max-width:100%;overflow:auto;max-height:570px;border:1px solid var(--line);background:#0b1727;border-radius:12px;padding:.4rem;margin:1rem 0}
+#gdsl-diagram{width:100%;height:auto;display:block}
+.gdsl-legend{display:flex;flex-wrap:wrap;gap:.8rem;font-size:.78rem}
+.gdsl-buffer,.gdsl-scalar{font-family:ui-monospace,monospace;font-weight:700}
+.gdsl-buffer{color:#7ad7ca}
+.gdsl-scalar{color:#d7a6f3}
+.gdsl-results pre{max-height:23rem;min-height:9rem;overflow:auto}
+#gdsl-status{font-size:.85rem}
+#gdsl-trace{white-space:pre;max-height:21rem}
+@media(max-width:820px){.gdsl-editors{grid-template-columns:1fr}.gdsl-code{min-height:10rem;max-height:24rem}}
