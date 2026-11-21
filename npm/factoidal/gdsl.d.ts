@@ -79,3 +79,24 @@ export interface GdslExample {
 export function listExamples():{id:string;title:string;description:string;domain:string}[];
 export function example(id:string):GdslExample;
 export {createGsslResidentSession} from "./gpu-resident.d.ts";
+
+/** A reference to a Lean/Wasm PVGraph builder result. It is NOT a JS IR. */
+export interface PVGraphWasmRef {
+  readonly ref:string;
+  readonly kind:GdslDataType;
+}
+export interface PVGraphWasmBuilder {
+  input(name:string,type?:GdslDataType,options?:{id?:string}):PVGraphWasmRef;
+  op(opcode:string,inputs:Record<string,PVGraphWasmRef>,
+     params?:Record<string,string|number>,
+     options:{resultType:GdslDataType;id?:string}):PVGraphWasmRef;
+  output(name:string,source:PVGraphWasmRef,options?:{id?:string}):void;
+  build():Promise<PVGraphDocument>;
+  admit(doc:PVGraphDocument):Promise<PVGraphDocument>;
+  evaluate(doc:PVGraphDocument,inputs:Record<string,number|number[]|Uint32Array>):
+    Promise<Record<string,number|number[]>>;
+}
+/** No JS PVGraph semantics: builder commands go to the loaded Lean/Wasm engine. */
+export function createPVGraphWasm(loadEngine:()=>Promise<{
+  call(op:string,args:string[]):Record<string,any>;
+}>):Promise<PVGraphWasmBuilder>;
