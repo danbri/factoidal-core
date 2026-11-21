@@ -51,6 +51,12 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "execution-stepper.mjs", "worker.mjs", "gpu.mjs", "word-gpu.mjs", "bgp-fixtures.mjs", "bgp-worker.mjs", "bgp-studio.mjs", "bgp-comparison.mjs", "integer-bgp-gpu.mjs", "integer-bgp-compact-gpu.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/paralliverse/${name}`);
   }
+  // Exploratory general GSSL compute workbench (not the assured SPARQL lab).
+  // Its runtime is the exact same-origin npm/factoidal/lib/gpu-resident.mjs
+  // already passed through by the package lib directory below.
+  for (const name of ["app.mjs", "lab-core.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/gssl/${name}`);
+  }
   // Publish the *same* audited browser-safe EVM→WASM compiler sources that
   // the Node differential suite tests (no second handwritten implementation).
   for (const name of ["evm-to-wasm.mjs", "evm-policy.mjs"]) {
