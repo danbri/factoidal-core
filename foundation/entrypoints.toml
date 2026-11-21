@@ -1745,7 +1745,7 @@ id = "npm:./gdsl#CORE_OPERATORS"
 reason = "JavaScript GDSL operator registry value"
 
 [[nonstage]]
-id = "npm:./gdsl#GDSL_GRAPH_WGSL"
+id = "npm:./gdsl#GDSL_PVGRAPH_WGSL"
 reason = "WGSL shader source string"
 
 [[nonstage]]
@@ -1765,8 +1765,12 @@ id = "npm:./gdsl#MAX_NODES"
 reason = "GDSL graph size limit constant"
 
 [[nonstage]]
-id = "npm:./gdsl#checkGraph"
+id = "npm:./gdsl#checkPVGraph"
 reason = "JavaScript validation of a GDSL graph document and its port types"
+
+[[nonstage]]
+id = "npm:./gdsl#admitPVGraphWithLean"
+reason = "Hosts a native Lean PVGraph admission process outside the registered dataflow stages"
 
 [[nonstage]]
 id = "npm:./gdsl#createGsslResidentSession"
@@ -1781,11 +1785,11 @@ id = "npm:./gdsl#example"
 reason = "Returns a bundled GDSL example document"
 
 [[nonstage]]
-id = "npm:./gdsl#fromSexpr"
+id = "npm:./gdsl#fromPVSexpr"
 reason = "Parses the GDSL S-expression syntax into a JavaScript document"
 
 [[nonstage]]
-id = "npm:./gdsl#graph"
+id = "npm:./gdsl#PVGraph"
 reason = "Creates a JavaScript builder for a GDSL document"
 
 [[nonstage]]
@@ -1793,15 +1797,15 @@ id = "npm:./gdsl#listExamples"
 reason = "Lists bundled GDSL example documents"
 
 [[nonstage]]
-id = "npm:./gdsl#runCPU"
+id = "npm:./gdsl#runPVGraphCPU"
 reason = "Interprets GDSL operators in the JavaScript CPU evaluator"
 
 [[nonstage]]
-id = "npm:./gdsl#runGraphGPU"
+id = "npm:./gdsl#runPVGraphGPU"
 reason = "Dispatches the GDSL graph shader through the WebGPU host session"
 
 [[nonstage]]
-id = "npm:./gdsl#toSexpr"
+id = "npm:./gdsl#toPVSexpr"
 reason = "Serialises a GDSL graph document to S-expression syntax"
 
 [[nonstage]]
