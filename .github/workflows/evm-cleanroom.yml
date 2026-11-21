@@ -131,6 +131,11 @@ jobs:
         run: |
           mkdir -p .lake/differential
           node scripts/differential/call-boundary.mjs | tee .lake/differential/call-boundary.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==102 and x["matched"]==102 and x["mismatches"]==0 and x["parentOOGCases"]==6 and x["successCases"]>0 and x["childFailureCases"]>0 and x["oracleGasMutationDetected"],x'
+      - name: Execute Osaka CLZ opcode and compare 277 full-width words against independent EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node scripts/differential/osaka-clz.mjs | tee .lake/differential/osaka-clz.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["fork"]=="Osaka" and x["tested"]==277 and x["passed"]==277 and x["failed"]==0 and x["forkGuardHeld"] and x["comparatorMutationCaught"],x'
       - name: Generate versioned synthetic corpus and compare independent runtimes
         working-directory: formal/lean4/evm-cleanroom
         run: |
