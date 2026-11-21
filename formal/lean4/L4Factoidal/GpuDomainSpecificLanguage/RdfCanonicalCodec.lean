@@ -10,8 +10,9 @@ agrees with structural equality on well-formed RDF terms. A *single*
 injective UInt32 ID therefore serves both faithful round-trip decoding
 and equality joins for the finite admitted term scope.
 
-The executable admission check validates both properties against the
-actual supplied dictionary. Graph and binding round trips preserve
+The executable admission check validates exact term round trips; a
+Lean theorem derives all engine-equality comparison guarantees without
+running an extra quadratic all-pairs check. Graph and binding round trips preserve
 all term constructors and the exact association-list binding order.
 
 This is a pure finite model, not a physical device, WGSL compiler,
@@ -48,24 +49,87 @@ def decodeTerm? (dict : Dictionary) (identity : UInt32) : Option Term :=
 def identityRoundTrip (dict : Dictionary) (term : Term) : Bool :=
   decide ((identityCode? dict term).bind (decodeTerm? dict) = some term)
 
-/-- The comparison check checks the engine's relation, including
-    literal and nested triple-term equality, for every admitted pair. -/
+/-- An optional executable comparison diagnostic. The theorem below proves
+    this agreement from successful identity round trips, so it is not needed
+    in the admission loop. -/
 def matchAgreement (dict : Dictionary) (a b : Term) : Bool :=
   match equalityCode? dict a, equalityCode? dict b with
   | some ac, some bc => ((ac == bc) == a.eqb b)
   | _, _ => false
 
+/-- O(n) dictionary lookup checks across admitted terms, not an O(n²)
+    all-pairs equivalence scan. The engine's canonicality theorem lets us
+    derive agreement of all equality comparisons from these round trips. -/
 def admit (dict : Dictionary) (scope : List Term) : Bool :=
-  scope.all (identityRoundTrip dict) &&
-  scope.all (fun a => scope.all (matchAgreement dict a))
+  scope.all (identityRoundTrip dict)
 
 theorem admitted_identity (dict : Dictionary) (scope : List Term)
     (valid : admit dict scope = true) (term : Term) (ht : term ∈ scope) :
     (identityCode? dict term).bind (decodeTerm? dict) = some term := by
-  simp only [admit, Bool.and_eq_true] at valid
-  have h := List.all_eq_true.mp valid.1 term ht
+  have h := List.all_eq_true.mp valid term ht
   unfold identityRoundTrip at h
   exact decide_eq_true_eq.mp h
+
+private theorem admitted_code (dict : Dictionary) (scope : List Term)
+    (valid : admit dict scope = true) (term : Term) (ht : term ∈ scope) :
+    ∃ code, identityCode? dict term = some code ∧
+      decodeTerm? dict code = some term := by
+  have h := admitted_identity dict scope valid term ht
+  cases hc : identityCode? dict term with
+  | none => simp [hc] at h
+  | some code =>
+      refine ⟨code, hc, ?_⟩
+      simpa [hc] using h
+
+/-- Injectivity of the finite *admitted* identity codebook. -/
+theorem admitted_code_eq_iff (dict : Dictionary) (scope : List Term)
+    (valid : admit dict scope = true) (a b : Term)
+    (ha : a ∈ scope) (hb : b ∈ scope) (ac bc : UInt32)
+    (hca : identityCode? dict a = some ac)
+    (hcb : identityCode? dict b = some bc) :
+    ac = bc ↔ a = b := by
+  have da : decodeTerm? dict ac = some a := by
+    have h := admitted_identity dict scope valid a ha
+    simpa [hca] using h
+  have db : decodeTerm? dict bc = some b := by
+    have h := admitted_identity dict scope valid b hb
+    simpa [hcb] using h
+  constructor
+  · intro heq
+    have both : some a = some b := by
+      calc
+        some a = decodeTerm? dict ac := da.symm
+        _ = decodeTerm? dict bc := by rw [heq]
+        _ = some b := db
+    exact Option.some.inj both
+  · intro heq
+    cases heq
+    exact Option.some.inj (hca.symm.trans hcb)
+
+/-- Because RDF.Term is canonical, its engine eqb coincides with Eq.
+    The one identity ID also preserves SPARQL join-key comparisons. -/
+theorem admitted_eqb_for_codes (dict : Dictionary) (scope : List Term)
+    (valid : admit dict scope = true) (a b : Term)
+    (ha : a ∈ scope) (hb : b ∈ scope) (ac bc : UInt32)
+    (hca : identityCode? dict a = some ac)
+    (hcb : identityCode? dict b = some bc) :
+    (ac == bc) = a.eqb b := by
+  have equiv := admitted_code_eq_iff dict scope valid a b ha hb ac bc hca hcb
+  by_cases h : ac = bc
+  · have ht : a = b := equiv.mp h
+    have hcode : (ac == bc) = true := beq_iff_eq.mpr h
+    have hterm : a.eqb b = true := (Term.eqb_iff_eq a b).mpr ht
+    rw [hcode, hterm]
+  · have ht : a ≠ b := fun hab => h (equiv.mpr hab)
+    have hcode : (ac == bc) = false := by
+      cases hcase : (ac == bc) with
+      | false => rfl
+      | true => exact False.elim (h (beq_iff_eq.mp hcase))
+    have hterm : a.eqb b = false := by
+      cases hcase : a.eqb b with
+      | false => rfl
+      | true => exact False.elim (ht ((Term.eqb_iff_eq a b).mp hcase))
+    rw [hcode, hterm]
 
 theorem admitted_equality (dict : Dictionary) (scope : List Term)
     (valid : admit dict scope = true) (a b : Term)
@@ -73,18 +137,10 @@ theorem admitted_equality (dict : Dictionary) (scope : List Term)
     ∃ ac bc, equalityCode? dict a = some ac ∧
       equalityCode? dict b = some bc ∧
       (ac == bc) = a.eqb b := by
-  simp only [admit, Bool.and_eq_true] at valid
-  have hall := valid.2
-  have pair := List.all_eq_true.mp (List.all_eq_true.mp hall a ha) b hb
-  unfold matchAgreement at pair
-  cases hca : equalityCode? dict a with
-  | none => simp [hca] at pair
-  | some ac =>
-    cases hcb : equalityCode? dict b with
-    | none => simp [hca, hcb] at pair
-    | some bc =>
-      refine ⟨ac, bc, rfl, rfl, ?_⟩
-      exact beq_iff_eq.mp (by simpa [hca, hcb] using pair)
+  obtain ⟨ac, hca, _⟩ := admitted_code dict scope valid a ha
+  obtain ⟨bc, hcb, _⟩ := admitted_code dict scope valid b hb
+  exact ⟨ac, bc, hca, hcb,
+    admitted_eqb_for_codes dict scope valid a b ha hb ac bc hca hcb⟩
 
 /-- An RDF graph's source terms, including arbitrary literal and triple-term
     objects. They are opaque dictionary entries, not broken into strings or
@@ -173,6 +229,8 @@ private def bad : Dictionary :=
 #guard checkBindingRoundTrip good [("x", Term.iri a), ("x", Term.iri b)]
 
 #print axioms admitted_identity
+#print axioms admitted_code_eq_iff
+#print axioms admitted_eqb_for_codes
 #print axioms admitted_equality
 #print axioms checkGraphRoundTrip_sound
 #print axioms checkBindingRoundTrip_sound
