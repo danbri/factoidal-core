@@ -4,6 +4,9 @@ on:
     paths:
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/Graph*.lean'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraph.lean'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraphBuilder.lean'
+      - 'formal/lean4/Harness/PVGraphBuilderSmoke.lean'
+      - 'tools/pvgraph-lean-builder-diff.mjs'
       - 'formal/lean4/Harness/GdslGraphCheck.lean'
       - 'tools/gdsl-lean-graph-diff.mjs'
       - 'tools/gdsl-lean-eval-diff.mjs'
@@ -54,6 +57,9 @@ jobs:
             formal/lean4/Harness/GdslGraphCheck.lean \
             formal/lean4/Harness/GdslGraphEval.lean \
             formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphEvaluate.lean \
+            formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraphBuilder.lean \
+            formal/lean4/Harness/PVGraphBuilderSmoke.lean \
+            tools/pvgraph-lean-builder-diff.mjs \
             npm/factoidal/lib/gdsl-graph.mjs \
             tools/gdsl-lean-graph-diff.mjs \
             tools/gdsl-lean-eval-diff.mjs \
@@ -68,7 +74,8 @@ jobs:
           timeout --kill-after=10s 420s lake build \
             L4Factoidal.GpuDomainSpecificLanguage.GraphJson \
             L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate \
-            L4Factoidal.GpuDomainSpecificLanguage.PVGraph
+            L4Factoidal.GpuDomainSpecificLanguage.PVGraph \
+            L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
       - name: Compare the same canonical graph bytes in Lean and JS
         working-directory: formal/lean4
         shell: bash
@@ -116,6 +123,24 @@ jobs:
             "$RUNNER_TEMP/gdsl-lean-json/js-eval.jsonl" \
             "$RUNNER_TEMP/gdsl-lean-json/lean-eval.jsonl" \
             | tee "$RUNNER_TEMP/gdsl-lean-json/evaluation-compared.json"
+      - name: Check Lean-native PVGraph authoring, admission and JS/S-expression agreement
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! timeout --kill-after=10s 120s lake env lean --run \
+            Harness/PVGraphBuilderSmoke.lean \
+            > "$RUNNER_TEMP/gdsl-lean-json/builder-fixtures.jsonl" \
+            2> "$RUNNER_TEMP/gdsl-lean-json/builder.stderr"; then
+            head -n 60 "$RUNNER_TEMP/gdsl-lean-json/builder.stderr"
+            head -n 30 "$RUNNER_TEMP/gdsl-lean-json/builder-fixtures.jsonl"
+            exit 1
+          fi
+          cd ../..
+          node --check tools/pvgraph-lean-builder-diff.mjs
+          node tools/pvgraph-lean-builder-diff.mjs \
+            "$RUNNER_TEMP/gdsl-lean-json/builder-fixtures.jsonl" \
+            | tee "$RUNNER_TEMP/gdsl-lean-json/builder-diff.json"
       - name: Preserve source-verifiable cross-language evidence
         if: always()
         uses: actions/upload-artifact@v4
