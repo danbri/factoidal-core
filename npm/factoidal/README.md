@@ -42,58 +42,34 @@ RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
 `@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
 and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
-## Experimental GDSL 0.2: one graph language for every domain
+## GDSL PVGraph (Lean/Wasm)
 
-The optional `@factoidal/core/gdsl` subpath defines a **single typed
-dataflow graph** with named operator nodes, typed scalar/buffer links,
-a JavaScript graph-constructor API, and an S-expression notation.
-Every domain adds operators to this shared graph instead of defining
-a new GDSL syntax or execution architecture.
+The `@factoidal/core/gdsl` subpath exposes the typed PVGraph API.
+**Lean 4 owns graph construction, admission and reference execution.**
+JavaScript marshals calls into the compiled Wasm engine.
 
 ```js
-import {PVGraph,runPVGraphCPU,toPVSexpr} from "@factoidal/core/gdsl";
+import {createPVGraphWasm} from "@factoidal/core/gdsl";
+import {loadEngine} from "@factoidal/core/browser.js";
 
-const g=PVGraph();
-const pixels=g.input("pixels");
-const scale=g.op("u32.map.mul",{x:pixels},{value:3});
-const bias=g.op("u32.map.add",{x:pixels},{value:1});
-const result=g.op("u32.zip.add",{a:scale,b:bias});
-g.output("result",result);
-
-console.log(runPVGraphCPU(g.build(),{pixels:[2,3,5,7]}).outputs.result);
-// [9, 13, 21, 29]
-console.log(toPVSexpr(g.build())); // identical graph in common notation
+const g = await createPVGraphWasm(loadEngine);
+const input = g.input("words");
+const doubled = g.op("u32.map.mul",{x:input},{value:2},
+  {resultType:"buffer<u32>"});
+g.output("answer",doubled);
+const program = await g.build();
+const outputs = await g.evaluate(program,{words:[1,2,3]});
+// outputs.answer: [2,4,6]
 ```
 
-A common JavaScript CPU interpreter and fixed-kernel WebGPU backend use
-the *same PVGraph*, including signal, glyph, particle, pixel and scalar
-examples. **The PVGraph GPU API is fail-closed:** an unverified graph
-cannot dispatch to WebGPU. Development verification currently requires
-a local Lean 4.33.1 toolkit and the matching `formal/lean4/` sources;
-there is no browser runtime verifier yet.
+Requires a Lean/Wasm build exposing `pvgraphBuild`, `pvgraphAdmit`
+and `pvgraphEvaluate`. Missing exports fail closed. The current
+prebuilt engine must be updated to use this subpath.
 
-```js
-import {admitPVGraphWithLean,runPVGraphGPU}
-  from "@factoidal/core/gdsl";
-
-const pvgraph = g.build();
-const inputs = {pixels:[2,3,5,7]};
-const admission = await admitPVGraphWithLean(pvgraph, inputs);
-const observed = await runPVGraphGPU(pvgraph, inputs, {admission});
-// observed.status === "observed-not-proven"
-```
-
-Lean checks the actual serialized PVGraph, produces an input-bound
-admission, and independently evaluates the expected outputs. GPU readback
-must agree. A forged approval object, missing toolkit, stale inputs or
-unsupported operator refuses execution; **the WGSL compiler and device
-remain outside the Lean theorem boundary**. The separate low-level
-`@factoidal/core/gpu-resident` API is deliberately not a certified
-PVGraph executor.
+The lower-level `@factoidal/core/gpu-resident` API is independent of
+PVGraph and provides no certified GPU lowering.
 
 Specification: [GDSL 0.2](../../docs/specs/gdsl-0.2.md).
-This npm subpath appears in the next published package release; the
-GitHub source is available now.
 
 ## Experimental GPU-resident compute resources
 
