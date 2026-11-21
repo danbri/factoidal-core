@@ -6,6 +6,7 @@ on:
       - 'npm/factoidal/lib/pvgraph-lean-admission.mjs'
       - 'tests/gdsl_graph.test.mjs'
       - 'tools/gdsl-graph-device-smoke.mjs'
+      - 'tools/pvgraph-native-admission-smoke.mjs'
       - '.github/workflows/check-gdsl-graph.yml'
   workflow_dispatch: {}
 permissions:
@@ -46,11 +47,13 @@ jobs:
           node --check npm/factoidal/lib/pvgraph-lean-admission.mjs
           node --check npm/factoidal/lib/gdsl-examples.mjs
           node --check tools/gdsl-graph-device-smoke.mjs
+          node --check tools/pvgraph-native-admission-smoke.mjs
           node --check tests/gdsl_graph.test.mjs
           mkdir -p "$RUNNER_TEMP/gdsl"
           git rev-parse HEAD > "$RUNNER_TEMP/gdsl/commit.txt"
           sha256sum npm/factoidal/lib/gdsl-*.mjs npm/factoidal/lib/pvgraph-lean-admission.mjs tests/gdsl_graph.test.mjs \
-            tools/gdsl-graph-device-smoke.mjs | tee "$RUNNER_TEMP/gdsl/source.sha256"
+            tools/gdsl-graph-device-smoke.mjs tools/pvgraph-native-admission-smoke.mjs |
+            tee "$RUNNER_TEMP/gdsl/source.sha256"
       - name: Check canonical graph, JS builder, S-expression and CPU
         run: node --test tests/gdsl_graph.test.mjs
       - name: Build independently executable Lean PVGraph admission and evaluation
@@ -59,6 +62,12 @@ jobs:
           set -euo pipefail
           timeout --kill-after=10s 420s lake build \
             L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
+      - name: Run native Lean PVGraph admission and anti-forgery tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 180s node tools/pvgraph-native-admission-smoke.mjs \
+            | tee "$RUNNER_TEMP/gdsl/native-gate.json"
       - name: Install Mesa software Vulkan
         run: |
           sudo apt-get update
