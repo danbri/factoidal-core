@@ -8,11 +8,11 @@ if(!/^[0-9a-f]{40}$/.test(sourceCommit))
   throw new Error("Usage: gssl-gpu-resident-device-smoke.mjs HEAD_SHA");
 const WGSL = `
 @group(0) @binding(0) var<storage, read> source: array<u32>;
-@group(0) @binding(1) var<storage, read_write> target: array<u32>;
+@group(0) @binding(1) var<storage, read_write> destination: array<u32>;
 @compute @workgroup_size(4)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if(gid.x >= 4u) { return; }
-  target[gid.x] = source[gid.x] * 3u + 1u;
+  destination[gid.x] = source[gid.x] * 3u + 1u;
 }
 `;
 const report={
