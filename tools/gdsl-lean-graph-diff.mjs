@@ -7,10 +7,10 @@ import {checkPVGraph} from "../npm/factoidal/lib/gdsl-graph.mjs";
 
 const clone=x=>JSON.parse(JSON.stringify(x));
 const cases=[];
-function add(name,graph){
+function add(name,pvgraph){
   if(cases.some(x=>x.case===name))throw Error("duplicate case "+name);
   let admitted;
-  try{checkPVGraph(graph);admitted=true;}
+  try{checkPVGraph(pvgraph);admitted=true;}
   catch{admitted=false;}
   cases.push({case:name,pvgraph,admitted});
 }
