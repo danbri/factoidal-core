@@ -123,7 +123,7 @@ private def good : Document :=
 
 #guard good.linksAdmitted
 #guard !(⟨good.nodes,[⟨⟨"multiply","out"⟩,⟨"samples","x"⟩,u32Buffer⟩]⟩ : Document).linksAdmitted
-#guard !(⟨good.nodes,[⟨inputLink with dataType := u32Scalar⟩]⟩ : Document).linksAdmitted
+#guard !(⟨good.nodes,[{inputLink with dataType := u32Scalar}]⟩ : Document).linksAdmitted
 #guard !(⟨good.nodes,[⟨⟨"absent","out"⟩,⟨"multiply","x"⟩,u32Buffer⟩]⟩ : Document).linksAdmitted
 
 #print axioms linksAdmitted_sound
