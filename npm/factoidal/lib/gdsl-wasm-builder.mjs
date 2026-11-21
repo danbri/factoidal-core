@@ -70,7 +70,8 @@ export async function createPVGraphWasm(loadEngine){
     },
     async evaluate(pvgraph,inputs){
       return checkResult("pvgraphEvaluate",engine.call("pvgraphEvaluate",[
-        JSON.stringify(pvgraph),JSON.stringify(inputs)]),"outputs");
+        JSON.stringify(pvgraph),JSON.stringify(inputs,(_key,value)=>
+          value instanceof Uint32Array?Array.from(value):value)]),"outputs");
     },
   });
 }
