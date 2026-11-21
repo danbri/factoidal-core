@@ -30,7 +30,7 @@
     "scripts/check-axiom-output.py": "8d0cabed81fa593b90062c600bb4a9e3a3c0430b",
     "scripts/differential/osaka-clz.mjs": "75c466fdfef537ee1ab79874263ee8bba59ef251",
     "EVMCleanroom/PragueEnvelope.lean": "1dbd4c5ccca0ab3d74e84d848be3cf6f5c6f9bce",
-    "scripts/eels/run-lean-prague-all-types.mjs": "cf38389666e6d2e176488c204ef69ee219eebdf2",
+    "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265"
   },
