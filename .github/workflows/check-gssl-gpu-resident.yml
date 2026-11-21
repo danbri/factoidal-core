@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - 'tools/gssl-gpu-resident.mjs'
+      - 'npm/factoidal/lib/gpu-resident.mjs'
+      - 'npm/factoidal/gpu-resident.d.ts'
+      - 'npm/factoidal/package.json'
+      - 'npm/factoidal/test/gpu-resident.test.mjs'
       - 'tools/gssl-gpu-resident-device-smoke.mjs'
       - 'tests/gssl_gpu_resident_test.mjs'
       - '.github/workflows/check-gssl-gpu-resident.yml'
@@ -35,15 +39,23 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           node --check tools/gssl-gpu-resident.mjs
+          node --check npm/factoidal/lib/gpu-resident.mjs
+          node --check npm/factoidal/test/gpu-resident.test.mjs
           node --check tools/gssl-gpu-resident-device-smoke.mjs
           node --check tests/gssl_gpu_resident_test.mjs
           mkdir -p "$RUNNER_TEMP/gssl-resident"
           git rev-parse HEAD | tee "$RUNNER_TEMP/gssl-resident/commit.txt"
           sha256sum tools/gssl-gpu-resident.mjs \
+            npm/factoidal/lib/gpu-resident.mjs \
+            npm/factoidal/gpu-resident.d.ts \
+            npm/factoidal/package.json \
+            npm/factoidal/test/gpu-resident.test.mjs \
             tools/gssl-gpu-resident-device-smoke.mjs \
             tests/gssl_gpu_resident_test.mjs | tee "$RUNNER_TEMP/gssl-resident/source.sha256"
       - name: Test generic API with deterministic GPU mocks
         run: node --test tests/gssl_gpu_resident_test.mjs
+      - name: Check experimental package subpath
+        run: node --test npm/factoidal/test/gpu-resident.test.mjs
       - name: Install Mesa Vulkan software adapter
         run: |
           sudo apt-get update
