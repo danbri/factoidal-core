@@ -101,7 +101,7 @@ export async function admitPVGraphWithLean(doc,bindings){
         cwd,timeout:120000,maxBuffer:MAX_LEAN_JSON_BYTES,windowsHide:true,
       },(error,stdout,stderr)=>{
         if(error)return reject(new Error("PVGraph Lean evaluation did not complete: "+
-          (stderr||error.message).slice(0,1400)));
+          [stderr,stdout,error.message].filter(Boolean).join("\n").slice(0,3600)));
         resolve({stdout,stderr});
       });
     });
