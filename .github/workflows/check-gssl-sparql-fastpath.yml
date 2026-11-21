@@ -1,0 +1,28 @@
+name: GSSL SPARQL fast-path contract
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/SPARQL/**'
+      - '.github/workflows/check-gssl-sparql-fastpath.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  contract:
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: gssl-sparql-fastpath
+      timeout_minutes: 20
+      modules: >-
+        L4Factoidal.SPARQL.GsslFastPath L4Factoidal.SPARQL.GsslFastPathTests
+        L4Factoidal.SPARQL.GsslBgpRefinement
+      theorems: >-
+        L4Factoidal.SPARQL.GsslFastPath.resolve_eq_indexed
+        L4Factoidal.SPARQL.GsslFastPath.unsupported_fallback
+        L4Factoidal.SPARQL.GsslFastPath.missing_fallback
+        L4Factoidal.SPARQL.GsslBgpRefinement.rdfPlan_eq_evalBgpIdx
+        L4Factoidal.SPARQL.GsslBgpRefinement.resolve_rdfPlan
+        L4Factoidal.SPARQL.GsslBgpRefinement.rightMatch_eq_tpMatch
+        L4Factoidal.SPARQL.GsslBgpRefinement.rightSelect_eq_evalTP
+        L4Factoidal.SPARQL.GsslBgpRefinement.relationalPlan_eq_rdfPlan
+        L4Factoidal.SPARQL.GsslBgpRefinement.relationalPlan_eq_evalBgpIdx
