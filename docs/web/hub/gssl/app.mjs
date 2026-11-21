@@ -249,4 +249,4 @@ window.addEventListener("pagehide",()=>{
 stats();
 
 // All domain examples run through the single canonical GDSL graph explorer.
-mountGdslGraph();
+mountPVGraph();
