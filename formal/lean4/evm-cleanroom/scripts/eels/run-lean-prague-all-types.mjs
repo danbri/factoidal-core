@@ -50,6 +50,16 @@ const cases=[];
 let passed=0,unsupported=0,failed=0;
 const EXPECTED_TYPES=new Set([0,1,2,3,4]);
 const common=new Common({chain:Mainnet,hardfork:Hardfork.Prague});
+// The state-test signed type-3 envelope contains versioned hashes but NO
+// blob sidecars or KZG commitments/proofs. EthereumJS's 4844 constructor
+// nevertheless requires a KZG object. This fail-closed sentinel *throws*
+// on every KZG method access: no fake proof can make an invalid sidecar
+// pass. Sidecar validation is explicitly outside this signed-envelope gate.
+const forbiddenKzg=new Proxy({}, {get(_target,operation){
+  throw Error('KZG sidecar operation not permitted in this fixture gate: '+String(operation));
+}});
+const blobCommon=new Common({chain:Mainnet,hardfork:Hardfork.Prague,
+  customCrypto:{kzg:forbiddenKzg}});
 function reject(id,reason) {unsupported++;cases.push({id,status:'unsupported',reason});}
 function parseHexInt(s,label) {
   if(typeof s!=='string'||!/^(0x[0-9a-fA-F]+)$/.test(s)) throw Error(label+' expected a hex integer, received '+String(s));
@@ -100,7 +110,9 @@ for(const {id,record,post} of eligible){
     const txBytes=post.txbytes;
     if(typeof txBytes!=='string' || !/^0x[0-9a-fA-F]+$/.test(txBytes))
       throw Error('missing signed transaction bytes');
-    const parsed=createTxFromRLP(hexToBytes(txBytes),{common});
+    const parsed=createTxFromRLP(hexToBytes(txBytes),{
+      common: txBytes.slice(0,4).toLowerCase()==='0x03' ? blobCommon : common
+    });
     const recovered=parsed.getSenderAddress().toString().toLowerCase();
     if(recovered!==addr)throw Error('signature recovered wrong sender');
     if(!EXPECTED_TYPES.has(parsed.type) ||
@@ -341,7 +353,7 @@ const results={
   limits:{
     notGeneralEVM:true,
     supported:'Six official Prague EIP-7623 signed type-0..4 no-destination-code cases: 4844 one blob and 7702 one new authorization; Lean typed fees, authority delegation code and nonces',
-    trusted:['EthereumJS RLP and secp256k1 signer/authorization recovery','EthereumJS account/Merkle Patricia trie serializer','JS host transaction field extraction','Lean interpreter/runtime/compiler'],
+    trusted:['EthereumJS RLP and secp256k1 signer/authorization recovery','EIP-4844 KZG sidecars absent and fail-closed (no proof verification claimed)','EthereumJS account/Merkle Patricia trie serializer','JS host transaction field extraction','Lean interpreter/runtime/compiler'],
     notVerified:['independent signature recovery','general EIP-4844 nonzero-excess blob fee','all EIP-7702 authorization permutations','MPT hashing','full EVM/transaction semantics']
   }
 };
