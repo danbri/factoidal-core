@@ -183,12 +183,15 @@ export async function createGsslResidentSession({
         throw new TypeError("Invalid or repeated binding index.");
       seen.add(binding);attached.add(id);
       const b=find(id);
-      if(!b.initialized && !writes.includes(id))
-        throw new Error("Uninitialized buffer used as input: "+id);
       return {binding,resource:{buffer:b.buffer}};
     });
     if(writes.some(x=>!attached.has(x)))
       throw new Error("All declared writes must name bound resources.");
+    for(const {id} of bindings){
+      const b=find(id);
+      if(!b.initialized && !writes.includes(id))
+        throw new Error("Uninitialized buffer used as input: "+id);
+    }
     busy=true;
     try{
       const bg=device.createBindGroup({layout:k.pipeline.getBindGroupLayout(0),entries});
