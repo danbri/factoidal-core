@@ -16,7 +16,7 @@ private def evalCase (request : Json) : Except String Json := do
   let id ← (← request.getObjVal? "case").getStr?
   let pvgraph ← request.getObjVal? "pvgraph"
   let bindings ← request.getObjVal? "bindings"
-  match PVGraph.evaluate? pvgraph bindings with
+  match evaluate? pvgraph bindings with
   | .ok outputs =>
       return Json.mkObj [("case",toJson id),
         ("accepted",toJson true),("outputs",outputs)]
