@@ -2,7 +2,7 @@
 // and its named inputs go into the JS runPVGraphCPU and native Lean evaluate?.
 // Not proof of arbitrary JS/Lean semantics or GPU correctness.
 import {readFileSync,writeFileSync} from "node:fs";
-import {pvgraph,runPVGraphCPU,checkPVGraph}
+import {PVGraph,runPVGraphCPU,checkPVGraph}
   from "../npm/factoidal/lib/gdsl-graph.mjs";
 import {example} from "../npm/factoidal/lib/gdsl-examples.mjs";
 
