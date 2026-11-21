@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/Graph.lean'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphAdmission.lean'
       - '.github/workflows/check-gdsl-lean.yml'
   workflow_dispatch: {}
 permissions:
@@ -15,5 +16,11 @@ jobs:
       timeout_minutes: 12
       modules: >-
         L4Factoidal.GpuDomainSpecificLanguage.Graph
+        L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission
       theorems: >-
         L4Factoidal.GpuDomainSpecificLanguage.Graph.linksAdmitted_sound
+        L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission.admitted_unique_node_ids
+        L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission.admitted_unique_producers
+        L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission.admitted_edges
+        L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission.admitted_all_input_ports_bound
+        L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission.admitted_core_signatures
