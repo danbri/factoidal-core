@@ -30,6 +30,20 @@ def Word.div (a b : Word) : Word := word (a.val / b.val)
 /-- Unsigned EVM bitwise OR over 256-bit words. -/
 def Word.bitOr (a b : Word) : Word := word (Nat.lor a.val b.val)
 
+/-- EIP-7939: leading zero bits in a 256-bit EVM word.
+    Zero has 256 leading zero bits; otherwise bit length is log2(x)+1.
+    No narrowing to a machine word is permitted. -/
+def Word.leadingZeros (a : Word) : Nat :=
+  if a.val == 0 then 256 else 255 - Nat.log2 a.val
+
+/-- The CLZ result always fits in the EVM 256-bit word domain. -/
+theorem Word.leadingZeros_le (a : Word) : a.leadingZeros ≤ 256 := by
+  unfold Word.leadingZeros
+  split <;> omega
+
+/-- The exceptional all-zero operand produces 256, not 255. -/
+theorem Word.leadingZeros_zero : (word 0).leadingZeros = 256 := by decide
+
 inductive Error where
   | stackUnderflow
   | stackOverflow
@@ -49,11 +63,14 @@ structure Stack where
 
 def Stack.empty : Stack := ⟨[], by decide⟩
 
-/-- Profile captures only the PUSH0 fork boundary; other fork-dependent
-    opcodes and gas rules are deliberately unsupported. -/
+/-- Opcode-dispatch profiles, NOT complete fork execution environments.
+    "shanghaiPlus" is the pre-Osaka legacy subset used by the existing
+    tests, NOT a claim that later opcodes/gas rules are present. "osaka"
+    enables EIP-7939 CLZ but does not claim full Fusaka/Osaka support. -/
 inductive Profile where
   | preShanghai
   | shanghaiPlus
+  | osaka
   deriving DecidableEq, Repr
 
 /-- Machine-local state only. No accounts, persistent storage, external calls,
@@ -254,6 +271,13 @@ def planStep (s : State) : Except Error Plan :=
     | 0x03 => binary s Word.sub 3                      -- SUB
     | 0x04 => binary s Word.div 5                      -- DIV
     | 0x17 => binary s Word.bitOr 3                    -- OR
+    | 0x1e =>                                           -- EIP-7939 CLZ (Osaka)
+      if s.profile = .osaka then
+        match s.stack.items with
+        | value :: rest =>
+          prepared (s.pc + 1) (word value.leadingZeros :: rest) 5
+        | [] => .error .stackUnderflow
+      else .error .unsupportedFork
     | 0x50 => pop s                                    -- POP
     | 0x51 => mload s                                  -- MLOAD
     | 0x52 => mstore s                                 -- MSTORE
@@ -270,7 +294,7 @@ def planStep (s : State) : Except Error Plan :=
       else .error .outOfGas
     | 0x5b => prepared (s.pc + 1) s.stack.items 1        -- JUMPDEST
     | 0x5f =>
-      if s.profile = .shanghaiPlus then
+      if s.profile != .preShanghai then
         prepared (s.pc + 1) (word 0 :: s.stack.items) 2
       else .error (.invalidOpcode op)
     | _ =>
@@ -301,5 +325,17 @@ def run : Nat → State → Except Error State
       | .error e => .error e
       | .ok next =>
         if next.halted then .ok next else run fuel next
+
+/-- Normative EIP-7939 boundary examples. The differential harness also
+    runs full-width EVM words on a separately maintained Osaka runtime. -/
+#guard (word 0).leadingZeros == 256
+#guard (word 1).leadingZeros == 255
+#guard (word 2).leadingZeros == 254
+#guard (word (2 ^ 255)).leadingZeros == 0
+#guard (word (2 ^ 254)).leadingZeros == 1
+#guard (word (2 ^ 256 - 1)).leadingZeros == 0
+
+#print axioms Word.leadingZeros_le
+#print axioms Word.leadingZeros_zero
 
 end EVMCleanroom
