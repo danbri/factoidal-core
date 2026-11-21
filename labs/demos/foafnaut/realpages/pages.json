@@ -15,6 +15,18 @@
  },
  "pages": [
   {
+   "id": "desktop-bbc-news",
+   "url": "https://www.bbc.co.uk/news",
+   "note": "Desktop acceptance: open, scroll, and stay responsive"
+  },
+  {
+   "id": "desktop-bbc-news-noscripts",
+   "url": "https://www.bbc.co.uk/news",
+   "scripts": false,
+   "snapshot": "desktop-bbc-news",
+   "note": "Same page as desktop-bbc-news with scripts disabled to separate the failure paths"
+  },
+  {
    "id": "desktop-wikipedia-www",
    "url": "https://en.wikipedia.org/wiki/World_Wide_Web",
    "note": "Desktop acceptance: heading, search, and top navigation",
