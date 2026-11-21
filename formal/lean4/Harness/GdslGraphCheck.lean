@@ -1,5 +1,5 @@
 import Lean.Data.Json
-import L4Factoidal.GpuDomainSpecificLanguage.GraphJson
+import L4Factoidal.GpuDomainSpecificLanguage.PVGraph
 
 /-!
 # Cross-language GDSL 0.2 admission checker
@@ -21,12 +21,12 @@ parsers agree for every input string.
 namespace Harness.GdslGraphCheck
 
 open Lean
-open L4Factoidal.GpuDomainSpecificLanguage.GraphJson
+open L4Factoidal.GpuDomainSpecificLanguage.PVGraph
 
 private def runCase (j : Json) : Except String Json := do
   let caseId ← (← j.getObjVal? "case").getStr?
   let pvgraph ← j.getObjVal? "pvgraph"
-  let admitted := (decodeCertified? pvgraph).isOk
+  let admitted := (admit? pvgraph).isOk
   return Json.mkObj [("case", toJson caseId),
     ("admitted", toJson admitted)]
 
