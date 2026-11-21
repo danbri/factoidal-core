@@ -14,7 +14,7 @@ if(!/^[0-9a-f]{40}$/.test(commit))
   throw Error("Usage: gdsl-graph-device-smoke.mjs HEAD_SHA");
 const s=await createGsslResidentSession({
   byteBudget:8*1024*1024,inspectMaxWords:256});
-const report={schema:"gdsl-canonical-graph-device-v0.2",commit,
+const report={schema:"gdsl-pvgraph-device-v0.2",commit,
   status:"fail",backend:"actual Deno WebGPU Mesa Vulkan software adapter",
   cases:[],trust:"device observation, not verified shader compiler/refinement"};
 const same=(a,b)=>JSON.stringify(Object.entries(a).sort())===
