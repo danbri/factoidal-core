@@ -65,16 +65,17 @@ const same=(a,b)=>JSON.stringify(canonicalJSON(a))===
  * Lean GraphEvaluate.evaluate? runner. No injected callback is allowed.
  * The native runtime must be built from the intended repository source.
  *
- * leanCwd: exact source checkout formal/lean4 directory. A separately
- * installed npm package has no implicit, unverified Lean binary.
+ * This uses only the Lean source checkout accompanying this module. The
+ * package does not accept a caller-supplied, unverified Lean working tree.
+ * Installing @factoidal/core without these Lean sources fails closed.
  */
-export async function admitPVGraphWithLean(doc,bindings,{leanCwd}={}){
+export async function admitPVGraphWithLean(doc,bindings){
   const pvgraph=checkPVGraph(doc,{registry:CORE_OPERATORS});
   const normalized=identity(pvgraph,bindings);
   // The local JS interpreter is checked independently against the
   // native Lean result before a device gets an admission capability.
   const local=runPVGraphCPU(pvgraph,bindings,{registry:CORE_OPERATORS}).outputs;
-  const {bytes,typedInputs,digest}=await normalized;
+  const {typedInputs,digest}=await normalized;
   let execFile,fs,tmpdir,join,fileURLToPath;
   try{
     ({execFile}=await import("node:child_process"));
@@ -85,7 +86,10 @@ export async function admitPVGraphWithLean(doc,bindings,{leanCwd}={}){
   }catch{
     throw new Error("PVGraph Lean admission unavailable: trusted native Lean bridge is not installed.");
   }
-  const cwd=leanCwd??fileURLToPath(new URL("../../../formal/lean4/",import.meta.url));
+  const cwd=fileURLToPath(new URL("../../../formal/lean4/",import.meta.url));
+  const executable=fileURLToPath(new URL("../../../formal/lean4/Harness/GdslGraphEval.lean",import.meta.url));
+  try{await fs.access(executable);}catch{throw new Error(
+    "PVGraph requires the local Lean 4 toolkit and repository Harness/GdslGraphEval.lean; no verification performed.");}
   const root=await fs.mkdtemp(join(tmpdir(),"gdsl-pvgraph-lean-"));
   const fixture=join(root,"request.jsonl");
   try{
