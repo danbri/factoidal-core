@@ -50,7 +50,7 @@ JavaScript marshals calls into the compiled Wasm engine.
 
 ```js
 import {createPVGraphWasm} from "@factoidal/core/gdsl";
-import {loadEngine} from "@factoidal/core/browser.js";
+import {loadEngine} from "@factoidal/core/browser";
 
 const g = await createPVGraphWasm(loadEngine);
 const input = g.input("words");
