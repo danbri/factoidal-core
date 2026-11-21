@@ -161,11 +161,16 @@ def broadcast (value : Wire .scalar) (shape : Wire .buffer)
 
 /-- Materialize one *canonical*, language-neutral PVGraph 0.2 document.
     State stores node/link JSON only, not another semantic IR. -/
-def build (program : M Unit) : Json :=
-  let (_, st) := program.run {}
+/-- Materialize the common document from builder state. This function is
+    shared by native Lean programs and the Wasm-bound command interpreter. -/
+def State.document (st : State) : Json :=
   obj [("version", toJson ("gdsl/0.2" : String)),
        ("nodes", toJson st.nodes.reverse),
        ("links", toJson st.links.reverse)]
+
+def build (program : M Unit) : Json :=
+  let (_, st) := program.run {}
+  st.document
 
 /-- Use the existing Lean certification gate on the exact serialized output. -/
 def buildAndAdmit? (program : M Unit) :
