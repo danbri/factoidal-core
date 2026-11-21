@@ -84,7 +84,7 @@ theorem admitted_equality (dict : Dictionary) (scope : List Term)
     cases hcb : equalityCode? dict b with
     | none => simp [hca, hcb] at pair
     | some bc =>
-      refine ⟨ac, bc, hca, hcb, ?_⟩
+      refine ⟨ac, bc, rfl, rfl, ?_⟩
       exact beq_iff_eq.mp (by simpa [hca, hcb] using pair)
 
 /-- An RDF graph's source terms, including arbitrary literal and triple-term
@@ -152,8 +152,9 @@ def checkBindingRoundTrip (dict : Dictionary) (b : L4Factoidal.SPARQL.Binding) :
 
 theorem checkBindingRoundTrip_sound (dict : Dictionary) (b : L4Factoidal.SPARQL.Binding)
     (valid : checkBindingRoundTrip dict b = true) :
-    (encodeBinding? dict b).bind (decodeBinding? dict) = some b :=
-  of_decide_true valid
+    (encodeBinding? dict b).bind (decodeBinding? dict) = some b := by
+  unfold checkBindingRoundTrip at valid
+  exact decide_eq_true_eq.mp valid
 
 /-- Two distinct IRIs are a minimal counterexample to an identity-code
     collision; a join may additionally need equality classes. -/
