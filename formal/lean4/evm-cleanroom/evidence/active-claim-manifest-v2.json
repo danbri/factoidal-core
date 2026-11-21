@@ -33,7 +33,7 @@
     "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
-    "EVMCleanroom/CallOpcode.lean": "2d091da5be8c46a60460b17d7828b7b5cee1366f",
+    "EVMCleanroom/CallOpcode.lean": "52a42042b24fe4433e4217f05936e80c467b98e1",
     "scripts/differential/call-opcode.mjs": "574af6316ccbba111cabfbed961b193aa884742e"
   },
   "theorem_inventory": [
