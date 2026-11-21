@@ -37,6 +37,14 @@ jobs:
         run: |
           python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==3,x'
           python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==14 and x["sourceFiles"]>=6,x'
+      - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --prague-tx-fee 1 179 1 1 28170 7 0 7 1000000 0 0 3 1 1 0 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["chargedGas"]=="28170" and x["blobGasUsed"]=="131072" and x["blobFeeBurn"]=="131072" and x["senderAfterBalance"]=="671738",x'
+          lake exe evm-subset --prague-tx-fee 0 1221 1 1 69840 7 0 7 1000000 0 0 4 0 0 0 1 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["intrinsicGas"]=="69836" and x["floorGas"]=="69840" and x["chargedGas"]=="69840" and x["senderAfterBalance"]=="511120",x'
+          lake exe evm-subset --prague-authorize 0 1 0 0 1 1 1 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["nonce"]=="1" and x["codeHex"]=="0xef0100"+"0"*39+"1" and x["refundGas"]=="0",x'
+          lake exe evm-subset --prague-authorize 2 1 0 0 1 1 1 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="authorization-chain-id-mismatch",x'
+          lake exe evm-subset --prague-tx-fee 1 179 1 1 28170 7 0 7 1000000 0 0 3 1 0 0 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="blob-cap-below-current-fee",x'
       - name: Execute restricted EVM CLI and check emitted JSON
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -189,7 +197,7 @@ jobs:
           npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
           npm ls --prefix scripts/eels --depth=0
           printf '2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7  scripts/eels/package-lock.json\n' | sha256sum --check
-      - name: Execute published Prague EELS state tests with Lean empty-code frames
+      - name: Require all six official Prague EELS signed transaction types with Lean and authenticated roots
         working-directory: formal/lean4/evm-cleanroom
         run: |
           mkdir -p .lake/eels
@@ -197,8 +205,8 @@ jobs:
             --output .lake/eels/eip7623.json \
             "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/prague/eip7623_increase_calldata_cost/test_eip_7623.json"
           printf '9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4  .lake/eels/eip7623.json\n' | sha256sum --check
-          node scripts/eels/run-lean-state-tests.mjs --fixture .lake/eels/eip7623.json --out .lake/eels/lean-state-results.json | tee .lake/eels/summary.json
-          python3 -c 'import json; x=json.load(open(".lake/eels/lean-state-results.json")); assert x["status"]=="pass" and x["passed"]==4 and x["failed"]==0 and x["unsupported"]==2 and x["passed"]+x["unsupported"]==x["provenance"]["totalFixtureCases"] and all(case.get("computedStateRoot")==case.get("expectedStateRoot") for case in x["cases"] if case["status"]=="pass"),x'
+          node scripts/eels/run-lean-prague-all-types.mjs --fixture .lake/eels/eip7623.json --out .lake/eels/lean-prague-all-results.json | tee .lake/eels/summary.json
+          python3 -c 'import json; x=json.load(open(".lake/eels/lean-prague-all-results.json")); assert x["status"]=="pass" and x["passed"]==6 and x["failed"]==0 and x["unsupported"]==0 and x["actualLeanStateTestsExecuted"]==6 and len(x["cases"])==6 and all(c["computedStateRoot"]==c["expectedStateRoot"] for c in x["cases"]),x'
       - name: Execute genuine nonempty EELS Cancun contracts using Lean and reconstruct state roots
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -219,10 +227,10 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           node scripts/eels/contract-selftest.mjs .lake/eels/push0-contracts.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==4 and all(c["rejected"] for c in x["controls"]),x'
-      - name: Reject tampered EELS post-root and account-state expectations
+      - name: Reject forged Prague EIP-4844 blobs and EIP-7702 signatures, delegation and roots
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          node scripts/eels/selftest.mjs .lake/eels/eip7623.json .lake/eels/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==2 and all(c["detected"] for c in x["checks"]),x'
+          node scripts/eels/prague-all-selftest.mjs .lake/eels/eip7623.json .lake/eels/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==9 and all(c["rejected"] for c in x["checks"]),x'
       - name: Preserve published fixture, host transition results and npm resolution
         if: always()
         uses: actions/upload-artifact@v4
