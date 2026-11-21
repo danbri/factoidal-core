@@ -35,3 +35,4 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.GraphWords.mapXor_length
         L4Factoidal.GpuDomainSpecificLanguage.GraphWords.scan_length
         L4Factoidal.GpuDomainSpecificLanguage.GraphWords.broadcast_length
+        L4Factoidal.GpuDomainSpecificLanguage.GraphJson.certified_sound
