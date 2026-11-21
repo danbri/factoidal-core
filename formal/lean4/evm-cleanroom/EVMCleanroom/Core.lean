@@ -326,8 +326,8 @@ def run : Nat → State → Except Error State
       | .ok next =>
         if next.halted then .ok next else run fuel next
 
-/-- Normative EIP-7939 boundary examples. The differential harness also
-    runs full-width EVM words on a separately maintained Osaka runtime. -/
+-- Normative EIP-7939 boundary examples; the differential harness also
+-- runs full-width EVM words on a separately maintained Osaka runtime.
 #guard (word 0).leadingZeros == 256
 #guard (word 1).leadingZeros == 255
 #guard (word 2).leadingZeros == 254
