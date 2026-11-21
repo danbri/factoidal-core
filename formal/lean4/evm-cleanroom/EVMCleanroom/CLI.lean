@@ -2,6 +2,7 @@ import EVMCleanroom.Core
 import EVMCleanroom.Frame
 import EVMCleanroom.Call
 import EVMCleanroom.TxAccounting
+import EVMCleanroom.PragueEnvelope
 
 /-!
 A minimal machine-readable entry point for the *restricted* EVM model.
@@ -326,8 +327,85 @@ private def opcodeMain (profile : Profile) (hex gasStr fuelStr : String) : IO UI
     IO.println "{\"status\":\"inputError\",\"message\":\"gas and fuel must be nonnegative integers\"}"
     return 2
 
+/-- Explicit Prague envelope: type 0..4, blob fee at header excess=0,
+    and EIP-7702 authorization count. All big integers are decimal strings.
+    This does not read RLP or verify secp256k1, which are host boundaries. -/
+private def pragueFeeJSON (p : PragueEnvelope.Settlement) : String :=
+  "{\"schemaVersion\":1,\"status\":\"ok\",\"intrinsicGas\":\"" ++
+  toString p.intrinsic ++ "\",\"floorGas\":\"" ++ toString p.floor ++
+  "\",\"chargedGas\":\"" ++ toString p.charged ++
+  "\",\"effectivePrice\":\"" ++ toString p.price ++
+  "\",\"blobGasUsed\":\"" ++ toString p.blobGasUsed ++
+  "\",\"blobFeeBurn\":\"" ++ toString p.blobFeeBurn ++
+  "\",\"senderAfterBalance\":\"" ++ toString p.senderAfterBalance ++
+  "\",\"senderAfterNonce\":\"" ++ toString p.senderAfterNonce ++
+  "\",\"minerReward\":\"" ++ toString p.minerReward ++
+  "\",\"baseFeeBurn\":\"" ++ toString p.baseFeeBurn ++
+  "\",\"authorizationRefundGas\":\"" ++ toString p.authorizationRefundGas ++ "\"}"
+
+private def pragueFeeMain (args : List String) : IO UInt32 := do
+  let decoded := args.map String.toNat?
+  match decoded with
+  | [some z, some nz, some a, some k, some lim, some cap,
+     some tip, some base, some bal, some nonce, some used,
+     some txType, some blobs, some blobCap, some excess,
+     some auth, some existing] =>
+    let p : PragueEnvelope.Input := {
+      zeros := z, nonzeros := nz, accessAddresses := a, accessKeys := k,
+      gasLimit := lim, gasPriceCap := cap, priorityCap := tip,
+      baseFee := base, senderBalance := bal, senderNonce := nonce,
+      executionUsed := used, txType := txType, blobCount := blobs,
+      maxFeePerBlobGas := blobCap, excessBlobGas := excess,
+      authorizationCount := auth, existingAuthorizations := existing }
+    match PragueEnvelope.settle p with
+    | .ok result => IO.println (pragueFeeJSON result)
+    | .error reason =>
+      IO.println ("{\"status\":\"error\",\"reason\":\"" ++ reason ++ "\"}")
+    return 0
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"expected 17 decimal Prague envelope fields\"}"
+    return 2
+
+private def hexBytes (bs : Array UInt8) : String :=
+  String.ofList ((bs.toList).flatMap (fun byte =>
+    [hexDigit (byte.toNat / 16), hexDigit (byte.toNat % 16)]))
+
+/-- A distinct Lean authority state transition: the JS host must recover
+    and authenticate the EIP-7702 signer before setting signatureVerified.
+    No external signed bytes or 'expected' post-state are trusted as code. -/
+private def pragueAuthorizeMain (args : List String) : IO UInt32 := do
+  let decoded := args.map String.toNat?
+  match decoded with
+  | [some chain, some network, some signedNonce, some currentNonce,
+     some delegate, some signature, some codePermitted, some accountPresent] =>
+    if signature > 1 || codePermitted > 1 || accountPresent > 1 then
+      IO.println "{\"status\":\"inputError\",\"reason\":\"flags-must-be-0-or-1\"}"
+      return 2
+    let a : PragueEnvelope.AuthorizationInput := {
+      signedChainId := chain, networkChainId := network,
+      signedNonce := signedNonce, currentNonce := currentNonce,
+      delegateAddress := delegate,
+      signatureVerified := signature == 1,
+      codeIsPermitted := codePermitted == 1,
+      accountExists := accountPresent == 1 }
+    match PragueEnvelope.authorize a with
+    | .error reason =>
+      IO.println ("{\"status\":\"error\",\"reason\":\"" ++ reason ++ "\"}")
+    | .ok result =>
+      IO.println ("{\"schemaVersion\":1,\"status\":\"ok\",\"nonce\":\"" ++
+        toString result.nonce ++ "\",\"codeHex\":\"0x" ++
+        hexBytes result.code ++ "\",\"alreadyExisted\":" ++
+        (if result.alreadyExisted then "true" else "false") ++
+        ",\"refundGas\":\"" ++ toString result.refundGas ++ "\"}")
+    return 0
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"expected 8 Prague authorization fields\"}"
+    return 2
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
+  | "--prague-tx-fee" :: rest => pragueFeeMain rest
+  | "--prague-authorize" :: rest => pragueAuthorizeMain rest
   | "--tx-fee" :: rest => txFeeMain rest
   | "--storage" :: rest => storageMain rest
   | "--frame-storage" :: rest => frameStorageMain rest
