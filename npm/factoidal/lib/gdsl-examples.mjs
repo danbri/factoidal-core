@@ -1,6 +1,6 @@
 // All examples use the same GDSL 0.2 graph constructor, typed ports,
 // graph document and S-expression grammar. No application-owned parser.
-import {graph,toPVSexpr} from "./gdsl-graph.mjs";
+import {PVGraph,toPVSexpr} from "./gdsl-graph.mjs";
 
 function createSignalLoom(){
   const g=PVGraph();
@@ -87,5 +87,5 @@ export function example(id){
   if(!Object.prototype.hasOwnProperty.call(factories,id))
     throw new RangeError("Unknown GDSL example "+String(id));
   const x=factories[id]();
-  return {...x,id,sexpr:toPVSexpr(x.graph)};
+  return {...x,id,sexpr:toPVSexpr(x.pvgraph)};
 }
