@@ -6,6 +6,7 @@ on:
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphAdmission.lean'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphWords.lean'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphJson.lean'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphEvaluate.lean'
       - '.github/workflows/check-gdsl-lean.yml'
   workflow_dispatch: {}
 permissions:
@@ -21,6 +22,7 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission
         L4Factoidal.GpuDomainSpecificLanguage.GraphWords
         L4Factoidal.GpuDomainSpecificLanguage.GraphJson
+        L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
       theorems: >-
         L4Factoidal.GpuDomainSpecificLanguage.Graph.linksAdmitted_sound
         L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission.admitted_unique_node_ids
