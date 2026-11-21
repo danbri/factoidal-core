@@ -150,14 +150,17 @@ private def escape (s : String) : String :=
 
 private def chapterId (i : Nat) := "epub-chapter-" ++ toString (i + 1)
 
-private def link (book : Book) (path : String) (href : String) : Option String := do
+private def chapterURL (index : Nat) := "?epubChapter=" ++ toString (index + 1)
+
+private def link (book : Book) (path : String) (href : String) (paged : Bool) : Option String := do
   let fields := href.splitOn "#"
   if fields.length > 2 then none else
   let relative := fields.headD ""
   let target ← if relative.isEmpty then some path else resolvePath path relative
   let index ← book.spine.toList.findIdx? (fun r => r.path == target)
   let fragment ← String.fromUTF8? (WHATWG.URL.percentDecode (fields[1]?.getD "").toUTF8)
-  return "#" ++ chapterId index ++ (if fragment.isEmpty then "" else "-" ++ fragment)
+  let anchor := "#" ++ chapterId index ++ (if fragment.isEmpty then "" else "-" ++ fragment)
+  return if paged && target != path then chapterURL index ++ anchor else anchor
 
 private def raster (media : String) : Bool :=
   ["image/png","image/jpeg","image/gif"].contains media
@@ -170,7 +173,7 @@ private def markup : List String :=
 
 /-- Render only the passive subset. No book attributes are copied except escaped
 anchor IDs; links and raster sources are constructed from the admitted archive. -/
-private def renderNode (book : Book) (resource : Resource) (index : Nat) :
+private def renderNode (book : Book) (resource : Resource) (index : Nat) (paged : Bool) :
     Nat → NamespaceNode → Nat → String × Nat
   | 0, _, budget => ("", budget)
   | _+1, .other raw, budget => (escape (rawText (.other raw)), budget)
@@ -192,16 +195,17 @@ private def renderNode (book : Book) (resource : Resource) (index : Nat) :
     let idAttr := if anchor.isEmpty then "" else " id=\"" ++ escape (chapterId index ++ "-" ++ anchor) ++ "\""
     if ["br","hr"].contains tag then return ("<" ++ tag ++ idAttr ++ ">", budget)
     let (content, left) := kids.foldl (fun (acc, remaining) kid =>
-      let (s, next) := renderNode book resource index fuel kid remaining
+      let (s, next) := renderNode book resource index paged fuel kid remaining
       (acc ++ s, next)) ("", budget)
     if !markup.contains tag then return (content, left)
     let href := if tag == "a" then
-      ((link book resource.path (attr node "href")).map fun u => " href=\"" ++ escape u ++ "\"").getD ""
+      ((link book resource.path (attr node "href") paged).map fun u => " href=\"" ++ escape u ++ "\"").getD ""
       else ""
     return ("<" ++ tag ++ idAttr ++ href ++ ">" ++ content ++ "</" ++ tag ++ ">", left)
 
 /-- A reflowable reading view with a generated chapter index and safe links. -/
-def Book.readerHtml (book : Book) : Except String String := do
+def Book.readerHtml (book : Book) (chapter : Option Nat := none) : Except String String := do
+  if chapter.any (fun index => index >= book.spine.size) then throw "EPUB chapter is out of range"
   let mut sections := ""
   let mut links := ""
   let mut budget := maxInlineImageBytes
@@ -210,15 +214,17 @@ def Book.readerHtml (book : Book) : Except String String := do
     let root ← parse resource.bytes maxChapterBytes
     if !named xhtml "html" root then throw "Invalid EPUB XHTML document"
     let some body := child root xhtml "body" | throw "EPUB XHTML has no body"
-    let chapter := chapterId i
+    let id := chapterId i
     let name := ((child root xhtml "head").bind (fun n => child n xhtml "title")).map
       (fun n => String.join ((children n).map rawText))
     let label := escape (name.filter (!·.isEmpty) |>.getD ("Section " ++ toString (i + 1)))
-    links := links ++ "<li><a href=\"#" ++ chapter ++ "\">" ++ label ++ "</a></li>"
+    let href := if chapter.isSome then chapterURL i else "#" ++ chapterId i
+    links := links ++ "<li><a href=\"" ++ href ++ "\">" ++ label ++ "</a></li>"
+    if chapter.any (· != i) then continue
     let (content, left) := (children body).foldl (fun (acc, remaining) node =>
-      let (s, next) := renderNode book resource i 96 node remaining
+      let (s, next) := renderNode book resource i chapter.isSome 96 node remaining
       (acc ++ s, next)) ("", budget)
-    sections := sections ++ "<section id=\"" ++ chapter ++ "\">" ++ content ++ "</section>"
+    sections := sections ++ "<section id=\"" ++ id ++ "\">" ++ content ++ "</section>"
     budget := left
   let title := escape book.title
   return "<!doctype html><meta charset=\"utf-8\"><title>" ++ title ++ "</title>" ++
@@ -246,11 +252,16 @@ private def fixture : Except String Book := do
   openBook bytes
 
 #guard (fixture.map fun b => (b.title, b.spine.toList.map (·.id))).toOption == some ("Example", ["b","a"])
-#guard match fixture.bind Book.readerHtml with
+#guard match fixture.bind (·.readerHtml) with
   | .error _ => false
   | .ok s => (s.splitOn "href=\"#epub-chapter-2-code\"").length == 2 &&
       (s.splitOn "B &amp; C").length == 2 &&
       (s.splitOn "secretScriptMarker").length == 1 && (s.splitOn "file:///").length == 1
+
+#guard match fixture.bind (fun book => book.readerHtml (some 0)) with
+  | .error _ => false
+  | .ok s => (s.splitOn "href=\"?epubChapter=2#epub-chapter-2-code\"").length == 2 &&
+      (s.splitOn "id=\"epub-chapter-2\"").length == 1
 
 #print axioms segmentStep_root_parent
 

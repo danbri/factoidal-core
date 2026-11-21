@@ -3280,7 +3280,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     if html.utf8ByteSize > (Epub.maxArchiveBytes + 2) / 3 * 4 then throw "EPUB archive size limit exceeded"
     let some archive := XML.Enc.base64Decode? html | throw "Invalid EPUB byte transport"
     let book ← Epub.openBook archive
-    let page ← book.readerHtml
+    let page ← book.readerHtml (some (natField request "epubChapter"))
     return ((JSON.Json.object [("source", .string page)]).toString, #[])
   if str request "op" == "fontLoad" then
     return (← stepState fun e => let (h,r) := loadFont e.holds request; ({e with holds := h},r),#[])
