@@ -7,6 +7,34 @@ The name **GDSL** abbreviates **GpuDomainSpecificLanguage**; existing
 \`L4Factoidal.GpuDomainSpecificLanguage\` and GSSL-labeled low-level
 implementation modules retain their names for compatibility.
 
+## Runtime authority: Lean, not competing JS semantics
+
+The intended production architecture is **one Lean 4 PVGraph API compiled to
+WebAssembly**. Type rules, the core operator registry, canonical PVGraph
+construction, admission, and the reference interpreter are authored in Lean.
+JavaScript is a host binding that marshals arguments and calls this Wasm API.
+S-expressions are an alternative textual notation intended to be parsed by
+Lean/Wasm into that same PVGraph representation.
+
+The present synchronous JS `PVGraph()`, `checkPVGraph()`,
+`runPVGraphCPU()`, and `fromPVSexpr()` implementations predate that
+migration. They remain useful as **independent differential-test or exploratory
+implementations**, not the target trusted semantics. Any assertion about
+independent JS-to-Lean equivalence describes these legacy paths, **not**
+a universal obligation to prove arbitrary JavaScript correct.
+
+On the development branch, `Wasm.Ops.PVGraph` introduces
+`pvgraphBuild`, `pvgraphAdmit` and `pvgraphEvaluate` through the full
+Factoidal Wasm dispatch table. `createPVGraphWasm(loadEngine)` is a thin
+JavaScript command-marshalling client. It has no operator interpreter or
+independent node/link checker. **A rebuild and distribution of the full Wasm
+artifact is required** before an installed/browser package can use these
+new exports; old artifacts fail closed if the operations are absent.
+
+Lean-to-Wasm compilation, the C/JS ABI, execution host and any GPU lowering
+remain trust boundaries; kernel-checked source proofs do not automatically
+constitute a verified compiler correctness proof.
+
 ## 1. Non-negotiable interoperability rule
 
 **Every GDSL domain uses the same canonical PVGraph dataflow document, node/edge
@@ -189,14 +217,48 @@ compiling a Lean declaration that returns `Json` does **not** assert that
 the document is admitted. This distinction is intentional.
 
 Likewise, JS and S-expressions do **not** have to be parsed by the Lean
-elaborator. A host can convert either notation to the **same** canonical
-JSON and submit that exact document to the existing Lean checker. Equality
-of the JS/S-expression front ends with Lean is presently tested on finite
-shared fixtures, **not universally proved**. An eventual Lean elaborator
+elaborator. Native Lean terms directly invoke PVGraph constructors. At runtime,
+JS can invoke those *same constructors* through the compiled Lean/Wasm API;
+S-expressions can be decoded by a Lean/Wasm reader. The current independent
+JS builder and reader remain transitional test implementations, not the
+semantic authority. Their finite differential fixtures establish compatibility
+evidence, not a universal compiler-refinement theorem. An eventual Lean elaborator
 macro may improve ergonomics, but must elaborate to these same constructors
 and pass through the same certificate boundary.
 
-### 3.4 The one API
+### 3.4 Lean/Wasm-authoritative JavaScript binding (new)
+
+The bound API forwards one structured list of steps to Lean, where
+`PVGraph.Builder` constructs the canonical document and
+`PVGraph.admit?` checks it. The JavaScript layer assigns only ephemeral
+reference labels; the Lean builder chooses node IDs, creates typed links and
+applies registered operator semantics.
+
+```js
+import {createPVGraphWasm} from "@factoidal/core/gdsl";
+import {loadEngine} from "@factoidal/core/browser.js";
+
+const g = await createPVGraphWasm(loadEngine);
+const words = g.input("words");
+const scaled = g.op("u32.map.mul", {x:words}, {value:3},
+  {resultType:"buffer<u32>"});
+g.output("answer",scaled);
+const pv = await g.build(); // Lean/Wasm creates + admits the actual document
+const outputs = await g.evaluate(pv,{words:[2,3,5]});
+// outputs.answer = [6,9,15]
+```
+
+`resultType` is a *claim from the caller*, not a trusted JS operator
+signature; Lean validates it against the operator registry when admitting
+the resulting PVGraph. The Wasm builder accepts the same `gdsl/0.2`
+schema as native Lean. This new client deliberately doesn't fall back to
+`checkPVGraph()` or `runPVGraphCPU()` if Wasm is unavailable.
+
+S-expression parsing will be moved into Lean/Wasm too. It need not happen
+inside the Lean elaborator at compile time; Lean sources can construct and
+verify PVGraph directly, while dynamic host text can be parsed at runtime.
+
+### 3.5 Transitional legacy JavaScript API
 
 \`\`\`text
 PVGraph(registry?)      PVGraph constructor; add input, op, output
