@@ -12,10 +12,10 @@ test("GDSL 0.2 replaces the separate syntax proposal in earlier specification",(
   const spec=text("docs/specs/gdsl-0.2.md");
   const older=text("docs/specs/gssl-0.1.md");
   const residency=text("docs/20261121-gssl-residency-worklets.md");
-  assert.match(spec,/Every GDSL domain uses the same canonical dataflow graph/);
+  assert.match(spec,/Every GDSL domain uses the same canonical PVGraph dataflow document/);
   assert.match(spec,/register.*operator/i);
   assert.match(spec,/S-expressions/);
-  assert.match(spec,/JavaScript computational graph constructor/);
+  assert.match(spec,/JavaScript computational PVGraph constructor/);
   assert.match(spec,/typed.*link/i);
   assert.match(spec,/same graph/i);
   assert.match(older,/Superseded for new language design/);
@@ -45,11 +45,13 @@ test("GDSL Hub editor, graph rendering, bindings, CPU and GPU share one canonica
     assert.match(page,new RegExp('id="'+id+'"'));
   assert.match(page,/docs\/specs\/gdsl-0\.2\.md/);
   assert.match(graphApp,/from "\.\.\/\.\.\/\.\.\/npm\/factoidal\/gdsl\.mjs"/);
-  for(const fn of ["fromPVSexpr","toPVSexpr","runPVGraphCPU","runPVGraphGPU",
-    "createGsslResidentSession"]){
+  for(const fn of ["fromPVSexpr","toPVSexpr","runPVGraphCPU","PVGraph",
+    "createElementNS"]){
     assert.ok(graphApp.includes(fn));
   }
   assert.match(graphApp,/createElementNS/);
+  assert.doesNotMatch(graphApp,/runPVGraphGPU\s*\(/);
+  assert.match(page,/native Lean 4 toolkit/i);
   assert.match(graphApp,/dataflow/i);
   assert.match(app,/mountPVGraph\(\)/);
   assert.match(site,/web\/hub\/gssl/);
