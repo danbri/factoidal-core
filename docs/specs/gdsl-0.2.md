@@ -1,4 +1,4 @@
-# GDSL 0.2 — one typed dataflow language
+# GDSL 0.2 — one typed PVGraph dataflow language
 
 **Editor's draft · 21 November 2026 · experimental · not a W3C specification**
 
@@ -9,7 +9,7 @@ implementation modules retain their names for compatibility.
 
 ## 1. Non-negotiable interoperability rule
 
-**Every GDSL domain uses the same canonical dataflow graph, node/edge
+**Every GDSL domain uses the same canonical PVGraph dataflow document, node/edge
 representation, type vocabulary, registry protocol, parser, checker,
 interpreter, provenance and device boundary.**
 
@@ -79,7 +79,7 @@ future link-kind profiles, **not implemented** in this pure 0.2 graph.
 
 ### 2.2 Admission invariants
 
-The shared \`checkGraph\` rejects:
+The shared \`checkPVGraph\` rejects:
 
 - Duplicate node IDs, unknown operators or unrecognized parameters;
 - missing, duplicate, mistyped or mismatched source/destination ports;
@@ -98,12 +98,12 @@ not a machine-checked Lean refinement of the serialized format.
 
 ## 3. Two notations, **not** two DSLs
 
-### 3.1 JavaScript computational graph constructor
+### 3.1 JavaScript computational PVGraph constructor
 
 \`\`\`js
-import { graph, runCPU, toSexpr } from "@factoidal/core/gdsl";
+import { PVGraph, runPVGraphCPU, toPVSexpr } from "@factoidal/core/gdsl";
 
-const g = graph();
+const g = PVGraph();
 const samples = g.input("samples");
 const multiply = g.op("u32.map.mul", {x:samples}, {value:3},
   {id:"multiply"});
@@ -113,10 +113,10 @@ const mixed = g.op("u32.zip.add", {a:multiply,b:bias}, {},
   {id:"mix"});
 g.output("result",mixed);
 
-const program = g.build();  // a single checked graph document
-const {outputs} = runCPU(program,{samples:[2,3,5,7]});
+const program = g.build();  // a single checked PVGraph document
+const {outputs} = runPVGraphCPU(program,{samples:[2,3,5,7]});
 console.log(outputs.result); // [13,17,25,33]
-console.log(toSexpr(program));
+console.log(toPVSexpr(program));
 \`\`\`
 
 ### 3.2 S-expressions
@@ -126,7 +126,7 @@ The complete version 0.2 grammar consists of \`gdsl\`, \`node\`,
 extra language constructs**.
 
 \`\`\`scheme
-(gdsl gdsl/0.2
+(pvgraph gdsl/0.2
   (node samples core.input
     (param name "samples")
     (param type "buffer<u32>"))
@@ -144,7 +144,7 @@ extra language constructs**.
   (link mix out answer in buffer u32))
 \`\`\`
 
-\`toSexpr(graph)\` and \`fromSexpr(text)\` round-trip one
+\`toPVSexpr(graph)\` and \`fromPVSexpr(text)\` round-trip one
 \`{version,nodes,links}\` document. The same operators and typed links
 apply to every domain profile. Source text is a program **description**,
 not host JavaScript to evaluate.
@@ -152,12 +152,12 @@ not host JavaScript to evaluate.
 ### 3.3 The one API
 
 \`\`\`text
-graph(registry?)        constructor; add input, op, output
-checkGraph(document)   structural and type admission
-toSexpr(document)      emit common notation
-fromSexpr(text)        parse and admit common notation
-runCPU(graph, inputs)  reference interpreter and per-node trace
-runGraphGPU(graph, inputs, {session?})
+PVGraph(registry?)      PVGraph constructor; add input, op, output
+checkPVGraph(document)   structural and type admission
+toPVSexpr(document)      emit common notation
+fromPVSexpr(text)        parse and admit common notation
+runPVGraphCPU(pvgraph, inputs)  reference interpreter and per-node trace
+runPVGraphGPU(pvgraph, inputs, {admission,session?})
                         fixed-kernel WebGPU backend
 createOperatorRegistry(extensions)
                         trusted domain operator registration
@@ -208,14 +208,14 @@ Their presence is not a speedup claim.
 
 ### CPU
 
-\`runCPU\` interprets each admitted node in topological order,
+\`runPVGraphCPU\` interprets each admitted node in topological order,
 preserves named input/output types, and provides a per-node trace.
 A domain operator's CPU semantics comes from its registered
 implementation, not from arbitrary code embedded in a graph document.
 
 ### WebGPU
 
-\`runGraphGPU\` accepts the **same graph** but only lowers the
+\`runPVGraphGPU\` accepts the **same graph** but only lowers the
 whitelisted common built-in operations. It runs a single trusted
 WGSL source with a fixed opcode parameter, uses the already implemented
 \`@factoidal/core/gpu-resident\` device session, retains intermediate
@@ -316,8 +316,8 @@ The CI corpus checks two independent cross-language paths:
 
 These are **real native Lean executions**, not a JavaScript reimplementation
 branded as a proof. However, they remain *differential tests*:
-there is not yet a theorem showing `fromSexpr` and the JavaScript
-`checkGraph/runCPU` refine their Lean counterparts for every
+there is not yet a theorem showing `fromPVSexpr` and the JavaScript
+`checkPVGraph/runPVGraphCPU` refine their Lean counterparts for every
 possible input, nor a theorem that WGSL and the driver implement this
 Lean interpreter.
 
@@ -325,6 +325,50 @@ The Lean JSON bridge currently admits the **shared core operator
 registry**, not arbitrary domain-specific extensions. Each extension
 needs a checked signature and corresponding semantics before
 receiving the same assurance.
+
+### 7.2 Native-Lean-admitted PVGraph GPU execution (development profile)
+
+The exported `runPVGraphGPU` operation now **fails closed** unless it
+receives an opaque `PVGraphLeanAdmission` minted by
+`admitPVGraphWithLean` in the same process. A caller cannot authorize
+execution using a Boolean flag, object literal, or content hash alone.
+The admission binds the canonical PVGraph and exact named input words,
+checks the source document with the actual native Lean
+`GraphJson.decodeCertified?` model, evaluates it through
+`GraphEvaluate.evaluate?`, and requires that the independently
+computed Lean output agrees with the JavaScript reference.
+
+```js
+import {
+  PVGraph, admitPVGraphWithLean, runPVGraphGPU
+} from "@factoidal/core/gdsl";
+
+const pv = PVGraph();
+const xs = pv.input("words");
+const squared = pv.op("u32.map.mul", {x:xs}, {value:2});
+pv.output("answer",squared);
+const program = pv.build();
+const bindings = {words:[1,2,3,4]};
+
+// Requires this source checkout's Lean 4 toolkit (lake), not static Pages.
+const admission = await admitPVGraphWithLean(program,bindings);
+const observation = await runPVGraphGPU(program,bindings,{admission});
+```
+
+The native toolkit and matching Lean source checkout are presently
+mandatory. A separately installed npm package without those sources
+fails closed. The browser-only static Hub can still show PVGraph,
+S-expressions and the JavaScript CPU reference, but it **cannot**
+perform admitted PVGraph GPU execution without a future Lean/Wasm or
+other explicitly trusted native bridge. Its separate original
+low-level WebGPU diagnostic is *not* a certified PVGraph execution.
+
+The GPU runner snapshots its typed inputs and checks that exact snapshot,
+avoiding a JavaScript mutation between asynchronous verification and
+GPU upload. It compares the final device readback to the native Lean
+result. The session, WGSL compiler, driver and hardware remain trusted;
+**native Lean approval does not prove WGSL refinement**.
+No general runtime program verifier is claimed.
 
 ## 8. Integer width is an execution encoding
 
