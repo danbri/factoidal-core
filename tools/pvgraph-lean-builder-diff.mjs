@@ -68,7 +68,7 @@ for(const record of observed){
   assert.deepStrictEqual(fromPVSexpr(sexpr),record.pvgraph,
     `${id}: S-expression failed to round-trip Lean IR`);
   const result=runPVGraphCPU(record.pvgraph,record.bindings);
-  assert.deepStrictEqual(result.outputs,record.outputs,
+  assert.deepStrictEqual({...result.outputs},record.outputs,
     `${id}: Lean and JS evaluation diverged`);
 }
 console.log(JSON.stringify({status:"pass",cases:[...seen],
