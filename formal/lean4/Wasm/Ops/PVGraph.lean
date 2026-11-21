@@ -166,6 +166,16 @@ private def exampleSteps : Json := Json.mkObj [("steps", toJson ([
 ] : List Json))]
 
 #guard (match fromSteps? exampleSteps with | .ok _ => true | .error _ => false)
+/-- The Wasm command path uses the real Lean PVGraph reference evaluator. -/
+#guard (match fromSteps? exampleSteps with
+  | .error _ => false
+  | .ok doc =>
+    match PVGraph.evaluate? doc
+      (Json.mkObj [("samples", toJson ([2, 3, 5] : List Nat))]) with
+    | .error _ => false
+    | .ok output =>
+      output.compress == (Json.mkObj [("answer",
+        toJson ([6, 9, 15] : List Nat))]).compress)
 #guard (match fromSteps? (Json.mkObj [("steps", toJson ([
   Json.mkObj [("cmd", toJson "output"), ("name", toJson "answer"),
     ("source", toJson "missing"), ("id", Json.null)]
