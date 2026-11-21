@@ -50,12 +50,12 @@ private def fieldArr (j : Json) (name : String) : Except String (Array Json) := 
   v.getArr?
 
 private def idValid (s : String) : Bool :=
-  let letters := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-  let trailing := letters ++ "0123456789_.-"
+  let letters := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".toList
+  let trailing := letters ++ "0123456789_.-".toList
   if s.length == 0 || s.length > 64 then false else
     match s.toList with
     | [] => false
-    | c :: rest => letters.contains c && rest.all trailing.contains
+    | c :: rest => letters.contains c && rest.all (fun x => trailing.contains x)
 
 private def checkedId (s : String) : Except String String :=
   if idValid s then pure s else fail ("Invalid identifier: " ++ s)
