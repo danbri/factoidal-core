@@ -130,15 +130,15 @@ theorem fanout_second (v : Value) : (fanout v).2 = v := by rfl
 
 #guard (scan [1,2,3,4]) == [1,3,6,10]
 #guard (sum [1,2,3,4]) == (10 : UInt32)
-#guard (execute .mapMul [.buffer [1,2,3]] (some 3)) ==
-  .ok (.buffer [3,6,9])
-#guard (execute .reduceSum [.buffer []]) == .ok (.scalar 0)
-#guard (execute .broadcast [.scalar 7, .buffer [1,2,3]]) ==
-  .ok (.buffer [7,7,7])
-#guard (execute .zipAdd [.buffer [1,2], .buffer [3]]) ==
-  .error "GDSL zip lengths differ"
-#guard (Operator.fromName? "u32.map.xor") == some .mapXor
-#guard (Operator.fromName? "sparql.worklet") == none
+#guard decide (execute .mapMul [.buffer [1,2,3]] (some 3) =
+  .ok (.buffer [3,6,9]))
+#guard decide (execute .reduceSum [.buffer []] = .ok (.scalar 0))
+#guard decide (execute .broadcast [.scalar 7, .buffer [1,2,3]] =
+  .ok (.buffer [7,7,7]))
+#guard decide (execute .zipAdd [.buffer [1,2], .buffer [3]] =
+  .error "GDSL zip lengths differ")
+#guard decide (Operator.fromName? "u32.map.xor" = some .mapXor)
+#guard decide (Operator.fromName? "sparql.worklet" = none)
 
 #print axioms mapAdd_length
 #print axioms mapMul_length
