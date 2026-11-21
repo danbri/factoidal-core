@@ -58,7 +58,7 @@ test("public Hub route is explicitly exploratory, linked, and uses same runtime"
   assert.match(page,/Neither constitutes a general Lean→WGSL compiler or a formal proof/i);
   assert.match(page,/GPU hardware execution/i);
   assert.match(page,/issues\/691/);
-  assert.match(page,/docs\/specs\/gssl-0\.1\.md/);
+  assert.match(page,/docs\/specs\/gdsl-0\.2\.md/);
   assert.match(app, /from "\.\.\/\.\.\/\.\.\/npm\/factoidal\/lib\/gpu-resident\.mjs"/);
   assert.match(app,/runGPUSequential/);
   assert.match(app,/session\.dispatch\(/);
