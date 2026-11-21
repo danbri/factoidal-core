@@ -76,7 +76,7 @@ def sameShape (a b : Computed) : Bool :=
   verticalAlign == b.verticalAlign && tableFixed == b.tableFixed &&
   lengthEq minWidth b.minWidth && lengthEq maxWidth b.maxWidth &&
   lengthEq minHeight b.minHeight && lengthEq maxHeight b.maxHeight && objectFit == b.objectFit &&
-  optEq (fun (ax,ay) (bx,by) => lengthEq ax bx && lengthEq ay by) objectPosition b.objectPosition &&
+  optEq (fun left right => lengthEq left.1 right.1 && lengthEq left.2 right.2) objectPosition b.objectPosition &&
   textAlign == b.textAlign && direction == b.direction && unicodeBidi == b.unicodeBidi &&
   autoMarginLeft == b.autoMarginLeft && autoMarginRight == b.autoMarginRight &&
   autoMarginTop == b.autoMarginTop && autoMarginBottom == b.autoMarginBottom &&
