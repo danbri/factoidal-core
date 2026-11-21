@@ -24,7 +24,7 @@ open L4Factoidal.Storage
 structure Lanes where
   lo : UInt32
   hi : UInt32
-  deriving DecidableEq, BEq, Repr
+  deriving DecidableEq, Repr
 
 def split (x : UInt64) : Lanes :=
   ⟨x.toUInt32, (x >>> 32).toUInt32⟩
@@ -63,7 +63,8 @@ theorem split_beq_eq (x y : UInt64) :
   | true =>
     have heq : split x = split y := beq_iff_eq.mp h
     have hxy : x = y := (split_eq_iff x y).mp heq
-    simpa [hxy] using h
+    subst y
+    simp
 
 /-- The generic GSSL bag join needs no extra assumption when converting
     an abstract UInt64 key into the lossless low/high WGSL key. Both result
@@ -152,7 +153,9 @@ theorem readRecord_recordWords (t : IdTriple) :
     readRecord? (recordWords t) = some t := by
   cases t with
   | mk s p o =>
-      simp only [readRecord?, recordWords, join_split]
+      change some ⟨join (split s), join (split p), join (split o)⟩ =
+        some ⟨s, p, o⟩
+      rw [join_split s, join_split p, join_split o]
 
 theorem recordWords_length (t : IdTriple) : (recordWords t).length = 6 := by
   simp [recordWords]
