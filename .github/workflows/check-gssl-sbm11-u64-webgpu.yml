@@ -8,6 +8,9 @@ on:
       - 'tools/gssl-sbm11-webgpu.mjs'
       - 'tools/gssl-sbm11-dense-u32.mjs'
       - 'tools/gssl-sbm11-webgpu-smoke.mjs'
+      - 'tools/gssl-sbm11-snapshot.mjs'
+      - 'tools/gssl-sbm11-snapshot-gpu.mjs'
+      - 'tools/gssl-sbm11-snapshot-device-smoke.mjs'
       - 'tests/gssl_sbm11_u64_test.mjs'
       - '.github/workflows/check-gssl-sbm11-u64-webgpu.yml'
   workflow_dispatch: {}
@@ -39,6 +42,9 @@ jobs:
           node --check tools/gssl-sbm11-webgpu.mjs
           node --check tools/gssl-sbm11-dense-u32.mjs
           node --check tools/gssl-sbm11-webgpu-smoke.mjs
+          node --check tools/gssl-sbm11-snapshot.mjs
+          node --check tools/gssl-sbm11-snapshot-gpu.mjs
+          node --check tools/gssl-sbm11-snapshot-device-smoke.mjs
           node --check tests/gssl_sbm11_u64_test.mjs
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           mkdir -p "$RUNNER_TEMP/gssl-u64"
@@ -46,6 +52,9 @@ jobs:
           sha256sum tools/gssl-sbm11-webgpu.mjs \
             tools/gssl-sbm11-dense-u32.mjs \
             tools/gssl-sbm11-webgpu-smoke.mjs \
+            tools/gssl-sbm11-snapshot.mjs \
+            tools/gssl-sbm11-snapshot-gpu.mjs \
+            tools/gssl-sbm11-snapshot-device-smoke.mjs \
             formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/Sbm11U64Lanes.lean \
             tests/gssl_sbm11_u64_test.mjs | tee "$RUNNER_TEMP/gssl-u64/source.sha256"
       - name: Strict pure JavaScript u64 lane and BGP tests
@@ -67,6 +76,18 @@ jobs:
           timeout --kill-after=10s 240s deno run --no-config --no-npm --unstable-webgpu \
             tools/gssl-sbm11-webgpu-smoke.mjs "$SOURCE_COMMIT" \
             | tee "$RUNNER_TEMP/gssl-u64/device.json"
+      - name: Run snapshot-bound u64 and dense32 GPU and refuse stale replies
+        shell: bash
+        run: |
+          set -euo pipefail
+          driver="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$driver"
+          export DENO_WEBGPU_BACKEND=vulkan VK_DRIVER_FILES="$driver"
+          export XDG_RUNTIME_DIR
+          XDG_RUNTIME_DIR="$(mktemp -d "$RUNNER_TEMP/gssl-snapshot-xdg.XXXXXX")"
+          timeout --kill-after=10s 240s deno run --no-config --no-npm --unstable-webgpu \
+            tools/gssl-sbm11-snapshot-device-smoke.mjs "$SOURCE_COMMIT" \
+            | tee "$RUNNER_TEMP/gssl-u64/snapshot-device.json"
       - name: Save exact-source device evidence
         if: always()
         uses: actions/upload-artifact@v4
