@@ -1,6 +1,6 @@
 ---
 layout: hub-app.njk
-title: GSSL · GPU computation workbench
+title: GDSL · Typed dataflow workbench
 appBase: /web/hub/gssl
 appSource: https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/gssl
 appEngineLabel: Spec and assurance
@@ -79,7 +79,7 @@ permalink: /web/hub/gssl/
     <p class="scope">Status: experimental graph checker and fixed whitelisted GPU opcode kernel. Device results are observed, not Lean-certified. There is no general GDSL-to-WGSL compiler theorem. <a href="https://github.com/danbri/factoidal-core/blob/main/docs/specs/gdsl-0.2.md">Read the GDSL 0.2 specification</a>.</p>
   </section>
   <section class="panel" aria-labelledby="input-title">
-    <div class="panel-head"><h2 id="input-title">Input and program parameters</h2><span>01 · PREPARE</span></div>
+    <div class="panel-head"><h2 id="input-title">Legacy fixed-kernel device probe</h2><span>LOW-LEVEL REGRESSION</span></div>
     <p>Enter 1–64 unsigned 32-bit integers. The first and second passes apply separate affine transformations modulo 2<sup>32</sup>; the shader stays identical.</p>
     <label for="source">Input words (JSON array)</label>
     <textarea id="source" spellcheck="false" rows="5">[2, 3, 5, 7, 11, 13, 17, 19]</textarea>
