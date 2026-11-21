@@ -213,5 +213,5 @@ private def firstFill (html extra : String) : Except String (Option (Float × Fl
 #guard (boxes "<div><svg id='s' width='10' height='10' style='margin:4px'></svg></div>").map (·.head?) == .ok (some ("s",4,4,10,10))
 end L4Factoidal.Rendering.ReplacedTests
 
-#print axioms pictureOffset_default
-#print axioms pictureOffset_percent
+#print axioms L4Factoidal.Rendering.Layout.pictureOffset_default
+#print axioms L4Factoidal.Rendering.Layout.pictureOffset_percent
