@@ -42,6 +42,39 @@ RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
 `@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
 and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
+## Experimental GDSL 0.2: one graph language for every domain
+
+The optional `@factoidal/core/gdsl` subpath defines a **single typed
+dataflow graph** with named operator nodes, typed scalar/buffer links,
+a JavaScript graph-constructor API, and an S-expression notation.
+Every domain adds operators to this shared graph instead of defining
+a new GDSL syntax or execution architecture.
+
+```js
+import {graph,runCPU,toSexpr} from "@factoidal/core/gdsl";
+
+const g=graph();
+const pixels=g.input("pixels");
+const scale=g.op("u32.map.mul",{x:pixels},{value:3});
+const bias=g.op("u32.map.add",{x:pixels},{value:1});
+const result=g.op("u32.zip.add",{a:scale,b:bias});
+g.output("result",result);
+
+console.log(runCPU(g.build(),{pixels:[2,3,5,7]}).outputs.result);
+// [9, 13, 21, 29]
+console.log(toSexpr(g.build())); // identical graph in common notation
+```
+
+A common CPU interpreter and a fixed-kernel experimental WebGPU executor
+use the *same graph*, including non-SPARQL examples for signals, glyph
+advances, particle motion, pixel masking and scalar broadcasting.
+The WebGPU executor returns `observed-not-proven`, not an assurance
+claim about the WGSL compiler or physical GPU.
+
+Specification: [GDSL 0.2](../../docs/specs/gdsl-0.2.md).
+This npm subpath appears in the next published package release; the
+GitHub source is available now.
+
 ## Experimental GPU-resident compute resources
 
 The optional `@factoidal/core/gpu-resident` subpath exports
