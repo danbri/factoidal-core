@@ -1738,3 +1738,76 @@ id = "cli:xslt4"
 stages = ["xslt4Transform"]
 covers = "part"
 note = "bin/factoidal.mjs and bin/qt4.mjs read explicit files, call xslt4Transform, and print the engine result or a supplied serialization; no XML or query parsing in the host."
+
+# GDSL 0.2 public JavaScript and WebGPU surface. These exports do not call a registered Lean stage.
+[[nonstage]]
+id = "npm:./gdsl#CORE_OPERATORS"
+reason = "JavaScript GDSL operator registry value"
+
+[[nonstage]]
+id = "npm:./gdsl#GDSL_PVGRAPH_WGSL"
+reason = "WGSL shader source string"
+
+[[nonstage]]
+id = "npm:./gdsl#GDSL_VERSION"
+reason = "GDSL format version string"
+
+[[nonstage]]
+id = "npm:./gdsl#MAX_BUFFER_WORDS"
+reason = "GDSL buffer limit constant"
+
+[[nonstage]]
+id = "npm:./gdsl#MAX_LINKS"
+reason = "GDSL link limit constant"
+
+[[nonstage]]
+id = "npm:./gdsl#MAX_NODES"
+reason = "GDSL graph size limit constant"
+
+[[nonstage]]
+id = "npm:./gdsl#checkPVGraph"
+reason = "JavaScript validation of a GDSL graph document and its port types"
+
+[[nonstage]]
+id = "npm:./gdsl#admitPVGraphWithLean"
+reason = "Hosts a native Lean PVGraph admission process outside the registered dataflow stages"
+
+[[nonstage]]
+id = "npm:./gdsl#createGsslResidentSession"
+reason = "Creates a WebGPU host session and manages device buffers"
+
+[[nonstage]]
+id = "npm:./gdsl#createOperatorRegistry"
+reason = "Constructs a JavaScript registry of GDSL operator definitions"
+
+[[nonstage]]
+id = "npm:./gdsl#example"
+reason = "Returns a bundled GDSL example document"
+
+[[nonstage]]
+id = "npm:./gdsl#fromPVSexpr"
+reason = "Parses the GDSL S-expression syntax into a JavaScript document"
+
+[[nonstage]]
+id = "npm:./gdsl#PVGraph"
+reason = "Creates a JavaScript builder for a GDSL document"
+
+[[nonstage]]
+id = "npm:./gdsl#listExamples"
+reason = "Lists bundled GDSL example documents"
+
+[[nonstage]]
+id = "npm:./gdsl#runPVGraphCPU"
+reason = "Interprets GDSL operators in the JavaScript CPU evaluator"
+
+[[nonstage]]
+id = "npm:./gdsl#runPVGraphGPU"
+reason = "Dispatches the GDSL graph shader through the WebGPU host session"
+
+[[nonstage]]
+id = "npm:./gdsl#toPVSexpr"
+reason = "Serialises a GDSL graph document to S-expression syntax"
+
+[[nonstage]]
+id = "npm:./gpu-resident#createGsslResidentSession"
+reason = "Creates a WebGPU host session and manages device buffers"
