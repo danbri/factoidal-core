@@ -70,8 +70,8 @@ runtime, shader compiler or GPU execution.
 - Pixel words: XOR channel mask and checksum.
 - Broadcasting: a scalar node, explicit buffer-shape link and zip-add.
 
-Each example runs under the same `graph()`, `toSexpr()`,
-`fromSexpr()`, `checkGraph()`, `runCPU()` and `runGraphGPU()`
+Each example runs under the same `PVGraph()`, `toPVSexpr()`,
+`fromPVSexpr()`, `checkPVGraph()`, `runPVGraphCPU()` and `runPVGraphGPU()`
 vocabulary, not a language with its own planner.
 
 ## What remains outside the GDSL specification
