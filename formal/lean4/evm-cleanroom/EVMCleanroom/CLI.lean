@@ -377,8 +377,8 @@ private def pragueAuthorizeMain (args : List String) : IO UInt32 := do
   let decoded := args.map String.toNat?
   match decoded with
   | [some chain, some network, some signedNonce, some currentNonce,
-     some delegate, some signature, some codePermitted, some exists] =>
-    if signature > 1 || codePermitted > 1 || exists > 1 then
+     some delegate, some signature, some codePermitted, some accountPresent] =>
+    if signature > 1 || codePermitted > 1 || accountPresent > 1 then
       IO.println "{\"status\":\"inputError\",\"reason\":\"flags-must-be-0-or-1\"}"
       return 2
     let a : PragueEnvelope.AuthorizationInput := {
@@ -387,7 +387,7 @@ private def pragueAuthorizeMain (args : List String) : IO UInt32 := do
       delegateAddress := delegate,
       signatureVerified := signature == 1,
       codeIsPermitted := codePermitted == 1,
-      accountExists := exists == 1 }
+      accountExists := accountPresent == 1 }
     match PragueEnvelope.authorize a with
     | .error reason =>
       IO.println ("{\"status\":\"error\",\"reason\":\"" ++ reason ++ "\"}")
