@@ -29,7 +29,7 @@
     "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
     "scripts/check-axiom-output.py": "8d0cabed81fa593b90062c600bb4a9e3a3c0430b",
     "scripts/differential/osaka-clz.mjs": "75c466fdfef537ee1ab79874263ee8bba59ef251",
-    "EVMCleanroom/PragueEnvelope.lean": "167f939fe72139ff223dee8161efdd02ab79711a",
+    "EVMCleanroom/PragueEnvelope.lean": "1dbd4c5ccca0ab3d74e84d848be3cf6f5c6f9bce",
     "scripts/eels/run-lean-prague-all-types.mjs": "d289e7870a7b95d8c4ab4bd7a80944de175bb486",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265"
