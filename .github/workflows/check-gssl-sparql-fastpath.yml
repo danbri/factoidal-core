@@ -51,6 +51,8 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.join_split
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.split_eq_iff
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.split_beq_eq
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.joinRows_split_eq
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.bgpLaneModel_eq_bgpSpec
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.fromTermId_eq_iff_eqb
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.decodeTerm_encodeTerm
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.decodeTerm_encodeTerm?
