@@ -14,10 +14,13 @@
 // browser this native verifier deliberately refuses, and the public GPU
 // executor will not submit a pass.
 
-import {checkPVGraph,runPVGraphCPU,CORE_OPERATORS}
+import {checkPVGraph,runPVGraphCPU,createOperatorRegistry}
   from "./gdsl-graph.mjs";
 
 const capabilities=new WeakMap();
+// Independent fixed core semantics: exported registries may be extended
+// or mutated by applications and cannot authorize a GPU execution.
+const VERIFIED_CORE=createOperatorRegistry();
 const MAX_LEAN_JSON_BYTES=1024*1024;
 
 function normalizeInputs(pvgraph,inputs){
@@ -70,10 +73,10 @@ const same=(a,b)=>JSON.stringify(canonicalJSON(a))===
  * Installing @factoidal/core without these Lean sources fails closed.
  */
 export async function admitPVGraphWithLean(doc,bindings){
-  const pvgraph=checkPVGraph(doc,{registry:CORE_OPERATORS});
+  const pvgraph=checkPVGraph(doc,{registry:VERIFIED_CORE});
   // The local JS reference is checked independently against native Lean.
   // Do not leave an unhandled SHA-256 promise if CPU input validation fails.
-  const local=runPVGraphCPU(pvgraph,bindings,{registry:CORE_OPERATORS}).outputs;
+  const local=runPVGraphCPU(pvgraph,bindings,{registry:VERIFIED_CORE}).outputs;
   const {typedInputs,digest}=await identity(pvgraph,bindings);
   let execFile,fs,tmpdir,join,fileURLToPath;
   try{
