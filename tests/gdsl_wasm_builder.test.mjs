@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {createPVGraphWasm} from "../npm/factoidal/gdsl.mjs";
+import {createPVGraphWasm,example,listExamples} from "../npm/factoidal/gdsl.mjs";
 
 function stub(){
   const calls=[];
@@ -64,4 +64,23 @@ test("Wasm rejection surfaces as failure and never yields an admitted graph",asy
   const xs=g.input("x");
   g.output("answer",xs);
   await assert.rejects(g.build(),/Lean admission refused/);
+});
+
+test("all five domain recipes cross the Lean/Wasm ABI, never a JS interpreter",async()=>{
+  for(const item of listExamples()){
+    const {engine,calls,graph}=stub();
+    const e=await example(item.id,async()=>engine);
+    assert.strictEqual(e.pvgraph,graph);
+    assert.equal(e.domain,item.domain);
+    assert.ok(Object.values(e.input).every(Array.isArray));
+    const build=calls.find(c=>c.op==="pvgraphBuild");
+    assert.ok(build,item.id+": no Lean build call");
+    const steps=JSON.parse(build.args[0]).steps;
+    assert.ok(steps.some(x=>x.cmd==="input"));
+    assert.ok(steps.some(x=>x.cmd==="op"));
+    assert.ok(steps.some(x=>x.cmd==="output"));
+    assert.ok(steps.filter(x=>x.cmd==="op").every(x=>
+      x.resultType==="scalar<u32>"||x.resultType==="buffer<u32>"));
+    assert.deepEqual(calls.map(x=>x.op),["ops","pvgraphBuild"]);
+  }
 });
