@@ -71,8 +71,11 @@ def evaluate? (rawGraph rawBindings : Json) : Except String Json := do
   let rawNodes ← (← rawGraph.getObjVal? "nodes").getArr?
   let mut inputs : List String := []
   for raw in rawNodes do
-    if (← (← raw.getObjVal? "op").getStr?) == "core.input" then
-      inputs := (← (← raw.getObjVal? "params").getObjVal? "name").getStr?.toOption.getD "" :: inputs
+    let op ← (← raw.getObjVal? "op").getStr?
+    if op == "core.input" then
+      let params ← raw.getObjVal? "params"
+      let name ← (← params.getObjVal? "name").getStr?
+      inputs := name :: inputs
   let expected ← inputs.mapM fun name => do
     let v ← rawBindings.getObjVal? name
     return (name,v)
