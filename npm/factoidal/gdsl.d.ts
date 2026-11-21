@@ -88,7 +88,7 @@ export interface PVGraphWasmRef {
 export interface PVGraphWasmBuilder {
   input(name:string,type?:GdslDataType,options?:{id?:string}):PVGraphWasmRef;
   op(opcode:string,inputs:Record<string,PVGraphWasmRef>,
-     params?:Record<string,string|number>,
+     params:Record<string,string|number>|undefined,
      options:{resultType:GdslDataType;id?:string}):PVGraphWasmRef;
   output(name:string,source:PVGraphWasmRef,options?:{id?:string}):void;
   build():Promise<PVGraphDocument>;
