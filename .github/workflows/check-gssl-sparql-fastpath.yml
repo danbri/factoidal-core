@@ -42,6 +42,8 @@ jobs:
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement.rdfJoin_eq_relationalPlan
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement.encodedJoin_eq_evalBgpIdx
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_identity
+        L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_code_eq_iff
+        L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_eqb_for_codes
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_equality
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.checkGraphRoundTrip_sound
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.checkBindingRoundTrip_sound
