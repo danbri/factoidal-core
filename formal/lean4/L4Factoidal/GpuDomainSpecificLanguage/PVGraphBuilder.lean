@@ -76,14 +76,14 @@ private def connect {kind : ValueKind}
   modify fun st =>
     { st with links := linkJson source target inputPort :: st.links }
 
-private def chooseId (requested : Option String) : M String := do
+private def chooseId (requested : Option String) (prefix : String := "n") : M String := do
   match requested with
   | some id => return id
   | none =>
       let st ← get
       let n := st.next + 1
       set { st with next := n }
-      return s!"n{n}"
+      return s!"{prefix}{n}"
 
 /-- Named external binding, represented as the same core.input node as JS. -/
 def input (name : String) (kind : ValueKind := .buffer)
@@ -107,7 +107,8 @@ def op (opcode : String) (resultKind : ValueKind)
 /-- Named external result, with input port linked using the wire's type. -/
 def output {kind : ValueKind} (name : String) (source : Wire kind)
     (id : Option String := none) : M Unit := do
-  let node ← chooseId id
+  -- The generated resultN convention matches the JavaScript PVGraph builder.
+  let node ← chooseId id "result"
   addNode node "core.output"
     (obj [("name", toJson name), ("type", toJson kind.typeName)])
   connect source node "in"
