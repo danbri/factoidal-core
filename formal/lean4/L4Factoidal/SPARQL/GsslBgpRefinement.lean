@@ -46,7 +46,7 @@ theorem rightMatch_eq_tpMatch (colleague : VarName) (works object : WfIri)
       tpMatch ⟨.var colleague, .iri works, .iri object⟩ triple binding := by
   cases hkey : key.eqb triple.s.toTerm <;> cases hpred : works == triple.p <;>
     simp [rightMatch, tpMatch, tryBindSubject, tryBindTerm, bound, hkey, hpred]
-  cases hobj : triple.o <;> simp [hobj]
+  cases triple.o <;> simp
 
 /-- Ordered filter/map of the complete RDF graph for an already-bound key. -/
 def rightSelect (colleague : VarName) (works object : WfIri)
