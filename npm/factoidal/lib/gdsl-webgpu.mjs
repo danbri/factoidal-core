@@ -15,7 +15,7 @@ const CODES=Object.freeze({
   "u32.zip.add":4,"u32.zip.xor":5,"u32.scan.sum":6,
   "u32.reduce.sum":7,"u32.scalar.add":8,"u32.broadcast":9,
 });
-export const GDSL_GRAPH_WGSL=String.raw`
+export const GDSL_PVGRAPH_WGSL=String.raw`
 @group(0) @binding(0) var<storage, read> inputA: array<u32>;
 @group(0) @binding(1) var<storage, read> inputB: array<u32>;
 @group(0) @binding(2) var<storage, read_write> result: array<u32>;
@@ -138,7 +138,7 @@ export async function runPVGraphGPU(doc,bindings,{admission=null,session=null,
     await session.upload(id,new Uint32Array(words.length?words:[0]));
   }
   try{
-    await session.compile("gdsl-v02-graph",GDSL_GRAPH_WGSL);
+    await session.compile("gdsl-v02-graph",GDSL_PVGRAPH_WGSL);
     const dummy=prefix+"zero";
     await upload(dummy,[0]);
     for(const node of g.nodes){
