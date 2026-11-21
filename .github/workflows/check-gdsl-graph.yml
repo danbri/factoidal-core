@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'npm/factoidal/lib/gdsl-*.mjs'
+      - 'npm/factoidal/lib/pvgraph-lean-admission.mjs'
       - 'tests/gdsl_graph.test.mjs'
       - 'tools/gdsl-graph-device-smoke.mjs'
       - '.github/workflows/check-gdsl-graph.yml'
@@ -26,6 +27,15 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.4
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
       - name: Syntax and provenance
         shell: bash
         run: |
@@ -33,15 +43,22 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           node --check npm/factoidal/lib/gdsl-graph.mjs
           node --check npm/factoidal/lib/gdsl-webgpu.mjs
+          node --check npm/factoidal/lib/pvgraph-lean-admission.mjs
           node --check npm/factoidal/lib/gdsl-examples.mjs
           node --check tools/gdsl-graph-device-smoke.mjs
           node --check tests/gdsl_graph.test.mjs
           mkdir -p "$RUNNER_TEMP/gdsl"
           git rev-parse HEAD > "$RUNNER_TEMP/gdsl/commit.txt"
-          sha256sum npm/factoidal/lib/gdsl-*.mjs tests/gdsl_graph.test.mjs \
+          sha256sum npm/factoidal/lib/gdsl-*.mjs npm/factoidal/lib/pvgraph-lean-admission.mjs tests/gdsl_graph.test.mjs \
             tools/gdsl-graph-device-smoke.mjs | tee "$RUNNER_TEMP/gdsl/source.sha256"
       - name: Check canonical graph, JS builder, S-expression and CPU
         run: node --test tests/gdsl_graph.test.mjs
+      - name: Build independently executable Lean PVGraph admission and evaluation
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 420s lake build \
+            L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
       - name: Install Mesa software Vulkan
         run: |
           sudo apt-get update
@@ -55,7 +72,7 @@ jobs:
           export DENO_WEBGPU_BACKEND=vulkan VK_DRIVER_FILES="$driver"
           export XDG_RUNTIME_DIR
           XDG_RUNTIME_DIR="$(mktemp -d "$RUNNER_TEMP/gdsl-xdg.XXXXXX")"
-          timeout --kill-after=10s 240s deno run --no-config --no-npm --unstable-webgpu \
+          timeout --kill-after=10s 240s deno run -A --no-config --no-npm --unstable-webgpu \
             tools/gdsl-graph-device-smoke.mjs "$SOURCE_COMMIT" \
             | tee "$RUNNER_TEMP/gdsl/device.json"
       - name: Save original evidence
