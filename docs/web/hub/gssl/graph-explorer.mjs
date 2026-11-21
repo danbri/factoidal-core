@@ -3,7 +3,7 @@
 // Text input is parsed and never run as host JavaScript. GPU results are not
 // certified by Lean or by equality of a handful of test cases.
 import {
-  example,listExamples,fromSexpr,toSexpr,runCPU,runGraphGPU,
+  example,listExamples,fromPVSexpr,toPVSexpr,runPVGraphCPU,runPVGraphGPU,
   CORE_OPERATORS,createGsslResidentSession,
 } from "../../../npm/factoidal/gdsl.mjs";
 
@@ -36,7 +36,7 @@ function inputMap(doc,id){
   return map;
 }
 function builderSource(doc){
-  const rows=["import { graph } from '@factoidal/core/gdsl';","const g = graph();"];
+  const rows=["import { graph } from '@factoidal/core/gdsl';","const g = PVGraph();"];
   const refs=new Map();
   for(const [index,node] of doc.nodes.entries()){
     const variable="n"+index;
@@ -145,7 +145,7 @@ function showStats(run){
 function documentAndBindings(){
   if(source.value.length>65536||bindings.value.length>65536)
     throw new RangeError("GDSL editor input is bounded.");
-  const doc=fromSexpr(source.value);
+  const doc=fromPVSexpr(source.value);
   let supplied;
   try{supplied=JSON.parse(bindings.value);}
   catch{throw new SyntaxError("Input bindings must be valid JSON.");}
@@ -178,7 +178,7 @@ function runCPUOnly(){
   try{
     const {doc,supplied}=documentAndBindings();
     validate();
-    const run=runCPU(doc,supplied);
+    const run=runPVGraphCPU(doc,supplied);
     $("gdsl-cpu-output").textContent=JSON.stringify(run.outputs,null,2);
     $("gdsl-gpu-output").textContent="Not executed for this graph.";
     $("gdsl-agreement").textContent="CPU reference only (no device execution).";
@@ -195,7 +195,7 @@ async function runBoth(){
     const {doc,supplied}=documentAndBindings();
     validate();
     const sourceAtStart=source.value,bindingsAtStart=bindings.value;
-    const cpu=runCPU(doc,supplied);
+    const cpu=runPVGraphCPU(doc,supplied);
     $("gdsl-cpu-output").textContent=JSON.stringify(cpu.outputs,null,2);
     $("gdsl-gpu-output").textContent="GPU dispatch in progress…";
     setStatus("Executing the same admitted GDSL graph on WebGPU…");
@@ -203,7 +203,7 @@ async function runBoth(){
       throw new Error("No secure WebGPU device; the CPU result is available.");
     if(!session)session=await createGsslResidentSession({
       byteBudget:8*1024*1024,inspectMaxWords:256});
-    const gpu=await runGraphGPU(doc,supplied,{session});
+    const gpu=await runPVGraphGPU(doc,supplied,{session});
     if(source.value!==sourceAtStart||bindings.value!==bindingsAtStart)
       throw new Error("Graph changed during GPU run; stale device answer discarded.");
     const same=eq(cpu.outputs,gpu.outputs);
