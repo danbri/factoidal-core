@@ -27,10 +27,12 @@ export function leaseEqual(a,b) {
 // the GPU input without also changing its content hash.
 export async function createSnapshotRequest({
   sourceId,generation,graphId,codebookDigest,requestNumber,layout,
-  triples,queryConstants,
+  triples,queryConstants,queryText,
 }) {
   if(!validText(sourceId)||!validText(generation))
     throw new TypeError("An authentic source and generation identifier are required.");
+  if(!validText(queryText))
+    throw new TypeError("The exact SPARQL query text must be supplied for request identity.");
   if(!validDigest(codebookDigest))
     throw new TypeError("The codebook manifest SHA-256 must be supplied.");
   if(!Number.isSafeInteger(requestNumber)||requestNumber<1)
@@ -49,8 +51,16 @@ export async function createSnapshotRequest({
     queryWords[2*i]=Number(constants[i]&0xffffffffn);
     queryWords[2*i+1]=Number(constants[i]>>32n);
   }
+  // Include the exact UTF-8 query bytes, not just the three fixed constants.
+  // Distinct SELECT projections or variable names must not share a lease.
+  const queryTextBytes=new TextEncoder().encode(queryText);
+  const queryLaneBytes=encodeWordsLE(queryWords);
+  const queryBytes=new Uint8Array(4+queryTextBytes.length+queryLaneBytes.length);
+  new DataView(queryBytes.buffer).setUint32(0,queryTextBytes.length,true);
+  queryBytes.set(queryTextBytes,4);
+  queryBytes.set(queryLaneBytes,4+queryTextBytes.length);
   const [graphDigest,queryDigest]=await Promise.all([
-    sha256Hex(encodeWordsLE(payload)),sha256Hex(encodeWordsLE(queryWords)),
+    sha256Hex(encodeWordsLE(payload)),sha256Hex(queryBytes),
   ]);
   const lease=Object.freeze({sourceId,generation,graphId:graphId64.toString(),
     graphDigest,codebookDigest:codebookDigest.toLowerCase(),queryDigest,
