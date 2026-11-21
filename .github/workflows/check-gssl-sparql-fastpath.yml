@@ -22,6 +22,7 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
       theorems: >-
         L4Factoidal.SPARQL.GsslFastPath.resolve_eq_indexed
         L4Factoidal.SPARQL.GsslFastPath.unsupported_fallback
@@ -47,3 +48,10 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_equality
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.checkGraphRoundTrip_sound
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.checkBindingRoundTrip_sound
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.join_split
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.split_eq_iff
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.split_beq_eq
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.fromTermId_eq_iff_eqb
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.decodeTerm_encodeTerm
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.decodeTerm_encodeTerm?
+        L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.readRecord_recordWords
