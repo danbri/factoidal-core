@@ -1,0 +1,105 @@
+name: Paralliverse actual integer BGP WebGPU
+
+on:
+  push:
+    branches: [main, feat/674-gpu-bgp-core]
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/SelectCompact.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/IntegerBgp.lean'
+      - 'formal/lean4/Harness/ParalliverseIntegerBgpDevice.lean'
+      - 'docs/web/hub/paralliverse/integer-bgp-gpu.mjs'
+      - 'docs/web/hub/paralliverse/integer-bgp-compact-gpu.mjs'
+      - 'tools/paralliverse-integer-bgp-device-smoke.mjs'
+      - '.github/workflows/check-paralliverse-integer-bgp-device.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/SelectCompact.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/IntegerBgp.lean'
+      - 'formal/lean4/Harness/ParalliverseIntegerBgpDevice.lean'
+      - 'docs/web/hub/paralliverse/integer-bgp-gpu.mjs'
+      - 'docs/web/hub/paralliverse/integer-bgp-compact-gpu.mjs'
+      - 'tools/paralliverse-integer-bgp-device-smoke.mjs'
+      - '.github/workflows/check-paralliverse-integer-bgp-device.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  gpu-bgp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.4
+      - name: Check source syntax and exact provenance
+        run: |
+          set -euo pipefail
+          node --check docs/web/hub/paralliverse/integer-bgp-gpu.mjs
+          node --check docs/web/hub/paralliverse/integer-bgp-compact-gpu.mjs
+          node --check tools/paralliverse-integer-bgp-device-smoke.mjs
+          mkdir -p "$RUNNER_TEMP/integer-bgp-gpu"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/integer-bgp-gpu/commit.txt"
+          test "$(cat "$RUNNER_TEMP/integer-bgp-gpu/commit.txt")" = "$SOURCE_COMMIT"
+          sha256sum formal/lean4/L4Factoidal/Paralliverse/IntegerBgp.lean \
+            formal/lean4/L4Factoidal/Paralliverse/SelectCompact.lean \
+            formal/lean4/Harness/ParalliverseIntegerBgpDevice.lean \
+            docs/web/hub/paralliverse/integer-bgp-gpu.mjs \
+            docs/web/hub/paralliverse/integer-bgp-compact-gpu.mjs \
+            tools/paralliverse-integer-bgp-device-smoke.mjs | tee "$RUNNER_TEMP/integer-bgp-gpu/sources.sha256"
+      - name: Compile Lean integer query reference
+        working-directory: formal/lean4
+        run: timeout --kill-after=10s 240s lake build L4Factoidal.Paralliverse.IntegerBgp
+      - name: Native Lean BGP oracle fixtures, not a JavaScript query
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 180s lake env lean --run \
+            Harness/ParalliverseIntegerBgpDevice.lean \
+            > "$RUNNER_TEMP/integer-bgp-gpu/cpu.jsonl"
+          test "$(wc -l < "$RUNNER_TEMP/integer-bgp-gpu/cpu.jsonl")" -eq 5
+      - name: Install Mesa software Vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+          dpkg-query -W libvulkan1 mesa-vulkan-drivers
+      - name: "Real GPU execution: count, scan, and emitted BGP bindings"
+        shell: bash
+        run: |
+          set -euo pipefail
+          driver="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$driver"
+          export DENO_WEBGPU_BACKEND=vulkan VK_DRIVER_FILES="$driver"
+          export XDG_RUNTIME_DIR
+          XDG_RUNTIME_DIR="$(mktemp -d "$RUNNER_TEMP/integer-bgp-xdg.XXXXXX")"
+          timeout --kill-after=10s 240s deno run --no-config --no-npm --unstable-webgpu \
+            --allow-read="$RUNNER_TEMP/integer-bgp-gpu/cpu.jsonl" \
+            tools/paralliverse-integer-bgp-device-smoke.mjs \
+            "$RUNNER_TEMP/integer-bgp-gpu/cpu.jsonl" "$SOURCE_COMMIT" \
+            | tee "$RUNNER_TEMP/integer-bgp-gpu/device.json"
+      - name: Save original source, oracle and GPU traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integer-bgp-device-evidence
+          path: ${{ runner.temp }}/integer-bgp-gpu/
+          if-no-files-found: warn
+          retention-days: 30
