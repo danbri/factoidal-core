@@ -84,7 +84,7 @@ private def errorJSON (e : EVMCleanroom.Error) : String :=
 /-- Execute multiple independent cases in one Lean process. Each nonempty
     input line contains HEX, GAS, FUEL separated by TABs. The output has
     exactly one JSON result per input record, preserving input order. -/
-private def runBatchFile (path : String) : IO UInt32 := do
+private def runBatchFile (path : String) (profile : Profile := .shanghaiPlus) : IO UInt32 := do
   let source ← IO.FS.readFile path
   let mut count : Nat := 0
   let mut malformed : Nat := 0
@@ -96,7 +96,7 @@ private def runBatchFile (path : String) : IO UInt32 := do
       | [hex, gasStr, fuelStr] =>
         match parseBytecode hex, gasStr.toNat?, fuelStr.toNat? with
         | .ok code, some gas, some fuel =>
-          let s : EVMCleanroom.State := { code := code, gas := gas }
+          let s : EVMCleanroom.State := { code := code, gas := gas, profile := profile }
           match EVMCleanroom.run fuel s with
           | .ok out => IO.println (successJSON out)
           | .error e => IO.println (errorJSON e)
@@ -304,6 +304,28 @@ private def callSliceMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"reason\":\"usage: --call-slice HEX TARGET PARENT_GAS REQUESTED_GAS FUEL\"}"
     return 2
 
+/-- Minimal whole-word Osaka opcode probe. This is an explicit profile
+    selection for a small verified subset, NOT a whole-fork transaction runner.
+    The batch variant is used to compare every selected input with a real
+    independently executed Osaka EVM using a single Lean process. -/
+private def opcodeMain (profile : Profile) (hex gasStr fuelStr : String) : IO UInt32 := do
+  match parseBytecode hex, gasStr.toNat?, fuelStr.toNat? with
+  | .ok code, some gas, some fuel =>
+    let s : EVMCleanroom.State := { code := code, gas := gas, profile := profile }
+    match EVMCleanroom.run fuel s with
+    | .ok out =>
+      IO.println (successJSON out)
+      return 0
+    | .error e =>
+      IO.println (errorJSON e)
+      return 0
+  | .error why, _, _ =>
+    IO.println ("{\"status\":\"inputError\",\"message\":\"" ++ why ++ "\"}")
+    return 2
+  | _, _, _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"gas and fuel must be nonnegative integers\"}"
+    return 2
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
   | "--tx-fee" :: rest => txFeeMain rest
@@ -312,23 +334,9 @@ def cliMain (args : List String) : IO UInt32 := do
   | "--call-slice" :: rest => callSliceMain rest
   | ["--storage-batch", path] => storageBatchMain path
   | ["--batch", path] => runBatchFile path
-  | [hex, gasStr, fuelStr] =>
-    match parseBytecode hex, gasStr.toNat?, fuelStr.toNat? with
-    | .ok code, some gas, some fuel =>
-      let s : EVMCleanroom.State := { code := code, gas := gas }
-      match EVMCleanroom.run fuel s with
-      | .ok out =>
-        IO.println (successJSON out)
-        return 0
-      | .error e =>
-        IO.println (errorJSON e)
-        return 0
-    | .error why, _, _ =>
-      IO.println ("{\"status\":\"inputError\",\"message\":\"" ++ why ++ "\"}")
-      return 2
-    | _, _, _ =>
-      IO.println "{\"status\":\"inputError\",\"message\":\"gas and fuel must be nonnegative integers\"}"
-      return 2
+  | ["--osaka-batch", path] => runBatchFile path .osaka
+  | ["--osaka", hex, gasStr, fuelStr] => opcodeMain .osaka hex gasStr fuelStr
+  | [hex, gasStr, fuelStr] => opcodeMain .shanghaiPlus hex gasStr fuelStr
   | _ =>
     IO.println "{\"status\":\"inputError\",\"message\":\"usage: evm-subset HEX GAS FUEL\"}"
     return 2
