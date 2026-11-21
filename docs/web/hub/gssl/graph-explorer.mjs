@@ -223,7 +223,7 @@ async function runBoth(){
     setStatus(e?.message||String(e),"error");
   }finally{busy(false);}
 }
-export function mountGdslGraph(){
+export function mountPVGraph(){
   const presets=listExamples();
   if(!presets.length)throw Error("GDSL has no registered graph examples.");
   options.addEventListener("change",()=>preset(options.value));
