@@ -34,6 +34,13 @@ const edges = [
   (1n << 256n) - 1n,
 ]
 const operands = new Map(edges.map(n => [n.toString(16), n]))
+const add = n => operands.set(n.toString(16), n)
+// Cover every CLZ result from 0 through 256, and both sides of each
+// bit-length transition. This catches off-by-one errors which uniform
+// 256-bit random inputs (mostly yielding CLZ=0 or 1) routinely miss.
+for (let bit = 0; bit < 256; bit++) add(1n << BigInt(bit))
+for (let bit = 1; bit <= 256; bit++) add((1n << BigInt(bit)) - 1n)
+for (let bit = 0; bit < 256; bit++) add((1n << BigInt(bit)) + 1n)
 for (let i = 0; i < 256; i++) {
   const digest = createHash('sha256')
     .update('factoidal-eip7939-osaka-clz-v1:' + String(i)).digest('hex')
@@ -64,12 +71,12 @@ try {
   rmSync(temp, {recursive: true, force: true})
 }
 
-async function reference(code) {
+async function reference(code, gasLimit = GAS) {
   const common = new Common({chain: Mainnet, hardfork: Hardfork.Osaka})
   const evm = await createEVM({common})
   await evm.stateManager.putAccount(target, new Account())
   await evm.stateManager.putCode(target, hexToBytes('0x' + code))
-  const run = await evm.runCall({caller, to: target, gasLimit: GAS})
+  const run = await evm.runCall({caller, to: target, gasLimit})
   const execution = run.execResult
   if (execution.exceptionError)
     throw Error('Osaka reference rejected supported CLZ: ' +
@@ -79,7 +86,7 @@ async function reference(code) {
     throw Error('Osaka reference did not preserve one CLZ result')
   return {
     stack: [stack[0].toString()],
-    gasRemaining: (GAS - execution.executionGasUsed).toString(),
+    gasRemaining: (gasLimit - execution.executionGasUsed).toString(),
   }
 }
 
@@ -121,16 +128,40 @@ if (earlier.error || earlier.status !== 0) throw Error('legacy Lean probe failed
 const beforeOsaka = JSON.parse(earlier.stdout.trim().split('\n').at(-1))
 const forkGuardHeld =
   beforeOsaka.status === 'error' && beforeOsaka.error === 'unsupportedFork'
+function leanSingle(code, gas) {
+  const proc = spawnSync('lake', [
+    'exe', 'evm-subset', '--osaka', code, String(gas), String(FUEL),
+  ], {encoding: 'utf8', timeout: 60000})
+  if (proc.error || proc.status !== 0)
+    throw Error('Lean single opcode probe failed: ' + String(proc.error ?? proc.stderr))
+  return JSON.parse(proc.stdout.trim().split('\n').at(-1))
+}
+const underflow = leanSingle('1e00', 100)
+const tooLittleGas = leanSingle(hexCode(0n), 7)
+const exactGas = leanSingle(hexCode(0n), 8)
+const underflowRejected = underflow.status === 'error' &&
+  underflow.error === 'stackUnderflow'
+const outOfGasRejected = tooLittleGas.status === 'error' &&
+  tooLittleGas.error === 'outOfGas'
+const exactGasAccepted = exactGas.status === 'ok' &&
+  exactGas.gasRemaining === '0' && exactGas.stack?.[0] === '256'
+const oracleExactGas = await reference(hexCode(0n), 8n)
+const independentExactGas = oracleExactGas.gasRemaining === '0' &&
+  oracleExactGas.stack?.[0] === '256'
 const result = {
   kind: 'EIP-7939 full-256bit CLZ opcode differential',
   fork: 'Osaka', oracle: '@ethereumjs/evm@10.1.3 Hardfork.Osaka',
   tested: corpus.length, passed: corpus.length - failures.length,
   failed: failures.length, forkGuardHeld, comparatorMutationCaught,
-  boundaryInputs: edges.length, pseudorandomInputs: 256,
+  underflowRejected, outOfGasRejected, exactGasAccepted, independentExactGas,
+  boundaryInputs: edges.length, oneHotInputs: 256,
+  belowPowerInputs: 256, abovePowerInputs: 256, pseudorandomInputs: 256,
   comparedFields: ['stack result', 'exact gas', 'PC', 'memory', 'declarative bit-length'],
   limitations: 'only one CLZ instruction after PUSH32; Osaka explicitly selected, not full mainnet transaction/block conformance',
   firstFailures: failures.slice(0, 5),
 }
 console.log(JSON.stringify(result))
-if (failures.length || !forkGuardHeld || !comparatorMutationCaught)
+if (failures.length || !forkGuardHeld || !comparatorMutationCaught ||
+    !underflowRejected || !outOfGasRejected ||
+    !exactGasAccepted || !independentExactGas || corpus.length !== 1022)
   process.exitCode = 1
