@@ -160,7 +160,7 @@ function linkFor(from,to,type){
   return {from:{node:from.node,port:from.port},to:{node:to.node,port:to.port},
     ...portType(type)};
 }
-function copyGraph(doc){
+function copyPVGraph(doc){
   // Copy by projection to avoid prototype/alias tricks, reject unsupported extras.
   if(!object(doc)||!eq(Object.keys(doc).sort(),["links","nodes","version"]))
     fail("Graph must have exactly links, nodes and version.");
@@ -190,9 +190,9 @@ function copyGraph(doc){
   * require a future profile and cannot silently enter a pure graph.
   * All nodes appear in topological order and are single assignment.
   */
-export function checkGraph(doc,{registry=CORE_OPERATORS}={}){
+export function checkPVGraph(doc,{registry=CORE_OPERATORS}={}){
   if(!(registry instanceof Map))fail("A typed registry Map is required.");
-  const graph=copyGraph(doc);
+  const graph=copyPVGraph(doc);
   const nodeMap=new Map(),positions=new Map(),inCounts=new Map(),
     namesIn=new Set(),namesOut=new Set();
   let outputs=0;
@@ -240,7 +240,7 @@ export function checkGraph(doc,{registry=CORE_OPERATORS}={}){
 }
 
 /** Construct the exact shared AST. No hidden domain-specific AST exists. */
-export function graph({registry=CORE_OPERATORS}={}){
+export function PVGraph({registry=CORE_OPERATORS}={}){
   const nodes=[],links=[],ids=new Set();
   let next=0;
   const newId=(candidate)=>{
@@ -286,14 +286,14 @@ export function graph({registry=CORE_OPERATORS}={}){
       wire(source,node,"in",type);
       return freeze({node,port:"out"});
     },
-    build(){return checkGraph({version:GDSL_VERSION,nodes,links},{registry});},
+    build(){return checkPVGraph({version:GDSL_VERSION,nodes,links},{registry});},
   };
   return builder;
 }
 
 /** CPU reference over the exact admitted graph, no implicit GPU/device use. */
-export function runCPU(doc,bindings,{registry=CORE_OPERATORS}={}){
-  const checked=checkGraph(doc,{registry});
+export function runPVGraphCPU(doc,bindings,{registry=CORE_OPERATORS}={}){
+  const checked=checkPVGraph(doc,{registry});
   if(!object(bindings))fail("Run bindings must be a named object.");
   const supplied=new Map(Object.entries(bindings));
   const actualInputs=checked.nodes.filter(n=>n.op==="core.input");
@@ -337,16 +337,16 @@ export function runCPU(doc,bindings,{registry=CORE_OPERATORS}={}){
   *
   * Link records and node declarations use one vocabulary for every domain.
   */
-export function toSexpr(doc,{registry=CORE_OPERATORS}={}){
-  const d=checkGraph(doc,{registry});
+export function toPVSexpr(doc,{registry=CORE_OPERATORS}={}){
+  const d=checkPVGraph(doc,{registry});
   const atom=v=>typeof v==="string"?JSON.stringify(v):String(v);
   const nodes=d.nodes.map(n=>"  (node "+n.id+" "+n.op+
     Object.entries(n.params).map(([name,v])=>" (param "+name+" "+atom(v)+")").join("")+")");
   const links=d.links.map(l=>"  (link "+l.from.node+" "+l.from.port+" "+
     l.to.node+" "+l.to.port+" "+l.kind+" "+l.type+")");
-  return "(gdsl "+GDSL_VERSION+"\n"+[...nodes,...links].join("\n")+"\n)";
+  return "(pvgraph "+GDSL_VERSION+"\n"+[...nodes,...links].join("\n")+"\n)";
 }
-export function fromSexpr(text,{registry=CORE_OPERATORS}={}){
+export function fromPVSexpr(text,{registry=CORE_OPERATORS}={}){
   if(typeof text!=="string"||text.length>65536)fail("Invalid or oversized S-expression.");
   const tokens=text.match(/"(?:\\.|[^"\\])*"|\(|\)|[^\s()]+/g)??[];
   if(tokens.length>6000)fail("S-expression exceeds token limit.");
@@ -375,7 +375,7 @@ export function fromSexpr(text,{registry=CORE_OPERATORS}={}){
   }
   const forms=parse();
   if(at!==tokens.length)fail("Unexpected trailing S-expression tokens.");
-  if(!Array.isArray(forms)||forms[0]!=="gdsl"||
+  if(!Array.isArray(forms)||forms[0]!=="pvgraph"||
     forms[1]!==GDSL_VERSION)fail("Wrong GDSL S-expression header.");
   const nodes=[],links=[];
   for(const form of forms.slice(2)){
@@ -398,5 +398,5 @@ export function fromSexpr(text,{registry=CORE_OPERATORS}={}){
         to:{node:dst,port:dstPort},kind,type});
     }else fail("Unknown GDSL form "+String(form[0]));
   }
-  return checkGraph({version:GDSL_VERSION,nodes,links},{registry});
+  return checkPVGraph({version:GDSL_VERSION,nodes,links},{registry});
 }
