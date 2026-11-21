@@ -1,0 +1,253 @@
+name: Theorem review Lean check
+
+on:
+  push:
+    branches: [main, wip/timer-partition-proofs]
+    paths:
+      - 'formal/lean4/**'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-timer-partition.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/**'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-timer-partition.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  timer-partition:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/timer-partition-proofs'
+    name: Lean proofs (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: timer-blob-rdf-vc
+            job_timeout_minutes: 30
+            modules: |-
+              L4Factoidal.EventLoop.TimerPartitionTheorems
+              L4Factoidal.Net.BlobQuotaTheorems
+              L4Factoidal.Net.SubresourceBoundTheorems
+              L4Factoidal.DOM.Editing.TextControlOffsetTheorems
+              L4Factoidal.RDF.CollectionBoundTheorems
+              L4Factoidal.VC.CidKeyTheorems
+              L4Factoidal.VC.StatusListRangeTheorems
+              L4Factoidal.Rendering.RdfViewTheorems
+              L4Factoidal.SPARQL.GraphStoreMergeTheorems
+              L4Factoidal.SPARQL.GraphStorePostTheorems
+            larger_dependency_budgets: ''
+            theorems: |-
+              L4Factoidal.EventLoop.mem_due_now_iff
+              L4Factoidal.EventLoop.mem_due_later_iff
+              L4Factoidal.EventLoop.fire_no_due
+              L4Factoidal.EventLoop.fire_idempotent
+              L4Factoidal.EventLoop.due_eq_filters
+              L4Factoidal.EventLoop.fire_eq_filter_tasks
+              L4Factoidal.Net.BlobUrls.default_payload_quota
+              L4Factoidal.Net.BlobUrls.add_payload_quota
+              L4Factoidal.Net.BlobUrls.revoke_payload
+              L4Factoidal.Net.BlobUrls.revoke_payload_quota
+              L4Factoidal.Net.Subresource.start_live_bound
+              L4Factoidal.Net.Subresource.answer_live_nonincrease
+              L4Factoidal.Net.Subresource.cancel_live_nonincrease
+              L4Factoidal.Net.Subresource.live_bound_preserved
+              L4Factoidal.DOM.Editing.indexOfUnits_unitsOfIndex
+              L4Factoidal.DOM.Editing.textEdit_result_utf16
+              L4Factoidal.RDF.listWalk_length_lt
+              L4Factoidal.RDF.listItemsBy_length_lt
+              L4Factoidal.RDF.listItems_length_le
+              L4Factoidal.VC.Cryptosuite.resolvePublicKey_cid_document
+              L4Factoidal.VC.StatusList.validate_ok_status_range
+              L4Factoidal.Rendering.RdfView.toDOM_graph_length_le
+              L4Factoidal.Rendering.RdfView.parse_graph_and_caps
+              L4Factoidal.SPARQL.GraphStoreService.freshPrefix_fresh
+              L4Factoidal.SPARQL.GraphStoreService.freshPrefix_candidate
+              L4Factoidal.SPARQL.GraphStoreService.serve_post_named_denotation
+          - group: storage-tli
+            job_timeout_minutes: 20
+            modules: |-
+              L4Factoidal.Storage.TermLocalIndex
+              L4Factoidal.Storage.TermLocalIndexLookupTheorems
+              L4Factoidal.Storage.TermLocalIndexWireLookupTheorems
+            larger_dependency_budgets: ''
+            theorems: |-
+              L4Factoidal.Storage.TermLocalIndex.mem_entriesOf_iff
+              L4Factoidal.Storage.TermFold.foldTerm_eq_self
+              L4Factoidal.Storage.TermLocalIndex.lookup_entriesOf_sound
+              L4Factoidal.Storage.TermLocalIndex.lookup?_eq_some_of_key_cut
+              L4Factoidal.Storage.TermLocalIndexWire.strictlyIncreasing_pairwise_key_lt
+              L4Factoidal.Storage.TermLocalIndexWire.lookup_entriesOf_at_of_encode?
+              L4Factoidal.Storage.TermLocalIndexWire.decode_lookup_entriesOf_eq_findTermId?
+              L4Factoidal.Storage.TermLocalIndexWire.dictInjective_entriesOf_of_encode?
+          - group: xhr-provenance
+            job_timeout_minutes: 15
+            modules: |-
+              L4Factoidal.Net.XhrResponseProvenanceTheorems
+            larger_dependency_budgets: ''
+            theorems: |-
+              L4Factoidal.Net.Xhr.give_realm_response_released
+          - group: eventsource-header
+            job_timeout_minutes: 15
+            modules: |-
+              L4Factoidal.Net.EventSourceHeaderTheorems
+            larger_dependency_budgets: ''
+            theorems: |-
+              L4Factoidal.Net.EventSource.unicode_last_event_id_header_refused
+          - group: http-wire
+            job_timeout_minutes: 15
+            modules: |-
+              L4Factoidal.HTTP.WireBoundTheorems
+            larger_dependency_budgets: ''
+            theorems: |-
+              L4Factoidal.HTTP.Wire.decodeChunked_body_bound
+              L4Factoidal.HTTP.Wire.frameRequest_body_bound
+          - group: store-endpoint
+            job_timeout_minutes: 45
+            modules: |-
+              L4Factoidal.SPARQL.StoreEndpointTheorems
+              L4Factoidal.SPARQL.StoreReplayTheorems
+              L4Factoidal.SPARQL.StoreCommitReplayTheorems
+              L4Factoidal.SPARQL.LogEpochTheorems
+              L4Factoidal.SPARQL.StoreEndpointNamedPostScopeTheorems
+            # Both existing dependencies exceeded Lean's 2 GiB cap on a fresh build.
+            larger_dependency_budgets: |-
+              L4Factoidal/OWL/RLSemantics.lean
+              L4Factoidal/Storage/Sbm11/VarintWordTheorems.lean
+            theorems: |-
+              L4Factoidal.SPARQL.StoreEndpoint.commitOutcome_defaultGraph_replay_named
+              L4Factoidal.SPARQL.StoreEndpoint.commitOutcome_readOnly_no_commit
+              L4Factoidal.SPARQL.StoreEndpoint.graphDelta_default_replay_mem
+              L4Factoidal.SPARQL.StoreEndpoint.graphDelta_default_replay_default
+              L4Factoidal.SPARQL.StoreEndpoint.commitOutcome_defaultGraph_replay
+              L4Factoidal.SPARQL.StoreEndpoint.acceptedLogAppend_can_fail_reopen
+              L4Factoidal.SPARQL.StoreEndpoint.namedPosts_cross_graph_label_observable
+    env:
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Compile fresh source dependencies and theorem modules
+        working-directory: formal/lean4
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
+          PROOF_MODULES: ${{ matrix.modules }}
+          LARGER_DEPENDENCY_BUDGETS: ${{ matrix.larger_dependency_budgets }}
+        run: |
+          set -euo pipefail
+          unset LEAN_PATH LEAN_SRC_PATH
+          mkdir -p "$PROOF_DIR"
+          mkdir "$PROOF_DIR/modules"
+          export LEAN_PATH="$PROOF_DIR/modules"
+          {
+            git rev-parse HEAD
+            cat lean-toolchain
+            (
+              ulimit -v 4194304
+              lean --version
+            )
+          } 2>&1 | tee "$PROOF_DIR/source.txt"
+          python3 -u - <<'PY' 2>&1 | tee "$PROOF_DIR/lean.log"
+          import hashlib, os, pathlib, re, shlex, subprocess, sys
+          out = pathlib.Path(os.environ['PROOF_DIR'])
+          proof_modules = os.environ['PROOF_MODULES'].split()
+          larger_dependencies = set(os.environ.get('LARGER_DEPENDENCY_BUDGETS', '').split())
+          seen, order = set(), []
+
+          def module_source(name):
+              return pathlib.Path(name.replace('.', '/') + '.lean')
+
+          def visit(name):
+              if name in seen:
+                  return
+              seen.add(name)
+              source = module_source(name)
+              if not source.is_file():
+                  if name.startswith('L4Factoidal.'):
+                      raise SystemExit(f'Missing local dependency: {name}')
+                  return
+              for line in source.read_text().splitlines():
+                  if re.match(r'^\s*(?:public\s+)?import\s+', line):
+                      for dep in re.sub(r'^\s*(?:public\s+)?import\s+', '', line).split('--')[0].split():
+                          visit(dep)
+              order.append(source)
+
+          for name in proof_modules:
+              visit(name)
+          proof_sources = {module_source(name) for name in proof_modules}
+          failed = False
+          for source in order:
+              target = out / 'modules' / source.with_suffix('.olean')
+              timing = out / 'timings' / source.with_suffix('.txt')
+              target.parent.mkdir(parents=True, exist_ok=True)
+              timing.parent.mkdir(parents=True, exist_ok=True)
+              with (out / 'source.txt').open('a') as f:
+                  print(hashlib.sha256(source.read_bytes()).hexdigest(), source, file=f)
+              strict = source in proof_sources
+              if str(source) in larger_dependencies and not strict:
+                  duration, os_memory_kib, lean_memory = '360s', '6291456', '-M4096'
+              else:
+                  duration, os_memory_kib, lean_memory = '180s', '4194304', '-M2048'
+              cmd = [
+                  'timeout', '--kill-after=10s', duration, '/usr/bin/time', '-v', '-o', str(timing),
+                  'bash', '-c', 'ulimit -v "$1" && shift && exec "$@"', 'lean-limit', os_memory_kib,
+                  'lean', '-j1', '-s16384', lean_memory,
+                  *(['-DwarningAsError=true'] if strict else []), '-o', str(target), str(source),
+              ]
+              print(shlex.join(cmd), flush=True)
+              result = subprocess.run(cmd)
+              print(f'{source}: compile_exit={result.returncode}', flush=True)
+              if result.returncode or not target.is_file():
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY
+      - name: Require individual theorem axiom reports
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
+          REQUIRED_THEOREMS: ${{ matrix.theorems }}
+        run: |
+          set -euo pipefail
+          python3 tools/lean-hygiene-audit.py --build-log "$PROOF_DIR/lean.log" \
+            2>&1 | tee "$PROOF_DIR/hygiene.log"
+          python3 - <<'PY'
+          import os, pathlib, re
+          out = pathlib.Path(os.environ['PROOF_DIR'])
+          required = os.environ['REQUIRED_THEOREMS'].split()
+          reports = re.findall(
+              r"'([^']+)' (?:depends on axioms: \[[^\]]*\]|does not depend on any axioms)",
+              (out / 'lean.log').read_text(),
+          )
+          missing = set(required) - set(reports)
+          if missing:
+              raise SystemExit('Missing axiom reports for ' + ', '.join(sorted(missing)))
+          (out / 'checked-theorems.txt').write_text('\n'.join(required) + '\n')
+          PY
+      - name: Preserve exact-source compiler evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: timer-partition-lean-evidence-${{ matrix.group }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.group }}-evidence/
+            !${{ runner.temp }}/${{ matrix.group }}-evidence/modules/**
+          if-no-files-found: warn
+          retention-days: 30

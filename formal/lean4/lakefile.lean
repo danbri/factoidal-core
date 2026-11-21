@@ -1012,3 +1012,52 @@ lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 
 -- Lean shaping font adapter (https://github.com/danbri/factoidal/issues/1233). Not a default target.
 lean_exe «l4font-shape» where root := `L4Factoidal.Rendering.LeanFontShape
+
+-- Proof-only timer partition and firing completeness (issue #608).
+lean_lib TimerPartitionProofs where
+  roots := #[`L4Factoidal.EventLoop.TimerPartitionTheorems]
+
+-- Logical payload quota proofs (issue #610), outside runtime imports.
+lean_lib BlobQuotaProofs where
+  roots := #[`L4Factoidal.Net.BlobQuotaTheorems]
+
+-- Live subresource table bounds (issue #625), outside runtime imports.
+lean_lib SubresourceBoundProofs where
+  roots := #[`L4Factoidal.Net.SubresourceBoundTheorems]
+
+-- Text-control UTF-16 boundary correspondence (issue #627), outside runtime imports.
+lean_lib TextControlOffsetProofs where
+  roots := #[`L4Factoidal.DOM.Editing.TextControlOffsetTheorems]
+
+-- Collection result cardinality proofs (issue #611).
+lean_lib CollectionBoundProofs where
+  roots := #[`L4Factoidal.RDF.CollectionBoundTheorems]
+
+-- Cross-zone adapter proofs (issues #614, #616, #618, #620 and #621), outside runtime imports.
+lean_lib CrossZoneProofs where
+  roots := #[`L4Factoidal.VC.CidKeyTheorems, `L4Factoidal.VC.StatusListRangeTheorems, `L4Factoidal.Rendering.RdfViewTheorems,
+             `L4Factoidal.SPARQL.StoreEndpointTheorems, `L4Factoidal.SPARQL.StoreReplayTheorems, `L4Factoidal.SPARQL.StoreCommitReplayTheorems,
+             `L4Factoidal.SPARQL.GraphStoreMergeTheorems, `L4Factoidal.SPARQL.GraphStorePostTheorems, `L4Factoidal.SPARQL.LogEpochTheorems,
+             `L4Factoidal.SPARQL.StoreEndpointNamedPostScopeTheorems]
+
+-- HTTP wire payload provenance and configured limits (issue #628), proof-only.
+lean_lib HttpWireBoundProofs where
+  roots := #[`L4Factoidal.HTTP.WireBoundTheorems]
+
+-- Built TLI1 membership, lookup soundness and successful wire lookup (issue #634).
+lean_lib TermLocalIndexLookupProofs where
+  roots := #[`L4Factoidal.Storage.TermLocalIndexLookupTheorems,
+             `L4Factoidal.Storage.TermLocalIndexWireLookupTheorems]
+
+-- Actual async XHR response, Fetch release and integrity bridge (issue #635).
+lean_lib XhrResponseProvenanceProofs where
+  roots := #[`L4Factoidal.Net.XhrResponseProvenanceTheorems]
+
+-- Actual SSE parser and reconnect header boundary (issue #636), proof-only.
+lean_lib EventSourceHeaderProofs where
+  roots := #[`L4Factoidal.Net.EventSourceHeaderTheorems]
+
+-- Actual event-loop JSON admission bridge (issue #629), proof-only lab root.
+lean_lib EventLoopWireProofs where
+  srcDir := "../../labs/demos/foafnaut"
+  roots := #[`WebEventLoopStateTheorems]

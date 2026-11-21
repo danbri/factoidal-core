@@ -164,6 +164,36 @@ theorem entriesOf_eq_spec (terms : Array Term) : entriesOf terms = entriesOfSpec
   congr 1
   simp [decorate, Function.comp_def]
 
+/-- Kind: representation invariant.
+    Says: the built index contains precisely the entries with the original
+    dictionary position, the term at that position and its serialised key.
+    Does not say: the search finds a particular entry or the wire encoder
+    admits the dictionary. -/
+theorem mem_entriesOf_iff (terms : Array Term) (entry : Entry) :
+    entry ∈ entriesOf terms ↔
+      terms[entry.localId]? = some entry.term ∧ entry.key = serializeTerm entry.term := by
+  let makeEntry : Term × Nat → Entry := fun p => ⟨serializeTerm p.1, p.1, p.2⟩
+  have enumerate (xs : List Term) (start : Nat) :
+      entriesGo start xs = (xs.zipIdx start).map makeEntry := by
+    induction xs generalizing start with
+    | nil => rfl
+    | cons t ts ih => simp only [entriesGo, List.zipIdx_cons, List.map_cons, makeEntry, ih]
+  rw [entriesOf_eq_spec, entriesOfSpec, Array.mem_mergeSort, List.mem_toArray, enumerate,
+    List.mem_map]
+  constructor
+  · rintro ⟨⟨t, i⟩, present, rfl⟩
+    refine ⟨?_, rfl⟩
+    simpa only [Array.getElem?_toList] using (List.mem_zipIdx_iff_getElem?.mp present)
+  · rintro ⟨position, bytes⟩
+    refine ⟨(entry.term, entry.localId), ?_, ?_⟩
+    · apply List.mem_zipIdx_iff_getElem?.mpr
+      simpa only [Array.getElem?_toList] using position
+    · cases entry with
+      | mk key term localId =>
+        change key = serializeTerm term at bytes
+        subst key
+        rfl
+
 private def lowerBoundGo (entries : Array Entry) (key : List UInt8) (low high : Nat) : Nat → Nat
   | 0 => low
   | fuel + 1 =>
@@ -191,6 +221,70 @@ def lookup? (entries : Array Entry) (wanted0 : Term) : Option Nat :=
   match entries[index]? with
   | some entry => if entry.key == key && entry.term == wanted then some entry.localId else none
   | none => none
+
+/-- Kind: binary-search correctness.
+    Says: when precisely the entries before position `i` have byte keys below
+    the requested key, a matching entry at `i` yields its stored local ID.
+    Does not say: an arbitrary array has that ordering or that a range reader
+    fetched the page containing the term. -/
+theorem lookup?_eq_some_of_key_cut (entries : Array Entry) (wanted : Term)
+    (i : Nat) (hi : i < entries.size)
+    (cut : ∀ j (hj : j < entries.size),
+      entries[j].key < serializeTerm (TermFold.foldTerm wanted) ↔ j < i)
+    (keyMatch : entries[i].key = serializeTerm (TermFold.foldTerm wanted))
+    (termMatch : entries[i].term = TermFold.foldTerm wanted) :
+    lookup? entries wanted = some entries[i].localId := by
+  have byteOrder (xs ys : List UInt8) : lessBytes xs ys = true ↔ xs < ys := by
+    induction xs generalizing ys with
+    | nil => cases ys <;> simp [lessBytes]
+    | cons x xs ih =>
+      cases ys with
+      | nil => simp [lessBytes]
+      | cons y ys =>
+        by_cases lt : x < y
+        · simp [lessBytes, lt, List.cons_lt_cons_iff]
+        · by_cases eq : x = y
+          · subst y
+            simp [lessBytes, lt, ih]
+          · simp [lessBytes, lt, eq, List.cons_lt_cons_iff]
+  let key := serializeTerm (TermFold.foldTerm wanted)
+  have search : ∀ fuel low high : Nat, low ≤ i → i ≤ high → high ≤ entries.size →
+      high - low ≤ fuel → lowerBoundGo entries key low high fuel = i := by
+    intro fuel
+    induction fuel with
+    | zero =>
+      intro low high hlo hhi hsize width
+      change low = i
+      omega
+    | succ fuel ih =>
+      intro low high hlo hhi hsize width
+      by_cases closed : low ≥ high
+      · rw [lowerBoundGo, if_pos closed]
+        omega
+      · let middle := low + (high - low) / 2
+        have midLt : middle < high := by dsimp [middle]; omega
+        have lowLe : low ≤ middle := by dsimp [middle]; omega
+        have inBounds := Nat.lt_of_lt_of_le midLt hsize
+        rw [lowerBoundGo, if_neg closed]
+        change (match entries[middle]? with
+          | none => low
+          | some e => if lessBytes e.key key then lowerBoundGo entries key (middle + 1) high fuel
+                      else lowerBoundGo entries key low middle fuel) = i
+        simp only [Array.getElem?_eq_getElem inBounds]
+        have test := (byteOrder entries[middle].key key).trans (cut middle inBounds)
+        by_cases below : middle < i
+        · rw [if_pos (test.mpr below)]
+          exact ih _ _ (by omega) hhi hsize (by omega)
+        · rw [if_neg (fun passes => below (test.mp passes))]
+          exact ih _ _ hlo (by omega) (by omega) (by omega)
+  have result := search (entries.size + 1) 0 entries.size (Nat.zero_le _) (Nat.le_of_lt hi)
+    (Nat.le_refl _) (by omega)
+  change (match entries[lowerBoundGo entries key 0 entries.size (entries.size + 1)]? with
+    | some e => if e.key == key && e.term == TermFold.foldTerm wanted then some e.localId else none
+    | none => none) = _
+  rw [result, Array.getElem?_eq_getElem hi]
+  have keys : entries[i].key = key := keyMatch
+  simp [keys, termMatch]
 
 /-- The direct dictionary lookup is the reference contract for a TLI1 decoder
     and range reader. -/

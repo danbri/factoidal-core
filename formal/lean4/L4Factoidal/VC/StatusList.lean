@@ -25,8 +25,10 @@ read most significant bit first.
 
 What this module does not do: dereference the status list credential or
 verify its proof. The host fetches the document (STATUS_RETRIEVAL_ERROR is
-the host's), and the proof is verified by `VC/Cryptosuite.lean`
-(`verifyDocument`) before `validate` runs; the Wasm op does both in order.
+the host's). Callers must arrange proof verification separately. The direct
+`vcStatusValidate` Wasm operation checks structure and status; `vcDiVerify`
+is a separate operation. The HTTP VC shim verifies the credential and list
+proofs before status validation for its recognised status-list entries.
 -/
 import L4Factoidal.JSON.Value
 import L4Factoidal.JOSE.Base64Url

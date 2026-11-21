@@ -502,7 +502,7 @@ theorem Literal.valueEqb_of_eqb {l1 l2 : Literal} (h : l1.eqb l2 = true) :
   obtain ⟨⟨⟨hl, hd⟩, ht⟩, hr⟩ := h
   unfold Literal.valueEqb
   by_cases hx : (l1.datatype == rdfXMLLiteral && l2.datatype == rdfXMLLiteral) = true <;>
-    simp [hx, hl, hd, ht, hr, XmlCanon.xmlCanonEq]
+    simp [hl, hd, ht, hr, XmlCanon.xmlCanonEq]
 
 @[simp] theorem Literal.termEq_refl (l : Literal) : l.termEq l = true := by
   simp [Literal.termEq]
