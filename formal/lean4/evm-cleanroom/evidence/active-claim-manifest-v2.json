@@ -26,7 +26,8 @@
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
     "scripts/differential/call-boundary.mjs": "d2ddd1fd22f7139e0c50b1e82f6143db0c07d42a",
     "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
-    "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8"
+    "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
+    "scripts/check-axiom-output.py": "8d0cabed81fa593b90062c600bb4a9e3a3c0430b"
   },
   "theorem_inventory": [
     {
@@ -211,5 +212,5 @@
     "Independent expert review"
   ],
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
-  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass."
+  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job."
 }
