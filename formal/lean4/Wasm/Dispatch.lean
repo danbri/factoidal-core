@@ -59,6 +59,7 @@ import Wasm.Ops.Explain
 import Wasm.Ops.StageList
 import Wasm.Ops.PipelineNodes
 import Wasm.Ops.GraphNodes
+import Wasm.Ops.PVGraph
 import Wasm.Ops.Handles
 import Wasm.Ops.DatasetFull
 import Wasm.Ops.Pack
@@ -137,6 +138,9 @@ def opNames : List String :=
   , "pipelineCheck"
   , "pipelineCheckNodes"
   , "graphCheckNodes"
+  , "pvgraphBuild"
+  , "pvgraphAdmit"
+  , "pvgraphEvaluate"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -526,6 +530,9 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "pipelineCheck"        => arity1 op pipelineCheck args
     | "pipelineCheckNodes"   => arity1 op pipelineCheckNodes args
     | "graphCheckNodes"      => arity1 op graphCheckNodes args
+    | "pvgraphBuild"         => arity1 op pvgraphBuild args
+    | "pvgraphAdmit"         => arity1 op pvgraphAdmit args
+    | "pvgraphEvaluate"      => arity2 op pvgraphEvaluate args
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args
