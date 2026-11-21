@@ -74,10 +74,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout --kill-after=10s 120s lake env lean --run \
+          if ! timeout --kill-after=10s 120s lake env lean --run \
             Harness/GdslGraphCheck.lean \
             "$RUNNER_TEMP/gdsl-lean-json/cases.jsonl" \
-            > "$RUNNER_TEMP/gdsl-lean-json/lean-verdicts.jsonl"
+            > "$RUNNER_TEMP/gdsl-lean-json/lean-verdicts.jsonl" \
+            2> "$RUNNER_TEMP/gdsl-lean-json/lean-check.stderr"; then
+            head -n 60 "$RUNNER_TEMP/gdsl-lean-json/lean-check.stderr"
+            head -n 30 "$RUNNER_TEMP/gdsl-lean-json/lean-verdicts.jsonl"
+            exit 1
+          fi
           cd ../..
           node tools/gdsl-lean-graph-diff.mjs compare \
             "$RUNNER_TEMP/gdsl-lean-json/js-verdicts.jsonl" \
@@ -97,10 +102,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout --kill-after=10s 120s lake env lean --run \
+          if ! timeout --kill-after=10s 120s lake env lean --run \
             Harness/GdslGraphEval.lean \
             "$RUNNER_TEMP/gdsl-lean-json/eval-cases.jsonl" \
-            > "$RUNNER_TEMP/gdsl-lean-json/lean-eval.jsonl"
+            > "$RUNNER_TEMP/gdsl-lean-json/lean-eval.jsonl" \
+            2> "$RUNNER_TEMP/gdsl-lean-json/lean-eval.stderr"; then
+            head -n 60 "$RUNNER_TEMP/gdsl-lean-json/lean-eval.stderr"
+            head -n 30 "$RUNNER_TEMP/gdsl-lean-json/lean-eval.jsonl"
+            exit 1
+          fi
           cd ../..
           node tools/gdsl-lean-eval-diff.mjs compare \
             "$RUNNER_TEMP/gdsl-lean-json/js-eval.jsonl" \
