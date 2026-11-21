@@ -20,7 +20,7 @@ test("GDSL 0.2 replaces the separate syntax proposal in earlier specification",(
   assert.match(spec,/same graph/i);
   assert.match(older,/Superseded for new language design/);
   assert.match(residency,/The GPU is not inherently an RDF store/);
-  assert.match(residency,/no longer part of the GDSL language specification/);
+  assert.match(residency,/is no\s+longer part of the GDSL language specification/);
 });
 test("all five domain examples generate valid common graphs, parser and results",()=>{
   for(const info of listExamples()){
