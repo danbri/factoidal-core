@@ -317,7 +317,9 @@ for(const {id,record,post} of eligible){
       gasLimit:parsed.gasLimit.toString(),intrinsicGas:intrinsic.toString(),
       calldataFloorGas:floor.toString(),accessListGas:accessListGas.toString(),chargedGas:charged.toString(),
       baseFeeBurn:baseFeeBurn.toString(),blobFeeBurn:blobBurn.toString(),
-      blobGasUsed:blobGas.toString(),authorizationAccounts:authorizedAccounts,
+      blobGasUsed:blobGas.toString(),authorizationAccounts:authorizedAccounts.map(a=>({
+        address:a.address,nonce:a.nonce.toString(),code:a.code,
+        refund:a.refund.toString()})),
       leanExecutionGas:executionGas.toString(),coinbaseReward:minerFee.toString(),
       expectedStateRoot:post.hash,computedStateRoot:root,
       observedLogsHash:emptyLogHash,
