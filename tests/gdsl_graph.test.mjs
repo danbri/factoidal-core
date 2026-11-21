@@ -131,3 +131,23 @@ test("PVGraph GPU is fail-closed without native Lean admission, including forged
   assert.strictEqual(globalThis.navigator?.gpu,before);
   // No WebGPU adapter, session, pipeline or buffer can be reached here.
 });
+
+test("PVGraph GPU cannot replace its verified core operator semantics",async()=>{
+  const e=example("signal");
+  const custom=new Map(CORE_OPERATORS);
+  await assert.rejects(runPVGraphGPU(e.pvgraph,e.input,{
+    registry:custom,admission:{approved:true},
+  }),/refuses arbitrary operator registries/);
+  const old=CORE_OPERATORS.get("u32.map.mul");
+  try{
+    // The public registry is an app extension surface, not the GPU TCB.
+    CORE_OPERATORS.set("u32.map.mul",{
+      inputs:{},outputs:{out:"scalar<u32>"},params:{},
+      execute:()=>0,
+    });
+    await assert.rejects(runPVGraphGPU(e.pvgraph,e.input),
+      /missing native Lean admission/);
+  }finally{
+    CORE_OPERATORS.set("u32.map.mul",old);
+  }
+});
