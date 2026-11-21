@@ -22,13 +22,13 @@ npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
 node scripts/differential/osaka-clz.mjs
 ```
 
-The separate differential runner checks **277 full-width operands** (21 chosen boundaries + 256 deterministic SHA-256-generated values) under **EthereumJS 10.1.3 `Hardfork.Osaka`** executing actual bytecode `PUSH32 word; CLZ; STOP`. It independently compares the complete result word, exact gas, PC, memory, and an independently written binary-length reference formula. It checks that the default Lean profile does not accept the opcode and deliberately falsifies a gas expectation to test the comparator. Every row is a real instruction execution, not a mock of `CLZ`.
+The separate differential runner checks **1,022 distinct full-width operands** (21 hand-chosen boundaries, every bit position 0–255, values immediately below and above powers of two, plus 256 deterministic SHA-256-generated values) under **EthereumJS 10.1.3 `Hardfork.Osaka`** executing actual bytecode `PUSH32 word; CLZ; STOP`. It independently compares the complete result word, exact gas, PC, memory, and an independently written binary-length reference formula. It checks that the default Lean profile does not accept the opcode, that an empty CLZ stack underflows, and that exactly 8 gas succeeds while 7 gas fails. It deliberately falsifies a gas expectation to test the comparator. Every row is a real instruction execution, not a mock of `CLZ`.
 
 ## Explicit non-claims
 
 Not an Osaka/Fusaka-complete EVM: no Osaka-wide transaction cap (EIP-7825), secp256r1 precompile (EIP-7951), ModExp repricing, PeerDAS, BPO blob settings, historical fork selection, authenticated tries, full receipts, execution/consensus APIs, general CALL, or mainnet replay. Future **Glamsterdam** repricings must not be silently applied to the currently specified Osaka profile: its Hoodi activation was postponed 22 October 2026 and further security review continues.
 
-The active v2 manifest pins exact new source blobs but keeps its earlier reference CI URL explicitly **historical**, not evidence for this source. The 277-case evidence is valid only when **fresh current-head CI** runs green.
+The active v2 manifest pins exact new source blobs but keeps its earlier reference CI URL explicitly **historical**, not evidence for this source. The 1,022-case evidence is valid only when **fresh current-head CI** runs green.
 
 ## Pinned normative references
 
