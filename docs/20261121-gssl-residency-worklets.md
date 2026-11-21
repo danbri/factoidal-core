@@ -1,6 +1,8 @@
 # GSSL residency and the proposed SPARQL worklet boundary
 
-21 November 2026. Experimental host implementation: `tools/gssl-gpu-resident.mjs`.
+21 November 2026. Experimental host implementation: `npm/factoidal/lib/gpu-resident.mjs`,
+exposed as `@factoidal/core/gpu-resident` in the next published package version.
+The `tools/gssl-gpu-resident.mjs` module reexports this same implementation.
 No assured Hub lab and no shipping SPARQL GPU fast-path are claimed.
 
 ## Separate execution resource from application semantics
@@ -35,12 +37,16 @@ The proposed layering is:
                   |
         WebGPU compute/renderer device
 
-A worklet can be a CPU task with no GPU buffers. Several worklets may reuse
+A worklet can be a CPU task with no GPU buffers.
+The term *SPARQL worklet* denotes a proposed internal planner/executor unit,
+not an already specified API in this repository. The earlier Factoidal
+LATERAL/SERVICE work establishes correlated query semantics but does not
+define a standalone SPARQL-worklet protocol. Several worklets may reuse
 the same device/session, or a worklet can invoke a sequence of shaders whose
 intermediate outputs never return to the host. A SPARQL *result* is one possible
 typed output of a worklet, not the expected meaning of GPU residency.
 
-## What is shipped in this experimental increment
+## What is implemented for the experimental npm subpath
 
 `createGsslResidentSession` is an application-neutral execution resource.
 Its API provides:
@@ -114,6 +120,31 @@ binding scope and failure semantics defined by the query language.
 They do not turn a GPU session into a persistent triple store, nor
 provide proof of arbitrary WGSL output. GPU acceleration should only
 be selected for an admitted subfragment and retain a CPU fallback.
+
+## Minimal public API usage
+
+```js
+import {createGsslResidentSession} from "@factoidal/core/gpu-resident";
+
+// Requires a WebGPU-capable browser or Deno with WebGPU enabled.
+const gpu = await createGsslResidentSession({byteBudget: 16 * 1024 * 1024});
+await gpu.upload("values", new Uint32Array([2, 3, 5, 7]));
+gpu.allocate("answer", 16);
+await gpu.compile("transform", trustedWGSLSource);
+await gpu.dispatch({
+  kernel: "transform",
+  bindings: [{binding: 0, id: "values"}, {binding: 1, id: "answer"}],
+  writes: ["answer"],
+  workgroups: [1, 1, 1],
+});
+const sample = await gpu.inspect("answer", {countWords: 4});
+gpu.close();
+```
+
+`trustedWGSLSource` is a caller-owned WGSL program with compatible bindings.
+This is illustrative API usage, not an implemented parser or proof-backed
+shader generator. The npm export is committed but is not available from the
+public npm registry until a new package version is published.
 
 ## Remaining caveats and near-term improvements
 
