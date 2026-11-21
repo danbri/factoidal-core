@@ -63,8 +63,9 @@ def admit (dict : Dictionary) (scope : List Term) : Bool :=
 theorem admitted_identity (dict : Dictionary) (scope : List Term)
     (valid : admit dict scope = true) (term : Term) (ht : term ∈ scope) :
     (identityCode? dict term).bind (decodeTerm? dict) = some term := by
-  have h := (Bool.and_eq_true.mp valid).1
-  exact of_decide_true (List.all_eq_true.mp h term ht)
+  simp only [admit, Bool.and_eq_true] at valid
+  have h := List.all_eq_true.mp valid.1 term ht
+  exact decide_eq_true_eq.mp h
 
 theorem admitted_equality (dict : Dictionary) (scope : List Term)
     (valid : admit dict scope = true) (a b : Term)
@@ -72,7 +73,8 @@ theorem admitted_equality (dict : Dictionary) (scope : List Term)
     ∃ ac bc, equalityCode? dict a = some ac ∧
       equalityCode? dict b = some bc ∧
       (ac == bc) = a.eqb b := by
-  have hall := (Bool.and_eq_true.mp valid).2
+  simp only [admit, Bool.and_eq_true] at valid
+  have hall := valid.2
   have pair := List.all_eq_true.mp (List.all_eq_true.mp hall a ha) b hb
   unfold matchAgreement at pair
   cases hca : equalityCode? dict a with
@@ -93,14 +95,14 @@ def graphTerms (g : Graph) : List Term :=
 /-- A binding's variables are untouched; only the RDF-term payloads receive
     identity codes. Variable order and duplicate association-list entries
     are therefore preserved. -/
-def encodeBinding? (dict : Dictionary) : Binding → Option (List (String × UInt32))
+def encodeBinding? (dict : Dictionary) : L4Factoidal.SPARQL.Binding → Option (List (String × UInt32))
   | [] => some []
   | (name, term) :: rest => do
       let code ← identityCode? dict term
       let tail ← encodeBinding? dict rest
       return (name, code) :: tail
 
-def decodeBinding? (dict : Dictionary) : List (String × UInt32) → Option Binding
+def decodeBinding? (dict : Dictionary) : List (String × UInt32) → Option L4Factoidal.SPARQL.Binding
   | [] => some []
   | (name, code) :: rest => do
       let term ← decodeTerm? dict code
@@ -141,12 +143,13 @@ def checkGraphRoundTrip (dict : Dictionary) (g : Graph) : Bool :=
 theorem checkGraphRoundTrip_sound (dict : Dictionary) (g : Graph)
     (valid : checkGraphRoundTrip dict g = true) :
     (encodeGraph? dict g).bind (decodeGraph? dict) = some g :=
-  of_decide_true valid
+by
+  exact decide_eq_true_eq.mp valid
 
-def checkBindingRoundTrip (dict : Dictionary) (b : Binding) : Bool :=
+def checkBindingRoundTrip (dict : Dictionary) (b : L4Factoidal.SPARQL.Binding) : Bool :=
   decide ((encodeBinding? dict b).bind (decodeBinding? dict) = some b)
 
-theorem checkBindingRoundTrip_sound (dict : Dictionary) (b : Binding)
+theorem checkBindingRoundTrip_sound (dict : Dictionary) (b : L4Factoidal.SPARQL.Binding)
     (valid : checkBindingRoundTrip dict b = true) :
     (encodeBinding? dict b).bind (decodeBinding? dict) = some b :=
   of_decide_true valid
@@ -166,7 +169,7 @@ private def bad : Dictionary :=
 #guard !(admit bad [.iri a, .iri b])
 #guard checkGraphRoundTrip good
   [{s := .iri a, p := a, o := .iri b}]
-#guard checkBindingRoundTrip good [("x", .iri a), ("x", .iri b)]
+#guard checkBindingRoundTrip good [("x", Term.iri a), ("x", Term.iri b)]
 
 #print axioms admitted_identity
 #print axioms admitted_equality
