@@ -1,6 +1,6 @@
 // One GDSL graph under every domain example: editor, typed link renderer,
 // JS builder view, CPU reference, and actual WebGPU observed execution.
-// Text input is parsed, never eval()ed. Browser GPU results are not
+// Text input is parsed and never run as host JavaScript. GPU results are not
 // certified by Lean or by equality of a handful of test cases.
 import {
   example,listExamples,fromSexpr,toSexpr,runCPU,runGraphGPU,
