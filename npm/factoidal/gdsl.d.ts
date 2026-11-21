@@ -67,7 +67,7 @@ export function runPVGraphGPU(doc:PVGraphDocument,
   Promise<GdslGpuResult>;
 export interface GdslExample {
   title:string;description:string;domain:string;id:string;
-  graph:PVGraphDocument;sexpr:string;
+  pvgraph:PVGraphDocument;sexpr:string;
   input:Record<string,number[]>;
 }
 export function listExamples():{id:string;title:string;description:string;domain:string}[];
