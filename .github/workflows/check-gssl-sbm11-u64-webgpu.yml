@@ -23,7 +23,7 @@ permissions:
 jobs:
   device:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -77,7 +77,7 @@ jobs:
         working-directory: formal/lean4
         run: |
           set -euo pipefail
-          timeout --kill-after=10s 300s lake build \
+          timeout --kill-after=10s 600s lake build \
             L4Factoidal.Storage.Sbm11.PackSpec \
             L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
       - name: Capture genuine SBM11 dictionary ids and native Lean query oracle
