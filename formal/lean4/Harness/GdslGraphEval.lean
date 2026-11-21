@@ -1,5 +1,5 @@
 import Lean.Data.Json
-import L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
+import L4Factoidal.GpuDomainSpecificLanguage.PVGraph
 
 /-!
 Executable independent Lean CPU result oracle for the same actual
@@ -10,13 +10,13 @@ admission is a failed build in the Node comparison driver.
 namespace Harness.GdslGraphEval
 
 open Lean
-open L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
+open L4Factoidal.GpuDomainSpecificLanguage.PVGraph
 
 private def evalCase (request : Json) : Except String Json := do
   let id ← (← request.getObjVal? "case").getStr?
   let pvgraph ← request.getObjVal? "pvgraph"
   let bindings ← request.getObjVal? "bindings"
-  match evaluate? pvgraph bindings with
+  match PVGraph.evaluate? pvgraph bindings with
   | .ok outputs =>
       return Json.mkObj [("case",toJson id),
         ("accepted",toJson true),("outputs",outputs)]
