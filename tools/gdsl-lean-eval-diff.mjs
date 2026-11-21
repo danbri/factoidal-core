@@ -1,8 +1,8 @@
 // Executable semantic differential: the *same serialized canonical graph*
-// and its named inputs go into the JS runCPU and native Lean evaluate?.
+// and its named inputs go into the JS runPVGraphCPU and native Lean evaluate?.
 // Not proof of arbitrary JS/Lean semantics or GPU correctness.
 import {readFileSync,writeFileSync} from "node:fs";
-import {graph,runCPU,checkGraph}
+import {pvgraph,runPVGraphCPU,checkPVGraph}
   from "../npm/factoidal/lib/gdsl-graph.mjs";
 import {example} from "../npm/factoidal/lib/gdsl-examples.mjs";
 
@@ -21,30 +21,30 @@ function add(label,document,bindings){
   if(all.some(x=>x.case===label))throw Error("reused semantic corpus ID");
   let expected;
   try{
-    const accepted=checkGraph(document);
+    const accepted=checkPVGraph(document);
     expected={case:label,accepted:true,
-      outputs:runCPU(accepted,bindings).outputs};
+      outputs:runPVGraphCPU(accepted,bindings).outputs};
   }catch{
     expected={case:label,accepted:false};
   }
-  all.push({case:label,graph:document,bindings:clone(bindings),expected});
+  all.push({case:label,pvgraph:document,bindings:clone(bindings),expected});
 }
 for(const domain of ["signal","font","motion","image","basic"]){
   const e=example(domain);
-  add(domain+"-sample",e.graph,e.input);
+  add(domain+"-sample",e.pvgraph,e.input);
   const keys=Object.keys(e.input);
-  add(domain+"-empty",e.graph,Object.fromEntries(keys.map(k=>[k,[]])));
-  add(domain+"-high",e.graph,Object.fromEntries(keys.map(k=>[k,
+  add(domain+"-empty",e.pvgraph,Object.fromEntries(keys.map(k=>[k,[]])));
+  add(domain+"-high",e.pvgraph,Object.fromEntries(keys.map(k=>[k,
     [0,1,0x80000000,0xffffffff,0x7fffffff,0xaaaaaaaa,0x55555555]])));
-  add(domain+"-duplicates",e.graph,Object.fromEntries(keys.map(k=>[k,
+  add(domain+"-duplicates",e.pvgraph,Object.fromEntries(keys.map(k=>[k,
     [1,1,1,1,9,9,9,0,0,0,4294967295,4294967295]])));
   for(let i=0;i<12;i++){
     const len=i===0?1:(i%4)*7+1;
-    add(domain+"-random-"+i,e.graph,Object.fromEntries(keys.map(k=>[k,sample(len)])));
+    add(domain+"-random-"+i,e.pvgraph,Object.fromEntries(keys.map(k=>[k,sample(len)])));
   }
 }
 {
-  const g=graph();
+  const g=PVGraph();
   const scalar=g.input("amount","scalar<u32>");
   const template=g.input("template");
   const repeated=g.op("u32.broadcast",{value:scalar,shape:template});
@@ -58,7 +58,7 @@ for(const domain of ["signal","font","motion","image","basic"]){
     {amount:[8],template:[0,1,2]});
 }
 {
-  const g=graph();
+  const g=PVGraph();
   const a=g.input("a","scalar<u32>");
   const b=g.input("b","scalar<u32>");
   const sum=g.op("u32.scalar.add",{a,b});
@@ -69,15 +69,15 @@ for(const domain of ["signal","font","motion","image","basic"]){
 }
 {
   const e=example("motion");
-  add("motion-zip-mismatch",e.graph,{positions:[1,2],velocities:[1,2,3]});
-  add("motion-too-long",e.graph,{positions:sample(4097),velocities:sample(4097)});
-  add("motion-missing-binding",e.graph,{positions:[2,3]});
-  add("motion-extra-binding",e.graph,{...e.input,extra:[1]});
-  add("motion-wrong-word",e.graph,{positions:[2.2],velocities:[3]});
+  add("motion-zip-mismatch",e.pvgraph,{positions:[1,2],velocities:[1,2,3]});
+  add("motion-too-long",e.pvgraph,{positions:sample(4097),velocities:sample(4097)});
+  add("motion-missing-binding",e.pvgraph,{positions:[2,3]});
+  add("motion-extra-binding",e.pvgraph,{...e.input,extra:[1]});
+  add("motion-wrong-word",e.pvgraph,{positions:[2.2],velocities:[3]});
 }
 {
   const e=example("signal");
-  const d=clone(e.graph);
+  const d=clone(e.pvgraph);
   d.nodes[1].op="u32.not-registered";
   add("invalid-op",d,e.input);
 }
@@ -86,8 +86,8 @@ const [, ,cmd,...args]=process.argv;
 if(cmd==="emit"){
   const [fixtures,expectedPath]=args;
   if(!fixtures||!expectedPath)throw Error("usage: emit INPUT.jsonl EXPECT.jsonl");
-  writeFileSync(fixtures,lines(all.map(({case:id,graph,bindings})=>
-    ({case:id,graph,bindings}))));
+  writeFileSync(fixtures,lines(all.map(({case:id,pvgraph,bindings})=>
+    ({case:id,pvgraph,bindings}))));
   writeFileSync(expectedPath,lines(all.map(x=>x.expected)));
   console.log(JSON.stringify({semanticCases:all.length,
     accepted:all.filter(x=>x.expected.accepted).length,
