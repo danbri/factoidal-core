@@ -71,11 +71,10 @@ const same=(a,b)=>JSON.stringify(canonicalJSON(a))===
  */
 export async function admitPVGraphWithLean(doc,bindings){
   const pvgraph=checkPVGraph(doc,{registry:CORE_OPERATORS});
-  const normalized=identity(pvgraph,bindings);
-  // The local JS interpreter is checked independently against the
-  // native Lean result before a device gets an admission capability.
+  // The local JS reference is checked independently against native Lean.
+  // Do not leave an unhandled SHA-256 promise if CPU input validation fails.
   const local=runPVGraphCPU(pvgraph,bindings,{registry:CORE_OPERATORS}).outputs;
-  const {typedInputs,digest}=await normalized;
+  const {typedInputs,digest}=await identity(pvgraph,bindings);
   let execFile,fs,tmpdir,join,fileURLToPath;
   try{
     ({execFile}=await import("node:child_process"));
