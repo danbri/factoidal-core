@@ -51,7 +51,7 @@ test("GDSL Hub editor, graph rendering, bindings, CPU and GPU share one canonica
   }
   assert.match(graphApp,/createElementNS/);
   assert.match(graphApp,/dataflow/i);
-  assert.match(app,/mountGdslGraph\(\)/);
+  assert.match(app,/mountPVGraph\(\)/);
   assert.match(site,/web\/hub\/gssl/);
   assert.match(site,/"gdsl.mjs"/);
   assert.match(home,/href="\.\/gssl\//);
