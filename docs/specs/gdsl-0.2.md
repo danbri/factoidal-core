@@ -363,6 +363,6 @@ the universal operator set.
 - [Shared Lean u32 semantics](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphWords.lean)
 - [Exact-JSON Lean graph decoder](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphJson.lean)
 - [Independent Lean JSON-graph evaluator](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphEvaluate.lean)
-- [Actual JS vs Lean admission and semantics CI](https://github.com/danbri/factoidal-core/actions/runs/44944315001)
+- [Actual JS vs Lean admission and semantics CI](https://github.com/danbri/factoidal-core/actions/runs/44944066469/job/136967365524)
 - [Existing GPU residency model](../../formal/lean4/L4Factoidal/GpuKernel/Resident.lean)
 - [GDSL issue and domain release gate](https://github.com/danbri/factoidal-core/issues/691)
