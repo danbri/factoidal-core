@@ -171,16 +171,10 @@ def decode? (j : Json) : Except String Document := do
   if Document.admitted d then pure d
   else fail "Common typed graph admission failed"
 
-/-- A successfully decoded document always satisfies the complete
-    whole-graph admission predicate, rather than merely the link-only
-    predicate. -/
-theorem decode_sound (j : Json) (d : Document)
-    (h : decode? j = .ok d) : Document.admitted d = true := by
-  unfold decode? at h
-  -- Remaining proof obligation: the executable parser's conditional
-  -- success path entails the final common admission check.
-  -- We explicitly defer this bridge theorem rather than insert
-  -- an unverified assumption.
-  sorry
+/-!
+The parser's result is guarded by `Document.admitted`, but no
+parser-refinement theorem is claimed in this file. Cross-language
+differential acceptance tests are a separate obligation.
+-/
 
 end L4Factoidal.GpuDomainSpecificLanguage.GraphJson
