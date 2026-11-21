@@ -97,7 +97,7 @@ semantics; an arbitrary name is not an assumption of correctness.
 
 ```js
 import {createPVGraphWasm} from "@factoidal/core/gdsl";
-import {loadEngine} from "@factoidal/core/browser.js";
+import {loadEngine} from "@factoidal/core/browser";
 
 const g = await createPVGraphWasm(loadEngine);
 const xs = g.input("values");
