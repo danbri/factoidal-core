@@ -48,6 +48,15 @@ const builders={
     g.output("checksum",checksum,"scalar<u32>",{id:"checksumOut"});
     return g.build();
   },
+  generated(){
+    const g=PVGraph();
+    const samples=g.input("samples");
+    const adjusted=g.op("u32.map.mul",{x:samples},{value:3});
+    const total=g.op("u32.reduce.sum",{x:adjusted},{});
+    g.output("adjusted",adjusted);
+    g.output("sum",total,"scalar<u32>");
+    return g.build();
+  },
 };
 
 const path=process.argv[2];
