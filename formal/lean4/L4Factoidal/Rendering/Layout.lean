@@ -406,7 +406,7 @@ def fitScale (fit : ObjectFit) (iw ih w h : Float) : Float × Float :=
 
 /-- CSS Images 3 §5.6 resolves position percentages against the space left by the
 fitted object. That space can be negative when the object exceeds the box. -/
-def pictureOffset (position : Option (Length × Length)) (roomX roomY : Float) : Float × Float :=
+def pictureOffset (position : Option (CSS.Length × CSS.Length)) (roomX roomY : Float) : Float × Float :=
   match position with
   | none => (roomX/2,roomY/2)
   | some (x,y) => ((CSS.resolve roomX x).getD (roomX/2), (CSS.resolve roomY y).getD (roomY/2))
