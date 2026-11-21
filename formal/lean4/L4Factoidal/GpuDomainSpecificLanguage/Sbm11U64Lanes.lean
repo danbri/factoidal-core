@@ -1,6 +1,7 @@
 import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.Storage.Sbm11.TermIdTheorems
 import L4Factoidal.RDF.Core
+import L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin
 
 /-!
 # GSSL: lossless Shardborough SBM11 UInt64 IDs in portable WGSL
@@ -63,6 +64,18 @@ theorem split_beq_eq (x y : UInt64) :
     have heq : split x = split y := beq_iff_eq.mp h
     have hxy : x = y := (split_eq_iff x y).mp heq
     simpa [hxy] using h
+
+/-- The generic GSSL bag join needs no extra assumption when converting
+    an abstract UInt64 key into the lossless low/high WGSL key. Both result
+    order and duplicates are retained. -/
+theorem joinRows_split_eq (left : List (UInt64 × α))
+    (right : List (UInt64 × β)) :
+    EncodedJoin.joinRows
+      (left.map (fun l => (split l.1, l.2)))
+      (right.map (fun r => (split r.1, r.2))) =
+    EncodedJoin.joinRows left right := by
+  exact EncodedJoin.joinRows_encode split right left
+    (by intro l _ r _; exact split_beq_eq l.1 r.1)
 
 def fromTermId (id : Sbm11.TermId) : Lanes :=
   split id.bits
@@ -144,6 +157,39 @@ theorem readRecord_recordWords (t : IdTriple) :
 theorem recordWords_length (t : IdTriple) : (recordWords t).length = 6 := by
   simp [recordWords]
 
+/-- The same fixed two-predicate BGP can operate directly over UInt64
+    Shardborough IDs; this is the independent CPU denotation. -/
+def selectLeft (knows : UInt64) (triples : List IdTriple) :
+    List (UInt64 × (UInt64 × UInt64)) :=
+  triples.filterMap fun t =>
+    if t.p == knows then some (t.o, (t.s, t.o)) else none
+
+def selectRight (works atlas : UInt64) (triples : List IdTriple) :
+    List (UInt64 × Unit) :=
+  triples.filterMap fun t =>
+    if t.p == works && t.o == atlas then some (t.s, ()) else none
+
+def bgpSpec (knows works atlas : UInt64) (triples : List IdTriple) :
+    List (UInt64 × UInt64) :=
+  (EncodedJoin.joinRows
+    (selectLeft knows triples) (selectRight works atlas triples)).map Prod.fst
+
+/-- Abstract WGSL-lane interpretation: the same two independently
+    selected relations, changing ONLY join key representation. -/
+def bgpLaneModel (knows works atlas : UInt64) (triples : List IdTriple) :
+    List (UInt64 × UInt64) :=
+  (EncodedJoin.joinRows
+    ((selectLeft knows triples).map (fun l => (split l.1, l.2)))
+    ((selectRight works atlas triples).map (fun r => (split r.1, r.2)))).map Prod.fst
+
+theorem bgpLaneModel_eq_bgpSpec (knows works atlas : UInt64)
+    (triples : List IdTriple) :
+    bgpLaneModel knows works atlas triples =
+    bgpSpec knows works atlas triples := by
+  exact congrArg (List.map Prod.fst)
+    (joinRows_split_eq (selectLeft knows triples) (selectRight works atlas triples))
+
+
 #guard (split (0x2000000000000001 : UInt64)).lo ==
   (split (0x9000000000000001 : UInt64)).lo
 #guard (split (0x2000000000000001 : UInt64)).hi !=
@@ -153,6 +199,8 @@ theorem recordWords_length (t : IdTriple) : (recordWords t).length = 6 := by
   some ⟨0x2000000000000001, 0x4000000000000002, 0x9000000000000003⟩
 
 #print axioms join_split
+#print axioms joinRows_split_eq
+#print axioms bgpLaneModel_eq_bgpSpec
 #print axioms split_eq_iff
 #print axioms split_beq_eq
 #print axioms termId_roundTrip
