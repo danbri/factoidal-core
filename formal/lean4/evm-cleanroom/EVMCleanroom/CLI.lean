@@ -439,7 +439,7 @@ private def callOpcodeMain (args : List String) : IO UInt32 := do
       | .reverted final s => IO.println (serialize "reverted" final s)
       | .exceptional final s reason =>
         let state := serialize "exceptional" final s
-        IO.println (state.dropEnd 1 ++ ",\"reason\":\"" ++ errorCode reason ++ "\"}")
+        IO.println ((state.dropEnd 1).toString ++ ",\"reason\":\"" ++ errorCode reason ++ "\"}")
       | .indeterminate reason =>
         IO.println ("{\"status\":\"indeterminate\",\"reason\":\"" ++ errorCode reason ++ "\"}")
       return 0
