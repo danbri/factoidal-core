@@ -1,3 +1,6 @@
+> **Superseded for new language design by [GDSL 0.2](gdsl-0.2.md).**
+> All domain extensions now MUST share a single typed dataflow graph, node/link schema, JS builder and S-expression notation. This 0.1 document is retained as the historical typed-expression foundation; its suggestions for separately authored domain grammars no longer set the architecture.
+
 # GSSL 0.1 — GpuDomainSpecificLanguage
 **Editor's draft · 21 November 2026 · experimental · not a Web standard**
 

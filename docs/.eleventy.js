@@ -54,7 +54,7 @@ module.exports = function(eleventyConfig) {
   // Exploratory general GSSL compute workbench (not the assured SPARQL lab).
   // Its runtime is the exact same-origin npm/factoidal/lib/gpu-resident.mjs
   // already passed through by the package lib directory below.
-  for (const name of ["app.mjs", "lab-core.mjs", "style.css"]) {
+  for (const name of ["app.mjs", "lab-core.mjs", "graph-explorer.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/gssl/${name}`);
   }
   // Publish the *same* audited browser-safe EVM→WASM compiler sources that
@@ -126,7 +126,7 @@ module.exports = function(eleventyConfig) {
   // mirror is no longer read, and a directory there would write the same
   // output paths as these entries.
   for (const rel of [
-    "browser.js", "api.mjs", "rdfjs.mjs",
+    "browser.js", "api.mjs", "rdfjs.mjs", "gdsl.mjs",
     "lib", "l4-assets", "store-host", "store-http",
   ]) {
     eleventyConfig.addPassthroughCopy({ [`../npm/factoidal/${rel}`]: `npm/factoidal/${rel}` });

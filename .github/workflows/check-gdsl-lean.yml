@@ -1,0 +1,19 @@
+name: GDSL common dataflow Lean graph model
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/Graph.lean'
+      - '.github/workflows/check-gdsl-lean.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  formal:
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: gdsl-common-dataflow
+      timeout_minutes: 12
+      modules: >-
+        L4Factoidal.GpuDomainSpecificLanguage.Graph
+      theorems: >-
+        L4Factoidal.GpuDomainSpecificLanguage.Graph.linksAdmitted_sound
