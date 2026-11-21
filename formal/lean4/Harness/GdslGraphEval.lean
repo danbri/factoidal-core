@@ -14,9 +14,9 @@ open L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
 
 private def evalCase (request : Json) : Except String Json := do
   let id ← (← request.getObjVal? "case").getStr?
-  let graph ← request.getObjVal? "graph"
+  let pvgraph ← request.getObjVal? "pvgraph"
   let bindings ← request.getObjVal? "bindings"
-  match evaluate? graph bindings with
+  match evaluate? pvgraph bindings with
   | .ok outputs =>
       return Json.mkObj [("case",toJson id),
         ("accepted",toJson true),("outputs",outputs)]
