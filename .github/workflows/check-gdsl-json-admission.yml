@@ -6,7 +6,14 @@ on:
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraph.lean'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraphBuilder.lean'
       - 'formal/lean4/Harness/PVGraphBuilderSmoke.lean'
+      - 'formal/lean4/Wasm/Ops/PVGraph.lean'
+      - 'formal/lean4/Wasm/Dispatch.lean'
+      - 'formal/lean4/Wasm/CoreDispatch.lean'
       - 'tools/pvgraph-lean-builder-diff.mjs'
+      - 'npm/factoidal/lib/gdsl-wasm-builder.mjs'
+      - 'npm/factoidal/gdsl.mjs'
+      - 'npm/factoidal/gdsl.d.ts'
+      - 'tests/gdsl_wasm_builder.test.mjs'
       - 'formal/lean4/Harness/GdslGraphCheck.lean'
       - 'tools/gdsl-lean-graph-diff.mjs'
       - 'tools/gdsl-lean-eval-diff.mjs'
@@ -59,6 +66,9 @@ jobs:
             formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphEvaluate.lean \
             formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraphBuilder.lean \
             formal/lean4/Harness/PVGraphBuilderSmoke.lean \
+            formal/lean4/Wasm/Ops/PVGraph.lean \
+            npm/factoidal/lib/gdsl-wasm-builder.mjs \
+            tests/gdsl_wasm_builder.test.mjs \
             tools/pvgraph-lean-builder-diff.mjs \
             npm/factoidal/lib/gdsl-graph.mjs \
             tools/gdsl-lean-graph-diff.mjs \
@@ -75,7 +85,8 @@ jobs:
             L4Factoidal.GpuDomainSpecificLanguage.GraphJson \
             L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate \
             L4Factoidal.GpuDomainSpecificLanguage.PVGraph \
-            L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
+            L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder \
+            Wasm.Ops.PVGraph
       - name: Compare the same canonical graph bytes in Lean and JS
         working-directory: formal/lean4
         shell: bash
@@ -123,6 +134,11 @@ jobs:
             "$RUNNER_TEMP/gdsl-lean-json/js-eval.jsonl" \
             "$RUNNER_TEMP/gdsl-lean-json/lean-eval.jsonl" \
             | tee "$RUNNER_TEMP/gdsl-lean-json/evaluation-compared.json"
+      - name: Check thin JS/Wasm API marshalling without JS semantic fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/gdsl_wasm_builder.test.mjs
       - name: Check Lean-native PVGraph authoring, admission and JS/S-expression agreement
         working-directory: formal/lean4
         shell: bash
