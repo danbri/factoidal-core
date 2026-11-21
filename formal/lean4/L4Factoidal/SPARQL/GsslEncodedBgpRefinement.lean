@@ -21,6 +21,7 @@ open L4Factoidal.RDF
 open L4Factoidal.GpuDomainSpecificLanguage
 open L4Factoidal.SPARQL.GsslBgpRefinement
 open L4Factoidal.SPARQL.SharedSubjectTripleRefinement
+open L4Factoidal.SPARQL.SharedSubjectTriple
 
 /-- Actual binding layout used by the engine for the first pattern. -/
 def leftBinding (person colleague : VarName) (t : Triple) : Binding :=
@@ -55,6 +56,9 @@ def rdfJoin (person colleague : VarName) (knows works object : WfIri)
     (leftRows person colleague knows graph)
     (rightRows works object graph)).map Prod.fst
 
+@[simp] private theorem rdfKey_beq (a b : Term) :
+    ((⟨a⟩ : RdfTermCodebook.Key) == (⟨b⟩ : RdfTermCodebook.Key)) = a.eqb b := rfl
+
 private theorem rightRow_matches_engine (colleague : VarName)
     (works object : WfIri) (binding : Binding) (key : Term)
     (bound : binding.lookup colleague = some key) (t : Triple) :
@@ -67,7 +71,7 @@ private theorem rightRow_matches_engine (colleague : VarName)
   cases hk : key.eqb t.s.toTerm <;>
     cases hp : works == t.p <;>
     cases t.o <;>
-    simp [RdfTermCodebook.instBEqKey, hk, hp]
+    simp_all [rdfKey_beq]
 
 /-- Stable right-side selection of a graph is equivalent to the engine's
     second-pattern matcher when its join variable is already bound. -/
@@ -114,8 +118,25 @@ private theorem joinLeft_eq_select (person colleague : VarName)
         simp [leftBinding, Binding.lookup]
       have row := rowJoin_eq_rightSelect colleague works object graph
         (leftBinding person colleague t) t.o bound
-      simpa [EncodedJoin.joinRows, List.map_append, List.flatMap_cons] using
-        congrArg₂ List.append row ih
+      calc
+        (EncodedJoin.joinRows
+          ((t :: rest).map fun u => (⟨u.o⟩, leftBinding person colleague u))
+          (rightRows works object graph)).map Prod.fst =
+          (EncodedJoin.rowMatches (⟨t.o⟩, leftBinding person colleague t)
+            (rightRows works object graph)).map Prod.fst ++
+          (EncodedJoin.joinRows
+            (rest.map fun u => (⟨u.o⟩, leftBinding person colleague u))
+            (rightRows works object graph)).map Prod.fst := by
+              simp [EncodedJoin.joinRows, List.map_append]
+        _ = rightSelect colleague works object graph (leftBinding person colleague t) ++
+            (EncodedJoin.joinRows
+              (rest.map fun u => (⟨u.o⟩, leftBinding person colleague u))
+              (rightRows works object graph)).map Prod.fst := by rw [row]
+        _ = rightSelect colleague works object graph (leftBinding person colleague t) ++
+            rest.flatMap (fun u => rightSelect colleague works object graph
+              (leftBinding person colleague u)) := by rw [ih]
+        _ = (t :: rest).flatMap (fun u => rightSelect colleague works object graph
+              (leftBinding person colleague u)) := by rfl
 
 /-- The GSSL RDF relations reproduce the exact engine-side ordered right
     selection and left-major solution sequence, including multiplicity. -/
