@@ -154,9 +154,8 @@ for(const {id,record,post} of eligible){
           parsed.maxFeePerBlobGas!==parseHexInt(fixtureTx.maxFeePerBlobGas,'blob cap') ||
           blobHashes.length!==fixtureTx.blobVersionedHashes?.length ||
           blobHashes.some((hash,i)=>
-            !(hash instanceof Uint8Array) || hash.length!==32 ||
-            hash[0]!==0x01 ||
-            !sameBytes(hash,fixtureTx.blobVersionedHashes[i])))) ||
+            typeof hash!=='string' || !/^0x01[0-9a-fA-F]{62}$/.test(hash) ||
+            hash.toLowerCase()!==fixtureTx.blobVersionedHashes[i]?.toLowerCase()))) ||
        (parsed.type!==3 && fixtureTx.blobVersionedHashes!==undefined))
       throw Error('signed EIP-4844 blob envelope/hash does not match fixture');
     const excessBlobGas=parseHexInt(env.currentExcessBlobGas,'excessBlobGas');
