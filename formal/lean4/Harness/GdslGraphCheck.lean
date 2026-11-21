@@ -25,8 +25,8 @@ open L4Factoidal.GpuDomainSpecificLanguage.GraphJson
 
 private def runCase (j : Json) : Except String Json := do
   let caseId ← (← j.getObjVal? "case").getStr?
-  let graph ← j.getObjVal? "graph"
-  let admitted := (decode? graph).isOk
+  let pvgraph ← j.getObjVal? "pvgraph"
+  let admitted := (decodeCertified? pvgraph).isOk
   return Json.mkObj [("case", toJson caseId),
     ("admitted", toJson admitted)]
 
