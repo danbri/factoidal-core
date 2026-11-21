@@ -102,10 +102,17 @@ export async function runPVGraphGPU(doc,bindings,{admission=null,session=null,
       unsupported.map(n=>n.op).join(","));
   const bound=new Map(inputs.map(n=>[n.id,readInput(
     bindings[n.params.name],n.params.type)]));
-  // Mandatory: real native-Lean-checked admission of this exact program
-  // AND input content. No GPU adapter/session/buffer is created beforehand.
-  // A caller-created {approved:true} object, a hash, or stale permit fails.
-  const leanState=await requirePVGraphLeanAdmission(admission,g,bindings);
+  // Snapshot the *actual words the GPU will upload* before asynchronous
+  // SHA-256 checking. The caller may mutate the original JS arrays during
+  // WebCrypto or device initialization; their later values must not be the
+  // ones that were verified instead of the copied GPU input.
+  const boundInputs=Object.fromEntries(inputs.map(n=>[
+    n.params.name,n.params.type==="scalar<u32>"?
+      bound.get(n.id)[0]:bound.get(n.id).slice()
+  ]));
+  // Mandatory: independently executed native-Lean admission of the exact
+  // PVGraph and input snapshot. Fail before creating any GPU resources.
+  const leanState=await requirePVGraphLeanAdmission(admission,g,boundInputs);
   const prefix="gdsl-"+await hashGraph(g)+"-";
   let owned=false;
   if(!session){
