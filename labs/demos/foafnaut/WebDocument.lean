@@ -2422,7 +2422,10 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   | 35 =>
     let px := (node / 65536).toFloat
     let py := (node % 65536).toFloat
-    match WebHit.target l.dom l.scene l.boxes px py with
+    let styles : Array Rendering.CSS.Computed := match l.styles.get with
+      | .ok styles => styles
+      | .error _ => #[]
+    match WebHit.targetWithStyles l.dom l.scene l.boxes styles px py with
     | some (hit,_) =>
       let chain := Id.run do
         let mut acc : Array Nat := #[hit]
@@ -3437,7 +3440,10 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
         let t ← t.toNat?
         let px ← (Rendering.CSS.number x).toOption
         let py ← (Rendering.CSS.number y).toOption
-        let (node,_) ← WebHit.target laid.dom laid.scene laid.boxes px py
+        let styles : Array Rendering.CSS.Computed := match laid.styles.get with
+          | .ok styles => styles
+          | .error _ => #[]
+        let (node,_) ← WebHit.targetWithStyles laid.dom laid.scene laid.boxes styles px py
         some (t,node)
       | _ => none
     | _ => []
