@@ -176,7 +176,34 @@ theorem settle_parent_exception_atomic (entry : TxWorld) (initial : State)
   case exceptional _ =>
     exact h.1.symm
 
+/-- This is the public EXECUTABLE run entry point (not just a constructor
+    lemma): any observed parent REVERT returns the precise original
+    transaction world, even after one or more successful children. -/
+theorem run_parent_revert_atomic (fuel : Nat) (entry result : TxWorld)
+    (parentAddress gas : Nat) (terminal : State)
+    (h : run fuel entry parentAddress gas = .reverted result terminal) :
+    result = entry := by
+  dsimp [run] at h
+  exact settle_parent_revert_atomic entry
+    (frameInput entry parentAddress gas)
+    (execute fuel entry parentAddress (frameInput entry parentAddress gas))
+    result terminal h
+
+/-- Any exceptional public parent outcome similarly returns the entry world,
+    rather than a child-mutated world. The gas is zeroed by settle. -/
+theorem run_parent_exception_atomic (fuel : Nat) (entry result : TxWorld)
+    (parentAddress gas : Nat) (terminal : State) (reason : Error)
+    (h : run fuel entry parentAddress gas = .exceptional result terminal reason) :
+    result = entry := by
+  dsimp [run] at h
+  exact settle_parent_exception_atomic entry
+    (frameInput entry parentAddress gas)
+    (execute fuel entry parentAddress (frameInput entry parentAddress gas))
+    result terminal reason h
+
 #print axioms settle_parent_revert_atomic
 #print axioms settle_parent_exception_atomic
+#print axioms run_parent_revert_atomic
+#print axioms run_parent_exception_atomic
 
 end EVMCleanroom.CallOpcode
