@@ -3,14 +3,14 @@
 // Text input is parsed and never run as host JavaScript. GPU results are not
 // certified by Lean or by equality of a handful of test cases.
 import {
-  example,listExamples,fromPVSexpr,toPVSexpr,runPVGraphCPU,runPVGraphGPU,
-  CORE_OPERATORS,createGsslResidentSession,
+  example,listExamples,fromPVSexpr,toPVSexpr,runPVGraphCPU,
+  CORE_OPERATORS,
 } from "../../../npm/factoidal/gdsl.mjs";
 
 const $=id=>document.getElementById(id);
 const status=$("gdsl-status"),source=$("gdsl-sexpr"),
   bindings=$("gdsl-bindings"),options=$("gdsl-example");
-let session=null,active=false;
+let active=false;
 const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const ns="http://www.w3.org/2000/svg";
 function svg(tag,attributes={},text=null){
@@ -26,7 +26,7 @@ function busy(v){
   active=v;
   for(const id of ["gdsl-example","gdsl-check","gdsl-cpu","gdsl-gpu","gdsl-release"]){
     const el=$(id);
-    if(id==="gdsl-release")el.disabled=v||!session;
+    if(id==="gdsl-release")el.disabled=true;
     else el.disabled=v;
   }
 }
@@ -188,40 +188,22 @@ function runCPUOnly(){
     setStatus("CPU graph completed with "+doc.nodes.length+" nodes.","success");
   }catch(e){setStatus(e?.message||String(e),"error");}
 }
-async function runBoth(){
+function describeNativeGate(){
   if(active)return;
-  busy(true);
   try{
     const {doc,supplied}=documentAndBindings();
     validate();
-    const sourceAtStart=source.value,bindingsAtStart=bindings.value;
     const cpu=runPVGraphCPU(doc,supplied);
     $("gdsl-cpu-output").textContent=JSON.stringify(cpu.outputs,null,2);
-    $("gdsl-gpu-output").textContent="GPU dispatch in progress…";
-    setStatus("Executing the same admitted GDSL graph on WebGPU…");
-    if(!globalThis.isSecureContext||!globalThis.navigator?.gpu)
-      throw new Error("No secure WebGPU device; the CPU result is available.");
-    if(!session)session=await createGsslResidentSession({
-      byteBudget:8*1024*1024,inspectMaxWords:256});
-    const gpu=await runPVGraphGPU(doc,supplied,{session});
-    if(source.value!==sourceAtStart||bindings.value!==bindingsAtStart)
-      throw new Error("Graph changed during GPU run; stale device answer discarded.");
-    const same=eq(cpu.outputs,gpu.outputs);
-    $("gdsl-gpu-output").textContent=JSON.stringify(gpu.outputs,null,2);
-    $("gdsl-agreement").dataset.match=same?"yes":"no";
-    $("gdsl-agreement").textContent=same
-      ?"Exact CPU vs device equality for this admitted graph ("+
-        gpu.gpuDispatches+" GPU operator passes)."
-      :"Mismatch between CPU and actual GPU output. No agreement claimed.";
-    showStats(gpu);
-    setStatus("WebGPU returned "+Object.keys(gpu.outputs).length+
-      " named outputs; status observed-not-proven.",same?"success":"error");
-  }catch(e){
-    $("gdsl-gpu-output").textContent="No complete GPU result.";
-    $("gdsl-agreement").textContent="GPU refused or failed; no agreement claimed.";
+    $("gdsl-gpu-output").textContent=
+      "Not executed. PVGraph WebGPU execution requires a native Lean 4 toolkit"+
+      " and an input-bound Lean admission. Static GitHub Pages cannot issue one.";
     $("gdsl-agreement").dataset.match="pending";
-    setStatus(e?.message||String(e),"error");
-  }finally{busy(false);}
+    $("gdsl-agreement").textContent=
+      "Unverified JavaScript CPU output only; no PVGraph GPU submission.";
+    setStatus("Native Lean toolkit required: use admitPVGraphWithLean(pvgraph, inputs)"+
+      " before runPVGraphGPU(pvgraph, inputs, {admission}).","neutral");
+  }catch(e){setStatus(e?.message||String(e),"error");}
 }
 export function mountPVGraph(){
   const presets=listExamples();
@@ -232,15 +214,6 @@ export function mountPVGraph(){
     try{validate();}catch(e){setStatus(e?.message||String(e),"error");}
   });
   $("gdsl-cpu").addEventListener("click",runCPUOnly);
-  $("gdsl-gpu").addEventListener("click",runBoth);
-  $("gdsl-release").addEventListener("click",()=>{
-    if(active||!session)return;
-    try{session.close();}catch(e){setStatus(e?.message||String(e),"error");return;}
-    session=null;showStats();busy(false);
-    setStatus("GDSL GPU session released. CPU checker remains usable.");
-  });
-  window.addEventListener("pagehide",()=>{
-    if(session&&!active){try{session.close();}catch{}}
-  });
+  $("gdsl-gpu").addEventListener("click",describeNativeGate);
   preset("signal");
 }
