@@ -171,37 +171,58 @@ private def markup : List String :=
    "ul","ol","li","dl","dt","dd","table","thead","tbody","tfoot","tr","td","th",
    "caption","figure","figcaption","details","summary","a","br","hr"]
 
-/-- Render only the passive subset. No book attributes are copied except escaped
-anchor IDs; links and raster sources are constructed from the admitted archive. -/
-private def renderNode (book : Book) (resource : Resource) (index : Nat) (paged : Bool) :
-    Nat → NamespaceNode → Nat → String × Nat
-  | 0, _, budget => ("", budget)
-  | _+1, .other raw, budget => (escape (rawText (.other raw)), budget)
-  | fuel+1, node@(.element name _ kids), budget => Id.run do
-    if name.namespace_ != some xhtml then return ("", budget)
-    let tag := name.localPart
-    if ["script","style","iframe","object","embed","template","form","input","button"].contains tag then
-      return ("", budget)
-    if tag == "img" then
-      let alt := escape (attr node "alt")
-      let image := (resolvePath resource.path (attr node "src")).bind fun path =>
-        book.manifest.find? (fun r => r.path == path && raster r.mediaType)
-      if let some img := image then
-        if img.bytes.size > 0 && img.bytes.size <= budget then
-          return ("<img alt=\"" ++ alt ++ "\" src=\"data:" ++ img.mediaType ++ ";base64," ++
-            XML.Enc.base64 img.bytes ++ "\">", budget - img.bytes.size)
-      return (alt, budget)
-    let anchor := attr node "id"
-    let idAttr := if anchor.isEmpty then "" else " id=\"" ++ escape (chapterId index ++ "-" ++ anchor) ++ "\""
-    if ["br","hr"].contains tag then return ("<" ++ tag ++ idAttr ++ ">", budget)
-    let (content, left) := kids.foldl (fun (acc, remaining) kid =>
-      let (s, next) := renderNode book resource index paged fuel kid remaining
-      (acc ++ s, next)) ("", budget)
-    if !markup.contains tag then return (content, left)
-    let href := if tag == "a" then
-      ((link book resource.path (attr node "href") paged).map fun u => " href=\"" ++ escape u ++ "\"").getD ""
-      else ""
-    return ("<" ++ tag ++ idAttr ++ href ++ ">" ++ content ++ "</" ++ tag ++ ">", left)
+private inductive ReaderTask where
+  | visit (depth : Nat) (node : NamespaceNode)
+  | close (tag : String)
+
+/-- Render the passive subset with an explicit work list and one output join.
+The XHTML input bound and nesting bound also bound the work list traversal. -/
+private def renderNodes (book : Book) (resource : Resource) (index : Nat) (paged : Bool)
+    (nodes : List NamespaceNode) (imageBudget : Nat) : Except String (String × Nat) := do
+  let mut pending := nodes.map (ReaderTask.visit 96)
+  let mut output : List String := []
+  let mut budget := imageBudget
+  for _ in [:2 * resource.bytes.size + 1] do
+    match pending with
+    | [] => return (String.join output.reverse, budget)
+    | .close tag :: rest =>
+      pending := rest
+      output := ("</" ++ tag ++ ">") :: output
+    | .visit depth node :: rest =>
+      pending := rest
+      if depth == 0 then continue
+      match node with
+      | .other _ => output := escape (rawText node) :: output
+      | .element name _ kids =>
+        if name.namespace_ != some xhtml then continue
+        let tag := name.localPart
+        if ["script","style","iframe","object","embed","template","form","input","button"].contains tag then
+          continue
+        if tag == "img" then
+          let alt := escape (attr node "alt")
+          let image := (resolvePath resource.path (attr node "src")).bind fun path =>
+            book.manifest.find? (fun r => r.path == path && raster r.mediaType)
+          if let some img := image then
+            if img.bytes.size > 0 && img.bytes.size <= budget then
+              let source := "data:" ++ img.mediaType ++ ";base64," ++ XML.Enc.base64 img.bytes
+              output := ("<img alt=\"" ++ alt ++ "\" src=\"" ++ source ++ "\">") :: output
+              budget := budget - img.bytes.size
+              continue
+          output := alt :: output
+          continue
+        let anchor := attr node "id"
+        let idAttr := if anchor.isEmpty then "" else " id=\"" ++ escape (chapterId index ++ "-" ++ anchor) ++ "\""
+        if ["br","hr"].contains tag then
+          output := ("<" ++ tag ++ idAttr ++ ">") :: output
+          continue
+        if markup.contains tag then
+          let href := if tag == "a" then
+            ((link book resource.path (attr node "href") paged).map fun u => " href=\"" ++ escape u ++ "\"").getD ""
+            else ""
+          output := ("<" ++ tag ++ idAttr ++ href ++ ">") :: output
+          pending := .close tag :: pending
+        pending := kids.foldr (fun child tail => .visit (depth - 1) child :: tail) pending
+  throw "EPUB XHTML traversal exceeds input bound"
 
 /-- A reflowable reading view with a generated chapter index and safe links. -/
 def Book.readerHtml (book : Book) (chapter : Option Nat := none) : Except String String := do
@@ -221,9 +242,7 @@ def Book.readerHtml (book : Book) (chapter : Option Nat := none) : Except String
     let href := if chapter.isSome then chapterURL i else "#" ++ chapterId i
     links := links ++ "<li><a href=\"" ++ href ++ "\">" ++ label ++ "</a></li>"
     if chapter.any (· != i) then continue
-    let (content, left) := (children body).foldl (fun (acc, remaining) node =>
-      let (s, next) := renderNode book resource i chapter.isSome 96 node remaining
-      (acc ++ s, next)) ("", budget)
+    let (content, left) ← renderNodes book resource i chapter.isSome (children body) budget
     sections := sections ++ "<section id=\"" ++ id ++ "\">" ++ content ++ "</section>"
     budget := left
   let title := escape book.title
