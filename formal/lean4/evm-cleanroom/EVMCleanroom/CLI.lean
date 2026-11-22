@@ -394,6 +394,31 @@ private def chainIdMain (hex gasStr fuelStr idStr : String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX GAS FUEL CHAIN_ID\"}"
     return 2
 
+/-- Synthetic opcode-level fee and randomness context. The effective gas
+    price is not recovered from a signature and the randao mix is not derived
+    from an authenticated header or beacon state. -/
+private def txEnvironmentMain (args : List String) : IO UInt32 := do
+  match args with
+  | [hex, gasStr, fuelStr, priceStr, randaoStr] =>
+    match parseBytecode hex, gasStr.toNat?, fuelStr.toNat?, priceStr.toNat?,
+          randaoStr.toNat? with
+    | .ok code, some gas, some fuel, some price, some randao =>
+      if price ≥ modulus ∨ randao ≥ modulus then
+        IO.println "{\"status\":\"inputError\",\"message\":\"fee or randao out of range\"}"
+        return 2
+      let s : State := {
+        code := code, gas := gas, profile := .shanghaiPlus,
+        effectiveGasPrice := price, blockPrevRandao := randao }
+      match EVMCleanroom.run fuel s with
+      | .ok out => IO.println (successJSON out); return 0
+      | .error e => IO.println (errorJSON e); return 0
+    | _, _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX GAS FUEL EFFECTIVE_GAS_PRICE PREVRANDAO\"}"
+      return 2
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"expected 5 transaction environment arguments\"}"
+    return 2
+
 /-- Explicit synthetic block environment for opcode-level comparisons. These
     values are supplied by the caller and are not authenticated block fields. -/
 private def blockEnvironmentMain (args : List String) : IO UInt32 := do
@@ -652,6 +677,7 @@ def cliMain (args : List String) : IO UInt32 := do
   | ["--osaka-batch", path] => runBatchFile path .osaka
   | ["--chainid", hex, gasStr, fuelStr, idStr] => chainIdMain hex gasStr fuelStr idStr
   | "--block-env" :: rest => blockEnvironmentMain rest
+  | "--tx-env" :: rest => txEnvironmentMain rest
   | ["--osaka", hex, gasStr, fuelStr] => opcodeMain .osaka hex gasStr fuelStr
   | [hex, gasStr, fuelStr] => opcodeMain .shanghaiPlus hex gasStr fuelStr
   | _ =>
