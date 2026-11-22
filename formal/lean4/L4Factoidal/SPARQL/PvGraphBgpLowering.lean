@@ -476,12 +476,13 @@ def prepare? (code : RDF.Term → UInt64)
     (person colleague : VarName) (knows works object : WfIri)
     (active : RDF.Graph) :
     Option (Prepared code person colleague knows works object active) :=
-  if hcode : checkCode64 code
-      (leftRows person colleague knows active)
-      (rightRows works object active) = true then
-    let ps := comparisons code
-      (leftRows person colleague knows active)
-      (rightRows works object active)
+  let left := leftRows person colleague knows active
+  let right := rightRows works object active
+  -- Refuse before allocating even one Cartesian pair or performing an
+  -- O(left×right) equality-admission scan.
+  if left.length * right.length > 262144 then none
+  else if hcode : checkCode64 code left right = true then
+    let ps := comparisons code left right
     if hbound : ps.length ≤ 262144 then
       some ⟨ps, rfl, hcode, hbound⟩
     else none
