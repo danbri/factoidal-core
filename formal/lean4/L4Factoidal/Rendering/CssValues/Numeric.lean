@@ -76,6 +76,7 @@ structure Ctx where
   rootLineHeight : Rat := (96 : Rat) / 5
   viewportW : Rat := 800
   viewportH : Rat := 600
+  percentageBasis : Option Rat := none
   deriving Repr, Inhabited
 
 def ratMin (a b : Rat) : Rat := if a ≤ b then a else b
@@ -344,7 +345,11 @@ def addUnit (acc : List (String × Rat)) (u : String) (v : Rat) : List (String �
 /-- Bring a value to the canonical unit of its kind when the ratio is fixed, or when the
 context gives it. -/
 def canonVal (ctx : Option Ctx) (v : Rat) (u : String) : Calc :=
-  match absFactor u with
+  if u == "%" then
+    match ctx.bind (·.percentageBasis) with
+    | some basis => .val (v * basis / 100) "px"
+    | none => .val v u
+  else match absFactor u with
   | some (f, cu) => .val (v * f) cu
   | none =>
     match ctx.bind (·.pxPer u) with
@@ -600,7 +605,7 @@ def sameUnitValues (xs : List Calc) : Option (List Rat × String) :=
 /-- Simplify a calculation (§10.10.1): units made canonical, numbers folded, sums and
 products flattened, like terms added, and functions over like values computed. The
 recursion is on the nesting of the calculation. -/
-def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
+def Calc.simpWith (ctx : Option Ctx) (deferPctMath : Bool) : Nat → Calc → Calc
   | 0, c => c
   | fuel + 1, c =>
     match c with
@@ -610,19 +615,19 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
       else if k == "e" then .val ((2718281828459045235360287471352 : Rat) / 1000000000000000000000000000000) ""
       else .kw k
     | .neg x =>
-      let y := Calc.simp ctx fuel x
+      let y := Calc.simpWith ctx deferPctMath fuel x
       match extOf y with
       | some (e, u) => ofExt e.neg u
       | none => negate y
     | .inv x =>
-      match Calc.simp ctx fuel x with
+      match Calc.simpWith ctx deferPctMath fuel x with
       | .val v "" => ofExt (XNum.inv (.fin v)) ""
       | .kw k => match XNum.ofKw k with
         | some e => ofExt e.inv ""
         | none => .inv (.kw k)
       | y => .inv y
     | .sum xs =>
-      let ys := (xs.map (Calc.simp ctx fuel)).flatMap fun y => match y with
+      let ys := (xs.map (Calc.simpWith ctx deferPctMath fuel)).flatMap fun y => match y with
         | .sum zs => zs
         | z => [z]
       if ys.any isExtCalc then
@@ -646,7 +651,7 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
       | [t] => t
       | ts => .sum ts
     | .prod xs =>
-      let ys := (xs.map (Calc.simp ctx fuel)).flatMap fun y => match y with
+      let ys := (xs.map (Calc.simpWith ctx deferPctMath fuel)).flatMap fun y => match y with
         | .prod zs => zs
         | z => [z]
       let n := ys.foldl (fun acc y => match y with
@@ -678,11 +683,11 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
       | [.val v u, .inv (.val w u')] =>
         if u == u' && w != 0 then .val (n * v / w) "" else .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
       | rest => .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
-    | .fn "clamp" [.kw "none", x, .kw "none"] => Calc.simp ctx fuel x
-    | .fn "clamp" [.kw "none", x, hi] => Calc.simp ctx fuel (.fn "min" [x, hi])
-    | .fn "clamp" [lo, x, .kw "none"] => Calc.simp ctx fuel (.fn "max" [lo, x])
+    | .fn "clamp" [.kw "none", x, .kw "none"] => Calc.simpWith ctx deferPctMath fuel x
+    | .fn "clamp" [.kw "none", x, hi] => Calc.simpWith ctx deferPctMath fuel (.fn "min" [x, hi])
+    | .fn "clamp" [lo, x, .kw "none"] => Calc.simpWith ctx deferPctMath fuel (.fn "max" [lo, x])
     | .fn name args =>
-      let ys := args.map (Calc.simp ctx fuel)
+      let ys := args.map (Calc.simpWith ctx deferPctMath fuel)
       let strategy := match ys with
         | .kw k :: _ => if roundingStrategies.contains k || k == "no-clamp" then k else "nearest"
         | _ => "nearest"
@@ -695,16 +700,21 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
       | none =>
       match sameUnitValues operands with
       | some (vs, u) =>
+        if deferPctMath && u == "%" then .fn name ys else
         match evalFn name strategy vs u with
         | some r => r
         | none => .fn name ys
       | none =>
         match sameUnitExt operands with
         | some (vs, u) =>
+          if deferPctMath && u == "%" then .fn name ys else
           match evalExtFn name vs u with
           | some r => r
           | none => .fn name ys
         | none => .fn name ys
+
+def Calc.simp (ctx : Option Ctx) (fuel : Nat) (c : Calc) : Calc :=
+  Calc.simpWith ctx false fuel c
 
 /-! ### Serialisation -/
 
@@ -848,7 +858,7 @@ def roundInt (v : Rat) : Rat := ((v + (1 : Rat) / 2).floor : Rat)
 
 /-- A numeric component value read against `req`. With `ctx = none` the canonical specified
 value; with a context the computed value. `none`: not a value of that type. -/
-def numeric (ctx : Option Ctx) (req : NumReq) (cv : CV) : Option CV :=
+def numericWith (ctx : Option Ctx) (deferPctMath : Bool) (req : NumReq) (cv : CV) : Option CV :=
   match cv with
   | .tok (.num v int) =>
     if req.kind == .number then
@@ -875,7 +885,7 @@ def numeric (ctx : Option Ctx) (req : NumReq) (cv : CV) : Option CV :=
       let fuel := Calc.depth 64 c + 4
       if Calc.type pctAs fuel c != some (Ty.ofKind req.kind) then none
       else
-        match Calc.simp ctx fuel c, ctx with
+        match Calc.simpWith ctx deferPctMath fuel c, ctx with
         | .val v u, some _ =>
           -- a computed value that is one value: in range, and an integer where one is wanted
           let v := req.clamp (if req.integer then roundInt v else v)
@@ -896,6 +906,9 @@ def numeric (ctx : Option Ctx) (req : NumReq) (cv : CV) : Option CV :=
           | none => some (.raw (Calc.text s))
         | s, none => some (.raw (Calc.text s))
   | _ => none
+
+def numeric (ctx : Option Ctx) (req : NumReq) (cv : CV) : Option CV :=
+  numericWith ctx false req cv
 
 /-! ### Tests and theorems -/
 
