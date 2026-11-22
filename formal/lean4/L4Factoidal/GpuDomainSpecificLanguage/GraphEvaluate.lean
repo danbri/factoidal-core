@@ -33,7 +33,7 @@ private def inputValue (j : Json) (t : LinkType) : Except String Value := do
     return .scalar (← natU32 j)
   else if t.kind == .buffer && t.atom == "u32" then
     let arr ← j.getArr?
-    if arr.size > 4096 then refuse "Input buffer exceeds 4096 u32 words"
+    if arr.size > 262144 then refuse "Input buffer exceeds 262144 u32 words"
     else
       let vals ← arr.toList.mapM natU32
       return .buffer vals
