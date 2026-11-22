@@ -4,6 +4,7 @@ import EVMCleanroom.Call
 import EVMCleanroom.CallOpcode
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.PragueEnvelope
+import EVMCleanroom.FrontierTransfer
 
 /-!
 A minimal machine-readable entry point for the *restricted* EVM model.
