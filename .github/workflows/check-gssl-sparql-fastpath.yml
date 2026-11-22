@@ -22,6 +22,7 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin
         L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement
+        L4Factoidal.SPARQL.PvGraphBgpLowering
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
       theorems: >-
@@ -48,6 +49,13 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook.join_eq_of_check
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement.rdfJoin_eq_relationalPlan
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement.encodedJoin_eq_evalBgpIdx
+        L4Factoidal.SPARQL.PvGraphBgpLowering.word_xor_zero_iff
+        L4Factoidal.SPARQL.PvGraphBgpLowering.reconstruct_differences
+        L4Factoidal.SPARQL.PvGraphBgpLowering.pvgraph_zipXor_matches_model
+        L4Factoidal.SPARQL.PvGraphBgpLowering.matches_eq_encodedJoin
+        L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_indexed
+        L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_evalIn
+        L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_namedGraph
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_identity
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_code_eq_iff
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_eqb_for_codes
