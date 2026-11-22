@@ -9,6 +9,7 @@ on:
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphEvaluate.lean'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraph.lean'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraphBuilder.lean'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GpuFastPath.lean'
       - '.github/workflows/check-gdsl-lean.yml'
   workflow_dispatch: {}
 permissions:
@@ -27,6 +28,7 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
         L4Factoidal.GpuDomainSpecificLanguage.PVGraph
         L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath
       theorems: >-
         L4Factoidal.GpuDomainSpecificLanguage.Graph.linksAdmitted_sound
         L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission.admitted_unique_node_ids
@@ -41,3 +43,8 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.GraphWords.broadcast_length
         L4Factoidal.GpuDomainSpecificLanguage.GraphJson.certified_sound
         L4Factoidal.GpuDomainSpecificLanguage.PVGraph.admitted_sound
+        L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate.evaluateWith_eq_of_primitives
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelTag_decode_code
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelCall_correct
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.modelOrCpu_eq_reference
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.pvgraph_model_eq_reference
