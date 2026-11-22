@@ -17,7 +17,7 @@ const listOf=(name:string)=>{
 const ops=new Set([...model.matchAll(/⟨"([A-Za-z]+)", \.(state|query|counter|hostFact)/g)].map(m=>m[1]));
 const hosts=["native_html_engine.ts","run_html.ts","native_html_document.ts","textnaut/textnaut.ts",
   "../../../docs/web/hub/foafnaut/browser-worker.mjs","../../../docs/web/hub/foafnaut/link-route.mjs",
-  "../../../docs/web/hub/textnaut/engine-core.mjs"];
+  "../../../docs/web/hub/textnaut/engine-core.mjs","../../../docs/web/hub/epub/worker.mjs"];
 
 Deno.test("host contract: every op a host sends is in HostContract.ops",async()=>{
   assert.ok(ops.size>=60,`only ${ops.size} operations read from Model.lean`);
