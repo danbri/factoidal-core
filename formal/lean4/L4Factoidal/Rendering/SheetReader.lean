@@ -516,12 +516,13 @@ theorem scan_length (cs : List Char) (buf : String) (quote : Char) (esc : Bool) 
 the condition of an `@supports` rule. A sheet that stops early closes its open blocks.
 The loop is over the pieces of the text (`pieces`): one step for each rule, declaration
 and block end. -/
-def read (supports : String → Bool) (source : String) : Array Leaf := Id.run do
+private def readSource (supports : String → Bool) (source : String)
+    (initialLayers : Array (List String)) (initialAnon : Nat) : Array Leaf × Array (List String) × Nat := Id.run do
   let mut out : Array Leaf := #[]
   let mut stack : List Frame := []
   let mut top : Frame := {}
-  let mut layers : Array (List String) := #[]
-  let mut anon := 0
+  let mut layers := initialLayers
+  let mut anon := initialAnon
   -- the text of a prelude that a `;` did not end (outside a style rule)
   let mut carry := ""
   -- the depth inside the block of an at-rule that is kept as written, or skipped
@@ -611,7 +612,35 @@ def read (supports : String → Bool) (source : String) : Array Leaf := Id.run d
     if let some leaf := rawLeaf then out := out.push { leaf with body := rawBody }
   out := flushed out top
   for f in stack do out := flushed out f
-  return out.map fun leaf => if leaf.layer.isEmpty then leaf else { leaf with rank := rankOf layers leaf.layer }
+  return (out, layers, anon)
+
+/-- Read each stylesheet as a separate source, retaining its origin on every leaf.
+Named layer order and anonymous-layer identities are shared across sheets. -/
+def readSheets (supports : String → Bool) (sources : List (String × String)) : Array (String × Leaf) := Id.run do
+  let mut out := #[]
+  let mut layers := #[]
+  let mut anon := 0
+  for (origin, source) in sources do
+    let (leaves, nextLayers, nextAnon) := readSource supports source layers anon
+    out := out ++ leaves.map (origin, ·)
+    layers := nextLayers
+    anon := nextAnon
+  return out.map fun (origin, leaf) =>
+    (origin, if leaf.layer.isEmpty then leaf else { leaf with rank := rankOf layers leaf.layer })
+
+/-- Read a standalone stylesheet. -/
+def read (supports : String → Bool) (source : String) : Array Leaf :=
+  (readSheets supports [("", source)]).map (·.2)
+
+#guard (readSheets (fun _ => true)
+  [("one.css", "@layer first, second; @layer second { b { color: blue } }"),
+   ("two.css", "@layer first { a { color: red } }")]).toList.map
+  (fun (origin, leaf) => (origin, leaf.prelude, leaf.rank)) ==
+    [("one.css", "b", 2), ("two.css", "a", 1)]
+
+#guard (readSheets (fun _ => true)
+  [("one.css", "a { color: red"), ("two.css", "b { color: blue }")]).toList.map
+  (fun (origin, leaf) => (origin, leaf.prelude)) == [("one.css", "a"), ("two.css", "b")]
 
 /-! ### `@import` -/
 
