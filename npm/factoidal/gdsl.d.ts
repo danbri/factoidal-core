@@ -54,6 +54,7 @@ export interface PVGraphRun {
   timing?:{planMs:number;deviceAndReadbackMs:number;totalMs:number};
   assurance?:string;
   gpuError?:string;
+  verifiedAgainstLeanWasm?:boolean;
   device?:Record<string,unknown>;
 }
 export function runPVGraph(options:{
@@ -63,4 +64,5 @@ export function runPVGraph(options:{
   session?:unknown;
   requireGPU?:boolean;
   minWords?:number;
+  verifyWithLean?:boolean;
 }):Promise<PVGraphRun>;
