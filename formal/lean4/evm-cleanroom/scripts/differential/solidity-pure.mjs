@@ -90,6 +90,21 @@ add('slt-out-of-gas', push(maxWord) + push(signBit) + '1200', '', 8)
 add('slt-one-operand', '60011200', '', 6)
 add('slt-no-operands', '1200', '', 3)
 
+// SGT: compare the signed left operand at stack top to the next word.
+// The 8x8 two's-complement matrix is evaluated by independent EthereumJS,
+// including the 0x80...00/0x7f...ff boundary; no JS implementation of SGT.
+let sgtCases = 0
+for (const [i, a] of words.entries()) {
+  for (const [j, b] of words.entries()) {
+    add(`sgt-${i}-${j}`, push(b) + push(a) + '1300', '', 9)
+    sgtCases++
+  }
+}
+add('sgt-out-of-gas', '600260011300', '', 8)
+add('sgt-one-operand', '60011300', '', 6)
+add('sgt-no-operands', '1300', '', 3)
+sgtCases += 3
+
 // Signed division and remainder use truncated magnitudes, and SAR uses
 // sign extension even when the full-width shift operand exceeds 255.
 // Every case runs a real Lean frame against the independent EthereumJS EVM.
@@ -211,7 +226,7 @@ console.log(JSON.stringify({
   kind: 'solidity-pure-frame-differential', oracle: '@ethereumjs/evm@10.1.3 Shanghai runCode',
   compiler: fixture.compiler.version, runtimeSha256: fixture.runtimeSha256,
   compared: cases.length, matched: cases.length, mismatches: 0,
-  signedCases: words.length ** 2 + 3 + newSignedCases, signExtendCases,
+  signedCases: words.length ** 2 + 3 + newSignedCases + sgtCases, sgtCases, signExtendCases,
   modularCases, forbiddenRefusals: forbidden.length,
   compiledExactGas: baseline.gasUsed, legacyCompatibility: 1,
 }))
