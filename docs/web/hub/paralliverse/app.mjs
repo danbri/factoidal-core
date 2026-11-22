@@ -1,7 +1,13 @@
+import {mountExecutionStepper} from "./execution-stepper.mjs";
+import {mountBgpStudio} from "./bgp-studio.mjs";
+
 const $ = id => document.getElementById(id);
+const executionStepper = mountExecutionStepper();
 const source = $("source");
 const program = $("program");
 const example = $("example");
+const cityLab = $("city-lab");
+const cityChecks = [...cityLab.querySelectorAll("input[data-city-tile]")];
 const run = $("run");
 const live = $("live");
 const inputStatus = $("input-status");
@@ -12,7 +18,8 @@ const gpuOutput = $("gpu-output");
 const comparison = $("comparison-status");
 const runtimeData = $("runtime-data");
 const initialPackInput = source.value;
-const examples = {mixed: initialPackInput, empty: "[[], [], []]", none: "[]"};
+const examples = {mixed: initialPackInput, empty: "[[], [], []]", none: "[]",
+  city: "[[1, 3], [1, 2], [3]]"};
 // These are literal input fixtures. Transformation and preparation happen in Lean.
 const presets = {
   signal: {
@@ -88,6 +95,7 @@ function setEmptyView(message = "Actual output appears here.", detail = "Every c
 }
 
 function clearResult() {
+  executionStepper.reset(mode, gpuStates[mode]);
   lastCPUWords = null;
   lastGPUWords = null;
   cpuOutput.textContent = "—";
@@ -154,6 +162,7 @@ function showCurrentGpuState() {
 
 function selectMode(next, {scheduleRun = true, preserveInput = false} = {}) {
   if (next !== "pack" && next !== "studio") return;
+  cityLab.hidden = true;
   if (next !== mode) {
     stopSignal("Playback stopped when the experiment changed.");
     inputs[mode] = source.value;
@@ -213,6 +222,7 @@ function schedule(delay = 150, manual = false, signalFrame = false) {
 }
 
 function edit() {
+  cityLab.hidden = true;
   inputs[mode] = source.value;
   example.value = "custom";
   markPreset(null);
@@ -416,6 +426,7 @@ function showResult({packed, prepareMs, cpuMs}) {
   const words = unpackWords(packed);
   const count = showWords(cpuOutput, words);
   lastCPUWords = words;
+  executionStepper.cpuPack(words);
   renderSelectedWordView();
   cpuStatus.textContent = `${count} ${count === 1 ? "word" : "words"} · ${duration(cpuMs)} CPU call`;
   inputStatus.textContent = `Input prepared in ${duration(prepareMs)}. One untimed warm-up precedes each measured CPU/GPU sample.`;
@@ -440,6 +451,7 @@ function showStudioResult({result, cpuMs}) {
     ? (result.refusal || "The GPU selector declined this program.")
     : JSON.stringify(result.executionPlan, null, 2);
   lastStudioResult = result;
+  executionStepper.cpuStudio(result);
   renderSelectedWordView();
   $("copy-lean").disabled = false;
   $("download-lean").disabled = false;
@@ -462,13 +474,21 @@ function showGpuResult(data) {
   const words = unpackWords(data.packed);
   const count = showWords(gpuOutput, words);
   lastGPUWords = words;
+  executionStepper.gpu(words, data);
   renderSelectedWordView();
   const timing = `${count} ${count === 1 ? "word" : "words"} · ${duration(data.endToEndMs)} GPU end to end.`;
   gpuStatus.textContent = timing + (mode === "pack"
     ? ` Upload/encode/submit ${duration(data.encodeSubmitMs)}; queue and terminal ${duration(data.queueAndTerminalMs)}; payload readback ${duration(data.payloadReadbackMs)}.`
     : ` ${data.passCount ?? "Selected"} passes. Final payload and buffer-frame checks are reported below.`);
-  comparison.textContent = data.matches ? "Exact CPU/GPU byte match." : "CPU/GPU mismatch. The two actual results are shown above.";
-  comparison.dataset.match = String(data.matches);
+  const payloadMatches = data.matches === true;
+  const fullFrameMatches = mode !== "studio" || (data.fullMatches === true && data.canariesMatch === true);
+  const completeMatch = payloadMatches && fullFrameMatches;
+  comparison.textContent = completeMatch
+    ? (mode === "studio" ? "Exact CPU/GPU payload and complete GPU buffer-frame match." : "Exact CPU/GPU byte match.")
+    : payloadMatches && !fullFrameMatches
+      ? "CPU/GPU payloads match, but the full GPU buffer frame (header or tail) does not. See the stepper."
+      : "CPU/GPU mismatch. The two actual results are shown above.";
+  comparison.dataset.match = String(completeMatch);
   if (mode === "studio") {
     $("frame-status").textContent = data.fullMatches === true && data.canariesMatch === true
       ? "Header + tail match"
@@ -491,11 +511,19 @@ function showGpuProvenance(data) {
 }
 
 function applyPreset(name) {
-  if (name === "pack") {
-    inputs.pack = examples.mixed;
+  if (name === "pack" || name === "city") {
+    const fixture = name === "city" ? examples.city : examples.mixed;
+    inputs.pack = fixture;
     selectMode("pack", {scheduleRun: false});
-    source.value = examples.mixed;
-    example.value = "mixed";
+    source.value = fixture;
+    example.value = name === "city" ? "custom" : "mixed";
+    if (name === "city") {
+      const initial = [[1, 3], [1, 2], [3]];
+      for (const item of cityChecks) {
+        item.checked = initial[Number(item.dataset.cityTile)].includes(Number(item.value));
+      }
+      cityLab.hidden = false;
+    }
   } else {
     const preset = presets[name];
     if (!preset || !studioLimit) return;
@@ -599,9 +627,11 @@ if (worker) {
           }
           // A late device event for another mode cannot erase the current result.
           if ((data.mode || "pack") !== mode) break;
+          executionStepper.gpuState(data.state);
           showCurrentGpuState();
           if (data.state !== "ready" && data.state !== "checking") {
             lastGPUWords = null;
+            executionStepper.invalidateGpu();
             gpuOutput.textContent = "—";
             comparison.textContent = "";
             comparison.removeAttribute("data-match");
@@ -659,8 +689,19 @@ if (worker) {
     gpuStatus.textContent = "WebGPU status unavailable because the worker stopped.";
     setPill("adapter-pill", "WebGPU unavailable", "unavailable");
   });
+  cityLab.addEventListener("change", event => {
+    if (!event.target.matches("input[data-city-tile]")) return;
+    const rows = [0, 1, 2].map(tile => cityChecks
+      .filter(item => Number(item.dataset.cityTile) === tile && item.checked)
+      .map(item => Number(item.value)));
+    source.value = JSON.stringify(rows);
+    inputs.pack = source.value;
+    example.value = "custom";
+    markPreset("city");
+    schedule(0, true);
+  });
   source.addEventListener("input", edit);
-  source.addEventListener("change", () => { inputs[mode] = source.value; example.value = "custom"; markPreset(null); schedule(0); });
+  source.addEventListener("change", () => { cityLab.hidden = true; inputs[mode] = source.value; example.value = "custom"; markPreset(null); schedule(0); });
   program.addEventListener("input", edit);
   program.addEventListener("change", () => { markPreset(null); schedule(0); });
   run.addEventListener("click", () => { example.value = "custom"; schedule(0, true); });
@@ -719,3 +760,8 @@ $("download-lean").addEventListener("click", () => {
   $("action-status").textContent = "Downloaded the Lean source returned by this runtime.";
 });
 $("share").addEventListener("click", shareExperiment);
+
+
+// The BGP runs in two independent backends. The full Lean SPARQL runtime
+// is the lexical oracle; WebGPU performs integer triple filtering and joins.
+mountBgpStudio();

@@ -1,0 +1,83 @@
+name: Ethereum bytecode to WASM to SPARQL demo
+
+on:
+  pull_request:
+    paths:
+      - 'labs/ethereum-wasm-sparql/**'
+      - 'npm/factoidal/test/ethereum-wasm-sparql.test.mjs'
+      - '.github/workflows/check-ethereum-wasm-sparql.yml'
+      - 'docs/web/hub/ethereum-wasm-sparql.md'
+      - 'docs/web/hub/index.md'
+      - 'docs/web/hub/sparql.md'
+      - 'docs/_includes/hub.njk'
+      - 'docs/.eleventy.js'
+      - 'tests/hub/hub_ethereum_wasm_sparql_test.mjs'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  compiler:
+    name: Deterministic EVM-to-WASM compilation and 400 differential vectors
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check actual EVM source -> binary WASM plus input rejection
+        run: node --test labs/ethereum-wasm-sparql/evm-to-wasm.test.mjs labs/ethereum-wasm-sparql/evm-to-wasm-256.test.mjs labs/ethereum-wasm-sparql/evm-policy.test.mjs
+
+  # The existing npm package suite and dataflow workflow runs the live
+  # Factoidal extension-function integration tests with the Lean WASM
+  # engine installed from the newest ancestor web-release artifacts.
+
+  independent-ethereumjs:
+    name: Compare 64/256-bit WASM with pinned EthereumJS Cancun on 800 ABI inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install independently maintained EVM implementation from integrity-pinned lock
+        run: npm ci --prefix labs/ethereum-wasm-sparql --ignore-scripts --no-audit --no-fund
+      - name: Execute raw EVM bytecode and compare 400 uint64 plus 400 uint256 WASM outcomes
+        run: node --test labs/ethereum-wasm-sparql/ethereumjs-oracle.test.mjs labs/ethereum-wasm-sparql/evm-policy-ethereumjs.test.mjs
+
+  hub:
+    name: Real Factoidal Hub cells, site build and exact same-origin compiler assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install published-ancestor Lean WASM engine for Hub cell tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/fetch-builds.sh --set web
+      - name: Install Factoidal and Eleventy dependencies from lockfiles
+        run: |
+          npm ci --prefix npm/factoidal --ignore-scripts --no-audit --no-fund
+          npm ci --prefix docs --ignore-scripts --no-audit --no-fund
+      - name: Run the actual Hub observable-js cell sources in reactive Node harness
+        run: node --test tests/hub/hub_ethereum_wasm_sparql_test.mjs
+      - name: Build complete Hub site with new interactive page
+        run: npm run build --prefix docs
+      - name: Verify browser HTML and exact audited compiler modules are published
+        run: |
+          set -euo pipefail
+          test -s docs/_site/web/hub/ethereum-wasm-sparql/index.html
+          cmp labs/ethereum-wasm-sparql/evm-to-wasm.mjs docs/_site/web/hub/ethereum-wasm-sparql/evm-to-wasm.mjs
+          cmp labs/ethereum-wasm-sparql/evm-policy.mjs docs/_site/web/hub/ethereum-wasm-sparql/evm-policy.mjs
+          grep -Fq 'evmWasmSparqlDemo' docs/web/hub/ethereum-wasm-sparql.md
+          grep -Fq '/factoidal/web/hub/ethereum-wasm-sparql/evm-policy.mjs' docs/_site/web/hub/ethereum-wasm-sparql/index.html
+          grep -Fq 'Ethereum bytecode' docs/_site/web/hub/index.html

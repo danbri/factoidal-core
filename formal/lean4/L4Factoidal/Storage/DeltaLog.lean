@@ -111,6 +111,12 @@ private theorem joinU64LowHigh32 (n : UInt64) :
     BitVec.extractLsb'_append_extractLsb']
   simp
 
+/-- Public reusable two-u32-lane reconstruction lemma. GPU or network codecs can
+    reuse the DLE1 bit-vector proof without importing a separate axiom. -/
+theorem joinU64LowHigh32_correct (n : UInt64) :
+    n.toUInt32.toUInt64 ||| ((n >>> 32).toUInt32.toUInt64 <<< 32) = n :=
+  joinU64LowHigh32 n
+
 /-- The u64 framing primitive is an inverse in front of arbitrary subsequent
     bytes. It is expressed as two proved u32 fields and a checked bit-vector
     reconstruction, matching the F* DLOG/CEP1 representation. -/

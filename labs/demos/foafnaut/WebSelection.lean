@@ -290,8 +290,8 @@ screen, 300 on a 3x phone; the native window keeps 100) shows the reader the zoo
 by that: the text size, 100 being the size a usual browser gives. The settings page steps
 and sets the text size; the host gets the zoom back. -/
 
-/-- Text size of a new window, in percent of a usual browser's: 200 (it was 150). -/
-def defaultPercent : Nat := 200
+/-- Text size of a new window, in percent of a usual browser's: 100. -/
+def defaultPercent : Nat := 100
 
 /-- The largest text size the settings page and a pinch reach. -/
 def maxShown : Nat := 1000
@@ -377,11 +377,16 @@ def commandPercent (command percent : Nat) (unit : Nat := 100) : Nat :=
 #guard zoomIn 2000 == 2200 && zoomIn 1 == 2
 #guard zoomOut 100 == 90 && zoomOut 50 == 50 && zoomOut 105 == 95 && zoomOut 165 == 150
 #guard zoomOut 51 == 50 && zoomOut 10 == 10 && zoomOut 2200 == 2000
-#guard commandPercent 3 175 == 200 && commandPercent 4 175 == 175 && commandPercent 3 175 300 == 600
--- A 3x phone starts at 600 and shows 200%; A+ gives 225% (675), A− 175% (525).
+/-- The reset command and an explicit 100% selection use the same backing-scale conversion. -/
+theorem reset_eq_normal_text (percent unit : Nat) :
+    commandPercent 3 percent unit = textZoom (.to 100) percent unit := rfl
+
+#guard commandPercent 3 175 == 100 && commandPercent 4 175 == 175
+#guard commandPercent 3 400 200 == 200 && commandPercent 3 175 300 == 300
+-- At an explicit 200% on a 3x screen, A+ gives 225% (675), A− 175% (525).
 #guard shownPercent 600 300 == 200 && textZoom .up 600 300 == 675 && textZoom .down 600 300 == 525
 #guard textZoom (.to 400) 600 300 == 1200 && textZoom (.to 5000) 100 100 == 1000 && textZoom (.to 10) 300 300 == 150
-#guard textZoom .reset 450 300 == 600 && textZoom .reset 150 100 == 200 && textZoom .reset 330 263 == 525
+#guard textZoom .reset 450 300 == 300 && textZoom .reset 150 100 == 100 && textZoom .reset 330 263 == 265
 -- Off the steps (a pinch left 210%), A+ and A− go to the steps beside it.
 #guard textZoom .up 210 100 == 225 && textZoom .down 210 100 == 200 && textZoom .down 50 100 == 50 && textZoom .up 1000 100 == 1000
 #guard ZoomAsk.parse "up" == some .up && ZoomAsk.parse "150" == some (.to 150) && ZoomAsk.parse "" == none && ZoomAsk.parse "1e3" == none

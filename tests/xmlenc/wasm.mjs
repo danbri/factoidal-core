@@ -17,6 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { pbkdf2Sync } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runWithCipher } from '../../npm/factoidal/lib/cipher-host.mjs';
@@ -97,10 +98,55 @@ for (const c of w3c.cases) {
   test(`W3C ${c.id}: ${c.outcome}`, async () => {
     // `key` names the one key a case is given (the documents name RSA keys by certificate only).
     const caseKeys = c.key ? w3cKeys.filter((k) => k.kid === c.key) : w3cKeys;
-    const res = await decrypt({ document: readFileSync(join(w3cDir, c.file), 'utf8'), keys: caseKeys });
+    const document = readFileSync(join(w3cDir, c.file), 'utf8');
+    if (c.outcome === 'octets') {
+      // No Type (XML Encryption 1.1 §3.1): the plaintext octets (§4.4 step 3).
+      const r = await decrypt({ document, keys: caseKeys, octets: true });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(Buffer.from(r.octets, 'base64').toString('hex'), c.expectedHex);
+      return;
+    }
+    if (c.outcome === 'defective') {
+      // Defective test data (cases.json defectiveNote, c.issue): no §5.2
+      // padding block. The CBC requests use the key Node derives; the
+      // octets are not the stated plaintext. Red if they ever are.
+      const keysSeen = [];
+      const call = op('xmlDecrypt');
+      const r = await runWithCipher((a) => {
+        const out = call(a);
+        if (out.ok && out.need) keysSeen.push(Buffer.from(out.need.key, 'base64').toString('hex'));
+        return out;
+      }, { document, keys: caseKeys, octets: true, allowCbc: true });
+      assert.ok(keysSeen.length > 0 && keysSeen.every((k) => k === c.derivedKeyHex), keysSeen.join(','));
+      const got = r.ok ? Buffer.from(r.octets, 'base64').toString('hex') : null;
+      assert.notEqual(got, c.expectedHex, `STALE defective-data exclusion, now decrypts: ${c.issue}`);
+      return;
+    }
+    const res = await decrypt({ document, keys: caseKeys });
     if (c.outcome === 'ok') {
       assert.equal(res.ok, true, res.error);
       assert.equal(res.canonical, canonical(readFileSync(join(w3cDir, c.expected), 'utf8')));
+    } else if (c.outcome === 'xfail') {
+      // An expected failure: red when it starts to decrypt (close c.issue then).
+      assert.notEqual(res.ok, true, `STALE expected failure, now decrypts: ${c.issue}`);
+      assert.equal(res.error, DECRYPTION_ERROR, res.error);
+    } else {
+      assert.equal(res.ok, false);
+      assert.ok(res.error.includes(c.reason), res.error);
+      assert.notEqual(res.error, DECRYPTION_ERROR);
+    }
+  });
+}
+
+// PBKDF2 key derivation (XML Encryption 1.1 §5.4.2) in key agreement:
+// documents made by Node's crypto (tests/xmlenc/make-pbkdf2.mjs).
+const pbkdf2 = JSON.parse(readFileSync(join(root, 'tests', 'xmlenc', 'pbkdf2.json'), 'utf8'));
+for (const c of pbkdf2.cases) {
+  test(`PBKDF2 ${c.name}: ${c.outcome}`, async () => {
+    const res = await decrypt({ document: c.document, keys: pbkdf2.keys });
+    if (c.outcome === 'ok') {
+      assert.equal(res.ok, true, res.error);
+      assert.equal(res.canonical, canonical(c.expected));
     } else {
       assert.equal(res.ok, false);
       assert.ok(res.error.includes(c.reason), res.error);
@@ -151,12 +197,20 @@ const RECIPIENTS = [
   ['ECDH-ES P-256, kw-aes128, AES-128-GCM', { recipient: publicOf(byKid('ec-1')), algorithm: 'aes128-gcm' }],
   ['X25519, kw-aes256, AES-256-GCM', { recipient: publicOf(byKid('x-1')), algorithm: 'aes256-gcm' }],
   ['kw-aes256 under a named key, Content', { recipient: byKid('kek256'), algorithm: 'aes128-gcm', content: true }],
+  // XML Encryption 1.1 §5.4.2 and §5.4.3 in the writer.
+  ['ECDH-ES P-256, PBKDF2 HMAC-SHA-256', { recipient: publicOf(byKid('ec-1')), algorithm: 'aes128-gcm',
+    keyDerivation: { algorithm: 'pbkdf2', prf: 'hmac-sha256', iterations: 1000 } }],
+  ['X25519, PBKDF2 HMAC-SHA-512, AES-256-GCM', { recipient: publicOf(byKid('x-1')), algorithm: 'aes256-gcm',
+    keyDerivation: { algorithm: 'pbkdf2', prf: 'hmac-sha512', iterations: 20, saltLength: 32 } }],
+  ['DerivedKey from kek128, Concat KDF', { recipient: byKid('kek128'), derivedKey: true }],
+  ['DerivedKey from kek256, PBKDF2 HMAC-SHA-1, kw-aes256', { recipient: byKid('kek256'), derivedKey: true,
+    keyWrap: 'kw-aes256', keyDerivation: { algorithm: 'pbkdf2', prf: 'hmac-sha1', iterations: 10 } }],
 ];
 
 const dump = [];
 for (const [label, opts] of RECIPIENTS) {
   test(`Lean encrypts (${label}) and decrypts`, async () => {
-    const random = Buffer.from(crypto.getRandomValues(new Uint8Array(96))).toString('base64');
+    const random = Buffer.from(crypto.getRandomValues(new Uint8Array(112))).toString('base64');
     const enc = await encrypt({ document: PLAIN, random, ...opts });
     assert.equal(enc.ok, true, enc.error);
     assert.equal(enc.document.includes('4019'), false);
@@ -166,6 +220,25 @@ for (const [label, opts] of RECIPIENTS) {
     dump.push({ name: label, document: enc.document, expected: PLAIN });
   });
 }
+
+test('the PBKDF2 key of a DerivedKey that Lean writes is the one Node derives', async () => {
+  const random = Buffer.from(crypto.getRandomValues(new Uint8Array(112))).toString('base64');
+  const enc = await encrypt({ document: PLAIN, random, recipient: byKid('kek128'), derivedKey: true,
+    keyDerivation: { algorithm: 'pbkdf2', prf: 'hmac-sha256', iterations: 1000 } });
+  assert.equal(enc.ok, true, enc.error);
+  const salt = Buffer.from(enc.document.match(/<xenc11:Specified>([^<]*)</)[1], 'base64');
+  const master = Buffer.from(byKid('kek128').k, 'base64url');
+  const want = pbkdf2Sync(master, salt, 1000, 16, 'sha256').toString('base64');
+  let seen;
+  const call = op('xmlDecrypt');
+  const dec = await runWithCipher((a) => {
+    const r = call(a);
+    if (r.need?.op === 'aes-kw-unwrap') seen = r.need.key;
+    return r;
+  }, { document: enc.document, keys });
+  assert.equal(dec.ok, true, dec.error);
+  assert.equal(seen, want);
+});
 
 test('Lean encrypts a SAML EncryptedAssertion', async () => {
   const assertion = '<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_1" Version="2.0"/>';

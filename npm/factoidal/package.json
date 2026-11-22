@@ -76,6 +76,14 @@
     "./xmpp/server": "./xmpp/server.mjs",
     "./xmpp/inpage": "./xmpp/inpage.mjs",
     "./cipher-host": "./lib/cipher-host.mjs",
+    "./gdsl": {
+      "types": "./gdsl.d.ts",
+      "default": "./gdsl.mjs"
+    },
+    "./gpu-resident": {
+      "types": "./gpu-resident.d.ts",
+      "default": "./lib/gpu-resident.mjs"
+    },
     "./store": {
       "default": "./bin/store.mjs"
     },
@@ -145,6 +153,9 @@
     "xmpp/",
     "sample-store.mjs",
     "sample-store.d.ts",
+    "gpu-resident.d.ts",
+    "gdsl.mjs",
+    "gdsl.d.ts",
     "docs/",
     "README.md",
     "CHANGELOG.md",

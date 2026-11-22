@@ -103,6 +103,13 @@ def target (dom : DOM.Dom) (scene : Rendering.Scene) (boxes : Array Rendering.La
   let node := ((outerSvg dom best.source).bind fun svg => svgTarget dom scene svg px py).getD best.source
   return (node,(boxes.find? (·.source == node)).getD best)
 
+/-- The target after CSSOM View's visibility check. Visibility is tested on each box's
+computed style, so a visible descendant of a hidden ancestor can still be hit. -/
+def targetWithStyles (dom : DOM.Dom) (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+    (styles : Array Rendering.CSS.Computed) (px py : Float) : Option (Nat × Rendering.Layout.Box) :=
+  let visibleBoxes := boxes.filter fun b => (styles[b.source]?.map (·.visible)).getD true
+  target dom scene visibleBoxes px py
+
 /-! ### Bounds of an SVG element -/
 
 /-- A rectangle as `(x0, y0, x1, y1)`. -/

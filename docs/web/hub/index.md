@@ -15,10 +15,11 @@ answers SPARQL 1.1 and 1.2, reasons with RDFS and OWL 2, validates with
 SHACL and ShEx, imports CSV, JSON and XML, canonicalises and signs RDF,
 serves data over HTTP, and keeps it on disk.
 
-The pages below run their examples in this page with the npm package
+The notebook pages below run their examples in this page with the npm package
 `@factoidal/core` {{ factoidalRelease.version }}, the published release
 (loaded from `{{ factoidalRelease.base }}`): edit a cell and press Run. The engine and the data stay
-in your browser.
+in your browser. The <a href="./gpu-sparql/">mixed CPU / GPU SPARQL workbench</a>
+loads a local build from this site instead, so it can exercise the current source before an npm release.
 
 ## Web platform
 
@@ -28,6 +29,7 @@ WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-pla
 
 <ul class="post-series">
   <li><a href="./foafnaut/">Foafnaut</a> — the browser in a page: tabs, an address bar for URLs, searches and commands, view source, XML with XSLT, drawn by the built-in engine with WebGPU. It works at phone width.</li>
+  <li><a href="./epub/">EPUB reader</a> — open an unencrypted EPUB 3 file in your browser.</li>
   <li><a href="./textnaut/">Textnaut</a> — the text-mode browser in a page: the built-in engine lays out a page and Textnaut shows it as a grid of characters with numbered links, as in a terminal. The terminal program: <code>npx @foafos/textnaut</code>.</li>
   <li><a href="./foafnaut/pages/start.html">Start page</a> — the page Foafnaut and Textnaut open with: sites on the web to try, grouped, each with a note on how well it works today, and copies of some openly licensed pages that open inside Foafnaut on the Hub.</li>
   <li><a href="./foafnaut/pages/index.html">Demo pages</a> — pages that show what the engine draws: scripts, WebGPU and WebGL, SVG, text, XML and XSLT. Open them in <a href="./foafnaut/">Foafnaut</a> or <a href="./textnaut/">Textnaut</a>.</li>
@@ -46,7 +48,10 @@ WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-pla
 ## Parallel compute
 
 <ul class="post-series">
-  <li><a href="./paralliverse/">Paralliverse</a> — editable stable packing on compiled Lean WebAssembly and WebGPU, with actual byte comparisons, separate timings and the proof's scope.</li>
+  <li><a href="./gdsl-app/">GDSL in your app</a> — build a signal mixer and prefix sum through the public PVGraph API; edit inputs, compare CPU and GPU execution, inspect the program, and copy a complete standalone app. Loads local modules and Wasm, with no npm release required.</li>
+  <li><a href="./gpu-sparql/">Mixed CPU / GPU SPARQL</a> — the shipping query API with automatic placement, explicit CPU and required GPU modes; editable RDF and SPARQL, local file loading, observed join and device traces, and a separate CPU result comparison. Loads a local runtime, with no npm release required.</li>
+  <li><a href="./gssl/">GDSL graph workbench</a> — one shared typed dataflow language across signal, font, motion, image and numeric examples; Lean/Wasm provides construction, admission and reference evaluation through one API; no JavaScript PVGraph interpreter or checker is used. The page also includes an experimental general-purpose GPU device lab: two actual compute passes, persistent intermediate buffers, upload reuse, bounded buffer inspection and a draft language specification. This is not the assured SPARQL accelerator.</li>
+  <li><a href="./paralliverse/">Paralleliverse</a> — typed parallel-computation Studio: a real RDF/SPARQL BGP evaluated independently by Lean/Wasm and two WebGPU join plans, with lexical triples, intermediate GPU relations, solution-bag comparisons and source-scoped evidence; plus word-map and packing experiments.</li>
 </ul>
 
 ## Pages
@@ -57,6 +62,7 @@ WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-pla
   <li><a href="./jsonld-star/">JSON-LD-star and JSON-LD 1.3</a> — RDF 1.2 triple terms, reifiers, annotations and base direction in JSON-LD (<code>@triple</code>, <code>@reifies</code>, <code>@annotation</code>, option <code>rdfstar</code>); the draft, the choices made, scores, and the plan towards JSON-LD 1.3</li>
   <li><a href="./rdf12-jsonld-usecases/">RDF 1.2 use cases in JSON-LD-star</a> — provenance, facts with several occurrences, edge properties, claims that are not asserted, one reifier for several triples, annotations on annotations; SPARQL 1.2 annotation queries</li>
   <li><a href="./sparql/">SPARQL</a> — query and update, property paths, aggregates, GeoSPARQL functions, <code>text:query</code>, extension functions in JavaScript and WebAssembly, SERVICE, SPARQL 1.2 triple patterns</li>
+  <li><a href="./ethereum-wasm-sparql/">Ethereum bytecode → WASM → SPARQL</a> — interactive full-uint256 EVM bytecode compilation, seven-condition eligibility policy, editable RDF/SPARQL, bytecode mutation and provenance hashes</li>
   <li><a href="./importers/">Data importers and integration</a> — CSVW, RML, JSON-LD and a GRDDL-style XSLT step, four independent sources merged into one dataset, each in its own named graph, one query across them</li>
   <li><a href="./inference/">Inference</a> — RDFS and OWL 2 RL closure over pipeline output, derived triples in their own graph, OWL 2 DL consistency and entailment</li>
   <li><a href="./sparql-rl/">SPARQL-RL</a> — SPARQL 1.2 RL rules (W3C editor's draft) with data blocks, NOT, SET, GROUP, stratification and run-once rules; OWL 2 RL as SPARQL-RL rules; the semi-naive and BGP theorems; comparison with RIF, SWRL, SPIN, SHACL rules, N3, Datalog and OWL 2 RL</li>

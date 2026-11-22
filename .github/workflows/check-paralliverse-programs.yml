@@ -32,11 +32,13 @@ jobs:
       timeout_minutes: 10
       modules: >-
         L4Factoidal.Paralliverse.Program L4Factoidal.Paralliverse.ProgramCPU
+        L4Factoidal.GpuDomainSpecificLanguage
       theorems: >-
         L4Factoidal.Paralliverse.Program.eval_fuseMaps
         L4Factoidal.Paralliverse.Program.runCPU_eq_eval
         L4Factoidal.Paralliverse.Program.runCPU_fuseMaps_eq_eval
         L4Factoidal.Paralliverse.Program.collect_mapCPU_eq_eval
+        L4Factoidal.GpuDomainSpecificLanguage.eval_eq_of_primitive_agreement
   words:
     if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-typed-programs'
     uses: ./.github/workflows/check-dataflow-stage.yml

@@ -10,8 +10,9 @@
 // lists them), its scripts run on BubblePopJS (a script session as run_html.ts starts it, time
 // moved 16 ms a step), and drawn once by the engine's CPU raster (op render with cpu:true,
 // SVGRaster) at the job's size, CSS pixels = device pixels. The default face is Noto Sans
-// (third_party/fonts) with the Hub's fallback fonts, as in the window; --bitmap-font draws with
-// the engine's bitmap face instead (a diagnostic, never a score).
+// (third_party/fonts) with the Hub's fallback fonts, and serif and monospace text draw with
+// Liberation Serif and Liberation Mono (serif_font.ts), as in the window; --bitmap-font draws
+// with the engine's bitmap face instead (a diagnostic, never a score).
 //
 // When the page is drawn: WPT's rule (wptrunner reftest-wait.js): after the load, and while the
 // root element's class has `reftest-wait`, when a script removes it. Here: after the first
@@ -26,6 +27,7 @@
 import {loadHTML,nativeBackends,unpackAnswer} from "../../labs/demos/foafnaut/native_html_engine.ts";
 import {inputURL,loadFontFile,prepareHTML,readSource,setFontHost,setScriptHost,setImagesAfterFirstFrame} from "../../labs/demos/foafnaut/native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts} from "../../labs/demos/foafnaut/native_html_fonts.ts";
+import {MONO_FAMILY,SERIF_FAMILY,monoFontPath,serifFontPath} from "../../labs/demos/foafnaut/serif_font.ts";
 import {netAnswer} from "../../labs/demos/foafnaut/native_net.ts";
 import {pngOf} from "../../labs/demos/foafnaut/png_write.ts";
 // @ts-ignore plain JavaScript module of the Hub
@@ -56,6 +58,8 @@ if(!bitmap){
 }
 // Images go with the first frame: there is one frame.
 setImagesAfterFirstFrame(false);
+/** The generic faces given to the engine so far (each once a run). */
+const faces={serif:false,mono:false};
 let size={width:800,height:600};
 const call=(source:string,request:Record<string,unknown>)=>engine.scriptSession(source,request) as unknown as Turn;
 const synced=async(turn:Turn):Promise<Turn>=>{
@@ -134,8 +138,20 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
     }
   }
   const {source,options}=page.request(job.width,job.height,{textScalePercent:100,zoomUnit:100});
-  const request=JSON.stringify({...options,op:"render",checks:false,cpu:true});
-  const buffer=bytesBackend(source,request,job.width,job.height);
+  // partialNote:false: no "Partial page" note in the picture (WebDocument.layOutDOMIn); it is the
+  // browser's, not the page's. An older engine ignores the field and draws the note.
+  const request=JSON.stringify({...options,op:"render",checks:false,cpu:true,partialNote:false});
+  let buffer=bytesBackend(source,request,job.width,job.height);
+  // The serif and monospace faces, as the window holds them (serif_font.ts): given the first time
+  // a render says its text wants one, then the page is drawn again. Only an engine that holds
+  // such a face says so, so an older engine never gets a font load mode it does not know.
+  if(!bitmap){
+    const wants=unpackAnswer(buffer).head as {wantsSerif?:unknown;wantsMono?:unknown};
+    let again=false;
+    if(wants.wantsSerif===true&&!faces.serif){faces.serif=true;again=true;await loadFontFile(engine,serifFontPath(),SERIF_FAMILY,"bytes","serif");}
+    if(wants.wantsMono===true&&!faces.mono){faces.mono=true;again=true;await loadFontFile(engine,monoFontPath(),MONO_FAMILY,"bytes","mono");}
+    if(again)buffer=bytesBackend(source,request,job.width,job.height);
+  }
   if(script)try{engine.scriptSession("",{action:"close"});}catch{/* closed */}
   const {head,sections}=unpackAnswer(buffer);
   if((head as {error?:string}).error)throw new Error(String((head as {error?:string}).error));

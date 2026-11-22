@@ -1,0 +1,61 @@
+{
+  "schema": "factoidal.risc0.toolchains.v1",
+  "platform": "x86_64-unknown-linux-gnu",
+  "sdk_version": "3.1.0",
+  "sdk_commit": "22c5fb90522cb4d9427d4af6c05e747d20be2b7f",
+  "host_rust_toolchain": "1.97.1-x86_64-unknown-linux-gnu",
+  "host_rust_version": "1.97.1",
+  "guest_rustc_version": "rustc 1.97.0-dev (e638c6cfe 2026-07-15)",
+  "rustup_alias": "risc0",
+  "settings_toml": "[default_versions]\ncpp = \"2024.1.5\"\nrust = \"1.97.0\"\n",
+  "cpp_link_target": "toolchains/v2024.1.5-cpp-x86_64-unknown-linux-gnu/riscv32im-linux-x86_64",
+  "rust_link_target": "risc0/toolchains/v1.97.0-rust-x86_64-unknown-linux-gnu",
+  "sources": [
+    "https://github.com/risc0/risc0/releases/tag/v3.1.0",
+    "https://api.github.com/repos/risc0/risc0/releases/tags/v3.1.0",
+    "https://github.com/risc0/toolchain/releases/tag/2024.01.05",
+    "https://github.com/risc0/rust/releases/tag/r0.1.97.0",
+    "https://docs.rs/crate/rzup/0.5.2/source/src/components.rs"
+  ],
+  "archives": [
+    {
+      "name": "cpp",
+      "version": "2024.1.5",
+      "url": "https://github.com/risc0/toolchain/releases/download/2024.01.05/riscv32im-linux-x86_64.tar.xz",
+      "cache_names": ["riscv32im-linux-x86_64.tar.xz"],
+      "sha256": "cc19497db5fd1ccd92fa3d315a33cacd4ba480f8d21b3c84dfb5493cfd68da0d",
+      "bytes": 303795048,
+      "members": 1755,
+      "unpacked_regular_bytes": 1605598023,
+      "destination": "risc0/toolchains/v2024.1.5-cpp-x86_64-unknown-linux-gnu",
+      "required_members": [
+        "riscv32im-linux-x86_64/bin/riscv32-unknown-elf-g++",
+        "riscv32im-linux-x86_64/bin/riscv32-unknown-elf-objcopy"
+      ]
+    },
+    {
+      "name": "rust",
+      "version": "1.97.0",
+      "url": "https://github.com/risc0/rust/releases/download/r0.1.97.0/rust-toolchain-x86_64-unknown-linux-gnu.tar.gz",
+      "cache_names": ["rust-toolchain-x86_64-unknown-linux-gnu.tar.gz"],
+      "sha256": "100b597d605b706bec94e1d32bfaaf5851df8d75173f986d4b56a3e90916be53",
+      "bytes": 528796425,
+      "members": 401,
+      "unpacked_regular_bytes": 1675701300,
+      "destination": "risc0/toolchains/v1.97.0-rust-x86_64-unknown-linux-gnu",
+      "required_members": ["bin/rustc", "bin/cargo"]
+    },
+    {
+      "name": "sdk",
+      "version": "3.1.0",
+      "url": "https://github.com/risc0/risc0/releases/download/v3.1.0/cargo-risczero-x86_64-unknown-linux-gnu.tgz",
+      "cache_names": ["cargo-risczero-x86_64-unknown-linux-gnu.tgz", "cargo-risczero-v3.1.0.tgz"],
+      "sha256": "415ca205d4408f5d768b9e4d623f2aac6b869329a6cf965f0c57a88a6dbb5871",
+      "bytes": 53368396,
+      "members": 2,
+      "unpacked_regular_bytes": 96491168,
+      "destination": "risc0-bin",
+      "required_members": ["cargo-risczero", "r0vm"]
+    }
+  ]
+}

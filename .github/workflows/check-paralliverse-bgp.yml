@@ -1,0 +1,41 @@
+name: Paralliverse BGP Studio checks
+
+on:
+  push:
+    branches: [main, feat/665-bgp-studio-lexical]
+    paths:
+      - 'docs/web/hub/paralliverse/**'
+      - 'tests/hub/paralliverse_bgp_test.mjs'
+      - 'tests/hub/paralliverse_bgp_gpu_comparison_test.mjs'
+      - '.github/workflows/check-paralliverse-bgp.yml'
+  pull_request:
+    paths:
+      - 'docs/web/hub/paralliverse/**'
+      - 'tests/hub/paralliverse_bgp_test.mjs'
+      - 'tests/hub/paralliverse_bgp_gpu_comparison_test.mjs'
+      - '.github/workflows/check-paralliverse-bgp.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  bgp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check all BGP source files
+        run: |
+          node --check docs/web/hub/paralliverse/bgp-fixtures.mjs
+          node --check docs/web/hub/paralliverse/bgp-worker.mjs
+          node --check docs/web/hub/paralliverse/bgp-studio.mjs
+          node --check docs/web/hub/paralliverse/bgp-comparison.mjs
+          node --check docs/web/hub/paralliverse/integer-bgp-gpu.mjs
+          node --check docs/web/hub/paralliverse/integer-bgp-compact-gpu.mjs
+          node --check docs/web/hub/paralliverse/app.mjs
+      - name: Test lexical triples, generated scales and exact ID conversion
+        run: node --test tests/hub/paralliverse_bgp_test.mjs tests/hub/paralliverse_bgp_gpu_comparison_test.mjs

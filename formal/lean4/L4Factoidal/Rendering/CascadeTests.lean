@@ -215,13 +215,12 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard (styleAt pageT "#t { background: url(a.png) no-repeat #00f }").map (fun s => (s.background.map (·.b)).getD 0) == some 1
 -- the `font` shorthand sets the size, the family and the line height
 #guard (styleAt pageT "#t { font: xx-small serif }").map (fun s => (s.fontSize, s.fontFamily)) == some (9, "serif")
--- CSS 2 §10.8.1. Zero may be a length, a unitless factor, or a percentage.
--- A negative declaration on a child leaves its inherited line height in place.
+
+-- A zero length, factor or percentage is valid. A negative value is discarded.
 #guard (styleAt pageT "#t { line-height: -0px }").map (·.lineHeight) == some 0
 #guard (styleAt pageT "#t { line-height: 0 }").map (·.lineHeightFactor) == some (some 0)
 #guard (styleAt pageT "#t { line-height: 0% }").map (·.lineHeight) == some 0
 #guard (styleAt pageT "body { line-height: 31px } #t { line-height: -2px }").map (·.lineHeight) == some 31
-
 #guard (styleAt pageT "#t { font: italic bold 12px/30px Georgia, serif }").map (fun s => (s.fontSize, s.lineHeight)) ==
   some (12, 30)
 #guard (styleAt pageT ".a { font: 20px/2 Foo } #t { font-size: 10px }").map (fun s => (s.fontSize, s.lineHeight)) == some (10, 20)

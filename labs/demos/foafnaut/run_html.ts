@@ -2,7 +2,7 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,holdForPrefetch,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {Downloaded,inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,type DocumentCookies,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
+import {Downloaded,inputURL,loadFontFile,prepareHTML as prepareDocument,readSource,refusalHTML,type DocumentCookies,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
@@ -25,7 +25,7 @@ import type {AccessibilityAnswer} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
-import {SERIF_FAMILY,serifFontHost,serifFontPath,wantsSerif} from "./serif_font.ts";
+import {MONO_FAMILY,SERIF_FAMILY,monoFontPath,serifFontHost,serifFontPath,wantsMono,wantsSerif} from "./serif_font.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
 type BuildInfo={commit?:string;commitFull?:string;dirty?:boolean;builtAt?:string;version?:string;release?:boolean};
@@ -56,7 +56,7 @@ async function main() {
   }
   let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
-  let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
+  let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=100;
   let accessibilityOn=false;
   let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
@@ -243,6 +243,8 @@ async function main() {
   let worker:CompileClient|undefined,mainFont=false;
   type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"findInPage"|"aboutPage"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout"|"encodingSetting"|"encodingChoices">;
   let lean:Lean=engine;
+  const prepareHTML:typeof prepareDocument=(reader,url,signal,inline,accept)=>
+    prepareDocument(reader,url,signal,inline,{...accept,epubReader:engine.epubReader});
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
   let engineRan="wasm";
@@ -280,6 +282,13 @@ async function main() {
     else await loadFontFile(engine,path,SERIF_FAMILY,"bytes","serif");
     console.log(JSON.stringify({type:"native-html-serif",t:Math.round(performance.now()),where,ms:Math.round((performance.now()-start)*10)/10}));
   });
+  // The monospace face (serif_font.ts), the same way: pre, code, kbd and samp text.
+  const mono=serifFontHost(async()=>{
+    const start=performance.now(),path=monoFontPath(),where=worker?.alive?"worker":"main";
+    if(worker?.alive)await worker.monoFont(path,MONO_FAMILY);
+    else await loadFontFile(engine,path,MONO_FAMILY,"bytes","mono");
+    console.log(JSON.stringify({type:"native-html-mono",t:Math.round(performance.now()),where,ms:Math.round((performance.now()-start)*10)/10}));
+  },"monospace");
   const useMainEngine=async(reason:string)=>{
     console.error("Native HTML: ENGINE WORKER UNAVAILABLE, so Lean runs on the main thread and the window can miss input:",reason);
     console.log(JSON.stringify({type:"native-html-worker",state:"main-thread-fallback",reason}));
@@ -290,6 +299,7 @@ async function main() {
       if(mainFallbacks&&workerFonts?.length)await mainFonts.add(workerFonts);
       // The serif face the worker held, so serif pages stay serif.
       if(serif.started)await loadFontFile(engine,serifFontPath(),SERIF_FAMILY,"bytes","serif").catch(()=>{});
+      if(mono.started)await loadFontFile(engine,monoFontPath(),MONO_FAMILY,"bytes","mono").catch(()=>{});
     }catch(error){if(fontFile)throw error;workerFont=undefined;}}
   };
   if(check){
@@ -315,6 +325,8 @@ async function main() {
   // session; a page whose text never resolves to serif draws as before. A render that still
   // answers wantsSerif (a failed load) does not start another (serifFontHost).
   if(workerFont){const loading=serif.want();if(!worker?.alive)await loading;}
+  // The monospace face too (320 KB, read once a session), so a page of code is laid out once.
+  if(workerFont){const loading=mono.want();if(!worker?.alive)await loading;}
   // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
@@ -456,7 +468,7 @@ async function main() {
         // for its scripts' layout reads; an engine without them ignores the fields.
         // (The first page starts before the window's size and chrome are set: then 1280 by 800.)
         const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100,zoomUnit:view.zoomUnit??100};}
-          catch{return {width:1280,height:800,textScalePercent:150,zoomUnit:100};}})();
+          catch{return {width:1280,height:800,textScalePercent:100,zoomUnit:100};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
@@ -733,9 +745,9 @@ async function main() {
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
-  // Text zoom 200 (WebSelection.defaultPercent; it was 150) until the window's backing scale is
-  // known; then zoom unit 100*scale and zoom 200*scale, which the settings page shows as 200%.
-  const view:PageView={textScalePercent:200};
+  // Text zoom 100 (WebSelection.defaultPercent) until the window's backing scale is
+  // known; the zoom unit and the normal text size then both use 100*scale.
+  const view:PageView={textScalePercent:100};
   let press:NativePress<typeof document>|undefined,lastCopied:string|undefined,loading=false;
   // The press on screen (issue 1268): Lean's `press` answer (a chrome control, or the link's
   // node for `:active`, and the rectangles that the composite darkens), the time its event was
@@ -1132,7 +1144,7 @@ async function main() {
   let zoomOps:boolean|undefined;
   const textZoom=(argument="")=>{
     if(zoomOps===false)return undefined;
-    try{const answer=engine.textZoom(argument,view.textScalePercent??200,view.zoomUnit??100);zoomOps=true;return answer;}
+    try{const answer=engine.textZoom(argument,view.textScalePercent??100,view.zoomUnit??100);zoomOps=true;return answer;}
     catch{zoomOps=false;return undefined;}
   };
   const zoomTo=(next:number)=>{
@@ -1546,8 +1558,8 @@ async function main() {
     }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
     // Layout in points, drawn at the backing scale (WebDocument, Device pixels): Lean lays the page
-    // out width/scale CSS px wide. The starting text zoom is 200% of a usual browser's text at this
-    // scale (WebSelection.unitPercent), as on the Hub; a saved zoom (read above, applied later) wins.
+    // out width/scale CSS px wide. Start at the usual CSS text size at this backing scale
+    // (WebSelection.unitPercent); a saved zoom (read above, applied later) wins.
     view.zoomUnit=scale*100;view.textScalePercent=Math.max(50,Math.round(textSize*scale/5)*5);
     if(commands)native.testRaise();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
@@ -1635,6 +1647,7 @@ async function main() {
       noteDiagnostics(nextDocument,nextLayers??next);
       // Text that resolves to serif while the engine holds no serif face: give it, draw again.
       if(wantsSerif(nextLayers??next))serif.want()?.then(ok=>{if(ok)dirty=true;});
+      if(wantsMono(nextLayers??next))mono.want()?.then(ok=>{if(ok)dirty=true;});
       const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.

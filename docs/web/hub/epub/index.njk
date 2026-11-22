@@ -1,0 +1,21 @@
+---
+layout: hub-app.njk
+title: EPUB reader
+appBase: /web/hub/epub
+appSource: https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/epub
+appEngineLabel: Foafnaut
+appEngineUrl: ../foafnaut/
+permalink: /web/hub/epub/
+---
+<section class="ebook-header" aria-labelledby="page-title">
+  <h1 id="page-title">EPUB reader</h1>
+  <p>Read an unencrypted EPUB 3 file up to 8 MiB. Your book stays in this browser.</p>
+  <div class="ebook-actions">
+    <label for="book">Choose an EPUB</label>
+    <input id="book" type="file" accept=".epub,application/epub+zip">
+    <button id="sample" type="button">Try a sample</button>
+  </div>
+  <p id="status" role="status" aria-live="polite"></p>
+</section>
+<iframe id="reader" title="Book text and reading order" sandbox="allow-same-origin" hidden></iframe>
+<noscript>This reader needs JavaScript to run Factoidal’s Lean WebAssembly engine locally.</noscript>
