@@ -36,6 +36,10 @@ def requestedWords (offset length : Nat) : Nat :=
 def accessCost (oldWords offset length : Nat) : Nat :=
   expansion oldWords (requestedWords offset length)
 
+/-- Base, per-word and memory-expansion gas for calldata, code or returndata copy. -/
+def copyCost (oldWords offset length : Nat) : Nat :=
+  3 + 3 * ((length + 31) / 32) + accessCost oldWords offset length
+
 /-- The EVM memory-cost function is monotone, including quadratic terms. -/
 theorem cost_monotone {a b : Nat} (h : a ≤ b) : cost a ≤ cost b := by
   unfold cost
@@ -76,6 +80,20 @@ theorem previously_allocated_access_free (oldWords offset length : Nat)
     (h : requestedWords offset length ≤ oldWords) :
     accessCost oldWords offset length = 0 := by
   simp [accessCost, expansion, Nat.max_eq_left h]
+
+/-- Kind: range coverage.
+    Says: nonempty access fits below the high-water mark requested for it.
+    Does not say: a caller can afford the expansion. -/
+theorem requestedWords_covers (offset length : Nat) (h : 0 < length) :
+    offset + length ≤ 32 * requestedWords offset length := by
+  simp only [requestedWords, beq_iff_eq, Nat.ne_of_gt h, if_false]
+  omega
+
+/-- Kind: boundary.
+    Says: copying zero bytes charges the base fee regardless of destination.
+    Does not say: a zero-length returndata access passes its source check. -/
+theorem copyCost_zero (oldWords offset : Nat) : copyCost oldWords offset 0 = 3 := by
+  simp [copyCost, zero_length_access_free]
 
 /-- A sequence of arbitrary length of non-shrinking memory allocations,
     annotated with the incremental gas charged at each stage. -/
@@ -123,5 +141,7 @@ theorem ExpansionTrace.exact_total {before final spent : Nat}
 #print axioms expansion_path_independent
 #print axioms zero_length_access_free
 #print axioms previously_allocated_access_free
+#print axioms requestedWords_covers
+#print axioms copyCost_zero
 
 end EVMCleanroom.MemoryGas

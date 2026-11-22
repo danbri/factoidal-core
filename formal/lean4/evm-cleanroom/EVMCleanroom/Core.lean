@@ -89,6 +89,7 @@ inductive Error where
   | stackUnderflow
   | stackOverflow
   | outOfGas
+  | returnDataOutOfBounds
   | invalidOpcode (opcode : Nat)
   | invalidJump (destination : Nat)
   | alreadyHalted
@@ -131,7 +132,11 @@ structure State where
   callValue : Nat := 0
   selfBalance : Nat := 0
   readOnly : Bool := false
-  callData : Array UInt8 := #[]
+  callData : ByteView := {}
+  /-- Full output of the most recent call in this frame. -/
+  returnData : ByteView := {}
+  /-- This frame's own RETURN or REVERT payload. -/
+  outputData : ByteView := {}
 
 /-- An instruction plan describes effects without committing state changes.
     The dispatcher must produce one of these; all success passes through
@@ -186,13 +191,13 @@ def pushData (s : State) (n : Nat) : Word :=
     (word 0)
 
 /-- Accumulate big-endian bytes with a natural-number cursor and zero padding. -/
-def loadCallDataLoop (data : Array UInt8) (offset acc : Nat) : Nat → Nat
+def loadCallDataLoop (data : ByteView) (offset acc : Nat) : Nat → Nat
   | 0 => acc
   | remaining + 1 =>
-    loadCallDataLoop data (offset + 1) (acc * 256 + (data.getD offset 0).toNat) remaining
+    loadCallDataLoop data (offset + 1) (acc * 256 + (data.readByte offset).toNat) remaining
 
 /-- CALLDATALOAD reads exactly 32 bytes, even for a full-width offset. -/
-def loadCallDataWord (data : Array UInt8) (offset : Nat) : Word :=
+def loadCallDataWord (data : ByteView) (offset : Nat) : Word :=
   word (loadCallDataLoop data offset 0 32)
 
 /-- Byte width of the instruction starting addr pc, including PUSH
@@ -236,6 +241,21 @@ private def unary (s : State) (op : Word → Word) (cost : Nat) : Except Error P
 
 private def logicalShift (s : State) (op : Word → Word → Word) : Except Error Plan :=
   if s.profile = .preShanghai then .error .unsupportedFork else binary s op 3
+
+/-- All COPY sources are bounded views. RETURNDATACOPY checks that the
+    full source range fits after checking gas, as in EELS. -/
+private def copyBytes (s : State) (data : ByteView) (checkBounds : Bool := false) : Except Error Plan :=
+  match s.stack.items with
+  | dest :: source :: length :: rest =>
+    let gas := MemoryGas.copyCost s.memory.words dest.val length.val
+    if s.gas < gas then .error .outOfGas
+    else if checkBounds && decide (data.size < source.val + length.val) then
+      .error .returnDataOutOfBounds
+    else
+      let requested := MemoryGas.requestedWords dest.val length.val
+      let memory := (s.memory.expand requested).copyFrom data source.val dest.val length.val
+      prepared (s.pc + 1) rest gas false (some memory)
+  | _ => .error .stackUnderflow
 
 private def pop (s : State) : Except Error Plan :=
   match s.stack.items with
@@ -364,6 +384,15 @@ def planStep (s : State) : Except Error Plan :=
     | 0x34 => prepared (s.pc + 1) (word s.callValue :: s.stack.items) 2 -- CALLVALUE
     | 0x35 => unary s (fun offset => loadCallDataWord s.callData offset.val) 3 -- CALLDATALOAD
     | 0x36 => prepared (s.pc + 1) (word s.callData.size :: s.stack.items) 2 -- CALLDATASIZE
+    | 0x37 => copyBytes s s.callData -- CALLDATACOPY
+    | 0x38 => prepared (s.pc + 1) (word s.code.size :: s.stack.items) 2 -- CODESIZE
+    | 0x39 => copyBytes s (ByteView.ofArray s.code) -- CODECOPY
+    | 0x3d => -- RETURNDATASIZE (EIP-211)
+      if s.profile = .preShanghai then .error .unsupportedFork
+      else prepared (s.pc + 1) (word s.returnData.size :: s.stack.items) 2
+    | 0x3e => -- RETURNDATACOPY (EIP-211)
+      if s.profile = .preShanghai then .error .unsupportedFork
+      else copyBytes s s.returnData true
     | 0x47 =>                                           -- SELFBALANCE (Istanbul+)
       if s.profile = .preShanghai then .error .unsupportedFork
       else prepared (s.pc + 1) (word s.selfBalance :: s.stack.items) 5
@@ -419,6 +448,74 @@ theorem step_callDataSize (s : State) (hRun : s.halted = false)
     (hOp : byteAt s s.pc = 0x36) :
     step s = commit s (s.pc + 1) (word s.callData.size :: s.stack.items) 2 := by
   simp [step, planStep, hRun, hOp, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: funded CALLDATACOPY pops destination, source and length and commits
+    the priced memory overlay using frame input bytes.
+    Does not say: calldata is modified by the copy. -/
+theorem step_callDataCopy (s : State) (dest source length : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x37)
+    (hStack : s.stack.items = dest :: source :: length :: rest)
+    (hGas : MemoryGas.copyCost s.memory.words dest.val length.val ≤ s.gas) :
+    step s = commit s (s.pc + 1) rest (MemoryGas.copyCost s.memory.words dest.val length.val)
+      false (some ((s.memory.expand (MemoryGas.requestedWords dest.val length.val)).copyFrom
+        s.callData source.val dest.val length.val)) := by
+  simp [step, planStep, hRun, hOp, copyBytes, hStack, Nat.not_lt_of_ge hGas, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: CODESIZE pushes the current code array's length for two gas.
+    Does not say: a frame with a full stack can commit. -/
+theorem step_codeSize (s : State) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x38) :
+    step s = commit s (s.pc + 1) (word s.code.size :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: funded CODECOPY pops destination, source and length and commits
+    the priced memory overlay using the current code bytes.
+    Does not say: reads beyond code length fail. -/
+theorem step_codeCopy (s : State) (dest source length : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x39)
+    (hStack : s.stack.items = dest :: source :: length :: rest)
+    (hGas : MemoryGas.copyCost s.memory.words dest.val length.val ≤ s.gas) :
+    step s = commit s (s.pc + 1) rest (MemoryGas.copyCost s.memory.words dest.val length.val)
+      false (some ((s.memory.expand (MemoryGas.requestedWords dest.val length.val)).copyFrom
+        (ByteView.ofArray s.code) source.val dest.val length.val)) := by
+  simp [step, planStep, hRun, hOp, copyBytes, hStack, Nat.not_lt_of_ge hGas, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: on an admitted profile RETURNDATASIZE pushes the current buffer size for two gas.
+    Does not say: this opcode updates the return buffer. -/
+theorem step_returnDataSize (s : State) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x3d)
+    (hProfile : s.profile ≠ .preShanghai) :
+    step s = commit s (s.pc + 1) (word s.returnData.size :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, hProfile, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: a funded, in-bounds RETURNDATACOPY on an admitted profile commits
+    a priced memory overlay from the last call's return buffer.
+    Does not say: the underlying call succeeded. -/
+theorem step_returnDataCopy (s : State) (dest source length : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x3e) (hProfile : s.profile ≠ .preShanghai)
+    (hStack : s.stack.items = dest :: source :: length :: rest)
+    (hGas : MemoryGas.copyCost s.memory.words dest.val length.val ≤ s.gas)
+    (hBounds : source.val + length.val ≤ s.returnData.size) :
+    step s = commit s (s.pc + 1) rest (MemoryGas.copyCost s.memory.words dest.val length.val)
+      false (some ((s.memory.expand (MemoryGas.requestedWords dest.val length.val)).copyFrom
+        s.returnData source.val dest.val length.val)) := by
+  simp [step, planStep, hRun, hOp, hProfile, copyBytes, hStack,
+    Nat.not_lt_of_ge hGas, Nat.not_lt_of_ge hBounds, prepared]
+
+/-- Kind: boundary.
+    Says: a funded RETURNDATACOPY on an admitted profile with source end
+    past the buffer fails, including a zero-length read starting past the end.
+    Does not say: bounds failure takes precedence over insufficient gas. -/
+theorem step_returnDataCopy_outOfBounds (s : State) (dest source length : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x3e) (hProfile : s.profile ≠ .preShanghai)
+    (hStack : s.stack.items = dest :: source :: length :: rest)
+    (hGas : MemoryGas.copyCost s.memory.words dest.val length.val ≤ s.gas)
+    (hBounds : s.returnData.size < source.val + length.val) :
+    step s = .error .returnDataOutOfBounds := by
+  simp [step, planStep, hRun, hOp, hProfile, copyBytes, hStack, Nat.not_lt_of_ge hGas, hBounds]
 
 /-- Kind: dispatcher correspondence.
     Says: SLT replaces the top two stack words in pop order and requests a
@@ -499,6 +596,12 @@ def run : Nat → State → Except Error State
 #print axioms Word.leadingZeros_zero
 #print axioms step_callDataLoad
 #print axioms step_callDataSize
+#print axioms step_callDataCopy
+#print axioms step_codeSize
+#print axioms step_codeCopy
+#print axioms step_returnDataSize
+#print axioms step_returnDataCopy
+#print axioms step_returnDataCopy_outOfBounds
 #print axioms step_slt
 #print axioms step_addMod
 #print axioms step_mulMod

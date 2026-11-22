@@ -8,28 +8,28 @@ Tracking issue: https://github.com/danbri/factoidal-core/issues/734.
 namespace EVMCleanroom
 
 /-- A byte of the input at its mathematical index, or zero beyond the input. -/
-def paddedCallDataByte (data : Array UInt8) (offset : Nat) : Nat :=
-  if h : offset < data.size then data[offset].toNat else 0
+def paddedCallDataByte (data : ByteView) (offset : Nat) : Nat :=
+  if offset < data.size then (data.raw offset).toNat else 0
 
 /-- Big-endian semantics by place value. CALLDATALOAD uses width 32. -/
-noncomputable def callDataValue (data : Array UInt8) (offset : Nat) : Nat → Nat
+noncomputable def callDataValue (data : ByteView) (offset : Nat) : Nat → Nat
   | 0 => 0
   | remaining + 1 =>
     paddedCallDataByte data offset * 256 ^ remaining + callDataValue data (offset + 1) remaining
 
-private theorem getD_eq_paddedCallDataByte (data : Array UInt8) (offset : Nat) :
-    (data.getD offset 0).toNat = paddedCallDataByte data offset := by
-  by_cases h : offset < data.size <;> simp [paddedCallDataByte, h]
+private theorem readByte_eq_paddedCallDataByte (data : ByteView) (offset : Nat) :
+    (data.readByte offset).toNat = paddedCallDataByte data offset := by
+  by_cases h : offset < data.size <;> simp [ByteView.readByte, paddedCallDataByte, h]
 
-private theorem loadCallDataLoop_eq (data : Array UInt8) (width offset acc : Nat) :
+private theorem loadCallDataLoop_eq (data : ByteView) (width offset acc : Nat) :
     loadCallDataLoop data offset acc width = acc * 256 ^ width + callDataValue data offset width := by
   induction width generalizing offset acc with
   | zero => simp [loadCallDataLoop, callDataValue]
   | succ remaining ih =>
-    simp only [loadCallDataLoop, callDataValue, ih, getD_eq_paddedCallDataByte]
+    simp only [loadCallDataLoop, callDataValue, ih, readByte_eq_paddedCallDataByte]
     simp [Nat.add_mul, Nat.mul_comm, Nat.mul_assoc, Nat.add_assoc, Nat.pow_succ]
 
-private theorem callDataValue_lt (data : Array UInt8) (width offset : Nat) :
+private theorem callDataValue_lt (data : ByteView) (width offset : Nat) :
     callDataValue data offset width < 256 ^ width := by
   induction width generalizing offset with
   | zero => simp [callDataValue]
@@ -44,7 +44,7 @@ private theorem callDataValue_lt (data : Array UInt8) (width offset : Nat) :
     rw [callDataValue, Nat.pow_succ, Nat.mul_comm (256 ^ remaining) 256]
     exact Nat.lt_of_lt_of_le (Nat.add_lt_add_left (ih (offset + 1)) _) hMul
 
-private theorem callDataValue_eq_zero (data : Array UInt8) (width offset : Nat)
+private theorem callDataValue_eq_zero (data : ByteView) (width offset : Nat)
     (h : data.size ≤ offset) : callDataValue data offset width = 0 := by
   induction width generalizing offset with
   | zero => rfl
@@ -56,7 +56,7 @@ private theorem callDataValue_eq_zero (data : Array UInt8) (width offset : Nat)
     Says: the executable loader returns the exact natural value of the 32
     zero-padded big-endian bytes; this value is below 2^256.
     Does not say: other calldata or ABI operations are implemented. -/
-theorem loadCallDataWord_correct (data : Array UInt8) (offset : Nat) :
+theorem loadCallDataWord_correct (data : ByteView) (offset : Nat) :
     (loadCallDataWord data offset).val = callDataValue data offset 32 ∧
     callDataValue data offset 32 < modulus := by
   have hBound : callDataValue data offset 32 < modulus := by
@@ -69,7 +69,7 @@ theorem loadCallDataWord_correct (data : Array UInt8) (offset : Nat) :
 /-- Kind: boundary.
     Says: the executable loader returns zero at every offset at or past the input.
     Does not say: every zero load is outside the input. -/
-theorem loadCallDataWord_eq_zero (data : Array UInt8) (offset : Nat)
+theorem loadCallDataWord_eq_zero (data : ByteView) (offset : Nat)
     (h : data.size ≤ offset) : (loadCallDataWord data offset).val = 0 := by
   rw [(loadCallDataWord_correct data offset).1, callDataValue_eq_zero data 32 offset h]
 
@@ -127,7 +127,7 @@ theorem Word.large_shifts_zero (shift value : Word) (h : 256 ≤ shift.val) :
     code := #[0x60, 0, 0x35, 0]
     gas := 6
     profile := .preShanghai
-    callData := #[0xab]
+    callData := ByteView.ofArray #[0xab]
   }
   match run 3 input with
   | .ok s => s.stack.items.map Word.val == [0xab * 256 ^ 31] && s.gas == 0

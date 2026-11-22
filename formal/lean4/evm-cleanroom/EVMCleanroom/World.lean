@@ -3,20 +3,15 @@ import EVMCleanroom.Frame
 /-!
 # Transaction-scoped multi-account state and per-account frame isolation
 
-This module is a *functional state-transition scaffold*, not an
-Ethereum world-state trie and not an implementation of CALL or CREATE.
-
 Each account has independent storage, code, balance and nonce. A transaction
-records the original values of ALL storage slots before any frame is run.
-Warm access state and refunds are transaction-scoped and keyed by both
-account and slot. Executing Frame.run against one account projects that
-account's storage into the existing single-account interpreter; only a
-successful frame may commit its effects back to that account.
-
-IMPORTANT: running two frames in sequence here is NOT EVM CALL semantics.
-There is no gas forwarding, calldata/return-data copying, value transfer,
-call-depth limit, precompiles, address warming, account creation, or Merkle
-authentication. The explicit "unsupported" case has no consensus outcome.
+records the original values of all storage slots before any frame is run.
+Account and slot warmth and the refund counter are transaction-scoped.
+`frameInput` projects the current account's journal into an interpreter
+frame, while `commitFrame` writes its current storage, warmth and refund
+back. The world-aware CALL dispatcher uses these operations at suspension
+and resumption boundaries. The standalone `runAt` runs one frame and
+commits only on success. The world is a functional journal without trie
+authentication.
 -/
 
 namespace EVMCleanroom.World
@@ -84,14 +79,12 @@ theorem frameInput_context (w : TxWorld) (address gas : Nat)
 #print axioms frameInput_value_zero
 #print axioms frameInput_context
 
-/-- Commit a successfully completed frame. All other accounts retain the
-    exact same account records, including code, balance, nonce and storage. -/
+/-- Write a frame's storage journal to its account before child entry or
+    after successful completion. The other accounts retain their records. -/
 def commitFrame (w : TxWorld) (address : Nat) (out : State) : TxWorld :=
+  let updated := { w.accounts address with storage := out.storage.current }
   { w with
-    accounts := fun other =>
-      if other = address then
-        { w.accounts address with storage := out.storage.current }
-      else w.accounts other
+    accounts := fun other => if other = address then updated else w.accounts other
     warmSlots := fun other key =>
       if other = address then out.storage.warm key else w.warmSlots other key
     refund := out.storage.refund }

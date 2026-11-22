@@ -25,9 +25,11 @@ namespace EVMCleanroom.WorldCall
 
 open EVMCleanroom.World
 
-/-- EIP-2929 address warming is transaction-scoped but checkpointed. -/
+/-- EIP-2929 address warming is transaction-scoped but checkpointed.
+    Repeated accesses to a warm target reuse the existing journal. -/
 def warmTarget (w : TxWorld) (target : Nat) : TxWorld :=
-  { w with warmAddresses := fun a => if a = target then true else w.warmAddresses a }
+  if w.warmAddresses target then w
+  else { w with warmAddresses := fun a => if a = target then true else w.warmAddresses a }
 
 /-- These results describe what a caller's CALL instruction can observe.
     Child REVERT/exception returns failure, without exceptionally halting
@@ -115,27 +117,35 @@ theorem callZeroValue_child_exception (fuel : Nat) (w : TxWorld)
 /-- Entering a call cannot itself change accounts (including balance/code),
     storage, refunds or the transaction-original storage snapshot. -/
 theorem warmTarget_accounts (w : TxWorld) (target other : Nat) :
-    (warmTarget w target).accounts other = w.accounts other := rfl
+    (warmTarget w target).accounts other = w.accounts other := by
+  unfold warmTarget
+  split <;> rfl
 
 theorem warmTarget_original (w : TxWorld) (target addr slot : Nat) :
-    (warmTarget w target).original addr slot = w.original addr slot := rfl
+    (warmTarget w target).original addr slot = w.original addr slot := by
+  unfold warmTarget
+  split <;> rfl
 
 theorem warmTarget_refund (w : TxWorld) (target : Nat) :
-    (warmTarget w target).refund = w.refund := rfl
+    (warmTarget w target).refund = w.refund := by
+  unfold warmTarget
+  split <;> rfl
 
 theorem warmTarget_slotWarmth (w : TxWorld) (target addr slot : Nat) :
-    (warmTarget w target).warmSlots addr slot = w.warmSlots addr slot := rfl
+    (warmTarget w target).warmSlots addr slot = w.warmSlots addr slot := by
+  unfold warmTarget
+  split <;> rfl
 
 /-- A failed child scope must not make its address cold again: address
     warming occurs before the checkpoint and stays in the parent world. -/
 theorem warmTarget_own (w : TxWorld) (target : Nat) :
     (warmTarget w target).warmAddresses target = true := by
-  simp [warmTarget]
+  by_cases hWarm : w.warmAddresses target <;> simp [warmTarget, hWarm]
 
 theorem warmTarget_other (w : TxWorld) (target other : Nat)
     (hne : other ≠ target) :
     (warmTarget w target).warmAddresses other = w.warmAddresses other := by
-  simp [warmTarget, hne]
+  by_cases hWarm : w.warmAddresses target <;> simp [warmTarget, hWarm, hne]
 
 #print axioms warmTarget_accounts
 #print axioms warmTarget_original

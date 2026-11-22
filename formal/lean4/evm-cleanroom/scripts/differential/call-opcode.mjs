@@ -7,7 +7,8 @@
  * parent CALL success-bit stack, gas, committed child storage and rollback.
  * Covers parent STOP/REVERT/INVALID and warm second CALL in one parent frame.
  *
- * This is a zero-value, zero-calldata/output, single child depth slice.
+ * The legacy corpus uses zero-value, empty-window, single-depth CALLs.
+ * A nonempty input success and an identity precompile refusal are checked separately.
  */
 import { spawnSync } from 'node:child_process'
 import { createEVM } from '@ethereumjs/evm'
@@ -18,6 +19,7 @@ const parentAddress = createAddressFromString('0x0000000000000000000000000000000
 const childAddress = createAddressFromString('0x00000000000000000000000000000000000000c3')
 const callerAddress = createAddressFromString('0x00000000000000000000000000000000000000c2')
 const common = new Common({chain: Mainnet, hardfork: Hardfork.Cancun})
+const executable = process.argv[2]
 const children = [
   {name: 'stop', code: '00'},
   {name: 'write-and-stop', code: '600160005500'},
@@ -45,13 +47,16 @@ function opcode(requested) {
 function program(requested, ending, calls=1) {
   return opcode(requested).repeat(calls) + ending
 }
-function lean(parent, child, totalGas) {
-  const proc = spawnSync('lake', [
-    'exe','evm-subset','--call-opcode',parent,child,String(totalGas),'100',
-  ], {encoding:'utf8',timeout:60000,maxBuffer:1024*1024})
+function leanOutcome(parent, child, totalGas) {
+  const args = ['--call-opcode',parent,child,String(totalGas),'100']
+  const proc = spawnSync(executable ?? 'lake', executable ? args : ['exe','evm-subset',...args],
+    {encoding:'utf8',timeout:60000,maxBuffer:1024*1024})
   if (proc.error || proc.status!==0)
     throw Error('Lean real-opcode executable failed '+String(proc.error??proc.stderr))
-  const json = JSON.parse(proc.stdout.trim().split('\n').at(-1))
+  return JSON.parse(proc.stdout.trim().split('\n').at(-1))
+}
+function lean(parent, child, totalGas) {
+  const json = leanOutcome(parent, child, totalGas)
   if (json.status==='indeterminate' || json.status==='inputError')
     throw Error('Lean admitted no supported outcome: '+JSON.stringify(json))
   return json
@@ -126,19 +131,20 @@ for(const child of children) {
       program(requested,'00',2),child.code,available+16*2)
   }
 }
-// The parent writes one input byte; the reference child can load and store it.
-// The Lean CALL slice still excludes a nonempty input window.
+// The parent writes one input byte. Both engines must load and store it in the child.
 const nonemptyInput='602a5f535f5f60015f5f60c3617530f100'
 const inputReadingChild='5f355f5500'
 const validReference=await ethereumjs(nonemptyInput,inputReadingChild,50000)
-const refused=spawnSync('lake',[
-  'exe','evm-subset','--call-opcode',nonemptyInput,inputReadingChild,'50000','100',
-],{encoding:'utf8',timeout:60000})
-if(refused.error||refused.status!==0)throw Error('Lean invalid scope probe failed')
-const outOfScope=JSON.parse(refused.stdout.trim().split('\n').at(-1))
-const invalidScopeRefused=validReference.status==='stopped' &&
+const forwarded=lean(nonemptyInput,inputReadingChild,50000)
+const nonemptyInputPassed=validReference.status==='stopped' &&
   validReference.stack.length===1 && validReference.stack[0]==='1' &&
   validReference.slot0===(0x2an<<248n).toString() &&
+  Object.keys(validReference).every(key=>JSON.stringify(forwarded[key])===JSON.stringify(validReference[key]))
+const identityCall='5f5f5f5f5f6004617530f100'
+const precompileReference=await ethereumjs(identityCall,'',50000)
+const outOfScope=leanOutcome(identityCall,'',50000)
+const precompileScopeRefused=precompileReference.status==='stopped' &&
+  JSON.stringify(precompileReference.stack)===JSON.stringify(['1']) &&
   outOfScope.status==='indeterminate' &&
   outOfScope.reason==='unsupportedFork'
 
@@ -147,12 +153,12 @@ const report={
   oracle:'@ethereumjs/evm@10.1.3 Hardfork.Cancun',
   compared:records.length,matched:records.length-failures.length,
   mismatches:failures.length,parentReverts,parentExceptions,
-  childSuccesses,childFailures,gasMutationRejected,invalidScopeRefused,
+  childSuccesses,childFailures,gasMutationRejected,nonemptyInputPassed,precompileScopeRefused,
   comparedFields:['parent outcome','gas','child storage','actual CALL success bit'],
-  scope:'Zero value, empty input/output, one child frame; parent rollback and two successive F1 opcodes exercised. This is not general EVM CALL, precompiles, receipts, or block execution.',
+  scope:'Zero value, empty input/output, one child frame, parent rollback and successive CALLs. Nonempty input and identity precompile refusal are separate controls.',
   firstFailures:failures.slice(0,6),
 }
 console.log(JSON.stringify(report))
 if(failures.length || records.length!==330 || !gasMutationRejected ||
-   !invalidScopeRefused || parentReverts===0 || parentExceptions===0 ||
+   !nonemptyInputPassed || !precompileScopeRefused || parentReverts===0 || parentExceptions===0 ||
    childSuccesses===0 || childFailures===0)process.exitCode=1

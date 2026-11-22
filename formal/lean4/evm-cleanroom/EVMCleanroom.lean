@@ -1,5 +1,7 @@
 import EVMCleanroom.Core
 import EVMCleanroom.CalldataProofs
+import EVMCleanroom.ByteCopyProofs
+import EVMCleanroom.ByteCopyTests
 import EVMCleanroom.SolidityProofs
 import EVMCleanroom.ModularProofs
 import EVMCleanroom.Storage

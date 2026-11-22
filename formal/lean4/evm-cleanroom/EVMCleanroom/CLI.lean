@@ -52,6 +52,7 @@ private def errorCode : EVMCleanroom.Error → String
   | .invalidJump _ => "invalidJump"
   | .alreadyHalted => "alreadyHalted"
   | .writeProtection => "writeProtection"
+  | .returnDataOutOfBounds => "returnDataOutOfBounds"
   | .unsupportedFork => "unsupportedFork"
   | .framePolicyViolation _ => "framePolicyViolation"
   | .stepLimit => "stepLimit"
@@ -294,7 +295,8 @@ private def frameCallMain (args : List String) (guarded : Bool := false) : IO UI
     match parseBytecode hex, parseBytecode dataHex, gasStr.toNat?, fuelStr.toNat? with
     | .ok code, .ok callData, some gas, some fuel =>
       let input : State := {
-        code := code, gas := gas, callData := callData, callValue := 0, readOnly := guarded }
+        code := code, gas := gas, callData := ByteView.ofArray callData
+        callValue := 0, readOnly := guarded }
       let outcome := if guarded then Frame.runWithPolicy Frame.zeroValueContextFree fuel input
         else Frame.run fuel input
       IO.println (frameCallJSON outcome guarded)
@@ -447,74 +449,99 @@ private def pragueAuthorizeMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"message\":\"expected 8 Prague authorization fields\"}"
     return 2
 
-/-- Run the actual 0xf1 instruction in parent bytecode under a scoped Cancun
-    frame model; no arbitrary transaction envelope/receipt is inferred.
-    Usage: --call-opcode PARENT_HEX CHILD_HEX GAS FUEL.
-    Parent address = 0xc1, child address = 0xc3, no initial storage.
-    Parent and child balances are optional for backward compatibility:
-    PARENT_HEX CHILD_HEX GAS FUEL [PARENT_BALANCE CHILD_BALANCE CHILD_NONCE].
-    The account values are explicit PRESTATE, not fetched from an archive. -/
+private def byteViewFieldsJSON (name : String) (view : ByteView) : String :=
+  let count := min view.size byteObservationLimit
+  let hex := String.ofList ((List.range count).flatMap (fun i =>
+    let byte := (view.readByte i).toNat
+    [hexDigit (byte / 16), hexDigit (byte % 16)]))
+  ",\"" ++ name ++ "Hex\":\"" ++ hex ++
+  "\",\"" ++ name ++ "Size\":\"" ++ toString view.size ++
+  "\",\"" ++ name ++ "Truncated\":" ++ (if count < view.size then "true" else "false")
+
+private def parseProfile : String → Option Profile
+  | "preShanghai" => some .preShanghai
+  | "shanghaiPlus" => some .shanghaiPlus
+  | "osaka" => some .osaka
+  | _ => none
+
+/-- Run actual 0xf1 instructions under a scoped EVM frame model. Parent
+    address = 0xc1, child = 0xc3, third account = 0xc4. The prestate has
+    zero storage and starts cold by default. The optional context controls
+    the entry frame's read-only flag, opcode profile, call depth and whether
+    its address is initially warm. -/
 private def callOpcodeMain (args : List String) : IO UInt32 := do
-  let expanded := match args with
+  let basic := match args with
     | [p, c, g, f] => [p, c, g, f, "0", "0", "0"]
     | otherwise => otherwise
+  let expanded := match basic.length with
+    | 7 => basic ++ ["0", "shanghaiPlus", "0", "", "0"]
+    | 10 => basic ++ ["", "0"]
+    | 11 => basic ++ ["0"]
+    | _ => basic
   match expanded with
-  | [parentHex, childHex, gasStr, fuelStr, parentBalanceStr,
-     childBalanceStr, childNonceStr] =>
-    match parseBytecode parentHex, parseBytecode childHex,
-      gasStr.toNat?, fuelStr.toNat?, parentBalanceStr.toNat?,
-      childBalanceStr.toNat?, childNonceStr.toNat? with
-    | .ok parentCode, .ok childCode, some gas, some fuel,
-        some parentBalance, some childBalance, some childNonce =>
-      if parentBalance ≥ modulus || childBalance ≥ modulus ||
-          childNonce ≥ 2 ^ 64 then
+  | [parentHex, childHex, gasStr, fuelStr, parentBalanceStr, childBalanceStr, childNonceStr,
+     readOnlyStr, profileStr, depthStr, grandchildHex, prewarmParentStr] =>
+    match parseBytecode parentHex, parseBytecode childHex, parseBytecode grandchildHex,
+      gasStr.toNat?, fuelStr.toNat?, parentBalanceStr.toNat?, childBalanceStr.toNat?,
+      childNonceStr.toNat?, readOnlyStr.toNat?, parseProfile profileStr, depthStr.toNat?,
+      prewarmParentStr.toNat? with
+    | .ok parentCode, .ok childCode, .ok grandchildCode, some gas, some fuel,
+        some parentBalance, some childBalance, some childNonce, some readOnly, some profile,
+        some depth, some prewarmParent =>
+      if parentBalance ≥ modulus || childBalance ≥ modulus || childNonce ≥ 2 ^ 64 then
         IO.println "{\"status\":\"inputError\",\"reason\":\"account-values-out-of-range\"}"
+        return 2
+      if readOnly > 1 || depth > CallOpcode.maxDepth || prewarmParent > 1 then
+        IO.println "{\"status\":\"inputError\",\"reason\":\"call-context-out-of-range\"}"
         return 2
       let parentAddress : Nat := 0xc1
       let childAddress : Nat := 0xc3
+      let grandchildAddress : Nat := 0xc4
       let accounts : Nat → World.Account := fun address =>
         if address == parentAddress then
           { code := parentCode, balance := parentBalance }
         else if address == childAddress then
           { code := childCode, balance := childBalance, nonce := childNonce }
+        else if address == grandchildAddress then { code := grandchildCode }
         else {}
-      let world := World.beginTransaction accounts
+      let entry := World.beginTransaction accounts
+      let world := if prewarmParent == 1 then WorldCall.warmTarget entry parentAddress else entry
       let serialize : String → World.TxWorld → State → String := fun status outcome s =>
-        let stack := String.intercalate ","
-          (s.stack.items.map (fun w => "\"" ++ toString w.val ++ "\""))
         "{\"schemaVersion\":2,\"status\":\"" ++ status ++
         "\",\"gasRemaining\":\"" ++ toString s.gas ++
         "\",\"pc\":\"" ++ toString s.pc ++
-        "\",\"stack\":[" ++ stack ++
-        "],\"slot0\":\"" ++ toString ((outcome.accounts childAddress).storage 0) ++
-        "\",\"parentBalance\":\"" ++
-          toString ((outcome.accounts parentAddress).balance) ++
-        "\",\"childBalance\":\"" ++
-          toString ((outcome.accounts childAddress).balance) ++
-        "\",\"childNonce\":\"" ++
-          toString ((outcome.accounts childAddress).nonce) ++
-        "\",\"warmAddress\":" ++
-        (if outcome.warmAddresses childAddress then "true" else "false") ++
-        ",\"warmSlot\":" ++
-        (if outcome.warmSlots childAddress 0 then "true" else "false") ++
-        ",\"refund\":\"" ++ toString outcome.refund ++ "\"}"
-      match CallOpcode.run fuel world parentAddress gas with
+        "\",\"stack\":" ++ stackJSON s ++
+        ",\"slot0\":\"" ++ toString ((outcome.accounts childAddress).storage 0) ++
+        "\",\"parentSlot0\":\"" ++ toString ((outcome.accounts parentAddress).storage 0) ++
+        "\",\"grandchildSlot0\":\"" ++ toString ((outcome.accounts grandchildAddress).storage 0) ++
+        "\",\"parentBalance\":\"" ++ toString ((outcome.accounts parentAddress).balance) ++
+        "\",\"childBalance\":\"" ++ toString ((outcome.accounts childAddress).balance) ++
+        "\",\"childNonce\":\"" ++ toString ((outcome.accounts childAddress).nonce) ++
+        "\",\"warmAddress\":" ++ (if outcome.warmAddresses childAddress then "true" else "false") ++
+        ",\"warmSlot\":" ++ (if outcome.warmSlots childAddress 0 then "true" else "false") ++
+        ",\"warmGrandchildAddress\":" ++ (if outcome.warmAddresses grandchildAddress then "true" else "false") ++
+        ",\"warmGrandchildSlot\":" ++ (if outcome.warmSlots grandchildAddress 0 then "true" else "false") ++
+        ",\"entryParentWarm\":" ++ (if prewarmParent == 1 then "true" else "false") ++
+        ",\"refund\":\"" ++ toString outcome.refund ++ "\"" ++
+        byteViewFieldsJSON "parentMemory" (ByteView.ofMemory s.memory 0 (32 * s.memory.words)) ++
+        byteViewFieldsJSON "returnData" s.returnData ++
+        byteViewFieldsJSON "returnBytes" s.outputData ++ "}"
+      let initial := World.frameInput world parentAddress gas (readOnly == 1) profile
+      match CallOpcode.settle world initial (CallOpcode.executeAtDepth fuel world parentAddress depth initial) with
       | .stopped final st => IO.println (serialize "stopped" final st)
       | .returned final st => IO.println (serialize "returned" final st)
       | .reverted final st => IO.println (serialize "reverted" final st)
       | .exceptional final st reason =>
         let state := serialize "exceptional" final st
-        IO.println ((state.dropEnd 1).toString ++
-          ",\"reason\":\"" ++ errorCode reason ++ "\"}")
+        IO.println ((state.dropEnd 1).toString ++ ",\"reason\":\"" ++ errorCode reason ++ "\"}")
       | .indeterminate reason =>
-        IO.println ("{\"status\":\"indeterminate\",\"reason\":\"" ++
-          errorCode reason ++ "\"}")
+        IO.println ("{\"status\":\"indeterminate\",\"reason\":\"" ++ errorCode reason ++ "\"}")
       return 0
-    | _, _, _, _, _, _, _ =>
+    | _, _, _, _, _, _, _, _, _, _, _, _ =>
       IO.println "{\"status\":\"inputError\",\"reason\":\"bad CALL bytecode, gas or account fields\"}"
       return 2
   | _ =>
-    IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX GAS FUEL [PARENT_BALANCE CHILD_BALANCE CHILD_NONCE]\"}"
+    IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX GAS FUEL [PARENT_BALANCE CHILD_BALANCE CHILD_NONCE [READ_ONLY PROFILE DEPTH [GRANDCHILD_HEX [PREWARM_PARENT]]]]\"}"
     return 2
 
 /-- Fork-scoped pre-EIP-155 Frontier account transfer. The host supplies

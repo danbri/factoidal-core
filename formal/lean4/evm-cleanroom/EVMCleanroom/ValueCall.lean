@@ -3,8 +3,8 @@ import EVMCleanroom.Call
 /-!
 # Real nonzero-value CALL into an existing or newly credited account
 
-This is a *separately fork-scoped* extension of the executable EVM 0xf1
-path, not a replacement for the zero-value scheduler. Matches EELS Prague:
+The world-aware EVM 0xf1 path reuses this positive-value gas scheduler.
+For ordinary code addresses it uses the following EELS Prague charges:
 - EIP-2929 account access charge (2600 cold / 100 warm);
 - 9000 nonzero-value transfer surcharge;
 - EIP-161 25000 surcharge when transferring to a not-alive account;
@@ -13,14 +13,9 @@ path, not a replacement for the zero-value scheduler. Matches EELS Prague:
 - value transferred at child entry and reverted on failed child frame;
 - parent retains unused child gas, even if child REVERTs.
 
-The child may execute Frame.run's existing supported opcodes, including
-CALLVALUE and ADDRESS, and storage changes. CALLER, calldata/returndata,
-precompiles and nested calls require later extensions. An unimplemented path
-yields an explicit non-consensus 'indeterminate' result.
-
-This module is NOT equivalent to all of EELS CALL by itself. Theorems prove
-the exact executable budget arithmetic, and independent EthereumJS differential
-tests challenge the parent bytecode path against a real second EVM.
+`WorldCall.callWithValue` is a standalone single-child API over `Frame.run`.
+The actual nested opcode dispatcher in `CallOpcode` uses the same scheduler
+and transfer primitive and manages the call windows and checkpoints itself.
 -/
 
 namespace EVMCleanroom.CallValue
@@ -162,9 +157,8 @@ inductive ValueOutcome where
     REVERT and exceptional child halts restore the parent's warmed checkpoint,
     including both account balances. Child failure does not halt the caller.
 
-    This is one nested level only, with zero calldata/return length handled
-    by the actual opcode dispatcher. Unlike an authorization message, the
-    value transfer is not a transaction signed by the child. -/
+    This standalone API executes one child with empty input. The caller's
+    byte windows and nested execution belong to the opcode dispatcher. -/
 def callWithValue (fuel : Nat) (w : TxWorld)
     (caller target parentGas requestedGas value : Nat)
     (profile : Profile := .shanghaiPlus) : ValueOutcome :=
@@ -251,7 +245,7 @@ theorem accountAlive_funded (a : Account) (h : (a.balance != 0) = true) :
 /-- The refund/storage snapshot cannot be affected just by warming the
     value-transfer target in the parent CALL scope. -/
 theorem warmTarget_value_refund (w : TxWorld) (target : Nat) :
-    (warmTarget w target).refund = w.refund := rfl
+    (warmTarget w target).refund = w.refund := warmTarget_refund w target
 
 #print axioms accountAlive_funded
 #print axioms warmTarget_value_refund

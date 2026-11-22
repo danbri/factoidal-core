@@ -174,7 +174,7 @@ jobs:
         run: |
           mkdir -p .lake/differential
           node --check scripts/differential/call-opcode.mjs
-          node scripts/differential/call-opcode.mjs | tee .lake/differential/call-opcode.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==330 and x["matched"]==330 and x["mismatches"]==0 and x["parentReverts"]>0 and x["parentExceptions"]>0 and x["childSuccesses"]>0 and x["childFailures"]>0 and x["gasMutationRejected"] and x["invalidScopeRefused"],x'
+          node scripts/differential/call-opcode.mjs .lake/build/bin/evm-subset | tee .lake/differential/call-opcode.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==330 and x["matched"]==330 and x["mismatches"]==0 and x["parentReverts"]>0 and x["parentExceptions"]>0 and x["childSuccesses"]>0 and x["childFailures"]>0 and x["gasMutationRejected"] and x["nonemptyInputPassed"] and x["precompileScopeRefused"],x'
       - name: Execute actual nonzero-value CALL under EthereumJS oracle, gas stipend and new-account challenges
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -194,6 +194,27 @@ jobs:
           lake -d evm-cleanroom build evm-subset
           mkdir -p evm-cleanroom/.lake/differential
           node evm-cleanroom/scripts/differential/calldata.mjs | tee evm-cleanroom/.lake/differential/calldata.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==331 and x["matched"]==331 and x["mismatches"]==0 and x["negativeControls"]==3 and x["inputErrors"]==8 and x["fuelLimitChecks"]==1,x'
+      - name: Compare byte copy, CALL memory windows and nested journals against EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/differential
+          node scripts/differential/byte-copy.mjs | tee .lake/differential/byte-copy.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==124 and x["mismatches"]==0 and x["gasBoundaryTriplets"]==7 and all(x["negativeControls"].values()),x'
+          node scripts/differential/call-data.mjs | tee .lake/differential/call-data.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==122 and x["mismatches"]==0 and len(x["refusalChecks"])==3 and x["globalFuelBoundary"] and all(x["negativeControls"].values()),x'
+      - name: Compare the Shanghai byte and CALL fixture subset against pinned Geth
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          geth_dir=$(mktemp -d "$RUNNER_TEMP/evm-geth.XXXXXX")
+          geth_release=geth-alltools-linux-amd64-1.17.10-1df30b18
+          curl --fail --show-error --silent --location --retry 3 \
+            "https://gethstore.blob.core.windows.net/builds/$geth_release.tar.gz" \
+            --output "$geth_dir/geth.tar.gz"
+          printf 'f991c32e5b7bb68db97a1b06d50c7c06f6aa9ae84d8f6f9b2301dc02cad2a7cf  %s\n' "$geth_dir/geth.tar.gz" | sha256sum --check
+          tar -xzf "$geth_dir/geth.tar.gz" -C "$geth_dir" "$geth_release/evm"
+          export EVM_GETH_EXE="$geth_dir/$geth_release/evm"
+          node scripts/differential/byte-copy.mjs | tee .lake/differential/byte-copy-geth.json | python3 -c 'import json,sys; g=json.load(sys.stdin)["geth"]; assert g["compared"]==g["matched"]==124 and g["mismatches"]==0 and g["zeroGasExcluded"]==0,g'
+          node scripts/differential/call-data.mjs | tee .lake/differential/call-data-geth.json | python3 -c 'import json,sys; g=json.load(sys.stdin)["geth"]; assert g["compared"]==g["matched"]==112 and g["mismatches"]==0 and g["excluded"]=={"staticEntry":5,"osaka":1,"nonzeroDepth":3,"coldParent":1,"zeroGas":0},g'
       - name: Compare self-CALL and child context with a separate precompile boundary check
         shell: bash
         working-directory: formal/lean4

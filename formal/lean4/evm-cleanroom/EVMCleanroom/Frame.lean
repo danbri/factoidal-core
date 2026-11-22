@@ -56,14 +56,16 @@ private def errorOutcome (e : Error) : RawOutcome :=
 
 /-- Execute RETURN or REVERT: memory expansion is charged before the
     instruction is committed. No return-byte buffer is allocated here. -/
-private def haltWithData (s : State) : Except Error (State × Nat × Nat) :=
+def haltWithData (s : State) : Except Error (State × Nat × Nat) :=
   match s.stack.items with
   | offset :: length :: rest =>
     let needed := MemoryGas.requestedWords offset.val length.val
     let expanded := s.memory.expand needed
     let gasCost := MemoryGas.expansion s.memory.words needed
     match commit s (s.pc + 1) rest gasCost true (some expanded) with
-    | .ok final => .ok (final, offset.val, length.val)
+    | .ok final =>
+      .ok ({ final with outputData := ByteView.ofMemory final.memory offset.val length.val },
+        offset.val, length.val)
     | .error e => .error e
   | _ => .error .stackUnderflow
 
@@ -105,7 +107,8 @@ def zeroValueContextFree (s : State) (opcode : Nat) : Bool :=
     (match opcode with
     | 0x00 | 0x01 | 0x02 | 0x03 | 0x04 | 0x08 | 0x09
     | 0x10 | 0x11 | 0x12 | 0x14 | 0x15 | 0x16 | 0x17 | 0x18 | 0x19 | 0x1a | 0x1b | 0x1c
-    | 0x34 | 0x35 | 0x36 | 0x50 | 0x51 | 0x52 | 0x53
+    | 0x34 | 0x35 | 0x36 | 0x37 | 0x38 | 0x39 | 0x3d | 0x3e
+    | 0x50 | 0x51 | 0x52 | 0x53
     | 0x56 | 0x57 | 0x58 | 0x59 | 0x5b | 0xf3 | 0xfd => true
     | _ => decide (0x5f ≤ opcode ∧ opcode ≤ 0x9f))
 
