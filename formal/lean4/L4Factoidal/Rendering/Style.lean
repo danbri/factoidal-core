@@ -125,6 +125,14 @@ inductive BackgroundSize where
   | contain
   deriving Repr
 
+/-- A family change re-resolves a keyword and rescales an inherited relative size.
+An absolute author length fixes the size through inheritance. -/
+inductive FontSizeBasis where
+  | keyword (name : String)
+  | relative
+  | absolute
+  deriving Repr, Inhabited
+
 structure Computed where
   display : Display := .inline
   width : Length := .auto
@@ -141,6 +149,7 @@ structure Computed where
   columnCount : Option Nat := none
   columnWidth : Option Float := none
   fontSize : Float := 16
+  fontSizeBasis : FontSizeBasis := .keyword "medium"
   /-- CSS Fonts 4 §2.1: the initial value is the user agent's; as in browsers, `serif`
   (`FontFaceRule.genericOf`: drawn with the serif face when the engine holds one, else with
   its first font, as before). -/
@@ -1254,6 +1263,63 @@ def clipPathEmpty (value : String) : Bool :=
 #guard !maskHides "url(#fade)"
 #guard !maskHides "url( '#fade' )"
 
+/-- The absolute font size keywords (CSS Fonts 4 §3.5, medium 16px) in px. -/
+def fontSizeKeyword : String → Option Float
+  | "xx-small" => some 9 | "x-small" => some 10 | "small" => some 13 | "medium" => some 16
+  | "large" => some 18 | "x-large" => some 24 | "xx-large" => some 32 | "xxx-large" => some 48
+  | _ => none
+
+/-- A percentage text as a fraction. -/
+def percentOf (text : String) : Option Float :=
+  if text.endsWith "%" then (number (text.dropEnd 1).toString).toOption.map (· / 100) else none
+
+/-- A single generic monospace family uses the 13px fixed-font keyword table. -/
+private def fixedFontSizeKeyword : String → Option Float
+  | "xx-small" => some 9 | "x-small" => some 10 | "small" => some 12 | "medium" => some 13
+  | "large" => some 16 | "x-large" => some 20 | "xx-large" => some 26 | "xxx-large" => some 39
+  | _ => none
+
+private def relativeFontSizeBasis : FontSizeBasis → FontSizeBasis
+  | .absolute => .absolute
+  | _ => .relative
+
+private def fontSizeValue (s : Computed) (source : String) : Except String (Float × FontSizeBasis) := do
+  if let .ok size := pixels source then return (size, .absolute)
+  let some computed := tableComputed s.fontSize "font-size" source | throw "unsupported font-size"
+  let normalized := computed.toLower
+  if let some size := fontSizeKeyword normalized then return (size, .keyword normalized)
+  let relativeBasis := relativeFontSizeBasis s.fontSizeBasis
+  if normalized == "larger" then return (s.fontSize*1.2, relativeBasis)
+  if normalized == "smaller" then return (s.fontSize/1.2, relativeBasis)
+  if let some fraction := percentOf normalized then return (s.fontSize*fraction, relativeBasis)
+  let basis := match CssValues.stripWs (CssValues.CV.parse source) with
+    | [.tok (.dim _ _ unit)] =>
+      if ["em","ex","ch","cap","ic","lh"].contains unit.toLower then relativeBasis else .absolute
+    | _ => .absolute
+  return (← pixels normalized, basis)
+
+/-- Re-resolve font size after the size and family cascades. Unitless line height follows
+the resulting font size. An inherited explicit line height remains its computed length. -/
+private def resolveFamilyFontSize (parent s : Computed) : Computed :=
+  let wasFixed := parent.fontFamily.toLower == "monospace"
+  let fixed := s.fontFamily.toLower == "monospace"
+  let size := match s.fontSizeBasis with
+    | .keyword name =>
+      if fixed then (fixedFontSizeKeyword name).getD s.fontSize
+      else if wasFixed then (fontSizeKeyword name).getD s.fontSize else s.fontSize
+    | .relative =>
+      if wasFixed == fixed then s.fontSize
+      else if fixed then s.fontSize*13/16 else s.fontSize*16/13
+    | .absolute => s.fontSize
+  if size == s.fontSize then s else
+    {s with fontSize := size, lineHeight := s.lineHeightFactor.map (size*·) |>.getD s.lineHeight}
+
+#guard (resolveFamilyFontSize {} {fontFamily := "monospace"}).fontSize == 13
+#guard (resolveFamilyFontSize {} {fontFamily := "monospace, monospace"}).fontSize == 16
+#guard (resolveFamilyFontSize {} {fontFamily := "monospace", fontSize := 20, fontSizeBasis := .absolute}).fontSize == 20
+#guard (resolveFamilyFontSize {} {fontFamily := "monospace", fontSize := 32, fontSizeBasis := .relative}).fontSize == 26
+#guard (resolveFamilyFontSize {fontFamily := "monospace"} {fontSize := 13}).fontSize == 16
+
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" =>
@@ -1415,9 +1481,9 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let some args := gradientArgs d.value | throw "background-image: only linear-gradient() and url() are drawn"
     return {s with backgroundGradient := some (← parseLinearGradient args), backgroundImage := none}
   | "font-size" =>
-    let v ← pixels d.value
+    let (v, basis) ← fontSizeValue s d.value
     if v <= 0 then throw "font-size must be positive"
-    return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
+    return {s with fontSize := v, fontSizeBasis := basis, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
   | "line-height" =>
     if d.value == "0px" then
       return {s with lineHeight := 0, lineHeightFactor := none}
@@ -1578,16 +1644,6 @@ def colorHex (value : String) : Option String :=
       | "rgba", [r, g, b, a] => if a == 0 then some "transparent" else some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
       | _, _ => none
     | _ => none
-
-/-- The absolute font size keywords (CSS Fonts 4 §3.5, medium 16px) in px. -/
-def fontSizeKeyword : String → Option Float
-  | "xx-small" => some 9 | "x-small" => some 10 | "small" => some 13 | "medium" => some 16
-  | "large" => some 18 | "x-large" => some 24 | "xx-large" => some 32 | "xxx-large" => some 48
-  | _ => none
-
-/-- A percentage text as a fraction. -/
-def percentOf (text : String) : Option Float :=
-  if text.endsWith "%" then (number (text.dropEnd 1).toString).toOption.map (· / 100) else none
 
 /-- A declaration this profile's parsers refused, written as they read it, when the
 property table reads it: lengths in px, colours as hex, `display` as the nearest box this
@@ -1808,7 +1864,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
-    some {s with fontSize := source.fontSize, lineHeight := lineHeightOf source.fontSize s.lineHeightFactor s.lineHeight}
+    some {s with fontSize := source.fontSize, fontSizeBasis := source.fontSizeBasis,
+                 lineHeight := lineHeightOf source.fontSize s.lineHeightFactor s.lineHeight}
   | "font-family" => some {s with fontFamily := source.fontFamily}
   | "font-weight" => some {s with fontWeight := source.fontWeight}
   | "font-style" => some {s with oblique := source.oblique}
@@ -1816,7 +1873,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
     some {s with lineHeightFactor := source.lineHeightFactor,
                  lineHeight := lineHeightOf s.fontSize source.lineHeightFactor source.lineHeight}
   | "font" =>
-    some {s with fontSize := source.fontSize, fontFamily := source.fontFamily, lineHeightFactor := source.lineHeightFactor,
+    some {s with fontSize := source.fontSize, fontSizeBasis := source.fontSizeBasis,
+                 fontFamily := source.fontFamily, lineHeightFactor := source.lineHeightFactor,
                  lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight,
                  fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
@@ -3075,6 +3133,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     oblique := parent.oblique || (html && FontSynthesis.italicTags.contains n.lname),
     color := parent.color,
     clipOverflow := svgViewport && svgOverflow != "visible", fontSize,
+    fontSizeBasis := if scale == 1 then parent.fontSizeBasis else relativeFontSizeBasis parent.fontSizeBasis,
     fontFamily := if html && monospaceTags.contains n.lname then "monospace" else parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
     lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
@@ -3194,10 +3253,12 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
         if v == "rtl" then true else if v == "ltr" then false else initial.direction == .rtl
       | none => initial.direction == .rtl
     chosen := physicalWinners {rtl} chosen
-  -- Font size precedes line-height and inheritance-sensitive dependent values.
+  -- Resolve font size and family before line height and em-based declarations.
   if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then result := applyWinner parent initial result d
+  if let some (_,(_,d)) := chosen.find? (·.1 == "font-family") then result := applyWinner parent initial result d
+  result := resolveFamilyFontSize parent result
   for (key,(priority,d)) in chosen do
-    if key != "font-size" then
+    if key != "font-size" && key != "font-family" then
       -- Inline SVG paint declarations stay with the existing SVG producer.
       -- External HTML paint rules are refused until that cascade is unified.
       if n.ns == some DOM.svgNS && priority[2]? == some 1 && !htmlProperties.contains key then pure ()

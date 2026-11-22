@@ -116,23 +116,27 @@ async function contentArea(lib:string){
   assert.ok(height>=22&&height<=23,`the content area of 20px Liberation Mono is 22.66 px, got ${height}`);
 }
 
-// Expected failure, https://github.com/danbri/factoidal-core/issues/750 (generic monospace at 13 px): browsers draw text whose family is the generic `monospace` alone,
-// and whose size comes from a keyword (the initial `medium`), at 13 px, not 16 px (Blink, Gecko
-// and WebKit; `pre`, `code`, `kbd`, `samp` in an unstyled page). This engine draws it at 16 px.
-// When this test fails because the ten letters are 78 px wide (13 px x 0.6 em), assert that and
-// close the issue in the same landing.
-const stillGap=`expected failure of https://github.com/danbri/factoidal-core/issues/750 no longer fails: pre text is not 16 px; make this test assert 13 px (78 px for ten letters) and close the issue`;
-async function monoSize(lib:string){
-  const engine=await loadHTML(lib,"bytes");
-  await loadFontFile(engine,sans,"Noto Sans");
-  await loadFontFile(engine,monoFontPath(),MONO_FAMILY,"bytes","mono");
-  const page="<!doctype html><body style='margin:0'><pre style='margin:0'><span style='background:#0000ff;color:#0000ff'>iiiiiiiiii</span></pre></body>";
-  const {blue}=spanWidths(lib,page);
-  assert.ok(Math.abs(blue-96)<=1,stillGap+` (width ${blue})`);
+async function monoSize(lib:string) {
+  const engine = await loadHTML(lib, "bytes");
+  await loadFontFile(engine, sans, "Noto Sans");
+  await loadFontFile(engine, monoFontPath(), MONO_FAMILY, "bytes", "mono");
+  const text = "<span style='background:#0000ff;color:#0000ff'>iiiiiiiiii</span>";
+  const page = (content: string) => "<!doctype html><body style='margin:0'>" + content + "</body>";
+  const cases = [
+    ["default pre", page("<pre style='margin:0'>" + text + "</pre>"), 78],
+    ["small keyword", page("<pre style='margin:0;font-size:small'>" + text + "</pre>"), 72],
+    ["family list", page("<pre style='margin:0;font-family:monospace, monospace'>" + text + "</pre>"), 96],
+    ["font-relative size", page("<pre style='margin:0;font-size:2em'>" + text + "</pre>"), 156],
+    ["inherited pixel size", page("<div style='font-size:20px'><pre style='margin:0'>" + text + "</pre></div>"), 120],
+  ] as const;
+  for (const [label, html, expected] of cases) {
+    const {blue} = spanWidths(lib, html);
+    assert.ok(Math.abs(blue - expected) <= 1, `${label}: expected ${expected}px, got ${blue}px`);
+  }
 }
 
 Deno.test("monospace face: pre and code draw with Liberation Mono, other pages unchanged (Wasm)",async()=>{await check();});
 Deno.test({name:"monospace face: pre and code draw with Liberation Mono, other pages unchanged (native)",ignore:!library,fn:async()=>{await check(library);}});
 Deno.test({name:"monospace face: every letter is 0.6 em wide (native CPU pixels)",ignore:!library,fn:async()=>{await advances(library!);}});
 Deno.test({name:"monospace face: an inline background is the content area of Liberation Mono (native CPU pixels)",ignore:!library,fn:async()=>{await contentArea(library!);}});
-Deno.test({name:"expected failure, https://github.com/danbri/factoidal-core/issues/750: pre text at 16 px where browsers use 13 px (native CPU pixels)",ignore:!library,fn:async()=>{await monoSize(library!);}});
+Deno.test({name:"monospace sizing: keyword, relative and inherited pixel sizes (native CPU pixels)",ignore:!library,fn:async()=>{await monoSize(library!);}});
