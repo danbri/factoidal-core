@@ -33,7 +33,7 @@ private def scalarShape : M Unit := do
   let z ← zipXor x y (some "mask")
   output "inverted" z (some "result")
 
-private def scalarAdd : M Unit := do
+private def scalarPair : M Unit := do
   let a ← input "a" .scalar
   let b ← input "b" .scalar
   let s ← scalarAdd a b (some "sum")
@@ -54,7 +54,7 @@ private def caseData : List (String × M Unit × Json × Json) := [
   ("broadcast", scalarShape,
     Json.mkObj [("template", toJson ([0,1,2,5,4294967295] : List Nat))],
     Json.mkObj [("template", toJson (5 : Nat))]),
-  ("scalar", scalarAdd,
+  ("scalar", scalarPair,
     Json.mkObj [("a", toJson (4294967295 : Nat)), ("b", toJson (3 : Nat))],
     Json.mkObj [("a", toJson (1 : Nat)), ("b", toJson (1 : Nat))]),
   ("empty", fanout,
