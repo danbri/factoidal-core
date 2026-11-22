@@ -529,14 +529,15 @@ source-bound index per render, shared by all embedded SVG roots. SVG text is low
 to glyph paths first, with `fonts`, the fonts that draw HTML text
 (`NativeSVGText.lowerDocumentGlyphs`); each element keeps its source path, and the
 glyph outlines go to the reader as numbers in a table. -/
-def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.Dom) (documentURL : Option String := none)
-    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
+def makeReplacedWithStore (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.Dom) (documentURL : Option String := none)
+    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[])
+    (backgroundKeys : List String := []) :
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
-      Option StoreEntry × NativeSVGText.Words) := do
+      Option StoreEntry × NativeSVGText.Words × NativeImage.Store) := do
   let imgs := htmlImageKeys dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
-    let (store,made) := storeIn kept (imgs.map (·.2)) images
-    return (embedding dom,picturesOf store imgs,made,{})
+    let (store,made) := storeIn kept (imgs.map (·.2) ++ backgroundKeys) images
+    return (embedding dom,picturesOf store imgs,made,{},store)
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,source) ← documentNamespaceTree dom
@@ -548,14 +549,22 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
   -- Each image decodes once for the document, not once for each SVG root. The keys are
   -- those of the tree as it was read (`storeKeys`: text lowered to glyphs names no image),
   -- so a store made ahead of the layout (`storeAhead`) is the one found here.
-  let (store,made) := storeIn kept (NativeSVG.imageKeys source documentURL ++ imgs.map (·.2)) images
+  let (store,made) := storeIn kept (NativeSVG.imageKeys source documentURL ++ imgs.map (·.2) ++ backgroundKeys) images
   -- A viewport of fractional CSS pixels (a percentage width with `height:auto`) keeps its
   -- exact size: the viewBox maps onto it, and the backing raster is the next whole pixel.
   return (fun id style width height => do
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
     let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store) glyphs
-    return placeSVG scene id style width height,picturesOf store imgs,made,madeWords)
+    return placeSVG scene id style width height,picturesOf store imgs,made,madeWords,store)
+
+/-- The embedding and replaced-element pictures without CSS background resources. -/
+def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.Dom) (documentURL : Option String := none)
+    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
+    Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
+      Option StoreEntry × NativeSVGText.Words) := do
+  let (embed, pictures, made, madeWords, _) ← makeReplacedWithStore kept words dom documentURL images fonts
+  return (embed, pictures, made, madeWords)
 
 /-- The pictures of a page drawn with no SVG: the `img` pictures, made as on a page with no
 `svg` element, and an embedding that refuses every `svg` root with `refusal` (liberal mode
