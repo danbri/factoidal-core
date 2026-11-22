@@ -110,8 +110,19 @@ theorem both_masks_zero_iff (a b : UInt64) :
       | mk blo bhi =>
         change (alo == blo && ahi == bhi) =
           ((⟨alo,ahi⟩ : Lanes) == ⟨blo,bhi⟩)
-        by_cases h1 : alo = blo <;> by_cases h2 : ahi = bhi <;>
-          simp_all [beq_iff_eq]
+        apply Bool.eq_iff_iff.mpr
+        constructor
+        · intro h
+          have he : alo = blo := beq_iff_eq.mp (Bool.and_eq_true.mp h).1
+          have hf : ahi = bhi := beq_iff_eq.mp (Bool.and_eq_true.mp h).2
+          cases he
+          cases hf
+          simp
+        · intro h
+          have eq : (⟨alo,ahi⟩ : Lanes) = ⟨blo,bhi⟩ :=
+            beq_iff_eq.mp h
+          cases eq
+          simp
   rw [encode_pair]
   exact split_beq_eq a b
 
@@ -215,12 +226,14 @@ private theorem row_matching (code : RDF.Term → UInt64)
         (EncodedJoin.rowMatches (code left.1.term, left.2)
           ((code r.1.term,r.2) :: (rest.map fun t =>
             (code t.1.term,t.2)))).map Prod.fst
+      have ih' := ih
+      simp only [EncodedJoin.rowMatches, List.filterMap_map] at ih'
       simp only [EncodedJoin.rowMatches, List.filterMap_cons]
       cases hc : (code left.1.term == code r.1.term) with
       | false =>
-          simpa [hc] using ih
+          simpa [hc] using ih'
       | true =>
-          simpa [hc] using congrArg (List.cons left.2) ih
+          simpa [hc] using congrArg (List.cons left.2) ih'
 
 /-- Exact ordered and multiplicity-preserving reconstruction from
     equality-comparison slot order. -/
