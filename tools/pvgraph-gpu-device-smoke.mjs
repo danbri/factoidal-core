@@ -11,7 +11,13 @@ if(!inputPath||!/^[a-f0-9]{40}$/.test(sha??""))
   throw Error("Usage: pvgraph-gpu-device-smoke.mjs LEAN_FIXTURES HEAD_SHA");
 const fixtures=readFileSync(inputPath,"utf8").trim().split(/\r?\n/)
   .filter(Boolean).map(JSON.parse);
-if(fixtures.length!==7)throw Error("expected seven Lean-authored cases");
+if(fixtures.length!==8)throw Error("expected eight Lean-authored cases");
+const u64=fixtures.find(r=>r.case==="u64-two-lane-equality");
+if(!u64||u64.expected.differenceLow[0]!==0||
+   u64.expected.differenceHigh[0]===0||
+   u64.expected.differenceLow[1]!==0||
+   u64.expected.differenceHigh[1]!==0)
+  throw Error("UInt64 fixture must distinguish high-bit collisions while preserving equal IDs");
 const adapter=await navigator.gpu?.requestAdapter();
 if(!adapter)throw Error("PVGraph GPU gate requires an actual WebGPU adapter.");
 const session=await createGsslResidentSession({
@@ -90,7 +96,7 @@ try{
       for(const id of allocated.reverse())session.release(id);
     }
   }
-  if(data.cases.length!==7||data.cases.some(c=>!c.correct&&!c.correctlyRefused))
+  if(data.cases.length!==8||data.cases.some(c=>!c.correct&&!c.correctlyRefused))
     throw Error("missing PVGraph GPU evidence");
   data.status="pass";
 }catch(error){
