@@ -116,6 +116,23 @@ for (const [i, shift] of shifts.entries()) {
 signedAdd('sar-out-of-gas', '600360021d00', 8)
 signedAdd('sar-underflow', '60011d00', 100)
 
+// SIGNEXTEND is a pre-EIP instruction: byte index counts from the low end.
+// Matrix crosses 0x7f/0x80, 0x7fff/0x8000, 31/32 and 256-bit limits.
+// The EVM oracle is independent; there is no JS implementation of the opcode.
+const signExtendIndexes = [0n, 1n, 2n, 15n, 30n, 31n, 32n, 33n, 255n, 256n, signBit, maxWord]
+const signExtendValues = [0n, 1n, 0x7fn, 0x80n, 0xffn, 0x100n,
+  0x7fffn, 0x8000n, signBit - 1n, signBit, signBit + 1n, maxWord]
+let signExtendCases = 0
+for (const [i, index] of signExtendIndexes.entries()) {
+  for (const [j, value] of signExtendValues.entries()) {
+    add(`signextend-${i}-${j}`, push(value) + push(index) + '0b00', '', 11)
+    signExtendCases++
+  }
+}
+add('signextend-out-of-gas', '608060000b00', '', 10)
+add('signextend-underflow', '60010b00', '', 100)
+signExtendCases += 2
+
 // ADDMOD/MULMOD must retain full-precision intermediate values. Each triple
 // is executed by the pinned independent EthereumJS oracle and by actual Lean.
 const modularPairs = [
@@ -194,6 +211,7 @@ console.log(JSON.stringify({
   kind: 'solidity-pure-frame-differential', oracle: '@ethereumjs/evm@10.1.3 Shanghai runCode',
   compiler: fixture.compiler.version, runtimeSha256: fixture.runtimeSha256,
   compared: cases.length, matched: cases.length, mismatches: 0,
-  signedCases: words.length ** 2 + 3 + newSignedCases, modularCases, forbiddenRefusals: forbidden.length,
+  signedCases: words.length ** 2 + 3 + newSignedCases, signExtendCases,
+  modularCases, forbiddenRefusals: forbidden.length,
   compiledExactGas: baseline.gasUsed, legacyCompatibility: 1,
 }))

@@ -50,6 +50,24 @@ def Word.signedMod (a b : Word) : Word :=
     let r := a.signedMagnitude % b.signedMagnitude
     if a.val < 2 ^ 255 then word r else word (modulus - r)
 
+/-- EVM SIGNEXTEND (0x0b): index counts bytes from the least-significant
+    end. Retain the low index+1 bytes and replicate their highest bit.
+    The guard stops a full-width index becoming an exponent or allocation. -/
+def Word.signExtend (index value : Word) : Word :=
+  if index.val < 32 then
+    let keep := 2 ^ (8 * (index.val + 1))
+    let low := value.val % keep
+    if low < keep / 2 then word low
+    else word (low + modulus - keep)
+  else value
+
+/-- Kind: executable helper boundary.
+    Says: any SIGNEXTEND byte index >= 32 preserves the original 256-bit word.
+    Does not say: the lower byte indexes have been refined against EELS. -/
+theorem Word.signExtend_large (index value : Word) (h : ¬ index.val < 32) :
+    index.signExtend value = value := by
+  simp [Word.signExtend, h]
+
 /-- Kind: executable helper boundary.
     Says: SDIV never divides by zero and returns the EVM zero word.
     Does not say: SDIV matches every fork-specific context. -/
@@ -427,6 +445,7 @@ def planStep (s : State) : Except Error Plan :=
     | 0x07 => binary s Word.signedMod 5                -- SMOD
     | 0x08 => ternary s Word.addMod 8                  -- ADDMOD
     | 0x09 => ternary s Word.mulMod 8                  -- MULMOD
+    | 0x0b => binary s Word.signExtend 5              -- SIGNEXTEND
     | 0x10 => binary s Word.lt 3                       -- LT
     | 0x11 => binary s Word.gt 3                       -- GT
     | 0x12 => binary s Word.signedLt 3                 -- SLT
@@ -621,6 +640,16 @@ theorem step_sar (s : State) (shift value : Word) (rest : List Word)
   simp [step, planStep, hRun, hOp, logicalShift, hProfile, binary, hStack, prepared]
 
 /-- Kind: dispatcher correspondence.
+    Says: SIGNEXTEND pops byte index then value and requests five gas through
+    the actual Core.step to commit path.
+    Does not say: the whole EVM transaction is conformant. -/
+theorem step_signExtend (s : State) (index value : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x0b)
+    (hStack : s.stack.items = index :: value :: rest) :
+    step s = commit s (s.pc + 1) (index.signExtend value :: rest) 5 := by
+  simp [step, planStep, hRun, hOp, binary, hStack, prepared]
+
+/-- Kind: dispatcher correspondence.
     Says: ADDMOD uses three words in EVM pop order and charges eight gas
     through the common commit path, without early 256-bit addition wrap. -/
 theorem step_addMod (s : State) (a b m : Word) (rest : List Word)
@@ -696,6 +725,8 @@ def run : Nat → State → Except Error State
 #print axioms step_returnDataCopy
 #print axioms step_returnDataCopy_outOfBounds
 #print axioms step_slt
+#print axioms Word.signExtend_large
+#print axioms step_signExtend
 #print axioms Word.signedDivide_zero
 #print axioms Word.signedMod_zero
 #print axioms Word.shiftArithmetic_large_nonnegative

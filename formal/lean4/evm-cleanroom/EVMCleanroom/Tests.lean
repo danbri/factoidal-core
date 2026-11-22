@@ -61,6 +61,31 @@ private def pushMax : Array UInt8 :=
 #guard isError (step (initial #[0x08])) .stackUnderflow
 #guard isError (step (initial #[0x09])) .stackUnderflow
 
+-- SIGNEXTEND indexes bytes from the least-significant end. The sign bit is
+-- bit 7 of byte k, not the word's global sign bit except when k=31.
+#guard (word 0).signExtend (word 0x7f) == word 0x7f
+#guard (word 0).signExtend (word 0x80) == word (modulus - 0x80)
+#guard (word 0).signExtend (word 0xff) == word (modulus - 1)
+#guard (word 0).signExtend (word 0x100) == word 0
+#guard (word 1).signExtend (word 0x7fff) == word 0x7fff
+#guard (word 1).signExtend (word 0x8000) == word (modulus - 0x8000)
+#guard (word 1).signExtend (word 0x80ff) == word (modulus - 0x7f01)
+#guard (word 30).signExtend (word signBit) == word 0
+#guard (word 31).signExtend (word signBit) == word signBit
+#guard (word 32).signExtend (word (signBit + 1)) == word (signBit + 1)
+#guard (word (modulus - 1)).signExtend (word signBit) == word signBit
+-- Actual opcode order and metering: PUSH1 0x80, PUSH0 0, SIGNEXTEND.
+#guard resultWord (run 5 (initial #[0x60, 0x80, 0x5f, 0x0b, 0x00])) ==
+  some (modulus - 0x80)
+#guard resultWord (run 5 (initial (pushMax ++ #[0x60, 0x00, 0x0b, 0x00]))) ==
+  some (modulus - 1)
+#guard isError (step (initial #[0x0b])) .stackUnderflow
+#guard isError (step { (initial #[0x0b]) with
+  stack := ⟨[word 1], by decide⟩ }) .stackUnderflow
+#guard resultWord (run 5 (initial #[0x60, 0x80, 0x5f, 0x0b, 0x00] 10)) ==
+  some (modulus - 0x80)
+#guard isError (run 5 (initial #[0x60, 0x80, 0x5f, 0x0b, 0x00] 9)) .outOfGas
+
 -- Signed arithmetic follows two's-complement magnitudes, not Nat division.
 -- SDIV truncates towards zero, including signed minimum / -1 wraparound.
 #guard (word (modulus - 7)).signedDivide (word 3) == word (modulus - 2)

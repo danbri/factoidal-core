@@ -8,10 +8,10 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "d4ed219c9d2ce77f66dc16c3f569be511bbc2923",
+    "EVMCleanroom/Core.lean": "a7fcdc1ee151b0678d0e35d1c16fe17fe471eda0",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
-    "EVMCleanroom/Frame.lean": "f37bf4a2ece59c0ddfbb902d4536c0796694d803",
+    "EVMCleanroom/Frame.lean": "c8590d3ec21595f336fd51bce6c8dc71200a2f77",
     "EVMCleanroom/World.lean": "255f115cc6586e911bab142fcee60e2929b2ecf3",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
@@ -66,7 +66,7 @@
     "scripts/differential/fixtures/solidity-pure/PureCompare.sol": "54b9b9ef152b6c7d65f83d5c71ab8384364fdbaa",
     "scripts/differential/fixtures/solidity-pure/README.md": "67434fd985ee991564f528f9a475b7950457f3ba",
     "scripts/differential/fixtures/solidity-pure/fixture.json": "d41be2ef7c28a5c1c4690986ade30183b372afd6",
-    "scripts/differential/solidity-pure.mjs": "1aff42a8c5af4812ec6cf355d091b05f74361356",
+    "scripts/differential/solidity-pure.mjs": "e9490cef563fe9e59f3e5b534c928954eda3c9bd",
     "scripts/rpc/evidence/op-sepolia-jovian-decimals-51771054.json": "45e3eec526801649e061cecff87c0f28dec98e7e",
     "scripts/rpc/evidence/op-sepolia-solidity-ge-51771081.json": "2d8c431338d2f34fb2179ac709b675190295364a",
     "scripts/rpc/evidence/polygon-solidity-ge-97759492.json": "68700c5c1ef0bd14089c11525a4663dbd4e918b2",
@@ -82,7 +82,7 @@
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
     "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
     "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
-    "EVMCleanroom/Tests.lean": "b4a7e922cb54eedb108ac7711b30b827e0ca4a85"
+    "EVMCleanroom/Tests.lean": "c3bf32b0dfb307c82a613fb67fa86f071310b4c4"
   },
   "theorem_inventory": [
     {
@@ -1906,5 +1906,24 @@
     "independent_reference": "@ethereumjs/evm@10.1.3 Shanghai; 198 additional generated cases",
     "theorem_status": "Seven additional theorem axiom sets compiled and actually printed at pinned Lean 4.33.1 in EVM CI run 45031418855, commit 41242a3fc0dce267742b5ec571c50af1d3afb60e; 2 no axioms, 5 propext only. Now selected as 103 total for future fail-closed auditing.",
     "limits": "PreShanghai coarse profile does not distinguish EIP-145 Istanbul activation, full-client and consensus checks remain open"
+  },
+  "signextend_integration": {
+    "status": "implementation-published-proof-compiler-and-oracle-pending",
+    "issue": "https://github.com/danbri/factoidal-core/issues/752",
+    "baseCommit": "22a2b6ab09bbe78b10506974d1094ca3666e783b",
+    "scope": "SIGNEXTEND 0x0b helper, opcode dispatch, zero-value frame admission and additional tests; all-fork coverage not asserted",
+    "intendedTheorems": [
+      "EVMCleanroom.Word.signExtend_large",
+      "EVMCleanroom.step_signExtend"
+    ],
+    "axiomsStatus": "Actual #print axioms pending pinned Lean 4.33.1 CI; not yet included in selected theorem_inventory",
+    "differential": {
+      "newSignExtendCases": 146,
+      "previousRetained": 381,
+      "requiredTotal": 527,
+      "oracle": "@ethereumjs/evm@10.1.3 Shanghai"
+    },
+    "gas": 5,
+    "limits": "No local Lean compiler or performance runner available in authoring environment. Fork-exact full implementation and consensus remain pending under issue725."
   }
 }
