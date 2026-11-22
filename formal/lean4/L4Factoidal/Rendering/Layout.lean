@@ -216,11 +216,15 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
   .gradient {shape := .linear (cx-dx*length/2) (cy-dy*length/2) (cx+dx*length/2) (cy+dy*length/2),
              boundingBoxUnits := false,stops}
 
+private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
+  if !s.visible || w <= 0 || h <= 0 then #[] else
+  match s.background with
+  | none => #[]
+  | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
-  let colour := match s.background with
-    | none => #[]
-    | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  let colour := backgroundColour id s x y w h
   -- CSS Backgrounds 3 §3.2: the image over the colour
   match s.backgroundGradient with
   | none => colour
@@ -2175,7 +2179,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let cy := innerY+rowY.getD cell.row 0
         let w := Table.spanSize widths cell.col cell.colSpan hs
         let h := Table.spanSize rows cell.row cell.rowSpan vs
-        -- Row group, row and cell backgrounds, each in the cell's area (CSS 2.1 §17.5.1).
+        -- The originating column and group paint under the row layers, within the
+        -- cell's area even for a spanning cell (CSS 2.2 §17.5.1). A group with
+        -- no child columns supplies the sizing ID; paint its colour only once.
+        let columnGroup := grid.columnGroups.getD cell.col none
+        let column := grid.columnElements.getD cell.col none
+        if let some id := columnGroup then
+          nodes := nodes ++ backgroundColour id styles[id]! cx cy w h
+        if column != columnGroup then
+          if let some id := column then
+            nodes := nodes ++ backgroundColour id styles[id]! cx cy w h
         let row := grid.rows.getD cell.row ⟨none,none⟩
         for layer in [row.group,row.element] do
           if let some id := layer then nodes := nodes ++ background id (styles[id]!) cx cy w h
