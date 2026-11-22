@@ -30,6 +30,9 @@ structure TxWorld where
   warmSlots : Nat → Nat → Bool := fun _ _ => false
   warmAddresses : Nat → Bool := fun _ => false
   refund : Int := 0
+  /-- The chain identifier supplied by a selected chain environment. Not a
+      signed-transaction or consensus-authenticated datum in this model. -/
+  chainId : Nat := 0
 
 def beginTransaction (accounts : Nat → Account) : TxWorld :=
   { accounts := accounts
@@ -43,6 +46,7 @@ def frameInput (w : TxWorld) (address gas : Nat)
     gas := gas
     currentAddress := address
     txOrigin := originAddress
+    chainId := w.chainId
     callerAddress := callerAddress
     callValue := 0
     selfBalance := (w.accounts address).balance
@@ -65,6 +69,12 @@ theorem frameInput_balance (w : TxWorld) (address gas : Nat) :
     (frameInput w address gas).selfBalance =
       (w.accounts address).balance := rfl
 
+/-- Actual frame entry reads the transaction world's chain selection.
+    Nested CALL creates its child through this same projection. -/
+theorem frameInput_chainId (w : TxWorld) (address gas : Nat)
+    (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
+    (frameInput w address gas readOnly profile originAddress callerAddress).chainId = w.chainId := rfl
+
 theorem frameInput_value_zero (w : TxWorld) (address gas : Nat) :
     (frameInput w address gas).callValue = 0 := rfl
 
@@ -85,6 +95,7 @@ theorem frameInput_participants (w : TxWorld) (address gas : Nat)
   ⟨rfl, rfl⟩
 
 #print axioms frameInput_address
+#print axioms frameInput_chainId
 #print axioms frameInput_participants
 #print axioms frameInput_balance
 #print axioms frameInput_value_zero

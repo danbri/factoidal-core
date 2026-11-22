@@ -256,6 +256,9 @@ structure State where
   currentAddress : Nat := 0
   /-- Externally supplied transaction origin (not authenticated here). -/
   txOrigin : Nat := 0
+  /-- Chain identifier provided by the surrounding execution environment.
+      It is not derived from or authenticated against a transaction here. -/
+  chainId : Nat := 0
   /-- Immediate caller, set at each CALL entry. -/
   callerAddress : Nat := 0
   callValue : Nat := 0
@@ -541,6 +544,10 @@ def planStep (s : State) : Except Error Plan :=
     | 0x3e => -- RETURNDATACOPY (EIP-211)
       if s.profile = .preShanghai then .error .unsupportedFork
       else copyBytes s s.returnData true
+    | 0x46 => -- CHAINID (EIP-1344; Istanbul and later)
+      -- preShanghai spans both sides of Istanbul: refuse to claim either.
+      if s.profile = .preShanghai then .error .unsupportedFork
+      else prepared (s.pc + 1) (word s.chainId :: s.stack.items) 2
     | 0x47 =>                                           -- SELFBALANCE (Istanbul+)
       if s.profile = .preShanghai then .error .unsupportedFork
       else prepared (s.pc + 1) (word s.selfBalance :: s.stack.items) 5
@@ -778,6 +785,22 @@ theorem step_slt_underflow (s : State) (hRun : s.halted = false)
       simp only [hs, List.length_cons] at hStack
       have hMin : 2 ≤ rest.length + 1 + 1 := Nat.succ_le_succ (Nat.succ_le_succ (Nat.zero_le _))
       exact (Nat.not_lt_of_ge hMin hStack).elim
+
+/-- EIP-1344 CHAINID executes through the actual gas-checked dispatcher.
+    This proves propagation of the supplied context, not its authenticity. -/
+theorem step_chainId (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x46) (hProfile : s.profile ≠ .preShanghai) :
+    step s = commit s (s.pc + 1) (word s.chainId :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, hProfile, prepared]
+
+/-- The coarse older profile cannot claim EIP-1344 availability. -/
+theorem step_chainId_unknown_fork (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x46) (hProfile : s.profile = .preShanghai) :
+    step s = .error .unsupportedFork := by
+  simp [step, planStep, hRun, hOp, hProfile]
+
+#print axioms step_chainId
+#print axioms step_chainId_unknown_fork
 
 /-- ORIGIN reads the supplied transaction-origin field through actual Core.step.
     Authentication of that context is a separate obligation. -/
