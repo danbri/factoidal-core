@@ -104,6 +104,12 @@ structure BackgroundGradient where
   stops : List (Color × Float × Option (Float × Bool)) := []
   deriving Repr
 
+/-- Pixels supplied by the document's bounded image store, with their CSS intrinsic size. -/
+structure BackgroundBitmap where
+  record : ImageRecord
+  natural : Nat × Nat
+  deriving Repr
+
 structure Computed where
   display : Display := .inline
   width : Length := .auto
@@ -116,6 +122,9 @@ structure Computed where
   backgroundGradient : Option BackgroundGradient := none
   /-- Raster background layer URLs in CSS order, front to back. -/
   backgroundURLs : List String := []
+  backgroundBitmaps : List (Option BackgroundBitmap) := []
+  backgroundSizes : List String := ["auto"]
+  backgroundRepeats : List String := ["repeat"]
   /-- `column-count` and `column-width` (px) of a multi-column container (CSS Multi-column
   Layout 1 §3); none is `auto`. With both `auto` the box is not a multi-column container. -/
   columnCount : Option Nat := none
@@ -603,7 +612,10 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
       let image := raster.getD (if (gradientArgs d.value).isSome then d.value else "none")
       let colour := if raster.isSome then
         (expanded.bind (·.lookup "background-color")).getD d.value else d.value
-      (⟨"background-color",colour,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
+      let placement : List Declaration := ["background-size", "background-repeat"].filterMap fun name =>
+        (expanded.bind (·.lookup name)).map fun value => ⟨name,value,d.important⟩
+      (⟨"background-color",colour,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ ::
+        placement ++ (whole :: acc) else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
@@ -1346,6 +1358,11 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
         | some (.px x) => width := some (max 0 x)
         | _ => throw "columns: not a count or a length"
     return {s with columnCount := count, columnWidth := width}
+  | "background-size" | "background-repeat" =>
+    let some value := CssValues.specified d.property d.value | throw "invalid background layer values"
+    let values := CssValues.listItems value
+    if d.property == "background-size" then return {s with backgroundSizes := values}
+    return {s with backgroundRepeats := values}
   | "background-image" =>
     if (trim d.value).toLower == "none" then
       return {s with backgroundGradient := none, backgroundURLs := []}
@@ -1645,7 +1662,7 @@ def ownProperties : List String :=
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
-   "font-family","background-image","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
+   "font-family","background-image","background-size","background-repeat","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
 alignment, position and grid readers take, `content`, and the prefixed names those readers
@@ -1741,6 +1758,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "background" | "background-color" => some {s with background := source.background}
   | "background-image" => some {s with backgroundGradient := source.backgroundGradient,
       backgroundURLs := source.backgroundURLs}
+  | "background-size" => some {s with backgroundSizes := source.backgroundSizes}
+  | "background-repeat" => some {s with backgroundRepeats := source.backgroundRepeats}
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
