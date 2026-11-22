@@ -11,6 +11,7 @@ import L4Factoidal.Rendering.AspectRatio
 import L4Factoidal.Rendering.ScrollGeometry
 import L4Factoidal.Rendering.GridLayout
 import L4Factoidal.Rendering.SelfPlace
+import L4Factoidal.Rendering.LogicalAxes
 import L4Factoidal.Unicode.ScriptDirection
 import L4Factoidal.Unicode.LineBreak
 
@@ -1661,7 +1662,8 @@ block child when no border, padding or clearance is between them and the block d
 establish a new block formatting context. A list item's marker is content before it. -/
 def collapsesTop (dom : Dom) (s : Computed) (id : Nat) : Bool :=
   let n := dom.get id
-  s.display == .block && s.borderEdges.top == 0 && s.padding.top == 0 && !s.clipOverflow && !s.pos.formattingRoot &&
+  s.display == .block && s.pos.writingMode == .horizontalTb &&
+    s.borderEdges.top == 0 && s.padding.top == 0 && !s.clipOverflow && !s.pos.formattingRoot &&
     !s.pos.isAbsolute && s.pos.float == .none && n.lname != "li" && n.ns != some DOM.svgNS &&
     (n.parent.map fun p => (dom.get p).type == .element).getD false
 
@@ -1670,7 +1672,8 @@ minimum height (CSS 2.1 §8.3.1). -/
 def collapsesBottom (dom : Dom) (s : Computed) (id : Nat) : Bool :=
   let n := dom.get id
   let auto := fun (l : CSS.Length) => match l with | .auto => true | _ => false
-  s.display == .block && s.borderEdges.bottom == 0 && s.padding.bottom == 0 && !s.clipOverflow && !s.pos.formattingRoot &&
+  s.display == .block && s.pos.writingMode == .horizontalTb &&
+    s.borderEdges.bottom == 0 && s.padding.bottom == 0 && !s.clipOverflow && !s.pos.formattingRoot &&
     !s.pos.isAbsolute && s.pos.float == .none && auto s.height && auto s.minHeight &&
     n.ns != some DOM.svgNS && (n.parent.map fun p => (dom.get p).type == .element).getD false
 
@@ -1701,6 +1704,70 @@ all of `top` is taken out. -/
 def overlapPx (before top : Float) : Float :=
   if before >= unbounded/2 then top
   else if before >= 0 && top >= 0 then min before top else if before < 0 && top < 0 then max before top else 0
+
+/-- The physical border box of a sized block in a vertical block formatting context.
+Auto margins divide positive inline slack. With negative slack they act as zero, and
+the inline-start edge determines placement. The block start is in logical coordinates. -/
+private def verticalBlockRect (frame : Logical.Frame) (width height blockStart : Float)
+    (s : Computed) (borderWidth borderHeight : Float) : Logical.PRect :=
+  let spare := max 0 (height-borderHeight-s.margin.top-s.margin.bottom)
+  let (margin, autoStart, autoEnd) := if frame.inlineFlip then
+    (s.margin.bottom, s.autoMarginBottom, s.autoMarginTop)
+  else (s.margin.top, s.autoMarginTop, s.autoMarginBottom)
+  let inlineStart := margin + (if autoStart then (if autoEnd then spare/2 else spare) else 0)
+  Logical.toPhysical frame (LU.ofPx width) (LU.ofPx height)
+    ⟨LU.ofPx inlineStart, LU.ofPx blockStart, LU.ofPx borderHeight, LU.ofPx borderWidth⟩
+
+#guard verticalBlockRect (Logical.Frame.of false true false) 600 400 100
+  {margin := {top := 100}} 100 100 == ⟨LU.ofPx 100,LU.ofPx 100,LU.ofPx 100,LU.ofPx 100⟩
+#guard verticalBlockRect (Logical.Frame.of true false true) 600 400 400
+  {margin := {bottom := 200}} 100 100 == ⟨LU.ofPx 100,LU.ofPx 100,LU.ofPx 100,LU.ofPx 100⟩
+#guard verticalBlockRect (Logical.Frame.of false true false) 600 400 0
+  {autoMarginTop := true, autoMarginBottom := true} 100 100 == ⟨0,LU.ofPx 150,LU.ofPx 100,LU.ofPx 100⟩
+
+/-- Pure placement for independently sized blocks. Work out the whole placement before
+calling child layout, so fallback never repeats a child layout. Rectangles stay in
+physical coordinates for painting, absolute descendants and geometry consumers. -/
+private def verticalBlockPlan (dom : Dom) (styles : Array Computed) (s : Computed)
+    (kids : Array Nat) (width height : Float) : Option (Array (Nat × Logical.PRect)) := Id.run do
+  let right := s.pos.writingMode == .verticalRl
+  let frame := Logical.Frame.of right (!right) (s.direction == .rtl)
+  let mut endEdge : Float := 0
+  let mut trailing : Float := 0
+  let mut out := #[]
+  for id in kids do
+    let n := dom.get id
+    let child := styles[id]!
+    if n.type == .text || n.type == .cdata then
+      if s.preformatted || !blankText n.data then return none
+      continue
+    if n.type != .element || child.display == .none then continue
+    if child.pos.isAbsolute then
+      let point := Logical.toPhysical frame (LU.ofPx width) (LU.ofPx height) ⟨0, LU.ofPx endEdge, 0, 0⟩
+      out := out.push (id, point)
+      continue
+    -- Without a definite size on both axes or with floats, the independent-block
+    -- placement is insufficient. Inline content in vertical scripts needs shaping.
+    if child.display != .block || child.pos.float != .none || child.pos.clear != .none ||
+       n.lname == "hr" || n.ns == some DOM.svgNS then return none
+    let some w := CSS.resolve width child.width | return none
+    let some h := CSS.resolve height child.height | return none
+    if child.minWidth.isKeyword || child.maxWidth.isKeyword ||
+       child.minHeight.isKeyword || child.maxHeight.isKeyword then return none
+    let edge := child.borderEdges
+    let p := child.padding
+    let bw := max 0 (clampOpt ((CSS.resolve width child.minWidth).getD 0) (CSS.resolve width child.maxWidth) w) +
+      edge.left+edge.right+p.left+p.right
+    let bh := max 0 (clampOpt ((CSS.resolve height child.minHeight).getD 0) (CSS.resolve height child.maxHeight) h) +
+      edge.top+edge.bottom+p.top+p.bottom
+    if bw <= 0 then return none
+    let marginStart := if right then child.margin.right else child.margin.left
+    let marginEnd := if right then child.margin.left else child.margin.right
+    let start := endEdge + collapsePx trailing marginStart
+    out := out.push (id, verticalBlockRect frame width height start child bw bh)
+    endEdge := start+bw
+    trailing := marginEnd
+  return some out
 
 /-- The top margin that the box of `id` shows to what is before it: its own, collapsed
 with those of the first blocks nested at its top that adjoin it (CSS 2.1 §8.3.1, two at a
@@ -2602,7 +2669,37 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | none => match s.height with
           | .px h => if contentLimits then none else some (clampOpt minHeight maxHeight (max 0 h))
           | _ => if ratioFixed then ratioHeight.map (clampOpt minHeight maxHeight) else none
-      let content ← if s.display.isFlex then
+      -- Orthogonal blocks and explicit formatting roots do not collapse their children's
+      -- block margins across the container edge. Definite boxes can place block children
+      -- before laying them out, leaving the fragment's public coordinates physical.
+      let parentHorizontal := (n.parent.bind fun id => styles[id]?).any fun parent =>
+        parent.pos.writingMode == .horizontalTb
+      let isolated := parentHorizontal || s.pos.formattingRoot || s.clipOverflow ||
+        ((border.left+padding.left > 0) && (border.right+padding.right > 0))
+      let verticalPlan := if s.display == .block && s.pos.writingMode != .horizontalTb &&
+          isolated && (imposedWidth.isSome || (CSS.resolve available s.width).isSome) &&
+          !contentOnly && lead.isEmpty && around.isEmpty &&
+          s.columnCount.isNone && s.columnWidth.isNone then
+        definite.bind fun h => verticalBlockPlan dom styles s n.kids width h
+      else none
+      let content ← if let some plan := verticalPlan then do
+          let mut out : Result := {}
+          for (child, rect) in plan do
+            let px := innerX+LU.toPx rect.x
+            let py := innerY+LU.toPx rect.y
+            let cs := styles[child]!
+            if cs.pos.isAbsolute then
+              out := {out with pending := out.pending.push {
+                id := child, x := px, y := py,
+                fx := if s.pos.writingMode == .verticalRl then 1 else 0,
+                fy := if s.direction == .rtl then 1 else 0}}
+            else
+              let r ← layoutTask dom styles font embedding pictures fuel
+                (sub <| .sized child (LU.toPx rect.width) (some (LU.toPx rect.height)))
+                (px-cs.margin.left) (py-cs.margin.top) width
+              out := append out r
+          pure {out with height := definite.getD 0, baseline := none, lastBaseline := none}
+        else if s.display.isFlex then
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, measure}
         else if s.display.isGrid then
