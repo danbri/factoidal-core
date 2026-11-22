@@ -88,7 +88,7 @@
     "scripts/differential/chain-id.mjs": "9639c8e6a837a4004e034e4253cee7b56c2788d8",
     "scripts/differential/block-environment.mjs": "9f812894cf211bccc4133926575f7d4f4ad0c45d",
     "scripts/differential/tx-env.mjs": "3e31e0e17f270ff46fa9286b028fb07eff9c8bb8",
-    "scripts/differential/blob-base-fee.mjs": "6066173840db5bd346d3de922e5765e926d5dd77"
+    "scripts/differential/blob-base-fee.mjs": "db42ea673778af7a14b6f7ca65a26c110853d046"
   },
   "theorem_inventory": [
     {

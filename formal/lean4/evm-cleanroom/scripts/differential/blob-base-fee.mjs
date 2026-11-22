@@ -37,25 +37,32 @@ const examples = [
   { id: 'add-two', code: '4a60010100' },
 ]
 const gases = [1, 2, 4, 7, 11, 100]
+function differingFields(a, b) {
+  const fields = b.status === 'error' ? ['status', 'error']
+    : ['status', 'gasRemaining', 'stack', 'memorySizeBytes', 'memoryHex']
+  return fields.filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k]))
+}
 let compared = 0
 const failures = []
 for (const x of examples) for (const gas of gases) {
   compared++
   try {
     const a = lean(x.code, gas), b = await reference(x.code, gas)
-    const fields = b.status === 'error' ? ['status', 'error']
-      : ['status', 'gasRemaining', 'stack', 'memorySizeBytes', 'memoryHex']
-    const mismatch = fields.filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k]))
+    const mismatch = differingFields(a, b)
     if (mismatch.length) failures.push({ id: x.id + ':' + gas, mismatch, actual: a, expected: b })
   } catch (e) { failures.push({ id: x.id + ':' + gas, error: String(e) }) }
 }
 const expected = await reference('4a00', 100)
 const forged = lean('4a00', 100, fee + 1n)
+const baseline = lean('4a00', 100)
+const forgedGasOracle = { ...expected, gasRemaining: '97' }
 const old = lean('4a00', 100, fee, 'shanghai')
 const negativeControls = {
   changedFeeDetected: expected.stack?.[0] === String(fee) &&
     forged.stack?.[0] !== expected.stack?.[0],
-  changedGasDetected: expected.gasRemaining === '98' && expected.gasRemaining !== '97',
+  changedGasDetected: expected.gasRemaining === '98' &&
+    differingFields(baseline, expected).length === 0 &&
+    differingFields(baseline, forgedGasOracle).includes('gasRemaining'),
 }
 const report = { schemaVersion: 1, reference: '@ethereumjs/evm@10.1.3 Cancun',
   compared, matched: compared - failures.length, mismatches: failures.length,
