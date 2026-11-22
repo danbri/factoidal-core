@@ -70,15 +70,13 @@ theorem parent_child (n : Nat) (right : Bool) :
     Does not say: root 1 has a valid sibling. -/
 theorem sibling_left_child (n : Nat) :
     sibling (child n false) = child n true := by
-  simp [sibling, child]
-  omega
+  simp [sibling, child] <;> omega
 
 /-- Says: the actual sibling of a right child is its matching left child.
     Does not say: zero is a valid generalized index. -/
 theorem sibling_right_child (n : Nat) :
     sibling (child n true) = child n false := by
-  simp [sibling, child]
-  omega
+  simp [sibling, child] <;> omega
 
 /-- Says: a concatenated path follows the executable child function.
     Does not say: the path is a valid field path for any concrete SSZ type. -/
