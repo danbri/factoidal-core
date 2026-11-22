@@ -178,7 +178,7 @@ theorem KernelCall_schedule_independent (c : KernelCall)
     (memory : GpuKernel.Mem UInt32) :
     c.dispatch.runOrder memory order = c.dispatch.runSeq memory := by
   exact GpuKernel.Dispatch.runOrder_perm c.dispatch
-    c.KernelCall_dispatch_raceFree order permutation memory
+    (KernelCall_dispatch_raceFree c) order permutation memory
 
 /-- A proof-carrying dynamic dispatch: it is impossible to fabricate
     a typed kernel call whose operator or parameters are different from
