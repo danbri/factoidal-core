@@ -28,4 +28,14 @@ private def blockHTML := "<style>body{margin:0}div{width:20px;height:12px;overfl
 private def useHTML := "<style>body{margin:0}svg{display:block;width:40px;height:30px}</style><svg viewBox='0 0 40 30'><defs><symbol id='s' viewBox='0 0 10 10'><rect width='20' height='20' fill='green'/></symbol></defs><use href='#s' x='5' y='5' width='10' height='10'/></svg>"
 #guard (pixel useHTML 10 10).toOption == some (0,128/255,0)
 #guard (pixel useHTML 16 10).toOption == some (1,1,1)
+private def posterHTML :=
+  "<style>body{margin:0}video{display:block;width:40px;height:20px;background:blue}</style>" ++
+  "<video poster='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg=='></video>"
+#guard (pixel posterHTML 0 10).toOption == some (0,0,1)
+#guard (pixel posterHTML 16 10).toOption == some (0,1,0)
+#guard (pixel (posterHTML.replace "background:blue" "object-fit:fill;background:blue") 0 10).toOption == some (0,1,0)
+#guard (WebRender.htmlImageKeys
+    (DOM.parseHtmlDocument "<video poster=' ../poster.png ' src='movie.mp4'></video><video poster=' '></video>")
+    (some "https://example.test/media/index.html")).map (·.2) == ["https://example.test/poster.png"]
+
 end WebRenderTests

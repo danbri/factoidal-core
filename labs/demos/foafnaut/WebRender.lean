@@ -277,14 +277,17 @@ theorem imageSource_plain (dom : DOM.Dom) (id : Nat) (h : plainImage dom id = tr
     imageSource dom id = plainSource dom id := by
   simp [imageSource, h]
 
-/-- The image of each HTML `img`, by node, as a key of the image store
-(`NativeSVG.imageKey`: a `data:` URI as it stands, another URL resolved). -/
+/-- HTML images and video posters, keyed by the node that displays them.
+Resolve each nonempty source with the same image-store key as SVG images. -/
 def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) := Id.run do
   let mut out : Array (Nat × String) := #[]
   for id in [0:dom.size] do
     let n := dom.get id
     if DOM.Dom.isHtmlElement n "img" then
       if let some src := imageSource dom id then out := out.push (id,NativeSVG.imageKey base src)
+    else if DOM.Dom.isHtmlElement n "video" then
+      let poster := (Rendering.CSS.attrValue n "poster").trimAscii.toString
+      if !poster.isEmpty then out := out.push (id,NativeSVG.imageKey base poster)
   return out.toList
 
 /-! ### An SVG document as the image of an `img` (2026-11-14)

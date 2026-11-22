@@ -93,6 +93,20 @@ inductive UnicodeBidi where | normal | embed | isolate | bidiOverride | isolateO
 /-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
 inductive BorderStyle where | none | solid | inset | outset
   deriving Repr, BEq
+/-- The border paint is independent of whether its widths take up space. -/
+inductive BorderColor where
+  | current
+  | transparent
+  | solid (color : Color)
+  deriving Repr
+
+/-- Substitute the element's computed text colour when the border uses currentcolor. -/
+def BorderColor.resolve (paint : BorderColor) (currentColor : Color) : Option Color :=
+  match paint with
+  | .current => some currentColor
+  | .transparent => none
+  | .solid c => some c
+
 /-- A `linear-gradient()` background image (CSS Images 3 §3.1): the direction as an angle in
 degrees (0 is up, 90 is right; `to bottom`, the default, is 180), or a corner (`to top
 right`: x and y each -1, 0 or 1), whose angle depends on the box; and the colour stops, each
@@ -110,6 +124,16 @@ inductive BackgroundSize where
   | cover
   | contain
   deriving Repr
+
+/-- An offset from the start of a background's physical positioning axis. -/
+inductive BackgroundOffset where
+  | length (value : Length)
+  | calculation (expression : CssValues.Calc) (units : CssValues.Ctx)
+
+instance : Repr BackgroundOffset where
+  reprPrec
+    | .length value, prec => reprPrec value prec
+    | .calculation expr _, prec => reprPrec (CssValues.Calc.text expr) prec
 
 structure Computed where
   display : Display := .inline
@@ -143,7 +167,7 @@ structure Computed where
   borderWidth : Edges := ⟨3,3,3,3⟩
   borderStyle : BorderStyle := .none
   /-- None: `currentColor`. -/
-  borderColor : Option Color := none
+  borderColor : BorderColor := .current
   /-- `border-spacing`, horizontal and vertical (inherited). -/
   borderSpacingX : Float := 0
   borderSpacingY : Float := 0
@@ -233,6 +257,8 @@ structure Computed where
   backgroundBitmap : Option (Nat × Bitmap) := none
   backgroundSize : BackgroundSize := .dimensions .auto .auto
   backgroundRepeat : Bool × Bool := (true, true)
+  backgroundPositionX : BackgroundOffset := .length (.percent 0)
+  backgroundPositionY : BackgroundOffset := .length (.percent 0)
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -247,7 +273,8 @@ def htmlProperties : List String :=
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
    "min-width","max-width","min-height","max-height","object-fit","object-position","text-align",
-   "direction","unicode-bidi","background-size","background-repeat"]
+   "direction","unicode-bidi","background-size","background-repeat",
+   "background-position","background-position-x","background-position-y"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
@@ -538,29 +565,34 @@ def generatedSelector (s : String) : Option (String × Bool) :=
 /-- The longhands that a side shorthand read by this profile sets, in the order of its
 values: the four sides of `margin`, `padding` and `inset`, the two sides of a
 flow-relative shorthand of one axis (`margin-block`, `padding-inline`, `inset-block`;
-`CssValues.Logical.pair`). Empty for any other property. -/
+`CssValues.Logical.pair`), or the two axes of `background-position`. -/
 def sidesOf (property : String) : List String :=
   if property == "margin" || property == "padding" then ["top","right","bottom","left"].map (property ++ "-" ++ ·)
   else if property == "inset" then ["top","right","bottom","left"]
+  else if property == "background-position" then ["background-position-x","background-position-y"]
   else match CssValues.Logical.pair property with
     | some (a, b) => [a, b]
     | none => []
 
 /-- The longhand declarations of a side shorthand: one to four values for four sides (CSS
 Box 4 §3.2), one or two for the two sides of an axis (CSS Logical 1 §4.2). The values are
-the component values: `calc(1px + 2px)` and `var(--a, 1px 2px)` are one each. Empty when
-the property is not a side shorthand or the number of values is not one it takes. -/
+the component values: `calc(1px + 2px)` and `var(--a, 1px 2px)` are one each.
+`background-position` uses the shared property grammar. -/
 def expandSides (property value : String) (important : Bool) : List Declaration :=
-  let names := sidesOf property
-  let each := match names.length, SheetReader.splitWords value with
-    | 4, [a] => [a,a,a,a]
-    | 4, [a,b] => [a,b,a,b]
-    | 4, [a,b,c] => [a,b,c,b]
-    | 4, [a,b,c,d] => [a,b,c,d]
-    | 2, [a] => [a,a]
-    | 2, [a,b] => [a,b]
-    | _, _ => []
-  (names.zip each).map fun (name, v) => ⟨name,v,important⟩
+  if property == "background-position" then
+    ((CssValues.expand property value).getD []).filterMap fun (name, v) =>
+      if name == property then none else some ⟨name,v,important⟩
+  else
+    let names := sidesOf property
+    let each := match names.length, SheetReader.splitWords value with
+      | 4, [a] => [a,a,a,a]
+      | 4, [a,b] => [a,b,a,b]
+      | 4, [a,b,c] => [a,b,c,b]
+      | 4, [a,b,c,d] => [a,b,c,d]
+      | 2, [a] => [a,a]
+      | 2, [a,b] => [a,b]
+      | _, _ => []
+    (names.zip each).map fun (name, v) => ⟨name,v,important⟩
 
 /-- The longhands of a `font` shorthand that this profile has (size, family, line height),
 each with its canonical specified value; none when the value is not a `font` value or is a
@@ -623,10 +655,13 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     if key == "background" then
       let image := if (gradientArgs d.value).isSome || (firstUrl? d.value).isSome then d.value else "none"
       let expanded := CssValues.expand key d.value
-      let rasterPlacement : List Declaration := ["background-size", "background-repeat"].filterMap fun name =>
+      let rasterPlacement : List Declaration := ["background-size", "background-repeat",
+        "background-position-x", "background-position-y"].filterMap fun name =>
         (expanded.bind (·.lookup name)).map fun value => ⟨name,value,d.important⟩
       (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ ::
         rasterPlacement ++ (whole :: acc) else
+    if key == "background-position" && !CssVars.mentions d.value then
+      expandSides key d.value d.important ++ acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
@@ -1005,6 +1040,21 @@ def Length.atViewport (width height : Float) : Length → Length
   | .vh n => .px (n*height).floor
   | other => other
 
+def BackgroundOffset.atViewport (vw vh : Float) : BackgroundOffset → BackgroundOffset
+  | .length value => .length (value.atViewport vw vh)
+  | .calculation expr units =>
+    .calculation expr {units with viewportW := tableRat vw, viewportH := tableRat vh}
+
+-- Percentages use the space left by the sized tile, which can be negative.
+def BackgroundOffset.resolve (basis : Float) : BackgroundOffset → Option Float
+  | .length value => L4Factoidal.Rendering.CSS.resolve basis value
+  | .calculation expr units =>
+    let reference := if basis < 0 then -(tableRat (-basis)) else tableRat basis
+    let units := {units with percentageBasis := some reference}
+    match CssValues.Calc.simp (some units) (CssValues.Calc.depth 64 expr + 4) expr with
+    | .val result "px" => some (ratToFloat result)
+    | _ => none
+
 def BackgroundSize.atViewport (vw vh : Float) : BackgroundSize → BackgroundSize
   | .dimensions w h => .dimensions (w.atViewport vw vh) (h.atViewport vw vh)
   | .cover => .cover
@@ -1063,6 +1113,12 @@ against font size `fontSize`; `none` when it is not a value of the property. -/
 def tableComputed (fontSize : Float) (property value : String) : Option String :=
   (CssValues.specified property value).map fun s =>
     CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
+
+private def borderPaint (source : String) : Except String BorderColor :=
+  match (trim source).toLower with
+  | "transparent" => .ok .transparent
+  | "currentcolor" => .ok .current
+  | _ => .solid <$> color source
 
 private def edgeValues (s : String) : Except String Edges := do
   let vals ← (words s).mapM pixels
@@ -1401,6 +1457,20 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
       | "no-repeat" | "no-repeat no-repeat" => pure (false,false)
       | _ => throw "unsupported background repeat mode"
     return {s with backgroundRepeat := axes}
+  | "background-position-x" | "background-position-y" =>
+    let parts := (CssValues.commaItems d.value).headD []
+    let value := String.intercalate " " (parts.map fun cv => CssValues.serialize [cv])
+    let some canonical := CssValues.specified d.property value | throw "invalid background position"
+    let components := CssValues.stripWs (CssValues.CV.parse (CssValues.computedForm d.property canonical))
+    let offset : BackgroundOffset ← match components with
+      | [cv@(.fn _ _)] =>
+        let some expr := CssValues.Calc.parse cv | throw "unsupported background position calculation"
+        pure (.calculation expr {fontSize := tableRat s.fontSize})
+      | _ =>
+        let some length := tableLength s.fontSize d.property value | throw "unsupported background position"
+        pure (.length length)
+    if d.property == "background-position-x" then return {s with backgroundPositionX := offset}
+    return {s with backgroundPositionY := offset}
   | "background-image" =>
     if (trim d.value).toLower == "none" then return {s with backgroundGradient := none, backgroundImage := none}
     -- The first layer: an image URL (`url(...)`) or a linear gradient, whichever comes first.
@@ -1478,16 +1548,16 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     else if s.borderStyle == .none then return {s with borderStyle := st, borderWidth := only}
     else return {s with borderStyle := st}
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
-    return {s with borderColor := some (← color d.value)}
+    return {s with borderColor := ← borderPaint d.value}
   | "border-width" => return {s with borderWidth := ← borderEdges s.fontSize d.value}
-  | "border-color" => return {s with borderColor := some (← color d.value)}
+  | "border-color" => return {s with borderColor := ← borderPaint d.value}
   | "border" =>
     -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
-    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := none}
+    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := .current}
     for part in words d.value do
       if let .ok style := borderStyle part then out := {out with borderStyle := style}
       else if let .ok w := borderWidthPx s.fontSize part then out := {out with borderWidth := ⟨w,w,w,w⟩}
-      else out := {out with borderColor := some (← color part)}
+      else out := {out with borderColor := ← borderPaint part}
     return out
   | "border-spacing" =>
     match ← (words d.value).mapM pixels with
@@ -1713,7 +1783,8 @@ def ownProperties : List String :=
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","object-position","font-weight","font-style",
-   "font-family","background-image","background-size","background-repeat","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
+   "font-family","background-image","background-size","background-repeat",
+   "background-position-x","background-position-y","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
 alignment, position and grid readers take, `content`, and the prefixed names those readers
@@ -1810,6 +1881,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "background-image" => some {s with backgroundGradient := source.backgroundGradient, backgroundImage := source.backgroundImage}
   | "background-size" => some {s with backgroundSize := source.backgroundSize}
   | "background-repeat" => some {s with backgroundRepeat := source.backgroundRepeat}
+  | "background-position-x" => some {s with backgroundPositionX := source.backgroundPositionX}
+  | "background-position-y" => some {s with backgroundPositionY := source.backgroundPositionY}
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
@@ -2042,7 +2115,7 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   -- HTML §15.3.10: a `table`'s `bordercolor` maps to the four `border-*-color` properties
   if tag == "table" then
     let bc := attrValue n "bordercolor"
-    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColor := some c}
+    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColor := .solid c}
   if ["tr","td","th","thead","tbody","tfoot"].contains tag then
     match (attrValue n "valign").toLower with
     | "top" => s := {s with verticalAlign := .top}
@@ -2070,7 +2143,8 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
   let sized := imageInput || ["img","video","canvas","iframe","embed","object","marquee"].contains tag
   if !sized && tag != "hr" then return s
-  let mut s := s
+  -- HTML §15.4.1: the video box contains its poster at its intrinsic ratio.
+  let mut s := if tag == "video" then {s with objectFit := .contain} else s
   if let some w := dimensionAttribute (attrValue n "width") then s := {s with width := w}
   if sized then
     if let some h := dimensionAttribute (attrValue n "height") then s := {s with height := h}
@@ -3240,7 +3314,7 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     display := .inline, width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
     columnCount := none, columnWidth := none,
-    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
+    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := .current,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by
@@ -3759,6 +3833,18 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
     | _ => false
   | none => false
 #guard (applyDeclaration ({} : Computed) "background-repeat" "repeat-y").map (·.backgroundRepeat) == some (false,true)
+#guard ((applyDeclaration ({} : Computed) "background-position" "right 10px bottom 5px").bind
+  (fun s => s.backgroundPositionX.resolve 80)) == some 70
+#guard ((applyDeclaration ({} : Computed) "background-position" "right 10px bottom 5px").bind
+  (fun s => s.backgroundPositionY.resolve 30)) == some 25
+#guard ((applyDeclaration ({} : Computed) "background-position-x" "center, left").bind
+  (fun s => s.backgroundPositionX.resolve (-20))) == some (-10)
+#guard ((applyDeclaration ({} : Computed) "background-position" "min(0%, 100%) max(0%, 100%)").map
+  (fun s => (s.backgroundPositionX.resolve (-50),s.backgroundPositionY.resolve (-50)))) == some (some (-50),some 0)
+#guard ((applyDeclaration ({} : Computed) "background-position-y" "max(5px, 50%)").bind
+  (fun s => s.backgroundPositionY.resolve 40)) == some 20
+#guard ((applyDeclaration ({} : Computed) "background-position-x" "calc(25% + 10vw)").bind
+  (fun s => (s.backgroundPositionX.atViewport 200 100).resolve 40)) == some 30
 #guard (applyDeclaration ({} : Computed) "background-image" "linear-gradient(red, blue), url(a.png)").map (·.backgroundImage) == some none
 
 -- Border widths in every length unit and keyword (`borderWidthPx`; WPT css/CSS2/borders).
