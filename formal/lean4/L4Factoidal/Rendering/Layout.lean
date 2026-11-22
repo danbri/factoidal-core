@@ -554,18 +554,17 @@ def lineBreakMode (s : Computed) : Unicode.LineBreak.Mode :=
   | .normal => .normal
   | .loose => .loose
 
-/-- The visible fallback for control characters that reach the text shaper
-(CSS Text 3 §4). Control Pictures cover C0 and DEL. The replacement glyph
-represents C1. This changes the display string by one code point only. -/
+/-- The visible fallback for controls that reach the text shaper (CSS Text 3 §4).
+Use the replacement glyph so a font without Control Pictures still draws them.
+The one-code-point substitution retains text offsets. -/
 private def visibleControl (c : Char) : Char :=
   let n := c.toNat
-  if n == 0x7F then Char.ofNat 0x2421
-  else if 0x80 ≤ n && n ≤ 0x9F then Char.ofNat 0xFFFD
-  else if n < 0x20 && n != 0x09 && n != 0x0A && n != 0x0D then Char.ofNat (0x2400+n)
+  if (0x7F ≤ n && n ≤ 0x9F) || (n < 0x20 && n != 0x09 && n != 0x0A && n != 0x0D) then
+    Char.ofNat 0xFFFD
   else c
 
-#guard (visibleControl (Char.ofNat 0x01)).toNat == 0x2401
-#guard (visibleControl (Char.ofNat 0x7F)).toNat == 0x2421
+#guard (visibleControl (Char.ofNat 0x01)).toNat == 0xFFFD
+#guard (visibleControl (Char.ofNat 0x7F)).toNat == 0xFFFD
 #guard (visibleControl (Char.ofNat 0x85)).toNat == 0xFFFD
 #guard visibleControl '\t' == '\t' && visibleControl '\n' == '\n' &&
   visibleControl '\r' == '\r' && visibleControl (Char.ofNat 0x200D) == Char.ofNat 0x200D
