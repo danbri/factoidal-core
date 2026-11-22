@@ -2,7 +2,7 @@ name: EVM cleanroom Lean seed
 
 on:
   push:
-    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121"]
+    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121", "feat/lean-evm-value-call-20261122"]
     paths:
       - "formal/lean4/evm-cleanroom/**"
       - ".github/workflows/evm-cleanroom.yml"
@@ -51,6 +51,13 @@ jobs:
           lake exe evm-subset --call-opcode 5f5f5f5f5f60c3617530f100 600160005500 50000 100 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="stopped" and x["stack"]==["1"] and x["gasRemaining"]=="25278" and x["slot0"]=="1" and x["warmAddress"] is True,x'
           lake exe evm-subset --call-opcode 5f5f5f5f5f60c3617530f15f5ffd 600160005500 50000 100 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="reverted" and x["gasRemaining"]=="25274" and x["slot0"]=="0" and x["warmAddress"] is False,x'
           lake exe evm-subset --call-opcode 5f5f5f5f5f60c3617530f1fe 600160005500 50000 100 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="exceptional" and x["gasRemaining"]=="0" and x["slot0"]=="0" and x["warmAddress"] is False,x'
+      - name: Smoke test actual zero/nonzero ETH CALL, stipend and parent rollback in Lean
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --call-opcode 5f5f5f5f61000260c3617530f100 00 50017 100 1000 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="stopped" and x["stack"]==["1"] and x["gasRemaining"]=="40700" and x["parentBalance"]=="998" and x["childBalance"]=="2",x'
+          lake exe evm-subset --call-opcode 5f5f5f5f61000260c3617530f100 00 50017 100 0 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="stopped" and x["stack"]==["0"] and x["gasRemaining"]=="40700" and x["parentBalance"]=="0" and x["childBalance"]=="0",x'
+          lake exe evm-subset --call-opcode 5f5f5f5f61000260c3617530f15f5ffd 00 50017 100 1000 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="reverted" and x["gasRemaining"]=="40696" and x["parentBalance"]=="1000" and x["childBalance"]=="0",x'
+          lake exe evm-subset --call-opcode 5f5f5f5f61000260c3617530f100 '' 50017 100 1000 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="stopped" and x["stack"]==["1"] and x["gasRemaining"]=="15700" and x["parentBalance"]=="998" and x["childBalance"]=="2",x'
       - name: Execute restricted EVM CLI and check emitted JSON
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -106,7 +113,7 @@ jobs:
           node scripts/check-eels-memory.mjs /tmp/ethereum-eels-prague-gas.py /tmp/ethereum-eels-prague-memory.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==6 and x["mismatches"]==0, x'
   differential:
     # PR-only avoids installing a second Lean/npm toolchain for both push and PR.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -156,6 +163,12 @@ jobs:
           mkdir -p .lake/differential
           node --check scripts/differential/call-opcode.mjs
           node scripts/differential/call-opcode.mjs | tee .lake/differential/call-opcode.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==330 and x["matched"]==330 and x["mismatches"]==0 and x["parentReverts"]>0 and x["parentExceptions"]>0 and x["childSuccesses"]>0 and x["childFailures"]>0 and x["gasMutationRejected"] and x["invalidScopeRefused"],x'
+      - name: Execute actual nonzero-value CALL under EthereumJS oracle, gas stipend and new-account challenges
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node --check scripts/differential/value-call.mjs
+          node scripts/differential/value-call.mjs | tee .lake/differential/value-call.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==450 and x["matched"]==450 and x["mismatches"]==0 and x["parentsReverted"]>0 and x["parentsExceptional"]>0 and x["childFailures"]>0 and x["childSuccesses"]>0 and x["comparisonMutationCaught"],x'
       - name: Generate versioned synthetic corpus and compare independent runtimes
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -186,7 +199,7 @@ jobs:
             formal/lean4/evm-cleanroom/scripts/differential/package-lock.json
   eels-real-state:
     # Validate real EELS post-state roots, not merely JSON structure.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
