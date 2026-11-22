@@ -115,6 +115,8 @@ inductive ItemAlign where
 structure AlignStyle where
   justifyContent : ContentAlign := .normal
   alignContent : ContentAlign := .normal
+  alignContentSafe : Option Bool := none
+  alignContentLastBaseline : Bool := false
   alignItems : ItemAlign := .normal
   alignSelf : ItemAlign := .auto
   justifyItems : ItemAlign := .normal
@@ -135,6 +137,7 @@ structure AlignStyle where
 /-- Every field equal: the two lay out the same. -/
 def AlignStyle.same (a b : AlignStyle) : Bool :=
   a.justifyContent == b.justifyContent && a.alignContent == b.alignContent &&
+  a.alignContentSafe == b.alignContentSafe && a.alignContentLastBaseline == b.alignContentLastBaseline &&
   a.alignItems == b.alignItems && a.alignSelf == b.alignSelf &&
   a.justifyItems == b.justifyItems && a.justifySelf == b.justifySelf &&
   a.rowGap.same b.rowGap && a.columnGap.same b.columnGap && a.order == b.order &&
@@ -218,7 +221,12 @@ def AlignStyle.set (fontSize : Float) (a : AlignStyle) (property value : String)
     let reset := resetsToInitial v
     match p with
     | "justify-content" => if reset then some {a with justifyContent := .normal} else (contentAlignOf v).map fun x => {a with justifyContent := x}
-    | "align-content" => if reset then some {a with alignContent := .normal} else (contentAlignOf v).map fun x => {a with alignContent := x}
+    | "align-content" =>
+      if reset then some {a with alignContent := .normal, alignContentSafe := none, alignContentLastBaseline := false}
+      else (contentAlignOf v).map fun x =>
+        {a with alignContent := x,
+                alignContentSafe := if alignSafe v then some true else if v.startsWith "unsafe " then some false else none,
+                alignContentLastBaseline := v == "last baseline"}
     | "align-items" => if reset then some {a with alignItems := .normal, alignItemsSafe := false}
         else (itemAlignOf v).map fun x => {a with alignItems := x, alignItemsSafe := alignSafe v}
     | "align-self" => if reset then some {a with alignSelf := .auto, alignSelfSafe := false}
@@ -242,6 +250,22 @@ def AlignStyle.set (fontSize : Float) (a : AlignStyle) (property value : String)
 for any other property or a value that is not one of the shorthand's. -/
 def alignShorthand (property value : String) : Option (List (String × String)) :=
   if alignShorthands.contains property then CssValues.expand property value else none
+
+/-- CSS Box Alignment 3 §5.1.1. A block aligns all of its contents together. Distribution
+uses its positional fallback. Without an overflow keyword, a non-scroll container is safe. -/
+def AlignStyle.blockOffset (a : AlignStyle) (scrollContainer : Bool) (free : Float) : Float :=
+  let distribution := a.alignContent == .spaceAround || a.alignContent == .spaceEvenly
+  let baseline := a.alignContent == .baseline
+  if free < 0 && (distribution || baseline || a.alignContentSafe.getD (!scrollContainer)) then 0
+  else if a.alignContent == .center || distribution then free/2
+  else if a.alignContent == .end_ || a.alignContent == .flexEnd || (baseline && a.alignContentLastBaseline) then free
+  else 0
+
+#guard ({alignContent := .center} : AlignStyle).blockOffset false 20 == 10
+#guard ({alignContent := .end_} : AlignStyle).blockOffset false (-20) == 0
+#guard ({alignContent := .end_} : AlignStyle).blockOffset true (-20) == -20
+#guard ({alignContent := .end_, alignContentSafe := some false} : AlignStyle).blockOffset false (-20) == -20
+#guard ({alignContent := .spaceAround} : AlignStyle).blockOffset true (-20) == 0
 
 #guard ((AlignStyle.set 16 {} "justify-content" "space-between").map (·.justifyContent)) == some .spaceBetween
 #guard ((AlignStyle.set 16 {} "justify-content" "safe CENTER").map (·.justifyContent)) == some .center
