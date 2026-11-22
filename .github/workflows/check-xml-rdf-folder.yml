@@ -44,7 +44,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tools/fetch-builds.sh --set web \
+          tools/fetch-builds.sh --set web --allow-unrelated \
             2>&1 | tee "$RUNNER_TEMP/xml-rdf-evidence/engine-install.log"
       - name: Execute actual Lean XSLT4/JSON-LD/RDF/SPARQL/XSLT4
         shell: bash
