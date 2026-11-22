@@ -108,7 +108,10 @@ theorem both_masks_zero_iff (a b : UInt64) :
     | mk alo ahi =>
       cases hb : split b with
       | mk blo bhi =>
-        simp [ha, hb, beq_iff_eq]
+        change (alo == blo && ahi == bhi) =
+          ((⟨alo,ahi⟩ : Lanes) == ⟨blo,bhi⟩)
+        by_cases h1 : alo = blo <;> by_cases h2 : ahi = bhi <;>
+          simp_all [beq_iff_eq]
   rw [encode_pair]
   exact split_beq_eq a b
 
@@ -122,11 +125,23 @@ theorem pairedHigh (ps : List Comparison) :
 
 private theorem zipLow (ps : List Comparison) :
     List.zipWith (· ^^^ ·) (leftLow ps) (rightLow ps) = differenceLow ps := by
-  simp [leftLow, rightLow, differenceLow, List.zipWith_map_map]
+  induction ps with
+  | nil => rfl
+  | cons p rest ih =>
+      change ((split p.leftId).lo ^^^ (split p.rightId).lo) ::
+        List.zipWith (· ^^^ ·) (leftLow rest) (rightLow rest) =
+        ((split p.leftId).lo ^^^ (split p.rightId).lo) :: differenceLow rest
+      rw [ih]
 
 private theorem zipHigh (ps : List Comparison) :
     List.zipWith (· ^^^ ·) (leftHigh ps) (rightHigh ps) = differenceHigh ps := by
-  simp [leftHigh, rightHigh, differenceHigh, List.zipWith_map_map]
+  induction ps with
+  | nil => rfl
+  | cons p rest ih =>
+      change ((split p.leftId).hi ^^^ (split p.rightId).hi) ::
+        List.zipWith (· ^^^ ·) (leftHigh rest) (rightHigh rest) =
+        ((split p.leftId).hi ^^^ (split p.rightId).hi) :: differenceHigh rest
+      rw [ih]
 
 /-- Both operations are the existing generic PVGraph primitive,
     with no RDF-specific arithmetic implementation. -/
@@ -134,17 +149,25 @@ theorem pvgraph_low_eq (ps : List Comparison) :
     GraphWords.execute .zipXor
       [.buffer (leftLow ps), .buffer (rightLow ps)] none =
     .ok (.buffer (differenceLow ps)) := by
-  simpa only [zipLow] using
-    (GpuFastPath.KernelCall_correct
-      (.zipXor (leftLow ps) (rightLow ps) (pairedLow ps)))
+  have h := GpuFastPath.KernelCall_correct
+    (.zipXor (leftLow ps) (rightLow ps) (pairedLow ps))
+  change GraphWords.execute .zipXor
+    [.buffer (leftLow ps), .buffer (rightLow ps)] none =
+      .ok (.buffer (List.zipWith (· ^^^ ·) (leftLow ps) (rightLow ps))) at h
+  rw [zipLow] at h
+  exact h
 
 theorem pvgraph_high_eq (ps : List Comparison) :
     GraphWords.execute .zipXor
       [.buffer (leftHigh ps), .buffer (rightHigh ps)] none =
     .ok (.buffer (differenceHigh ps)) := by
-  simpa only [zipHigh] using
-    (GpuFastPath.KernelCall_correct
-      (.zipXor (leftHigh ps) (rightHigh ps) (pairedHigh ps)))
+  have h := GpuFastPath.KernelCall_correct
+    (.zipXor (leftHigh ps) (rightHigh ps) (pairedHigh ps))
+  change GraphWords.execute .zipXor
+    [.buffer (leftHigh ps), .buffer (rightHigh ps)] none =
+      .ok (.buffer (List.zipWith (· ^^^ ·) (leftHigh ps) (rightHigh ps))) at h
+  rw [zipHigh] at h
+  exact h
 
 /-- For all comparison slots, the complete pair of u32 GPU-model
     output buffers reconstructs the exact original RDF bindings. -/
@@ -183,13 +206,21 @@ private theorem row_matching (code : RDF.Term → UInt64)
   induction right with
   | nil => rfl
   | cons r rest ih =>
+      change
+        (if code left.1.term == code r.1.term then
+          left.2 :: matchingBindings (rest.map fun t =>
+            (⟨left.2, code left.1.term, code t.1.term⟩ : Comparison))
+         else matchingBindings (rest.map fun t =>
+            (⟨left.2, code left.1.term, code t.1.term⟩ : Comparison))) =
+        (EncodedJoin.rowMatches (code left.1.term, left.2)
+          ((code r.1.term,r.2) :: (rest.map fun t =>
+            (code t.1.term,t.2)))).map Prod.fst
+      simp only [EncodedJoin.rowMatches, List.filterMap_cons]
       cases hc : (code left.1.term == code r.1.term) with
       | false =>
-          simpa [matchingBindings, EncodedJoin.rowMatches, hc]
-            using ih
+          simpa [hc] using ih
       | true =>
-          simpa [matchingBindings, EncodedJoin.rowMatches, hc]
-            using congrArg (List.cons left.2) ih
+          simpa [hc] using congrArg (List.cons left.2) ih
 
 /-- Exact ordered and multiplicity-preserving reconstruction from
     equality-comparison slot order. -/
@@ -211,7 +242,7 @@ theorem matching_eq_encodedJoin64 (code : RDF.Term → UInt64)
           ((l :: rest).map fun l => (code l.1.term,l.2))
           (right.map fun r => (code r.1.term,r.2))).map Prod.fst
       rw [matching_append, row_matching, ih]
-      rfl
+      simp [EncodedJoin.joinRows, List.map_append]
 
 /-- A checked finite UInt64 dictionary preserves actual RDF.Term.eqb
     comparison semantics and all ordered solution occurrences. -/
