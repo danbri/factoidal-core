@@ -61,7 +61,7 @@
    "expected": "plaintext.xml",
    "key": "oracle-DH-1024",
    "dh1024": true,
-   "kek": "969eab9b0a05428cd116ad0cd6fc11b6"
+   "kek": "cd71afb5b99a88dfaf1738655eea6920"
   },
   {
    "id": "AGRMNT.9",
