@@ -55,7 +55,8 @@ to `Computed` stops this from compiling until it is sorted here. The custom prop
 its descendants, each of which is compared itself. -/
 def sameShape (a b : Computed) : Bool :=
   match a with
-  | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
+  | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,backgroundURLs,backgroundBitmaps,backgroundSizes,backgroundRepeats,
+    columnCount,columnWidth,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
@@ -64,8 +65,11 @@ def sameShape (a b : Computed) : Bool :=
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
-  -- a gradient background is painted from its stops: a style with one is never the same shape
+  -- Gradient and raster backgrounds have paint beyond the colour pairs.
   backgroundGradient.isNone && b.backgroundGradient.isNone &&
+  backgroundURLs.isEmpty && b.backgroundURLs.isEmpty &&
+  backgroundBitmaps.isEmpty && b.backgroundBitmaps.isEmpty &&
+  backgroundSizes == b.backgroundSizes && backgroundRepeats == b.backgroundRepeats &&
   columnCount == b.columnCount && optEq (· == ·) columnWidth b.columnWidth &&
   lineHeight == b.lineHeight && optEq (· == ·) lineHeightFactor b.lineHeightFactor &&
   visible == b.visible && clipOverflow == b.clipOverflow && underline == b.underline &&
