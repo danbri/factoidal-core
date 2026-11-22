@@ -1033,6 +1033,26 @@
       ],
       "scope": "For running frame/non-preShanghai/SAR opcode and a 2-element stack prefix, real Core.step calls commit with shiftArithmetic and charge 3.",
       "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+    },
+    {
+      "name": "EVMCleanroom.Word.signExtend_large",
+      "source": "EVMCleanroom/Core.lean",
+      "source_symbol": "Word.signExtend_large",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "For any 256-bit index >=32, the concrete SIGNEXTEND helper preserves the original value without entering the bounded exponentiation branch.",
+      "provenance": "Actually printed by pinned Lean 4.33.1 at published SHA 90bd86bd2fe6363e26b10eb5e90c73d2a7b42ab9, GitHub EVM CI run 45036718007 job 137251997426. Helper theorem only; not independent normative refinement."
+    },
+    {
+      "name": "EVMCleanroom.step_signExtend",
+      "source": "EVMCleanroom/Core.lean",
+      "source_symbol": "step_signExtend",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual Core.step on running SIGNEXTEND with two stack operands calls commit with correct pop order, helper value and five-gas charge.",
+      "provenance": "Actually printed by pinned Lean 4.33.1 at published SHA 90bd86bd2fe6363e26b10eb5e90c73d2a7b42ab9, GitHub EVM CI run 45036718007 job 137251997426. Dispatcher correspondence only; not all-fork proof."
     }
   ],
   "external_evidence": {
@@ -1908,7 +1928,7 @@
     "limits": "PreShanghai coarse profile does not distinguish EIP-145 Istanbul activation, full-client and consensus checks remain open"
   },
   "signextend_integration": {
-    "status": "implementation-published-proof-compiler-and-oracle-pending",
+    "status": "implementation-and-oracle-green-105-selected-axiom-audit-awaiting-recheck",
     "issue": "https://github.com/danbri/factoidal-core/issues/752",
     "baseCommit": "22a2b6ab09bbe78b10506974d1094ca3666e783b",
     "scope": "SIGNEXTEND 0x0b helper, opcode dispatch, zero-value frame admission and additional tests; all-fork coverage not asserted",
@@ -1916,7 +1936,7 @@
       "EVMCleanroom.Word.signExtend_large",
       "EVMCleanroom.step_signExtend"
     ],
-    "axiomsStatus": "Actual #print axioms pending pinned Lean 4.33.1 CI; not yet included in selected theorem_inventory",
+    "axiomsStatus": "Both new actual Lean 4.33.1 #print axioms outputs are [propext] in EVM CI run 45036718007 at source 90bd86bd2fe6363e26b10eb5e90c73d2a7b42ab9; now included in 105 selected claims, recheck on this new manifest commit.",
     "differential": {
       "newSignExtendCases": 146,
       "previousRetained": 381,
@@ -1924,6 +1944,16 @@
       "oracle": "@ethereumjs/evm@10.1.3 Shanghai"
     },
     "gas": 5,
-    "limits": "No local Lean compiler or performance runner available in authoring environment. Fork-exact full implementation and consensus remain pending under issue725."
+    "limits": "No local Lean compiler or performance runner available in authoring environment. Fork-exact full implementation and consensus remain pending under issue725.",
+    "firstCi": {
+      "commit": "90bd86bd2fe6363e26b10eb5e90c73d2a7b42ab9",
+      "evm": "https://github.com/danbri/factoidal-core/actions/runs/45036718007",
+      "frontier": "https://github.com/danbri/factoidal-core/actions/runs/45036717984",
+      "evmJobsPassed": 3,
+      "frontierPassed": true,
+      "guardedComparisons": 527,
+      "signExtendCompared": 146,
+      "signExtendMatched": 146
+    }
   }
 }

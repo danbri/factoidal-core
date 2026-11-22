@@ -35,7 +35,7 @@ jobs:
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==103 and x["files"]==75,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==105 and x["files"]==75,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |

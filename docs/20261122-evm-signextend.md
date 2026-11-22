@@ -9,7 +9,7 @@ Base: draft PR #751, commit `22a2b6ab09bbe78b10506974d1094ca3666e783b`, stacked 
 - `EVMCleanroom.Word.signExtend_large`: for a 256-bit index whose natural value is >= 32, the real `Word.signExtend` implementation returns its original value.
 - `EVMCleanroom.step_signExtend`: when `Core.step` fetches 0x0b in a running frame with `index :: value :: rest`, the executable dispatcher invokes `commit` with precisely `index.signExtend value :: rest` and cost 5.
 
-These statements are proof obligations on the concrete helper and dispatcher, not a theorem that all EELS instructions, fork profiles or transaction transitions match the specification. Exact printed Lean 4.33.1 theorem axioms are **pending CI**, not asserted on publication.
+These statements are proof obligations on the concrete helper and dispatcher, not a theorem that all EELS instructions, fork profiles or transaction transitions match the specification. On exact source commit `90bd86bd2fe6363e26b10eb5e90c73d2a7b42ab9`, Lean 4.33.1 printed `[propext]` for each theorem in EVM CI run 45036718007; the 105-selected-claim follow-up audit is pending its next run.
 
 ## Semantics and code
 
@@ -23,7 +23,7 @@ The byte index counts from the low end. For index < 32, keep `8*(index+1)` bits 
 
 ## Validation status
 
-At authoring: GitHub source files available but no local repository checkout, Lean binary or shared Mac build lock is accessible. No Lean compile, theorem-axiom output, comparator pass or native performance measurement is claimed yet. The PR CI provides a reproducible Linux check on exact source. Existing tail regression in https://github.com/danbri/factoidal-core/issues/739 is not resolved by this change.
+GitHub CI run [45036718007](https://github.com/danbri/factoidal-core/actions/runs/45036718007) passed all three jobs on `90bd86bd2fe6363e26b10eb5e90c73d2a7b42ab9`, including 527/527 EthereumJS comparisons (146 new SIGNEXTEND), 103 previously selected axiom audits, six Prague and six Cancun state roots and retained 10,000-program corpus. Both new proof outputs were actually printed with only `propext`. [Authenticated Frontier replay 45036717984](https://github.com/danbri/factoidal-core/actions/runs/45036717984) passed independently on that head. The two new theorems are now selected for a 105-claim audit in the next commit. Broader repository corpus/npm workflows are still separate. The current authoring host has no Lean toolchain and cannot give local compilation or native performance figures. Existing tail regression in https://github.com/danbri/factoidal-core/issues/739 is not resolved by this change.
 
 Reproduction from `formal/lean4/evm-cleanroom` with Lean 4.33.1 and bounded memory / single-build lock:
 
