@@ -63,7 +63,9 @@ jobs:
           timeout --kill-after=10s 720s lake build \
             L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder \
             Wasm.Ops.PVGraph \
-            Wasm.CoreDispatchTests
+            Wasm.CoreDispatchTests \
+            L4Factoidal.GpuDomainSpecificLanguage.GpuPlan \
+            L4Factoidal.GpuDomainSpecificLanguage.DataflowAdapter
       - name: Execute genuine native-Lean PVGraph authoring and reference evaluation
         working-directory: formal/lean4
         run: |
