@@ -2044,7 +2044,8 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
   let sized := imageInput || ["img","video","canvas","iframe","embed","object","marquee"].contains tag
   if !sized && tag != "hr" then return s
-  let mut s := s
+  -- HTML §15.4.1: the video box contains its poster at its intrinsic ratio.
+  let mut s := if tag == "video" then {s with objectFit := .contain} else s
   if let some w := dimensionAttribute (attrValue n "width") then s := {s with width := w}
   if sized then
     if let some h := dimensionAttribute (attrValue n "height") then s := {s with height := h}
