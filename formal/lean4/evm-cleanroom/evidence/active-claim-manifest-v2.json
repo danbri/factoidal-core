@@ -35,7 +35,7 @@
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
     "EVMCleanroom/CallOpcode.lean": "a09f9f86d6e707383c232be4423700a363cf5234",
     "scripts/differential/call-opcode.mjs": "574af6316ccbba111cabfbed961b193aa884742e",
-    "EVMCleanroom/ValueCall.lean": "34032fba7c2a327786579b58004ab8724b655037",
+    "EVMCleanroom/ValueCall.lean": "7841c1cfff09a83cc1b26574c329b47bfedae737",
     "scripts/differential/value-call.mjs": "c8f984084b8ed39a81645f142734c167239b2858"
   },
   "theorem_inventory": [
