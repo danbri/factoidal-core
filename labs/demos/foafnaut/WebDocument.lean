@@ -720,13 +720,34 @@ def importsLacking (dom : DOM.Dom) (url : String) (request : JSON.Json) : List S
       Rendering.ImportTree.lackingOf importEdges Syntax.resolveIri (fun u => given.lookup u) from_ text).eraseDups.take
         Rendering.ImportTree.maxSheets
 
+/-- Winning raster image keys in document order. Inline declaration URLs are
+relative to the document base; stylesheet declarations are already resolved. -/
+def backgroundImageKeys (styles : Array Rendering.CSS.Computed) (base : Option String) : List String :=
+  (styles.toList.flatMap fun style =>
+    if !style.visible || style.display == .none then []
+    else style.backgroundURLs.map (NativeSVG.imageKey base)).eraseDups
+
+private def inspectBackgroundImages (dom : DOM.Dom) (url : String) (request : JSON.Json) :
+    Except String (List JSON.Json) := do
+  let base := baseURL dom url
+  let (rules, _) ← rulesWith {} dom request
+  let (_, styles) ← Rendering.Generated.styled none dom rules 1 {}
+  let ordinary ← imageRequests dom base
+  let keys := (backgroundImageKeys styles (if base.isEmpty then none else some base)).filter fun key =>
+    !key.toLower.startsWith "data:" && !(ordinary.any fun record => str record "key" == key)
+  return (keys.take (maxDocumentImages - ordinary.length)).map fun key =>
+    .object [("key", .string key), ("url", .string key)]
+
 /-- What the host fetches for a page, in the mode of `request`. In liberal mode the answer
 has `diagnostics`, the skips (`WebAccept.Diagnostic.json`), when there are any. With sheets
 that import others, `imports`: the URLs of the imported sheets the request does not give. -/
 def inspect (dom : DOM.Dom) (url : String) (request : JSON.Json := .object []) : Except String JSON.Json := do
   let (answer,ds) ← WebAccept.accept (WebAccept.mode request) fun m => inspectIn m dom url (scripting request)
   let lacking := importsLacking dom url request
-  let more : List (String × JSON.Json) :=
+  let cssImages ← if request.field? "inspectBackgroundImages" == some (.bool true)
+    then do pure [("backgroundImages", .array (← inspectBackgroundImages dom url request))]
+    else pure []
+  let more : List (String × JSON.Json) := cssImages ++
     (if lacking.isEmpty then [] else [("imports",.array (lacking.map fun u => .object [("url",.string u)]))]) ++
     (if ds.isEmpty then [] else [("diagnostics",WebAccept.diagnosticsJSON ds)])
   match answer with
