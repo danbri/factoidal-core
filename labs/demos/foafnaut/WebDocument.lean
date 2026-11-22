@@ -2517,10 +2517,11 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   -- (`Rendering.Layout.scrollSize`): the padding box extended to the boxes inside it; for
   -- the root element, the viewport extended to the whole page. "0 0" with no box.
   | 38 =>
-    let border : Rendering.CSS.Edges := match l.styles.get with
-      | .ok styles => (styles[node]?.map (·.borderEdges)).getD {}
+    let style : Rendering.CSS.Computed := match l.styles.get with
+      | .ok styles => styles[node]?.getD {}
       | .error _ => {}
-    match Rendering.Layout.scrollSize l.dom l.boxes border (Float.ofNat l.scene.width) (Float.ofNat l.scene.height) node with
+    match Rendering.Layout.scrollSize l.dom l.boxes style.borderEdges
+        (Float.ofNat l.scene.width) (Float.ofNat l.scene.height) node (Rendering.Layout.scrollAxes style) with
     | some (w,h) => some (line [w,h])
     | none => some "0 0"
   -- 21: the used width and height of the node's content box (CSSOM §9.1 resolved values
