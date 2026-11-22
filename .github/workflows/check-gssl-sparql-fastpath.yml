@@ -15,7 +15,9 @@ jobs:
     uses: ./.github/workflows/check-dataflow-stage.yml
     with:
       group: gssl-sparql-fastpath
-      timeout_minutes: 20
+      # Match the full-source Wasm/dataflow lanes for the cold query ABI closure.
+      # Per-module limits and all theorem/axiom gates remain in the reusable job.
+      timeout_minutes: 90
       modules: >-
         L4Factoidal.SPARQL.GsslFastPath L4Factoidal.SPARQL.GsslFastPathTests
         L4Factoidal.SPARQL.GsslBgpRefinement
