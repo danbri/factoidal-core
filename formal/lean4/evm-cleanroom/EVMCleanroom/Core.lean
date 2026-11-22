@@ -28,6 +28,42 @@ def Word.mul (a b : Word) : Word := word (a.val * b.val)
 def Word.sub (a b : Word) : Word := word (a.val + modulus - b.val)
 def Word.div (a b : Word) : Word := word (a.val / b.val)
 
+/-- Absolute magnitude of the signed two's-complement interpretation. -/
+def Word.signedMagnitude (a : Word) : Nat :=
+  if a.val < 2 ^ 255 then a.val else modulus - a.val
+
+/-- EVM SDIV truncates towards zero. Signs apply to the mathematical
+    magnitude before reduction to the word domain; a zero divisor gives 0.
+    In particular (-2^255)/(-1) wraps back to -2^255. -/
+def Word.signedDivide (a b : Word) : Word :=
+  if b.val = 0 then word 0
+  else
+    let q := a.signedMagnitude / b.signedMagnitude
+    if (a.val < 2 ^ 255) == (b.val < 2 ^ 255) then word q
+    else word (modulus - q)
+
+/-- EVM SMOD uses the dividend's sign, unlike Euclidean Int.mod.
+    A zero divisor or an exact multiple yields zero. -/
+def Word.signedMod (a b : Word) : Word :=
+  if b.val = 0 then word 0
+  else
+    let r := a.signedMagnitude % b.signedMagnitude
+    if a.val < 2 ^ 255 then word r else word (modulus - r)
+
+/-- Kind: executable helper boundary.
+    Says: SDIV never divides by zero and returns the EVM zero word.
+    Does not say: SDIV matches every fork-specific context. -/
+theorem Word.signedDivide_zero (a : Word) :
+    a.signedDivide (word 0) = word 0 := by
+  rfl
+
+/-- Kind: executable helper boundary.
+    Says: SMOD never divides by zero and returns the EVM zero word.
+    Does not say: arbitrary signed division is independently specified. -/
+theorem Word.signedMod_zero (a : Word) :
+    a.signedMod (word 0) = word 0 := by
+  rfl
+
 /-- ADDMOD computes the full mathematical sum before reducing, not an
     intermediate 256-bit wrapped addition. A zero modulus yields zero. -/
 def Word.addMod (a b m : Word) : Word :=
@@ -70,6 +106,31 @@ def Word.shiftLeft (shift value : Word) : Word :=
 
 def Word.shiftRight (shift value : Word) : Word :=
   if shift.val < 256 then word (value.val >>> shift.val) else word 0
+
+/-- EIP-145 SAR. For a negative value retain the high sign bits; avoid a
+    shift by a full-width EVM operand by checking the 256-bit bound first. -/
+def Word.shiftArithmetic (shift value : Word) : Word :=
+  if value.val < signBit then
+    if shift.val < 256 then word (value.val >>> shift.val) else word 0
+  else if shift.val < 256 then
+    word ((value.val >>> shift.val) + modulus - (modulus >>> shift.val))
+  else word (modulus - 1)
+
+/-- Kind: executable helper boundary.
+    Says: shifts >= 256 of a nonnegative EVM word yield zero.
+    Does not say: the opcode is available on pre-Istanbul forks. -/
+theorem Word.shiftArithmetic_large_nonnegative (shift value : Word)
+    (hShift : ¬ shift.val < 256) (hSign : value.val < signBit) :
+    shift.shiftArithmetic value = word 0 := by
+  simp [Word.shiftArithmetic, hShift, hSign]
+
+/-- Kind: executable helper boundary.
+    Says: shifts >= 256 of a negative EVM word yield all ones.
+    Does not say: this accounts for 256-bit fork activation rules. -/
+theorem Word.shiftArithmetic_large_negative (shift value : Word)
+    (hShift : ¬ shift.val < 256) (hSign : ¬ value.val < signBit) :
+    shift.shiftArithmetic value = word (modulus - 1) := by
+  simp [Word.shiftArithmetic, hShift, hSign]
 
 /-- EIP-7939: leading zero bits in a 256-bit EVM word.
     Zero has 256 leading zero bits; otherwise bit length is log2(x)+1.
@@ -362,6 +423,8 @@ def planStep (s : State) : Except Error Plan :=
     | 0x02 => binary s Word.mul 5                      -- MUL
     | 0x03 => binary s Word.sub 3                      -- SUB
     | 0x04 => binary s Word.div 5                      -- DIV
+    | 0x05 => binary s Word.signedDivide 5             -- SDIV
+    | 0x07 => binary s Word.signedMod 5                -- SMOD
     | 0x08 => ternary s Word.addMod 8                  -- ADDMOD
     | 0x09 => ternary s Word.mulMod 8                  -- MULMOD
     | 0x10 => binary s Word.lt 3                       -- LT
@@ -376,6 +439,7 @@ def planStep (s : State) : Except Error Plan :=
     | 0x1a => binary s Word.byte 3                     -- BYTE
     | 0x1b => logicalShift s Word.shiftLeft            -- SHL
     | 0x1c => logicalShift s Word.shiftRight           -- SHR
+    | 0x1d => logicalShift s Word.shiftArithmetic      -- SAR (EIP-145)
     | 0x1e =>                                           -- EIP-7939 CLZ (Osaka)
       if s.profile = .osaka then
         unary s (fun value => word value.leadingZeros) 5
@@ -528,6 +592,35 @@ theorem step_slt (s : State) (a b : Word) (rest : List Word)
   simp [step, planStep, hRun, hOp, binary, hStack, prepared]
 
 /-- Kind: dispatcher correspondence.
+    Says: SDIV pops signed numerator then denominator and requests five gas.
+    Does not say: the source-level helper is normatively proved equivalent. -/
+theorem step_sdiv (s : State) (a b : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x05)
+    (hStack : s.stack.items = a :: b :: rest) :
+    step s = commit s (s.pc + 1) (a.signedDivide b :: rest) 5 := by
+  simp [step, planStep, hRun, hOp, binary, hStack, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: SMOD pops signed dividend then divisor and requests five gas.
+    Does not say: it supplies a whole transaction gas model. -/
+theorem step_smod (s : State) (a b : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x07)
+    (hStack : s.stack.items = a :: b :: rest) :
+    step s = commit s (s.pc + 1) (a.signedMod b :: rest) 5 := by
+  simp [step, planStep, hRun, hOp, binary, hStack, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: SAR requests three gas and uses the signed shift helper on
+    admitted pre-Osaka profiles; preShanghai remains explicitly refused.
+    Does not say: the coarse profile models the historical Istanbul boundary. -/
+theorem step_sar (s : State) (shift value : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x1d)
+    (hProfile : s.profile ≠ .preShanghai)
+    (hStack : s.stack.items = shift :: value :: rest) :
+    step s = commit s (s.pc + 1) (shift.shiftArithmetic value :: rest) 3 := by
+  simp [step, planStep, hRun, hOp, logicalShift, hProfile, binary, hStack, prepared]
+
+/-- Kind: dispatcher correspondence.
     Says: ADDMOD uses three words in EVM pop order and charges eight gas
     through the common commit path, without early 256-bit addition wrap. -/
 theorem step_addMod (s : State) (a b m : Word) (rest : List Word)
@@ -603,6 +696,13 @@ def run : Nat → State → Except Error State
 #print axioms step_returnDataCopy
 #print axioms step_returnDataCopy_outOfBounds
 #print axioms step_slt
+#print axioms Word.signedDivide_zero
+#print axioms Word.signedMod_zero
+#print axioms Word.shiftArithmetic_large_nonnegative
+#print axioms Word.shiftArithmetic_large_negative
+#print axioms step_sdiv
+#print axioms step_smod
+#print axioms step_sar
 #print axioms step_addMod
 #print axioms step_mulMod
 #print axioms step_slt_underflow
