@@ -13,6 +13,7 @@ import EVMCleanroom.CallOpcode
 import EVMCleanroom.EELSBridge
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.PragueEnvelope
+import EVMCleanroom.FrontierTransfer
 import EVMCleanroom.JumpProofs
 import EVMCleanroom.JumpCompleteness
 import EVMCleanroom.MemoryGas
