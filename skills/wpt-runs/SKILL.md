@@ -401,6 +401,11 @@ quoted next to the WPT number, never folded into it: `wpt-reftest-svg` (svg/, fi
   animation, scripting), fix the largest clusters, and report before and after per cluster.
   Reftests where Chrome passes and Foafnaut does not come first. Keep the WPT number and the
   Spinal Tap budgets from falling.
+  Causes, counts and probes as of 2026-11-22, with the method to repeat them:
+  `docs/designissues/2026-11-22-reftest-layout-causes.md`
+  (https://github.com/danbri/factoidal-core/issues/747). Before counting a failure as an engine
+  defect, check the test picture for the "Partial page" note, and before counting a pass,
+  check that the picture is not empty (section 2 of that record).
 - **On the Hub**: the Conformance page has a "Rendering (reftests)" section after WPT
   (`passmap-data.py --hub` writes `reftests` into data.json and history.json).
 
