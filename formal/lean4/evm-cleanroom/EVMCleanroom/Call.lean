@@ -46,13 +46,18 @@ inductive Outcome where
 /-- Precompile destinations excluded by the CALL subset. The opcode profiles
     do not select complete forks: preShanghai uses the set through Shanghai,
     and shanghaiPlus conservatively includes the Cancun and Prague additions.
+    cancunPlus selects the Cancun set with point evaluation at 0x0a.
     Osaka also reserves 0x100 for P256VERIFY.
     References: EIP-4844, EIP-2537 and EIP-7951. -/
 def unsupportedPrecompile (profile : Profile) (target : Nat) : Bool :=
   match profile with
   | .preShanghai => decide (1 ≤ target ∧ target ≤ 0x09)
   | .shanghaiPlus => decide (1 ≤ target ∧ target ≤ 0x11)
+  | .cancunPlus => decide (1 ≤ target ∧ target ≤ 0x0a)
   | .osaka => decide ((1 ≤ target ∧ target ≤ 0x11) ∨ target = 0x100)
+
+#guard unsupportedPrecompile .cancunPlus 0x0a
+#guard !unsupportedPrecompile .cancunPlus 0x0b
 
 /-- A single zero-value call to the target's code. All unused forwarded
     gas is returned after STOP, RETURN or REVERT, not exceptional halt. -/

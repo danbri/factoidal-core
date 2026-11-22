@@ -104,7 +104,7 @@ def main():
     for source, assertions in grouped.items():
         require((ROOT / source).is_file(), 'missing theorem source: ' + source)
         result = subprocess.run(
-            ['lake', 'env', 'lean', source], cwd=ROOT,
+            ['lake', '-d', 'evm-cleanroom', 'env', 'lean', str(ROOT / source)], cwd=ROOT.parent,
             text=True, capture_output=True, timeout=120, check=False,
         )
         require(result.returncode == 0,
