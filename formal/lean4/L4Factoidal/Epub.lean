@@ -1,5 +1,6 @@
 import Std.Data.TreeMap
 import L4Factoidal.XProc31.Zip
+import L4Factoidal.Crypto.SHA1
 import L4Factoidal.XML.NamespaceView
 import L4Factoidal.WHATWG.Base64
 import L4Factoidal.WHATWG.URL.PercentEncode
@@ -92,6 +93,57 @@ private def parse (bytes : ByteArray) (limit : Nat) : Except String NamespaceNod
 private def required (label value : String) : Except String String :=
   if value.isEmpty then .error ("EPUB missing " ++ label) else .ok value
 
+private def xmlenc := "http://www.w3.org/2001/04/xmlenc#"
+private def idpfEmbedding := "http://www.idpf.org/2008/embedding"
+private def encryptedUnsupported := "Encrypted EPUB resources are unsupported"
+
+private def childElements (node : NamespaceNode) : List NamespaceNode :=
+  (children node).filter fun
+    | .element .. => true
+    | .other _ => false
+
+private def fontMedia (media : String) : Bool :=
+  ["font/ttf", "font/otf", "font/woff", "font/woff2", "application/font-sfnt",
+    "application/vnd.ms-opentype", "application/font-woff"].contains media
+
+/-- OCF uses this file for both actual encryption and standard font obfuscation.
+Only standalone IDPF font entries are admitted. Their URIs are archive-relative. -/
+private def fontObfuscationPaths (bytes : ByteArray) : Except String (Std.TreeMap String Unit) := do
+  let root ← (parse bytes maxMetadataBytes).mapError (fun _ => encryptedUnsupported)
+  if !named ocf "encryption" root then throw encryptedUnsupported
+  let data := childElements root
+  if data.isEmpty then throw encryptedUnsupported
+  let mut paths : Std.TreeMap String Unit := {}
+  for entry in data do
+    if !named xmlenc "EncryptedData" entry then throw encryptedUnsupported
+    let [method, cipher] := childElements entry | throw encryptedUnsupported
+    if !named xmlenc "EncryptionMethod" method || attr method "Algorithm" != idpfEmbedding ||
+        !(childElements method).isEmpty || !named xmlenc "CipherData" cipher then
+      throw encryptedUnsupported
+    let [ref] := childElements cipher | throw encryptedUnsupported
+    if !named xmlenc "CipherReference" ref || !(childElements ref).isEmpty then throw encryptedUnsupported
+    let some path := resolvePath "encryption.xml" (attr ref "URI") | throw encryptedUnsupported
+    if (paths.get? path).isSome then throw "EPUB has duplicate font obfuscation entries"
+    paths := paths.insert path ()
+  return paths
+
+/-- EPUB 3.3 §4.4 derives a public fingerprint from the package identifier. -/
+private def fontKey (package : NamespaceNode) : Except String ByteArray := do
+  let id ← required "unique-identifier" (attr package "unique-identifier")
+  let some metadata := child package opf "metadata" | throw "EPUB missing metadata"
+  let some node := (children metadata).find? (fun n =>
+      named dc "identifier" n && attr n "id" == id) | throw "EPUB missing unique identifier"
+  let identifier := String.join ((children node).map rawText)
+  let normalized := String.ofList (identifier.toList.filter (fun c => !(c == ' ' || c == '\t' || c == '\r' || c == '\n')))
+  let value ← required "unique identifier" normalized
+  return Crypto.sha1 value.toUTF8
+
+private def restoreFont (key bytes : ByteArray) : ByteArray := Id.run do
+  let mut output := bytes
+  for i in [:min 1040 bytes.size] do
+    output := output.set! i (bytes[i]! ^^^ key[i % 20]!)
+  return output
+
 /-- Pure EPUB 3 reader. The archive, aggregate expansion, number of members and
 total spine bytes have independent limits. No member is written to disk. -/
 def openBook (bytes : ByteArray) : Except String Book := do
@@ -109,7 +161,6 @@ def openBook (bytes : ByteArray) : Except String Book := do
     | none => .error ("EPUB missing archive member: " ++ path)
   let mime ← file "mimetype"
   if mime != "application/epub+zip".toUTF8 then throw "EPUB mimetype is incorrect"
-  if (entries.get? "META-INF/encryption.xml").isSome then throw "Encrypted EPUB resources are unsupported"
   let container ← parse (← file "META-INF/container.xml") maxMetadataBytes
   if !named ocf "container" container then throw "Invalid EPUB container root"
   let some roots := child container ocf "rootfiles" | throw "EPUB container has no rootfiles"
@@ -123,6 +174,11 @@ def openBook (bytes : ByteArray) : Except String Book := do
   let some spine := child package opf "spine" | throw "EPUB package has no spine"
   let titleNode := (child package opf "metadata").bind (fun n => child n dc "title")
   let title := (titleNode.map (fun n => String.join ((children n).map rawText))).getD "EPUB publication"
+  let obfuscated ← match entries.get? "META-INF/encryption.xml" with
+    | none => pure {}
+    | some descriptor => fontObfuscationPaths descriptor
+  let key ← if obfuscated.isEmpty then pure ByteArray.empty else fontKey package
+  let mut remaining := obfuscated
   let mut resources : Array Resource := #[]
   let mut byId : Std.TreeMap String Resource := {}
   for item in children manifest do
@@ -130,9 +186,16 @@ def openBook (bytes : ByteArray) : Except String Book := do
     let id ← required "manifest id" (attr item "id")
     if (byId.get? id).isSome then throw "EPUB has a duplicate manifest id"
     let some member := resolvePath path (attr item "href") | throw "Unsupported EPUB manifest URL"
-    let resource : Resource := ⟨id, member, ← required "manifest media type" (attr item "media-type"), ← file member⟩
+    let media ← required "manifest media type" (attr item "media-type")
+    let mut bytes ← file member
+    if (obfuscated.get? member).isSome then
+      if !fontMedia media then throw encryptedUnsupported
+      bytes := restoreFont key bytes
+      remaining := remaining.erase member
+    let resource : Resource := ⟨id, member, media, bytes⟩
     resources := resources.push resource
     byId := byId.insert id resource
+  if !remaining.isEmpty then throw "EPUB font obfuscation target is missing from the manifest"
   let mut readingOrder : Array Resource := #[]
   let mut total := 0
   for item in children spine do
