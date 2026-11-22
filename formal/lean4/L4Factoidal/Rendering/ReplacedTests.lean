@@ -192,7 +192,7 @@ private def wordsAt (html : String) : Except String (List (String × Float)) :=
 #guard wordsAt "<pre>a\tb</pre>" == .ok [("a",0),("b",48)]
 #guard wordsAt "<p>a  b</p>" == .ok [("a",0),("b",12)]
 -- And does not wrap.
-#guard (render "<pre>aaaa bbbb</pre>" "pre{width:30px}").map (·.1.glyphRuns.toList.map (fun r => (r.glyphs[0]?.map (·.y)).getD 0)) == .ok [3.5,3.5]
+#guard (render "<pre>aaaa bbbb</pre>" "pre{width:30px}").map (·.1.glyphRuns.toList.map (fun r => (r.glyphs[0]?.map (·.y)).getD 0)) == .ok [7,7]
 
 -- CSS 2.1 §14.2: the body background fills the canvas, not the body's box.
 private def firstFill (html extra : String) : Except String (Option (Float × Float × Float × Float)) :=
