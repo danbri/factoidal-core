@@ -109,7 +109,7 @@ inductive BackgroundSize where
   | dimensions (width height : Length)
   | cover
   | contain
-  deriving Repr, BEq
+  deriving Repr
 
 structure Computed where
   display : Display := .inline
@@ -3709,8 +3709,9 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
 #guard firstUrl? "url(a.png" == none
 #guard (applyDeclaration ({} : Computed) "background-image" "url(/i/a.png)").map (·.backgroundImage) == some (some "/i/a.png")
 #guard (applyDeclaration ({} : Computed) "background-image" "none").map (·.backgroundImage) == some none
-#guard (applyDeclaration ({} : Computed) "background-size" "50% auto").map (·.backgroundSize) ==
-  some (.dimensions (.percent 0.5) .auto)
+#guard match (applyDeclaration ({} : Computed) "background-size" "50% auto").map (·.backgroundSize) with
+  | some (.dimensions (.percent value) .auto) => value == 0.5
+  | _ => false
 #guard (applyDeclaration ({} : Computed) "background-repeat" "repeat-y").map (·.backgroundRepeat) == some (false,true)
 #guard (applyDeclaration ({} : Computed) "background-image" "linear-gradient(red, blue), url(a.png)").map (·.backgroundImage) == some none
 
