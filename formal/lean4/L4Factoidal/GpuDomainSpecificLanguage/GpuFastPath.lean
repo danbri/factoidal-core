@@ -1,4 +1,5 @@
 import L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
+import L4Factoidal.GpuKernel.Race
 
 /-!
 # PVGraph: first GPU kernel refinement (pure Lean)
@@ -139,6 +140,46 @@ theorem KernelCall_correct (call : KernelCall) :
   | scalarAdd x y => rfl
   | broadcast value shape => rfl
 
+/-- The memory words produced by a supported kernel; a scalar uses
+    a single physical u32 lane. -/
+def KernelCall.words (c : KernelCall) : List UInt32 :=
+  match c.result with
+  | .buffer xs => xs
+  | .scalar x => [x]
+
+/-- One invocation writes at most its own in-range output lane. -/
+def KernelCall.laneWrites (c : KernelCall) (i : Nat) :
+    List (Nat × UInt32) :=
+  if i < c.words.length then [(i,(c.words[i]?).getD 0)] else []
+
+/-- Separate output addresses are disjoint for all valid invocation IDs. -/
+def KernelCall.dispatch (c : KernelCall) : GpuKernel.Dispatch UInt32 :=
+  { n := c.words.length, writes := c.laneWrites }
+
+/-- Proof of race freedom for the direct map, zip, scalar and broadcast
+    kernel model. No atomics or barriers are involved. -/
+theorem KernelCall_dispatch_raceFree (c : KernelCall) :
+    c.dispatch.RaceFree := by
+  intro t u ht hu hne i hi
+  change i ∉ GpuKernel.keys (c.laneWrites u)
+  have ht' : t < c.words.length := ht
+  have hu' : u < c.words.length := hu
+  simp only [GpuKernel.keys, KernelCall.laneWrites, if_pos ht',
+    List.map_cons, List.map_nil, List.mem_singleton] at hi
+  simp only [GpuKernel.keys, KernelCall.laneWrites, if_pos hu',
+    List.map_cons, List.map_nil, List.mem_singleton]
+  intro hii
+  exact hne (hi.symm.trans hii)
+
+/-- Under any permutation of valid invocation IDs, the kernel's writes
+    yield the same memory as the sequential reference execution. -/
+theorem KernelCall_schedule_independent (c : KernelCall)
+    (order : List Nat) (permutation : order.Perm (List.range c.dispatch.n))
+    (memory : GpuKernel.Mem UInt32) :
+    c.dispatch.runOrder memory order = c.dispatch.runSeq memory := by
+  exact GpuKernel.Dispatch.runOrder_perm c.dispatch
+    c.KernelCall_dispatch_raceFree order permutation memory
+
 /-- A proof-carrying dynamic dispatch: it is impossible to fabricate
     a typed kernel call whose operator or parameters are different from
     the checked Lean reference call. -/
@@ -214,6 +255,8 @@ theorem pvgraph_model_eq_reference (pv inputs : Json) :
 #guard decide (modelOrCpu .reduceSum [.buffer [1,2,3]] none =
   GraphWords.execute .reduceSum [.buffer [1,2,3]] none)
 
+#print axioms KernelCall_dispatch_raceFree
+#print axioms KernelCall_schedule_independent
 #print axioms KernelTag_decode_code
 #print axioms KernelCall_correct
 #print axioms modelOrCpu_eq_reference
