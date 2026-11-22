@@ -8,10 +8,10 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "ffa29453195fc108081e958bae031818122de7a9",
+    "EVMCleanroom/Core.lean": "437ea03ccabd9beaa8e845525ecfc2d472f078b3",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
-    "EVMCleanroom/Frame.lean": "ffd73c798cfeb20d607aa10c7843c16c095b937d",
+    "EVMCleanroom/Frame.lean": "f37bf4a2ece59c0ddfbb902d4536c0796694d803",
     "EVMCleanroom/World.lean": "255f115cc6586e911bab142fcee60e2929b2ecf3",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
@@ -66,7 +66,7 @@
     "scripts/differential/fixtures/solidity-pure/PureCompare.sol": "54b9b9ef152b6c7d65f83d5c71ab8384364fdbaa",
     "scripts/differential/fixtures/solidity-pure/README.md": "67434fd985ee991564f528f9a475b7950457f3ba",
     "scripts/differential/fixtures/solidity-pure/fixture.json": "d41be2ef7c28a5c1c4690986ade30183b372afd6",
-    "scripts/differential/solidity-pure.mjs": "79b50d85fccbb8bd2f11ed32424ea15a28c4581c",
+    "scripts/differential/solidity-pure.mjs": "1aff42a8c5af4812ec6cf355d091b05f74361356",
     "scripts/rpc/evidence/op-sepolia-jovian-decimals-51771054.json": "45e3eec526801649e061cecff87c0f28dec98e7e",
     "scripts/rpc/evidence/op-sepolia-solidity-ge-51771081.json": "2d8c431338d2f34fb2179ac709b675190295364a",
     "scripts/rpc/evidence/polygon-solidity-ge-97759492.json": "68700c5c1ef0bd14089c11525a4663dbd4e918b2",
@@ -81,7 +81,8 @@
     "scripts/differential/package-lock.json": "5318ca3893d6f4a10add5044de63c289dd48c79f",
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
     "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
-    "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc"
+    "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
+    "EVMCleanroom/Tests.lean": "b4a7e922cb54eedb108ac7711b30b827e0ca4a85"
   },
   "theorem_inventory": [
     {
@@ -1830,5 +1831,14 @@
     "testedSourceCommit": "0573815601f6c0db6833bdf4a2409fab2044b123",
     "publishedImplementationCommit": "f9fec7cbc5213aef53c19b0561efd21abba7db0c",
     "oracleObserved": "@ethereumjs/evm@10.1.3 Shanghai, 100 modular cases matched in the 183-case Solidity gate"
+  },
+  "signed_arithmetic_integration": {
+    "status": "implementation-and-differential-pending-CI",
+    "commit_provenance": "wip/evm-signed-ops-20261122 stacked on d752d109ddb3c6707650053930f95ed6ef0bfdc4",
+    "issue": "https://github.com/danbri/factoidal-core/issues/749",
+    "scope": "SDIV SMOD and SAR executable helpers and opcode dispatch; not fork-exact transaction/block conformance",
+    "independent_reference": "@ethereumjs/evm@10.1.3 Shanghai; 198 additional generated cases",
+    "theorem_status": "Seven statements in Core.lean printed by compiler; do not claim axiom audit until CI or local Lean 4.33.1 outputs are inspected",
+    "limits": "PreShanghai coarse profile does not distinguish EIP-145 Istanbul activation, full-client and consensus checks remain open"
   }
 }
