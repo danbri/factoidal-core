@@ -712,6 +712,7 @@ theorem begin_sound (cfg : Config) (env : EvalEnv) (ds : Dataset) (q : Query) :
                 hp.map (fun rows => Answer.graph
                   (Graph.cbd active (describeRoots targets (formSolutions frozen active q rows))))
 
+#print axioms Plan.run_eq
 #print axioms decodePairs_pairs
 #print axioms candidateJoin_sound
 #print axioms bgpStep_sound
