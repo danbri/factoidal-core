@@ -39,7 +39,10 @@
     "scripts/eels/replay-first-mainnet.mjs": "27bb7f161b209c644875aec883f86170f9b17161",
     "evidence/frontier-mainnet-46147.json": "3cea095d8700ffb3ea34f21c9a7741b881eabdc6",
     "scripts/eels/verify-frontier-account-witness.mjs": "8504e925310ae67d4a1b4edbae9635554498a071",
-    "scripts/eels/fetch-frontier-account-witness.mjs": "f9098dd19b8c2d0a776aa9b9b6f9bab1b8628275"
+    "scripts/eels/fetch-frontier-account-witness.mjs": "f9098dd19b8c2d0a776aa9b9b6f9bab1b8628275",
+    "evidence/frontier-mainnet-46146-account-proofs.json.gz.b64": "cfa64d5226ad00240685a2e4b0540e4be3f64717",
+    "scripts/eels/independent-frontier-trie.py": "1382f0110163507b06104bc3754c23b944e84f7a",
+    "scripts/eels/frontier-independent-negative.py": "0ab7a7c35b09047d611adae1b5608a26ef57e45f"
   },
   "theorem_inventory": [
     {
@@ -451,19 +454,33 @@
       "scope": "First actual signed mainnet transaction, Frontier 2015; verifiable transactions/receipts/header commitments plus hypothetical Lean transfer, NOT actual authenticated prestate replay",
       "reviewerDisposition": "draft; no full mainnet replay claim",
       "prestate_witness_tools": {
-        "status": "synthetic-present-and-absent-account-proofs-CI-pending",
-        "verifier": "scripts/eels/verify-frontier-account-witness.mjs",
-        "fetcher": "scripts/eels/fetch-frontier-account-witness.mjs",
-        "requirements": [
-          "exact authenticated historical block 46146 parent header hash",
-          "3 distinct eth_getProof account path validations against parent stateRoot",
-          "RLP codeHash, storageHash, balance, nonce verified against account proof",
-          "Lean Frontier fee/value/nonce transition on authenticated prestate",
-          "recomputed sparse MPT state root equals pre-Byzantium receipt intermediate root",
-          "block reward + 5 ETH and recomputed final state root equals block 46147 header",
-          "fail-closed on any mismatch"
+        "status": "offline-two-implementation-replay-awaits-current-head-CI",
+        "witnessBlob": "evidence/frontier-mainnet-46146-account-proofs.json.gz.b64",
+        "compressedEncoding": "Base64 of gzip of UTF8 compact canonical JSON, deterministic mtime=0",
+        "witnessJsonSha256": "9c9286d7c9500aca5426b7bf44bc74b19f84d2b16761dfb10ea7948bbef17924",
+        "witnessGzipSha256": "4d0b30b553d3e5e5bd24e4c26465d88a7d53326ef60f70396aaafd867298b3fc",
+        "witnessSource": "EIP-1186 account proofs at mainnet block 46146 independently returned by public archive RPCs; captured 2026-11-22 via CI",
+        "targetParentStateRoot": "0x691fc4f4d21d10787902e8f3266711f1d640e75fedbeb406dc0b8d3096128436",
+        "expectedIntermediateRoot": "0x96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957",
+        "expectedFinalBlockRoot": "0x0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169",
+        "pairOfImplementations": [
+          "Lean FrontierTransfer.settle + EthereumJS 10.1.3 secure MPT verified archive proof paths",
+          "Independent dependency-free Python Keccak-f[1600] + canonical RLP + secure Patricia trie rebuild"
         ],
-        "externallyAuthenticatedHistoricalStateAvailable": false
+        "requiredActions": [
+          "compare 15-field parent Frontier header Keccak to block 46147 parentHash",
+          "verify all three account proof paths including recipient nonmembership and all RLP account fields",
+          "apply 2015 signed value, nonce, Frontier intrinsic gas and 1.05 ETH miner fee",
+          "match pre-Byzantium receipt posttransaction state root",
+          "apply separate 5 ETH Frontier miner issuance and match postblock root",
+          "check 10 synthetic and 6 historical proof mutation controls; source pin and raw witness hash"
+        ],
+        "remainingTrust": [
+          "Lean arithmetic not proved equivalent to all Frontier consensus rules",
+          "two Keccak/MPT implementations not yet proved equivalent in Lean",
+          "proof source chain headers/PoW/canonical fork selection not independently verified",
+          "general transactions/storage/calls not covered"
+        ]
       }
     }
   },
@@ -484,6 +501,6 @@
     "Independent expert review"
   ],
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
-  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text. Candidate Prague type3/4 extension is separate from the historical original 4/6 record; it requires fresh six-of-six CI. Do not claim six successes until all roots and mutations pass. New strict Prague six-state ledger checks all six pinned external roots and 6 negative report mutations; CI must be green on this exact source revision. Signed EIP-4844 RLP requires a KZG option for EthereumJS instantiation; a fail-closed sentinel rejects any sidecar proof operation. No KZG proof validity is claimed. The exact 6/6 Prague root and 9+6 adversarial gates succeeded at commit ff3251d231a1a5bc7328f458eb158b8ce57d4dab in CI 44940731780. Six new Lean Prague theorems now join the selected live axioms gate (20 total). A further CI run is needed to validate this manifest-only assurance update. Actual 0xf1 parent opcode executable and 330 independent EthereumJS oracle comparisons introduced after historical CI; no pass claim until current branch run is green. The selected theorem-axiom manifest remains 20 and will be expanded only after observing real printed axioms of the new two parent-journal proofs. Added public executable CallOpcode.run parent rollback theorems; axiom lists will be pinned after this new source revision successfully elaborates. Four actual CALL parent rollback theorems now selected and their printed axioms pinned from Lean log 44954398201. New current-head CI must pass 24/24 selected-axiom audit and 330/330 oracle comparisons before claiming active revision conformance. First-ever historical mainnet block 46147 transaction and pre-Byzantium receipts-root verification candidate added as separate proof boundary. Historical prestate not authenticated and no claim of full state-root replay. Do not attribute earlier CI to this source revision. Added proof-path verifier and optional free public archive RPC probe. Offline synthetic proof selftest must pass before any historical witness claim; no EIP-1186 bundle has yet been authenticated against 2015 parent block 46146. All six executable Frontier theorem statements are now pinned from actual Lean #print axioms at source/CI 44993735718. Live selected-theorem inventory now 30 (new gate requires fresh CI on witness branch). The proof selftest now separately requires correct membership and nonmembership proofs and ten tampered account/path/root controls; no genuine historical proof has been substituted. Real 2015 EIP-1186 proofs independently fetched by two public archives exposed protocol distinction: a proven absent account has zero RPC code/storage hashes, unlike the hashes of an existing empty account. Verifier now makes the existence distinction from authenticated MPT proof result, not RPC account status. Unverified against posttransaction state roots until fresh CI. Synthetic nonmembership proof generator now uses EIP-1186 absence zero-hash convention consistent with two real 2015 archive RPC responses; actual existence is independently established by verifying MPT proof path.",
+  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text. Candidate Prague type3/4 extension is separate from the historical original 4/6 record; it requires fresh six-of-six CI. Do not claim six successes until all roots and mutations pass. New strict Prague six-state ledger checks all six pinned external roots and 6 negative report mutations; CI must be green on this exact source revision. Signed EIP-4844 RLP requires a KZG option for EthereumJS instantiation; a fail-closed sentinel rejects any sidecar proof operation. No KZG proof validity is claimed. The exact 6/6 Prague root and 9+6 adversarial gates succeeded at commit ff3251d231a1a5bc7328f458eb158b8ce57d4dab in CI 44940731780. Six new Lean Prague theorems now join the selected live axioms gate (20 total). A further CI run is needed to validate this manifest-only assurance update. Actual 0xf1 parent opcode executable and 330 independent EthereumJS oracle comparisons introduced after historical CI; no pass claim until current branch run is green. The selected theorem-axiom manifest remains 20 and will be expanded only after observing real printed axioms of the new two parent-journal proofs. Added public executable CallOpcode.run parent rollback theorems; axiom lists will be pinned after this new source revision successfully elaborates. Four actual CALL parent rollback theorems now selected and their printed axioms pinned from Lean log 44954398201. New current-head CI must pass 24/24 selected-axiom audit and 330/330 oracle comparisons before claiming active revision conformance. First-ever historical mainnet block 46147 transaction and pre-Byzantium receipts-root verification candidate added as separate proof boundary. Historical prestate not authenticated and no claim of full state-root replay. Do not attribute earlier CI to this source revision. Added proof-path verifier and optional free public archive RPC probe. Offline synthetic proof selftest must pass before any historical witness claim; no EIP-1186 bundle has yet been authenticated against 2015 parent block 46146. All six executable Frontier theorem statements are now pinned from actual Lean #print axioms at source/CI 44993735718. Live selected-theorem inventory now 30 (new gate requires fresh CI on witness branch). The proof selftest now separately requires correct membership and nonmembership proofs and ten tampered account/path/root controls; no genuine historical proof has been substituted. Real 2015 EIP-1186 proofs independently fetched by two public archives exposed protocol distinction: a proven absent account has zero RPC code/storage hashes, unlike the hashes of an existing empty account. Verifier now makes the existence distinction from authenticated MPT proof result, not RPC account status. Unverified against posttransaction state roots until fresh CI. Synthetic nonmembership proof generator now uses EIP-1186 absence zero-hash convention consistent with two real 2015 archive RPC responses; actual existence is independently established by verifying MPT proof path. Real block 46146 archive witness captured from CI artifacts and pinned for mandatory offline replay. Independent stdlib Python Keccak/RLP/MPT source pin added as second oracle. BOTH root checks are currently confirmed locally with independent Python; CI on this new combined head is required before marking current-head proof gate green. Historical header/PoW not independently proven.",
   "fork_scope_note": "The Osaka profile only enables opcode 0x1e (EIP-7939) in the otherwise restricted interpreter. It is NOT a fork-complete Osaka/Fusaka EVM or an EL/CL node. Historical Shanghai-to-Prague profile tests stay on their original default; never relabel earlier EELS roots as Osaka conformance. The CLZ differential gate includes an input for every possible 0..256 leading-zero result and both sides of powers-of-two bit-length transitions."
 }
