@@ -42,7 +42,7 @@ try{
     // Warm both routes. The GPU path must run and return full words.
     const base=runReference();
     const warm=await runPVGraph({pvgraph,bindings:{words},loadEngine,
-      session,requireGPU:true,minWords:0});
+      session,requireGPU:true,minWords:0,verifyWithLean:false});
     if(warm.status!=="gpu-observed"||!same(warm.outputs,base))
       throw Error("GPU disagrees with Lean at n="+n);
     const cpuMs=[],gpuMs=[];
@@ -52,7 +52,7 @@ try{
       cpuMs.push(now()-t);
       t=now();
       const observed=await runPVGraph({pvgraph,bindings:{words},
-        loadEngine,session,requireGPU:true,minWords:0});
+        loadEngine,session,requireGPU:true,minWords:0,verifyWithLean:false});
       gpuMs.push(now()-t);
       if(observed.status!=="gpu-observed"||!same(observed.outputs,expected))
         throw Error("GPU/Lean disagreement at n="+n+" sample "+k);
