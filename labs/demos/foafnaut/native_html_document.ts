@@ -381,9 +381,24 @@ export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compi
 /** How a page is accepted. `liberal`: liberal mode (WebAccept.lean, --be-liberal-in-what-we-accept
 and the Settings checkbox): Lean skips what it may skip and says so, and this host passes on
 the fetches that failed instead of refusing the page. */
-export type AcceptOptions={liberal?:boolean;request?:DocumentRequest;downloads?:string;cookies?:DocumentCookies};
+export type AcceptOptions={liberal?:boolean;request?:DocumentRequest;downloads?:string;cookies?:DocumentCookies;
+  epubReader?:(bytes:Uint8Array,chapter:number)=>{source:string}};
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
   const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c,pageDecoding.fallback,pageDecoding.locale):undefined;
+  const isLocalEpub=inline===undefined&&url.startsWith("file:")&&new URL(url).pathname.toLowerCase().endsWith(".epub");
+  if(isLocalEpub){
+    if(!accept.epubReader)throw new Error("This engine has no EPUB reader");
+    const file=new URL(url),limit=8*1024*1024;
+    const chapter=Number(file.searchParams.get("epubChapter")??"1");
+    if(!Number.isSafeInteger(chapter)||chapter<1||chapter>512)throw new Error("Invalid EPUB chapter number");
+    file.search="";file.hash="";
+    if((await Deno.stat(file)).size>limit)throw new Error("EPUB archive size limit exceeded");
+    signal?.throwIfAborted();
+    const bytes=await Deno.readFile(file);
+    signal?.throwIfAborted();
+    if(bytes.length>limit)throw new Error("EPUB archive size limit exceeded");
+    inline=accept.epubReader(bytes,chapter-1).source;
+  }
   const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array;status?:number}=inline===undefined
     ?await readSource(url,signal,decode,{errorPages:true,...(engine.download&&accept.downloads?{decide:r=>engine.download!(r) as {action:string;name?:string}|undefined,downloads:accept.downloads}:{}),
       ...(accept.cookies?{cookies:accept.cookies}:{}),...accept.request})

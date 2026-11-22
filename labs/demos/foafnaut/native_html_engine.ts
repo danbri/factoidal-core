@@ -199,15 +199,35 @@ export function nativeBackends(path:string):Backends {
 export function nativeBackend(path:string):DocumentBackend {return nativeBackends(path).text;}
 /** Backend 1: the Wasm module. */
 function wasmBackends(module:Module):Backends {
+  const callDocument=(name:string,html:string,request:string,width:number,height:number,extra:number[]=[])=>{
+    const args=[width,height,...extra],numeric=args.map(()=>"number");
+    if(html.length+request.length<=512*1024)
+      return module.ccall(name,"number",["string","string",...numeric],[html,request,...args]);
+
+    // ccall copies string arguments onto the Wasm stack. EPUB archives and
+    // image-bearing reader pages can exceed that stack even within source limits.
+    if(!module._malloc||!module._free)throw new Error("Published Lean HTML engine has no heap allocator");
+    const source=encoder.encode(html),options=encoder.encode(request);
+    const input=module._malloc(source.length+options.length+2);
+    if(!input)throw new Error("Published Lean HTML engine allocation failed");
+    try{
+      const requestAt=input+source.length+1,heap=module.HEAPU8;
+      heap.set(source,input);
+      heap[requestAt-1]=0;
+      heap.set(options,requestAt);
+      heap[requestAt+options.length]=0;
+      return module.ccall(name,"number",["number","number",...numeric],[input,requestAt,...args]);
+    }finally{module._free(input);}
+  };
   return {
     text:(html,request,width,height)=>{
-      const pointer=module.ccall("web_document_call","number",["string","string","number","number"],[html,request,width,height]);
+      const pointer=callDocument("web_document_call",html,request,width,height);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return module.UTF8ToString(pointer);}
       finally{module.ccall("web_render_free",null,["number"],[pointer]);}
     },
     bytes:(html,request,width,height)=>{
-      const pointer=module.ccall("web_document_call_bin","number",["string","string","number","number","number"],[html,request,width,height,0]);
+      const pointer=callDocument("web_document_call_bin",html,request,width,height,[0]);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       // The first word is the total length. One copy out of the Wasm memory.
       try{const heap=module.HEAPU8,total=new DataView(heap.buffer,heap.byteOffset+pointer,4).getUint32(0,true);
@@ -434,6 +454,11 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       try{return documentCall("",{...request,op:"cookies"}) as {cookie?:string;jar?:string;error?:string};}catch{return undefined;}},
     download:(request:{contentType:string;disposition:string;url:string})=>{
       try{return documentCall("",{...request,op:"download"}) as {action:"show"}|{action:"save";name:string};}catch{return undefined;}},
+    epubReader:(bytes:Uint8Array,epubChapter:number)=>{
+      let text="";
+      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      return documentCall(btoa(text),{op:"epubReader",epubChapter}) as {source:string};
+    },
     decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
       if(!backends.decode)return undefined;
       const answer=backends.decode(bytes,charset,fallback,locale),i=answer.indexOf("\n");

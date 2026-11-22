@@ -20,7 +20,7 @@ open Lean L4Factoidal.RDF L4Factoidal.SPARQL L4Factoidal.Dataflow
 open L4Factoidal.GpuDomainSpecificLanguage
 
 private def error (message : String) : String :=
-  (Json.mkObj [("ok", toJson false), ("error", toJson message)]).compress
+  errJson message
 
 private def fieldString (j : Json) (key fallback : String) : Except String String :=
   match j.getObjVal? key with

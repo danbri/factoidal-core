@@ -30,6 +30,68 @@ Since 2026-10-20 the hub has two parts:
 
 The contract below applies to both.
 
+### Mixed CPU / GPU SPARQL: local runtime workbench
+
+`gpu-sparql/` is a standalone `hub-app.njk` page, with an explicit local
+runtime choice. It does not inherit the notebook's CDN engine loading.
+Its default module is the same-origin `/factoidal/npm/factoidal/browser.js`
+that Eleventy copies from this checkout. It accepts another same-origin
+module URL and an optional same-origin Wasm assets directory. The page
+never falls back to a CDN or a published npm version. Serve a local build
+and the Hub from the same origin; a `file:` page cannot load the runtime.
+
+With Lean (the version in `formal/lean4/lean-toolchain`), Emscripten and
+Node installed, build the full engine from the repository root:
+
+```sh
+bash formal/lean4/Wasm/build-wasm.sh /tmp/factoidal-gpu-demo-wasm
+third_party/eleventy/install.sh docs
+```
+
+The engine build writes the matching loader, glue and Wasm to
+`docs/web/hub/assets/l4/`. From `docs/`, serve the site:
+
+```sh
+npx @11ty/eleventy --serve
+```
+
+Open `http://localhost:8080/factoidal/web/hub/gpu-sparql/`. Leave the
+browser module at `/factoidal/npm/factoidal/browser.js` and set the assets
+directory to `/factoidal/web/hub/assets/l4/` to use those newly built files.
+An already prepared `npm/factoidal/l4-assets/` can use the blank assets
+field instead. Build products stay uncommitted; no npm publish is needed.
+The runtime fields lock after loading because `browser.js` loads one
+engine per module instance; reload the page before changing them.
+
+The workbench reads the runtime's operations and shipping registry before
+enabling queries. A missing `datasetQueryGpuBegin`, `datasetQueryGpuStep`,
+`datasetQueryGpuRestart`, `datasetQueryGpuClose` or bound
+`gpuSparqlStage` produces a visible rebuild instruction. Updating only the
+JavaScript cannot add these operations to an old Wasm build.
+
+`fixtures.mjs` supplies original Turtle source and sample queries, including
+OPTIONAL, GROUP BY, duplicate solution rows, CONSTRUCT and ASK. All RDF
+parsing, query evaluation, placement and graph-isomorphism checking use the
+shipping API. `app.mjs` owns the UI and file transport. It passes selected
+`execution`, `gpuMinRows` and `gpuMaxPairs` options unchanged to the engine.
+SELECT comparison checks the exact ordered binding snapshots, including
+duplicates; graph comparison calls `core.isomorphic`. Separate runs can
+legitimately differ for nondeterministic expressions or fresh blank nodes.
+Display previews are bounded, but comparison covers the complete answer.
+
+Execution tables show returned `execution.joins` and `execution.observed`,
+and label missing metadata explicitly (ordinary CPU results and ASK can
+have none). CPU fallback counts are refused GPU requests, not all CPU
+algebra. Single-run wall times are shown separately from runtime loading
+and dataset parsing, with no claim of physical-GPU speedup. A JSON download
+records the module and assets URLs, engine identity, query, limits, observed
+execution and comparison. It includes a result preview, not the input file.
+
+The source is `docs/web/hub/gpu-sparql/{index.njk,app.mjs,style.css,fixtures.mjs}`;
+`docs/.eleventy.js` passes the three assets through. The
+[mixed SPARQL architecture](../../designissues/2026-11-22-mixed-gpu-sparql.md)
+records the proof boundary and full-query device tests.
+
 This is the implementation reference for writing a hub post. The
 reader-facing explanation lives in [the hub index](../)'s "How the
 interactive cells work" section; this file is the fuller contract for

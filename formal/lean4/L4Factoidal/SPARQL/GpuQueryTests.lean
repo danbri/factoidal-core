@@ -71,10 +71,12 @@ private def collisionPlan : Plan SolutionSeq :=
 #guard collisionPlan.cpu.length == 2
 #guard ({left := #[0, 4294967296], right := #[4294967296, 0], label := "high-lane", maxPairs := 8} : Job).pairs == [(0, 1), (1, 0)]
 
-private def jobShapes : Plan α → List (Nat × Nat)
-  | .done _ => []
-  | .dispatch job resume =>
-      (job.left.size, job.right.size) :: jobShapes (resume (some job.pairs))
+private def jobShapes (p : Plan α) : List (Nat × Nat) := go p []
+where
+  go : Plan α → List (Nat × Nat) → List (Nat × Nat)
+    | .done _, acc => acc.reverse
+    | .dispatch job resume, acc =>
+        go (resume (some job.pairs)) ((job.left.size, job.right.size) :: acc)
 
 /-- Placement is observed, not inferred from answer equality: at least one
 request is made and constant predicates reduce every transferred graph. -/
@@ -90,5 +92,28 @@ private def placementChecks : Bool :=
   | _, _ => false
 
 #guard placementChecks
+
+/-- Boundary regression for dataset-sized continuation stacks. The smaller
+case still submits a numeric job; the larger case returns all named graphs
+through the complete CPU operation. -/
+private def namedGraphPlacementCheck (n : Nat) (expectGpu : Bool) : Bool :=
+  let quads := String.join ((List.range n).map fun i =>
+    s!"<urn:a> <urn:p> <urn:b> <urn:g{i}> .\n" ++
+    s!"<urn:b> <urn:q> <urn:c> <urn:g{i}> .\n")
+  match Syntax.parseNQuads quads,
+      parseSparql "SELECT * WHERE { GRAPH ?g { ?s <urn:p> ?o . ?o <urn:q> ?x } }" with
+  | .ok ds, .ok q =>
+      let env : EvalEnv := { dataset := some ds }
+      match begin force env ds q with
+      | .dispatch _ _ => expectGpu && ds.named.length == n
+      | .done answer =>
+          !expectGpu && answer == referenceAnswer { env, ds, backend := none, query := q } &&
+            match answer with
+            | .select _ rows => rows.length == n
+            | _ => false
+  | _, _ => false
+
+#guard namedGraphPlacementCheck 256 true
+#guard namedGraphPlacementCheck 257 false
 
 end L4Factoidal.SPARQL.GpuQueryTests

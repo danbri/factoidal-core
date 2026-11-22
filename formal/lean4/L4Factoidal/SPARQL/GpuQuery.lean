@@ -555,7 +555,9 @@ theorem innerJoin_sound (cfg : Config) (left right : SolutionSeq) :
   · rfl
 
 /-- Recursion follows the existing lowered algebra. Correlated SERVICE
-joins and LATERAL retain the complete reference operation. -/
+joins and LATERAL retain the complete reference operation. A variable GRAPH
+over more than 256 named graphs uses the complete CPU operation, so its
+continuation stack is bounded independently of the dataset's graph count. -/
 def pattern (cfg : Config) (ds : Dataset) (active : Graph) :
     GraphPattern → Plan SolutionSeq
   | .bgp b => bgpRows cfg (ExistsIndex.ofGraph active) b [Binding.empty]
@@ -580,14 +582,27 @@ def pattern (cfg : Config) (ds : Dataset) (active : Graph) :
       | .iri i => match ds.lookupNamedIri i.val with
           | some g => pattern cfg ds g p
           | none => .done []
-      | .var v => Plan.collect ds.named fun ng =>
-          (pattern cfg ds ng.graph p).map (fun rows =>
-            rows.filterMap (fun mu => mu.bindIfCompatible v ng.name.toTerm))
+      | .var v =>
+          if ds.named.length > 256 then
+            .done ((GraphPattern.graph (.var v) p).evalIn ds active)
+          else
+            Plan.collect ds.named fun ng =>
+              (pattern cfg ds ng.graph p).map (fun rows =>
+                rows.filterMap (fun mu => mu.bindIfCompatible v ng.name.toTerm))
       | _ => pattern cfg ds active p
   | .bind binder v p _ =>
       (pattern cfg ds active p).map (fun rows => bindRowsFresh binder active v rows 0)
   | .modified post p _ => (pattern cfg ds active p).map (post active)
   | p => .done (p.evalIn ds active)
+
+/-- Resource-bound theorem. Says: crossing the named-graph continuation
+bound returns the complete reference sequence in one CPU result. Does not
+say: that query syntax nesting or the CPU evaluator has a new bound. -/
+theorem pattern_graphVar_large (cfg : Config) (ds : Dataset) (active : Graph)
+    (v : VarName) (p : GraphPattern) (h : 256 < ds.named.length) :
+    pattern cfg ds active (.graph (.var v) p) =
+      .done ((GraphPattern.graph (.var v) p).evalIn ds active) := by
+  simp only [pattern, h, ↓reduceIte]
 
 /-- Refinement theorem. Says: every supported algebra context preserves the
 complete reference WHERE sequence under valid numeric replies, including
@@ -624,10 +639,13 @@ theorem pattern_sound (cfg : Config) (ds : Dataset) (active : Graph)
           | none => simp only [pattern, hn, GraphPattern.evalIn, Plan.Sound]
           | some g => simpa only [pattern, hn, GraphPattern.evalIn] using ih g
       | var v =>
-          apply Plan.collect_sound
-          intro ng _
-          exact (ih ng.graph).map (fun rows =>
-            rows.filterMap (fun mu => mu.bindIfCompatible v ng.name.toTerm))
+          rw [pattern]
+          split
+          · rfl
+          · apply Plan.collect_sound
+            intro ng _
+            exact (ih ng.graph).map (fun rows =>
+              rows.filterMap (fun mu => mu.bindIfCompatible v ng.name.toTerm))
       | bnode b => exact ih active
       | literal l => exact ih active
       | tripleTerm s p o => exact ih active

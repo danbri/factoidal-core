@@ -1,4 +1,5 @@
 import Lean.Data.Json
+import Wasm.Ops.Support
 import L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
 import L4Factoidal.GpuDomainSpecificLanguage.GpuPlan
 
@@ -129,7 +130,9 @@ def fromSteps? (source : Json) : Except String Json := do
 private def envelope (name : String) (result : Except String Json) : String :=
   match result with
   | .ok value => (Json.mkObj [("ok", toJson true), (name, value)]).compress
-  | .error msg => (Json.mkObj [("ok", toJson false), ("error", toJson msg)]).compress
+  -- Dispatch's shared error-code path expects the ABI's ordered envelope.
+  -- Lean.Json sorts object members, placing `error` before `ok`.
+  | .error msg => L4Wasm.Ops.errJson msg
 
 private def parseBounded (s : String) : Except String Json := do
   if s.utf8ByteSize > 8388608 then fail "request exceeds 8 MiB"

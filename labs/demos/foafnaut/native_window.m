@@ -400,7 +400,7 @@ char *ng_open_file_panel(void) {
     panel.canChooseFiles=YES;panel.canChooseDirectories=NO;panel.allowsMultipleSelection=NO;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    panel.allowedFileTypes=@[@"html",@"htm",@"svg",@"xhtml"];
+    panel.allowedFileTypes=@[@"html",@"htm",@"svg",@"xhtml",@"epub"];
 #pragma clang diagnostic pop
     if ([panel runModal]!=NSModalResponseOK || !panel.URL) return NULL;
     return copyPath(panel.URL);

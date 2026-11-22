@@ -153,6 +153,13 @@ continuation on the CPU; exhausting session capacity selects the ordinary
 CPU entry. Explicit `"gpu"` execution reports a refusal. No capacity check
 returns a truncated solution sequence.
 
+Variable `GRAPH` over more than 256 named graphs uses the complete existing
+CPU operation. Lean checks this bound before collecting graph continuations;
+it limits stack growth, not the number of graphs or returned solutions.
+`GpuQuery.pattern_graphVar_large` proves the exact reference result at this
+boundary, and `pattern_sound` covers both branches. Required GPU execution
+still needs an observed GPU join elsewhere in the query to succeed.
+
 ## Shipping registry and proof boundary
 
 The registry entry
@@ -217,7 +224,8 @@ compares the actual continuation evaluator with the reference through a
 numeric model, all-CPU refusals and mixed refusals. It covers all four query
 forms, modifiers, named graphs/FROM, subqueries, unbound values, duplicate
 solutions, collisions, UInt64 high lanes, observed placement and selective
-right-side transfers.
+right-side transfers. The named-graph boundary fixtures observe a dispatch
+at 256 graphs and a complete reference CPU result with all 257 rows at 257.
 
 The device gates are
 [`pvgraph-gpu-device-smoke.mjs`](../../tools/pvgraph-gpu-device-smoke.mjs)

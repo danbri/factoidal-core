@@ -61,6 +61,10 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "fixtures.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/xml-rdf/${name}`);
   }
+  // Mixed SPARQL uses the checkout's browser API and local Wasm assets.
+  for (const name of ["app.mjs", "fixtures.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/gpu-sparql/${name}`);
+  }
   // Publish the *same* audited browser-safe EVM→WASM compiler sources that
   // the Node differential suite tests (no second handwritten implementation).
   for (const name of ["evm-to-wasm.mjs", "evm-policy.mjs"]) {
@@ -71,6 +75,9 @@ module.exports = function(eleventyConfig) {
   // Every module of the Hub browser, so a new one is never left off the site (page-gpu.mjs,
   // and before it browser-state.mjs, were missing from a list of names).
   eleventyConfig.addPassthroughCopy("web/hub/foafnaut/*.mjs");
+  for (const name of ["app.mjs", "worker.mjs", "style.css", "sample.epub"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/epub/${name}`);
+  }
   // The Hub's Textnaut page and the notebook's engine cells. Their grid.mjs is not copied: it is
   // made from labs/demos/foafnaut/textnaut/grid.ts at build time (web/hub/textnaut/grid.11ty.js).
   eleventyConfig.addPassthroughCopy("web/hub/textnaut/*.mjs");

@@ -69,6 +69,12 @@ private def tt : String :=
 #guard codeOfCall "containerPath" [] == some "call.arity"
 #guard codeOfCall "containerPath" ["{\"kind\":\"resource\",\"container\":\"https://s.example/c/\",\"path\":\"../x\"}"] == none
 #guard codeOfCall "noSuchOp" [] == some "op.unknown"
+-- PVGraph refusals use the ordered ABI envelope so dispatch attaches a code.
+-- Lean.Json's sorted object output used to bypass the error fast path.
+#guard codeOfCall "pvgraphBuild" [""] == some "op.failed"
+#guard codeOfCall "pvgraphAdmit" [""] == some "op.failed"
+#guard codeOfCall "pvgraphEvaluate" ["", ""] == some "op.failed"
+#guard codeOfCall "pvgraphGpuPlan" ["", ""] == some "op.failed"
 -- every error answer of the table carries a declared code
 #guard ((L4Wasm.call "xpathEval" (args ["<a/>", "///"])) |> codeOf?).all errorCodes.contains
 

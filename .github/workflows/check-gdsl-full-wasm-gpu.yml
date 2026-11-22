@@ -5,6 +5,8 @@ on:
       - '.github/workflows/check-gdsl-full-wasm-gpu.yml'
       - 'tools/pvgraph-wasm-gpu-bench.mjs'
       - 'tools/pvgraph-query-device-smoke.mjs'
+      - 'tools/gpu-sparql-hub-smoke.mjs'
+      - 'docs/web/hub/gpu-sparql/**'
       - 'tools/pvgraph-evidence-provenance.mjs'
       - 'tools/lean-wasm-runtime-closure.py'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/**'
@@ -28,7 +30,8 @@ jobs:
     timeout-minutes: 90
     env:
       SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-      LEAN_STACK_SIZE_KB: 16384
+      # Keep Lean's default worker stack: the smaller 16 MiB override
+      # exhausts the kernel stack while checking JS.Str's existing proof.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -106,6 +109,9 @@ jobs:
             --unstable-webgpu tools/pvgraph-query-device-smoke.mjs \
             --wasm npm/factoidal/l4-assets/l4factoidal.js "$SOURCE_COMMIT" \
             2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/sparql-query-device.json.log"
+          timeout --kill-after=10s 420s deno run -A --no-config --no-npm \
+            --unstable-webgpu tools/gpu-sparql-hub-smoke.mjs --require-gpu \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/hub-query-device.json.log"
       - name: Preserve exact-source build, benchmark and provenance
         if: always()
         uses: actions/upload-artifact@v4

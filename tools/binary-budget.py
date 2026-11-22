@@ -45,12 +45,12 @@ ALLOWED_LEAN = ('Lean.Data.',)
 FORBIDDEN_SYMBOL = re.compile(rb'initialize_Lean_(?!Data_)[A-Za-z0-9_]+')
 
 
-def web_render_roots(lean4):
+def web_render_roots():
     script = (ROOT / 'labs/demos/foafnaut/build-web-render.sh').read_text()
-    m = re.search(r"^for module in (\[[^\]]*\]): visit\(module\)", script, re.M)
+    m = re.search(r'^CORE=\(([^)]*)\)', script, re.M)
     if not m:
         sys.exit('binary-budget: no module list in build-web-render.sh (the import walk moved?)')
-    return [x.strip().strip("'") for x in m.group(1)[1:-1].split(',') if x.strip()]
+    return m.group(1).split()
 
 
 def lean_imports(lean4, roots, lab=None):
@@ -78,7 +78,7 @@ def cmd_imports(args):
     lean4 = Path(args[0]) if args else ROOT / 'formal/lean4'
     lab = ROOT / 'labs/demos/foafnaut'
     roots = dict(EXE_ROOTS)
-    roots['web-render'] = web_render_roots(lean4)
+    roots['web-render'] = web_render_roots()
     lab_modules = re.search(r'^LAB_MODULES=\(([^)]*)\)', (lab / 'build-web-render.sh').read_text(), re.M)
     if lab_modules:
         roots['web-render'] += lab_modules.group(1).split()

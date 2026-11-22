@@ -51,16 +51,30 @@ plans and numeric readbacks. SELECT, ASK, CONSTRUCT and DESCRIBE keep their
 existing result shapes and modifier semantics.
 
 ```js
+import { parse } from "@factoidal/core";
+
+const dataset = await parse(`
+  <urn:a> <urn:relation> <urn:b> .
+  <urn:b> <urn:value> "example" .
+`, { format: "ntriples" });
 const sparql = `SELECT ?s ?value WHERE {
   ?s <urn:relation> ?o . ?o <urn:value> ?value
 } ORDER BY ?s ?value`;
 
 const rows = await dataset.query(sparql); // execution: 'auto'
 const cpuRows = await dataset.query(sparql, { execution: 'cpu' });
-const gpuRows = await dataset.query(sparql, {
-  execution: 'gpu', gpuMinRows: 1, gpuMaxPairs: 1000000
-});
-console.log(gpuRows.execution); // observed joins, fallbacks and device phases
+console.log(rows.length, cpuRows.length); // 1 1
+if (globalThis.navigator?.gpu) {
+  try {
+    const gpuRows = await dataset.query(sparql, {
+      execution: 'gpu', gpuMinRows: 1, gpuMaxPairs: 1000000
+    });
+    console.log(gpuRows.execution); // observed joins, fallbacks and device phases
+  } catch (error) {
+    console.log(error.message); // explicit GPU execution can be refused
+  }
+}
+dataset.dispose();
 ```
 
 `auto` uses cached selectivity estimates and actual input sizes, and retains
@@ -105,7 +119,7 @@ JavaScript marshals calls into the compiled Wasm engine.
 
 ```js
 import {createPVGraphWasm} from "@factoidal/core/gdsl";
-import {loadEngine} from "@factoidal/core/browser";
+import {loadEngine} from "@factoidal/core";
 
 const g = await createPVGraphWasm(loadEngine);
 const input = g.input("words");
