@@ -1,6 +1,6 @@
 // PVGraph workbench. JS only renders UI and marshals commands.
 // Lean/Wasm owns construction, admission, types and evaluation.
-import {createPVGraphWasm,example,listExamples}
+import {createPVGraphWasm,runPVGraph,example,listExamples}
   from "../../../npm/factoidal/gdsl.mjs";
 import {loadEngine} from "../../../npm/factoidal/browser.js";
 
@@ -131,6 +131,29 @@ async function runCPU(){
   $("gdsl-gpu-output").textContent="Not executed";
   $("gdsl-agreement").textContent="Lean/Wasm reference evaluation only.";
 }
+async function runGPU(){
+  const doc=await validate();
+  const {supplied}=inputDocument();
+  const observed=await runPVGraph({
+    pvgraph:doc,bindings:supplied,loadEngine,requireGPU:true,minWords:0
+  });
+  const expected=await (await bridge()).evaluate(doc,supplied);
+  const actual=observed.outputs;
+  const agreement=JSON.stringify(expected)===JSON.stringify(actual);
+  $("gdsl-cpu-output").textContent=JSON.stringify(expected,null,2);
+  $("gdsl-gpu-output").textContent=JSON.stringify({
+    status:observed.status,outputs:actual,
+    gpuDispatches:observed.dispatches,timing:observed.timing
+  },null,2);
+  $("gdsl-agreement").textContent=agreement
+    ?"Complete GPU readback equals Lean/Wasm reference for these inputs."
+    :"GPU and Lean/Wasm disagree; no correct output claimed.";
+  $("gdsl-agreement").dataset.match=agreement?"yes":"no";
+  $("gdsl-resources").textContent=JSON.stringify(observed.device,null,2);
+  setStatus(agreement?"WebGPU observed; source-level proof is separate.":
+    "GPU output differs from Lean/Wasm",agreement?"success":"error");
+  if(!agreement)throw Error("PVGraph GPU/Lean mismatch");
+}
 async function action(fn){
   if(active)return;
   busy(true);
@@ -142,10 +165,6 @@ export function mountPVGraph(){
   options.addEventListener("change",()=>action(()=>preset(options.value)));
   $("gdsl-check").addEventListener("click",()=>action(validate));
   $("gdsl-cpu").addEventListener("click",()=>action(runCPU));
-  $("gdsl-gpu").addEventListener("click",()=>{
-    $("gdsl-gpu-output").textContent=
-      "PVGraph GPU lowering is not exposed in this profile.";
-    setStatus("GPU acceleration requires separately checked Lean lowering.","neutral");
-  });
+  $("gdsl-gpu").addEventListener("click",()=>action(runGPU));
   action(()=>preset("signal"));
 }
