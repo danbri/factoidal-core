@@ -66,7 +66,7 @@ theorem schedule_charge_exact {available requested : Nat}
     {wasWarm isAlive : Bool} {b : Budget}
     (h : schedule available requested wasWarm isAlive = .ok b) :
     b.reserve + b.forwarded + b.extraCharge = available := by
-  unfold schedule at h
+  dsimp [schedule] at h
   split at h
   · cases h
     dsimp
@@ -81,7 +81,7 @@ theorem schedule_child_stipend {available requested : Nat}
     {wasWarm isAlive : Bool} {b : Budget}
     (h : schedule available requested wasWarm isAlive = .ok b) :
     b.childGas = b.forwarded + stipend := by
-  unfold schedule at h
+  dsimp [schedule] at h
   split at h
   · cases h
     rfl
@@ -113,7 +113,7 @@ theorem schedule_parent_bounded {available requested : Nat}
     b.reserve + childRemaining ≤ available := by
   have hc := schedule_resume_exact h childRemaining hchild
   have he := extraCharge_covers_stipend wasWarm isAlive
-  unfold schedule at h
+  dsimp [schedule] at h
   split at h
   · cases h
     dsimp at *
@@ -201,7 +201,7 @@ def callWithValue (fuel : Nat) (w : TxWorld)
         | .unsupported e => .indeterminate e
 
 /-- Child account liveness depends on nonce, code or balance only. -/
-theorem accountAlive_funded (a : Account) (h : a.balance != 0 = true) :
+theorem accountAlive_funded (a : Account) (h : (a.balance != 0) = true) :
     CallValue.accountAlive a = true := by
   simp [CallValue.accountAlive, h]
 
