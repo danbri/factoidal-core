@@ -105,6 +105,12 @@ def Word.signedLt (a b : Word) : Word :=
   else
     Word.ofBool (decide (b.val < signBit ∨ a.val < b.val))
 
+/-- SGT is signed greater-than; reverse signed less-than arguments, not word signs. -/
+def Word.signedGt (a b : Word) : Word := b.signedLt a
+
+/-- Executable SGT has precisely reversed SLT operand semantics for every word. -/
+theorem Word.signedGt_dual (a b : Word) : a.signedGt b = b.signedLt a := rfl
+
 def Word.eq (a b : Word) : Word := Word.ofBool (a.val == b.val)
 def Word.isZero (a : Word) : Word := Word.ofBool (a.val == 0)
 def Word.bitAnd (a b : Word) : Word := word (Nat.land a.val b.val)
@@ -449,6 +455,7 @@ def planStep (s : State) : Except Error Plan :=
     | 0x10 => binary s Word.lt 3                       -- LT
     | 0x11 => binary s Word.gt 3                       -- GT
     | 0x12 => binary s Word.signedLt 3                 -- SLT
+    | 0x13 => binary s Word.signedGt 3                 -- SGT
     | 0x14 => binary s Word.eq 3                       -- EQ
     | 0x15 => unary s Word.isZero 3                     -- ISZERO
     | 0x16 => binary s Word.bitAnd 3                   -- AND
@@ -611,6 +618,16 @@ theorem step_slt (s : State) (a b : Word) (rest : List Word)
   simp [step, planStep, hRun, hOp, binary, hStack, prepared]
 
 /-- Kind: dispatcher correspondence.
+    Says: SGT pops its left then right signed operand, and commits the
+    reversed-SLT helper with the correct three-gas cost.
+    Does not say: a transaction, fork schedule or external oracle is proved. -/
+theorem step_sgt (s : State) (a b : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x13)
+    (hStack : s.stack.items = a :: b :: rest) :
+    step s = commit s (s.pc + 1) (a.signedGt b :: rest) 3 := by
+  simp [step, planStep, hRun, hOp, binary, hStack, prepared]
+
+/-- Kind: dispatcher correspondence.
     Says: SDIV pops signed numerator then denominator and requests five gas.
     Does not say: the source-level helper is normatively proved equivalent. -/
 theorem step_sdiv (s : State) (a b : Word) (rest : List Word)
@@ -725,6 +742,8 @@ def run : Nat → State → Except Error State
 #print axioms step_returnDataCopy
 #print axioms step_returnDataCopy_outOfBounds
 #print axioms step_slt
+#print axioms Word.signedGt_dual
+#print axioms step_sgt
 #print axioms Word.signExtend_large
 #print axioms step_signExtend
 #print axioms Word.signedDivide_zero
