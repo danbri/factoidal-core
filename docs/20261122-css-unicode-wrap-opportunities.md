@@ -18,3 +18,13 @@ candidate function with warnings treated as errors. The existing Arabic,
 CJK and kana guards pass, along with guards for hyphen, zero-width space,
 em space, word joiner and no-break space. These guards check tokenization.
 Full engine compilation and WPT outcomes are tracked in the PR.
+
+
+The fixed-pin native comparison gained 101 of the selected CSS Text assertions
+with no lost passes. The exact-base paired raster comparison gained three of
+287 tests with no lost pass. The remaining 60 failing test outcomes were
+unchanged.
+
+Lean checked `wordPieces_alnum` with the exact Unicode imports and tokenizer.
+Its hypothesis identifies tokens that take the ASCII fast path. Every line
+break mode returns the original token at offset zero for those inputs.

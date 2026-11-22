@@ -600,6 +600,14 @@ def wordPieces (word : String) (mode : Unicode.LineBreak.Mode := .strict) : List
     out := (from_, String.ofList (cs.extract from_ cs.size).toList) :: out
     return out.reverse
 
+/-- Plain alphanumeric text keeps its original token and offset in every line-break mode. -/
+theorem wordPieces_alnum (word : String) (mode : Unicode.LineBreak.Mode)
+    (alnum : word.toList.all (fun c => c.isAlpha || c.isDigit) = true) :
+    wordPieces word mode = [(0, word)] := by
+  simp [wordPieces, alnum]
+
+#print axioms wordPieces_alnum
+
 #guard wordPieces "word-break" == [(0, "word-"), (5, "break")]
 #guard wordPieces "alpha\u200Bbeta" == [(0, "alpha\u200B"), (6, "beta")]
 #guard wordPieces "alpha\u2003beta" == [(0, "alpha\u2003"), (6, "beta")]
