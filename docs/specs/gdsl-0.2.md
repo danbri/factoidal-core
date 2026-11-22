@@ -1,6 +1,6 @@
 # GDSL 0.2 — PVGraph
 
-**Experimental specification · 21 November 2026**
+**Experimental specification · updated 22 November 2026**
 
 GDSL (GpuDomainSpecificLanguage) describes typed, acyclic dataflow
 computations using **PVGraph**. RDF `Graph` has separate semantics and
@@ -28,8 +28,11 @@ The three entry points are:
 
 No JavaScript PVGraph parser, checker or reference evaluator is part of
 the API. A missing or outdated Wasm module is an error, not a reason to
-execute a second implementation. The Lean/Wasm export is present in
-source but must be included in a new Wasm build for browser/npm use.
+execute a second implementation. The published web runtime built from
+[`e0666850902b`](https://github.com/danbri/factoidal-builds/releases/tag/build-e0666850902b-web)
+includes the builder, admission, reference evaluator and GPU planner.
+The [independent-app Hub example](https://danbri.github.io/factoidal/web/hub/gdsl-app/)
+uses those exports through local modules; npm publication is a separate step.
 
 ## 2. Canonical representation
 
@@ -67,7 +70,11 @@ effects or unregistered operators in this profile.
 The checker requires unique valid IDs, valid parameter schemas,
 complete and type-correct port bindings, named inputs and outputs,
 registered operator signatures and version/resource limits. Core
-bounds: at most 128 nodes, 384 links and 4,096 u32 words per buffer.
+bounds: at most 128 nodes, 384 links and 4,194,240 u32 words per input
+buffer. Execution also checks operation-specific shapes and resource bounds.
+The Wasm JSON ABI separately limits each argument to 8 MiB of UTF-8 text
+before parsing (`Wasm/Ops/PVGraph.lean`, `parseBounded`). Reference input
+bindings must fit that limit; buffer capacity alone is not a transport guarantee.
 
 ## 3. Lean authoring
 
@@ -116,6 +123,26 @@ untrusted and must agree with Lean's operator registry. The ABI exports
 
 The same JavaScript binding works in browsers and other hosts whose
 Factoidal engine supports these exports.
+
+### Using local browser modules in another app
+
+Serve the package's browser files from your app, preserving their directory
+layout: `browser.js`, `gdsl.mjs`, `lib/` and matching `l4-assets/`.
+Import `./vendor/factoidal/gdsl.mjs` and `./vendor/factoidal/browser.js`
+instead of the package specifiers above. `loadEngine()` resolves its assets
+relative to `browser.js`. If assets are elsewhere, call the browser module's
+`setAssetsUrl()` before the first engine load. Use HTTP on localhost or HTTPS.
+
+`createPVGraphWasm(loadEngine)` constructs and checks a program;
+`g.evaluate(pvgraph, bindings)` executes its reference semantics on the CPU;
+`runPVGraph({pvgraph, bindings, loadEngine})` requests an eligible GPU plan
+and otherwise uses that same reference. The JavaScript builder is a command
+binding, not arbitrary JavaScript compiled for the GPU. No Lean compiler is
+needed in an app that consumes the prebuilt runtime. Authoring and checking
+new Lean theorems still uses the Lean toolkit.
+
+The [copyable signal-mixer app](https://danbri.github.io/factoidal/web/hub/gdsl-app/)
+contains a complete local-loading example and the exact PVGraph it builds.
 
 ## 5. S-expression notation
 
@@ -168,9 +195,10 @@ creating a second GDSL parser or evaluator.
 
 `runPVGraph({pvgraph,bindings,loadEngine})` asks the Lean/Wasm engine
 for a shape-checked `pvgraphGpuPlan`. Lean selects the supported
-`u32` map/zip/scalar-add/broadcast operations, their numeric kernel
-tags, buffer shapes, and dispatch sizes. The host submits a fixed WGSL
-shader to WebGPU, retains intermediate buffers, and reads named outputs.
+`u32` map/zip/scalar-add/broadcast operations, hierarchical parallel scans
+and indexed tuple operations, their numeric kernel tags, buffer shapes,
+and dispatch sizes. The host submits the engine's WGSL kernels to WebGPU,
+retains intermediate buffers, and reads named outputs.
 No JavaScript operator registry or reference evaluator exists.
 
 `GpuFastPath` proves the pure kernel model agrees with the actual
@@ -182,11 +210,24 @@ a correct GPU driver is an explicit implementation assumption. Device
 testing compares complete WebGPU outputs with native Lean outputs,
 including high-bit arithmetic, zero-length buffers, fanout and broadcast.
 
-The GPU branch refuses unsupported operations, including the current
-sequential scan/reduce; `runPVGraph` uses the same Lean/Wasm evaluator as
-fallback, never JavaScript arithmetic. `requireGPU:true` instead fails
-when no admitted device execution can run. Capacity is 262,144 u32
-words per buffer. The benchmark `tools/pvgraph-wasm-gpu-bench.mjs`
+The GPU branch refuses operations outside its fragment, including
+`u32.reduce.sum`; `u32.scan.sum` uses a hierarchical parallel GPU plan.
+`runPVGraph` falls back for the **whole PVGraph** to the same Lean/Wasm
+evaluator, never JavaScript arithmetic. This API does not split one PVGraph
+between CPU and GPU. SPARQL's higher-level mixed planner is separate.
+`requireGPU:true` fails when no admitted device execution can run.
+Malformed programs, invalid bindings and unexpected planning exceptions
+remain errors in automatic mode. Both returned and thrown Lean refusal
+envelopes are handled by the host binding.
+
+The default `minWords:1024` avoids GPU startup for small programs;
+`minWords:0` is useful for an explicit device demonstration. By default,
+`verifyWithLean:true` compares the complete GPU result with a fresh reference
+evaluation. Its extra CPU work is included in total wall time. The comparison
+is evidence about the observed input and result, not a proof of the device.
+Input capacity is 4,194,240 u32 words per buffer, with a 512 MiB aggregate
+transport budget and the device's own limits. The benchmark
+`tools/pvgraph-wasm-gpu-bench.mjs`
 measures end-to-end Lean/Wasm versus WebGPU, including transfer and
 readback. The name *fast path* describes its intended role, not an
 unmeasured universal speedup.
@@ -212,7 +253,7 @@ witness at the device boundary. RDF/SPARQL specialisation must also
 prove its encoding, active-graph identity, row multiplicities and
 ordering; a u32 buffer alone denotes none of those things.
 
-## 7. Assurance and execution boundary
+## 9. Assurance and execution boundary
 
 `GraphAdmission` checks whole-program structure and typed links.
 `GraphJson.decodeCertified?` admits the actual serialized document,

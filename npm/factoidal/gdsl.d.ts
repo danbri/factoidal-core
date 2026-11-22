@@ -31,6 +31,7 @@ export interface PVGraphWasmBuilder {
     Promise<Record<string,number|number[]>>;
 }
 export interface LeanPVGraphEngine {
+  /** The shipping loader throws an Error with `.envelope` on Lean refusal. */
   call(op:string,args:string[]):Record<string,unknown>;
 }
 export function createPVGraphWasm(loadEngine:()=>Promise<LeanPVGraphEngine>):
@@ -50,8 +51,18 @@ export interface PVGraphRun {
   status:"gpu-observed"|"lean-reference";
   outputs:Record<string,number|number[]>;
   dispatches:number;
+  /** Tracked storage and parameter buffer bytes for this GPU invocation. */
+  residentBytes?:number;
   reason?:string;
-  timing?:{planMs:number;deviceAndReadbackMs:number;totalMs:number};
+  timing?:{
+    planMs:number;
+    compileMs:number;
+    uploadMs:number;
+    dispatchMs:number;
+    readbackMs:number;
+    deviceAndReadbackMs:number;
+    totalMs:number;
+  };
   assurance?:string;
   gpuError?:string;
   verifiedAgainstLeanWasm?:boolean;

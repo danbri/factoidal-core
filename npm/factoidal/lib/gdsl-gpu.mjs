@@ -207,8 +207,19 @@ export async function runPVGraph({pvgraph,bindings,loadEngine,session=null,
     throw Error("PVGraph GPU needs Lean/Wasm pvgraphGpuPlan and pvgraphEvaluate exports");
   const {typed,shapes}=normalizeForGpu(pvgraph,bindings);
   const t0=now();
-  const p=engine.call("pvgraphGpuPlan",[
-    JSON.stringify(pvgraph),JSON.stringify(shapes)]);
+  let p;
+  try{
+    p=engine.call("pvgraphGpuPlan",[
+      JSON.stringify(pvgraph),JSON.stringify(shapes)]);
+  }catch(error){
+    // The shipping loader throws for Lean refusal envelopes. Only an explicit
+    // GPU-fragment refusal selects the reference; host errors and invalid
+    // documents still fail, and required GPU execution never falls back.
+    const envelope=error?.envelope;
+    if(!requireGPU&&envelope?.ok===false&&isIneligible(String(envelope.error)))
+      return leanReference(engine,pvgraph,bindings,"outside Lean GPU fragment");
+    throw error;
+  }
   if(!p?.ok){
     if(!requireGPU&&isIneligible(String(p?.error)))
       return leanReference(engine,pvgraph,bindings,"outside Lean GPU fragment");

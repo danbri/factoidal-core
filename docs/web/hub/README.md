@@ -30,6 +30,35 @@ Since 2026-10-20 the hub has two parts:
 
 The contract below applies to both.
 
+### GDSL in an independent app
+
+`gdsl-app/` is a standalone `hub-app.njk` page using the public
+`npm/factoidal/gdsl.mjs` and `browser.js` modules from the same origin.
+It builds a signal mixer (`map.mul`, `zip.add`) and a hierarchical prefix
+sum (`scan.sum`) through the typed PVGraph builder. `example.mjs` has no
+DOM or Hub dependency. The copyable integration and downloadable HTML use
+that same builder function, local modules, and the matching Wasm runtime.
+
+The page loads the engine when Run is selected. CPU uses the built-in
+reference evaluator; automatic and required-GPU modes use `runPVGraph`.
+Automatic fallback applies to the whole PVGraph. Required-GPU failures
+clear the result, and editing an input invalidates the previous display.
+The diagnostic default `minWords:0` lets small inputs exercise a device;
+the public API's production default remains 1,024 words. GPU results are
+compared with the complete CPU reference by `verifyWithLean:true`.
+
+Use the runtime and Eleventy setup below, then open
+`http://localhost:8080/factoidal/web/hub/gdsl-app/`. A prebuilt web runtime
+can be installed from the repository root with
+`bash tools/fetch-builds.sh --set web`. No npm publication is required.
+The page's [source and local-app instructions](gdsl-app/README.md) explain
+which package directories to serve with a separate app.
+
+`tools/gdsl-app-smoke.mjs` runs the actual demo recipe against the full
+runtime in Node, or requires WebGPU with `--require-gpu` under Deno.
+The integration and assurance record is
+[GDSL app API](../../designissues/2026-11-22-gdsl-app-api.md).
+
 ### Mixed CPU / GPU SPARQL: local runtime workbench
 
 `gpu-sparql/` is a standalone `hub-app.njk` page, with an explicit local

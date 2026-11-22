@@ -111,7 +111,7 @@ from a JavaScript update alone. Placement is a conservative cardinality
 heuristic, not a calibrated timing model, and no physical-GPU speedup is
 claimed. See the [architecture, proof boundary and validation record](../../docs/designissues/2026-11-22-mixed-gpu-sparql.md).
 
-## GDSL PVGraph (Lean/Wasm)
+## GDSL PVGraph for other apps
 
 The `@factoidal/core/gdsl` subpath exposes the typed PVGraph API.
 **Lean 4 owns graph construction, admission and reference execution.**
@@ -131,9 +131,59 @@ const outputs = await g.evaluate(program,{words:[1,2,3]});
 // outputs.answer: [2,4,6]
 ```
 
-Requires a Lean/Wasm build exposing `pvgraphBuild`, `pvgraphAdmit`
-and `pvgraphEvaluate`. Missing exports fail closed. The current
-prebuilt engine must be updated to use this subpath.
+The [GDSL app example](https://danbri.github.io/factoidal/web/hub/gdsl-app/)
+uses this public API to mix two signals and compute their prefix sum. It
+includes editable inputs, CPU and GPU execution, and a downloadable
+standalone HTML app. It loads local modules and matching Wasm; npm
+publication is a separate step.
+
+The web runtime built from
+[`e0666850902b`](https://github.com/danbri/factoidal-builds/releases/tag/build-e0666850902b-web)
+exposes `pvgraphBuild`, `pvgraphAdmit`, `pvgraphEvaluate` and
+`pvgraphGpuPlan`. Older runtimes missing an export refuse the call.
+
+To request device execution, use `runPVGraph` on the same program:
+
+```js
+import {createPVGraphWasm, runPVGraph} from "@factoidal/core/gdsl";
+import {loadEngine} from "@factoidal/core";
+
+const g = await createPVGraphWasm(loadEngine);
+const input = g.input("words");
+const doubled = g.op("u32.map.mul", {x: input}, {value: 2},
+  {resultType: "buffer<u32>"});
+const cumulative = g.op("u32.scan.sum", {x: doubled}, {},
+  {resultType: "buffer<u32>"});
+g.output("answer", cumulative);
+const pvgraph = await g.build();
+const result = await runPVGraph({
+  pvgraph, bindings: {words: [1, 2, 3]}, loadEngine,
+  minWords: 0, // Try the device for this small demonstration.
+  verifyWithLean: true
+});
+// result.outputs.answer: [2, 6, 12]
+// result.status: "gpu-observed" or "lean-reference"
+```
+
+For a browser app without a package manager, preserve `browser.js`,
+`gdsl.mjs`, `lib/` and the matching `l4-assets/` under a local directory
+such as `vendor/factoidal/`. Use `./vendor/factoidal/gdsl.mjs` and
+`./vendor/factoidal/browser.js` as the imports. Serve the files over HTTP
+on localhost or HTTPS. The loader resolves the Wasm assets beside itself.
+The Hub example gives the complete copyable integration and local setup.
+
+Automatic execution falls back for the whole PVGraph when its GPU plan is
+ineligible, the workload is small (default `minWords:1024`), or device
+execution fails. `requireGPU:true` refuses instead. The CPU fallback is
+the same compiled Lean evaluator. This differs from SPARQL's higher-level
+planner, which can place separate joins on different backends. Scan is
+GPU eligible; reduction currently selects the reference evaluator.
+
+Construction uses registered typed operations, not arbitrary JavaScript
+functions. The browser runs prebuilt Wasm and needs no Lean compiler.
+New Lean theorems are checked with the Lean toolkit. GPU comparison records
+observed agreement for the supplied inputs; compiler and device behaviour
+remain outside that observation's proof boundary.
 
 The lower-level `@factoidal/core/gpu-resident` API is independent of
 PVGraph and provides no certified GPU lowering.
