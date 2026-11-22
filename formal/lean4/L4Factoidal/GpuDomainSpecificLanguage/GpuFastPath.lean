@@ -184,7 +184,8 @@ theorem pvgraph_model_eq_reference (pv inputs : Json) :
     GraphEvaluate.evaluateWith? modelOrCpu pv inputs =
       GraphEvaluate.evaluate? pv inputs := by
   exact GraphEvaluate.evaluateWith_eq_of_primitives
-    modelOrCpu GraphWords.execute modelOrCpu_eq_reference pv inputs
+    modelOrCpu (fun op args k => GraphWords.execute op args k)
+    modelOrCpu_eq_reference pv inputs
 
 #guard (KernelTag.decode 2 == some .mapMul)
 #guard (match prepare? .mapMul [.buffer [1,2,3]] (some 5) with
