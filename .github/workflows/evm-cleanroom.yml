@@ -2,7 +2,7 @@ name: EVM cleanroom Lean seed
 
 on:
   push:
-    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121", "feat/lean-evm-value-call-20261122"]
+    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121", "feat/lean-evm-value-call-20261122", "feat/lean-evm-call-context-20261122"]
     paths:
       - "formal/lean4/evm-cleanroom/**"
       - ".github/workflows/evm-cleanroom.yml"
@@ -113,7 +113,7 @@ jobs:
           node scripts/check-eels-memory.mjs /tmp/ethereum-eels-prague-gas.py /tmp/ethereum-eels-prague-memory.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==6 and x["mismatches"]==0, x'
   differential:
     # PR-only avoids installing a second Lean/npm toolchain for both push and PR.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122' || github.ref == 'refs/heads/feat/lean-evm-call-context-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -169,6 +169,12 @@ jobs:
           mkdir -p .lake/differential
           node --check scripts/differential/value-call.mjs
           node scripts/differential/value-call.mjs | tee .lake/differential/value-call.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==450 and x["matched"]==450 and x["mismatches"]==0 and x["parentsReverted"]>0 and x["parentsExceptional"]>0 and x["childFailures"]>0 and x["childSuccesses"]>0 and x["comparisonMutationCaught"],x'
+      - name: Compare actual CALLVALUE SELFBALANCE ADDRESS on 128 real child programs
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node --check scripts/differential/call-context.mjs
+          node scripts/differential/call-context.mjs | tee .lake/differential/call-context.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==128 and x["passed"]==128 and x["failed"]==0 and x["childCommitted"]>0 and x["childFailed"]>0 and x["observedParentBalance"]>0 and x["mutatedGasRejected"],x'
       - name: Generate versioned synthetic corpus and compare independent runtimes
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -199,7 +205,7 @@ jobs:
             formal/lean4/evm-cleanroom/scripts/differential/package-lock.json
   eels-real-state:
     # Validate real EELS post-state roots, not merely JSON structure.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122' || github.ref == 'refs/heads/feat/lean-evm-call-context-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
