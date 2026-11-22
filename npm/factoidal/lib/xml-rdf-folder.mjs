@@ -97,7 +97,7 @@ export async function runXmlFolder(core,files,{
   maxFiles=100,maxFileCharacters=2_000_000
 }={}){
   if(!core?.xslt4Transform||!core?.jsonldToRdf||!core?.fromQuads||
-     !core?.datasetMerge||!core?.queryRaw||!core?.dataFactory)
+     !core?.datasetMerge||!core?.query||!core?.dataFactory)
     throw new TypeError("Factoidal XML/RDF/SPARQL engine API is required");
   const collected=[];
   for await(const input of files){
@@ -147,12 +147,12 @@ export async function runXmlFolder(core,files,{
         dispose(parsed);dispose(scoped);
       }
     }
-    // Preserve named-graph boundaries: never use Graph union or a
-    // JavaScript-side SPARQL evaluator. QueryRaw receives canonical TriG.
-    const trig=await combined.serialize({format:"trig"});
+    // Use the original Factoidal dataset-handle query path. In
+    // particular, query() includes registered async extension rounds;
+    // queryRaw() on a string does not. Neither path is a JS evaluator.
     step(onStage,"sparql","running",{backend:"lean-indexed"});
-    const xmlResult=await core.queryRaw(trig,query,{
-      dataFormat:"trig",output:"xml",entail:"none"
+    const xmlResult=await core.query(combined,query,{
+      output:"xml",entail:"none"
     });
     if(typeof xmlResult!=="string"||!xmlResult.trimStart().startsWith("<"))
       throw new TypeError("SPARQL XML result transport rejected");
