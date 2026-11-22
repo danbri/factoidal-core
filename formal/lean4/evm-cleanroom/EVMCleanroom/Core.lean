@@ -39,7 +39,7 @@ def Word.signedDivide (a b : Word) : Word :=
   if b.val = 0 then word 0
   else
     let q := a.signedMagnitude / b.signedMagnitude
-    if decide (a.val < signBit) == decide (b.val < signBit) then word q
+    if decide (a.val < 2 ^ 255) == decide (b.val < 2 ^ 255) then word q
     else word (modulus - q)
 
 /-- EVM SMOD uses the dividend's sign, unlike Euclidean Int.mod.
