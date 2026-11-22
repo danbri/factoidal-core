@@ -151,8 +151,10 @@ structure Computed where
   clipOverflow : Bool := false
   underline : Bool := false
   decorationColor : Option Color := none
-  /-- Line breaks in the source are kept (pre and its older relatives). -/
+  /-- Source spaces, tabs and line feeds are preserved. -/
   preformatted : Bool := false
+  /-- Source line feeds are preserved while spaces and tabs collapse. -/
+  preserveSegmentBreaks : Bool := false
   /-- Border widths as specified; `Computed.borderEdges` is the used width (0 with no style). -/
   borderWidth : Edges := ⟨3,3,3,3⟩
   borderStyle : BorderStyle := .none
@@ -1426,16 +1428,17 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
     if v < 0 then throw "line-height must be non-negative"
     return {s with lineHeight := v, lineHeightFactor := factor}
-  -- `white-space` and `white-space-collapse` (CSS Text 4 §3): white space and line breaks
-  -- kept (`pre`, `pre-wrap`, `pre-line`, `break-spaces`, `preserve`) or collapsed
   | "white-space" | "white-space-collapse" =>
+    let nowrap := d.property != "white-space" && s.pos.nowrap
     match (trim d.value).toLower with
-    | "pre" | "pre-wrap" | "pre-line" | "break-spaces" | "preserve" | "preserve-breaks" | "preserve-spaces" =>
-      return {s with preformatted := true, pos := if d.property == "white-space" then {s.pos with nowrap := false} else s.pos}
-    -- `nowrap`: the spaces collapse and the lines do not break at them (`pos.nowrap`, read by the line layout)
-    | "nowrap" => return {s with preformatted := false, pos := {s.pos with nowrap := true}}
+    | "pre-line" | "preserve-breaks" =>
+      return {s with preformatted := false, preserveSegmentBreaks := true, pos := {s.pos with nowrap}}
+    | "pre" | "pre-wrap" | "break-spaces" | "preserve" | "preserve-spaces" =>
+      return {s with preformatted := true, preserveSegmentBreaks := false, pos := {s.pos with nowrap}}
+    | "nowrap" =>
+      return {s with preformatted := false, preserveSegmentBreaks := false, pos := {s.pos with nowrap := true}}
     | "normal" | "collapse" =>
-      return {s with preformatted := false, pos := if d.property == "white-space" then {s.pos with nowrap := false} else s.pos}
+      return {s with preformatted := false, preserveSegmentBreaks := false, pos := {s.pos with nowrap}}
     | _ => throw "unsupported CSS white-space"
   | "visibility" => match d.value with
     | "visible" => return {s with visible := true}
@@ -1821,7 +1824,9 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
                  fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
   | "white-space" | "white-space-collapse" =>
-    some {s with preformatted := source.preformatted, pos := {s.pos with nowrap := source.pos.nowrap}}
+    let nowrap := if property == "white-space" then source.pos.nowrap else s.pos.nowrap
+    some {s with preformatted := source.preformatted, preserveSegmentBreaks := source.preserveSegmentBreaks,
+                 pos := {s.pos with nowrap}}
   | "overflow" => some {s with clipOverflow := source.clipOverflow}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
   | "border-width" => some {s with borderWidth := source.borderWidth}
@@ -3082,6 +3087,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     -- HTML §15.3.6: `sub { vertical-align: sub }`, `sup { vertical-align: super }`
     shift := if html && n.lname == "sup" then 1 else if html && n.lname == "sub" then -1 else 0,
     preformatted := parent.preformatted || ["pre","listing","xmp","plaintext"].contains n.lname,
+    preserveSegmentBreaks := parent.preserveSegmentBreaks,
     display := if hidden then .none else if block then .block else tableDisplay n.lname,
     margin := startMargin n.lname fontSize,
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
