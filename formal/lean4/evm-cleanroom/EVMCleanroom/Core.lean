@@ -28,6 +28,46 @@ def Word.mul (a b : Word) : Word := word (a.val * b.val)
 def Word.sub (a b : Word) : Word := word (a.val + modulus - b.val)
 def Word.div (a b : Word) : Word := word (a.val / b.val)
 
+/-- EVM MOD: unsigned remainder, with a zero result for a zero divisor. -/
+def Word.modulo (a b : Word) : Word :=
+  if b.val = 0 then word 0 else word (a.val % b.val)
+
+/-- Bounded square-and-multiply, visiting at most 256 exponent bits.
+    The recursive fuel decreases on every iteration, and zero bits terminate
+    early. Intermediate products are reduced before the next iteration. -/
+private def powModBits : Nat → Nat → Nat → Nat → Nat
+  | 0, _, _, accumulator => accumulator
+  | fuel + 1, base, exponent, accumulator =>
+      if exponent == 0 then accumulator
+      else
+        let nextAccumulator :=
+          if exponent % 2 == 1 then (accumulator * base) % modulus else accumulator
+        let nextBase := (base * base) % modulus
+        powModBits fuel nextBase (exponent / 2) nextAccumulator
+
+/-- EVM EXP: bounded 256-bit exponentiation modulo 2^256.
+    No intermediate mathematical power or exponent-sized allocation occurs. -/
+def Word.powMod (base exponent : Word) : Word :=
+  word (powModBits 256 base.val exponent.val 1)
+
+/-- EIP-160 EXP byte metering: exponent zero has no exponent-byte charge. -/
+def expByteCount (exponent : Word) : Nat :=
+  if exponent.val == 0 then 0 else Nat.log2 exponent.val / 8 + 1
+
+def expGas (exponent : Word) : Nat := 10 + 50 * expByteCount exponent
+
+/-- Zero divisors must not expose Lean's Nat.mod zero-divisor convention. -/
+theorem Word.modulo_zero (a : Word) : a.modulo (word 0) = word 0 := by
+  rfl
+
+/-- EVM defines zero exponent as one, including the case zero to zero. -/
+theorem Word.powMod_zero (base : Word) : base.powMod (word 0) = word 1 := by
+  rfl
+
+/-- EXP zero exponent costs ten gas on post-EIP-160 forks. -/
+theorem expGas_zero : expGas (word 0) = 10 := by
+  rfl
+
 /-- Absolute magnitude of the signed two's-complement interpretation. -/
 def Word.signedMagnitude (a : Word) : Nat :=
   if a.val < 2 ^ 255 then a.val else modulus - a.val
@@ -319,6 +359,16 @@ private def ternary (s : State) (op : Word → Word → Word → Word)
   | a :: b :: m :: rest => prepared (s.pc + 1) (op a b m :: rest) cost
   | _ => .error .stackUnderflow
 
+/-- EXP has a value-dependent charge. This model only admits the EIP-160
+    pricing present on Shanghai and later profiles. The coarse preShanghai
+    profile cannot select the historical EIP-160 activation boundary. -/
+private def expStep (s : State) : Except Error Plan :=
+  if s.profile = .preShanghai then .error .unsupportedFork
+  else match s.stack.items with
+  | base :: exponent :: rest =>
+    prepared (s.pc + 1) (base.powMod exponent :: rest) (expGas exponent)
+  | _ => .error .stackUnderflow
+
 private def unary (s : State) (op : Word → Word) (cost : Nat) : Except Error Plan :=
   match s.stack.items with
   | value :: rest => prepared (s.pc + 1) (op value :: rest) cost
@@ -448,9 +498,11 @@ def planStep (s : State) : Except Error Plan :=
     | 0x03 => binary s Word.sub 3                      -- SUB
     | 0x04 => binary s Word.div 5                      -- DIV
     | 0x05 => binary s Word.signedDivide 5             -- SDIV
+    | 0x06 => binary s Word.modulo 5                   -- MOD
     | 0x07 => binary s Word.signedMod 5                -- SMOD
     | 0x08 => ternary s Word.addMod 8                  -- ADDMOD
     | 0x09 => ternary s Word.mulMod 8                  -- MULMOD
+    | 0x0a => expStep s                                -- EXP (EIP-160 price)
     | 0x0b => binary s Word.signExtend 5              -- SIGNEXTEND
     | 0x10 => binary s Word.lt 3                       -- LT
     | 0x11 => binary s Word.gt 3                       -- GT
@@ -628,6 +680,27 @@ theorem step_sgt (s : State) (a b : Word) (rest : List Word)
   simp [step, planStep, hRun, hOp, binary, hStack, prepared]
 
 /-- Kind: dispatcher correspondence.
+    Says: MOD pops the numerator before the divisor, and charges five gas.
+    Does not say: the whole fork schedule is modelled. -/
+theorem step_mod (s : State) (a b : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x06)
+    (hStack : s.stack.items = a :: b :: rest) :
+    step s = commit s (s.pc + 1) (a.modulo b :: rest) 5 := by
+  simp [step, planStep, hRun, hOp, binary, hStack, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: post-EIP-160 EXP uses the actual bounded exponentiation helper,
+    exponent-dependent pricing and shared gas-checked commit path.
+    Does not say: the helper's general mathematical refinement is proved. -/
+theorem step_exp (s : State) (base exponent : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x0a)
+    (hProfile : s.profile ≠ .preShanghai)
+    (hStack : s.stack.items = base :: exponent :: rest) :
+    step s = commit s (s.pc + 1) (base.powMod exponent :: rest)
+      (expGas exponent) := by
+  simp [step, planStep, hRun, hOp, expStep, hProfile, hStack, prepared]
+
+/-- Kind: dispatcher correspondence.
     Says: SDIV pops signed numerator then denominator and requests five gas.
     Does not say: the source-level helper is normatively proved equivalent. -/
 theorem step_sdiv (s : State) (a b : Word) (rest : List Word)
@@ -731,6 +804,11 @@ def run : Nat → State → Except Error State
 #guard (word (2 ^ 254)).leadingZeros == 1
 #guard (word (2 ^ 256 - 1)).leadingZeros == 0
 
+#print axioms Word.modulo_zero
+#print axioms Word.powMod_zero
+#print axioms expGas_zero
+#print axioms step_mod
+#print axioms step_exp
 #print axioms Word.leadingZeros_le
 #print axioms Word.leadingZeros_zero
 #print axioms step_callDataLoad
