@@ -366,8 +366,10 @@ quoted next to the WPT number, never folded into it: `wpt-reftest-svg` (svg/, fi
 - **How a page is drawn**: core's `tests/browser-wpt/reftest-render.ts` on the release's engine
   library: the page loaded as the window and Textnaut load it (`prepareHTML`: sheets, imports,
   images, web fonts), scripts on BubblePopJS, one frame by the engine's CPU raster (op `render`
-  with `cpu:true`, `SVGRaster`), Noto Sans and the Hub's fallback fonts from `third_party/fonts`
-  (never the bitmap face, which is a diagnostic only: `--bitmap-font`). The pages come from a
+  with `cpu:true`, `SVGRaster`), Noto Sans and the Hub's fallback fonts from `third_party/fonts`,
+  and Liberation Serif and Liberation Mono for serif and monospace text (since 2026-11-22; given
+  when a render answers `wantsSerif` or `wantsMono`, then the page is drawn again) (never the
+  bitmap face, which is a diagnostic only: `--bitmap-font`). The pages come from a
   server of the runner on a random port, never wptserve's 8000, so a reftest run can share the
   machine with a WPT run.
 - **Rivals**: Chrome, Firefox, Safari and Edge on the same tests at the same WPT commit, from
