@@ -8,18 +8,18 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "25a18e147653521d0f7e8479a638862b0219176c",
+    "EVMCleanroom/Core.lean": "3626c44c19091ac1267827b2820cb5e6b4d804f8",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "6a29b0ea0de533d5907ceb72ee79a5a05d6df5ad",
-    "EVMCleanroom/World.lean": "895a4e48a826da2d9c23d24a33f39113deda09c0",
+    "EVMCleanroom/World.lean": "b4a96d65fa80c3e5a33add760dd4f17f2e79d0d4",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
     "EVMCleanroom/Call.lean": "dc93647332fefb33fd690a3ef298c39ae3baf89f",
     "EVMCleanroom/MemoryGas.lean": "f8fdb875e5be25954c7dbc7a9f67a733dc4dbecf",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "8f516f1c57b43bd0c8939ff373346b818e96c09a",
+    "EVMCleanroom/CLI.lean": "30c7383a8e415ed1802e5c6669c2cf23b47552df",
     "EVMCleanroom.lean": "687acb6099dda7d1a7efc4f180092a8dbef41ebf",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
@@ -48,7 +48,7 @@
     "evidence/frontier-keccak-vectors.json": "45eb0eeff0a5fe64df74c85e392571d36d10a157",
     "EVMCleanroom/ValueCall.lean": "c96d8c57bdbe6cde79c0d71d37834b9f0a9f67ac",
     "scripts/differential/value-call.mjs": "c8f984084b8ed39a81645f142734c167239b2858",
-    "EVMCleanroom/CallContextTests.lean": "024a0739e6db5e235f3b1f19c40b4e604698565e",
+    "EVMCleanroom/CallContextTests.lean": "a874f8c7d7af417e38c205461f94c82110be9e84",
     "scripts/differential/call-context.mjs": "7518029373724316264afd3eb07d28a6c302883e",
     "EVMCleanroom/CallTests.lean": "2d6596346a7092cab12955e4b936303ab4d21473",
     "EVMCleanroom/CalldataProofs.lean": "381db0a2e577b236385f55cf94e9263183895fcd",
@@ -84,7 +84,8 @@
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
     "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
     "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
-    "EVMCleanroom/Tests.lean": "af829e9849d1804491c6e0e3275dd0b4af594a18"
+    "EVMCleanroom/Tests.lean": "6aa910eb3d78b90120fbf383a6178f8cb9baaa3f",
+    "scripts/differential/chain-id.mjs": "73f5595931b7b020fd8e2b8e25bc30c9714297c5"
   },
   "theorem_inventory": [
     {
@@ -1144,6 +1145,34 @@
       "axioms_printed": [],
       "scope": "Actual frameInput projects explicitly supplied txOrigin and callerAddress, not validated transaction provenance.",
       "provenance": "2026-11-22 issue #760, expected until actual Lean 4.33.1 audit."
+    },
+    {
+      "name": "EVMCleanroom.step_chainId",
+      "source_symbol": "step_chainId",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual Core.step CHAINID dispatch requests exactly 2 gas, pushes supplied chainId modulo 2^256, and increments PC on admitted profiles.",
+      "provenance": "2026-11-22 issue #767; expected axiom set until exact-source Lean 4.33.1 CI prints it."
+    },
+    {
+      "name": "EVMCleanroom.step_chainId_unknown_fork",
+      "source_symbol": "step_chainId_unknown_fork",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Coarse preShanghai profile explicitly refuses to judge CHAINID support; this is not a protocol-invalid opcode claim.",
+      "provenance": "2026-11-22 issue #767; expected axiom set until exact-source Lean 4.33.1 CI prints it."
+    },
+    {
+      "name": "EVMCleanroom.World.frameInput_chainId",
+      "source_symbol": "frameInput_chainId",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "Actual world frame entry projects chainId for account execution and nested CALL; does not authenticate selected chain or preserve it through external consensus.",
+      "provenance": "2026-11-22 issue #767; expected axiom set until exact-source Lean 4.33.1 CI prints it."
     }
   ],
   "external_evidence": {
@@ -2081,5 +2110,22 @@
     "independentNewChildOracleCases": 32,
     "totalCallContextCases": 160,
     "trustLimit": "Explicit participant parameters synthetic until signed transaction provenance and authenticated entry-state validation."
+  },
+  "chainid_integration": {
+    "status": "source-published-CI-pending",
+    "issue": "https://github.com/danbri/factoidal-core/issues/767",
+    "normative": "EIP-1344 CHAINID; two gas, Istanbul and later",
+    "supportedProfiles": [
+      "shanghaiPlus",
+      "osaka"
+    ],
+    "refusedProfiles": [
+      "preShanghai (covers both before and after Istanbul)"
+    ],
+    "expectedAxiomSets": 3,
+    "ethereumJsOracle": "@ethereumjs/evm@10.1.3; Mainnet Shanghai chainId=1",
+    "independentCasesPlanned": 30,
+    "negativeControl": "run same bytecode with false Lean chainId=2; comparator must detect mismatch",
+    "trustLimit": "Top-level State/TxWorld chainId is a synthetic external field, not authenticated chain selection, signed transaction or consensus context; no historical full-fork coverage."
   }
 }
