@@ -106,7 +106,9 @@ def compile? (rawGraph inputSizes : Json) : Except String Json := do
       let p ← raw.getObjVal? "params"
       let name ← strField p "name"
       let length ← (← inputSizes.getObjVal? name).getNat?
-      let kind := (node.outputs.head!).dataType.kind
+      let kind ← match node.outputs with
+        | [out] => pure out.dataType.kind
+        | _ => fail "malformed input node signature"
       if kind == .scalar && length != 1 then
         fail ("scalar input needs one word: " ++ name)
       if length > maxWords then fail ("input exceeds GPU bound: " ++ name)
