@@ -1,0 +1,76 @@
+name: XML folder → XSLT4 → JSON-LD → RDF/SPARQL → HTML
+on:
+  pull_request:
+    paths:
+      - 'npm/factoidal/lib/xml-rdf-folder.mjs'
+      - 'docs/web/hub/xml-rdf/**'
+      - 'tests/xml_rdf_folder*.mjs'
+      - 'docs/.eleventy.js'
+      - 'formal/lean4/L4Factoidal/Dataflow/XmlSourceGraphStage.lean'
+      - '.github/workflows/check-xml-rdf-folder.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  xml-rdf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact source and host contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          node --check npm/factoidal/lib/xml-rdf-folder.mjs
+          node --check docs/web/hub/xml-rdf/app.mjs
+          node --check docs/web/hub/xml-rdf/fixtures.mjs
+          node --test tests/xml_rdf_folder.test.mjs
+          mkdir -p "$RUNNER_TEMP/xml-rdf-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/xml-rdf-evidence/commit.txt"
+          sha256sum npm/factoidal/lib/xml-rdf-folder.mjs \
+            docs/web/hub/xml-rdf/* > "$RUNNER_TEMP/xml-rdf-evidence/sources.sha256"
+      - name: Install pinned Lean engine assets for end-to-end test
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tools/fetch-builds.sh --set web \
+            2>&1 | tee "$RUNNER_TEMP/xml-rdf-evidence/engine-install.log"
+      - name: Execute actual Lean XSLT4/JSON-LD/RDF/SPARQL/XSLT4
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/xml_rdf_folder_engine.test.mjs \
+            2>&1 | tee "$RUNNER_TEMP/xml-rdf-evidence/real-engine-test.log"
+      - name: Publishable Hub static-site smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash third_party/eleventy/install.sh docs
+          (cd docs && node_modules/.bin/eleventy --quiet --output=_site)
+          for f in \
+            docs/_site/web/hub/xml-rdf/index.html \
+            docs/_site/web/hub/xml-rdf/app.mjs \
+            docs/_site/web/hub/xml-rdf/fixtures.mjs \
+            docs/_site/web/hub/xml-rdf/style.css \
+            docs/_site/npm/factoidal/lib/xml-rdf-folder.mjs
+          do test -s "$f" || { echo "Missing Hub output $f"; exit 1; }
+          done
+      - name: Preserve exact-source pipeline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xml-rdf-folder-workflow
+          path: ${{ runner.temp }}/xml-rdf-evidence/
+          if-no-files-found: warn
+          retention-days: 30
