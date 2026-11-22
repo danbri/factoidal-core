@@ -99,6 +99,33 @@ def publicJwk (k : Json) : Json :=
   | .object fs => .object (fs.filter (·.1 != "d"))
   | j => j
 
+/-- A stand-in answer to an AES request of the writer (`aes-kw-wrap`,
+`aes-gcm-encrypt`): octets of the right length. Only the key encryption key
+of the request is checked, not the AES output. -/
+def answerOf (need : Json) : Option Json := do
+  let op ← need.getString? "op"
+  let data ← need.getString? "data" >>= base64Decode?
+  let extra ← if op == "aes-kw-wrap" then some 8 else if op == "aes-gcm-encrypt" then some 16 else none
+  pure (.object [("request", need),
+    ("answer", .object [("ok", .string (base64 ⟨Array.replicate (data.size + extra) (7 : UInt8)⟩))])])
+
+/-- `encryptWith` on the replay cipher, answering each request with
+`answerOf`: the result and the key of the `aes-kw-wrap` request (base64). -/
+def driveEncrypt (fields : List (String × Json)) : (fuel : Nat) → List Json → Option String → Json × Option String
+  | 0, _, k => (.object [("ok", .bool false), ("error", .string "too many requests")], k)
+  | f + 1, answers, k =>
+      let arg := Json.object (fields ++ [("answers", .array answers)])
+      let r := match parseJson (L4Wasm.Ops.XmlEnc.encryptWith replayCipher nativePrims arg.toString) with
+        | .ok j => j
+        | .error _ => .object [("ok", .bool false), ("error", .string "unparseable envelope")]
+      match r.field? "need" with
+      | none => (r, k)
+      | some need =>
+          let k' := if need.getString? "op" == some "aes-kw-wrap" then need.getString? "key" else k
+          match answerOf need with
+          | some ans => driveEncrypt fields f (answers ++ [ans]) k'
+          | none => (r, k')
+
 def keysOfFixture (keys : Json) : Keys :=
   match keys with
   | .array _ => (L4Wasm.Ops.XmlEnc.keysOf (.object [("keys", keys)])).toOption.getD {}
@@ -167,6 +194,35 @@ def main (args : List String) : IO UInt32 := do
     let d := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", (e.field? "document").getD .null), ("keys", keys)])
     let hidden := (((e.getString? "document").getD "secret").splitOn "secret").length == 1
     s := s.ok (isOk e && hidden && sameDoc d "<a xmlns=\"urn:x\"><b>secret é</b></a>") s!"encrypt {alg} {kt}: round trip"
+  -- The writer's §5.4 methods (PBKDF2 in key agreement, xenc11:DerivedKey), on
+  -- HACL* ECDH and PBKDF2: the key encryption key that Lean's writer derives is
+  -- the one that Lean's reader derives from the written document.
+  let fxKey (kid : String) : Json := match keys with
+    | .array ks => (ks.find? (·.getString? "kid" == some kid)).getD .null
+    | _ => .null
+  let pbk (prf : String) (it : Nat) : Json :=
+    .object [("algorithm", .string "pbkdf2"), ("prf", .string prf), ("iterations", .number (toString it))]
+  let writeCases : List (String × Json × List (String × Json) × String) :=
+    [("P-256 agreement, PBKDF2 HMAC-SHA-256", publicJwk (fxKey "ec-1"),
+        [("keyDerivation", pbk "hmac-sha256" 1000)], "PBKDF2-params"),
+     ("X25519 agreement, PBKDF2 HMAC-SHA-512, AES-256", publicJwk (fxKey "x-1"),
+        [("keyDerivation", pbk "hmac-sha512" 20), ("algorithm", .string "aes256-gcm")], "PBKDF2-params"),
+     ("P-256 agreement, Concat KDF", publicJwk (fxKey "ec-1"), [], "ConcatKDFParams"),
+     ("DerivedKey, Concat KDF", fxKey "kek128", [("derivedKey", .bool true)], "xenc11:DerivedKey"),
+     ("DerivedKey, PBKDF2 HMAC-SHA-1", fxKey "kek256",
+        [("derivedKey", .bool true), ("keyDerivation", pbk "hmac-sha1" 10)], "xenc11:DerivedKey"),
+     ("DerivedKey, PBKDF2 HMAC-SHA-384, kw-aes256", fxKey "kek128",
+        [("derivedKey", .bool true), ("keyDerivation", pbk "hmac-sha384" 7), ("keyWrap", .string "kw-aes256")],
+        "xenc11:DerivedKey")]
+  for (name, recip, extra, marker) in writeCases do
+    let rnd ← IO.getRandomBytes 112
+    let (e, kek) := driveEncrypt ([("document", .string "<a xmlns=\"urn:x\"><b>secret é</b></a>"),
+      ("recipient", recip), ("random", .string (base64 rnd))] ++ extra) 6 [] none
+    let doc := (e.getString? "document").getD ""
+    let need := needOf (runReplay (.object [("document", .string doc), ("keys", keys)]))
+    s := s.ok (isOk e && kek.isSome && (doc.splitOn marker).length ≥ 2 && (doc.splitOn "secret").length == 1 &&
+        need.map (·.1) == some "aes-kw-unwrap" && need.map (·.2) == kek)
+      s!"encrypt {name}: the reader derives the writer's key; got {(e.getString? "error").getD "ok"}"
   -- The W3C XML Encryption 1.1 test cases (tests/xmlenc/w3c/PROVENANCE.md).
   let w3cDir := (path.parent.getD ".") / "w3c"
   let w3cText ← IO.FS.readFile (w3cDir / "cases.json")

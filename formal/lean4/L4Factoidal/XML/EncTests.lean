@@ -179,6 +179,47 @@ def decryptText (s : String) (ks : Keys := keys) (opts : Opts := {}) (cipher : C
   | .ok d => decrypt cipher stubPrims ks opts d
   | .error _ => refuse "does not parse"
 
+/-! ## The writer's §5.4 key derivation (PBKDF2 and DerivedKey) -/
+
+-- The writer's PBKDF2 (§5.4.2) in key agreement: P-256 and X25519, every PRF.
+#guard roundTrips (encryptCard { recipient := .agree (some "ec-1") .p256 ecPub 16, kdf := .pbkdf2 .sha256 1000 })
+#guard roundTrips (encryptCard { keyLen := 32, recipient := .agree none .x25519 xPub 32, kdf := .pbkdf2 .sha1 10 })
+#guard roundTrips (encryptCard { recipient := .agree none .x25519 xPub 16, kdf := .pbkdf2 .sha384 3 8 })
+#guard roundTrips (encryptCard { recipient := .agree none .x25519 xPub 32, kdf := .pbkdf2 .sha512 2 32 })
+-- xenc11:DerivedKey (§5.4.3) from the symmetric master key "kek128": Concat KDF and PBKDF2.
+#guard roundTrips (encryptCard { recipient := .derived (some "kek128") kek16 16 })
+#guard roundTrips (encryptCard { keyLen := 32, recipient := .derived (some "kek128") kek16 32, kdf := .pbkdf2 .sha256 100 })
+#guard roundTrips (encryptCard { recipient := .derived none kek16 16, kdf := .pbkdf2 .sha1 1 })
+-- What the writer writes for PBKDF2: the schema order, and the reader's names.
+#guard match encryptCard { recipient := .derived (some "kek128") kek16 16, kdf := .pbkdf2 .sha256 1000 } with
+  | .ok d =>
+      let t := serializeDocument d
+      let pos (frag : String) : Nat := ((t.splitOn frag).headD "").length
+      (t.splitOn "xenc11:DerivedKey").length == 3 &&
+      pos "<xenc11:Salt>" < pos "<xenc11:IterationCount>1000<" &&
+      pos "<xenc11:IterationCount>" < pos "<xenc11:KeyLength>16<" &&
+      pos "<xenc11:KeyLength>" < pos ("<xenc11:PRF Algorithm=\"" ++ hmacSha256Prf) &&
+      pos "</xenc11:KeyDerivationMethod>" < pos "<xenc11:MasterKeyName>kek128<"
+  | .error _ => false
+-- A wrong master key: the one decryption error.
+#guard match encryptCard { recipient := .derived (some "kek128") kek16 16, kdf := .pbkdf2 .sha256 5 } with
+  | .ok d => failsWith (reopen d (ks := { keys with sym := [{ kid := some "kek128", k := bytes 16 77 }] }))
+      isDecryptFailed
+  | .error _ => false
+-- The reader's iteration limit holds for what the writer wrote.
+#guard match encryptCard { recipient := .derived (some "kek128") kek16 16, kdf := .pbkdf2 .sha256 50 } with
+  | .ok d => failsWith (reopen d (opts := { maxPbkdf2Iterations := 49 })) (refusedHas "above the limit")
+  | .error _ => false
+-- The writer's limits: iterations 1 to 1,000,000, a salt of 8 to 64 octets.
+#guard failsWith (encryptCard { recipient := .derived none kek16 16, kdf := .pbkdf2 .sha256 0 })
+  (refusedHas "PBKDF2 iterations")
+#guard failsWith (encryptCard { recipient := .derived none kek16 16, kdf := .pbkdf2 .sha256 1000001 })
+  (refusedHas "PBKDF2 iterations")
+#guard failsWith (encryptCard { recipient := .derived none kek16 16, kdf := .pbkdf2 .sha256 10 4 })
+  (refusedHas "salt")
+-- A key wrap key of 24 octets is refused before any derivation.
+#guard failsWith (encryptCard { recipient := .derived none kek16 24 }) (refusedHas "16 or 32")
+
 -- An altered ciphertext fails the tag: the one decryption error.
 #guard match encryptCard (rsaSpec false) with
   | .ok d => failsWith (decryptText (tamperLast d)) isDecryptFailed

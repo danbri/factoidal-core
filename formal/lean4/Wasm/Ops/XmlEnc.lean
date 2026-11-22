@@ -9,7 +9,10 @@ AES requests (`Crypto/CipherCall.lean`, design record
               "answers": [{"request": need, "answer": {"ok": b64} | {"refused": true}}…]})
   xmlEncrypt({"document": xml, "recipient": jwk, "algorithm": "aes128-gcm" | "aes256-gcm",
               "keyTransport": "rsa-oaep-mgf1p" | "rsa-oaep-sha256", "keyWrap": "kw-aes128" | "kw-aes256",
-              "content": bool, "saml": bool, "random": b64, "answers": […]})
+              "content": bool, "saml": bool, "derivedKey": bool,
+              "keyDerivation": "ConcatKDF" | {"algorithm": "pbkdf2", "prf": "hmac-sha1" | "hmac-sha256"
+                | "hmac-sha384" | "hmac-sha512", "iterations": n, "saltLength": n},
+              "random": b64, "answers": […]})
     -> {"ok":true,"document":xml,"canonical":c14n}
      | {"ok":true,"need":{"op":…,"key":b64,"iv":b64,"aad":b64,"data":b64}}
      | {"ok":false,"error":…}
@@ -36,7 +39,17 @@ of `xmlEncrypt` has 16 or 32 octets. `kid` is the
 `ds:KeyName` the document uses for the key. For `xmlEncrypt`, `random` is
 octets from the host's random source: the content key, the 12-octet IV,
 then 20 (RSA-OAEP SHA-1), 32 (RSA-OAEP SHA-256, or the ephemeral key of a
-key agreement) or 0 (a named key encryption key) octets.
+key agreement) or 0 (a named key encryption key or a derived key) octets,
+then the PBKDF2 salt (`saltLength`, default 16) when `keyDerivation` is
+PBKDF2.
+
+`keyDerivation` (XML Encryption 1.1 §5.4) is the key derivation method of an
+`EC` or `OKP` recipient (key agreement) or of a derived key: Concat KDF over
+SHA-256 (§5.4.1, the default) or PBKDF2 (§5.4.2; `iterations` 1 to
+1,000,000, `saltLength` 8 to 64). `derivedKey: true` with an `oct` recipient
+(1 to 1024 octets) writes an `xenc11:DerivedKey` (§5.4.3): the content key is
+wrapped (`keyWrap`, default the content key size) under a key derived from
+the recipient's `k`, and the recipient's `kid` is the `xenc11:MasterKeyName`.
 
 `canonical` is the canonical form of the result
 (`XML.Canonical.canonDocument`), so a caller can compare two documents
@@ -225,9 +238,40 @@ def recipientOf (j : Json) (keyLen : Nat) : Except String Recipient := do
       pure (.agree kid .x25519 x kwLen)
   | some "oct" =>
       let k ← b64Field? r "k"
-      if k.size != 16 && k.size != 32 then throw "an oct recipient must be 16 or 32 octets"
-      pure (.kek kid k)
+      if (j.field? "derivedKey").bind Json.asBool? |>.getD false then
+        if k.size < 1 || k.size > 1024 then throw "a derived key's master key must be 1 to 1024 octets"
+        pure (.derived kid k kwLen)
+      else
+        if k.size != 16 && k.size != 32 then throw "an oct recipient must be 16 or 32 octets"
+        pure (.kek kid k)
   | _ => throw "the recipient must be a JWK with kty RSA, EC, OKP or oct"
+
+/-- A non-negative integer member. -/
+def natField? (j : Json) (name : String) : Except String (Option Nat) :=
+  match j.field? name with
+  | none => pure none
+  | some (.number t) => match t.toNat? with
+    | some n => pure (some n)
+    | none => throw s!"{name} must be a non-negative integer"
+  | some _ => throw s!"{name} must be a number"
+
+/-- The `keyDerivation` member of `xmlEncrypt` (§5.4). -/
+def writeKdfOf (j : Json) : Except String WriteKdf := do
+  match j.field? "keyDerivation" with
+  | none | some (.string "ConcatKDF") => pure .concat
+  | some k@(.object _) =>
+      if k.getString? "algorithm" != some "pbkdf2" then
+        throw "keyDerivation.algorithm must be \"pbkdf2\" (or keyDerivation \"ConcatKDF\")"
+      let prf ← match k.getString? "prf" with
+        | none | some "hmac-sha256" => pure L4Factoidal.Crypto.WebHacl.HashAlg.sha256
+        | some "hmac-sha1" => pure .sha1
+        | some "hmac-sha384" => pure .sha384
+        | some "hmac-sha512" => pure .sha512
+        | some p => throw s!"keyDerivation.prf {p} is not supported (hmac-sha1, -sha256, -sha384, -sha512)"
+      let some it ← natField? k "iterations" | throw "keyDerivation.iterations is required for pbkdf2"
+      let salt := (← natField? k "saltLength").getD 16
+      pure (.pbkdf2 prf it salt)
+  | some _ => throw "keyDerivation must be \"ConcatKDF\" or an object"
 
 def samlNs : String := "urn:oasis:names:tc:SAML:2.0:assertion"
 
@@ -247,7 +291,8 @@ def encryptWith (mkCipher : List (Req × Ans) → Cipher) (prims : Prims) (argJs
         let answers ← answersOf j
         let content := (j.field? "content").bind Json.asBool? |>.getD false
         let saml := (j.field? "saml").bind Json.asBool? |>.getD false
-        pure (d, ({ keyLen, recipient, content } : EncryptSpec), rand, answers, saml) : Except String _) with
+        let kdf ← writeKdfOf j
+        pure (d, ({ keyLen, recipient, content, kdf } : EncryptSpec), rand, answers, saml) : Except String _) with
       | .error e => errJson e
       | .ok (d, spec, rand, answers, saml) =>
           let out := encryptDocument (mkCipher answers) prims spec rand d

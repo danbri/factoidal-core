@@ -1993,6 +1993,19 @@ export function xmlEncrypt(
     keyWrap?: 'kw-aes128' | 'kw-aes256';
     content?: boolean;
     saml?: boolean;
+    /** With an `oct` recipient: wrap under a key derived from it (xenc11:DerivedKey, §5.4.3). */
+    derivedKey?: boolean;
+    /** The §5.4 key derivation of a key agreement or a derived key; Concat KDF by default. */
+    keyDerivation?:
+      | 'ConcatKDF'
+      | {
+          algorithm: 'pbkdf2';
+          prf?: 'hmac-sha1' | 'hmac-sha256' | 'hmac-sha384' | 'hmac-sha512';
+          /** 1 to 1,000,000. */
+          iterations: number;
+          /** Salt octets, 8 to 64; 16 by default. */
+          saltLength?: number;
+        };
   }
 ): Promise<{ document: string; canonical: string }>;
 

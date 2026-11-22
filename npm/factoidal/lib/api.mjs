@@ -1937,9 +1937,13 @@ function buildApi(driver) {
    * @param {string} document the XML document
    * @param {{recipient: object, algorithm?: 'aes128-gcm'|'aes256-gcm',
    *   keyTransport?: 'rsa-oaep-mgf1p'|'rsa-oaep-sha256', keyWrap?: 'kw-aes128'|'kw-aes256',
-   *   content?: boolean, saml?: boolean}} options `recipient` is a public JWK
+   *   content?: boolean, saml?: boolean, derivedKey?: boolean,
+   *   keyDerivation?: 'ConcatKDF' | {algorithm: 'pbkdf2', prf?: string, iterations: number,
+   *   saltLength?: number}}} options `recipient` is a public JWK
    *   (RSA, EC P-256, OKP X25519) or an `oct` key; `saml` wraps the result in
-   *   saml:EncryptedAssertion
+   *   saml:EncryptedAssertion; `derivedKey` with an `oct` recipient writes an
+   *   xenc11:DerivedKey (§5.4.3) from that master key; `keyDerivation` is the
+   *   §5.4 method of a key agreement or a derived key (Concat KDF by default)
    * @returns {Promise<{document: string, canonical: string}>}
    */
   async function xmlEncrypt(document, options) {
@@ -1948,10 +1952,12 @@ function buildApi(driver) {
     if (o.recipient === null || typeof o.recipient !== 'object') {
       throw new TypeError('xmlEncrypt: options.recipient must be a JWK object');
     }
-    const args = { document, recipient: o.recipient, random: randomBase64(CIPHER_RANDOM_BYTES) };
-    for (const k of ['algorithm', 'keyTransport', 'keyWrap']) if (o[k] !== undefined) args[k] = o[k];
+    // 64 more octets than other cipher ops: the largest PBKDF2 salt (§5.4.2).
+    const args = { document, recipient: o.recipient, random: randomBase64(CIPHER_RANDOM_BYTES + 64) };
+    for (const k of ['algorithm', 'keyTransport', 'keyWrap', 'keyDerivation']) if (o[k] !== undefined) args[k] = o[k];
     if (o.content === true) args.content = true;
     if (o.saml === true) args.saml = true;
+    if (o.derivedKey === true) args.derivedKey = true;
     const r = await cipherOp('xmlEncrypt', 'XML encryption', args);
     return { document: r.document, canonical: r.canonical };
   }
