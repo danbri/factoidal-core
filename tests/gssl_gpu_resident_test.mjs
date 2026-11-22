@@ -230,3 +230,67 @@ test("host write failure poisons cached version; close is possible after device 
   s.close();s.close();
   assert.equal(s.status().closed,true);
 });
+
+test("dependent compute passes run in one submission with ordered writes",async()=>{
+  const {device,stats}=mockDevice();
+  const s=await createGsslResidentSession({device,byteBudget:64});
+  await s.upload("input",new Uint32Array([2,5,9,12]));
+  s.allocate("scratch",16);s.allocate("result",16);
+  await s.compile("add-one",source);
+  await s.dispatchBatch([
+    {kernel:"add-one",bindings:[{binding:0,id:"input"},{binding:1,id:"scratch"}],
+      writes:["scratch"],workgroups:[1,1,1]},
+    {kernel:"add-one",bindings:[{binding:0,id:"scratch"},{binding:1,id:"result"}],
+      writes:["result"],workgroups:[1,1,1]}
+  ]);
+  assert.equal(stats.submissions,1);
+  assert.equal(stats.dispatches,2);
+  assert.deepEqual(await s.readWords("result",{countWords:4}),[4,7,11,14]);
+  s.close();
+});
+
+test("invalid later batch command prevents all earlier dispatches",async()=>{
+  const {device,stats}=mockDevice();
+  const s=await createGsslResidentSession({device,byteBudget:64});
+  await s.upload("input",new Uint32Array([2]));s.allocate("result",4);
+  await s.compile("add-one",source);
+  await assert.rejects(s.dispatchBatch([
+    {kernel:"add-one",bindings:[{binding:0,id:"input"},{binding:1,id:"result"}],
+      writes:["result"],workgroups:[1,1,1]},
+    {kernel:"absent",bindings:[{binding:0,id:"result"}],workgroups:[1,1,1]}
+  ]),/Unknown compute kernel/);
+  assert.equal(stats.submissions,0);
+  assert.equal(stats.dispatches,0);
+  await assert.rejects(s.readWords("result",{countWords:1}),/Uninitialized/);
+  s.close();
+});
+
+test("device storage limits are checked before buffer creation",async()=>{
+  const {device,stats}=mockDevice();
+  device.limits={maxBufferSize:64,maxStorageBufferBindingSize:16};
+  const s=await createGsslResidentSession({device,byteBudget:128});
+  assert.throws(()=>s.allocate("large",20),/device storage/);
+  await assert.rejects(s.upload("large",new Uint32Array(5)),/device storage/);
+  assert.equal(stats.created,0);
+  assert.equal(s.status().resourceCount,0);
+  s.close();
+});
+
+test("asynchronous batch validation failure poisons all destinations",async()=>{
+  const {device}=mockDevice();
+  const scopes=[];
+  device.pushErrorScope=kind=>scopes.push(kind);
+  device.popErrorScope=async()=>({message:"injected binding validation error"});
+  const s=await createGsslResidentSession({device,byteBudget:128});
+  await s.upload("input",new Uint32Array([1,2]));
+  s.allocate("output",8);
+  await s.compile("add-one",source);
+  await assert.rejects(s.dispatchBatch([{kernel:"add-one",bindings:[
+    {binding:0,id:"input"},{binding:1,id:"output"}],writes:["output"]}]),
+    /injected binding validation error/);
+  assert.deepEqual(scopes,["validation"]);
+  await assert.rejects(s.readWords("output",{countWords:2}),/Uninitialized/);
+  await s.upload("output",new Uint32Array([7,8]));
+  assert.deepEqual(await s.readWords("output",{countWords:2}),[7,8]);
+  s.close();
+});

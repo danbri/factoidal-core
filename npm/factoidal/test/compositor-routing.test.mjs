@@ -7,7 +7,7 @@ test('compositor routes with the built package and preserves existing recipe/err
   const root=fileURLToPath(new URL('../../../',import.meta.url));
   // Under `node --test` a child with NODE_TEST_CONTEXT skips its files and exits 0.
   const {NODE_TEST_CONTEXT:_,...parent}=process.env;
-  const result=spawnSync(process.execPath,['--test',
+  const result=spawnSync(process.execPath,['--test','--test-reporter=tap',
     'tests/hub/compositor_routing_test.mjs',
     'tests/hub/compositor_failure_test.mjs',
     'tests/hub/compositor_pipeline_test.mjs',

@@ -214,6 +214,10 @@ private def renderRaw (output : String) (a : RawAnswer) : Except String String :
     | "ntriples", .bindings vars rows => .ok (varEqualsText vars rows)
     | other, _ => .error s!"queryRaw: unknown output format '{other}'"
 
+/-- The shared results writer for synchronous and resumed query answers. -/
+def renderQueryAnswer (output : String) (answer : L4Factoidal.Dataflow.Answer) :
+    Except String String := renderRaw output (rawOfAnswer answer)
+
 /-- `queryRaw` after the parse: close the default graph of `ds0` under
 `entail`, evaluate, and write the answer in `output`. The dataset-handle op
 `datasetQueryRaw` (`Wasm/Ops/Handles.lean`) calls it with a stored dataset. -/

@@ -57,6 +57,14 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "lab-core.mjs", "graph-explorer.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/gssl/${name}`);
   }
+  // XML-folder → named-graph SPARQL → HTML workbench.
+  for (const name of ["app.mjs", "fixtures.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/xml-rdf/${name}`);
+  }
+  // Mixed SPARQL uses the checkout's browser API and local Wasm assets.
+  for (const name of ["app.mjs", "fixtures.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/gpu-sparql/${name}`);
+  }
   // Publish the *same* audited browser-safe EVM→WASM compiler sources that
   // the Node differential suite tests (no second handwritten implementation).
   for (const name of ["evm-to-wasm.mjs", "evm-policy.mjs"]) {

@@ -53,7 +53,7 @@ test("public Hub route is explicitly exploratory, linked, and uses same runtime"
   const app=read("docs/web/hub/gssl/app.mjs");
   const eleventy=read("docs/.eleventy.js");
   const hub=read("docs/web/hub/index.md");
-  const spec=read("docs/specs/gssl-0.1.md");
+  const spec=read("docs/specs/gdsl-0.2.md");
   assert.match(page,/permalink: \/web\/hub\/gssl\//);
   assert.match(page,/Neither constitutes a general Lean→WGSL compiler or a formal proof/i);
   assert.match(page,/GPU hardware execution/i);
@@ -66,8 +66,7 @@ test("public Hub route is explicitly exploratory, linked, and uses same runtime"
   assert.match(app,/session\.inspect\("result"/);
   assert.match(eleventy,/web\/hub\/gssl\/\$\{name\}/);
   assert.match(hub,/href="\.\/gssl\//);
-  assert.match(spec,/PROVED/);
-  assert.match(spec,/PROPOSED/);
-  assert.match(spec,/no general GSSL parser/i);
-  assert.match(spec,/SPARQL.*NOT ready/i);
+  assert.match(spec,/Lean 4 defines the language/);
+  assert.match(spec,/GPU lowering and WGSL/);
+  assert.match(spec,/issue #691/);
 });

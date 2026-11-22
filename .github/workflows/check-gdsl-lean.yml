@@ -8,6 +8,10 @@ on:
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphJson.lean'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphEvaluate.lean'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraph.lean'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraphBuilder.lean'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GpuFastPath.lean'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GpuPlan.lean'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/DataflowAdapter.lean'
       - '.github/workflows/check-gdsl-lean.yml'
   workflow_dispatch: {}
 permissions:
@@ -25,6 +29,10 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.GraphJson
         L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
         L4Factoidal.GpuDomainSpecificLanguage.PVGraph
+        L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath
+        L4Factoidal.GpuDomainSpecificLanguage.GpuPlan
+        L4Factoidal.GpuDomainSpecificLanguage.DataflowAdapter
       theorems: >-
         L4Factoidal.GpuDomainSpecificLanguage.Graph.linksAdmitted_sound
         L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission.admitted_unique_node_ids
@@ -39,3 +47,13 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.GraphWords.broadcast_length
         L4Factoidal.GpuDomainSpecificLanguage.GraphJson.certified_sound
         L4Factoidal.GpuDomainSpecificLanguage.PVGraph.admitted_sound
+        L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate.evaluateWith_eq_of_primitives
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelTag_decode_code
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelTag_ofOperator_sound
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelCall_dispatch_raceFree
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelCall_schedule_independent
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelCall_correct
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.modelOrCpu_eq_reference
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.pvgraph_model_eq_reference
+        L4Factoidal.GpuDomainSpecificLanguage.DataflowAdapter.modeledFastStage_run_eq
+        L4Factoidal.GpuDomainSpecificLanguage.DataflowAdapter.stageOfVerifiedDevice_contract

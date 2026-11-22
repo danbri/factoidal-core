@@ -2468,3 +2468,10 @@ L4Factoidal_HTML_AccessibleTree_walk*  # (c) one call per child of a node with l
 # --- Added 2026-11-17, processing instruction attributes (DOM/PiAttributes.lean) ---
 L4Factoidal_DOM_PiAttributes_escapeList  # (s) DOM/PiAttributes.lean: the specification of unescape_escape; the executed path is the loop escapeGo (fast_eq)
 L4Factoidal_DOM_PiAttributes_unescapeList  # (s) DOM/PiAttributes.lean: the specification of unescape_escape; the executed path is the loop unescapeGo (fast_eq)
+# --- 2026-11-22, common GPU scan and mixed SPARQL continuations; generated C reviewed individually ---
+L4Factoidal_GpuDomainSpecificLanguage_GpuPlan_emitScan  # (c) private planner helper; its only entry supplies fuel 8, which decreases at every call; each level reduces words to ceil(words / 64)
+L4Factoidal_SPARQL_GpuQuery_Plan_bind  # (b) nesting of query-algebra continuations; a dispatch wraps its resume without evaluating later jobs; no recursion over solution rows; named-graph continuation chains are bounded at 256 by pattern
+L4Factoidal_SPARQL_GpuQuery_Plan_collect  # (c) only production caller is pattern's variable GRAPH branch, guarded by ds.named.length <= 256; larger datasets use the complete CPU evalIn operation (pattern_graphVar_large)
+L4Factoidal_SPARQL_GpuQuery_bgpRows  # (b) one continuation per triple pattern in a query BGP; recursion follows query syntax, never the number of matching rows or triples in the dataset
+L4Factoidal_SPARQL_GpuQuery_estimatePattern  # (b) query AST nesting; the variable GRAPH branch walks named graphs with emitted List.mapTR and foldl loops, not a dataset-length recursive stack
+L4Factoidal_SPARQL_GpuQuery_pattern  # (b) lowered query-algebra nesting; the only dataset-length continuation collection is variable GRAPH and is guarded at 256 named graphs before Plan.collect

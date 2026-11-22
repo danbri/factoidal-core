@@ -127,6 +127,15 @@ export function buildNodes(deps) {
       return answer instanceof Dataset ? { graph: answer, artefact: { form: 'graph' } }
         : { graph: answer, artefact: { answer } };
     },
+    gpuSparqlStage: async (wire, params) => {
+      const { query: sparql, ...opts } = params;
+      if (typeof sparql !== 'string') throw new TypeError('node gpuSparqlStage: params.query must be a string');
+      if (opts.execution !== undefined && opts.execution !== 'gpu')
+        throw new TypeError('node gpuSparqlStage requires execution: gpu');
+      const answer = await query(wire.graph, sparql, { ...opts, execution: 'gpu' });
+      return answer instanceof Dataset ? { graph: answer, artefact: { form: 'graph', execution: answer.execution } }
+        : { graph: answer, artefact: { answer, execution: answer?.execution } };
+    },
     ntriplesDocumentWriter: writer('ntriples'),
     nquadsDocumentWriter: writer('nquads'),
     turtleDocumentWriter: writer('turtle'),

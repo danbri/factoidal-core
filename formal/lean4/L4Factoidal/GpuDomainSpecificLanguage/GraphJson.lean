@@ -3,20 +3,17 @@ import L4Factoidal.GpuDomainSpecificLanguage.GraphAdmission
 import L4Factoidal.GpuDomainSpecificLanguage.GraphWords
 
 /-!
-# GDSL 0.2 JSON-to-Lean graph checker (core u32 profile)
+# GDSL 0.2: canonical PVGraph admission
 
-Unlike a theorem about handwritten Lean nodes, `decode?` consumes the
-actual versioned {version,nodes,links} JSON schema used by JS
-`checkGraph` and `fromSexpr`. It refuses unknown fields, unknown ops,
-invalid IDs, ill-typed links and incorrect parameter schemas. The Lean
-graph signatures are reconstructed from operator names, never trusted
-from external port declarations.
+`decode?` accepts only the exact versioned {version,nodes,links}
+document. Lean reconstructs operator and port signatures from its
+registry; client-provided signatures are never trusted. Unknown fields,
+operators, invalid IDs, ill-typed links and malformed parameters are
+refused. `decodeCertified?` checks the same document and returns
+admission evidence for the actual serialized computation.
 
-Domain-specific extension registries are NOT admitted by this initial
-core-only checker. They require a separately verified registered
-signature. String and numeric lexical edge cases are covered by the
-cross-implementation corpus; equality with the JS parser is TESTED, not
-yet proved as a compiler-refinement theorem.
+Domain extension operators require independently checked signatures;
+this module currently admits the core u32 profile.
 -/
 
 namespace L4Factoidal.GpuDomainSpecificLanguage.GraphJson
@@ -126,8 +123,17 @@ private def parseNode (j : Json) : Except String Node := do
     else if op == "u32.reduce.sum" then do
       exactFields params []
       pure ([portSig "x" b],[portSig "out" s])
-    else if op == "u32.zip.add" || op == "u32.zip.xor" then do
+    else if op == "u32.zip.add" || op == "u32.zip.xor" || op == "u32.zip.sub" then do
       exactFields params []
+      pure ([portSig "a" b,portSig "b" b],[portSig "out" b])
+    else if op == "u64.tuple.lower" || op == "u64.tuple.upper" ||
+        op == "u32.segment.expand" then do
+      checkedU32Param params
+      let value ← fieldNat params "value"
+      if op != "u32.segment.expand" && (value == 0 || value > 16) then
+        fail "Tuple key arity must be in 1..16"
+      if op == "u32.segment.expand" && value > IndexedJoinOps.maxWords / 2 then
+        fail "Segment expansion exceeds output capacity"
       pure ([portSig "a" b,portSig "b" b],[portSig "out" b])
     else if op == "u32.scalar.add" then do
       exactFields params []

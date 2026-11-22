@@ -1,0 +1,56 @@
+---
+layout: hub-app.njk
+title: XML / RDF / SPARQL Folder Pipeline
+permalink: /web/hub/xml-rdf/
+---
+<link rel="stylesheet" href="./style.css"/>
+<section class="xml-rdf-workbench">
+  <header>
+    <h1>XML files → RDF named graphs → SPARQL → HTML</h1>
+    <p>Native Factoidal Lean/Wasm stages: XSLT 4, JSON-LD, RDF dataset merge, indexed SPARQL and XSLT 4. Source files are separate named graphs; no JavaScript RDF or SPARQL interpreter.</p>
+  </header>
+  <div class="xml-steps" aria-label="Execution stages">
+    <span>XML files</span><span>XSLT 4</span><span>JSON-LD</span><span>RDF named dataset</span><span>SPARQL</span><span>XSLT 4 → HTML</span>
+  </div>
+  <div class="xml-controls">
+    <label>Select a directory of XML files
+      <input id="xml-folder" type="file" accept=".xml,text/xml" multiple webkitdirectory/>
+    </label>
+    <label>Or select individual XML files
+      <input id="xml-files" type="file" accept=".xml,text/xml,application/xml" multiple/>
+    </label>
+    <div class="xml-buttons">
+      <button type="button" id="xml-fixtures">Load the bundled 3-file example</button>
+      <button type="button" id="xml-run">Run source pipeline</button>
+    </div>
+    <label>SPARQL query
+      <textarea spellcheck="false" id="xml-sparql" rows="9"></textarea>
+    </label>
+    <details>
+      <summary>XSLT 4: XML to JSON-LD</summary>
+      <textarea spellcheck="false" id="xml-extract" rows="17"></textarea>
+    </details>
+    <details>
+      <summary>XSLT 4: SPARQL results to HTML</summary>
+      <textarea spellcheck="false" id="xml-render" rows="15"></textarea>
+    </details>
+  </div>
+  <p id="xml-workflow-status" role="status">No pipeline run yet.</p>
+  <div class="xml-evidence">
+    <div>
+      <h2>Source provenance</h2>
+      <pre id="xml-sources">No named graphs yet.</pre>
+    </div>
+    <div>
+      <h2>Stages and backend</h2>
+      <pre id="xml-stages">Lean indexed SPARQL until the proved GPU BGP stage is registered.</pre>
+    </div>
+  </div>
+  <details><summary>SPARQL XML result (exact engine output)</summary>
+    <pre id="xml-sparql-result"></pre>
+  </details>
+  <h2>Rendered HTML</h2>
+  <iframe id="xml-html" title="HTML produced by the Factoidal XSLT 4 engine" sandbox></iframe>
+  <p class="xml-limit">Current profile is batch XSLT per source and incremental named-graph merge. Directory/file access is a browser or XProc host boundary. Embedded JSON-LD named graphs and empty sources are refused rather than losing their identity. No verified REST/MCP-to-GPU offload or streamed XSLT parser is claimed.</p>
+</section>
+<script type="module" src="./app.mjs"></script>

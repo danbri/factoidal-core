@@ -28,7 +28,7 @@ permalink: /web/hub/gssl/
 <div class="gssl-layout" id="workbench">
   <section class="panel gdsl-graph-panel" id="gdsl-graph" aria-labelledby="gdsl-graph-title">
     <div class="panel-head"><h2 id="gdsl-graph-title">GDSL 0.2 · One PVGraph, five domains</h2><span>UNIFIED LANGUAGE</span></div>
-    <p>Every example uses the <strong>same PVGraph node/link schema</strong>, JavaScript PVGraph constructor, S-expression notation and CPU interpreter. Verified PVGraph GPU execution requires a native Lean 4 toolkit; the static Hub cannot issue admission.</p>
+    <p>Every example uses the <strong>same Lean-defined PVGraph</strong>. Construction, admission and reference execution run through Lean/Wasm. The full Wasm build must include the PVGraph exports; otherwise this workbench refuses to run.</p>
     <div class="gdsl-preset">
       <label for="gdsl-example">Example
         <select id="gdsl-example">
@@ -43,21 +43,21 @@ permalink: /web/hub/gssl/
     </div>
     <div class="gdsl-editors">
       <div>
-        <label for="gdsl-sexpr">Editable GDSL S-expression</label>
-        <textarea id="gdsl-sexpr" rows="17" spellcheck="false" aria-describedby="gdsl-help">(pvgraph gdsl/0.2)</textarea>
+        <label for="gdsl-json">Editable canonical PVGraph JSON</label>
+        <textarea id="gdsl-json" rows="17" spellcheck="false" aria-describedby="gdsl-help">{}</textarea>
         <label for="gdsl-bindings">Named input buffers (JSON)</label>
         <textarea id="gdsl-bindings" rows="5" spellcheck="false">{}</textarea>
       </div>
       <div>
-        <label for="gdsl-js">Equivalent JavaScript PVGraph-constructor form</label>
+        <label for="gdsl-js">Admitted operators and parameters</label>
         <pre id="gdsl-js" class="gdsl-code" aria-live="polite">Loading canonical graph…</pre>
-        <p id="gdsl-help">The expression and the JavaScript constructor yield an identical canonical graph. Edit and validate the expression without executing any host JavaScript.</p>
+        <p id="gdsl-help">Edit the PVGraph JSON or load an example. Lean/Wasm validates node IDs, registered operators, port types and links. S-expression parsing belongs in the Lean front end.</p>
       </div>
     </div>
     <div class="actions">
-      <button id="gdsl-check" type="button" class="secondary">Validate and visualize graph</button>
-      <button id="gdsl-cpu" type="button" class="secondary">Run graph on CPU</button>
-      <button id="gdsl-gpu" type="button" class="secondary">Native Lean GPU requirements</button>
+      <button id="gdsl-check" type="button" class="secondary">Lean validate and visualize</button>
+      <button id="gdsl-cpu" type="button" class="secondary">Run Lean/Wasm reference</button>
+      <button id="gdsl-gpu" type="button" class="secondary">Run Lean-planned WebGPU</button>
       
     </div>
     <p id="gdsl-status" class="status" role="status">Choose an example or edit the common expression.</p>
@@ -67,7 +67,7 @@ permalink: /web/hub/gssl/
     </div>
     <p class="gdsl-legend">Edges: <span class="gdsl-buffer">buffer&lt;u32&gt;</span> · <span class="gdsl-scalar">scalar&lt;u32&gt;</span>. Ports must match exactly; all links point forward in topological order.</p>
     <div class="result-grid gdsl-results">
-      <div><h3>Typed CPU result</h3><pre id="gdsl-cpu-output">Not executed</pre></div>
+      <div><h3>Lean/Wasm result</h3><pre id="gdsl-cpu-output">Not executed</pre></div>
       <div><h3>Lean-gated GPU result</h3><pre id="gdsl-gpu-output">Not executed</pre></div>
     </div>
     <p id="gdsl-agreement" class="comparison" role="status">No CPU/GPU result comparison yet.</p>
@@ -76,10 +76,10 @@ permalink: /web/hub/gssl/
       <pre id="gdsl-trace">No graph executed yet.</pre>
       <pre id="gdsl-resources">No GPU device allocated.</pre>
     </details>
-    <p class="scope">Status: the static Hub provides an exploratory JavaScript PVGraph editor and CPU interpreter only. Verified PVGraph GPU calls require native Lean admission for the exact PVGraph and inputs; there is no browser Lean bridge yet. The separate lower-level GPU probe below is not a PVGraph execution and is not Lean-certified. There is no general GDSL-to-WGSL refinement theorem. <a href="https://github.com/danbri/factoidal-core/blob/main/docs/specs/gdsl-0.2.md">Read the GDSL 0.2 specification</a>.</p>
+    <p class="scope">PVGraph uses the Lean/Wasm evaluator and a restricted GPU path (map/zip/broadcast); scan and reduction remain CPU-only. A current Wasm build with the GPU-plan operation is required. The fixed-kernel diagnostic below is independent. There is no general GDSL-to-WGSL refinement theorem. <a href="https://github.com/danbri/factoidal-core/blob/main/docs/specs/gdsl-0.2.md">GDSL 0.2 specification</a>.</p>
   </section>
   <section class="panel" aria-labelledby="input-title">
-    <div class="panel-head"><h2 id="input-title">Legacy fixed-kernel device probe</h2><span>LOW-LEVEL REGRESSION</span></div>
+    <div class="panel-head"><h2 id="input-title">Fixed-kernel GPU diagnostic</h2><span>LOW-LEVEL REGRESSION</span></div>
     <p>Enter 1–64 unsigned 32-bit integers. The first and second passes apply separate affine transformations modulo 2<sup>32</sup>; the shader stays identical.</p>
     <label for="source">Input words (JSON array)</label>
     <textarea id="source" spellcheck="false" rows="5">[2, 3, 5, 7, 11, 13, 17, 19]</textarea>

@@ -1,0 +1,134 @@
+name: PVGraph full Lean/Wasm engine vs WebGPU benchmark
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/check-gdsl-full-wasm-gpu.yml'
+      - 'tools/pvgraph-wasm-gpu-bench.mjs'
+      - 'tools/pvgraph-query-device-smoke.mjs'
+      - 'tools/gpu-sparql-hub-smoke.mjs'
+      - 'docs/web/hub/gpu-sparql/**'
+      - 'tools/pvgraph-evidence-provenance.mjs'
+      - 'tools/lean-wasm-runtime-closure.py'
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/**'
+      - 'formal/lean4/L4Factoidal/SPARQL/GpuQuery*.lean'
+      - 'formal/lean4/L4Factoidal/Dataflow/GpuSparql*.lean'
+      - 'formal/lean4/L4Factoidal/Dataflow/Registry.lean'
+      - 'formal/lean4/Wasm/Ops/PVGraph.lean'
+      - 'formal/lean4/Wasm/Ops/GpuSparql.lean'
+      - 'formal/lean4/Wasm/Dispatch.lean'
+      - 'formal/lean4/Wasm/CoreDispatch.lean'
+      - 'formal/lean4/Wasm/build-wasm.sh'
+      - 'npm/factoidal/lib/gdsl-*.mjs'
+      - 'npm/factoidal/lib/api.mjs'
+      - 'npm/factoidal/lib/nodes.mjs'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  full-wasm-gpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      # Keep Lean's default worker stack: the smaller 16 MiB override
+      # exhausts the kernel stack while checking JS.Str's existing proof.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.4
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - uses: actions/cache@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-6.0.8-${{ runner.os }}
+      - name: Prepare source-locked Wasm and GPU tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          mkdir -p "$RUNNER_TEMP/pvgraph-wasm-bench"
+          git rev-parse HEAD > "$RUNNER_TEMP/pvgraph-wasm-bench/commit.txt"
+          sudo apt-get update
+          sudo apt-get install -y libuv1-dev libvulkan1 mesa-vulkan-drivers
+          if [ ! -x "$HOME/emsdk/emsdk" ]; then
+            git clone --depth 1 https://github.com/emscripten-core/emsdk "$HOME/emsdk"
+          fi
+          "$HOME/emsdk/emsdk" install 6.0.8
+          "$HOME/emsdk/emsdk" activate 6.0.8
+      - name: Build full Factoidal Lean source into real Wasm
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$HOME/emsdk/emsdk_env.sh"
+          timeout --kill-after=10s 4500s bash formal/lean4/Wasm/build-wasm.sh \
+            "$RUNNER_TEMP/l4wasm-work" 2>&1 \
+            | tee "$RUNNER_TEMP/pvgraph-wasm-bench/build.log"
+          sha256sum npm/factoidal/l4-assets/l4factoidal.wasm \
+            | tee "$RUNNER_TEMP/pvgraph-wasm-bench/wasm.sha256"
+      - name: Require new PVGraph exports from the exact built Wasm bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS' | tee "$RUNNER_TEMP/pvgraph-wasm-bench/exports.json"
+          import {loadEngine} from "./npm/factoidal/index.mjs";
+          const engine=await loadEngine();
+          const available=new Set(engine.call("ops",[]).ops);
+          const names=["pvgraphBuild","pvgraphAdmit","pvgraphEvaluate","pvgraphGpuPlan",
+            "datasetQueryGpuBegin","datasetQueryGpuStep","datasetQueryGpuRestart","datasetQueryGpuClose"];
+          for(const name of names)if(!available.has(name))throw Error("missing exact-source Wasm op "+name);
+          console.log(JSON.stringify({status:"pass",ops:names}));
+          JS
+      - name: Compare actual Lean/Wasm with Mesa WebGPU end-to-end
+        shell: bash
+        run: |
+          set -euo pipefail
+          driver="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$driver"
+          export DENO_WEBGPU_BACKEND=vulkan VK_DRIVER_FILES="$driver"
+          export XDG_RUNTIME_DIR
+          XDG_RUNTIME_DIR="$(mktemp -d "$RUNNER_TEMP/pvgraph-gpu-xdg.XXXXXX")"
+          timeout --kill-after=10s 420s deno run -A --no-config --no-npm \
+            --unstable-webgpu tools/pvgraph-wasm-gpu-bench.mjs \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/benchmarks.json.log"
+          timeout --kill-after=10s 420s deno run -A --no-config --no-npm \
+            --unstable-webgpu tools/pvgraph-query-device-smoke.mjs \
+            --wasm npm/factoidal/l4-assets/l4factoidal.js "$SOURCE_COMMIT" \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/sparql-query-device.json.log"
+          timeout --kill-after=10s 420s deno run -A --no-config --no-npm \
+            --unstable-webgpu tools/gpu-sparql-hub-smoke.mjs --require-gpu \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/hub-query-device.json.log"
+      - name: Preserve exact-source build, benchmark and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvgraph-full-wasm-vs-webgpu
+          path: ${{ runner.temp }}/pvgraph-wasm-bench/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Preserve rebuilt full Lean/Wasm runtime
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvgraph-lean-wasm-runtime
+          path: |
+            npm/factoidal/l4-assets/l4factoidal.wasm
+            npm/factoidal/l4-assets/l4factoidal.mjs
+            npm/factoidal/l4-assets/l4factoidal.js
+            npm/factoidal/l4-assets/version.json
+          if-no-files-found: error
+          retention-days: 7
