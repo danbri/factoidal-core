@@ -1,0 +1,91 @@
+name: Verify recorded RISC Zero ASK proof in local EVM
+
+on:
+  pull_request:
+    paths:
+      - 'zkvm/risc0/evm/**'
+      - '.github/workflows/check-risc0-evm.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'zkvm/risc0/evm/**'
+      - '.github/workflows/check-risc0-evm.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify-recorded-ask:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: zkvm/risc0/evm
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install checksum-pinned Foundry and solc
+        run: |
+          set -euo pipefail
+          FACTOIDAL_EVM_TOOLS="$RUNNER_TEMP/factoidal-evm-tools"
+          install -d -m 0700 "$FACTOIDAL_EVM_TOOLS"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' \
+            'https://github.com/foundry-rs/foundry/releases/download/v1.5.0/foundry_v1.5.0_linux_amd64.tar.gz' \
+            --output "$FACTOIDAL_EVM_TOOLS/foundry.tar.gz"
+          printf '%s  %s\n' \
+            '5cd98f9092bcc28be087939491f786b2bf3ed55e492996a409e29519b8ab4dc8' \
+            "$FACTOIDAL_EVM_TOOLS/foundry.tar.gz" | sha256sum --check --strict -
+          tar --extract --gzip --file "$FACTOIDAL_EVM_TOOLS/foundry.tar.gz" \
+            --directory "$FACTOIDAL_EVM_TOOLS" forge
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' \
+            'https://raw.githubusercontent.com/ethereum/solc-bin/gh-pages/linux-amd64/solc-linux-amd64-v0.8.26+commit.8a97fa7a' \
+            --output "$FACTOIDAL_EVM_TOOLS/solc"
+          printf '%s  %s\n' \
+            'd5f23436f443edb85d8e76906d12f0a86ce0490e7663a9e608efeb7a93f149ef' \
+            "$FACTOIDAL_EVM_TOOLS/solc" | sha256sum --check --strict -
+          chmod 0755 "$FACTOIDAL_EVM_TOOLS/solc"
+          "$FACTOIDAL_EVM_TOOLS/forge" --version
+          "$FACTOIDAL_EVM_TOOLS/solc" --version
+          printf '%s\n' "$FACTOIDAL_EVM_TOOLS" >> "$GITHUB_PATH"
+
+      - name: Verify pinned official Solidity sources
+        run: python3 bootstrap.py
+
+      - name: Check recorded public fixture provenance
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          root = Path('fixtures')
+          metadata = json.loads((root / 'provenance.json').read_text())
+          if metadata['schema'] != 'factoidal.ask.fixture-provenance.v1' or metadata['publicSynthetic'] is not True:
+              raise SystemExit('Expected a versioned public synthetic fixture')
+          for name in ['ask-proof.json', 'expected-statement.json']:
+              data = (root / name).read_bytes()
+              record = metadata['files'][name]
+              if len(data) != record['bytes'] or hashlib.sha256(data).hexdigest() != record['sha256']:
+                  raise SystemExit('Recorded fixture bytes differ: ' + name)
+          expected = json.loads((root / 'expected-statement.json').read_text())
+          proof = json.loads((root / 'ask-proof.json').read_text())
+          if proof['imageId'] != expected['imageId'] or expected['imageId'] != metadata['imageId']:
+              raise SystemExit('Fixture image differs from recorded guest baseline')
+          if proof['journal'] != expected['journal']:
+              raise SystemExit('Proof journal differs from independent native statement')
+          journal = bytes.fromhex(expected['journal'].removeprefix('0x'))
+          if hashlib.sha256(journal).hexdigest() != metadata['journalSha256']:
+              raise SystemExit('Recorded native journal digest differs')
+          print('Verified fixture bytes and recorded baseline; EVM proof verification follows')
+          PY
+
+      - name: Run local verifier admission tests
+        run: forge test --offline --use "$RUNNER_TEMP/factoidal-evm-tools/solc" -vv
+
+      - name: Verify genuine ASK fixture and all six rejection controls
+        env:
+          FOUNDRY_PROFILE: proof
+          FACTOIDAL_EVM_FIXTURE_DIR: fixtures
+        run: forge test --offline --use "$RUNNER_TEMP/factoidal-evm-tools/solc" -vv

@@ -556,13 +556,102 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
     sheets := (from_,source)::sheets
   return (sheets.reverse,ds)
 
+/-! ### Background images (CSS Backgrounds 3 §3.3, issue 704)
+
+A `url(...)` in a `background` or `background-image` declaration is resolved against the URL of
+the sheet it is in (CSS Values 4 §4.5), or of the document for a `style` element or attribute,
+when the sheets are read (`backgroundUrlsAbsolute`), so the cascade holds absolute URLs. The
+host fetches them as it fetches images: `inspect` lists them (`backgroundImages`) once it has
+the sheets (its second call, with `resources`). After the cascade each element's image is
+looked up in the supplied images and decoded (`attachBackgrounds`). -/
+
+/-- The argument of a `url(` whose text follows: its URL, and the text after its `)`. -/
+private def urlArg (p : String) : Option (String × String) :=
+  let cs := p.toList.dropWhile Char.isWhitespace
+  match cs with
+  | [] => none
+  | q :: more =>
+    if q == '"' || q == '\'' then
+      let inner := more.takeWhile (· != q)
+      if inner.length == more.length then none else
+      match (more.drop (inner.length+1)).dropWhile Char.isWhitespace with
+      | ')' :: rest => some (String.ofList inner,String.ofList rest)
+      | _ => none
+    else
+      let inner := cs.takeWhile (· != ')')
+      if inner.length == cs.length then none else
+      some (String.ofList (inner.reverse.dropWhile Char.isWhitespace).reverse,String.ofList (cs.drop (inner.length+1)))
+
+/-- Whether the declaration that the text after `t` is in names a background property: the
+text after the last `{` or `;` of `t` mentions `background`, or `t` has neither and the
+declaration before it did (`prev`). -/
+private def inBackground (prev : Bool) (t : String) : Bool :=
+  let cs := t.toLower.toList
+  let tail := (cs.reverse.takeWhile (fun c => c != '{' && c != ';' && c != '}')).reverse
+  let mentions := fun (l : List Char) => ((String.ofList l).splitOn "background").length > 1
+  if tail.length < cs.length then mentions tail else prev || mentions cs
+
+private def resolveBackgroundUrl (base u : String) : String :=
+  if base.isEmpty || u.toLower.startsWith "data:" then u else Syntax.resolveIri base u
+
+/-- CSS text with each `url(...)` of a background declaration absolute, against `base`. Text
+with no `url(` is given back as it is. -/
+def backgroundUrlsAbsolute (base text : String) : String := Id.run do
+  let pieces := text.splitOn "url("
+  if pieces.length < 2 then return text
+  let mut out := pieces.head!
+  let mut st := inBackground false pieces.head!
+  for p in pieces.tail do
+    match urlArg p with
+    | some (u,rest) =>
+      if st && !u.isEmpty && !u.contains '"' then
+        out := out ++ "url(\"" ++ resolveBackgroundUrl base u ++ "\")" ++ rest
+      else out := out ++ "url(" ++ p
+      st := inBackground st rest
+    | none =>
+      out := out ++ "url(" ++ p
+      st := inBackground st p
+  return out
+
+/-- The absolute URLs of the `url(...)` of background declarations in CSS text. -/
+def backgroundUrlsOf (base text : String) : List String := Id.run do
+  let pieces := text.splitOn "url("
+  if pieces.length < 2 then return []
+  let mut out : List String := []
+  let mut st := inBackground false pieces.head!
+  for p in pieces.tail do
+    match urlArg p with
+    | some (u,rest) =>
+      if st && !u.isEmpty then out := resolveBackgroundUrl base u :: out
+      st := inBackground st rest
+    | none => st := inBackground st p
+  return out.reverse
+
+#guard backgroundUrlsAbsolute "https://a.test/css/s.css" "p{background:url(i.png) no-repeat} q{content:url(x.png)}" ==
+  "p{background:url(\"https://a.test/css/i.png\") no-repeat} q{content:url(x.png)}"
+#guard backgroundUrlsOf "https://a.test/" "div { color: red; background-image: url('a b.png'), url(c.png) }" ==
+  ["https://a.test/a b.png","https://a.test/c.png"]
+#guard backgroundUrlsOf "https://a.test/" "div { list-style: url(m.png) }" == []
+
+/-- The document with each `style` attribute's background URLs absolute against `base`. -/
+def styleAttributesAbsolute (dom : DOM.Dom) (base : String) : DOM.Dom :=
+  if !dom.nodes.any (fun n => n.attrs.any (fun a => a.lname == "style" && (a.value.splitOn "url(").length > 1)) then dom
+  else {dom with nodes := dom.nodes.map fun n =>
+    if n.attrs.any (fun a => a.lname == "style" && (a.value.splitOn "url(").length > 1) then
+      {n with attrs := n.attrs.map fun a => if a.lname == "style" then {a with value := backgroundUrlsAbsolute base a.value} else a}
+    else n}
+
+/-- Most background images that a page has fetched. -/
+private def maxBackgroundImages : Nat := 64
+
 /-- The text of a document's sheets, read as one. -/
 def sheetSource (sheets : List (String × String)) : String := String.intercalate "\n" (sheets.map (·.2))
 
 /-- The rules of sheets in `env`: `CSS.parseIn env`, with the sheets read once (`sheetIn`). -/
 def rulesOfSheets (kept : Kept) (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) :
     Except String (List Rendering.CSS.Rule × Made) := do
-  let (raw,made) := sheetIn kept (sheetSource sheets)
+  -- background URLs absolute against each sheet's own URL, before the sheets are joined
+  let (raw,made) := sheetIn kept (sheetSource (sheets.map fun (b,t) => (b,backgroundUrlsAbsolute b t)))
   return (Rendering.CSS.parseInRaw env (← raw),made)
 
 /-- The rules of the document's sheets in `env` (`sheetsIn`). -/
@@ -704,14 +793,38 @@ def importsLacking (dom : DOM.Dom) (url : String) (request : JSON.Json) : List S
       Rendering.ImportTree.lackingOf importEdges Syntax.resolveIri (fun u => given.lookup u) from_ text).eraseDups.take
         Rendering.ImportTree.maxSheets
 
+/-- The background images of a page that a host fetches (`backgroundImages` of `inspect`):
+the background URLs of its `style` elements, of its `style` attributes, and of the linked and
+imported sheets the request gives, each against its own base; at most
+`maxBackgroundImages`, `data:` URLs left out (the engine decodes those itself). -/
+def backgroundImageRequests (dom : DOM.Dom) (url : String) (request : JSON.Json) : List String :=
+  let base := baseURL dom url
+  let given := (importedSheets request).toOption.getD []
+  let texts : List (String × String) := (dom.treeOrder 0).toList.flatMap fun id =>
+    let n := dom.get id
+    let own := match n.attrs.find? (·.lname == "style") with
+      | some a => [(base,a.value)]
+      | none => []
+    if DOM.Dom.isHtmlElement n "style" then (base,(dom.textContent id).getD "") :: own
+    else if stylesheet n && Rendering.CSS.hasAttribute n "href" then
+      match supplied request id with
+      | .ok (some text) => ((suppliedURL request id).getD base,text) :: own
+      | _ => own
+    else own
+  ((texts ++ given).flatMap fun (b,t) => backgroundUrlsOf b t).eraseDups.filter
+    (!·.toLower.startsWith "data:") |>.take maxBackgroundImages
+
 /-- What the host fetches for a page, in the mode of `request`. In liberal mode the answer
 has `diagnostics`, the skips (`WebAccept.Diagnostic.json`), when there are any. With sheets
-that import others, `imports`: the URLs of the imported sheets the request does not give. -/
+that import others, `imports`: the URLs of the imported sheets the request does not give.
+With background images in its sheets or styles, `backgroundImages` (`{key,url}`). -/
 def inspect (dom : DOM.Dom) (url : String) (request : JSON.Json := .object []) : Except String JSON.Json := do
   let (answer,ds) ← WebAccept.accept (WebAccept.mode request) fun m => inspectIn m dom url (scripting request)
   let lacking := importsLacking dom url request
+  let backgrounds := backgroundImageRequests dom url request
   let more : List (String × JSON.Json) :=
     (if lacking.isEmpty then [] else [("imports",.array (lacking.map fun u => .object [("url",.string u)]))]) ++
+    (if backgrounds.isEmpty then [] else [("backgroundImages",.array (backgrounds.map fun u => .object [("key",.string u),("url",.string u)]))]) ++
     (if ds.isEmpty then [] else [("diagnostics",WebAccept.diagnosticsJSON ds)])
   match answer with
   | .object fields => return .object (fields ++ more)
@@ -2162,6 +2275,27 @@ theorem liberalSvg_noSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option Str
     (liberalSvg kept dom documentURL images svgFonts).2.2.2.1.map (·.skip) = [.svgContent] := by
   simp [liberalSvg, h1, h2, WebRender.makeReplacedNoSvg]
 
+/-- Background pictures take ids from here up, apart from the ids of the page's `img` and SVG
+images (`WebRender.picturesOf`): the paint table keeps one bitmap for each id. -/
+def backgroundPictureBase : Nat := 1099511627776
+
+/-- The cascade with each element's background image decoded from the supplied images (a
+`data:` URL from itself), and the store made for them, for the engine to keep. A page with no
+background image gives its cascade back as it is. -/
+def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × ByteArray))
+    (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) :
+    Except String (DOM.Dom × Array Rendering.CSS.Computed) × Option WebRender.StoreEntry :=
+  match made with
+  | .error e => (.error e,none)
+  | .ok (d,styles) =>
+    let keys := (styles.toList.filterMap (·.backgroundImage)).eraseDups.take maxBackgroundImages
+    if keys.isEmpty then (.ok (d,styles),none) else
+    let (store,entry) := WebRender.storeIn stores keys images
+    let pics := WebRender.picturesOf store (styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·))
+    (.ok (d,styles.mapIdx fun i st => match pics i with
+      | some pic => {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap)}
+      | none => st),entry)
+
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
 run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
@@ -2224,7 +2358,12 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- The cascade of the page, made before the fonts: the layout of `dom` below draws with it
   -- (`renderWithStyles_made`), so it is made once, and it says whether any text resolves to
   -- `serif` (`textWantsSerif`) before the first layout.
+  -- background URLs of `style` attributes absolute against the document (sheets: `rulesOfSheets`)
+  let dom := styleAttributesAbsolute dom url
   let made := Rendering.Generated.styled treeScope dom rules textScale state
+  -- background images decoded into the cascade (issue 704); none on most pages
+  let (made,bgStore) := attachBackgrounds kept.stores images made
+  modify (·.merge {store := bgStore})
   -- With the serif face held, the family lookup goes in only for a page that has serif text;
   -- a page with none lays out as with no face held (`familyFontsWith_first`), with no lookup
   -- for each word. A host that gives the face before the first page (run_html.ts, the Hub)
@@ -2517,10 +2656,11 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   -- (`Rendering.Layout.scrollSize`): the padding box extended to the boxes inside it; for
   -- the root element, the viewport extended to the whole page. "0 0" with no box.
   | 38 =>
-    let border : Rendering.CSS.Edges := match l.styles.get with
-      | .ok styles => (styles[node]?.map (·.borderEdges)).getD {}
+    let style : Rendering.CSS.Computed := match l.styles.get with
+      | .ok styles => styles[node]?.getD {}
       | .error _ => {}
-    match Rendering.Layout.scrollSize l.dom l.boxes border (Float.ofNat l.scene.width) (Float.ofNat l.scene.height) node with
+    match Rendering.Layout.scrollSize l.dom l.boxes style.borderEdges
+        (Float.ofNat l.scene.width) (Float.ofNat l.scene.height) node (Rendering.Layout.scrollAxes style) with
     | some (w,h) => some (line [w,h])
     | none => some "0 0"
   -- 21: the used width and height of the node's content box (CSSOM §9.1 resolved values

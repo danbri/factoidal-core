@@ -15,7 +15,14 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
-| 2026-11-22 | [GDSL public API and independent Hub application](20261122-gdsl-app-api.md) | this commit | current — local package integration, thrown-envelope fallback repair, Node and SwiftShader checks; browser CI and live checks pending |
+| 2026-11-22 | [Verified RISC Zero ASK attestation](20261122-ask-risc0-proof.md) | PR 759 | record — genuine composite, succinct, identity and Groth16 receipts; actual local Solidity verification, tampering controls and scoped gas measurement |
+| 2026-11-22 | [Native and ASK guest execution parity](20261122-ask-guest-parity.md) | PR 759 | current — reproducible 24 native fixtures and four guest framing/limit controls, with source and journal binding |
+| 2026-11-22 | [RISC Zero archive and compiler provenance](20261122-risc0-link-provenance.md) | PR 759 | current — exact verified archive snapshots and compiler-cache binding |
+| 2026-11-22 | [RV32 Lean scalar alignment audit](20261122-rv32-lean-runtime-alignment.md) | issue 745 | current — pinned allocator/accessor audit, reproduced alignment failures and bounded header repair |
+| 2026-11-22 | [RISC Zero executable and receipt boundaries](20261122-risc0-elf-review.md) | issue 745 | current — actual TLS failure, static ELF/archive gate and recursive receipt-decoding regression |
+| 2026-11-22 | [Checked ASK attestation computation](20261122-ask-attestation-pipeline.md) | issue 745 | current — deterministic admitted policy, exact commitment bytes, checked failure/success semantics and native journal fixture |
+| 2026-11-22 | [Checked saturation for local ASK attestations](20261122-checked-saturation.md) | issue 745 | current — actual RDFS/RL convergence checks, retained bounds, declarative saturation and base preservation |
+| 2026-11-22 | [GDSL public API and independent Hub application](20261122-gdsl-app-api.md) | PR 746 | record — merged and deployed, full-Wasm and browser CI passed, live CPU fallback and runtime hashes verified |
 | 2026-11-22 | [Why Foafnaut fails CSS and SVG reftests: causes, counts and evidence](designissues/2026-11-22-reftest-layout-causes.md) | https://github.com/danbri/factoidal-core/issues/747 | current — measurement defects (partial-page note in reftest pictures, empty-picture passes), 21 probe-confirmed causes with counts, Ahem line-box offset, SVG clusters, layout testharness directories, proposed order, how to repeat |
 | 2026-11-19 | [XML RSA-OAEP hashes](20261119-xmlenc-oaep-hacl.md) | PR 601 | current — checked HACL* digest selection, refusal and mixed-hash fixtures |
 | 2026-11-19 | [Paralliverse model, proofs and Hub implementation](20261119-paralliverse-progress.md) | PR 607 | current — exact compiler evidence, physical target boundary, CPU ABI and public-demo gates |

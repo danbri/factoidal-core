@@ -472,10 +472,21 @@ async function prepare(url){
   for(const r of sheets.resources)sources.push({kind:'Style sheet',url:r.url,source:r.source});
   // The sheets those sheets import (page-load.mjs loadImports): named by Lean, read from this
   // site as the linked ones are.
-  const imported=await loadImports(list=>call(page.source,{op:'inspect',url:page.url,...(page.syntax?{syntax:page.syntax}:{}),...(liberal?{liberal:true}:{}),
-      ...(sheets.resources.length?{resources:sheets.resources}:{}),...(list.length?{imported:list}:{})}),siteText,[],
+  let sheetsFacts;
+  const imported=await loadImports(list=>(sheetsFacts=call(page.source,{op:'inspect',url:page.url,...(page.syntax?{syntax:page.syntax}:{}),...(liberal?{liberal:true}:{}),
+      ...(sheets.resources.length?{resources:sheets.resources}:{}),...(list.length?{imported:list}:{})})),siteText,[],
     (sheetURL,reason)=>console.warn('foafnaut: imported style sheet not read:',sheetURL,reason));
   for(const r of imported)sources.push({kind:'Style sheet',url:r.url,source:r.source});
+  // Background images (CSS url() in background declarations, WebDocument.backgroundImageRequests):
+  // listed by the first inspect for style elements and attributes, by the inspect with the sheets
+  // for the sheets; read as the page's images are. An engine that lists none gets none.
+  const knownImages=new Set((facts.images??[]).map(image=>image.key));
+  const backgroundWanted=[...(facts.backgroundImages??[]),...(sheetsFacts?.backgroundImages??[])]
+    .filter(image=>!knownImages.has(image.key)&&(knownImages.add(image.key),true));
+  if(backgroundWanted.length){
+    const more=await pageImages(backgroundWanted);
+    for(const key of ['images','heldImages'])if(Array.isArray(more[key]))images[key]=[...(images[key]??[]),...more[key]];
+  }
   const webFonts=await pageWebFonts(page,sheets.resources);
   // The XSLT result's syntax (html for the output methods html and text) goes with the page to every
   // request (pageLayoutFields): an .xml address must not make the result parse as XML.
