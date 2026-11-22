@@ -218,6 +218,13 @@ bounded receipt decoder, then writes a new private receipt file. It uses
 the shared local proving lock. Both commands enforce a 64 Mi-cycle
 session ceiling and 2^18-cycle segments. The smaller segments bound local
 CPU prover memory while leaving the guest image and statement unchanged.
+`FACTOIDAL_ZK_SEGMENT_PO2=19` or `20` selects larger segments when the
+machine has enough memory; other values are refused. Larger segments
+reduce continuation overhead. `RAYON_NUM_THREADS` independently controls
+the Rust polynomial/NTT work pool; the pinned C++ witness generator has
+its own hardware-sized pool. Measure memory and elapsed time on the actual
+machine before selecting a production proving budget. The parity runner
+always uses the reproducible 18/one-Rayon-thread execution profile.
 Development mode is refused,
 and the Bonsai feature/default remote-prover selection is not used.
 

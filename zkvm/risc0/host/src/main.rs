@@ -29,6 +29,12 @@ fn journal_boolean(bytes: &[u8]) -> Result<bool> {
     }
 }
 
+fn segment_limit(value: Option<&str>) -> Result<u32> {
+    let limit: u32 = value.unwrap_or("18").parse().context("invalid FACTOIDAL_ZK_SEGMENT_PO2")?;
+    ensure!((18..=20).contains(&limit), "FACTOIDAL_ZK_SEGMENT_PO2 must be 18, 19 or 20");
+    Ok(limit)
+}
+
 fn verify(receipt: &Receipt, image_id: Digest, expected: &[u8]) -> Result<bool> {
     let satisfied = journal_boolean(expected)?;
     ensure!(!matches!(receipt.inner, InnerReceipt::Fake(_)), "development receipts are refused");
@@ -64,9 +70,11 @@ fn run_local(args: &[String], prove: bool) -> Result<()> {
     let expected = bounded_read(&args[5], 128)?;
     let satisfied = journal_boolean(&expected)?;
     let mut builder = ExecutorEnv::builder();
-    // A smaller segment bounds CPU prover memory without changing the guest
-    // image or the verified statement. The session ceiling remains separate.
-    builder.write_slice(&frame).segment_limit_po2(18).session_limit(Some(64 * 1024 * 1024));
+    // Segment size trades prover memory for continuation overhead. It changes
+    // neither the guest image nor the verified statement or session ceiling.
+    let setting = env::var_os("FACTOIDAL_ZK_SEGMENT_PO2");
+    let setting = setting.as_ref().map(|s| s.to_str().context("non-UTF-8 segment setting")).transpose()?;
+    builder.write_slice(&frame).segment_limit_po2(segment_limit(setting)?).session_limit(Some(64 * 1024 * 1024));
     let guest_env = builder.build()?;
     // An explicit local subprocess avoids the SDK's default prover selection.
     // The Bonsai feature is not compiled in.
@@ -139,6 +147,17 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn segment_setting_preserves_the_bounded_profiles() {
+        assert_eq!(segment_limit(None).unwrap(), 18);
+        for value in ["18", "19", "20"] {
+            assert_eq!(segment_limit(Some(value)).unwrap().to_string(), value);
+        }
+        for value in ["", "17", "21", "-1", "18.0", "unbounded"] {
+            assert!(segment_limit(Some(value)).is_err());
+        }
+    }
 
     #[test]
     fn journal_requires_exact_length_and_canonical_boolean() {

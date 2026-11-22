@@ -208,7 +208,7 @@ def save_report(output, report):
 
 
 def execute(command, directory, timeout):
-    env = dict(os.environ, RAYON_NUM_THREADS="1")
+    env = dict(os.environ, RAYON_NUM_THREADS="1", FACTOIDAL_ZK_SEGMENT_PO2="18")
     started = time.monotonic()
     with (directory / "stdout.log").open("xb") as stdout, (directory / "stderr.log").open("xb") as stderr:
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
