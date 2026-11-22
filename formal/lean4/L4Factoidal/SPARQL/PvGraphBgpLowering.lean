@@ -1,6 +1,7 @@
 import L4Factoidal.SPARQL.GsslEncodedBgpRefinement
 import L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
 import L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
+import L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath
 
 /-!
 # A restricted RDF BGP lowered to the actual Lean PVGraph evaluator
@@ -23,9 +24,12 @@ the pure model. It does NOT prove GPU WGSL, host I/O, or device fidelity.
 
 namespace L4Factoidal.SPARQL.PvGraphBgpLowering
 
+set_option linter.unusedSimpArgs false
+
 open Lean
 open L4Factoidal.RDF
 open L4Factoidal.SPARQL.GsslEncodedBgpRefinement
+open L4Factoidal.SPARQL.GsslBgpRefinement
 open L4Factoidal.GpuDomainSpecificLanguage
 open L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
 open L4Factoidal.GpuDomainSpecificLanguage.PVGraph.Builder
@@ -83,19 +87,23 @@ def reconstruct : List Comparison → List UInt32 → List UInt32 → Option Sol
 /-- A fixed-width XOR is zero precisely for equal words. -/
 theorem word_xor_zero_iff (a b : UInt32) :
     ((a ^^^ b) == (0 : UInt32)) = (a == b) := by
-  cases a with
-  | ofBitVec x =>
-      cases b with
-      | ofBitVec y =>
-          simp [UInt32.xor, BitVec.xor_eq_zero_iff]
+  have hx : (a ^^^ b = (0 : UInt32)) ↔ (a = b) := by
+    cases a with
+    | ofBitVec x =>
+        cases b with
+        | ofBitVec y =>
+            simp [UInt32.xor, BitVec.xor_eq_zero_iff]
+  cases h1 : ((a ^^^ b) == (0 : UInt32)) <;>
+    cases h2 : (a == b) <;> simp_all [beq_iff_eq, hx]
 
 /-- Two 32-bit XOR masks recover the equality of the original 64-bit IDs. -/
 theorem both_masks_zero_iff (a b : UInt64) :
     (((split a).lo ^^^ (split b).lo == 0) &&
      ((split a).hi ^^^ (split b).hi == 0)) = (a == b) := by
   rw [word_xor_zero_iff, word_xor_zero_iff]
-  have encode_pair : ((split a).lo == (split b).lo) &&
-      ((split a).hi == (split b).hi) = ((split a) == (split b)) := by
+  have encode_pair :
+      (((split a).lo == (split b).lo) &&
+       ((split a).hi == (split b).hi)) = ((split a) == (split b)) := by
     cases ha : split a with
     | mk alo ahi =>
       cases hb : split b with
@@ -114,15 +122,11 @@ theorem pairedHigh (ps : List Comparison) :
 
 private theorem zipLow (ps : List Comparison) :
     List.zipWith (· ^^^ ·) (leftLow ps) (rightLow ps) = differenceLow ps := by
-  induction ps with
-  | nil => rfl
-  | cons _ rest ih => simp [leftLow, rightLow, differenceLow, ih]
+  simp [leftLow, rightLow, differenceLow, List.zipWith_map_map]
 
 private theorem zipHigh (ps : List Comparison) :
     List.zipWith (· ^^^ ·) (leftHigh ps) (rightHigh ps) = differenceHigh ps := by
-  induction ps with
-  | nil => rfl
-  | cons _ rest ih => simp [leftHigh, rightHigh, differenceHigh, ih]
+  simp [leftHigh, rightHigh, differenceHigh, List.zipWith_map_map]
 
 /-- Both operations are the existing generic PVGraph primitive,
     with no RDF-specific arithmetic implementation. -/
@@ -150,10 +154,15 @@ theorem reconstruct_differences (ps : List Comparison) :
   induction ps with
   | nil => rfl
   | cons p rest ih =>
-      simp only [differenceLow, differenceHigh, List.map_cons,
-        reconstruct, ih, Option.map_some, matchingBindings]
-      rw [both_masks_zero_iff]
-      split <;> rfl
+      change (reconstruct rest (differenceLow rest) (differenceHigh rest)).map
+        (fun tail =>
+          if ((split p.leftId).lo ^^^ (split p.rightId).lo == 0) &&
+             ((split p.leftId).hi ^^^ (split p.rightId).hi == 0)
+          then p.binding :: tail else tail) =
+        some (matchingBindings (p :: rest))
+      rw [both_masks_zero_iff, ih]
+      simp only [matchingBindings]
+      cases h : (p.leftId == p.rightId) <;> rfl
 
 private theorem matching_append (a b : List Comparison) :
     matchingBindings (a ++ b) = matchingBindings a ++ matchingBindings b := by
@@ -174,8 +183,13 @@ private theorem row_matching (code : RDF.Term → UInt64)
   induction right with
   | nil => rfl
   | cons r rest ih =>
-      cases hc : (code left.1.term == code r.1.term) <;>
-        simp [matchingBindings, EncodedJoin.rowMatches, hc, ih]
+      cases hc : (code left.1.term == code r.1.term) with
+      | false =>
+          simpa [matchingBindings, EncodedJoin.rowMatches, hc]
+            using ih
+      | true =>
+          simpa [matchingBindings, EncodedJoin.rowMatches, hc]
+            using congrArg (List.cons left.2) ih
 
 /-- Exact ordered and multiplicity-preserving reconstruction from
     equality-comparison slot order. -/
@@ -189,7 +203,13 @@ theorem matching_eq_encodedJoin64 (code : RDF.Term → UInt64)
   induction left with
   | nil => rfl
   | cons l rest ih =>
-      simp only [comparisons, List.flatMap_cons, List.map_cons]
+      change matchingBindings
+        ((right.map fun r =>
+          (⟨l.2, code l.1.term, code r.1.term⟩ : Comparison)) ++
+            comparisons code rest right) =
+        (EncodedJoin.joinRows
+          ((l :: rest).map fun l => (code l.1.term,l.2))
+          (right.map fun r => (code r.1.term,r.2))).map Prod.fst
       rw [matching_append, row_matching, ih]
       rfl
 
@@ -210,7 +230,7 @@ theorem encodedJoin64_eq_indexed (code : RDF.Term → UInt64)
       ⟨.var colleague, .iri works, .iri object⟩] active := by
   calc
     _ = rdfJoin person colleague knows works object active := by
-      unfold rdfJoin checkCode64 at *
+      unfold rdfJoin
       exact congrArg (List.map Prod.fst)
         (EncodedJoin.joinRows_encode_checked
           (fun k : RdfTermCodebook.Key => code k.term)
