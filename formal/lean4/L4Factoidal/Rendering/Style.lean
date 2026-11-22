@@ -2070,7 +2070,9 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   if tag == "table" then
     let spacing := (dimensionAttribute (attrValue n "cellspacing")).bind (resolve 0)
     let v := spacing.getD 2
-    s := {s with borderSpacingX := v, borderSpacingY := v, borderCollapse := false, captionBottom := false}
+    s := { s with
+      borderSpacingX := v, borderSpacingY := v, borderCollapse := false, captionBottom := false
+      pos := {s.pos with borderBox := true} }
   if ["thead","tbody","tfoot","tr"].contains tag then s := {s with verticalAlign := .middle}
   if tag == "td" || tag == "th" then
     let pad := ((tableAncestor dom id).bind fun t => (dimensionAttribute (attrValue t "cellpadding")).bind (resolve 0)).getD 1
