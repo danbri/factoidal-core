@@ -40,8 +40,8 @@ function mockCore({quads=[source]}={}){
       async jsonldToRdf(text){calls.push(["jsonldToRdf",JSON.parse(text)]);return make(quads);},
       async fromQuads(qs){calls.push(["fromQuads",qs]);return make(qs);},
       async datasetMerge(a,b){calls.push(["datasetMerge"]);return make([...a.rows,...b.rows]);},
-      async queryRaw(data,query,opts){
-        calls.push(["queryRaw",data,query,opts]);
+      async query(data,query,opts){
+        calls.push(["query",data,query,opts]);
         return "<sparql xmlns='http://www.w3.org/2005/sparql-results#'></sparql>";
       }
     }
@@ -62,10 +62,12 @@ test("one named RDF graph per XML source and cross-file SPARQL over TriG",async(
   assert.equal(tagged.length,2);
   assert.deepEqual(tagged.map(x=>x[1][0].graph.value),
     [sourceGraphIri("sources/alice.xml"),sourceGraphIri("sources/bob.xml")]);
-  const merged=calls.find(x=>x[0]==="queryRaw");
-  assert.ok(merged[1].includes("alice.xml")&&merged[1].includes("bob.xml"));
-  assert.equal(merged[2],DEFAULT_QUERY);
-  assert.deepEqual(merged[3],{dataFormat:"trig",output:"xml",entail:"none"});
+  const queryCall=calls.find(x=>x[0]==="query");
+  assert.equal(queryCall[1].rows.length,2);
+  assert.ok(queryCall[1].rows.some(q=>q.graph.value.includes("alice.xml")));
+  assert.ok(queryCall[1].rows.some(q=>q.graph.value.includes("bob.xml")));
+  assert.equal(queryCall[2],DEFAULT_QUERY);
+  assert.deepEqual(queryCall[3],{output:"xml",entail:"none"});
   assert.equal(result.html,"<html><body>Mapped by XSLT</body></html>");
   assert.equal(stages.at(-1).id,"xslt4:html");
   assert.equal(open.size,0,"RDF dataset handles are released");
