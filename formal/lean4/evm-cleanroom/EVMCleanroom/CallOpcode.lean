@@ -43,7 +43,7 @@ inductive CallStep where
 /-- A resumed parent with the actual EVM Boolean CALL success bit.
     The charge is validated by Core.commit before committing any persistent
     world-state side effects. -/
-private def finishCall (parent : State) (rest : List Word)
+private def finishCall (parentAddress : Nat) (parent : State) (rest : List Word)
     (out : TxWorld) (remaining : Nat) (succeeded : Bool) : CallStep :=
   if remaining ≤ parent.gas then
     match commit parent (parent.pc + 1)
@@ -51,7 +51,9 @@ private def finishCall (parent : State) (rest : List Word)
         (parent.gas - remaining) with
     | .ok state =>
       .committed out
-        { state with storage := { state.storage with refund := out.refund } }
+        { state with
+          selfBalance := (out.accounts parentAddress).balance
+          storage := { state.storage with refund := out.refund } }
     | .error e => .exceptional e
   else .indeterminate .unsupportedFork
 
@@ -69,11 +71,11 @@ def callStep (fuel : Nat) (world : TxWorld)
       match WorldCall.callZeroValue fuel world
           (target.val % addressBound) parent.gas requested.val with
       | .childSuccess childWorld remaining =>
-        finishCall parent rest childWorld remaining true
+        finishCall parentAddress parent rest childWorld remaining true
       | .childReverted childWorld remaining =>
-        finishCall parent rest childWorld remaining false
+        finishCall parentAddress parent rest childWorld remaining false
       | .childExceptional childWorld remaining _ =>
-        finishCall parent rest childWorld remaining false
+        finishCall parentAddress parent rest childWorld remaining false
       | .callerOutOfGas => .exceptional .outOfGas
       | .invalidAddress => .indeterminate .unsupportedFork
       | .invalidChildGas => .indeterminate .unsupportedFork
@@ -83,13 +85,13 @@ def callStep (fuel : Nat) (world : TxWorld)
       match WorldCall.callWithValue fuel world parentAddress
           (target.val % addressBound) parent.gas requested.val value.val with
       | .childSuccess childWorld remaining =>
-        finishCall parent rest childWorld remaining true
+        finishCall parentAddress parent rest childWorld remaining true
       | .childReverted childWorld remaining =>
-        finishCall parent rest childWorld remaining false
+        finishCall parentAddress parent rest childWorld remaining false
       | .childExceptional childWorld remaining _ =>
-        finishCall parent rest childWorld remaining false
+        finishCall parentAddress parent rest childWorld remaining false
       | .insufficientFunds childWorld remaining =>
-        finishCall parent rest childWorld remaining false
+        finishCall parentAddress parent rest childWorld remaining false
       | .callerOutOfGas => .exceptional .outOfGas
       | .indeterminate e => .indeterminate e
   | _ => .exceptional .stackUnderflow
