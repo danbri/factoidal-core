@@ -1978,16 +1978,39 @@ def droppedDeclarations (dom : Dom) (rules : List Rule) : Array String := Id.run
         out := out.push line
   return out
 
-/-- Spacing an unstyled page starts with. Margins here do not collapse, so each
-side has half of what a browser's single collapsed margin would be. -/
-private def startMargin (tag : String) (size : Float) : Edges :=
-  let gap := size/2
+/-- Whether an ancestor of `id` is a list (`dir`, `dl`, `menu`, `ol`, `ul`): HTML §15.3.8's
+`:is(dir, dl, menu, ol, ul) :is(dir, dl, menu, ol, ul) { margin-block: 0 }`. The walk takes
+at most as many steps as the arena has nodes. -/
+def insideList (dom : Dom) (id : Nat) : Bool := Id.run do
+  let mut cur := (dom.get id).parent
+  for _ in [0:dom.size] do
+    match cur with
+    | none => return false
+    | some k =>
+      let a := dom.get k
+      if ["dir","dl","menu","ol","ul"].contains a.lname then return true
+      cur := a.parent
+  return false
+
+/-- The user agent's margins of an element whose font size is `size` (HTML §15.3.3, §15.3.6,
+§15.3.7, §15.3.8): `margin-block: 1em` on `p`, `pre`, `listing`, `xmp`, `plaintext`,
+`blockquote`, `figure`, `dl` and the lists (0 for a list or `dl` in a list: `nested`);
+`blockquote` and `figure` 40 px inline; headings 0.67em to 2.33em; `dd` 40 px at the start;
+`body` 8 px. These margins collapse (`Layout.collapsePx`). Before 2026-11-23 each was half
+of this, from the time when margins here did not collapse: a `p` and a block after it stood
+8 px apart, where browsers have 16 px. -/
+def startMargin (tag : String) (size : Float) (nested : Bool := false) : Edges :=
+  let em := size
   if tag == "body" then ⟨8,8,8,8⟩
-  else if ["p","pre","dl","listing","xmp","plaintext","address","h1","h2","h3","h4","h5","h6"].contains tag then ⟨gap,0,gap,0⟩
-  else if ["ul","ol","dir","menu"].contains tag then ⟨gap,0,gap,40⟩
-  else if tag == "blockquote" then ⟨gap,40,gap,40⟩
+  else if ["p","pre","listing","xmp","plaintext"].contains tag then ⟨em,0,em,0⟩
+  else if tag == "dl" then (if nested then {} else ⟨em,0,em,0⟩)
+  else if ["ul","ol","dir","menu"].contains tag then (if nested then ⟨0,0,0,40⟩ else ⟨em,0,em,40⟩)
+  else if tag == "blockquote" || tag == "figure" then ⟨em,40,em,40⟩
   else if tag == "dd" then ⟨0,0,0,40⟩
-  else {}
+  else match tag with
+    | "h1" => ⟨0.67*em,0,0.67*em,0⟩ | "h2" => ⟨0.83*em,0,0.83*em,0⟩ | "h3" => ⟨em,0,em,0⟩
+    | "h4" => ⟨1.33*em,0,1.33*em,0⟩ | "h5" => ⟨1.67*em,0,1.67*em,0⟩ | "h6" => ⟨2.33*em,0,2.33*em,0⟩
+    | _ => {}
 
 /-- HTML §15.3.4 (the user agent's rules `pre, listing, xmp, plaintext, code, kbd, samp, tt
 { font-family: monospace }`): elements that start in the monospace family, so that with
@@ -3136,7 +3159,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     shift := if html && n.lname == "sup" then 1 else if html && n.lname == "sub" then -1 else 0,
     preformatted := parent.preformatted || ["pre","listing","xmp","plaintext"].contains n.lname,
     display := if hidden then .none else if block then .block else tableDisplay n.lname,
-    margin := startMargin n.lname fontSize,
+    margin := startMargin n.lname fontSize (insideList dom id),
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
     borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom,
     textAlign := parent.textAlign, direction := parent.direction, vars := parent.vars,
@@ -3248,7 +3271,16 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       | none => initial.direction == .rtl
     chosen := physicalWinners {rtl} chosen
   -- Font size precedes line-height and inheritance-sensitive dependent values.
-  if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then result := applyWinner parent initial result d
+  if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then
+    result := applyWinner parent initial result d
+    -- the user agent's margins are in em of the element's own font size (`startMargin`); an
+    -- author `margin` below still wins
+    -- (only when the margins are still the user agent's: no presentational hint set them)
+    let ua := startMargin n.lname initial.fontSize (insideList dom id)
+    if html && result.fontSize != initial.fontSize && (let a := result.margin
+        a.top == ua.top && a.right == ua.right && a.bottom == ua.bottom && a.left == ua.left) &&
+        ua.top + ua.bottom > 0 then
+      result := {result with margin := startMargin n.lname result.fontSize (insideList dom id)}
   for (key,(priority,d)) in chosen do
     if key != "font-size" then
       -- Inline SVG paint declarations stay with the existing SVG producer.
