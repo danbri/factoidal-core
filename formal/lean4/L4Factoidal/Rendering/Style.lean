@@ -187,6 +187,7 @@ structure Computed where
   minHeight : Length := .auto
   maxHeight : Length := .auto
   objectFit : ObjectFit := .fill
+  objectPosition : Option (Length × Length) := none
   /-- `text-align` (inherited): where the lines of a block container sit. -/
   textAlign : TextAlign := .start
   /-- `direction` (inherited), from CSS or the HTML `dir` attribute. -/
@@ -275,7 +276,7 @@ def htmlProperties : List String :=
    "column-fill","orphans","widows",
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
-   "min-width","max-width","min-height","max-height","object-fit","text-align",
+   "min-width","max-width","min-height","max-height","object-fit","object-position","text-align",
    "direction","unicode-bidi","background-size","background-repeat",
    "background-position","background-position-x","background-position-y"]
 
@@ -1063,6 +1064,24 @@ def BackgroundSize.atViewport (vw vh : Float) : BackgroundSize → BackgroundSiz
   | .cover => .cover
   | .contain => .contain
 
+/-- Read one axis of a position validated by the CSS property grammar. -/
+private def objectPositionAxis (s : String) : Option Length :=
+  match s with
+  | "left" | "top" => some (.percent 0)
+  | "center" => some (.percent 0.5)
+  | "right" | "bottom" => some (.percent 1)
+  | _ =>
+    let edge := (s.splitOn " ").headD ""
+    if edge == "left" || edge == "top" then
+      (length (s.drop (edge.length + 1)).toString).toOption
+    else if edge == "right" || edge == "bottom" then
+      match (length (s.drop (edge.length + 1)).toString).toOption with
+      | some (.px n) => some (.calc 1 (-n))
+      | some (.percent p) => some (.percent (1-p))
+      | some (.calc p n) => some (.calc (1-p) (-n))
+      | _ => none
+    else (length s).toOption
+
 private def pixels (s : String) : Except String Float := do
   match ← length s with | .px n => return n | _ => throw "box edges require px in this CSS profile"
 private def color (source : String) : Except String Color := do
@@ -1581,6 +1600,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "max-width" => return {s with maxWidth := ← limit d.value}
   | "min-height" => return {s with minHeight := ← limit d.value}
   | "max-height" => return {s with maxHeight := ← limit d.value}
+  | "object-position" =>
+    let some value := tableComputed s.fontSize d.property d.value | throw "invalid CSS object-position"
+    let some (x,y) := CssValues.positionXY value | throw "unsupported CSS object-position"
+    let some x := objectPositionAxis x | throw "unsupported horizontal object-position"
+    let some y := objectPositionAxis y | throw "unsupported vertical object-position"
+    return {s with objectPosition := some (x,y)}
   | "object-fit" => match (trim d.value).toLower with
     | "fill" => return {s with objectFit := .fill}
     | "contain" => return {s with objectFit := .contain}
@@ -1769,7 +1794,7 @@ def ownProperties : List String :=
    "border-top-style","border-right-style","border-bottom-style","border-left-style",
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
-   "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
+   "vertical-align","min-width","max-width","min-height","max-height","object-fit","object-position","font-weight","font-style",
    "font-family","background-image","background-size","background-repeat",
    "background-position-x","background-position-y","column-count","column-width","column-fill","columns","orphans","widows","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
@@ -1906,6 +1931,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "min-height" => some {s with minHeight := source.minHeight}
   | "max-height" => some {s with maxHeight := source.maxHeight}
   | "object-fit" => some {s with objectFit := source.objectFit}
+  | "object-position" => some {s with objectPosition := source.objectPosition}
   | "text-align" => some {s with textAlign := source.textAlign}
   | "direction" => some {s with direction := source.direction}
   | "unicode-bidi" => some {s with unicodeBidi := source.unicodeBidi}
@@ -2085,7 +2111,9 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   if tag == "table" then
     let spacing := (dimensionAttribute (attrValue n "cellspacing")).bind (resolve 0)
     let v := spacing.getD 2
-    s := {s with borderSpacingX := v, borderSpacingY := v, borderCollapse := false, captionBottom := false}
+    s := { s with
+      borderSpacingX := v, borderSpacingY := v, borderCollapse := false, captionBottom := false
+      pos := {s.pos with borderBox := true} }
   if ["thead","tbody","tfoot","tr"].contains tag then s := {s with verticalAlign := .middle}
   if tag == "td" || tag == "th" then
     let pad := ((tableAncestor dom id).bind fun t => (dimensionAttribute (attrValue t "cellpadding")).bind (resolve 0)).getD 1
