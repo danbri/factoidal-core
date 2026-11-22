@@ -90,6 +90,26 @@ add('slt-out-of-gas', push(maxWord) + push(signBit) + '1200', '', 8)
 add('slt-one-operand', '60011200', '', 6)
 add('slt-no-operands', '1200', '', 3)
 
+// ADDMOD/MULMOD must retain full-precision intermediate values. Each triple
+// is executed by the pinned independent EthereumJS oracle and by actual Lean.
+const modularPairs = [
+  [0n, 0n], [1n, 2n], [maxWord, maxWord], [maxWord, 2n],
+  [signBit, signBit], [signBit + 1n, 7n], [7n, maxWord], [maxWord, 0n],
+]
+const modularModuli = [0n, 1n, 3n, 7n, signBit, maxWord]
+let modularCases = 0
+for (const [op, name] of [['08', 'addmod'], ['09', 'mulmod']]) {
+  for (const [i, [a, b]] of modularPairs.entries()) {
+    for (const [j, m] of modularModuli.entries()) {
+      add(`${name}-${i}-${j}`, push(m) + push(b) + push(a) + op + '00', '', 17)
+      modularCases++
+    }
+  }
+  add(`${name}-out-of-gas`, '600360026001' + op + '00', '', 16)
+  add(`${name}-underflow`, '60016002' + op + '00', '', 100)
+  modularCases += 2
+}
+
 const highToLow = abi(signBit + 1n, signBit)
 const lowToHigh = abi(signBit, signBit + 1n)
 const baseline = await oracle({ code: runtime, data: highToLow, gas: 1000 })
@@ -148,6 +168,6 @@ console.log(JSON.stringify({
   kind: 'solidity-pure-frame-differential', oracle: '@ethereumjs/evm@10.1.3 Shanghai runCode',
   compiler: fixture.compiler.version, runtimeSha256: fixture.runtimeSha256,
   compared: cases.length, matched: cases.length, mismatches: 0,
-  signedCases: words.length ** 2 + 3, forbiddenRefusals: forbidden.length,
+  signedCases: words.length ** 2 + 3, modularCases, forbiddenRefusals: forbidden.length,
   compiledExactGas: baseline.gasUsed, legacyCompatibility: 1,
 }))

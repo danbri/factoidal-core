@@ -8,10 +8,10 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "3ab0b5be08e79902d819bd570d6f8707a6b09e2d",
+    "EVMCleanroom/Core.lean": "6d84dcf79da145192f7020a0240c3b3195fbfb88",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
-    "EVMCleanroom/Frame.lean": "0be10880faff6321aab9d4f87b003194024beb09",
+    "EVMCleanroom/Frame.lean": "ae83b64fa59f5362d9dda20a7ae8a2ac778ed2de",
     "EVMCleanroom/World.lean": "ad753ba48fd171428b6b1499043ee71c0358693f",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
@@ -20,7 +20,7 @@
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
     "EVMCleanroom/CLI.lean": "f8a3353e2d6918d4c6930cad8d9f67dcdad22b5e",
-    "EVMCleanroom.lean": "0ba0c1317e8f8b560dbd1c609c2282b4ec8f37b6",
+    "EVMCleanroom.lean": "50dba1238f4ae50d0606537b2aceea7b76acbd77",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
@@ -66,10 +66,11 @@
     "scripts/differential/fixtures/solidity-pure/PureCompare.sol": "54b9b9ef152b6c7d65f83d5c71ab8384364fdbaa",
     "scripts/differential/fixtures/solidity-pure/README.md": "67434fd985ee991564f528f9a475b7950457f3ba",
     "scripts/differential/fixtures/solidity-pure/fixture.json": "d41be2ef7c28a5c1c4690986ade30183b372afd6",
-    "scripts/differential/solidity-pure.mjs": "1fc2d632388268d699dfd2116518b736dc2aa164",
+    "scripts/differential/solidity-pure.mjs": "79b50d85fccbb8bd2f11ed32424ea15a28c4581c",
     "scripts/rpc/evidence/op-sepolia-jovian-decimals-51771054.json": "45e3eec526801649e061cecff87c0f28dec98e7e",
     "scripts/rpc/evidence/op-sepolia-solidity-ge-51771081.json": "2d8c431338d2f34fb2179ac709b675190295364a",
-    "scripts/rpc/evidence/polygon-solidity-ge-97759492.json": "68700c5c1ef0bd14089c11525a4663dbd4e918b2"
+    "scripts/rpc/evidence/polygon-solidity-ge-97759492.json": "68700c5c1ef0bd14089c11525a4663dbd4e918b2",
+    "EVMCleanroom/ModularProofs.lean": "2eadb7c2a35da21c9f94c2a1c9881699af55446f"
   },
   "theorem_inventory": [
     {
@@ -1235,5 +1236,18 @@
         "scope": "One local native CLI fixture, without an observed performance gain."
       }
     }
+  },
+  "modular_arithmetic_pending_validation": {
+    "baseCommit": "c33266528063272b900a8ceb0dfa34f6b365e3e7",
+    "newTheorems": [
+      "EVMCleanroom.Word.addMod_correct",
+      "EVMCleanroom.Word.mulMod_correct",
+      "EVMCleanroom.step_addMod",
+      "EVMCleanroom.step_mulMod"
+    ],
+    "sourceStatus": "proposed-unvalidated",
+    "oraclePlanned": "@ethereumjs/evm@10.1.3 Shanghai, 100 new comparisons",
+    "preservedSelectedAxiomSet": 60,
+    "limits": "Not official state tests, protocol gas accounting, signed arithmetic, byte windows or full execution client"
   }
 }

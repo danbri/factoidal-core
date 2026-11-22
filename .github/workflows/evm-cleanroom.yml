@@ -205,7 +205,7 @@ jobs:
         working-directory: formal/lean4
         run: |
           mkdir -p evm-cleanroom/.lake/differential
-          node evm-cleanroom/scripts/differential/solidity-pure.mjs | tee evm-cleanroom/.lake/differential/solidity-pure.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==83 and x["mismatches"]==0 and x["signedCases"]==67 and x["forbiddenRefusals"]==5 and x["legacyCompatibility"]==1,x'
+          node evm-cleanroom/scripts/differential/solidity-pure.mjs | tee evm-cleanroom/.lake/differential/solidity-pure.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==183 and x["mismatches"]==0 and x["signedCases"]==67 and x["modularCases"]==100 and x["forbiddenRefusals"]==5 and x["legacyCompatibility"]==1,x'
       - name: Replay read-only RPC captures offline with the compiled guarded frame comparator
         shell: bash
         working-directory: formal/lean4

@@ -50,6 +50,20 @@ private def resultWord (result : Except Error State) : Option Nat :=
 private def pushMax : Array UInt8 :=
   #[0x7f] ++ (List.replicate 32 (0xff : UInt8)).toArray
 
+-- Modular arithmetic uses a full-width intermediate, never the wrapped
+-- 256-bit ADD/MUL result. 2 * (2^256-1) modulo 7 is 2, not 0.
+#guard resultWord (run 8 (initial (#[0x60, 0x07] ++ pushMax ++ pushMax ++ #[0x08, 0x00]) 100)) ==
+  some 2
+#guard resultWord (run 8 (initial (#[0x60, 0x07, 0x60, 0x02] ++ pushMax ++ #[0x09, 0x00]) 100)) ==
+  some 2
+#guard resultWord (run 8 (initial #[0x5f, 0x60, 0x02, 0x60, 0x03, 0x08, 0x00])) == some 0
+#guard resultWord (run 8 (initial #[0x5f, 0x60, 0x02, 0x60, 0x03, 0x09, 0x00])) == some 0
+#guard isError (step (initial #[0x08])) .stackUnderflow
+#guard isError (step (initial #[0x09])) .stackUnderflow
+#guard isError (run 8 (initial #[0x60, 0x03, 0x60, 0x02, 0x60, 0x01, 0x08, 0x00] 16)) .outOfGas
+#guard isError (run 8 (initial #[0x60, 0x03, 0x60, 0x02, 0x60, 0x01, 0x09, 0x00] 16)) .outOfGas
+
+
 #guard resultWord (run 8 (initial (pushMax ++ pushMax ++ #[0x01, 0x00]) 100)) ==
   some (modulus - 2)
 #guard resultWord (run 8 (initial (pushMax ++ #[0x60, 0x04, 0x01, 0x00]) 100)) ==

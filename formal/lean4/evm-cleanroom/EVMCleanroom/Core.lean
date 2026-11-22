@@ -28,6 +28,15 @@ def Word.mul (a b : Word) : Word := word (a.val * b.val)
 def Word.sub (a b : Word) : Word := word (a.val + modulus - b.val)
 def Word.div (a b : Word) : Word := word (a.val / b.val)
 
+/-- ADDMOD computes the full mathematical sum before reducing, not an
+    intermediate 256-bit wrapped addition. A zero modulus yields zero. -/
+def Word.addMod (a b m : Word) : Word :=
+  if m.val = 0 then word 0 else word ((a.val + b.val) % m.val)
+
+/-- MULMOD likewise uses the full mathematical product before reducing. -/
+def Word.mulMod (a b m : Word) : Word :=
+  if m.val = 0 then word 0 else word ((a.val * b.val) % m.val)
+
 def Word.ofBool (b : Bool) : Word := if b then word 1 else word 0
 def Word.lt (a b : Word) : Word := Word.ofBool (decide (a.val < b.val))
 def Word.gt (a b : Word) : Word := Word.ofBool (decide (b.val < a.val))
@@ -213,6 +222,13 @@ private def binary (s : State) (op : Word → Word → Word) (cost : Nat) : Exce
   | a :: b :: rest => prepared (s.pc + 1) (op a b :: rest) cost
   | _ => .error .stackUnderflow
 
+/-- Three stack operands in pop order; no state is committed here. -/
+private def ternary (s : State) (op : Word → Word → Word → Word)
+    (cost : Nat) : Except Error Plan :=
+  match s.stack.items with
+  | a :: b :: m :: rest => prepared (s.pc + 1) (op a b m :: rest) cost
+  | _ => .error .stackUnderflow
+
 private def unary (s : State) (op : Word → Word) (cost : Nat) : Except Error Plan :=
   match s.stack.items with
   | value :: rest => prepared (s.pc + 1) (op value :: rest) cost
@@ -326,6 +342,8 @@ def planStep (s : State) : Except Error Plan :=
     | 0x02 => binary s Word.mul 5                      -- MUL
     | 0x03 => binary s Word.sub 3                      -- SUB
     | 0x04 => binary s Word.div 5                      -- DIV
+    | 0x08 => ternary s Word.addMod 8                  -- ADDMOD
+    | 0x09 => ternary s Word.mulMod 8                  -- MULMOD
     | 0x10 => binary s Word.lt 3                       -- LT
     | 0x11 => binary s Word.gt 3                       -- GT
     | 0x12 => binary s Word.signedLt 3                 -- SLT
@@ -412,6 +430,24 @@ theorem step_slt (s : State) (a b : Word) (rest : List Word)
     step s = commit s (s.pc + 1) (a.signedLt b :: rest) 3 := by
   simp [step, planStep, hRun, hOp, binary, hStack, prepared]
 
+/-- Kind: dispatcher correspondence.
+    Says: ADDMOD uses three words in EVM pop order and charges eight gas
+    through the common commit path, without early 256-bit addition wrap. -/
+theorem step_addMod (s : State) (a b m : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x08)
+    (hStack : s.stack.items = a :: b :: m :: rest) :
+    step s = commit s (s.pc + 1) (a.addMod b m :: rest) 8 := by
+  simp [step, planStep, hRun, hOp, ternary, hStack, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: MULMOD uses three words in EVM pop order and charges eight gas
+    through the common commit path, without early 256-bit product wrap. -/
+theorem step_mulMod (s : State) (a b m : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x09)
+    (hStack : s.stack.items = a :: b :: m :: rest) :
+    step s = commit s (s.pc + 1) (a.mulMod b m :: rest) 8 := by
+  simp [step, planStep, hRun, hOp, ternary, hStack, prepared]
+
 /-- Kind: dispatcher boundary.
     Says: SLT faults on stacks with fewer than two operands.
     Does not say: a valid stack is sufficient to execute SLT. -/
@@ -464,6 +500,8 @@ def run : Nat → State → Except Error State
 #print axioms step_callDataLoad
 #print axioms step_callDataSize
 #print axioms step_slt
+#print axioms step_addMod
+#print axioms step_mulMod
 #print axioms step_slt_underflow
 #print axioms step_callValue_zero
 
