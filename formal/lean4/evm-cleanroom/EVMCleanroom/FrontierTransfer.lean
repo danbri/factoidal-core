@@ -158,7 +158,7 @@ private def historicalExample : Input :=
     signedNonce := 0
     recipientHasNoCode := true }
 
-/-- Fixture BALANCES ARE ILLUSTRATIVE, NOT AUTHENTICATED MAINNET PRESTATE. -/
+-- Fixture BALANCES ARE ILLUSTRATIVE, NOT AUTHENTICATED MAINNET PRESTATE.
 #guard intrinsicGas historicalExample == 21000
 #guard fee historicalExample == 1050000000000000000
 #guard debit historicalExample == 1050000000000031337
