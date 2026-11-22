@@ -61,6 +61,20 @@ private def pushMax : Array UInt8 :=
 #guard isError (step (initial #[0x08])) .stackUnderflow
 #guard isError (step (initial #[0x09])) .stackUnderflow
 
+-- SGT compares signed 256-bit words, not their Nat representations.
+#guard (word 0).signedGt (word (modulus - 1)) == word 1
+#guard (word (modulus - 1)).signedGt (word 0) == word 0
+#guard (word (modulus - 1)).signedGt (word signBit) == word 1
+#guard (word signBit).signedGt (word (modulus - 1)) == word 0
+#guard (word signBit).signedGt (word signBit) == word 0
+-- Top of stack is SGT's left operand; 2 > 1 yields one.
+#guard resultWord (run 4 (initial #[0x60, 0x01, 0x60, 0x02, 0x13, 0x00] 9)) == some 1
+#guard resultWord (run 4 (initial #[0x60, 0x02, 0x60, 0x01, 0x13, 0x00] 9)) == some 0
+#guard isError (step (initial #[0x13])) .stackUnderflow
+#guard isError (step { (initial #[0x13]) with
+  stack := ⟨[word 1], by decide⟩ }) .stackUnderflow
+#guard isError (run 4 (initial #[0x60, 0x01, 0x60, 0x02, 0x13, 0x00] 8)) .outOfGas
+
 -- SIGNEXTEND indexes bytes from the least-significant end. The sign bit is
 -- bit 7 of byte k, not the word's global sign bit except when k=31.
 #guard (word 0).signExtend (word 0x7f) == word 0x7f
