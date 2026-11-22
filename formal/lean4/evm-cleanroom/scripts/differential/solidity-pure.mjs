@@ -168,6 +168,40 @@ for (const [op, name] of [['08', 'addmod'], ['09', 'mulmod']]) {
   modularCases += 2
 }
 
+// MOD and EXP are compared through actual bytecode in both engines. EXP is
+// EIP-160 metered, with 0/1/2/32-byte exponents and full 256-bit operands.
+// No JavaScript copy of the EVM operation supplies expected answers.
+const modExpBases = [0n, 1n, 2n, 3n, 7n, signBit, maxWord - 1n, maxWord]
+const modExpExponents = [0n, 1n, 2n, 3n, 7n, 255n, 256n, 65535n,
+  65536n, signBit - 1n, signBit, maxWord]
+let modExpCases = 0
+const addModExp = (id, code, gas) => {
+  add(id, code, '', gas)
+  modExpCases++
+}
+for (const [i, divisor] of modExpBases.entries()) {
+  for (const [j, dividend] of modExpBases.entries()) {
+    addModExp(`mod-${i}-${j}`, push(divisor) + push(dividend) + '0600', 11)
+  }
+}
+addModExp('mod-one-gas-short', '600360070600', 10)
+addModExp('mod-underflow', '60030600', 100)
+for (const [i, base] of modExpBases.entries()) {
+  for (const [j, exponent] of modExpExponents.entries()) {
+    addModExp(`exp-${i}-${j}`, push(exponent) + push(base) + '0a00', 2000)
+  }
+}
+for (const [name, code, gas] of [
+  ['zero-exponent-exact', '600060020a00', 16],
+  ['zero-exponent-one-gas-short', '600060020a00', 15],
+  ['one-byte-exact', '600160020a00', 66],
+  ['one-byte-one-gas-short', '600160020a00', 65],
+  ['two-byte-exact', '61010060020a00', 116],
+  ['two-byte-one-gas-short', '61010060020a00', 115],
+]) addModExp('exp-' + name, code, gas)
+addModExp('exp-underflow', '60010a00', 100)
+assert.equal(modExpCases, 169)
+
 const highToLow = abi(signBit + 1n, signBit)
 const lowToHigh = abi(signBit, signBit + 1n)
 const baseline = await oracle({ code: runtime, data: highToLow, gas: 1000 })
@@ -227,6 +261,6 @@ console.log(JSON.stringify({
   compiler: fixture.compiler.version, runtimeSha256: fixture.runtimeSha256,
   compared: cases.length, matched: cases.length, mismatches: 0,
   signedCases: words.length ** 2 + 3 + newSignedCases + sgtCases, sgtCases, signExtendCases,
-  modularCases, forbiddenRefusals: forbidden.length,
+  modularCases, modExpCases, forbiddenRefusals: forbidden.length,
   compiledExactGas: baseline.gasUsed, legacyCompatibility: 1,
 }))
