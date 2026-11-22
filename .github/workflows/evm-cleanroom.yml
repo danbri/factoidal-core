@@ -2,7 +2,7 @@ name: EVM cleanroom Lean seed
 
 on:
   push:
-    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121", "feat/lean-frontier-historical-mainnet-46147-20261122"]
+    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121", "feat/lean-frontier-historical-mainnet-46147-20261122", "feat/lean-frontier-state-witness-20261122"]
     paths:
       - "formal/lean4/evm-cleanroom/**"
       - ".github/workflows/evm-cleanroom.yml"
@@ -114,7 +114,7 @@ jobs:
           node scripts/check-eels-memory.mjs /tmp/ethereum-eels-prague-gas.py /tmp/ethereum-eels-prague-memory.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==6 and x["mismatches"]==0, x'
   differential:
     # PR-only avoids installing a second Lean/npm toolchain for both push and PR.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122' || github.ref == 'refs/heads/feat/lean-frontier-state-witness-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -194,7 +194,7 @@ jobs:
             formal/lean4/evm-cleanroom/scripts/differential/package-lock.json
   eels-real-state:
     # Validate real EELS post-state roots, not merely JSON structure.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122' || github.ref == 'refs/heads/feat/lean-frontier-state-witness-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -264,6 +264,24 @@ jobs:
             --fixture evidence/frontier-mainnet-46147.json \
             --out .lake/eels/first-real-mainnet.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["hardfork"]=="Frontier" and x["block"]=="46147" and x["chargedGas"]=="21000" and x["chargedFeeWei"]=="1050000000000000000" and x["adversarialControlsRejected"]==6 and x["preStateAuthenticated"] is False and x["leanDerivedIntermediateStateRoot"] is None and x["fullMainnetStateReplay"] is False,x'
+      - name: Verify secure MPT account proofs, sparse state updates and five adversarial changes
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/verify-frontier-account-witness.mjs \
+            --historical evidence/frontier-mainnet-46147.json \
+            --selftest \
+            --out .lake/eels/frontier-prestate-synthetic-mpt-test.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="synthetic-archive-proof-mutation-tests-pass" and x["syntheticOnly"] is True and x["completeTrieMatchesSparseProofTrie"] and x["forgedProofsRejected"]==5 and x["historicalPrestateAvailable"] is False and x["actualMainnetStateRootReplayed"] is False,x'
+          node --check scripts/eels/fetch-frontier-account-witness.mjs
+      - name: Probe free historical archive for REAL 2015 account proof witnesses (not a conformance gate)
+        continue-on-error: true
+        timeout-minutes: 3
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/fetch-frontier-account-witness.mjs \
+            --rpc https://ethereum-rpc.blockreq.com/v1/rpc/public \
+            --historical evidence/frontier-mainnet-46147.json \
+            --out .lake/eels/first-frontier-archive-proof-bundle.json
       - name: Preserve published fixture, host transition results and npm resolution
         if: always()
         uses: actions/upload-artifact@v4
