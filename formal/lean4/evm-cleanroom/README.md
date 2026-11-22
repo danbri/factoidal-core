@@ -263,8 +263,8 @@ charging. This does not prove EELS equivalence or world-state rollback.
 
 ## Opcode coverage
 
-`STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `ADDMOD`, `MULMOD`, `LT`, `GT`, `SLT`, `EQ`, `ISZERO`,
-`AND`, `OR`, `XOR`, `NOT`, `BYTE`, `SHL`, `SHR`, `CLZ`, `ADDRESS`, `CALLVALUE`,
+`STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `SDIV`, `SMOD`, `ADDMOD`, `MULMOD`, `LT`, `GT`, `SLT`, `EQ`, `ISZERO`,
+`AND`, `OR`, `XOR`, `NOT`, `BYTE`, `SHL`, `SHR`, `SAR`, `CLZ`, `ADDRESS`, `CALLVALUE`,
 `CALLDATALOAD`, `CALLDATASIZE`, `CALLDATACOPY`, `CODESIZE`, `CODECOPY`,
 `RETURNDATASIZE`, `RETURNDATACOPY`, `SELFBALANCE`, `POP`,
 `JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`, `MLOAD`, `MSTORE`, `MSTORE8`, `MSIZE`,
