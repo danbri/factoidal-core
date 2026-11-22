@@ -52,6 +52,24 @@ theorem KernelTag_decode_code (k : KernelTag) :
     KernelTag.decode k.code = some k := by
   cases k <;> decide
 
+/-- The sole mapping from a Lean primitive to a supported GPU kernel. -/
+def KernelTag.ofOperator? : Operator → Option KernelTag
+  | .mapAdd => some .mapAdd
+  | .mapMul => some .mapMul
+  | .mapXor => some .mapXor
+  | .zipAdd => some .zipAdd
+  | .zipXor => some .zipXor
+  | .scalarAdd => some .scalarAdd
+  | .broadcast => some .broadcast
+  | _ => none
+
+/-- Recovering the selected operator from the encoded opcode cannot alias
+    any other supported kernel. -/
+theorem KernelTag_decode_ofOperator (op : Operator) (tag : KernelTag)
+    (h : KernelTag.ofOperator? op = some tag) :
+    KernelTag.decode tag.code = some tag :=
+  KernelTag_decode_code tag
+
 /-- A call admitted to this fragment has appropriately typed operands.
     Zip length equality is part of the call, not a GPU-side guess. -/
 inductive KernelCall where
