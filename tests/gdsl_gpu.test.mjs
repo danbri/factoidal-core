@@ -98,7 +98,8 @@ test("Lean GPU plan instructions wire WebGPU buffers without JS graph interpreta
     throw Error("GPU execution must not compute a JS reference");
   }};
   const result=await runPVGraph({pvgraph,bindings:{words:[1,2,3]},
-    loadEngine:async()=>engine,session:fakeSession,requireGPU:true,minWords:0});
+    loadEngine:async()=>engine,session:fakeSession,requireGPU:true,minWords:0,
+    verifyWithLean:false});
   assert.equal(result.status,"gpu-observed");
   assert.equal(result.dispatches,1);
   assert.deepEqual({...result.outputs},{out:[7,14,21]});
