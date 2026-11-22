@@ -90,6 +90,8 @@ jobs:
         run: python3 zkvm/risc0/evm/bootstrap.py
       - name: Verify the real official Groth16 fixture with the pinned SDK
         run: cargo +1.97.1 test --release --locked --manifest-path zkvm/risc0/evm/receipt-tool/Cargo.toml -j2
+      - name: Check private ASK lifecycle and publication refusals
+        run: python3 zkvm/risc0/private/test_workflow.py
       - name: Install the pinned RV32 compiler for real assembly controls
         shell: bash
         run: |

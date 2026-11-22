@@ -12,6 +12,8 @@ the repository's pinned HACL* implementation.
 
 The precise admitted policy, limits and theorem scope are documented in
 [the computation protocol](../../docs/20261122-ask-attestation-pipeline.md).
+The [private workflow](private/README.md) adds OS-generated salts, private
+snapshots/checkpoints and a public-only verifier around the reviewed guest.
 This is a bounded, versioned policy, not an arbitrary SPARQL service.
 The RDFS regime runs the existing full-seed closure before the positive
 rule closure; it does not alternate the two closures to a joint fixpoint.
@@ -30,6 +32,7 @@ axioms. It is not presented as complete RDF 1.1 model-theoretic entailment.
 | `receipt_format.rs` | Bound receipt transport and reject unsupported recursive assumptions before SDK decoding; no proof verification is reimplemented |
 | `verify-elf.py` | Check the final ELF and every runtime object for the restricted ABI, static linking and absence of TLS |
 | `evm/` | Patched official Groth16 conversion and a local Solidity gate requiring the authorised true ASK statement |
+| `private/` | Private witness lifecycle, independent public authority, local proving orchestration and allowlisted public export |
 
 The Lean statements do not prove the compiler, C/Rust bridge, allocator,
 HACL FFI, RISC Zero circuits or Solidity implementation. These remain
