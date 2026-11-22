@@ -27,6 +27,8 @@
     "scripts/differential/call-boundary.mjs": "d2ddd1fd22f7139e0c50b1e82f6143db0c07d42a",
     "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
     "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
+    "scripts/check-active-ledger.py": "ea8de18227f20a2f8013ec42945eaf36fc8fca77",
+    "scripts/test-active-ledger.py": "c0223c61e6a8ab0528d2340d574a211dc41723f3",
     "scripts/check-axiom-output.py": "8d0cabed81fa593b90062c600bb4a9e3a3c0430b",
     "scripts/differential/osaka-clz.mjs": "75c466fdfef537ee1ab79874263ee8bba59ef251",
     "EVMCleanroom/PragueEnvelope.lean": "1dbd4c5ccca0ab3d74e84d848be3cf6f5c6f9bce",
