@@ -101,6 +101,27 @@ for (const c of w3c.cases) {
     if (c.outcome === 'ok') {
       assert.equal(res.ok, true, res.error);
       assert.equal(res.canonical, canonical(readFileSync(join(w3cDir, c.expected), 'utf8')));
+    } else if (c.outcome === 'xfail') {
+      // An expected failure: red when it starts to decrypt (close c.issue then).
+      assert.notEqual(res.ok, true, `STALE expected failure, now decrypts: ${c.issue}`);
+      assert.equal(res.error, DECRYPTION_ERROR, res.error);
+    } else {
+      assert.equal(res.ok, false);
+      assert.ok(res.error.includes(c.reason), res.error);
+      assert.notEqual(res.error, DECRYPTION_ERROR);
+    }
+  });
+}
+
+// PBKDF2 key derivation (XML Encryption 1.1 §5.4.2) in key agreement:
+// documents made by Node's crypto (tests/xmlenc/make-pbkdf2.mjs).
+const pbkdf2 = JSON.parse(readFileSync(join(root, 'tests', 'xmlenc', 'pbkdf2.json'), 'utf8'));
+for (const c of pbkdf2.cases) {
+  test(`PBKDF2 ${c.name}: ${c.outcome}`, async () => {
+    const res = await decrypt({ document: c.document, keys: pbkdf2.keys });
+    if (c.outcome === 'ok') {
+      assert.equal(res.ok, true, res.error);
+      assert.equal(res.canonical, canonical(c.expected));
     } else {
       assert.equal(res.ok, false);
       assert.ok(res.error.includes(c.reason), res.error);

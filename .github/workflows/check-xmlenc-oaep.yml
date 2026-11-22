@@ -35,6 +35,11 @@ jobs:
         L4Factoidal.Crypto.RsaOaep.emeEncode_length
         L4Factoidal.Crypto.RsaOaep.emeDecode_emeEncode
         L4Factoidal.Crypto.RsaOaep.oaepDecrypt_oaepEncrypt
+        L4Factoidal.XML.Enc.xmlenc11_pbkdf2_native_eq_rfc8018
+        L4Factoidal.XML.Enc.xmlenc11_kdfOf_concatKdf
+        L4Factoidal.XML.Enc.xmlenc11_derive_concat
+        L4Factoidal.XML.Enc.xmlenc11_derive_pbkdf2_size
+        L4Factoidal.XML.Enc.xmlenc11_derive_pbkdf2_eq_webcrypto
     steps:
       - uses: actions/checkout@v4
         with:

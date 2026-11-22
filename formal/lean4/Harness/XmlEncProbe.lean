@@ -39,6 +39,7 @@ structure Score where
   pass : Nat := 0
   fail : Nat := 0
   hostOnly : Nat := 0
+  xfail : Nat := 0
   failures : List String := []
 
 def Score.ok (s : Score) (b : Bool) (name : String) : Score :=
@@ -55,6 +56,19 @@ def run (f : (List (Req × Ans) → Cipher) → Prims → String → String) (ar
   match parseJson (f native nativePrims arg.toString) with
   | .ok j => j
   | .error _ => .object [("ok", .bool false), ("error", .string "unparseable envelope")]
+
+/-- `decryptWith` on the replay cipher with no answers: the first AES request
+comes back as `need`, so a host-only case shows the key the Lean code
+derived for it. -/
+def runReplay (arg : Json) : Json :=
+  match parseJson (L4Wasm.Ops.XmlEnc.decryptWith replayCipher nativePrims arg.toString) with
+  | .ok j => j
+  | .error _ => .object [("ok", .bool false), ("error", .string "unparseable envelope")]
+
+/-- The `need` request of an envelope: its op and its key (base64). -/
+def needOf (j : Json) : Option (String × String) := do
+  let n ← j.field? "need"
+  pure (← n.getString? "op", ← n.getString? "key")
 
 def isOk (j : Json) : Bool := j.field? "ok" == some (.bool true) && (j.getString? "document").isSome
 
@@ -166,6 +180,13 @@ def main (args : List String) : IO UInt32 := do
           | _, _ => w3cKeys
         let r := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string doc), ("keys", caseKeys)])
         match c.getString? "outcome" with
+        | some "xfail" =>
+            -- An expected failure (its `issue`): the structure is accepted and
+            -- the case reaches the AES Key Wrap request natively.
+            let issue := (c.getString? "issue").getD "?"
+            let need := needOf (runReplay (.object [("document", .string doc), ("keys", caseKeys)]))
+            if need.map (·.1) == some "aes-kw-unwrap" then s := { s with xfail := s.xfail + 1 }
+            else s := s.ok false s!"W3C {id}: expected failure ({issue}) did not reach the key wrap request"
         | some "ok" =>
             if c.field? "native" == some (.bool true) then
               let expected ← IO.FS.readFile (w3cDir / ((c.getString? "expected").getD "missing"))
@@ -177,6 +198,33 @@ def main (args : List String) : IO UInt32 := do
             s := s.ok (errorHas r why && r.getString? "error" != some decryptionError)
               s!"W3C {id}: refused ({why}); got {(r.getString? "error").getD "ok"}"
   | _, _ => s := s.ok false "W3C cases: cases.json or keys.json is not JSON"
+  -- PBKDF2 key derivation (§5.4.2), Node-made documents (tests/xmlenc/make-pbkdf2.mjs).
+  let pbText ← IO.FS.readFile ((path.parent.getD ".") / "pbkdf2.json")
+  match parseJson pbText with
+  | .ok pb =>
+      let pbKeys := (pb.field? "keys").getD (.array [])
+      for c in ((pb.field? "cases").bind Json.asArray?).getD [] do
+        let name := (c.getString? "name").getD "?"
+        let doc := (c.getString? "document").getD ""
+        let arg := Json.object [("document", .string doc), ("keys", pbKeys)]
+        match c.getString? "outcome" with
+        | some "ok" =>
+            if c.field? "native" == some (.bool true) then
+              s := s.ok (sameDoc (run L4Wasm.Ops.XmlEnc.decryptWith arg) ((c.getString? "expected").getD ""))
+                s!"PBKDF2 {name}: decrypt"
+            else
+              -- The key wrap is host-only: check the key encryption key Lean
+              -- derived against the one Node derived.
+              let kek := (L4Factoidal.VC.Multibase.byteArrayOfHex? ((c.getString? "kek").getD "")).map base64
+              let need := needOf (runReplay arg)
+              s := s.ok (need.isSome && need.map (·.1) == some "aes-kw-unwrap" && need.map (·.2) == kek)
+                s!"PBKDF2 {name}: derived key encryption key"
+        | _ =>
+            let why := (c.getString? "reason").getD "?"
+            let r := run L4Wasm.Ops.XmlEnc.decryptWith arg
+            s := s.ok (errorHas r why && r.getString? "error" != some decryptionError)
+              s!"PBKDF2 {name}: refused ({why}); got {(r.getString? "error").getD "ok"}"
+  | .error _ => s := s.ok false "PBKDF2 cases: pbkdf2.json is not JSON"
   -- SAML.
   let saml := (fx.field? "saml").getD .null
   let hex (k : String) := (L4Factoidal.VC.Multibase.byteArrayOfHex? ((saml.getString? k).getD "")).getD ByteArray.empty
@@ -204,7 +252,8 @@ def main (args : List String) : IO UInt32 := do
   let r5 := sub (validate { policy with decryptKeys := {} } "encryptedId")
   s := s.ok ((r5.splitOn L4Factoidal.SAML.encryptionIssue).length == 2) s!"saml EncryptedID without a key: {r5}"
   for f in s.failures do IO.println s!"FAIL {f}"
-  IO.println s!"xmlenc-native: {s.pass} pass, {s.fail} fail, {s.hostOnly} host-only (out of {s.pass + s.fail + s.hostOnly})"
+  IO.println (s!"xmlenc-native: {s.pass} pass, {s.fail} fail, {s.hostOnly} host-only, " ++
+    s!"{s.xfail} expected failures (out of {s.pass + s.fail + s.hostOnly + s.xfail})")
   return (if s.fail == 0 then 0 else 1)
 
 end XmlEncProbe
