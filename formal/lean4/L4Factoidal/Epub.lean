@@ -1,7 +1,7 @@
 import Std.Data.TreeMap
 import L4Factoidal.XProc31.Zip
 import L4Factoidal.XML.NamespaceView
-import L4Factoidal.XML.Enc
+import L4Factoidal.WHATWG.Base64
 import L4Factoidal.WHATWG.URL.PercentEncode
 
 /-! Read an unencrypted EPUB 3 publication in memory. The book exposes its manifest
@@ -204,7 +204,7 @@ private def renderNodes (book : Book) (resource : Resource) (index : Nat) (paged
             book.manifest.find? (fun r => r.path == path && raster r.mediaType)
           if let some img := image then
             if img.bytes.size > 0 && img.bytes.size <= budget then
-              let source := "data:" ++ img.mediaType ++ ";base64," ++ XML.Enc.base64 img.bytes
+              let source := "data:" ++ img.mediaType ++ ";base64," ++ WHATWG.Base64.encode img.bytes
               output := ("<img alt=\"" ++ alt ++ "\" src=\"" ++ source ++ "\">") :: output
               budget := budget - img.bytes.size
               continue
