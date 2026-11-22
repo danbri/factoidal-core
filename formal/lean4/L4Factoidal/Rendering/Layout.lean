@@ -263,8 +263,8 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
       let r := min (x+w) (tx+tw)
       let bo := min (y+h) (ty+th)
       if r > l && bo > t then
-        out := out.push (.paint ⟨some id,{geometry := .rect l t (r-l) (bo-t),
-          style := {fill := .image ⟨⟨sx,0,0,sy,-tx*sx,-ty*sy⟩,pic,b⟩}}⟩)
+        let image : ImageRecord := ⟨⟨sx,0,0,sy,-tx*sx,-ty*sy⟩,pic,b⟩
+        out := out.push (.paint ⟨some id,{geometry := .rect l t (r-l) (bo-t),style := {fill := .image image}}⟩)
   return out
 
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
