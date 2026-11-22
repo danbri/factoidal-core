@@ -192,9 +192,16 @@ there, and gives back what it made (`Made`), which the engine adds (`Kept.add`).
 /-- A style sheet's text, read (`CSS.parseRaw`). -/
 abbrev RawSheet := Except String (List Rendering.CSS.RawRule)
 
+/-- A cached document's sheets, keyed by both the source text and its URL. -/
+abbrev SheetSources := List (String × String)
+
+private def readSheetSources : SheetSources → RawSheet
+  | [("", source)] => Rendering.CSS.parseRaw source
+  | sheets => .ok (Rendering.CSS.parseRawSheets Syntax.resolveIri sheets)
+
 structure Kept where
   parsed : Array (String × Bool × Except String DOM.Dom) := #[]
-  sheets : Array (String × RawSheet) := #[]
+  sheets : Array (SheetSources × RawSheet) := #[]
   stores : WebRender.StoresKept := #[]
   /-- Words of SVG text (`NativeSVGText.wordIn`). -/
   words : NativeSVGText.Words := {}
@@ -202,7 +209,7 @@ structure Kept where
 /-- What one operation made that `Kept` did not have. -/
 structure Made where
   parsed : Option (String × Bool × Except String DOM.Dom) := none
-  sheet : Option (String × RawSheet) := none
+  sheet : Option (SheetSources × RawSheet) := none
   store : Option WebRender.StoreEntry := none
   words : NativeSVGText.Words := {}
 
@@ -231,16 +238,20 @@ def parseIn (kept : Kept) (html : String) (xhtml : Bool) : Except String DOM.Dom
   | some (_,_,d) => (d,{})
   | none => let d := parseFresh html xhtml; (d,{parsed := some (html,xhtml,d)})
 
-/-- The rules of a sheet's text: the kept ones, or `CSS.parseRaw`, also given back. -/
-def sheetIn (kept : Kept) (source : String) : RawSheet × Made :=
-  match kept.sheets.find? (·.1 == source) with
+/-- The rules of the named sheets from the cache, or a fresh parse to be kept. -/
+private def sheetsInCache (kept : Kept) (sources : SheetSources) : RawSheet × Made :=
+  match kept.sheets.find? (·.1 == sources) with
   | some (_,r) => (r,{})
-  | none => let r := Rendering.CSS.parseRaw source; (r,{sheet := some (source,r)})
+  | none => let r := readSheetSources sources; (r,{sheet := some (sources,r)})
+
+/-- The rules of a single stylesheet without a separate URL (a shadow sheet). -/
+def sheetIn (kept : Kept) (source : String) : RawSheet × Made :=
+  sheetsInCache kept [("",source)]
 
 /-- A table is valid when each entry is what it keeps: the parse of its source, the
 rules of its text, the image store of its keys and bytes. -/
 def Kept.Valid (kept : Kept) : Prop :=
-  (∀ e ∈ kept.parsed, e.2.2 = parseFresh e.1 e.2.1) ∧ (∀ e ∈ kept.sheets, e.2 = Rendering.CSS.parseRaw e.1) ∧
+  (∀ e ∈ kept.parsed, e.2.2 = parseFresh e.1 e.2.1) ∧ (∀ e ∈ kept.sheets, e.2 = readSheetSources e.1) ∧
   WebRender.StoresValid kept.stores
 
 /-- Refinement: from a valid table, `parseIn` gives `parseFresh`. -/
@@ -257,10 +268,9 @@ theorem parseIn_eq (kept : Kept) (valid : kept.Valid) (html : String) (xhtml : B
     rw [v, sat.1, sat.2]
   · rfl
 
-/-- Refinement: from a valid table, `sheetIn` gives `CSS.parseRaw`. -/
-theorem sheetIn_eq (kept : Kept) (valid : kept.Valid) (source : String) :
-    (sheetIn kept source).1 = Rendering.CSS.parseRaw source := by
-  unfold sheetIn
+private theorem sheetsInCache_eq (kept : Kept) (valid : kept.Valid) (sources : SheetSources) :
+    (sheetsInCache kept sources).1 = readSheetSources sources := by
+  unfold sheetsInCache
   split
   · next _ s raw h =>
     have mem := Array.mem_of_find?_eq_some h
@@ -270,6 +280,12 @@ theorem sheetIn_eq (kept : Kept) (valid : kept.Valid) (source : String) :
     simp only at v
     rw [v, sat]
   · rfl
+
+/-- Refinement: from a valid table, `sheetIn` gives `CSS.parseRaw`. -/
+theorem sheetIn_eq (kept : Kept) (valid : kept.Valid) (source : String) :
+    (sheetIn kept source).1 = Rendering.CSS.parseRaw source := by
+  rw [sheetIn, sheetsInCache_eq kept valid]
+  rfl
 
 /-! Words that miss the font memo (`SfntProfile.profile`) were also shaped again by each
 layout (realperf). `shapeKept` is `SfntProfile.shapeFresh`; its implementation keeps
@@ -562,7 +578,7 @@ def sheetSource (sheets : List (String × String)) : String := String.intercalat
 /-- The rules of sheets in `env`: `CSS.parseIn env`, with the sheets read once (`sheetIn`). -/
 def rulesOfSheets (kept : Kept) (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) :
     Except String (List Rendering.CSS.Rule × Made) := do
-  let (raw,made) := sheetIn kept (sheetSource sheets)
+  let (raw,made) := sheetsInCache kept sheets
   return (Rendering.CSS.parseInRaw env (← raw),made)
 
 /-- The rules of the document's sheets in `env` (`sheetsIn`). -/
