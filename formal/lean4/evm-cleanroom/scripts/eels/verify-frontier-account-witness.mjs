@@ -207,62 +207,71 @@ async function verifyHistorical(bundle,historical) {
 async function syntheticSelftest(historical){
   const b=historical.block,tx=historical.transaction
   const roles=[address(tx.from),address(tx.to),address(b.miner)]
-  const accounts=[
-    {address:roles[0],nonce:0n,balance:2000000000000000000n,
-      storageHash:EMPTY_STORAGE_ROOT,codeHash:EMPTY_CODE_HASH},
-    {address:roles[1],nonce:0n,balance:0n,
-      storageHash:EMPTY_STORAGE_ROOT,codeHash:EMPTY_CODE_HASH},
-    {address:roles[2],nonce:0n,balance:0n,
-      storageHash:EMPTY_STORAGE_ROOT,codeHash:EMPTY_CODE_HASH},
-  ]
-  const reference=await createMPT({useKeyHashing:true})
-  for(const a of accounts)
-    await reference.put(hexToBytes(a.address),accountRlp(a))
-  const root=bytesToHex(reference.root())
-  const bundles=[]
-  for(const a of accounts) {
-    const proof=await createMerkleProof(reference,hexToBytes(a.address))
-    bundles.push({address:a.address,accountProof:proof.map(bytesToHex),
-      storageProof:[],balance:'0x'+a.balance.toString(16),
-      nonce:'0x'+a.nonce.toString(16),
-      codeHash:a.codeHash,storageHash:a.storageHash})
+  const trials=[]
+  for(const receiverExists of [true,false]){
+    const accounts=[
+      {address:roles[0],nonce:0n,balance:2000000000000000000n,
+        storageHash:EMPTY_STORAGE_ROOT,codeHash:EMPTY_CODE_HASH,exists:true},
+      {address:roles[1],nonce:0n,balance:0n,
+        storageHash:EMPTY_STORAGE_ROOT,codeHash:EMPTY_CODE_HASH,exists:receiverExists},
+      {address:roles[2],nonce:0n,balance:0n,
+        storageHash:EMPTY_STORAGE_ROOT,codeHash:EMPTY_CODE_HASH,exists:true},
+    ]
+    const reference=await createMPT({useKeyHashing:true})
+    for(const a of accounts)
+      if(a.exists)await reference.put(hexToBytes(a.address),accountRlp(a))
+    const root=bytesToHex(reference.root())
+    const bundles=[]
+    for(const a of accounts) {
+      const proof=await createMerkleProof(reference,hexToBytes(a.address))
+      bundles.push({address:a.address,accountProof:proof.map(bytesToHex),
+        storageProof:[],balance:'0x'+a.balance.toString(16),
+        nonce:'0x'+a.nonce.toString(16),
+        codeHash:a.codeHash,storageHash:a.storageHash})
+    }
+    const proven=await authenticateAccounts(root,bundles,roles)
+    require(proven[1].exists===receiverExists,
+      'proof did not correctly classify recipient account existence')
+    const transfer=runLean(tx,b,proven)
+    const changed=[
+      {...proven[0],balance:BigInt(transfer.senderAfterBalance),
+        nonce:BigInt(transfer.senderAfterNonce)},
+      {...proven[1],balance:BigInt(transfer.receiverAfterBalance)},
+      {...proven[2],balance:BigInt(transfer.minerAfterBalance)},
+    ]
+    const proofRoot=await replayFromRoot(root,proven,changed)
+    for(const a of changed) await reference.put(hexToBytes(a.address),accountRlp(a))
+    const fullRoot=bytesToHex(reference.root())
+    require(same(proofRoot,fullRoot),
+      'sparse proof trie and complete independently-built trie diverged')
+    const mutations=[
+      x=>{x[0].balance='0x1'},
+      x=>{x[0].accountProof[0]='0xdeadbeef'},
+      x=>{x[1].codeHash='0x'+'11'.repeat(32)},
+      x=>{x[2].address=roles[0]},
+    ]
+    let rejected=0
+    for(const mutate of mutations) {
+      const forged=structuredClone(bundles)
+      mutate(forged)
+      try {await authenticateAccounts(root,forged,roles)}
+      catch {rejected++}
+    }
+    require(rejected===mutations.length,'one or more forged account proofs accepted')
+    let wrongRootRejected=false
+    try{await authenticateAccounts('0x'+'11'.repeat(32),bundles,roles)}
+    catch{wrongRootRejected=true}
+    require(wrongRootRejected,'forged parent trie root incorrectly accepted')
+    trials.push({receiverExists,root,mutatedRoot:proofRoot,
+      fullTrieMatched:true,forgeriesRejected:rejected+1})
   }
-  const proven=await authenticateAccounts(root,bundles,roles)
-  const transfer=runLean(tx,b,proven)
-  const changed=[
-    {...proven[0],balance:BigInt(transfer.senderAfterBalance),
-      nonce:BigInt(transfer.senderAfterNonce)},
-    {...proven[1],balance:BigInt(transfer.receiverAfterBalance)},
-    {...proven[2],balance:BigInt(transfer.minerAfterBalance)},
-  ]
-  const proofRoot=await replayFromRoot(root,proven,changed)
-  for(const a of changed) await reference.put(hexToBytes(a.address),accountRlp(a))
-  const fullRoot=bytesToHex(reference.root())
-  require(same(proofRoot,fullRoot),
-    'sparse proof trie and complete independently-built synthetic trie diverge')
-  const mutations=[
-    x=>{x[0].balance='0x1'},
-    x=>{x[0].accountProof[0]='0xdeadbeef'},
-    x=>{x[1].codeHash='0x'+'11'.repeat(32)},
-    x=>{x[2].address=roles[0]},
-  ]
-  let rejected=0
-  for(const mutate of mutations) {
-    const forged=structuredClone(bundles)
-    mutate(forged)
-    try {await authenticateAccounts(root,forged,roles)}
-    catch {rejected++}
-  }
-  require(rejected===mutations.length,'one or more forged account proofs accepted')
-  let wrongRootRejected=false
-  try{await authenticateAccounts('0x'+'11'.repeat(32),bundles,roles)}
-  catch{wrongRootRejected=true}
-  require(wrongRootRejected,'forged parent trie root incorrectly accepted')
   return {status:'synthetic-archive-proof-mutation-tests-pass',
-    syntheticOnly:true,syntheticRoot:root,
-    syntheticMutatedRoot:proofRoot,
-    completeTrieMatchesSparseProofTrie:same(proofRoot,fullRoot),
-    forgedProofsRejected:rejected+1,
+    syntheticOnly:true,
+    syntheticScenarios:trials.length,
+    testedPresentAndAbsentRecipient:true,
+    completeTrieMatchesSparseProofTrie:trials.every(t=>t.fullTrieMatched),
+    forgedProofsRejected:trials.reduce((n,t)=>n+t.forgeriesRejected,0),
+    trials,
     historicalPrestateAvailable:false,
     actualMainnetStateRootReplayed:false}
 }
