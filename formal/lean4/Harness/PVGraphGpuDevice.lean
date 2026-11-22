@@ -64,6 +64,48 @@ private def tupleKeys : M Unit := do
   output "lower" lo (some "outLower")
   output "upper" hi (some "outUpper")
 
+private def mapAddOnly : M Unit := do
+  let x ← input "left"
+  let y ← mapAdd x 4294967295 (some "operation")
+  output "answer" y (some "result")
+
+private def mapMulOnly : M Unit := do
+  let x ← input "left"
+  let y ← mapMul x 65537 (some "operation")
+  output "answer" y (some "result")
+
+private def mapXorOnly : M Unit := do
+  let x ← input "left"
+  let y ← mapXor x 2147483649 (some "operation")
+  output "answer" y (some "result")
+
+private def zipAddOnly : M Unit := do
+  let x ← input "left"
+  let y ← input "right"
+  let z ← zipAdd x y (some "operation")
+  output "answer" z (some "result")
+
+private def zipXorOnly : M Unit := do
+  let x ← input "left"
+  let y ← input "right"
+  let z ← zipXor x y (some "operation")
+  output "answer" z (some "result")
+
+private def mapZipPrograms : List (String × Bool × M Unit) := [
+  ("map-add", false, mapAddOnly), ("map-mul", false, mapMulOnly),
+  ("map-xor", false, mapXorOnly), ("zip-add", true, zipAddOnly),
+  ("zip-xor", true, zipXorOnly)]
+
+-- Each single-operator case starts with overflow/high-bit operands. Repeating
+-- the six-word patterns also exercises zero, one and both sides of the sign bit.
+private def mapZipLeft (n : Nat) : List Nat :=
+  (List.range n).map fun i =>
+    ([4294967295,2147483648,2147483647,0,1,4294967294] : List Nat)[i % 6]!
+
+private def mapZipRight (n : Nat) : List Nat :=
+  (List.range n).map fun i =>
+    ([1,2147483648,1,4294967295,2147483649,3] : List Nat)[i % 6]!
+
 private def caseData : List (String × M Unit × Json × Json) := [
   ("map-highbits", mapWords,
     Json.mkObj [("words", toJson ([0,1,4294967295,2147483648,7,99] : List Nat))],
@@ -129,6 +171,32 @@ def main : IO Unit := do
     IO.println ((Json.mkObj [
       ("case",toJson name),("pvgraph",pv),("input",bindings),
       ("plan",plan),("eligible",toJson eligible),("expected",expected)]).compress)
+  -- Exercise the production mapZip shader independently for each operation,
+  -- including no logical words, a full workgroup and one padded workgroup.
+  for (name, zipped, program) in mapZipPrograms do
+    let pv := build program
+    for n in [0,1,63,64,65] do
+      let bindings := Json.mkObj (
+        [("left",toJson (mapZipLeft n))] ++
+        if zipped then [("right",toJson (mapZipRight n))] else [])
+      let shapes := Json.mkObj (
+        [("left",toJson n)] ++ if zipped then [("right",toJson n)] else [])
+      let .ok expected := PVGraph.evaluate? pv bindings |
+        throw (IO.userError s!"{name}-{n}: map/zip reference refused")
+      let .ok plan := GpuPlan.compile? pv shapes |
+        throw (IO.userError s!"{name}-{n}: map/zip plan refused")
+      IO.println ((Json.mkObj [
+        ("case",toJson s!"mapzip-{name}-{n}"),("pvgraph",pv),("input",bindings),
+        ("plan",plan),("eligible",toJson true),("expected",expected)]).compress)
+    if zipped then
+      let bindings := Json.mkObj [
+        ("left",toJson (mapZipLeft 64)),("right",toJson (mapZipRight 65))]
+      let shapes := Json.mkObj [("left",toJson (64 : Nat)),("right",toJson (65 : Nat))]
+      if (PVGraph.evaluate? pv bindings).isOk || (GpuPlan.compile? pv shapes).isOk then
+        throw (IO.userError s!"{name}: unequal zip lengths were accepted")
+      IO.println ((Json.mkObj [
+        ("case",toJson s!"mapzip-{name}-unequal"),("pvgraph",pv),("input",bindings),
+        ("plan",Json.null),("eligible",toJson false),("expected",Json.null)]).compress)
   -- Cross-workgroup and recursive-scan boundaries, including zero lanes
   -- in the final group and modulo-u32 overflow.
   for n in [0,63,64,65,4095,4096,4097,16385,262145] do

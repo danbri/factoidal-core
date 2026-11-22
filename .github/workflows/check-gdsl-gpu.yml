@@ -4,10 +4,20 @@ on:
     paths:
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/**'
       - 'formal/lean4/Harness/PVGraphGpuDevice.lean'
+      - 'formal/lean4/Harness/PVGraphPlanTiming.lean'
+      - 'formal/lean4/Harness/MapZipPlanTests.lean'
+      - 'formal/lean4/lakefile.lean'
+      - 'formal/lean4/lean-toolchain'
       - 'npm/factoidal/lib/gdsl-gpu.mjs'
       - 'npm/factoidal/lib/gpu-resident.mjs'
       - 'tools/pvgraph-gpu-device-smoke.mjs'
+      - 'tools/pvgraph-wasm-fixtures.mjs'
       - 'tools/pvgraph-evidence-provenance.mjs'
+      - 'tools/check-mapzip-source-drift.py'
+      - 'tools/lean-module-closure.py'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
       - 'tests/gdsl_gpu.test.mjs'
       - 'tests/gssl_gpu_resident_test.mjs'
       - 'npm/factoidal/test/pvgraph-gpu-plan.test.mjs'
@@ -16,6 +26,37 @@ on:
 permissions:
   contents: read
 jobs:
+  mapzip-source-refinement:
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: pvgraph-mapzip-source-refinement
+      timeout_minutes: 12
+      modules: >-
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipShader
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipSurface
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipKind
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipPlan
+        L4Factoidal.GpuDomainSpecificLanguage.GpuPlan
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipRefinement
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipGrid
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipCompileRefinement
+        Harness.MapZipPlanTests
+      theorems: >-
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipPlan.checkNode_sound
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipPlan.Checked.node_step
+        L4Factoidal.GpuDomainSpecificLanguage.GpuPlan.compile_checked
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipRefinement.parse_source
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipRefinement.run_source_lane
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipRefinement.run_empty_lane
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipGrid.grid_bounds
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipGrid.gid_exact
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipGrid.active_lane
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipGrid.lane_address_injective
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipGrid.run_source_grid
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipGrid.lane_store_bounds
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipCompileRefinement.step_refines
+        L4Factoidal.GpuDomainSpecificLanguage.MapZipCompileRefinement.compiled_mapzip
+      runtime_fixture: Harness.MapZipPlanTests
   gpu-evidence:
     runs-on: ubuntu-24.04
     timeout-minutes: 22
@@ -49,15 +90,26 @@ jobs:
           node --check npm/factoidal/lib/gdsl-gpu.mjs
           node --check npm/factoidal/lib/gpu-resident.mjs
           node --check tools/pvgraph-gpu-device-smoke.mjs
+          node --check tools/pvgraph-wasm-fixtures.mjs
           node --test tests/gdsl_gpu.test.mjs tests/gssl_gpu_resident_test.mjs \
             npm/factoidal/test/pvgraph-gpu-plan.test.mjs npm/factoidal/test/gpu-resident.test.mjs
           mkdir -p "$RUNNER_TEMP/pvgraph-gpu"
           git rev-parse HEAD > "$RUNNER_TEMP/pvgraph-gpu/commit.txt"
           sha256sum formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GpuPlan.lean \
             formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GpuFastPath.lean \
+            formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/MapZip*.lean \
+            formal/lean4/Harness/MapZipPlanTests.lean \
+            formal/lean4/Harness/PVGraphGpuDevice.lean \
             npm/factoidal/lib/gdsl-gpu.mjs \
             tools/pvgraph-gpu-device-smoke.mjs \
+            tools/pvgraph-wasm-fixtures.mjs \
             > "$RUNNER_TEMP/pvgraph-gpu/sources.sha256"
+      - name: Require real source changes to break the corresponding proofs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check-mapzip-source-drift.py \
+            --output "$RUNNER_TEMP/pvgraph-gpu/source-drift"
       - name: Compile real Lean semantics, GPU lowering and device fixtures
         working-directory: formal/lean4
         shell: bash
@@ -100,6 +152,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pvgraph-lean-gpu-evidence
-          path: ${{ runner.temp }}/pvgraph-gpu/
+          path: |
+            ${{ runner.temp }}/pvgraph-gpu/
+            !${{ runner.temp }}/pvgraph-gpu/source-drift/**/modules/**
           if-no-files-found: warn
           retention-days: 30
