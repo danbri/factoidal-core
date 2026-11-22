@@ -1,0 +1,10 @@
+name = "ethereum_consensus"
+version = "0.1.0"
+defaultTargets = ["EthereumConsensus"]
+
+[[lean_lib]]
+name = "EthereumConsensus"
+
+[[lean_exe]]
+name = "ssz-gindex"
+root = "Main"
