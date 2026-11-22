@@ -1423,6 +1423,15 @@ private def AtomicFrame.opened (id : Nat) (s : Computed) (before : Array Inline)
   let fixed := CSS.resolve available s.width
   ⟨id,s,before,fixed,fixed.getD room⟩
 
+private def hasBlockAlignment (s : Computed) : Bool :=
+  s.align.alignContent != .normal &&
+    (s.display == .block || s.display == .inlineBlock || s.display == .tableCaption)
+
+private def alignBlockContents (s : Computed) (height : Float) (r : Result) : Result :=
+  if hasBlockAlignment s && s.pos.writingMode == .horizontalTb then
+    r.shift 0 (s.align.blockOffset (s.pos.scrolls || s.pos.overflowYHidden) (height-r.height))
+  else r
+
 /-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
 widest line (at most the room); its content is laid out at the origin inside its
 border and padding. Its bottom margin edge sits on the line's baseline, as a
@@ -1443,7 +1452,8 @@ private def atomicBox (font : FontProfile) (frame : AtomicFrame) (items : Array 
     | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
   let w := b.left+p.left+used+p.right+b.right
   let h := b.top+p.top+height+p.bottom+b.bottom
-  let inner := shiftResult (m.left+b.left+p.left) (m.top+b.top+p.top) content
+  let aligned := alignBlockContents s height content
+  let inner := shiftResult (m.left+b.left+p.left) (m.top+b.top+p.top) aligned
   return framedAtomic frame.source s w h inner
 
 /-- Each matched inline-block becomes one atomic item in its parent's line. The stack
@@ -1661,7 +1671,7 @@ block child when no border, padding or clearance is between them and the block d
 establish a new block formatting context. A list item's marker is content before it. -/
 def collapsesTop (dom : Dom) (s : Computed) (id : Nat) : Bool :=
   let n := dom.get id
-  s.display == .block && s.borderEdges.top == 0 && s.padding.top == 0 && !s.clipOverflow && !s.pos.formattingRoot &&
+  s.display == .block && s.borderEdges.top == 0 && s.padding.top == 0 && !s.clipOverflow && !s.pos.formattingRoot && !hasBlockAlignment s &&
     !s.pos.isAbsolute && s.pos.float == .none && n.lname != "li" && n.ns != some DOM.svgNS &&
     (n.parent.map fun p => (dom.get p).type == .element).getD false
 
@@ -1670,7 +1680,7 @@ minimum height (CSS 2.1 §8.3.1). -/
 def collapsesBottom (dom : Dom) (s : Computed) (id : Nat) : Bool :=
   let n := dom.get id
   let auto := fun (l : CSS.Length) => match l with | .auto => true | _ => false
-  s.display == .block && s.borderEdges.bottom == 0 && s.padding.bottom == 0 && !s.clipOverflow && !s.pos.formattingRoot &&
+  s.display == .block && s.borderEdges.bottom == 0 && s.padding.bottom == 0 && !s.clipOverflow && !s.pos.formattingRoot && !hasBlockAlignment s &&
     !s.pos.isAbsolute && s.pos.float == .none && auto s.height && auto s.minHeight &&
     n.ns != some DOM.svgNS && (n.parent.map fun p => (dom.get p).type == .element).getD false
 
@@ -2141,7 +2151,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             -- what follows it (`Task.flowed`). A box with a formatting context of its own (a
             -- table, a flex container, a box that clips, a replaced element) is beside the floats.
             let cn := dom.get child
-            let plain := cs.display == .block && !cs.clipOverflow && !cs.pos.formattingRoot && (pictures child).isNone &&
+            let plain := cs.display == .block && !cs.clipOverflow && !cs.pos.formattingRoot && !hasBlockAlignment cs && (pictures child).isNone &&
               (blankReplaced cn).isNone && cn.ns != some DOM.svgNS && cn.lname != "hr"
             let r ← if plain then layoutTask dom styles font embedding pictures fuel (sub <| .flowed child floats) innerX top width
               else if floats.isEmpty then layoutTask dom styles font embedding pictures fuel (sub <| .box child) innerX top width
@@ -2279,7 +2289,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         if let .element id := cell.source then
           nodes := nodes ++ decorations id cs cx cy w h
           boxes := boxes.push ⟨id,cx,cy,w,h⟩
-        let moved := r.shiftY (cy+Table.alignOffset cs.verticalAlign h outer)
+        let offset := if cs.align.alignContent == .normal || cs.pos.writingMode != .horizontalTb then
+            Table.alignOffset cs.verticalAlign h outer
+          else cs.align.blockOffset (cs.pos.scrolls || cs.pos.overflowYHidden) (h-outer)
+        let moved := r.shiftY (cy+offset)
         paints := paints ++ moved.nodes
         boxes := boxes ++ moved.boxes
         runs := runs ++ moved.runs
@@ -2323,7 +2336,11 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .element id => layoutTask dom styles font embedding pictures fuel (sub <| .inner id w) ix iy w
         | .anonymous container kids => layoutTask dom styles font embedding pictures fuel (sub <| .contents container kids) ix iy w
       frame := fun item ix iy w h content => match item with
-        | .element id => let s := styles[id]!; frameBox id s (ix+s.margin.left) (iy+s.margin.top) w h content
+        | .element id =>
+          let s := styles[id]!
+          let border := s.borderEdges
+          let hContent := max 0 (h-border.top-border.bottom-s.padding.top-s.padding.bottom)
+          frameBox id s (ix+s.margin.left) (iy+s.margin.top) w h (alignBlockContents s hContent content)
         | .anonymous _ _ => {content with height := h}
       heightSensitive := fun item => match item with
         | .element id => sizesItself dom styles pictures id
@@ -2660,6 +2677,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             clampOpt (if contentKeyword s.minHeight then content.height else minHeight)
               (if contentKeyword s.maxHeight then some content.height else maxHeight) own
           else clampOpt minHeight maxHeight content.height
+      let content := alignBlockContents s height content
       -- The absolutely positioned children of a flex or grid container are not its items.
       let content := if s.display.isFlex then
           {content with pending := content.pending ++ flexAbsolutes dom styles id innerX innerY width height}

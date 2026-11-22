@@ -1422,12 +1422,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "hidden" | "collapse" => return {s with visible := false}
     | _ => throw "unsupported CSS visibility"
   | "overflow" =>
-    if d.value == "visible" then return {s with clipOverflow := false, pos := {s.pos with scrolls := false}}
-    if d.value == "hidden" || d.value == "clip" then return {s with clipOverflow := true, pos := {s.pos with scrolls := false}}
+    if d.value == "visible" then
+      return {s with clipOverflow := false, pos := {s.pos with scrolls := false, overflowYHidden := false}}
+    if d.value == "hidden" || d.value == "clip" then
+      return {s with clipOverflow := true, pos := {s.pos with scrolls := false, overflowYHidden := d.value == "hidden"}}
     -- A scroll container (`pos.scrolls`): nothing scrolls yet, so nothing is clipped away,
     -- but the box holds its floats and its children's margins.
     if d.value == "auto" || d.value == "scroll" || d.value == "overlay" then
-      return {s with clipOverflow := false, pos := {s.pos with scrolls := true}}
+      return {s with clipOverflow := false, pos := {s.pos with scrolls := true, overflowYHidden := false}}
     throw "unsupported CSS overflow mode"
   | "text-decoration" | "text-decoration-line" =>
     if d.value == "underline" then return {s with underline := true}
@@ -1802,7 +1804,10 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "visibility" => some {s with visible := source.visible}
   | "white-space" | "white-space-collapse" =>
     some {s with preformatted := source.preformatted, pos := {s.pos with nowrap := source.pos.nowrap}}
-  | "overflow" => some {s with clipOverflow := source.clipOverflow}
+  | "overflow" => some {s with clipOverflow := source.clipOverflow,
+      pos := {s.pos with scrolls := source.pos.scrolls, overflowYHidden := source.pos.overflowYHidden}}
+  | "align-content" => some {s with align := {s.align with alignContent := source.align.alignContent,
+      alignContentSafe := source.align.alignContentSafe, alignContentLastBaseline := source.align.alignContentLastBaseline}}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
   | "border-width" => some {s with borderWidth := source.borderWidth}
   | "border-style" => some {s with borderStyle := source.borderStyle}

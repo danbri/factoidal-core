@@ -224,6 +224,8 @@ structure PositionStyle where
   nothing is clipped away; the box is still the root of a block formatting context (CSS 2.1
   §9.4.1): it holds its floats and its children's margins. -/
   scrolls : Bool := false
+  /-- Hidden overflow is a scroll container for block alignment, unlike clip. -/
+  overflowYHidden : Bool := false
   /-- The percentage parts of the margins (top, right, bottom, left), as fractions of the
   containing block's width (CSS 2.1 §8.3), until `Layout.percentEdges` adds them to
   `Computed.margin`. -/
@@ -242,6 +244,7 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.lineBreak == b.lineBreak &&
   sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin &&
   a.marginOf == b.marginOf && a.paddingOf == b.paddingOf && a.scrolls == b.scrolls &&
+  a.overflowYHidden == b.overflowYHidden &&
   a.contents == b.contents && a.positionArea == b.positionArea && a.anchorNames == b.anchorNames && a.positionAnchor == b.positionAnchor &&
   AnchorRef.sameOpt a.anchorTop b.anchorTop && AnchorRef.sameOpt a.anchorRight b.anchorRight &&
   AnchorRef.sameOpt a.anchorBottom b.anchorBottom && AnchorRef.sameOpt a.anchorLeft b.anchorLeft
@@ -383,9 +386,10 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       -- another counter style or a string: the marker of the kind of list stands
       | _ => some {p with listStyle := .auto}
     | "overflow-x" | "overflow-y" =>
-      -- one axis that scrolls makes the box a scroll container; the other values of the
-      -- longhands are not read
-      if v == "auto" || v == "scroll" then some {p with scrolls := true} else none
+      -- Keep hidden separate from clip for block-axis overflow alignment.
+      if name == "overflow-y" then
+        some {p with overflowYHidden := v == "hidden", scrolls := p.scrolls || v == "auto" || v == "scroll"}
+      else if v == "auto" || v == "scroll" then some {p with scrolls := true} else none
     | "transform" =>
       if reset then some {p with transform := []} else
       (BoxTransform.read (CssValues.computed { num := { fontSize := tableRat fontSize } } name v)).map fun steps =>
@@ -482,7 +486,7 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {} "transform" "bogus").map (·.transform.length)) == none
 #guard ((PositionStyle.set 10 {} "transform-origin" "left top").map (·.transformOrigin)) == some (0,0,0,0)
 #guard ((PositionStyle.set 10 {} "overflow-x" "auto").map (·.scrolls)) == some true
-#guard ((PositionStyle.set 10 {} "overflow-y" "hidden").map (·.scrolls)) == none
+#guard ((PositionStyle.set 10 {} "overflow-y" "hidden").map (·.overflowYHidden)) == some true
 #guard (({scrolls := true} : PositionStyle).formattingRoot) == true
 #guard (({flowRoot := true} : PositionStyle).formattingRoot) == true
 #guard (({} : PositionStyle).formattingRoot) == false
