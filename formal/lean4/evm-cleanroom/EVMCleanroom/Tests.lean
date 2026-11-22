@@ -37,6 +37,17 @@ private def resultWord (result : Except Error State) : Option Nat :=
 -- PC and GAS push the current program counter and post-charge gas.
 #guard resultWord (run 3 (initial #[0x58, 0x00])) == some 0
 #guard resultWord (run 3 (initial #[0x5a, 0x00])) == some 98
+-- Fee-market and post-Merge header inputs are supplied, not authenticated;
+-- 0x3a must use the resolved effective price, not maxFeePerGas.
+#guard resultWord (run 2 { (initial #[0x3a,0x00] 2) with effectiveGasPrice := 12345 }) == some 12345
+#guard resultWord (run 2 { (initial #[0x3a,0x00] 2) with effectiveGasPrice := modulus + 9 }) == some 9
+#guard resultWord (run 2 { (initial #[0x44,0x00] 2) with blockPrevRandao := 0x123456 }) == some 0x123456
+#guard resultWord (run 2 { (initial #[0x44,0x00] 2) with blockPrevRandao := modulus + 17 }) == some 17
+#guard isError (step { (initial #[0x3a] 1) with effectiveGasPrice := 7 }) .outOfGas
+#guard isError (step { (initial #[0x44] 1) with blockPrevRandao := 7 }) .outOfGas
+#guard isError (step { (initial #[0x44] 100 .preShanghai) with blockPrevRandao := 7 })
+  .unsupportedFork
+
 -- Header environment values are supplied, not authenticated; the real dispatcher
 -- charges two gas and reads the same fields that nested world frames receive.
 #guard resultWord (run 2 { (initial #[0x41,0x00] 2) with blockCoinbase := 0x1234 }) == some 0x1234

@@ -33,10 +33,14 @@ structure TxWorld where
   /-- The chain identifier supplied by a selected chain environment. Not a
       signed-transaction or consensus-authenticated datum in this model. -/
   chainId : Nat := 0
+  /-- Effective price derived upstream from the actual signed transaction;
+      still an unverified input in the current restricted runner. -/
+  effectiveGasPrice : Nat := 0
   /-- Supplied block header context, not yet authenticated by Lean state replay. -/
   blockCoinbase : Nat := 0
   blockTimestamp : Nat := 0
   blockNumber : Nat := 0
+  blockPrevRandao : Nat := 0
   blockGasLimit : Nat := 0
   blockBaseFee : Nat := 0
 
@@ -53,9 +57,11 @@ def frameInput (w : TxWorld) (address gas : Nat)
     currentAddress := address
     txOrigin := originAddress
     chainId := w.chainId
+    effectiveGasPrice := w.effectiveGasPrice
     blockCoinbase := w.blockCoinbase
     blockTimestamp := w.blockTimestamp
     blockNumber := w.blockNumber
+    blockPrevRandao := w.blockPrevRandao
     blockGasLimit := w.blockGasLimit
     blockBaseFee := w.blockBaseFee
     callerAddress := callerAddress
@@ -85,6 +91,16 @@ theorem frameInput_balance (w : TxWorld) (address gas : Nat) :
 theorem frameInput_chainId (w : TxWorld) (address gas : Nat)
     (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
     (frameInput w address gas readOnly profile originAddress callerAddress).chainId = w.chainId := rfl
+
+/-- The real world/frame adapter preserves the supplied effective tx price and
+    post-Merge header mix, including on nested CALL entry. No signature or
+    beacon-head authentication is implied. -/
+theorem frameInput_feeAndRandao (w : TxWorld) (address gas : Nat)
+    (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
+    (frameInput w address gas readOnly profile originAddress callerAddress).effectiveGasPrice =
+      w.effectiveGasPrice ∧
+    (frameInput w address gas readOnly profile originAddress callerAddress).blockPrevRandao =
+      w.blockPrevRandao := ⟨rfl, rfl⟩
 
 /-- Each world-to-frame projection supplies the same block fields, including for nested CALL. -/
 theorem frameInput_blockEnvironment (w : TxWorld) (address gas : Nat)
@@ -118,6 +134,7 @@ theorem frameInput_participants (w : TxWorld) (address gas : Nat)
 #print axioms frameInput_address
 #print axioms frameInput_chainId
 #print axioms frameInput_blockEnvironment
+#print axioms frameInput_feeAndRandao
 #print axioms frameInput_participants
 #print axioms frameInput_balance
 #print axioms frameInput_value_zero
