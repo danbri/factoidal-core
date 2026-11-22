@@ -238,14 +238,17 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
   let iw := Float.ofNat b.width
   let ih := Float.ofNat b.height
   let e := s.borderEdges
-  let (tw,th) := backgroundTileSize s.backgroundSize iw ih (max 0 (w-e.left-e.right)) (max 0 (h-e.top-e.bottom))
+  let areaW := max 0 (w-e.left-e.right)
+  let areaH := max 0 (h-e.top-e.bottom)
+  let (tw,th) := backgroundTileSize s.backgroundSize iw ih areaW areaH
   if tw <= 0 || th <= 0 then return #[]
   let (repeatX,repeatY) := s.backgroundRepeat
   if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
     let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
     return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  let ox := x+e.left
-  let oy := y+e.top
+  -- CSS Backgrounds 3 §2.6 resolves each axis against the area minus the sized image.
+  let ox := x+e.left+(s.backgroundPositionX.resolve (areaW-tw)).getD 0
+  let oy := y+e.top+(s.backgroundPositionY.resolve (areaH-th)).getD 0
   let startX := if repeatX then ox-((ox-x)/tw).ceil*tw else ox
   let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
   let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1
@@ -476,15 +479,28 @@ def fitScale (fit : ObjectFit) (iw ih w h : Float) : Float × Float :=
   | .none => (1,1)
   | .scaleDown => let k := min 1 (min (w/iw) (h/ih)); (k,k)
 
-/-- The paint of a picture in the content box `x`, `y`, `w`, `h`: one rectangle filled
-with the image, centred (`object-position: 50% 50%`) and cut to the box by its own
-geometry, as the SVG `image` with `slice` is. -/
+/-- CSS Images 3 §5.6 resolves position percentages against the space left by the
+fitted object. That space can be negative when the object exceeds the box. -/
+def pictureOffset (position : Option (CSS.Length × CSS.Length)) (roomX roomY : Float) : Float × Float :=
+  match position with
+  | none => (roomX/2,roomY/2)
+  | some (x,y) => ((CSS.resolve roomX x).getD (roomX/2), (CSS.resolve roomY y).getD (roomY/2))
+
+theorem pictureOffset_default (roomX roomY : Float) :
+    pictureOffset none roomX roomY = (roomX/2,roomY/2) := rfl
+
+theorem pictureOffset_percent (roomX roomY x y : Float) :
+    pictureOffset (some (.percent x,.percent y)) roomX roomY = (roomX*x,roomY*y) := rfl
+
+/-- Paint the fitted image at its object position, clipped to its content box. -/
 def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float) : List Node :=
   let (iw,ih) := picture.size
   if !s.visible || w <= 0 || h <= 0 || iw <= 0 || ih <= 0 then [] else
   let (sx,sy) := fitScale s.objectFit iw ih w h
-  let dx := x+(w-iw*sx)/2
-  let dy := y+(h-ih*sy)/2
+  let (offsetX,offsetY) := pictureOffset s.objectPosition (w-iw*sx) (h-ih*sy)
+  let dx := x+offsetX
+  let dy := y+offsetY
+
   let left := max x dx
   let top := max y dy
   let right := min (x+w) (dx+iw*sx)
@@ -1733,10 +1749,17 @@ private def cellContents (dom : Dom) : Table.Source → Nat × Array Nat
   | .element id => (id,(dom.get id).kids)
   | .anonymous parent kids => (parent,kids)
 
-/-- The width a cell asks of its columns (CSS 2.1 §17.5.2.2): its min-content and
-max-content widths with its padding, and its specified width. -/
-private def cellMeasure (s : Computed) (widths : Float × Float) : Table.Measure :=
-  let pad := s.padding.left+s.padding.right
+/-- The space between the content and border edges of a table or cell. The
+  collapsing border model keeps its existing sizing until it resolves shared edges. -/
+private def tableInsets (s : Computed) (collapsed : Bool) : Edges :=
+  if collapsed then s.padding else
+  let b := s.borderEdges
+  ⟨s.padding.top+b.top, s.padding.right+b.right, s.padding.bottom+b.bottom, s.padding.left+b.left⟩
+
+/-- Intrinsic column contributions include the cell's padding and separated borders. -/
+private def cellMeasure (s : Computed) (collapsed : Bool) (widths : Float × Float) : Table.Measure :=
+  let insets := tableInsets s collapsed
+  let pad := insets.left+insets.right
   {min := widths.1+pad, max := widths.2+pad,
    fixed := match s.width with | .px w => some (w+pad) | _ => none,
    percent := match s.width with | .percent p => some p | _ => none}
@@ -1751,7 +1774,8 @@ private def columnMeasure (styles : Array Computed) : Option Nat → Table.Measu
 private structure TableFrame where
   style : Computed
   margin : Edges
-  padding : Edges
+  insets : Edges
+  borderBox : Bool
   hs : Float
   vs : Float
 
@@ -1760,9 +1784,12 @@ private def tableFrame (styles : Array Computed) (element : Option Nat) (contain
     | some id => styles[id]!
     | none => {anonymousBox styles[container]! with display := .table, tableFixed := false}
   let edges := element.isSome
-  {style := s, margin := if edges then s.margin else {}, padding := if edges then s.padding else {},
-   hs := if s.borderCollapse then 0 else s.borderSpacingX,
-   vs := if s.borderCollapse then 0 else s.borderSpacingY}
+  { style := s
+    margin := if edges then s.margin else {}
+    insets := if edges then tableInsets s s.borderCollapse else {}
+    borderBox := s.pos.borderBox || s.borderCollapse
+    hs := if s.borderCollapse then 0 else s.borderSpacingX
+    vs := if s.borderCollapse then 0 else s.borderSpacingY }
 
 /-- A content width within the box's `min-width` and `max-width` when they are lengths
 (a percentage or a keyword limit does not bound an intrinsic contribution); the minimum
@@ -1870,15 +1897,18 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       let mut measures : Array Table.Measure := #[]
       for cell in grid.cells do
         let (c,ks) := cellContents dom cell.source
-        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
+        measures := measures.push (cellMeasure (cellStyle styles cell.source) frame.style.borderCollapse (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
       let cols := Table.columns grid.columns grid.cells measures (grid.columnElements.map (columnMeasure styles)) frame.hs
       let spacing := if grid.columns == 0 then 0 else frame.hs*Float.ofNat (grid.columns+1)
-      let edges := frame.padding.left+frame.padding.right
+      let edges := frame.insets.left+frame.insets.right
       let low := Table.total (cols.map (·.min))+spacing+edges
       let high := max low (Table.total ((Table.guesses cols 0)[3]!)+spacing+edges)
       let margins := frame.margin.left+frame.margin.right
       match frame.style.width with
-      | .px w => return (max w low+margins,max w low+margins)
+      | .px w =>
+        let borderWidth := if frame.borderBox then w else w+edges
+        let result := max borderWidth low+margins
+        return (result,result)
       | _ => return (low+margins,high+margins)
     -- What a flex or grid container may ask of its items while widths are measured.
     let children : Children := {
@@ -1964,12 +1994,21 @@ def renderedLegend (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
           !(styles[k]!).pos.isAbsolute && (styles[k]!).pos.float == .none) == some id
   | none => false
 
+/-- Is the physical axis's logical start at its far edge? -/
+private def axisStartIsFar (s : Computed) (horizontal : Bool) : Bool :=
+  SelfPlace.startsAtEnd horizontal (s.pos.writingMode != .horizontalTb)
+    (s.pos.writingMode == .verticalRl) (s.direction == .rtl)
+
+#guard axisStartIsFar {pos := {writingMode := .verticalRl}} true
+#guard !(axisStartIsFar {pos := {writingMode := .verticalLr}, direction := .rtl} true)
+#guard axisStartIsFar {pos := {writingMode := .verticalLr}, direction := .rtl} false
+
 /-- The fraction of an anchor box's size, from its top or left edge, at which the side an
 `anchor()` names lies (CSS Anchor Positioning 1 §3.2), for an inset of the horizontal axis or
 the vertical one, on the far side (`right`, `bottom`) or not. `start` and `end` are of the
-containing block's direction (`rtl`), `self-start` and `self-end` of the box's own
-(`selfRtl`); a percentage is from the start side. `none`: a side of the other axis. -/
-def anchorFraction (side : AnchorSide) (horizontal far rtl selfRtl : Bool) : Option Float :=
+containing block's writing mode (`startFar`), `self-start` and `self-end` of
+its own writing mode (`selfStartFar`). A percentage is from the start side. `none`: a side of the other axis. -/
+def anchorFraction (side : AnchorSide) (horizontal far startFar selfStartFar : Bool) : Option Float :=
   let flip := fun (f : Float) (r : Bool) => if r then 1 - f else f
   match side with
   | .left => if horizontal then some 0 else none
@@ -1977,13 +2016,13 @@ def anchorFraction (side : AnchorSide) (horizontal far rtl selfRtl : Bool) : Opt
   | .top => if horizontal then none else some 0
   | .bottom => if horizontal then none else some 1
   | .center => some 0.5
-  | .start => some (flip 0 rtl)
-  | .end_ => some (flip 1 rtl)
-  | .selfStart => some (flip 0 selfRtl)
-  | .selfEnd => some (flip 1 selfRtl)
+  | .start => some (flip 0 startFar)
+  | .end_ => some (flip 1 startFar)
+  | .selfStart => some (flip 0 selfStartFar)
+  | .selfEnd => some (flip 1 selfStartFar)
   | .inside => some (if far then 1 else 0)
   | .outside => some (if far then 0 else 1)
-  | .fraction f => some (flip f rtl)
+  | .fraction f => some (flip f startFar)
 
 #guard anchorFraction .right true false false false == some 1 && anchorFraction .right false false false false == none
 #guard anchorFraction .start true false true false == some 1 && anchorFraction .outside false true false false == some 0
@@ -2187,7 +2226,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- no block was laid out: `previous` is still `before`, which is not a margin of this flow
       return {content with marginBottom := if content.height <= 0 || previous >= unbounded/2 then 0 else previous}
     -- A table box (CSS 2.1 §17): captions, then the grid, then bottom captions.
-    let table (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String Result := do
+    let table (element : Option Nat) (container : Nat) (kids : Array Nat)
+        (imposedWidth imposedHeight : Option Float) : Except String Result := do
       let frame := tableFrame styles element container
       let ts := frame.style
       let grid := Table.build dom styles (element.getD container) kids
@@ -2196,28 +2236,32 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut measures : Array Table.Measure := #[]
       for cell in grid.cells do
         let (c,ks) := cellContents dom cell.source
-        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
+        measures := measures.push (cellMeasure (cellStyle styles cell.source) frame.style.borderCollapse (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
       let elements := grid.columnElements.map (columnMeasure styles)
       let cols := Table.columns grid.columns grid.cells measures elements hs
       let spacing := if grid.columns == 0 then 0 else hs*Float.ofNat (grid.columns+1)
-      let padX := frame.padding.left+frame.padding.right
-      let padY := frame.padding.top+frame.padding.bottom
+      let padX := frame.insets.left+frame.insets.right
+      let padY := frame.insets.top+frame.insets.bottom
       let lowest := Table.total (cols.map (·.min))+spacing
-      -- `width` of a table is its border box (HTML §15.3.8 `table { box-sizing: border-box }`).
-      let specified := (CSS.resolve available ts.width).map (·-padX)
+      let authoredWidth := CSS.resolve available ts.width
+      let specified := match imposedWidth with
+        | some w => some (w-padX)
+        | none => authoredWidth.map fun w => if frame.borderBox then w-padX else w
       let room := available-frame.margin.left-frame.margin.right-padX
       let contentWidth := match specified with
         | some w => max w lowest
         | none => max lowest (min room (Table.total ((Table.guesses cols room)[3]!)+spacing))
       let target := max 0 (contentWidth-spacing)
-      let widths := if ts.tableFixed && specified.isSome then
+      let widths := if ts.tableFixed && authoredWidth.isSome then
           let firstRow := (grid.cells.zip measures).filter (·.1.row == 0)
           Table.fixedWidths grid.columns firstRow elements target hs
         else Table.distribute cols target
       let contentWidth := max contentWidth (Table.extent widths hs)
       let borderWidth := contentWidth+padX
-      let outerX := x+autoMarginShift ts available (frame.margin.left+borderWidth+frame.margin.right)+frame.margin.left
-      let innerX := outerX+frame.padding.left
+      let shift := if imposedWidth.isSome then 0
+        else autoMarginShift ts available (frame.margin.left+borderWidth+frame.margin.right)
+      let outerX := x+shift+frame.margin.left
+      let innerX := outerX+frame.insets.left
       let colX := Table.offsets widths hs
       -- Each cell laid out once, at its column and at the top; moved down when the rows are known.
       let mut laid : Array (Result × Float) := #[]
@@ -2225,21 +2269,25 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let cs := cellStyle styles cell.source
         let (c,ks) := cellContents dom cell.source
         let w := Table.spanSize widths cell.col cell.colSpan hs
-        let left := innerX+colX.getD cell.col 0+cs.padding.left
-        let r ← layoutTask dom styles font embedding pictures fuel (sub <| .contents c ks) left cs.padding.top (max 0 (w-cs.padding.left-cs.padding.right))
+        let insets := tableInsets cs ts.borderCollapse
+        let left := innerX+colX.getD cell.col 0+insets.left
+        let r ← layoutTask dom styles font embedding pictures fuel (sub <| .contents c ks)
+          left insets.top (max 0 (w-insets.left-insets.right))
         let own := (CSS.resolve 0 cs.height).getD 0
-        let outer := max (r.height+cs.padding.top+cs.padding.bottom) (own+cs.padding.top+cs.padding.bottom)
+        let outer := max r.height own+insets.top+insets.bottom
         laid := laid.push (r,outer)
       let minimum := grid.rows.map fun row => match row.element with
         | some id => (CSS.resolve 0 (styles[id]!).height).getD 0
         | none => 0
       let rows := Table.rowHeights minimum grid.cells (laid.map (·.2)) vs
       let gridHeight := Table.extent rows vs
-      let rows := match CSS.resolve 0 ts.height with
+      let specifiedBorderHeight := imposedHeight.orElse fun _ =>
+        (CSS.resolve 0 ts.height).map fun h => if frame.borderBox then h else h+padY
+      let rows := match specifiedBorderHeight with
         | some h => Table.stretch rows (h-padY-gridHeight)
         | none => rows
       let gridHeight := Table.extent rows vs
-      let borderHeight := max (gridHeight+padY) ((CSS.resolve 0 ts.height).getD 0)
+      let borderHeight := max (gridHeight+padY) (specifiedBorderHeight.getD 0)
       let rowY := Table.offsets rows vs
       -- Captions above and below, as wide as the table's border box.
       let mut out : Result := {}
@@ -2249,8 +2297,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           let r ← layoutTask dom styles font embedding pictures fuel (sub <| .box caption) outerX top borderWidth
           out := append out r
           top := top+r.height
-      let innerY := top+frame.padding.top
-      let mut nodes : Array Node := background (element.getD container) ts outerX top borderWidth borderHeight
+      let innerY := top+frame.insets.top
+      let tableId := element.getD container
+      let mut nodes : Array Node := if ts.borderCollapse then background tableId ts outerX top borderWidth borderHeight
+        else decorations tableId ts outerX top borderWidth borderHeight
       let mut paints : Array Node := #[]
       let mut boxes : Array Box := #[]
       let mut runs : Array GlyphRun := #[]
@@ -2352,10 +2402,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           (xs[x0]!, ys[y0]!, max 0 (xs[x1]!-xs[x0]!), max 0 (ys[y1]!-ys[y0]!))
       let (cx, cy, cw, ch) := area.getD (cx, cy, cw, ch)
       let autoInset : Option Float := if area.isSome then some 0 else none
-      let rtlCB := (absoluteContainer dom styles id).direction == .rtl
+      let containing := absoluteContainer dom styles id
       let anchored := fun (ref : Option AnchorRef) (horizontal far : Bool) => (show Option Float from
         ref.bind fun a => ((a.name.orElse fun _ => s.pos.positionAnchor).bind anchors).bind fun (ax, ay, aw, ah) =>
-          (anchorFraction a.side horizontal far (horizontal && rtlCB) (horizontal && s.direction == .rtl)).map fun f =>
+          (anchorFraction a.side horizontal far (axisStartIsFar containing horizontal) (axisStartIsFar s horizontal)).map fun f =>
             let (lo, size, cLo, cSize) := if horizontal then (ax, aw, cx, cw) else (ay, ah, cy, ch)
             let edge := lo + f * size
             if far then cLo + cSize - edge else edge - cLo)
@@ -2370,10 +2420,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- `align-self` for its block axis; `start` and `end` are sides of that writing mode,
       -- `self-start` and `self-end` of the box's own, `left` and `right` of the page.
       let plain := fun (a : CSS.ItemAlign) => a == .auto || a == .normal || a == .stretch
-      let container := if plain s.align.justifySelf && plain s.align.alignSelf then s else absoluteContainer dom styles id
-      let flowOf := fun (st : Computed) (horizontalAxis : Bool) =>
-        SelfPlace.startsAtEnd horizontalAxis (st.pos.writingMode != .horizontalTb) (st.pos.writingMode == .verticalRl)
-          (st.direction == .rtl)
+      let container := if plain s.align.justifySelf && plain s.align.alignSelf then s else containing
       let placeOn := fun (horizontalAxis : Bool) =>
         let inlineAxis := horizontalAxis != (container.pos.writingMode != .horizontalTb)
         let a := if inlineAxis then s.align.justifySelf else s.align.alignSelf
@@ -2389,12 +2436,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .auto, some t | .normal, some t => t
         | .auto, _ | .normal, _ | .stretch, _ => SelfPlace.Place.stretch
         | .center, _ => .center
-        | .end_, _ | .flexEnd, _ | .lastBaseline, _ => SelfPlace.Place.end_.physical (flowOf container horizontalAxis)
-        | .selfStart, _ => SelfPlace.Place.start.physical (flowOf s horizontalAxis)
-        | .selfEnd, _ => SelfPlace.Place.end_.physical (flowOf s horizontalAxis)
+        | .end_, _ | .flexEnd, _ | .lastBaseline, _ => SelfPlace.Place.end_.physical (axisStartIsFar container horizontalAxis)
+        | .selfStart, _ => SelfPlace.Place.start.physical (axisStartIsFar s horizontalAxis)
+        | .selfEnd, _ => SelfPlace.Place.end_.physical (axisStartIsFar s horizontalAxis)
         | .left, _ => .start
         | .right, _ => .end_
-        | _, _ => SelfPlace.Place.start.physical (flowOf container horizontalAxis)
+        | _, _ => SelfPlace.Place.start.physical (axisStartIsFar container horizontalAxis)
       let placeX := placeOn true
       let placeY := placeOn false
       -- §10.3.7: the width is given, or fills the room between `left` and `right`, or
@@ -2491,11 +2538,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .auto => if renderedLegend dom styles id then {s with width := .fitContent} else s
         | _ => s
       if s.display.isTable then
-        match imposedWidth with
-        | none => return (← table (some id) (n.parent.getD 0) n.kids)
-        | some w =>
-          -- A table sizes itself (CSS 2.1 §17.5.2) in the width it is given.
-          return (← layoutTask dom styles font embedding pictures fuel (sub <| .table (some id) (n.parent.getD 0) n.kids) x y w)
+        -- Collapsed tables still size their grid without resolving shared border edges.
+        -- Keep their available-width input until the parent and table agree on those edges.
+        if s.borderCollapse then
+          match imposedWidth with
+          | none => return (← table (some id) (n.parent.getD 0) n.kids none none)
+          | some w =>
+            return (← layoutTask dom styles font embedding pictures fuel
+              (sub <| .table (some id) (n.parent.getD 0) n.kids) x y w)
+        -- Separated tables consume the used border-box dimensions chosen by placement.
+        return (← table (some id) (n.parent.getD 0) n.kids imposedWidth imposedHeight)
       let margin := s.margin
       let padding := s.padding
       let border := s.borderEdges
@@ -2711,7 +2763,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     | .contents container kids =>
       let content ← flow (styles[container]!) container kids #[] x y available
       return {content with height := max content.height (floatsHeight content.floats y), floats := #[]}
-    | .table element container kids => table element container kids
+    | .table element container kids => table element container kids none none
     | .flowed id floats => box id none none false floats true
     | .box id => box id none none false
     | .sized id width height => box id (some width) height false
@@ -2855,6 +2907,9 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
             backgroundSize := s.backgroundSize.atViewport vw vh,
+            backgroundPositionX := s.backgroundPositionX.atViewport vw vh,
+            backgroundPositionY := s.backgroundPositionY.atViewport vw vh,
+            objectPosition := s.objectPosition.map fun (x,y) => (x.atViewport vw vh, y.atViewport vw vh),
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}
   -- Percentage margins and padding, where the containing block's width is definite.
