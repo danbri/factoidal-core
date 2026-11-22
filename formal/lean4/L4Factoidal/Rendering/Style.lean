@@ -150,6 +150,9 @@ structure Computed where
   Layout 1 §3); none is `auto`. With both `auto` the box is not a multi-column container. -/
   columnCount : Option Nat := none
   columnWidth : Option Float := none
+  columnFillBalance : Bool := true
+  orphans : Nat := 2
+  widows : Nat := 2
   fontSize : Float := 16
   /-- CSS Fonts 4 §2.1: the initial value is the user agent's; as in browsers, `serif`
   (`FontFaceRule.genericOf`: drawn with the serif face when the engine holds one, else with
@@ -269,6 +272,7 @@ def htmlProperties : List String :=
    "padding-top","padding-right","padding-bottom","padding-left",
    "color","background","background-color","font-size","font-family",
    "line-height","visibility","overflow","text-decoration","text-decoration-line",
+   "column-fill","orphans","widows",
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
    "min-width","max-width","min-height","max-height","object-fit","text-align",
@@ -1393,6 +1397,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let some n := v.toNat? | throw "column-count must be auto or a whole number"
     if n == 0 then throw "column-count must be at least 1"
     return {s with columnCount := some (min n 1000)}
+  | "column-fill" => match (trim d.value).toLower with
+    | "auto" => return {s with columnFillBalance := false}
+    | "balance" | "balance-all" => return {s with columnFillBalance := true}
+    | _ => throw "unsupported column-fill"
+  | "orphans" | "widows" =>
+    let some count := (trim d.value).toNat? | throw "expected a positive line count"
+    if count == 0 then throw "expected a positive line count"
+    return if d.property == "orphans" then {s with orphans := count} else {s with widows := count}
   | "column-width" =>
     let v := (trim d.value).toLower
     if v == "auto" then return {s with columnWidth := none}
@@ -1759,7 +1771,7 @@ def ownProperties : List String :=
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
    "font-family","background-image","background-size","background-repeat",
-   "background-position-x","background-position-y","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
+   "background-position-x","background-position-y","column-count","column-width","column-fill","columns","orphans","widows","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
 alignment, position and grid readers take, `content`, and the prefixed names those readers
@@ -1860,6 +1872,9 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "background-position-y" => some {s with backgroundPositionY := source.backgroundPositionY}
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
+  | "column-fill" => some {s with columnFillBalance := source.columnFillBalance}
+  | "orphans" => some {s with orphans := source.orphans}
+  | "widows" => some {s with widows := source.widows}
   | "font-size" =>
     some {s with fontSize := source.fontSize, lineHeight := lineHeightOf source.fontSize s.lineHeightFactor s.lineHeight}
   | "font-family" => some {s with fontFamily := source.fontFamily}
@@ -1900,7 +1915,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
 them). -/
 def inheritedProperties : List String :=
   ["color","font","font-size","font-family","font-weight","font-style","line-height","visibility","border-spacing","border-collapse",
-   "caption-side","text-align","direction","white-space","white-space-collapse"]
+   "caption-side","text-align","direction","white-space","white-space-collapse","orphans","widows"]
 
 /-- The style a CSS-wide keyword takes the property from (CSS Cascade 4 §7.3): `inherit`
 the parent's; `initial` the initial values (the fields of an empty `Computed`); `unset`
@@ -3130,7 +3145,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     clipOverflow := svgViewport && svgOverflow != "visible", fontSize,
     fontFamily := if html && monospaceTags.contains n.lname then "monospace" else parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
-    lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
+    lineHeightFactor := parent.lineHeightFactor, orphans := parent.orphans, widows := parent.widows,
+    visible := parent.visible,
     rise := parent.rise, centerBlocks := parent.centerBlocks,
     -- HTML §15.3.6: `sub { vertical-align: sub }`, `sup { vertical-align: super }`
     shift := if html && n.lname == "sup" then 1 else if html && n.lname == "sub" then -1 else 0,

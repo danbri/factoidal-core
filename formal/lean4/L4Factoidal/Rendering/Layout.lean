@@ -1195,13 +1195,23 @@ private def placeStarts (starts : Array (Nat × Nat × Computed)) (line : Array 
 private def continuedStarts (open_ : Array (Nat × Nat × Computed)) : Array (Float × Inline) × Array Nat :=
   if open_.isEmpty then (#[],#[]) else (open_.map fun st => (0,.openInline st.2.1 st.2.2 true),open_.map (·.1))
 
+private structure InlineFlow where
+  flow : Result := {}
+  lines : Option (Array Result) := none
+
+private def InlineFlow.add (out : InlineFlow) (line : Result) : InlineFlow :=
+  match out.lines with
+  | none => {flow := appendResult out.flow line}
+  | some lines => {flow := {height := out.flow.height+line.height}, lines := some (lines.push line)}
+
 /-- Word wrapping constructs line participants first. The font profile and
 positioned glyph runs are consumed to paint the actual word geometry. With bidi
 (`needsBidi`), words are cut by level first, a word's pieces stay on one line, and
 each line is reordered (`bidiLine`). -/
-def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : Float)
+private def inlineLayoutCore (font : FontProfile) (items0 : Array Inline) (x y available : Float)
     (strut : Option Computed := none)
-    (band : Float → Float × Float := fun _ => (0,available)) : Except String Result := do
+    (band : Float → Float × Float := fun _ => (0,available))
+    (collectLines : Bool := false) : Except String InlineFlow := do
   let rtlBlock := strut.any (·.direction == .rtl)
   let plain := strut.any (·.unicodeBidi == .plaintext)
   let bidi := needsBidi rtlBlock plain items0
@@ -1228,7 +1238,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   let place := fun (line : Array (Float × Inline)) (idx : Array Nat) (lineEnd : Float) =>
     if bidi then bidiLine line (idx.map fun k => bi.levels[k]?.getD 0) (idx.map fun k => bi.paraLevels[k]?.getD 0) lineEnd
     else (line, #[])
-  let mut out : Result := {}
+  let mut out : InlineFlow := {lines := if collectLines then some #[] else none}
   let mut cursorX : Float := 0
   let mut pendingSpace : Option (TextSource × Computed) := none
   let mut pendingK : Nat := 0
@@ -1305,8 +1315,8 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
         openBoxes := openBoxes ++ waiting
         waiting := #[]
       let (row,dirs) := place (line.push (cursorX,item)) (lineIdx.push k) cursorX
-      let row ← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs
-      out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
+      let row ← lineLayout font row (x+indent cursorX out.flow.height) (y+out.flow.height) strut dirs
+      out := out.add {row with height := if row.height > 0 then row.height else 19.2}
       (line,lineIdx) := continuedStarts openBoxes
       cursorX := 0
       pendingSpace := none
@@ -1349,9 +1359,9 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
               else break
             | none => break
           | _ => break
-      if cursorX > 0 && cursorX+gap+whole > (band out.height).2 && !preformatted item && !glued k && !held then
+      if cursorX > 0 && cursorX+gap+whole > (band out.flow.height).2 && !preformatted item && !glued k && !held then
         let (row,dirs) := place line lineIdx cursorX
-        out := appendResult out (← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs)
+        out := out.add (← lineLayout font row (x+indent cursorX out.flow.height) (y+out.flow.height) strut dirs)
         (line,lineIdx) := continuedStarts openBoxes
         cursorX := 0
         fresh := false
@@ -1373,9 +1383,14 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       content := true
   if !line.isEmpty && (content || fresh) then
     let (row,dirs) := place line lineIdx cursorX
-    let row ← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs
-    out := appendResult out (if content then row else {row with height := 0})
+    let row ← lineLayout font row (x+indent cursorX out.flow.height) (y+out.flow.height) strut dirs
+    out := out.add (if content then row else {row with height := 0})
   return out
+
+def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Float)
+    (strut : Option Computed := none)
+    (band : Float → Float × Float := fun _ => (0,available)) : Except String Result :=
+  (inlineLayoutCore font items x y available strut band).map (·.flow)
 
 private def append (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height,
@@ -1620,6 +1635,81 @@ def columnKids (single : Result) (kids : Array Nat) (count : Nat) (y : Float) : 
     if cuts.contains i then groups := groups.push #[]
     groups := groups.modify (groups.size-1) (·.push kids[i]!)
   return groups
+
+/-- Cut a run of line boxes at cumulative block ends. Positive orphans and widows
+constrain the lines on each side of an unforced break. An oversized first line in
+a fragment still makes progress (CSS Break 3 §4.4). -/
+private def columnLineCuts (ends : Array Int) (height : Int) (orphans widows : Nat) :
+    Option (Array Nat) := Id.run do
+  let mut next : Nat := 0
+  let mut start : Nat := 0
+  let mut top : Int := 0
+  let mut cuts := #[]
+  for _ in [0:3*ends.size+1] do
+    if next == ends.size then return some cuts
+    if next == start || ends[next]!-top <= height then
+      next := next+1
+    else
+      let cut := min next (ends.size-widows)
+      let minimum := max 1 (if start == 0 then orphans else max orphans widows)
+      if cut < start+minimum then return none
+      cuts := cuts.push cut
+      top := ends[cut-1]!
+      start := cut
+      next := cut
+  return none
+
+/-- Balance a single run of line boxes with the existing column count, keeping
+the height search exact in layout units. A height bound can require extra columns. -/
+private def columnLinePlan (ends : Array Int) (count : Nat) (limit : Option Int)
+    (balance : Bool) (orphans widows : Nat) : Array Nat := Id.run do
+  let total := ends.back?.getD 0
+  let mut used := limit.getD total
+  if balance && used > 0 then
+    let mut lo : Int := 0
+    let mut hi := min total used
+    for _ in [0:64] do
+      if lo >= hi then break
+      let mid := (lo+hi)/2
+      if (columnLineCuts ends mid orphans widows).any (fun cuts => cuts.size+1 <= count) then
+        hi := mid
+      else lo := mid+1
+    used := hi
+  return (columnLineCuts ends used orphans widows).getD ((columnLineCuts ends used 1 1).getD #[])
+
+#guard columnLinePlan #[10,20,30,40,50,60] 2 none true 2 2 == #[3]
+#guard columnLinePlan #[10,20,30,40,50] 2 none true 2 2 == #[3]
+#guard columnLinePlan #[10,20,30] 3 none true 2 2 == #[]
+#guard columnLinePlan #[10,20,30,40,50,60] 2 (some 20) false 1 1 == #[2,4]
+#guard columnLinePlan #[10,20,30,40,50] 2 (some 20) false 2 2 == #[2,4]
+#guard columnLinePlan #[10,20,30,40] 2 none false 1 1 == #[]
+
+/-- Keep local line geometry, then translate each completed line into its column. -/
+private def placeColumnLines (lines : Array Result) (s : Computed)
+    (count : Nat) (width column gap : Float) (limit : Option Float) : Result := Id.run do
+  let mut ends := #[]
+  let mut total : Float := 0
+  for line in lines do
+    total := total+line.height
+    ends := ends.push (LU.ofPx total)
+  let cuts := columnLinePlan ends count (limit.map LU.ofPx) s.columnFillBalance s.orphans s.widows
+  let mut out : Result := {}
+  let mut columnIndex : Nat := 0
+  let mut originalY : Float := 0
+  let mut columnY : Float := 0
+  let mut maxHeight : Float := 0
+  for i in [0:lines.size] do
+    if cuts[columnIndex]? == some i then
+      columnIndex := columnIndex+1
+      columnY := 0
+    let line := lines[i]!
+    let advance := Float.ofNat columnIndex * (column+gap)
+    let dx := if s.direction == .rtl then width-column-advance else advance
+    out := appendResult out (line.shift dx (columnY-originalY))
+    originalY := originalY+line.height
+    columnY := columnY+line.height
+    maxHeight := max maxHeight columnY
+  return {out with height := maxHeight}
 
 /-- The used `column-gap` of a multi-column container: `normal` is 1em (§5.1). -/
 def columnGapPx (s : Computed) (width : Float) : Float :=
@@ -2618,20 +2708,34 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           match columnPlan s.columnCount s.columnWidth gap width with
           | none => flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
           | some (count,cw) => do
-            -- a multi-column container is the root of its own block formatting context: its
-            -- contents in one column first, then each column's children laid out in their place
-            let single ← flow s id n.kids lead innerX innerY cw 0 #[] none
-            let single := {single with height := max single.height (floatsHeight single.floats innerY), floats := #[]}
-            let groups := columnKids single n.kids count innerY
-            if groups.size ≤ 1 then pure single else do
-            let mut out : Result := {work := single.work}
-            for i in [0:groups.size] do
-              let r ← flow s id groups[i]! (if i == 0 then lead else #[]) (innerX+Float.ofNat i*(cw+gap)) innerY cw 0 #[] none
-              out := {out with nodes := out.nodes ++ r.nodes, boxes := out.boxes ++ r.boxes, runs := out.runs ++ r.runs,
-                               pending := out.pending ++ r.pending, work := out.work+r.work,
-                               height := max out.height (max r.height (floatsHeight r.floats innerY)),
-                               baseline := if i == 0 then r.baseline else out.baseline, lastBaseline := r.lastBaseline}
-            pure out
+            let inlineOnly := s.pos.writingMode == .horizontalTb && n.kids.all fun child =>
+              let cs := styles[child]!
+              (dom.get child).type != .element || cs.display == .none ||
+                (!cs.display.isBlockLevel && !cs.display.isInlineContainer && !cs.display.isTableInternal &&
+                 !(cs.display == .inlineBlock && blockInside dom styles child) &&
+                 cs.pos.float == .none && !cs.pos.isAbsolute)
+            if inlineOnly then
+              let mut items := lead
+              for child in n.kids do
+                items := items ++ (← inlineItems dom styles embedding pictures cw fuel child)
+              let rows ← inlineLayoutCore font (← atomize font items cw) innerX innerY cw (some s)
+                (fun _ => (0,cw)) true
+              pure (placeColumnLines (rows.lines.getD #[]) s count width cw gap definite)
+            else
+              -- a multi-column container is the root of its own block formatting context: its
+              -- contents in one column first, then each column's children laid out in their place
+              let single ← flow s id n.kids lead innerX innerY cw 0 #[] none
+              let single := {single with height := max single.height (floatsHeight single.floats innerY), floats := #[]}
+              let groups := columnKids single n.kids count innerY
+              if groups.size ≤ 1 then pure single else do
+              let mut out : Result := {work := single.work}
+              for i in [0:groups.size] do
+                let r ← flow s id groups[i]! (if i == 0 then lead else #[]) (innerX+Float.ofNat i*(cw+gap)) innerY cw 0 #[] none
+                out := {out with nodes := out.nodes ++ r.nodes, boxes := out.boxes ++ r.boxes, runs := out.runs ++ r.runs,
+                                 pending := out.pending ++ r.pending, work := out.work+r.work,
+                                 height := max out.height (max r.height (floatsHeight r.floats innerY)),
+                                 baseline := if i == 0 then r.baseline else out.baseline, lastBaseline := r.lastBaseline}
+              pure out
       -- CSS 2.1 §10.6.7: a box that is the root of its block formatting context (one laid
       -- out with no floats around it) is as high as its floats; one in a context with floats
       -- hands them on to the flow after it.

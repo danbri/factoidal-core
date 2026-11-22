@@ -55,7 +55,7 @@ to `Computed` stops this from compiling until it is sorted here. The custom prop
 its descendants, each of which is compared itself. -/
 def sameShape (a b : Computed) : Bool :=
   match a with
-  | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
+  | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,columnFillBalance,orphans,widows,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
@@ -70,6 +70,7 @@ def sameShape (a b : Computed) : Bool :=
   -- so is a background image: its tiles are made with the box's size
   backgroundImage.isNone && b.backgroundImage.isNone &&
   columnCount == b.columnCount && optEq (· == ·) columnWidth b.columnWidth &&
+  columnFillBalance == b.columnFillBalance && orphans == b.orphans && widows == b.widows &&
   lineHeight == b.lineHeight && optEq (· == ·) lineHeightFactor b.lineHeightFactor &&
   visible == b.visible && clipOverflow == b.clipOverflow && underline == b.underline &&
   decorationColor.isSome == b.decorationColor.isSome && preformatted == b.preformatted &&
