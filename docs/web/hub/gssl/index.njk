@@ -57,7 +57,7 @@ permalink: /web/hub/gssl/
     <div class="actions">
       <button id="gdsl-check" type="button" class="secondary">Lean validate and visualize</button>
       <button id="gdsl-cpu" type="button" class="secondary">Run Lean/Wasm reference</button>
-      <button id="gdsl-gpu" type="button" class="secondary">GPU status</button>
+      <button id="gdsl-gpu" type="button" class="secondary">Run Lean-planned WebGPU</button>
       
     </div>
     <p id="gdsl-status" class="status" role="status">Choose an example or edit the common expression.</p>
@@ -76,7 +76,7 @@ permalink: /web/hub/gssl/
       <pre id="gdsl-trace">No graph executed yet.</pre>
       <pre id="gdsl-resources">No GPU device allocated.</pre>
     </details>
-    <p class="scope">PVGraph requires a compatible Lean/Wasm engine. No JavaScript interpreter or graph-checker fallback is provided. The separate fixed-kernel GPU probe below is not PVGraph execution. There is no general GDSL-to-WGSL refinement theorem. <a href="https://github.com/danbri/factoidal-core/blob/main/docs/specs/gdsl-0.2.md">GDSL 0.2 specification</a>.</p>
+    <p class="scope">PVGraph uses the Lean/Wasm evaluator and a restricted GPU path (map/zip/broadcast); scan and reduction remain CPU-only. A current Wasm build with the GPU-plan operation is required. The fixed-kernel diagnostic below is independent. There is no general GDSL-to-WGSL refinement theorem. <a href="https://github.com/danbri/factoidal-core/blob/main/docs/specs/gdsl-0.2.md">GDSL 0.2 specification</a>.</p>
   </section>
   <section class="panel" aria-labelledby="input-title">
     <div class="panel-head"><h2 id="input-title">Fixed-kernel GPU diagnostic</h2><span>LOW-LEVEL REGRESSION</span></div>
