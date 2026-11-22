@@ -39,7 +39,7 @@ inductive CallStep where
 
 -- Memory expansion of zero-byte ranges is zero, regardless of their offsets;
 -- all nonzero lengths are outside this first opcode slice.
-/-- One actual CALL instruction with a seven-word stack and checked state commit. -/
+-- One actual CALL instruction with a seven-word stack and checked state commit.
 /-- A resumed parent with the actual EVM Boolean CALL success bit.
     The charge is validated by Core.commit before committing any persistent
     world-state side effects. -/
@@ -92,6 +92,7 @@ def callStep (fuel : Nat) (world : TxWorld)
         finishCall parent rest childWorld remaining false
       | .callerOutOfGas => .exceptional .outOfGas
       | .indeterminate e => .indeterminate e
+  | _ => .exceptional .stackUnderflow
 
 /-- Intermediate outcomes retain a world on success, but not when an entire
     parent frame must revert or halt exceptionally. That choice forces the
