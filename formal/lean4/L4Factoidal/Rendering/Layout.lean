@@ -238,14 +238,17 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
   let iw := Float.ofNat b.width
   let ih := Float.ofNat b.height
   let e := s.borderEdges
-  let (tw,th) := backgroundTileSize s.backgroundSize iw ih (max 0 (w-e.left-e.right)) (max 0 (h-e.top-e.bottom))
+  let areaW := max 0 (w-e.left-e.right)
+  let areaH := max 0 (h-e.top-e.bottom)
+  let (tw,th) := backgroundTileSize s.backgroundSize iw ih areaW areaH
   if tw <= 0 || th <= 0 then return #[]
   let (repeatX,repeatY) := s.backgroundRepeat
   if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
     let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
     return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  let ox := x+e.left
-  let oy := y+e.top
+  -- CSS Backgrounds 3 §2.6 resolves each axis against the area minus the sized image.
+  let ox := x+e.left+(s.backgroundPositionX.resolve (areaW-tw)).getD 0
+  let oy := y+e.top+(s.backgroundPositionY.resolve (areaH-th)).getD 0
   let startX := if repeatX then ox-((ox-x)/tw).ceil*tw else ox
   let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
   let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1
@@ -476,15 +479,28 @@ def fitScale (fit : ObjectFit) (iw ih w h : Float) : Float × Float :=
   | .none => (1,1)
   | .scaleDown => let k := min 1 (min (w/iw) (h/ih)); (k,k)
 
-/-- The paint of a picture in the content box `x`, `y`, `w`, `h`: one rectangle filled
-with the image, centred (`object-position: 50% 50%`) and cut to the box by its own
-geometry, as the SVG `image` with `slice` is. -/
+/-- CSS Images 3 §5.6 resolves position percentages against the space left by the
+fitted object. That space can be negative when the object exceeds the box. -/
+def pictureOffset (position : Option (CSS.Length × CSS.Length)) (roomX roomY : Float) : Float × Float :=
+  match position with
+  | none => (roomX/2,roomY/2)
+  | some (x,y) => ((CSS.resolve roomX x).getD (roomX/2), (CSS.resolve roomY y).getD (roomY/2))
+
+theorem pictureOffset_default (roomX roomY : Float) :
+    pictureOffset none roomX roomY = (roomX/2,roomY/2) := rfl
+
+theorem pictureOffset_percent (roomX roomY x y : Float) :
+    pictureOffset (some (.percent x,.percent y)) roomX roomY = (roomX*x,roomY*y) := rfl
+
+/-- Paint the fitted image at its object position, clipped to its content box. -/
 def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float) : List Node :=
   let (iw,ih) := picture.size
   if !s.visible || w <= 0 || h <= 0 || iw <= 0 || ih <= 0 then [] else
   let (sx,sy) := fitScale s.objectFit iw ih w h
-  let dx := x+(w-iw*sx)/2
-  let dy := y+(h-ih*sy)/2
+  let (offsetX,offsetY) := pictureOffset s.objectPosition (w-iw*sx) (h-ih*sy)
+  let dx := x+offsetX
+  let dy := y+offsetY
+
   let left := max x dx
   let top := max y dy
   let right := min (x+w) (dx+iw*sx)
@@ -2856,6 +2872,9 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
             backgroundSize := s.backgroundSize.atViewport vw vh,
+            backgroundPositionX := s.backgroundPositionX.atViewport vw vh,
+            backgroundPositionY := s.backgroundPositionY.atViewport vw vh,
+            objectPosition := s.objectPosition.map fun (x,y) => (x.atViewport vw vh, y.atViewport vw vh),
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}
   -- Percentage margins and padding, where the containing block's width is definite.
