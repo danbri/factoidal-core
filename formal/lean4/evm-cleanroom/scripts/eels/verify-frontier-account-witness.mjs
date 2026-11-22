@@ -88,8 +88,17 @@ async function authenticateAccounts(root, bundles, addresses) {
     for(const [name,field] of [
       ['balance',actual.balance],['nonce',actual.nonce],
     ])require(num(p[name],name)===field,'forged account proof '+name+' for '+addr)
-    require(same(p.codeHash,actual.codeHash) &&
-      same(p.storageHash,actual.storageHash),'forged account code/storage hashes for '+addr)
+    // EIP-1186 eth_getProof represents an ABSENT account by zeroed codeHash
+    // and storageHash, whereas an EXISTING empty-code/empty-storage account
+    // uses Keccak(empty bytes) and Keccak(RLP empty string). A verified MPT
+    // nonmembership result is the sole authority for selecting the convention:
+    // the RPC cannot *declare* an address absent to evade a real account.
+    const rpcAbsentHash='0x'+'00'.repeat(32)
+    const expectedCodeHash=actual.exists?actual.codeHash:rpcAbsentHash
+    const expectedStorageHash=actual.exists?actual.storageHash:rpcAbsentHash
+    require(same(p.codeHash,expectedCodeHash) &&
+      same(p.storageHash,expectedStorageHash),
+      'forged account code/storage hashes or nonmembership convention for '+addr)
     out.push({...actual,address:addr,proofNodes:nodes})
   }
   return out
