@@ -5542,7 +5542,9 @@
   // rendering"). A page with no observer pays nothing: the first observe() wraps the natives
   // that change the tree, so that a change asks for one check in the next frame.
   // An engine without the operations leaves the interfaces undefined.
-  lazyGroup(['IntersectionObserver', 'IntersectionObserverEntry', 'ResizeObserver', 'ResizeObserverEntry', 'ResizeObserverSize'], () => {
+  let layoutObservers;
+  const layoutObserverInterfaces = () => layoutObservers ??= makeLayoutObservers();
+  function makeLayoutObservers() {
     if (typeof apiCall(171, ['0px']) !== 'string') return undefined;
     const layoutWatch = { intersection: new Set(), resize: new Set(), wrapped: false, pending: false };
     const layoutUnits = v => Math.round(v * 64);
@@ -5726,16 +5728,11 @@
       get trackVisibility() { return intersectionState.get(this).trackVisibility; }
       observe(target) {
         if (!(target instanceof Element)) throw new TypeError("Failed to execute 'observe' on 'IntersectionObserver': parameter 1 is not of type 'Element'.");
-        const st = intersectionState.get(this);
-        if (st.targets.has(target)) return;
-        st.targets.set(target, { index: -1, intersecting: false });
-        layoutWatch.intersection.add(this); watchTreeForObservers(); askObserverCheck();
+        addIntersectionTarget(this, target);
       }
       unobserve(target) {
         if (!(target instanceof Element)) throw new TypeError("Failed to execute 'unobserve' on 'IntersectionObserver': parameter 1 is not of type 'Element'.");
-        const st = intersectionState.get(this);
-        st.targets.delete(target);
-        if (!st.targets.size) layoutWatch.intersection.delete(this);
+        removeIntersectionTarget(this, target);
       }
       disconnect() { const st = intersectionState.get(this); st.targets.clear(); layoutWatch.intersection.delete(this); }
       takeRecords() { const st = intersectionState.get(this), q = st.queue; st.queue = []; return q; }
@@ -5792,8 +5789,35 @@
       for (const k of Object.getOwnPropertyNames(C.prototype)) if (k !== 'constructor') Object.defineProperty(C.prototype, k, { enumerable: true });
       Object.defineProperty(C.prototype, Symbol.toStringTag, { value: C.name, configurable: true });
     }
-    return { IntersectionObserver, IntersectionObserverEntry, ResizeObserver, ResizeObserverEntry, ResizeObserverSize };
-  });
+    function addIntersectionTarget(observer, target) {
+      const st = intersectionState.get(observer);
+      if (st.targets.has(target)) return;
+      st.targets.set(target, { index: -1, intersecting: false });
+      layoutWatch.intersection.add(observer); watchTreeForObservers(); askObserverCheck();
+    }
+    function removeIntersectionTarget(observer, target) {
+      const st = intersectionState.get(observer);
+      st.targets.delete(target);
+      if (!st.targets.size) layoutWatch.intersection.delete(observer);
+    }
+    let lazyImages;
+    function watchLazyImage(target) {
+      lazyImages ??= new IntersectionObserver(entries => {
+        for (const entry of entries) {
+          const id = nodeId(entry.target);
+          if (entry.isIntersecting && imgLazy.has(id)) updateImage(id, true);
+        }
+      });
+      addIntersectionTarget(lazyImages, target);
+    }
+    function forgetLazyImage(target) {
+      if (lazyImages) removeIntersectionTarget(lazyImages, target);
+    }
+    return { IntersectionObserver, IntersectionObserverEntry, ResizeObserver, ResizeObserverEntry, ResizeObserverSize,
+      watchLazyImage, forgetLazyImage };
+  }
+  lazyGroup(['IntersectionObserver', 'IntersectionObserverEntry', 'ResizeObserver', 'ResizeObserverEntry', 'ResizeObserverSize'],
+    layoutObserverInterfaces);
   // ==== end of observers of layout ========================================================
   lazy('TextDecoder', () => {
     const decoders = new WeakMap();
@@ -7410,13 +7434,6 @@
   const imgClearSize = (id, st) => { if (st.layoutSized) imgWriteSize(id, st, ''); };
   const updateImage = (id, force = false) => {
     const el = wrap(id);
-    // A lazy request waits until script asks for image state (the current engine's
-    // bounded demand trigger). Attribute writes are coalesced below so setting src
-    // and then loading=lazy in one script turn does not start an eager request.
-    if (!force && String(el.getAttribute('loading') ?? '').toLowerCase() === 'lazy') {
-      imgLazy.add(id);
-      return;
-    }
     const gen = ++imgGen;
     const hasSrc = n0.attr(id, 'src');
     const selection = imgSelection(id);
@@ -7450,6 +7467,19 @@
       imgFire(el, ok ? 'load' : 'error');
       imgUndelay(id);
     };
+    const rawSrc = n0.attr(id, 'src');
+    const parent = info(id, 1);
+    const inPicture = parent >= 0 && info(parent, 0) === 1 && htmlEl(parent) && str(parent, 0) === 'picture';
+    const plainSrc = !inPicture && typeof rawSrc === 'string' && n0.attr(id, 'srcset') === null && url !== '' && url === resolveURL(rawSrc, info(id, 7) > 0 ? docURL(info(id, 7)) : undefined);
+    const available = (plainSrc || inPicture) ? imgAvailable.get(availableKey) : null;
+    // Absent sources and completed cache entries resolve before viewport deferral.
+    if (!force && url !== '' && !available && String(el.getAttribute('loading') ?? '').toLowerCase() === 'lazy') {
+      imgLazy.add(id);
+      layoutObserverInterfaces()?.watchLazyImage(el);
+      imgUndelay(id);
+      return;
+    }
+    if (imgLazy.delete(id)) layoutObserverInterfaces()?.forgetLazyImage(el);
     if (url === '') {
       // no source: broken; an empty src attribute fires error (step 13)
       st.complete = true;
@@ -7459,11 +7489,6 @@
       return;
     }
     if (cspBlocksRequest('img-src', url, '', false, id)) { flushViolations(); Promise.resolve().then(() => { if (imgStates.get(id)?.gen === gen) settle(false); }); return; }
-    const rawSrc = n0.attr(id, 'src');
-    const parent = info(id, 1);
-    const inPicture = parent >= 0 && info(parent, 0) === 1 && htmlEl(parent) && str(parent, 0) === 'picture';
-    const plainSrc = !inPicture && typeof rawSrc === 'string' && n0.attr(id, 'srcset') === null && selection.url === resolveURL(rawSrc, info(id, 7) > 0 ? docURL(info(id, 7)) : undefined);
-    const available = (plainSrc || inPicture) ? imgAvailable.get(availableKey) : null;
     if (available) {
       st.w = available.w; st.h = available.h;
       st.available = true;
@@ -7630,12 +7655,14 @@
     for (const el of imgs) {
       const id = nodeId(el);
       const lazy = String(el.getAttribute('loading') ?? '').toLowerCase() === 'lazy';
-      if (!lazy && k++ < imgStartMax) { imgDelay.add(id); updateImage(id); } else imgLazy.add(id);
+      if (lazy) updateImage(id);
+      else if (k++ < imgStartMax) { imgDelay.add(id); updateImage(id); }
+      else imgLazy.add(id);
     }
   };
   const imgTouch = id => {
     if (imgPendingUpdates.delete(id)) updateImage(id, true);
-    else if (imgLazy.delete(id)) updateImage(id, true);
+    else if (imgLazy.has(id)) updateImage(id, true);
   };
   {
     const P = named.HTMLImageElement.prototype;

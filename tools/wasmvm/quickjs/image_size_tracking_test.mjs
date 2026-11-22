@@ -68,7 +68,7 @@ test('one URL changing from 1x to 2x to 1x clears and restores its layout dimens
   assert.ok(start>=0&&end>start);
   const commands=[], events=[], requests=[], timers=[];
   let selected='';
-  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,viewport:()=>[800,600],
+  const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,viewport:()=>[800,600],
     n0:{attr:()=>null},wrap:()=>({getAttribute:()=>null}),resolveURL:s=>s,
     imgGen:0,imgStates:new Map(),imgAvailable:new Map(),imgFire:(_el,event)=>events.push(event),imgUndelay:()=>{},
     chk(){},register:f=>f,
@@ -95,7 +95,7 @@ test('a completed plain-src image is available to another detached image in the 
   const end=prelude.indexOf('  const imgWatch = () => {',start);
   const requests=[],events=[],timers=[],states=new Map(),available=new Map();
   let mode='no-cors';
-  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
+  const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
     viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(_id,name)=>name==='src'?'/cached.png':null},
     wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:()=>'',
     n:{query(_id,op,payload){if(op===195)return '0/cached.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
@@ -125,7 +125,7 @@ test('a completed selected image is reused inside an empty picture',async()=>{
   const end=prelude.indexOf('  const imgWatch = () => {',start);
   const events=[],timers=[],states=new Map(),available=new Map();
   available.set(JSON.stringify([9,'/cached-picture.png','no-cors','include']),{w:37,h:23});
-  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(id,k)=>k===7?9:k===1?(id===2?10:-1):k===12?-1:k===0?1:0,
+  const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(id,k)=>k===7?9:k===1?(id===2?10:-1):k===12?-1:k===0?1:0,
     viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(_id,name)=>name==='src'?'/cached-picture.png':null},
     wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:(id)=>id===10?'picture':'img',
     n:{query(_id,op,payload){if(op===195)return '0/cached-picture.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
@@ -145,7 +145,7 @@ test('a valid image response is accepted when its HTTP status is an error',async
   const start=prelude.indexOf('  const imgSelection = id => {');
   const end=prelude.indexOf('  const imgWatch = () => {',start);
   const events=[],timers=[],states=new Map(),available=new Map();
-  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
+  const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
     viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(_id,name)=>name==='src'?'/error-status.png':null},
     wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:()=>'div',
     n:{query(_id,op){if(op===195)return '0/error-status.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
@@ -168,7 +168,7 @@ test('a completed superseded fetch seeds availability without settling its stale
   const end=prelude.indexOf('  const imgWatch = () => {',start);
   const src=new Map([[1,'/old.png'],[2,'/old.png']]),pending=[],timers=[],events=[];
   const states=new Map(),available=new Map();
-  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
+  const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
     viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(id,name)=>name==='src'?src.get(id)??null:null},
     wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:()=>'',
     n:{query(id,op){if(op===195)return '0'+src.get(id);assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
@@ -195,7 +195,7 @@ test('decode waiters observe a replaced request on the DOM task source',()=>{
   const end=prelude.indexOf('  const imgWatch = () => {',start);
   const timers=[];let rejected=0;
   const states=new Map([[4,{gen:0,url:'/old.png',waiters:[[()=>{},()=>rejected++]],layoutSized:false}]]);
-  const context=vm.createContext({DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
+  const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
     viewport:()=>[800,600],resolveURL:s=>s,n0:{attr:()=>null},wrap:()=>({getAttribute:()=>null}),
     n:{query(_id,op){if(op===195)return '0/new.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
     imgGen:0,imgStates:states,imgAvailable:new Map(),imgFire(){},imgUndelay(){},chk(){},register:f=>f,
@@ -296,17 +296,77 @@ test('changing a deferred image to loading=eager schedules its request',()=>{
   h.flush();
   assert.deepEqual(h.updates,[[4,false]]);
 });
-test('loading=lazy defers a request until script demands image state',()=>{
-  const start=prelude.indexOf('  const updateImage = (id, force = false) => {');
+function lazyImageHarness() {
+  const start=prelude.indexOf('  const imgSelection = id => {');
   const end=prelude.indexOf('  const imgWatch = () => {',start);
-  assert.ok(start>=0&&end>start);
-  const lazy=new Set(),calls=[];
-  const context=vm.createContext({Set,String,imgLazy:lazy,wrap(){return {getAttribute(){return 'lazy';}};},
-    imgSelection(){calls.push('selected');return null;}});
+  const lazy=new Set(),requests=[],timers=[],events=[],watches=[],available=new Map();
+  let source='/image.png';
+  const context=vm.createContext({imgLazy:lazy,DOMException,devicePixelRatio:1,
+    info:(_id,k)=>k===7?9:k===1||k===12?-1:0,viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,
+    n0:{attr:(_id,name)=>name==='src'?source:null},
+    wrap:()=>({getAttribute:name=>name==='loading'?'lazy':null}),htmlEl:()=>true,str:()=>'',
+    n:{query(_id,op){if(op===195)return source?'1'+source:'';assert.equal(op,163);return '';},
+      timer(f){timers.push(f);return ''; }},
+    imgGen:0,imgStates:new Map(),imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay(){},
+    chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
+    corsSettings:()=>({mode:'no-cors',credentials:'include'}),
+    layoutObserverInterfaces:()=>({watchLazyImage(){watches.push('observe');},forgetLazyImage(){watches.push('unobserve');}}),
+    elementFetch(url){requests.push(url);return new Promise(()=>{});}});
   vm.runInContext(prelude.slice(start,end)+'\n globalThis.update=updateImage;',context);
-  context.update(4);
-  assert.deepEqual([...lazy],[4]);
-  assert.deepEqual(calls,[]);
+  return {update:context.update,lazy,requests,timers,events,watches,available,setSource(value){source=value;}};
+}
+
+test('an unavailable lazy image waits for an intersection before requesting its bytes',()=>{
+  const h=lazyImageHarness();
+  h.update(4);
+  assert.deepEqual([...h.lazy],[4]);
+  assert.deepEqual(h.watches,['observe']);
+  assert.deepEqual(h.requests,[]);
+  h.update(4,true);
+  assert.deepEqual([...h.lazy],[]);
+  assert.deepEqual(h.watches,['observe','unobserve']);
+  assert.deepEqual(h.requests,['/image.png']);
+});
+
+test('an empty lazy image reports an error and clears its deferred request',async()=>{
+  const h=lazyImageHarness();
+  h.update(4);
+  h.setSource('');
+  h.update(4);
+  await Promise.resolve();
+  assert.deepEqual([...h.lazy],[]);
+  assert.deepEqual(h.watches,['observe','unobserve']);
+  assert.deepEqual(h.events,['error']);
+  assert.deepEqual(h.requests,[]);
+});
+
+test('a completed image is reused before waiting on a lazy intersection',()=>{
+  const h=lazyImageHarness();
+  h.available.set(JSON.stringify([9,'/image.png','no-cors','include']),{w:40,h:20});
+  h.update(4);
+  assert.deepEqual([...h.lazy],[]);
+  assert.deepEqual(h.watches,[]);
+  assert.deepEqual(h.requests,[]);
+  for(const timer of h.timers)timer();
+  assert.deepEqual(h.events,['load']);
+});
+
+test('the internal observer resumes an intersecting image with zero intersection area',()=>{
+  const start=prelude.indexOf('    let lazyImages;');
+  const end=prelude.indexOf('    return { IntersectionObserver,',start);
+  let deliver;
+  const updates=[],id=4,target={};
+  const context=vm.createContext({imgLazy:new Set([id]),nodeId:()=>id,
+    IntersectionObserver:class {constructor(callback){deliver=callback;}},
+    addIntersectionTarget(_observer,el){assert.equal(el,target);},
+    removeIntersectionTarget(){},
+    updateImage(node,force){updates.push([node,force]);}});
+  vm.runInContext(prelude.slice(start,end)+'\n globalThis.watch=watchLazyImage;',context);
+  context.watch(target);
+  deliver([{target,isIntersecting:false,intersectionRatio:0}]);
+  assert.deepEqual(updates,[]);
+  deliver([{target,isIntersecting:true,intersectionRatio:0}]);
+  assert.deepEqual(updates,[[id,true]]);
 });
 
 test('inserting an in-flight image into an empty picture invalidates its same-URL request',async()=>{
