@@ -600,32 +600,35 @@ def inlineLead (s : Computed) : Float := s.margin.left+s.borderEdges.left+s.padd
 /-- What the end of an inline box adds to its line: the right padding, border and margin. -/
 def inlineTrail (s : Computed) : Float := s.padding.right+s.borderEdges.right+s.margin.right
 
-/-- A character of the scripts that break between letters with no space between words
-(UAX 14 classes ID, CJ, H2 and H3, and their punctuation): Han, kana, Hangul, CJK
-punctuation, fullwidth forms. -/
-def wideChar (c : Nat) : Bool :=
-  (0x2E80 ≤ c && c ≤ 0x9FFF) || (0xAC00 ≤ c && c ≤ 0xD7AF) || (0xF900 ≤ c && c ≤ 0xFAFF) ||
-  (0xFE30 ≤ c && c ≤ 0xFE4F) || (0xFF00 ≤ c && c ≤ 0xFFEF) || (0x20000 ≤ c && c ≤ 0x3FFFF)
-
-/-- A word cut where UAX 14 lets a line break inside it next to a `wideChar`, so that
-Chinese, Japanese and Korean text wraps between its characters as in a browser (CSS Text 3
-§5.1, `word-break: normal`), and a table cell's narrowest width is a character, not the
-sentence. Each piece with its offset in code points. A word with no `wideChar` is one
-piece, with no UAX 14 pass. -/
+/-- Split one CSS text token at its internal UAX 14 break opportunities, retaining
+code-point offsets for selection. CSS spaces and explicit line breaks are handled
+by the caller. Plain ASCII letters and digits have no internal break. -/
 def wordPieces (word : String) (mode : Unicode.LineBreak.Mode := .strict) : List (Nat × String) :=
-  let cs := word.toList.toArray
-  if !cs.any (fun c => wideChar c.toNat) then [(0, word)] else Id.run do
-    let cuts := (Unicode.LineBreak.breaks cs mode).filter fun i =>
-      i < cs.size && (wideChar cs[i-1]!.toNat || wideChar cs[i]!.toNat)
+  let chars := word.toList
+  if chars.all (fun c => c.isAlpha || c.isDigit) then [(0, word)] else Id.run do
+    let cs := chars.toArray
     let mut out : List (Nat × String) := []
     let mut from_ := 0
-    for i in cuts do
-      out := (from_, String.ofList (cs.extract from_ i).toList) :: out
-      from_ := i
+    for i in Unicode.LineBreak.breaks cs mode do
+      if i < cs.size then
+        out := (from_, String.ofList (cs.extract from_ i).toList) :: out
+        from_ := i
     out := (from_, String.ofList (cs.extract from_ cs.size).toList) :: out
     return out.reverse
 
-#guard wordPieces "word-break" == [(0, "word-break")]
+/-- Plain alphanumeric text keeps its original token and offset in every line-break mode. -/
+theorem wordPieces_alnum (word : String) (mode : Unicode.LineBreak.Mode)
+    (alnum : word.toList.all (fun c => c.isAlpha || c.isDigit) = true) :
+    wordPieces word mode = [(0, word)] := by
+  simp [wordPieces, alnum]
+
+#print axioms wordPieces_alnum
+
+#guard wordPieces "word-break" == [(0, "word-"), (5, "break")]
+#guard wordPieces "alpha\u200Bbeta" == [(0, "alpha\u200B"), (6, "beta")]
+#guard wordPieces "alpha\u2003beta" == [(0, "alpha\u2003"), (6, "beta")]
+#guard wordPieces "alpha\u2060beta" == [(0, "alpha\u2060beta")]
+#guard wordPieces "alpha\u00A0beta" == [(0, "alpha\u00A0beta")]
 #guard wordPieces "مرحبا" == [(0, "مرحبا")]
 #guard (wordPieces "你好，世界").map (·.2) == ["你", "好，", "世", "界"]
 -- Small kana and the middle dot do not start a line (UAX 14 NS, CJ as NS).
