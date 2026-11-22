@@ -1,25 +1,24 @@
 import L4Factoidal.SPARQL.GsslEncodedBgpRefinement
 import L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
+import L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
 
 /-!
-# Restricted BGP lowering to the real, versioned PVGraph
+# A restricted RDF BGP lowered to the actual Lean PVGraph evaluator
 
-For ?person <knows> ?colleague . ?colleague <works> <object>,
-the source RDF graph is read using the existing Factoidal SPARQL
-selection code. Join keys are represented by a finite, checked UInt32
-codebook, but the solution Binding payloads remain original RDF Terms.
+The identifier model is *UInt64*, as in Shardborough/SBM11.
+WGSL receives two u32 words per term. The two halves are compared by
+the same generic PVGraph u32.zip.xor operator, and a stable CPU
+reconstruction step retains the original RDF Binding payloads.
+No RDF identity is replaced with JS numbers or a u32-only codebook.
 
-Each potential left/right pair occupies a slot, left-major then
-right-major. The generic PVGraph u32.zip.xor operator computes word
-differences; zero denotes a matching key. Stable reconstruction
-retains the original RDF binding payload, preserving order and
-multiplicity. This profile is quadratic and capacity-bounded: it is
-a correctness bridge, not evidence of a competitive GPU join.
+For ?person <knows> ?colleague . ?colleague <works> <object>, the
+existing SPARQL evaluator selects from the *active* RDF graph.
+Join comparisons occupy left-major/right-major slots, preserving the
+exact multiplicity of duplicate solutions and the solution order.
 
-The abstract XOR/model and RDF-to-BGP theorems below are universal.
-A separately admitted *actual serialized PVGraph* is exercised by
-the executable guard. Universal serialized-evaluator/WGSL/device
-refinement is not claimed by this module.
+This quadratic fragment is an assurance milestone, not a fast general
+SPARQL join. It assumes a finite equality-checked codebook and proves
+the pure model. It does NOT prove GPU WGSL, host I/O, or device fidelity.
 -/
 
 namespace L4Factoidal.SPARQL.PvGraphBgpLowering
@@ -28,121 +27,162 @@ open Lean
 open L4Factoidal.RDF
 open L4Factoidal.SPARQL.GsslEncodedBgpRefinement
 open L4Factoidal.GpuDomainSpecificLanguage
+open L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
 open L4Factoidal.GpuDomainSpecificLanguage.PVGraph.Builder
 
-/-- One comparison lane; the payload never crosses into the GPU. -/
+/-- A comparison slot uses the standard 64-bit term identifiers.
+    The Binding payload remains a real RDF solution mapping. -/
 structure Comparison where
   binding : Binding
-  leftWord : UInt32
-  rightWord : UInt32
+  leftId : UInt64
+  rightId : UInt64
 
-/-- Left-major/right-major Cartesian slot order, including every
-    occurrence. No deduplication or sorting is performed here. -/
-def comparisons (code : Term → UInt32)
+/-- Exact finite comparison admission; this does not assert that an
+    arbitrary 64-bit codebook is injective over *all* possible RDF terms. -/
+def checkCode64 (code : RDF.Term → UInt64)
+    (left : List (RdfTermCodebook.Key × Binding))
+    (right : List (RdfTermCodebook.Key × Unit)) : Bool :=
+  EncodedJoin.checkAgreement
+    (fun k : RdfTermCodebook.Key => code k.term) left right
+
+def comparisons (code : RDF.Term → UInt64)
     (left : List (RdfTermCodebook.Key × Binding))
     (right : List (RdfTermCodebook.Key × Unit)) : List Comparison :=
   left.flatMap fun l =>
     right.map fun r => ⟨l.2, code l.1.term, code r.1.term⟩
 
-def leftWords (ps : List Comparison) : List UInt32 :=
-  ps.map Comparison.leftWord
+def leftLow (ps : List Comparison) : List UInt32 :=
+  ps.map fun p => (split p.leftId).lo
+def leftHigh (ps : List Comparison) : List UInt32 :=
+  ps.map fun p => (split p.leftId).hi
+def rightLow (ps : List Comparison) : List UInt32 :=
+  ps.map fun p => (split p.rightId).lo
+def rightHigh (ps : List Comparison) : List UInt32 :=
+  ps.map fun p => (split p.rightId).hi
 
-def rightWords (ps : List Comparison) : List UInt32 :=
-  ps.map Comparison.rightWord
+def differenceLow (ps : List Comparison) : List UInt32 :=
+  ps.map fun p => (split p.leftId).lo ^^^ (split p.rightId).lo
+def differenceHigh (ps : List Comparison) : List UInt32 :=
+  ps.map fun p => (split p.leftId).hi ^^^ (split p.rightId).hi
 
-def differences (ps : List Comparison) : List UInt32 :=
-  ps.map (fun p => p.leftWord ^^^ p.rightWord)
-
-/-- Stable, occurrence-preserving decoder in the original RDF space. -/
-def matches : List Comparison → SolutionSeq
+/-- Plain RDF binding list in the original, stable join order. -/
+def matchingBindings : List Comparison → SolutionSeq
   | [] => []
-  | p :: ps =>
-      if p.leftWord == p.rightWord then p.binding :: matches ps
-      else matches ps
+  | p :: ps => if p.leftId == p.rightId
+      then p.binding :: matchingBindings ps
+      else matchingBindings ps
 
-/-- Decode *exactly* the expected output count; a truncated or extra GPU
-    buffer cannot silently become a valid answer. -/
-def reconstruct : List Comparison → List UInt32 → Option SolutionSeq
-  | [], [] => some []
-  | p :: ps, d :: ds =>
-      (reconstruct ps ds).map fun tail =>
-        if d == 0 then p.binding :: tail else tail
-  | _, _ => none
+/-- No partial, truncated or extra WebGPU readback can decode as success. -/
+def reconstruct : List Comparison → List UInt32 → List UInt32 → Option SolutionSeq
+  | [], [], [] => some []
+  | p :: ps, dl :: dls, dh :: dhs =>
+      (reconstruct ps dls dhs).map fun tail =>
+        if dl == 0 && dh == 0 then p.binding :: tail else tail
+  | _, _, _ => none
 
-/-- UInt32 XOR is zero precisely when both 32-bit words are identical.
-    There is no narrowing to JavaScript Number in this proof. -/
+/-- A fixed-width XOR is zero precisely for equal words. -/
 theorem word_xor_zero_iff (a b : UInt32) :
     ((a ^^^ b) == (0 : UInt32)) = (a == b) := by
   cases a with
-  | mk x =>
-    cases b with
-    | mk y =>
-      simp [UInt32.xor, BitVec.xor_eq_zero_iff]
+  | ofBitVec x =>
+      cases b with
+      | ofBitVec y =>
+          simp [UInt32.xor, BitVec.xor_eq_zero_iff]
 
-/-- For every list of comparison lanes the exact XOR output reconstructs
-    the same ordered bag of RDF bindings as direct integer equality. -/
+/-- Two 32-bit XOR masks recover the equality of the original 64-bit IDs. -/
+theorem both_masks_zero_iff (a b : UInt64) :
+    (((split a).lo ^^^ (split b).lo == 0) &&
+     ((split a).hi ^^^ (split b).hi == 0)) = (a == b) := by
+  rw [word_xor_zero_iff, word_xor_zero_iff]
+  have encode_pair : ((split a).lo == (split b).lo) &&
+      ((split a).hi == (split b).hi) = ((split a) == (split b)) := by
+    cases ha : split a with
+    | mk alo ahi =>
+      cases hb : split b with
+      | mk blo bhi =>
+        simp [ha, hb, beq_iff_eq]
+  rw [encode_pair]
+  exact split_beq_eq a b
+
+/-- XOR outputs preserve complete comparison-slot count. -/
+theorem pairedLow (ps : List Comparison) :
+    (leftLow ps).length = (rightLow ps).length := by
+  simp [leftLow, rightLow]
+theorem pairedHigh (ps : List Comparison) :
+    (leftHigh ps).length = (rightHigh ps).length := by
+  simp [leftHigh, rightHigh]
+
+private theorem zipLow (ps : List Comparison) :
+    List.zipWith (· ^^^ ·) (leftLow ps) (rightLow ps) = differenceLow ps := by
+  induction ps with
+  | nil => rfl
+  | cons _ rest ih => simp [leftLow, rightLow, differenceLow, ih]
+
+private theorem zipHigh (ps : List Comparison) :
+    List.zipWith (· ^^^ ·) (leftHigh ps) (rightHigh ps) = differenceHigh ps := by
+  induction ps with
+  | nil => rfl
+  | cons _ rest ih => simp [leftHigh, rightHigh, differenceHigh, ih]
+
+/-- Both operations are the existing generic PVGraph primitive,
+    with no RDF-specific arithmetic implementation. -/
+theorem pvgraph_low_eq (ps : List Comparison) :
+    GraphWords.execute .zipXor
+      [.buffer (leftLow ps), .buffer (rightLow ps)] none =
+    .ok (.buffer (differenceLow ps)) := by
+  simpa only [zipLow] using
+    (GpuFastPath.KernelCall_correct
+      (.zipXor (leftLow ps) (rightLow ps) (pairedLow ps)))
+
+theorem pvgraph_high_eq (ps : List Comparison) :
+    GraphWords.execute .zipXor
+      [.buffer (leftHigh ps), .buffer (rightHigh ps)] none =
+    .ok (.buffer (differenceHigh ps)) := by
+  simpa only [zipHigh] using
+    (GpuFastPath.KernelCall_correct
+      (.zipXor (leftHigh ps) (rightHigh ps) (pairedHigh ps)))
+
+/-- For all comparison slots, the complete pair of u32 GPU-model
+    output buffers reconstructs the exact original RDF bindings. -/
 theorem reconstruct_differences (ps : List Comparison) :
-    reconstruct ps (differences ps) = some (matches ps) := by
+    reconstruct ps (differenceLow ps) (differenceHigh ps) =
+      some (matchingBindings ps) := by
   induction ps with
   | nil => rfl
   | cons p rest ih =>
-      simp only [differences, List.map_cons, reconstruct, ih, Option.map_some]
-      simp only [matches]
-      rw [word_xor_zero_iff]
+      simp only [differenceLow, differenceHigh, List.map_cons,
+        reconstruct, ih, Option.map_some, matchingBindings]
+      rw [both_masks_zero_iff]
       split <;> rfl
 
-/-- Empty and nonempty lane lists have equal left/right input lengths. -/
-theorem paired_lengths (ps : List Comparison) :
-    (leftWords ps).length = (rightWords ps).length := by
-  simp [leftWords, rightWords]
-
-private theorem zipPairWords (ps : List Comparison) :
-    List.zipWith (· ^^^ ·) (leftWords ps) (rightWords ps) = differences ps := by
-  induction ps with
+private theorem matching_append (a b : List Comparison) :
+    matchingBindings (a ++ b) = matchingBindings a ++ matchingBindings b := by
+  induction a with
   | nil => rfl
   | cons p rest ih =>
-      simp [leftWords, rightWords, differences, ih]
+      simp only [List.cons_append, matchingBindings]
+      split <;> simp [ih]
 
-/-- The *existing* generic Lean PVGraph primitive computes the exact
-    comparison lanes, not a separately invented RDF-specific operation. -/
-theorem pvgraph_zipXor_matches_model (ps : List Comparison) :
-    GraphWords.execute .zipXor
-      [.buffer (leftWords ps), .buffer (rightWords ps)] none =
-      .ok (.buffer (differences ps)) := by
-  simp only [GraphWords.execute, paired_lengths, BEq.beq]
-  exact congrArg (fun xs => Except.ok (GraphWords.Value.buffer xs))
-    (zipPairWords ps)
-
-/-- Each right-side match produces exactly the original left binding.
-    Right multiplicity is preserved, as is left-major/right-major order. -/
-private theorem row_matches (code : Term → UInt32)
+private theorem row_matching (code : RDF.Term → UInt64)
     (left : RdfTermCodebook.Key × Binding)
     (right : List (RdfTermCodebook.Key × Unit)) :
-    matches (right.map fun r =>
-      (⟨left.2, code left.1.term, code r.1.term⟩ : Comparison)) =
+    matchingBindings
+      (right.map fun r =>
+        (⟨left.2, code left.1.term, code r.1.term⟩ : Comparison)) =
     (EncodedJoin.rowMatches (code left.1.term, left.2)
       (right.map fun r => (code r.1.term, r.2))).map Prod.fst := by
   induction right with
   | nil => rfl
   | cons r rest ih =>
-      simp only [List.map_cons, matches, EncodedJoin.rowMatches,
-        List.filterMap_cons, List.map_cons]
-      cases h : code left.1.term == code r.1.term <;> simp [h, ih]
+      cases hc : (code left.1.term == code r.1.term) <;>
+        simp [matchingBindings, EncodedJoin.rowMatches, hc, ih]
 
-private theorem matches_append (a b : List Comparison) :
-    matches (a ++ b) = matches a ++ matches b := by
-  induction a with
-  | nil => rfl
-  | cons p rest ih =>
-      simp only [List.cons_append, matches]
-      split <;> simp [ih]
-
-/-- The stable mask decoder has the same ordered bag as the generic
-    equality-encoded join, including duplicate right-hand matches. -/
-theorem matches_eq_encodedJoin (code : Term → UInt32)
+/-- Exact ordered and multiplicity-preserving reconstruction from
+    equality-comparison slot order. -/
+theorem matching_eq_encodedJoin64 (code : RDF.Term → UInt64)
     (left : List (RdfTermCodebook.Key × Binding))
     (right : List (RdfTermCodebook.Key × Unit)) :
-    matches (comparisons code left right) =
+    matchingBindings (comparisons code left right) =
     (EncodedJoin.joinRows
       (left.map fun l => (code l.1.term, l.2))
       (right.map fun r => (code r.1.term, r.2))).map Prod.fst := by
@@ -150,47 +190,80 @@ theorem matches_eq_encodedJoin (code : Term → UInt32)
   | nil => rfl
   | cons l rest ih =>
       simp only [comparisons, List.flatMap_cons, List.map_cons]
-      rw [matches_append, row_matches, ih]
+      rw [matching_append, row_matching, ih]
       rfl
 
-/-- Source-level RDF→word-comparison→RDF round-trip, for any active
-    RDF graph and a codebook passing the exact finite equality check.
-    This is list equality, stronger than set or bag equality. -/
-theorem reconstructed_eq_indexed (code : Term → UInt32)
+/-- A checked finite UInt64 dictionary preserves actual RDF.Term.eqb
+    comparison semantics and all ordered solution occurrences. -/
+theorem encodedJoin64_eq_indexed (code : RDF.Term → UInt64)
     (person colleague : VarName) (knows works object : WfIri)
-    (active : Graph) (different : person ≠ colleague)
-    (checked : RdfTermCodebook.check code
+    (active : RDF.Graph) (different : person ≠ colleague)
+    (checked : checkCode64 code
+      (leftRows person colleague knows active)
+      (rightRows works object active) = true) :
+    (EncodedJoin.joinRows
+      ((leftRows person colleague knows active).map fun l =>
+        (code l.1.term,l.2))
+      ((rightRows works object active).map fun r =>
+        (code r.1.term,r.2))).map Prod.fst =
+    evalBgpIdx [⟨.var person, .iri knows, .var colleague⟩,
+      ⟨.var colleague, .iri works, .iri object⟩] active := by
+  calc
+    _ = rdfJoin person colleague knows works object active := by
+      unfold rdfJoin checkCode64 at *
+      exact congrArg (List.map Prod.fst)
+        (EncodedJoin.joinRows_encode_checked
+          (fun k : RdfTermCodebook.Key => code k.term)
+          (leftRows person colleague knows active)
+          (rightRows works object active) checked)
+    _ = relationalPlan person colleague knows works object active :=
+      rdfJoin_eq_relationalPlan person colleague knows works object active
+    _ = evalBgpIdx [⟨.var person, .iri knows, .var colleague⟩,
+        ⟨.var colleague, .iri works, .iri object⟩] active :=
+      relationalPlan_eq_evalBgpIdx person colleague knows works object active different
+
+/-- Pure UInt64→two-u32-lanes→RDF correctness, list equality stronger
+    than bag equality: order and duplicates remain identical. -/
+theorem reconstructed_eq_indexed (code : RDF.Term → UInt64)
+    (person colleague : VarName) (knows works object : WfIri)
+    (active : RDF.Graph) (different : person ≠ colleague)
+    (checked : checkCode64 code
       (leftRows person colleague knows active)
       (rightRows works object active) = true) :
     reconstruct
       (comparisons code
         (leftRows person colleague knows active)
         (rightRows works object active))
-      (differences (comparisons code
+      (differenceLow (comparisons code
+        (leftRows person colleague knows active)
+        (rightRows works object active)))
+      (differenceHigh (comparisons code
         (leftRows person colleague knows active)
         (rightRows works object active))) =
     some (evalBgpIdx [⟨.var person, .iri knows, .var colleague⟩,
       ⟨.var colleague, .iri works, .iri object⟩] active) := by
-  rw [reconstruct_differences, matches_eq_encodedJoin]
+  rw [reconstruct_differences, matching_eq_encodedJoin64]
   exact congrArg some
-    (encodedJoin_eq_evalBgpIdx code person colleague knows works object
+    (encodedJoin64_eq_indexed code person colleague knows works object
       active different checked)
 
-/-- The same proof against the *active graph* argument of
-    GraphPattern.evalIn: named graphs are not silently unioned into the
-    default graph. -/
-theorem reconstructed_eq_evalIn (dataset : Dataset) (active : Graph)
-    (code : Term → UInt32)
+/-- Active graph is supplied explicitly; named graphs are not
+    accidentally substituted for the default RDF graph. -/
+theorem reconstructed_eq_evalIn (dataset : RDF.Dataset) (active : RDF.Graph)
+    (code : RDF.Term → UInt64)
     (person colleague : VarName) (knows works object : WfIri)
     (different : person ≠ colleague)
-    (checked : RdfTermCodebook.check code
+    (checked : checkCode64 code
       (leftRows person colleague knows active)
       (rightRows works object active) = true) :
     reconstruct
       (comparisons code
         (leftRows person colleague knows active)
         (rightRows works object active))
-      (differences (comparisons code
+      (differenceLow (comparisons code
+        (leftRows person colleague knows active)
+        (rightRows works object active)))
+      (differenceHigh (comparisons code
         (leftRows person colleague knows active)
         (rightRows works object active))) =
     some ((GraphPattern.bgp [⟨.var person, .iri knows, .var colleague⟩,
@@ -199,22 +272,24 @@ theorem reconstructed_eq_evalIn (dataset : Dataset) (active : Graph)
     reconstructed_eq_indexed code person colleague knows works object
       active different checked
 
-/-- Selection by GRAPH <iri> uses only that named graph, and has
-    the same complete ordered answer as the original SPARQL evaluator. -/
-theorem reconstructed_eq_namedGraph (dataset : Dataset) (name : WfIri)
-    (active : Graph)
+/-- GRAPH <iri> resolves exactly one named graph in the dataset. -/
+theorem reconstructed_eq_namedGraph (dataset : RDF.Dataset) (name : WfIri)
+    (active : RDF.Graph)
     (found : dataset.lookupNamedIri name.val = some active)
-    (code : Term → UInt32)
+    (code : RDF.Term → UInt64)
     (person colleague : VarName) (knows works object : WfIri)
     (different : person ≠ colleague)
-    (checked : RdfTermCodebook.check code
+    (checked : checkCode64 code
       (leftRows person colleague knows active)
       (rightRows works object active) = true) :
     reconstruct
       (comparisons code
         (leftRows person colleague knows active)
         (rightRows works object active))
-      (differences (comparisons code
+      (differenceLow (comparisons code
+        (leftRows person colleague knows active)
+        (rightRows works object active)))
+      (differenceHigh (comparisons code
         (leftRows person colleague knows active)
         (rightRows works object active))) =
     some ((GraphPattern.graph (.iri name)
@@ -225,36 +300,47 @@ theorem reconstructed_eq_namedGraph (dataset : Dataset) (name : WfIri)
     reconstructed_eq_indexed code person colleague knows works object
       active different checked
 
-/-- The precise PVGraph document whose one operator computes XOR
-    differences on two equal-length word buffers. -/
+/-- One genuine serialized PVGraph with two generic XOR operators,
+    four input buffers and two output buffers. -/
 def pvgraph : Json := build do
-  let left ← input "leftWords"
-  let right ← input "rightWords"
-  let diff ← zipXor left right (some "compare")
-  output "differences" diff (some "answer")
+  let ll ← input "leftLow"
+  let lr ← input "rightLow"
+  let hl ← input "leftHigh"
+  let hr ← input "rightHigh"
+  let dlo ← zipXor ll lr (some "compareLow")
+  let dhi ← zipXor hl hr (some "compareHigh")
+  output "differenceLow" dlo (some "outLow")
+  output "differenceHigh" dhi (some "outHigh")
 
 def inputBindings (ps : List Comparison) : Json :=
-  Json.mkObj [("leftWords", toJson ((leftWords ps).map UInt32.toNat)),
-    ("rightWords", toJson ((rightWords ps).map UInt32.toNat))]
+  Json.mkObj [("leftLow", toJson ((leftLow ps).map UInt32.toNat)),
+    ("rightLow", toJson ((rightLow ps).map UInt32.toNat)),
+    ("leftHigh", toJson ((leftHigh ps).map UInt32.toNat)),
+    ("rightHigh", toJson ((rightHigh ps).map UInt32.toNat))]
 
 def expectedOutput (ps : List Comparison) : Json :=
-  Json.mkObj [("differences", toJson ((differences ps).map UInt32.toNat))]
+  Json.mkObj [("differenceLow", toJson ((differenceLow ps).map UInt32.toNat)),
+    ("differenceHigh", toJson ((differenceHigh ps).map UInt32.toNat))]
 
 #guard (PVGraph.admit? pvgraph).isOk
 
--- Actual serialized Lean PVGraph evaluator, not a proxy graph.
 private def sample : List Comparison :=
-  [⟨[], 0, 0⟩, ⟨[], 1, 2⟩, ⟨[], 4294967295, 4294967295⟩]
+  [⟨[], 0x2000000000000001, 0x9000000000000001⟩,
+   ⟨[], 0x2000000000000001, 0x2000000000000001⟩,
+   ⟨[], 0x9000000000000001, 0x9000000000000001⟩]
 
 #guard (match PVGraph.evaluate? pvgraph (inputBindings sample) with
   | .ok answer => answer.compress == (expectedOutput sample).compress
   | .error _ => false)
-#guard (reconstruct sample [0,0]).isNone
+#guard (reconstruct sample [0,0] [0]).isNone
 
 #print axioms word_xor_zero_iff
+#print axioms both_masks_zero_iff
 #print axioms reconstruct_differences
-#print axioms pvgraph_zipXor_matches_model
-#print axioms matches_eq_encodedJoin
+#print axioms pvgraph_low_eq
+#print axioms pvgraph_high_eq
+#print axioms matching_eq_encodedJoin64
+#print axioms encodedJoin64_eq_indexed
 #print axioms reconstructed_eq_indexed
 #print axioms reconstructed_eq_evalIn
 #print axioms reconstructed_eq_namedGraph
