@@ -1,0 +1,39 @@
+name: Lean beacon SSZ generalized-index foundation
+
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/ethereum-consensus/**"
+      - ".github/workflows/ethereum-consensus.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ethereum-consensus-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  ssz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Lean 4.33.1 definitions, guards and axiom audit
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EthereumConsensus
+      - name: Re-run exact theorem files through Lean for printed axiom evidence
+        working-directory: formal/lean4/ethereum-consensus
+        run: |
+          lake env lean EthereumConsensus/SSZ/GIndex.lean
+      - name: Independent SSZ generalized-index reference over 1025 inputs
+        shell: bash
+        working-directory: formal/lean4/ethereum-consensus
+        run: |
+          set -euo pipefail
+          lake exe ssz-gindex | python3 scripts/check-gindex.py
