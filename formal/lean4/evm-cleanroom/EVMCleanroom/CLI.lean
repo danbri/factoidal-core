@@ -61,25 +61,31 @@ private def errorCode : EVMCleanroom.Error → String
 private def hexDigit (n : Nat) : Char :=
   Char.ofNat (if n < 10 then 48 + n else 87 + n)
 
+private def byteObservationLimit : Nat := 4096
+
 private def memoryHex (s : EVMCleanroom.State) (limit : Nat) : String :=
   let observed := min (32 * s.memory.words) limit
   String.ofList ((List.range observed).flatMap (fun address =>
     let b := (s.memory.readByte address).toNat
     [hexDigit (b / 16), hexDigit (b % 16)]))
 
-private def successJSON (s : EVMCleanroom.State) : String :=
+private def stackJSON (s : EVMCleanroom.State) : String :=
   -- Decimal STRING encoding is essential: a JSON number would silently
   -- lose precision in JavaScript for EVM words above 2^53 - 1.
-  let items := String.intercalate "," (s.stack.items.map (fun w => "\"" ++ toString w.val ++ "\""))
+  "[" ++ String.intercalate "," (s.stack.items.map (fun w => "\"" ++ toString w.val ++ "\"")) ++ "]"
+
+private def memoryFieldsJSON (s : State) : String :=
+  ",\"memorySizeBytes\":\"" ++ toString (32 * s.memory.words) ++
+  "\",\"memoryWord0\":\"" ++ toString (s.memory.readWord 0) ++
+  "\",\"memoryObservedBytes\":\"" ++ toString (min (32 * s.memory.words) byteObservationLimit) ++
+  "\",\"memoryTruncated\":" ++ (if byteObservationLimit < 32 * s.memory.words then "true" else "false") ++
+  ",\"memoryHex\":\"" ++ memoryHex s byteObservationLimit ++ "\""
+
+private def successJSON (s : EVMCleanroom.State) : String :=
   "{\"schemaVersion\":2,\"status\":\"ok\",\"gasRemaining\":\"" ++ toString s.gas ++
   "\",\"pc\":\"" ++ toString s.pc ++
   "\",\"halted\":" ++ (if s.halted then "true" else "false") ++
-  ",\"stack\":[" ++ items ++ "]" ++
-  ",\"memorySizeBytes\":\"" ++ toString (32 * s.memory.words) ++
-  "\",\"memoryWord0\":\"" ++ toString (s.memory.readWord 0) ++
-  "\",\"memoryObservedBytes\":\"" ++ toString (min (32 * s.memory.words) 4096) ++
-  "\",\"memoryTruncated\":" ++ (if 4096 < 32 * s.memory.words then "true" else "false") ++
-  ",\"memoryHex\":\"" ++ memoryHex s 4096 ++ "\"}"
+  ",\"stack\":" ++ stackJSON s ++ memoryFieldsJSON s ++ "}"
 
 private def errorJSON (e : EVMCleanroom.Error) : String :=
   "{\"status\":\"error\",\"error\":\"" ++ errorCode e ++ "\"}"
@@ -226,13 +232,13 @@ private def frameOutcomeJSON (o : Frame.Outcome) (key : Nat) : String :=
   match o with
   | .stopped s => frameStateJSON "stopped" s key
   | .returned s offset length =>
-    if length > 4096 then
+    if length > byteObservationLimit then
       "{\"status\":\"unsupported\",\"reason\":\"return-data-observation-limit\"}"
     else
       frameStateJSON "returned" s key
         (",\"returnDataHex\":\"" ++ frameDataHex s offset length ++ "\"")
   | .reverted s offset length =>
-    if length > 4096 then
+    if length > byteObservationLimit then
       "{\"status\":\"unsupported\",\"reason\":\"revert-data-observation-limit\"}"
     else
       frameStateJSON "reverted" s key
@@ -262,6 +268,35 @@ private def frameStorageMain (args : List String) : IO UInt32 := do
       return 2
   | _ =>
     IO.println "{\"status\":\"inputError\",\"message\":\"usage: --frame-storage HEX GAS FUEL KEY ORIGINAL_VALUE\"}"
+    return 2
+
+/-- Frame-call snapshot with explicit total return length and bounded byte output. -/
+private def frameCallJSON (outcome : Frame.Outcome) : String :=
+  let report (status : String) (s : State) (offset length : Nat) (extra : String := "") :=
+    frameStateJSON status s 0
+      (",\"stack\":" ++ stackJSON s ++ memoryFieldsJSON s ++
+        ",\"returnDataHex\":\"" ++ frameDataHex s offset (min length byteObservationLimit) ++
+        "\",\"returnDataLength\":\"" ++ toString length ++
+        "\",\"returnDataTruncated\":" ++ (if length > byteObservationLimit then "true" else "false") ++ extra)
+  match outcome with
+  | .stopped s => report "stopped" s 0 0
+  | .returned s offset length => report "returned" s offset length
+  | .reverted s offset length => report "reverted" s offset length
+  | .exceptional s e => report "exceptional" s 0 0 (",\"error\":\"" ++ errorCode e ++ "\"")
+  | .unsupported e => "{\"status\":\"unsupported\",\"error\":\"" ++ errorCode e ++ "\"}"
+
+private def frameCallMain (args : List String) : IO UInt32 := do
+  match args with
+  | [hex, dataHex, gasStr, fuelStr] =>
+    match parseBytecode hex, parseBytecode dataHex, gasStr.toNat?, fuelStr.toNat? with
+    | .ok code, .ok callData, some gas, some fuel =>
+      IO.println (frameCallJSON (Frame.run fuel { code := code, gas := gas, callData := callData }))
+      return 0
+    | _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX CALLDATA_HEX GAS FUEL\"}"
+      return 2
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"usage: --frame-call HEX CALLDATA_HEX GAS FUEL\"}"
     return 2
 
 /-- Zero-value child-call slice, *not* actual CALL opcode dispatch. The
@@ -407,48 +442,71 @@ private def pragueAuthorizeMain (args : List String) : IO UInt32 := do
 /-- Run the actual 0xf1 instruction in parent bytecode under a scoped Cancun
     frame model; no arbitrary transaction envelope/receipt is inferred.
     Usage: --call-opcode PARENT_HEX CHILD_HEX GAS FUEL.
-    Parent address = 0xc1, child address = 0xc3, no initial storage. -/
+    Parent address = 0xc1, child address = 0xc3, no initial storage.
+    Parent and child balances are optional for backward compatibility:
+    PARENT_HEX CHILD_HEX GAS FUEL [PARENT_BALANCE CHILD_BALANCE CHILD_NONCE].
+    The account values are explicit PRESTATE, not fetched from an archive. -/
 private def callOpcodeMain (args : List String) : IO UInt32 := do
-  match args with
-  | [parentHex, childHex, gasStr, fuelStr] =>
+  let expanded := match args with
+    | [p, c, g, f] => [p, c, g, f, "0", "0", "0"]
+    | otherwise => otherwise
+  match expanded with
+  | [parentHex, childHex, gasStr, fuelStr, parentBalanceStr,
+     childBalanceStr, childNonceStr] =>
     match parseBytecode parentHex, parseBytecode childHex,
-      gasStr.toNat?, fuelStr.toNat? with
-    | .ok parentCode, .ok childCode, some gas, some fuel =>
+      gasStr.toNat?, fuelStr.toNat?, parentBalanceStr.toNat?,
+      childBalanceStr.toNat?, childNonceStr.toNat? with
+    | .ok parentCode, .ok childCode, some gas, some fuel,
+        some parentBalance, some childBalance, some childNonce =>
+      if parentBalance ≥ modulus || childBalance ≥ modulus ||
+          childNonce ≥ 2 ^ 64 then
+        IO.println "{\"status\":\"inputError\",\"reason\":\"account-values-out-of-range\"}"
+        return 2
       let parentAddress : Nat := 0xc1
       let childAddress : Nat := 0xc3
       let accounts : Nat → World.Account := fun address =>
-        if address == parentAddress then { code := parentCode }
-        else if address == childAddress then { code := childCode }
+        if address == parentAddress then
+          { code := parentCode, balance := parentBalance }
+        else if address == childAddress then
+          { code := childCode, balance := childBalance, nonce := childNonce }
         else {}
       let world := World.beginTransaction accounts
       let serialize : String → World.TxWorld → State → String := fun status outcome s =>
         let stack := String.intercalate ","
           (s.stack.items.map (fun w => "\"" ++ toString w.val ++ "\""))
-        "{\"schemaVersion\":1,\"status\":\"" ++ status ++
+        "{\"schemaVersion\":2,\"status\":\"" ++ status ++
         "\",\"gasRemaining\":\"" ++ toString s.gas ++
         "\",\"pc\":\"" ++ toString s.pc ++
         "\",\"stack\":[" ++ stack ++
         "],\"slot0\":\"" ++ toString ((outcome.accounts childAddress).storage 0) ++
+        "\",\"parentBalance\":\"" ++
+          toString ((outcome.accounts parentAddress).balance) ++
+        "\",\"childBalance\":\"" ++
+          toString ((outcome.accounts childAddress).balance) ++
+        "\",\"childNonce\":\"" ++
+          toString ((outcome.accounts childAddress).nonce) ++
         "\",\"warmAddress\":" ++
         (if outcome.warmAddresses childAddress then "true" else "false") ++
         ",\"warmSlot\":" ++
         (if outcome.warmSlots childAddress 0 then "true" else "false") ++
         ",\"refund\":\"" ++ toString outcome.refund ++ "\"}"
       match CallOpcode.run fuel world parentAddress gas with
-      | .stopped final s => IO.println (serialize "stopped" final s)
-      | .returned final s => IO.println (serialize "returned" final s)
-      | .reverted final s => IO.println (serialize "reverted" final s)
-      | .exceptional final s reason =>
-        let state := serialize "exceptional" final s
-        IO.println ((state.dropEnd 1).toString ++ ",\"reason\":\"" ++ errorCode reason ++ "\"}")
+      | .stopped final st => IO.println (serialize "stopped" final st)
+      | .returned final st => IO.println (serialize "returned" final st)
+      | .reverted final st => IO.println (serialize "reverted" final st)
+      | .exceptional final st reason =>
+        let state := serialize "exceptional" final st
+        IO.println ((state.dropEnd 1).toString ++
+          ",\"reason\":\"" ++ errorCode reason ++ "\"}")
       | .indeterminate reason =>
-        IO.println ("{\"status\":\"indeterminate\",\"reason\":\"" ++ errorCode reason ++ "\"}")
+        IO.println ("{\"status\":\"indeterminate\",\"reason\":\"" ++
+          errorCode reason ++ "\"}")
       return 0
-    | _, _, _, _ =>
-      IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX GAS FUEL\"}"
+    | _, _, _, _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"reason\":\"bad CALL bytecode, gas or account fields\"}"
       return 2
   | _ =>
-    IO.println "{\"status\":\"inputError\",\"reason\":\"usage: --call-opcode PARENT_HEX CHILD_HEX GAS FUEL\"}"
+    IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX GAS FUEL [PARENT_BALANCE CHILD_BALANCE CHILD_NONCE]\"}"
     return 2
 
 /-- Fork-scoped pre-EIP-155 Frontier account transfer. The host supplies
@@ -503,6 +561,7 @@ def cliMain (args : List String) : IO UInt32 := do
   | "--tx-fee" :: rest => txFeeMain rest
   | "--storage" :: rest => storageMain rest
   | "--frame-storage" :: rest => frameStorageMain rest
+  | "--frame-call" :: rest => frameCallMain rest
   | "--call-opcode" :: rest => callOpcodeMain rest
   | "--call-slice" :: rest => callSliceMain rest
   | ["--storage-batch", path] => storageBatchMain path

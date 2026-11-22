@@ -5,7 +5,7 @@ import EVMCleanroom.Storage
 
 A deliberately limited proof-development seed, not a mainnet EVM.
 Specification references: Ethereum Yellow Paper §9; Ethereum execution-specs.
-Only a fork-insensitive opcode subset plus Shanghai's PUSH0 is admitted.
+Fork-sensitive instructions are admitted only for supported profiles.
 No code was copied from an Ethereum client or other EVM formalization.
 -/
 
@@ -27,8 +27,29 @@ def Word.add (a b : Word) : Word := word (a.val + b.val)
 def Word.mul (a b : Word) : Word := word (a.val * b.val)
 def Word.sub (a b : Word) : Word := word (a.val + modulus - b.val)
 def Word.div (a b : Word) : Word := word (a.val / b.val)
+
+def Word.ofBool (b : Bool) : Word := if b then word 1 else word 0
+def Word.lt (a b : Word) : Word := Word.ofBool (decide (a.val < b.val))
+def Word.gt (a b : Word) : Word := Word.ofBool (decide (b.val < a.val))
+def Word.eq (a b : Word) : Word := Word.ofBool (a.val == b.val)
+def Word.isZero (a : Word) : Word := Word.ofBool (a.val == 0)
+def Word.bitAnd (a b : Word) : Word := word (Nat.land a.val b.val)
 /-- Unsigned EVM bitwise OR over 256-bit words. -/
 def Word.bitOr (a b : Word) : Word := word (Nat.lor a.val b.val)
+def Word.bitXor (a b : Word) : Word := word (Nat.xor a.val b.val)
+def Word.bitNot (a : Word) : Word := word (modulus - 1 - a.val)
+
+/-- BYTE uses a big-endian index over the 32 bytes of the value. -/
+def Word.byte (index value : Word) : Word :=
+  if index.val < 32 then word ((value.val >>> (8 * (31 - index.val))) % 256)
+  else word 0
+
+/-- EIP-145 logical shifts test the full shift operand before shifting. -/
+def Word.shiftLeft (shift value : Word) : Word :=
+  if shift.val < 256 then word (value.val <<< shift.val) else word 0
+
+def Word.shiftRight (shift value : Word) : Word :=
+  if shift.val < 256 then word (value.val >>> shift.val) else word 0
 
 /-- EIP-7939: leading zero bits in a 256-bit EVM word.
     Zero has 256 leading zero bits; otherwise bit length is log2(x)+1.
@@ -84,7 +105,12 @@ structure State where
   profile : Profile := .shanghaiPlus
   memory : Memory := Memory.empty
   storage : Storage := Storage.empty
+  /-- Host-populated frame context, not independently authenticated account state. -/
+  currentAddress : Nat := 0
+  callValue : Nat := 0
+  selfBalance : Nat := 0
   readOnly : Bool := false
+  callData : Array UInt8 := #[]
 
 /-- An instruction plan describes effects without committing state changes.
     The dispatcher must produce one of these; all success passes through
@@ -138,6 +164,16 @@ def pushData (s : State) (n : Nat) : Word :=
     (fun accumulated i => word (accumulated.val * 256 + byteAt s (s.pc + 1 + i)))
     (word 0)
 
+/-- Accumulate big-endian bytes with a natural-number cursor and zero padding. -/
+def loadCallDataLoop (data : Array UInt8) (offset acc : Nat) : Nat → Nat
+  | 0 => acc
+  | remaining + 1 =>
+    loadCallDataLoop data (offset + 1) (acc * 256 + (data.getD offset 0).toNat) remaining
+
+/-- CALLDATALOAD reads exactly 32 bytes, even for a full-width offset. -/
+def loadCallDataWord (data : Array UInt8) (offset : Nat) : Word :=
+  word (loadCallDataLoop data offset 0 32)
+
 /-- Byte width of the instruction starting addr pc, including PUSH
     immediates. The width is always addr least one. -/
 def opcodeWidth (code : Array UInt8) (pc : Nat) : Nat :=
@@ -164,6 +200,14 @@ private def binary (s : State) (op : Word → Word → Word) (cost : Nat) : Exce
   match s.stack.items with
   | a :: b :: rest => prepared (s.pc + 1) (op a b :: rest) cost
   | _ => .error .stackUnderflow
+
+private def unary (s : State) (op : Word → Word) (cost : Nat) : Except Error Plan :=
+  match s.stack.items with
+  | value :: rest => prepared (s.pc + 1) (op value :: rest) cost
+  | [] => .error .stackUnderflow
+
+private def logicalShift (s : State) (op : Word → Word → Word) : Except Error Plan :=
+  if s.profile = .preShanghai then .error .unsupportedFork else binary s op 3
 
 private def pop (s : State) : Except Error Plan :=
   match s.stack.items with
@@ -270,14 +314,28 @@ def planStep (s : State) : Except Error Plan :=
     | 0x02 => binary s Word.mul 5                      -- MUL
     | 0x03 => binary s Word.sub 3                      -- SUB
     | 0x04 => binary s Word.div 5                      -- DIV
+    | 0x10 => binary s Word.lt 3                       -- LT
+    | 0x11 => binary s Word.gt 3                       -- GT
+    | 0x14 => binary s Word.eq 3                       -- EQ
+    | 0x15 => unary s Word.isZero 3                     -- ISZERO
+    | 0x16 => binary s Word.bitAnd 3                   -- AND
     | 0x17 => binary s Word.bitOr 3                    -- OR
+    | 0x18 => binary s Word.bitXor 3                   -- XOR
+    | 0x19 => unary s Word.bitNot 3                     -- NOT
+    | 0x1a => binary s Word.byte 3                     -- BYTE
+    | 0x1b => logicalShift s Word.shiftLeft            -- SHL
+    | 0x1c => logicalShift s Word.shiftRight           -- SHR
     | 0x1e =>                                           -- EIP-7939 CLZ (Osaka)
       if s.profile = .osaka then
-        match s.stack.items with
-        | value :: rest =>
-          prepared (s.pc + 1) (word value.leadingZeros :: rest) 5
-        | [] => .error .stackUnderflow
+        unary s (fun value => word value.leadingZeros) 5
       else .error .unsupportedFork
+    | 0x30 => prepared (s.pc + 1) (word s.currentAddress :: s.stack.items) 2 -- ADDRESS
+    | 0x34 => prepared (s.pc + 1) (word s.callValue :: s.stack.items) 2 -- CALLVALUE
+    | 0x35 => unary s (fun offset => loadCallDataWord s.callData offset.val) 3 -- CALLDATALOAD
+    | 0x36 => prepared (s.pc + 1) (word s.callData.size :: s.stack.items) 2 -- CALLDATASIZE
+    | 0x47 =>                                           -- SELFBALANCE (Istanbul+)
+      if s.profile = .preShanghai then .error .unsupportedFork
+      else prepared (s.pc + 1) (word s.selfBalance :: s.stack.items) 5
     | 0x50 => pop s                                    -- POP
     | 0x51 => mload s                                  -- MLOAD
     | 0x52 => mstore s                                 -- MSTORE
@@ -313,6 +371,24 @@ def step (s : State) : Except Error State :=
   | .error e => .error e
   | .ok p => commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage
 
+/-- Kind: dispatcher correspondence.
+    Says: CALLDATALOAD replaces the top stack item through the loader and
+    requests a three-gas commit.
+    Does not say: a frame with insufficient gas can commit. -/
+theorem step_callDataLoad (s : State) (offset : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x35)
+    (hStack : s.stack.items = offset :: rest) :
+    step s = commit s (s.pc + 1) (loadCallDataWord s.callData offset.val :: rest) 3 := by
+  simp [step, planStep, hRun, hOp, unary, hStack, prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: CALLDATASIZE pushes the input length and requests a two-gas commit.
+    Does not say: a frame with a full stack can commit. -/
+theorem step_callDataSize (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x36) :
+    step s = commit s (s.pc + 1) (word s.callData.size :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, prepared]
+
 /-- Fuel-limited execution, terminating on STOP, error or exhausted fuel.
     Exceptional errors are reported; their outer transaction-level gas and
     rollback effects have not yet been formalized. -/
@@ -337,5 +413,7 @@ def run : Nat → State → Except Error State
 
 #print axioms Word.leadingZeros_le
 #print axioms Word.leadingZeros_zero
+#print axioms step_callDataLoad
+#print axioms step_callDataSize
 
 end EVMCleanroom

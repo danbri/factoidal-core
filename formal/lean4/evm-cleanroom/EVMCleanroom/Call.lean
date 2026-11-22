@@ -41,18 +41,31 @@ inductive Outcome where
   | invalidChildGas
   | unsupported (reason : Error)
 
+/-- Precompile destinations excluded by the CALL subset. The opcode profiles
+    do not select complete forks: preShanghai uses the set through Shanghai,
+    and shanghaiPlus conservatively includes the Cancun and Prague additions.
+    Osaka also reserves 0x100 for P256VERIFY.
+    References: EIP-4844, EIP-2537 and EIP-7951. -/
+def unsupportedPrecompile (profile : Profile) (target : Nat) : Bool :=
+  match profile with
+  | .preShanghai => decide (1 ≤ target ∧ target ≤ 0x09)
+  | .shanghaiPlus => decide (1 ≤ target ∧ target ≤ 0x11)
+  | .osaka => decide ((1 ≤ target ∧ target ≤ 0x11) ∨ target = 0x100)
+
 /-- A single zero-value call to the target's code. All unused forwarded
     gas is returned after STOP, RETURN or REVERT, not exceptional halt. -/
 def callZeroValue (fuel : Nat) (w : TxWorld)
-    (target parentGas requestedGas : Nat) : Outcome :=
+    (target parentGas requestedGas : Nat)
+    (readOnly : Bool := false) (profile : Profile := .shanghaiPlus) : Outcome :=
   if target ≥ addressBound then .invalidAddress
+  else if unsupportedPrecompile profile target then .unsupported .unsupportedFork
   else
     match CallGas.schedule parentGas requestedGas (w.warmAddresses target) with
     | .error .outOfGas => .callerOutOfGas
     | .error e => .unsupported e
     | .ok b =>
       let warmed := warmTarget w target
-      match runAt fuel warmed target b.forwarded with
+      match runAt fuel warmed target b.forwarded readOnly profile with
       | .stopped out remaining =>
         if remaining ≤ b.forwarded then
           .childSuccess out (b.reserve + remaining)
@@ -70,6 +83,34 @@ def callZeroValue (fuel : Nat) (w : TxWorld)
           .childExceptional out (b.reserve + remaining) reason
         else .invalidChildGas
       | .unsupported e => .unsupported e
+
+/-- Boundary.
+    Says: a precompile target returns unsupported before ordinary account execution.
+    Does not say: what executing that precompile would return on Ethereum. -/
+theorem callZeroValue_precompile (fuel : Nat) (w : TxWorld)
+    (target parentGas requestedGas : Nat) (readOnly : Bool) (profile : Profile)
+    (hAddress : target < addressBound) (hPrecompile : unsupportedPrecompile profile target) :
+    callZeroValue fuel w target parentGas requestedGas readOnly profile =
+      .unsupported .unsupportedFork := by
+  simp [callZeroValue, Nat.not_le.mpr hAddress, hPrecompile]
+
+/-- Checkpoint.
+    Says: a scheduled zero-value child that fails exceptionally under the supplied
+    static flag and opcode profile keeps only the caller's target warm-up.
+    Does not say: which child programs exceptionally halt. -/
+theorem callZeroValue_child_exception (fuel : Nat) (w : TxWorld)
+    (target parentGas requestedGas : Nat) (readOnly : Bool) (profile : Profile)
+    (b : CallGas.Budget) (out : State) (reason : Error)
+    (hAddress : target < addressBound)
+    (hOrdinary : unsupportedPrecompile profile target = false)
+    (hBudget : CallGas.schedule parentGas requestedGas (w.warmAddresses target) = .ok b)
+    (hChild : Frame.run fuel
+      (frameInput (warmTarget w target) target b.forwarded readOnly profile) =
+      .exceptional out reason)
+    (hGas : out.gas ≤ b.forwarded) :
+    callZeroValue fuel w target parentGas requestedGas readOnly profile =
+      .childExceptional (warmTarget w target) (b.reserve + out.gas) reason := by
+  simp [callZeroValue, Nat.not_le.mpr hAddress, hOrdinary, hBudget, runAt, hChild, hGas]
 
 /-- Entering a call cannot itself change accounts (including balance/code),
     storage, refunds or the transaction-original storage snapshot. -/
@@ -102,5 +143,7 @@ theorem warmTarget_other (w : TxWorld) (target other : Nat)
 #print axioms warmTarget_slotWarmth
 #print axioms warmTarget_own
 #print axioms warmTarget_other
+#print axioms callZeroValue_precompile
+#print axioms callZeroValue_child_exception
 
 end EVMCleanroom.WorldCall

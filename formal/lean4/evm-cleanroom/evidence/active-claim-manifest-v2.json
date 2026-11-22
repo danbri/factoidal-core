@@ -8,19 +8,19 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "71da30eb2d4f59195c0eef322cb36a0a24bae200",
+    "EVMCleanroom/Core.lean": "34bbfce608e7693bfd4469e1714d2aa0ba247061",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "db48e3382b8885f8c74b42a6d2b6cfb88b193da3",
-    "EVMCleanroom/World.lean": "7d2b5145d13fc92fba560933719aafd0b88e8362",
+    "EVMCleanroom/World.lean": "ad753ba48fd171428b6b1499043ee71c0358693f",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
-    "EVMCleanroom/Call.lean": "e721f872271c6b6832dbc34422d836b2391dce98",
+    "EVMCleanroom/Call.lean": "2931f762af2e1435428a11aca5747ea85a44a0ff",
     "EVMCleanroom/MemoryGas.lean": "35840f83cb5141c454943546827fe6c93d2f1569",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "8ab340c1e2e74daf1e13c459159a461803fd2c27",
-    "EVMCleanroom.lean": "2ae2934e66cb1e59fc94126bdb79d63c45309310",
+    "EVMCleanroom/CLI.lean": "ce6d7e3413698e8b99ee31ff41a2367ef8bf864a",
+    "EVMCleanroom.lean": "d5cca3c3a7907794178dced5d898868a836dfd84",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
@@ -33,8 +33,8 @@
     "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
-    "EVMCleanroom/CallOpcode.lean": "ae46f712f1848eb9259b505cb3f8005204fd5720",
-    "scripts/differential/call-opcode.mjs": "574af6316ccbba111cabfbed961b193aa884742e",
+    "EVMCleanroom/CallOpcode.lean": "dbaa077c7aaba0dab18c49c5096864d77c6e04e0",
+    "scripts/differential/call-opcode.mjs": "534c19df9185c733ef6b2b174bdbe9d587b43282",
     "EVMCleanroom/FrontierTransfer.lean": "a85feceae4af9c1370d661f43ec8f7fcd4837531",
     "scripts/eels/replay-first-mainnet.mjs": "27bb7f161b209c644875aec883f86170f9b17161",
     "evidence/frontier-mainnet-46147.json": "3cea095d8700ffb3ea34f21c9a7741b881eabdc6",
@@ -43,7 +43,25 @@
     "evidence/frontier-mainnet-46146-account-proofs.json.gz.b64": "cfa64d5226ad00240685a2e4b0540e4be3f64717",
     "scripts/eels/independent-frontier-trie.py": "dc82cd32d542b764d3e839c2afff59a7fc929c67",
     "scripts/eels/frontier-independent-negative.py": "8ad4e8081d1395df8f382e720b92a23a4711f073",
-    "evidence/frontier-keccak-vectors.json": "45eb0eeff0a5fe64df74c85e392571d36d10a157"
+    "evidence/frontier-keccak-vectors.json": "45eb0eeff0a5fe64df74c85e392571d36d10a157",
+    "EVMCleanroom/ValueCall.lean": "0127bf77f1e3a102695ab45dcc26d9961649e4f2",
+    "scripts/differential/value-call.mjs": "c8f984084b8ed39a81645f142734c167239b2858",
+    "EVMCleanroom/CallContextTests.lean": "b9daf2a0e1effbc62fc8052b589378120af2e79e",
+    "scripts/differential/call-context.mjs": "4347690149529a63d3b7090edf3b8126d4a1bd64",
+    "EVMCleanroom/CallTests.lean": "2d6596346a7092cab12955e4b936303ab4d21473",
+    "EVMCleanroom/CalldataProofs.lean": "665d815e160de1602da029afbbfa3028e387a538",
+    "EVMCleanroom/CallBoundaryTests.lean": "1071872262f7c8b1774ae9b4fd61ce1b1dd60a96",
+    "scripts/differential/CallRepairsProbe.lean": "53ff7f43feb1da53bc86e9b644dd482da1fe78fa",
+    "scripts/differential/calldata.mjs": "63ad41b263dda18e324077201deb6bfcb43cc1c6",
+    "scripts/differential/call-repairs.mjs": "7da80e271dfe8253ebd75a6312f39dbf6a28eeca",
+    "scripts/rpc/README.md": "bad4db76d967a462857d708962e83a82609227d6",
+    "scripts/rpc/capture.mjs": "a750587f0bd40b6c11766748c59589dc489c336f",
+    "scripts/rpc/capture.test.mjs": "ebb7dfd8711bd940ac7dec76bc82682b48e3556f",
+    "scripts/rpc/compare.mjs": "c708a77ce43a857fcc6425b02dd38f72c6682138",
+    "scripts/rpc/evidence/op-sepolia-51770430.json": "a0a0f86acd8efa2412e5c09b1d10175d550f14de",
+    "scripts/rpc/evidence/polygon-97758671.json": "290bbd2fb91f00647ef152dcc9bb6d3c5923e92d",
+    "scripts/rpc/mock-fixture.json": "f3274f3079bf9b2678f6133f04de77556f7d3062",
+    "scripts/rpc/rpc-client.mjs": "3eb7265714c4579e2d2d88ee34e91dbf1a6d92e1"
   },
   "theorem_inventory": [
     {
@@ -313,6 +331,191 @@
       "axioms_printed": [],
       "scope": "The validated public Frontier settle function increments the sender nonce by one.",
       "provenance": "Axiom prints emitted by pinned Lean4 v4.33.1 on source blob a85feceae4af9c1370d661f43ec8f7fcd4837531, green source CI 44993735718; local theorem, not independently reviewed Frontier/EELS semantic refinement"
+    },
+    {
+      "name": "EVMCleanroom.CallValue.schedule_charge_exact",
+      "source": "EVMCleanroom/ValueCall.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Actual value CALL charged reserve+forwarded+access/value/new-account fee equals parent's entry gas.",
+      "provenance": "Actual Lean v4.33.1 #print axioms from CI job 137122813344, source Git blob 7841c1cfff09a83cc1b26574c329b47bfedae737. Job build failed later in CallOpcode parser; not current-head conformance evidence."
+    },
+    {
+      "name": "EVMCleanroom.CallValue.schedule_child_stipend",
+      "source": "EVMCleanroom/ValueCall.lean",
+      "axioms_printed": [],
+      "scope": "Forwarded child gas includes the precisely stated 2300-value stipend.",
+      "provenance": "Actual Lean v4.33.1 #print axioms from CI job 137122813344, source Git blob 7841c1cfff09a83cc1b26574c329b47bfedae737. Job build failed later in CallOpcode parser; not current-head conformance evidence."
+    },
+    {
+      "name": "EVMCleanroom.CallValue.schedule_resume_exact",
+      "source": "EVMCleanroom/ValueCall.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Gas accounting when child finishes, distinguishing paid forwarded gas from stipend.",
+      "provenance": "Actual Lean v4.33.1 #print axioms from CI job 137122813344, source Git blob 7841c1cfff09a83cc1b26574c329b47bfedae737. Job build failed later in CallOpcode parser; not current-head conformance evidence."
+    },
+    {
+      "name": "EVMCleanroom.CallValue.extraCharge_covers_stipend",
+      "source": "EVMCleanroom/ValueCall.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Value-transfer surcharge always exceeds 2300 stipend.",
+      "provenance": "Actual Lean v4.33.1 #print axioms from CI job 137122813344, source Git blob 7841c1cfff09a83cc1b26574c329b47bfedae737. Job build failed later in CallOpcode parser; not current-head conformance evidence."
+    },
+    {
+      "name": "EVMCleanroom.CallValue.schedule_parent_bounded",
+      "source": "EVMCleanroom/ValueCall.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Parent cannot gain gas under value-transfer stipend schedule.",
+      "provenance": "Actual Lean v4.33.1 #print axioms from CI job 137122813344, source Git blob 7841c1cfff09a83cc1b26574c329b47bfedae737. Job build failed later in CallOpcode parser; not current-head conformance evidence."
+    },
+    {
+      "name": "EVMCleanroom.WorldCall.accountAlive_funded",
+      "source": "EVMCleanroom/ValueCall.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Any nonzero-balance child account is alive for EIP-161 new-account gas classification.",
+      "provenance": "Actual Lean v4.33.1 #print axioms from CI job 137122813344, source Git blob 7841c1cfff09a83cc1b26574c329b47bfedae737. Job build failed later in CallOpcode parser; not current-head conformance evidence."
+    },
+    {
+      "name": "EVMCleanroom.WorldCall.warmTarget_value_refund",
+      "source": "EVMCleanroom/ValueCall.lean",
+      "axioms_printed": [],
+      "scope": "Parent-side account warming does not modify transaction refund.",
+      "provenance": "Actual Lean v4.33.1 #print axioms from CI job 137122813344, source Git blob 7841c1cfff09a83cc1b26574c329b47bfedae737. Job build failed later in CallOpcode parser; not current-head conformance evidence."
+    },
+    {
+      "name": "EVMCleanroom.step_callDataLoad",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "CALLDATALOAD sends the exact loader result to the commit path for three gas.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 18c0b9aec011b6399526843a96bab721310b51ce, Git blob 34bbfce608e7693bfd4469e1714d2aa0ba247061; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.step_callDataSize",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "CALLDATASIZE sends the input length to the commit path for two gas.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 18c0b9aec011b6399526843a96bab721310b51ce, Git blob 34bbfce608e7693bfd4469e1714d2aa0ba247061; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.loadCallDataWord_correct",
+      "source": "EVMCleanroom/CalldataProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "The executable loader equals the 32-byte big-endian, zero-padded specification at every natural offset, and the value fits in 256 bits.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 18c0b9aec011b6399526843a96bab721310b51ce, Git blob 665d815e160de1602da029afbbfa3028e387a538; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.loadCallDataWord_eq_zero",
+      "source": "EVMCleanroom/CalldataProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The executable loader returns zero for every offset at or beyond the input length.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 18c0b9aec011b6399526843a96bab721310b51ce, Git blob 665d815e160de1602da029afbbfa3028e387a538; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.commit_keeps_call_input",
+      "source": "EVMCleanroom/CalldataProofs.lean",
+      "axioms_printed": [],
+      "scope": "A successful instruction commit preserves the frame input and call context.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 18c0b9aec011b6399526843a96bab721310b51ce, Git blob 665d815e160de1602da029afbbfa3028e387a538; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.Word.comparisons_boolean",
+      "source": "EVMCleanroom/CalldataProofs.lean",
+      "axioms_printed": [],
+      "scope": "LT, GT, EQ and ISZERO helpers return word zero or one.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 18c0b9aec011b6399526843a96bab721310b51ce, Git blob 665d815e160de1602da029afbbfa3028e387a538; local executable model.",
+      "source_symbol": "Word.comparisons_boolean"
+    },
+    {
+      "name": "EVMCleanroom.Word.large_shifts_zero",
+      "source": "EVMCleanroom/CalldataProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "SHL and SHR helpers return zero for a full-width count of 256 or more.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 18c0b9aec011b6399526843a96bab721310b51ce, Git blob 665d815e160de1602da029afbbfa3028e387a538; local executable model.",
+      "source_symbol": "Word.large_shifts_zero"
+    },
+    {
+      "name": "EVMCleanroom.World.frameInput_context",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "The executable frame projection receives the supplied static flag and opcode profile.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob ad753ba48fd171428b6b1499043ee71c0358693f; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.WorldCall.callZeroValue_precompile",
+      "source": "EVMCleanroom/Call.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "An in-range precompile target is explicitly unsupported by the zero-value scheduler before ordinary dispatch.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob 2931f762af2e1435428a11aca5747ea85a44a0ff; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.WorldCall.callZeroValue_child_exception",
+      "source": "EVMCleanroom/Call.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "A scheduled child that fails exceptionally under the supplied static flag and profile returns the parent world with the target warmed.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob 2931f762af2e1435428a11aca5747ea85a44a0ff; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.WorldCall.callWithValue_precompile",
+      "source": "EVMCleanroom/ValueCall.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "A value call to a reserved precompile yields indeterminate before any transfer or ordinary dispatch.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob 0127bf77f1e3a102695ab45dcc26d9961649e4f2; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.WorldCall.callWithValue_child_exception",
+      "source": "EVMCleanroom/ValueCall.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "A funded child that fails exceptionally under the supplied profile and value reverts its transfer.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob 0127bf77f1e3a102695ab45dcc26d9961649e4f2; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.finishCall_state_projection",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [],
+      "scope": "A resumed caller reads its balance, current storage, warm slots and refund from the resulting world, and retains transaction-original storage.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob dbaa077c7aaba0dab18c49c5096864d77c6e04e0; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.finishCall_commit_preserves_world",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Committing the resumed caller preserves the resulting world in the absence of intervening journal changes.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob dbaa077c7aaba0dab18c49c5096864d77c6e04e0; local executable model."
     }
   ],
   "external_evidence": {
@@ -503,6 +706,152 @@
         }
       },
       "commitmentStageScope": "The trustedHost and computedCandidates fields above describe replay-first-mainnet.mjs only; real authenticated pre-balances are supplied by the separate witness stage below."
+    },
+    "nonzero_value_call_candidate": {
+      "evidence_status": "pending-ci",
+      "fork": "Cancun",
+      "oracle": "EthereumJS 10.1.3 real executed CALL bytecode",
+      "compared_target": 450,
+      "passed_target": 450,
+      "failed_target": 0,
+      "component": "EVMCleanroom/ValueCall.lean",
+      "trust": [
+        "EELS Prague CALL gas schedule is reference logic, not formally refined",
+        "EthereumJS EVM independent differential expected values",
+        "Lean model runtime, 256-bit nat and host compilation"
+      ],
+      "scope": [
+        "actual parent 0xf1 with positive value",
+        "9000 value surcharge",
+        "25000 newly alive surcharge",
+        "2300 gas stipend uncharged to caller",
+        "failure-bit on insufficient funds",
+        "child storage and balance rollback on REVERT/exception",
+        "parent-wide rollback after successful child",
+        "warm second call"
+      ],
+      "unverified": [
+        "calldata and returndata",
+        "nested calls",
+        "nonzero value precompiles",
+        "dynamic bytecode loading",
+        "full transaction/receipt state root"
+      ]
+    },
+    "call_context_candidate": {
+      "status": "pending-current-head-ci",
+      "fork": "Cancun",
+      "reference": "EthereumJS 10.1.3 executing exactly the same parent/child bytecode",
+      "required": {
+        "compared": 128,
+        "passed": 128,
+        "failed": 0
+      },
+      "semantics": [
+        "actual 0x34 CALLVALUE from child transferred amount",
+        "actual 0x47 SELFBALANCE from child post-transfer account",
+        "actual 0x30 ADDRESS from executing account",
+        "parent 0x47 after debit/rollback",
+        "Core word/gas/stack update and real World.frameInput"
+      ],
+      "exclusions": [
+        "caller and origin context not yet supplied",
+        "arbitrary calldata/returndata",
+        "nested CALL",
+        "precompiles",
+        "whole blockchain state root"
+      ]
+    },
+    "calldata_and_word_candidate": {
+      "status": "local-validation-passed-remote-ci-pending",
+      "reference": "EthereumJS 10.1.3 Shanghai runCode",
+      "gate": "scripts/differential/calldata.mjs",
+      "required": {
+        "compared": 331,
+        "matched": 331,
+        "mismatches": 0,
+        "negativeControls": 3,
+        "inputErrors": 8,
+        "fuelLimitChecks": 1
+      },
+      "scope": [
+        "Full-width calldata offsets and unsigned word operations, including exact gas and error cases.",
+        "Standalone frame calldata, RETURN and REVERT; gas, stack, memory and output observations.",
+        "Memory and return-byte prefixes capped at 4096 bytes, with exact total lengths and explicit truncation flags."
+      ],
+      "limits": [
+        "CALL child calldata and return-data windows require separate implementation.",
+        "When an instruction simultaneously lacks stack operands and sufficient gas, Lean reports stackUnderflow and EthereumJS may report out of gas. Both outcomes exceptionally halt with zero remaining gas and empty return data."
+      ]
+    },
+    "call_boundaries_candidate": {
+      "status": "local-validation-passed-remote-ci-pending",
+      "reference": "EthereumJS 10.1.3 Cancun and Osaka runCall",
+      "gate": "scripts/differential/call-repairs.mjs",
+      "required": {
+        "compared": 5,
+        "matched": 5,
+        "failures": 0,
+        "precompileBoundaryChecks": 1,
+        "leanGuards": 16
+      },
+      "scope": [
+        "Successful self-CALL leaves child-written storage visible when the parent stops.",
+        "Read-only caller correctly propagates the static flag to the zero-value child.",
+        "Both value paths propagate the opcode profile to an Osaka CLZ child.",
+        "EthereumJS identity precompile fails with zero forwarded gas; Lean reports indeterminate. The boundary is separate from execution matches.",
+        "The 330-program zero-value CALL matrix also checks that a valid reference program passing a nonempty input window is explicitly indeterminate in Lean."
+      ],
+      "limits": "One supported child frame, empty CALL byte windows and no precompile execution."
+    },
+    "rpc_capture_candidate": {
+      "status": "local-validation-passed-remote-ci-pending",
+      "gate": "scripts/rpc/capture.test.mjs",
+      "required": {
+        "tests": 34,
+        "passed": 34,
+        "failed": 0,
+        "skipped": 0
+      },
+      "scope": [
+        "Offline loopback JSON-RPC capture of read-only requests, canonical-block checks and malformed or contradictory provider-response controls.",
+        "Restricted output comparison through the compiled Lean frame CLI, including replay of saved OP Sepolia and Polygon mainnet provider assertions with synthetic code overrides."
+      ],
+      "savedFixtures": [
+        "scripts/rpc/evidence/op-sepolia-51770430.json",
+        "scripts/rpc/evidence/polygon-97758671.json"
+      ],
+      "limits": [
+        "CI requires no live provider. The saved files contain provider assertions and the code used for each synthetic override call.",
+        "State roots, consensus, and transaction, receipt or historical contract authenticity are unverified by this RPC gate."
+      ],
+      "liveComparisons": [
+        {
+          "network": "op-sepolia",
+          "chainId": 11155420,
+          "blockNumber": 51770430,
+          "providerBlockHash": "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967",
+          "codeSource": "synthetic-state-override",
+          "localComparison": "match",
+          "fixture": "scripts/rpc/evidence/op-sepolia-51770430.json"
+        },
+        {
+          "network": "polygon",
+          "chainId": 137,
+          "blockNumber": 97758671,
+          "providerBlockHash": "0xb3d1960600ab25877def36b54ffab17790f36ed254d32e4e74872f2811da2491",
+          "codeSource": "synthetic-state-override",
+          "localComparison": "match",
+          "fixture": "scripts/rpc/evidence/polygon-97758671.json"
+        }
+      ],
+      "amoyProbe": {
+        "chainId": 80002,
+        "blockNumber": 53520858,
+        "providerBlockHash": "0xe4b7edc58fc1a1c676a382738e1c548c7b9cc118f6af8210e1da0d9e826a94e6",
+        "ethCallErrorCode": 1,
+        "localComparison": "unverified"
+      }
     }
   },
   "trust_boundaries": [
@@ -522,7 +871,78 @@
     "Independent expert review"
   ],
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
-  "post_reference_evidence": "The previous append-only progress narrative is retained as post_reference_evidence_history and is not the current evidence verdict. Baseline e59416f5c5cc2a08f7d76e288571e1c28465094c passed authenticated Frontier replay run 44995444984 and combined EVM run 44995444945, including the signed commitment stage, Lean/axiom audit, differential and EELS jobs. One restricted transfer at block 46147 matches both historical state roots through Lean plus EthereumJS and independently in Python. Follow-up review found an off-fixture Python Keccak padding defect and an omitted commitment prerequisite in the dedicated workflow. This revision fixes those, adds 24 reference vectors and describes the standalone verifier dependency explicitly. Local regression evidence and remaining trust boundaries are recorded under prestate_witness_tools; changed sources require their own successful CI and do not inherit the baseline pass. General Ethereum conformance remains unestablished.",
+  "post_reference_evidence": "Integrated replay source 840c997996619808a961638e94a7b772f738539e and value-CALL/context source 6ede61776c4cd27b18af22e7165250e12ae6e4e9. Historical evidence remains attributed to its recorded source. The combined sources require a fresh Lean build, printed-axiom audit and all retained independent execution gates. No combined-head pass or complete Ethereum conformance is inferred from either parent. The integration adds standalone frame calldata and bounded output observations, self-CALL resumption, static/profile propagation and explicit precompile boundaries. The seven calldata and seven CALL theorems have actual local Lean axiom prints. The read-only RPC host and its two saved provider-response fixtures are pinned for an offline gate with the compiled Lean comparator. Local validation succeeded on the exact tested source listed in local_validation. Remote CI for the integrated revision remains pending.",
   "fork_scope_note": "The Osaka profile only enables opcode 0x1e (EIP-7939) in the otherwise restricted interpreter. It is NOT a fork-complete Osaka/Fusaka EVM or an EL/CL node. Historical Shanghai-to-Prague profile tests stay on their original default; never relabel earlier EELS roots as Osaka conformance. The CLZ differential gate includes an input for every possible 0..256 leading-zero result and both sides of powers-of-two bit-length transitions.",
-  "post_reference_evidence_history": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text. Candidate Prague type3/4 extension is separate from the historical original 4/6 record; it requires fresh six-of-six CI. Do not claim six successes until all roots and mutations pass. New strict Prague six-state ledger checks all six pinned external roots and 6 negative report mutations; CI must be green on this exact source revision. Signed EIP-4844 RLP requires a KZG option for EthereumJS instantiation; a fail-closed sentinel rejects any sidecar proof operation. No KZG proof validity is claimed. The exact 6/6 Prague root and 9+6 adversarial gates succeeded at commit ff3251d231a1a5bc7328f458eb158b8ce57d4dab in CI 44940731780. Six new Lean Prague theorems now join the selected live axioms gate (20 total). A further CI run is needed to validate this manifest-only assurance update. Actual 0xf1 parent opcode executable and 330 independent EthereumJS oracle comparisons introduced after historical CI; no pass claim until current branch run is green. The selected theorem-axiom manifest remains 20 and will be expanded only after observing real printed axioms of the new two parent-journal proofs. Added public executable CallOpcode.run parent rollback theorems; axiom lists will be pinned after this new source revision successfully elaborates. Four actual CALL parent rollback theorems now selected and their printed axioms pinned from Lean log 44954398201. New current-head CI must pass 24/24 selected-axiom audit and 330/330 oracle comparisons before claiming active revision conformance. First-ever historical mainnet block 46147 transaction and pre-Byzantium receipts-root verification candidate added as separate proof boundary. Historical prestate not authenticated and no claim of full state-root replay. Do not attribute earlier CI to this source revision. Added proof-path verifier and optional free public archive RPC probe. Offline synthetic proof selftest must pass before any historical witness claim; no EIP-1186 bundle has yet been authenticated against 2015 parent block 46146. All six executable Frontier theorem statements are now pinned from actual Lean #print axioms at source/CI 44993735718. Live selected-theorem inventory now 30 (new gate requires fresh CI on witness branch). The proof selftest now separately requires correct membership and nonmembership proofs and ten tampered account/path/root controls; no genuine historical proof has been substituted. Real 2015 EIP-1186 proofs independently fetched by two public archives exposed protocol distinction: a proven absent account has zero RPC code/storage hashes, unlike the hashes of an existing empty account. Verifier now makes the existence distinction from authenticated MPT proof result, not RPC account status. Unverified against posttransaction state roots until fresh CI. Synthetic nonmembership proof generator now uses EIP-1186 absence zero-hash convention consistent with two real 2015 archive RPC responses; actual existence is independently established by verifying MPT proof path. Real block 46146 archive witness captured from CI artifacts and pinned for mandatory offline replay. Independent stdlib Python Keccak/RLP/MPT source pin added as second oracle. BOTH root checks are currently confirmed locally with independent Python; CI on this new combined head is required before marking current-head proof gate green. Historical header/PoW not independently proven."
+  "post_reference_evidence_history": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text. Candidate Prague type3/4 extension is separate from the historical original 4/6 record; it requires fresh six-of-six CI. Do not claim six successes until all roots and mutations pass. New strict Prague six-state ledger checks all six pinned external roots and 6 negative report mutations; CI must be green on this exact source revision. Signed EIP-4844 RLP requires a KZG option for EthereumJS instantiation; a fail-closed sentinel rejects any sidecar proof operation. No KZG proof validity is claimed. The exact 6/6 Prague root and 9+6 adversarial gates succeeded at commit ff3251d231a1a5bc7328f458eb158b8ce57d4dab in CI 44940731780. Six new Lean Prague theorems now join the selected live axioms gate (20 total). A further CI run is needed to validate this manifest-only assurance update. Actual 0xf1 parent opcode executable and 330 independent EthereumJS oracle comparisons introduced after historical CI; no pass claim until current branch run is green. The selected theorem-axiom manifest remains 20 and will be expanded only after observing real printed axioms of the new two parent-journal proofs. Added public executable CallOpcode.run parent rollback theorems; axiom lists will be pinned after this new source revision successfully elaborates. Four actual CALL parent rollback theorems now selected and their printed axioms pinned from Lean log 44954398201. New current-head CI must pass 24/24 selected-axiom audit and 330/330 oracle comparisons before claiming active revision conformance. First-ever historical mainnet block 46147 transaction and pre-Byzantium receipts-root verification candidate added as separate proof boundary. Historical prestate not authenticated and no claim of full state-root replay. Do not attribute earlier CI to this source revision. Added proof-path verifier and optional free public archive RPC probe. Offline synthetic proof selftest must pass before any historical witness claim; no EIP-1186 bundle has yet been authenticated against 2015 parent block 46146. All six executable Frontier theorem statements are now pinned from actual Lean #print axioms at source/CI 44993735718. Live selected-theorem inventory now 30 (new gate requires fresh CI on witness branch). The proof selftest now separately requires correct membership and nonmembership proofs and ten tampered account/path/root controls; no genuine historical proof has been substituted. Real 2015 EIP-1186 proofs independently fetched by two public archives exposed protocol distinction: a proven absent account has zero RPC code/storage hashes, unlike the hashes of an existing empty account. Verifier now makes the existence distinction from authenticated MPT proof result, not RPC account status. Unverified against posttransaction state roots until fresh CI. Synthetic nonmembership proof generator now uses EIP-1186 absence zero-hash convention consistent with two real 2015 archive RPC responses; actual existence is independently established by verifying MPT proof path. Real block 46146 archive witness captured from CI artifacts and pinned for mandatory offline replay. Independent stdlib Python Keccak/RLP/MPT source pin added as second oracle. BOTH root checks are currently confirmed locally with independent Python; CI on this new combined head is required before marking current-head proof gate green. Historical header/PoW not independently proven.\nCALL-context branch history: 102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text. Candidate Prague type3/4 extension is separate from the historical original 4/6 record; it requires fresh six-of-six CI. Do not claim six successes until all roots and mutations pass. New strict Prague six-state ledger checks all six pinned external roots and 6 negative report mutations; CI must be green on this exact source revision. Signed EIP-4844 RLP requires a KZG option for EthereumJS instantiation; a fail-closed sentinel rejects any sidecar proof operation. No KZG proof validity is claimed. The exact 6/6 Prague root and 9+6 adversarial gates succeeded at commit ff3251d231a1a5bc7328f458eb158b8ce57d4dab in CI 44940731780. Six new Lean Prague theorems now join the selected live axioms gate (20 total). A further CI run is needed to validate this manifest-only assurance update. Actual 0xf1 parent opcode executable and 330 independent EthereumJS oracle comparisons introduced after historical CI; no pass claim until current branch run is green. The selected theorem-axiom manifest remains 20 and will be expanded only after observing real printed axioms of the new two parent-journal proofs. Added public executable CallOpcode.run parent rollback theorems; axiom lists will be pinned after this new source revision successfully elaborates. Four actual CALL parent rollback theorems now selected and their printed axioms pinned from Lean log 44954398201. New current-head CI must pass 24/24 selected-axiom audit and 330/330 oracle comparisons before claiming active revision conformance. A new executable nonzero value CALL slice and 450-case independent differential are pending current-head CI. Four existing CallOpcode parent rollback proofs remain selected; the new ValueCall theorems need exact live axiom audit before being added to the active manifest. Seven new ValueCall proof axiom sets were actually printed in CI job 137122813344. Must re-elaborate and audit all 31 claims on a clean current-head run; do not mistake an earlier parent-scope parser failure for proved CALL conformance. Context-sensitive CALLVALUE, SELFBALANCE and ADDRESS inserted into the production Core dispatcher and World.frameInput path, with child nonzero value passed into Frame.run. 128 oracle comparisons and three frameInput theorem prints require fresh current-head verification; not a claim of general code execution conformance.",
+  "integration_evidence_status": "local-validation-passed-remote-ci-pending",
+  "local_validation": {
+    "testedSourceCommit": "cbcedb8b470c470f1a82b3e4fa9323e28c178339",
+    "remoteCI": "pending",
+    "lean": {
+      "version": "4.33.1",
+      "buildJobs": 47
+    },
+    "activeLedger": {
+      "pinnedSourceBlobs": 54,
+      "printedAxiomsMatched": 51,
+      "theoremSourceFiles": 13,
+      "axiomNegativeControlsRejected": 3,
+      "testGroupsPassed": 4,
+      "testGroupsSkipped": 0
+    },
+    "newDifferential": {
+      "calldata": {
+        "matched": 331,
+        "compared": 331,
+        "negativeControls": 3,
+        "inputErrors": 8,
+        "fuelLimitChecks": 1
+      },
+      "callRepairs": {
+        "matched": 5,
+        "compared": 5,
+        "leanGuards": 16,
+        "separatePrecompileBoundaryChecks": 1
+      },
+      "rpcCapture": {
+        "passed": 34,
+        "total": 34,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    "retainedDifferential": {
+      "rawBytecodeMatches": 10000,
+      "rawBytecodeNegativeControls": 3,
+      "storageMatches": 136,
+      "frameMatches": 13,
+      "callSchedulerMatches": 4,
+      "callSchedulerBoundaryMatches": 102,
+      "callOpcodeMatches": 330,
+      "callOpcodeNonemptyInputRefused": true,
+      "valueCallMatches": 450,
+      "callContextMatches": 128,
+      "osakaClzMatches": 1022
+    },
+    "retainedStateReplay": {
+      "prague": {
+        "rootsMatched": 6,
+        "fixtureMutationsRejected": 9,
+        "ledgerMutationsRejected": 6
+      },
+      "cancun": {
+        "rootsMatched": 6,
+        "otherForkCasesUnexecuted": 18,
+        "mutationsRejected": 4
+      },
+      "frontier": {
+        "blockNumber": 46147,
+        "parentBlockNumber": 46146,
+        "stateRootsMatchedInBothImplementations": 2,
+        "keccakKnownAnswerVectors": 24,
+        "pythonProofMutationsRejected": 6,
+        "syntheticMptMutationsRejected": 10
+      }
+    }
+  }
 }

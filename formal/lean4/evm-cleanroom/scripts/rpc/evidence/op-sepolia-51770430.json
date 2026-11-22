@@ -1,0 +1,441 @@
+{
+  "schemaVersion": 1,
+  "captureStatus": "captured",
+  "expectedProfile": {
+    "id": "op-sepolia",
+    "name": "OP Sepolia",
+    "chainId": 11155420,
+    "chainType": "op-stack-rollup",
+    "defaultRpc": "https://sepolia.optimism.io",
+    "source": "https://github.com/ethereum-optimism/superchain-registry/blob/main/chainList.json"
+  },
+  "provider": {
+    "origin": "https://sepolia.optimism.io",
+    "customEndpoint": false,
+    "chainId": "0xaa37dc"
+  },
+  "acquisition": {
+    "blockSelector": "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967",
+    "stateQuerySelector": "canonical-block-hash",
+    "before": {
+      "number": "0x315f43e",
+      "hash": "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967"
+    },
+    "after": {
+      "number": "0x315f43e",
+      "hash": "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967"
+    },
+    "requests": [
+      {
+        "id": 1,
+        "method": "eth_chainId",
+        "params": [],
+        "startedAt": "2026-11-22T10:31:12.348Z",
+        "durationMs": 3821,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 59,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 45,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 45,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "ef1b85ff59f7be46cfe6640e8559047aa13d4eadad5de15e4eada6e7b89d320f"
+      },
+      {
+        "id": 2,
+        "method": "eth_getBlockByHash",
+        "params": [
+          "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967",
+          false
+        ],
+        "startedAt": "2026-11-22T10:31:16.169Z",
+        "durationMs": 158,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 140,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 1836,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 1836,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "732be1f800e4bb5875bb9a09f9b887767353ceaf564e1793856f14c5923294f5"
+      },
+      {
+        "id": 3,
+        "method": "eth_getBlockByNumber",
+        "params": [
+          "0x315f43e",
+          false
+        ],
+        "startedAt": "2026-11-22T10:31:16.327Z",
+        "durationMs": 157,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 85,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 1836,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 1836,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "fe0e3e5ae4998918a0be8859af919fc58e85bd169b3640c188585bb3f39914bf"
+      },
+      {
+        "id": 4,
+        "method": "eth_getBlockByHash",
+        "params": [
+          "0xeafc5a7f1049b9bd33f1438b7d172ec45015300f3e314c34c452fb8d26aa9727",
+          false
+        ],
+        "startedAt": "2026-11-22T10:31:16.484Z",
+        "durationMs": 151,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 140,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 1836,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 1836,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "6420ac25548f011b3946da4b8e65eb49282b8ebb33729592261883a21143890d"
+      },
+      {
+        "id": 5,
+        "method": "eth_getCode",
+        "params": [
+          "0x1111111111111111111111111111111111111111",
+          {
+            "blockHash": "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967",
+            "requireCanonical": true
+          }
+        ],
+        "startedAt": "2026-11-22T10:31:16.635Z",
+        "durationMs": 156,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 210,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 39,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 39,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "263a270121832710785bd2ad62130d058d4d1286203cda4201ee673170664a8d"
+      },
+      {
+        "id": 6,
+        "method": "eth_call",
+        "params": [
+          {
+            "to": "0x1111111111111111111111111111111111111111",
+            "data": "0x12345678"
+          },
+          {
+            "blockHash": "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967",
+            "requireCanonical": true
+          },
+          {
+            "0x1111111111111111111111111111111111111111": {
+              "code": "0x60003560005260206000f3"
+            }
+          }
+        ],
+        "startedAt": "2026-11-22T10:31:16.792Z",
+        "durationMs": 157,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 317,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 103,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 103,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "00ddd5fddd37f0c953001fa239fc5726c4fb12d1d5a666d0f56280cc4453956a"
+      },
+      {
+        "id": 7,
+        "method": "eth_getTransactionByHash",
+        "params": [
+          "0xa9dc5aec95988e7e38a3bf0cfcc4ea01850d72b6593b4762f07940c8476535df"
+        ],
+        "startedAt": "2026-11-22T10:31:16.949Z",
+        "durationMs": 158,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 140,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 997,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 997,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "759509ec6db0a599deb2a5fda4b28ef2fb4b6fe04330c37120d1b7e20539d296"
+      },
+      {
+        "id": 8,
+        "method": "eth_getTransactionReceipt",
+        "params": [
+          "0xa9dc5aec95988e7e38a3bf0cfcc4ea01850d72b6593b4762f07940c8476535df"
+        ],
+        "startedAt": "2026-11-22T10:31:17.107Z",
+        "durationMs": 158,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 141,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 1268,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 1268,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "c6086b07aba589162a3b59463a26409c4a5fab203f17f80b4fc0c33037c3f8a0"
+      },
+      {
+        "id": 9,
+        "method": "eth_getBlockByNumber",
+        "params": [
+          "0x315f43e",
+          false
+        ],
+        "startedAt": "2026-11-22T10:31:17.264Z",
+        "durationMs": 157,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 85,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 1836,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 1836,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "092af2a908b8d86f5ed7fd5c776f20911806e3fb63a2cab6b11ce629ca9ca31b"
+      }
+    ]
+  },
+  "providerAssertions": {
+    "block": {
+      "baseFeePerGas": "0xfa",
+      "blobGasUsed": "0x0",
+      "difficulty": "0x0",
+      "excessBlobGas": "0x0",
+      "extraData": "0x01000000fa000000020000000000000000",
+      "gasLimit": "0x2625a00",
+      "gasUsed": "0xd512",
+      "hash": "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967",
+      "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "miner": "0x4200000000000000000000000000000000000011",
+      "mixHash": "0xb3cc38ae259eb40e8e3e1512e725d641cc48c9b98edb24961daf52daf8486022",
+      "nonce": "0x0000000000000000",
+      "number": "0x315f43e",
+      "parentBeaconBlockRoot": "0xfeaef9e03c113a45d2791148d679f484f51a49bf5020f28cb491fadad9f8491b",
+      "parentHash": "0xeafc5a7f1049b9bd33f1438b7d172ec45015300f3e314c34c452fb8d26aa9727",
+      "receiptsRoot": "0xfe576c0fbad8d908fba07fcf0291784f492778c55ba3b43bd21f32af175c939f",
+      "requestsHash": "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+      "size": "0x38b",
+      "stateRoot": "0xec9f6c0ede7a9f35e472f171c5006f2b255cf07adec86b002b62e77537d15605",
+      "timestamp": "0x6b02c428",
+      "transactions": [
+        "0xa9dc5aec95988e7e38a3bf0cfcc4ea01850d72b6593b4762f07940c8476535df"
+      ],
+      "transactionsRoot": "0x110129ebd7b8250559a73c8c08b0e72cf72b5ed9c9c9568cb2c37e3f26692b28",
+      "uncles": [],
+      "withdrawals": [],
+      "withdrawalsRoot": "0x4fc859af56f88514804f3913e9e5d272f273660eb7f43189b12538d7ea3c338e"
+    },
+    "parentBlock": {
+      "baseFeePerGas": "0xfa",
+      "blobGasUsed": "0x0",
+      "difficulty": "0x0",
+      "excessBlobGas": "0x0",
+      "extraData": "0x01000000fa000000020000000000000000",
+      "gasLimit": "0x2625a00",
+      "gasUsed": "0xb44e",
+      "hash": "0xeafc5a7f1049b9bd33f1438b7d172ec45015300f3e314c34c452fb8d26aa9727",
+      "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "miner": "0x4200000000000000000000000000000000000011",
+      "mixHash": "0x7f181184e4474a24d6f24246ec4994d625e54f2d70fdba7726788bd2902243cb",
+      "nonce": "0x0000000000000000",
+      "number": "0x315f43d",
+      "parentBeaconBlockRoot": "0x9d231876168fad287fcc52fdb84b1a76fd60e95283f09a221f4934af4c7aa5ac",
+      "parentHash": "0x109686f49280652d12cd17b477201f17714c0b0572f24ef1ebc25fcd98f60c53",
+      "receiptsRoot": "0x2d5c0ede49d7c149ed9a19401678812f18b7b345346b003ecc378f0a0121bb92",
+      "requestsHash": "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+      "size": "0x38b",
+      "stateRoot": "0x3c1854cd636309c6d2e4e522466cb845b7e71ce67362b640d7cd4c3ccb4e8425",
+      "timestamp": "0x6b02c426",
+      "transactions": [
+        "0xc72c4c0ad5953cfcdf68aefcaef7b624099d4c73d24bb58c6d555eabf8ff248d"
+      ],
+      "transactionsRoot": "0x837d5d45a784b0700156d9f5694ecd90e387174ad868ad070cccb9234ffbc0e6",
+      "uncles": [],
+      "withdrawals": [],
+      "withdrawalsRoot": "0x4fc859af56f88514804f3913e9e5d272f273660eb7f43189b12538d7ea3c338e"
+    },
+    "transaction": {
+      "blockHash": "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967",
+      "blockNumber": "0x315f43e",
+      "blockTimestamp": "0x6b02c428",
+      "depositReceiptVersion": "0x1",
+      "from": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001",
+      "gas": "0xf4240",
+      "gasPrice": "0x0",
+      "hash": "0xa9dc5aec95988e7e38a3bf0cfcc4ea01850d72b6593b4762f07940c8476535df",
+      "input": "0x3db6be2b00001db0000d27300000000000000000000000006b02c3e00000000000b9fa12000000000000000000000000000000000000000000000000000000000000001100000000000000000000000000000000000000000000000000000000000000013566075ec83ddc547ae96ac136da1da4b6c7742671f8f551bb55c18705508d1600000000000000000000000064eda4f93314ecd619bd4f79d8d1f8112a4e6e160000000000000000000000000190",
+      "mint": "0x0",
+      "nonce": "0x315f45e",
+      "r": "0x0",
+      "s": "0x0",
+      "sourceHash": "0x7f87e31a49a15596784671ea1171b593584703c1675a8424471756610a6e9549",
+      "to": "0x4200000000000000000000000000000000000015",
+      "transactionIndex": "0x0",
+      "type": "0x7e",
+      "v": "0x0",
+      "value": "0x0",
+      "yParity": "0x0"
+    },
+    "receipt": {
+      "blobGasUsed": "0x9dd0",
+      "blockHash": "0x89d9d64ddd5a2633d5cde0af78f08d3202eb142da1abb32a4f351ccb748f7967",
+      "blockNumber": "0x315f43e",
+      "contractAddress": null,
+      "cumulativeGasUsed": "0xd512",
+      "daFootprintGasScalar": "0x190",
+      "depositNonce": "0x315f45e",
+      "depositReceiptVersion": "0x1",
+      "effectiveGasPrice": "0x0",
+      "from": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001",
+      "gasUsed": "0xd512",
+      "l1BaseFeeScalar": "0x1db0",
+      "l1BlobBaseFee": "0x1",
+      "l1BlobBaseFeeScalar": "0xd2730",
+      "l1Fee": "0x0",
+      "l1GasPrice": "0x11",
+      "l1GasUsed": "0x654",
+      "logs": [],
+      "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "status": "0x1",
+      "to": "0x4200000000000000000000000000000000000015",
+      "transactionHash": "0xa9dc5aec95988e7e38a3bf0cfcc4ea01850d72b6593b4762f07940c8476535df",
+      "transactionIndex": "0x0",
+      "type": "0x7e"
+    },
+    "call": {
+      "address": "0x1111111111111111111111111111111111111111",
+      "dataHex": "0x12345678",
+      "chainCodeHex": "0x",
+      "executionCode": {
+        "source": "synthetic-state-override",
+        "dataHex": "0x60003560005260206000f3"
+      },
+      "outcome": {
+        "kind": "return",
+        "dataHex": "0x1234567800000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  },
+  "verification": {
+    "localComparison": {
+      "status": "match",
+      "engine": "evm-subset --frame-call",
+      "codeSource": "synthetic-state-override",
+      "gas": "1000000",
+      "fuel": "10000",
+      "local": {
+        "kind": "return",
+        "dataHex": "0x1234567800000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "stateRoot": "unverified",
+    "transactionExecution": "unverified",
+    "blockHash": "unverified",
+    "consensus": "unverified"
+  }
+}
