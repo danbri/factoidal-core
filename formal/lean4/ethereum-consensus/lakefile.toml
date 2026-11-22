@@ -8,3 +8,7 @@ name = "EthereumConsensus"
 [[lean_exe]]
 name = "ssz-gindex"
 root = "Main"
+
+[[lean_exe]]
+name = "lmd-latest"
+root = "LatestMain"
