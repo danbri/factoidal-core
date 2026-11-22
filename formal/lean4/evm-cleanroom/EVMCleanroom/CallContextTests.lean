@@ -56,7 +56,7 @@ private def observeParticipants (op : UInt8) (origin caller : Nat) (gas : Nat :=
 #guard observeParticipants 0x33 0x77 0xc2 1 == none
 
 -- Real parent CALL, real child SSTORE, actual nested interpreter path.
-private def nestedParticipantSlot (opcode : UInt8) : Option Nat :=
+private def nestedParticipantSlot (opcode : UInt8) (chainId : Nat := 0) : Option Nat :=
   let parentCode : Array UInt8 :=
     #[0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x60, 0xc3, 0x61, 0x75, 0x30, 0xf1, 0x00]
   let childCode : Array UInt8 := #[opcode, 0x60, 0x00, 0x55, 0x00]
@@ -64,7 +64,7 @@ private def nestedParticipantSlot (opcode : UInt8) : Option Nat :=
     if address == 0xc1 then { balance := 100000, code := parentCode }
     else if address == 0xc3 then { code := childCode }
     else {}
-  let w := World.beginTransaction accounts
+  let w : World.TxWorld := { World.beginTransaction accounts with chainId := chainId }
   let parent := World.frameInput w 0xc1 100000 false .shanghaiPlus 0x77 0x42
   match CallOpcode.execute 40 w 0xc1 parent with
   | .stopped outputWorld _ => some ((outputWorld.accounts 0xc3).storage 0)
@@ -72,5 +72,7 @@ private def nestedParticipantSlot (opcode : UInt8) : Option Nat :=
 
 #guard nestedParticipantSlot 0x33 == some 0xc1
 #guard nestedParticipantSlot 0x32 == some 0x77
+#guard nestedParticipantSlot 0x46 31337 == some 31337
+#guard nestedParticipantSlot 0x46 (modulus + 3) == some 3
 
 end EVMCleanroom.CallContextTests
