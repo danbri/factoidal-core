@@ -63,5 +63,8 @@ try{
       cpuSamples:cpuMs,gpuSamples:gpuMs});
   }
   report.status="pass";
-}catch(e){report.error=e?.stack||String(e);process.exitCode=1;}
+}catch(e){report.error=e?.stack||String(e);
+  if(typeof Deno!=="undefined")Deno.exitCode=1;
+  else process.exitCode=1;
+}
 finally{session.close();console.log(JSON.stringify(report,null,2));}
