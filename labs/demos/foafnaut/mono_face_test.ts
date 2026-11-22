@@ -91,6 +91,31 @@ async function advances(lib:string){
   assert.ok(Math.abs(after.red-120)<=1,`ten W at 20px are 120 px wide, got ${after.red}`);
 }
 
+/** The height of the blue background on a CPU picture of `html` (its tallest column). */
+function blueHeight(lib:string,html:string):number {
+  const w=400,h=120;
+  const buffer=nativeBackends(lib).bytes(html,JSON.stringify({op:"render",checks:false,cpu:true,url:"file:///mono.html"}),w,h);
+  const {head,sections}=unpackAnswer(buffer);
+  const scene=(head.page??head) as Record<string,unknown>;
+  const [offset,length]=sections[scene.pixelsSection as number];
+  const rgba=new Uint8Array(buffer,offset,length);
+  let best=0;
+  for(let x=0;x<w;x++){let n=0;for(let y=0;y<h;y++){const p=(y*w+x)*4;if(rgba[p]<40&&rgba[p+1]<40&&rgba[p+2]>200)n++;}best=Math.max(best,n);}
+  return best;
+}
+
+// CSS 2.1 §10.6.1: the background of inline text covers the content area of its own font.
+// Liberation Mono's hhea ascent and descent are 1,705 and 615 of 2,048 units (1.1328 em, 22.66 px
+// at 20 px); before 2026-11-22 every line used Noto Sans's (1.362 em, 27.24 px:
+// Layout.FontProfile.metricsOf).
+async function contentArea(lib:string){
+  const engine=await loadHTML(lib,"bytes");
+  await loadFontFile(engine,sans,"Noto Sans");
+  await loadFontFile(engine,monoFontPath(),MONO_FAMILY,"bytes","mono");
+  const height=blueHeight(lib,"<!doctype html><body style='margin:0'><p style='margin:20px 0'><span style='font:20px/60px monospace;background:#0000ff;color:#0000ff'>iii</span></p></body>");
+  assert.ok(height>=22&&height<=23,`the content area of 20px Liberation Mono is 22.66 px, got ${height}`);
+}
+
 // Expected failure, https://github.com/danbri/factoidal-core/issues/750 (generic monospace at 13 px): browsers draw text whose family is the generic `monospace` alone,
 // and whose size comes from a keyword (the initial `medium`), at 13 px, not 16 px (Blink, Gecko
 // and WebKit; `pre`, `code`, `kbd`, `samp` in an unstyled page). This engine draws it at 16 px.
@@ -109,4 +134,5 @@ async function monoSize(lib:string){
 Deno.test("monospace face: pre and code draw with Liberation Mono, other pages unchanged (Wasm)",async()=>{await check();});
 Deno.test({name:"monospace face: pre and code draw with Liberation Mono, other pages unchanged (native)",ignore:!library,fn:async()=>{await check(library);}});
 Deno.test({name:"monospace face: every letter is 0.6 em wide (native CPU pixels)",ignore:!library,fn:async()=>{await advances(library!);}});
+Deno.test({name:"monospace face: an inline background is the content area of Liberation Mono (native CPU pixels)",ignore:!library,fn:async()=>{await contentArea(library!);}});
 Deno.test({name:"expected failure, https://github.com/danbri/factoidal-core/issues/750: pre text at 16 px where browsers use 13 px (native CPU pixels)",ignore:!library,fn:async()=>{await monoSize(library!);}});
