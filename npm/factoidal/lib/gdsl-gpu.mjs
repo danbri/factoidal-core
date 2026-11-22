@@ -65,7 +65,7 @@ function isIneligible(message){
  * The GPU device and WGSL compiler remain trusted execution components.
  */
 export async function runPVGraph({pvgraph,bindings,loadEngine,session=null,
-  requireGPU=false,minWords=1024}={}){
+  requireGPU=false,minWords=1024,verifyWithLean=true}={}){
   if(typeof loadEngine!=="function")refuse("Lean/Wasm loadEngine is required");
   if(!Number.isSafeInteger(minWords)||minWords<0)refuse("invalid minimum GPU size");
   const engine=await loadEngine();
@@ -144,10 +144,26 @@ export async function runPVGraph({pvgraph,bindings,loadEngine,session=null,
       const words=await gpu.readWords(src,{countWords:output.words});
       outputs[output.name]=output.kind==="scalar"?words[0]:words;
     }
+    // The default assurance profile refuses an unchecked device answer:
+    // use the SAME Lean/Wasm evaluator, not an independent JS interpreter.
+    // Benchmark callers may set verifyWithLean:false, but must do their own
+    // independent comparison before asserting correctness or speed.
+    if(verifyWithLean){
+      const reference=await leanReference(engine,pvgraph,bindings,
+        "validate actual GPU readback");
+      const keys=Object.keys(reference.outputs).sort();
+      if(JSON.stringify(keys)!==JSON.stringify(Object.keys(outputs).sort())||
+         keys.some(name=>JSON.stringify(reference.outputs[name])!==
+           JSON.stringify(outputs[name])))
+        throw Error("GPU readback disagrees with Lean/Wasm reference");
+    }
     return {status:"gpu-observed",outputs,dispatches,
       timing:{planMs:planningMs,deviceAndReadbackMs:now()-started,
         totalMs:now()-t0},device:gpu.status(),
-      assurance:"Lean plan and proof-backed kernel model; physical WebGPU execution observed, not formally proved"};
+      verifiedAgainstLeanWasm:verifyWithLean,
+      assurance:verifyWithLean
+        ?"Observed GPU output agreed with Lean/Wasm for this input; physical backend not proved"
+        :"GPU output observed without runtime Lean comparison; pure-model theorem only"};
   }catch(error){
     if(requireGPU)throw error;
     return {...await leanReference(engine,pvgraph,bindings,
