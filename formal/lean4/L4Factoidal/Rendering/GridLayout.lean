@@ -4,6 +4,7 @@ import L4Factoidal.Rendering.Grid.Align
 import L4Factoidal.Rendering.Grid.Abspos
 import L4Factoidal.Rendering.Grid.Baseline
 import L4Factoidal.Rendering.LogicalAxes
+import L4Factoidal.Rendering.AspectRatio
 
 /-! Grid layout (CSS Grid Layout 2) of a container's items: this module reads the
 computed values (`Computed.grid`, `Computed.align`), asks the pure modules under
@@ -269,6 +270,39 @@ def gridItemWidth (kids : Children) (item : Item) (is : Computed) (areaW : Float
         pure (min (c-e) (max (a-e) (areaW-e)))
   return max 0 (clampOpt ((CSS.resolve areaW is.minWidth).getD 0) (CSS.resolve areaW is.maxWidth) content)+padH
 
+/-- Transfer a definite preferred height through an authored ratio when alignment
+uses a fit-content width (CSS Grid 2 §6.2 and CSS Sizing 4 §5.1). Layout styles
+store content-box lengths, but a border-box ratio relates the outer box edges. -/
+private def gridRatioWidth (s : Computed) (areaW : Float) (areaH : Option Float)
+    (stretch : Bool) : Option Float := do
+  let (num, den) ← s.pos.ratio
+  if stretch || s.width != .auto || s.pos.ratioAuto || s.display.isTable || num == 0 || den == 0 then none else
+  let h ← resolveOpt areaH s.height
+  let b := s.borderEdges
+  let padH := b.left+b.right+s.padding.left+s.padding.right
+  let padV := b.top+b.bottom+s.padding.top+s.padding.bottom
+  let h := clampOpt ((resolveOpt areaH s.minHeight).getD 0) (resolveOpt areaH s.maxHeight) h
+  let input := if s.pos.borderBox then h+padV else h
+  let w := LU.toPx (Ratio.widthFor num den (LU.ofPx (max 0 input)))
+  let content := if s.pos.borderBox then max 0 (w-padH) else w
+  return max 0 (clampOpt ((CSS.resolve areaW s.minWidth).getD 0) (CSS.resolve areaW s.maxWidth) content)+padH
+
+private def gridJustifyItem (item container : Computed) (rtl : Bool) : Grid.SelfAlign :=
+  if item.grid.templateColumns.subgrid && item.display.isGrid then .stretch
+  else gridSelfAlign item.align.justifySelf container.align.justifyItems rtl
+    ((selfStartSides (gridFrame item)).1 != rtl)
+
+private def gridItemX (item container : Computed) (rtl : Bool) (align : Grid.SelfAlign)
+    (areaX areaW width : Float) : Float :=
+  let outer := width+item.margin.left+item.margin.right
+  let offset := match autoCrossOffset item.autoMarginLeft item.autoMarginRight (areaW-outer) with
+    | some d => d
+    | none =>
+      let safe := gridSafe item.align.justifySelf item.align.justifySelfSafe container.align.justifyItemsSafe
+      let d := LU.toPx (gridSelfOffset align safe (gridUnits areaW) (gridUnits outer))
+      if rtl then areaW-outer-d else d
+  areaX+offset
+
 /-- The tracks of an axis that are collapsed (§7.2.3.2): the tracks of a
 `repeat(auto-fit, …)` that no item spans. `spans` are the start track and the span of
 every item in this axis. -/
@@ -388,18 +422,13 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let extent := Grid.spanExtent colStarts colSizes a.col a.colSpan
     let areaW := gridPx extent.2
     let areaX := if rtl then box.width-LU.toPx extent.1-areaW else LU.toPx extent.1
-    -- a subgrid always stretches in its subgridded axes (§9 of CSS Grid 2, subgrid box alignment)
-    let justify : Grid.SelfAlign := if is.grid.templateColumns.subgrid && is.display.isGrid then .stretch
-      else gridSelfAlign is.align.justifySelf s.align.justifyItems rtl ((selfStartSides (gridFrame is)).1 != rtl)
-    let width ← gridItemWidth kids item is areaW (justify == .stretch)
-    let outerW := width+m.left+m.right
-    let dx := match autoCrossOffset is.autoMarginLeft is.autoMarginRight (areaW-outerW) with
-      | some d => d
-      | none =>
-        let d := LU.toPx (gridSelfOffset justify (gridSafe is.align.justifySelf is.align.justifySelfSafe s.align.justifyItemsSafe)
-          (gridUnits areaW) (gridUnits outerW))
-        if rtl then areaW-outerW-d else d
-    let x := box.x+areaX+dx
+    let justify := gridJustifyItem is s rtl
+    let stretch := justify == .stretch
+    let fixedRowHeight := (gridFixedSpan rowFns rowGap a.row a.rowSpan).map gridPx
+    let width ← match gridRatioWidth is areaW fixedRowHeight stretch with
+      | some width => pure width
+      | none => gridItemWidth kids item is areaW stretch
+    let x := gridItemX is s rtl justify (box.x+areaX) areaW width
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
     let minH := match is.minHeight with | .px v => v | _ => 0
     let maxH := match is.maxHeight with | .px v => some v | _ => none
@@ -410,10 +439,10 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     -- flex or grid container is then laid out once, not measured and laid out again.
     let rowStretch := (is.grid.templateRows.subgrid && is.display.isGrid) ||
       gridSelfAlign is.align.alignSelf s.align.alignItems false == .stretch
-    let fixed := match fixed, gridFixedSpan rowFns rowGap a.row a.rowSpan with
-      | none, some areaU =>
+    let fixed := match fixed, fixedRowHeight with
+      | none, some areaH =>
         if kids.heightSensitive item && rowStretch && !is.autoMarginTop && !is.autoMarginBottom then
-          some (max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (gridPx areaU-m.top-m.bottom)))
+          some (max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (areaH-m.top-m.bottom)))
         else none
       | f, _ => f
     -- An item whose height the rows may still change is only measured here
@@ -492,9 +521,17 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let is := styles[i]!
     let a := plan.areas.getD i default
     let m := is.margin
-    let (r,x,width,natural,areaW) := laid[i]!
+    let (r,measuredX,measuredWidth,natural,areaW) := laid[i]!
     let extent := Grid.spanExtent rowStarts rowSizes a.row a.rowSpan
     let areaH := gridPx extent.2
+    let ratioWidth := is.pos.ratio.bind fun _ =>
+      gridRatioWidth is areaW (some areaH) (gridJustifyItem is s rtl == .stretch)
+    let width := ratioWidth.getD measuredWidth
+    let changedWidth := width != measuredWidth
+    let x := if !changedWidth then measuredX else
+      let cols := Grid.spanExtent colStarts colSizes a.col a.colSpan
+      let areaX := if rtl then box.width-LU.toPx cols.1-areaW else LU.toPx cols.1
+      gridItemX is s rtl (gridJustifyItem is s rtl) (box.x+areaX) areaW width
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
     let rowSubgrid := is.grid.templateRows.subgrid && is.display.isGrid
     let align : Grid.SelfAlign := if rowSubgrid then .stretch
@@ -518,7 +555,10 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let y := box.y+LU.toPx extent.1+dy
     -- the inline axis of a right-to-left vertical grid runs bottom to top
     let y := if flipY then box.y+contentH-(y-box.y)-(height+m.top+m.bottom) else y
-    let done ← if kids.heightSensitive item then
+    let done ← if changedWidth && !box.measure then do
+        let again ← kids.layout item x y {available := areaW, width := some width, height := some height}
+        pure {again with work := again.work+r.work}
+      else if kids.heightSensitive item then
         -- a container that is itself only measured keeps the measured item: its size is right
         if box.measure then pure (r.shift 0 (y-box.y))
         else if (height-natural).abs < 0.01 && !r.rough then pure (r.shift 0 (y-box.y))
