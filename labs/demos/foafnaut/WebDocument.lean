@@ -594,8 +594,8 @@ private def inBackground (prev : Bool) (t : String) : Bool :=
 private def resolveBackgroundUrl (base u : String) : String :=
   if base.isEmpty || u.toLower.startsWith "data:" then u else Syntax.resolveIri base u
 
-/-- CSS text with each `url(...)` of a background declaration absolute, against `base`. Text
-with no `url(` is given back as it is. -/
+/-- Resolve background URLs against `base` while preserving fragment-only URLs as local
+references (CSS Values 4 §4.5.1.1). -/
 def backgroundUrlsAbsolute (base text : String) : String := Id.run do
   let pieces := text.splitOn "url("
   if pieces.length < 2 then return text
@@ -604,7 +604,7 @@ def backgroundUrlsAbsolute (base text : String) : String := Id.run do
   for p in pieces.tail do
     match urlArg p with
     | some (u,rest) =>
-      if st && !u.isEmpty && !u.contains '"' then
+      if st && !u.isEmpty && !u.startsWith "#" && !u.contains '"' then
         out := out ++ "url(\"" ++ resolveBackgroundUrl base u ++ "\")" ++ rest
       else out := out ++ "url(" ++ p
       st := inBackground st rest
@@ -613,7 +613,7 @@ def backgroundUrlsAbsolute (base text : String) : String := Id.run do
       st := inBackground st p
   return out
 
-/-- The absolute URLs of the `url(...)` of background declarations in CSS text. -/
+/-- The absolute URLs of background declarations that can identify image resources. -/
 def backgroundUrlsOf (base text : String) : List String := Id.run do
   let pieces := text.splitOn "url("
   if pieces.length < 2 then return []
@@ -622,7 +622,7 @@ def backgroundUrlsOf (base text : String) : List String := Id.run do
   for p in pieces.tail do
     match urlArg p with
     | some (u,rest) =>
-      if st && !u.isEmpty then out := resolveBackgroundUrl base u :: out
+      if st && !u.isEmpty && !u.startsWith "#" then out := resolveBackgroundUrl base u :: out
       st := inBackground st rest
     | none => st := inBackground st p
   return out.reverse
@@ -632,6 +632,10 @@ def backgroundUrlsOf (base text : String) : List String := Id.run do
 #guard backgroundUrlsOf "https://a.test/" "div { color: red; background-image: url('a b.png'), url(c.png) }" ==
   ["https://a.test/a b.png","https://a.test/c.png"]
 #guard backgroundUrlsOf "https://a.test/" "div { list-style: url(m.png) }" == []
+#guard backgroundUrlsAbsolute "https://a.test/s.css" "p{background:url(#a),url('#b')}" ==
+  "p{background:url(#a),url('#b')}"
+#guard backgroundUrlsOf "https://a.test/s.css" "p{background:url(#a),url('icons.svg#b')}" ==
+  ["https://a.test/icons.svg#b"]
 
 /-- The document with each `style` attribute's background URLs absolute against `base`. -/
 def styleAttributesAbsolute (dom : DOM.Dom) (base : String) : DOM.Dom :=

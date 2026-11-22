@@ -23,3 +23,15 @@ extracted placement code with warnings treated as errors. Three rectangle
 guards and four two-block placement probes passed, including mixed positive
 and negative block margins. These check the placement kernel. The native
 browser-layout check uses the pinned CSS anchor and writing-modes suites.
+
+
+The pinned native run recovered the 864 vertical-parent assertions in
+`anchor-position-writing-modes-001.html`. The 16 new logical-anchor passes in
+its companion fixture were already on the branch's main baseline. There were no
+lost assertions across the 104 matching writing-mode, anchor and grid tests.
+
+The rectangle round-trip theorem states that inline margins and writing direction
+preserve the chosen block start and both dimensions in the layout-unit logical
+frame. Lean 4.33.1 compiled the exact placement helper and theorem with the
+exact LogicalAxes and LayoutUnit modules. The check used a minimal stand-in for the
+computed-style record. The full-module compiler check runs on the reconciled branch.
