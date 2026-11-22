@@ -67,6 +67,7 @@ def stubPrims : Prims where
   p256Ecdh xy sk := if xy.size == 64 then some (xorB (xy.extract 0 32) (sha256 sk)) else none
   x25519Public sk := some (sha256 sk)
   x25519 sk pub := if pub.size == 32 then some (xorB pub (sha256 sk)) else none
+  pbkdf2 a := WebCrypto.pbkdf2 a.pure
 
 def bytes (n : Nat) (seed : Nat) : ByteArray := ⟨((List.range n).map fun i => (i * 7 + seed).toUInt8).toArray⟩
 
@@ -391,5 +392,63 @@ def drive (run : Cipher → M Document) (answer : Cipher) : (fuel : Nat) → Lis
 #guard unpad ⟨#[1, 2, 0]⟩ == none
 #guard nestingWithin 2 "<a><b/></a>".toList 0
 #guard !nestingWithin 2 "<a><b><c/></b></a>".toList 0
+
+/-! ## PBKDF2 key derivation (§5.4.2) -/
+
+/-- A `KeyDerivationMethod` element from its text, or none. -/
+def kdmOf (s : String) : Option DSig.El :=
+  match parseXML s with
+  | .ok d => DSig.elOf? Canonical.rootScope d.root
+  | .error _ => none
+
+def kdmText (it len prf : String) (salt : String := "AAECAwQFBgc=") : String :=
+  "<k:KeyDerivationMethod xmlns:k=\"" ++ xenc11Ns ++ "\" Algorithm=\"" ++ pbkdf2Alg ++ "\"><k:PBKDF2-params>" ++
+  "<k:Salt><k:Specified>" ++ salt ++ "</k:Specified></k:Salt><k:IterationCount>" ++ it ++
+  "</k:IterationCount><k:KeyLength>" ++ len ++ "</k:KeyLength><k:PRF Algorithm=\"" ++ prf ++
+  "\"/></k:PBKDF2-params></k:KeyDerivationMethod>"
+
+def pbOk (s : String) (p : Pbkdf2Params → Bool) : Bool :=
+  match kdmOf s with
+  | some e => match pbkdf2Params {} e with
+    | .ok q => p q
+    | .error _ => false
+  | none => false
+
+def pbRefused (s : String) (frag : String) : Bool :=
+  match kdmOf s with
+  | some e => match kdfOf {} e with
+    | .error (.refused m) => (m.splitOn frag).length ≥ 2
+    | _ => false
+  | none => false
+
+#guard positiveInteger? "2000" == some 2000
+#guard positiveInteger? " +07 " == some 7
+#guard positiveInteger? "0" == none
+#guard positiveInteger? "-1" == none
+#guard positiveInteger? "1e3" == none
+#guard positiveInteger? "1234567890123" == none
+#guard prfOf? hmacSha256Prf == some .sha256
+#guard prfOf? "http://www.w3.org/2001/04/xmldsig-more#hmac-sha224" == none
+#guard pbOk (kdmText "2000" "32" hmacSha256Prf) fun p =>
+  p.iterations == 2000 && p.keyLength == 32 && p.prf == .sha256 && p.salt.size == 8
+#guard pbOk (kdmText "1" "16" hmacSha1Prf) (·.prf == .sha1)
+#guard pbRefused (kdmText "0" "32" hmacSha256Prf) "IterationCount"
+#guard pbRefused (kdmText "1000001" "32" hmacSha256Prf) "above the limit"
+#guard pbRefused (kdmText "10" "32" "urn:x") "PRF"
+#guard pbRefused (kdmText "10" "32" hmacSha256Prf "!!") "not base64"
+#guard pbRefused ((kdmText "10" "32" hmacSha256Prf).replace "pbkdf2\"" "hkdf\"") "not supported"
+-- RFC 6070 test 2 (PBKDF2-HMAC-SHA1, 2 iterations) through a stub's derivation.
+#guard match kdmOf (kdmText "2" "20" hmacSha1Prf (base64 "salt".toUTF8)) with
+  | some e => match kdfOf {} e with
+    | .ok k => (k.derive? stubPrims "password".toUTF8 20).map hexOf ==
+        some "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957"
+    | .error _ => false
+  | none => false
+-- A derived key of another length than the one it is used for is not given.
+#guard match kdmOf (kdmText "2" "20" hmacSha1Prf) with
+  | some e => match kdfOf {} e with
+    | .ok k => (k.derive? stubPrims "password".toUTF8 16).isNone
+    | .error _ => false
+  | none => false
 
 end L4Factoidal.XML.EncTests

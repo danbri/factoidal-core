@@ -155,6 +155,33 @@ rulings):
   certificate.
 * `EncryptedData` without `Type` is refused (W3C SYM.1, DRV.1): the profile
   decrypts XML only.
+* PBKDF2 key derivation (§5.4.2), since 2026-11-22 (track B item 5, part
+  2, of https://github.com/danbri/factoidal/issues/1165): `kdfOf` reads
+  `xmlenc11#ConcatKDF` (§5.4.1, unchanged: theorem
+  `xmlenc11_kdfOf_concatKdf`) or `xmlenc11#pbkdf2` in an
+  `xenc:AgreementMethod`. The password is the shared secret Z. Accepted:
+  `PBKDF2-params` with its four children in schema order, a `Specified`
+  salt (`OtherSource` defines no algorithm and is refused), an
+  `IterationCount` of at most `Opts.maxPbkdf2Iterations` (1,000,000, so a
+  document cannot ask for unbounded work), a `KeyLength` equal to the length
+  of the key it makes (a structure refusal, before any key is used), and the
+  PRF HMAC-SHA-1 or HMAC-SHA-256/384/512 (no HACL* HMAC-SHA-224 here).
+  `Prims.pbkdf2` is `WebCrypto.pbkdf2` over `WebHacl.haclHash`; theorem
+  `xmlenc11_pbkdf2_native_eq_rfc8018` makes it the pure RFC 8018 function
+  given `HashAgrees` and `HmacAgrees`, and
+  `xmlenc11_derive_pbkdf2_eq_webcrypto` states the derived key for a
+  document. Tests: `tests/xmlenc/pbkdf2.json`, made by Node's crypto
+  (`tests/xmlenc/make-pbkdf2.mjs`): 5 documents that decrypt (P-256 and
+  X25519; key wrap and direct agreement; each PRF) and 6 refusals; the
+  native probe compares the key encryption key Lean derives with Node's.
+  The writer still uses Concat KDF only.
+* The published PBKDF2 vectors do not decrypt as written. W3C AGRMNT.9
+  (Oracle, ECDH-ES with PBKDF2): no derivation tried gives a key that
+  unwraps its key; an expected failure,
+  https://github.com/danbri/factoidal/issues/1303. IBM and Microsoft DRV.2
+  and DRV.4 (PBKDF2 in `xenc11:DerivedKey`): the derived key decrypts them,
+  but their AES-256-CBC ciphertexts have no padding block, which §5.2
+  requires; not vendored, as `xenc11:DerivedKey` is not read yet.
 
 ## JWE profile
 

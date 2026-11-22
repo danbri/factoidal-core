@@ -48,7 +48,11 @@ refused, with a message that names it. Nothing is skipped.
     `http://www.w3.org/2021/04/xmldsig-more#x25519` (RFC 9231 §2.6.2) on
     X25519 (originator key `dsig11:DEREncodedKeyValue`, the RFC 8410
     SubjectPublicKeyInfo); key derivation `xmlenc11#ConcatKDF` with the
-    `ds:DigestMethod` SHA-256; no `KA-Nonce`. The recipient key is named by
+    `ds:DigestMethod` SHA-256 (§5.4.1), or `xmlenc11#pbkdf2` (§5.4.2) with a
+    `Specified` salt, an `IterationCount` of at most
+    `Opts.maxPbkdf2Iterations`, a `KeyLength` equal to the length of the key
+    it makes, and the PRF HMAC-SHA-1, -256, -384 or -512 (`Prims.pbkdf2`,
+    HACL* HMAC); no `KA-Nonce`. The recipient key is named by
     `ds:KeyName` in `xenc:RecipientKeyInfo`, or is the caller's only key on
     that curve.
 
@@ -145,6 +149,11 @@ def kwAes256 : String := xencNs ++ "kw-aes256"
 def ecdhEs : String := xenc11Ns ++ "ECDH-ES"
 def x25519Agreement : String := "http://www.w3.org/2021/04/xmldsig-more#x25519"
 def concatKdfAlg : String := xenc11Ns ++ "ConcatKDF"
+def pbkdf2Alg : String := xenc11Ns ++ "pbkdf2"
+def hmacSha1Prf : String := "http://www.w3.org/2000/09/xmldsig#hmac-sha1"
+def hmacSha256Prf : String := "http://www.w3.org/2001/04/xmldsig-more#hmac-sha256"
+def hmacSha384Prf : String := "http://www.w3.org/2001/04/xmldsig-more#hmac-sha384"
+def hmacSha512Prf : String := "http://www.w3.org/2001/04/xmldsig-more#hmac-sha512"
 def sha1Digest : String := "http://www.w3.org/2000/09/xmldsig#sha1"
 def sha256Digest : String := xencNs ++ "sha256"
 def mgf1Sha1 : String := xenc11Ns ++ "mgf1sha1"
@@ -191,6 +200,11 @@ structure Prims where
   x25519Public : ByteArray → Option ByteArray
   /-- Both OAEP hashes use the checked backend, including MGF1 on the seed. -/
   oaepDigest : OaepDigest → ByteArray → Option ByteArray := OaepDigest.hacl?
+  /-- PBKDF2 (RFC 8018 §5.2) with HMAC over the hash `a`: password, salt,
+  iteration count, key length in octets. HACL* HMAC by default
+  (`WebHacl.haclHash`); `pbkdf2_native_eq_spec` relates it to the pure function. -/
+  pbkdf2 : WebHacl.HashAlg → ByteArray → ByteArray → Nat → Nat → ByteArray :=
+    fun a => WebCrypto.pbkdf2 (WebHacl.haclHash a)
 
 /-- HACL* (`RsaOaep.rsaPrivateOp`, `Rsa.rsaPublicOp`, `P256`, `X25519`). -/
 def nativePrims : Prims where
@@ -240,6 +254,10 @@ structure Opts where
   maxDepth : Nat := 32
   /-- The most `EncryptedData` elements decrypted in one document. -/
   maxEncrypted : Nat := 16
+  /-- The largest PBKDF2 `IterationCount` (§5.4.2) accepted. Each iteration is
+  one HMAC; a larger count is refused before any key is used, so a document
+  cannot make the reader do unbounded work. -/
+  maxPbkdf2Iterations : Nat := 1000000
 
 /-- Why a decryption or encryption gives no document. -/
 inductive Failure where
@@ -657,8 +675,161 @@ def concatKdfParams (kdm : El) : M ConcatKdf.XmlEncParams := do
       | _ => refuse "xenc11:ConcatKDFParams must hold one ds:DigestMethod"
   | _ => refuse "xenc11:KeyDerivationMethod must hold one ConcatKDFParams"
 
+/-! ## PBKDF2 (§5.4.2) -/
+
+/-- The `xenc11:PBKDF2-params` of §5.4.2: the specified salt, the iteration
+count, the key length in octets and the pseudorandom function (HMAC over
+`prf`). -/
+structure Pbkdf2Params where
+  salt : ByteArray
+  iterations : Nat
+  keyLength : Nat
+  prf : WebHacl.HashAlg
+
+/-- The `xenc11:PRF` algorithms accepted: HMAC-SHA-1 (XML Signature 1.1
+§6.3) and HMAC-SHA-256/384/512 (RFC 9231 §2.2). HMAC-SHA-224 and others are
+refused (no HACL* HMAC for them here). -/
+def prfOf? (u : String) : Option WebHacl.HashAlg :=
+  if u == hmacSha1Prf then some .sha1
+  else if u == hmacSha256Prf then some .sha256
+  else if u == hmacSha384Prf then some .sha384
+  else if u == hmacSha512Prf then some .sha512
+  else none
+
+/-- Decimal digits to a number, at most 12 digits (a larger value is refused
+by the caller's bounds anyway). -/
+def digitsLoop : List Char → Nat → Option Nat
+  | [], n => some n
+  | c :: cs, n => if c.isDigit then digitsLoop cs (n * 10 + (c.toNat - 48)) else none
+
+/-- An `xsd:positiveInteger` (XML Schema 1.1 Part 2 §3.4.25): an optional `+`,
+digits, value at least 1; whitespace collapsed. -/
+def positiveInteger? (s : String) : Option Nat :=
+  let t := trimWs s
+  let cs := match t.toList with
+    | '+' :: rest => rest
+    | l => l
+  if cs.isEmpty || cs.length > 12 then none
+  else match digitsLoop cs 0 with
+    | some n => if n ≥ 1 then some n else none
+    | none => none
+
+/-- The PBKDF2 parameters of a `xenc11:KeyDerivationMethod` (§5.4.2). The
+children are the schema's sequence `Salt`, `IterationCount`, `KeyLength`,
+`PRF`, each once and in that order. `Salt` must be `Specified` (`OtherSource`
+is refused: no algorithm for it is defined). -/
+def pbkdf2Params (opts : Opts) (kdm : El) : M Pbkdf2Params := do
+  if kdm.attr? "Algorithm" != some pbkdf2Alg then refuse "the key derivation method must be pbkdf2"
+  if !kdm.elementOnly then refuse "xenc11:KeyDerivationMethod has unexpected content"
+  match kdm.children with
+  | [p] =>
+      if !p.is xenc11Ns "PBKDF2-params" then refuse "xenc11:KeyDerivationMethod must hold PBKDF2-params"
+      if !p.elementOnly then refuse "xenc11:PBKDF2-params has unexpected content"
+      match p.children with
+      | [saltEl, itEl, lenEl, prfEl] =>
+          if !saltEl.is xenc11Ns "Salt" then refuse "xenc11:PBKDF2-params must start with xenc11:Salt"
+          if !itEl.is xenc11Ns "IterationCount" then refuse "xenc11:PBKDF2-params has no xenc11:IterationCount"
+          if !lenEl.is xenc11Ns "KeyLength" then refuse "xenc11:PBKDF2-params has no xenc11:KeyLength"
+          if !prfEl.is xenc11Ns "PRF" then refuse "xenc11:PBKDF2-params has no xenc11:PRF"
+          if !saltEl.elementOnly then refuse "xenc11:Salt has unexpected content"
+          let salt ← match saltEl.children with
+            | [sp] =>
+                if sp.is xenc11Ns "OtherSource" then
+                  refuse "PBKDF2 xenc11:OtherSource salt is not supported: no algorithm for it is defined"
+                if !sp.is xenc11Ns "Specified" then refuse "xenc11:Salt must hold xenc11:Specified"
+                match sp.text? >>= base64Decode? with
+                | some b => pure b
+                | none => refuse "PBKDF2 xenc11:Specified salt is not base64"
+            | _ => refuse "xenc11:Salt must hold one xenc11:Specified"
+          let iterations ← match itEl.text? >>= positiveInteger? with
+            | some n => pure n
+            | none => refuse "PBKDF2 xenc11:IterationCount is not a positive integer"
+          if iterations > opts.maxPbkdf2Iterations then
+            refuse s!"PBKDF2 xenc11:IterationCount {iterations} is above the limit {opts.maxPbkdf2Iterations}"
+          let keyLength ← match lenEl.text? >>= positiveInteger? with
+            | some n => pure n
+            | none => refuse "PBKDF2 xenc11:KeyLength is not a positive integer"
+          if !prfEl.kids.all wsOnly then refuse "xenc11:PRF parameters are not supported"
+          let prfUri := (prfEl.attr? "Algorithm").getD ""
+          let prf ← match prfOf? prfUri with
+            | some a => pure a
+            | none => refuse s!"the PBKDF2 PRF {prfUri} is not supported"
+          pure { salt, iterations, keyLength, prf }
+      | _ => refuse "xenc11:PBKDF2-params must hold Salt, IterationCount, KeyLength and PRF, in that order"
+  | _ => refuse "xenc11:KeyDerivationMethod must hold one PBKDF2-params"
+
+/-- A key derivation method of §5.4: Concat KDF (§5.4.1) or PBKDF2 (§5.4.2). -/
+inductive Kdf where
+  | concat (p : ConcatKdf.XmlEncParams)
+  | pbkdf2 (p : Pbkdf2Params)
+
+/-- The key derivation method named by `Algorithm`. -/
+def kdfOf (opts : Opts) (kdm : El) : M Kdf :=
+  let alg := (kdm.attr? "Algorithm").getD ""
+  if alg == concatKdfAlg then Kdf.concat <$> concatKdfParams kdm
+  else if alg == pbkdf2Alg then Kdf.pbkdf2 <$> pbkdf2Params opts kdm
+  else refuse s!"the key derivation method {alg} is not supported (ConcatKDF or pbkdf2)"
+
+/-- `keyLen` octets from the shared secret `z` (§5.4). `none` is a failure
+after the structure check. -/
+def Kdf.derive? (prims : Prims) (z : ByteArray) (keyLen : Nat) : Kdf → Option ByteArray
+  | .concat p => ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash z keyLen p
+  | .pbkdf2 p =>
+      let k := prims.pbkdf2 p.prf z p.salt p.iterations p.keyLength
+      if k.size == keyLen then some k else none
+
+/-! ### Theorems relating §5.4.2 to RFC 8018, WebCrypto and §5.4.1
+
+Says: the PBKDF2 of `nativePrims` is the pure-Lean RFC 8018 PBKDF2 of
+`WebCrypto.pbkdf2` (the function WebCrypto's `deriveBits` with `PBKDF2` is
+specified by here), given HACL*'s functional correctness as the hypotheses
+`HashAgrees` and `HmacAgrees`; the Concat KDF path of XML Encryption 1.1
+§5.4.1 is the one it was before §5.4.2 was added; a PBKDF2 key is used only
+when it has the length the key is used for.
+Does not say: that a document's PBKDF2 parameters are strong (the reader
+bounds only the iteration count); anything about constant-time behaviour. -/
+
+/-- XML Encryption 1.1 §5.4.2 PBKDF2 on the native primitives is RFC 8018
+§5.2 PBKDF2 over the specification hash and HMAC. -/
+theorem xmlenc11_pbkdf2_native_eq_rfc8018 (hh : WebHacl.HashAgrees) (hm : WebHacl.HmacAgrees)
+    (a : WebHacl.HashAlg) (pw salt : ByteArray) (it len : Nat) :
+    nativePrims.pbkdf2 a pw salt it len = WebCrypto.pbkdf2 a.pure pw salt it len :=
+  WebHacl.pbkdf2_hacl_eq hh hm a pw salt it len
+
+/-- Adding §5.4.2 leaves the §5.4.1 Concat KDF method as it was: a
+`KeyDerivationMethod` with the ConcatKDF algorithm is read by
+`concatKdfParams`. -/
+theorem xmlenc11_kdfOf_concatKdf (opts : Opts) (kdm : El)
+    (h : kdm.attr? "Algorithm" = some concatKdfAlg) :
+    kdfOf opts kdm = Kdf.concat <$> concatKdfParams kdm := by
+  simp [kdfOf, h]
+
+/-- The Concat KDF derivation is `ConcatKdf.xmlEncDerive?` over SHA-256. -/
+theorem xmlenc11_derive_concat (prims : Prims) (z : ByteArray) (n : Nat) (p : ConcatKdf.XmlEncParams) :
+    (Kdf.concat p).derive? prims z n = ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash z n p := rfl
+
+/-- A PBKDF2 key is given only with the length it is used for. -/
+theorem xmlenc11_derive_pbkdf2_size (prims : Prims) (z : ByteArray) (n : Nat) (p : Pbkdf2Params)
+    (k : ByteArray) (h : (Kdf.pbkdf2 p).derive? prims z n = some k) : k.size = n := by
+  simp only [Kdf.derive?] at h
+  split at h
+  · rename_i e
+    cases h
+    simpa using e
+  · cases h
+
+/-- The PBKDF2 key of §5.4.2 is the one `WebCrypto` `deriveBits` (PBKDF2,
+`8 * KeyLength` bits) gives for the same password, salt, iterations and hash,
+on the native primitives, given HACL*'s functional correctness. -/
+theorem xmlenc11_derive_pbkdf2_eq_webcrypto (hh : WebHacl.HashAgrees) (hm : WebHacl.HmacAgrees)
+    (z : ByteArray) (p : Pbkdf2Params) :
+    (Kdf.pbkdf2 p).derive? nativePrims z p.keyLength =
+      (let k := WebCrypto.pbkdf2 p.prf.pure z p.salt p.iterations p.keyLength
+       if k.size == p.keyLength then some k else none) := by
+  simp only [Kdf.derive?, xmlenc11_pbkdf2_native_eq_rfc8018 hh hm]
+
 /-- A key of `keyLen` octets from an `xenc:AgreementMethod`. -/
-def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) : M ByteArray := do
+def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) (opts : Opts := {}) : M ByteArray := do
   let alg := (a.attr? "Algorithm").getD ""
   if alg != ecdhEs && alg != x25519Agreement then
     refuse s!"the key agreement algorithm {alg} is not supported"
@@ -672,9 +843,14 @@ def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) : M ByteArray
     else if c.is xencNs "OriginatorKeyInfo" && orig.isNone then orig := some c
     else if c.is xencNs "RecipientKeyInfo" && recip.isNone then recip := some c
     else refuse s!"xenc:AgreementMethod has an unsupported child {c.lname}"
-  let params ← match kdm with
-    | some k => concatKdfParams k
+  let kdf ← match kdm with
+    | some k => kdfOf opts k
     | none => refuse "xenc:AgreementMethod has no key derivation method"
+  match kdf with
+  | .pbkdf2 p =>
+      if p.keyLength != keyLen then
+        refuse s!"PBKDF2 xenc11:KeyLength {p.keyLength} is not the {keyLen} octets the key is used for"
+  | .concat _ => pure ()
   let (curve, pub) ← match orig with
     | some o => originatorKey o
     | none => refuse "xenc:AgreementMethod has no originator key"
@@ -693,7 +869,7 @@ def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) : M ByteArray
   let z? := match curve with
     | .p256 => prims.p256Ecdh pub key.d
     | .x25519 => prims.x25519 key.d pub
-  match z? >>= fun z => ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash z keyLen params with
+  match z? >>= fun z => kdf.derive? prims z keyLen with
   | some k => pure k
   | none => .error .decryptFailed
 
@@ -725,7 +901,8 @@ def kekRefOf (ki : Option El) : M KekRef := do
       pure out
 
 /-- The content key in an `EncryptedKey`. -/
-def unwrapKey (cipher : Cipher) (prims : Prims) (keys : Keys) (ek : El) (keyLen : Nat) : M ByteArray := do
+def unwrapKey (cipher : Cipher) (prims : Prims) (keys : Keys) (ek : El) (keyLen : Nat) (opts : Opts := {}) :
+    M ByteArray := do
   let p ← encParts ek fun c => c.is xencNs "ReferenceList" || c.is xencNs "CarriedKeyName"
   let alg ← keyAlgOf p.method
   let kr ← kekRefOf p.keyInfo
@@ -748,7 +925,7 @@ def unwrapKey (cipher : Cipher) (prims : Prims) (keys : Keys) (ek : El) (keyLen 
         | .unnamed => do
             let s ← pick "symmetric" none (keys.sym.filter (·.k.size == len)) (·.kid)
             pure s.k
-        | .agreement a => agreeKey prims keys a len
+        | .agreement a => agreeKey prims keys a len opts
       if kek.size != len then refuse "the key encryption key does not have the size of the key wrap algorithm"
       let cek ← ccall cipher { op := .kwUnwrap, key := kek, data := p.cipherValue }
       if cek.size == keyLen then pure cek else .error .decryptFailed
@@ -791,14 +968,14 @@ def contentKey (ctx : Ctx) (ki : Option El) (fallback : Option El) (keyLen : Nat
   match ki with
   | none =>
       match fallback with
-      | some ek => unwrapKey ctx.cipher ctx.prims ctx.keys ek keyLen
+      | some ek => unwrapKey ctx.cipher ctx.prims ctx.keys ek keyLen ctx.opts
       | none => refuse "xenc:EncryptedData has no ds:KeyInfo and no key"
   | some k =>
       if !k.elementOnly then refuse "ds:KeyInfo has unexpected content"
       match k.children with
       | [c] =>
-          if isEncKey c then unwrapKey ctx.cipher ctx.prims ctx.keys c keyLen
-          else if c.is xencNs "AgreementMethod" then agreeKey ctx.prims ctx.keys c keyLen
+          if isEncKey c then unwrapKey ctx.cipher ctx.prims ctx.keys c keyLen ctx.opts
+          else if c.is xencNs "AgreementMethod" then agreeKey ctx.prims ctx.keys c keyLen ctx.opts
           else if c.is dsNs "KeyName" then do
             let nm ← keyNameOf c
             let s ← pick "symmetric" (some nm) ctx.keys.sym (·.kid)
@@ -813,7 +990,7 @@ def contentKey (ctx : Ctx) (ki : Option El) (fallback : Option El) (keyLen : Nat
             if !uri.startsWith "#" || uri.length < 2 then
               refuse "ds:RetrievalMethod must refer to an element of this document (#id)"
             match findKeysNode (uri.drop 1).toString rootScope [] ctx.root with
-            | [ek] => unwrapKey ctx.cipher ctx.prims ctx.keys ek keyLen
+            | [ek] => unwrapKey ctx.cipher ctx.prims ctx.keys ek keyLen ctx.opts
             | [] => refuse s!"no xenc:EncryptedKey has the Id {(uri.drop 1).toString}"
             | _ => refuse s!"more than one xenc:EncryptedKey has the Id {(uri.drop 1).toString}"
           else refuse s!"ds:KeyInfo of xenc:EncryptedData holds {c.lname}, which is not supported"

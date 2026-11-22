@@ -60,10 +60,11 @@
    "reason": "key agreement algorithm"
   },
   {
-   "id": "AGRMNT (PBKDF2)",
+   "id": "AGRMNT.9",
    "file": "cipherText__EC-P256__aes128-gcm__kw-aes256__ECDH-ES__pbkdf2.xml",
-   "outcome": "refused",
-   "reason": "must be ConcatKDF"
+   "outcome": "xfail",
+   "issue": "https://github.com/danbri/factoidal/issues/1303",
+   "key": "oracle-EC-P256"
   },
   {
    "id": "SYM.1",
