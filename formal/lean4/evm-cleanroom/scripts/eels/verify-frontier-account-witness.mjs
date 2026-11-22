@@ -233,10 +233,15 @@ async function syntheticSelftest(historical){
     const bundles=[]
     for(const a of accounts) {
       const proof=await createMerkleProof(reference,hexToBytes(a.address))
+      const missingHash='0x'+'00'.repeat(32)
       bundles.push({address:a.address,accountProof:proof.map(bytesToHex),
         storageProof:[],balance:'0x'+a.balance.toString(16),
         nonce:'0x'+a.nonce.toString(16),
-        codeHash:a.codeHash,storageHash:a.storageHash})
+        // A real EIP-1186 RPC reports ZERO hashes for proven non-members;
+        // an existing empty-code account has Keccak(empty) and an empty
+        // storage trie has Keccak(RLP-empty). Both cases are exercised.
+        codeHash:a.exists?a.codeHash:missingHash,
+        storageHash:a.exists?a.storageHash:missingHash})
     }
     const proven=await authenticateAccounts(root,bundles,roles)
     require(proven[1].exists===receiverExists,
