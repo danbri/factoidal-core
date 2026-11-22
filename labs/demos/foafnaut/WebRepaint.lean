@@ -56,7 +56,7 @@ its descendants, each of which is compared itself. -/
 def sameShape (a b : Computed) : Bool :=
   match a with
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
-    lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
+    lineHeightFactor,lineHeightNormal,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
@@ -67,7 +67,7 @@ def sameShape (a b : Computed) : Bool :=
   -- a gradient background is painted from its stops: a style with one is never the same shape
   backgroundGradient.isNone && b.backgroundGradient.isNone &&
   columnCount == b.columnCount && optEq (· == ·) columnWidth b.columnWidth &&
-  lineHeight == b.lineHeight && optEq (· == ·) lineHeightFactor b.lineHeightFactor &&
+  lineHeight == b.lineHeight && optEq (· == ·) lineHeightFactor b.lineHeightFactor && lineHeightNormal == b.lineHeightNormal &&
   visible == b.visible && clipOverflow == b.clipOverflow && underline == b.underline &&
   decorationColor.isSome == b.decorationColor.isSome && preformatted == b.preformatted &&
   edgesEq borderWidth b.borderWidth && (borderStyle == .none) == (b.borderStyle == .none) &&

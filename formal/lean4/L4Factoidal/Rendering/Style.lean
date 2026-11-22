@@ -126,6 +126,10 @@ structure Computed where
   fontFamily : String := "serif"
   lineHeight : Float := 19.2
   lineHeightFactor : Option Float := some 1.2
+  /-- `line-height: normal` (the initial value): the layout takes the line height of the
+  text's own font, its ascent, descent and line gap (`Layout.usedLineHeight`), as browsers do;
+  `lineHeight` (1.2 times the size) serves where no font is known. -/
+  lineHeightNormal : Bool := true
   visible : Bool := true
   clipOverflow : Bool := false
   underline : Bool := false
@@ -1323,7 +1327,7 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
       else some <$> (if d.value == "normal" then pure 1.2 else number d.value)
     let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
     if v <= 0 then throw "line-height must be positive"
-    return {s with lineHeight := v, lineHeightFactor := factor}
+    return {s with lineHeight := v, lineHeightFactor := factor, lineHeightNormal := d.value == "normal"}
   -- `white-space` and `white-space-collapse` (CSS Text 4 §3): white space and line breaks
   -- kept (`pre`, `pre-wrap`, `pre-line`, `break-spaces`, `preserve`) or collapsed
   | "white-space" | "white-space-collapse" =>
@@ -1709,10 +1713,11 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "font-weight" => some {s with fontWeight := source.fontWeight}
   | "font-style" => some {s with oblique := source.oblique}
   | "line-height" =>
-    some {s with lineHeightFactor := source.lineHeightFactor,
+    some {s with lineHeightFactor := source.lineHeightFactor, lineHeightNormal := source.lineHeightNormal,
                  lineHeight := lineHeightOf s.fontSize source.lineHeightFactor source.lineHeight}
   | "font" =>
     some {s with fontSize := source.fontSize, fontFamily := source.fontFamily, lineHeightFactor := source.lineHeightFactor,
+                 lineHeightNormal := source.lineHeightNormal,
                  lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight,
                  fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
@@ -2949,7 +2954,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     clipOverflow := svgViewport && svgOverflow != "visible", fontSize,
     fontFamily := if html && monospaceTags.contains n.lname then "monospace" else parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
-    lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
+    lineHeightFactor := parent.lineHeightFactor, lineHeightNormal := parent.lineHeightNormal, visible := parent.visible,
     rise := parent.rise, centerBlocks := parent.centerBlocks,
     -- HTML §15.3.6: `sub { vertical-align: sub }`, `sup { vertical-align: super }`
     shift := if html && n.lname == "sup" then 1 else if html && n.lname == "sub" then -1 else 0,

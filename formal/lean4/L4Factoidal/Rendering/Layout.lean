@@ -39,6 +39,9 @@ structure FontProfile where
   advance : Float
   ascent : Float
   descent : Float
+  /-- The line gap of the font (hhea), in the same units: part of the height of
+  `line-height: normal` (`usedLineHeight`). -/
+  lineGap : Float := 0
   /-- Glyph geometry comes from a Lean font adapter, never from host layout. -/
   outline : Nat → List Geometry
   admits : Nat → Bool
@@ -62,8 +65,9 @@ structure FontProfile where
   /-- The ascent and descent, in this profile's units, of the first font of a `font-family`
   value (`Computed.fontFamily`) when that font is not this profile's own (a web font, the
   serif or the monospace face): CSS 2.1 §10.8.1, the inline box of text is the content area
-  of its font, with the half-leading of that font. `none`: the profile's own metrics. -/
-  familyMetrics : String → Option (Float × Float) := fun _ => none
+  of its font, with the half-leading of that font; the third number is its line gap.
+  `none`: the profile's own metrics. -/
+  familyMetrics : String → Option (Float × Float × Float) := fun _ => none
 
 def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
   {family := face.family,unitsPerEm := face.unitsPerEm,advance := 0,
@@ -110,13 +114,26 @@ first font (`familyMetrics`), else the profile's. Before 2026-11-22 every line b
 profile's (Noto Sans: 1.069 and 0.293 em), so a line of `font: 20px/1 Ahem` put its baseline
 0.088 em too low and failed the CSS2 reftests drawn with Ahem by 2 px. -/
 def FontProfile.metricsOf (font : FontProfile) (style : Computed) : Float × Float :=
-  (font.familyMetrics style.fontFamily).getD (font.ascent,font.descent)
+  match font.familyMetrics style.fontFamily with
+  | some (a,d,_) => (a,d)
+  | none => (font.ascent,font.descent)
+
+/-- The used line height of `style`'s text (CSS 2.1 §10.8.2): its `line-height`, and for
+`normal` the ascent, descent and line gap of the text's own font, as browsers take it
+(Noto Sans 1.362 em, Liberation Serif 1.15 em, Liberation Mono 1.133 em, Ahem 1 em). Before
+2026-11-22 `normal` was 1.2 em for every font. A profile with fixed test metrics or the bitmap
+face (`scalable` false) keeps 1.2 em. -/
+def usedLineHeight (font : FontProfile) (style : Computed) : Float :=
+  if style.lineHeightNormal && font.scalable then
+    let (a,d,g) := (font.familyMetrics style.fontFamily).getD (font.ascent,font.descent,font.lineGap)
+    (a+d+g)*style.fontSize/font.unitsPerEm
+  else style.lineHeight
 
 /-- CSS leading surrounds the actual ascent+descent metric box, which need
 not equal one em (ordinary real fonts often differ). -/
 private def lineLeading (font : FontProfile) (style : Computed) : Float :=
   let (a,d) := font.metricsOf style
-  (style.lineHeight-(a+d)*style.fontSize/font.unitsPerEm)/2
+  (usedLineHeight font style-(a+d)*style.fontSize/font.unitsPerEm)/2
 
 /-- CSS Overflow 3 §3.1: `overflow: hidden` and `overflow: clip` clip the content of a
 box to its padding box (`paddingBox`); the box's own background and border are drawn
@@ -910,7 +927,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,advance*Float.ofNat chars.length,s.lineHeight⟩}
+        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,advance*Float.ofNat chars.length,usedLineHeight font s⟩}
         extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
       | some word =>
         let scale := s.fontSize/word.unitsPerEm
@@ -918,14 +935,14 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let glyphs := word.glyphs.map fun glyph =>
           ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩}
+        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,width,usedLineHeight font s⟩}
         extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
       let leading := lineLeading font s
       let top := y+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm-leading
       out := {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes,
-                       boxes := out.boxes.push ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩}
+                       boxes := out.boxes.push ⟨source.geometry,x+offset,top,advance,usedLineHeight font s⟩}
       extent := some (x+offset,x+offset+advance)
       if s.underline && s.visible then
         let thickness := max 1 (s.fontSize/14)
@@ -1972,7 +1989,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           if !inline.isEmpty then
             let top := innerY+content.height
             let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+              (fun dy => floatBand floats innerX width (top+dy) (usedLineHeight font s))
             content := append content lines
             inline := #[]
           let (offset,room) := floatBand floats innerX width (innerY+content.height) 1
@@ -2030,7 +2047,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             if !inline.isEmpty then
               let top := innerY+content.height
               let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+                (fun dy => floatBand floats innerX width (top+dy) (usedLineHeight font s))
               content := append content lines
               inline := #[]
               -- white space between blocks makes no line: the margins still adjoin
@@ -2092,7 +2109,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       if !inline.isEmpty then
         let top := innerY+content.height
         let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+          (fun dy => floatBand floats innerX width (top+dy) (usedLineHeight font s))
         content := append content lines
         if lines.height > 0 then previous := 0
       content := {content with floats}

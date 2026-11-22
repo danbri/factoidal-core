@@ -747,7 +747,7 @@ def profile (fonts : Array Font) (memo : Memo)
   let shapedWordDir := fun (text : String) (px : Nat) (rtl : Bool) => shape text px (some rtl)
   return {
     family := f.family,unitsPerEm := space.unitsPerEm,advance := 0,ascent := space.ascent,
-    descent := space.descent,outline := fun _ => [],admits := fun _ => false,cssFamilies := [f.family],
+    descent := space.descent,lineGap := space.lineGap,outline := fun _ => [],admits := fun _ => false,cssFamilies := [f.family],
     fontSha256 := some f.sha256,faceIndex := f.faceIndex,scalable := true,
     shapedWord := some shapedWord,shapedWordDir := some shapedWordDir,
     -- Web fonts (and the serif face) first, then the held fonts; the units and metrics stay
@@ -764,6 +764,6 @@ def profile (fonts : Array Font) (memo : Memo)
       (webFonts family)[0]?.bind fun w =>
         if w.face.unitsPerEm == 0 then none else
         let k := space.unitsPerEm/Float.ofNat w.face.unitsPerEm
-        some (Float.ofInt w.face.ascender*k,-Float.ofInt w.face.descender*k)}
+        some (Float.ofInt w.face.ascender*k,-Float.ofInt w.face.descender*k,Float.ofInt w.face.lineGap*k)}
 
 end L4Factoidal.Rendering.SfntProfile
