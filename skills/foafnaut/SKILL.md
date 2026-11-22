@@ -348,7 +348,9 @@ GPU or the Deno host. Record of the first such session, with every number and co
 
 ```sh
 # tools (Ubuntu 24.04): elan and the pinned Lean (skills/session-restore), then
-apt-get install -y --no-install-recommends time linux-tools-generic valgrind
+apt-get install -y --no-install-recommends time linux-tools-generic valgrind libc++-dev libc++abi-dev
+# (libc++: the native link needs it; without it the build stops at the link, after about 22
+# minutes on 4 vCPUs, with "clang++ can not compile against libc++". Seen 2026-11-22.)
 # BubblePopJS command line: about 3 minutes on 4 vCPUs. From formal/lean4:
 lake build leanjs && .lake/build/bin/leanjs bench
 # BubblePopKit, native: 16 to 20 minutes on 4 vCPUs, 1.1 GB of build output. From the repository root:
