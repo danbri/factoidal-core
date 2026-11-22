@@ -8,13 +8,9 @@ import L4Factoidal.GpuDomainSpecificLanguage.GraphWords
 Unlike a standalone primitive fixture, `evaluate?` decodes and checks
 the *real JSON graph document* and runs its op nodes in topological order.
 It looks up each typed input port's incoming link, preserves scalar/buffer
-distinctions and emits named results. This is a separate Lean reference
-interpreter, not the JavaScript CPU implementation.
-
-An external differential harness compares it with the JavaScript
-`runCPU` interpreter. That test evidence does not prove the two parsers
-or interpreters equivalent on all inputs. The WebGPU compiler and driver
-remain outside this module's claim.
+distinctions and emits named results. The evaluator is parameterized over a primitive implementation, enabling
+a proof that an eligible GPU kernel model is a semantics-preserving choice.
+WGSL compilation and physical GPU execution are separate obligations.
 -/
 namespace L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
 
@@ -66,7 +62,8 @@ private def constant? (n : Node) (raw : Json) : Except String (Option UInt32) :=
 
 /-- Deterministic evaluation of the common accepted acyclic node/link graph,
     using the separately defined UInt32 primitive semantics. -/
-def evaluate? (rawGraph rawBindings : Json) : Except String Json := do
+def evaluateWith? (primitive : Operator → List Value → Option UInt32 → Except String Value)
+    (rawGraph rawBindings : Json) : Except String Json := do
   let certified ← GraphJson.decodeCertified? rawGraph
   let d := certified.graph
   let rawNodes ← (← rawGraph.getObjVal? "nodes").getArr?
@@ -102,12 +99,31 @@ def evaluate? (rawGraph rawBindings : Json) : Except String Json := do
           refuse ("Unregistered core primitive " ++ n.op)
         let args ← portArgs d values n
         let param ← constant? n raw
-        GraphWords.execute op args param
+        primitive op args param
     values := (n.id,result) :: values
     if n.op == "core.output" then
       let params ← raw.getObjVal? "params"
       let name ← (← params.getObjVal? "name").getStr?
       outputs := (name,valueJson result) :: outputs
   return Json.mkObj outputs
+
+/-- Default evaluator: the actual Lean reference primitives. -/
+def evaluate? (rawGraph rawBindings : Json) : Except String Json :=
+  evaluateWith? GraphWords.execute rawGraph rawBindings
+
+/-- All admitted PVGraphs are parametric in their primitive interpreter.
+    Primitive-level equivalence yields full-program equivalence, including
+    the exact JSON decoding, input errors, topological execution and outputs. -/
+theorem evaluateWith_eq_of_primitives
+    (f g : Operator → List Value → Option UInt32 → Except String Value)
+    (agree : ∀ op args k, f op args k = g op args k)
+    (pv inputs : Json) :
+    evaluateWith? f pv inputs = evaluateWith? g pv inputs := by
+  have heq : f = g := by
+    funext op args k
+    exact agree op args k
+  rw [heq]
+
+#print axioms evaluateWith_eq_of_primitives
 
 end L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate
