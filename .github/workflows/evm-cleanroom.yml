@@ -273,15 +273,27 @@ jobs:
             --out .lake/eels/frontier-prestate-synthetic-mpt-test.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="synthetic-archive-proof-mutation-tests-pass" and x["syntheticOnly"] is True and x["completeTrieMatchesSparseProofTrie"] and x["forgedProofsRejected"]==5 and x["historicalPrestateAvailable"] is False and x["actualMainnetStateRootReplayed"] is False,x'
           node --check scripts/eels/fetch-frontier-account-witness.mjs
-      - name: Probe free historical archive for REAL 2015 account proof witnesses (not a conformance gate)
+      - name: Probe three free historical archive endpoints for REAL 2015 account proofs (separate from conformance)
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 4
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          node scripts/eels/fetch-frontier-account-witness.mjs \
-            --rpc https://ethereum-rpc.blockreq.com/v1/rpc/public \
-            --historical evidence/frontier-mainnet-46147.json \
-            --out .lake/eels/first-frontier-archive-proof-bundle.json
+          set -o pipefail
+          for endpoint in \
+            https://eth-mainnet.public.blastapi.io \
+            https://rpc.mevblocker.io/noreverts \
+            https://ethereum-rpc.blockreq.com/v1/rpc/public; do
+            echo "Archive candidate: ${endpoint}"
+            if node scripts/eels/fetch-frontier-account-witness.mjs \
+              --rpc "$endpoint" \
+              --historical evidence/frontier-mainnet-46147.json \
+              --out .lake/eels/first-frontier-archive-proof-bundle.json; then
+              echo "AUTHENTICATED HISTORICAL STATE REPLAY SUCCEEDED; inspect saved proof artifact"
+              exit 0
+            fi
+          done
+          echo "NO AUTHENTICATED 2015 ARCHIVE STATE WITNESS: not a mainnet state-root replay"
+          exit 1
       - name: Preserve published fixture, host transition results and npm resolution
         if: always()
         uses: actions/upload-artifact@v4
