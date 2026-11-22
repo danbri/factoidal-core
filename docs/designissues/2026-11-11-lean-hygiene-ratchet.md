@@ -23,12 +23,17 @@ misses what it was not told to look at, and it can be skipped by not running it.
 | `unsafe` | `ConstantInfo.isUnsafe`, except compiler-made names (`_unsafe_rec`, internal names) |
 | `implemented_by` | the `implemented_by` attribute, except the one a `partial def` gets |
 | `partial_def` | an `opaque` constant with a `_unsafe_rec` copy (what `partial def` makes; well-founded recursion also gets a `_unsafe_rec` but its constant is a definition, so it is not counted). Includes `partial def`s that `deriving` writes for nested inductives |
-| `extern` | the `extern` attribute |
+| `extern` | individual declarations with the `extern` attribute, for audit |
+| `hacl_extern` | declarations using Factoidal's HACL* C shim symbols |
+| `extern_budget` | one unit for HACL* when present, plus one per other extern |
 | `opaque` | `opaque` constants that are not `partial def` or `extern` (in the lab: `initialize` cells and `opaque` fronts of `implemented_by`) |
 | `modules` | how many modules were read: a floor, so an empty walk fails |
 
 It defines `counts` as a value. The theorem `lab_ratchet` states, by `decide`, that every
-count is at most `baseline` (and `modules` at least). If a count rises, `LabHygiene.lean`
+gated count is at most `baseline` (and `modules` at least). For externs, the
+ratchet uses `extern_budget`; the raw `extern` total remains in the report.
+A single HACL* dependency may expose multiple C bindings. Other extern entries,
+including inline C, still consume one unit apiece. If a gated count rises, `LabHygiene.lean`
 does not compile.
 
 Baseline, measured on main 4078eafa2 (2026-11-10):
