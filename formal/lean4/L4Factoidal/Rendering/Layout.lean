@@ -247,8 +247,8 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
     let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
     return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
   -- CSS Backgrounds 3 §2.6 resolves each axis against the area minus the sized image.
-  let ox := x+e.left+(CSS.resolve (areaW-tw) s.backgroundPositionX).getD 0
-  let oy := y+e.top+(CSS.resolve (areaH-th) s.backgroundPositionY).getD 0
+  let ox := x+e.left+(s.backgroundPositionX.resolve (areaW-tw)).getD 0
+  let oy := y+e.top+(s.backgroundPositionY.resolve (areaH-th)).getD 0
   let startX := if repeatX then ox-((ox-x)/tw).ceil*tw else ox
   let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
   let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1

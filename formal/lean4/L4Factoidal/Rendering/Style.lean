@@ -111,6 +111,16 @@ inductive BackgroundSize where
   | contain
   deriving Repr
 
+/-- An offset from the start of a background's physical positioning axis. -/
+inductive BackgroundOffset where
+  | length (value : Length)
+  | calculation (expression : CssValues.Calc) (units : CssValues.Ctx)
+
+instance : Repr BackgroundOffset where
+  reprPrec
+    | .length value, prec => reprPrec value prec
+    | .calculation expr _, prec => reprPrec (CssValues.Calc.text expr) prec
+
 structure Computed where
   display : Display := .inline
   width : Length := .auto
@@ -232,8 +242,8 @@ structure Computed where
   backgroundBitmap : Option (Nat × Bitmap) := none
   backgroundSize : BackgroundSize := .dimensions .auto .auto
   backgroundRepeat : Bool × Bool := (true, true)
-  backgroundPositionX : Length := .percent 0
-  backgroundPositionY : Length := .percent 0
+  backgroundPositionX : BackgroundOffset := .length (.percent 0)
+  backgroundPositionY : BackgroundOffset := .length (.percent 0)
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -1015,6 +1025,21 @@ def Length.atViewport (width height : Float) : Length → Length
   | .vh n => .px (n*height).floor
   | other => other
 
+def BackgroundOffset.atViewport (vw vh : Float) : BackgroundOffset → BackgroundOffset
+  | .length value => .length (value.atViewport vw vh)
+  | .calculation expr units =>
+    .calculation expr {units with viewportW := tableRat vw, viewportH := tableRat vh}
+
+-- Percentages use the space left by the sized tile, which can be negative.
+def BackgroundOffset.resolve (basis : Float) : BackgroundOffset → Option Float
+  | .length value => L4Factoidal.Rendering.CSS.resolve basis value
+  | .calculation expr units =>
+    let reference := if basis < 0 then -(tableRat (-basis)) else tableRat basis
+    let units := {units with percentageBasis := some reference}
+    match CssValues.Calc.simp (some units) (CssValues.Calc.depth 64 expr + 4) expr with
+    | .val result "px" => some (ratToFloat result)
+    | _ => none
+
 def BackgroundSize.atViewport (vw vh : Float) : BackgroundSize → BackgroundSize
   | .dimensions w h => .dimensions (w.atViewport vw vh) (h.atViewport vw vh)
   | .cover => .cover
@@ -1396,7 +1421,15 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "background-position-x" | "background-position-y" =>
     let parts := (CssValues.commaItems d.value).headD []
     let value := String.intercalate " " (parts.map fun cv => CssValues.serialize [cv])
-    let some offset := tableLength s.fontSize d.property value | throw "unsupported background position"
+    let some canonical := CssValues.specified d.property value | throw "invalid background position"
+    let components := CssValues.stripWs (CssValues.CV.parse (CssValues.computedForm d.property canonical))
+    let offset : BackgroundOffset ← match components with
+      | [cv@(.fn _ _)] =>
+        let some expr := CssValues.Calc.parse cv | throw "unsupported background position calculation"
+        pure (.calculation expr {fontSize := tableRat s.fontSize})
+      | _ =>
+        let some length := tableLength s.fontSize d.property value | throw "unsupported background position"
+        pure (.length length)
     if d.property == "background-position-x" then return {s with backgroundPositionX := offset}
     return {s with backgroundPositionY := offset}
   | "background-image" =>
@@ -3754,11 +3787,17 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
   | none => false
 #guard (applyDeclaration ({} : Computed) "background-repeat" "repeat-y").map (·.backgroundRepeat) == some (false,true)
 #guard ((applyDeclaration ({} : Computed) "background-position" "right 10px bottom 5px").bind
-  (fun s => resolve 80 s.backgroundPositionX)) == some 70
+  (fun s => s.backgroundPositionX.resolve 80)) == some 70
 #guard ((applyDeclaration ({} : Computed) "background-position" "right 10px bottom 5px").bind
-  (fun s => resolve 30 s.backgroundPositionY)) == some 25
+  (fun s => s.backgroundPositionY.resolve 30)) == some 25
 #guard ((applyDeclaration ({} : Computed) "background-position-x" "center, left").bind
-  (fun s => resolve (-20) s.backgroundPositionX)) == some (-10)
+  (fun s => s.backgroundPositionX.resolve (-20))) == some (-10)
+#guard ((applyDeclaration ({} : Computed) "background-position" "min(0%, 100%) max(0%, 100%)").map
+  (fun s => (s.backgroundPositionX.resolve (-50),s.backgroundPositionY.resolve (-50)))) == some (some (-50),some 0)
+#guard ((applyDeclaration ({} : Computed) "background-position-y" "max(5px, 50%)").bind
+  (fun s => s.backgroundPositionY.resolve 40)) == some 20
+#guard ((applyDeclaration ({} : Computed) "background-position-x" "calc(25% + 10vw)").bind
+  (fun s => (s.backgroundPositionX.atViewport 200 100).resolve 40)) == some 30
 #guard (applyDeclaration ({} : Computed) "background-image" "linear-gradient(red, blue), url(a.png)").map (·.backgroundImage) == some none
 
 -- Border widths in every length unit and keyword (`borderWidthPx`; WPT css/CSS2/borders).
