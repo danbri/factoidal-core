@@ -24,6 +24,13 @@ nested-call frames. The synthetic `--tx-env` CLI takes
 `HEX GAS FUEL EFFECTIVE_GAS_PRICE PREVRANDAO`; both values must be
 less than 2^256. This CLI does not authenticate input provenance.
 
+Normative references: [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559)
+requires GASPRICE to return the effective gas price, not the fee cap.
+[EIP-4399](https://eips.ethereum.org/EIPS/eip-4399) retains opcode 0x44,
+changes its return value at the PoS transition to the header mixHash, and
+leaves the gas cost unchanged. The current coarse preShanghai profile is
+not precise enough to select either historical branch of that transition.
+
 ## Intended machine-checked statements
 
 - `EVMCleanroom.step_effectiveGasPrice`: for a running state at GASPRICE,
