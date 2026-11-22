@@ -238,14 +238,17 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
   let iw := Float.ofNat b.width
   let ih := Float.ofNat b.height
   let e := s.borderEdges
-  let (tw,th) := backgroundTileSize s.backgroundSize iw ih (max 0 (w-e.left-e.right)) (max 0 (h-e.top-e.bottom))
+  let areaW := max 0 (w-e.left-e.right)
+  let areaH := max 0 (h-e.top-e.bottom)
+  let (tw,th) := backgroundTileSize s.backgroundSize iw ih areaW areaH
   if tw <= 0 || th <= 0 then return #[]
   let (repeatX,repeatY) := s.backgroundRepeat
   if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
     let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
     return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  let ox := x+e.left
-  let oy := y+e.top
+  -- CSS Backgrounds 3 §2.6 resolves each axis against the area minus the sized image.
+  let ox := x+e.left+(CSS.resolve (areaW-tw) s.backgroundPositionX).getD 0
+  let oy := y+e.top+(CSS.resolve (areaH-th) s.backgroundPositionY).getD 0
   let startX := if repeatX then ox-((ox-x)/tw).ceil*tw else ox
   let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
   let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1
@@ -2835,6 +2838,8 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
             backgroundSize := s.backgroundSize.atViewport vw vh,
+            backgroundPositionX := s.backgroundPositionX.atViewport vw vh,
+            backgroundPositionY := s.backgroundPositionY.atViewport vw vh,
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}
   -- Percentage margins and padding, where the containing block's width is definite.
