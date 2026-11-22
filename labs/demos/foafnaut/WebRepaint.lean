@@ -52,10 +52,11 @@ an underline are there in both or in neither: the two styles lay out the same an
 the same paints. The anonymous constructor names every field in order, so a field added
 to `Computed` stops this from compiling until it is sorted here. The custom properties
 (`vars`) are not compared: they act only through the other fields of this element and of
-its descendants, each of which is compared itself. -/
+its descendants, each of which is compared itself. The font size basis
+is likewise resolved in each computed style. -/
 def sameShape (a b : Computed) : Bool :=
   match a with
-  | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
+  | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,_fontSizeBasis,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
