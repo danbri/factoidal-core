@@ -296,7 +296,7 @@ dark at the bottom and right; `inset` is the reverse. -/
 def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
   if !s.visible || w <= 0 || h <= 0 || s.borderStyle == .none then return #[]
-  let c := s.borderColor.getD s.color
+  let some c := s.borderColor.resolve s.color | return #[]
   let (near,far) := match s.borderStyle with
     | .outset => (lighter c,darker c)
     | .inset => (darker c,lighter c)
