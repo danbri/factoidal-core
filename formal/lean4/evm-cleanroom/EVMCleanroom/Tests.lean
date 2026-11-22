@@ -60,6 +60,39 @@ private def pushMax : Array UInt8 :=
 #guard resultWord (run 8 (initial #[0x5f, 0x60, 0x02, 0x60, 0x03, 0x09, 0x00])) == some 0
 #guard isError (step (initial #[0x08])) .stackUnderflow
 #guard isError (step (initial #[0x09])) .stackUnderflow
+
+-- Signed arithmetic follows two's-complement magnitudes, not Nat division.
+-- SDIV truncates towards zero, including signed minimum / -1 wraparound.
+#guard (word (modulus - 7)).signedDivide (word 3) == word (modulus - 2)
+#guard (word 7).signedDivide (word (modulus - 3)) == word (modulus - 2)
+#guard (word signBit).signedDivide (word (modulus - 1)) == word signBit
+#guard (word 42).signedDivide (word 0) == word 0
+-- SMOD carries the dividend sign, with zero for exact multiples.
+#guard (word (modulus - 7)).signedMod (word 3) == word (modulus - 1)
+#guard (word 7).signedMod (word (modulus - 3)) == word 1
+#guard (word (modulus - 6)).signedMod (word 3) == word 0
+#guard (word (modulus - 7)).signedMod (word 0) == word 0
+-- SAR sign-extends at any shift, including 255/256 and full-width offsets.
+#guard (word 0).shiftArithmetic (word (modulus - 1)) == word (modulus - 1)
+#guard (word 1).shiftArithmetic (word (modulus - 1)) == word (modulus - 1)
+#guard (word 255).shiftArithmetic (word signBit) == word (modulus - 1)
+#guard (word 256).shiftArithmetic (word signBit) == word (modulus - 1)
+#guard (word (modulus - 1)).shiftArithmetic (word 1) == word 0
+#guard (word 2).shiftArithmetic (word 7) == word 1
+-- These checks run the actual bytecode interpreter, not only the helpers.
+#guard resultWord (run 5 (initial (pushMax ++ #[0x60, 0x03, 0x05, 0x00]))) ==
+  some (modulus - 3)
+#guard resultWord (run 5 (initial (pushMax ++ #[0x60, 0x03, 0x07, 0x00]))) ==
+  some 0
+#guard resultWord (run 5 (initial (pushMax ++ #[0x60, 0x1f, 0x1d, 0x00]))) ==
+  some (modulus - 1)
+#guard isError (step (initial #[0x05])) .stackUnderflow
+#guard isError (step (initial #[0x07])) .stackUnderflow
+#guard isError (step (initial #[0x1d])) .stackUnderflow
+#guard isError (step (initial #[0x1d] 100 .preShanghai)) .unsupportedFork
+#guard isError (run 5 (initial #[0x60, 0x03, 0x60, 0x08, 0x05, 0x00] 10)) .outOfGas
+#guard isError (run 5 (initial #[0x60, 0x03, 0x60, 0x08, 0x07, 0x00] 10)) .outOfGas
+#guard isError (run 5 (initial #[0x60, 0x03, 0x60, 0x08, 0x1d, 0x00] 8)) .outOfGas
 #guard isError (run 8 (initial #[0x60, 0x03, 0x60, 0x02, 0x60, 0x01, 0x08, 0x00] 16)) .outOfGas
 #guard isError (run 8 (initial #[0x60, 0x03, 0x60, 0x02, 0x60, 0x01, 0x09, 0x00] 16)) .outOfGas
 
