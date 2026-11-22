@@ -39,6 +39,7 @@ call transactions. The current axiom output for 52 retained statements
 also lists `Quot.sound`. The versioned audit delta records each changed
 set. Three deliberate axiom-report mutations were rejected.
 [Active proof ledger](../formal/lean4/evm-cleanroom/evidence/active-claim-manifest-v2.json) ·
+[Published source checkpoint](https://github.com/danbri/factoidal-core/commit/c1e119557f75bd262d9c3c84b3195178f27c3e83) ·
 [Printed axiom changes](../formal/lean4/evm-cleanroom/evidence/2026-11-22-call-transaction/axiom-deltas.json)
 
 ## Bytecode comparisons
@@ -89,3 +90,12 @@ CALL median from 4.513 to 33.176 ms and the 10,000-case raw batch median
 from 154.781 to 187.701 ms. All measured legacy field values and raw
 outputs agreed. Timing investigation remains tracked in issue #739.
 [Native timing samples and link diagnosis](../formal/lean4/evm-cleanroom/evidence/2026-11-22-call-transaction/TIMING.md)
+
+After isolating transaction JSON, the 6.65 MB bytecode executable
+repeated the paired comparison against the original baseline. The ABI
+and zero-window CALL median paired differences were +0.055 and
++0.072 ms. The 10,000-case batch median moved from 164.644 to
+174.384 ms, with a median paired difference of +2.534 ms. The
+120.84 MB companion retains standard Lean initialisation and did not
+participate in the legacy timing paths.
+[Final paired samples and scope](../formal/lean4/evm-cleanroom/evidence/2026-11-22-call-transaction/TIMING.md#split-native-entry-points)

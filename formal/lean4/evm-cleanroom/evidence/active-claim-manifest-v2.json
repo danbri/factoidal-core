@@ -2403,7 +2403,8 @@
       "negativeControlsRejected": 4,
       "report": "evidence/2026-11-22-call-transaction/hash-log.json",
       "testedSourceCommitKind": "Local integration commit",
-      "nativeExecutableSha256": "3cf7b69691bab210360d8766fc58a9c6cc8d0a133060ab46707051437e6205e5"
+      "nativeExecutableSha256": "3cf7b69691bab210360d8766fc58a9c6cc8d0a133060ab46707051437e6205e5",
+      "publishedSourceCheckpoint": "c1e119557f75bd262d9c3c84b3195178f27c3e83"
     },
     "synthetic_call_transactions": {
       "testedSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
@@ -2425,7 +2426,8 @@
       "harnessSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
       "testedSourceCommitKind": "Local integration commit",
       "launcherSha256": "3cf7b69691bab210360d8766fc58a9c6cc8d0a133060ab46707051437e6205e5",
-      "companionSha256": "479fe12d5ec64b7121aa2887c2a3b74adcd95a0c87c2fcf2b3a54b9f3f7d7740"
+      "companionSha256": "479fe12d5ec64b7121aa2887c2a3b74adcd95a0c87c2fcf2b3a54b9f3f7d7740",
+      "publishedSourceCheckpoint": "c1e119557f75bd262d9c3c84b3195178f27c3e83"
     },
     "authenticated_shanghai_call_transaction": {
       "testedSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
@@ -2462,7 +2464,8 @@
       "report": "evidence/2026-11-22-call-transaction/historical-replay.json",
       "harnessSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
       "testedSourceCommitKind": "Local integration commit",
-      "nativeExecutableSha256": "479fe12d5ec64b7121aa2887c2a3b74adcd95a0c87c2fcf2b3a54b9f3f7d7740"
+      "nativeExecutableSha256": "479fe12d5ec64b7121aa2887c2a3b74adcd95a0c87c2fcf2b3a54b9f3f7d7740",
+      "publishedSourceCheckpoint": "c1e119557f75bd262d9c3c84b3195178f27c3e83"
     }
   },
   "trust_boundaries": [
@@ -2943,12 +2946,17 @@
       "evidence/2026-11-22-call-transaction/axiom-audit.json": "af2a76e40162675f1d97a987f508678c5a68e2d62b5300172b9d747326fc1c00",
       "evidence/2026-11-22-call-transaction/axiom-selftest.json": "773346e16785e7b82a91529df8a12a9cbcd22b929b6d3ff744f85c34d76cabcf",
       "evidence/2026-11-22-call-transaction/retained-checks.json": "dcf205b5d91169aa38f80c6ac4d07e459e8dda60da6dfc3d7f3337c15ac4aa51",
-      "evidence/2026-11-22-call-transaction/TIMING.md": "5ecdd3a100dba9530942511d6f060ce19101c8a05a23f460afa40c59a1606545",
+      "evidence/2026-11-22-call-transaction/TIMING.md": "51d8bb9b832c2a8651f64a40937596c252a80349b0f727b0892ec52a0828b297",
       "evidence/2026-11-22-call-transaction/elaborator-import-regression/environment.log": "398cef6c954be3ef2fbcf7e0a01ee91099d0ff78bcd1ac3ff0e453e625d20fcd",
       "evidence/2026-11-22-call-transaction/elaborator-import-regression/legacy-cli-timing.json": "8fb3b0a69e9c18cf012f83462a5810f067e577a613656d2b52b0451df061c422",
       "evidence/2026-11-22-call-transaction/elaborator-import-regression/raw10000-timing.json": "8cbd86fbe8f053788b8c195fa2ff9b7b55e93f8b03a03bb6040084f6eb49cea1",
       "evidence/2026-11-22-call-transaction/elaborator-import-regression/summary.json": "0db467c154c1b4fd89bd8381526176c2c0f3b112357b5bde430c482d60958593",
-      "evidence/2026-11-22-call-transaction/cli-routing.json": "b68a5e1d0fb294abd913faa847ce61d7c86e91539b0f03ef1680fb55c61cd82e"
+      "evidence/2026-11-22-call-transaction/cli-routing.json": "b68a5e1d0fb294abd913faa847ce61d7c86e91539b0f03ef1680fb55c61cd82e",
+      "evidence/2026-11-22-call-transaction/legacy-cli-timing.json": "f14af1740f43ae51cffddcec6ff361f71dde66e88b8404d9bd89648ee153f25e",
+      "evidence/2026-11-22-call-transaction/raw10000-timing.json": "96401006b4aa8ad3ad3d770f649da82a1617e2152bb088b46922e46cf9d1a085",
+      "evidence/2026-11-22-call-transaction/timing-summary.json": "a61f12344f3de3180f5e1842a661fee413035762f7bda2552b5b66347d3ccc22",
+      "evidence/2026-11-22-call-transaction/timing-environment.log": "1a74b907f1d7e440f0950a6c321315f37b1ea6d64f111e345387b77040d91973",
+      "evidence/2026-11-22-call-transaction/timing-commands.sh": "dca9b3933c8778630381efd16f33d17e2c272762a9f81d7c4859926adf899089"
     },
     "localProofAudit": "all-selected-exact-axiom-reports-matched",
     "replayHarnessSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
@@ -2959,7 +2967,17 @@
       "baselinePublicSourceEquivalent": "d3843c42d3b9c6fea8e96c3d0eebd65890dbea4b",
       "scope": "Paired fresh native process timings for the two legacy CLI paths and one full 10,000-case batch. The initial JSON-import build substantially raised cold-call times and retained raw corpus output equality.",
       "initialSummary": "evidence/2026-11-22-call-transaction/elaborator-import-regression/summary.json",
-      "notes": "evidence/2026-11-22-call-transaction/TIMING.md"
+      "notes": "evidence/2026-11-22-call-transaction/TIMING.md",
+      "finalSummary": "evidence/2026-11-22-call-transaction/timing-summary.json",
+      "finalPairedSamples": {
+        "abiFrameCall": 160,
+        "zeroWindowStorageCall": 160,
+        "raw10000": 11
+      },
+      "finalScope": "The legacy paths use the split lightweight evm-subset. The companion handles JSON transactions and is outside these paired measurements.",
+      "remainingPerformanceIssue": "The final batches had a 5.92% median level increase and a +2.534 ms median paired delta. The final zero-window storage call also had a higher p95 and maximum.",
+      "finalPublishedSourceCheckpoint": "c1e119557f75bd262d9c3c84b3195178f27c3e83",
+      "baselinePublicEquivalence": "Native Lean sources, Lake configuration and toolchain pin are byte-identical. The published tree also includes updates to the axiom-audit script and proof ledger."
     },
     "testedSourceCommitKind": "Local integration commit",
     "nativeExecutables": {
@@ -2978,6 +2996,12 @@
       "missingCompanion": 2,
       "legacy": 1,
       "report": "evidence/2026-11-22-call-transaction/cli-routing.json"
+    },
+    "publishedSourceCheckpoint": {
+      "commit": "c1e119557f75bd262d9c3c84b3195178f27c3e83",
+      "tree": "718748fabb2b60313d6d4cba73c474779347eaf9",
+      "byteIdenticalLocalCheckpoint": "23db9cc1c8b3bca8bada8e2e37951acb461b7eb9",
+      "equivalence": "The published checkpoint includes final CI, evidence and packaging documentation. All native Lean sources, Lake configuration, replay runners and the historical fixture are byte-identical to the locally built integration source."
     }
   }
 }
