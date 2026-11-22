@@ -5,12 +5,15 @@ on:
       - 'docs/specs/gdsl-0.2.md'
       - 'docs/web/hub/gssl/**'
       - 'docs/web/hub/gpu-sparql/**'
+      - 'docs/web/hub/gdsl-app/**'
       - 'docs/.eleventy.js'
       - 'npm/factoidal/gdsl.*'
       - 'npm/factoidal/lib/gdsl-*.mjs'
       - 'npm/factoidal/test/gdsl.test.mjs'
       - 'tests/gdsl_hub.test.mjs'
       - 'tools/gpu-sparql-hub-smoke.mjs'
+      - 'tools/gdsl-app-smoke.mjs'
+      - 'tests/web-demos/gdsl_app_browser.mjs'
       - '.github/workflows/check-gdsl-hub.yml'
   workflow_dispatch: {}
 permissions:
@@ -42,11 +45,17 @@ jobs:
           node --check docs/web/hub/gpu-sparql/app.mjs
           node --check docs/web/hub/gpu-sparql/fixtures.mjs
           node --check tools/gpu-sparql-hub-smoke.mjs
+          node --check docs/web/hub/gdsl-app/app.mjs
+          node --check docs/web/hub/gdsl-app/example.mjs
+          node --check tools/gdsl-app-smoke.mjs
+          node --check tests/web-demos/gdsl_app_browser.mjs
           node --test tests/gdsl_hub.test.mjs npm/factoidal/test/gdsl.test.mjs
           mkdir -p "$RUNNER_TEMP/gdsl-hub"
           git rev-parse HEAD > "$RUNNER_TEMP/gdsl-hub/commit.txt"
           sha256sum docs/specs/gdsl-0.2.md docs/web/hub/gssl/*.mjs \
             docs/web/hub/gpu-sparql/* tools/gpu-sparql-hub-smoke.mjs \
+            docs/web/hub/gdsl-app/* tools/gdsl-app-smoke.mjs \
+            tests/web-demos/gdsl_app_browser.mjs \
             npm/factoidal/gdsl.mjs npm/factoidal/lib/gdsl-*.mjs \
             tests/gdsl_hub.test.mjs > "$RUNNER_TEMP/gdsl-hub/source.sha256"
       - name: Install offline Eleventy from vendored cache
@@ -69,6 +78,10 @@ jobs:
             docs/_site/web/hub/gpu-sparql/app.mjs \
             docs/_site/web/hub/gpu-sparql/fixtures.mjs \
             docs/_site/web/hub/gpu-sparql/style.css \
+            docs/_site/web/hub/gdsl-app/index.html \
+            docs/_site/web/hub/gdsl-app/app.mjs \
+            docs/_site/web/hub/gdsl-app/example.mjs \
+            docs/_site/web/hub/gdsl-app/style.css \
             docs/_site/npm/factoidal/browser.js \
             docs/_site/npm/factoidal/lib/api.mjs \
             docs/_site/npm/factoidal/gdsl.mjs \
@@ -84,6 +97,8 @@ jobs:
           grep -q 'createPVGraphWasm' docs/_site/web/hub/gssl/graph-explorer.mjs
           grep -q 'value="/factoidal/npm/factoidal/browser.js"' docs/_site/web/hub/gpu-sparql/index.html
           grep -q 'gpu-sparql/app.mjs' docs/_site/web/hub/gpu-sparql/index.html
+          grep -q 'gdsl-app/app.mjs' docs/_site/web/hub/gdsl-app/index.html
+          grep -q 'value="/factoidal/npm/factoidal/"' docs/_site/web/hub/gdsl-app/index.html
           tail -n 7 "$RUNNER_TEMP/gdsl-hub/site-build.log"
       - name: Save evidence
         if: always()

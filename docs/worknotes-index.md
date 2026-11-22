@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-22 | [GDSL public API and independent Hub application](20261122-gdsl-app-api.md) | this commit | current — local package integration, thrown-envelope fallback repair, Node and SwiftShader checks; browser CI and live checks pending |
 | 2026-11-19 | [XML RSA-OAEP hashes](20261119-xmlenc-oaep-hacl.md) | PR 601 | current — checked HACL* digest selection, refusal and mixed-hash fixtures |
 | 2026-11-19 | [Paralliverse model, proofs and Hub implementation](20261119-paralliverse-progress.md) | PR 607 | current — exact compiler evidence, physical target boundary, CPU ABI and public-demo gates |
 | 2026-11-19 | [GPU pacing test clock](20261119-foafnaut-gpu-pacing-clock.md) | PR 606 | record — deterministic poll clock and exact-source native package checks passed; production gate unchanged |

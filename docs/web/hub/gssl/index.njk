@@ -12,6 +12,7 @@ permalink: /web/hub/gssl/
     <p class="eyebrow">GDSL 0.2 · Shared graph language + exploratory GPU runtime</p>
     <h1>One dataflow language. Different computations.</h1>
     <p class="lede">Keep typed words on a WebGPU device while multiple compute passes work over them. Change the inputs, reuse a pipeline, inspect actual device memory when you choose.</p>
+    <p><a href="{{ '/web/hub/gdsl-app/' | url }}">Use GDSL in your own app</a>: a complete local-loading signal mixer and prefix-sum example through the public API.</p>
     <p class="scope">This is a <strong>fixed trusted WGSL kernel</strong> run through the generic GSSL resident-session API. The CPU reference is independent JavaScript arithmetic. Neither constitutes a general Lean→WGSL compiler or a formal proof of GPU hardware execution.</p>
   </div>
   <div class="hero-code" aria-label="Compute flow">
@@ -76,7 +77,7 @@ permalink: /web/hub/gssl/
       <pre id="gdsl-trace">No graph executed yet.</pre>
       <pre id="gdsl-resources">No GPU device allocated.</pre>
     </details>
-    <p class="scope">PVGraph uses the Lean/Wasm evaluator and a restricted GPU path (map/zip/broadcast); scan and reduction remain CPU-only. A current Wasm build with the GPU-plan operation is required. The fixed-kernel diagnostic below is independent. There is no general GDSL-to-WGSL refinement theorem. <a href="https://github.com/danbri/factoidal-core/blob/main/docs/specs/gdsl-0.2.md">GDSL 0.2 specification</a>.</p>
+    <p class="scope">PVGraph uses the Lean/Wasm evaluator and an engine-planned GPU path, including map, zip, broadcast and hierarchical prefix scan. Reduction uses the CPU reference; required-GPU execution refuses a PVGraph containing it. A current Wasm build with the GPU-plan operation is required. The fixed-kernel diagnostic below is independent. Pure-model theorems and observed device comparisons have separate assurance boundaries. <a href="https://github.com/danbri/factoidal-core/blob/main/docs/specs/gdsl-0.2.md">GDSL 0.2 specification</a>.</p>
   </section>
   <section class="panel" aria-labelledby="input-title">
     <div class="panel-head"><h2 id="input-title">Fixed-kernel GPU diagnostic</h2><span>LOW-LEVEL REGRESSION</span></div>

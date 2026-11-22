@@ -7,6 +7,10 @@ on:
       - 'tools/pvgraph-query-device-smoke.mjs'
       - 'tools/gpu-sparql-hub-smoke.mjs'
       - 'docs/web/hub/gpu-sparql/**'
+      - 'docs/web/hub/gdsl-app/**'
+      - 'tools/gdsl-app-smoke.mjs'
+      - 'tests/web-demos/gdsl_app_browser.mjs'
+      - 'npm/factoidal/test/gdsl-runtime.test.mjs'
       - 'tools/pvgraph-evidence-provenance.mjs'
       - 'tools/lean-wasm-runtime-closure.py'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/**'
@@ -93,6 +97,40 @@ jobs:
           for(const name of names)if(!available.has(name))throw Error("missing exact-source Wasm op "+name);
           console.log(JSON.stringify({status:"pass",ops:names}));
           JS
+      - name: Check public GDSL app API against the built runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test npm/factoidal/test/gdsl-runtime.test.mjs \
+            | tee "$RUNNER_TEMP/pvgraph-wasm-bench/gdsl-api-tests.log"
+          node tools/gdsl-app-smoke.mjs \
+            | tee "$RUNNER_TEMP/pvgraph-wasm-bench/gdsl-app-cpu.json"
+      - name: Check the rendered Hub and independent app with exact built Wasm
+        shell: bash
+        env:
+          REQUIRE_EXACT_GDSL_RUNTIME: '1'
+        run: |
+          set -euo pipefail
+          # This lane builds the full runtime above. Browser acceptance never
+          # substitutes an ancestor release or the reduced PVGraph test engine.
+          bash third_party/eleventy/install.sh docs \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/eleventy-install.log"
+          ( cd docs && node_modules/.bin/eleventy --quiet --output=_site ) \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/browser-site-build.log"
+          # Match the installed test-driver version used to author the harness.
+          # Browser provisioning happens in this Linux CI job, not on the host.
+          npm install --prefix "$RUNNER_TEMP/gdsl-browser-tools" \
+            --ignore-scripts --no-audit --no-fund --save-exact playwright@1.62.1 \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/playwright-install.log"
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/gdsl-browser-binaries"
+          "$RUNNER_TEMP/gdsl-browser-tools/node_modules/.bin/playwright" \
+            install --with-deps chromium \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/chromium-install.log"
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/gdsl-browser-tools/node_modules/playwright/index.mjs"
+          timeout --kill-after=10s 240s node tests/web-demos/gdsl_app_browser.mjs \
+            --report "$RUNNER_TEMP/pvgraph-wasm-bench/gdsl-app-browser.json" \
+            --screenshots "$RUNNER_TEMP/pvgraph-wasm-bench/browser-screenshots" \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/gdsl-app-browser.log"
       - name: Compare actual Lean/Wasm with Mesa WebGPU end-to-end
         shell: bash
         run: |
@@ -112,6 +150,9 @@ jobs:
           timeout --kill-after=10s 420s deno run -A --no-config --no-npm \
             --unstable-webgpu tools/gpu-sparql-hub-smoke.mjs --require-gpu \
             2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/hub-query-device.json.log"
+          timeout --kill-after=10s 240s deno run -A --no-config --no-npm \
+            --unstable-webgpu tools/gdsl-app-smoke.mjs --require-gpu \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/gdsl-app-device.json"
       - name: Preserve exact-source build, benchmark and provenance
         if: always()
         uses: actions/upload-artifact@v4
