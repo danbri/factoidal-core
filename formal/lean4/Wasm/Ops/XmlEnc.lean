@@ -5,7 +5,7 @@ Wasm.Ops.XmlEnc — XML Encryption 1.1 on the dispatch surface
 AES requests (`Crypto/CipherCall.lean`, design record
 `docs/designissues/2026-10-27-xml-encryption-and-jwe.md`).
 
-  xmlDecrypt({"document": xml, "keys": [jwk…], "allowCbc": bool,
+  xmlDecrypt({"document": xml, "keys": [jwk…], "allowCbc": bool, "octets": bool,
               "answers": [{"request": need, "answer": {"ok": b64} | {"refused": true}}…]})
   xmlEncrypt({"document": xml, "recipient": jwk, "algorithm": "aes128-gcm" | "aes256-gcm",
               "keyTransport": "rsa-oaep-mgf1p" | "rsa-oaep-sha256", "keyWrap": "kw-aes128" | "kw-aes256",
@@ -13,6 +13,9 @@ AES requests (`Crypto/CipherCall.lean`, design record
     -> {"ok":true,"document":xml,"canonical":c14n}
      | {"ok":true,"need":{"op":…,"key":b64,"iv":b64,"aad":b64,"data":b64}}
      | {"ok":false,"error":…}
+  with "octets": true, the document element must be an EncryptedData of any
+  or no Type, and the result is {"ok":true,"octets":b64} (its plaintext
+  octets, XML Encryption 1.1 §4.4 step 3) or the same need and error forms.
 
 `need.op` is one of `aes-gcm-encrypt`, `aes-gcm-decrypt`, `aes-kw-wrap`,
 `aes-kw-unwrap`, `aes-cbc-encrypt`, `aes-cbc-decrypt`. Byte members are
@@ -26,7 +29,10 @@ is an error.
 Keys (`keys`, and `recipient` of `xmlEncrypt`) are JWKs (RFC 7517, RFC 7518
 §6, RFC 8037): `RSA` with `n` and `d` (`e` for a recipient), `EC` with `crv`
 `P-256` and `d` (`x`, `y` for a recipient), `OKP` with `crv` `X25519` and `d`
-(`x` for a recipient), `oct` with `k` of 16 or 32 octets. `kid` is the
+(`x` for a recipient), `oct` with `k` of 1 to 1024 octets (a key encryption
+key or content key must still have the size of its algorithm; a master key
+of an `xenc11:DerivedKey` may have any of these sizes). An `oct` recipient
+of `xmlEncrypt` has 16 or 32 octets. `kid` is the
 `ds:KeyName` the document uses for the key. For `xmlEncrypt`, `random` is
 octets from the host's random source: the content key, the 12-octet IV,
 then 20 (RSA-OAEP SHA-1), 32 (RSA-OAEP SHA-256, or the ephemeral key of a
@@ -135,7 +141,7 @@ def addKey (ks : Keys) (j : Json) : Except String Keys := do
       pure { ks with ec := ks.ec ++ [{ kid, curve := .x25519, d }] }
   | some "oct" =>
       let k ← b64Field? j "k"
-      if k.size != 16 && k.size != 32 then throw "an oct key must be 16 or 32 octets"
+      if k.size == 0 || k.size > 1024 then throw "an oct key must be 1 to 1024 octets"
       pure { ks with sym := ks.sym ++ [{ kid, k }] }
   | _ => throw "a key must be a JWK with kty RSA, EC, OKP or oct"
 
@@ -156,6 +162,12 @@ def documentOf (j : Json) : Except String Document :=
         | .ok d => .ok d
         | .error _ => .error "the document is not well-formed XML"
 
+def octetsEnvelope (r : M ByteArray) : String :=
+  match r with
+  | .ok b => okWith [("octets", .string (base64 b))]
+  | .error (.need q) => okWith [("need", reqJson q)]
+  | .error f => errJson f.message
+
 def envelope (r : M Document) : String :=
   match r with
   | .ok d => okWith [("document", .string (serializeDocument d)),
@@ -174,10 +186,13 @@ def decryptWith (mkCipher : List (Req × Ans) → Cipher) (prims : Prims) (argJs
         let ks ← keysOf j
         let answers ← answersOf j
         let allowCbc := (j.field? "allowCbc").bind Json.asBool? |>.getD false
-        pure (d, ks, answers, allowCbc) : Except String _) with
+        let octets := (j.field? "octets").bind Json.asBool? |>.getD false
+        pure (d, ks, answers, allowCbc, octets) : Except String _) with
       | .error e => errJson e
-      | .ok (d, ks, answers, allowCbc) =>
-          envelope (decrypt (mkCipher answers) prims ks { allowCbc, maxDepth := maxDocDepth } d)
+      | .ok (d, ks, answers, allowCbc, octets) =>
+          let opts : Opts := { allowCbc, maxDepth := maxDocDepth }
+          if octets then octetsEnvelope (decryptOctets (mkCipher answers) prims ks opts d)
+          else envelope (decrypt (mkCipher answers) prims ks opts d)
 
 /-- The recipient of `xmlEncrypt`, from a public JWK. -/
 def recipientOf (j : Json) (keyLen : Nat) : Except String Recipient := do

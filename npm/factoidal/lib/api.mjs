@@ -1914,16 +1914,20 @@ function buildApi(driver) {
    * Decrypt every xenc:EncryptedData of an XML document (XML Encryption 1.1).
    * Allowlist and key forms: API.md "XML Encryption and JWE".
    * @param {string} document the XML document
-   * @param {{keys: object[], allowCbc?: boolean}} options private JWKs
-   *   (`kid` is the ds:KeyName); `allowCbc` admits aes128-cbc and aes256-cbc
-   * @returns {Promise<{document: string, canonical: string}>}
+   * @param {{keys: object[], allowCbc?: boolean, octets?: boolean}} options private JWKs
+   *   (`kid` is the ds:KeyName or xenc11:MasterKeyName); `allowCbc` admits
+   *   aes128-cbc and aes256-cbc; `octets`: the document element is an
+   *   xenc:EncryptedData of any or no Type, and its plaintext octets are returned
+   * @returns {Promise<{document: string, canonical: string} | {octets: Uint8Array}>}
    */
   async function xmlDecrypt(document, options) {
     if (typeof document !== 'string') throw new TypeError('xmlDecrypt: document must be a string');
     const o = options || {};
     checkKeys('xmlDecrypt', o.keys);
+    const octets = o.octets === true;
     const r = await cipherOp('xmlDecrypt', 'XML decryption',
-      { document, keys: o.keys, allowCbc: o.allowCbc === true });
+      { document, keys: o.keys, allowCbc: o.allowCbc === true, octets });
+    if (octets) return { octets: base64ToBytes(r.octets) };
     return { document: r.document, canonical: r.canonical };
   }
 

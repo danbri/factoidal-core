@@ -1972,8 +1972,16 @@ export function vcEd25519Verify(
  */
 export function xmlDecrypt(
   document: string,
-  options: { keys: object[]; allowCbc?: boolean }
+  options: { keys: object[]; allowCbc?: boolean; octets?: false }
 ): Promise<{ document: string; canonical: string }>;
+/**
+ * The plaintext octets of a document element xenc:EncryptedData with any or
+ * no Type (XML Encryption 1.1 §4.4 step 3).
+ */
+export function xmlDecrypt(
+  document: string,
+  options: { keys: object[]; allowCbc?: boolean; octets: true }
+): Promise<{ octets: Uint8Array }>;
 
 /** Encrypt an XML document element, or its content, for one recipient. */
 export function xmlEncrypt(

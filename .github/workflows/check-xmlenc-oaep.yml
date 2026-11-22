@@ -40,6 +40,9 @@ jobs:
         L4Factoidal.XML.Enc.xmlenc11_derive_concat
         L4Factoidal.XML.Enc.xmlenc11_derive_pbkdf2_size
         L4Factoidal.XML.Enc.xmlenc11_derive_pbkdf2_eq_webcrypto
+        L4Factoidal.XML.Enc.xmlenc11_deriveFromMaster_size
+        L4Factoidal.XML.Enc.xmlenc11_derivedKey_concat
+        L4Factoidal.XML.Enc.xmlenc11_derivedKey_pbkdf2_eq_rfc8018
     steps:
       - uses: actions/checkout@v4
         with:

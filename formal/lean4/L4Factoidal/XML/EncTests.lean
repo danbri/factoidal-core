@@ -451,4 +451,86 @@ def pbRefused (s : String) (frag : String) : Bool :=
     | .error _ => false
   | none => false
 
+/-! ## Derived keys (§5.4.3) and octets (§4.4 step 3) -/
+
+def master32 : ByteArray := bytes 32 21
+
+def dkText (kdm : String) (extra : String := "<k:MasterKeyName>m1</k:MasterKeyName>") : String :=
+  "<k:DerivedKey xmlns:k=\"" ++ xenc11Ns ++ "\">" ++ kdm ++ extra ++ "</k:DerivedKey>"
+
+def concatKdm : String :=
+  "<k:KeyDerivationMethod Algorithm=\"" ++ concatKdfAlg ++ "\"><k:ConcatKDFParams AlgorithmID=\"0001\" " ++
+  "PartyUInfo=\"0002\" PartyVInfo=\"0003\"><ds:DigestMethod xmlns:ds=\"" ++ L4Factoidal.XML.DSig.dsNs ++
+  "\" Algorithm=\"" ++ sha256Digest ++ "\"/></k:ConcatKDFParams></k:KeyDerivationMethod>"
+
+def dkKeys : Keys := { sym := [{ kid := some "m1", k := master32 }, { kid := some "kek128", k := kek16 }] }
+
+def dkRun (s : String) (n : Nat) (ks : Keys := dkKeys) : M ByteArray :=
+  match kdmOf s with
+  | some e => derivedKey stubPrims ks e n
+  | none => refuse "does not parse"
+
+def mRefused (r : M ByteArray) (frag : String) : Bool :=
+  match r with
+  | .error (.refused m) => (m.splitOn frag).length ≥ 2
+  | _ => false
+
+def concatParams : ConcatKdf.XmlEncParams :=
+  { algorithmId := some ⟨#[0, 1]⟩, partyUInfo := some ⟨#[0, 2]⟩, partyVInfo := some ⟨#[0, 3]⟩ }
+
+-- A Concat KDF DerivedKey is §5.4.1 over the named master key.
+#guard match dkRun (dkText concatKdm) 32 with
+  | .ok k => some k == ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash master32 32 concatParams && k.size == 32
+  | .error _ => false
+-- A PBKDF2 DerivedKey is RFC 8018 PBKDF2 over the master key as the password.
+#guard match dkRun (dkText (kdmText "3" "16" hmacSha256Prf)) 16 with
+  | .ok k => k == WebCrypto.pbkdf2 WebHacl.HashAlg.sha256.pure master32
+      ((base64Decode? "AAECAwQFBgc=").getD ByteArray.empty) 3 16
+  | .error _ => false
+#guard mRefused (dkRun (dkText (kdmText "3" "32" hmacSha256Prf)) 16) "KeyLength"
+#guard mRefused (dkRun (dkText "") 32) "no xenc11:KeyDerivationMethod"
+#guard mRefused (dkRun (dkText concatKdm "<k:MasterKeyName>nope</k:MasterKeyName>") 32) "no symmetric master key named nope"
+#guard mRefused (dkRun (dkText concatKdm "") 32) "more than one symmetric master key"
+#guard mRefused (dkRun (dkText concatKdm "<k:Other/>") 32) "unsupported or repeated child Other"
+#guard mRefused (dkRun (dkText (concatKdm ++ concatKdm)) 32) "repeated child"
+-- With one symmetric key, MasterKeyName may be left out.
+#guard (dkRun (dkText concatKdm "") 32 (ks := { sym := [{ k := master32 }] })).toOption.isSome
+
+/-- An `EncryptedData` with the stub AES-GCM of `pt` under `key`, IV `iv`. -/
+def gcmDoc (keyInfo : String) (key iv pt : ByteArray) (typ : String := "") : String :=
+  let ct := (stubCipher.call { op := .gcmEncrypt, key, iv, data := pt }).toOption.getD ByteArray.empty
+  "<xenc:EncryptedData xmlns:xenc=\"" ++ xencNs ++ "\" xmlns:ds=\"" ++ L4Factoidal.XML.DSig.dsNs ++ "\"" ++
+  (if typ.isEmpty then "" else " Type=\"" ++ typ ++ "\"") ++ "><xenc:EncryptionMethod Algorithm=\"" ++
+  aes128Gcm ++ "\"/>" ++ keyInfo ++ "<xenc:CipherData><xenc:CipherValue>" ++ base64 (iv ++ ct) ++
+  "</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData>"
+
+def octetsOf (s : String) (ks : Keys := dkKeys) : M ByteArray :=
+  match parseXML s with
+  | .ok d => decryptOctets stubCipher stubPrims ks {} d
+  | .error _ => refuse "does not parse"
+
+def octPt : ByteArray := ⟨#[0xd9, 0x31, 0x32, 0x25, 0, 1, 2, 255]⟩
+def namedKi : String := "<ds:KeyInfo><ds:KeyName>kek128</ds:KeyName></ds:KeyInfo>"
+
+-- No Type: the octets, not a document.
+#guard (octetsOf (gcmDoc namedKi kek16 (bytes 12 6) octPt)).toOption == some octPt
+#guard failsWith (decryptText (gcmDoc namedKi kek16 (bytes 12 6) octPt) (ks := dkKeys)) (refusedHas "no Type")
+-- The octets of an Element EncryptedData are the text that `decrypt` parses.
+#guard (octetsOf (gcmDoc namedKi kek16 (bytes 12 6) "<a/>".toUTF8 typeElement)).toOption == some "<a/>".toUTF8
+-- A content key from a DerivedKey (here, 16 octets by Concat KDF).
+#guard match ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash master32 16 concatParams with
+  | some cek => (octetsOf (gcmDoc ("<ds:KeyInfo>" ++ dkText concatKdm ++ "</ds:KeyInfo>") cek (bytes 12 7) octPt)).toOption
+      == some octPt
+  | none => false
+-- A wrong master key: the one decryption error.
+#guard match ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash master32 16 concatParams with
+  | some cek =>
+      match octetsOf (gcmDoc ("<ds:KeyInfo>" ++ dkText concatKdm ++ "</ds:KeyInfo>") cek (bytes 12 7) octPt)
+          (ks := { sym := [{ kid := some "m1", k := bytes 32 99 }] }) with
+      | .error .decryptFailed => true
+      | _ => false
+  | none => false
+-- The octets form needs an EncryptedData document element.
+#guard mRefused (octetsOf "<r/>") "must be xenc:EncryptedData"
+
 end L4Factoidal.XML.EncTests

@@ -40,6 +40,9 @@ structure Score where
   fail : Nat := 0
   hostOnly : Nat := 0
   xfail : Nat := 0
+  /-- Defective test data (`cases.json` outcome `defective`): reported
+  after the total, not in it. -/
+  excluded : Nat := 0
   failures : List String := []
 
 def Score.ok (s : Score) (b : Bool) (name : String) : Score :=
@@ -180,6 +183,24 @@ def main (args : List String) : IO UInt32 := do
           | _, _ => w3cKeys
         let r := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string doc), ("keys", caseKeys)])
         match c.getString? "outcome" with
+        | some "octets" =>
+            -- No Type (§3.1): the plaintext octets (§4.4 step 3).
+            let r := run L4Wasm.Ops.XmlEnc.decryptWith
+              (.object [("document", .string doc), ("keys", caseKeys), ("octets", .bool true)])
+            let got := (r.getString? "octets" >>= base64Decode?).map hexOf
+            s := s.ok (got.isSome && got == c.getString? "expectedHex")
+              s!"W3C {id}: octets; got {(r.getString? "error").getD (got.getD "?")}"
+        | some "defective" =>
+            -- Defective test data (no §5.2 padding block, cases.json
+            -- `defectiveNote`): the derived key must be Node's, and AES-CBC
+            -- is host-only here, so the first AES request shows it.
+            let issue := (c.getString? "issue").getD "?"
+            let want := (L4Factoidal.VC.Multibase.byteArrayOfHex? ((c.getString? "derivedKeyHex").getD "")).map base64
+            let need := needOf (runReplay (.object [("document", .string doc), ("keys", caseKeys),
+              ("octets", .bool true), ("allowCbc", .bool true)]))
+            if need.isSome && need.map (·.1) == some "aes-cbc-encrypt" && need.map (·.2) == want then
+              s := { s with excluded := s.excluded + 1 }
+            else s := s.ok false s!"W3C {id}: defective test data ({issue}): the derived key is not Node's"
         | some "xfail" =>
             -- An expected failure (its `issue`): the structure is accepted and
             -- the case reaches the AES Key Wrap request natively.
@@ -253,7 +274,8 @@ def main (args : List String) : IO UInt32 := do
   s := s.ok ((r5.splitOn L4Factoidal.SAML.encryptionIssue).length == 2) s!"saml EncryptedID without a key: {r5}"
   for f in s.failures do IO.println s!"FAIL {f}"
   IO.println (s!"xmlenc-native: {s.pass} pass, {s.fail} fail, {s.hostOnly} host-only, " ++
-    s!"{s.xfail} expected failures (out of {s.pass + s.fail + s.hostOnly + s.xfail})")
+    s!"{s.xfail} expected failures (out of {s.pass + s.fail + s.hostOnly + s.xfail}); " ++
+    s!"{s.excluded} excluded (defective test data)")
   return (if s.fail == 0 then 0 else 1)
 
 end XmlEncProbe

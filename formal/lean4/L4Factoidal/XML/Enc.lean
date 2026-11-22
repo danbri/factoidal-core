@@ -12,7 +12,10 @@ Everything below is an allowlist. Any other algorithm, element or form is
 refused, with a message that names it. Nothing is skipped.
 
   * `xenc:EncryptedData` with `Type` Element or Content (§3.1; another or no
-    `Type` is refused). Children: `xenc:EncryptionMethod` (required here),
+    `Type` is refused by `decrypt`). `decryptOctets` gives the plaintext
+    octets of a document element `EncryptedData` with any or no `Type`
+    (§4.4 step 3: data that is not an element or element content goes to
+    the application as octets). Children: `xenc:EncryptionMethod` (required here),
     optional `ds:KeyInfo`, `xenc:CipherData` holding `xenc:CipherValue`
     (`xenc:CipherReference` is refused: no retrieval), nothing else.
   * Data encryption (§5.2): `xmlenc11#aes128-gcm`, `xmlenc11#aes256-gcm`.
@@ -24,8 +27,8 @@ refused, with a message that names it. Nothing is skipped.
     `ds:RetrievalMethod` whose `Type` is `xmlenc#EncryptedKey` and whose
     `URI` is `#id` of exactly one `xenc:EncryptedKey` in the same document
     (no transforms, no remote retrieval), one `xenc:AgreementMethod`
-    (direct key agreement), or one `ds:KeyName` that names a caller's
-    symmetric key. `decryptWrapped` (SAML `EncryptedElementType`) also
+    (direct key agreement), one `xenc11:DerivedKey` (§5.4.3), or one
+    `ds:KeyName` that names a caller's symmetric key. `decryptWrapped` (SAML `EncryptedElementType`) also
     takes the one `EncryptedKey` sibling when `KeyInfo` is absent.
   * Key transport (§5.5): `xmlenc#rsa-oaep-mgf1p` (MGF1 with SHA-1) and
     `xmlenc11#rsa-oaep` (MGF1 with the hash of `xenc11:MGF`: `mgf1sha1`,
@@ -55,6 +58,14 @@ refused, with a message that names it. Nothing is skipped.
     HACL* HMAC); no `KA-Nonce`. The recipient key is named by
     `ds:KeyName` in `xenc:RecipientKeyInfo`, or is the caller's only key on
     that curve.
+  * Derived keys (§5.4.3): `xenc11:DerivedKey` in `ds:KeyInfo` of
+    `EncryptedData` (the content key) or of `EncryptedKey` (the key
+    encryption key of AES Key Wrap), with one `xenc11:KeyDerivationMethod`
+    (the Concat KDF or PBKDF2 of the key agreement list above) and an
+    optional `xenc11:MasterKeyName` naming the caller's symmetric master
+    key (else the caller's only symmetric key). `xenc:ReferenceList` and
+    `xenc11:DerivedKeyName` are read as labels only. The master key is the
+    shared secret `Z` of §5.4.1, or the password of §5.4.2.
 
 ## Decryption (§4.4)
 
@@ -828,6 +839,94 @@ theorem xmlenc11_derive_pbkdf2_eq_webcrypto (hh : WebHacl.HashAgrees) (hm : WebH
        if k.size == p.keyLength then some k else none) := by
   simp only [Kdf.derive?, xmlenc11_pbkdf2_native_eq_rfc8018 hh hm]
 
+/-- The key derivation method of `kdm` for a key of `keyLen` octets: a
+PBKDF2 `KeyLength` must be `keyLen` (§5.4.2). -/
+def kdfSized (opts : Opts) (kdm : El) (keyLen : Nat) : M Kdf := do
+  let kdf ← kdfOf opts kdm
+  match kdf with
+  | .pbkdf2 p =>
+      if p.keyLength != keyLen then
+        refuse s!"PBKDF2 xenc11:KeyLength {p.keyLength} is not the {keyLen} octets the key is used for"
+      pure kdf
+  | .concat _ => pure kdf
+
+/-! ## Derived keys (§5.4.3) -/
+
+/-- `keyLen` octets derived from the master key `master` (§5.4.3): the
+shared secret `Z` of Concat KDF, or the password of PBKDF2. `none` is a
+failure after the structure check. -/
+def deriveFromMaster (prims : Prims) (kdf : Kdf) (master : ByteArray) (keyLen : Nat) : Option ByteArray :=
+  match kdf.derive? prims master keyLen with
+  | some k => if k.size == keyLen then some k else none
+  | none => none
+
+/-- A key of `keyLen` octets from an `xenc11:DerivedKey` (§5.4.3). Children,
+each at most once: `xenc11:KeyDerivationMethod` (required here),
+`xenc:ReferenceList` and `xenc11:DerivedKeyName` (labels, not read), and
+`xenc11:MasterKeyName`, which names the caller's symmetric master key. -/
+def derivedKey (prims : Prims) (keys : Keys) (dk : El) (keyLen : Nat) (opts : Opts := {}) : M ByteArray := do
+  if !dk.elementOnly then refuse "xenc11:DerivedKey has unexpected content"
+  let mut kdm : Option El := none
+  let mut master : Option El := none
+  let mut refs := false
+  let mut dname := false
+  for c in dk.children do
+    if c.is xenc11Ns "KeyDerivationMethod" && kdm.isNone then kdm := some c
+    else if c.is xencNs "ReferenceList" && !refs then refs := true
+    else if c.is xenc11Ns "DerivedKeyName" && !dname then dname := true
+    else if c.is xenc11Ns "MasterKeyName" && master.isNone then master := some c
+    else refuse s!"xenc11:DerivedKey has an unsupported or repeated child {c.lname}"
+  let kdf ← match kdm with
+    | some k => kdfSized opts k keyLen
+    | none => refuse "xenc11:DerivedKey has no xenc11:KeyDerivationMethod"
+  let name? ← match master with
+    | some m => some <$> keyNameOf m
+    | none => pure none
+  let mk ← pick "symmetric master" name? keys.sym (·.kid)
+  match deriveFromMaster prims kdf mk.k keyLen with
+  | some k => pure k
+  | none => .error .decryptFailed
+
+/-! ### Theorems relating §5.4.3 to §5.4.1 and §5.4.2
+
+Says: a `DerivedKey` uses the same Concat KDF (§5.4.1) and PBKDF2 (§5.4.2)
+functions as key agreement, with the master key in the place of the shared
+secret `Z`; a derived key is given only with the length it is used for; the
+PBKDF2 derived key is RFC 8018 PBKDF2 as WebCrypto specifies it, given
+HACL*'s functional correctness (`HashAgrees`, `HmacAgrees`).
+Does not say: that a master key is secret or strong; that a key named by
+`MasterKeyName` is the one the sender used. -/
+
+/-- A derived key has the length it is used for. -/
+theorem xmlenc11_deriveFromMaster_size (prims : Prims) (kdf : Kdf) (m : ByteArray) (n : Nat)
+    (k : ByteArray) (h : deriveFromMaster prims kdf m n = some k) : k.size = n := by
+  unfold deriveFromMaster at h
+  split at h
+  · split at h
+    · rename_i e
+      cases h
+      simpa using e
+    · cases h
+  · cases h
+
+/-- §5.4.3 with Concat KDF is §5.4.1 Concat KDF over SHA-256 with the master
+key as `Z`, kept when it has the length asked for. -/
+theorem xmlenc11_derivedKey_concat (prims : Prims) (p : ConcatKdf.XmlEncParams) (m : ByteArray) (n : Nat) :
+    deriveFromMaster prims (.concat p) m n =
+      (match ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash m n p with
+       | some k => if k.size == n then some k else none
+       | none => none) := rfl
+
+/-- §5.4.3 with PBKDF2, on the native primitives, is RFC 8018 PBKDF2 (the
+function of WebCrypto `deriveBits`) with the master key as the password. -/
+theorem xmlenc11_derivedKey_pbkdf2_eq_rfc8018 (hh : WebHacl.HashAgrees) (hm : WebHacl.HmacAgrees)
+    (p : Pbkdf2Params) (m : ByteArray) :
+    deriveFromMaster nativePrims (.pbkdf2 p) m p.keyLength =
+      (let k := WebCrypto.pbkdf2 p.prf.pure m p.salt p.iterations p.keyLength
+       if k.size == p.keyLength then some k else none) := by
+  simp only [deriveFromMaster, Kdf.derive?, xmlenc11_pbkdf2_native_eq_rfc8018 hh hm]
+  split <;> simp_all
+
 /-- A key of `keyLen` octets from an `xenc:AgreementMethod`. -/
 def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) (opts : Opts := {}) : M ByteArray := do
   let alg := (a.attr? "Algorithm").getD ""
@@ -844,13 +943,8 @@ def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) (opts : Opts 
     else if c.is xencNs "RecipientKeyInfo" && recip.isNone then recip := some c
     else refuse s!"xenc:AgreementMethod has an unsupported child {c.lname}"
   let kdf ← match kdm with
-    | some k => kdfOf opts k
+    | some k => kdfSized opts k keyLen
     | none => refuse "xenc:AgreementMethod has no key derivation method"
-  match kdf with
-  | .pbkdf2 p =>
-      if p.keyLength != keyLen then
-        refuse s!"PBKDF2 xenc11:KeyLength {p.keyLength} is not the {keyLen} octets the key is used for"
-  | .concat _ => pure ()
   let (curve, pub) ← match orig with
     | some o => originatorKey o
     | none => refuse "xenc:AgreementMethod has no originator key"
@@ -879,6 +973,7 @@ def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) (opts : Opts 
 inductive KekRef where
   | name (n : String)
   | agreement (a : El)
+  | derived (d : El)
   | unnamed
 
 def kekRefOf (ki : Option El) : M KekRef := do
@@ -890,13 +985,14 @@ def kekRefOf (ki : Option El) : M KekRef := do
       let mut seen := false
       for c in k.children do
         if c.is dsNs "X509Data" || c.is dsNs "KeyValue" then pure ()
-        else if c.is dsNs "KeyName" || c.is xencNs "AgreementMethod" then
+        else if c.is dsNs "KeyName" || c.is xencNs "AgreementMethod" || c.is xenc11Ns "DerivedKey" then
           if seen then refuse "ds:KeyInfo of xenc:EncryptedKey names more than one key"
           seen := true
           if c.is dsNs "KeyName" then
             let nm ← keyNameOf c
             out := .name nm
-          else out := .agreement c
+          else if c.is xencNs "AgreementMethod" then out := .agreement c
+          else out := .derived c
         else refuse s!"ds:KeyInfo of xenc:EncryptedKey holds {c.lname}, which is not supported"
       pure out
 
@@ -912,6 +1008,7 @@ def unwrapKey (cipher : Cipher) (prims : Prims) (keys : Keys) (ek : El) (keyLen 
         | .name n => pure (some n)
         | .unnamed => pure none
         | .agreement _ => refuse "RSA-OAEP key transport with a key agreement is not supported"
+        | .derived _ => refuse "RSA-OAEP key transport with a derived key is not supported"
       let k ← pick "RSA" name? keys.rsa (·.kid)
       match RsaOaep.oaepDecryptChecked (prims.oaepProvider dig) (prims.oaepProvider mgf)
           prims.rsaPrivate k.n k.d p.cipherValue label with
@@ -926,6 +1023,7 @@ def unwrapKey (cipher : Cipher) (prims : Prims) (keys : Keys) (ek : El) (keyLen 
             let s ← pick "symmetric" none (keys.sym.filter (·.k.size == len)) (·.kid)
             pure s.k
         | .agreement a => agreeKey prims keys a len opts
+        | .derived dk => derivedKey prims keys dk len opts
       if kek.size != len then refuse "the key encryption key does not have the size of the key wrap algorithm"
       let cek ← ccall cipher { op := .kwUnwrap, key := kek, data := p.cipherValue }
       if cek.size == keyLen then pure cek else .error .decryptFailed
@@ -976,6 +1074,7 @@ def contentKey (ctx : Ctx) (ki : Option El) (fallback : Option El) (keyLen : Nat
       | [c] =>
           if isEncKey c then unwrapKey ctx.cipher ctx.prims ctx.keys c keyLen ctx.opts
           else if c.is xencNs "AgreementMethod" then agreeKey ctx.prims ctx.keys c keyLen ctx.opts
+          else if c.is xenc11Ns "DerivedKey" then derivedKey ctx.prims ctx.keys c keyLen ctx.opts
           else if c.is dsNs "KeyName" then do
             let nm ← keyNameOf c
             let s ← pick "symmetric" (some nm) ctx.keys.sym (·.kid)
@@ -1052,6 +1151,13 @@ def parseFragment (opts : Opts) (sc : Scope) (depth : Nat) (pt : ByteArray) : M 
                 then .ok kids else .error .decryptFailed
             | _ => .error .decryptFailed
 
+/-- The plaintext octets of an `EncryptedData` read as `p` (§4.4 steps 1
+to 3): the algorithm, the content key, the decryption. -/
+def partsOctets (ctx : Ctx) (fallback : Option El) (p : EncParts) : M ByteArray := do
+  let alg ← dataAlgOf ctx.opts p.method
+  let cek ← contentKey ctx p.keyInfo fallback alg.keyLen
+  decryptContent ctx.cipher alg cek p.cipherValue
+
 /-- The nodes that replace one `EncryptedData` whose parent has bindings
 `e.parent` and nesting `depth`. -/
 def decryptData (ctx : Ctx) (fallback : Option El) (e : El) (depth : Nat) : M (List Node) := do
@@ -1061,10 +1167,9 @@ def decryptData (ctx : Ctx) (fallback : Option El) (e : El) (depth : Nat) : M (L
         if t == typeElement then pure true
         else if t == typeContent then pure false
         else refuse s!"the EncryptedData Type {t} is not supported"
-    | none => refuse "xenc:EncryptedData has no Type (Element or Content)"
-  let alg ← dataAlgOf ctx.opts p.method
-  let cek ← contentKey ctx p.keyInfo fallback alg.keyLen
-  let pt ← decryptContent ctx.cipher alg cek p.cipherValue
+    | none => refuse ("xenc:EncryptedData has no Type (Element or Content): its plaintext is octets, " ++
+        "which the octets form of decryption gives")
+  let pt ← partsOctets ctx fallback p
   let nodes ← parseFragment ctx.opts e.parent depth pt
   if isElement then
     match nodes with
@@ -1115,6 +1220,19 @@ def decrypt (cipher : Cipher) (prims : Prims) (keys : Keys) (opts : Opts) (d : D
     | .ok ([r@(.element ..)], _) => .ok { d with root := r }
     | .ok _ => .error .decryptFailed
     | .error f => .error f
+
+/-- The plaintext octets of a document whose element is an `EncryptedData`,
+with any or no `Type` (§4.4 step 3: the octets go to the application). -/
+def decryptOctets (cipher : Cipher) (prims : Prims) (keys : Keys) (opts : Opts) (d : Document) :
+    M ByteArray :=
+  if d.doctype.isSome then refuse "a document type declaration is not allowed"
+  else match elOf? rootScope d.root with
+    | none => refuse "an element or attribute prefix is not bound"
+    | some e =>
+        if !isEncData e then refuse "the document element must be xenc:EncryptedData for its octets"
+        else do
+          let p ← encParts e fun _ => false
+          partsOctets { cipher, prims, keys, opts, root := d.root } none p
 
 /-- An element of SAML's `EncryptedElementType` (SAML Core §2.2.4):
 `xenc:EncryptedData`, then `xenc:EncryptedKey` elements. The one decrypted
