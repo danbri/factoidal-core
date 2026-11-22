@@ -113,8 +113,16 @@ theorem both_masks_zero_iff (a b : UInt64) :
         apply Bool.eq_iff_iff.mpr
         constructor
         · intro h
-          have he : alo = blo := beq_iff_eq.mp (Bool.and_eq_true.mp h).1
-          have hf : ahi = bhi := beq_iff_eq.mp (Bool.and_eq_true.mp h).2
+          have hlo : (alo == blo) = true := by
+            cases hval : (alo == blo) with
+            | true => rfl
+            | false => simp [hval] at h
+          have hhi : (ahi == bhi) = true := by
+            cases hval : (ahi == bhi) with
+            | true => rfl
+            | false => simp [hval] at h
+          have he : alo = blo := beq_iff_eq.mp hlo
+          have hf : ahi = bhi := beq_iff_eq.mp hhi
           cases he
           cases hf
           simp
