@@ -153,8 +153,11 @@ rulings):
   read: the key is the caller's key named by `ds:KeyName`, or the caller's
   only key of that kind. W3C WRAP.1 and AGRMNT.1 name their keys only by
   certificate.
-* `EncryptedData` without `Type` is refused (W3C SYM.1, DRV.1): the profile
-  decrypts XML only.
+* `EncryptedData` without `Type` is refused by `decrypt`, which replaces
+  elements in a document. Since 2026-11-22 (track B item 5, part 3):
+  `decryptOctets`, the `xmlDecrypt` member `octets: true`, gives the
+  plaintext octets of a document element `EncryptedData` with any or no
+  `Type` (§4.4 step 3). W3C SYM.1 passes this way.
 * PBKDF2 key derivation (§5.4.2), since 2026-11-22 (track B item 5, part
   2, of https://github.com/danbri/factoidal/issues/1165): `kdfOf` reads
   `xmlenc11#ConcatKDF` (§5.4.1, unchanged: theorem
@@ -181,7 +184,21 @@ rulings):
   https://github.com/danbri/factoidal/issues/1303. IBM and Microsoft DRV.2
   and DRV.4 (PBKDF2 in `xenc11:DerivedKey`): the derived key decrypts them,
   but their AES-256-CBC ciphertexts have no padding block, which §5.2
-  requires; not vendored, as `xenc11:DerivedKey` is not read yet.
+  requires. Microsoft DRV.1 (Concat KDF) has the same defect.
+* `xenc11:DerivedKey` (§5.4.3), since 2026-11-22 (track B item 5, part
+  3): in `ds:KeyInfo` of `EncryptedData` (the content key) or of
+  `EncryptedKey` (the key encryption key of AES Key Wrap; RSA-OAEP with a
+  derived key is refused). One `KeyDerivationMethod` (Concat KDF or PBKDF2,
+  through the same `kdfSized` as key agreement), optional
+  `xenc:ReferenceList` and `DerivedKeyName` (read as labels only), and
+  `MasterKeyName`, which names the caller's symmetric master key (else the
+  caller's only symmetric key). The master key takes the place of Z.
+  Theorems: `xmlenc11_deriveFromMaster_size`, `xmlenc11_derivedKey_concat`
+  (§5.4.1 over the master key), `xmlenc11_derivedKey_pbkdf2_eq_rfc8018`.
+  The npm `oct` key may have 1 to 1024 octets, for a master key or a
+  password. W3C DRV.1 and DRV.2 are vendored and counted apart as defective
+  test data (no padding block); the harnesses check that the key Lean
+  derives equals the key Node derives.
 
 ## JWE profile
 
