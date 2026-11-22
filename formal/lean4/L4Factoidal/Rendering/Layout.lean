@@ -252,8 +252,8 @@ private def backgroundRasterNodes (id : Nat) (s : Computed) (x y w h : Float) : 
     let (iw,ih) := (Float.ofNat img.natural.1, Float.ofNat img.natural.2)
     if iw <= 0 || ih <= 0 then continue
     let size := s.backgroundSizes[index % max 1 s.backgroundSizes.length]?.getD "auto"
-    let repeat := s.backgroundRepeats[index % max 1 s.backgroundRepeats.length]?.getD "repeat"
-    let some (repeatX,repeatY) := backgroundRepeatAxes repeat | continue
+    let repeatMode := s.backgroundRepeats[index % max 1 s.backgroundRepeats.length]?.getD "repeat"
+    let some (repeatX,repeatY) := backgroundRepeatAxes repeatMode | continue
     let (tw,th) := backgroundTileSize size iw ih areaW areaH
     if tw <= 0 || th <= 0 then continue
     let ox := if repeatX then border.left-(border.left/tw).ceil*tw else border.left
