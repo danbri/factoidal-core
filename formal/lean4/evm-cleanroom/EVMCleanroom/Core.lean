@@ -84,6 +84,10 @@ structure State where
   profile : Profile := .shanghaiPlus
   memory : Memory := Memory.empty
   storage : Storage := Storage.empty
+  /-- Host-populated frame context, not independently authenticated account state. -/
+  currentAddress : Nat := 0
+  callValue : Nat := 0
+  selfBalance : Nat := 0
   readOnly : Bool := false
 
 /-- An instruction plan describes effects without committing state changes.
@@ -278,6 +282,11 @@ def planStep (s : State) : Except Error Plan :=
           prepared (s.pc + 1) (word value.leadingZeros :: rest) 5
         | [] => .error .stackUnderflow
       else .error .unsupportedFork
+    | 0x30 => prepared (s.pc + 1) (word s.currentAddress :: s.stack.items) 2 -- ADDRESS
+    | 0x34 => prepared (s.pc + 1) (word s.callValue :: s.stack.items) 2 -- CALLVALUE
+    | 0x47 =>                                           -- SELFBALANCE (Istanbul+)
+      if s.profile = .preShanghai then .error .unsupportedFork
+      else prepared (s.pc + 1) (word s.selfBalance :: s.stack.items) 5
     | 0x50 => pop s                                    -- POP
     | 0x51 => mload s                                  -- MLOAD
     | 0x52 => mstore s                                 -- MSTORE

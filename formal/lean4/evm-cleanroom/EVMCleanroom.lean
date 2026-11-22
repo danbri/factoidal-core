@@ -11,6 +11,7 @@ import EVMCleanroom.Call
 import EVMCleanroom.CallTests
 import EVMCleanroom.ValueCall
 import EVMCleanroom.CallOpcode
+import EVMCleanroom.CallContextTests
 import EVMCleanroom.EELSBridge
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.PragueEnvelope

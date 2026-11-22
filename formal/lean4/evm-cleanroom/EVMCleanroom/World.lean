@@ -44,12 +44,32 @@ def beginTransaction (accounts : Nat → Account) : TxWorld :=
 def frameInput (w : TxWorld) (address gas : Nat) : State :=
   { code := (w.accounts address).code
     gas := gas
+    currentAddress := address
+    callValue := 0
+    selfBalance := (w.accounts address).balance
     storage := {
       original := w.original address
       current := (w.accounts address).storage
       warm := w.warmSlots address
       refund := w.refund
     } }
+
+/-- The executing address and its pre-instruction balance come from the
+    supplied transaction world. This is the actual executable projection
+    consumed by the CALL context opcodes, not a detached specification. -/
+theorem frameInput_address (w : TxWorld) (address gas : Nat) :
+    (frameInput w address gas).currentAddress = address := rfl
+
+theorem frameInput_balance (w : TxWorld) (address gas : Nat) :
+    (frameInput w address gas).selfBalance =
+      (w.accounts address).balance := rfl
+
+theorem frameInput_value_zero (w : TxWorld) (address gas : Nat) :
+    (frameInput w address gas).callValue = 0 := rfl
+
+#print axioms frameInput_address
+#print axioms frameInput_balance
+#print axioms frameInput_value_zero
 
 /-- Commit a successfully completed frame. All other accounts retain the
     exact same account records, including code, balance, nonce and storage. -/
