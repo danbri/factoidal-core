@@ -453,6 +453,82 @@ def expectedOutput (ps : List Comparison) : Json :=
   Json.mkObj [("differenceLow", toJson ((differenceLow ps).map UInt32.toNat)),
     ("differenceHigh", toJson ((differenceHigh ps).map UInt32.toNat))]
 
+/-- Runtime preparation is from *the same RDF selection functions*
+    used by the indexed SPARQL theorem, not a second RDF store.
+    The check and maximum number of Cartesian slots are remembered
+    as logical evidence, with the actual serialized PVGraph as output. -/
+structure Prepared (code : RDF.Term → UInt64)
+    (person colleague : VarName) (knows works object : WfIri)
+    (active : RDF.Graph) where
+  rows : List Comparison
+  actualRows : rows = comparisons code
+    (leftRows person colleague knows active)
+    (rightRows works object active)
+  codebookValid : checkCode64 code
+    (leftRows person colleague knows active)
+    (rightRows works object active) = true
+  bounded : rows.length ≤ 262144
+
+/-- Reject codebook collisions or oversize GPU candidate spaces before
+    allocating the four u32 input buffers. No candidate is invented
+    when either check fails. -/
+def prepare? (code : RDF.Term → UInt64)
+    (person colleague : VarName) (knows works object : WfIri)
+    (active : RDF.Graph) :
+    Option (Prepared code person colleague knows works object active) :=
+  if hcode : checkCode64 code
+      (leftRows person colleague knows active)
+      (rightRows works object active) = true then
+    let ps := comparisons code
+      (leftRows person colleague knows active)
+      (rightRows works object active)
+    if hbound : ps.length ≤ 262144 then
+      some ⟨ps, rfl, hcode, hbound⟩
+    else none
+  else none
+
+/-- The exact host values for the two generic XOR op nodes.
+    Every term ID is transmitted losslessly in lo/high lanes. -/
+def Prepared.bindings {code : RDF.Term → UInt64}
+    {person colleague : VarName} {knows works object : WfIri}
+    {active : RDF.Graph}
+    (p : Prepared code person colleague knows works object active) : Json :=
+  inputBindings p.rows
+
+/-- Reconstructing the mathematically correct dual-XOR outputs from
+    a prepared and checked plan yields the indexed SPARQL result
+    with the original RDF binding payload, order and multiplicity. -/
+theorem Prepared.correct (code : RDF.Term → UInt64)
+    (person colleague : VarName) (knows works object : WfIri)
+    (active : RDF.Graph) (different : person ≠ colleague)
+    (p : Prepared code person colleague knows works object active) :
+    reconstruct p.rows (differenceLow p.rows) (differenceHigh p.rows) =
+      some (evalBgpIdx [⟨.var person, .iri knows, .var colleague⟩,
+        ⟨.var colleague, .iri works, .iri object⟩] active) := by
+  rw [p.actualRows]
+  exact reconstructed_eq_indexed code person colleague knows works object
+    active different p.codebookValid
+
+/-- The output-format boundary refuses any wrong-sized arrays or
+    incorrect numeric values. RDF payloads do not cross the GPU API. -/
+private def jsonWord (raw : Json) : Except String UInt32 := do
+  let value ← raw.getNat?
+  if value > 4294967295 then .error "PVGraph GPU result exceeds UInt32"
+  else pure (UInt32.ofNat value)
+
+def decodeOutput? (ps : List Comparison) (result : Json) :
+    Except String SolutionSeq := do
+  let lo ← (← result.getObjVal? "differenceLow").getArr?
+  let hi ← (← result.getObjVal? "differenceHigh").getArr?
+  if lo.size != ps.length || hi.size != ps.length then
+    .error "PVGraph GPU output lengths do not match admitted comparisons"
+  else
+    let lo ← lo.toList.mapM jsonWord
+    let hi ← hi.toList.mapM jsonWord
+    match reconstruct ps lo hi with
+    | some bindings => pure bindings
+    | none => .error "PVGraph GPU comparison reconstruction refused"
+
 #guard (PVGraph.admit? pvgraph).isOk
 
 private def sample : List Comparison :=
@@ -476,5 +552,6 @@ private def sample : List Comparison :=
 #print axioms reconstructed_eq_evalIn
 #print axioms reconstructed_eq_namedGraph
 #print axioms namedDecoded_eq_graphVariable
+#print axioms Prepared.correct
 
 end L4Factoidal.SPARQL.PvGraphBgpLowering
