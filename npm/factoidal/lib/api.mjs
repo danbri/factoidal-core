@@ -513,8 +513,13 @@ function buildApi(driver) {
 
   // Reuse compiled pipelines across queries, releasing all per-plan buffers.
   // The queue protects the resident device; no SPARQL decisions live here.
-  async function useQueryGpu(run) {
+  async function useQueryGpu(run, expectedSession) {
     const work = gpuTail.then(async () => {
+      // Device facts belong to this exact resident resource. Check inside the
+      // queue, before allocation and outside the failure cleanup: a stale
+      // query must neither use nor destroy another query's replacement.
+      if (expectedSession !== undefined && gpuSession !== expectedSession)
+        throw new Error('GPU query resident session changed after device admission');
       try {
         if (!gpuSession) gpuSession = await createGsslResidentSession({ byteBudget: 512 * 1024 * 1024 });
         return await run(gpuSession);
@@ -528,14 +533,16 @@ function buildApi(driver) {
     return work;
   }
 
-  function executeQueryGpu(request) {
-    return useQueryGpu(session => executePVGraphGpuPlan({ plan: request.plan, bindings: request.bindings, session }));
+  function executeQueryGpu(request, admittedSession) {
+    if (admittedSession === undefined)
+      throw new Error('GPU query has no admitted resident session');
+    return useQueryGpu(session => executePVGraphGpuPlan({ plan: request.plan, bindings: request.bindings, session }), admittedSession);
   }
 
   async function mixedQueryEnvelope(e, handle, sparql, opts) {
     for (const op of ['datasetQueryGpuBegin', 'datasetQueryGpuStep', 'datasetQueryGpuRestart', 'datasetQueryGpuClose'])
       requireEntryFn(e, op, 'query GPU execution');
-    let session;
+    let session, admittedGpuSession;
     const observed = [];
     try {
       const result = await withExtensionRounds(async (round, call) => {
@@ -553,10 +560,11 @@ function buildApi(driver) {
           let reply;
           try {
             if (state.state === 'device') {
-              const device = await useQueryGpu(session => session.status().adapterInfo);
-              reply = { requestId: state.requestId, device };
+              const admitted = await useQueryGpu(resident => ({ resident, device: resident.status().adapterInfo }));
+              admittedGpuSession = admitted.resident;
+              reply = { requestId: state.requestId, device: admitted.device };
             } else {
-              const gpu = await executeQueryGpu(state);
+              const gpu = await executeQueryGpu(state, admittedGpuSession);
               observed.push({ round, phase: state.phase, dispatches: gpu.dispatches, timing: gpu.timing, device: gpu.device });
               reply = { requestId: state.requestId, outputs: gpu.outputs };
             }

@@ -201,6 +201,108 @@ const queries=[
   ["empty-second-pattern",'SELECT ?s WHERE { ?s <urn:p> ?k . ?k <urn:absent> ?o }']
 ];
 
+// Exercise a lost resident lease across a real asynchronous query replay.
+// The proxy only injects one transport failure and counts device resources;
+// parsing, query planning, fallback and every successful kernel stay real.
+async function publicResidentLeaseChecks(){
+  const originalGpu=navigator.gpu;
+  const originalOwn=Object.getOwnPropertyDescriptor(navigator,"gpu");
+  const timeout=async(promise)=>{
+    let timer;
+    try{return await Promise.race([promise,new Promise((_,reject)=>{
+      timer=setTimeout(()=>reject(Error("resident lease test timed out")),60000);
+    })]);}finally{clearTimeout(timer);}
+  };
+  try{
+    for(const execution of ["gpu","auto"]){
+      const devices=[];
+      let failNextWrite=false,release,entered,pendingOutcome;
+      const gate=new Promise(resolve=>{release=resolve;});
+      const called=new Promise(resolve=>{entered=resolve;});
+      Object.defineProperty(navigator,"gpu",{configurable:true,value:{
+        async requestAdapter(){
+          const actualAdapter=await originalGpu.requestAdapter();
+          assert.ok(actualAdapter);
+          return {
+            // Missing metadata is an explicit protocol fault-injection case;
+            // it lets auto exercise the GPU path on software-only CI hosts.
+            info:{},
+            async requestDevice(){
+              const actual=await actualAdapter.requestDevice();
+              const stats={actual,created:0,destroyed:0};devices.push(stats);
+              const queue=new Proxy(actual.queue,{get(target,key){
+                if(key==="writeBuffer")return(...args)=>{
+                  if(failNextWrite){failNextWrite=false;throw Error("injected resident lease write failure");}
+                  return target.writeBuffer(...args);
+                };
+                const value=Reflect.get(target,key,target);
+                return typeof value==="function"?value.bind(target):value;
+              }});
+              return new Proxy(actual,{get(target,key){
+                if(key==="queue")return queue;
+                if(key==="createBuffer")return(...args)=>{stats.created++;return target.createBuffer(...args);};
+                if(key==="destroy")return()=>{stats.destroyed++;return target.destroy();};
+                const value=Reflect.get(target,key,target);
+                return typeof value==="function"?value.bind(target):value;
+              }});
+            }
+          };
+        }
+      }});
+      const api=buildApi({engineName:"source-built-lean-wasm",
+        loadEntry:async()=>entryFromEngine(wasmEngine)});
+      const ds=await api.parse(baseData,{format:"nquads"});
+      try{
+        const iri="urn:gpu-test:resident-lease";
+        await api.registerExtensionFunction(iri,async()=>{entered();await gate;return "retained";});
+        const query=`SELECT ?s ?o (<${iri}>(?o) AS ?value) WHERE { ?s <urn:p> ?k . ?k <urn:q> ?o }`;
+        pendingOutcome=api.query(ds,query,{execution,gpuMinRows:1}).then(
+          value=>({value}),error=>({error}));
+        await timeout(called);
+        assert.equal(devices.length,1,"suspended query admitted the first resident");
+        failNextWrite=true;
+        await assert.rejects(api.query(ds,chain,{execution:"gpu"}),/injected resident lease write failure/);
+        assert.equal(devices[0].destroyed,1,"the failed resident was closed");
+        const replacement=await api.query(ds,chain,{execution:"gpu"});
+        assert.ok(replacement.execution.gpuJoins>0);
+        assert.equal(devices.length,2,"a fresh query admitted a replacement resident");
+        const replacementAllocations=devices[1].created;
+        release();
+        const outcome=await timeout(pendingOutcome);
+        if(execution==="gpu"){
+          assert.match(outcome.error?.message??"",/resident session changed after device admission/);
+        }else{
+          assert.equal(outcome.error,undefined);
+          assert.equal(outcome.value.length,replacement.length);
+          assert.ok(outcome.value.every(row=>row.get("value")?.value==="retained"));
+          assert.ok(outcome.value.execution.cpuFallbacks>0);
+          assert.ok(outcome.value.execution.joins.some(join=>
+            /resident session changed after device admission/.test(join.reason)));
+        }
+        assert.equal(devices[1].created,replacementAllocations,"stale admission allocated nothing on the replacement");
+        assert.equal(devices[1].destroyed,0,"stale admission did not close the replacement");
+        const fresh=await api.query(ds,chain,{execution:"gpu"});
+        assert.equal(fresh.length,replacement.length);
+        assert.ok(fresh.execution.gpuJoins>0);
+        assert.equal(devices.length,2,"a fresh query reused the healthy replacement");
+        assert.equal(devices[1].destroyed,0);
+        report.cases.push({name:`public-resident-lease-${execution}`,correct:true,
+          adapterMetadata:"intentionally unavailable for fault injection",
+          staleDispatchAllocatedBytes:0,replacementPreserved:true});
+      }finally{
+        release();
+        if(pendingOutcome)await timeout(pendingOutcome);
+        await api.clearExtensionFunctions();
+        ds.dispose();
+        for(const device of devices)device.actual.destroy();
+      }
+    }
+  }finally{
+    if(originalOwn)Object.defineProperty(navigator,"gpu",originalOwn);
+    else delete navigator.gpu;
+  }
+}
+
 async function publicApiChecks(){
   const observedCalls=[];
   const observedEngine={...wasmEngine,call(op,callArgs=[]){
@@ -372,6 +474,7 @@ async function publicApiChecks(){
       assert.ok(observedCalls.slice(serviceCalls).includes("datasetQueryGpuRestart"));
     }finally{await serviceApi.clearExtensionFunctions();}
     report.cases.push({name:"async-replay-rechecks-service-failure",correct:true});
+    await publicResidentLeaseChecks();
   }finally{
     await api.clearExtensionFunctions();
     ds.dispose();

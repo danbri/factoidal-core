@@ -66,7 +66,8 @@ jobs:
           timeout --kill-after=10s 480s lake build \
             L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath \
             L4Factoidal.GpuDomainSpecificLanguage.GpuPlan \
-            L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
+            L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder \
+            L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin
           if ! timeout --kill-after=10s 180s lake env lean --run \
             Harness/PVGraphGpuDevice.lean \
             > "$RUNNER_TEMP/pvgraph-gpu/lean-fixtures.jsonl" \
