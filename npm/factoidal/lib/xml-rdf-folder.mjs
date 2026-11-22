@@ -63,7 +63,7 @@ export const DEFAULT_RENDER_STYLESHEET = `<xsl:stylesheet version="4.0"
   </xsl:template>
 </xsl:stylesheet>`;
 
-const sourcePath=entry=>String(entry.path??entry.webkitRelativePath??entry.name??"");
+const sourcePath=entry=>String(entry.path||entry.webkitRelativePath||entry.name||"");
 const safePath=name=>{
   if(!name||name.includes("\0")||name.includes("\\")||
      name.split("/").some(part=>part==="."||part===".."||!part))
