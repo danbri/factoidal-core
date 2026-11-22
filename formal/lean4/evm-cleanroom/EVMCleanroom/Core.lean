@@ -254,6 +254,10 @@ structure State where
   storage : Storage := Storage.empty
   /-- Host-populated frame context, not independently authenticated account state. -/
   currentAddress : Nat := 0
+  /-- Externally supplied transaction origin (not authenticated here). -/
+  txOrigin : Nat := 0
+  /-- Immediate caller, set at each CALL entry. -/
+  callerAddress : Nat := 0
   callValue : Nat := 0
   selfBalance : Nat := 0
   readOnly : Bool := false
@@ -523,6 +527,8 @@ def planStep (s : State) : Except Error Plan :=
         unary s (fun value => word value.leadingZeros) 5
       else .error .unsupportedFork
     | 0x30 => prepared (s.pc + 1) (word s.currentAddress :: s.stack.items) 2 -- ADDRESS
+    | 0x32 => prepared (s.pc + 1) (word s.txOrigin :: s.stack.items) 2 -- ORIGIN
+    | 0x33 => prepared (s.pc + 1) (word s.callerAddress :: s.stack.items) 2 -- CALLER
     | 0x34 => prepared (s.pc + 1) (word s.callValue :: s.stack.items) 2 -- CALLVALUE
     | 0x35 => unary s (fun offset => loadCallDataWord s.callData offset.val) 3 -- CALLDATALOAD
     | 0x36 => prepared (s.pc + 1) (word s.callData.size :: s.stack.items) 2 -- CALLDATASIZE
@@ -773,6 +779,19 @@ theorem step_slt_underflow (s : State) (hRun : s.halted = false)
       have hMin : 2 ≤ rest.length + 1 + 1 := Nat.succ_le_succ (Nat.succ_le_succ (Nat.zero_le _))
       exact (Nat.not_lt_of_ge hMin hStack).elim
 
+/-- ORIGIN reads the supplied transaction-origin field through actual Core.step.
+    Authentication of that context is a separate obligation. -/
+theorem step_origin (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x32) :
+    step s = commit s (s.pc + 1) (word s.txOrigin :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, prepared]
+
+/-- CALLER reads the immediate caller through actual Core.step. -/
+theorem step_caller (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x33) :
+    step s = commit s (s.pc + 1) (word s.callerAddress :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, prepared]
+
 /-- Kind: dispatcher correspondence.
     Says: CALLVALUE in the zero-value context pushes zero and requests a
     two-gas commit.
@@ -811,6 +830,8 @@ def run : Nat → State → Except Error State
 #print axioms step_exp
 #print axioms Word.leadingZeros_le
 #print axioms Word.leadingZeros_zero
+#print axioms step_origin
+#print axioms step_caller
 #print axioms step_callDataLoad
 #print axioms step_callDataSize
 #print axioms step_callDataCopy

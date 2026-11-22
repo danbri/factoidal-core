@@ -8,11 +8,11 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "3ce6ef28bd7e71dfa2b5df931deba5be452b1248",
+    "EVMCleanroom/Core.lean": "25a18e147653521d0f7e8479a638862b0219176c",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "6a29b0ea0de533d5907ceb72ee79a5a05d6df5ad",
-    "EVMCleanroom/World.lean": "255f115cc6586e911bab142fcee60e2929b2ecf3",
+    "EVMCleanroom/World.lean": "895a4e48a826da2d9c23d24a33f39113deda09c0",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
     "EVMCleanroom/Call.lean": "dc93647332fefb33fd690a3ef298c39ae3baf89f",
@@ -35,7 +35,7 @@
     "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
-    "EVMCleanroom/CallOpcode.lean": "47477b39c9b80e7563bfd966bcc21b86e817f5ad",
+    "EVMCleanroom/CallOpcode.lean": "8bb9fb36f705c4739615aa5b8eb80b1d0d3e0008",
     "scripts/differential/call-opcode.mjs": "c303ca5c17c0f485b01d300c79e2f3f2b30546d1",
     "EVMCleanroom/FrontierTransfer.lean": "a85feceae4af9c1370d661f43ec8f7fcd4837531",
     "scripts/eels/replay-first-mainnet.mjs": "27bb7f161b209c644875aec883f86170f9b17161",
@@ -48,8 +48,8 @@
     "evidence/frontier-keccak-vectors.json": "45eb0eeff0a5fe64df74c85e392571d36d10a157",
     "EVMCleanroom/ValueCall.lean": "c96d8c57bdbe6cde79c0d71d37834b9f0a9f67ac",
     "scripts/differential/value-call.mjs": "c8f984084b8ed39a81645f142734c167239b2858",
-    "EVMCleanroom/CallContextTests.lean": "b9daf2a0e1effbc62fc8052b589378120af2e79e",
-    "scripts/differential/call-context.mjs": "4347690149529a63d3b7090edf3b8126d4a1bd64",
+    "EVMCleanroom/CallContextTests.lean": "205323331ddbecf2f188c8e74379beeefca1b1c2",
+    "scripts/differential/call-context.mjs": "7518029373724316264afd3eb07d28a6c302883e",
     "EVMCleanroom/CallTests.lean": "2d6596346a7092cab12955e4b936303ab4d21473",
     "EVMCleanroom/CalldataProofs.lean": "381db0a2e577b236385f55cf94e9263183895fcd",
     "EVMCleanroom/CallBoundaryTests.lean": "1071872262f7c8b1774ae9b4fd61ce1b1dd60a96",
@@ -1116,6 +1116,34 @@
       ],
       "scope": "Actual Core.step on running SIGNEXTEND with two stack operands calls commit with correct pop order, helper value and five-gas charge.",
       "provenance": "Actually printed by pinned Lean 4.33.1 at published SHA 90bd86bd2fe6363e26b10eb5e90c73d2a7b42ab9, GitHub EVM CI run 45036718007 job 137251997426. Dispatcher correspondence only; not all-fork proof."
+    },
+    {
+      "name": "EVMCleanroom.step_origin",
+      "source_symbol": "step_origin",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual Core.step ORIGIN uses supplied txOrigin and two-gas commit; no context authentication.",
+      "provenance": "2026-11-22 issue #760, expected until exact source compiler axiom audit."
+    },
+    {
+      "name": "EVMCleanroom.step_caller",
+      "source_symbol": "step_caller",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual Core.step CALLER uses the immediate callerAddress field and two-gas commit.",
+      "provenance": "2026-11-22 issue #760, expected until actual Lean 4.33.1 audit."
+    },
+    {
+      "name": "EVMCleanroom.World.frameInput_participants",
+      "source_symbol": "frameInput_participants",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "Actual frameInput projects explicitly supplied txOrigin and callerAddress, not validated transaction provenance.",
+      "provenance": "2026-11-22 issue #760, expected until actual Lean 4.33.1 audit."
     }
   ],
   "external_evidence": {
@@ -2040,5 +2068,18 @@
     "knownProofGap": "General powMod equivalence to mathematical modular power is tested but not yet formally proved; wrapper theorem only establishes actual opcode dispatch.",
     "toolchain": "Lean 4.33.1; CI validation required",
     "performance": "Not yet measured against predecessor; prior CALL tail regression #739 remains open."
+  },
+  "origin_caller_integration": {
+    "status": "source-published-verification-required",
+    "issue": "https://github.com/danbri/factoidal-core/issues/760",
+    "baseCommit": "ec51f506d480954a77ae62344d7c7dd5d70a54bc",
+    "operations": [
+      "ORIGIN 0x32",
+      "CALLER 0x33"
+    ],
+    "expectedAxiomSets": 3,
+    "independentNewChildOracleCases": 32,
+    "totalCallContextCases": 160,
+    "trustLimit": "Explicit participant parameters synthetic until signed transaction provenance and authenticated entry-state validation."
   }
 }

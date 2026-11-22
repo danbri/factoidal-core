@@ -2,7 +2,7 @@
 /**
  * Actual EVM context opcodes across actual parent -> child CALL 0xf1.
  *
- * Test CALLVALUE (0x34), SELFBALANCE (0x47), ADDRESS (0x30) in a child
+ * Test CALLVALUE (0x34), SELFBALANCE (0x47), ADDRESS (0x30), CALLER (0x33) in a child
  * with zero/nonzero value transfer, and SELFBALANCE in the parent AFTER
  * CALL. Both interpreters execute the *same* parent and child bytecode.
  *
@@ -22,6 +22,7 @@ const children = [
   {name:'CALLVALUE',code:'3460005500'},
   {name:'SELFBALANCE',code:'4760005500'},
   {name:'ADDRESS',code:'3060005500'},
+  {name:'CALLER',code:'3360005500'},
   {name:'CALLVALUE+SELFBALANCE',code:'34470160005500'},
 ]
 function program(amount,requested,parentSelfBalance) {
@@ -118,6 +119,6 @@ const report={
   firstFailures:failures.slice(0,5),
 }
 console.log(JSON.stringify(report))
-if(tested!==128||failures.length||!mutatedGasRejected||
+if(tested!==160||failures.length||!mutatedGasRejected||
    childCommitted===0||childFailed===0||observedParentBalance===0)
   process.exitCode=1

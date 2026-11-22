@@ -202,7 +202,9 @@ def beginCall (active : ActiveFrame) : Except Error CallEntry :=
           transfer.map fun childWorld =>
             let child := { frameInput childWorld target budget.childGas parent.readOnly parent.profile with
               callData := ByteView.ofMemory memory ranges.inputOffset ranges.inputSize
-              callValue := value.val }
+              callValue := value.val
+              txOrigin := parent.txOrigin
+              callerAddress := active.address }
             .entered ⟨childWorld, target, active.depth + 1, child⟩ continuation
   | _ => .error .stackUnderflow
 
@@ -379,7 +381,9 @@ theorem beginCall_entered_context (active child : ActiveFrame) (k : Continuation
     child.state.readOnly = active.state.readOnly ∧ child.state.profile = active.state.profile ∧
     child.depth = active.depth + 1 ∧ child.depth ≤ maxDepth ∧
     k.checkpoint = WorldCall.warmTarget (commitFrame active.world active.address active.state) child.address ∧
-    child.world.original = active.world.original := by
+    child.world.original = active.world.original ∧
+    child.state.txOrigin = active.state.txOrigin ∧
+    child.state.callerAddress = active.address := by
   unfold beginCall at h
   dsimp only at h
   split at h
@@ -415,7 +419,7 @@ theorem beginCall_entered_context (active child : ActiveFrame) (k : Continuation
       by_cases hValue : value.val = 0
       · simp only [hValue, if_true, Except.map] at h
         cases h
-        exact ⟨rfl, rfl, rfl, rfl, rfl, hChildDepth, rfl, hOriginal⟩
+        exact ⟨rfl, rfl, rfl, rfl, rfl, hChildDepth, rfl, hOriginal, rfl, rfl⟩
       · simp only [hValue, if_false] at h
         cases hPay : pay checkpoint active.address target value.val with
         | error e =>
@@ -429,7 +433,7 @@ theorem beginCall_entered_context (active child : ActiveFrame) (k : Continuation
           have hTransferOriginal : transferred.original = checkpoint.original := by
             funext address slot
             exact pay_preserves_original hPay address slot
-          exact ⟨rfl, rfl, rfl, rfl, rfl, hChildDepth, rfl, hTransferOriginal.trans hOriginal⟩
+          exact ⟨rfl, rfl, rfl, rfl, rfl, hChildDepth, rfl, hTransferOriginal.trans hOriginal, rfl, rfl⟩
   next => contradiction
 
 /-- Kind: invariant.

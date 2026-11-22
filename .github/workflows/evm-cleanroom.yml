@@ -35,12 +35,12 @@ jobs:
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==112 and x["files"]==77,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==115 and x["files"]==77,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==3,x'
-          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==112 and x["sourceFiles"]==17,x'
+          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==115 and x["sourceFiles"]==17,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -181,12 +181,12 @@ jobs:
           mkdir -p .lake/differential
           node --check scripts/differential/value-call.mjs
           node scripts/differential/value-call.mjs | tee .lake/differential/value-call.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==450 and x["matched"]==450 and x["mismatches"]==0 and x["parentsReverted"]>0 and x["parentsExceptional"]>0 and x["childFailures"]>0 and x["childSuccesses"]>0 and x["comparisonMutationCaught"],x'
-      - name: Compare actual CALLVALUE SELFBALANCE ADDRESS on 128 real child programs
+      - name: Compare actual CALLVALUE SELFBALANCE ADDRESS CALLER on 160 real child programs
         working-directory: formal/lean4/evm-cleanroom
         run: |
           mkdir -p .lake/differential
           node --check scripts/differential/call-context.mjs
-          node scripts/differential/call-context.mjs | tee .lake/differential/call-context.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==128 and x["passed"]==128 and x["failed"]==0 and x["childCommitted"]>0 and x["childFailed"]>0 and x["observedParentBalance"]>0 and x["mutatedGasRejected"],x'
+          node scripts/differential/call-context.mjs | tee .lake/differential/call-context.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==160 and x["passed"]==160 and x["failed"]==0 and x["childCommitted"]>0 and x["childFailed"]>0 and x["observedParentBalance"]>0 and x["mutatedGasRejected"],x'
       - name: Compare calldata, unsigned word operations and bounded frame output against EthereumJS
         shell: bash
         working-directory: formal/lean4

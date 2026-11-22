@@ -37,10 +37,13 @@ def beginTransaction (accounts : Nat → Account) : TxWorld :=
 
 /-- Project one account's transaction-scoped storage into Frame.run. -/
 def frameInput (w : TxWorld) (address gas : Nat)
-    (readOnly : Bool := false) (profile : Profile := .shanghaiPlus) : State :=
+    (readOnly : Bool := false) (profile : Profile := .shanghaiPlus)
+    (originAddress : Nat := 0) (callerAddress : Nat := 0) : State :=
   { code := (w.accounts address).code
     gas := gas
     currentAddress := address
+    txOrigin := originAddress
+    callerAddress := callerAddress
     callValue := 0
     selfBalance := (w.accounts address).balance
     readOnly := readOnly
@@ -74,7 +77,15 @@ theorem frameInput_context (w : TxWorld) (address gas : Nat)
     (frameInput w address gas readOnly profile).profile = profile :=
   ⟨rfl, rfl⟩
 
+/-- World frame entry preserves explicitly supplied caller and transaction origin. -/
+theorem frameInput_participants (w : TxWorld) (address gas : Nat)
+    (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
+    (frameInput w address gas readOnly profile originAddress callerAddress).txOrigin = originAddress ∧
+    (frameInput w address gas readOnly profile originAddress callerAddress).callerAddress = callerAddress :=
+  ⟨rfl, rfl⟩
+
 #print axioms frameInput_address
+#print axioms frameInput_participants
 #print axioms frameInput_balance
 #print axioms frameInput_value_zero
 #print axioms frameInput_context
