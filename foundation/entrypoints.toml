@@ -1771,3 +1771,11 @@ reason = "Proof-bearing Lean validation of the PVGraph document, not a Dataflow 
 [[nonstage]]
 id = "wasm:pvgraphEvaluate"
 reason = "Lean PVGraph reference evaluator, not a Dataflow Stage"
+
+[[nonstage]]
+id = "wasm:pvgraphGpuPlan"
+reason = "Lean PVGraph-to-GPU-plan lowering and admission; not a Dataflow Stage"
+
+[[nonstage]]
+id = "npm:./gdsl#runPVGraph"
+reason = "GPU host binding for a Lean-issued PVGraph plan, with Lean evaluator fallback"
