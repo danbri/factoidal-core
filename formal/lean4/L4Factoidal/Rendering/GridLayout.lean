@@ -276,7 +276,8 @@ store content-box lengths, but a border-box ratio relates the outer box edges. -
 private def gridRatioWidth (s : Computed) (areaW : Float) (areaH : Option Float)
     (stretch : Bool) : Option Float := do
   let (num, den) ← s.pos.ratio
-  if stretch || s.width != .auto || s.pos.ratioAuto || s.display.isTable || num == 0 || den == 0 then none else
+  let autoWidth := match s.width with | .auto => true | _ => false
+  if stretch || !autoWidth || s.pos.ratioAuto || s.display.isTable || num == 0 || den == 0 then none else
   let h ← resolveOpt areaH s.height
   let b := s.borderEdges
   let padH := b.left+b.right+s.padding.left+s.padding.right
