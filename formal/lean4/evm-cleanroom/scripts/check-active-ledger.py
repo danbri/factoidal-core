@@ -58,6 +58,10 @@ def check_theorems(manifest, blobs):
         require("sorryAx" not in claim["axioms_printed"],
                 "sorryAx in claimed axioms: " + claim["name"])
         sym = claim.get("source_symbol", claim["name"].split(".")[-1])
+        # A qualified source_symbol must still designate the named theorem.
+        # Otherwise a tampered claim name can silently inherit the old symbol.
+        require(claim["name"].endswith("." + sym),
+                "theorem name/source_symbol mismatch: " + claim["name"])
         src = (ROOT / claim["source"]).read_text()
         require(re.search(r"\btheorem\s+" + re.escape(sym) + r"\b", src) is not None,
                 "claimed theorem declaration not found: " + claim["name"])
