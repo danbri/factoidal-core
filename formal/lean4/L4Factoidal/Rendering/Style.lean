@@ -1399,10 +1399,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if v <= 0 then throw "font-size must be positive"
     return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
   | "line-height" =>
+    if d.value == "0px" then
+      return {s with lineHeight := 0, lineHeightFactor := none}
     let factor ← if d.value.endsWith "px" then pure none
       else some <$> (if d.value == "normal" then pure 1.2 else number d.value)
     let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
-    if v <= 0 then throw "line-height must be positive"
+    if v < 0 then throw "line-height must be non-negative"
     return {s with lineHeight := v, lineHeightFactor := factor}
   -- `white-space` and `white-space-collapse` (CSS Text 4 §3): white space and line breaks
   -- kept (`pre`, `pre-wrap`, `pre-line`, `break-spaces`, `preserve`) or collapsed
@@ -1849,6 +1851,21 @@ private def applyWinner (parent start s : Computed) (d : Declaration) : Computed
   match wideSource parent start d with
   | some source => (copyProperty d.property source s).getD s
   | none => applyOrKeep s d
+
+/-- The ordinary winning-declaration path sets a zero pixel line height and
+clears the inherited unitless factor, preserving the remaining style fields. -/
+theorem applyWinner_lineHeight_zeroPx (parent start s : Computed) :
+    applyWinner parent start s ⟨"line-height", "0px", false⟩ =
+      {s with lineHeight := 0, lineHeightFactor := none} := by
+  have wide : wideSource parent start ⟨"line-height", "0px", false⟩ = none := by
+    have spelling : (trim "0px").toLower = "0px" := by cbv
+    simp [wideSource, spelling]
+  have supported : appliedName "line-height" = true := by simp [appliedName, ownProperties]
+  have value : apply s ⟨"line-height", "0px", false⟩ =
+      .ok {s with lineHeight := 0, lineHeightFactor := none} := rfl
+  simp only [applyWinner, wide, applyOrKeep, supported, if_true, applyOrKeepSlow, value]
+
+#print axioms applyWinner_lineHeight_zeroPx
 
 /-- `inherit` gives the parent's value. -/
 theorem copyProperty_color (source s : Computed) :
