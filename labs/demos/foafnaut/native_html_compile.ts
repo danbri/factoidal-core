@@ -19,6 +19,8 @@ export type CompileClient={
   pageFonts(source:string):Promise<PageFonts&{workerMs:number}>;
   /** The serif face (serif_font.ts), loaded in the worker, before later calls. */
   serifFont(path:string,family:string):Promise<{value:unknown;workerMs:number}>;
+  /** The monospace face (serif_font.ts), loaded in the worker, before later calls. */
+  monoFont(path:string,family:string):Promise<{value:unknown;workerMs:number}>;
   /** Drop the low-priority call that has not started, if there is one. */
   dropLow():void;
   /** Ordinary and input calls sent and not yet answered. */
@@ -68,6 +70,11 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     dropLow(){if(alive)send({op:"dropLow"}).catch(()=>{});},
     async serifFont(path,family){
       const reply=await send({op:"serifFont",path,family});
+      if(!reply.ok)throw new Error(reply.error);
+      return {value:reply.value,workerMs:reply.ms};
+    },
+    async monoFont(path,family){
+      const reply=await send({op:"monoFont",path,family});
       if(!reply.ok)throw new Error(reply.error);
       return {value:reply.value,workerMs:reply.ms};
     },

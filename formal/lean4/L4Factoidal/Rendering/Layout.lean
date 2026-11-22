@@ -59,6 +59,11 @@ structure FontProfile where
   when it is not the script's. `none`: the family list names no web font, and
   `shapedWord` serves. -/
   familyWord : String → Option (String → Nat → Option Bool → Except String FontProvider.Word) := fun _ => none
+  /-- The ascent and descent, in this profile's units, of the first font of a `font-family`
+  value (`Computed.fontFamily`) when that font is not this profile's own (a web font, the
+  serif or the monospace face): CSS 2.1 §10.8.1, the inline box of text is the content area
+  of its font, with the half-leading of that font. `none`: the profile's own metrics. -/
+  familyMetrics : String → Option (Float × Float) := fun _ => none
 
 def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
   {family := face.family,unitsPerEm := face.unitsPerEm,advance := 0,
@@ -100,10 +105,18 @@ private def spaceWidth (font : FontProfile) (style : Computed) : Except String F
       throw "unsupported painted whitespace glyph in collapsed space profile"
     return word.advance*style.fontSize/font.unitsPerEm
 
+/-- The ascent and descent, in the profile's units, of the font of `style`'s text: its family's
+first font (`familyMetrics`), else the profile's. Before 2026-11-22 every line box used the
+profile's (Noto Sans: 1.069 and 0.293 em), so a line of `font: 20px/1 Ahem` put its baseline
+0.088 em too low and failed the CSS2 reftests drawn with Ahem by 2 px. -/
+def FontProfile.metricsOf (font : FontProfile) (style : Computed) : Float × Float :=
+  (font.familyMetrics style.fontFamily).getD (font.ascent,font.descent)
+
 /-- CSS leading surrounds the actual ascent+descent metric box, which need
 not equal one em (ordinary real fonts often differ). -/
 private def lineLeading (font : FontProfile) (style : Computed) : Float :=
-  (style.lineHeight-(font.ascent+font.descent)*style.fontSize/font.unitsPerEm)/2
+  let (a,d) := font.metricsOf style
+  (style.lineHeight-(a+d)*style.fontSize/font.unitsPerEm)/2
 
 /-- CSS Overflow 3 §3.1: `overflow: hidden` and `overflow: clip` clip the content of a
 box to its padding box (`paddingBox`); the box's own background and border are drawn
@@ -203,15 +216,74 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
   .gradient {shape := .linear (cx-dx*length/2) (cy-dy*length/2) (cx+dx*length/2) (cy+dy*length/2),
              boundingBoxUnits := false,stops}
 
+/-- Most tiles of one background image that a box paints (`backgroundTiles`); a box that
+would need more paints its colour only. -/
+def maxBackgroundTiles : Nat := 4096
+
+private def backgroundTileSize (size : BackgroundSize) (iw ih w h : Float) : Float × Float :=
+  match size with
+  | .cover => let scale := max (w/iw) (h/ih); (iw*scale, ih*scale)
+  | .contain => let scale := min (w/iw) (h/ih); (iw*scale, ih*scale)
+  | .dimensions width height =>
+    match CSS.resolve w width, CSS.resolve h height with
+    | some tw, some th => (tw,th)
+    | some tw, none => (tw,ih*tw/iw)
+    | none, some th => (iw*th/ih,th)
+    | none, none => (iw,ih)
+
+/-- The first background layer is sized against the padding box and clipped to the
+border box. Repeated axes may need a tile before the origin to cover the border. -/
+def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float) : Array Node := Id.run do
+  if b.width == 0 || b.height == 0 then return #[]
+  let iw := Float.ofNat b.width
+  let ih := Float.ofNat b.height
+  let e := s.borderEdges
+  let (tw,th) := backgroundTileSize s.backgroundSize iw ih (max 0 (w-e.left-e.right)) (max 0 (h-e.top-e.bottom))
+  if tw <= 0 || th <= 0 then return #[]
+  let (repeatX,repeatY) := s.backgroundRepeat
+  if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
+    let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
+    return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  let ox := x+e.left
+  let oy := y+e.top
+  let startX := if repeatX then ox-((ox-x)/tw).ceil*tw else ox
+  let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
+  let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1
+  let rows := if repeatY then ((y+h-startY)/th).ceil.toUInt64.toNat else 1
+  if cols*rows > maxBackgroundTiles then return #[]
+  let sx := iw/tw
+  let sy := ih/th
+  let mut out := #[]
+  for j in [0:rows] do
+    for i in [0:cols] do
+      let tx := startX+Float.ofNat i*tw
+      let ty := startY+Float.ofNat j*th
+      let l := max x tx
+      let t := max y ty
+      let r := min (x+w) (tx+tw)
+      let bo := min (y+h) (ty+th)
+      if r > l && bo > t then
+        let image : ImageRecord := ⟨⟨sx,0,0,sy,-tx*sx,-ty*sy⟩,pic,b⟩
+        out := out.push (.paint ⟨some id,{geometry := .rect l t (r-l) (bo-t),style := {fill := .image image}}⟩)
+  return out
+
+private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
+  if !s.visible || w <= 0 || h <= 0 then #[] else
+  match s.background with
+  | none => #[]
+  | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+
+
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
-  let colour := match s.background with
-    | none => #[]
-    | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  let colour := backgroundColour id s x y w h
   -- CSS Backgrounds 3 §3.2: the image over the colour
-  match s.backgroundGradient with
-  | none => colour
-  | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
+  let withGradient := match s.backgroundGradient with
+    | none => colour
+    | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
+  match s.backgroundBitmap with
+  | none => withGradient
+  | some (pic,b) => withGradient ++ backgroundTiles id pic b s x y w h
 
 /-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
 agent): the colour moved 60% of the way to white, and 60% of the colour. -/
@@ -425,6 +497,7 @@ def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float)
   let (offsetX,offsetY) := pictureOffset s.objectPosition (w-iw*sx) (h-ih*sy)
   let dx := x+offsetX
   let dy := y+offsetY
+
   let left := max x dx
   let top := max y dy
   let right := min (x+w) (dx+iw*sx)
@@ -459,6 +532,20 @@ def autoMarginShift (s : Computed) (available outer : Float) : Float :=
   let free := available-outer
   if free <= 0 || !s.autoMarginLeft then 0
   else if s.autoMarginRight then free/2 else free
+
+/-- Resolve the used left margin of a horizontal block in normal flow.
+With specified margins the containing block's direction selects the side that
+absorbs the remaining space. On overflow, auto margins first become zero
+(CSS 2.2 §10.3.3). -/
+def blockMarginShift (s : Computed) (rtl : Bool) (available outer : Float) : Float :=
+  let free := available-outer
+  if rtl && (free < 0 || (!s.autoMarginLeft && !s.autoMarginRight)) then free
+  else autoMarginShift s available outer
+
+#guard blockMarginShift {} true 100 52 == 48
+#guard blockMarginShift {} false 100 52 == 0
+#guard blockMarginShift {autoMarginLeft := true, autoMarginRight := true} true 100 40 == 30
+#guard blockMarginShift {autoMarginRight := true} true 100 120 == -20
 
 /-- The width that margins, borders and padding add to a box. -/
 private def horizontalEdges (s : Computed) : Float :=
@@ -553,6 +640,21 @@ def lineBreakMode (s : Computed) : Unicode.LineBreak.Mode :=
   | .normal => .normal
   | .loose => .loose
 
+/-- The visible fallback for controls that reach the text shaper (CSS Text 3 §4).
+Use the replacement glyph so a font without Control Pictures still draws them.
+The one-code-point substitution retains text offsets. -/
+private def visibleControl (c : Char) : Char :=
+  let n := c.toNat
+  if (0x7F ≤ n && n ≤ 0x9F) || (n < 0x20 && n != 0x09 && n != 0x0A && n != 0x0D) then
+    Char.ofNat 0xFFFD
+  else c
+
+#guard (visibleControl (Char.ofNat 0x01)).toNat == 0xFFFD
+#guard (visibleControl (Char.ofNat 0x7F)).toNat == 0xFFFD
+#guard (visibleControl (Char.ofNat 0x85)).toNat == 0xFFFD
+#guard visibleControl '\t' == '\t' && visibleControl '\n' == '\n' &&
+  visibleControl '\r' == '\r' && visibleControl (Char.ofNat 0x200D) == Char.ofNat 0x200D
+
 private def textItems (id : TextSource) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
   let mut word := ""
@@ -586,7 +688,7 @@ private def textItems (id : TextSource) (style : Computed) (text : String) : Lis
         | .uppercase => TextCase.upper c
         | .lowercase => TextCase.lower c
         | .capitalize => if word.isEmpty then TextCase.upper c else c
-      word := word.push shown
+      word := word.push (visibleControl shown)
       spaced := false
       column := column+1
     index := index+1
@@ -806,7 +908,8 @@ private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x
   match s.background with
   | some c =>
     if !s.visible || width <= 0 then #[] else
-    #[.paint ⟨some source,{geometry := .rect x top width ((font.ascent+font.descent)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
+    let (a,d) := font.metricsOf s
+    #[.paint ⟨some source,{geometry := .rect x top width ((a+d)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
   | none => #[]
 
 /-- All inline participants share the line baseline, computed before any glyph
@@ -819,14 +922,16 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   let mut tallBottom : Float := 0
   if let some style := strut then
     let leading := lineLeading font style
-    ascent := font.ascent*style.fontSize/font.unitsPerEm+leading
-    descent := font.descent*style.fontSize/font.unitsPerEm+leading
+    let (a,d) := font.metricsOf style
+    ascent := a*style.fontSize/font.unitsPerEm+leading
+    descent := d*style.fontSize/font.unitsPerEm+leading
   for (_,item) in items do
     match item with
     | .word _ s _ _ | .space _ s | .lineBreak s =>
       let leading := lineLeading font s
-      ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
-      descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
+      let (a,d) := font.metricsOf s
+      ascent := max ascent (a*s.fontSize/font.unitsPerEm+leading)
+      descent := max descent (d*s.fontSize/font.unitsPerEm+leading)
     -- An atomic box (an inline-block, an inline flex or grid container) sits on the line by
     -- `vertical-align`: on its own baseline (`atomicBaseline`), or by its margin box.
     | .atomic _ s _ h inner => match s.verticalAlign with
@@ -867,8 +972,9 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   let fragment := fun (f : InlineBox.Frame Float) (s : Computed) (ended : Bool) =>
     let b := s.borderEdges
     let scale := s.fontSize/font.unitsPerEm
-    let top := y+ascent-font.ascent*scale-s.padding.top-b.top
-    let height := (font.ascent+font.descent)*scale+s.padding.top+s.padding.bottom+b.top+b.bottom
+    let (a,d) := font.metricsOf s
+    let top := y+ascent-a*scale-s.padding.top-b.top
+    let height := (a+d)*scale+s.padding.top+s.padding.bottom+b.top+b.bottom
     let left := f.lo
     -- never past the box's right edge by a rounding of the subtraction: the width of a
     -- container that shrinks to fit is read from these boxes
@@ -888,10 +994,15 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     let mut extent : Option (Float × Float) := none
     match item with
     | .word source s text start =>
+      -- `top`: where the glyphs' em boxes start in the profile's units (the glyphs are drawn
+      -- at the baseline); `areaTop`: the content area of the text's own font, and `boxTop` its
+      -- line-height box (CSS 2.1 §10.6.1, §10.8.1).
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
       let leading := lineLeading font s
+      let areaTop := y+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm
+      let boxTop := areaTop-leading
       if reordered && s.background.isSome then
-        out := {out with nodes := out.nodes ++ textBackground font source.paint s (x+offset) top (← itemWidth font rtl item)}
+        out := {out with nodes := out.nodes ++ textBackground font source.paint s (x+offset) areaTop (← itemWidth font rtl item)}
       match ← font.word s text rtl with
       | none =>
         -- A character this font has no glyph for shows as a question mark.
@@ -900,7 +1011,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source.geometry,x+offset,top-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
+        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,advance*Float.ofNat chars.length,s.lineHeight⟩}
         extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
       | some word =>
         let scale := s.fontSize/word.unitsPerEm
@@ -908,12 +1019,12 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let glyphs := word.glyphs.map fun glyph =>
           ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source.geometry,x+offset,top-leading,width,s.lineHeight⟩}
+        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩}
         extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
       let leading := lineLeading font s
-      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
+      let top := y+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm-leading
       out := {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes,
                        boxes := out.boxes.push ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩}
       extent := some (x+offset,x+offset+advance)
@@ -2165,7 +2276,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let cy := innerY+rowY.getD cell.row 0
         let w := Table.spanSize widths cell.col cell.colSpan hs
         let h := Table.spanSize rows cell.row cell.rowSpan vs
-        -- Row group, row and cell backgrounds, each in the cell's area (CSS 2.1 §17.5.1).
+        -- The originating column and group paint under the row layers, within the
+        -- cell's area even for a spanning cell (CSS 2.2 §17.5.1). A group with
+        -- no child columns supplies the sizing ID; paint its colour only once.
+        let columnGroup := grid.columnGroups.getD cell.col none
+        let column := grid.columnElements.getD cell.col none
+        if let some id := columnGroup then
+          nodes := nodes ++ backgroundColour id styles[id]! cx cy w h
+        if column != columnGroup then
+          if let some id := column then
+            nodes := nodes ++ backgroundColour id styles[id]! cx cy w h
         let row := grid.rows.getD cell.row ⟨none,none⟩
         for layer in [row.group,row.element] do
           if let some id := layer then nodes := nodes ++ background id (styles[id]!) cx cy w h
@@ -2415,8 +2535,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             | some m => min width m
             | none => width
           max 0 (max ((widthOf s.minWidth).getD 0) width)
-      -- §10.3.3: auto margins share the room the box leaves; an imposed box is placed by its parent.
-      let shift := if imposedWidth.isSome then 0 else autoMarginShift s available (margin.left+width+edgesX+margin.right)
+      -- The parent resolves an imposed box's margins. In horizontal normal flow,
+      -- use the containing block's direction, even when the child has its own.
+      let move := fun outer =>
+        if imposedWidth.isSome then 0 else
+        let containing := (n.parent.bind fun id => styles[id]?).getD s
+        let rtl := s.display.isBlockLevel && containing.pos.writingMode == .horizontalTb &&
+          containing.direction == .rtl
+        blockMarginShift s rtl available outer
+      let shift := move (margin.left+width+edgesX+margin.right)
       -- CSS 2.1 §8.3.1: a block in a block formatting context whose top margin adjoins its
       -- first child's shows the larger of the two, and the child starts at its top edge.
       let joinsTop := imposedWidth.isNone && !contentOnly && collapsesTop dom s id
@@ -2429,7 +2556,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- its auto margins put it.
       let replaced := fun (w h : Float) (content : Float → Float → List Node) (s : Computed) =>
         let (ow,oh,nodes) := replacedBox id s w h content
-        let dx := if imposedWidth.isSome then 0 else autoMarginShift s available ow
+        let dx := move ow
         ({nodes := #[.group none (translate (x+dx) y) nodes],
           boxes := #[⟨id,x+dx+margin.left,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh,
           marginBottom := margin.bottom} : Result)
@@ -2741,6 +2868,7 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
     {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
+            backgroundSize := s.backgroundSize.atViewport vw vh,
             objectPosition := s.objectPosition.map fun (x,y) => (x.atViewport vw vh, y.atViewport vw vh),
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}

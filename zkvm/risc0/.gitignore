@@ -1,0 +1,8 @@
+target/
+*.receipt
+*.bin
+*.elf
+*.journal
+*.seal
+build/
+__pycache__/

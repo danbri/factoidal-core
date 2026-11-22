@@ -1,0 +1,127 @@
+---
+layout: hub-app.njk
+title: Mixed CPU / GPU SPARQL
+appBase: /web/hub/gpu-sparql
+appSource: https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/gpu-sparql
+appEngineLabel: Local runtime
+appEngineUrl: '#runtime'
+permalink: /web/hub/gpu-sparql/
+factoidalEngine: local
+---
+<header class="hero">
+  <p class="eyebrow">SPARQL workbench · local build</p>
+  <h1>One query. CPU and GPU together.</h1>
+  <p class="lede">Load RDF, edit a query and inspect the joins that actually ran. The same query API chooses eligible GPU joins and completes the remaining work on the CPU.</p>
+  <div class="hero-tags"><span>RDF stays in the engine</span><span>Checked GPU readbacks</span><span>No npm release required</span></div>
+</header>
+
+<section class="panel runtime-panel" id="runtime" aria-labelledby="runtime-title">
+  <div class="panel-title"><h2 id="runtime-title">1. Local runtime</h2><span id="webgpu-status" class="badge">Checking WebGPU exposure…</span></div>
+  <p>The default module is this site's copy of the repository. Its matching Wasm build must include the mixed query operations. No CDN package is loaded.</p>
+  <div class="runtime-fields">
+    <label for="runtime-module">Browser module URL
+      <input id="runtime-module" type="text" spellcheck="false" value="{{ '/npm/factoidal/browser.js' | url }}" autocomplete="off">
+    </label>
+    <label for="runtime-assets">Wasm assets directory <span class="muted">(optional)</span>
+      <input id="runtime-assets" type="text" spellcheck="false" placeholder="Default: l4-assets/ beside browser.js" autocomplete="off">
+    </label>
+    <button id="load-runtime" type="button" class="secondary">Load local runtime</button>
+  </div>
+  <p id="runtime-status" class="status" role="status">Ready to load. Run a query to load the runtime automatically.</p>
+  <details>
+    <summary>Use another local build</summary>
+    <p>Serve the Hub and the package from the same HTTP origin, normally <code>http://localhost</code>. Point the module field at that package's <code>browser.js</code>. If needed, point the assets field at the directory containing <code>l4factoidal.js</code>, <code>l4factoidal.mjs</code> and <code>l4factoidal.wasm</code>. Reload the page to change an already loaded runtime.</p>
+    <p>To build from this repository, run <code>bash formal/lean4/Wasm/build-wasm.sh /tmp/factoidal-gpu-demo-wasm</code> with Lean and Emscripten installed. Serve the site with Eleventy, then set the assets directory to <code>{{ '/web/hub/assets/l4/' | url }}</code>. <a href="https://github.com/danbri/factoidal-core/blob/main/docs/web/hub/README.md#mixed-cpu--gpu-sparql-local-runtime-workbench">Full local setup instructions</a>.</p>
+    <p>WebGPU needs a supported browser in a secure context. Automatic mode can use the CPU when WebGPU is absent or the adapter is a known software implementation. Required GPU mode reports a refusal when it cannot complete an eligible join on the device.</p>
+    <pre id="runtime-info">No runtime loaded.</pre>
+  </details>
+</section>
+
+<div class="workspace">
+  <section class="panel" aria-labelledby="data-title">
+    <div class="panel-title"><h2 id="data-title">2. Dataset</h2><span class="step-note">PARSE ONCE · REUSE</span></div>
+    <div class="inline-controls">
+      <label for="sample-size">People in the sample
+        <select id="sample-size"><option value="64">64 · small</option><option value="2048" selected>2,048 · join-sized</option><option value="8192">8,192 · larger</option></select>
+      </label>
+      <button id="load-sample" class="secondary" type="button">Use sample</button>
+    </div>
+    <p>The sample links people to eight projects, with names and optional regions. The larger samples can reach the automatic join threshold; placement still depends on the device.</p>
+    <label for="dataset-file">Or open a local RDF file
+      <input id="dataset-file" type="file" accept=".ttl,.trig,.nt,.nq,.jsonld,.json,.rdf,.xml,.txt">
+    </label>
+    <p class="small">The selected file is read in this page. It is not uploaded.</p>
+    <label for="dataset-format">Input format
+      <select id="dataset-format"><option value="">Detect in the engine</option><option value="turtle" selected>Turtle</option><option value="trig">TriG</option><option value="ntriples">N-Triples</option><option value="nquads">N-Quads</option><option value="jsonld">JSON-LD</option><option value="rdfxml">RDF/XML</option></select>
+    </label>
+    <label for="dataset-text">Editable RDF source
+      <textarea id="dataset-text" rows="12" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+    </label>
+    <button id="load-dataset" class="secondary" type="button">Parse dataset</button>
+    <p id="dataset-status" class="status" role="status">The sample is ready to parse.</p>
+  </section>
+
+  <section class="panel" aria-labelledby="query-title">
+    <div class="panel-title"><h2 id="query-title">3. Query</h2><span class="step-note">SHIPPING QUERY API</span></div>
+    <label for="query-preset">Sample query
+      <select id="query-preset"></select>
+    </label>
+    <label for="query-text">SPARQL <span class="muted">· Ctrl / ⌘ + Enter to run</span>
+      <textarea id="query-text" rows="13" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+    </label>
+    <label for="execution-mode">Execution mode
+      <select id="execution-mode"><option value="auto">Automatic · choose per join</option><option value="cpu">CPU · existing evaluator</option><option value="gpu">Required GPU · refuse if unavailable</option></select>
+    </label>
+    <details class="limits">
+      <summary>Join limits</summary>
+      <div class="inline-controls">
+        <label for="gpu-min-rows">Minimum input rows <span class="muted">(optional)</span>
+          <input id="gpu-min-rows" type="number" min="0" max="1000000" step="1" placeholder="Auto: 1024 · GPU: 1">
+        </label>
+        <label for="gpu-max-pairs">Maximum candidate pairs
+          <input id="gpu-max-pairs" type="number" min="0" max="2097120" step="1" value="1000000">
+        </label>
+      </div>
+      <p>The engine checks these limits. In automatic mode, a refused GPU request resumes on the CPU and preserves the full answer.</p>
+    </details>
+    <div class="actions"><button id="run-query" type="button">Run query</button><button id="compare-cpu" type="button" class="secondary">Run + compare CPU</button></div>
+    <p class="small">Automatic placement uses a conservative size estimate. Required GPU mode also allows software adapters for device testing.</p>
+  </section>
+</div>
+
+<section class="panel results-panel" aria-labelledby="results-title">
+  <div class="panel-title"><h2 id="results-title">Results and execution</h2><button id="download-report" type="button" class="secondary" disabled>Save run report</button></div>
+  <p id="status" class="status" role="status" aria-live="polite">Choose a mode, then run the sample or your own query.</p>
+  <div class="metrics" aria-label="Last completed query">
+    <div><span>Query wall time</span><strong id="query-ms">—</strong></div>
+    <div><span>Result</span><strong id="result-count">—</strong></div>
+    <div><span>GPU joins</span><strong id="gpu-joins">—</strong></div>
+    <div><span>CPU fallbacks</span><strong id="cpu-fallbacks">—</strong></div>
+  </div>
+  <p id="backend-status" class="small">No execution yet.</p>
+  <p id="comparison" class="comparison" role="status">CPU comparison has not been run.</p>
+  <p class="small">Times are single sequential runs in this browser, including query planning, transfer and readback. Runtime loading and dataset parsing are reported separately. Pipeline caches can affect later runs. These measurements do not establish a physical-GPU speedup.</p>
+  <div id="result-view" class="table-wrap" tabindex="0" aria-label="Query result"><p class="empty">Your result will appear here.</p></div>
+  <details><summary>Result data <span class="muted">(first 200 SELECT rows or a bounded graph preview)</span></summary><pre id="result-json">No result.</pre></details>
+
+  <h3>Candidate joins reported by the engine</h3>
+  <p class="small">These are GPU candidates and their outcomes. CPU algebra outside these requests is not counted. “CPU fallbacks” counts refused requests, not all CPU work.</p>
+  <div class="table-wrap" tabindex="0" aria-label="Join execution trace">
+    <table><thead><tr><th>Join</th><th>Backend</th><th>Left rows</th><th>Right rows</th><th>Candidate pairs</th><th>Reason</th></tr></thead><tbody id="join-rows"><tr><td colspan="6">No join trace yet.</td></tr></tbody></table>
+  </div>
+  <details>
+    <summary>Device phases and complete execution metadata</summary>
+    <div class="table-wrap" tabindex="0" aria-label="Observed device phases">
+      <table><thead><tr><th>Round / phase</th><th>Dispatches</th><th>Compile</th><th>Upload</th><th>Dispatch</th><th>Readback</th></tr></thead><tbody id="phase-rows"><tr><td colspan="6">No GPU dispatch observed.</td></tr></tbody></table>
+    </div>
+    <pre id="execution-json">No metadata.</pre>
+  </details>
+</section>
+
+<section class="panel evidence-panel" id="evidence" aria-labelledby="evidence-title">
+  <h2 id="evidence-title">What this run demonstrates</h2>
+  <p>This page calls <code>core.query(dataset, query, options)</code>. The engine owns SPARQL parsing, join placement, RDF matching and query modifiers. The host transports the emitted GPU plans and displays the answer. The CPU comparison is a separate run of the same public API.</p>
+  <p>The checked numeric readback and pure mixed plan have Lean proofs against the reference answer. The registry retains an explicit IO assumption for the stateful session and ABI, which are covered by integration tests. Browser, driver and hardware speed is measured, not proved.</p>
+  <p><a href="https://github.com/danbri/factoidal-core/blob/main/docs/designissues/2026-11-22-mixed-gpu-sparql.md">Architecture and proof boundary</a> · <a href="https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/README.md#mixed-cpuwebgpu-sparql">Query API</a> · <a href="https://github.com/danbri/factoidal-core/blob/main/tools/pvgraph-query-device-smoke.mjs">Device integration tests</a></p>
+  <details><summary>Live registry entry: <code>gpuSparqlStage</code></summary><pre id="registry-json">Load the runtime to read its shipping registry.</pre></details>
+</section>

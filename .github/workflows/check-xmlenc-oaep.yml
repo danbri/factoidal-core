@@ -35,6 +35,18 @@ jobs:
         L4Factoidal.Crypto.RsaOaep.emeEncode_length
         L4Factoidal.Crypto.RsaOaep.emeDecode_emeEncode
         L4Factoidal.Crypto.RsaOaep.oaepDecrypt_oaepEncrypt
+        L4Factoidal.XML.Enc.xmlenc11_pbkdf2_native_eq_rfc8018
+        L4Factoidal.XML.Enc.xmlenc11_kdfOf_concatKdf
+        L4Factoidal.XML.Enc.xmlenc11_derive_concat
+        L4Factoidal.XML.Enc.xmlenc11_derive_pbkdf2_size
+        L4Factoidal.XML.Enc.xmlenc11_derive_pbkdf2_eq_webcrypto
+        L4Factoidal.XML.Enc.xmlenc11_deriveFromMaster_size
+        L4Factoidal.XML.Enc.xmlenc11_derivedKey_concat
+        L4Factoidal.XML.Enc.xmlenc11_derivedKey_pbkdf2_eq_rfc8018
+        L4Factoidal.XML.Enc.xmlenc11_prfOf_prfUri
+        L4Factoidal.XML.Enc.xmlenc11_write_concat
+        L4Factoidal.XML.Enc.xmlenc11_write_pbkdf2_eq_rfc8018
+        L4Factoidal.XML.Enc.xmlenc11_write_derived_size
     steps:
       - uses: actions/checkout@v4
         with:

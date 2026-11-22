@@ -4,6 +4,8 @@ on:
     paths:
       - 'formal/lean4/L4Factoidal/SPARQL/**'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/**'
+      - 'formal/lean4/L4Factoidal/Dataflow/GpuSparql*.lean'
+      - 'formal/lean4/Wasm/Ops/GpuSparql.lean'
       - '.github/workflows/check-gssl-sparql-fastpath.yml'
   workflow_dispatch: {}
 permissions:
@@ -13,7 +15,9 @@ jobs:
     uses: ./.github/workflows/check-dataflow-stage.yml
     with:
       group: gssl-sparql-fastpath
-      timeout_minutes: 20
+      # Match the full-source Wasm/dataflow lanes for the cold query ABI closure.
+      # Per-module limits and all theorem/axiom gates remain in the reusable job.
+      timeout_minutes: 90
       modules: >-
         L4Factoidal.SPARQL.GsslFastPath L4Factoidal.SPARQL.GsslFastPathTests
         L4Factoidal.SPARQL.GsslBgpRefinement
@@ -22,8 +26,19 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.EncodedJoin
         L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement
+        L4Factoidal.SPARQL.PvGraphBgpLowering
+        L4Factoidal.SPARQL.PvGraphHybridPlacement
+        L4Factoidal.Dataflow.XmlSourceGraphStage
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoinSort
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoinIntervals
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoinCorrectness
+        L4Factoidal.SPARQL.GpuQuery L4Factoidal.SPARQL.GpuQueryTests
+        L4Factoidal.Dataflow.GpuSparqlStage
+        L4Factoidal.Dataflow.GpuSparqlReadback
+        Wasm.Ops.GpuSparql
       theorems: >-
         L4Factoidal.SPARQL.GsslFastPath.resolve_eq_indexed
         L4Factoidal.SPARQL.GsslFastPath.unsupported_fallback
@@ -48,6 +63,24 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook.join_eq_of_check
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement.rdfJoin_eq_relationalPlan
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement.encodedJoin_eq_evalBgpIdx
+        L4Factoidal.SPARQL.PvGraphBgpLowering.word_xor_zero_iff
+        L4Factoidal.SPARQL.PvGraphBgpLowering.both_masks_zero_iff
+        L4Factoidal.SPARQL.PvGraphBgpLowering.reconstruct_differences
+        L4Factoidal.SPARQL.PvGraphBgpLowering.pvgraph_low_eq
+        L4Factoidal.SPARQL.PvGraphBgpLowering.pvgraph_high_eq
+        L4Factoidal.SPARQL.PvGraphBgpLowering.matching_eq_encodedJoin64
+        L4Factoidal.SPARQL.PvGraphBgpLowering.encodedJoin64_eq_indexed
+        L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_indexed
+        L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_evalIn
+        L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_namedGraph
+        L4Factoidal.SPARQL.PvGraphBgpLowering.namedDecoded_eq_graphVariable
+        L4Factoidal.SPARQL.PvGraphBgpLowering.Prepared.correct
+        L4Factoidal.SPARQL.PvGraphHybridPlacement.run_eq_indexed
+        L4Factoidal.SPARQL.PvGraphHybridPlacement.chosen_eq_indexed
+        L4Factoidal.SPARQL.PvGraphHybridPlacement.runWithLease_eq_indexed
+        L4Factoidal.SPARQL.PvGraphHybridPlacement.serviceStage_contract
+        L4Factoidal.Dataflow.XmlSourceGraphStage.sourceDataset_lookup
+        L4Factoidal.Dataflow.XmlSourceGraphStage.ingestSourceStage_exact
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_identity
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_code_eq_iff
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_eqb_for_codes
@@ -63,3 +96,14 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.decodeTerm_encodeTerm
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.decodeTerm_encodeTerm?
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes.readRecord_recordWords
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin.filter_sortEntries
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin.interval_complete
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin.filter_range_of_interval
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin.acceptRanges_sound
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin.acceptPacked_sound
+        L4Factoidal.SPARQL.GpuQuery.begin_sound
+        L4Factoidal.SPARQL.GpuQuery.Plan.run_eq
+        L4Factoidal.Dataflow.gpuSparqlPlan_sound
+        L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin.accepted_join_eq_reference
+        L4Factoidal.Dataflow.checkedGpuSparqlDeviceReply_valid
+        L4Factoidal.Dataflow.checkedGpuSparqlPlan_sound

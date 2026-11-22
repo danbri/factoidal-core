@@ -192,10 +192,11 @@ PY
 # build-web-render.sh's import walk of the Wasm engine's modules, which refuses Std modules
 # the Wasm runtime does not link; run on the sources, without the build.
 std_in_wasm() {
-  local walk script
+  local walk script roots_text root
+  local roots=()
   # The commit's own walk; an older commit without one is checked with this checkout's walk.
   for script in "$LAB/build-web-render.sh" "$ROOT/labs/demos/foafnaut/build-web-render.sh"; do
-    walk=$(awk '/python3 - "\$PROJECT" "\$BUILD\/core-c-files.txt" <<.PY./{p=1; next} p&&/^PY$/{exit} p{print}' "$script")
+    walk=$(awk '/^python3 - "\$PROJECT" "\$BUILD\/core-c-files.txt"/ && /<<.PY./{p=1; next} p&&/^PY$/{exit} p{print}' "$script")
     if printf '%s\n' "$walk" | grep -q STD_IN_WASM; then break; fi
   done
   # Generated modules (formal/lean4/.gitignore, written by the engine build) import nothing;
@@ -205,7 +206,19 @@ std_in_wasm() {
     [ -e "$TREE/formal/lean4/$g" ] || : > "$TREE/formal/lean4/$g"
   done
   printf '%s\n' "$walk" | grep -q STD_IN_WASM || { echo "premerge: build-web-render.sh has no Std import walk"; return 1; }
-  python3 -I - "$TREE/formal/lean4" /dev/null <<<"$walk" && echo "no Std import outside the Wasm runtime's Std in the engine's modules"
+  # The current builder passes its shared CORE array to the walk. Older walks
+  # used a literal list and ignore these extra arguments. Never accept an empty
+  # or unrecognised root list: that would make the current walk check nothing.
+  roots_text=$(sed -n 's/^CORE=(\(.*\))$/\1/p' "$script")
+  [ -n "$roots_text" ] || { echo "premerge: build-web-render.sh has no CORE root list"; return 1; }
+  read -r -a roots <<<"$roots_text"
+  [ -n "${roots[0]:-}" ] || { echo "premerge: build-web-render.sh has an empty CORE root list"; return 1; }
+  for root in "${roots[@]}"; do
+    [[ "$root" =~ ^L4Factoidal\.[A-Za-z_][A-Za-z0-9_.]*$ ]] || {
+      echo "premerge: unrecognised CORE root in build-web-render.sh: $root"; return 1;
+    }
+  done
+  python3 -I - "$TREE/formal/lean4" /dev/null "${roots[@]}" <<<"$walk" && echo "no Std import outside the Wasm runtime's Std in the engine's modules"
 }
 
 # tools/binary-budget.py imports: no Lean module outside Lean.Data (tactics: Lean.Elab, Lean.Meta)

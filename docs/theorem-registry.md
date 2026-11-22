@@ -3749,3 +3749,28 @@ first duplicate slot (`FunInfo.indexOf_lookup`); absence and both threshold
 branches are covered. No claim about arbitrary indexes, all environment
 mutations, JavaScript conformance or speed. Imported by `L4Factoidal.JS`;
 standard axioms only. See [scope and checks](20261110-foafnaut-js-env-index.md).
+
+## Checked ASK attestation computation (2026-11-22)
+
+Work item: [Local ASK attestations, issue 745](https://github.com/danbri/factoidal-core/issues/745).
+The new checked runners retain the existing RDFS and SPARQL-RL semantics,
+but successful output requires actual convergence instead of unreported
+fuel exhaustion. Their 35 public theorems are recorded in
+[checked saturation](20261122-checked-saturation.md).
+
+The attestation modules add structural, admission and execution properties:
+
+| Theorems, under `L4Factoidal.Attestation` | Checked statement |
+| --- | --- |
+| `boolWord_size`, `Journal.encode_size`, `publicOutput_error`, `abiResult_error_empty` | Exact ABI size; every failure has no public journal |
+| `AdmittedPolicy.isAsk`, `positiveRule_general`, `AdmittedPolicy.rules_general`, `AdmittedPolicy.rules_negBlind`, `AdmittedPolicy.rules_validated` | Concrete admission excludes ASK's non-ASK fallback and discharges actual rule validation/general-rule hypotheses |
+| `admitPolicy_source` | Successful admission retains the exact supplied policy text, regime and limits |
+| `bnodeRewriteSafe_disjoint`, `AdmittedPolicy.bnodeRewriteSafe` | Actual admitted ASK patterns keep rewritten blank-node variable names distinct from explicit user variables |
+| `Evaluation.answer`, `attest_of_evaluate_error`, `makeJournal_satisfied`, `attest_success` | Actual successful computation reaches the existing ASK evaluator on the completed checked graph; errors cannot become successful false |
+| `hash32_bytes`, `makeJournal_bindings` | Exact supplied hash messages bind original bytes plus salt, admitted source policy and context |
+| `attest_wrong_salt`, `attest_context_limit` | Defined refusal before evaluation and hashing at those input bounds |
+
+Each listed theorem was kernel checked with an actual allowed-axiom report.
+These are not cryptographic soundness or zero-knowledge theorems, parser
+conformance claims, or proofs of the compiler/runtime/HACL* FFI. See the
+[protocol and trust boundaries](20261122-ask-attestation-pipeline.md).

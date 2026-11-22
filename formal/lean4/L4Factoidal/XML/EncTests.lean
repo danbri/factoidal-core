@@ -67,6 +67,7 @@ def stubPrims : Prims where
   p256Ecdh xy sk := if xy.size == 64 then some (xorB (xy.extract 0 32) (sha256 sk)) else none
   x25519Public sk := some (sha256 sk)
   x25519 sk pub := if pub.size == 32 then some (xorB pub (sha256 sk)) else none
+  pbkdf2 a := WebCrypto.pbkdf2 a.pure
 
 def bytes (n : Nat) (seed : Nat) : ByteArray := ⟨((List.range n).map fun i => (i * 7 + seed).toUInt8).toArray⟩
 
@@ -177,6 +178,47 @@ def decryptText (s : String) (ks : Keys := keys) (opts : Opts := {}) (cipher : C
   match parseXML s with
   | .ok d => decrypt cipher stubPrims ks opts d
   | .error _ => refuse "does not parse"
+
+/-! ## The writer's §5.4 key derivation (PBKDF2 and DerivedKey) -/
+
+-- The writer's PBKDF2 (§5.4.2) in key agreement: P-256 and X25519, every PRF.
+#guard roundTrips (encryptCard { recipient := .agree (some "ec-1") .p256 ecPub 16, kdf := .pbkdf2 .sha256 1000 })
+#guard roundTrips (encryptCard { keyLen := 32, recipient := .agree none .x25519 xPub 32, kdf := .pbkdf2 .sha1 10 })
+#guard roundTrips (encryptCard { recipient := .agree none .x25519 xPub 16, kdf := .pbkdf2 .sha384 3 8 })
+#guard roundTrips (encryptCard { recipient := .agree none .x25519 xPub 32, kdf := .pbkdf2 .sha512 2 32 })
+-- xenc11:DerivedKey (§5.4.3) from the symmetric master key "kek128": Concat KDF and PBKDF2.
+#guard roundTrips (encryptCard { recipient := .derived (some "kek128") kek16 16 })
+#guard roundTrips (encryptCard { keyLen := 32, recipient := .derived (some "kek128") kek16 32, kdf := .pbkdf2 .sha256 100 })
+#guard roundTrips (encryptCard { recipient := .derived none kek16 16, kdf := .pbkdf2 .sha1 1 })
+-- What the writer writes for PBKDF2: the schema order, and the reader's names.
+#guard match encryptCard { recipient := .derived (some "kek128") kek16 16, kdf := .pbkdf2 .sha256 1000 } with
+  | .ok d =>
+      let t := serializeDocument d
+      let pos (frag : String) : Nat := ((t.splitOn frag).headD "").length
+      (t.splitOn "xenc11:DerivedKey").length == 3 &&
+      pos "<xenc11:Salt>" < pos "<xenc11:IterationCount>1000<" &&
+      pos "<xenc11:IterationCount>" < pos "<xenc11:KeyLength>16<" &&
+      pos "<xenc11:KeyLength>" < pos ("<xenc11:PRF Algorithm=\"" ++ hmacSha256Prf) &&
+      pos "</xenc11:KeyDerivationMethod>" < pos "<xenc11:MasterKeyName>kek128<"
+  | .error _ => false
+-- A wrong master key: the one decryption error.
+#guard match encryptCard { recipient := .derived (some "kek128") kek16 16, kdf := .pbkdf2 .sha256 5 } with
+  | .ok d => failsWith (reopen d (ks := { keys with sym := [{ kid := some "kek128", k := bytes 16 77 }] }))
+      isDecryptFailed
+  | .error _ => false
+-- The reader's iteration limit holds for what the writer wrote.
+#guard match encryptCard { recipient := .derived (some "kek128") kek16 16, kdf := .pbkdf2 .sha256 50 } with
+  | .ok d => failsWith (reopen d (opts := { maxPbkdf2Iterations := 49 })) (refusedHas "above the limit")
+  | .error _ => false
+-- The writer's limits: iterations 1 to 1,000,000, a salt of 8 to 64 octets.
+#guard failsWith (encryptCard { recipient := .derived none kek16 16, kdf := .pbkdf2 .sha256 0 })
+  (refusedHas "PBKDF2 iterations")
+#guard failsWith (encryptCard { recipient := .derived none kek16 16, kdf := .pbkdf2 .sha256 1000001 })
+  (refusedHas "PBKDF2 iterations")
+#guard failsWith (encryptCard { recipient := .derived none kek16 16, kdf := .pbkdf2 .sha256 10 4 })
+  (refusedHas "salt")
+-- A key wrap key of 24 octets is refused before any derivation.
+#guard failsWith (encryptCard { recipient := .derived none kek16 24 }) (refusedHas "16 or 32")
 
 -- An altered ciphertext fails the tag: the one decryption error.
 #guard match encryptCard (rsaSpec false) with
@@ -391,5 +433,145 @@ def drive (run : Cipher → M Document) (answer : Cipher) : (fuel : Nat) → Lis
 #guard unpad ⟨#[1, 2, 0]⟩ == none
 #guard nestingWithin 2 "<a><b/></a>".toList 0
 #guard !nestingWithin 2 "<a><b><c/></b></a>".toList 0
+
+/-! ## PBKDF2 key derivation (§5.4.2) -/
+
+/-- A `KeyDerivationMethod` element from its text, or none. -/
+def kdmOf (s : String) : Option DSig.El :=
+  match parseXML s with
+  | .ok d => DSig.elOf? Canonical.rootScope d.root
+  | .error _ => none
+
+def kdmText (it len prf : String) (salt : String := "AAECAwQFBgc=") : String :=
+  "<k:KeyDerivationMethod xmlns:k=\"" ++ xenc11Ns ++ "\" Algorithm=\"" ++ pbkdf2Alg ++ "\"><k:PBKDF2-params>" ++
+  "<k:Salt><k:Specified>" ++ salt ++ "</k:Specified></k:Salt><k:IterationCount>" ++ it ++
+  "</k:IterationCount><k:KeyLength>" ++ len ++ "</k:KeyLength><k:PRF Algorithm=\"" ++ prf ++
+  "\"/></k:PBKDF2-params></k:KeyDerivationMethod>"
+
+def pbOk (s : String) (p : Pbkdf2Params → Bool) : Bool :=
+  match kdmOf s with
+  | some e => match pbkdf2Params {} e with
+    | .ok q => p q
+    | .error _ => false
+  | none => false
+
+def pbRefused (s : String) (frag : String) : Bool :=
+  match kdmOf s with
+  | some e => match kdfOf {} e with
+    | .error (.refused m) => (m.splitOn frag).length ≥ 2
+    | _ => false
+  | none => false
+
+#guard positiveInteger? "2000" == some 2000
+#guard positiveInteger? " +07 " == some 7
+#guard positiveInteger? "0" == none
+#guard positiveInteger? "-1" == none
+#guard positiveInteger? "1e3" == none
+#guard positiveInteger? "1234567890123" == none
+#guard prfOf? hmacSha256Prf == some .sha256
+#guard prfOf? "http://www.w3.org/2001/04/xmldsig-more#hmac-sha224" == none
+#guard pbOk (kdmText "2000" "32" hmacSha256Prf) fun p =>
+  p.iterations == 2000 && p.keyLength == 32 && p.prf == .sha256 && p.salt.size == 8
+#guard pbOk (kdmText "1" "16" hmacSha1Prf) (·.prf == .sha1)
+#guard pbRefused (kdmText "0" "32" hmacSha256Prf) "IterationCount"
+#guard pbRefused (kdmText "1000001" "32" hmacSha256Prf) "above the limit"
+#guard pbRefused (kdmText "10" "32" "urn:x") "PRF"
+#guard pbRefused (kdmText "10" "32" hmacSha256Prf "!!") "not base64"
+#guard pbRefused ((kdmText "10" "32" hmacSha256Prf).replace "pbkdf2\"" "hkdf\"") "not supported"
+-- RFC 6070 test 2 (PBKDF2-HMAC-SHA1, 2 iterations) through a stub's derivation.
+#guard match kdmOf (kdmText "2" "20" hmacSha1Prf (base64 "salt".toUTF8)) with
+  | some e => match kdfOf {} e with
+    | .ok k => (k.derive? stubPrims "password".toUTF8 20).map hexOf ==
+        some "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957"
+    | .error _ => false
+  | none => false
+-- A derived key of another length than the one it is used for is not given.
+#guard match kdmOf (kdmText "2" "20" hmacSha1Prf) with
+  | some e => match kdfOf {} e with
+    | .ok k => (k.derive? stubPrims "password".toUTF8 16).isNone
+    | .error _ => false
+  | none => false
+
+/-! ## Derived keys (§5.4.3) and octets (§4.4 step 3) -/
+
+def master32 : ByteArray := bytes 32 21
+
+def dkText (kdm : String) (extra : String := "<k:MasterKeyName>m1</k:MasterKeyName>") : String :=
+  "<k:DerivedKey xmlns:k=\"" ++ xenc11Ns ++ "\">" ++ kdm ++ extra ++ "</k:DerivedKey>"
+
+def concatKdm : String :=
+  "<k:KeyDerivationMethod Algorithm=\"" ++ concatKdfAlg ++ "\"><k:ConcatKDFParams AlgorithmID=\"0001\" " ++
+  "PartyUInfo=\"0002\" PartyVInfo=\"0003\"><ds:DigestMethod xmlns:ds=\"" ++ L4Factoidal.XML.DSig.dsNs ++
+  "\" Algorithm=\"" ++ sha256Digest ++ "\"/></k:ConcatKDFParams></k:KeyDerivationMethod>"
+
+def dkKeys : Keys := { sym := [{ kid := some "m1", k := master32 }, { kid := some "kek128", k := kek16 }] }
+
+def dkRun (s : String) (n : Nat) (ks : Keys := dkKeys) : M ByteArray :=
+  match kdmOf s with
+  | some e => derivedKey stubPrims ks e n
+  | none => refuse "does not parse"
+
+def mRefused (r : M ByteArray) (frag : String) : Bool :=
+  match r with
+  | .error (.refused m) => (m.splitOn frag).length ≥ 2
+  | _ => false
+
+def concatParams : ConcatKdf.XmlEncParams :=
+  { algorithmId := some ⟨#[0, 1]⟩, partyUInfo := some ⟨#[0, 2]⟩, partyVInfo := some ⟨#[0, 3]⟩ }
+
+-- A Concat KDF DerivedKey is §5.4.1 over the named master key.
+#guard match dkRun (dkText concatKdm) 32 with
+  | .ok k => some k == ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash master32 32 concatParams && k.size == 32
+  | .error _ => false
+-- A PBKDF2 DerivedKey is RFC 8018 PBKDF2 over the master key as the password.
+#guard match dkRun (dkText (kdmText "3" "16" hmacSha256Prf)) 16 with
+  | .ok k => k == WebCrypto.pbkdf2 WebHacl.HashAlg.sha256.pure master32
+      ((base64Decode? "AAECAwQFBgc=").getD ByteArray.empty) 3 16
+  | .error _ => false
+#guard mRefused (dkRun (dkText (kdmText "3" "32" hmacSha256Prf)) 16) "KeyLength"
+#guard mRefused (dkRun (dkText "") 32) "no xenc11:KeyDerivationMethod"
+#guard mRefused (dkRun (dkText concatKdm "<k:MasterKeyName>nope</k:MasterKeyName>") 32) "no symmetric master key named nope"
+#guard mRefused (dkRun (dkText concatKdm "") 32) "more than one symmetric master key"
+#guard mRefused (dkRun (dkText concatKdm "<k:Other/>") 32) "unsupported or repeated child Other"
+#guard mRefused (dkRun (dkText (concatKdm ++ concatKdm)) 32) "repeated child"
+-- With one symmetric key, MasterKeyName may be left out.
+#guard (dkRun (dkText concatKdm "") 32 (ks := { sym := [{ k := master32 }] })).toOption.isSome
+
+/-- An `EncryptedData` with the stub AES-GCM of `pt` under `key`, IV `iv`. -/
+def gcmDoc (keyInfo : String) (key iv pt : ByteArray) (typ : String := "") : String :=
+  let ct := (stubCipher.call { op := .gcmEncrypt, key, iv, data := pt }).toOption.getD ByteArray.empty
+  "<xenc:EncryptedData xmlns:xenc=\"" ++ xencNs ++ "\" xmlns:ds=\"" ++ L4Factoidal.XML.DSig.dsNs ++ "\"" ++
+  (if typ.isEmpty then "" else " Type=\"" ++ typ ++ "\"") ++ "><xenc:EncryptionMethod Algorithm=\"" ++
+  aes128Gcm ++ "\"/>" ++ keyInfo ++ "<xenc:CipherData><xenc:CipherValue>" ++ base64 (iv ++ ct) ++
+  "</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData>"
+
+def octetsOf (s : String) (ks : Keys := dkKeys) : M ByteArray :=
+  match parseXML s with
+  | .ok d => decryptOctets stubCipher stubPrims ks {} d
+  | .error _ => refuse "does not parse"
+
+def octPt : ByteArray := ⟨#[0xd9, 0x31, 0x32, 0x25, 0, 1, 2, 255]⟩
+def namedKi : String := "<ds:KeyInfo><ds:KeyName>kek128</ds:KeyName></ds:KeyInfo>"
+
+-- No Type: the octets, not a document.
+#guard (octetsOf (gcmDoc namedKi kek16 (bytes 12 6) octPt)).toOption == some octPt
+#guard failsWith (decryptText (gcmDoc namedKi kek16 (bytes 12 6) octPt) (ks := dkKeys)) (refusedHas "no Type")
+-- The octets of an Element EncryptedData are the text that `decrypt` parses.
+#guard (octetsOf (gcmDoc namedKi kek16 (bytes 12 6) "<a/>".toUTF8 typeElement)).toOption == some "<a/>".toUTF8
+-- A content key from a DerivedKey (here, 16 octets by Concat KDF).
+#guard match ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash master32 16 concatParams with
+  | some cek => (octetsOf (gcmDoc ("<ds:KeyInfo>" ++ dkText concatKdm ++ "</ds:KeyInfo>") cek (bytes 12 7) octPt)).toOption
+      == some octPt
+  | none => false
+-- A wrong master key: the one decryption error.
+#guard match ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash master32 16 concatParams with
+  | some cek =>
+      match octetsOf (gcmDoc ("<ds:KeyInfo>" ++ dkText concatKdm ++ "</ds:KeyInfo>") cek (bytes 12 7) octPt)
+          (ks := { sym := [{ kid := some "m1", k := bytes 32 99 }] }) with
+      | .error .decryptFailed => true
+      | _ => false
+  | none => false
+-- The octets form needs an EncryptedData document element.
+#guard mRefused (octetsOf "<r/>") "must be xenc:EncryptedData"
 
 end L4Factoidal.XML.EncTests

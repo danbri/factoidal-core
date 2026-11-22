@@ -1,4 +1,5 @@
 import WebRenderFontRequests
+import L4Factoidal.Epub
 import L4Factoidal.DOM.OfXml
 import WebRenderScript
 import WebXslt
@@ -555,13 +556,102 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
     sheets := (from_,source)::sheets
   return (sheets.reverse,ds)
 
+/-! ### Background images (CSS Backgrounds 3 §3.3, issue 704)
+
+A `url(...)` in a `background` or `background-image` declaration is resolved against the URL of
+the sheet it is in (CSS Values 4 §4.5), or of the document for a `style` element or attribute,
+when the sheets are read (`backgroundUrlsAbsolute`), so the cascade holds absolute URLs. The
+host fetches them as it fetches images: `inspect` lists them (`backgroundImages`) once it has
+the sheets (its second call, with `resources`). After the cascade each element's image is
+looked up in the supplied images and decoded (`attachBackgrounds`). -/
+
+/-- The argument of a `url(` whose text follows: its URL, and the text after its `)`. -/
+private def urlArg (p : String) : Option (String × String) :=
+  let cs := p.toList.dropWhile Char.isWhitespace
+  match cs with
+  | [] => none
+  | q :: more =>
+    if q == '"' || q == '\'' then
+      let inner := more.takeWhile (· != q)
+      if inner.length == more.length then none else
+      match (more.drop (inner.length+1)).dropWhile Char.isWhitespace with
+      | ')' :: rest => some (String.ofList inner,String.ofList rest)
+      | _ => none
+    else
+      let inner := cs.takeWhile (· != ')')
+      if inner.length == cs.length then none else
+      some (String.ofList (inner.reverse.dropWhile Char.isWhitespace).reverse,String.ofList (cs.drop (inner.length+1)))
+
+/-- Whether the declaration that the text after `t` is in names a background property: the
+text after the last `{` or `;` of `t` mentions `background`, or `t` has neither and the
+declaration before it did (`prev`). -/
+private def inBackground (prev : Bool) (t : String) : Bool :=
+  let cs := t.toLower.toList
+  let tail := (cs.reverse.takeWhile (fun c => c != '{' && c != ';' && c != '}')).reverse
+  let mentions := fun (l : List Char) => ((String.ofList l).splitOn "background").length > 1
+  if tail.length < cs.length then mentions tail else prev || mentions cs
+
+private def resolveBackgroundUrl (base u : String) : String :=
+  if base.isEmpty || u.toLower.startsWith "data:" then u else Syntax.resolveIri base u
+
+/-- CSS text with each `url(...)` of a background declaration absolute, against `base`. Text
+with no `url(` is given back as it is. -/
+def backgroundUrlsAbsolute (base text : String) : String := Id.run do
+  let pieces := text.splitOn "url("
+  if pieces.length < 2 then return text
+  let mut out := pieces.head!
+  let mut st := inBackground false pieces.head!
+  for p in pieces.tail do
+    match urlArg p with
+    | some (u,rest) =>
+      if st && !u.isEmpty && !u.contains '"' then
+        out := out ++ "url(\"" ++ resolveBackgroundUrl base u ++ "\")" ++ rest
+      else out := out ++ "url(" ++ p
+      st := inBackground st rest
+    | none =>
+      out := out ++ "url(" ++ p
+      st := inBackground st p
+  return out
+
+/-- The absolute URLs of the `url(...)` of background declarations in CSS text. -/
+def backgroundUrlsOf (base text : String) : List String := Id.run do
+  let pieces := text.splitOn "url("
+  if pieces.length < 2 then return []
+  let mut out : List String := []
+  let mut st := inBackground false pieces.head!
+  for p in pieces.tail do
+    match urlArg p with
+    | some (u,rest) =>
+      if st && !u.isEmpty then out := resolveBackgroundUrl base u :: out
+      st := inBackground st rest
+    | none => st := inBackground st p
+  return out.reverse
+
+#guard backgroundUrlsAbsolute "https://a.test/css/s.css" "p{background:url(i.png) no-repeat} q{content:url(x.png)}" ==
+  "p{background:url(\"https://a.test/css/i.png\") no-repeat} q{content:url(x.png)}"
+#guard backgroundUrlsOf "https://a.test/" "div { color: red; background-image: url('a b.png'), url(c.png) }" ==
+  ["https://a.test/a b.png","https://a.test/c.png"]
+#guard backgroundUrlsOf "https://a.test/" "div { list-style: url(m.png) }" == []
+
+/-- The document with each `style` attribute's background URLs absolute against `base`. -/
+def styleAttributesAbsolute (dom : DOM.Dom) (base : String) : DOM.Dom :=
+  if !dom.nodes.any (fun n => n.attrs.any (fun a => a.lname == "style" && (a.value.splitOn "url(").length > 1)) then dom
+  else {dom with nodes := dom.nodes.map fun n =>
+    if n.attrs.any (fun a => a.lname == "style" && (a.value.splitOn "url(").length > 1) then
+      {n with attrs := n.attrs.map fun a => if a.lname == "style" then {a with value := backgroundUrlsAbsolute base a.value} else a}
+    else n}
+
+/-- Most background images that a page has fetched. -/
+private def maxBackgroundImages : Nat := 64
+
 /-- The text of a document's sheets, read as one. -/
 def sheetSource (sheets : List (String × String)) : String := String.intercalate "\n" (sheets.map (·.2))
 
 /-- The rules of sheets in `env`: `CSS.parseIn env`, with the sheets read once (`sheetIn`). -/
 def rulesOfSheets (kept : Kept) (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) :
     Except String (List Rendering.CSS.Rule × Made) := do
-  let (raw,made) := sheetIn kept (sheetSource sheets)
+  -- background URLs absolute against each sheet's own URL, before the sheets are joined
+  let (raw,made) := sheetIn kept (sheetSource (sheets.map fun (b,t) => (b,backgroundUrlsAbsolute b t)))
   return (Rendering.CSS.parseInRaw env (← raw),made)
 
 /-- The rules of the document's sheets in `env` (`sheetsIn`). -/
@@ -703,14 +793,38 @@ def importsLacking (dom : DOM.Dom) (url : String) (request : JSON.Json) : List S
       Rendering.ImportTree.lackingOf importEdges Syntax.resolveIri (fun u => given.lookup u) from_ text).eraseDups.take
         Rendering.ImportTree.maxSheets
 
+/-- The background images of a page that a host fetches (`backgroundImages` of `inspect`):
+the background URLs of its `style` elements, of its `style` attributes, and of the linked and
+imported sheets the request gives, each against its own base; at most
+`maxBackgroundImages`, `data:` URLs left out (the engine decodes those itself). -/
+def backgroundImageRequests (dom : DOM.Dom) (url : String) (request : JSON.Json) : List String :=
+  let base := baseURL dom url
+  let given := (importedSheets request).toOption.getD []
+  let texts : List (String × String) := (dom.treeOrder 0).toList.flatMap fun id =>
+    let n := dom.get id
+    let own := match n.attrs.find? (·.lname == "style") with
+      | some a => [(base,a.value)]
+      | none => []
+    if DOM.Dom.isHtmlElement n "style" then (base,(dom.textContent id).getD "") :: own
+    else if stylesheet n && Rendering.CSS.hasAttribute n "href" then
+      match supplied request id with
+      | .ok (some text) => ((suppliedURL request id).getD base,text) :: own
+      | _ => own
+    else own
+  ((texts ++ given).flatMap fun (b,t) => backgroundUrlsOf b t).eraseDups.filter
+    (!·.toLower.startsWith "data:") |>.take maxBackgroundImages
+
 /-- What the host fetches for a page, in the mode of `request`. In liberal mode the answer
 has `diagnostics`, the skips (`WebAccept.Diagnostic.json`), when there are any. With sheets
-that import others, `imports`: the URLs of the imported sheets the request does not give. -/
+that import others, `imports`: the URLs of the imported sheets the request does not give.
+With background images in its sheets or styles, `backgroundImages` (`{key,url}`). -/
 def inspect (dom : DOM.Dom) (url : String) (request : JSON.Json := .object []) : Except String JSON.Json := do
   let (answer,ds) ← WebAccept.accept (WebAccept.mode request) fun m => inspectIn m dom url (scripting request)
   let lacking := importsLacking dom url request
+  let backgrounds := backgroundImageRequests dom url request
   let more : List (String × JSON.Json) :=
     (if lacking.isEmpty then [] else [("imports",.array (lacking.map fun u => .object [("url",.string u)]))]) ++
+    (if backgrounds.isEmpty then [] else [("backgroundImages",.array (backgrounds.map fun u => .object [("key",.string u),("url",.string u)]))]) ++
     (if ds.isEmpty then [] else [("diagnostics",WebAccept.diagnosticsJSON ds)])
   match answer with
   | .object fields => return .object (fields ++ more)
@@ -1554,6 +1668,11 @@ structure Holds where
   serif text (`layOutDOMIn`), so a page with none lays out as with no face held. A host that
   has not given it learns from `Laid.wantsSerif`. -/
   serif : Array Rendering.SfntProfile.Font := #[]
+  /-- The monospace face (`FontFaceRule.genericOf`), when the host gave it (`fontLoad` mode 4,
+  `loadMonoFont`), held and used as the serif face is: a layout draws with it only on a page
+  whose cascade has monospace text, and a host that has not given it learns from
+  `Laid.wantsMono`. -/
+  mono : Array Rendering.SfntProfile.Font := #[]
 
 instance : Inhabited Holds := ⟨{}⟩
 
@@ -1594,10 +1713,22 @@ private def loadSerifFont (h : Holds) (bytes : ByteArray) (family sha256 : Strin
     ({h with serif := #[font]}, .ok (JSON.Json.object [("serif",.string font.family),
       ("glyphs",.number (toString font.face.numGlyphs))]).toString)
 
+/-- Hold the monospace face (`fontLoad` mode 4): the policy refuses it or it replaces the one
+held. Layouts draw with it the text whose family list resolves to `monospace`
+(`FontFaceRule.genericOf`). -/
+private def loadMonoFont (h : Holds) (bytes : ByteArray) (family sha256 : String) : Holds × Except String String :=
+  match Rendering.SfntProfile.Font.read bytes family sha256 with
+  | .error e => (h, .error e)
+  | .ok font =>
+    ({h with mono := #[font]}, .ok (JSON.Json.object [("mono",.string font.family),
+      ("glyphs",.number (toString font.face.numGlyphs))]).toString)
+
 /-- The held fonts that a layout depends on, by family and SHA-256, in order (the `fonts`
-of `LayoutKey`): the page fonts (`HeldFont.names`), then the serif face, if held. -/
+of `LayoutKey`): the page fonts (`HeldFont.names`), then the serif face and the monospace
+face, if held. -/
 def Holds.fontNames (h : Holds) : List (String × String) :=
-  (h.font.map HeldFont.names).getD [] ++ h.serif.toList.map fun f => ("serif:" ++ f.family,f.sha256)
+  (h.font.map HeldFont.names).getD [] ++ h.serif.toList.map (fun f => ("serif:" ++ f.family,f.sha256)) ++
+    h.mono.toList.map fun f => ("mono:" ++ f.family,f.sha256)
 
 /-- The faces of `faces` with their held fonts, by the `webFonts` of the request: the
 font of the first source URL of each face that the request names with a held SHA-256,
@@ -1654,50 +1785,64 @@ def familyFonts (faces : Array Rendering.FontFaceRule.Face) (fonts : Array (Opti
   return out
 
 /-- The fonts of a `font-family` value before the held fonts: its web fonts
-(`familyFonts`), then the serif face when the value resolves to `serif`
-(`FontFaceRule.genericOfValue`) and one is held. -/
-def familyFontsWith (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+(`familyFonts`), then the serif face when the value resolves to `serif`, or the monospace face
+when it resolves to `monospace` (`FontFaceRule.genericOfValue`), when that face is held. -/
+def familyFontsWith (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String) :
     Array Rendering.SfntProfile.Font :=
-  if serif.isEmpty then familyFonts faces fonts held value
-  else if Rendering.FontFaceRule.genericOfValue held value = .serif then familyFonts faces fonts held value ++ serif
-  else familyFonts faces fonts held value
+  if serif.isEmpty && mono.isEmpty then familyFonts faces fonts held value
+  else match Rendering.FontFaceRule.genericOfValue held value with
+    | .serif => familyFonts faces fonts held value ++ serif
+    | .monospace => familyFonts faces fonts held value ++ mono
+    | .first => familyFonts faces fonts held value
 
-/-- Kind: property. Says: with no serif face held, the fonts of every family value are the
-web fonts as before: a host that never gives the serif face lays every page out as before. -/
+/-- Kind: property. Says: with no serif and no monospace face held, the fonts of every family
+value are the web fonts as before: a host that never gives either face lays every page out as
+before. -/
 theorem familyFontsWith_none (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String) :
-    familyFontsWith #[] faces fonts held value = familyFonts faces fonts held value := by
-  have h0 : (#[] : Array Rendering.SfntProfile.Font).isEmpty = true := rfl
+    familyFontsWith #[] #[] faces fonts held value = familyFonts faces fonts held value := by
   unfold familyFontsWith
-  rw [if_pos h0]
+  rfl
 
-/-- Kind: property. Says: a family value that does not resolve to `serif` (`sans-serif`,
-`monospace`, a held or installed sans-serif family first) gets the same fonts whether or not
-the serif face is held: explicit families are not taken over. -/
-theorem familyFontsWith_first (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+/-- Kind: property. Says: a family value that resolves to neither `serif` nor `monospace`
+(`sans-serif`, a held or installed sans-serif family first) gets the same fonts whether or not
+the faces are held: explicit families are not taken over. -/
+theorem familyFontsWith_first (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
     (h : Rendering.FontFaceRule.genericOfValue held value = .first) :
-    familyFontsWith serif faces fonts held value = familyFonts faces fonts held value := by
+    familyFontsWith serif mono faces fonts held value = familyFonts faces fonts held value := by
   unfold familyFontsWith
-  by_cases he : serif.isEmpty = true
-  · rw [if_pos he]
-  · rw [if_neg he, if_neg (by rw [h]; decide)]
+  split
+  · rfl
+  · rw [h]
 
 /-- Kind: property. Says: a family value that resolves to `serif` draws with the serif face
-after its web fonts and before the held fonts, when one is held. -/
-theorem familyFontsWith_serif (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+after its web fonts and before the held fonts, when one is held; the monospace face is not
+used for it. -/
+theorem familyFontsWith_serif (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
     (hs : serif.isEmpty = false) (h : Rendering.FontFaceRule.genericOfValue held value = .serif) :
-    familyFontsWith serif faces fonts held value = familyFonts faces fonts held value ++ serif := by
+    familyFontsWith serif mono faces fonts held value = familyFonts faces fonts held value ++ serif := by
   unfold familyFontsWith
-  rw [if_neg (by rw [hs]; decide), if_pos h]
+  rw [if_neg (by simp [hs]), h]
 
-/-- Whether the drawn text of `dom` has a family value that resolves to `serif`
-(`FontFaceRule.genericOfValue`), by the computed styles of its text nodes: a host that
-holds no serif face gives it when a layout says so (`Laid.wantsSerif`). Each distinct value
-is resolved once; the text of `SfntProfile.unrenderedText` elements is not drawn. -/
-def textWantsSerif (held : List String) (dom : DOM.Dom) (styles : Array Rendering.CSS.Computed) : Bool := Id.run do
+/-- Kind: property. Says: a family value that resolves to `monospace` draws with the monospace
+face after its web fonts and before the held fonts, when one is held; the serif face is not
+used for it. -/
+theorem familyFontsWith_mono (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
+    (hm : mono.isEmpty = false) (h : Rendering.FontFaceRule.genericOfValue held value = .monospace) :
+    familyFontsWith serif mono faces fonts held value = familyFonts faces fonts held value ++ mono := by
+  unfold familyFontsWith
+  rw [if_neg (by simp [hm]), h]
+
+/-- Whether the drawn text of `dom` has a family value that resolves to `g`
+(`FontFaceRule.genericOfValue`), by the computed styles of its text nodes: a host that holds
+no face for `g` gives it when a layout says so (`Laid.wantsSerif`, `Laid.wantsMono`). Each
+distinct value is resolved once; the text of `SfntProfile.unrenderedText` elements is not
+drawn. -/
+def textWants (g : Rendering.FontFaceRule.Generic) (held : List String) (dom : DOM.Dom) (styles : Array Rendering.CSS.Computed) : Bool := Id.run do
   let mut seen : Std.TreeMap String Unit := {}
   -- Text nodes in a row mostly share their value: the last one is checked first.
   let mut last := "\x00"
@@ -1706,20 +1851,28 @@ def textWantsSerif (held : List String) (dom : DOM.Dom) (styles : Array Renderin
     if n.type != .text then continue
     let value := (styles[id]?.map (·.fontFamily)).getD ""
     if value == last || n.data.all Char.isWhitespace || seen.contains value then continue
-    if Rendering.FontFaceRule.genericOfValue held value == .serif then
+    if Rendering.FontFaceRule.genericOfValue held value == g then
       if !Rendering.SfntProfile.inUnrendered dom id then return true
     else
       seen := seen.insert value ()
       last := value
   return false
 
+/-- `textWants` for the serif face. -/
+def textWantsSerif (held : List String) (dom : DOM.Dom) (styles : Array Rendering.CSS.Computed) : Bool :=
+  textWants .serif held dom styles
+
 /-- Whether the text of a page's cascade (`Generated.styled`: the tree with its generated
-content, and the styles) resolves to `serif`, before any layout; false when the cascade
-refused (the layout then refuses with it). -/
-def madeWantsSerif (held : List String) (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) : Bool :=
+content, and the styles) resolves to `g`, before any layout; false when the cascade refused
+(the layout then refuses with it). -/
+def madeWants (g : Rendering.FontFaceRule.Generic) (held : List String) (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) : Bool :=
   match made with
-  | .ok (d,styles) => textWantsSerif held (Rendering.Generated.flattenContents d styles) styles
+  | .ok (d,styles) => textWants g held (Rendering.Generated.flattenContents d styles) styles
   | .error _ => false
+
+/-- `madeWants` for the serif face. -/
+def madeWantsSerif (held : List String) (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) : Bool :=
+  madeWants .serif held made
 
 /-- The layout of `dom` with a cascade already made for it (`made`, from
 `Generated.styled`): what `Layout.renderWithStyles` does after its own cascade. -/
@@ -1742,8 +1895,9 @@ theorem renderWithStyles_made (dom : DOM.Dom) (rules : List Rendering.CSS.Rule) 
   unfold Rendering.Layout.renderWithStyles drawMade
   cases Rendering.Generated.styled treeScope dom rules textScale state <;> rfl
 
-/-- Whether a layout asks the host for the serif face (`Laid.wantsSerif`): only when none is
-held, a page font is held, and the page has serif text (`text`, worked out only then). -/
+/-- Whether a layout asks the host for a generic face (`Laid.wantsSerif` with the serif face,
+`Laid.wantsMono` with the monospace face): only when none is held, a page font is held, and
+the page has text in that family (`text`, worked out only then). -/
 def serifWanted (serif : Array Rendering.SfntProfile.Font) (loaded : Bool) (text : Unit → Bool) : Bool :=
   serif.isEmpty && loaded && text ()
 
@@ -1760,14 +1914,32 @@ theorem serifWanted_noText (serif : Array Rendering.SfntProfile.Font) (loaded : 
     (h : text () = false) : serifWanted serif loaded text = false := by
   simp [serifWanted, h]
 
-/-- Kind: property. Says: the family lookup a layout uses when the page has no serif text
-(`layOutDOMIn` passes no serif face then) gives every family value that does not resolve to
-`serif` the fonts it gets with the face held: on such text the face changes nothing. -/
-theorem familyFontsWith_noSerif (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+/-- Kind: property. Says: the family lookup a layout uses when the page has neither serif nor
+monospace text (`layOutDOMIn` passes no face then) gives every family value that resolves to
+neither the fonts it gets with the faces held: on such text the faces change nothing. -/
+theorem familyFontsWith_noSerif (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
     (h : Rendering.FontFaceRule.genericOfValue held value = .first) :
-    familyFontsWith #[] faces fonts held value = familyFontsWith serif faces fonts held value := by
-  rw [familyFontsWith_none, familyFontsWith_first serif faces fonts held value h]
+    familyFontsWith #[] #[] faces fonts held value = familyFontsWith serif mono faces fonts held value := by
+  rw [familyFontsWith_none, familyFontsWith_first serif mono faces fonts held value h]
+
+/-- Kind: property. Says: a page with monospace text and no serif text gets, for every family
+value, the fonts it gets with the serif face held too (`layOutDOMIn` passes the serif face only
+for a page with serif text): on text that is not serif, holding the serif face changes nothing. -/
+theorem familyFontsWith_monoOnly (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
+    (h : Rendering.FontFaceRule.genericOfValue held value ≠ .serif) :
+    familyFontsWith #[] mono faces fonts held value = familyFontsWith serif mono faces fonts held value := by
+  unfold familyFontsWith
+  cases hg : Rendering.FontFaceRule.genericOfValue held value with
+  | serif => exact absurd hg h
+  | monospace =>
+    by_cases hm : mono.isEmpty = true
+    · have h0 : mono = #[] := by simpa using hm
+      subst h0
+      simp
+    · simp [hm]
+  | first => simp
 
 /-- Read the bytes of a font file once. Later renders use it until another load
 changes the list. With `fallback`, the font goes at the end of the held list (a font
@@ -1793,6 +1965,7 @@ private def loadFont (h : Holds) (request : JSON.Json) : Holds × Except String 
   | some bytes =>
   if request.field? "webFont" == some (.bool true) then loadWebFont h bytes (str request "fontSha256" "unnamed") else
   if request.field? "serif" == some (.bool true) then loadSerifFont h bytes (str request "fontFamily" "serif") (str request "fontSha256" "unnamed") else
+  if request.field? "mono" == some (.bool true) then loadMonoFont h bytes (str request "fontFamily" "monospace") (str request "fontSha256" "unnamed") else
   loadFontBytes h bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed")
     (request.field? "fallback" == some (.bool true))
 
@@ -1895,9 +2068,11 @@ page's running animations and transitions (`elementState` reads it into the casc
 host gives the list of its script session's last turn, so the frame it paints has the
 values the page's scripts read. Until 2026-11-14 the field was not in this list, and a
 render's layout never saw it: content that fades in from `opacity: 0` stayed invisible. A
-page with no animation sends no such field and its key is as before. -/
+page with no animation sends no such field and its key is as before. `partialNote` (`false`:
+no "Partial page" note, `layOutDOMIn`) is the WPT reftest runner's; it was missing from this
+list on 2026-11-22 and the note stayed in its pictures. -/
 def layoutFields : List String := ["commands","resources","images","heldImages","url","syntax","fontData","textScalePercent","graphModel",
-  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported"]
+  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported","partialNote"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -1958,6 +2133,9 @@ structure Laid where
   /-- Text of the page resolves to `serif` and the engine holds no serif face
   (`textWantsSerif`): the answer says `wantsSerif`, and a host gives the face. -/
   wantsSerif : Bool := false
+  /-- Text of the page resolves to `monospace` and the engine holds no monospace face
+  (`textWants .monospace`): the answer says `wantsMono`, and a host gives the face. -/
+  wantsMono : Bool := false
 
 /-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
 of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
@@ -2097,6 +2275,27 @@ theorem liberalSvg_noSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option Str
     (liberalSvg kept dom documentURL images svgFonts).2.2.2.1.map (·.skip) = [.svgContent] := by
   simp [liberalSvg, h1, h2, WebRender.makeReplacedNoSvg]
 
+/-- Background pictures take ids from here up, apart from the ids of the page's `img` and SVG
+images (`WebRender.picturesOf`): the paint table keeps one bitmap for each id. -/
+def backgroundPictureBase : Nat := 1099511627776
+
+/-- The cascade with each element's background image decoded from the supplied images (a
+`data:` URL from itself), and the store made for them, for the engine to keep. A page with no
+background image gives its cascade back as it is. -/
+def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × ByteArray))
+    (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) :
+    Except String (DOM.Dom × Array Rendering.CSS.Computed) × Option WebRender.StoreEntry :=
+  match made with
+  | .error e => (.error e,none)
+  | .ok (d,styles) =>
+    let keys := (styles.toList.filterMap (·.backgroundImage)).eraseDups.take maxBackgroundImages
+    if keys.isEmpty then (.ok (d,styles),none) else
+    let (store,entry) := WebRender.storeIn stores keys images
+    let pics := WebRender.picturesOf store (styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·))
+    (.ok (d,styles.mapIdx fun i st => match pics i with
+      | some pic => {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap)}
+      | none => st),entry)
+
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
 run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
@@ -2118,7 +2317,10 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let (sheets,d2) ← sheetsIn m dom request env
   let (rules,madeSheet) ← rulesOfSheets kept env sheets
   modify (·.merge madeSheet)
-  let dom := if m == .liberal && graph.isNone then partialNote dom else dom
+  -- A request with `"partialNote":false` gets no note: the WPT reftest runner compares the page's
+  -- own content, and the note is the browser's (it moved each such page down 34 px and failed
+  -- 92 of 322 failing SVG reftests, issue 747). The window and the Hub still show it.
+  let dom := if m == .liberal && graph.isNone && request.field? "partialNote" != some (.bool false) then partialNote dom else dom
   -- Shadow trees (CSS Scoping 1): the layout is of the flat tree, and the selectors match
   -- on the node tree. A page with no shadow host takes none of this (`flatView`).
   let (dom,rules,treeScope) := flatView kept dom env rules
@@ -2156,12 +2358,19 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- The cascade of the page, made before the fonts: the layout of `dom` below draws with it
   -- (`renderWithStyles_made`), so it is made once, and it says whether any text resolves to
   -- `serif` (`textWantsSerif`) before the first layout.
+  -- background URLs of `style` attributes absolute against the document (sheets: `rulesOfSheets`)
+  let dom := styleAttributesAbsolute dom url
   let made := Rendering.Generated.styled treeScope dom rules textScale state
+  -- background images decoded into the cascade (issue 704); none on most pages
+  let (made,bgStore) := attachBackgrounds kept.stores images made
+  modify (·.merge {store := bgStore})
   -- With the serif face held, the family lookup goes in only for a page that has serif text;
   -- a page with none lays out as with no face held (`familyFontsWith_first`), with no lookup
   -- for each word. A host that gives the face before the first page (run_html.ts, the Hub)
   -- so lays a serif page out once, with its final face.
   let serifText := !h.serif.isEmpty && loaded.isSome && madeWantsSerif heldFamilies made
+  -- The monospace face likewise, for a page whose cascade has monospace text.
+  let monoText := !h.mono.isEmpty && loaded.isSome && madeWants .monospace heldFamilies made
   -- The serif face draws the text whose family resolves to `serif` (`familyFontsWith`); the
   -- words of web fonts and of the serif face are kept across layouts, as the others are.
   let font ← match loaded,memo with
@@ -2169,8 +2378,8 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
       let heldKey := Rendering.SfntProfile.fontsKey held.fonts
       Rendering.SfntProfile.profile held.fonts words
         (shapeKept heldKey none held.fonts)
-        (if faceFonts.all Option.isNone && !serifText then fun _ => #[]
-         else familyFontsWith (if serifText then h.serif else #[]) faces faceFonts heldFamilies)
+        (if faceFonts.all Option.isNone && !serifText && !monoText then fun _ => #[]
+         else familyFontsWith (if serifText then h.serif else #[]) (if monoText then h.mono else #[]) faces faceFonts heldFamilies)
         (held.fonts[0]?.map fun primary web =>
           shapeKept ("with|" ++ Rendering.SfntProfile.fontsKey web ++ "|" ++ heldKey) (some primary) (web ++ held.fonts))
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
@@ -2227,6 +2436,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- A page whose text resolves to `serif` while the engine holds no serif face says so; a
   -- host with a page font then gives the face and draws again. Others pay nothing more.
   let wantsSerif := serifWanted h.serif loaded.isSome fun _ => textWantsSerif heldFamilies dom styles
+  let wantsMono := serifWanted h.mono loaded.isSome fun _ => textWants .monospace heldFamilies dom styles
   return ({laid with dom := dom}
     |> fun l => {l with rules := rules}
     |> fun l => {l with textScale := textScale}
@@ -2234,7 +2444,8 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     |> fun l => {l with treeScope := treeScope}
     |> fun l => {l with styles := Thunk.pure (.ok styles)}
     |> fun l => {l with paint := paint}
-    |> fun l => {l with wantsSerif := wantsSerif},d1 ++ d2 ++ d0 ++ d3 ++ d4)
+    |> fun l => {l with wantsSerif := wantsSerif}
+    |> fun l => {l with wantsMono := wantsMono},d1 ++ d2 ++ d0 ++ d3 ++ d4)
 
 /-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
 in the mode of the request (`WebAccept.accept`). A script session's layout reads
@@ -2445,10 +2656,11 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   -- (`Rendering.Layout.scrollSize`): the padding box extended to the boxes inside it; for
   -- the root element, the viewport extended to the whole page. "0 0" with no box.
   | 38 =>
-    let border : Rendering.CSS.Edges := match l.styles.get with
-      | .ok styles => (styles[node]?.map (·.borderEdges)).getD {}
+    let style : Rendering.CSS.Computed := match l.styles.get with
+      | .ok styles => styles[node]?.getD {}
       | .error _ => {}
-    match Rendering.Layout.scrollSize l.dom l.boxes border (Float.ofNat l.scene.width) (Float.ofNat l.scene.height) node with
+    match Rendering.Layout.scrollSize l.dom l.boxes style.borderEdges
+        (Float.ofNat l.scene.width) (Float.ofNat l.scene.height) node (Rendering.Layout.scrollAxes style) with
     | some (w,h) => some (line [w,h])
     | none => some "0 0"
   -- 21: the used width and height of the node's content box (CSSOM §9.1 resolved values
@@ -3101,12 +3313,15 @@ def withDiagnostics (request : JSON.Json) (laid : Laid) (answer : String × Arra
   if request.field? "diagnostics" != some (.bool true) || laid.diagnostics.isEmpty || !text.endsWith "}" then answer
   else ((text.dropEnd 1).toString ++ ",\"diagnostics\":" ++ (WebAccept.diagnosticsJSON laid.diagnostics).toString ++ "}",sections)
 
-/-- A render answer of a layout whose text wants the serif face the engine does not hold
-(`Laid.wantsSerif`) says `"wantsSerif":true` at the end of its JSON head; others are as before. -/
+/-- A render answer of a layout whose text wants the serif face or the monospace face that the
+engine does not hold (`Laid.wantsSerif`, `Laid.wantsMono`) says `"wantsSerif":true` or
+`"wantsMono":true` at the end of its JSON head; others are as before. -/
 def withWants (laid : Laid) (answer : String × Array ByteArray) : String × Array ByteArray :=
   let (text,sections) := answer
-  if !laid.wantsSerif || !text.endsWith "}" then answer
-  else ((text.dropEnd 1).toString ++ ",\"wantsSerif\":true}",sections)
+  if !(laid.wantsSerif || laid.wantsMono) || !text.endsWith "}" then answer
+  else
+    let more := (if laid.wantsSerif then ",\"wantsSerif\":true" else "") ++ (if laid.wantsMono then ",\"wantsMono\":true" else "")
+    ((text.dropEnd 1).toString ++ more ++ "}",sections)
 
 /-- What the accessibility tree reads of a layout (`HTML.AccessibleTree.Env`): an element
 with `display: none` makes no box, `visibility` hides one, and the border boxes. With no
@@ -3274,6 +3489,13 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     (request : JSON.Json) (width height : Nat) : DocM M (String × Array ByteArray) := do
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
+  if str request "op" == "epubReader" then
+    -- The host transports bytes. The EPUB reader sets all limits and generates passive HTML.
+    if html.utf8ByteSize > (Epub.maxArchiveBytes + 2) / 3 * 4 then throw "EPUB archive size limit exceeded"
+    let some archive := WHATWG.Base64.decode html | throw "Invalid EPUB byte transport"
+    let book ← Epub.openBook archive
+    let page ← book.readerHtml (some (natField request "epubChapter"))
+    return ((JSON.Json.object [("source", .string page)]).toString, #[])
   if str request "op" == "fontLoad" then
     return (← stepState fun e => let (h,r) := loadFont e.holds request; ({e with holds := h},r),#[])
   -- A document's subresource requests go through the engine's network rules, step by step.
@@ -3665,7 +3887,7 @@ def engineNew (_ : Unit) : Engine := {}
 
 /-- `fontLoad` with the font file as bytes, with no Base64 and no JSON around it.
 A host copies the file into engine memory, so a font is not limited by the call stack,
-which holds string arguments in Wasm. `fallback` is 3 for the serif face (`loadSerifFont`), 2 for a web font (`loadWebFont`), 1 to
+which holds string arguments in Wasm. `fallback` is 4 for the monospace face (`loadMonoFont`), 3 for the serif face (`loadSerifFont`), 2 for a web font (`loadWebFont`), 1 to
 add the font to the held list, 0 to replace the list. The answer is the `fontLoad` answer. The guest module of page
 scripts comes the same way, as bytes (WebScripts). -/
 @[export web_document_font_load_bin]
@@ -3678,7 +3900,8 @@ def fontLoadBin (e : Engine) (bytes : ByteArray) (family sha256 : String) (fallb
     else
       let holds := e.holds
       let e := {e with holds := {}}
-      let (holds,r) := if fallback == 3 then loadSerifFont holds bytes family sha256
+      let (holds,r) := if fallback == 4 then loadMonoFont holds bytes family sha256
+        else if fallback == 3 then loadSerifFont holds bytes family sha256
         else if fallback == 2 then loadWebFont holds bytes sha256
         else loadFontBytes holds bytes family sha256 (fallback != 0)
       ({e with holds},r)

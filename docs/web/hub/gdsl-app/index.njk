@@ -1,0 +1,101 @@
+---
+layout: hub-app.njk
+title: GDSL in your app
+appBase: /web/hub/gdsl-app
+appSource: https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/gdsl-app
+appEngineLabel: Public API
+appEngineUrl: '#use-in-app'
+permalink: /web/hub/gdsl-app/
+factoidalEngine: local
+---
+<header class="hero">
+  <p class="eyebrow">GDSL · Public API example</p>
+  <h1>Compute with GDSL<br>in your own app.</h1>
+  <p class="lede">Mix two streams, then accumulate. A few JavaScript calls build a typed PVGraph; the built-in engine checks it and runs it on the CPU or WebGPU.</p>
+  <div class="hero-tags"><span>Local modules</span><span>One shared dataflow language</span><span>No SPARQL required</span></div>
+</header>
+
+<section class="pipeline" aria-label="The computation">
+  <div><span>01 · MAP</span><strong>Amplify A</strong><code>a × gain</code></div>
+  <div><span>02 · ZIP</span><strong>Mix in B</strong><code>amplified + b</code></div>
+  <div><span>03 · SCAN</span><strong>Accumulate</strong><code>inclusive prefix sum</code></div>
+</section>
+
+<div class="workspace">
+  <section class="panel" aria-labelledby="inputs-title">
+    <div class="panel-title"><h2 id="inputs-title">1. Make it yours</h2><span class="tag">UNSIGNED 32-BIT WORDS</span></div>
+    <div class="sample-controls">
+      <label for="sample-size">Sample size
+        <select id="sample-size"><option value="8">8 · inspect each word</option><option value="2048">2,048 · parallel scan</option><option value="4096">4,096 · larger sample</option></select>
+      </label>
+      <button id="load-sample" type="button" class="secondary">Load sample</button>
+    </div>
+    <label for="input-a">Input A <span>JSON array</span></label>
+    <textarea id="input-a" rows="4" spellcheck="false" autocapitalize="off" autocorrect="off">[2, 3, 5, 7, 11, 13, 17, 19]</textarea>
+    <label for="input-b">Input B <span>JSON array · same length</span></label>
+    <textarea id="input-b" rows="4" spellcheck="false" autocapitalize="off" autocorrect="off">[1, 4, 1, 5, 9, 2, 6, 5]</textarea>
+    <div class="input-row">
+      <label for="gain">Gain for A<input id="gain" type="number" min="0" max="4294967295" step="1" value="3"></label>
+      <label for="execution-mode">Execution mode
+        <select id="execution-mode"><option value="auto">Automatic · try GPU, allow CPU</option><option value="cpu">CPU · reference evaluator</option><option value="gpu">Required GPU · refuse if unavailable</option></select>
+      </label>
+    </div>
+    <p class="small">Arithmetic wraps modulo 2<sup>32</sup>. This editor accepts 0–4,096 words per input. Empty inputs are valid. The engine checks the PVGraph and input shapes.</p>
+    <button id="run-example" class="primary" type="button">Run computation</button>
+    <p id="run-status" class="status" role="status">Ready. The engine loads when you run.</p>
+    <details>
+      <summary>Local runtime and GPU threshold</summary>
+      <label for="package-url">Local package directory<input id="package-url" type="text" value="{{ '/npm/factoidal/' | url }}" spellcheck="false" autocomplete="off"></label>
+      <label for="assets-url">Wasm assets directory <span>optional</span><input id="assets-url" type="text" placeholder="Default: l4-assets/ beside browser.js" spellcheck="false" autocomplete="off"></label>
+      <label for="minimum-words">Minimum words for an automatic GPU attempt<input id="minimum-words" type="number" min="0" max="4194240" step="1" value="0"></label>
+      <p class="small">The demo uses <code>minWords: 0</code> to exercise WebGPU with small inputs. The API default is 1,024. This threshold is a diagnostic choice, not a speed claim. Required GPU mode ignores it.</p>
+      <p class="small">The package directory must be on this page's HTTP origin. It supplies <code>gdsl.mjs</code>, <code>browser.js</code> and the matching Wasm. Reload the page to change an already loaded runtime.</p>
+      <p id="runtime-status" class="status">No runtime loaded. No CDN modules are used.</p>
+    </details>
+  </section>
+
+  <section class="panel results" aria-labelledby="results-title">
+    <div class="panel-title"><h2 id="results-title">2. Inspect the result</h2><button id="save-report" type="button" class="secondary" disabled>Save run report</button></div>
+    <div class="metrics" aria-label="Last completed run">
+      <div><span>Backend</span><strong id="backend">—</strong></div>
+      <div><span>GPU dispatches</span><strong id="dispatches">—</strong></div>
+      <div><span>Build + run</span><strong id="wall-ms">—</strong></div>
+    </div>
+    <p id="agreement" class="comparison" role="status">No result yet.</p>
+    <p id="placement" class="small">Each GPU run compares its complete output with the built-in CPU evaluator.</p>
+    <div class="chart-header"><h3>Mixed stream</h3><span id="mixed-range">—</span></div>
+    <div id="mixed-chart" class="bars" aria-hidden="true"></div>
+    <div class="chart-header"><h3>Cumulative stream</h3><span id="cumulative-range">—</span></div>
+    <div id="cumulative-chart" class="bars cumulative" aria-hidden="true"></div>
+    <p id="preview-note" class="small">The charts display returned words; no JavaScript evaluator computes them.</p>
+    <div class="table-wrap" tabindex="0" aria-label="Returned values">
+      <table><thead><tr><th>Index</th><th>A</th><th>B</th><th>Mixed</th><th>Cumulative</th></tr></thead><tbody id="result-rows"><tr><td colspan="5">Run the example to see the output.</td></tr></tbody></table>
+    </div>
+    <details><summary>Exact admitted PVGraph</summary><pre id="pvgraph-json">No PVGraph built yet.</pre></details>
+    <details><summary>Execution report and phase timings</summary><pre id="execution-json">No execution yet.</pre></details>
+    <p class="small">Times are single runs in this browser, including construction, planning, execution and the reference check. Engine loading is reported separately.</p>
+  </section>
+</div>
+
+<section class="panel integration" id="use-in-app" aria-labelledby="integration-title">
+  <div class="panel-title"><h2 id="integration-title">3. Use it in another app</h2><span class="tag">PUBLIC MODULES ONLY</span></div>
+  <p>The code below uses your current inputs and settings. Put the repository's <code>npm/factoidal/</code> directory at <code>vendor/factoidal/</code> beside your app, including its installed <code>l4-assets/</code>. Serve that directory from localhost or HTTPS. The downloaded HTML is a complete independent app.</p>
+  <div class="actions"><button id="copy-code" type="button" class="secondary">Copy JavaScript module</button><button id="download-app" type="button" class="secondary">Download standalone HTML</button></div>
+  <p id="code-status" class="status" role="status">Imports use your local vendor/factoidal directory.</p>
+  <pre id="integration-code" tabindex="0" aria-label="Complete JavaScript integration example">The example code appears when JavaScript loads.</pre>
+  <details>
+    <summary>File layout and package imports</summary>
+    <ul><li><code>gdsl-example.html</code> — the downloaded app.</li><li><code>vendor/factoidal/gdsl.mjs</code> and <code>browser.js</code> — public entry points.</li><li><code>vendor/factoidal/lib/</code> — package support modules.</li><li><code>vendor/factoidal/l4-assets/</code> — the matching installed engine.</li></ul>
+    <p>For example, run <code>python3 -m http.server 8080</code> in your app directory, then open <code>http://localhost:8080/gdsl-example.html</code>.</p>
+    <p>The package declares the corresponding <code>@factoidal/core/gdsl</code> and <code>@factoidal/core/browser</code> imports for bundlers and package consumers. Use the local checkout for this example; npm publication is a separate release step.</p>
+    <p><a href="https://github.com/danbri/factoidal-core/blob/main/docs/web/hub/gdsl-app/README.md">Setup and reusable recipe</a> · <a href="https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/gdsl.d.ts">TypeScript API</a></p>
+  </details>
+</section>
+
+<section class="panel assurance" id="evidence" aria-labelledby="assurance-title">
+  <h2 id="assurance-title">What is checked?</h2>
+  <p>Lean/Wasm constructs, admits and plans the same PVGraph document that this app uses. The GPU path runs the emitted plan and, with <code>verifyWithLean: true</code>, compares every output word with the reference evaluator. The app contains no second implementation of those operators.</p>
+  <p>The pure model's theorems and this per-run comparison have distinct roles. Compilation, the host interface, WGSL execution, drivers and devices remain execution boundaries; a matching run does not prove hardware correctness or a performance advantage.</p>
+  <p><a href="https://github.com/danbri/factoidal-core/blob/main/docs/specs/gdsl-0.2.md">GDSL specification and operator profile</a> · <a href="{{ '/web/hub/gssl/' | url }}">PVGraph workbench</a> · <a href="{{ '/web/hub/gpu-sparql/' | url }}">SPARQL integration</a> · <a href="https://github.com/danbri/factoidal-core/issues/741">App integration record</a></p>
+</section>
+<noscript>This example needs JavaScript and the local Wasm engine. WebGPU also needs a supported browser in a secure context.</noscript>

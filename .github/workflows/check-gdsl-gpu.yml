@@ -1,0 +1,105 @@
+name: GDSL verified kernel model + actual GPU device
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/**'
+      - 'formal/lean4/Harness/PVGraphGpuDevice.lean'
+      - 'npm/factoidal/lib/gdsl-gpu.mjs'
+      - 'npm/factoidal/lib/gpu-resident.mjs'
+      - 'tools/pvgraph-gpu-device-smoke.mjs'
+      - 'tools/pvgraph-evidence-provenance.mjs'
+      - 'tests/gdsl_gpu.test.mjs'
+      - 'tests/gssl_gpu_resident_test.mjs'
+      - 'npm/factoidal/test/pvgraph-gpu-plan.test.mjs'
+      - '.github/workflows/check-gdsl-gpu.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  gpu-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.4
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Check source and host syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          node --check npm/factoidal/lib/gdsl-gpu.mjs
+          node --check npm/factoidal/lib/gpu-resident.mjs
+          node --check tools/pvgraph-gpu-device-smoke.mjs
+          node --test tests/gdsl_gpu.test.mjs tests/gssl_gpu_resident_test.mjs \
+            npm/factoidal/test/pvgraph-gpu-plan.test.mjs npm/factoidal/test/gpu-resident.test.mjs
+          mkdir -p "$RUNNER_TEMP/pvgraph-gpu"
+          git rev-parse HEAD > "$RUNNER_TEMP/pvgraph-gpu/commit.txt"
+          sha256sum formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GpuPlan.lean \
+            formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GpuFastPath.lean \
+            npm/factoidal/lib/gdsl-gpu.mjs \
+            tools/pvgraph-gpu-device-smoke.mjs \
+            > "$RUNNER_TEMP/pvgraph-gpu/sources.sha256"
+      - name: Compile real Lean semantics, GPU lowering and device fixtures
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 480s lake build \
+            L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath \
+            L4Factoidal.GpuDomainSpecificLanguage.GpuPlan \
+            L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder \
+            L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin
+          if ! timeout --kill-after=10s 180s lake env lean --run \
+            Harness/PVGraphGpuDevice.lean \
+            > "$RUNNER_TEMP/pvgraph-gpu/lean-fixtures.jsonl" \
+            2> "$RUNNER_TEMP/pvgraph-gpu/lean-fixtures.stderr"; then
+            cat "$RUNNER_TEMP/pvgraph-gpu/lean-fixtures.stderr"
+            head -n 10 "$RUNNER_TEMP/pvgraph-gpu/lean-fixtures.jsonl"
+            exit 1
+          fi
+      - name: Install real Mesa Vulkan software adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+      - name: Execute Lean-produced shader on actual WebGPU
+        shell: bash
+        run: |
+          set -euo pipefail
+          driver="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$driver"
+          export DENO_WEBGPU_BACKEND=vulkan VK_DRIVER_FILES="$driver"
+          export XDG_RUNTIME_DIR
+          XDG_RUNTIME_DIR="$(mktemp -d "$RUNNER_TEMP/pvgraph-gpu-xdg.XXXXXX")"
+          timeout --kill-after=10s 240s deno run -A --no-config --no-npm --unstable-webgpu \
+            tools/pvgraph-gpu-device-smoke.mjs \
+            "$RUNNER_TEMP/pvgraph-gpu/lean-fixtures.jsonl" "$SOURCE_COMMIT" \
+            | tee "$RUNNER_TEMP/pvgraph-gpu/device-observed.json"
+      - name: Preserve device and proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvgraph-lean-gpu-evidence
+          path: ${{ runner.temp }}/pvgraph-gpu/
+          if-no-files-found: warn
+          retention-days: 30

@@ -209,6 +209,16 @@ bilinear on premultiplied pixels, and beyond the edge the edge pixels. The shade
 states the same steps in `imageSample`. -/
 def ImageRecord.colorAt (g : ImageRecord) (x y : Float) : List Float :=
   let (u,v) := Math.Affine2.applyPoint .float g.map x y
+  -- An image drawn at its own size on whole pixels (unit scale, no rotation, a whole-pixel
+  -- offset) shows its pixels as they are, as browsers draw it: each sample takes the pixel it
+  -- falls in. Before 2026-11-22 bilinear sampling at the raster's sub-pixel samples mixed each
+  -- pixel with its neighbours (a 2 by 2 checker drew 78% of each colour).
+  if g.map.a == 1 && g.map.b == 0 && g.map.c == 0 && g.map.d == 1 &&
+      g.map.e == g.map.e.round && g.map.f == g.map.f.round then
+    let b := g.bitmap
+    let (r,gr,bl,a) := b.texel (edgeIndex u.floor b.width) (edgeIndex v.floor b.height)
+    if a <= 0 then [0,0,0,0] else [r/a,gr/a,bl/a,a]
+  else
   let fx := u-0.5
   let fy := v-0.5
   let x0 := fx.floor

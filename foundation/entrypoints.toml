@@ -548,9 +548,9 @@ note = "lib/pure.mjs calls the wasm op proofCheck."
 
 [[entry]]
 id = "npm:.#query"
-stages = ["shippedEvaluator"]
+stages = ["shippedEvaluator", "gpuSparqlStage"]
 covers = "part"
-note = "lib/api.mjs calls the wasm op datasetQuery (or datasetQuery12 for SPARQL 1.2)."
+note = "lib/api.mjs uses datasetQueryGpuBegin/Step when WebGPU is available, with Lean indexed preflight and per-join admission; otherwise datasetQuery/datasetQuery12. The GPU path advances gpuSparqlPlan under its numeric device law, with Lean CPU fallback. Host transport and rendering remain outside the stage proof."
 
 [[entry]]
 id = "npm:.#vcEddsaCreateFromCanonical"
@@ -660,9 +660,9 @@ note = "lib/pure.mjs calls the wasm op proofCheck."
 
 [[entry]]
 id = "npm:./browser#query"
-stages = ["shippedEvaluator"]
+stages = ["shippedEvaluator", "gpuSparqlStage"]
 covers = "part"
-note = "lib/api.mjs calls the wasm op datasetQuery (or datasetQuery12 for SPARQL 1.2)."
+note = "lib/api.mjs uses datasetQueryGpuBegin/Step when WebGPU is available, with Lean indexed preflight and per-join admission; otherwise datasetQuery/datasetQuery12. The GPU path advances gpuSparqlPlan under its numeric device law, with Lean CPU fallback. Host transport and rendering remain outside the stage proof."
 
 [[entry]]
 id = "npm:./browser#vcEddsaCreateFromCanonical"
@@ -1738,3 +1738,67 @@ id = "cli:xslt4"
 stages = ["xslt4Transform"]
 covers = "part"
 note = "bin/factoidal.mjs and bin/qt4.mjs read explicit files, call xslt4Transform, and print the engine result or a supplied serialization; no XML or query parsing in the host."
+
+# GDSL PVGraph: Lean/Wasm-owned semantics; host bindings are transport.
+[[nonstage]]
+id = "npm:./gdsl#createPVGraphWasm"
+reason = "Marshals GDSL construction to the Lean/Wasm PVGraph API; no JS evaluator"
+
+[[nonstage]]
+id = "npm:./gdsl#createGsslResidentSession"
+reason = "Generic WebGPU host resource manager, separate from PVGraph semantics"
+
+[[nonstage]]
+id = "npm:./gdsl#example"
+reason = "Runs a named PVGraph recipe through the Lean/Wasm builder"
+
+[[nonstage]]
+id = "npm:./gdsl#listExamples"
+reason = "Lists example metadata; performs no PVGraph evaluation"
+
+[[nonstage]]
+id = "npm:./gpu-resident#createGsslResidentSession"
+reason = "Manages GPU allocation, dispatch and diagnostic readback"
+
+[[nonstage]]
+id = "wasm:pvgraphBuild"
+reason = "Lean PVGraph construction and admission, distinct from Dataflow Stage registry"
+
+[[nonstage]]
+id = "wasm:pvgraphAdmit"
+reason = "Proof-bearing Lean validation of the PVGraph document, not a Dataflow Stage"
+
+[[nonstage]]
+id = "wasm:pvgraphEvaluate"
+reason = "Lean PVGraph reference evaluator, not a Dataflow Stage"
+
+[[nonstage]]
+id = "wasm:pvgraphGpuPlan"
+reason = "Lean PVGraph-to-GPU-plan lowering and admission; not a Dataflow Stage"
+
+[[nonstage]]
+id = "npm:./gdsl#runPVGraph"
+reason = "GPU host binding for a Lean-issued PVGraph plan, with Lean evaluator fallback"
+
+
+[[entry]]
+id = "wasm:datasetQueryGpuBegin"
+stages = ["gpuSparqlStage", "shippedEvaluator"]
+covers = "part"
+note = "Wasm/Ops/GpuSparql.lean snapshots dataset, NOW and services, parses the query and chooses gpuSparqlPlan by cached index estimates. A query below the threshold retains its previous CPU evaluator on the same snapshot. IndexedJoin emits bounded generic numeric plans; actual readback validators prove the complete ordered numeric join. Parsing, serialization and session/ABI execution remain outside that proof."
+
+[[entry]]
+id = "wasm:datasetQueryGpuStep"
+stages = ["gpuSparqlStage"]
+covers = "part"
+note = "Validates session/phase, complete numeric ranges and ordered pair readback, then resumes the same gpuSparqlPlan; a refused device resumes its existing indexed CPU continuation. Candidate capacity is checked before expansion."
+
+[[entry]]
+id = "wasm:datasetQueryGpuRestart"
+stages = ["gpuSparqlStage", "shippedEvaluator"]
+covers = "part"
+note = "Restarts the selected plan from the captured query, dataset, environment and backend for asynchronous extension-function rounds; does not reread the clock or dataset handle."
+
+[[nonstage]]
+id = "wasm:datasetQueryGpuClose"
+reason = "Releases the retained GPU query continuation and dataset snapshot; no query evaluation."

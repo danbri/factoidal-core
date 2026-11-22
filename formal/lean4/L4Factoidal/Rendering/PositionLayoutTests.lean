@@ -201,15 +201,19 @@ private def words := "<div id=w>AA BBB</div><div id=z>Z</div>"
 #guard box page "#c{height:40px} #p{height:min-content}" "p" == some (0,7,200,7)
 
 -- scrollWidth and scrollHeight (CSSOM View §6.1): the padding box extended to the boxes inside.
-private def scroll (html extra id : String) : Option (Float × Float) := do
+private def scroll (html extra id : String) (fromEnd : Bool × Bool := (false,false)) : Option (Float × Float) := do
   let dom := DOM.parseHtmlDocument html
   let n ← dom.getElementById 0 id
   let (_,boxes) ← (render html extra).toOption
-  Layout.scrollSize dom boxes {} 200 200 n
+  Layout.scrollSize dom boxes {} 200 200 n fromEnd
 #guard scroll page "" "c" == some (200,14)
 #guard scroll page "#c{height:10px;width:50px}" "c" == some (50,14)
 #guard scroll page "#c{height:10px;width:50px} #q{width:80px}" "c" == some (80,14)
 #guard scroll page "#c{height:10px} #p{position:relative;top:-100px}" "c" == some (200,14)
+private def overflowPage := "<div id=c><div id=p></div></div>"
+private def overflowCss := "#c{width:100px;height:80px} #p{position:relative;left:-30px;top:-20px;width:60px;height:50px}"
+#guard scroll overflowPage overflowCss "c" == some (100,80)
+#guard scroll overflowPage overflowCss "c" (true,true) == some (130,100)
 -- The root element scrolls the viewport (200 by 200 here) over the whole page.
 #guard scroll "<html id=h><body><div id=a>AA</div></body></html>" "" "h" == some (200,200)
 #guard scroll "<html id=h><body><div id=a>AA</div></body></html>" "#a{height:500px}" "h" == some (200,500)

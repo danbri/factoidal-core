@@ -337,6 +337,12 @@ export class Dataset implements Iterable<Quad> {
 export type ClosureRegime = 'rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus';
 
 export interface DatasetQueryOptions {
+  /** Automatic mixed CPU/WebGPU planning by default. 'gpu' requires an observed GPU join. */
+  execution?: 'auto' | 'cpu' | 'gpu';
+  /** Minimum rows per join input (default 1024 in auto mode; 1 in required GPU mode). */
+  gpuMinRows?: number;
+  /** Maximum candidate pairs, checked before output allocation (default 1000000). */
+  gpuMaxPairs?: number;
   sparql12?: boolean;
   version?: '1.1' | '1.2';
   /** Close the default graph under a regime before the query. */
@@ -1966,8 +1972,16 @@ export function vcEd25519Verify(
  */
 export function xmlDecrypt(
   document: string,
-  options: { keys: object[]; allowCbc?: boolean }
+  options: { keys: object[]; allowCbc?: boolean; octets?: false }
 ): Promise<{ document: string; canonical: string }>;
+/**
+ * The plaintext octets of a document element xenc:EncryptedData with any or
+ * no Type (XML Encryption 1.1 §4.4 step 3).
+ */
+export function xmlDecrypt(
+  document: string,
+  options: { keys: object[]; allowCbc?: boolean; octets: true }
+): Promise<{ octets: Uint8Array }>;
 
 /** Encrypt an XML document element, or its content, for one recipient. */
 export function xmlEncrypt(
@@ -1979,6 +1993,19 @@ export function xmlEncrypt(
     keyWrap?: 'kw-aes128' | 'kw-aes256';
     content?: boolean;
     saml?: boolean;
+    /** With an `oct` recipient: wrap under a key derived from it (xenc11:DerivedKey, §5.4.3). */
+    derivedKey?: boolean;
+    /** The §5.4 key derivation of a key agreement or a derived key; Concat KDF by default. */
+    keyDerivation?:
+      | 'ConcatKDF'
+      | {
+          algorithm: 'pbkdf2';
+          prf?: 'hmac-sha1' | 'hmac-sha256' | 'hmac-sha384' | 'hmac-sha512';
+          /** 1 to 1,000,000. */
+          iterations: number;
+          /** Salt octets, 8 to 64; 16 by default. */
+          saltLength?: number;
+        };
   }
 ): Promise<{ document: string; canonical: string }>;
 
@@ -2229,6 +2256,8 @@ export function capabilities(): Promise<{
   hdt: boolean;
   /** query()'s `sparql12` and Dataset.query's (queryDataset12, datasetQuery12). */
   sparql12: boolean;
+  /** The resumable mixed CPU/WebGPU query ops are present; device availability is separate. */
+  gpuSparql: boolean;
   /** openStore() and the Store methods (storeOpen, storeHandleQuery). */
   store: boolean;
   /** The deltaLog* functions (deltaLogEncode, deltaLogDecode, deltaLogMerge). */

@@ -51,6 +51,24 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "execution-stepper.mjs", "worker.mjs", "gpu.mjs", "word-gpu.mjs", "bgp-fixtures.mjs", "bgp-worker.mjs", "bgp-studio.mjs", "bgp-comparison.mjs", "integer-bgp-gpu.mjs", "integer-bgp-compact-gpu.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/paralliverse/${name}`);
   }
+  // Exploratory general GSSL compute workbench (not the assured SPARQL lab).
+  // Its runtime is the exact same-origin npm/factoidal/lib/gpu-resident.mjs
+  // already passed through by the package lib directory below.
+  for (const name of ["app.mjs", "lab-core.mjs", "graph-explorer.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/gssl/${name}`);
+  }
+  // XML-folder → named-graph SPARQL → HTML workbench.
+  for (const name of ["app.mjs", "fixtures.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/xml-rdf/${name}`);
+  }
+  // Mixed SPARQL uses the checkout's browser API and local Wasm assets.
+  for (const name of ["app.mjs", "fixtures.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/gpu-sparql/${name}`);
+  }
+  // An independent app using the same public GDSL modules as other consumers.
+  for (const name of ["app.mjs", "example.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/gdsl-app/${name}`);
+  }
   // Publish the *same* audited browser-safe EVM→WASM compiler sources that
   // the Node differential suite tests (no second handwritten implementation).
   for (const name of ["evm-to-wasm.mjs", "evm-policy.mjs"]) {
@@ -61,6 +79,9 @@ module.exports = function(eleventyConfig) {
   // Every module of the Hub browser, so a new one is never left off the site (page-gpu.mjs,
   // and before it browser-state.mjs, were missing from a list of names).
   eleventyConfig.addPassthroughCopy("web/hub/foafnaut/*.mjs");
+  for (const name of ["app.mjs", "worker.mjs", "style.css", "sample.epub"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/epub/${name}`);
+  }
   // The Hub's Textnaut page and the notebook's engine cells. Their grid.mjs is not copied: it is
   // made from labs/demos/foafnaut/textnaut/grid.ts at build time (web/hub/textnaut/grid.11ty.js).
   eleventyConfig.addPassthroughCopy("web/hub/textnaut/*.mjs");
@@ -77,11 +98,11 @@ module.exports = function(eleventyConfig) {
   eleventyConfig.addPassthroughCopy("web/hub/specs/*.csv");
   eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
   eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans": "web/hub/foafnaut/fonts/noto-sans" });
-  // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py) and the serif face (serif_font.ts); the Hub
+  // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py), the serif face and the monospace face (serif_font.ts); the Hub
   // fetches each only for a page that needs it.
   for (const dir of ["noto-sans-armenian", "noto-sans-georgian", "noto-sans-ethiopic", "noto-sans-hebrew", "noto-sans-arabic",
     "noto-sans-devanagari", "noto-sans-bengali", "noto-sans-tamil", "noto-sans-thai", "noto-sans-math", "noto-sans-cjk",
-    "noto-color-emoji", "noto-emoji", "fruktur", "liberation-serif"]) {
+    "noto-color-emoji", "noto-emoji", "fruktur", "liberation-serif", "liberation-mono"]) {
     eleventyConfig.addPassthroughCopy({ [`../third_party/fonts/${dir}`]: `web/hub/foafnaut/fonts/${dir}` });
   }
   eleventyConfig.addPassthroughCopy({
@@ -120,7 +141,7 @@ module.exports = function(eleventyConfig) {
   // mirror is no longer read, and a directory there would write the same
   // output paths as these entries.
   for (const rel of [
-    "browser.js", "api.mjs", "rdfjs.mjs",
+    "browser.js", "api.mjs", "rdfjs.mjs", "gdsl.mjs",
     "lib", "l4-assets", "store-host", "store-http",
   ]) {
     eleventyConfig.addPassthroughCopy({ [`../npm/factoidal/${rel}`]: `npm/factoidal/${rel}` });

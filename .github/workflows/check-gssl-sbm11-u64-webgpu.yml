@@ -12,6 +12,8 @@ on:
       - 'tools/gssl-sbm11-snapshot-gpu.mjs'
       - 'tools/gssl-sbm11-snapshot-device-smoke.mjs'
       - 'tests/gssl_sbm11_u64_test.mjs'
+      - 'formal/lean4/Harness/GsslSbm11SourceDevice.lean'
+      - 'tools/gssl-sbm11-native-source-device.mjs'
       - '.github/workflows/check-gssl-sbm11-u64-webgpu.yml'
   workflow_dispatch: {}
 
@@ -21,7 +23,7 @@ permissions:
 jobs:
   device:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -35,6 +37,15 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.4
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
       - name: Verify host code, shader sources and exact PR head
         shell: bash
         run: |
@@ -45,6 +56,7 @@ jobs:
           node --check tools/gssl-sbm11-snapshot.mjs
           node --check tools/gssl-sbm11-snapshot-gpu.mjs
           node --check tools/gssl-sbm11-snapshot-device-smoke.mjs
+          node --check tools/gssl-sbm11-native-source-device.mjs
           node --check tests/gssl_sbm11_u64_test.mjs
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           mkdir -p "$RUNNER_TEMP/gssl-u64"
@@ -55,10 +67,28 @@ jobs:
             tools/gssl-sbm11-snapshot.mjs \
             tools/gssl-sbm11-snapshot-gpu.mjs \
             tools/gssl-sbm11-snapshot-device-smoke.mjs \
+            tools/gssl-sbm11-native-source-device.mjs \
+            formal/lean4/Harness/GsslSbm11SourceDevice.lean \
             formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/Sbm11U64Lanes.lean \
             tests/gssl_sbm11_u64_test.mjs | tee "$RUNNER_TEMP/gssl-u64/source.sha256"
       - name: Strict pure JavaScript u64 lane and BGP tests
         run: node --test tests/gssl_sbm11_u64_test.mjs
+      - name: Compile source-level SBM11 PackSpec and native Lean BGP
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 600s lake build \
+            L4Factoidal.Storage.Sbm11.PackSpec \
+            L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
+      - name: Capture genuine SBM11 dictionary ids and native Lean query oracle
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 180s lake env lean --run \
+            Harness/GsslSbm11SourceDevice.lean \
+            > "$RUNNER_TEMP/gssl-u64/native-sbm11.jsonl"
+          test "$(wc -l < "$RUNNER_TEMP/gssl-u64/native-sbm11.jsonl")" -eq 2
       - name: Install Mesa software Vulkan
         run: |
           sudo apt-get update
@@ -88,6 +118,20 @@ jobs:
           timeout --kill-after=10s 240s deno run --no-config --no-npm --unstable-webgpu \
             tools/gssl-sbm11-snapshot-device-smoke.mjs "$SOURCE_COMMIT" \
             | tee "$RUNNER_TEMP/gssl-u64/snapshot-device.json"
+      - name: Compare WebGPU against genuine native Lean SBM11 term IDs
+        shell: bash
+        run: |
+          set -euo pipefail
+          driver="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$driver"
+          export DENO_WEBGPU_BACKEND=vulkan VK_DRIVER_FILES="$driver"
+          export XDG_RUNTIME_DIR
+          XDG_RUNTIME_DIR="$(mktemp -d "$RUNNER_TEMP/gssl-native-xdg.XXXXXX")"
+          timeout --kill-after=10s 240s deno run --no-config --no-npm --unstable-webgpu \
+            --allow-read="$RUNNER_TEMP/gssl-u64/native-sbm11.jsonl" \
+            tools/gssl-sbm11-native-source-device.mjs \
+            "$RUNNER_TEMP/gssl-u64/native-sbm11.jsonl" "$SOURCE_COMMIT" \
+            | tee "$RUNNER_TEMP/gssl-u64/native-device.json"
       - name: Save exact-source device evidence
         if: always()
         uses: actions/upload-artifact@v4
