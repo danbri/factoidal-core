@@ -112,9 +112,10 @@ structure Computed where
   padding : Edges := {}
   color : Color := ⟨0,0,0⟩
   background : Option Color := none
-  /-- `background-image: linear-gradient(...)`, painted over the colour; other images are
-  not drawn. -/
+  /-- A linear gradient painted over the background colour. -/
   backgroundGradient : Option BackgroundGradient := none
+  /-- Raster background layer URLs in CSS order, front to back. -/
+  backgroundURLs : List String := []
   /-- `column-count` and `column-width` (px) of a multi-column container (CSS Multi-column
   Layout 1 §3); none is `auto`. With both `auto` the box is not a multi-column container. -/
   columnCount : Option Nat := none
@@ -571,6 +572,19 @@ def gradientArgs (value : String) : Option String := do
     out := out.push c
   none
 
+/-- The URL layers of a raster `background-image`. Use CSS component values rather
+than splitting quoted strings or interpreting CSS escapes as URL characters. -/
+def backgroundURLLayers (value : String) : Option (List String) :=
+  (splitTopCommas value).mapM fun layer =>
+    match CssValues.stripWs (CssValues.CV.parse layer) with
+    | [.tok (.url url)] | [.fn "url" [.tok (.str url)]] =>
+      if url.isEmpty then none else some url
+    | _ => none
+
+#guard backgroundURLLayers "url(\"folder/a)b.png\"), url(second.png)" ==
+  some ["folder/a)b.png", "second.png"]
+#guard backgroundURLLayers "linear-gradient(red, blue)" == none
+
 /-- The declarations of this profile for declarations as written (`SheetReader.Decl`):
 side shorthands as their longhands (`expandSides`), `background` as the colour, the layout
 shorthands (`flex`, `flex-flow`, `gap`, `place-*`) as their longhands, so the cascade
@@ -581,10 +595,15 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     let whole : Declaration := ⟨key,d.value,d.important⟩
     -- `background` is also its colour, `background-color`, which this profile reads (`apply`,
     -- `tableDeclaration`); the shorthand stays for getComputedStyle's other longhands
-    -- and its image, `none` unless it is a `linear-gradient()` (the one image drawn)
+    -- and its image. The property table separates raster layers from colour, position and size.
     if key == "background" then
-      let image := if (gradientArgs d.value).isSome then d.value else "none"
-      (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
+      let expanded := CssValues.expand key d.value
+      let raster := (expanded.bind (·.lookup "background-image")).filter
+        (fun image => (backgroundURLLayers image).isSome)
+      let image := raster.getD (if (gradientArgs d.value).isSome then d.value else "none")
+      let colour := if raster.isSome then
+        (expanded.bind (·.lookup "background-color")).getD d.value else d.value
+      (⟨"background-color",colour,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
@@ -707,6 +726,23 @@ layer's place in the layer order), and nested style rules; `@container`, `@scope
 `@starting-style` blocks are skipped. -/
 def parseRaw (source : String) : Except String (List RawRule) :=
   .ok ((sheetLeaves source).toList.filterMap fun leaf => (ruleOfLeaf leaf).map fun rule => (leaf.media,rule))
+
+/-- Read a document's sheets in their common layer order. A stylesheet URL is only
+used for values that belong to that sheet, while inline style attributes are resolved
+against the page base by the document host. -/
+def parseRawSheets (resolve : String → String → String) (sheets : List (String × String)) : List RawRule :=
+  let bounded := (sheets.foldl (fun (left, out) (origin, source) =>
+    let part := if source.utf8ByteSize ≤ left then source else (source.take left).toString
+    (left - min left (source.utf8ByteSize + 1), if left == 0 then out else (origin,part)::out))
+    (maxSheetBytes, [])).2.reverse
+  (SheetReader.readSheets CssSupports.ruleHolds bounded).toList.filterMap fun (origin,leaf) =>
+    (ruleOfLeaf leaf).map fun rule =>
+      (leaf.media, {rule with declarations := rule.declarations.map fun decl =>
+        if decl.property != "background-image" || origin.isEmpty then decl
+        else match backgroundURLLayers decl.value with
+          | none => decl
+          | some urls => {decl with value := ", ".intercalate (urls.map fun url =>
+            "url(" ++ CssValues.serializeString (resolve origin url) ++ ")")}})
 
 /-- The rules of `parseRaw` that hold in the media environment `env`: those outside an
 `@media` block or in blocks whose query lists all hold. A relayout at another width needs
@@ -1311,9 +1347,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
         | _ => throw "columns: not a count or a length"
     return {s with columnCount := count, columnWidth := width}
   | "background-image" =>
-    if (trim d.value).toLower == "none" then return {s with backgroundGradient := none}
-    let some args := gradientArgs d.value | throw "background-image: only linear-gradient() is drawn"
-    return {s with backgroundGradient := some (← parseLinearGradient args)}
+    if (trim d.value).toLower == "none" then
+      return {s with backgroundGradient := none, backgroundURLs := []}
+    if let some urls := backgroundURLLayers d.value then
+      return {s with backgroundGradient := none, backgroundURLs := urls}
+    let some args := gradientArgs d.value | throw "unsupported CSS background image"
+    return {s with backgroundGradient := some (← parseLinearGradient args), backgroundURLs := []}
   | "font-size" =>
     let v ← pixels d.value
     if v <= 0 then throw "font-size must be positive"
@@ -1700,7 +1739,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
-  | "background-image" => some {s with backgroundGradient := source.backgroundGradient}
+  | "background-image" => some {s with backgroundGradient := source.backgroundGradient,
+      backgroundURLs := source.backgroundURLs}
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
@@ -3105,7 +3145,7 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
   let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
   if n.type == .element && !svgDescendant then computedFrom dom id (matchesOf id) parent else pure {parent with
     display := .inline, width := .auto, height := .auto,
-    margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
+    margin := {}, padding := {}, background := none, backgroundGradient := none, backgroundURLs := [], clipOverflow := false,
     columnCount := none, columnWidth := none,
     borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
