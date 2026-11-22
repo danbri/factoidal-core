@@ -259,10 +259,15 @@ structure State where
   /-- Chain identifier provided by the surrounding execution environment.
       It is not derived from or authenticated against a transaction here. -/
   chainId : Nat := 0
+  /-- The effective transaction gas price as resolved by the surrounding transaction
+      transition. It is not necessarily a signed fee cap and is not verified here. -/
+  effectiveGasPrice : Nat := 0
   /-- Externally selected header values, not authenticated against consensus here. -/
   blockCoinbase : Nat := 0
   blockTimestamp : Nat := 0
   blockNumber : Nat := 0
+  /-- Post-Merge PREVRANDAO, supplied by a header/consensus host. -/
+  blockPrevRandao : Nat := 0
   blockGasLimit : Nat := 0
   blockBaseFee : Nat := 0
   /-- Immediate caller, set at each CALL entry. -/
@@ -550,9 +555,14 @@ def planStep (s : State) : Except Error Plan :=
     | 0x3e => -- RETURNDATACOPY (EIP-211)
       if s.profile = .preShanghai then .error .unsupportedFork
       else copyBytes s s.returnData true
+    | 0x3a => prepared (s.pc + 1) (word s.effectiveGasPrice :: s.stack.items) 2 -- GASPRICE
     | 0x41 => prepared (s.pc + 1) (word s.blockCoinbase :: s.stack.items) 2 -- COINBASE
     | 0x42 => prepared (s.pc + 1) (word s.blockTimestamp :: s.stack.items) 2 -- TIMESTAMP
     | 0x43 => prepared (s.pc + 1) (word s.blockNumber :: s.stack.items) 2 -- NUMBER
+    | 0x44 => -- DIFFICULTY/PREVRANDAO (EIP-4399, post-Merge)
+      -- The old coarse profile spans both PoW and PoS: refuse ambiguity.
+      if s.profile = .preShanghai then .error .unsupportedFork
+      else prepared (s.pc + 1) (word s.blockPrevRandao :: s.stack.items) 2
     | 0x45 => prepared (s.pc + 1) (word s.blockGasLimit :: s.stack.items) 2 -- GASLIMIT
     | 0x46 => -- CHAINID (EIP-1344; Istanbul and later)
       -- preShanghai spans both sides of Istanbul: refuse to claim either.
@@ -799,6 +809,28 @@ theorem step_slt_underflow (s : State) (hRun : s.halted = false)
       simp only [hs, List.length_cons] at hStack
       have hMin : 2 ≤ rest.length + 1 + 1 := Nat.succ_le_succ (Nat.succ_le_succ (Nat.zero_le _))
       exact (Nat.not_lt_of_ge hMin hStack).elim
+
+/-- GASPRICE reads the effective price supplied to the execution frame, not a fee cap. -/
+theorem step_effectiveGasPrice (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x3a) :
+    step s = commit s (s.pc + 1) (word s.effectiveGasPrice :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, prepared]
+
+/-- Post-Merge opcode 0x44 uses the supplied PREVRANDAO through charged commit. -/
+theorem step_prevRandao (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x44) (hProfile : s.profile ≠ .preShanghai) :
+    step s = commit s (s.pc + 1) (word s.blockPrevRandao :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, hProfile, prepared]
+
+/-- An old ambiguous fork profile must not mislabel PoW difficulty as PREVRANDAO. -/
+theorem step_prevRandao_unknown_fork (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x44) (hProfile : s.profile = .preShanghai) :
+    step s = .error .unsupportedFork := by
+  simp [step, planStep, hRun, hOp, hProfile]
+
+#print axioms step_effectiveGasPrice
+#print axioms step_prevRandao
+#print axioms step_prevRandao_unknown_fork
 
 /-- Actual opcode COINBASE reads a supplied block-context value through the common charged commit. -/
 theorem step_blockCoinbase (s : State) (hRun : s.halted = false)
