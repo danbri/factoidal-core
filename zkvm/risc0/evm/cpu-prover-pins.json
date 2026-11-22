@@ -1,0 +1,40 @@
+{
+  "files": {
+    "app/prover.sh": {
+      "layer": "sha256:1935d7b791957a91199ef071debceefaa61d65665fdcd566162d1ae2d1a47329",
+      "sha256": "sha256:62f369d86687b95eefe0f2c99390147219f86452445c653c235e1b088d886f8b",
+      "size": 851
+    },
+    "app/stark_verify.cs": {
+      "layer": "sha256:e8de9d4607de9bf3fa69027e3e32939db072927ed9ca7afd89b645b9028a8146",
+      "sha256": "sha256:6ae11ad938464fb0b565484542d9b25d968651fb5d68f1c030d44bfe4dbc0a92",
+      "size": 304031226
+    },
+    "app/stark_verify.dat": {
+      "layer": "sha256:a3aca72834500037de450cf6138f631c536d9735ba902e0645cd95c558c01711",
+      "sha256": "sha256:a4b64c17d6c6836b91a2509f6692bf6fb5443bfadc11e285c49628b7277e7a59",
+      "size": 51191024
+    },
+    "app/stark_verify_final.pk.dmp": {
+      "layer": "sha256:36fb0ff79ede90c987770138675aaca37661105890ae9708db930e36c33525c5",
+      "sha256": "sha256:638cce8dd13b70e87f67ae118f4bfa495e2dee3321e0052c80231ef270f43dad",
+      "size": 2311436815
+    },
+    "usr/local/bin/prover": {
+      "layer": "sha256:5140ac79e738252de1cd81699234ead478c32f61c6d1b85740a17179c3f5b7db",
+      "sha256": "sha256:2fc71df966cf736e4969b59139aa08d051d8e41ab5d5243363266cc2af47db2d",
+      "size": 14633336
+    },
+    "usr/local/bin/stark_verify": {
+      "layer": "sha256:ef6acf334fd02139e1a7682272e2a4c1a15a9879dbb5c196cd294bde22876be2",
+      "sha256": "sha256:26e1b30011c7b9fee6d4a9cb19e78aa8594d58af9949ed6501346eb4ad3c3d55",
+      "size": 149269216
+    }
+  },
+  "manifest": "sha256:49093ed164b82aca9305dd80e4a6eb996bd443201ac7bd50b52909b2761ef583",
+  "proving_key_download_sha256": "b69993d9dbb22e6c064b1f1b75da6e176c983e23d9b308664b91188f0479abf8",
+  "repository": "risczero/risc0-groth16-prover",
+  "setup": "2026-10-20.1",
+  "tag": "v2026-10-20.1",
+  "upstream_source": "https://github.com/risc0/risc0/blob/22c5fb90522cb4d9427d4af6c05e747d20be2b7f/groth16_proof/docker/prover.Dockerfile"
+}

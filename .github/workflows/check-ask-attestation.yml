@@ -1,0 +1,122 @@
+name: Checked native ASK attestation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'formal/lean4/**'
+      - 'third_party/hacl/**'
+      - 'tools/check-ask-attestation.py'
+      - 'tools/lean-module-closure.py'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - 'zkvm/risc0/**'
+      - '.github/workflows/check-ask-attestation.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/**'
+      - 'third_party/hacl/**'
+      - 'tools/check-ask-attestation.py'
+      - 'tools/lean-module-closure.py'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - 'zkvm/risc0/**'
+      - '.github/workflows/check-ask-attestation.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-ask-attestation-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  native:
+    name: Native HACL journal and checked admission
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      LEAN_NUM_THREADS: '1'
+      LEAN_STACK_SIZE_KB: '16384'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      # The script verifies the exact 4.33.1 pin before building. A fresh
+      # checkout has no package cache; local cached runs still print every
+      # required theorem's axioms afresh before the existing hygiene gate.
+      - name: Build only attestation targets and verify native public outputs
+        run: python3 tools/check-ask-attestation.py --output-dir "${{ runner.temp }}/ask-attestation"
+      - name: Preserve source, axiom and public-fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ask-attestation
+          path: ${{ runner.temp }}/ask-attestation/
+          if-no-files-found: warn
+          retention-days: 30
+
+  receipt-boundaries:
+    name: Pinned SDK receipt and binary-format boundaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Select the pinned host compiler
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Check bounded receipt transport and journal framing
+        run: cargo +1.97.1 test --release --locked --manifest-path zkvm/risc0/host/Cargo.toml -j2
+      - name: Check immutable archive linking
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc +1.97.1 --edition=2021 --test zkvm/risc0/guest/runtime_snapshot.rs -o "${{ runner.temp }}/runtime-snapshot-tests"
+          "${{ runner.temp }}/runtime-snapshot-tests"
+      - name: Fetch the exact official verifier fixture sources
+        run: python3 zkvm/risc0/evm/bootstrap.py
+      - name: Verify the real official Groth16 fixture with the pinned SDK
+        run: cargo +1.97.1 test --release --locked --manifest-path zkvm/risc0/evm/receipt-tool/Cargo.toml -j2
+      - name: Install the pinned RV32 compiler for real assembly controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil, tarfile, urllib.request
+          pins = json.loads(pathlib.Path('zkvm/risc0/toolchain-pins.json').read_text())
+          pin = next(item for item in pins['archives'] if item['name'] == 'cpp')
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'factoidal-rv32-controls'
+          directory.mkdir(mode=0o700)
+          archive = directory / 'cpp.tar.xz'
+          with urllib.request.urlopen(pin['url'], timeout=60) as source, archive.open('xb') as out:
+              shutil.copyfileobj(source, out)
+          assert archive.stat().st_size == pin['bytes']
+          assert hashlib.file_digest(archive.open('rb'), 'sha256').hexdigest() == pin['sha256']
+          with tarfile.open(archive) as bundle:
+              bundle.extractall(directory, filter='data')
+          prefix = directory / 'riscv32im-linux-x86_64/bin/riscv32-unknown-elf-'
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write(f'FACTOIDAL_RISCV_GCC={prefix}gcc\n')
+              out.write(f'FACTOIDAL_RISCV_READELF={prefix}readelf\n')
+          PY
+      - name: Exercise the binary-format gate and refusal controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 zkvm/risc0/test_verify_elf.py
+          python3 zkvm/risc0/test_lower_fences.py
+          python3 zkvm/risc0/test_toolchain_fingerprint.py
+          python3 zkvm/risc0/test_check_guest.py

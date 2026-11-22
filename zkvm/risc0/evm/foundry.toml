@@ -1,0 +1,24 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.26"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 10000
+via_ir = true
+bytecode_hash = "none"
+ffi = false
+remappings = [
+  "risc0-ethereum/=lib/risc0-ethereum/contracts/",
+  "forge-std/=lib/risc0-ethereum/lib/forge-std/src/",
+  "openzeppelin/=lib/risc0-ethereum/lib/openzeppelin-contracts/",
+]
+
+[profile.proof]
+test = "proof-test"
+fs_permissions = [{ access = "read", path = "./fixtures" }]
+
+[fmt]
+line_length = 110

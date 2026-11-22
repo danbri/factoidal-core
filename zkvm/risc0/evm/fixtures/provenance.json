@@ -1,0 +1,178 @@
+{
+  "schema": "factoidal.ask.fixture-provenance.v1",
+  "recordedAtUtc": "2026-11-22T19:43:23Z",
+  "publicSynthetic": true,
+  "imageId": "0xc6d11ad4ba2b40d049bd3c117779816c73b3247d7bc50bb00e1c5c898618239b",
+  "journalSha256": "5f01400e92038a3656503249767456de6ebdf2d7e7c8b967b1afcdb69054b32d",
+  "files": {
+    "ask-proof.json": {
+      "bytes": 1072,
+      "sha256": "2aa8f0ddc1191aa07bdfff812af573849d840e0c360ac0892c8fd6fbca868783"
+    },
+    "expected-statement.json": {
+      "bytes": 360,
+      "sha256": "d1d91158797ff535a33134b165c9da07c97323fa296be639225c409e35d298ef"
+    }
+  },
+  "case": {
+    "name": "rule-inference",
+    "regime": "simple",
+    "regimeByte": 0,
+    "satisfied": true,
+    "description": "Two public N-Triples edges and two positive SPARQL-RL rules establish urn:a urn:reach urn:c before a BGP ASK.",
+    "generator": "tools/check-ask-attestation.py",
+    "inputFiles": {
+      "input.nt": {
+        "bytes": 52,
+        "sha256": "cd47c5ee4da334da7270576cb4e256b5a637266d933499b14b715a2a87ef0aa0"
+      },
+      "salt.bin": {
+        "bytes": 32,
+        "sha256": "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0"
+      },
+      "query.rq": {
+        "bytes": 35,
+        "sha256": "40df425b56edcaf54dce32a8568bf002f3a220bfb348bfa2f16622f4b337cd8e"
+      },
+      "rules.srl": {
+        "bytes": 121,
+        "sha256": "3c18e07c94b5efa0fc0a14569d82fb0bdee8a7e11b987b7d431a43e0319bb553"
+      },
+      "context.bin": {
+        "bytes": 47,
+        "sha256": "d17f02a96e768b75323df190724edff27b80feb8a0ac290de6a802fe70ac2f44"
+      }
+    }
+  },
+  "authorisedStatement": {
+    "journalSource": "Independent native Lean execution checked against the byte-protocol oracle in tools/check-ask-attestation.py",
+    "expectedStatementPreparedBeforeProofExport": true,
+    "imageSource": "Reviewed linked guest program and build manifest",
+    "policyAndContextSource": "The authorised native journal, supplied separately from the proof JSON"
+  },
+  "guestSource": {
+    "repository": "https://github.com/danbri/factoidal-core",
+    "commit": "1bf9c1b430f7ddc3489d72991c82b01bd625600c",
+    "tree": "985a6bd54f57da71530fc24f84b54bcd3e9f2192",
+    "programSha256": "b62a0fbaf80f1660e75a9df2143c2ca540d7755db6481daf49e3d7eeb21cf56b",
+    "buildManifestSha256": "6c943875c91d6bed1c5133849ceb4b408e95ccc85da2dc5fcd0bfc00f5eb0880",
+    "runtimeArchiveSha256": "be857b40649925c33de5f9a0d30e0fee077ab74d05b37163683feb8ae933a294"
+  },
+  "hostProofSource": {
+    "commit": "3cf6ccb83fea652753f9e6c8c0c380a924bc1c74",
+    "binarySha256": "27a0ee3b206dba9798fb3999277259a2a061b22daec6c76846fbf498ad395e7d"
+  },
+  "receiptBridgeSource": {
+    "mainRsSha256": "e497b6c0d42b90e79f694047b25ac8d291019f7919e2fb5e89ae2e893c75a993",
+    "binarySha256": "a4e35caf390c5dc73de139ac49af9270fe347d68fd93ecfce435252b638ff2c4"
+  },
+  "proofSystem": {
+    "sdk": "3.1.0",
+    "r0vm": "3.1.0",
+    "recursionCircuit": "4.1.0",
+    "rv32imCircuit": "4.1.0",
+    "groth16": "3.0.6",
+    "verifierParameters": "0xe71e6620a834f4d8dc1998476b865a9a6437a14474f9442cf8664f9ec22a5eee",
+    "identityVerifierParameters": "8dfe5a6be7860f94a46ad4dd69483b3d2b11ea9bae656e86027e893879586b6b",
+    "cpuProverManifest": "sha256:49093ed164b82aca9305dd80e4a6eb996bd443201ac7bd50b52909b2761ef583",
+    "trustedSetup": "2026-10-20.1",
+    "remoteProving": false,
+    "newSetupCeremony": false
+  },
+  "retainedCheckpointDigests": {
+    "compositeReceipt": {
+      "bytes": 9104164,
+      "sha256": "47f60cc9df7610211e5e8116664dac5a60506f0e9f374c8f3e4ac57ab7f4c654"
+    },
+    "succinctReceipt": {
+      "bytes": 223482,
+      "sha256": "ef650a0bf8f5b94d06c42dd3cac66e571fdca25eb4b749a7b0d1c95aa3a6f616"
+    },
+    "identityReceipt": {
+      "bytes": 223313,
+      "sha256": "8b2f21dfd786baa7b9be34187c8e711f37f4026a88edbb331a94a2e6992a814c"
+    },
+    "identitySeal": {
+      "bytes": 222668,
+      "sha256": "c7114bb176f5d92b773dd0fbe4fbe18264cb5ad1662a08cbac6d7ac921e2c73c"
+    },
+    "groth16Receipt": {
+      "bytes": 753,
+      "sha256": "e65a6fd2385d97c9d3f4a7c33c9dee11e7257484cb6f2b2e53ccd2a4abcaa55d"
+    },
+    "gnarkProofJson": {
+      "bytes": 724,
+      "sha256": "68b7dbd4040cd3a4622c3881c35177bf26e22a3af61786cdfc6d643cd518684f"
+    },
+    "evmSeal": {
+      "bytes": 260,
+      "sha256": "f53160f3d9297ad878e3b89224629c71f5661ec756a9324d387c776040fbc288"
+    }
+  },
+  "observedValidation": {
+    "sdkImageJournalVerification": true,
+    "localEvmAdmissionTests": {
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0
+    },
+    "localEvmRealAskTests": {
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    "rustBridgeTests": {
+      "passed": 5,
+      "failed": 0
+    },
+    "sharedReceiptDecoderTests": {
+      "passed": 4,
+      "failed": 0
+    },
+    "selectedFixturePath": {
+      "freshValidChildPassed": 7,
+      "wrongImageChildRefusedAtSetup": true,
+      "validDefaultUnchanged": true
+    },
+    "verificationCallGas": {
+      "value": 230839,
+      "scope": "Successful external verifyTrue call including ABI, STATICCALL and return overhead; excludes input copies, deployment/setup, log emission and intrinsic transaction gas",
+      "worstCaseBoundForMalformedProofs": false
+    },
+    "positiveForgeTestGas": 273492,
+    "solc": "0.8.26+commit.8a97fa7a",
+    "evmVersion": "cancun",
+    "optimizerRuns": 10000,
+    "viaIr": true,
+    "foundry": "1.5.0",
+    "tamperedSealForgeTestGas": 1008173841,
+    "tamperedSealObservedBehaviour": "Pairing PrecompileError followed by VerificationFailed; the official verifier requests gas() - 2000 for precompiles, subject to EVM forwarding rules. The large Forge harness gas result is not a successful-call measurement.",
+    "applicationCallBudgetPolicy": "Outside the reference view gate; no separate verification-call gas cap is imposed here.",
+    "tamperedSealExpectedError": "VerificationFailed.selector"
+  },
+  "recordedTimingsSeconds": {
+    "compositeProofWall": 3941.714,
+    "firstPrepareIncludingRejectedIdentity": 1287.0294658530038,
+    "successfulIdentityRetry": 81.36750177300564,
+    "cpuWitness": 6.903676867994363,
+    "cpuGroth16": 23.700174607001827,
+    "sdkFinish": 0.6663384420025977,
+    "sdkExport": 0.010029017001215834
+  },
+  "resources": {
+    "compositeSegments": 34,
+    "segmentLimitPo2": 19,
+    "rayonThreads": 8,
+    "goMaxProcs": 8,
+    "addressSpaceLimitBytes": 8589934592,
+    "goSoftMemoryLimitBytes": 6442450944,
+    "cpuTimeoutSecondsPerChild": 1800,
+    "sdkPrepareTimeoutSeconds": 10800
+  },
+  "recovery": {
+    "firstIdentityAttempt": "Refused a verifier-parameter mismatch because the adapter used the identity leaf ID instead of its depth-eight Merkle root.",
+    "repair": "Derived the fixed trusted root from pinned SDK constants with the official Poseidon254 hash_pair, restricted the context to poseidon_254, and retained full integrity and claim checks.",
+    "checkpointReuse": "The already verified succinct receipt was byte-identical in the successful retry; the composite proof was not repeated."
+  },
+  "ciScope": "Re-verification of this recorded guest image and authorised statement. CI does not rebuild the current Lean guest or regenerate its proof."
+}
