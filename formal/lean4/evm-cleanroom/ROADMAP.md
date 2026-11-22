@@ -1,11 +1,26 @@
-# From Lean EVM seed to independently reviewed Ethereum execution
+# From Lean EVM seed to independently reviewed Ethereum execution and consensus
 
-**Project state as of 22 November 2026.** The acceptance gates below describe
-the full execution-layer goal. The Lean interpreter and replay tools now
-cover specific parts of that goal, with independent comparisons and formal
-results scoped to each implementation. [Ethereum execution specification](https://github.com/ethereum/execution-specs)
+**Project state as of 22 November 2026.** The Lean interpreter and replay
+tools cover specific parts of the execution layer. Independent comparisons
+and formal results are scoped to the tested implementation.
 
-## Scope: three promises that must remain distinct
+## Full Lean Ethereum goal
+
+The full goal covers both the execution layer (EL) and the consensus layer
+(CL). It requires protocol-critical consensus logic in Lean, including
+beacon-state transitions, fork choice and finality, fork-indexed SSZ and BLS
+rules, and consensus networking for peer messages, gossip and sync.
+Acceptance requires the integrated EL and CL to pass published fork-specific
+fixtures and independent-client interoperability checks, with independent
+review of protocol semantics, Lean proofs and systems security against the
+exact source and evidence.
+[Full Lean Ethereum execution and consensus goal, #725](https://github.com/danbri/factoidal-core/issues/725) ·
+[Ethereum consensus specifications](https://github.com/ethereum/consensus-specs)
+
+## Execution-layer subgoal
+
+Milestones A–C and gates G0–G6 track the execution-layer subgoal.
+[Execution client and assurance tracker, #652](https://github.com/danbri/factoidal-core/issues/652)
 
 **A. Replay a real mainnet transaction.** Given the canonical typed or RLP
 transaction, its correct *pre-transaction* state, historical fork and block
@@ -19,10 +34,9 @@ the declared EVM, compiler, environmental and external-call assumptions.
 **C. Conform to Ethereum execution-layer consensus.** For every claimed
 historical/mainnet fork, implement the state transition accurately, including
 exceptional execution, precompiles, fee and account rules, state roots and
-receipts. For proof-of-stake operation, issue #652 scopes the node to the
-execution layer and its Engine API integration with an independently
-validated consensus client. Beacon-chain validation belongs to that client.
-[Execution client and assurance tracker](https://github.com/danbri/factoidal-core/issues/652)
+receipts. Engine API interoperability with an independently validated
+consensus client is an intermediate milestone on the way to integrated
+Lean execution and consensus.
 
 Do not promote any success in A to B or C without separate evidence.
 
@@ -40,10 +54,11 @@ Do not promote any success in A to B or C without separate evidence.
   selection and the headers are supplied externally. [Replay scope](README.md#authenticated-historical-frontier-replay)
 - **Executable frames and CALL.** The CLI covers fuel-bound STOP, memory,
   RETURN/REVERT and scoped storage rollback. Standalone frames accept
-  calldata, and the restricted zero- or nonzero-value CALL path carries
-  context and updates the world for one child depth. CALL input and
-  output windows, nested CALL, CREATE and precompile execution remain
-  open. [CALL and calldata scope](README.md#calldata-and-bounded-call-execution)
+  calldata, and the restricted CALL path carries context, value and byte
+  windows through nested frames. The shared fuel budget and depth check
+  bound frame dispatch. CALLCODE, DELEGATECALL, STATICCALL, CREATE and
+  precompile execution remain open.
+  [CALL and calldata scope](README.md#calldata-and-bounded-call-execution)
 - **Read-only RPC capture.** The capture and comparison tool supports
   Polygon PoS and OP Sepolia profiles. The saved Polygon mainnet and OP
   Sepolia samples matched local output with synthetic code overrides.
@@ -66,7 +81,7 @@ nonempty contract execution, persistent storage, exceptional outcomes,
 authenticated historical witnesses, official receipts and EELS semantic
 refinement were still open. [EELS runner and original evidence](scripts/eels/README.md)
 
-## Acceptance gates (ordered by dependencies, not by excitement)
+## Execution-layer acceptance gates G0–G6
 
 | Gate | Work | Demonstrable exit criterion |
 |---|---|---|
@@ -137,22 +152,25 @@ that a contract meets a financial or security invariant.
 
 ## Immediate implementation priorities
 
-1. Finish the guarded zero-value frame path for a reproducibly compiled
-   Solidity runtime. Check ABI dispatch, compare guarded execution against
-   the ordinary interpreter, and preserve compiler and bytecode provenance.
-   G4 still requires a proven property for an identified deployment.
+1. Prove a property for an identified Solidity deployment. Build on the
+   guarded zero-value ABI dispatcher and its reproducible compiler fixture.
    [Active work, #736](https://github.com/danbri/factoidal-core/issues/736)
-2. Implement CALL input and output windows and nested frame checkpoints, then
-   CREATE and precompile execution. Extend independent coverage of frame
-   effects, exceptional halts, gas and rollback. [Machine semantics, #649](https://github.com/danbri/factoidal-core/issues/649)
+2. Extend independent coverage and formal reference correspondence for CALL
+   gas, state and nested checkpoints. Implement the other call variants,
+   CREATE and precompile execution.
+   [Bounded CALL, #744](https://github.com/danbri/factoidal-core/issues/744) ·
+   [Machine semantics, #649](https://github.com/danbri/factoidal-core/issues/649)
 3. Advance fork-exact transaction and block transitions. Expand authenticated
    mainnet replay to successful, reverted and storage-mutating contract
    calls. Use an independent reference transition relation, and preserve
    unsupported cases in fixture totals. [Transaction replay, #650](https://github.com/danbri/factoidal-core/issues/650)
-4. Complete the execution client and check Engine API integration with an
-   independent consensus client. Obtain external review of Ethereum
-   semantics, Lean proofs and systems security against the exact revisions
-   and claims. [Execution client and assurance, #652](https://github.com/danbri/factoidal-core/issues/652)
+4. Complete the execution client and check Engine API interoperability with
+   an independent consensus client. Obtain external review against the
+   exact execution-layer revisions and claims.
+   [Execution client and assurance, #652](https://github.com/danbri/factoidal-core/issues/652)
+5. Implement and validate the Lean consensus layer, then exercise the
+   integrated EL and CL against the full goal's acceptance and review criteria.
+   [Full Lean Ethereum execution and consensus goal, #725](https://github.com/danbri/factoidal-core/issues/725)
 
 ## Independent external specifications
 

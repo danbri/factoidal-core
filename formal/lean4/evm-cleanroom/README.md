@@ -4,6 +4,8 @@
 executes selected opcode, frame, transaction and block replay cases. Full
 execution, fork coverage, Ethereum peer networking and consensus, and formal
 refinement to EELS remain open.
+[Full Lean Ethereum execution and consensus goal, #725](https://github.com/danbri/factoidal-core/issues/725) ·
+[Execution-layer milestones](ROADMAP.md#execution-layer-subgoal)
 
 The original proof record covers the initial interpreter and its trust
 boundaries. The active evidence ledger records subsequent claims with their
@@ -76,21 +78,39 @@ remain external inputs.
 
 `evm-subset --frame-call HEX CALLDATA_HEX GAS FUEL` executes one frame with ABI
 input. `CALLDATALOAD` reads a zero-padded big-endian word at the full-width
-offset and `CALLDATASIZE` gives the input size. Unsigned comparisons, Boolean
-and bitwise operations, byte extraction and logical shifts run in the core
-dispatcher. Frame output includes exact gas and stack words, allocated memory,
-return or revert bytes, and truncation flags for the 4,096-byte observation
-limits. The calldata slice matched 331 independent Shanghai EthereumJS cases
-in the local run of [the differential script](scripts/differential/calldata.mjs).
+offset and `CALLDATASIZE` gives the input size. `CALLDATACOPY` and `CODECOPY`
+pad reads beyond their source with zeros. `CODESIZE` reports the current code
+length. `RETURNDATASIZE` reports the last child buffer size and `RETURNDATACOPY`
+checks the full source range, even for zero bytes. Frame output includes exact
+gas and stack words, allocated memory, return or revert bytes, and truncation
+flags for the 4,096-byte observation limit. The standalone calldata matrix
+has 331 independent Shanghai EthereumJS cases.
+[Calldata differential](scripts/differential/calldata.mjs)
 
-The restricted parent `CALL` runner covers zero and nonzero value with one
-child depth. Its repairs preserve static and fork context in the child, retain
-successful self-call storage changes, and stop with an explicit unsupported
-result for precompile targets. Child calldata and return-data copying, nested
-calls and complete precompile support remain open.
+`evm-subset --call-opcode PARENT_HEX CHILD_HEX GAS FUEL` executes the `CALL`
+opcode against a fixture world. The parent and child addresses are `0xc1` and
+`0xc3`. Optional account and entry-context fields set the balances, child
+nonce, read-only flag, opcode profile and depth. The optional third runtime
+is at `0xc4`. The default fixture starts with cold addresses. The final
+optional field prewarms the parent. Run the command without arguments to
+see the positional fields.
+
+The `CALL` dispatcher shares a simulation fuel budget across frames and
+checks depth before child entry. It charges for both memory windows before
+forwarding gas, retains the caller's original storage snapshot, and passes
+child input as an immutable view of caller memory. A returning or reverting
+child publishes its full output to the caller's last-child buffer. The caller
+copies only the bytes that fit the paid output window. The journal retains a
+successful child's changes and restores the caller's checkpoint after a child
+failure. The JSON fields `parentMemory*`, `returnData*` and `returnBytes*`
+report bounded snapshots of parent memory, the last-child buffer and the
+parent's terminal output respectively. Precompiles and unsupported
+instructions produce an indeterminate result when reached.
 [CALL implementation](EVMCleanroom/CallOpcode.lean) ·
-[CALL repair differential](scripts/differential/call-repairs.mjs) ·
-[Frame and storage proof scope](FRAME_STORAGE.md)
+[Byte copy proofs](EVMCleanroom/ByteCopyProofs.lean) ·
+[Byte-opcode differential](scripts/differential/byte-copy.mjs) ·
+[Nested CALL differential](scripts/differential/call-data.mjs) ·
+[Run evidence](../../../docs/20261122-evm-call-data-nesting.md)
 
 `evm-subset --pure-frame-call HEX CALLDATA_HEX GAS FUEL` starts a read-only,
 zero-value frame and checks each fetched opcode before dispatch. This lets
@@ -243,17 +263,19 @@ charging. This does not prove EELS equivalence or world-state rollback.
 
 ## Opcode coverage
 
-`STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `LT`, `GT`, `EQ`, `ISZERO`,
+`STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `ADDMOD`, `MULMOD`, `LT`, `GT`, `SLT`, `EQ`, `ISZERO`,
 `AND`, `OR`, `XOR`, `NOT`, `BYTE`, `SHL`, `SHR`, `CLZ`, `ADDRESS`, `CALLVALUE`,
-`CALLDATALOAD`, `CALLDATASIZE`, `SELFBALANCE`, `POP`,
+`CALLDATALOAD`, `CALLDATASIZE`, `CALLDATACOPY`, `CODESIZE`, `CODECOPY`,
+`RETURNDATASIZE`, `RETURNDATACOPY`, `SELFBALANCE`, `POP`,
 `JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`, `MLOAD`, `MSTORE`, `MSTORE8`, `MSIZE`,
 `PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`.
 A separate `Frame.run` handles `RETURN` and `REVERT` and `CallOpcode.run`
 handles the restricted `CALL` path.
 
 `PUSH0` is gated by the coarse pre-/post-Shanghai profiles. The pre-Shanghai
-profile leaves activation of `SHL` and `SHR` indeterminate. `CLZ` requires
-the Osaka profile. Unsupported opcodes return explicit errors.
+profile leaves activation of `SHL`, `SHR`, `RETURNDATASIZE` and
+`RETURNDATACOPY` indeterminate. `CLZ` requires the Osaka profile. Unsupported
+opcodes return explicit errors.
 
 The arithmetic tests include expected values from the official
 [execution-spec-tests `addFiller.yml`](https://github.com/ethereum/execution-spec-tests/blob/main/tests/static/state_tests/VMTests/vmArithmeticTest/addFiller.yml).
@@ -278,7 +300,7 @@ misrepresented as proofs.
 
 After that: independently reviewed EELS memory-opcode refinement,
 JUMPDEST conformance to EELS, external semantic refinement of the new
-storage/frame slices, **nested calls and world-state rollback**, contract
+storage/frame slices and nested CALL checkpoints, contract
 creation, receipts, fork transitions and ultimately a full execution client.
 
 Sources: [EELS](https://github.com/ethereum/execution-specs),

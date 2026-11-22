@@ -1,7 +1,6 @@
 # Soundness and trust boundaries — Lean EVM cleanroom seed
 
-**Status: 2026-11-19. This is a restricted EVM model, not a verified
-Ethereum client.**
+**2026-11-22. This record covers the restricted Lean EVM model.**
 
 This document is a claim ledger. It distinguishes Lean theorems about the
 *implemented model*, executable regression checks, and facts still requiring
@@ -12,16 +11,19 @@ independent specification refinement.
 - `Word` is a natural-number residue below `2^256`; `word` reduces
   arbitrary naturals modulo that modulus.
 - `Stack` carries a proof that its list has at most 1,024 items.
-- `State` contains bytecode, program counter, stack, gas, halted flag,
-  a coarse pre-/post-Shanghai profile and sparse functional byte memory.
+- `State` contains code, program counter, stack, gas, halt status, a coarse
+  opcode profile, sparse functional memory, account-local storage, and
+  bounded views for calldata, the last child buffer and terminal output.
 - `planStep` calculates the next program counter, stack, gas cost and halt
   bit, or refuses a locally invalid instruction.
 - `commit` checks the stack limit and available gas; `step` either rejects
   a plan or applies it through this one controlled boundary. Planned
   memory changes are applied only after a successful gas check.
-- `run` is fuel-limited and reports `stepLimit` if fuel is exhausted.
-  Errors discard the local state in the result type. No transaction
-  rollback or exceptional-halt gas-consumption rules are represented.
+- `Core.run` is fuel-limited and reports `stepLimit` if fuel is exhausted.
+  `Frame.run` settles single-frame RETURN, REVERT and exceptional halts.
+  `CallOpcode.run` uses a world journal and an explicit continuation list
+  for the supported nested CALL path. The shared fuel budget is a simulation
+  limit on interpreter dispatches, including synthetic STOP past the code end.
 
 ## Machine-checked properties
 
@@ -43,8 +45,12 @@ exposed to the axiom audit in the dedicated workflow:
 | Accepted JUMPDESTs occur **exactly** at in-bounds decoded opcode boundaries, for **arbitrary bytecode** including PUSH1–32 immediate skipping | `validJumpdest_sound`, `validJumpdest_complete`, `scanJumpdest_sound`, `ForwardPath.scan_accepts`, `opcodeWidth_bounds` | Local soundness and completeness; decoder and relation share opcode-width definition, so independent EELS equivalence remains unproved |
 | Memory expands monotonically; byte stores preserve the high-water mark; stores can be read back at allocated addresses | `Memory.expand_monotone`, `Memory.writeByte_preserves_words`, `Memory.writeWord_preserves_words`, `Memory.readByte_after_write`, `Memory.readByte_write_other`, `Memory.empty_expand_zero` | About sparse functional byte semantics, not a proof of all MLOAD/MSTORE effects |
 | EVM memory cost is monotone | `MemoryGas.cost_monotone` | Mathematical memory pricing only |
-| Memory expansion cannot be undercharged by subdivision | `MemoryGas.expansion_path_independent`, `MemoryGas.ExpansionTrace.exact_total` | Every finite monotone allocation sequence; not yet connected to opcodes |
+| Memory expansion cannot be undercharged by subdivision | `MemoryGas.expansion_path_independent`, `MemoryGas.ExpansionTrace.exact_total` | Every finite monotone allocation sequence in the pricing model |
 | Empty memory access costs no expansion gas at any offset | `MemoryGas.zero_length_access_free` | Including offset `2^256-1` |
+| Bounded byte views and sparse copy overlays | `ByteView.readByte_inside`, `ByteView.readByte_outside`, `Memory.readByte_expandedCopy_inside`, `Memory.readByte_copyFrom_outside` | Copy semantics at arbitrary mathematical addresses with the indicated memory allocation |
+| Actual bytecode copy and return-buffer boundary | `step_callDataCopy`, `step_codeCopy`, `step_returnDataCopy_readByte`, `step_returnDataCopy_outOfBounds` | Funded steps with the specified operands and admitted profile where applicable |
+| CALL scheduling, output and child checkpoints | `CallOpcode.schedule_exact`, `CallOpcode.resumeCall_observations`, `CallOpcode.resumeChild_revert`, `CallOpcode.resumeChild_exception` | Model-level facts about the named scheduler and resumption functions |
+| Public CALL runner preserves the entry world on parent failure | `CallOpcode.run_parent_revert_atomic`, `CallOpcode.run_parent_exception_atomic` | Any completed outcome of the indicated kind, including after successful child work |
 
 The core gas equations are:
 
@@ -72,28 +78,40 @@ auditor's configured standard axiom allowlist. It does **not** verify
 Lean's kernel, code generation, deployed binaries, external dependencies
 or EELS semantics.
 
+Byte-view construction stores a backing function and a size. `CALLDATALOAD`
+requests 32 reads at mathematical offsets. Each nonempty copy creates one
+functional range overlay and does work independent of the numeric byte
+count, apart from arithmetic on the encoded naturals. A zero-length copy
+returns the existing memory. Reads can traverse older writes and memory
+snapshots, so dispatch fuel and CALL depth limits do not bound every host
+read or establish a host stack-use bound. The CLI reports at most 4,096
+bytes of each observed window and marks truncated observations.
+
 ## Genuine EELS state-test execution (scoped)
 
-The [EELS replay runner](scripts/eels/README.md) executes **four of six
-published Prague EIP-7623 state-test cases**, verifying the computed
-Merkle state root and expected account state. Two cases requiring blob fees
-and EIP-7702 authorisation remain explicitly unsupported.
+On 19 November 2026 the historical Prague runner matched **four of six**
+published EIP-7623 state-test roots. The two unsupported cases at that
+checkpoint required blob fees and EIP-7702 authorisation.
 
-Lean performs the empty-code frame execution and restricted type-0/1/2
-transaction fee/nonce/balance settlement. Theorems
+The active evidence ledger records **six Prague EIP-7623 roots** for the
+restricted type-0 through type-4 envelope runner and **six Cancun roots**
+for the nonempty PUSH0 contract fixture. The Cancun count covers six
+executed fork cases in a fixture with 24 cases across all its forks. The
+Prague runner handles empty-code execution and restricted transaction fee,
+nonce and balance settlement. Theorems
 `empty_code_halts_without_spending_gas`,
 `TxAccounting.settle_charged_bounded`,
 `TxAccounting.sender_balance_conservation`,
 `TxAccounting.sender_nonce_advances` and
 `TxAccounting.fee_conservation` are machine checked against the Lean model.
 
-This is **not** an end-to-end formally verified state transition:
-EthereumJS signed-envelope parsing and MPT serialization are trusted, while
-the host handles account set construction and field mapping. The model has
-not been independently proved to implement EELS's transaction rules,
-and no ordinary historical mainnet transaction or nonempty contract code has
-been replayed through this fixture runner. CI includes two deliberately
-tampered post-state negative controls to check that the comparator fails.
+Signed-envelope parsing and MPT serialisation use EthereumJS. The host
+constructs account sets and maps fixture fields. Specification refinement of
+transaction execution is open. The restricted Frontier transfer replay
+has its own historical evidence.
+[Fixture runners](scripts/eels/README.md) ·
+[Active evidence ledger](evidence/active-claim-manifest-v2.json) ·
+[Frontier replay](README.md#authenticated-historical-frontier-replay)
 
 ## External checks (not proof of conformance)
 
@@ -103,8 +121,8 @@ stack underflow, out-of-gas and exact-STOP fuel exhaustion behaviour. The
 
 The CI additionally parses a genuine published EELS-generated state-test
 fixture (Shanghai/PUSH0, from an EthereumJS mirror pinned by SHA) and
-deliberately reports **zero executed state tests** in that *preflight-only* job. A separate restricted EELS replay runner (documented above) now executes four cases and checks real state roots.
-No post-state root, account effect or receipt is compared by that parser.
+reports **zero executed state tests** in that *preflight-only* job. The
+scoped Prague and Cancun replay jobs execute cases and compare state roots.
 
 A different CI step executes 14 supported bytecode scenarios in the actual
 Lean interpreter and compares **gas deductions only** to the static opcode
@@ -139,48 +157,46 @@ truncated-memory results as full matches. The corpus hash is
 seed `20261119`. Complete cases, expected and observed outputs,
 dependency versions and any mismatches are retained as CI artifacts.
 
-This is **not** a proof that all Ethereum bytecode behaves correctly.
-Synthetic tests may miss entire opcode families; two independently written
-interpreters may still share a misunderstanding of an EIP; the Lean
-formal invariants are still largely stated over the *local* semantics.
-The externally maintained EELS execution tests continue to be
-*parsed but not executed*: **zero official state-test passes claimed**.
+The differential result covers the recorded bytecode cases. Synthetic
+tests may miss entire opcode families, and the formal invariants concern
+the local semantics. The official fixture passes come from the separate
+scoped state-test replays described above.
 See [differential methodology](scripts/differential/README.md) and
 [roadmap](ROADMAP.md).
 
-## What is not established
+The byte and nested CALL comparisons run separate fixtures through the
+Lean CLI, EthereumJS and a pinned Geth build. Each report records its
+client-specific set of observations. EthereumJS labels some returndata
+bounds exceptions `out of gas`. The fixture checks the corresponding Lean
+diagnostic separately, and the comparison records the raw oracle labels.
+The Shanghai Geth fixture requires a prewarmed parent. Its comparison
+leaves out raw-cold parent, static-entry, nonzero-depth and Osaka cases.
+The EthereumJS matrix and explicit Lean boundary tests cover those cases
+within the limits recorded in the evidence.
+[Byte-opcode differential](scripts/differential/byte-copy.mjs) ·
+[Nested CALL differential](scripts/differential/call-data.mjs)
 
-1. **No Ethereum specification equivalence.** There is no theorem of the
-   form `step_lean ≈ step_EELS`, no EELS differential-test runner, and
-   no complete opcode semantics. A perfectly proved wrong price or wrong
-   opcode result remains a wrong Ethereum implementation.
-2. **No complete gas or exception model.** Byte-addressed memory,
-   MLOAD/MSTORE/MSTORE8/MSIZE and expansion pricing are implemented, but
-   not formally refined to EELS. State rollback, exceptional gas burning,
-   refunds, warm/cold storage access and calls remain outside the model.
-3. **No complete protocol fork model.** The profile gates only PUSH0.
-   Correct execution of the historical chain requires every relevant
-   hard-fork transition, including other gas and opcode changes.
-4. **No world-state or chain semantics.** Accounts, storage, transaction
-   validity, roots, receipts, precompiles, nested calls, cryptography,
-   fork choice, networking and consensus clients are not implemented.
-5. **No compiler verification.** We do not compile Solidity/Yul, and
-   cannot infer validity of Solidity contracts or Ethereum transactions.
-6. **No production-security guarantee.** IO, resource exhaustion,
-   implementation side channels, peer attacks and host-runtime behaviour
-   remain unmodelled. The program uses Lean's trusted runtime to execute.
-7. **JUMPDEST soundness is internal, not external conformance.**
-   `validJumpdest_sound` proves every locally accepted jump target is a
-   declarative instruction boundary with opcode `0x5b`, for arbitrary
-   byte arrays and PUSH1–32 immediate widths. But the declarative
-   boundary relation shares `opcodeWidth` with the executable scanner;
-   *completeness* of the scanner is now also proved (in
-   `JumpCompleteness.lean`), but independent refinement to EELS remains
-   unproved.
-8. **No strict legal clean-room certification.** Implementation files were
-   independently written from public specification descriptions, not
-   copied from existing clients or Lean EVM formalizations. The project
-   has not undergone a formal clean-room provenance audit.
+## Remaining proof and execution boundaries
+
+1. **EELS refinement.** Opcode, gas, exception and journal theorems
+   concern the local model. Reference refinement remains open.
+2. **Fork selection.** `preShanghai`, `shanghaiPlus` and `osaka` select
+   subsets of opcode behaviour. Chain replay requires fork-exact
+   transaction context, address prewarming and gas schedules.
+3. **World and chain scope.** The functional world carries accounts, slots,
+   warmth and a signed refund counter for the supported frame operations.
+   Other call variants, CREATE, precompiles, complete transaction/block
+   validation, receipts, networking and consensus remain open.
+4. **Compiler and deployment scope.** Guarded execution checks the bytes
+   of a Solidity compiler fixture and selected provider captures. Compiler
+   correctness and deployed-contract properties need separate proofs.
+5. **Runtime trust.** Kernel, compiler, host execution, resource exhaustion
+   and implementation side channels remain trust boundaries.
+6. **JUMPDEST reference behaviour.** The local soundness and completeness
+   statements use the same `opcodeWidth` as the scanner. Comparison with
+   independently specified instruction boundaries remains open.
+7. **Provenance.** The project independently implements public specification
+   descriptions. A formal clean-room provenance audit remains open.
 
 ## Highest-value next proof obligations
 
@@ -195,8 +211,8 @@ See [differential methodology](scripts/differential/README.md) and
 4. Independently check the shared opcode-width semantics and JUMPDEST
    behaviour against EELS. Local soundness and completeness have both
    been proved for all finite bytecode arrays.
-5. Extend the state to accounts, storage, calls, return/revert data,
-   exceptional-halting semantics and fork-parameterized gas.
+5. Extend the supported account and CALL slice to the other call variants,
+   CREATE, precompiles and fork-exact environment and gas rules.
 6. If/when optimized implementations are introduced, prove they refine
    the independent simple-step specification rather than proving only
    self-consistency of the optimized code.

@@ -1,6 +1,6 @@
 # Multi-account transaction-state scaffold
 
-**Scope:** stacked draft PR #659, based on frame rollback PR #656. Not a verified Ethereum execution client.
+The transaction world supplies account state to single-frame and nested CALL execution. The scope is a functional account journal.
 
 ## Executable components
 
@@ -24,8 +24,21 @@ These theorems are checked in Lean; `#print axioms` and the CI axiom audit expos
 
 From `formal/lean4/evm-cleanroom`, run `lake build`; check the new proof sources with `lake env lean EVMCleanroom/World.lean` and `lake env lean EVMCleanroom/Value.lean`. The dedicated `.github/workflows/evm-cleanroom.yml` also reruns inherited synthetic EVM, storage, frame and restricted EELS checks.
 
-## Critical incomplete functionality
+## Single-frame and nested execution
 
-Running account A and then account B through `runAt` is not executing EVM `CALL`: there is no stack-driven call dispatcher, environment/returndata propagation, calldata, EIP-150 gas forwarding, nested value transfer, precompiles, logs or call-depth enforcement. The world uses functional account mappings rather than authenticated Merkle Patricia tries; addresses passed to `runAt` are not yet subtype-checked. No nonempty official EELS state-root replay is claimed. Balance transfers exist as a checked pure operation but are not wired to CALL, CREATE or settlement.
+`World.runAt` runs a single selected account through `Frame.run`. `CallOpcode.run`
+uses the same account projections with an explicit continuation list for
+stack-driven `CALL` (`0xf1`). It prices caller memory windows, passes child
+calldata and returndata, checks depth, applies value transfer when funded,
+and journals account state, warmth and refunds around each child. Parent
+REVERT and exceptional execution restore the entry world.
+[CALL dispatcher](EVMCleanroom/CallOpcode.lean) ·
+[Executable and test scope](README.md#calldata-and-bounded-call-execution)
 
-Before any broader Ethereum assurance claim, implement nested calls and their journal, EELS-derived fork-specific semantics, receipts, post-storage and post-state roots, transaction accounting and a fixed canonical mainnet replay bundle. See issues #649–#654.
+The world uses functional account mappings and natural-number addresses.
+The scoped official EELS root replays use a separate host for trie
+serialization. Open work includes authenticated general world state,
+fork-exact semantics, other CALL variants, CREATE, precompiles, logs and
+complete transaction and block settlement.
+[Published replay scope](README.md#published-eels-state-test-replay) ·
+[Machine semantics, #649](https://github.com/danbri/factoidal-core/issues/649)

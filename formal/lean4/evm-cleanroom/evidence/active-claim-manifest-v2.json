@@ -8,19 +8,19 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "6d84dcf79da145192f7020a0240c3b3195fbfb88",
+    "EVMCleanroom/Core.lean": "ffa29453195fc108081e958bae031818122de7a9",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
-    "EVMCleanroom/Frame.lean": "ae83b64fa59f5362d9dda20a7ae8a2ac778ed2de",
-    "EVMCleanroom/World.lean": "ad753ba48fd171428b6b1499043ee71c0358693f",
+    "EVMCleanroom/Frame.lean": "ffd73c798cfeb20d607aa10c7843c16c095b937d",
+    "EVMCleanroom/World.lean": "255f115cc6586e911bab142fcee60e2929b2ecf3",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
-    "EVMCleanroom/Call.lean": "2931f762af2e1435428a11aca5747ea85a44a0ff",
-    "EVMCleanroom/MemoryGas.lean": "35840f83cb5141c454943546827fe6c93d2f1569",
+    "EVMCleanroom/Call.lean": "dc93647332fefb33fd690a3ef298c39ae3baf89f",
+    "EVMCleanroom/MemoryGas.lean": "f8fdb875e5be25954c7dbc7a9f67a733dc4dbecf",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "f8a3353e2d6918d4c6930cad8d9f67dcdad22b5e",
-    "EVMCleanroom.lean": "50dba1238f4ae50d0606537b2aceea7b76acbd77",
+    "EVMCleanroom/CLI.lean": "8f516f1c57b43bd0c8939ff373346b818e96c09a",
+    "EVMCleanroom.lean": "687acb6099dda7d1a7efc4f180092a8dbef41ebf",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
@@ -33,8 +33,8 @@
     "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
-    "EVMCleanroom/CallOpcode.lean": "dbaa077c7aaba0dab18c49c5096864d77c6e04e0",
-    "scripts/differential/call-opcode.mjs": "534c19df9185c733ef6b2b174bdbe9d587b43282",
+    "EVMCleanroom/CallOpcode.lean": "47477b39c9b80e7563bfd966bcc21b86e817f5ad",
+    "scripts/differential/call-opcode.mjs": "c303ca5c17c0f485b01d300c79e2f3f2b30546d1",
     "EVMCleanroom/FrontierTransfer.lean": "a85feceae4af9c1370d661f43ec8f7fcd4837531",
     "scripts/eels/replay-first-mainnet.mjs": "27bb7f161b209c644875aec883f86170f9b17161",
     "evidence/frontier-mainnet-46147.json": "3cea095d8700ffb3ea34f21c9a7741b881eabdc6",
@@ -44,12 +44,12 @@
     "scripts/eels/independent-frontier-trie.py": "dc82cd32d542b764d3e839c2afff59a7fc929c67",
     "scripts/eels/frontier-independent-negative.py": "8ad4e8081d1395df8f382e720b92a23a4711f073",
     "evidence/frontier-keccak-vectors.json": "45eb0eeff0a5fe64df74c85e392571d36d10a157",
-    "EVMCleanroom/ValueCall.lean": "0127bf77f1e3a102695ab45dcc26d9961649e4f2",
+    "EVMCleanroom/ValueCall.lean": "c96d8c57bdbe6cde79c0d71d37834b9f0a9f67ac",
     "scripts/differential/value-call.mjs": "c8f984084b8ed39a81645f142734c167239b2858",
     "EVMCleanroom/CallContextTests.lean": "b9daf2a0e1effbc62fc8052b589378120af2e79e",
     "scripts/differential/call-context.mjs": "4347690149529a63d3b7090edf3b8126d4a1bd64",
     "EVMCleanroom/CallTests.lean": "2d6596346a7092cab12955e4b936303ab4d21473",
-    "EVMCleanroom/CalldataProofs.lean": "665d815e160de1602da029afbbfa3028e387a538",
+    "EVMCleanroom/CalldataProofs.lean": "381db0a2e577b236385f55cf94e9263183895fcd",
     "EVMCleanroom/CallBoundaryTests.lean": "1071872262f7c8b1774ae9b4fd61ce1b1dd60a96",
     "scripts/differential/CallRepairsProbe.lean": "53ff7f43feb1da53bc86e9b644dd482da1fe78fa",
     "scripts/differential/calldata.mjs": "63ad41b263dda18e324077201deb6bfcb43cc1c6",
@@ -70,7 +70,18 @@
     "scripts/rpc/evidence/op-sepolia-jovian-decimals-51771054.json": "45e3eec526801649e061cecff87c0f28dec98e7e",
     "scripts/rpc/evidence/op-sepolia-solidity-ge-51771081.json": "2d8c431338d2f34fb2179ac709b675190295364a",
     "scripts/rpc/evidence/polygon-solidity-ge-97759492.json": "68700c5c1ef0bd14089c11525a4663dbd4e918b2",
-    "EVMCleanroom/ModularProofs.lean": "4a7bb12ab2ffead0f1d87fe26e203bc8413b0730"
+    "EVMCleanroom/ModularProofs.lean": "4a7bb12ab2ffead0f1d87fe26e203bc8413b0730",
+    "EVMCleanroom/ByteCopyProofs.lean": "96822e97e72d5a7a7e0905b58b20a632069a2cbe",
+    "EVMCleanroom/ByteCopyTests.lean": "1f08081b49984653d1946af404645408c9a32bf8",
+    "EVMCleanroom/Memory.lean": "e04c41302210d6834c4f8fa444166e2240950f9a",
+    "scripts/differential/byte-call-timing.mjs": "458b3f4d963665bec9656c3363bb2c7413a299b8",
+    "scripts/differential/byte-copy.mjs": "fbe8c59b8dca01da00d4c05d1bc9ea2a98f52532",
+    "scripts/differential/call-data.mjs": "28a85f5f7e572cedbc9f903b6ce030e2a7edc606",
+    "scripts/differential/geth-byte-oracle.mjs": "d1be6712584c3fcc69ee64d71f19100183170160",
+    "scripts/differential/package-lock.json": "5318ca3893d6f4a10add5044de63c289dd48c79f",
+    "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
+    "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
+    "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc"
   },
   "theorem_inventory": [
     {
@@ -610,6 +621,351 @@
       ],
       "scope": "A successful Core step preserves a given zero-value, read-only context.",
       "provenance": "Actual Lean 4.33.1 #print axioms on source commit 866a36fce9b71f62fe18387a903f9bc0befca430, Git blob 15a773d282634f6cbbe202d642682cc30ae7ec30; local executable model."
+    },
+    {
+      "name": "EVMCleanroom.MemoryGas.requestedWords_covers",
+      "source": "EVMCleanroom/MemoryGas.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Requested words cover every byte of a nonempty access.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.MemoryGas.copyCost_zero",
+      "source": "EVMCleanroom/MemoryGas.lean",
+      "axioms_printed": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ],
+      "scope": "An empty copy charges exactly three gas independent of destination and prior allocation.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.Memory.copyFrom_zero",
+      "source": "EVMCleanroom/Memory.lean",
+      "axioms_printed": [],
+      "scope": "An empty overlay returns the identical memory value.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "Memory.copyFrom_zero"
+    },
+    {
+      "name": "EVMCleanroom.Memory.copyFrom_preserves_words",
+      "source": "EVMCleanroom/Memory.lean",
+      "axioms_printed": [],
+      "scope": "The overlay alone preserves the paid word count.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "Memory.copyFrom_preserves_words"
+    },
+    {
+      "name": "EVMCleanroom.Memory.readByte_copyFrom_inside",
+      "source": "EVMCleanroom/Memory.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Every paid destination byte reads its corresponding bounded source byte.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "Memory.readByte_copyFrom_inside"
+    },
+    {
+      "name": "EVMCleanroom.Memory.readByte_copyFrom_outside",
+      "source": "EVMCleanroom/Memory.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Every byte outside the destination range retains its previous read value.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "Memory.readByte_copyFrom_outside"
+    },
+    {
+      "name": "EVMCleanroom.step_callDataCopy",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Funded CALLDATACOPY pops destination, source and length and requests the priced overlay of frame input.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.step_codeSize",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "CODESIZE requests a two-gas commit of the current code length.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.step_codeCopy",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Funded CODECOPY pops destination, source and length and requests the priced overlay of current code bytes.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.step_returnDataSize",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "On an admitted profile RETURNDATASIZE requests a two-gas commit of the last return buffer size.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.step_returnDataCopy",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Funded in-bounds RETURNDATACOPY on an admitted profile requests the priced return-buffer overlay.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.step_returnDataCopy_outOfBounds",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Funded RETURNDATACOPY on an admitted profile fails when the mathematical source end exceeds the buffer size.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.step_addMod",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "The ADDMOD dispatcher pops the operands in EVM order and uses the common eight-gas commit.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.step_mulMod",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "The MULMOD dispatcher pops the operands in EVM order and uses the common eight-gas commit.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.Word.addMod_correct",
+      "source": "EVMCleanroom/ModularProofs.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "ADDMOD returns the mathematical sum reduced by the modulus, or zero for zero modulus.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "Word.addMod_correct"
+    },
+    {
+      "name": "EVMCleanroom.Word.mulMod_correct",
+      "source": "EVMCleanroom/ModularProofs.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "MULMOD returns the mathematical product reduced by the modulus, or zero for zero modulus.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "Word.mulMod_correct"
+    },
+    {
+      "name": "EVMCleanroom.ByteView.readByte_inside",
+      "source": "EVMCleanroom/ByteCopyProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "A read within the bounded view returns the backing byte.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "ByteView.readByte_inside"
+    },
+    {
+      "name": "EVMCleanroom.ByteView.readByte_outside",
+      "source": "EVMCleanroom/ByteCopyProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "A read at or beyond the view size returns zero.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "ByteView.readByte_outside"
+    },
+    {
+      "name": "EVMCleanroom.ByteView.readByte_ofArray",
+      "source": "EVMCleanroom/ByteCopyProofs.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "The array adapter agrees with padded array indexing at every natural offset.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "ByteView.readByte_ofArray"
+    },
+    {
+      "name": "EVMCleanroom.ByteView.readByte_ofMemory_inside",
+      "source": "EVMCleanroom/ByteCopyProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "In-bounds memory window reads address the immutable snapshot at base plus index.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "ByteView.readByte_ofMemory_inside"
+    },
+    {
+      "name": "EVMCleanroom.Memory.readByte_expandedCopy_inside",
+      "source": "EVMCleanroom/ByteCopyProofs.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Using the specified expansion gives the source byte for each address in the destination range.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "Memory.readByte_expandedCopy_inside"
+    },
+    {
+      "name": "EVMCleanroom.commit_keeps_return_data",
+      "source": "EVMCleanroom/ByteCopyProofs.lean",
+      "axioms_printed": [],
+      "scope": "A successful core commit preserves the last return buffer and the terminal output view.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.step_returnDataCopy_readByte",
+      "source": "EVMCleanroom/ByteCopyProofs.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "A successful funded in-bounds RETURNDATACOPY reads each destination byte from the corresponding buffer backing byte.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.Frame.haltWithData_output",
+      "source": "EVMCleanroom/ByteCopyProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "The common RETURN and REVERT handler supplies its own terminal memory window as the output view.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123).",
+      "source_symbol": "Frame.haltWithData_output"
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginCall_entered_context",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "An entered child snapshots expanded parent memory and inherits its static flag, opcode profile and transaction-original storage. Entry advances depth within the bound and records the target-warmed checkpoint.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginCall_entered_output_paid",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "In a continuation produced by successful child entry, the output range is covered by the paid memory allocation.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginCall_entered_input_byte",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Within an entered child input view, each byte reads the corresponding expanded caller-memory byte.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.executeAtDepth_no_fuel",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "The world-aware execution entry refuses dispatch at zero simulation fuel.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.schedule_exact",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "A successful schedule prices both CALL windows before the EIP-150 cap and separates the nonzero-value stipend from charged forwarding.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.resumeCall_observations",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "A committed continuation receives the entire child buffer, the fitting output memory prefix, caller reserve plus child gas, and the success bit.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.resumeCall_preserves_other_bytes",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "Resumption preserves each address outside the copied output prefix, including any remaining part of the paid window.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.resumeCall_copies_prefix",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext",
+        "Quot.sound"
+      ],
+      "scope": "On resumption with a paid output window, every index within the fitting prefix reads its corresponding child-output byte.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.resumeChild_revert",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Resuming a reverted child restores the saved world, returns its full output, and pushes zero.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.resumeChild_exception",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Resuming an exceptional child restores the saved world, clears the return buffer, and keeps the caller reserve alone.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.resumeFailedCall_observations",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "A soft depth or funds failure keeps the saved world and paid memory, clears the buffer, returns all allotted child gas, and pushes zero.",
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.resumeChild_success",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "scope": "Resuming a successful STOP or RETURN keeps the child world, sets the proper last-child buffer, and pushes one.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
     }
   ],
   "external_evidence": {
@@ -696,7 +1052,7 @@
       }
     },
     "actual_call_opcode_candidate": {
-      "evidence_status": "330/330 passed at earlier implementation head; new source theorem-only revision awaiting CI",
+      "evidence_status": "Historical single-depth matrix. The retained run of the current dispatcher is recorded under call_data_nesting_integration.",
       "reference": "EthereumJS 10.1.3 Cancun",
       "target_executions": 330,
       "pass_target": 330,
@@ -874,7 +1230,7 @@
         "Memory and return-byte prefixes capped at 4096 bytes, with exact total lengths and explicit truncation flags."
       ],
       "limits": [
-        "CALL child calldata and return-data windows require separate implementation.",
+        "This standalone fixture matrix covers frame calldata. The byte-window and nested CALL matrices cover child execution separately.",
         "When an instruction simultaneously lacks stack operands and sufficient gas, Lean reports stackUnderflow and EthereumJS may report out of gas. Both outcomes exceptionally halt with zero remaining gas and empty return data."
       ]
     },
@@ -894,9 +1250,9 @@
         "Read-only caller correctly propagates the static flag to the zero-value child.",
         "Both value paths propagate the opcode profile to an Osaka CLZ child.",
         "EthereumJS identity precompile fails with zero forwarded gas; Lean reports indeterminate. The boundary is separate from execution matches.",
-        "The 330-program zero-value CALL matrix also checks that a valid reference program passing a nonempty input window is explicitly indeterminate in Lean."
+        "The historical 330-program zero-value matrix included a nonempty-input refusal control. The current dispatcher has a separate nonempty-input success control."
       ],
-      "limits": "One supported child frame, empty CALL byte windows and no precompile execution."
+      "limits": "Historical one-child repair fixtures with empty CALL windows. Current byte and nesting support is recorded separately."
     },
     "rpc_capture_candidate": {
       "status": "local-validation-passed-remote-ci-pending",
@@ -1043,6 +1399,135 @@
       ],
       "scope": "Saved provider assertions are replayed offline through guarded Lean. The live deployed comparison is one zero-value call to the Jovian implementation with the provider runtime and a checked published code hash.",
       "limits": "The provider supplies block and state assertions. This gate does not authenticate them, prove a deployment invariant, exercise the proxy or reproduce an OP or Polygon chain transition."
+    },
+    "bounded_call_and_byte_copy": {
+      "testedSourceCommit": "0573815601f6c0db6833bdf4a2409fab2044b123",
+      "gates": [
+        "scripts/differential/byte-copy.mjs",
+        "scripts/differential/call-data.mjs"
+      ],
+      "scope": "Selected CALLDATACOPY, CODESIZE, CODECOPY, RETURNDATASIZE and RETURNDATACOPY programs, and zero- or nonzero-value nested CALL through the actual Lean dispatcher with bounded byte observations, initial-world inputs and explicit simulation fuel.",
+      "references": {
+        "ethereumjs": "@ethereumjs/evm@10.1.3 with pinned npm integrity and scripted Shanghai settings, plus one Osaka CLZ case in the CALL matrix",
+        "geth": {
+          "version": "evm version 1.17.10-stable-1df30b18",
+          "sourceCommit": "1df30b18d9ed35ee9d28ffd4648442c2204554ad",
+          "sha256": "d8cfddad15a8c601e7b069bc5973ad073dbc2d632b8c5ab50e513ef27c53d6da",
+          "fork": "Shanghai",
+          "archiveSha256": "f991c32e5b7bb68db97a1b06d50c7c06f6aa9ae84d8f6f9b2301dc02cad2a7cf"
+        },
+        "eelsInstructionReferenceCommit": "1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653",
+        "normativeReturndata": "https://eips.ethereum.org/EIPS/eip-211"
+      },
+      "byteOpcodes": {
+        "ethereumjs": {
+          "compared": 124,
+          "matched": 124,
+          "mismatches": 0,
+          "observedFields": [
+            "status",
+            "gasRemaining",
+            "frame output and size",
+            "stack and memory on STOP/RETURN/REVERT"
+          ]
+        },
+        "geth": {
+          "compared": 124,
+          "matched": 124,
+          "mismatches": 0,
+          "observedFields": [
+            "status",
+            "gasRemaining",
+            "frame output",
+            "stack and memory on STOP"
+          ]
+        },
+        "gasBoundaryTriplets": 7,
+        "negativeControlsRejected": [
+          "byte",
+          "gas",
+          "status"
+        ],
+        "ethereumjsExceptions": {
+          "out of gas": {
+            "outOfGas": 16,
+            "returnDataOutOfBounds": 5
+          },
+          "stack underflow": {
+            "stackUnderflow": 3
+          },
+          "stack overflow": {
+            "stackOverflow": 1
+          }
+        },
+        "report": "evidence/2026-11-22-call-byte/byte-opcodes.json"
+      },
+      "nestedCall": {
+        "ethereumjs": {
+          "compared": 122,
+          "matched": 122,
+          "mismatches": 0,
+          "observedFields": [
+            "status",
+            "gasRemaining",
+            "frame output and size",
+            "account balances/nonce/storage",
+            "journal warmth and refund",
+            "stack, memory and child returndata on STOP/RETURN/REVERT"
+          ]
+        },
+        "geth": {
+          "compared": 112,
+          "matched": 112,
+          "mismatches": 0,
+          "excluded": {
+            "staticEntry": 5,
+            "osaka": 1,
+            "nonzeroDepth": 3,
+            "coldParent": 1,
+            "zeroGas": 0
+          },
+          "initialWarmth": "Geth seeds parent and sender. Only explicitly seeded fixtures call the parent.",
+          "observedFields": [
+            "status",
+            "gasRemaining",
+            "frame output",
+            "account balances/nonce/storage",
+            "child returndata on STOP/RETURN/REVERT",
+            "stack and memory on STOP",
+            "refund on STOP/RETURN"
+          ]
+        },
+        "separateRefusals": [
+          "identity-precompile",
+          "nested-precompile",
+          "osaka-opcode-under-shanghai"
+        ],
+        "sharedFuelBoundaryPassed": true,
+        "negativeControlsRejected": [
+          "byte",
+          "gas",
+          "status"
+        ],
+        "ethereumjsExceptions": {
+          "out of gas": {
+            "outOfGas": 7,
+            "returnDataOutOfBounds": 4
+          },
+          "invalid opcode": {
+            "invalidOpcode": 1
+          },
+          "static state change": {
+            "writeProtection": 1,
+            "outOfGas": 1
+          }
+        },
+        "report": "evidence/2026-11-22-call-byte/call-nesting.json"
+      },
+      "exceptionComparison": "The reports preserve raw EthereumJS diagnostics. Fixture-specific Lean expected errors can distinguish a return-buffer bounds failure from out of gas and follow EELS gas-before-static-check ordering. Geth compares the common status, gas and output observations in its admitted fixture subset.",
+      "limits": "The Geth CALL subset excludes five static-entry, one Osaka, three nonzero-entry-depth and one raw-cold-parent cases. The explicit refusals and native shared-fuel boundary are separate from execution-match totals. Full EELS refinement, additional call variants, precompiles, CREATE and general world or chain transitions remain open.",
+      "publishedImplementationCommit": "f9fec7cbc5213aef53c19b0561efd21abba7db0c",
+      "implementationGitTree": "7d2cbe6bbd1ccf1bb1abd3fb485d415c1f7bf944"
     }
   },
   "trust_boundaries": [
@@ -1055,14 +1540,14 @@
   ],
   "missing": [
     "Full EELS semantic refinement proofs",
-    "Complete CALL/CREATE execution with arbitrary nested frames, journal, value and returndata beyond the tested restricted CALL subset",
+    "Other call variants, CREATE, precompiles and fork-exact frame and transaction rules beyond the restricted nested CALL dispatcher",
     "MPT/RLP/Keccak formal implementation and correspondence proofs in Lean",
     "General receipts, logs and complete transaction/block validity",
     "General multi-transaction, multi-fork mainnet replay, Engine API and beacon-chain consensus; one restricted Frontier transfer has replay evidence",
     "Independent expert review"
   ],
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
-  "post_reference_evidence": "Integrated replay source 840c997996619808a961638e94a7b772f738539e and value-CALL/context source 6ede61776c4cd27b18af22e7165250e12ae6e4e9. Historical evidence remains attributed to its recorded source. The combined sources require a fresh Lean build, printed-axiom audit and all retained independent execution gates. No combined-head pass or complete Ethereum conformance is inferred from either parent. The integration adds standalone frame calldata and bounded output observations, self-CALL resumption, static/profile propagation and explicit precompile boundaries. The seven calldata and seven CALL theorems have actual local Lean axiom prints. The read-only RPC host and its two saved provider-response fixtures are pinned for an offline gate with the compiled Lean comparator. Local validation succeeded on the exact tested source listed in local_validation. Remote CI for the integrated revision remains pending.",
+  "post_reference_evidence": "Integrated replay source 840c997996619808a961638e94a7b772f738539e and value-CALL/context source 6ede61776c4cd27b18af22e7165250e12ae6e4e9. Historical evidence remains attributed to its recorded source. The combined sources require a fresh Lean build, printed-axiom audit and all retained independent execution gates. No combined-head pass or complete Ethereum conformance is inferred from either parent. The integration adds standalone frame calldata and bounded output observations, self-CALL resumption, static/profile propagation and explicit precompile boundaries. The seven calldata and seven CALL theorems have actual local Lean axiom prints. The read-only RPC host and its two saved provider-response fixtures are pinned for an offline gate with the compiled Lean comparator. Local validation succeeded on the exact tested source listed in local_validation. Remote CI for the integrated revision remains pending. The current byte-window and nested CALL integration is recorded under call_data_nesting_integration, with local evidence at an exact source commit and a separate remote CI status.",
   "fork_scope_note": "The Osaka profile only enables opcode 0x1e (EIP-7939) in the otherwise restricted interpreter. It is NOT a fork-complete Osaka/Fusaka EVM or an EL/CL node. Historical Shanghai-to-Prague profile tests stay on their original default; never relabel earlier EELS roots as Osaka conformance. The CLZ differential gate includes an input for every possible 0..256 leading-zero result and both sides of powers-of-two bit-length transitions.",
   "post_reference_evidence_history": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text. Candidate Prague type3/4 extension is separate from the historical original 4/6 record; it requires fresh six-of-six CI. Do not claim six successes until all roots and mutations pass. New strict Prague six-state ledger checks all six pinned external roots and 6 negative report mutations; CI must be green on this exact source revision. Signed EIP-4844 RLP requires a KZG option for EthereumJS instantiation; a fail-closed sentinel rejects any sidecar proof operation. No KZG proof validity is claimed. The exact 6/6 Prague root and 9+6 adversarial gates succeeded at commit ff3251d231a1a5bc7328f458eb158b8ce57d4dab in CI 44940731780. Six new Lean Prague theorems now join the selected live axioms gate (20 total). A further CI run is needed to validate this manifest-only assurance update. Actual 0xf1 parent opcode executable and 330 independent EthereumJS oracle comparisons introduced after historical CI; no pass claim until current branch run is green. The selected theorem-axiom manifest remains 20 and will be expanded only after observing real printed axioms of the new two parent-journal proofs. Added public executable CallOpcode.run parent rollback theorems; axiom lists will be pinned after this new source revision successfully elaborates. Four actual CALL parent rollback theorems now selected and their printed axioms pinned from Lean log 44954398201. New current-head CI must pass 24/24 selected-axiom audit and 330/330 oracle comparisons before claiming active revision conformance. First-ever historical mainnet block 46147 transaction and pre-Byzantium receipts-root verification candidate added as separate proof boundary. Historical prestate not authenticated and no claim of full state-root replay. Do not attribute earlier CI to this source revision. Added proof-path verifier and optional free public archive RPC probe. Offline synthetic proof selftest must pass before any historical witness claim; no EIP-1186 bundle has yet been authenticated against 2015 parent block 46146. All six executable Frontier theorem statements are now pinned from actual Lean #print axioms at source/CI 44993735718. Live selected-theorem inventory now 30 (new gate requires fresh CI on witness branch). The proof selftest now separately requires correct membership and nonmembership proofs and ten tampered account/path/root controls; no genuine historical proof has been substituted. Real 2015 EIP-1186 proofs independently fetched by two public archives exposed protocol distinction: a proven absent account has zero RPC code/storage hashes, unlike the hashes of an existing empty account. Verifier now makes the existence distinction from authenticated MPT proof result, not RPC account status. Unverified against posttransaction state roots until fresh CI. Synthetic nonmembership proof generator now uses EIP-1186 absence zero-hash convention consistent with two real 2015 archive RPC responses; actual existence is independently established by verifying MPT proof path. Real block 46146 archive witness captured from CI artifacts and pinned for mandatory offline replay. Independent stdlib Python Keccak/RLP/MPT source pin added as second oracle. BOTH root checks are currently confirmed locally with independent Python; CI on this new combined head is required before marking current-head proof gate green. Historical header/PoW not independently proven.\nCALL-context branch history: 102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text. Candidate Prague type3/4 extension is separate from the historical original 4/6 record; it requires fresh six-of-six CI. Do not claim six successes until all roots and mutations pass. New strict Prague six-state ledger checks all six pinned external roots and 6 negative report mutations; CI must be green on this exact source revision. Signed EIP-4844 RLP requires a KZG option for EthereumJS instantiation; a fail-closed sentinel rejects any sidecar proof operation. No KZG proof validity is claimed. The exact 6/6 Prague root and 9+6 adversarial gates succeeded at commit ff3251d231a1a5bc7328f458eb158b8ce57d4dab in CI 44940731780. Six new Lean Prague theorems now join the selected live axioms gate (20 total). A further CI run is needed to validate this manifest-only assurance update. Actual 0xf1 parent opcode executable and 330 independent EthereumJS oracle comparisons introduced after historical CI; no pass claim until current branch run is green. The selected theorem-axiom manifest remains 20 and will be expanded only after observing real printed axioms of the new two parent-journal proofs. Added public executable CallOpcode.run parent rollback theorems; axiom lists will be pinned after this new source revision successfully elaborates. Four actual CALL parent rollback theorems now selected and their printed axioms pinned from Lean log 44954398201. New current-head CI must pass 24/24 selected-axiom audit and 330/330 oracle comparisons before claiming active revision conformance. A new executable nonzero value CALL slice and 450-case independent differential are pending current-head CI. Four existing CallOpcode parent rollback proofs remain selected; the new ValueCall theorems need exact live axiom audit before being added to the active manifest. Seven new ValueCall proof axiom sets were actually printed in CI job 137122813344. Must re-elaborate and audit all 31 claims on a clean current-head run; do not mistake an earlier parent-scope parser failure for proved CALL conformance. Context-sensitive CALLVALUE, SELFBALANCE and ADDRESS inserted into the production Core dispatcher and World.frameInput path, with child nonzero value passed into Frame.run. 128 oracle comparisons and three frameInput theorem prints require fresh current-head verification; not a claim of general code execution conformance.",
   "integration_evidence_status": "local-validation-passed-remote-ci-pending",
@@ -1237,7 +1722,99 @@
       }
     }
   },
-  "modular_arithmetic_pending_validation": {
+  "call_data_nesting_integration": {
+    "issue": "https://github.com/danbri/factoidal-core/issues/744",
+    "goal": "https://github.com/danbri/factoidal-core/issues/725",
+    "baseCommit": "5f90c3e6f9f42dd51a4c6c0f0a218526ee8be834",
+    "testedSourceCommit": "0573815601f6c0db6833bdf4a2409fab2044b123",
+    "testedExecutableSha256": "4af97fa82881c71cc5490daefe19be98147b089badaaa653790c18bd4502aea8",
+    "leanVersion": "4.33.1",
+    "buildJobs": 51,
+    "newByteGuardExpressions": 20,
+    "remoteCI": "pending",
+    "sourceBlobCount": 74,
+    "selectedTheorems": {
+      "total": 96,
+      "previous": 60,
+      "modular": 4,
+      "byte": 20,
+      "call": 12,
+      "sourceFiles": 17
+    },
+    "retainedDifferential": {
+      "rawBytecode": 10000,
+      "calldataAndWords": 331,
+      "guardedSolidity": 183,
+      "modularArithmeticCases": 100,
+      "guardedSolidityPolicyRefusals": 5,
+      "storage": 136,
+      "singleFrame": 13,
+      "callScheduler": 4,
+      "callSchedulerBoundaries": 102,
+      "callOpcode": 330,
+      "callOpcodeNonemptyInputPassed": true,
+      "callOpcodePrecompileRefused": true,
+      "valueCall": 450,
+      "callContext": 128,
+      "callRepairs": 5,
+      "osakaClz": 1022,
+      "offlineRpcTests": 42
+    },
+    "retainedStateReplay": {
+      "pragueRootsMatched": 6,
+      "pragueFixtureMutationsRejected": 9,
+      "pragueLedgerMutationsRejected": 6,
+      "cancunRootsMatched": 6,
+      "cancunFixtureMutationsRejected": 4,
+      "frontierBlock": 46147,
+      "frontierRootsMatchedByBothImplementations": 2,
+      "frontierKeccakVectors": 24,
+      "frontierIndependentProofMutationsRejected": 6,
+      "frontierSyntheticProofMutationsRejected": 10
+    },
+    "localReportSha256": {
+      "integrated-byte-copy-geth.json": "7a935e626559a29c5c5aa5297ae6a31685b2c519703ba480c95860b7cedd031d",
+      "integrated-call-data-geth.json": "8dea7f4aedcb11686a8b3e88c0c9b0df491506512471669020083a00910411a1",
+      "integrated-legacy-call-opcode.json": "94f855e2f72b0b9c530a548c2127cee12d051422908a4a3fe82b4a3e6f022ca2",
+      "integrated-build.log": "6a20c33609a16fbdb1e022c1367d0a43fee7177489e2a2c1b49093ecf5855f37",
+      "retained/retained-exits.json": "401692882dd8ece796d54a60d7129ef7cd7b4aee39d77b86df797c982d1022fe",
+      "retained/solidity-pure.json": "e8f830c26aa4042ed5c478d343093a5d39cb95a160029738a0c92deb62e6ea1a",
+      "retained/rpc-capture.tap": "7c58ce702061b021d32ba2519f0b8d2549265dc758023fab09e91d601f50d36f",
+      "state/summary.json": "917ab4a400a2050723476e36b6b9e84e0a1ea378871a4aa3a78faa0639c4ce9e"
+    },
+    "publishedImplementationCommit": "f9fec7cbc5213aef53c19b0561efd21abba7db0c",
+    "implementationGitTree": "7d2cbe6bbd1ccf1bb1abd3fb485d415c1f7bf944",
+    "activeLedgerChecks": {
+      "printedAxiomsMatched": 96,
+      "theoremSourceFiles": 17,
+      "axiomNegativeControlsRejected": 3,
+      "testsPassed": 4,
+      "testsSkipped": 0,
+      "currentCancunContractReplayChecked": true
+    },
+    "nativeTiming": {
+      "reportDirectory": "evidence/2026-11-22-call-byte/",
+      "reports": [
+        "legacy-cli-timing.json",
+        "raw10000-timing.json"
+      ],
+      "scope": "Paired native measurements include process launch and JSON output. Existing observations agreed. Samples show a higher median and wider timing spread for the raw 10000-case batch.",
+      "reportSha256": {
+        "evidence/2026-11-22-call-byte/legacy-cli-timing.json": "53962e7c42127f826ad990a16e54218170c140bb81ff11acc642c5bf62cb6d66",
+        "evidence/2026-11-22-call-byte/raw10000-timing.json": "c9cf3b884337e18e14c7b0ea44fbb0a9bf303f1b83839d404164ff1b89882ca4"
+      },
+      "rawBatchRunner": "scripts/differential/raw10000-timing.py"
+    },
+    "versionedReportSha256": {
+      "evidence/2026-11-22-call-byte/byte-opcodes.json": "7a935e626559a29c5c5aa5297ae6a31685b2c519703ba480c95860b7cedd031d",
+      "evidence/2026-11-22-call-byte/call-nesting.json": "8dea7f4aedcb11686a8b3e88c0c9b0df491506512471669020083a00910411a1",
+      "evidence/2026-11-22-call-byte/legacy-call-opcode.json": "94f855e2f72b0b9c530a548c2127cee12d051422908a4a3fe82b4a3e6f022ca2",
+      "evidence/2026-11-22-call-byte/state-replay-summary.json": "917ab4a400a2050723476e36b6b9e84e0a1ea378871a4aa3a78faa0639c4ce9e",
+      "evidence/2026-11-22-call-byte/axiom-audit.json": "c04be9cd03d6a80a274daae7f0f124909d2937fba6c120199f578e024650a90d",
+      "evidence/2026-11-22-call-byte/retained-summary.json": "e04410867e8bdc07fc1271b85b49b1c9fea009af97413ea2d5e94868091fe35b"
+    }
+  },
+  "modular_arithmetic": {
     "baseCommit": "c33266528063272b900a8ceb0dfa34f6b365e3e7",
     "newTheorems": [
       "EVMCleanroom.Word.addMod_correct",
@@ -1245,10 +1822,13 @@
       "EVMCleanroom.step_addMod",
       "EVMCleanroom.step_mulMod"
     ],
-    "sourceStatus": "proposed-unvalidated",
-    "oraclePlanned": "@ethereumjs/evm@10.1.3 Shanghai, 100 new comparisons",
+    "sourceStatus": "locally-validated-remote-ci-pending",
     "preservedSelectedAxiomSet": 60,
     "limits": "Not official state tests, protocol gas accounting, signed arithmetic, byte windows or full execution client",
-    "previousCIFailure": "Initial CI build found undeclared lt_trans (now qualified Nat.lt_trans); new revision requires full fresh gates."
+    "previousCIFailure": "Initial CI build found undeclared lt_trans. The qualified Nat.lt_trans compiled in the current local build.",
+    "activeSelectedAxiomSetIncludesAllFour": true,
+    "testedSourceCommit": "0573815601f6c0db6833bdf4a2409fab2044b123",
+    "publishedImplementationCommit": "f9fec7cbc5213aef53c19b0561efd21abba7db0c",
+    "oracleObserved": "@ethereumjs/evm@10.1.3 Shanghai, 100 modular cases matched in the 183-case Solidity gate"
   }
 }
