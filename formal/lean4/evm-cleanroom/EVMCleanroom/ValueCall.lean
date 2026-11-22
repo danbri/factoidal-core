@@ -181,22 +181,29 @@ def callWithValue (fuel : Nat) (w : TxWorld)
         .insufficientFunds warmed (b.reserve + b.childGas)
       | .error _ => .indeterminate .unsupportedFork
       | .ok transferred =>
-        match World.runAt fuel transferred target b.childGas with
-        | .stopped out remaining =>
-          if remaining ≤ b.childGas then
-            .childSuccess out (b.reserve + remaining)
+        -- This *actual child execution state* receives the sent wei amount.
+        -- World.frameInput reads its SELF balance after the checked transfer.
+        -- The general standalone Frame.run path still has callValue=0.
+        let child : State :=
+          { World.frameInput transferred target b.childGas with callValue := value }
+        match Frame.run fuel child with
+        | .stopped out =>
+          if out.gas ≤ b.childGas then
+            .childSuccess (World.commitFrame transferred target out)
+              (b.reserve + out.gas)
           else .indeterminate .unsupportedFork
-        | .returned out remaining _ _ =>
-          if remaining ≤ b.childGas then
-            .childSuccess out (b.reserve + remaining)
+        | .returned out _ _ =>
+          if out.gas ≤ b.childGas then
+            .childSuccess (World.commitFrame transferred target out)
+              (b.reserve + out.gas)
           else .indeterminate .unsupportedFork
-        | .reverted _ remaining _ _ =>
-          if remaining ≤ b.childGas then
-            .childReverted warmed (b.reserve + remaining)
+        | .reverted out _ _ =>
+          if out.gas ≤ b.childGas then
+            .childReverted warmed (b.reserve + out.gas)
           else .indeterminate .unsupportedFork
-        | .exceptional _ remaining reason =>
-          if remaining ≤ b.childGas then
-            .childExceptional warmed (b.reserve + remaining) reason
+        | .exceptional out reason =>
+          if out.gas ≤ b.childGas then
+            .childExceptional warmed (b.reserve + out.gas) reason
           else .indeterminate .unsupportedFork
         | .unsupported e => .indeterminate e
 
