@@ -37,6 +37,12 @@ class ActiveLedgerControls(unittest.TestCase):
         with self.assertRaises(ValueError):
             check.check_theorems(m, check.check_inventory(m))
 
+    def test_qualified_theorem_symbol_mismatch_rejected(self):
+        m=copy.deepcopy(MANIFEST)
+        m["theorem_inventory"][0]["source_symbol"]="Word.signedLt_correct"
+        with self.assertRaises(ValueError):
+            check.check_theorems(m, check.check_inventory(m))
+
     def test_falsified_contract_root_and_counts_rejected(self):
         path=ROOT/".lake/eels/lean-contract-results.json"
         if not path.exists():
