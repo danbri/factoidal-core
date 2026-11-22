@@ -1,7 +1,7 @@
 // End-to-end benchmark of the *same current Lean/Wasm* reference evaluator
 // and its Lean-planned WebGPU path. No JS PVGraph interpreter.
 import {createPVGraphWasm,runPVGraph} from "../npm/factoidal/gdsl.mjs";
-import {loadEngine} from "../npm/factoidal/browser.js";
+import {loadEngine} from "../npm/factoidal/index.mjs";
 import {createGsslResidentSession} from "../npm/factoidal/lib/gpu-resident.mjs";
 
 const sizes=[16,1024,8192,65536,262144];
