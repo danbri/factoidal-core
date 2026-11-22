@@ -58,7 +58,7 @@ def sameShape (a b : Computed) : Bool :=
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
-    minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
+    minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
     masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundSize,_backgroundRepeat,
      _backgroundPositionX,_backgroundPositionY⟩ =>
@@ -80,6 +80,7 @@ def sameShape (a b : Computed) : Bool :=
   verticalAlign == b.verticalAlign && tableFixed == b.tableFixed &&
   lengthEq minWidth b.minWidth && lengthEq maxWidth b.maxWidth &&
   lengthEq minHeight b.minHeight && lengthEq maxHeight b.maxHeight && objectFit == b.objectFit &&
+  optEq (fun left right => lengthEq left.1 right.1 && lengthEq left.2 right.2) objectPosition b.objectPosition &&
   textAlign == b.textAlign && direction == b.direction && unicodeBidi == b.unicodeBidi &&
   autoMarginLeft == b.autoMarginLeft && autoMarginRight == b.autoMarginRight &&
   autoMarginTop == b.autoMarginTop && autoMarginBottom == b.autoMarginBottom &&
