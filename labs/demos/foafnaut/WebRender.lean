@@ -280,11 +280,11 @@ theorem imageSource_plain (dom : DOM.Dom) (id : Nat) (h : plainImage dom id = tr
 /-- An image handled by the static decoder in an `object` or `embed`. An explicit type
 takes precedence over a filename; the URL can also be a typed data URL. -/
 private def embeddedImageSource (n : DOM.Node) : Option String := do
-  let attribute ←
+  let sourceAttr ←
     if DOM.Dom.isHtmlElement n "object" then some "data"
     else if DOM.Dom.isHtmlElement n "embed" then some "src"
     else none
-  let url := (Rendering.CSS.attrValue n attribute).trimAscii.toString
+  let url := (Rendering.CSS.attrValue n sourceAttr).trimAscii.toString
   if url.isEmpty then none else do
     let mimeType := fun s : String => ((s.splitOn ";").headD "").trimAscii.toString.toLower
     let declared := mimeType (Rendering.CSS.attrValue n "type")
