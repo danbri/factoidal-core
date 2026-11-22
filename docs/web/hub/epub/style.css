@@ -1,0 +1,45 @@
+:root {
+  color-scheme: light;
+  font: 16px/1.5 system-ui, sans-serif;
+  color: #172f30;
+  background: #f2f5ef;
+}
+body { margin: 0; }
+.hub-app-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem 1.6rem;
+  padding: .85rem clamp(1rem, 5vw, 3.5rem);
+  background: #173332;
+}
+.hub-app-nav a { color: #e0f0df; }
+main { max-width: 62rem; margin: auto; padding: 1.5rem 1rem; }
+.ebook-header { margin: 0 auto 1rem; }
+h1 { font: 600 clamp(2.1rem, 5vw, 3.75rem)/1.1 Georgia, serif; margin: 0; }
+.ebook-header p { margin: .7rem 0; }
+.ebook-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; }
+.ebook-actions label { font-weight: 650; }
+.ebook-actions input { font: inherit; max-width: 100%; }
+button, input::file-selector-button {
+  padding: .42rem .75rem;
+  color: #173332;
+  background: #e1eddf;
+  border: 1px solid #77938a;
+  border-radius: .3rem;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover, input::file-selector-button:hover { background: #cfdfcd; }
+:focus-visible { outline: 2px solid #176559; outline-offset: 3px; }
+#status:empty { display: none; }
+#reader {
+  display: block;
+  width: 100%;
+  min-height: 32rem;
+  height: 72dvh;
+  box-sizing: border-box;
+  background: #fffef9;
+  border: 1px solid #b2c5ba;
+  border-radius: .45rem;
+}
+#reader[hidden] { display: none; }

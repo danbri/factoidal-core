@@ -28,6 +28,7 @@ WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-pla
 
 <ul class="post-series">
   <li><a href="./foafnaut/">Foafnaut</a> — the browser in a page: tabs, an address bar for URLs, searches and commands, view source, XML with XSLT, drawn by the built-in engine with WebGPU. It works at phone width.</li>
+  <li><a href="./epub/">EPUB reader</a> — open an unencrypted EPUB 3 file in your browser.</li>
   <li><a href="./textnaut/">Textnaut</a> — the text-mode browser in a page: the built-in engine lays out a page and Textnaut shows it as a grid of characters with numbered links, as in a terminal. The terminal program: <code>npx @foafos/textnaut</code>.</li>
   <li><a href="./foafnaut/pages/start.html">Start page</a> — the page Foafnaut and Textnaut open with: sites on the web to try, grouped, each with a note on how well it works today, and copies of some openly licensed pages that open inside Foafnaut on the Hub.</li>
   <li><a href="./foafnaut/pages/index.html">Demo pages</a> — pages that show what the engine draws: scripts, WebGPU and WebGL, SVG, text, XML and XSLT. Open them in <a href="./foafnaut/">Foafnaut</a> or <a href="./textnaut/">Textnaut</a>.</li>
