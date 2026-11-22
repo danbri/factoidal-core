@@ -1955,9 +1955,11 @@ page's running animations and transitions (`elementState` reads it into the casc
 host gives the list of its script session's last turn, so the frame it paints has the
 values the page's scripts read. Until 2026-11-14 the field was not in this list, and a
 render's layout never saw it: content that fades in from `opacity: 0` stayed invisible. A
-page with no animation sends no such field and its key is as before. -/
+page with no animation sends no such field and its key is as before. `partialNote` (`false`:
+no "Partial page" note, `layOutDOMIn`) is the WPT reftest runner's; it was missing from this
+list on 2026-11-22 and the note stayed in its pictures. -/
 def layoutFields : List String := ["commands","resources","images","heldImages","url","syntax","fontData","textScalePercent","graphModel",
-  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported"]
+  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported","partialNote"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -2181,7 +2183,10 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let (sheets,d2) ← sheetsIn m dom request env
   let (rules,madeSheet) ← rulesOfSheets kept env sheets
   modify (·.merge madeSheet)
-  let dom := if m == .liberal && graph.isNone then partialNote dom else dom
+  -- A request with `"partialNote":false` gets no note: the WPT reftest runner compares the page's
+  -- own content, and the note is the browser's (it moved each such page down 34 px and failed
+  -- 92 of 322 failing SVG reftests, issue 747). The window and the Hub still show it.
+  let dom := if m == .liberal && graph.isNone && request.field? "partialNote" != some (.bool false) then partialNote dom else dom
   -- Shadow trees (CSS Scoping 1): the layout is of the flat tree, and the selectors match
   -- on the node tree. A page with no shadow host takes none of this (`flatView`).
   let (dom,rules,treeScope) := flatView kept dom env rules

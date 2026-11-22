@@ -138,7 +138,9 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
     }
   }
   const {source,options}=page.request(job.width,job.height,{textScalePercent:100,zoomUnit:100});
-  const request=JSON.stringify({...options,op:"render",checks:false,cpu:true});
+  // partialNote:false: no "Partial page" note in the picture (WebDocument.layOutDOMIn); it is the
+  // browser's, not the page's. An older engine ignores the field and draws the note.
+  const request=JSON.stringify({...options,op:"render",checks:false,cpu:true,partialNote:false});
   let buffer=bytesBackend(source,request,job.width,job.height);
   // The serif and monospace faces, as the window holds them (serif_font.ts): given the first time
   // a render says its text wants one, then the page is drawn again. Only an engine that holds
