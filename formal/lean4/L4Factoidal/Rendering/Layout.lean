@@ -1515,7 +1515,7 @@ inductive Task where
   | inner (id : Nat) (width : Float)
   /-- Absolutely positioned boxes laid out in the containing block `(cx,cy,cw,ch)`: for
   the root, whose containing block is the viewport (`render`). -/
-  | positioned (pending : Array Pending) (cx cy cw ch : Float)
+  | positioned (content : Result) (cx cy cw ch : Float)
   /-- `box id` in a block formatting context that has `floats` already (CSS 2.1 §9.5): the
   lines of the box and of its descendants are beside them. -/
   | flowed (id : Nat) (floats : Array Floats.Box)
@@ -2716,7 +2716,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     | .box id => box id none none false
     | .sized id width height => box id (some width) height false
     | .inner id width => box id (some width) none true
-    | .positioned pending cx cy cw ch => place {pending} cx cy cw ch true fun _ => none
+    | .positioned content cx cy cw ch => place content cx cy cw ch true fun _ => none
     | .rough inner => layoutTask dom styles font embedding pictures fuel (.rough inner) x y available
 
 /-- An element's block box: `layoutTask` of `.box id`. -/
@@ -2736,9 +2736,8 @@ def layoutRoot (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
   let mut laid ← block dom styles font embedding pictures 64 0 0 0 vw
   for _ in [0:4] do
     if laid.pending.isEmpty then break
-    let placed ← layoutTask dom styles font embedding pictures 64 (.positioned laid.pending 0 0 vw vh) 0 0 vw
-    laid := {laid with nodes := laid.nodes ++ placed.nodes, boxes := laid.boxes ++ placed.boxes,
-                       runs := laid.runs ++ placed.runs, pending := placed.pending, work := laid.work+placed.work}
+    -- The same paint ordering used for a local containing block applies at the root.
+    laid ← layoutTask dom styles font embedding pictures 64 (.positioned laid 0 0 vw vh) 0 0 vw
   return laid
 
 /-- The nearest HTML anchor with an href attribute, including href="". -/
