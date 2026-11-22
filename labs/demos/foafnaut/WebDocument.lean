@@ -744,7 +744,7 @@ that import others, `imports`: the URLs of the imported sheets the request does 
 def inspect (dom : DOM.Dom) (url : String) (request : JSON.Json := .object []) : Except String JSON.Json := do
   let (answer,ds) ← WebAccept.accept (WebAccept.mode request) fun m => inspectIn m dom url (scripting request)
   let lacking := importsLacking dom url request
-  let cssImages ← if request.field? "inspectBackgroundImages" == some (.bool true)
+  let cssImages : List (String × JSON.Json) ← if request.field? "inspectBackgroundImages" == some (.bool true)
     then do pure [("backgroundImages", .array (← inspectBackgroundImages dom url request))]
     else pure []
   let more : List (String × JSON.Json) := cssImages ++
@@ -753,6 +753,19 @@ def inspect (dom : DOM.Dom) (url : String) (request : JSON.Json := .object []) :
   match answer with
   | .object fields => return .object (fields ++ more)
   | _ => return answer
+
+-- Inspect only the winning background on the styled element. Ordinary image requests
+-- and background requests are reported separately so the host can fetch them once.
+#guard
+  let test := DOM.parseHtmlDocument
+    "<style>div{background-image:url(losing.png)} #x{background-image:url(used.png)}</style><div id=x></div>"
+  let options := JSON.Json.object [("url", .string "https://example.test/page/"),
+    ("inspectBackgroundImages", .bool true)]
+  match inspect test "https://example.test/page/" options with
+  | .error _ => false
+  | .ok answer => (answer.field? "backgroundImages").map (·.toString) ==
+    some (JSON.Json.array [.object [("key", .string "https://example.test/page/used.png"),
+      ("url", .string "https://example.test/page/used.png")]]).toString
 
 private def float (j : JSON.Json) : Except String Float :=
   match j with
