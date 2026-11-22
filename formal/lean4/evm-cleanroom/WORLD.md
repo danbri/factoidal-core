@@ -30,15 +30,17 @@ From `formal/lean4/evm-cleanroom`, run `lake build`; check the new proof sources
 uses the same account projections with an explicit continuation list for
 stack-driven `CALL` (`0xf1`). It prices caller memory windows, passes child
 calldata and returndata, checks depth, applies value transfer when funded,
-and journals account state, warmth and refunds around each child. Parent
-REVERT and exceptional execution restore the entry world.
+and journals account state, warmth, refunds and logs around each child.
+Parent REVERT and exceptional execution restore the entry world.
 [CALL dispatcher](EVMCleanroom/CallOpcode.lean) ·
 [Executable and test scope](README.md#calldata-and-bounded-call-execution)
 
 The world uses functional account mappings and natural-number addresses.
-The scoped official EELS root replays use a separate host for trie
-serialization. Open work includes authenticated general world state,
-fork-exact semantics, other CALL variants, CREATE, precompiles, logs and
-complete transaction and block settlement.
+The call-transaction entry checks reached accounts and storage slots against
+the supplied witness set. An explicit account witness can record absence.
+The replay host authenticates those facts and handles trie serialisation.
+Open work includes authenticated general world state, fork-exact semantics,
+other CALL variants, CREATE, precompiles and complete block settlement.
+[Call-transaction boundary](README.md#witness-limited-call-transactions) ·
 [Published replay scope](README.md#published-eels-state-test-replay) ·
 [Machine semantics, #649](https://github.com/danbri/factoidal-core/issues/649)

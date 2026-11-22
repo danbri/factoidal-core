@@ -47,6 +47,7 @@ inductive Outcome where
 private def errorOutcome (e : Error) : RawOutcome :=
   match e with
   | .unsupportedFork => .unsupported e
+  | .resourceLimit | .incompleteState _ _ => .unsupported e
   | .framePolicyViolation _ => .unsupported e
   | .stepLimit => .unsupported e
   | .invalidOpcode byte =>
@@ -107,15 +108,16 @@ def zeroValueContextFree (s : State) (opcode : Nat) : Bool :=
     (match opcode with
     | 0x00 | 0x01 | 0x02 | 0x03 | 0x04 | 0x05 | 0x06 | 0x07 | 0x08 | 0x09 | 0x0a | 0x0b
     | 0x10 | 0x11 | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 | 0x17 | 0x18 | 0x19 | 0x1a | 0x1b | 0x1c | 0x1d
+    | 0x20
     | 0x34 | 0x35 | 0x36 | 0x37 | 0x38 | 0x39 | 0x3d | 0x3e
     | 0x50 | 0x51 | 0x52 | 0x53
     | 0x56 | 0x57 | 0x58 | 0x59 | 0x5b | 0xf3 | 0xfd => true
     | _ => decide (0x5f ≤ opcode ∧ opcode ≤ 0x9f))
 
-/-- Revert all effects that belong to this frame's storage checkpoint.
+/-- Revert all effects that belong to this frame's storage and log checkpoint.
     Preserve the terminal memory for reading REVERT's return payload. -/
 def restore (initial terminal : State) : State :=
-  { terminal with storage := initial.storage }
+  { terminal with storage := initial.storage, logsRev := initial.logsRev }
 
 private def settle (initial : State) : RawOutcome → Outcome
   | .stopped out => .stopped out
@@ -259,12 +261,34 @@ theorem run_exception_atomic (fuel : Nat) (initial final : State)
     exact ⟨rfl, rfl, rfl⟩
   | unsupported e => simp [run, settle, he] at h
 
+/-- Kind: checkpoint.
+    Says: a standalone REVERT keeps precisely the entry frame's log journal.
+    Does not say: world-aware CALL uses this same outcome constructor. -/
+theorem run_revert_logs (fuel : Nat) (initial final : State) (offset length : Nat)
+    (h : run fuel initial = .reverted final offset length) :
+    final.logsRev = initial.logsRev := by
+  cases he : execute fuel initial <;> simp [run, settle, he] at h
+  case reverted state off len =>
+    rw [← h.1]
+    rfl
+
+/-- Kind: checkpoint.
+    Says: a standalone exceptional halt keeps precisely the entry frame's log journal.
+    Does not say: an indeterminate host refusal is a protocol exceptional halt. -/
+theorem run_exception_logs (fuel : Nat) (initial final : State) (reason : Error)
+    (h : run fuel initial = .exceptional final reason) : final.logsRev = initial.logsRev := by
+  cases he : execute fuel initial <;> simp [run, settle, he] at h
+  case exceptional e =>
+    rw [← h.1]
+
 #print axioms restore_current
 #print axioms restore_original
 #print axioms restore_warmth
 #print axioms restore_refund
 #print axioms run_revert_atomic
 #print axioms run_exception_atomic
+#print axioms run_revert_logs
+#print axioms run_exception_logs
 #print axioms executeWithPolicy_refuses
 #print axioms runWithPolicy_refines
 

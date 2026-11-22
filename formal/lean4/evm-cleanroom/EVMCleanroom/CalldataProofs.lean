@@ -78,7 +78,8 @@ theorem loadCallDataWord_eq_zero (data : ByteView) (offset : Nat)
     Does not say: a newly constructed child frame inherits its parent's context. -/
 theorem commit_keeps_call_input (s final : State) (pc : Nat) (stack : List Word) (cost : Nat)
     (halt : Bool) (memory : Option Memory) (storage : Option Storage)
-    (h : commit s pc stack cost halt memory storage = .ok final) :
+    {nextLog : Option LogEntry}
+    (h : commit s pc stack cost halt memory storage nextLog = .ok final) :
     final.callData = s.callData ∧ final.currentAddress = s.currentAddress ∧
     final.callValue = s.callValue ∧ final.selfBalance = s.selfBalance ∧
     final.readOnly = s.readOnly ∧ final.profile = s.profile := by

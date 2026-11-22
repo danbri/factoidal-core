@@ -8,6 +8,7 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 const fixturePath=process.argv[2]
 if(!fixturePath) throw Error('usage: node scripts/eels/contract-selftest.mjs /path/fixture.json')
@@ -23,6 +24,7 @@ const testCases=[
   ['tampered-recovered-signer', data=> {data[id].transaction.sender='0x'+'12'.repeat(20)}],
   ['lost-contract-case', data=> {delete data[id]}],
 ]
+const runner=fileURLToPath(new URL('./run-lean-contract-state-tests.mjs',import.meta.url))
 const temp=mkdtempSync(join(tmpdir(),'eels-lean-contract-negative-'))
 try {
   const result=[]
@@ -33,7 +35,7 @@ try {
     const input=join(temp,'fixture-'+i+'.json')
     const out=join(temp,'result-'+i+'.json')
     writeFileSync(input,JSON.stringify(changed))
-    const run=spawnSync('node',['scripts/eels/run-lean-contract-state-tests.mjs',
+    const run=spawnSync(process.execPath,[runner,
       '--fixture',input,'--out',out],{
       encoding:'utf8',timeout:120000,maxBuffer:1024*1024
     })

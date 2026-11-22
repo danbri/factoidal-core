@@ -87,6 +87,26 @@ snapshots, so dispatch fuel and CALL depth limits do not bound every host
 read or establish a host stack-use bound. The CLI reports at most 4,096
 bytes of each observed window and marks truncated observations.
 
+`KECCAK256` checks gas before the memory read and limits work to the host
+input cap, bounding the number of 136-byte blocks processed. The theorems
+cover the view, the dispatch and the local Ethereum padding. The pure
+implementation requires an explicit experimental opt-in in executable
+runs. Independent cryptographic refinement and constant-time operation
+remain open. Each `LOG0`–`LOG4` adds a single immutable data view with its
+address and ordered topics after the stack, gas and static checks. The
+standalone rollback proofs cover the exact entry log list.
+[Hash and log claim boundary](../../../docs/20261122-evm-hash-log-boundary.md)
+
+The witness-limited transaction theorems cover actual admission, escrow
+and settlement. Reverting and exceptional outcomes restore the execution
+checkpoint's slot values and logs before fee settlement. The host supplies
+signature recovery, header context and account and storage authentication.
+The reached-account and reached-slot checks prove refusal when the
+specified witness is absent. These checks operate on the provided witness
+set. They leave independent verification of its roots to the replay host.
+[Transaction proofs](EVMCleanroom/CallTransactionProofs.lean) ·
+[World-aware witness checks](EVMCleanroom/CallOpcode.lean)
+
 ## Genuine EELS state-test execution (scoped)
 
 On 19 November 2026 the historical Prague runner matched **four of six**

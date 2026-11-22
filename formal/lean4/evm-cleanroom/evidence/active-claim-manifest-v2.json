@@ -8,21 +8,21 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "0a805cd57d0b40d4237eec0bf0475f69563c7dad",
+    "EVMCleanroom/Core.lean": "e5363002d45ce987ac613e3bd3446026037f50e4",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
-    "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
-    "EVMCleanroom/Frame.lean": "6a29b0ea0de533d5907ceb72ee79a5a05d6df5ad",
-    "EVMCleanroom/World.lean": "595af96de1462e31e13956b05c000b7544f452af",
+    "EVMCleanroom/Proofs.lean": "85e56acddd9396be6ff1418400b717150521f9f5",
+    "EVMCleanroom/Frame.lean": "790e09753018170c633e3b3ad604b2b6b3c98244",
+    "EVMCleanroom/World.lean": "0f852ccd77d75a3b3ae03fb4b4b0ee1da6743b45",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
     "EVMCleanroom/Call.lean": "c7f2f3f581d76d3ca74ea018791ec5b7e61f224d",
-    "EVMCleanroom/MemoryGas.lean": "f8fdb875e5be25954c7dbc7a9f67a733dc4dbecf",
+    "EVMCleanroom/MemoryGas.lean": "cd52b70946e13e005b1242b8734720eed748f072",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "2d85c57f234b81d4765ff9e14f6189b8fd7f8fdc",
-    "EVMCleanroom.lean": "687acb6099dda7d1a7efc4f180092a8dbef41ebf",
+    "EVMCleanroom/CLI.lean": "772c48f3654eea1e10e57e54dfd916bed6992c81",
+    "EVMCleanroom.lean": "d8aad061e2423babef2b104a7a496d70410e815c",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
-    "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
+    "scripts/eels/contract-selftest.mjs": "c77302841e95f37c60d84e98aa839eb7749263ed",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
     "scripts/differential/call-boundary.mjs": "d2ddd1fd22f7139e0c50b1e82f6143db0c07d42a",
     "scripts/differential/storage.mjs": "53fdad8b817f803fb5ad35bb6e90ec2687c95efa",
@@ -35,7 +35,7 @@
     "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
-    "EVMCleanroom/CallOpcode.lean": "8bb9fb36f705c4739615aa5b8eb80b1d0d3e0008",
+    "EVMCleanroom/CallOpcode.lean": "15c847616a86336118e44da15c505af636d6ac8e",
     "scripts/differential/call-opcode.mjs": "c303ca5c17c0f485b01d300c79e2f3f2b30546d1",
     "EVMCleanroom/FrontierTransfer.lean": "a85feceae4af9c1370d661f43ec8f7fcd4837531",
     "scripts/eels/replay-first-mainnet.mjs": "27bb7f161b209c644875aec883f86170f9b17161",
@@ -51,7 +51,7 @@
     "EVMCleanroom/CallContextTests.lean": "a874f8c7d7af417e38c205461f94c82110be9e84",
     "scripts/differential/call-context.mjs": "7518029373724316264afd3eb07d28a6c302883e",
     "EVMCleanroom/CallTests.lean": "2d6596346a7092cab12955e4b936303ab4d21473",
-    "EVMCleanroom/CalldataProofs.lean": "381db0a2e577b236385f55cf94e9263183895fcd",
+    "EVMCleanroom/CalldataProofs.lean": "ba5a9cb7bec40f33f15b144bc84bb5e0cd993970",
     "EVMCleanroom/CallBoundaryTests.lean": "1071872262f7c8b1774ae9b4fd61ce1b1dd60a96",
     "scripts/differential/CallRepairsProbe.lean": "53ff7f43feb1da53bc86e9b644dd482da1fe78fa",
     "scripts/differential/calldata.mjs": "63ad41b263dda18e324077201deb6bfcb43cc1c6",
@@ -73,7 +73,7 @@
     "scripts/rpc/evidence/op-sepolia-solidity-ge-51771081.json": "2d8c431338d2f34fb2179ac709b675190295364a",
     "scripts/rpc/evidence/polygon-solidity-ge-97759492.json": "68700c5c1ef0bd14089c11525a4663dbd4e918b2",
     "EVMCleanroom/ModularProofs.lean": "4a7bb12ab2ffead0f1d87fe26e203bc8413b0730",
-    "EVMCleanroom/ByteCopyProofs.lean": "96822e97e72d5a7a7e0905b58b20a632069a2cbe",
+    "EVMCleanroom/ByteCopyProofs.lean": "31946692d6929c73722d48b0556b7c8184218d5b",
     "EVMCleanroom/ByteCopyTests.lean": "1f08081b49984653d1946af404645408c9a32bf8",
     "EVMCleanroom/Memory.lean": "e04c41302210d6834c4f8fa444166e2240950f9a",
     "scripts/differential/byte-call-timing.mjs": "458b3f4d963665bec9656c3363bb2c7413a299b8",
@@ -82,7 +82,7 @@
     "scripts/differential/geth-byte-oracle.mjs": "d1be6712584c3fcc69ee64d71f19100183170160",
     "scripts/differential/package-lock.json": "5318ca3893d6f4a10add5044de63c289dd48c79f",
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
-    "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
+    "lakefile.toml": "379997eaeb6e1c9fb147270be0f317f05812683b",
     "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
     "EVMCleanroom/Tests.lean": "fa8df939bb72f1b735b5f256fdc9a67fce679ec6",
     "scripts/differential/chain-id.mjs": "9639c8e6a837a4004e034e4253cee7b56c2788d8",
@@ -92,7 +92,23 @@
     "scripts/eels/verify-rpc-code-witness.mjs": "4a9bd1014efeb2c1a8f8e5fc62cb6ec172ad20a2",
     "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-factory.json": "f65142e9ea2680bcae1f37a08474b0220b8e671f",
     "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-code-proof.json": "63e3d0056f977342910b11b5977b0ba8081a6825",
-    "scripts/rpc/evidence/ethereum-sepolia-12191766-swaprouter02-factory.json": "a3ea5a1a4a2c118a32e92c9aeee7c05c4f2a9de2"
+    "scripts/rpc/evidence/ethereum-sepolia-12191766-swaprouter02-factory.json": "a3ea5a1a4a2c118a32e92c9aeee7c05c4f2a9de2",
+    "EVMCleanroom/CallTransaction.lean": "ad40361b4d703f07fa8bafdb1256261362208e7f",
+    "EVMCleanroom/CallTransactionProofs.lean": "56863f4db199d218c63135cda5290de745714ebd",
+    "EVMCleanroom/HashLogProofs.lean": "71107d9dcdae0cd7fa5246607dee95ddff1ff37c",
+    "EVMCleanroom/HashLogTests.lean": "bb5929112dfebaa2e70ca2c29fbd47eea360d97e",
+    "EVMCleanroom/Keccak.lean": "5e89e0c5b73b2b8900b03fca897a6ef9a1152618",
+    "README.md": "e974d865da78338a787196233471b43e24ae253b",
+    "evidence/historical-1cat-shanghai-19100013.json": "2aea250f921b10e9ad22abd8fc68314d1ac610f0",
+    "scripts/differential/hash-log.mjs": "91703959a8c3c60b9f61d1bda54d69eeb59e87a8",
+    "scripts/eels/call-transaction-differential.mjs": "83ee19a7f6e78984708b674a274e1933579c9615",
+    "scripts/eels/replay-authenticated-contract.mjs": "4b0f7257abbb96a2fbee8003c42aa1f9ba9d33f3",
+    "SOUNDNESS.md": "cc5db3065f7a94afc3b038dab800018fb15860d5",
+    "ROADMAP.md": "bcf5b808df8f645cdb7deefb13459ca9d078001f",
+    "WORLD.md": "6894676748f7cc2c984c0a456c7ee80624214ce4",
+    "EVMCleanroom/CLIEncoding.lean": "a93c3de1056df0e4b23a1d4bed24cd3ea34fdc54",
+    "EVMCleanroom/CLITransaction.lean": "e8f63c8fdd655ed31e2edd391465d16b991b3077",
+    "scripts/eels/call-transaction-cli-routing.mjs": "15d66bda0da9c3475cba63b91f30d44bcad2b463"
   },
   "theorem_inventory": [
     {
@@ -100,20 +116,22 @@
       "source_symbol": "step_exp",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual Core.step EXP on admitted profiles uses powMod and 10+50 per exponent byte, through normal gas-checked commit; no full arithmetic refinement.",
-      "provenance": "New 2026-11-22 MOD/EXP statement; axiom list is provisional until actual Lean 4.33.1 CI #print audit on this exact source."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_mod",
       "source_symbol": "step_mod",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual Core.step MOD dispatcher uses stack top as dividend, next word as divisor, and charges five gas through commit.",
-      "provenance": "New 2026-11-22 MOD/EXP statement; axiom list is provisional until actual Lean 4.33.1 CI #print audit on this exact source."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.expGas_zero",
@@ -151,55 +169,61 @@
       "name": "EVMCleanroom.step_sgt",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual Core.step dispatch of SGT preserves pop order and routes the signed greater-than result to commit with three-gas cost; execution admission remains subject to gas and stack checks.",
-      "provenance": "Expected axiom output for the new 2026-11-22 SGT dispatcher; requires fresh Lean 4.33.1 compiler audit and hosted oracle verification on exact PR head."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.run_original_unchanged",
       "source": "EVMCleanroom/Proofs.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Original storage snapshot immutable on all accepted Core.run executions",
-      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.Frame.run_revert_atomic",
       "source": "EVMCleanroom/Frame.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Single-frame REVERT restores local storage, warmth and refund",
-      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.Frame.run_exception_atomic",
       "source": "EVMCleanroom/Frame.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Single-frame exceptional outcomes consume gas and restore storage",
-      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.World.runAt_revert_world_unchanged",
       "source": "EVMCleanroom/World.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Projected frame REVERT leaves entry world unchanged",
-      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.World.runAt_exception_world_unchanged",
       "source": "EVMCleanroom/World.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Projected exceptional frame leaves entry world unchanged",
-      "provenance": "CI #44741089115, build+axiom-audit (on identical source blobs); theorem declarations, not externally reviewed EELS refinement"
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.World.pay_conserves_pair",
@@ -361,19 +385,21 @@
       "name": "EVMCleanroom.CallOpcode.run_parent_revert_atomic",
       "source": "EVMCleanroom/CallOpcode.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "The public executable CallOpcode.run guarantees that a parent REVERT yields exactly the transaction-entry world, for arbitrary bytecode/gas/fuel.",
-      "provenance": "Lean 4 v4.33.1 #print axioms output from CI 44954398201 compiling exact source blob ae46f712f1848eb9259b505cb3f8005204fd5720; job failed only on earlier unpinned manifest; no normative EELS refinement"
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.CallOpcode.run_parent_exception_atomic",
       "source": "EVMCleanroom/CallOpcode.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "The public executable CallOpcode.run guarantees that a parent exceptional halt yields exactly the transaction-entry world, for arbitrary bytecode/gas/fuel.",
-      "provenance": "Lean 4 v4.33.1 #print axioms output from CI 44954398201 compiling exact source blob ae46f712f1848eb9259b505cb3f8005204fd5720; job failed only on earlier unpinned manifest; no normative EELS refinement"
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.FrontierTransfer.settleUnchecked_miner_fee",
@@ -491,19 +517,21 @@
       "name": "EVMCleanroom.step_callDataLoad",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "CALLDATALOAD sends the exact loader result to the commit path for three gas.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 18c0b9aec011b6399526843a96bab721310b51ce, Git blob 34bbfce608e7693bfd4469e1714d2aa0ba247061; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_callDataSize",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "CALLDATASIZE sends the input length to the commit path for two gas.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 18c0b9aec011b6399526843a96bab721310b51ce, Git blob 34bbfce608e7693bfd4469e1714d2aa0ba247061; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.loadCallDataWord_correct",
@@ -560,37 +588,41 @@
       "name": "EVMCleanroom.WorldCall.callZeroValue_precompile",
       "source": "EVMCleanroom/Call.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "An in-range precompile target is explicitly unsupported by the zero-value scheduler before ordinary dispatch.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob 2931f762af2e1435428a11aca5747ea85a44a0ff; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.WorldCall.callZeroValue_child_exception",
       "source": "EVMCleanroom/Call.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "A scheduled child that fails exceptionally under the supplied static flag and profile returns the parent world with the target warmed.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob 2931f762af2e1435428a11aca5747ea85a44a0ff; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.WorldCall.callWithValue_precompile",
       "source": "EVMCleanroom/ValueCall.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "A value call to a reserved precompile yields indeterminate before any transfer or ordinary dispatch.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob 0127bf77f1e3a102695ab45dcc26d9961649e4f2; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.WorldCall.callWithValue_child_exception",
       "source": "EVMCleanroom/ValueCall.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "A funded child that fails exceptionally under the supplied profile and value reverts its transfer.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit e019a6a5c359593d8e93a9db13a076278628800a, Git blob 0127bf77f1e3a102695ab45dcc26d9961649e4f2; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.CallOpcode.finishCall_state_projection",
@@ -613,46 +645,51 @@
       "name": "EVMCleanroom.step_slt",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "SLT enters the instruction commit path with its result in pop order and a three-gas charge.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 866a36fce9b71f62fe18387a903f9bc0befca430, Git blob 3ab0b5be08e79902d819bd570d6f8707a6b09e2d; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_slt_underflow",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "A reached SLT with fewer than two stack operands faults with stackUnderflow.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 866a36fce9b71f62fe18387a903f9bc0befca430, Git blob 3ab0b5be08e79902d819bd570d6f8707a6b09e2d; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_callValue_zero",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "CALLVALUE in a zero-value state enters the commit path with word zero and a two-gas charge.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 866a36fce9b71f62fe18387a903f9bc0befca430, Git blob 3ab0b5be08e79902d819bd570d6f8707a6b09e2d; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.Frame.executeWithPolicy_refuses",
       "source": "EVMCleanroom/Frame.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "A rejected fetched opcode in a running frame is refused before dispatch, with positive fuel.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 866a36fce9b71f62fe18387a903f9bc0befca430, Git blob 0be10880faff6321aab9d4f87b003194024beb09; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.Frame.runWithPolicy_refines",
       "source": "EVMCleanroom/Frame.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Any conclusive guarded outcome equals ordinary Frame.run from the same state and fuel, including the frame checkpoint.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 866a36fce9b71f62fe18387a903f9bc0befca430, Git blob 0be10880faff6321aab9d4f87b003194024beb09; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.Word.signedLt_correct",
@@ -669,10 +706,11 @@
       "name": "EVMCleanroom.step_slt_outOfGas",
       "source": "EVMCleanroom/SolidityProofs.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "A reached SLT with both stack operands cannot commit with fewer than three gas.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 866a36fce9b71f62fe18387a903f9bc0befca430, Git blob 15a773d282634f6cbbe202d642682cc30ae7ec30; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.Frame.zeroValueContextFree_callValue",
@@ -689,10 +727,11 @@
       "name": "EVMCleanroom.step_preserves_zero_value_context",
       "source": "EVMCleanroom/SolidityProofs.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "A successful Core step preserves a given zero-value, read-only context.",
-      "provenance": "Actual Lean 4.33.1 #print axioms on source commit 866a36fce9b71f62fe18387a903f9bc0befca430, Git blob 15a773d282634f6cbbe202d642682cc30ae7ec30; local executable model."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.MemoryGas.requestedWords_covers",
@@ -757,73 +796,81 @@
       "name": "EVMCleanroom.step_callDataCopy",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Funded CALLDATACOPY pops destination, source and length and requests the priced overlay of frame input.",
-      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_codeSize",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "CODESIZE requests a two-gas commit of the current code length.",
-      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_codeCopy",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Funded CODECOPY pops destination, source and length and requests the priced overlay of current code bytes.",
-      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_returnDataSize",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "On an admitted profile RETURNDATASIZE requests a two-gas commit of the last return buffer size.",
-      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_returnDataCopy",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Funded in-bounds RETURNDATACOPY on an admitted profile requests the priced return-buffer overlay.",
-      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_returnDataCopy_outOfBounds",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Funded RETURNDATACOPY on an admitted profile fails when the mathematical source end exceeds the buffer size.",
-      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_addMod",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "The ADDMOD dispatcher pops the operands in EVM order and uses the common eight-gas commit.",
-      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_mulMod",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "The MULMOD dispatcher pops the operands in EVM order and uses the common eight-gas commit.",
-      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.Word.addMod_correct",
@@ -960,10 +1007,11 @@
       "name": "EVMCleanroom.CallOpcode.executeAtDepth_no_fuel",
       "source": "EVMCleanroom/CallOpcode.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "The world-aware execution entry refuses dispatch at zero simulation fuel.",
-      "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.CallOpcode.schedule_exact",
@@ -1080,30 +1128,33 @@
       "source": "EVMCleanroom/Core.lean",
       "source_symbol": "step_sdiv",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "For running frame/SDIV opcode and a 2-element stack prefix, real Core.step calls commit with signedDivide and charge 5.",
-      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_smod",
       "source": "EVMCleanroom/Core.lean",
       "source_symbol": "step_smod",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "For running frame/SMOD opcode and a 2-element stack prefix, real Core.step calls commit with signedMod and charge 5.",
-      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_sar",
       "source": "EVMCleanroom/Core.lean",
       "source_symbol": "step_sar",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "For running frame/non-preShanghai/SAR opcode and a 2-element stack prefix, real Core.step calls commit with shiftArithmetic and charge 3.",
-      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.Word.signExtend_large",
@@ -1120,30 +1171,33 @@
       "source": "EVMCleanroom/Core.lean",
       "source_symbol": "step_signExtend",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual Core.step on running SIGNEXTEND with two stack operands calls commit with correct pop order, helper value and five-gas charge.",
-      "provenance": "Actually printed by pinned Lean 4.33.1 at published SHA 90bd86bd2fe6363e26b10eb5e90c73d2a7b42ab9, GitHub EVM CI run 45036718007 job 137251997426. Dispatcher correspondence only; not all-fork proof."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_origin",
       "source_symbol": "step_origin",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual Core.step ORIGIN uses supplied txOrigin and two-gas commit; no context authentication.",
-      "provenance": "2026-11-22 issue #760, expected until exact source compiler axiom audit."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_caller",
       "source_symbol": "step_caller",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual Core.step CALLER uses the immediate callerAddress field and two-gas commit.",
-      "provenance": "2026-11-22 issue #760, expected until actual Lean 4.33.1 audit."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.World.frameInput_participants",
@@ -1158,20 +1212,22 @@
       "source_symbol": "step_chainId",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual Core.step CHAINID dispatch requests exactly 2 gas, pushes supplied chainId modulo 2^256, and increments PC on admitted profiles.",
-      "provenance": "2026-11-22 issue #767; expected axiom set until exact-source Lean 4.33.1 CI prints it."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_chainId_unknown_fork",
       "source_symbol": "step_chainId_unknown_fork",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Coarse preShanghai profile explicitly refuses to judge CHAINID support; this is not a protocol-invalid opcode claim.",
-      "provenance": "2026-11-22 issue #767; expected axiom set until exact-source Lean 4.33.1 CI prints it."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.World.frameInput_chainId",
@@ -1186,60 +1242,66 @@
       "source_symbol": "step_blockCoinbase",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual gas-checked Core.step COINBASE 0x41 pushes explicitly supplied State.blockCoinbase for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
-      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_blockTimestamp",
       "source_symbol": "step_blockTimestamp",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual gas-checked Core.step TIMESTAMP 0x42 pushes explicitly supplied State.blockTimestamp for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
-      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_blockNumber",
       "source_symbol": "step_blockNumber",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual gas-checked Core.step NUMBER 0x43 pushes explicitly supplied State.blockNumber for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
-      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_blockGasLimit",
       "source_symbol": "step_blockGasLimit",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual gas-checked Core.step GASLIMIT 0x45 pushes explicitly supplied State.blockGasLimit for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
-      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_blockBaseFee",
       "source_symbol": "step_blockBaseFee",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual gas-checked Core.step BASEFEE 0x48 pushes explicitly supplied State.blockBaseFee for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
-      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_blockBaseFee_unknown_fork",
       "source_symbol": "step_blockBaseFee_unknown_fork",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "BASEFEE returns unsupportedFork under coarse preShanghai profile, spanning before and after London. This is a conservative refusal, not a statement that BASEFEE was absent throughout preShanghai.",
-      "provenance": "2026-11-22 issue #774: expected output; unverified until new CI."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.World.frameInput_blockEnvironment",
@@ -1254,30 +1316,33 @@
       "source_symbol": "step_effectiveGasPrice",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual GASPRICE opcode loads supplied effective transaction gas price (not a cap) through commit with two-gas charge, for any running state.",
-      "provenance": "Candidate theorem for issue #781; real Lean 4.33.1 axiom output and current-head CI required."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_prevRandao",
       "source_symbol": "step_prevRandao",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual 0x44 opcode under shanghaiPlus or osaka loads the externally supplied post-Merge RANDAO mix with two-gas charging.",
-      "provenance": "Candidate theorem for issue #781; real Lean 4.33.1 axiom output and current-head CI required."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_prevRandao_unknown_fork",
       "source_symbol": "step_prevRandao_unknown_fork",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual 0x44 dispatch refuses ambiguous preShanghai profile, where PoW DIFFICULTY vs PoS PREVRANDAO cannot be selected safely.",
-      "provenance": "Candidate theorem for issue #781; real Lean 4.33.1 axiom output and current-head CI required."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.World.frameInput_feeAndRandao",
@@ -1292,30 +1357,33 @@
       "source_symbol": "step_blobBaseFee_cancun",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual Cancun Core.step requests a two-gas commit of supplied blob fee, not header derivation.",
-      "provenance": "Expected only; needs fresh Lean 4.33.1 compiler axiom print/audit at exact published source, issue #790."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_blobBaseFee_osaka",
       "source_symbol": "step_blobBaseFee_osaka",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "Actual Osaka Core.step requests same two-gas commit, not whole-fork refinement.",
-      "provenance": "Expected only; needs fresh Lean 4.33.1 compiler axiom print/audit at exact published source, issue #790."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.step_blobBaseFee_unknown_fork",
       "source_symbol": "step_blobBaseFee_unknown_fork",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [
+        "Quot.sound",
         "propext"
       ],
       "scope": "PreShanghai and ambiguous shanghaiPlus profiles refuse opcode availability rather than claiming invalid EVM execution.",
-      "provenance": "Expected only; needs fresh Lean 4.33.1 compiler axiom print/audit at exact published source, issue #790."
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
       "name": "EVMCleanroom.World.frameInput_blobBaseFee",
@@ -1324,6 +1392,384 @@
       "axioms_printed": [],
       "scope": "Actual world-to-frame adapter preserves selected blob base fee for nested CALL.",
       "provenance": "Expected only; needs fresh Lean 4.33.1 compiler axiom print/audit at exact published source, issue #790."
+    },
+    {
+      "name": "EVMCleanroom.step_keccak",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The actual enabled, funded, size-admitted dispatch hashes its paid memory window, pushes the big-endian digest word and requests the modeled gas debit.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_keccak_disabled",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The actual dispatch refuses KECCAK256 when the experimental capability is absent.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_keccak_outOfGas",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "An enabled KECCAK256 with two operands and inadequate gas returns out of gas regardless of its input length.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_keccak_resourceLimit",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "A funded enabled KECCAK256 above the host byte cap returns a resource refusal.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_log",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The actual LOG0\u2013LOG4 dispatcher prices and commits the active address, stack topics in pop order and the expanded data window.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_log_static",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "A funded LOG with enough operands reports write protection inside a static frame.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_log_outOfGas",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "A LOG with enough operands and inadequate gas reports out of gas before checking the static flag.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_log_underflow",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The actual LOG dispatcher reports stack underflow before its gas and static checks.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Frame.run_revert_logs",
+      "source": "EVMCleanroom/Frame.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "A standalone REVERT outcome keeps precisely the entry log journal.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Frame.run_exception_logs",
+      "source": "EVMCleanroom/Frame.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "A standalone exceptional outcome keeps precisely the entry log journal.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.execute_missing_sload",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "scope": "The actual world-aware execution refuses SLOAD when its reached slot lacks a supplied witness.",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.execute_missing_sstore",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "scope": "The actual world-aware execution refuses SSTORE when its reached slot lacks a supplied witness.",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginCall_missing_account",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "scope": "Actual CALL entry refuses a target account missing from the witness set, subject to its supplied operands and entry checks.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.finishCall_logs_projection",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "scope": "Successful caller resumption projects the committed world log journal to the resumed frame.",
+      "axioms_printed": [],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Keccak.paddedByte_input",
+      "source": "EVMCleanroom/Keccak.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Each valid padded-source byte equals the original bounded-view byte.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Keccak.paddedByte_combined",
+      "source": "EVMCleanroom/Keccak.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "An input ending one byte short of a full rate block combines the Ethereum delimiter and final bit in 0x81.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Keccak.padded_size_aligned",
+      "source": "EVMCleanroom/Keccak.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "A rate-aligned input has one whole additional padding block.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Keccak.padded_size_bounds",
+      "source": "EVMCleanroom/Keccak.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The padded mathematical length is strictly larger than the source length and grows by at most the 136-byte rate.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Keccak.paddedBlocks_paid",
+      "source": "EVMCleanroom/Keccak.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The available gas for the modeled KECCAK256 cost bounds its number of absorbed rate blocks.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Keccak.digest_reads_only_window",
+      "source": "EVMCleanroom/Keccak.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Equal view lengths and equal in-range bytes imply equal local sponge results.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Keccak.digest_width",
+      "source": "EVMCleanroom/Keccak.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The local sponge exposes exactly 32 output bytes.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_keccak_work_bound",
+      "source": "EVMCleanroom/HashLogProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Every successful enabled KECCAK256 respects the host byte cap and has its padded block count bounded by both the cap and paid gas.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.commit_log_effect",
+      "source": "EVMCleanroom/HashLogProofs.lean",
+      "axioms_printed": [],
+      "scope": "A checked commit prepends a planned log only in a writable frame, preserving the previous journal otherwise.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_static_logs_unchanged",
+      "source": "EVMCleanroom/HashLogProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Every successful core step preserves the log journal inside a static frame.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.step_log_entry",
+      "source": "EVMCleanroom/HashLogProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "A successful LOG step prepends exactly the entry with the current address, ordered topics and matching paid memory bytes, with the exact modeled gas debit.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.Frame.zeroValueContextFree_keccak",
+      "source": "EVMCleanroom/HashLogProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The pure frame admission predicate permits KECCAK256 in a read-only, zero-value frame. Core capability checking still applies.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration).",
+      "source_symbol": "Frame.zeroValueContextFree_keccak"
+    },
+    {
+      "name": "EVMCleanroom.Frame.zeroValueContextFree_log",
+      "source": "EVMCleanroom/HashLogProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The pure frame admission predicate rejects each LOG opcode.",
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration).",
+      "source_symbol": "Frame.zeroValueContextFree_log"
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.admit_checked",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "Successful admission enforces nonce, intrinsic gas, block gas allowance, fee floor and balance for maximum fees plus value.",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.run_executed_admitted",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "Actual completed transaction execution implies successful admission and the checked resource, nonce, gas and balance conditions.",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.debitSender_projection",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "The escrow debit increments the sender nonce, deducts the prepaid effective fee and preserves sender storage.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.charge_bounded",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "The modeled gas refund and charged gas respect the refund and gas-limit bounds.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.charge_escrow_exact",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "For model executions within the gas budget, returned fee plus burn plus tip equals the fee escrow.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.settleFrame_indeterminate",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "An indeterminate frame remains indeterminate at transaction settlement.",
+      "axioms_printed": [],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.finish_projection",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "Successful settlement reports the requested receipt status, emits logs in order and preserves the selected world nonce and slot values.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.finish_balance",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "Settlement adds exactly the sender refund and coinbase tip to their frame-world balances, including a shared recipient.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.settleFrame_reverted_checkpoint",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "A reverted frame settles a failed receipt from the escrow checkpoint and preserves checkpoint logs, nonce and storage.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.settleFrame_exception_checkpoint",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "An exceptional frame settles a failed receipt from the escrow checkpoint and preserves checkpoint logs, nonce and storage.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.settleFrame_reverted_balance",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "A reverted frame starts fee settlement from checkpoint balances and credits precisely the refund and beneficiary tip.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.settleFrame_exception_balance",
+      "source": "EVMCleanroom/CallTransactionProofs.lean",
+      "scope": "An exceptional frame starts fee settlement from checkpoint balances and credits precisely the refund and beneficiary tip.",
+      "axioms_printed": [
+        "propext"
+      ],
+      "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     }
   ],
   "external_evidence": {
@@ -1941,6 +2387,82 @@
         "The providers supply canonical chain selection. The header, trie and Keccak checks use the pinned EthereumJS host dependencies.",
         "The local comparison checks halt kind and full return bytes. Transaction replay, receipts, settlement and consensus remain separate."
       ]
+    },
+    "hash_log_instructions": {
+      "testedSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
+      "scope": "Lean frame and world fixtures use the shared KECCAK256/LOG rules of the Shanghai-plus profile.",
+      "gate": "scripts/differential/hash-log.mjs",
+      "reference": "@ethereumjs/evm@10.1.3 Cancun runCall; @noble/hashes@2.4.0 for direct Keccak known answers",
+      "experimentalHashFlag": "--dangerously-enable-unverified-keccak",
+      "matched": 80,
+      "compared": 80,
+      "mismatches": 0,
+      "knownAnswerFixtures": 24,
+      "gasBoundaryTriplets": 7,
+      "nativeBoundaryControls": 6,
+      "negativeControlsRejected": 4,
+      "report": "evidence/2026-11-22-call-transaction/hash-log.json",
+      "testedSourceCommitKind": "Local integration commit",
+      "nativeExecutableSha256": "3cf7b69691bab210360d8766fc58a9c6cc8d0a133060ab46707051437e6205e5"
+    },
+    "synthetic_call_transactions": {
+      "testedSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
+      "gate": "scripts/eels/call-transaction-differential.mjs",
+      "reference": "@ethereumjs/vm@10.1.3",
+      "scope": "Signed synthetic type-0, type-1 and type-2 ordinary call cases under Shanghai and Cancun. The host converts decoded envelope and state facts to Lean input and compares receipt bytes and state roots.",
+      "matched": 60,
+      "compared": 60,
+      "receiptAndStateRootMatches": 60,
+      "admissionRejections": 8,
+      "preSerializationRejections": 1,
+      "boundaryRefusals": 11,
+      "negativeControlsRejected": [
+        "changedGas",
+        "changedReceiptLog",
+        "changedStateBalance"
+      ],
+      "report": "evidence/2026-11-22-call-transaction/call-transaction-differential.json",
+      "harnessSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
+      "testedSourceCommitKind": "Local integration commit",
+      "launcherSha256": "3cf7b69691bab210360d8766fc58a9c6cc8d0a133060ab46707051437e6205e5",
+      "companionSha256": "479fe12d5ec64b7121aa2887c2a3b74adcd95a0c87c2fcf2b3a54b9f3f7d7740"
+    },
+    "authenticated_shanghai_call_transaction": {
+      "testedSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
+      "gate": "scripts/eels/replay-authenticated-contract.mjs",
+      "fixture": "evidence/historical-1cat-shanghai-19100013.json",
+      "fixtureSha256": "053b2d915c3a03ab529634ec6128df6e1e917418f355b51cb652af4e9162c78c",
+      "blockNumber": 19100013,
+      "blockHash": "0x9bc80ce85c8b20addd723d3e4848e49a7f15af7565bac87a1c1c5d50741808ae",
+      "transactionIndex": 0,
+      "transactionHash": "0xe02eb8e49aa4385b3fac6ccc5a061b5aded14f9f6dd674a4e7a8b7ad55ad85d0",
+      "authenticatedAccounts": 3,
+      "authenticatedSlots": 4,
+      "receiptStatus": 1,
+      "gasUsed": "33987",
+      "refundGas": "4800",
+      "logs": 1,
+      "returnBytesHex": "0000000000000000000000000000000000000000000000000000000000000001",
+      "keccakOptIn": true,
+      "derivedIntermediateWorldRoot": "0x4ec90276be487d2567d41039696e1bb75b3fa8cb796fc9705f5d83c606a17000",
+      "targetStorageRoot": "0x4fb8888e09be2dd7e1b31f7e39e670b7820adf8d179f382c34481a632ba0a08a",
+      "publishedFinalTargetStorageRoot": "0x4fb8888e09be2dd7e1b31f7e39e670b7820adf8d179f382c34481a632ba0a08a",
+      "ethereumJSAccountAndReceiptComparison": true,
+      "gethAccountAndReceiptComparison": true,
+      "gethExecutableSha256": "d8cfddad15a8c601e7b069bc5973ad073dbc2d632b8c5ab50e513ef27c53d6da",
+      "negativeControlsRejected": [
+        "without-keccak-opt-in",
+        "missing-authenticated-slot",
+        "changed-code",
+        "changed-storage-value",
+        "changed-receipt-gas",
+        "wrong-skip-key-transform"
+      ],
+      "scope": "One authenticated post-Merge transaction and receipt at index zero. The host applies the independently obtained engine account effects to the authenticated sparse parent trie. The intermediate global world root is derived; the published final-block comparison concerns the contract storage root. Provider assertions supply canonical selection.",
+      "report": "evidence/2026-11-22-call-transaction/historical-replay.json",
+      "harnessSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
+      "testedSourceCommitKind": "Local integration commit",
+      "nativeExecutableSha256": "479fe12d5ec64b7121aa2887c2a3b74adcd95a0c87c2fcf2b3a54b9f3f7d7740"
     }
   },
   "trust_boundaries": [
@@ -1954,9 +2476,9 @@
   "missing": [
     "Full EELS semantic refinement proofs",
     "Other call variants, CREATE, precompiles and fork-exact frame and transaction rules beyond the restricted nested CALL dispatcher",
-    "MPT/RLP/Keccak formal implementation and correspondence proofs in Lean",
-    "General receipts, logs and complete transaction/block validity",
-    "General multi-transaction, multi-fork mainnet replay, Engine API and beacon-chain consensus; one restricted Frontier transfer has replay evidence",
+    "Lean MPT/RLP implementation and correspondence, plus independent refinement and security review of the opt-in Keccak implementation",
+    "General receipt commitments, log and transaction rules, and complete block validity",
+    "General multi-transaction and multi-fork replay, persistent state, Engine API, networking and beacon-chain consensus for a complete execution and consensus client. Current authenticated mainnet evidence covers a restricted Frontier transfer and the witness-limited Shanghai 1CAT call.",
     "Independent expert review"
   ],
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
@@ -2391,5 +2913,71 @@
     "independentReference": "@ethereumjs/evm@10.1.3 Cancun; synthetic getBlobGasPrice",
     "plannedCases": 42,
     "unverified": "no authenticated blob fee formula, typed blob transaction, BLOBHASH, KZG, EELS refinement, EL/CL node"
+  },
+  "call_transaction_integration": {
+    "trackingIssue": "https://github.com/danbri/factoidal-core/issues/796",
+    "testedSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
+    "implementationGitTree": "d598cd08b0c87ce19def66b50b23f8be78174711",
+    "remoteCI": "pending",
+    "scope": "Ordinary type-0, type-1 and type-2 contract-call transactions in the supported Shanghai and Cancun subsets. Lean consumes supplied normalized signed-envelope fields and state witnesses, checks admission and reached witness coverage, executes frames and computes fee settlement and receipt fields. Host verification covers signatures, headers, witness and commitment handling.",
+    "leanVersion": "4.33.1",
+    "buildJobs": 63,
+    "bytecodeGuardExpressions": 20,
+    "sourceBlobCount": 101,
+    "selectedTheorems": {
+      "total": 172,
+      "sourceFiles": 20,
+      "previous": 133,
+      "newHashAndLog": 23,
+      "newCallTransactionAndWorldChecks": 16,
+      "changedPriorAxiomSets": 52,
+      "change": "Each gained standard Quot.sound in fresh per-file elaboration.",
+      "negativeControlsRejected": 3
+    },
+    "experimentalHashScope": "Scope is public Ethereum replay and synthetic or public known-answer tests. The opt-in is off by default. A 16 MiB host input cap refuses paid oversized work. Independent cryptographic refinement and constant-time behavior remain open.",
+    "versionedReportSha256": {
+      "evidence/2026-11-22-call-transaction/hash-log.json": "7088c0becf235bf5a1235a0aa3add386cf442c08afd09bb30418f4fa85c4c504",
+      "evidence/2026-11-22-call-transaction/axiom-deltas.json": "582f601fcbb793433e55a076909cc33cac173a8e2f64aa81e6bfe4f2959b7f38",
+      "evidence/2026-11-22-call-transaction/call-transaction-differential.json": "70f0f5952640799cb3e3468808f7bdb3aed0267ab872b0b5909a881768a0d801",
+      "evidence/2026-11-22-call-transaction/historical-replay.json": "cba032f9cbb727377e5c2af607d10ba7ea12e58cdc29f178eb50a1c27490194a",
+      "evidence/2026-11-22-call-transaction/axiom-audit.json": "af2a76e40162675f1d97a987f508678c5a68e2d62b5300172b9d747326fc1c00",
+      "evidence/2026-11-22-call-transaction/axiom-selftest.json": "773346e16785e7b82a91529df8a12a9cbcd22b929b6d3ff744f85c34d76cabcf",
+      "evidence/2026-11-22-call-transaction/retained-checks.json": "dcf205b5d91169aa38f80c6ac4d07e459e8dda60da6dfc3d7f3337c15ac4aa51",
+      "evidence/2026-11-22-call-transaction/TIMING.md": "5ecdd3a100dba9530942511d6f060ce19101c8a05a23f460afa40c59a1606545",
+      "evidence/2026-11-22-call-transaction/elaborator-import-regression/environment.log": "398cef6c954be3ef2fbcf7e0a01ee91099d0ff78bcd1ac3ff0e453e625d20fcd",
+      "evidence/2026-11-22-call-transaction/elaborator-import-regression/legacy-cli-timing.json": "8fb3b0a69e9c18cf012f83462a5810f067e577a613656d2b52b0451df061c422",
+      "evidence/2026-11-22-call-transaction/elaborator-import-regression/raw10000-timing.json": "8cbd86fbe8f053788b8c195fa2ff9b7b55e93f8b03a03bb6040084f6eb49cea1",
+      "evidence/2026-11-22-call-transaction/elaborator-import-regression/summary.json": "0db467c154c1b4fd89bd8381526176c2c0f3b112357b5bde430c482d60958593",
+      "evidence/2026-11-22-call-transaction/cli-routing.json": "b68a5e1d0fb294abd913faa847ce61d7c86e91539b0f03ef1680fb55c61cd82e"
+    },
+    "localProofAudit": "all-selected-exact-axiom-reports-matched",
+    "replayHarnessSourceCommit": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
+    "replayHarnessGitTree": "d598cd08b0c87ce19def66b50b23f8be78174711",
+    "performance": {
+      "trackingIssue": "https://github.com/danbri/factoidal-core/issues/739",
+      "initialBuildSourceCommit": "fb5812620c0feb2334fa016861baeab6f7f89879",
+      "baselinePublicSourceEquivalent": "d3843c42d3b9c6fea8e96c3d0eebd65890dbea4b",
+      "scope": "Paired fresh native process timings for the two legacy CLI paths and one full 10,000-case batch. The initial JSON-import build substantially raised cold-call times and retained raw corpus output equality.",
+      "initialSummary": "evidence/2026-11-22-call-transaction/elaborator-import-regression/summary.json",
+      "notes": "evidence/2026-11-22-call-transaction/TIMING.md"
+    },
+    "testedSourceCommitKind": "Local integration commit",
+    "nativeExecutables": {
+      "evm-subset": {
+        "sha256": "3cf7b69691bab210360d8766fc58a9c6cc8d0a133060ab46707051437e6205e5",
+        "bytes": 6653936
+      },
+      "evm-call-transaction": {
+        "sha256": "479fe12d5ec64b7121aa2887c2a3b74adcd95a0c87c2fcf2b3a54b9f3f7d7740",
+        "bytes": 120842224
+      }
+    },
+    "cliRouting": {
+      "gate": "scripts/eels/call-transaction-cli-routing.mjs",
+      "routed": 3,
+      "missingCompanion": 2,
+      "legacy": 1,
+      "report": "evidence/2026-11-22-call-transaction/cli-routing.json"
+    }
   }
 }

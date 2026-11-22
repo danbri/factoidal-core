@@ -41,6 +41,7 @@ private def finishCall (parentAddress : Nat) (parent : State) (rest : List Word)
       .committed out
         { state with
           selfBalance := (out.accounts parentAddress).balance
+          logsRev := out.logsRev
           storage := {
             current := (out.accounts parentAddress).storage
             original := parent.storage.original
@@ -70,6 +71,19 @@ theorem finishCall_state_projection (parentAddress : Nat) (parent resumed : Stat
     · cases h
   · cases h
 
+/-- Kind: projection.
+    Says: the resumed caller receives the selected child's resulting log journal.
+    Does not say: that a later caller failure will keep those logs. -/
+theorem finishCall_logs_projection (parentAddress : Nat) (parent resumed : State)
+    (rest : List Word) (out world : TxWorld) (remaining : Nat) (succeeded : Bool)
+    (h : finishCall parentAddress parent rest out remaining succeeded =
+      .committed world resumed) : resumed.logsRev = world.logsRev := by
+  unfold finishCall at h
+  split at h
+  · split at h <;> cases h
+    rfl
+  · cases h
+
 /-- Preservation.
     Says: committing the resumed caller preserves the resulting world if no
     intervening instruction changes the caller's journal.
@@ -81,8 +95,9 @@ theorem finishCall_commit_preserves_world (parentAddress : Nat) (parent resumed 
     commitFrame world parentAddress resumed = world := by
   obtain ⟨_, current, _, warm, refund⟩ :=
     finishCall_state_projection parentAddress parent resumed rest out world remaining succeeded h
+  have logs := finishCall_logs_projection parentAddress parent resumed rest out world remaining succeeded h
   unfold commitFrame
-  rw [current, warm, refund]
+  rw [current, warm, refund, logs]
   have accounts : (fun other => if other = parentAddress then
       { world.accounts parentAddress with storage := (world.accounts parentAddress).storage }
       else world.accounts other) = world.accounts := by
@@ -145,7 +160,8 @@ inductive RawOutcome where
     Other unknown opcodes can be valid EVM instructions absent in this slice. -/
 def stepError (e : Error) : RawOutcome :=
   match e with
-  | .unsupportedFork | .stepLimit | .framePolicyViolation _ => .indeterminate e
+  | .unsupportedFork | .stepLimit | .framePolicyViolation _
+  | .resourceLimit | .incompleteState _ _ => .indeterminate e
   | .invalidOpcode b =>
       if b == 0xfe then .exceptional e else .indeterminate e
   | _ => .exceptional e
@@ -182,30 +198,32 @@ def beginCall (active : ActiveFrame) : Except Error CallEntry :=
       outputOffset :: outputSize :: rest =>
     let target := targetWord.val % addressBound
     let ranges : Windows := ⟨inputOffset.val, inputSize.val, outputOffset.val, outputSize.val⟩
-    let alive := value.val != 0 && CallValue.accountAlive (active.world.accounts target)
-    match schedule parent ranges requested.val value.val (active.world.warmAddresses target) alive with
-    | .error e => .error e
-    | .ok budget =>
-      if parent.readOnly && value.val != 0 then .error .writeProtection
-      else
-        let callerWorld := commitFrame active.world active.address parent
-        let checkpoint := WorldCall.warmTarget callerWorld target
-        let memory := parent.memory.expand ranges.words
-        let continuation : Continuation :=
-          ⟨active.address, active.depth, { parent with memory, returnData := {} }, rest, checkpoint, budget, ranges⟩
-        if value.val > (callerWorld.accounts active.address).balance || active.depth ≥ maxDepth then
-          .ok (.failed continuation)
-        else if WorldCall.unsupportedPrecompile parent.profile target then .error .unsupportedFork
+    if !active.world.hasAccount target then .error (.incompleteState target none)
+    else
+      let alive := value.val != 0 && CallValue.accountAlive (active.world.accounts target)
+      match schedule parent ranges requested.val value.val (active.world.warmAddresses target) alive with
+      | .error e => .error e
+      | .ok budget =>
+        if parent.readOnly && value.val != 0 then .error .writeProtection
         else
-          let transfer := if value.val = 0 then .ok checkpoint else
-            (pay checkpoint active.address target value.val).mapError fun _ => .unsupportedFork
-          transfer.map fun childWorld =>
-            let child := { frameInput childWorld target budget.childGas parent.readOnly parent.profile with
-              callData := ByteView.ofMemory memory ranges.inputOffset ranges.inputSize
-              callValue := value.val
-              txOrigin := parent.txOrigin
-              callerAddress := active.address }
-            .entered ⟨childWorld, target, active.depth + 1, child⟩ continuation
+          let callerWorld := commitFrame active.world active.address parent
+          let checkpoint := WorldCall.warmTarget callerWorld target
+          let memory := parent.memory.expand ranges.words
+          let continuation : Continuation :=
+            ⟨active.address, active.depth, { parent with memory, returnData := {} }, rest, checkpoint, budget, ranges⟩
+          if value.val > (callerWorld.accounts active.address).balance || active.depth ≥ maxDepth then
+            .ok (.failed continuation)
+          else if WorldCall.unsupportedPrecompile parent.profile target then .error .unsupportedFork
+          else
+            let transfer := if value.val = 0 then .ok checkpoint else
+              (pay checkpoint active.address target value.val).mapError fun _ => .unsupportedFork
+            transfer.map fun childWorld =>
+              let child := { frameInput childWorld target budget.childGas parent.readOnly parent.profile with
+                callData := ByteView.ofMemory memory ranges.inputOffset ranges.inputSize
+                callValue := value.val
+                txOrigin := parent.txOrigin
+                callerAddress := active.address }
+              .entered ⟨childWorld, target, active.depth + 1, child⟩ continuation
   | _ => .error .stackUnderflow
 
 /-- The caller owns the entire last-child buffer, and only its fitting
@@ -247,6 +265,20 @@ private def afterCall (k : Continuation) : CallStep → Transition
   | .exceptional e => .terminal (.exceptional e)
   | .indeterminate e => .terminal (.indeterminate e)
 
+/-- The only storage-reading opcodes admitted by Core use the top word as key. -/
+private def missingStorage (active : ActiveFrame) (opcode : Nat) : Option Nat :=
+  match active.world.witnessed with
+  | none => none
+  | some coverage =>
+    let key := match active.state.stack.items with
+      | key :: _ :: _ =>
+        if opcode == 0x54 ||
+            (opcode == 0x55 && !active.state.readOnly && active.state.gas > 2300) then some key.val
+        else none
+      | [key] => if opcode == 0x54 then some key.val else none
+      | [] => none
+    key.filter (fun slot => !coverage.slot active.address slot)
+
 private def dispatch (active : ActiveFrame) : Transition :=
   let s := active.state
   if s.halted then .terminal (.stopped active.world s)
@@ -264,11 +296,14 @@ private def dispatch (active : ActiveFrame) : Transition :=
         if opcode == 0xfd then .terminal (.reverted terminal)
         else .terminal (.returned (commitFrame active.world active.address terminal) terminal)
     else
-      match step s with
-      | .error e => .terminal (stepError e)
-      | .ok next =>
-        if next.halted then .terminal (.stopped (commitFrame active.world active.address next) next)
-        else .next { active with state := next }
+      match missingStorage active opcode with
+      | some key => .terminal (.indeterminate (.incompleteState active.address (some key)))
+      | none =>
+        match step s with
+        | .error e => .terminal (stepError e)
+        | .ok next =>
+          if next.halted then .terminal (.stopped (commitFrame active.world active.address next) next)
+          else .next { active with state := next }
 
 /-- The continuation stack is separate from the Lean call stack. One fuel
     unit is consumed per dispatch across the active frames, including implicit
@@ -324,7 +359,10 @@ def settle (entryWorld : TxWorld) (initialParent : State)
   | .stopped world s => .stopped world s
   | .returned world s => .returned world s
   | .reverted s =>
-      .reverted entryWorld { s with storage := initialParent.storage, selfBalance := initialParent.selfBalance }
+      .reverted entryWorld { s with
+        storage := initialParent.storage
+        selfBalance := initialParent.selfBalance
+        logsRev := initialParent.logsRev }
   | .exceptional e =>
       .exceptional entryWorld
         { initialParent with gas := 0, halted := true } e
@@ -392,6 +430,9 @@ theorem beginCall_entered_context (active child : ActiveFrame) (k : Continuation
     let ranges : Windows := ⟨inputOffset.val, inputSize.val, outputOffset.val, outputSize.val⟩
     let callerWorld := commitFrame active.world active.address active.state
     let checkpoint := WorldCall.warmTarget callerWorld target
+    cases hKnown : active.world.hasAccount (targetWord.val % addressBound)
+    · simp [hKnown] at h
+    simp only [hKnown, Bool.not_true, Bool.false_eq_true, if_false] at h
     have hOriginal : checkpoint.original = active.world.original := by
       funext address slot
       exact WorldCall.warmTarget_original callerWorld target address slot
@@ -458,6 +499,46 @@ theorem beginCall_entered_input_byte (active child : ActiveFrame) (k : Continuat
   rw [hInput, hMemory]
   simp [ByteView.ofMemory, ByteView.readByte, hIndex]
 
+/-- Kind: boundary.
+    Says: the actual world-aware dispatch refuses an SLOAD with no
+    witness for its key before invoking the storage-reading step.
+    Does not say: who authenticated the supplied witness coverage. -/
+theorem execute_missing_sload (fuel : Nat) (world : TxWorld) (address depth : Nat)
+    (state : State) (coverage : World.WitnessCoverage) (key : Word) (rest : List Word)
+    (hRunning : state.halted = false) (hOpcode : byteAt state state.pc = 0x54)
+    (hStack : state.stack.items = key :: rest) (hCoverage : world.witnessed = some coverage)
+    (hMissing : coverage.slot address key.val = false) :
+    executeAtDepth (fuel + 1) world address depth state =
+      .indeterminate (.incompleteState address (some key.val)) := by
+  rw [executeAtDepth, executeLoop]
+  cases rest <;> simp [dispatch, missingStorage, Option.filter, hRunning, hOpcode, hStack, hCoverage, hMissing]
+
+/-- Kind: boundary.
+    Says: the actual dispatcher refuses an eligible SSTORE when no
+    witness covers the slot's original and current values.
+    Does not say: that static writes or underflow read storage. -/
+theorem execute_missing_sstore (fuel : Nat) (world : TxWorld) (address depth : Nat)
+    (state : State) (coverage : World.WitnessCoverage) (key value : Word) (rest : List Word)
+    (hRunning : state.halted = false) (hOpcode : byteAt state state.pc = 0x55)
+    (hStack : state.stack.items = key :: value :: rest)
+    (hMutable : state.readOnly = false) (hGas : 2300 < state.gas)
+    (hCoverage : world.witnessed = some coverage) (hMissing : coverage.slot address key.val = false) :
+    executeAtDepth (fuel + 1) world address depth state =
+      .indeterminate (.incompleteState address (some key.val)) := by
+  rw [executeAtDepth, executeLoop]
+  simp [dispatch, missingStorage, Option.filter, hRunning, hOpcode, hStack, hMutable, hGas, hCoverage, hMissing]
+
+/-- Kind: boundary.
+    Says: a CALL without a target account witness refuses before scheduling
+    from the target's balance or code.
+    Does not say: the call could have completed if the witness were available. -/
+theorem beginCall_missing_account (active : ActiveFrame) (request target value iOff iSize oOff oSize : Word)
+    (rest : List Word) (hStack : active.state.stack.items =
+      request :: target :: value :: iOff :: iSize :: oOff :: oSize :: rest)
+    (hMissing : active.world.hasAccount (target.val % addressBound) = false) :
+    beginCall active = .error (.incompleteState (target.val % addressBound) none) := by
+  simp [beginCall, hStack, hMissing]
+
 /-- Kind: correspondence.
     Says: once 0xf1 enters a child, the next dispatch is the same world-aware
     interpreter using that child and the suspended caller on its stack.
@@ -493,6 +574,9 @@ theorem executeAtDepth_no_fuel (world : TxWorld) (address depth : Nat) (s : Stat
 #print axioms beginCall_entered_context
 #print axioms beginCall_entered_output_paid
 #print axioms beginCall_entered_input_byte
+#print axioms execute_missing_sload
+#print axioms execute_missing_sstore
+#print axioms beginCall_missing_account
 #print axioms executeLoop_enters_child
 #print axioms executeLoop_resumes_caller
 #print axioms executeAtDepth_no_fuel
@@ -687,6 +771,7 @@ theorem run_parent_exception_atomic (fuel : Nat) (entry result : TxWorld)
 #print axioms run_parent_revert_atomic
 #print axioms run_parent_exception_atomic
 #print axioms finishCall_state_projection
+#print axioms finishCall_logs_projection
 #print axioms finishCall_commit_preserves_world
 
 end EVMCleanroom.CallOpcode

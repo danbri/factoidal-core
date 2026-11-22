@@ -40,6 +40,14 @@ def accessCost (oldWords offset length : Nat) : Nat :=
 def copyCost (oldWords offset length : Nat) : Nat :=
   3 + 3 * ((length + 31) / 32) + accessCost oldWords offset length
 
+/-- Base, rounded data word charges, and expansion for KECCAK256. -/
+def keccakCost (oldWords offset length : Nat) : Nat :=
+  30 + 6 * ((length + 31) / 32) + accessCost oldWords offset length
+
+/-- Base, topics, data bytes, and expansion for LOG0 through LOG4. -/
+def logCost (oldWords offset length topics : Nat) : Nat :=
+  375 + 375 * topics + 8 * length + accessCost oldWords offset length
+
 /-- The EVM memory-cost function is monotone, including quadratic terms. -/
 theorem cost_monotone {a b : Nat} (h : a ≤ b) : cost a ≤ cost b := by
   unfold cost

@@ -2,6 +2,8 @@ import EVMCleanroom.Core
 import EVMCleanroom.Frame
 import EVMCleanroom.Call
 import EVMCleanroom.CallOpcode
+import EVMCleanroom.CallTransaction
+import EVMCleanroom.CLIEncoding
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.PragueEnvelope
 import EVMCleanroom.FrontierTransfer
@@ -16,52 +18,33 @@ Arguments: hex bytecode (optional 0x prefix), initial gas, step fuel.
 Successful execution prints one JSON line. Execution errors also print
 JSON and exit zero; malformed invocation exits with code 2.
 
-This is deliberately NOT a transaction replay API, and it does not validate
-or interpret Ethereum transaction envelopes, account state, or post-state roots.
+The ordinary call-transaction entry point forwards to the sibling
+`evm-call-transaction` executable, which consumes decoded envelopes and
+state witnesses already authenticated by a host.
 -/
 
 namespace EVMCleanroom.CLI
 
-private def nibble (c : Char) : Option Nat :=
-  let n := c.toNat
-  if 48 ≤ n ∧ n ≤ 57 then some (n - 48)
-  else if 65 ≤ n ∧ n ≤ 70 then some (n - 65 + 10)
-  else if 97 ≤ n ∧ n ≤ 102 then some (n - 97 + 10)
-  else none
+private def observedLogJSON (entry : LogEntry) : String :=
+  -- The only payload strings are decimal words and hex bytes.
+  let topics := String.intercalate "," (entry.topics.map (fun topic => "\"" ++ toString topic.val ++ "\""))
+  "{\"address\":\"" ++ toString entry.address ++ "\",\"dataHex\":\"" ++ exactViewHex entry.data ++
+    "\",\"topics\":[" ++ topics ++ "]}"
 
-private def decodePairs : List Char → Array UInt8 → Except String (Array UInt8)
-  | [], acc => .ok acc
-  | [_], _ => .error "odd-length hex bytecode"
-  | hi :: lo :: rest, acc =>
-    match nibble hi, nibble lo with
-    | some a, some b =>
-      decodePairs rest (acc.push (UInt8.ofNat (16 * a + b)))
-    | _, _ => .error "invalid hex bytecode"
-
-def parseBytecode (s : String) : Except String (Array UInt8) :=
-  match s.toList with
-  | '0' :: 'x' :: cs => decodePairs cs #[]
-  | '0' :: 'X' :: cs => decodePairs cs #[]
-  | cs => decodePairs cs #[]
-
-private def errorCode : EVMCleanroom.Error → String
-  | .stackUnderflow => "stackUnderflow"
-  | .stackOverflow => "stackOverflow"
-  | .outOfGas => "outOfGas"
-  | .invalidOpcode _ => "invalidOpcode"
-  | .invalidJump _ => "invalidJump"
-  | .alreadyHalted => "alreadyHalted"
-  | .writeProtection => "writeProtection"
-  | .returnDataOutOfBounds => "returnDataOutOfBounds"
-  | .unsupportedFork => "unsupportedFork"
-  | .framePolicyViolation _ => "framePolicyViolation"
-  | .stepLimit => "stepLimit"
-
-/-- Bounded, lossless memory snapshot. The result records whether the snapshot
-    covers ALL allocated memory, so callers cannot silently count truncated
-    observations as a complete memory comparison. -/
-private def hexDigit (n : Nat) : Char :=
-  Char.ofNat (if n < 10 then 48 + n else 87 + n)
+private def appendObservations (json : String) (logsRev : List LogEntry)
+    (observeLogs : Bool) (acceptance : Option Keccak.Acceptance) : String :=
+  let keccak := if acceptance.isSome then ",\"keccakOptIn\":true" else ""
+  let logsBytes := if observeLogs then logsRev.foldl
+    (fun n entry => n + entry.data.size + 32 * entry.topics.length + 20) 0 else 0
+  if logsBytes > CallTransaction.maxDataBytes then
+    "{\"status\":\"indeterminate\",\"reason\":\"resourceLimit\"" ++ keccak ++ "}"
+  else if !observeLogs && !acceptance.isSome then json
+  else
+    let logs := if observeLogs then
+      ",\"logs\":[" ++ String.intercalate "," (logsRev.reverse.map observedLogJSON) ++
+      "],\"logsTruncated\":false"
+      else ""
+    (json.dropEnd 1).toString ++ keccak ++ logs ++ "}"
 
 private def byteObservationLimit : Nat := 4096
 
@@ -273,33 +256,38 @@ private def frameStorageMain (args : List String) : IO UInt32 := do
     return 2
 
 /-- Frame-call snapshot with explicit total return length and bounded byte output. -/
-private def frameCallJSON (outcome : Frame.Outcome) (guarded : Bool) : String :=
+private def frameCallJSON (outcome : Frame.Outcome) (guarded observeLogs : Bool)
+    (acceptance : Option Keccak.Acceptance) : String :=
   let context := if guarded then ",\"comparisonContext\":\"zero-value-context-free-v1\"" else ""
   let report (status : String) (s : State) (offset length : Nat) (extra : String := "") :=
-    frameStateJSON status s 0
+    let json := frameStateJSON status s 0
       (",\"stack\":" ++ stackJSON s ++ memoryFieldsJSON s ++
         ",\"returnDataHex\":\"" ++ frameDataHex s offset (min length byteObservationLimit) ++
         "\",\"returnDataLength\":\"" ++ toString length ++
         "\",\"returnDataTruncated\":" ++ (if length > byteObservationLimit then "true" else "false") ++
         extra ++ context)
+    appendObservations json s.logsRev observeLogs acceptance
   match outcome with
   | .stopped s => report "stopped" s 0 0
   | .returned s offset length => report "returned" s offset length
   | .reverted s offset length => report "reverted" s offset length
   | .exceptional s e => report "exceptional" s 0 0 (",\"error\":\"" ++ errorCode e ++ "\"")
-  | .unsupported e => "{\"status\":\"unsupported\",\"error\":\"" ++ errorCode e ++ "\"" ++ context ++ "}"
+  | .unsupported e =>
+    let json := "{\"status\":\"unsupported\",\"error\":\"" ++ errorCode e ++ "\"" ++ context ++ "}"
+    appendObservations json [] observeLogs acceptance
 
-private def frameCallMain (args : List String) (guarded : Bool := false) : IO UInt32 := do
+private def frameCallMain (args : List String) (guarded observeLogs : Bool)
+    (acceptance : Option Keccak.Acceptance) : IO UInt32 := do
   match args with
   | [hex, dataHex, gasStr, fuelStr] =>
     match parseBytecode hex, parseBytecode dataHex, gasStr.toNat?, fuelStr.toNat? with
     | .ok code, .ok callData, some gas, some fuel =>
       let input : State := {
         code := code, gas := gas, callData := ByteView.ofArray callData
-        callValue := 0, readOnly := guarded }
+        callValue := 0, readOnly := guarded, keccakAcceptance := acceptance }
       let outcome := if guarded then Frame.runWithPolicy Frame.zeroValueContextFree fuel input
         else Frame.run fuel input
-      IO.println (frameCallJSON outcome guarded)
+      IO.println (frameCallJSON outcome guarded observeLogs acceptance)
       return 0
     | _, _, _, _ =>
       IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX CALLDATA_HEX GAS FUEL\"}"
@@ -356,16 +344,17 @@ private def callSliceMain (args : List String) : IO UInt32 := do
     selection for a small verified subset, NOT a whole-fork transaction runner.
     The batch variant is used to compare every selected input with a real
     independently executed Osaka EVM using a single Lean process. -/
-private def opcodeMain (profile : Profile) (hex gasStr fuelStr : String) : IO UInt32 := do
+private def opcodeMain (profile : Profile) (hex gasStr fuelStr : String)
+    (observeLogs : Bool := false) (acceptance : Option Keccak.Acceptance := none) : IO UInt32 := do
   match parseBytecode hex, gasStr.toNat?, fuelStr.toNat? with
   | .ok code, some gas, some fuel =>
-    let s : EVMCleanroom.State := { code := code, gas := gas, profile := profile }
+    let s : EVMCleanroom.State := { code := code, gas := gas, profile := profile, keccakAcceptance := acceptance }
     match EVMCleanroom.run fuel s with
     | .ok out =>
-      IO.println (successJSON out)
+      IO.println (appendObservations (successJSON out) out.logsRev observeLogs acceptance)
       return 0
     | .error e =>
-      IO.println (errorJSON e)
+      IO.println (appendObservations (errorJSON e) [] observeLogs acceptance)
       return 0
   | .error why, _, _ =>
     IO.println ("{\"status\":\"inputError\",\"message\":\"" ++ why ++ "\"}")
@@ -512,10 +501,6 @@ private def pragueFeeMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"message\":\"expected 17 decimal Prague envelope fields\"}"
     return 2
 
-private def hexBytes (bs : Array UInt8) : String :=
-  String.ofList ((bs.toList).flatMap (fun byte =>
-    [hexDigit (byte.toNat / 16), hexDigit (byte.toNat % 16)]))
-
 /-- A distinct Lean authority state transition: the JS host must recover
     and authenticate the EIP-7702 signer before setting signatureVerified.
     No external signed bytes or 'expected' post-state are trusted as code. -/
@@ -560,6 +545,7 @@ private def byteViewFieldsJSON (name : String) (view : ByteView) : String :=
 private def parseProfile : String → Option Profile
   | "preShanghai" => some .preShanghai
   | "shanghaiPlus" => some .shanghaiPlus
+  | "cancunPlus" => some .cancunPlus
   | "osaka" => some .osaka
   | _ => none
 
@@ -568,7 +554,8 @@ private def parseProfile : String → Option Profile
     zero storage and starts cold by default. The optional context controls
     the entry frame's read-only flag, opcode profile, call depth and whether
     its address is initially warm. -/
-private def callOpcodeMain (args : List String) : IO UInt32 := do
+private def callOpcodeMain (args : List String) (observeLogs : Bool)
+    (acceptance : Option Keccak.Acceptance) : IO UInt32 := do
   let basic := match args with
     | [p, c, g, f] => [p, c, g, f, "0", "0", "0"]
     | otherwise => otherwise
@@ -603,7 +590,7 @@ private def callOpcodeMain (args : List String) : IO UInt32 := do
           { code := childCode, balance := childBalance, nonce := childNonce }
         else if address == grandchildAddress then { code := grandchildCode }
         else {}
-      let entry := World.beginTransaction accounts
+      let entry := { World.beginTransaction accounts with keccakAcceptance := acceptance }
       let world := if prewarmParent == 1 then WorldCall.warmTarget entry parentAddress else entry
       let serialize : String → World.TxWorld → State → String := fun status outcome s =>
         "{\"schemaVersion\":2,\"status\":\"" ++ status ++
@@ -627,14 +614,19 @@ private def callOpcodeMain (args : List String) : IO UInt32 := do
         byteViewFieldsJSON "returnBytes" s.outputData ++ "}"
       let initial := World.frameInput world parentAddress gas (readOnly == 1) profile
       match CallOpcode.settle world initial (CallOpcode.executeAtDepth fuel world parentAddress depth initial) with
-      | .stopped final st => IO.println (serialize "stopped" final st)
-      | .returned final st => IO.println (serialize "returned" final st)
-      | .reverted final st => IO.println (serialize "reverted" final st)
+      | .stopped final st =>
+        IO.println (appendObservations (serialize "stopped" final st) final.logsRev observeLogs acceptance)
+      | .returned final st =>
+        IO.println (appendObservations (serialize "returned" final st) final.logsRev observeLogs acceptance)
+      | .reverted final st =>
+        IO.println (appendObservations (serialize "reverted" final st) final.logsRev observeLogs acceptance)
       | .exceptional final st reason =>
         let state := serialize "exceptional" final st
-        IO.println ((state.dropEnd 1).toString ++ ",\"reason\":\"" ++ errorCode reason ++ "\"}")
+        let json := (state.dropEnd 1).toString ++ ",\"reason\":\"" ++ errorCode reason ++ "\"}"
+        IO.println (appendObservations json final.logsRev observeLogs acceptance)
       | .indeterminate reason =>
-        IO.println ("{\"status\":\"indeterminate\",\"reason\":\"" ++ errorCode reason ++ "\"}")
+        let json := "{\"status\":\"indeterminate\",\"reason\":\"" ++ errorCode reason ++ "\"}"
+        IO.println (appendObservations json [] observeLogs acceptance)
       return 0
     | _, _, _, _, _, _, _, _, _, _, _, _ =>
       IO.println "{\"status\":\"inputError\",\"reason\":\"bad CALL bytecode, gas or account fields\"}"
@@ -687,17 +679,43 @@ private def frontierTransferMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"reason\":\"expected 12 decimal Frontier transfer fields\"}"
     return 2
 
+private def forwardCallTransaction (path : String) (acceptance : Option Keccak.Acceptance) : IO UInt32 := do
+  let unavailable := do
+    let keccak := if acceptance.isSome then "true" else "false"
+    IO.println ("{\"keccakOptIn\":" ++ keccak ++
+      ",\"reason\":\"transactionCompanionUnavailable\",\"schemaVersion\":1,\"status\":\"inputError\"}")
+    return 2
+  try
+    let some directory := (← IO.appPath).parent | unavailable
+    let companion := (directory / "evm-call-transaction").addExtension System.FilePath.exeExtension
+    unless ← companion.pathExists do
+      return ← unavailable
+    let args := if acceptance.isSome then
+      #["--dangerously-enable-unverified-keccak", "--call-transaction", path]
+    else #["--call-transaction", path]
+    let child ← IO.Process.spawn { cmd := companion.toString, args }
+    child.wait
+  catch _ => unavailable
+
 def cliMain (args : List String) : IO UInt32 := do
+  let (args, acceptance) := match args with
+    | "--dangerously-enable-unverified-keccak" :: rest =>
+      (rest, some Keccak.dangerouslyAcceptUnverified)
+    | _ => (args, none)
+  let (args, observeLogs) := match args with
+    | "--observe-logs" :: rest => (rest, true)
+    | _ => (args, false)
   match args with
+  | ["--call-transaction", path] => forwardCallTransaction path acceptance
   | "--frontier-transfer" :: rest => frontierTransferMain rest
   | "--prague-tx-fee" :: rest => pragueFeeMain rest
   | "--prague-authorize" :: rest => pragueAuthorizeMain rest
   | "--tx-fee" :: rest => txFeeMain rest
   | "--storage" :: rest => storageMain rest
   | "--frame-storage" :: rest => frameStorageMain rest
-  | "--frame-call" :: rest => frameCallMain rest
-  | "--pure-frame-call" :: rest => frameCallMain rest true
-  | "--call-opcode" :: rest => callOpcodeMain rest
+  | "--frame-call" :: rest => frameCallMain rest false observeLogs acceptance
+  | "--pure-frame-call" :: rest => frameCallMain rest true observeLogs acceptance
+  | "--call-opcode" :: rest => callOpcodeMain rest observeLogs acceptance
   | "--call-slice" :: rest => callSliceMain rest
   | ["--storage-batch", path] => storageBatchMain path
   | ["--batch", path] => runBatchFile path
@@ -706,8 +724,8 @@ def cliMain (args : List String) : IO UInt32 := do
   | "--block-env" :: rest => blockEnvironmentMain rest
   | "--tx-env" :: rest => txEnvironmentMain rest
   | "--blobbasefee" :: rest => blobBaseFeeMain rest
-  | ["--osaka", hex, gasStr, fuelStr] => opcodeMain .osaka hex gasStr fuelStr
-  | [hex, gasStr, fuelStr] => opcodeMain .shanghaiPlus hex gasStr fuelStr
+  | ["--osaka", hex, gasStr, fuelStr] => opcodeMain .osaka hex gasStr fuelStr observeLogs acceptance
+  | [hex, gasStr, fuelStr] => opcodeMain .shanghaiPlus hex gasStr fuelStr observeLogs acceptance
   | _ =>
     IO.println "{\"status\":\"inputError\",\"message\":\"usage: evm-subset HEX GAS FUEL\"}"
     return 2

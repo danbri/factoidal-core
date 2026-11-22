@@ -59,6 +59,12 @@ Do not promote any success in A to B or C without separate evidence.
   bound frame dispatch. CALLCODE, DELEGATECALL, STATICCALL, CREATE and
   precompile execution remain open.
   [CALL and calldata scope](README.md#calldata-and-bounded-call-execution)
+- **Witness-limited call transactions.** The Shanghai and Cancun entry
+  validates and settles ordinary type-0, type-1 and type-2 calls against
+  supplied account and storage facts. The reached-state checks refuse an
+  incomplete witness. The host supplies authentication and receipt and
+  state commitments.
+  [Call-transaction scope](README.md#witness-limited-call-transactions)
 - **Read-only RPC capture.** The capture and comparison tool supports
   Polygon PoS and OP Sepolia profiles. The saved Polygon mainnet and OP
   Sepolia samples matched local output with synthetic code overrides.

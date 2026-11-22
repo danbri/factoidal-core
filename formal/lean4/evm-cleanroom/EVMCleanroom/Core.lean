@@ -1,4 +1,4 @@
-import EVMCleanroom.Memory
+import EVMCleanroom.Keccak
 import EVMCleanroom.Storage
 /-!
 # Independently written, small-step EVM executable model
@@ -220,6 +220,8 @@ inductive Error where
   | alreadyHalted
   | writeProtection
   | unsupportedFork
+  | resourceLimit
+  | incompleteState (address : Nat) (slot : Option Nat)
   | framePolicyViolation (opcode : Nat)
   | stepLimit
   deriving Repr, DecidableEq
@@ -242,8 +244,13 @@ inductive Profile where
   | osaka
   deriving DecidableEq, Repr
 
-/-- Machine-local state only. No accounts, persistent storage, external calls,
-    precompiles or transaction context is modeled in this first slice. -/
+/-- A log's emitter, ordered topics, and immutable data window. -/
+structure LogEntry where
+  address : Nat
+  topics : List Word
+  data : ByteView
+
+/-- Machine-local state and the frame's projection of the transaction journal. -/
 structure State where
   code : Array UInt8
   pc : Nat := 0
@@ -283,6 +290,16 @@ structure State where
   returnData : ByteView := {}
   /-- This frame's own RETURN or REVERT payload. -/
   outputData : ByteView := {}
+  /-- Transaction logs in reverse emission order. -/
+  logsRev : List LogEntry := []
+  /-- Scoped opt-in to the experimental, independently tested Keccak implementation. -/
+  keccakAcceptance : Option Keccak.Acceptance := none
+
+/-- Apply a planned log to the journal at commit time. -/
+def State.recordLog (s : State) (entry : Option LogEntry) : List LogEntry :=
+  match entry with
+  | none => s.logsRev
+  | some log => if s.readOnly then s.logsRev else log :: s.logsRev
 
 /-- An instruction plan describes effects without committing state changes.
     The dispatcher must produce one of these; all success passes through
@@ -294,17 +311,18 @@ structure Plan where
   halt : Bool
   nextMemory : Option Memory := none
   nextStorage : Option Storage := none
+  nextLog : Option LogEntry := none
 
 private def prepared (nextPC : Nat) (xs : List Word) (cost : Nat)
     (halt : Bool := false) (nextMemory : Option Memory := none)
-    (nextStorage : Option Storage := none) : Except Error Plan :=
-  .ok ⟨nextPC, xs, cost, halt, nextMemory, nextStorage⟩
+    (nextStorage : Option Storage := none) (nextLog : Option LogEntry := none) : Except Error Plan :=
+  .ok ⟨nextPC, xs, cost, halt, nextMemory, nextStorage, nextLog⟩
 
 /-- A single controlled state transition. Invariant: every successful
     transition has a bounded stack and charges gas before mutation. -/
 def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
     (halt : Bool := false) (nextMemory : Option Memory := none)
-    (nextStorage : Option Storage := none) : Except Error State :=
+    (nextStorage : Option Storage := none) (nextLog : Option LogEntry := none) : Except Error State :=
   if hb : xs.length ≤ 1024 then
     if hg : cost ≤ s.gas then
       let nextStack : Stack := ⟨xs, hb⟩
@@ -322,7 +340,7 @@ def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
         current := if s.readOnly then s.storage.current else planned.current
         refund := if s.readOnly then s.storage.refund else planned.refund
       }
-      .ok { s4 with memory := m, storage := st }
+      .ok { s4 with memory := m, storage := st, logsRev := s.recordLog nextLog }
     else .error .outOfGas
   else .error .stackOverflow
 
@@ -411,6 +429,39 @@ private def copyBytes (s : State) (data : ByteView) (checkBounds : Bool := false
       let requested := MemoryGas.requestedWords dest.val length.val
       let memory := (s.memory.expand requested).copyFrom data source.val dest.val length.val
       prepared (s.pc + 1) rest gas false (some memory)
+  | _ => .error .stackUnderflow
+
+/-- KECCAK256 checks gas and the host work limit before reading memory. -/
+private def keccakMemory (s : State) : Except Error Plan :=
+  match s.keccakAcceptance with
+  | none => .error .unsupportedFork
+  | some acceptance =>
+    match s.stack.items with
+    | offset :: length :: rest =>
+      let cost := MemoryGas.keccakCost s.memory.words offset.val length.val
+      if s.gas < cost then .error .outOfGas
+      else if Keccak.maxInputBytes < length.val then .error .resourceLimit
+      else
+        let expanded := s.memory.expand (MemoryGas.requestedWords offset.val length.val)
+        let input := ByteView.ofMemory expanded offset.val length.val
+        let result := word (Keccak.experimentalDigestWord acceptance input)
+        prepared (s.pc + 1) (result :: rest) cost false (some expanded)
+    | _ => .error .stackUnderflow
+
+/-- LOG0 through LOG4 use stack pop order and keep an immutable memory window. -/
+private def logMemory (s : State) (count : Nat) : Except Error Plan :=
+  match s.stack.items with
+  | offset :: length :: operands =>
+    let topics := operands.take count
+    if topics.length ≠ count then .error .stackUnderflow
+    else
+      let cost := MemoryGas.logCost s.memory.words offset.val length.val count
+      if s.gas < cost then .error .outOfGas
+      else if s.readOnly then .error .writeProtection
+      else
+        let expanded := s.memory.expand (MemoryGas.requestedWords offset.val length.val)
+        let entry : LogEntry := ⟨s.currentAddress, topics, ByteView.ofMemory expanded offset.val length.val⟩
+        prepared (s.pc + 1) (operands.drop count) cost false (some expanded) none (some entry)
   | _ => .error .stackUnderflow
 
 private def pop (s : State) : Except Error Plan :=
@@ -543,6 +594,7 @@ def planStep (s : State) : Except Error Plan :=
       if s.profile = .osaka then
         unary s (fun value => word value.leadingZeros) 5
       else .error .unsupportedFork
+    | 0x20 => keccakMemory s                           -- KECCAK256
     | 0x30 => prepared (s.pc + 1) (word s.currentAddress :: s.stack.items) 2 -- ADDRESS
     | 0x32 => prepared (s.pc + 1) (word s.txOrigin :: s.stack.items) 2 -- ORIGIN
     | 0x33 => prepared (s.pc + 1) (word s.callerAddress :: s.stack.items) 2 -- CALLER
@@ -602,6 +654,7 @@ def planStep (s : State) : Except Error Plan :=
       if s.profile != .preShanghai then
         prepared (s.pc + 1) (word 0 :: s.stack.items) 2
       else .error (.invalidOpcode op)
+    | 0xa0 | 0xa1 | 0xa2 | 0xa3 | 0xa4 => logMemory s (op - 0xa0)
     | _ =>
       if 0x60 ≤ op ∧ op ≤ 0x7f then
         let n := op - 0x5f
@@ -616,7 +669,125 @@ def planStep (s : State) : Except Error Plan :=
 def step (s : State) : Except Error State :=
   match planStep s with
   | .error e => .error e
-  | .ok p => commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage
+  | .ok p => commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage p.nextLog
+
+/-- Kind: dispatcher correspondence.
+    Says: a funded, admitted KECCAK256 consumes offset and length and requests
+    the priced commit of the local sponge digest of the expanded memory window.
+    Does not say: the local sponge is independently proved equivalent to Keccak. -/
+theorem step_keccak (s : State) (offset length : Word) (rest : List Word)
+    (acceptance : Keccak.Acceptance) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x20)
+    (hAccept : s.keccakAcceptance = some acceptance)
+    (hStack : s.stack.items = offset :: length :: rest)
+    (hGas : MemoryGas.keccakCost s.memory.words offset.val length.val ≤ s.gas)
+    (hSize : length.val ≤ Keccak.maxInputBytes) :
+    let expanded := s.memory.expand (MemoryGas.requestedWords offset.val length.val)
+    let result := word (Keccak.digestWord (ByteView.ofMemory expanded offset.val length.val))
+    step s = commit s (s.pc + 1) (result :: rest)
+      (MemoryGas.keccakCost s.memory.words offset.val length.val) false (some expanded) := by
+  simp [step, planStep, hRun, hOp, keccakMemory, hAccept, hStack, Nat.not_lt_of_ge hGas,
+    Nat.not_lt_of_ge hSize, Keccak.experimentalDigestWord, prepared]
+
+/-- Kind: admission.
+    Says: dispatch refuses KECCAK256 when the explicit experimental capability is absent.
+    Does not say: the opcode is invalid on Ethereum. -/
+theorem step_keccak_disabled (s : State) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x20)
+    (hAccept : s.keccakAcceptance = none) : step s = .error .unsupportedFork := by
+  simp [step, planStep, hRun, hOp, keccakMemory, hAccept]
+
+/-- Kind: gas boundary.
+    Says: an enabled KECCAK256 with insufficient gas returns out of gas regardless of length.
+    Does not say: an unavailable hash performs the gas check. -/
+theorem step_keccak_outOfGas (s : State) (offset length : Word) (rest : List Word)
+    (acceptance : Keccak.Acceptance) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x20)
+    (hAccept : s.keccakAcceptance = some acceptance)
+    (hStack : s.stack.items = offset :: length :: rest)
+    (hGas : s.gas < MemoryGas.keccakCost s.memory.words offset.val length.val) :
+    step s = .error .outOfGas := by
+  simp [step, planStep, hRun, hOp, keccakMemory, hAccept, hStack, hGas]
+
+/-- Kind: host work boundary.
+    Says: a funded KECCAK256 above the input cap yields the implementation refusal.
+    Does not say: the cap is an EVM gas rule. -/
+theorem step_keccak_resourceLimit (s : State) (offset length : Word) (rest : List Word)
+    (acceptance : Keccak.Acceptance) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x20)
+    (hAccept : s.keccakAcceptance = some acceptance)
+    (hStack : s.stack.items = offset :: length :: rest)
+    (hGas : MemoryGas.keccakCost s.memory.words offset.val length.val ≤ s.gas)
+    (hSize : Keccak.maxInputBytes < length.val) : step s = .error .resourceLimit := by
+  simp [step, planStep, hRun, hOp, keccakMemory, hAccept, hStack, Nat.not_lt_of_ge hGas, hSize]
+
+private theorem planStep_log (s : State) (count : Nat) (hCount : count ≤ 4)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0xa0 + count) :
+    planStep s = logMemory s count := by
+  have hCases : count = 0 ∨ count = 1 ∨ count = 2 ∨ count = 3 ∨ count = 4 := by omega
+  rcases hCases with h | h | h | h | h <;> subst count <;> simp [planStep, hRun, hOp]
+
+/-- Kind: dispatcher correspondence.
+    Says: LOG0 through LOG4 commit the ordered topics, current address and expanded data window.
+    Does not say: an enclosing frame eventually keeps this log. -/
+theorem step_log (s : State) (offset length : Word) (topics rest : List Word) (count : Nat)
+    (hCount : count ≤ 4) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0xa0 + count)
+    (hTopics : topics.length = count)
+    (hStack : s.stack.items = offset :: length :: (topics ++ rest))
+    (hGas : MemoryGas.logCost s.memory.words offset.val length.val count ≤ s.gas)
+    (hStatic : s.readOnly = false) :
+    let expanded := s.memory.expand (MemoryGas.requestedWords offset.val length.val)
+    let log : LogEntry := ⟨s.currentAddress, topics, ByteView.ofMemory expanded offset.val length.val⟩
+    step s = commit s (s.pc + 1) rest (MemoryGas.logCost s.memory.words offset.val length.val count)
+      false (some expanded) none (some log) := by
+  have hTake : (topics ++ rest).take count = topics := by
+    rw [← hTopics, List.take_append_length]
+  have hDrop : (topics ++ rest).drop count = rest := by
+    rw [← hTopics, List.drop_append_length]
+  simp [step, planStep_log s count hCount hRun hOp, logMemory, hStack, hTake, hDrop, hTopics,
+    Nat.not_lt_of_ge hGas, hStatic, prepared]
+
+/-- Kind: static boundary.
+    Says: funded LOG with enough operands in a static frame is a write-protection error.
+    Does not say: gas and operand failures have lower priority. -/
+theorem step_log_static (s : State) (offset length : Word) (operands : List Word) (count : Nat)
+    (hCount : count ≤ 4) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0xa0 + count)
+    (hStack : s.stack.items = offset :: length :: operands) (hTopics : count ≤ operands.length)
+    (hGas : MemoryGas.logCost s.memory.words offset.val length.val count ≤ s.gas)
+    (hStatic : s.readOnly = true) : step s = .error .writeProtection := by
+  simp [step, planStep_log s count hCount hRun hOp, logMemory, hStack, Nat.min_eq_left hTopics,
+    Nat.not_lt_of_ge hGas, hStatic]
+
+/-- Kind: gas boundary.
+    Says: LOG with enough operands but insufficient gas fails before its static check.
+    Does not say: the frame runner can settle that failure as a success. -/
+theorem step_log_outOfGas (s : State) (offset length : Word) (operands : List Word) (count : Nat)
+    (hCount : count ≤ 4) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0xa0 + count)
+    (hStack : s.stack.items = offset :: length :: operands) (hTopics : count ≤ operands.length)
+    (hGas : s.gas < MemoryGas.logCost s.memory.words offset.val length.val count) :
+    step s = .error .outOfGas := by
+  simp [step, planStep_log s count hCount hRun hOp, logMemory, hStack, Nat.min_eq_left hTopics, hGas]
+
+/-- Kind: operand boundary.
+    Says: insufficient LOG operands cause underflow before checking gas and static mode.
+    Does not say: all adequately supplied LOG instructions can execute. -/
+theorem step_log_underflow (s : State) (count : Nat)
+    (hCount : count ≤ 4) (hRun : s.halted = false) (hOp : byteAt s s.pc = 0xa0 + count)
+    (hStack : s.stack.items.length < count + 2) : step s = .error .stackUnderflow := by
+  simp only [step, planStep_log s count hCount hRun hOp, logMemory]
+  cases hs : s.stack.items with
+  | nil => rfl
+  | cons offset tail =>
+    cases tail with
+    | nil => rfl
+    | cons length operands =>
+      have hShort : operands.length < count := by simp [hs] at hStack; omega
+      simp [Nat.min_eq_right (Nat.le_of_lt hShort), Nat.ne_of_lt hShort]
+
+#print axioms step_keccak
+#print axioms step_keccak_disabled
+#print axioms step_keccak_outOfGas
+#print axioms step_keccak_resourceLimit
+#print axioms step_log
+#print axioms step_log_static
+#print axioms step_log_outOfGas
+#print axioms step_log_underflow
 
 /-- Kind: dispatcher correspondence.
     Says: CALLDATALOAD replaces the top stack item through the loader and

@@ -22,6 +22,11 @@ structure Account where
   code : Array UInt8 := #[]
   storage : Nat → Nat := fun _ => 0
 
+/-- Account presence or absence and storage membership proved by the host. -/
+structure WitnessCoverage where
+  account : Nat → Bool
+  slot : Nat → Nat → Bool
+
 /-- Original storage is captured once at the transaction boundary, not at
     the beginning of each subsequent execution frame. -/
 structure TxWorld where
@@ -30,6 +35,10 @@ structure TxWorld where
   warmSlots : Nat → Nat → Bool := fun _ _ => false
   warmAddresses : Nat → Bool := fun _ => false
   refund : Int := 0
+  logsRev : List LogEntry := []
+  /-- The standalone fixtures use total maps. Authenticated replay supplies an explicit domain. -/
+  witnessed : Option WitnessCoverage := none
+  keccakAcceptance : Option Keccak.Acceptance := none
   /-- The chain identifier supplied by a selected chain environment. Not a
       signed-transaction or consensus-authenticated datum in this model. -/
   chainId : Nat := 0
@@ -50,6 +59,15 @@ def beginTransaction (accounts : Nat → Account) : TxWorld :=
   { accounts := accounts
     original := fun address slot => (accounts address).storage slot }
 
+def TxWorld.hasAccount (w : TxWorld) (address : Nat) : Bool :=
+  match w.witnessed with
+  | none => true
+  | some coverage => coverage.account address
+
+/-- Replace one account while keeping transaction-original storage and context. -/
+def putAccount (w : TxWorld) (address : Nat) (account : Account) : TxWorld :=
+  { w with accounts := fun other => if other = address then account else w.accounts other }
+
 /-- Project one account's transaction-scoped storage into Frame.run. -/
 def frameInput (w : TxWorld) (address gas : Nat)
     (readOnly : Bool := false) (profile : Profile := .shanghaiPlus)
@@ -67,6 +85,8 @@ def frameInput (w : TxWorld) (address gas : Nat)
     blockGasLimit := w.blockGasLimit
     blockBaseFee := w.blockBaseFee
     blockBlobBaseFee := w.blockBlobBaseFee
+    logsRev := w.logsRev
+    keccakAcceptance := w.keccakAcceptance
     callerAddress := callerAddress
     callValue := 0
     selfBalance := (w.accounts address).balance
@@ -158,7 +178,8 @@ def commitFrame (w : TxWorld) (address : Nat) (out : State) : TxWorld :=
     accounts := fun other => if other = address then updated else w.accounts other
     warmSlots := fun other key =>
       if other = address then out.storage.warm key else w.warmSlots other key
-    refund := out.storage.refund }
+    refund := out.storage.refund
+    logsRev := out.logsRev }
 
 /-- A result is not a transaction receipt or a block-state root. REVERT
     and exceptional halts deliberately return the unmodified pre-frame

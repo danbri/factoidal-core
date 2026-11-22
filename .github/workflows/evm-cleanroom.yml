@@ -35,12 +35,12 @@ jobs:
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==133 and x["files"]==85,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==172 and x["files"]==101,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==3,x'
-          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==133 and x["sourceFiles"]==17,x'
+          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==172 and x["sourceFiles"]==20,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -225,6 +225,12 @@ jobs:
           mkdir -p .lake/differential
           node scripts/differential/byte-copy.mjs | tee .lake/differential/byte-copy.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==124 and x["mismatches"]==0 and x["gasBoundaryTriplets"]==7 and all(x["negativeControls"].values()),x'
           node scripts/differential/call-data.mjs | tee .lake/differential/call-data.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==122 and x["mismatches"]==0 and len(x["refusalChecks"])==3 and x["globalFuelBoundary"] and all(x["negativeControls"].values()),x'
+      - name: Compare opt-in Keccak and log instruction results with Cancun EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/differential
+          node scripts/differential/hash-log.mjs | tee .lake/differential/hash-log.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==80 and x["mismatches"]==0 and x["fixture"]["xkcpVectors"]==24 and x["gasBoundaryTriplets"]==7 and len(x["nativeBoundaries"])==6 and len(x["negativeControls"])==4 and all(x["negativeControls"].values()) and not x["firstFailures"],x'
       - name: Compare the Shanghai byte and CALL fixture subset against pinned Geth
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -314,6 +320,45 @@ jobs:
           npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
           npm ls --prefix scripts/eels --depth=0
           printf '2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7  scripts/eels/package-lock.json\n' | sha256sum --check
+      - name: Build native EVM and transaction entry points
+        working-directory: formal/lean4
+        run: lake -d evm-cleanroom build evm-subset evm-call-transaction
+      - name: Keep Lean compiler symbols out of the legacy EVM executable
+        working-directory: formal/lean4
+        run: python3 ../../tools/binary-budget.py check evm-subset=evm-cleanroom/.lake/build/bin/evm-subset
+      - name: Check transaction CLI forwarding and missing-companion behavior
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/eels
+          node scripts/eels/call-transaction-cli-routing.mjs \
+            "$PWD/.lake/build/bin/evm-subset" "$PWD/.lake/build/bin/evm-call-transaction" \
+            | tee .lake/eels/call-transaction-cli-routing.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x=={"kind":"call-transaction-cli-routing","routed":3,"missing":2,"legacy":1},x'
+      - name: Compare witness-limited call transactions and their roots with EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/eels
+          node scripts/eels/call-transaction-differential.mjs "$PWD/.lake/build/bin/evm-subset" \
+            | tee .lake/eels/call-transaction-differential.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==x["receiptAndStateRootMatches"]==60 and x["independentAdmissionRejections"]==8 and x["preSerializationRejections"]==1 and x["boundaryRefusals"]==11 and x["negativeControls"]=={"changedGas":True,"changedReceiptLog":True,"changedStateBalance":True} and not x["failures"],x'
+      - name: Replay the authenticated Shanghai mainnet contract transaction with Lean, EthereumJS and Geth
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          geth_dir=$(mktemp -d "$RUNNER_TEMP/evm-geth-replay.XXXXXX")
+          geth_release=geth-alltools-linux-amd64-1.17.10-1df30b18
+          curl --fail --show-error --silent --location --retry 3 \
+            "https://gethstore.blob.core.windows.net/builds/$geth_release.tar.gz" \
+            --output "$geth_dir/geth.tar.gz"
+          printf 'f991c32e5b7bb68db97a1b06d50c7c06f6aa9ae84d8f6f9b2301dc02cad2a7cf  %s\n' "$geth_dir/geth.tar.gz" | sha256sum --check
+          tar -xzf "$geth_dir/geth.tar.gz" -C "$geth_dir" "$geth_release/evm"
+          export EVM_GETH_EXE="$geth_dir/$geth_release/evm"
+          node scripts/eels/replay-authenticated-contract.mjs \
+            evidence/historical-1cat-shanghai-19100013.json "$PWD/.lake/build/bin/evm-call-transaction" \
+            | tee .lake/eels/historical-shanghai-contract-replay.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="authenticated-shanghai-contract-replay-match" and x["fixtureSha256"]=="053b2d915c3a03ab529634ec6128df6e1e917418f355b51cb652af4e9162c78c" and x["transactionIndex"]==0 and x["authenticatedAccounts"]==3 and x["authenticatedStorageSlots"]==4 and x["gasUsed"]=="33987" and x["refundGas"]=="4800" and x["receiptStatus"]==1 and x["logCount"]==1 and x["returnBytesHex"]=="0"*63+"1" and x["keccakOptIn"] and x["ethereumJS"]["matched"] and x["geth"]["matched"] and x["roots"]["intermediateStateRoot"]=="0x4ec90276be487d2567d41039696e1bb75b3fa8cb796fc9705f5d83c606a17000" and x["roots"]["targetStorageRoot"]==x["publishedFinalTargetStorageRoot"]=="0x4fb8888e09be2dd7e1b31f7e39e670b7820adf8d179f382c34481a632ba0a08a" and len(x["negativeControls"])==6,x'
       - name: Verify the captured Ethereum mainnet SwapRouter code against its header and EIP-1186 proof
         working-directory: formal/lean4/evm-cleanroom
         run: |

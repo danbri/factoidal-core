@@ -2,6 +2,8 @@ import EVMCleanroom.Core
 import EVMCleanroom.CalldataProofs
 import EVMCleanroom.ByteCopyProofs
 import EVMCleanroom.ByteCopyTests
+import EVMCleanroom.HashLogProofs
+import EVMCleanroom.HashLogTests
 import EVMCleanroom.SolidityProofs
 import EVMCleanroom.ModularProofs
 import EVMCleanroom.Storage
@@ -16,6 +18,8 @@ import EVMCleanroom.Call
 import EVMCleanroom.CallTests
 import EVMCleanroom.ValueCall
 import EVMCleanroom.CallOpcode
+import EVMCleanroom.CallTransaction
+import EVMCleanroom.CallTransactionProofs
 import EVMCleanroom.CallContextTests
 import EVMCleanroom.CallBoundaryTests
 import EVMCleanroom.EELSBridge

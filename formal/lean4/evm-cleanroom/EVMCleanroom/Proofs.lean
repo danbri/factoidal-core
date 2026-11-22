@@ -12,14 +12,14 @@ theorem word_add_comm (a b : Word) : a.add b = b.add a := by
 
 /-- Each successful commit preserves the EVM's 1024-word stack limit. -/
 theorem commit_stack_bounded {s out : State} {pc cost : Nat}
-    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage}
-    (_h : commit s pc xs cost halt nextMemory nextStorage = .ok out) :
+    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage} {nextLog : Option LogEntry}
+    (_h : commit s pc xs cost halt nextMemory nextStorage nextLog = .ok out) :
     out.stack.items.length ≤ 1024 := out.stack.bounded
 
 /-- Gas never increases on a successful committed transition. -/
 theorem commit_gas_nonincreasing {s out : State} {pc cost : Nat}
-    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage}
-    (h : commit s pc xs cost halt nextMemory nextStorage = .ok out) : out.gas ≤ s.gas := by
+    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage} {nextLog : Option LogEntry}
+    (h : commit s pc xs cost halt nextMemory nextStorage nextLog = .ok out) : out.gas ≤ s.gas := by
   unfold commit at h
   split at h
   · split at h
@@ -30,8 +30,8 @@ theorem commit_gas_nonincreasing {s out : State} {pc cost : Nat}
 
 /-- A transition cannot change bytecode. -/
 theorem commit_code_unchanged {s out : State} {pc cost : Nat}
-    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage}
-    (h : commit s pc xs cost halt nextMemory nextStorage = .ok out) : out.code = s.code := by
+    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage} {nextLog : Option LogEntry}
+    (h : commit s pc xs cost halt nextMemory nextStorage nextLog = .ok out) : out.code = s.code := by
   unfold commit at h
   split at h
   · split at h
@@ -43,8 +43,8 @@ theorem commit_code_unchanged {s out : State} {pc cost : Nat}
 /-- Exact successful gas accounting: the declared opcode cost is
     deducted, never rounded or silently refunded. -/
 theorem commit_gas_exact {s out : State} {pc cost : Nat}
-    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage}
-    (h : commit s pc xs cost halt nextMemory nextStorage = .ok out) :
+    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage} {nextLog : Option LogEntry}
+    (h : commit s pc xs cost halt nextMemory nextStorage nextLog = .ok out) :
     out.gas + cost = s.gas := by
   unfold commit at h
   split at h
@@ -57,8 +57,8 @@ theorem commit_gas_exact {s out : State} {pc cost : Nat}
 
 /-- A successful commit cannot silently switch the active fork profile. -/
 theorem commit_profile_unchanged {s out : State} {pc cost : Nat}
-    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage}
-    (h : commit s pc xs cost halt nextMemory nextStorage = .ok out) :
+    {xs : List Word} {halt : Bool} {nextMemory : Option Memory} {nextStorage : Option Storage} {nextLog : Option LogEntry}
+    (h : commit s pc xs cost halt nextMemory nextStorage nextLog = .ok out) :
     out.profile = s.profile := by
   unfold commit at h
   split at h
@@ -77,7 +77,7 @@ theorem step_code_unchanged {s out : State} (h : step s = .ok out) :
   | error e =>
     simp [step, hp] at h
   | ok p =>
-    have hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage = .ok out := by
+    have hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage p.nextLog = .ok out := by
       simpa [step, hp] using h
     exact commit_code_unchanged hc
 
@@ -88,7 +88,7 @@ theorem step_gas_nonincreasing {s out : State} (h : step s = .ok out) :
   | error e =>
     simp [step, hp] at h
   | ok p =>
-    have hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage = .ok out := by
+    have hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage p.nextLog = .ok out := by
       simpa [step, hp] using h
     exact commit_gas_nonincreasing hc
 
@@ -99,7 +99,7 @@ theorem step_profile_unchanged {s out : State} (h : step s = .ok out) :
   | error e =>
     simp [step, hp] at h
   | ok p =>
-    have hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage = .ok out := by
+    have hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage p.nextLog = .ok out := by
       simpa [step, hp] using h
     exact commit_profile_unchanged hc
 
@@ -110,7 +110,7 @@ theorem step_has_exact_bill {s out : State} (h : step s = .ok out) :
   | error e =>
     simp [step, hp] at h
   | ok p =>
-    have hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage = .ok out := by
+    have hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage p.nextLog = .ok out := by
       simpa [step, hp] using h
     exact ⟨p, rfl, commit_gas_exact hc⟩
 
@@ -119,8 +119,8 @@ theorem step_has_exact_bill {s out : State} (h : step s = .ok out) :
     regardless of the instruction's proposed storage update. -/
 theorem commit_original_unchanged {s out : State} {pc cost : Nat}
     {xs : List Word} {halt : Bool} {nextMemory : Option Memory}
-    {nextStorage : Option Storage}
-    (h : commit s pc xs cost halt nextMemory nextStorage = .ok out)
+    {nextStorage : Option Storage} {nextLog : Option LogEntry}
+    (h : commit s pc xs cost halt nextMemory nextStorage nextLog = .ok out)
     (key : Nat) :
     out.storage.original key = s.storage.original key := by
   unfold commit at h
@@ -135,8 +135,8 @@ theorem commit_original_unchanged {s out : State} {pc cost : Nat}
     commit inside a read-only frame. Warming reads remains permissible. -/
 theorem commit_static_current_unchanged {s out : State} {pc cost : Nat}
     {xs : List Word} {halt : Bool} {nextMemory : Option Memory}
-    {nextStorage : Option Storage}
-    (h : commit s pc xs cost halt nextMemory nextStorage = .ok out)
+    {nextStorage : Option Storage} {nextLog : Option LogEntry}
+    (h : commit s pc xs cost halt nextMemory nextStorage nextLog = .ok out)
     (hs : s.readOnly = true) (key : Nat) :
     out.storage.current key = s.storage.current key := by
   unfold commit at h
@@ -157,7 +157,7 @@ theorem step_original_unchanged {s out : State}
   | error e => simp [step, hp] at h
   | ok p =>
     have hc : commit s p.nextPC p.stack p.gasCost p.halt
-      p.nextMemory p.nextStorage = .ok out := by
+      p.nextMemory p.nextStorage p.nextLog = .ok out := by
       simpa [step, hp] using h
     exact commit_original_unchanged hc key
 
@@ -200,7 +200,7 @@ inductive BilledTrace : State → Nat → State → Prop where
   | nil (s : State) : BilledTrace s 0 s
   | cons {s mid out : State} {p : Plan} {spent : Nat}
       (hp : planStep s = .ok p)
-      (hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage = .ok mid)
+      (hc : commit s p.nextPC p.stack p.gasCost p.halt p.nextMemory p.nextStorage p.nextLog = .ok mid)
       (tail : BilledTrace mid spent out) :
       BilledTrace s (p.gasCost + spent) out
 

@@ -130,6 +130,48 @@ transaction execution and consensus unverified.
 [RPC capture commands, Ethereum L1 calls and proof scope](scripts/rpc/README.md) ·
 [Direct deployed OP Sepolia call](../../../docs/20261122-evm-solidity-deployed-call.md#direct-deployed-runtime-comparison)
 
+## Witness-limited call transactions
+
+`evm-subset --call-transaction REQUEST.json` accepts a normalised type-0,
+type-1 or type-2 call envelope, Shanghai or Cancun block context, and the
+address and slot witnesses used by execution. Lean checks admission,
+derives the intrinsic gas and effective price, escrows fees, executes the
+call frames and settles the gas refund, burn and beneficiary tip. An
+executed result reports the receipt status, gas, logs and supplied accounts'
+post-state. A reached account or slot without a witness yields an
+indeterminate result. The caller of this interface supplies authenticated
+envelope, code, header and state facts. Trie and receipt serialisation
+belong to the replay host.
+[Transaction implementation](EVMCleanroom/CallTransaction.lean) ·
+[Admission and settlement proofs](EVMCleanroom/CallTransactionProofs.lean)
+
+Build both native entry points from `formal/lean4`. The `evm-subset`
+transaction command forwards to `evm-call-transaction` beside the main
+executable. The same flags and input file also work with the transaction
+executable directly. Keep the two binaries in the same directory when
+using forwarding. A missing sibling returns `transactionCompanionUnavailable`.
+
+```sh
+lake -d evm-cleanroom build evm-subset evm-call-transaction
+```
+
+The experimental native `KECCAK256` path is off by default. Prefix the
+command with `--dangerously-enable-unverified-keccak` for scoped public
+replay and test runs. The output records the opt-in. Funded hash inputs
+above 16 MiB yield an implementation refusal. `LOG0` through `LOG4`
+preserve emitted bytes and topic order across a successful call. The
+entry journal is restored when that frame reverts or halts exceptionally.
+[Experimental hash risk and opcode checks](../../../docs/20261122-evm-hash-log-boundary.md)
+
+The authenticated Shanghai replay of the index-zero 1CAT transfer in
+mainnet block 19,100,013 reproduces its published receipt with 33,987 gas,
+one Transfer log and receipt status 1. Lean, EthereumJS and Geth agree
+on the witnessed account effects. The replay derives the world state
+root after the transaction and checks the target storage root against
+its independently proven final-block value.
+[Mainnet replay record](../../../docs/20261122-evm-shanghai-contract-replay.md) ·
+[Transaction and audit evidence](../../../docs/20261122-evm-call-transaction-evidence.md)
+
 ## External executable interface and first official-fixture integration
 
 The CLI executes **only the currently supported opcode subset** with supplied
@@ -142,9 +184,9 @@ lake exe evm-subset 600260030100 100 10
 # {"schemaVersion":2,"status":"ok","gasRemaining":"91","pc":"6","halted":true,"stack":["5"],"memorySizeBytes":"0","memoryWord0":"0","memoryObservedBytes":"0","memoryTruncated":false,"memoryHex":""}
 ```
 
-Machine input errors are distinct from EVM execution errors. This interface
-does **not** decode signed transactions or access account state, and the
-counter used for execution fuel is a harness limit, *not* Ethereum gas.
+Machine input errors are distinct from EVM execution errors. This raw
+bytecode mode takes code and gas directly. Execution fuel is a harness
+limit on interpreter dispatches.
 
 The standalone `scripts/eels-state-preflight.mjs` checks the envelope of
 **genuine published EELS state-test JSON**. CI downloads a version-pinned
@@ -270,7 +312,8 @@ charging. This does not prove EELS equivalence or world-state rollback.
 `CALLDATALOAD`, `CALLDATASIZE`, `CALLDATACOPY`, `CODESIZE`, `CODECOPY`,
 `RETURNDATASIZE`, `RETURNDATACOPY`, `SELFBALANCE`, `POP`,
 `JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`, `MLOAD`, `MSTORE`, `MSTORE8`, `MSIZE`,
-`PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`.
+`PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`, `LOG0..4`
+and opt-in `KECCAK256`.
 A separate `Frame.run` handles `RETURN` and `REVERT` and `CallOpcode.run`
 handles the restricted `CALL` path.
 

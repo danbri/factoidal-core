@@ -60,7 +60,8 @@ theorem Memory.readByte_expandedCopy_inside (m : Memory) (source : ByteView)
     Does not say: creating or completing a child call leaves both views intact. -/
 theorem commit_keeps_return_data (s final : State) (pc : Nat) (stack : List Word) (cost : Nat)
     (halt : Bool) (memory : Option Memory) (storage : Option Storage)
-    (h : commit s pc stack cost halt memory storage = .ok final) :
+    {nextLog : Option LogEntry}
+    (h : commit s pc stack cost halt memory storage nextLog = .ok final) :
     final.returnData = s.returnData ∧ final.outputData = s.outputData := by
   unfold commit at h
   split at h
@@ -73,7 +74,8 @@ theorem commit_keeps_return_data (s final : State) (pc : Nat) (stack : List Word
 
 private theorem commit_sets_memory (s final : State) (pc : Nat) (stack : List Word) (cost : Nat)
     (halt : Bool) (memory : Memory) (storage : Option Storage)
-    (h : commit s pc stack cost halt (some memory) storage = .ok final) :
+    {nextLog : Option LogEntry}
+    (h : commit s pc stack cost halt (some memory) storage nextLog = .ok final) :
     final.memory = memory := by
   unfold commit at h
   split at h

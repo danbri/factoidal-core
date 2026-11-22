@@ -8,3 +8,7 @@ name = "EVMCleanroom"
 [[lean_exe]]
 name = "evm-subset"
 root = "EVMCleanroom.CLI"
+
+[[lean_exe]]
+name = "evm-call-transaction"
+root = "EVMCleanroom.CLITransaction"
