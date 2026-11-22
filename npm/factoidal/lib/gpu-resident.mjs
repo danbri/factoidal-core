@@ -250,6 +250,39 @@ export async function createGsslResidentSession({
       busy=false;
     }
   }
+  /** Complete named output readback, separate from bounded diagnostic inspect.
+   * Requires an initialized storage buffer and explicit word count. No graph
+   * or operator interpretation is implemented by the resource manager.
+   */
+  async function readWords(id,{countWords}={}){
+    assertIdle();
+    const b=find(id);
+    if(!b.initialized)throw new Error("Uninitialized GPU output.");
+    if(!(b.usage&gpu().COPY_SRC))throw new Error("Output cannot be copied.");
+    if(!integer(countWords)||countWords>b.bytes/4||
+       countWords>262144||countWords*4>byteBudget)
+      throw new RangeError("GPU output readback exceeds admitted bounds.");
+    if(countWords===0)return [];
+    busy=true;
+    let stage=null;
+    try{
+      stage=device.createBuffer({label:"PVGraph complete output "+id,
+        size:countWords*4,usage:gpu().COPY_DST|gpu().MAP_READ});
+      const command=device.createCommandEncoder();
+      command.copyBufferToBuffer(b.buffer,0,stage,0,countWords*4);
+      device.queue.submit([command.finish()]);
+      await stage.mapAsync(mapping().READ);
+      const words=Array.from(new Uint32Array(stage.getMappedRange().slice(0)));
+      stage.unmap();
+      if(lost)throw Error("GPU lost during output readback.");
+      readbacks++;
+      return words;
+    }finally{
+      if(stage?.mapState==="mapped")stage.unmap();
+      stage?.destroy();
+      busy=false;
+    }
+  }
   function release(id){
     assertIdle();assertName(id);
     const result=free(id);
@@ -276,5 +309,5 @@ export async function createGsslResidentSession({
     kernels.clear();
     if(owned){try{device.destroy();}catch{}}
   }
-  return {allocate,upload,compile,dispatch,inspect,release,status,close};
+  return {allocate,upload,compile,dispatch,inspect,readWords,release,status,close};
 }
