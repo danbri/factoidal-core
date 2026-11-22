@@ -7,10 +7,10 @@ Execution subgoal is separate: https://github.com/danbri/factoidal-core/issues/6
 ## Normative slice and provenance
 
 The upstream Ethereum consensus specification is
-https://github.com/ethereum/consensus-specs/blob/master/ssz/merkle-proofs.md
-(SSZ generalized-index helpers and single Merkle proof; retrieved 22 November 2026).
-A content-addressed upstream commit/hash still needs to be pinned before
-a normative refinement claim. Its code states: child = 2*i+right,
+https://github.com/ethereum/consensus-specs/blob/498449f83228304263b05cce1b052f44b7531d8c/ssz/merkle-proofs.md
+(SSZ generalized-index helpers and single Merkle proof; latest path-change
+commit returned by GitHub on 22 November 2026). This is an upstream source
+pin; independent normative refinement is not yet proved. Its code states: child = 2*i+right,
 parent = i//2, sibling = i xor 1, proof length = floor(log2(i));
 odd-index siblings are hashed to the left. These operations are implemented
 in the actual Lean module `EthereumConsensus.SSZ.GIndex`.
