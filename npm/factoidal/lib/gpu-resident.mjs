@@ -20,6 +20,9 @@ const hex = bytes => Array.from(new Uint8Array(bytes),
 const gpu = () => globalThis.GPUBufferUsage;
 const mapping = () => globalThis.GPUMapMode;
 const MAX_BUDGET = 512 * 1024 * 1024;
+// 65,535 workgroups of 64 words, the portable one-dimensional dispatch bound.
+// The Lean planner admits smaller lengths where an operator needs more space.
+const MAX_OUTPUT_WORDS = 4194240;
 const DEFAULT_USAGE = () => gpu().STORAGE | gpu().COPY_SRC | gpu().COPY_DST;
 
 function bytesOf(input) {
@@ -66,6 +69,16 @@ export async function createGsslResidentSession({
   if(!providedDevice && !adapter)throw new Error("No WebGPU adapter.");
   const device=providedDevice??await adapter.requestDevice();
   const owned=ownsDevice??!providedDevice;
+  // Observed device facts only. Backend placement and cost policy belong to
+  // the Lean planner that consumes this metadata.
+  const info=adapter?.info;
+  const adapterInfo=Object.freeze({
+    vendor:typeof info?.vendor==="string"?info.vendor:"",
+    architecture:typeof info?.architecture==="string"?info.architecture:"",
+    device:typeof info?.device==="string"?info.device:"",
+    description:typeof info?.description==="string"?info.description:"",
+    isFallbackAdapter:info?.isFallbackAdapter??adapter?.isFallbackAdapter??null,
+  });
   const buffers=new Map(),kernels=new Map();
   let usedBytes=0,uploads=0,reuses=0,submissions=0,readbacks=0,
       createdPipelines=0,closed=false,busy=false,lost=false;
@@ -96,6 +109,9 @@ export async function createGsslResidentSession({
       throw new RangeError("GPU buffer bytes must be a positive multiple of four.");
     if(usedBytes+byteLength>byteBudget)
       throw new RangeError("GPU resident byte budget exceeded; release buffers explicitly.");
+    if(byteLength>(device.limits?.maxBufferSize??Infinity)||
+       byteLength>(device.limits?.maxStorageBufferBindingSize??Infinity))
+      throw new RangeError("GPU buffer exceeds the device storage binding limit.");
     const u=usage??DEFAULT_USAGE();
     if(!integer(u)||!(u&gpu().STORAGE))
       throw new TypeError("GSSL session buffers must be GPU storage buffers.");
@@ -128,6 +144,9 @@ export async function createGsslResidentSession({
       if(!replacing && !(old.usage&gpu().COPY_DST))
         throw new Error("Existing buffer is not host-writable.");
       if(replacing){
+        if(bytes.length>(device.limits?.maxBufferSize??Infinity)||
+           bytes.length>(device.limits?.maxStorageBufferBindingSize??Infinity))
+          throw new RangeError("GPU upload exceeds the device storage binding limit.");
         if(usedBytes-(old?.bytes??0)+bytes.length>byteBudget)
           throw new RangeError("GPU resident byte budget exceeded.");
         // Allocate first; a failure leaves the old usable buffer unchanged.
@@ -172,53 +191,92 @@ export async function createGsslResidentSession({
   }
   // writes must name every buffer this shader may mutate; that contract is
   // a trusted-lowering obligation, not something this host can prove from WGSL.
-  async function dispatch({kernel:kernelId,bindings,workgroups=[1,1,1],writes=[]}) {
-    assertIdle();assertName(kernelId);
-    const k=kernels.get(kernelId);
-    if(!k)throw new RangeError("Unknown compute kernel "+kernelId);
-    if(!Array.isArray(bindings)||bindings.length===0)
-      throw new TypeError("Explicit typed binding map is required.");
-    if(!Array.isArray(workgroups)||workgroups.length!==3||
-       !workgroups.every(x=>integer(x)&&x>=1&&x<=65535))
-      throw new RangeError("workgroups must be three numbers in 1..65535.");
-    if(!Array.isArray(writes)||new Set(writes).size!==writes.length)
-      throw new TypeError("Writes must be unique declared buffer IDs.");
-    const seen=new Set(),attached=new Set();
-    const entries=bindings.map(({binding,id})=>{
-      if(!integer(binding)||binding>31||seen.has(binding))
-        throw new TypeError("Invalid or repeated binding index.");
-      seen.add(binding);attached.add(id);
-      const b=find(id);
-      return {binding,resource:{buffer:b.buffer}};
+  async function dispatchBatch(commands) {
+    assertIdle();
+    if(!Array.isArray(commands)||commands.length<1||commands.length>4096)
+      throw new RangeError("GPU batch must contain 1..4096 dispatches.");
+    // Validate all references before submitting any command. Writes from an
+    // earlier pass initialise inputs of a later pass in the same command buffer.
+    const initialized=new Set([...buffers].filter(([,b])=>b.initialized).map(([id])=>id));
+    const checked=commands.map(({kernel:kernelId,bindings,workgroups=[1,1,1],writes=[]})=>{
+      assertName(kernelId);
+      const k=kernels.get(kernelId);
+      if(!k)throw new RangeError("Unknown compute kernel "+kernelId);
+      if(!Array.isArray(bindings)||bindings.length===0)
+        throw new TypeError("Explicit typed binding map is required.");
+      const maxGroups=Math.min(65535,device.limits?.maxComputeWorkgroupsPerDimension??65535);
+      if(!Array.isArray(workgroups)||workgroups.length!==3||
+         !workgroups.every(x=>integer(x)&&x>=1&&x<=maxGroups))
+        throw new RangeError("workgroups exceed the portable or device dispatch bound.");
+      if(!Array.isArray(writes)||new Set(writes).size!==writes.length)
+        throw new TypeError("Writes must be unique declared buffer IDs.");
+      const seen=new Set(),attached=new Set();
+      const entries=bindings.map(({binding,id})=>{
+        if(!integer(binding)||binding>31||seen.has(binding))
+          throw new TypeError("Invalid or repeated binding index.");
+        seen.add(binding);attached.add(id);
+        const b=find(id);
+        return {binding,resource:{buffer:b.buffer}};
+      });
+      if(writes.some(x=>!attached.has(x)))
+        throw new Error("All declared writes must name bound resources.");
+      for(const {id} of bindings)
+        if(!initialized.has(id)&&!writes.includes(id))
+          throw new Error("Uninitialized buffer used as input: "+id);
+      for(const id of writes)initialized.add(id);
+      return {kernelId,k,entries,workgroups,writes};
     });
-    if(writes.some(x=>!attached.has(x)))
-      throw new Error("All declared writes must name bound resources.");
-    for(const {id} of bindings){
-      const b=find(id);
-      if(!b.initialized && !writes.includes(id))
-        throw new Error("Uninitialized buffer used as input: "+id);
-    }
     busy=true;
+    let validationScope=false;
     try{
-      const bg=device.createBindGroup({layout:k.pipeline.getBindGroupLayout(0),entries});
+      if(typeof device.pushErrorScope==="function"){
+        device.pushErrorScope("validation");validationScope=true;
+      }
       const encoder=device.createCommandEncoder();
-      const pass=encoder.beginComputePass();
-      pass.setPipeline(k.pipeline);
-      pass.setBindGroup(0,bg);
-      pass.dispatchWorkgroups(...workgroups);
-      pass.end();
+      for(const {k,entries,workgroups} of checked){
+        const bg=device.createBindGroup({layout:k.pipeline.getBindGroupLayout(0),entries});
+        // Separate compute passes give the dependency barriers needed between
+        // scan levels and scatters without a CPU round trip at each pass.
+        const pass=encoder.beginComputePass();
+        pass.setPipeline(k.pipeline);
+        pass.setBindGroup(0,bg);
+        pass.dispatchWorkgroups(...workgroups);
+        pass.end();
+      }
       device.queue.submit([encoder.finish()]);
       submissions++;
-      for(const name of writes){
-        const b=find(name);
-        b.initialized=true;b.dirty=true;b.sha256=null;b.revision++;
-      }
+      for(const {writes} of checked)
+        for(const name of writes){
+          const b=find(name);
+          b.initialized=true;b.dirty=true;b.sha256=null;b.revision++;
+        }
       generation++;
       await device.queue.onSubmittedWorkDone();
+      if(validationScope){
+        validationScope=false;
+        const error=await device.popErrorScope();
+        if(error)throw new Error("GPU command validation failed: "+error.message);
+      }
       if(lost)throw new Error("GPU lost during compute dispatch.");
-      return {kernel:kernelId,submissions,revision:generation,
+      return {dispatches:checked.length,submissions,revision:generation,
         status:"observed-not-proven"};
-    }finally{busy=false;}
+    }catch(error){
+      // Validation can fail asynchronously after submit. No destination from
+      // a failed batch may later be read or reused as an initialized input.
+      for(const {writes} of checked)
+        for(const name of writes){
+          const b=find(name);
+          b.initialized=false;b.dirty=true;b.sha256=null;b.revision++;
+        }
+      throw error;
+    }finally{
+      if(validationScope){try{await device.popErrorScope();}catch{}}
+      busy=false;
+    }
+  }
+  async function dispatch(command){
+    const result=await dispatchBatch([command]);
+    return {...result,kernel:command.kernel};
   }
   async function inspect(id,{offsetWords=0,countWords=16}={}) {
     assertIdle();
@@ -250,6 +308,39 @@ export async function createGsslResidentSession({
       busy=false;
     }
   }
+  /** Complete named output readback, separate from bounded diagnostic inspect.
+   * Requires an initialized storage buffer and explicit word count. No graph
+   * or operator interpretation is implemented by the resource manager.
+   */
+  async function readWords(id,{countWords}={}){
+    assertIdle();
+    const b=find(id);
+    if(!b.initialized)throw new Error("Uninitialized GPU output.");
+    if(!(b.usage&gpu().COPY_SRC))throw new Error("Output cannot be copied.");
+    if(!integer(countWords)||countWords>b.bytes/4||
+       countWords>MAX_OUTPUT_WORDS||countWords*4>byteBudget)
+      throw new RangeError("GPU output readback exceeds admitted bounds.");
+    if(countWords===0)return [];
+    busy=true;
+    let stage=null;
+    try{
+      stage=device.createBuffer({label:"PVGraph complete output "+id,
+        size:countWords*4,usage:gpu().COPY_DST|gpu().MAP_READ});
+      const command=device.createCommandEncoder();
+      command.copyBufferToBuffer(b.buffer,0,stage,0,countWords*4);
+      device.queue.submit([command.finish()]);
+      await stage.mapAsync(mapping().READ);
+      const words=Array.from(new Uint32Array(stage.getMappedRange().slice(0)));
+      stage.unmap();
+      if(lost)throw Error("GPU lost during output readback.");
+      readbacks++;
+      return words;
+    }finally{
+      if(stage?.mapState==="mapped")stage.unmap();
+      stage?.destroy();
+      busy=false;
+    }
+  }
   function release(id){
     assertIdle();assertName(id);
     const result=free(id);
@@ -257,7 +348,7 @@ export async function createGsslResidentSession({
     return result;
   }
   function status(){
-    return {closed,lost,busy,usedBytes,byteBudget,resourceCount:buffers.size,
+    return {closed,lost,busy,usedBytes,byteBudget,adapterInfo,resourceCount:buffers.size,
       kernelCount:kernels.size,createdPipelines,uploads,reuses,
       submissions,readbacks,generation,
       resources:[...buffers].map(([id,b])=>({
@@ -276,5 +367,5 @@ export async function createGsslResidentSession({
     kernels.clear();
     if(owned){try{device.destroy();}catch{}}
   }
-  return {allocate,upload,compile,dispatch,inspect,release,status,close};
+  return {allocate,upload,compile,dispatch,dispatchBatch,inspect,readWords,release,status,close};
 }

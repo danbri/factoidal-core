@@ -381,9 +381,24 @@ export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compi
 /** How a page is accepted. `liberal`: liberal mode (WebAccept.lean, --be-liberal-in-what-we-accept
 and the Settings checkbox): Lean skips what it may skip and says so, and this host passes on
 the fetches that failed instead of refusing the page. */
-export type AcceptOptions={liberal?:boolean;request?:DocumentRequest;downloads?:string;cookies?:DocumentCookies};
+export type AcceptOptions={liberal?:boolean;request?:DocumentRequest;downloads?:string;cookies?:DocumentCookies;
+  epubReader?:(bytes:Uint8Array,chapter:number)=>{source:string}};
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
   const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c,pageDecoding.fallback,pageDecoding.locale):undefined;
+  const isLocalEpub=inline===undefined&&url.startsWith("file:")&&new URL(url).pathname.toLowerCase().endsWith(".epub");
+  if(isLocalEpub){
+    if(!accept.epubReader)throw new Error("This engine has no EPUB reader");
+    const file=new URL(url),limit=8*1024*1024;
+    const chapter=Number(file.searchParams.get("epubChapter")??"1");
+    if(!Number.isSafeInteger(chapter)||chapter<1||chapter>512)throw new Error("Invalid EPUB chapter number");
+    file.search="";file.hash="";
+    if((await Deno.stat(file)).size>limit)throw new Error("EPUB archive size limit exceeded");
+    signal?.throwIfAborted();
+    const bytes=await Deno.readFile(file);
+    signal?.throwIfAborted();
+    if(bytes.length>limit)throw new Error("EPUB archive size limit exceeded");
+    inline=accept.epubReader(bytes,chapter-1).source;
+  }
   const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array;status?:number}=inline===undefined
     ?await readSource(url,signal,decode,{errorPages:true,...(engine.download&&accept.downloads?{decide:r=>engine.download!(r) as {action:string;name?:string}|undefined,downloads:accept.downloads}:{}),
       ...(accept.cookies?{cookies:accept.cookies}:{}),...accept.request})
@@ -478,12 +493,18 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // them, with the fetched sheets in hand, and reads each in place of its @import rule. A page
   // whose sheets import nothing costs one inspect more only if it has a sheet at all.
   const imported:{url:string;source:string}[]=[];
+  // The last inspect made with the sheets in hand: it lists the background images of the sheets.
+  let sheetsInspection:{backgroundImages?:{key:string;url:string}[]}|undefined;
   const importsNow=async()=>{
     const hasSheet=resources.length>0||/<style/i.test(document.source);
     if(!hasSheet&&!options?.commands)return;
     const before=imported.length;
-    await loadImports((list:{url:string;source:string}[])=>engine.inspect(document.source,{url:document.url,...mode,resources,
-        ...(list.length?{imported:list}:{}),...(options?.commands?{commands:options.commands}:{})}),
+    await loadImports(async(list:{url:string;source:string}[])=>{
+        const answer=await engine.inspect(document.source,{url:document.url,...mode,resources,
+          ...(list.length?{imported:list}:{}),...(options?.commands?{commands:options.commands}:{})});
+        sheetsInspection=answer as {backgroundImages?:{key:string;url:string}[]};
+        return answer;
+      },
       async(sheetURL:string)=>{navigationURL(sheetURL,document.url,document.url);return readSheet(sheetURL);},imported,
       (sheetURL:string,reason:string)=>fetchFailed("style sheet",sheetURL,`imported style sheet not read: ${reason}`,"page drawn without it"));
     if(imported.length&&options)options.imported=imported;
@@ -503,9 +524,20 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // Only a page whose scripts do not run: a script session starts with the page's images (its
   // layout reads and the load event are of the page with them, in every host alike), so a
   // page with scripts waits for them as before.
-  const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&(inspection.images??[]).length>0;
+  // Background images (CSS `url()` in background declarations, WebDocument.backgroundImageRequests):
+  // listed by the first inspect for style elements and attributes, and by the inspect made with
+  // the sheets for the sheets; fetched with the rules of images and given with them. An engine
+  // that does not list them gets none.
+  const listedImages=new Set((inspection.images??[]).map(image=>image.key));
+  const backgroundWanted=[...((inspection as {backgroundImages?:{key:string;url:string}[]}).backgroundImages??[]),...(sheetsInspection?.backgroundImages??[])]
+    .filter(image=>!listedImages.has(image.key)&&(listedImages.add(image.key),true));
+  const pageImageBytes=backgroundWanted.length?Promise.all([imageBytes,fetchImageBytes(backgroundWanted,document.url,signal,
+    (imageURL,reason)=>fetchFailed("background image",imageURL,`image not read: ${reason}`,"background colour shown"),engine as SubresourceEngine)])
+    .then(([a,b])=>[...a,...b]):imageBytes;
+  pageImageBytes.catch(()=>{});
+  const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&((inspection.images??[]).length>0||backgroundWanted.length>0);
   let revision=0,imagesPending=later,imagesStarted=!later;
-  const images:Record<string,unknown>=later?{}:await imageOptions(engine,await imageBytes);
+  const images:Record<string,unknown>=later?{}:await imageOptions(engine,await pageImageBytes);
   // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images. One that fails or is refused leaves the tab with no icon.
   let iconBase64:string|undefined;
   if(inspection.icon&&iconReading)try{
@@ -597,7 +629,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   const startImages=()=>{
     if(imagesStarted)return;
     imagesStarted=true;
-    imageBytes.then(bytes=>imageOptions(engine,bytes)).then(more=>{
+    pageImageBytes.then(bytes=>imageOptions(engine,bytes)).then(more=>{
       for(const key of ["images","heldImages"] as const)
         if(Array.isArray(more[key])&&options)options[key]=[...((options[key] as unknown[]|undefined)??[]),...(more[key] as unknown[])];
       lateChange=true;
@@ -705,13 +737,13 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
 /** Give the engine a font file. Lean reads it, shapes words and takes outlines; this only moves bytes.
 `via:"bytes"` (the default) copies the file into engine memory; `"text"` sends it as Base64
 in the JSON request, the reference path that tests compare with. */
-export async function loadFontFile(engine:HTMLEngine,path:string,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"=false) {
+export async function loadFontFile(engine:HTMLEngine,path:string,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"|"mono"=false) {
   return loadFontData(engine,await Deno.readFile(path),family,via,fallback);
 }
 /** As loadFontFile, for a file already in memory. */
 /** `fallback:true` adds the font after the fonts the engine holds, for characters they lack;
-`"serif"` holds it as the serif face (serif_font.ts). */
-export async function loadFontData(engine:HTMLEngine,bytes:Uint8Array<ArrayBuffer>,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"=false) {
+`"serif"` holds it as the serif face, `"mono"` as the monospace face (serif_font.ts). */
+export async function loadFontData(engine:HTMLEngine,bytes:Uint8Array<ArrayBuffer>,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"|"mono"=false) {
   const sha=[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("");
   if(via==="bytes")return engine.fontLoadBytes(bytes,family,sha,fallback);
   let text="";

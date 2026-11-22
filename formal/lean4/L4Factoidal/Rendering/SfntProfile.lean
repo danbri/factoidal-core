@@ -757,6 +757,13 @@ def profile (fonts : Array Font) (memo : Memo)
       let web := webFonts family
       if web.isEmpty then none else some (match familyShape with
         | some shape => shape web
-        | none => shapeFreshWith f (web ++ fonts))}
+        | none => shapeFreshWith f (web ++ fonts)),
+    -- The first web font (or the serif or monospace face) of a family gives that text's line
+    -- metrics (`Layout.FontProfile.metricsOf`), in the primary font's units.
+    familyMetrics := fun family =>
+      (webFonts family)[0]?.bind fun w =>
+        if w.face.unitsPerEm == 0 then none else
+        let k := space.unitsPerEm/Float.ofNat w.face.unitsPerEm
+        some (Float.ofInt w.face.ascender*k,-Float.ofInt w.face.descender*k)}
 
 end L4Factoidal.Rendering.SfntProfile

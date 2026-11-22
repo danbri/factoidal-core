@@ -3,64 +3,55 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import path from "node:path";
-import {example,listExamples,fromSexpr,runCPU}
+import {createPVGraphWasm,listExamples}
   from "../npm/factoidal/gdsl.mjs";
 
-const dir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");
-const text=relative=>readFileSync(path.join(dir,relative),"utf8");
-test("GDSL 0.2 replaces the separate syntax proposal in earlier specification",()=>{
-  const spec=text("docs/specs/gdsl-0.2.md");
-  const older=text("docs/specs/gssl-0.1.md");
-  const residency=text("docs/20261121-gssl-residency-worklets.md");
-  assert.match(spec,/Every GDSL domain uses the same canonical dataflow graph/);
-  assert.match(spec,/register.*operator/i);
-  assert.match(spec,/S-expressions/);
-  assert.match(spec,/JavaScript computational graph constructor/);
-  assert.match(spec,/typed.*link/i);
-  assert.match(spec,/same graph/i);
-  assert.match(older,/Superseded for new language design/);
-  assert.match(residency,/The GPU is not inherently an RDF store/);
-  assert.match(residency,/is no\s+longer part of the GDSL language specification/);
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");
+const read=name=>readFileSync(path.join(root,name),"utf8");
+
+test("one Lean-owned PVGraph API with five shared-domain examples",()=>{
+  const s=read("docs/specs/gdsl-0.2.md");
+  assert.match(s,/Every GDSL domain uses the same canonical PVGraph document/);
+  assert.match(s,/JavaScript is a host binding/);
+  assert.match(s,/S-expression reader is planned/);
+  assert.equal(listExamples().length,5);
+  assert.equal(typeof createPVGraphWasm,"function");
+  const entry=read("npm/factoidal/gdsl.mjs");
+  assert.doesNotMatch(entry,/gdsl-graph\.mjs|runPVGraphCPU|checkPVGraph|fromPVSexpr/);
 });
-test("all five domain examples generate valid common graphs, parser and results",()=>{
-  for(const info of listExamples()){
-    const e=example(info.id);
-    assert.deepEqual(fromSexpr(e.sexpr),e.graph);
-    assert.ok(e.graph.nodes.some(n=>n.op==="core.input"));
-    assert.ok(e.graph.nodes.some(n=>n.op==="core.output"));
-    assert.ok(e.graph.links.length>0);
-    assert.ok(Object.keys(runCPU(e.graph,e.input).outputs).length>0);
-  }
-});
-test("GDSL Hub editor, graph rendering, bindings, CPU and GPU share one canonical API",()=>{
-  const page=text("docs/web/hub/gssl/index.njk");
-  const app=text("docs/web/hub/gssl/app.mjs");
-  const graphApp=text("docs/web/hub/gssl/graph-explorer.mjs");
-  const site=text("docs/.eleventy.js");
-  const home=text("docs/web/hub/index.md");
-  const pkg=JSON.parse(text("npm/factoidal/package.json"));
-  const entry=text("npm/factoidal/gdsl.mjs");
-  for(const id of ["gdsl-example","gdsl-sexpr","gdsl-js","gdsl-bindings",
-    "gdsl-diagram","gdsl-cpu","gdsl-gpu","gdsl-agreement"])
+test("Hub delegates PVGraph admission and interpretation to Lean/Wasm",()=>{
+  const page=read("docs/web/hub/gssl/index.njk");
+  const explorer=read("docs/web/hub/gssl/graph-explorer.mjs");
+  const app=read("docs/web/hub/gssl/app.mjs");
+  const site=read("docs/.eleventy.js");
+  const pkg=JSON.parse(read("npm/factoidal/package.json"));
+  for(const id of ["gdsl-example","gdsl-json","gdsl-bindings",
+    "gdsl-diagram","gdsl-cpu-output","gdsl-gpu-output","gdsl-agreement"])
     assert.match(page,new RegExp('id="'+id+'"'));
   assert.match(page,/docs\/specs\/gdsl-0\.2\.md/);
-  assert.match(graphApp,/from "\.\.\/\.\.\/\.\.\/npm\/factoidal\/gdsl\.mjs"/);
-  for(const fn of ["fromSexpr","toSexpr","runCPU","runGraphGPU",
-    "createGsslResidentSession"]){
-    assert.ok(graphApp.includes(fn));
-  }
-  assert.match(graphApp,/createElementNS/);
-  assert.match(graphApp,/dataflow/i);
-  assert.match(app,/mountGdslGraph\(\)/);
+  assert.match(explorer,/createPVGraphWasm/);
+  assert.match(explorer,/\.admit\(doc\)/);
+  assert.match(explorer,/\.evaluate\(doc,supplied\)/);
+  assert.match(explorer,/loadEngine/);
+  assert.match(explorer,/createElementNS/);
+  assert.doesNotMatch(explorer,/fromPVSexpr|runPVGraphCPU|CORE_OPERATORS/);
+  assert.doesNotMatch(explorer,/\beval\s*\(|new\s+Function\s*\(/);
+  assert.match(app,/mountPVGraph\(\)/);
   assert.match(site,/web\/hub\/gssl/);
-  assert.match(site,/"gdsl.mjs"/);
-  assert.match(home,/href="\.\/gssl\//);
   assert.ok(pkg.exports["./gdsl"]);
-  assert.match(entry,/from "\.\/lib\/gdsl-graph\.mjs"/);
 });
-test("The Hub has no competing domain parser or unchecked eval of source text",()=>{
-  const source=text("docs/web/hub/gssl/graph-explorer.mjs");
-  assert.doesNotMatch(source,/\beval\s*\(/);
-  assert.doesNotMatch(source,/new\s+Function\s*\(/);
-  assert.doesNotMatch(source,/\bdomainDsl\s*\(/);
+test("No independent PVGraph checker, interpreter or parser is distributed",()=>{
+  const forbidden=[
+    "npm/factoidal/lib/gdsl-graph.mjs",
+    "npm/factoidal/lib/gdsl-webgpu.mjs",
+    "npm/factoidal/lib/pvgraph-lean-admission.mjs",
+  ];
+  for(const name of forbidden){
+    assert.throws(()=>read(name),/ENOENT/,name);
+  }
+  const s=read("npm/factoidal/lib/gdsl-wasm-builder.mjs");
+  assert.match(s,/pvgraphBuild/);
+  assert.match(s,/pvgraphAdmit/);
+  assert.match(s,/pvgraphEvaluate/);
+  assert.doesNotMatch(s,/runPVGraphCPU|checkPVGraph/);
 });

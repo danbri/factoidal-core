@@ -102,6 +102,7 @@ def ops : List OpSpec :=
     ⟨"command", .state, []⟩,
     -- page answers
     ⟨"render", .query, []⟩, ⟨"inspect", .query, []⟩, ⟨"decode", .query, []⟩,
+    ⟨"epubReader", .query, []⟩,
     ⟨"nodeAt", .query, [.pointer]⟩, ⟨"selectedText", .query, []⟩, ⟨"findInPage", .query, []⟩,
     ⟨"printLayout", .query, [.print]⟩, ⟨"fontFaces", .query, []⟩, ⟨"fontRequests", .query, []⟩,
     ⟨"droppedCSS", .query, []⟩, ⟨"subresource", .query, [.network]⟩, ⟨"sourcePage", .query, []⟩,
@@ -138,7 +139,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 71
+#guard opNames.length == 72
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state

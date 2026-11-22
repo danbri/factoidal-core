@@ -12,11 +12,12 @@
 # differs from the tree, or when the line count differs from max-entries.
 # Adding a line needs a reason in the same change; removing one lowers max-entries.
 # Reasons are Claude-inferred (2026-10-24), not owner decisions.
-# max-entries: 27
+# max-entries: 28
 io:Ed25519Correct  # the native Ed25519 verify agrees with the Ed25519 specification (RFC 8032); crypto primitive realised outside Lean
 io:ReadsWritten  # reading back an SBM11 file returns what the writer wrote; file IO is not modelled in Lean
 io:SelectedAgrees  # a planner-selected SBM11 read returns the same triples as an unselected read; the on-disk selection index is outside Lean
 io:Sha256Agrees  # the native SHA-256 agrees with the Lean SHA-256 definition (FIPS 180-4); crypto primitive realised outside Lean
+io:GpuSparqlDeviceLaw  # gpuSparqlStage: checkedGpuSparqlDeviceReply_valid proves the numeric law for arbitrary raw replies, but correspondence of the actual stateful session/ABI/host to that checked composition is integration-tested, not proved
 field:L4Factoidal.Dataflow.Store.LawfulStore.assumed_contracts  # the store law rests on the listed Assumption values; their names are the name: lines below
 field:L4Factoidal.Dataflow.Store.LawfulDataset.assumed_contracts  # the dataset law rests on the listed Assumption values; their names are the name: lines below
 name:backendReadOpsExact  uses=2  # LawfulStore.hdt, LawfulStore.cottasInMemory: the reader is file access (HDT file, in-memory COTTAS pages); no theorem relates the bytes to the triples it returns

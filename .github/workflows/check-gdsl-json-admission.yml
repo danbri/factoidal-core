@@ -1,0 +1,86 @@
+name: GDSL PVGraph — Lean/Wasm authority
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/**'
+      - 'formal/lean4/Wasm/Ops/PVGraph.lean'
+      - 'formal/lean4/Wasm/Dispatch.lean'
+      - 'formal/lean4/Wasm/CoreDispatch.lean'
+      - 'formal/lean4/Harness/PVGraphBuilderSmoke.lean'
+      - 'npm/factoidal/gdsl.*'
+      - 'npm/factoidal/lib/gdsl-*.mjs'
+      - 'npm/factoidal/test/gdsl.test.mjs'
+      - 'tests/gdsl*'
+      - '.github/workflows/check-gdsl-json-admission.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  lean-pvgraph:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Source and host-binding checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          node --check npm/factoidal/gdsl.mjs
+          node --check npm/factoidal/lib/gdsl-wasm-builder.mjs
+          node --check npm/factoidal/lib/gdsl-examples.mjs
+          node --test tests/gdsl_wasm_builder.test.mjs tests/gdsl_hub.test.mjs
+          node --test npm/factoidal/test/gdsl.test.mjs
+          test ! -e npm/factoidal/lib/gdsl-graph.mjs
+          test ! -e npm/factoidal/lib/gdsl-webgpu.mjs
+          mkdir -p "$RUNNER_TEMP/pvgraph"
+          git rev-parse HEAD > "$RUNNER_TEMP/pvgraph/commit.txt"
+          sha256sum npm/factoidal/gdsl.mjs npm/factoidal/lib/gdsl-*.mjs \
+            formal/lean4/Wasm/Ops/PVGraph.lean \
+            formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraphBuilder.lean \
+            > "$RUNNER_TEMP/pvgraph/sources.sha256"
+      - name: Compile PVGraph semantics, builder and Lean/Wasm operation module
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 720s lake build \
+            L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder \
+            Wasm.Ops.PVGraph \
+            L4Factoidal.GpuDomainSpecificLanguage.GpuPlan \
+            L4Factoidal.GpuDomainSpecificLanguage.DataflowAdapter
+          # Full dispatch/core-reflection closure is built separately in
+          # check-gdsl-full-wasm-gpu.yml, against the exact same source.
+      - name: Execute genuine native-Lean PVGraph authoring and reference evaluation
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 120s lake env lean --run \
+            Harness/PVGraphBuilderSmoke.lean \
+            > "$RUNNER_TEMP/pvgraph/lean-fixtures.jsonl"
+          node -e 'const fs=require("fs");const lines=fs.readFileSync(process.argv[1],"utf8").trim().split(/\r?\n/);if(lines.length!==5||lines.some(s=>{const o=JSON.parse(s);return o.pvgraph.version!=="gdsl/0.2"||!o.outputs}))process.exit(1)' \
+            "$RUNNER_TEMP/pvgraph/lean-fixtures.jsonl"
+      - name: Preserve exact-source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdsl-lean-pvgraph
+          path: ${{ runner.temp }}/pvgraph/
+          if-no-files-found: warn
+          retention-days: 30

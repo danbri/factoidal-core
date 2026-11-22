@@ -63,6 +63,8 @@ import L4Factoidal.SPARQL.FromMergeStage
 import L4Factoidal.Storage.SelectedDataset
 import L4Factoidal.Storage.BackendRefinement
 import L4Factoidal.Dataflow.Evaluator
+import L4Factoidal.Dataflow.GpuSparqlStage
+import L4Factoidal.Dataflow.GpuSparqlReadback
 import L4Factoidal.Storage.StoreDictTheorems
 import L4Factoidal.HDT.DictionaryTheorems
 import L4Factoidal.Cottas.DictTheorems
@@ -684,6 +686,18 @@ def registry : List Entry := [
       ``evalAskBackendReference_some, ``backendReads_indexed, ``LawfulEvaluator.contract,
       ``L4Factoidal.Storage.BackendRefinement.evalPatternBackend_allowed]
     note := "answer = reference evaluator (SPARQL.Query), or the modifier layer (selectPost, formHasSolution) over a WHERE answer Allowed admits; premises EvalInput.Wf (env.dataset = ds, ds.IsSet, BackendReads); named assumption field assumed_contractOn = shippedAssumed: backend path with a pattern outside NativeFrag (BackendOutsideFragmentAgrees) or a SELECT fast path (SelectFastPathAgrees); not claimed: two Allowed answers are one multiset, den invariance" },
+  { area := "SPARQL mixed CPU/WebGPU evaluator (indexed candidate joins)"
+    dir := "Dataflow"
+    stage := ``gpuSparqlStage, wireIn := .dataset, wireOut := .answer
+    params := ["env", "query", "execution", "gpuMinRows", "gpuMaxPairs"]
+    contract := ``GpuSparqlContract, status := .assumed
+    ioAssumptions := [``GpuSparqlDeviceLaw]
+    theorems := [``gpuSparqlPlan_sound, ``L4Factoidal.SPARQL.GpuQuery.begin_sound,
+      ``L4Factoidal.SPARQL.GpuQuery.Plan.run_eq, ``checkedGpuSparqlDeviceReply_valid,
+      ``checkedGpuSparqlPlan_sound,
+      ``L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin.accepted_join_eq_reference]
+    tests := ["SPARQL/GpuQueryTests.lean", "tools/pvgraph-query-device-smoke.mjs"]
+    note := "Runnable npm node gpuSparqlStage invokes datasetQueryGpuBegin/Step through the ordinary query API; the host executes Lean-emitted PVGraph plans. Actual preparation and streaming readback validators prove the exact ordered numeric law for arbitrary device bytes; checkedGpuSparqlPlan_sound gives the reference answer without a GPU-fidelity premise. IO status records the remaining session/ABI/host execution boundary. Original Lean RDF compatibility removes hash collisions. Indexed preflight, software-adapter refusal, CPU fallback, immutable snapshots and output capacities are enforced in Lean." },
   { area := "SPARQL query evaluation (reference evaluator)", dir := "SPARQL"
     wireIn := .dataset, wireOut := .results, params := ["query"], status := .tested
     tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "W3C SPARQL 1.2 (l4w3c)"] },

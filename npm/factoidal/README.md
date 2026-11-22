@@ -42,38 +42,153 @@ RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
 `@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
 and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
-## Experimental GDSL 0.2: one graph language for every domain
+## Mixed CPU/WebGPU SPARQL
 
-The optional `@factoidal/core/gdsl` subpath defines a **single typed
-dataflow graph** with named operator nodes, typed scalar/buffer links,
-a JavaScript graph-constructor API, and an S-expression notation.
-Every domain adds operators to this shared graph instead of defining
-a new GDSL syntax or execution architecture.
+The ordinary `query(data, sparql, options)` and `dataset.query(sparql, options)`
+can place eligible joins on WebGPU. Lean owns the parser, placement decisions,
+RDF matching and complete query semantics; JavaScript transports Lean-generated
+plans and numeric readbacks. SELECT, ASK, CONSTRUCT and DESCRIBE keep their
+existing result shapes and modifier semantics.
 
 ```js
-import {graph,runCPU,toSexpr} from "@factoidal/core/gdsl";
+import { parse } from "@factoidal/core";
 
-const g=graph();
-const pixels=g.input("pixels");
-const scale=g.op("u32.map.mul",{x:pixels},{value:3});
-const bias=g.op("u32.map.add",{x:pixels},{value:1});
-const result=g.op("u32.zip.add",{a:scale,b:bias});
-g.output("result",result);
+const dataset = await parse(`
+  <urn:a> <urn:relation> <urn:b> .
+  <urn:b> <urn:value> "example" .
+`, { format: "ntriples" });
+const sparql = `SELECT ?s ?value WHERE {
+  ?s <urn:relation> ?o . ?o <urn:value> ?value
+} ORDER BY ?s ?value`;
 
-console.log(runCPU(g.build(),{pixels:[2,3,5,7]}).outputs.result);
-// [9, 13, 21, 29]
-console.log(toSexpr(g.build())); // identical graph in common notation
+const rows = await dataset.query(sparql); // execution: 'auto'
+const cpuRows = await dataset.query(sparql, { execution: 'cpu' });
+console.log(rows.length, cpuRows.length); // 1 1
+if (globalThis.navigator?.gpu) {
+  try {
+    const gpuRows = await dataset.query(sparql, {
+      execution: 'gpu', gpuMinRows: 1, gpuMaxPairs: 1000000
+    });
+    console.log(gpuRows.execution); // observed joins, fallbacks and device phases
+  } catch (error) {
+    console.log(error.message); // explicit GPU execution can be refused
+  }
+}
+dataset.dispose();
 ```
 
-A common CPU interpreter and a fixed-kernel experimental WebGPU executor
-use the *same graph*, including non-SPARQL examples for signals, glyph
-advances, particle motion, pixel masking and scalar broadcasting.
-The WebGPU executor returns `observed-not-proven`, not an assurance
-claim about the WGSL compiler or physical GPU.
+`auto` uses cached selectivity estimates and actual input sizes, and retains
+CPU execution for small or unsuitable joins. Known software/fallback adapters
+stay on the CPU automatically. `cpu` uses the existing CPU entry. `gpu`
+requires an observed GPU join and reports unavailable devices, unsuitable
+queries or exhausted capacities. It is useful for device validation as well
+as explicit placement.
+
+`gpuMinRows` applies to each input relation: its default is 1024 in `auto`
+and 1 in `gpu`, with a maximum of 1,000,000. `gpuMaxPairs` defaults to
+1,000,000 and can be at most 2,097,120; the candidate count is checked before
+GPU output allocation. Automatic execution falls back to Lean CPU operations
+on device or capacity failures, preserving the full answer.
+
+The mixed path adds non-enumerable `execution` metadata to row arrays and
+graph datasets. An ordinary CPU result may lack it; ASK remains a boolean
+and explicitly formatted results retain their existing shape. The registered
+`gpuSparqlStage` node invokes this same query path with required GPU execution
+and records its IO assumptions in pipeline evidence.
+
+Lean proves the pure composition of checked replies and the mixed plan returns
+the reference SPARQL answer for arbitrary raw device replies, using CPU
+continuations when validation refuses. The public strict GPU mode reports a
+refusal instead. The registry still names `GpuSparqlDeviceLaw` for the actual
+IO session: the theorem establishes it for the pure checked-reply function,
+while the stateful session and ABI correspondence is covered by integration
+tests.
+
+This requires a rebuilt engine exposing `datasetQueryGpuBegin`,
+`datasetQueryGpuStep`, `datasetQueryGpuRestart` and `datasetQueryGpuClose`;
+an older prebuilt engine does not acquire these entries
+from a JavaScript update alone. Placement is a conservative cardinality
+heuristic, not a calibrated timing model, and no physical-GPU speedup is
+claimed. See the [architecture, proof boundary and validation record](../../docs/designissues/2026-11-22-mixed-gpu-sparql.md).
+
+## GDSL PVGraph for other apps
+
+The `@factoidal/core/gdsl` subpath exposes the typed PVGraph API.
+**Lean 4 owns graph construction, admission and reference execution.**
+JavaScript marshals calls into the compiled Wasm engine.
+
+```js
+import {createPVGraphWasm} from "@factoidal/core/gdsl";
+import {loadEngine} from "@factoidal/core";
+
+const g = await createPVGraphWasm(loadEngine);
+const input = g.input("words");
+const doubled = g.op("u32.map.mul",{x:input},{value:2},
+  {resultType:"buffer<u32>"});
+g.output("answer",doubled);
+const program = await g.build();
+const outputs = await g.evaluate(program,{words:[1,2,3]});
+// outputs.answer: [2,4,6]
+```
+
+The [GDSL app example](https://danbri.github.io/factoidal/web/hub/gdsl-app/)
+uses this public API to mix two signals and compute their prefix sum. It
+includes editable inputs, CPU and GPU execution, and a downloadable
+standalone HTML app. It loads local modules and matching Wasm; npm
+publication is a separate step.
+
+The web runtime built from
+[`e0666850902b`](https://github.com/danbri/factoidal-builds/releases/tag/build-e0666850902b-web)
+exposes `pvgraphBuild`, `pvgraphAdmit`, `pvgraphEvaluate` and
+`pvgraphGpuPlan`. Older runtimes missing an export refuse the call.
+
+To request device execution, use `runPVGraph` on the same program:
+
+```js
+import {createPVGraphWasm, runPVGraph} from "@factoidal/core/gdsl";
+import {loadEngine} from "@factoidal/core";
+
+const g = await createPVGraphWasm(loadEngine);
+const input = g.input("words");
+const doubled = g.op("u32.map.mul", {x: input}, {value: 2},
+  {resultType: "buffer<u32>"});
+const cumulative = g.op("u32.scan.sum", {x: doubled}, {},
+  {resultType: "buffer<u32>"});
+g.output("answer", cumulative);
+const pvgraph = await g.build();
+const result = await runPVGraph({
+  pvgraph, bindings: {words: [1, 2, 3]}, loadEngine,
+  minWords: 0, // Try the device for this small demonstration.
+  verifyWithLean: true
+});
+// result.outputs.answer: [2, 6, 12]
+// result.status: "gpu-observed" or "lean-reference"
+```
+
+For a browser app without a package manager, preserve `browser.js`,
+`gdsl.mjs`, `lib/` and the matching `l4-assets/` under a local directory
+such as `vendor/factoidal/`. Use `./vendor/factoidal/gdsl.mjs` and
+`./vendor/factoidal/browser.js` as the imports. Serve the files over HTTP
+on localhost or HTTPS. The loader resolves the Wasm assets beside itself.
+The Hub example gives the complete copyable integration and local setup.
+
+Automatic execution falls back for the whole PVGraph when its GPU plan is
+ineligible, the workload is small (default `minWords:1024`), or device
+execution fails. `requireGPU:true` refuses instead. The CPU fallback is
+the same compiled Lean evaluator. This differs from SPARQL's higher-level
+planner, which can place separate joins on different backends. Scan is
+GPU eligible; reduction currently selects the reference evaluator.
+
+Construction uses registered typed operations, not arbitrary JavaScript
+functions. The browser runs prebuilt Wasm and needs no Lean compiler.
+New Lean theorems are checked with the Lean toolkit. GPU comparison records
+observed agreement for the supplied inputs; compiler and device behaviour
+remain outside that observation's proof boundary.
+
+The lower-level `@factoidal/core/gpu-resident` API is independent of
+PVGraph and provides no certified GPU lowering.
 
 Specification: [GDSL 0.2](../../docs/specs/gdsl-0.2.md).
-This npm subpath appears in the next published package release; the
-GitHub source is available now.
 
 ## Experimental GPU-resident compute resources
 

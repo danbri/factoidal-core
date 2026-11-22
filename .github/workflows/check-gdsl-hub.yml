@@ -1,14 +1,19 @@
-name: GDSL one-language graph Hub and specification
+name: GDSL Lean/Wasm Hub and specification
 on:
   pull_request:
     paths:
       - 'docs/specs/gdsl-0.2.md'
-      - 'docs/specs/gssl-0.1.md'
       - 'docs/web/hub/gssl/**'
+      - 'docs/web/hub/gpu-sparql/**'
+      - 'docs/web/hub/gdsl-app/**'
       - 'docs/.eleventy.js'
       - 'npm/factoidal/gdsl.*'
       - 'npm/factoidal/lib/gdsl-*.mjs'
+      - 'npm/factoidal/test/gdsl.test.mjs'
       - 'tests/gdsl_hub.test.mjs'
+      - 'tools/gpu-sparql-hub-smoke.mjs'
+      - 'tools/gdsl-app-smoke.mjs'
+      - 'tests/web-demos/gdsl_app_browser.mjs'
       - '.github/workflows/check-gdsl-hub.yml'
   workflow_dispatch: {}
 permissions:
@@ -27,28 +32,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify actual graph runtime syntax and exact source
+      - name: Verify Lean/Wasm host UI source
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           node --check npm/factoidal/gdsl.mjs
-          node --check npm/factoidal/lib/gdsl-graph.mjs
-          node --check npm/factoidal/lib/gdsl-webgpu.mjs
+          node --check npm/factoidal/lib/gdsl-wasm-builder.mjs
+          node --check npm/factoidal/lib/gdsl-examples.mjs
           node --check docs/web/hub/gssl/graph-explorer.mjs
           node --check docs/web/hub/gssl/app.mjs
+          node --check docs/web/hub/gpu-sparql/app.mjs
+          node --check docs/web/hub/gpu-sparql/fixtures.mjs
+          node --check tools/gpu-sparql-hub-smoke.mjs
+          node --check docs/web/hub/gdsl-app/app.mjs
+          node --check docs/web/hub/gdsl-app/example.mjs
+          node --check tools/gdsl-app-smoke.mjs
+          node --check tests/web-demos/gdsl_app_browser.mjs
+          node --test tests/gdsl_hub.test.mjs npm/factoidal/test/gdsl.test.mjs
           mkdir -p "$RUNNER_TEMP/gdsl-hub"
           git rev-parse HEAD > "$RUNNER_TEMP/gdsl-hub/commit.txt"
           sha256sum docs/specs/gdsl-0.2.md docs/web/hub/gssl/*.mjs \
+            docs/web/hub/gpu-sparql/* tools/gpu-sparql-hub-smoke.mjs \
+            docs/web/hub/gdsl-app/* tools/gdsl-app-smoke.mjs \
+            tests/web-demos/gdsl_app_browser.mjs \
             npm/factoidal/gdsl.mjs npm/factoidal/lib/gdsl-*.mjs \
             tests/gdsl_hub.test.mjs > "$RUNNER_TEMP/gdsl-hub/source.sha256"
-      - name: Common syntax, five examples, Hub frontend and package surface
-        run: |
-          node --test tests/gdsl_hub.test.mjs
-          node --test npm/factoidal/test/gdsl.test.mjs
       - name: Install offline Eleventy from vendored cache
         run: bash third_party/eleventy/install.sh docs
-      - name: Render and inspect the actual published site layout
+      - name: Render static Hub and verify deployment assets
         shell: bash
         run: |
           set -euo pipefail
@@ -62,23 +74,36 @@ jobs:
             docs/_site/web/hub/gssl/graph-explorer.mjs \
             docs/_site/web/hub/gssl/app.mjs \
             docs/_site/web/hub/gssl/style.css \
+            docs/_site/web/hub/gpu-sparql/index.html \
+            docs/_site/web/hub/gpu-sparql/app.mjs \
+            docs/_site/web/hub/gpu-sparql/fixtures.mjs \
+            docs/_site/web/hub/gpu-sparql/style.css \
+            docs/_site/web/hub/gdsl-app/index.html \
+            docs/_site/web/hub/gdsl-app/app.mjs \
+            docs/_site/web/hub/gdsl-app/example.mjs \
+            docs/_site/web/hub/gdsl-app/style.css \
+            docs/_site/npm/factoidal/browser.js \
+            docs/_site/npm/factoidal/lib/api.mjs \
             docs/_site/npm/factoidal/gdsl.mjs \
-            docs/_site/npm/factoidal/lib/gdsl-graph.mjs \
-            docs/_site/npm/factoidal/lib/gdsl-webgpu.mjs \
+            docs/_site/npm/factoidal/lib/gdsl-wasm-builder.mjs \
             docs/_site/npm/factoidal/lib/gdsl-examples.mjs \
             docs/_site/npm/factoidal/lib/gpu-resident.mjs
           do test -s "$f" || { echo "missing output: $f"; exit 1; }
           done
+          test ! -e docs/_site/npm/factoidal/lib/gdsl-graph.mjs
           grep -q 'gdsl-graph-title' docs/_site/web/hub/gssl/index.html
           grep -q 'gdsl-0.2.md' docs/_site/web/hub/gssl/index.html
           grep -q 'graph-explorer.mjs' docs/_site/web/hub/gssl/app.mjs
-          grep -q 'gdsl.mjs' docs/_site/web/hub/gssl/graph-explorer.mjs
-          grep -q 'GDSL' docs/_site/web/hub/index.html
+          grep -q 'createPVGraphWasm' docs/_site/web/hub/gssl/graph-explorer.mjs
+          grep -q 'value="/factoidal/npm/factoidal/browser.js"' docs/_site/web/hub/gpu-sparql/index.html
+          grep -q 'gpu-sparql/app.mjs' docs/_site/web/hub/gpu-sparql/index.html
+          grep -q 'gdsl-app/app.mjs' docs/_site/web/hub/gdsl-app/index.html
+          grep -q 'value="/factoidal/npm/factoidal/"' docs/_site/web/hub/gdsl-app/index.html
           tail -n 7 "$RUNNER_TEMP/gdsl-hub/site-build.log"
-      - name: Persist exact source and site evidence
+      - name: Save evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gdsl-graph-hub-evidence
+          name: gdsl-lean-wasm-hub
           path: ${{ runner.temp }}/gdsl-hub/
           retention-days: 30

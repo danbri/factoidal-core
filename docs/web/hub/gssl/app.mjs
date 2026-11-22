@@ -1,4 +1,4 @@
-import {mountGdslGraph} from "./graph-explorer.mjs";
+import {mountPVGraph} from "./graph-explorer.mjs";
 import {WGSL,parseWords,uint32,runReference,equalWords}
   from "./lab-core.mjs";
 import {createGsslResidentSession}
@@ -249,4 +249,4 @@ window.addEventListener("pagehide",()=>{
 stats();
 
 // All domain examples run through the single canonical GDSL graph explorer.
-mountGdslGraph();
+mountPVGraph();

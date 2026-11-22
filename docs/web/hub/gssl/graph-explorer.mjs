@@ -1,68 +1,32 @@
-// One GDSL graph under every domain example: editor, typed link renderer,
-// JS builder view, CPU reference, and actual WebGPU observed execution.
-// Text input is parsed and never run as host JavaScript. GPU results are not
-// certified by Lean or by equality of a handful of test cases.
-import {
-  example,listExamples,fromSexpr,toSexpr,runCPU,runGraphGPU,
-  CORE_OPERATORS,createGsslResidentSession,
-} from "../../../npm/factoidal/gdsl.mjs";
+// PVGraph workbench. JS only renders UI and marshals commands.
+// Lean/Wasm owns construction, admission, types and evaluation.
+import {createPVGraphWasm,runPVGraph,example,listExamples}
+  from "../../../npm/factoidal/gdsl.mjs";
+import {loadEngine} from "../../../npm/factoidal/browser.js";
 
 const $=id=>document.getElementById(id);
-const status=$("gdsl-status"),source=$("gdsl-sexpr"),
-  bindings=$("gdsl-bindings"),options=$("gdsl-example");
-let session=null,active=false;
-const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const status=$("gdsl-status"),source=$("gdsl-json"),bindings=$("gdsl-bindings"),
+  options=$("gdsl-example");
 const ns="http://www.w3.org/2000/svg";
+let bridgePromise=null;
+let active=false;
+const bridge=()=>bridgePromise??=(createPVGraphWasm(loadEngine));
 function svg(tag,attributes={},text=null){
   const el=document.createElementNS(ns,tag);
   for(const [k,v] of Object.entries(attributes))el.setAttribute(k,String(v));
   if(text!==null)el.textContent=String(text);
   return el;
 }
-function setStatus(message,kind="neutral"){
-  status.textContent=message;status.dataset.kind=kind;
+function setStatus(msg,kind="neutral"){
+  status.textContent=msg;
+  status.dataset.kind=kind;
 }
 function busy(v){
   active=v;
-  for(const id of ["gdsl-example","gdsl-check","gdsl-cpu","gdsl-gpu","gdsl-release"]){
+  for(const id of ["gdsl-example","gdsl-check","gdsl-cpu","gdsl-gpu"]){
     const el=$(id);
-    if(id==="gdsl-release")el.disabled=v||!session;
-    else el.disabled=v;
+    if(el)el.disabled=v;
   }
-}
-function inputMap(doc,id){
-  const map=new Map();
-  for(const l of doc.links)if(l.to.node===id)map.set(l.to.port,l.from.node);
-  return map;
-}
-function builderSource(doc){
-  const rows=["import { graph } from '@factoidal/core/gdsl';","const g = graph();"];
-  const refs=new Map();
-  for(const [index,node] of doc.nodes.entries()){
-    const variable="n"+index;
-    const incoming=inputMap(doc,node.id);
-    let line;
-    if(node.op==="core.input")
-      line="g.input("+JSON.stringify(node.params.name)+","+
-        JSON.stringify(node.params.type)+",{id:"+
-        JSON.stringify(node.id)+"})";
-    else if(node.op==="core.output")
-      line="g.output("+JSON.stringify(node.params.name)+","+
-        refs.get(incoming.get("in"))+","+
-        JSON.stringify(node.params.type)+",{id:"+
-        JSON.stringify(node.id)+"})";
-    else{
-      const s=CORE_OPERATORS.get(node.op);
-      const args=Object.keys(s.inputs).map(port=>
-        JSON.stringify(port)+":"+refs.get(incoming.get(port))).join(",");
-      line="g.op("+JSON.stringify(node.op)+",{"+args+"},"+
-        JSON.stringify(node.params)+",{id:"+JSON.stringify(node.id)+"})";
-    }
-    rows.push("const "+variable+" = "+line+";");
-    refs.set(node.id,variable);
-  }
-  rows.push("const document = g.build();");
-  return rows.join("\n");
 }
 function graphSVG(doc){
   const root=$("gdsl-diagram");
@@ -127,120 +91,80 @@ function graphSVG(doc){
   }
   return {nodes:doc.nodes.length,links:doc.links.length};
 }
-function showStats(run){
-  if(!run){
-    $("gdsl-resources").textContent="No GPU session allocated.";
-    return;
-  }
-  const s=run.resident;
-  $("gdsl-resources").textContent=JSON.stringify({
-    status:run.status,computePasses:run.gpuDispatches,
-    uploads:s.uploads,reusedUploads:s.reuses,compiledPipelines:s.createdPipelines,
-    commandSubmissions:s.submissions,readbacks:s.readbacks,
-    retainedBuffers:s.resourceCount,trackedBytes:s.usedBytes,
-  },null,2);
-  $("gdsl-trace").textContent=run.trace.map(t=>
-    t.id.padEnd(20)+" "+t.op.padEnd(23)+" "+t.status+" ("+t.length+" words)").join("\n");
-}
-function documentAndBindings(){
-  if(source.value.length>65536||bindings.value.length>65536)
-    throw new RangeError("GDSL editor input is bounded.");
-  const doc=fromSexpr(source.value);
-  let supplied;
-  try{supplied=JSON.parse(bindings.value);}
-  catch{throw new SyntaxError("Input bindings must be valid JSON.");}
+
+function inputDocument(){
+  if(source.value.length>8388608||bindings.value.length>8388608)
+    throw new RangeError("PVGraph input exceeds editor limit");
+  const doc=JSON.parse(source.value);
+  const supplied=JSON.parse(bindings.value);
   if(!supplied||Array.isArray(supplied)||typeof supplied!=="object")
-    throw new TypeError("GDSL inputs must be a JSON object.");
+    throw new TypeError("Named inputs must be a JSON object");
   return {doc,supplied};
 }
-function validate(){
-  const {doc}=documentAndBindings();
-  $("gdsl-js").textContent=builderSource(doc);
-  graphSVG(doc);
-  setStatus("Admitted canonical GDSL 0.2 graph: "+doc.nodes.length+
-    " operator nodes, "+doc.links.length+" typed links.","success");
-  return doc;
+async function validate(){
+  const {doc}=inputDocument();
+  const accepted=await (await bridge()).admit(doc);
+  graphSVG(accepted);
+  $("gdsl-js").textContent=accepted.nodes
+    .map(n=>n.id+" : "+n.op+" "+JSON.stringify(n.params)).join("\n");
+  setStatus("Lean/Wasm admitted "+accepted.nodes.length+
+    " operator nodes and "+accepted.links.length+" typed links.","success");
+  return accepted;
 }
-function preset(id){
-  const e=example(id);
-  source.value=e.sexpr;
+async function preset(id){
+  const e=await example(id,loadEngine);
+  source.value=JSON.stringify(e.pvgraph,null,2);
   bindings.value=JSON.stringify(e.input,null,2);
   $("gdsl-description").textContent=e.description;
   $("gdsl-cpu-output").textContent="Not executed";
   $("gdsl-gpu-output").textContent="Not executed";
-  $("gdsl-agreement").textContent="No comparison yet.";
-  $("gdsl-agreement").dataset.match="pending";
-  showStats();
-  validate();
+  $("gdsl-agreement").textContent="No GPU comparison";
+  $("gdsl-trace").textContent="Reference execution is performed by Lean/Wasm.";
+  $("gdsl-resources").textContent="No PVGraph GPU session";
+  await validate();
 }
-function runCPUOnly(){
-  if(active)return;
-  try{
-    const {doc,supplied}=documentAndBindings();
-    validate();
-    const run=runCPU(doc,supplied);
-    $("gdsl-cpu-output").textContent=JSON.stringify(run.outputs,null,2);
-    $("gdsl-gpu-output").textContent="Not executed for this graph.";
-    $("gdsl-agreement").textContent="CPU reference only (no device execution).";
-    $("gdsl-agreement").dataset.match="pending";
-    $("gdsl-trace").textContent=run.trace.map(t=>
-      t.id+" / "+t.op+" → "+JSON.stringify(t.value)).join("\n");
-    setStatus("CPU graph completed with "+doc.nodes.length+" nodes.","success");
-  }catch(e){setStatus(e?.message||String(e),"error");}
+async function runCPU(){
+  const doc=await validate();
+  const {supplied}=inputDocument();
+  const outputs=await (await bridge()).evaluate(doc,supplied);
+  $("gdsl-cpu-output").textContent=JSON.stringify(outputs,null,2);
+  $("gdsl-gpu-output").textContent="Not executed";
+  $("gdsl-agreement").textContent="Lean/Wasm reference evaluation only.";
 }
-async function runBoth(){
+async function runGPU(){
+  const doc=await validate();
+  const {supplied}=inputDocument();
+  const observed=await runPVGraph({
+    pvgraph:doc,bindings:supplied,loadEngine,requireGPU:true,minWords:0
+  });
+  const expected=await (await bridge()).evaluate(doc,supplied);
+  const actual=observed.outputs;
+  const agreement=JSON.stringify(expected)===JSON.stringify(actual);
+  $("gdsl-cpu-output").textContent=JSON.stringify(expected,null,2);
+  $("gdsl-gpu-output").textContent=JSON.stringify({
+    status:observed.status,outputs:actual,
+    gpuDispatches:observed.dispatches,timing:observed.timing
+  },null,2);
+  $("gdsl-agreement").textContent=agreement
+    ?"Complete GPU readback equals Lean/Wasm reference for these inputs."
+    :"GPU and Lean/Wasm disagree; no correct output claimed.";
+  $("gdsl-agreement").dataset.match=agreement?"yes":"no";
+  $("gdsl-resources").textContent=JSON.stringify(observed.device,null,2);
+  setStatus(agreement?"WebGPU observed; source-level proof is separate.":
+    "GPU output differs from Lean/Wasm",agreement?"success":"error");
+  if(!agreement)throw Error("PVGraph GPU/Lean mismatch");
+}
+async function action(fn){
   if(active)return;
   busy(true);
-  try{
-    const {doc,supplied}=documentAndBindings();
-    validate();
-    const sourceAtStart=source.value,bindingsAtStart=bindings.value;
-    const cpu=runCPU(doc,supplied);
-    $("gdsl-cpu-output").textContent=JSON.stringify(cpu.outputs,null,2);
-    $("gdsl-gpu-output").textContent="GPU dispatch in progress…";
-    setStatus("Executing the same admitted GDSL graph on WebGPU…");
-    if(!globalThis.isSecureContext||!globalThis.navigator?.gpu)
-      throw new Error("No secure WebGPU device; the CPU result is available.");
-    if(!session)session=await createGsslResidentSession({
-      byteBudget:8*1024*1024,inspectMaxWords:256});
-    const gpu=await runGraphGPU(doc,supplied,{session});
-    if(source.value!==sourceAtStart||bindings.value!==bindingsAtStart)
-      throw new Error("Graph changed during GPU run; stale device answer discarded.");
-    const same=eq(cpu.outputs,gpu.outputs);
-    $("gdsl-gpu-output").textContent=JSON.stringify(gpu.outputs,null,2);
-    $("gdsl-agreement").dataset.match=same?"yes":"no";
-    $("gdsl-agreement").textContent=same
-      ?"Exact CPU vs device equality for this admitted graph ("+
-        gpu.gpuDispatches+" GPU operator passes)."
-      :"Mismatch between CPU and actual GPU output. No agreement claimed.";
-    showStats(gpu);
-    setStatus("WebGPU returned "+Object.keys(gpu.outputs).length+
-      " named outputs; status observed-not-proven.",same?"success":"error");
-  }catch(e){
-    $("gdsl-gpu-output").textContent="No complete GPU result.";
-    $("gdsl-agreement").textContent="GPU refused or failed; no agreement claimed.";
-    $("gdsl-agreement").dataset.match="pending";
-    setStatus(e?.message||String(e),"error");
-  }finally{busy(false);}
+  try{await fn();}catch(e){setStatus(e?.message||String(e),"error");}
+  finally{busy(false);}
 }
-export function mountGdslGraph(){
-  const presets=listExamples();
-  if(!presets.length)throw Error("GDSL has no registered graph examples.");
-  options.addEventListener("change",()=>preset(options.value));
-  $("gdsl-check").addEventListener("click",()=>{
-    if(active)return;
-    try{validate();}catch(e){setStatus(e?.message||String(e),"error");}
-  });
-  $("gdsl-cpu").addEventListener("click",runCPUOnly);
-  $("gdsl-gpu").addEventListener("click",runBoth);
-  $("gdsl-release").addEventListener("click",()=>{
-    if(active||!session)return;
-    try{session.close();}catch(e){setStatus(e?.message||String(e),"error");return;}
-    session=null;showStats();busy(false);
-    setStatus("GDSL GPU session released. CPU checker remains usable.");
-  });
-  window.addEventListener("pagehide",()=>{
-    if(session&&!active){try{session.close();}catch{}}
-  });
-  preset("signal");
+export function mountPVGraph(){
+  if(!listExamples().length)throw Error("No PVGraph examples");
+  options.addEventListener("change",()=>action(()=>preset(options.value)));
+  $("gdsl-check").addEventListener("click",()=>action(validate));
+  $("gdsl-cpu").addEventListener("click",()=>action(runCPU));
+  $("gdsl-gpu").addEventListener("click",()=>action(runGPU));
+  action(()=>preset("signal"));
 }

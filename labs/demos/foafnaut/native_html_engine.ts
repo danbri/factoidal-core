@@ -36,8 +36,9 @@ export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:n
 export type PressAnswer = {control:string|null;sourceNode?:number|null;href?:string;rects:number[][]};
 /** A skip of liberal mode (WebAccept.Diagnostic.json): what Lean did not draw or run, and why. */
 export type Diagnostic = {source:"System";severity:string;feature:string;where:string;action:string;message:string};
-/** `wantsSerif`: the page's text resolves to serif and the engine holds no serif face (serif_font.ts). */
-export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact;diagnostics?:Diagnostic[];wantsSerif?:boolean};
+/** `wantsSerif`, `wantsMono`: the page's text resolves to serif, or to monospace, and the engine
+holds no such face (serif_font.ts). */
+export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact;diagnostics?:Diagnostic[];wantsSerif?:boolean;wantsMono?:boolean};
 export type Inspection = {
   baseURL:string;
   title:string;
@@ -127,10 +128,11 @@ a JSON head and raw sections, with no Base64. The buffer is the host's own copy.
 export type BytesBackend=(html:string,requestJSON:string,width:number,height:number)=>ArrayBuffer;
 /** A font file as bytes (`web_document_font_call_bin`, WebDocument.fontLoadBin): no Base64
 and no JSON, so the file is not copied onto the call stack. The answer is the fontLoad JSON. */
-/** `fallback`: "serif" holds the serif face (mode 3, WebDocument.loadSerifFont), "web" a web font (2),
-true a fallback font (1), false replaces the held list (0). */
-export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean|"web"|"serif")=>string;
-const fontMode=(fallback:boolean|"web"|"serif")=>fallback==="serif"?3:fallback==="web"?2:fallback?1:0;
+/** `fallback`: "mono" holds the monospace face (mode 4, WebDocument.loadMonoFont), "serif" the
+serif face (3, WebDocument.loadSerifFont), "web" a web font (2), true a fallback font (1), false
+replaces the held list (0). */
+export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean|"web"|"serif"|"mono")=>string;
+const fontMode=(fallback:boolean|"web"|"serif"|"mono")=>fallback==="mono"?4:fallback==="serif"?3:fallback==="web"?2:fallback?1:0;
 /** An image as bytes (`web_document_image_call_bin`, WebDocument.imageLoadBin), held by key
 and SHA-256; undefined when the engine has no such export. The answer is the imageLoad JSON. */
 export type ImageBackend=(bytes:Uint8Array,key:string,sha256:string)=>string;
@@ -199,15 +201,35 @@ export function nativeBackends(path:string):Backends {
 export function nativeBackend(path:string):DocumentBackend {return nativeBackends(path).text;}
 /** Backend 1: the Wasm module. */
 function wasmBackends(module:Module):Backends {
+  const callDocument=(name:string,html:string,request:string,width:number,height:number,extra:number[]=[])=>{
+    const args=[width,height,...extra],numeric=args.map(()=>"number");
+    if(html.length+request.length<=512*1024)
+      return module.ccall(name,"number",["string","string",...numeric],[html,request,...args]);
+
+    // ccall copies string arguments onto the Wasm stack. EPUB archives and
+    // image-bearing reader pages can exceed that stack even within source limits.
+    if(!module._malloc||!module._free)throw new Error("Published Lean HTML engine has no heap allocator");
+    const source=encoder.encode(html),options=encoder.encode(request);
+    const input=module._malloc(source.length+options.length+2);
+    if(!input)throw new Error("Published Lean HTML engine allocation failed");
+    try{
+      const requestAt=input+source.length+1,heap=module.HEAPU8;
+      heap.set(source,input);
+      heap[requestAt-1]=0;
+      heap.set(options,requestAt);
+      heap[requestAt+options.length]=0;
+      return module.ccall(name,"number",["number","number",...numeric],[input,requestAt,...args]);
+    }finally{module._free(input);}
+  };
   return {
     text:(html,request,width,height)=>{
-      const pointer=module.ccall("web_document_call","number",["string","string","number","number"],[html,request,width,height]);
+      const pointer=callDocument("web_document_call",html,request,width,height);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return module.UTF8ToString(pointer);}
       finally{module.ccall("web_render_free",null,["number"],[pointer]);}
     },
     bytes:(html,request,width,height)=>{
-      const pointer=module.ccall("web_document_call_bin","number",["string","string","number","number","number"],[html,request,width,height,0]);
+      const pointer=callDocument("web_document_call_bin",html,request,width,height,[0]);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       // The first word is the total length. One copy out of the Wasm memory.
       try{const heap=module.HEAPU8,total=new DataView(heap.buffer,heap.byteOffset+pointer,4).getUint32(0,true);
@@ -378,12 +400,13 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // Lean reads the font once and holds it; later renders draw with it.
     // fallback:true adds the font to the engine's list, after the fonts it holds;
     // otherwise the font replaces the list. The answer counts the fonts held.
-    fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string,fallback:boolean|"serif"=false)=>
-      documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256,...(fallback==="serif"?{serif:true}:fallback?{fallback:true}:{})}) as FontLoaded,
+    fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string,fallback:boolean|"serif"|"mono"=false)=>
+      documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256,...(fallback==="serif"?{serif:true}:fallback==="mono"?{mono:true}:fallback?{fallback:true}:{})}) as FontLoaded,
     // The same, with the file as bytes: no Base64, and no size limit from the call stack.
     // fallback:"serif" holds the serif face, which draws the text whose family resolves to
     // serif (FontFaceRule.genericOf); a host gives it when a render answers wantsSerif.
-    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string,fallback:boolean|"serif"=false)=>{
+    // fallback:"mono" holds the monospace face, likewise for monospace text and wantsMono.
+    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string,fallback:boolean|"serif"|"mono"=false)=>{
       const result=JSON.parse(backends.font(bytes,fontFamily,fontSha256,fallback));
       if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
       return result as FontLoaded;
@@ -434,6 +457,11 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       try{return documentCall("",{...request,op:"cookies"}) as {cookie?:string;jar?:string;error?:string};}catch{return undefined;}},
     download:(request:{contentType:string;disposition:string;url:string})=>{
       try{return documentCall("",{...request,op:"download"}) as {action:"show"}|{action:"save";name:string};}catch{return undefined;}},
+    epubReader:(bytes:Uint8Array,epubChapter:number)=>{
+      let text="";
+      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      return documentCall(btoa(text),{op:"epubReader",epubChapter}) as {source:string};
+    },
     decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
       if(!backends.decode)return undefined;
       const answer=backends.decode(bytes,charset,fallback,locale),i=answer.indexOf("\n");
@@ -470,6 +498,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       const layers:HTMLLayers={layers:place,page:sceneOf(result.page,width,place.bandHeight),chrome:sceneOf(result.chrome,width,Math.max(1,place.top))};
       if(Array.isArray(result.diagnostics))layers.diagnostics=result.diagnostics as Diagnostic[];
       if(result.wantsSerif===true)layers.wantsSerif=true;
+      if(result.wantsMono===true)layers.wantsMono=true;
       return layers;
     },
     // Lean decides what a chrome click, a key, an address and a link mean.

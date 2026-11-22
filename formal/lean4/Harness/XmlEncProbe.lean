@@ -39,6 +39,10 @@ structure Score where
   pass : Nat := 0
   fail : Nat := 0
   hostOnly : Nat := 0
+  xfail : Nat := 0
+  /-- Defective test data (`cases.json` outcome `defective`): reported
+  after the total, not in it. -/
+  excluded : Nat := 0
   failures : List String := []
 
 def Score.ok (s : Score) (b : Bool) (name : String) : Score :=
@@ -55,6 +59,19 @@ def run (f : (List (Req × Ans) → Cipher) → Prims → String → String) (ar
   match parseJson (f native nativePrims arg.toString) with
   | .ok j => j
   | .error _ => .object [("ok", .bool false), ("error", .string "unparseable envelope")]
+
+/-- `decryptWith` on the replay cipher with no answers: the first AES request
+comes back as `need`, so a host-only case shows the key the Lean code
+derived for it. -/
+def runReplay (arg : Json) : Json :=
+  match parseJson (L4Wasm.Ops.XmlEnc.decryptWith replayCipher nativePrims arg.toString) with
+  | .ok j => j
+  | .error _ => .object [("ok", .bool false), ("error", .string "unparseable envelope")]
+
+/-- The `need` request of an envelope: its op and its key (base64). -/
+def needOf (j : Json) : Option (String × String) := do
+  let n ← j.field? "need"
+  pure (← n.getString? "op", ← n.getString? "key")
 
 def isOk (j : Json) : Bool := j.field? "ok" == some (.bool true) && (j.getString? "document").isSome
 
@@ -81,6 +98,33 @@ def publicJwk (k : Json) : Json :=
   match k with
   | .object fs => .object (fs.filter (·.1 != "d"))
   | j => j
+
+/-- A stand-in answer to an AES request of the writer (`aes-kw-wrap`,
+`aes-gcm-encrypt`): octets of the right length. Only the key encryption key
+of the request is checked, not the AES output. -/
+def answerOf (need : Json) : Option Json := do
+  let op ← need.getString? "op"
+  let data ← need.getString? "data" >>= base64Decode?
+  let extra ← if op == "aes-kw-wrap" then some 8 else if op == "aes-gcm-encrypt" then some 16 else none
+  pure (.object [("request", need),
+    ("answer", .object [("ok", .string (base64 ⟨Array.replicate (data.size + extra) (7 : UInt8)⟩))])])
+
+/-- `encryptWith` on the replay cipher, answering each request with
+`answerOf`: the result and the key of the `aes-kw-wrap` request (base64). -/
+def driveEncrypt (fields : List (String × Json)) : (fuel : Nat) → List Json → Option String → Json × Option String
+  | 0, _, k => (.object [("ok", .bool false), ("error", .string "too many requests")], k)
+  | f + 1, answers, k =>
+      let arg := Json.object (fields ++ [("answers", .array answers)])
+      let r := match parseJson (L4Wasm.Ops.XmlEnc.encryptWith replayCipher nativePrims arg.toString) with
+        | .ok j => j
+        | .error _ => .object [("ok", .bool false), ("error", .string "unparseable envelope")]
+      match r.field? "need" with
+      | none => (r, k)
+      | some need =>
+          let k' := if need.getString? "op" == some "aes-kw-wrap" then need.getString? "key" else k
+          match answerOf need with
+          | some ans => driveEncrypt fields f (answers ++ [ans]) k'
+          | none => (r, k')
 
 def keysOfFixture (keys : Json) : Keys :=
   match keys with
@@ -150,6 +194,35 @@ def main (args : List String) : IO UInt32 := do
     let d := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", (e.field? "document").getD .null), ("keys", keys)])
     let hidden := (((e.getString? "document").getD "secret").splitOn "secret").length == 1
     s := s.ok (isOk e && hidden && sameDoc d "<a xmlns=\"urn:x\"><b>secret é</b></a>") s!"encrypt {alg} {kt}: round trip"
+  -- The writer's §5.4 methods (PBKDF2 in key agreement, xenc11:DerivedKey), on
+  -- HACL* ECDH and PBKDF2: the key encryption key that Lean's writer derives is
+  -- the one that Lean's reader derives from the written document.
+  let fxKey (kid : String) : Json := match keys with
+    | .array ks => (ks.find? (·.getString? "kid" == some kid)).getD .null
+    | _ => .null
+  let pbk (prf : String) (it : Nat) : Json :=
+    .object [("algorithm", .string "pbkdf2"), ("prf", .string prf), ("iterations", .number (toString it))]
+  let writeCases : List (String × Json × List (String × Json) × String) :=
+    [("P-256 agreement, PBKDF2 HMAC-SHA-256", publicJwk (fxKey "ec-1"),
+        [("keyDerivation", pbk "hmac-sha256" 1000)], "PBKDF2-params"),
+     ("X25519 agreement, PBKDF2 HMAC-SHA-512, AES-256", publicJwk (fxKey "x-1"),
+        [("keyDerivation", pbk "hmac-sha512" 20), ("algorithm", .string "aes256-gcm")], "PBKDF2-params"),
+     ("P-256 agreement, Concat KDF", publicJwk (fxKey "ec-1"), [], "ConcatKDFParams"),
+     ("DerivedKey, Concat KDF", fxKey "kek128", [("derivedKey", .bool true)], "xenc11:DerivedKey"),
+     ("DerivedKey, PBKDF2 HMAC-SHA-1", fxKey "kek256",
+        [("derivedKey", .bool true), ("keyDerivation", pbk "hmac-sha1" 10)], "xenc11:DerivedKey"),
+     ("DerivedKey, PBKDF2 HMAC-SHA-384, kw-aes256", fxKey "kek128",
+        [("derivedKey", .bool true), ("keyDerivation", pbk "hmac-sha384" 7), ("keyWrap", .string "kw-aes256")],
+        "xenc11:DerivedKey")]
+  for (name, recip, extra, marker) in writeCases do
+    let rnd ← IO.getRandomBytes 112
+    let (e, kek) := driveEncrypt ([("document", .string "<a xmlns=\"urn:x\"><b>secret é</b></a>"),
+      ("recipient", recip), ("random", .string (base64 rnd))] ++ extra) 6 [] none
+    let doc := (e.getString? "document").getD ""
+    let need := needOf (runReplay (.object [("document", .string doc), ("keys", keys)]))
+    s := s.ok (isOk e && kek.isSome && (doc.splitOn marker).length ≥ 2 && (doc.splitOn "secret").length == 1 &&
+        need.map (·.1) == some "aes-kw-unwrap" && need.map (·.2) == kek)
+      s!"encrypt {name}: the reader derives the writer's key; got {(e.getString? "error").getD "ok"}"
   -- The W3C XML Encryption 1.1 test cases (tests/xmlenc/w3c/PROVENANCE.md).
   let w3cDir := (path.parent.getD ".") / "w3c"
   let w3cText ← IO.FS.readFile (w3cDir / "cases.json")
@@ -166,6 +239,31 @@ def main (args : List String) : IO UInt32 := do
           | _, _ => w3cKeys
         let r := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string doc), ("keys", caseKeys)])
         match c.getString? "outcome" with
+        | some "octets" =>
+            -- No Type (§3.1): the plaintext octets (§4.4 step 3).
+            let r := run L4Wasm.Ops.XmlEnc.decryptWith
+              (.object [("document", .string doc), ("keys", caseKeys), ("octets", .bool true)])
+            let got := (r.getString? "octets" >>= base64Decode?).map hexOf
+            s := s.ok (got.isSome && got == c.getString? "expectedHex")
+              s!"W3C {id}: octets; got {(r.getString? "error").getD (got.getD "?")}"
+        | some "defective" =>
+            -- Defective test data (no §5.2 padding block, cases.json
+            -- `defectiveNote`): the derived key must be Node's, and AES-CBC
+            -- is host-only here, so the first AES request shows it.
+            let issue := (c.getString? "issue").getD "?"
+            let want := (L4Factoidal.VC.Multibase.byteArrayOfHex? ((c.getString? "derivedKeyHex").getD "")).map base64
+            let need := needOf (runReplay (.object [("document", .string doc), ("keys", caseKeys),
+              ("octets", .bool true), ("allowCbc", .bool true)]))
+            if need.isSome && need.map (·.1) == some "aes-cbc-encrypt" && need.map (·.2) == want then
+              s := { s with excluded := s.excluded + 1 }
+            else s := s.ok false s!"W3C {id}: defective test data ({issue}): the derived key is not Node's"
+        | some "xfail" =>
+            -- An expected failure (its `issue`): the structure is accepted and
+            -- the case reaches the AES Key Wrap request natively.
+            let issue := (c.getString? "issue").getD "?"
+            let need := needOf (runReplay (.object [("document", .string doc), ("keys", caseKeys)]))
+            if need.map (·.1) == some "aes-kw-unwrap" then s := { s with xfail := s.xfail + 1 }
+            else s := s.ok false s!"W3C {id}: expected failure ({issue}) did not reach the key wrap request"
         | some "ok" =>
             if c.field? "native" == some (.bool true) then
               let expected ← IO.FS.readFile (w3cDir / ((c.getString? "expected").getD "missing"))
@@ -177,6 +275,33 @@ def main (args : List String) : IO UInt32 := do
             s := s.ok (errorHas r why && r.getString? "error" != some decryptionError)
               s!"W3C {id}: refused ({why}); got {(r.getString? "error").getD "ok"}"
   | _, _ => s := s.ok false "W3C cases: cases.json or keys.json is not JSON"
+  -- PBKDF2 key derivation (§5.4.2), Node-made documents (tests/xmlenc/make-pbkdf2.mjs).
+  let pbText ← IO.FS.readFile ((path.parent.getD ".") / "pbkdf2.json")
+  match parseJson pbText with
+  | .ok pb =>
+      let pbKeys := (pb.field? "keys").getD (.array [])
+      for c in ((pb.field? "cases").bind Json.asArray?).getD [] do
+        let name := (c.getString? "name").getD "?"
+        let doc := (c.getString? "document").getD ""
+        let arg := Json.object [("document", .string doc), ("keys", pbKeys)]
+        match c.getString? "outcome" with
+        | some "ok" =>
+            if c.field? "native" == some (.bool true) then
+              s := s.ok (sameDoc (run L4Wasm.Ops.XmlEnc.decryptWith arg) ((c.getString? "expected").getD ""))
+                s!"PBKDF2 {name}: decrypt"
+            else
+              -- The key wrap is host-only: check the key encryption key Lean
+              -- derived against the one Node derived.
+              let kek := (L4Factoidal.VC.Multibase.byteArrayOfHex? ((c.getString? "kek").getD "")).map base64
+              let need := needOf (runReplay arg)
+              s := s.ok (need.isSome && need.map (·.1) == some "aes-kw-unwrap" && need.map (·.2) == kek)
+                s!"PBKDF2 {name}: derived key encryption key"
+        | _ =>
+            let why := (c.getString? "reason").getD "?"
+            let r := run L4Wasm.Ops.XmlEnc.decryptWith arg
+            s := s.ok (errorHas r why && r.getString? "error" != some decryptionError)
+              s!"PBKDF2 {name}: refused ({why}); got {(r.getString? "error").getD "ok"}"
+  | .error _ => s := s.ok false "PBKDF2 cases: pbkdf2.json is not JSON"
   -- SAML.
   let saml := (fx.field? "saml").getD .null
   let hex (k : String) := (L4Factoidal.VC.Multibase.byteArrayOfHex? ((saml.getString? k).getD "")).getD ByteArray.empty
@@ -204,7 +329,9 @@ def main (args : List String) : IO UInt32 := do
   let r5 := sub (validate { policy with decryptKeys := {} } "encryptedId")
   s := s.ok ((r5.splitOn L4Factoidal.SAML.encryptionIssue).length == 2) s!"saml EncryptedID without a key: {r5}"
   for f in s.failures do IO.println s!"FAIL {f}"
-  IO.println s!"xmlenc-native: {s.pass} pass, {s.fail} fail, {s.hostOnly} host-only (out of {s.pass + s.fail + s.hostOnly})"
+  IO.println (s!"xmlenc-native: {s.pass} pass, {s.fail} fail, {s.hostOnly} host-only, " ++
+    s!"{s.xfail} expected failures (out of {s.pass + s.fail + s.hostOnly + s.xfail}); " ++
+    s!"{s.excluded} excluded (defective test data)")
   return (if s.fail == 0 then 0 else 1)
 
 end XmlEncProbe

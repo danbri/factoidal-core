@@ -1,0 +1,55 @@
+name: RDF UInt64 to PVGraph and Dataflow correctness
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/SPARQL/PvGraphBgpLowering.lean'
+      - 'formal/lean4/L4Factoidal/SPARQL/PvGraphHybridPlacement.lean'
+      - 'formal/lean4/L4Factoidal/Dataflow/XmlSourceGraphStage.lean'
+      - '.github/workflows/check-rdf-pvgraph-bridge.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  lean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Lean compile and axiom inspect exact source
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          timeout --kill-after=10s 900s lake build \
+            L4Factoidal.SPARQL.PvGraphBgpLowering \
+            L4Factoidal.SPARQL.PvGraphHybridPlacement \
+            L4Factoidal.Dataflow.XmlSourceGraphStage
+          mkdir -p "$RUNNER_TEMP/rdf-pvgraph"
+          git rev-parse HEAD > "$RUNNER_TEMP/rdf-pvgraph/commit.txt"
+          sha256sum L4Factoidal/SPARQL/PvGraphBgpLowering.lean \
+            L4Factoidal/SPARQL/PvGraphHybridPlacement.lean \
+            L4Factoidal/Dataflow/XmlSourceGraphStage.lean \
+            > "$RUNNER_TEMP/rdf-pvgraph/source.sha256"
+      - name: Preserve source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rdf-u64-pvgraph-lean
+          path: ${{ runner.temp }}/rdf-pvgraph/
+          if-no-files-found: warn
+          retention-days: 30

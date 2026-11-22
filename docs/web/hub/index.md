@@ -15,10 +15,11 @@ answers SPARQL 1.1 and 1.2, reasons with RDFS and OWL 2, validates with
 SHACL and ShEx, imports CSV, JSON and XML, canonicalises and signs RDF,
 serves data over HTTP, and keeps it on disk.
 
-The pages below run their examples in this page with the npm package
+The notebook pages below run their examples in this page with the npm package
 `@factoidal/core` {{ factoidalRelease.version }}, the published release
 (loaded from `{{ factoidalRelease.base }}`): edit a cell and press Run. The engine and the data stay
-in your browser.
+in your browser. The <a href="./gpu-sparql/">mixed CPU / GPU SPARQL workbench</a>
+loads a local build from this site instead, so it can exercise the current source before an npm release.
 
 ## Web platform
 
@@ -28,6 +29,7 @@ WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-pla
 
 <ul class="post-series">
   <li><a href="./foafnaut/">Foafnaut</a> — the browser in a page: tabs, an address bar for URLs, searches and commands, view source, XML with XSLT, drawn by the built-in engine with WebGPU. It works at phone width.</li>
+  <li><a href="./epub/">EPUB reader</a> — open an unencrypted EPUB 3 file in your browser.</li>
   <li><a href="./textnaut/">Textnaut</a> — the text-mode browser in a page: the built-in engine lays out a page and Textnaut shows it as a grid of characters with numbered links, as in a terminal. The terminal program: <code>npx @foafos/textnaut</code>.</li>
   <li><a href="./foafnaut/pages/start.html">Start page</a> — the page Foafnaut and Textnaut open with: sites on the web to try, grouped, each with a note on how well it works today, and copies of some openly licensed pages that open inside Foafnaut on the Hub.</li>
   <li><a href="./foafnaut/pages/index.html">Demo pages</a> — pages that show what the engine draws: scripts, WebGPU and WebGL, SVG, text, XML and XSLT. Open them in <a href="./foafnaut/">Foafnaut</a> or <a href="./textnaut/">Textnaut</a>.</li>
@@ -46,7 +48,9 @@ WebGPU. Textnaut is the same engine in a text terminal. [Web platform](./web-pla
 ## Parallel compute
 
 <ul class="post-series">
-  <li><a href="./gssl/">GDSL graph workbench</a> — one shared typed dataflow language across signal, font, motion, image and numeric examples; JS graph builders and S-expressions both run through the same CPU/WebGPU graph checker. The page also includes an experimental general-purpose GPU device lab: two actual compute passes, persistent intermediate buffers, upload reuse, bounded buffer inspection and a draft language specification. This is not the assured SPARQL accelerator.</li>
+  <li><a href="./gdsl-app/">GDSL in your app</a> — build a signal mixer and prefix sum through the public PVGraph API; edit inputs, compare CPU and GPU execution, inspect the program, and copy a complete standalone app. Loads local modules and Wasm, with no npm release required.</li>
+  <li><a href="./gpu-sparql/">Mixed CPU / GPU SPARQL</a> — the shipping query API with automatic placement, explicit CPU and required GPU modes; editable RDF and SPARQL, local file loading, observed join and device traces, and a separate CPU result comparison. Loads a local runtime, with no npm release required.</li>
+  <li><a href="./gssl/">GDSL graph workbench</a> — one shared typed dataflow language across signal, font, motion, image and numeric examples; Lean/Wasm provides construction, admission and reference evaluation through one API; no JavaScript PVGraph interpreter or checker is used. The page also includes an experimental general-purpose GPU device lab: two actual compute passes, persistent intermediate buffers, upload reuse, bounded buffer inspection and a draft language specification. This is not the assured SPARQL accelerator.</li>
   <li><a href="./paralliverse/">Paralleliverse</a> — typed parallel-computation Studio: a real RDF/SPARQL BGP evaluated independently by Lean/Wasm and two WebGPU join plans, with lexical triples, intermediate GPU relations, solution-bag comparisons and source-scoped evidence; plus word-map and packing experiments.</li>
 </ul>
 

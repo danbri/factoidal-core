@@ -1,317 +1,283 @@
-# GDSL 0.2 — one typed dataflow language
+# GDSL 0.2 — PVGraph
 
-**Editor's draft · 21 November 2026 · experimental · not a W3C specification**
+**Experimental specification · updated 22 November 2026**
 
-This draft supersedes the separate-domain-syntax proposal in GSSL 0.1.
-The name **GDSL** abbreviates **GpuDomainSpecificLanguage**; existing
-\`L4Factoidal.GpuDomainSpecificLanguage\` and GSSL-labeled low-level
-implementation modules retain their names for compatibility.
+GDSL (GpuDomainSpecificLanguage) describes typed, acyclic dataflow
+computations using **PVGraph**. RDF `Graph` has separate semantics and
+is not an alias for PVGraph.
 
-## 1. Non-negotiable interoperability rule
+## 1. Implementation and authority
 
-**Every GDSL domain uses the same canonical dataflow graph, node/edge
-representation, type vocabulary, registry protocol, parser, checker,
-interpreter, provenance and device boundary.**
+Every GDSL domain uses the same canonical PVGraph document, typed
+operator/port/link representation, operator registry, admission procedure
+and reference semantics.
 
-A domain may introduce *registered operators* (for glyph shaping, images,
-physics, SPARQL, etc.) that declare their precise typed ports, parameters
-and denotations. It may **not** introduce another GDSL syntax, different
-link semantics, a privately reinterpreted type system, or an application-
-specific GPU memory manager and still call itself GDSL-compatible.
+**Lean 4 defines the language.** Lean code constructs, checks and
+interprets PVGraph; the runtime API compiles those operations to WebAssembly.
+JavaScript is a host binding that marshals calls into Lean/Wasm. An
+S-expression reader is planned in Lean/Wasm. Neither host notation defines
+independent PVGraph operator semantics.
 
-This standardizes the computation framework, not the meaning of every
-operator. RDF, glyph, image and simulation semantics belong to operator
-contracts. A GPUBuffer itself denotes no domain object.
+The three entry points are:
 
-## 2. Canonical graph document
+| Entry point | Role |
+|---|---|
+| Lean 4 `PVGraph.Builder` | Static definitions, compile-time checks, reusable proofs |
+| JavaScript `createPVGraphWasm(loadEngine)` | Dynamic construction through Lean/Wasm |
+| S-expressions | Planned Lean/Wasm parser for a human-readable, canonical interchange notation |
 
-Version 0.2 has exactly three top-level properties:
+No JavaScript PVGraph parser, checker or reference evaluator is part of
+the API. A missing or outdated Wasm module is an error, not a reason to
+execute a second implementation. The published web runtime built from
+[`e0666850902b`](https://github.com/danbri/factoidal-builds/releases/tag/build-e0666850902b-web)
+includes the builder, admission, reference evaluator and GPU planner.
+The [independent-app Hub example](https://danbri.github.io/factoidal/web/hub/gdsl-app/)
+uses those exports through local modules; npm publication is a separate step.
 
-\`\`\`json
+## 2. Canonical representation
+
+The versioned `gdsl/0.2` document has exactly `version`, `nodes` and
+`links`. Nodes contain `id`, `op`, `params`. Each link names a
+source output port and destination input port and a scalar/buffer type:
+
+```json
 {
-  "version": "gdsl/0.2",
-  "nodes": [
-    {"id":"samples","op":"core.input",
-     "params":{"name":"samples","type":"buffer<u32>"}},
-    {"id":"multiply","op":"u32.map.mul","params":{"value":3}},
-    {"id":"bias","op":"u32.map.add","params":{"value":5}},
-    {"id":"mix","op":"u32.zip.add","params":{}},
+  "version":"gdsl/0.2",
+  "nodes":[
+    {"id":"values","op":"core.input",
+     "params":{"name":"values","type":"buffer<u32>"}},
+    {"id":"scale","op":"u32.map.mul","params":{"value":3}},
     {"id":"answer","op":"core.output",
      "params":{"name":"result","type":"buffer<u32>"}}
   ],
-  "links": [
-    {"from":{"node":"samples","port":"out"},
-     "to":{"node":"multiply","port":"x"},"kind":"buffer","type":"u32"},
-    {"from":{"node":"samples","port":"out"},
-     "to":{"node":"bias","port":"x"},"kind":"buffer","type":"u32"},
-    {"from":{"node":"multiply","port":"out"},
-     "to":{"node":"mix","port":"a"},"kind":"buffer","type":"u32"},
-    {"from":{"node":"bias","port":"out"},
-     "to":{"node":"mix","port":"b"},"kind":"buffer","type":"u32"},
-    {"from":{"node":"mix","port":"out"},
-     "to":{"node":"answer","port":"in"},"kind":"buffer","type":"u32"}
+  "links":[
+    {"from":{"node":"values","port":"out"},
+     "to":{"node":"scale","port":"x"},
+     "kind":"buffer","type":"u32"},
+    {"from":{"node":"scale","port":"out"},
+     "to":{"node":"answer","port":"in"},
+     "kind":"buffer","type":"u32"}
   ]
 }
-\`\`\`
+```
 
-A node is a **single-assignment operator instance** with an explicit
-registered \`op\` identifier and named parameter values. A link connects a
-named source output port to one destination input port. No operand is
-smuggled into an application-specific AST.
+The implemented core types are `scalar<u32>` and `buffer<u32>`.
+Scalar-to-buffer conversion requires an explicit operator. Links are
+directed forward in topological order; an input port has exactly one
+producer; output ports may fan out. There are no implicit casts, cycles,
+effects or unregistered operators in this profile.
 
-### 2.1 Link types
+The checker requires unique valid IDs, valid parameter schemas,
+complete and type-correct port bindings, named inputs and outputs,
+registered operator signatures and version/resource limits. Core
+bounds: at most 128 nodes, 384 links and 4,194,240 u32 words per input
+buffer. Execution also checks operation-specific shapes and resource bounds.
+The Wasm JSON ABI separately limits each argument to 8 MiB of UTF-8 text
+before parsing (`Wasm/Ops/PVGraph.lean`, `parseBounded`). Reference input
+bindings must fit that limit; buffer capacity alone is not a transport guarantee.
 
-The first implemented profile supports exactly:
+## 3. Lean authoring
 
-- \`kind: "scalar", type: "u32"\` (a single unsigned 32-bit value)
-- \`kind: "buffer", type: "u32"\` (a bounded ordered sequence of u32 words)
+```lean
+import L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
+open L4Factoidal.GpuDomainSpecificLanguage
+open L4Factoidal.GpuDomainSpecificLanguage.PVGraph.Builder
 
-The matching port types are \`scalar<u32>\` and \`buffer<u32>\`.
-**The kind is semantic**, not just a drawing convention. A scalar-to-
-buffer edge is invalid. A named \`u32.broadcast\` node can perform
-the transformation explicitly. There are no implicit casts.
+def scaled : Lean.Json := build do
+  let xs ← input "values"
+  let ys ← mapMul xs 3 (some "scale")
+  output "result" ys (some "answer")
 
-Future domain atoms (e.g. packed RGBA, glyph runs, u64-lanes, float
-matrices, structs) must extend the **same grammar for type names** and
-share the same port/link API, not create a new link language.
-Events, streams, futures, effects and device-to-device transfers are
-future link-kind profiles, **not implemented** in this pure 0.2 graph.
+#guard (match PVGraph.admit? scaled with
+  | .ok _ => true
+  | .error _ => false)
+```
 
-### 2.2 Admission invariants
+`Wire .scalar` and `Wire .buffer` provide Lean-level typing for common
+operators. A builder returns a document; **admission is a separate
+check**, performed by `PVGraph.admit?` or `buildAndAdmit?`, and returns
+a proof-bearing result. A generic `op` may describe a registered
+domain operator, but admission must establish its signature and
+semantics; an arbitrary name is not an assumption of correctness.
 
-The shared \`checkGraph\` rejects:
+## 4. JavaScript host binding
 
-- Duplicate node IDs, unknown operators or unrecognized parameters;
-- missing, duplicate, mistyped or mismatched source/destination ports;
-- links to absent nodes, cyclic/forward references or ambiguous writes;
-- anything other than acyclic topological order (source node must
-  precede target node in \`nodes\`);
-- graphs with no named input or output;
-- invalid \`uint32\` operands or overly large graph documents.
+```js
+import {createPVGraphWasm} from "@factoidal/core/gdsl";
+import {loadEngine} from "@factoidal/core/browser";
 
-Each input has exactly one producer; an output can fan out to many
-consumers. \`core.output\` nodes and \`core.input\` nodes participate
-in the **same node model**.
+const g = await createPVGraphWasm(loadEngine);
+const xs = g.input("values");
+const scaled = g.op("u32.map.mul",{x:xs},{value:3},
+  {resultType:"buffer<u32>",id:"scale"});
+g.output("result",scaled,{id:"answer"});
+const program = await g.build();
+const outputs = await g.evaluate(program,{values:[2,3,5]});
+// outputs.result === [6,9,15]
+```
 
-The checker is presently a bounded, tested JavaScript implementation,
-not a machine-checked Lean refinement of the serialized format.
+The host binding queues commands; Lean/Wasm constructs and admits the
+canonical document and evaluates it. Caller-supplied `resultType` is
+untrusted and must agree with Lean's operator registry. The ABI exports
+`pvgraphBuild`, `pvgraphAdmit` and `pvgraphEvaluate`.
 
-## 3. Two notations, **not** two DSLs
+The same JavaScript binding works in browsers and other hosts whose
+Factoidal engine supports these exports.
 
-### 3.1 JavaScript computational graph constructor
+### Using local browser modules in another app
 
-\`\`\`js
-import { graph, runCPU, toSexpr } from "@factoidal/core/gdsl";
+Serve the package's browser files from your app, preserving their directory
+layout: `browser.js`, `gdsl.mjs`, `lib/` and matching `l4-assets/`.
+Import `./vendor/factoidal/gdsl.mjs` and `./vendor/factoidal/browser.js`
+instead of the package specifiers above. `loadEngine()` resolves its assets
+relative to `browser.js`. If assets are elsewhere, call the browser module's
+`setAssetsUrl()` before the first engine load. Use HTTP on localhost or HTTPS.
 
-const g = graph();
-const samples = g.input("samples");
-const multiply = g.op("u32.map.mul", {x:samples}, {value:3},
-  {id:"multiply"});
-const bias = g.op("u32.map.add", {x:samples}, {value:5},
-  {id:"bias"});
-const mixed = g.op("u32.zip.add", {a:multiply,b:bias}, {},
-  {id:"mix"});
-g.output("result",mixed);
+`createPVGraphWasm(loadEngine)` constructs and checks a program;
+`g.evaluate(pvgraph, bindings)` executes its reference semantics on the CPU;
+`runPVGraph({pvgraph, bindings, loadEngine})` requests an eligible GPU plan
+and otherwise uses that same reference. The JavaScript builder is a command
+binding, not arbitrary JavaScript compiled for the GPU. No Lean compiler is
+needed in an app that consumes the prebuilt runtime. Authoring and checking
+new Lean theorems still uses the Lean toolkit.
 
-const program = g.build();  // a single checked graph document
-const {outputs} = runCPU(program,{samples:[2,3,5,7]});
-console.log(outputs.result); // [13,17,25,33]
-console.log(toSexpr(program));
-\`\`\`
+The [copyable signal-mixer app](https://danbri.github.io/factoidal/web/hub/gdsl-app/)
+contains a complete local-loading example and the exact PVGraph it builds.
 
-### 3.2 S-expressions
+## 5. S-expression notation
 
-The complete version 0.2 grammar consists of \`gdsl\`, \`node\`,
-\`param\` and \`link\`. **Domain-specific operators are names, not
-extra language constructs**.
+A textual notation uses exactly the same nodes, parameters, ports and
+links. It must not introduce application-specific language constructs.
 
-\`\`\`scheme
-(gdsl gdsl/0.2
-  (node samples core.input
-    (param name "samples")
-    (param type "buffer<u32>"))
-  (node multiply u32.map.mul (param value 3))
-  (node bias u32.map.add (param value 5))
-  (node mix u32.zip.add)
+```scheme
+(pvgraph gdsl/0.2
+  (node values core.input
+    (param name "values") (param type "buffer<u32>"))
+  (node scale u32.map.mul (param value 3))
   (node answer core.output
-    (param name "result")
-    (param type "buffer<u32>"))
+    (param name "result") (param type "buffer<u32>"))
+  (link values out scale x buffer u32)
+  (link scale out answer in buffer u32))
+```
 
-  (link samples out multiply x buffer u32)
-  (link samples out bias x buffer u32)
-  (link multiply out mix a buffer u32)
-  (link bias out mix b buffer u32)
-  (link mix out answer in buffer u32))
-\`\`\`
+Parsing is to be implemented by Lean/Wasm and is **not currently
+exported**. It need not run inside the Lean elaborator; Lean source
+programs use typed constructors directly, while dynamic text is parsed
+at runtime.
 
-\`toSexpr(graph)\` and \`fromSexpr(text)\` round-trip one
-\`{version,nodes,links}\` document. The same operators and typed links
-apply to every domain profile. Source text is a program **description**,
-not host JavaScript to evaluate.
+## 6. Built-in operators
 
-### 3.3 The one API
-
-\`\`\`text
-graph(registry?)        constructor; add input, op, output
-checkGraph(document)   structural and type admission
-toSexpr(document)      emit common notation
-fromSexpr(text)        parse and admit common notation
-runCPU(graph, inputs)  reference interpreter and per-node trace
-runGraphGPU(graph, inputs, {session?})
-                        fixed-kernel WebGPU backend
-createOperatorRegistry(extensions)
-                        trusted domain operator registration
-\`\`\`
-
-A domain adapter MUST use \`createOperatorRegistry\` and provide
-operator name, typed input/output declarations, parameters and an
-execution semantics. A GPU implementation requires **additional**
-source-level lowering evidence, not merely an extension name.
-
-## 4. Implemented universal operators
-
-| Name | Input ports | Output | Meaning |
+| Operator | Inputs | Output | Semantics |
 |---|---|---|---|
-| \`core.input\` | — | declared type | Named host binding |
-| \`core.output\` | \`in:T\` | \`out:T\` | Named result |
-| \`u32.map.add\` | \`x:buffer\` | buffer | Add constant modulo 2³² |
-| \`u32.map.mul\` | \`x:buffer\` | buffer | Multiply constant modulo 2³² |
-| \`u32.map.xor\` | \`x:buffer\` | buffer | XOR constant |
-| \`u32.zip.add\` | \`a,b:buffer\` | buffer | Elementwise addition |
-| \`u32.zip.xor\` | \`a,b:buffer\` | buffer | Elementwise XOR |
-| \`u32.scan.sum\` | \`x:buffer\` | buffer | Inclusive prefix sum |
-| \`u32.reduce.sum\` | \`x:buffer\` | scalar | Sum modulo 2³² |
-| \`u32.scalar.const\` | — | scalar | Constant |
-| \`u32.scalar.add\` | \`a,b:scalar\` | scalar | Scalar addition |
-| \`u32.broadcast\` | \`value:scalar,shape:buffer\` | buffer | Repeat value to buffer length |
+| `core.input` | Host binding | Declared | Named input |
+| `core.output` | `in:T` | `out:T` | Named result |
+| `u32.map.add` | `x:buffer` | Buffer | Add constant |
+| `u32.map.mul` | `x:buffer` | Buffer | Multiply constant |
+| `u32.map.xor` | `x:buffer` | Buffer | XOR constant |
+| `u32.zip.add` | `a,b:buffer` | Buffer | Elementwise add |
+| `u32.zip.xor` | `a,b:buffer` | Buffer | Elementwise XOR |
+| `u32.scan.sum` | `x:buffer` | Buffer | Inclusive prefix sum |
+| `u32.reduce.sum` | `x:buffer` | Scalar | Reduction sum |
+| `u32.scalar.const` | None | Scalar | Constant |
+| `u32.scalar.add` | `a,b:scalar` | Scalar | Scalar add |
+| `u32.broadcast` | `value:scalar,shape:buffer` | Buffer | Repeat to shape |
 
-The \`map\`, \`zip\`, \`scan\`, \`reduce\` and \`broadcast\`
-operations are **common computation constructs**, not the private
-syntax of an RDF or image domain.
+Arithmetic is exact modulo `2^32`. Reduction, scan, broadcast and
+zip have explicit buffer semantics. Equal-length arrays are required
+by `zip`; empty buffers have defined results.
 
-For the bounded implementation:
+The same operators support signal, glyph-advance, motion, pixel and
+scalar-broadcast examples. Domain semantics must be introduced through
+registered operators with separately checked contracts, never by
+creating a second GDSL parser or evaluator.
 
-- Buffers contain at most 4,096 words.
-- Graphs contain at most 128 nodes and 384 links.
-- Missing data, unequal zip lengths, wrong types or unknown
-  operators are rejected.
-- Empty buffers have defined map/scan/reduce semantics.
-- Buffer order and multiplicity are preserved by operations that
-  preserve them. The \`reduce\` result is a scalar.
-- Arithmetic uses exact u32 wraparound, not imprecise host numbers.
+## 7. GPU fast path
 
-The \`u32.scan.sum\` and \`u32.reduce.sum\` GPU backend are
-**sequential single-invocation reference kernels** in this version.
-Their presence is not a speedup claim.
+`runPVGraph({pvgraph,bindings,loadEngine})` asks the Lean/Wasm engine
+for a shape-checked `pvgraphGpuPlan`. Lean selects the supported
+`u32` map/zip/scalar-add/broadcast operations, hierarchical parallel scans
+and indexed tuple operations, their numeric kernel tags, buffer shapes,
+and dispatch sizes. The host submits the engine's WGSL kernels to WebGPU,
+retains intermediate buffers, and reads named outputs.
+No JavaScript operator registry or reference evaluator exists.
 
-## 5. The same graph has several executors
+`GpuFastPath` proves the pure kernel model agrees with the actual
+Lean `GraphWords.execute` semantics and that the whole admitted
+PVGraph interpreter has the same result under that model. The per-lane
+dispatch also has disjoint writes and schedule-independent results.
+The `GpuPlan` and fixed shader are **not yet a verified WGSL compiler**;
+a correct GPU driver is an explicit implementation assumption. Device
+testing compares complete WebGPU outputs with native Lean outputs,
+including high-bit arithmetic, zero-length buffers, fanout and broadcast.
 
-### CPU
+The GPU branch refuses operations outside its fragment, including
+`u32.reduce.sum`; `u32.scan.sum` uses a hierarchical parallel GPU plan.
+`runPVGraph` falls back for the **whole PVGraph** to the same Lean/Wasm
+evaluator, never JavaScript arithmetic. This API does not split one PVGraph
+between CPU and GPU. SPARQL's higher-level mixed planner is separate.
+`requireGPU:true` fails when no admitted device execution can run.
+Malformed programs, invalid bindings and unexpected planning exceptions
+remain errors in automatic mode. Both returned and thrown Lean refusal
+envelopes are handled by the host binding.
 
-\`runCPU\` interprets each admitted node in topological order,
-preserves named input/output types, and provides a per-node trace.
-A domain operator's CPU semantics comes from its registered
-implementation, not from arbitrary code embedded in a graph document.
+The default `minWords:1024` avoids GPU startup for small programs;
+`minWords:0` is useful for an explicit device demonstration. By default,
+`verifyWithLean:true` compares the complete GPU result with a fresh reference
+evaluation. Its extra CPU work is included in total wall time. The comparison
+is evidence about the observed input and result, not a proof of the device.
+Input capacity is 4,194,240 u32 words per buffer, with a 512 MiB aggregate
+transport budget and the device's own limits. The benchmark
+`tools/pvgraph-wasm-gpu-bench.mjs`
+measures end-to-end Lean/Wasm versus WebGPU, including transfer and
+readback. The name *fast path* describes its intended role, not an
+unmeasured universal speedup.
 
-### WebGPU
+## 8. Relationship with Factoidal Dataflow
 
-\`runGraphGPU\` accepts the **same graph** but only lowers the
-whitelisted common built-in operations. It runs a single trusted
-WGSL source with a fixed opcode parameter, uses the already implemented
-\`@factoidal/core/gpu-resident\` device session, retains intermediate
-GPUBuffer objects between nodes and reads back only named outputs.
+`L4Factoidal.Dataflow.Stage` and `Dataflow.Graph` are the original
+**application-level orchestration and contract layer**, connecting
+readers, RDF datasets, SPARQL evaluators, reasoners, stores and writers.
+They have typed wires, error propagation, stage guarantees, and named IO
+assumptions. That `Graph` is distinct from both RDF `Graph` and PVGraph.
 
-It refuses unknown operators. Domain-specific device lowering is
-not silently invented. Source code admitted by the graph parser
-does not permit WGSL injection.
+PVGraph is an **internal computation program**, currently carrying
+scalar and buffer words between small typed GPU-eligible operations. A
+Dataflow stage may use PVGraph to implement part of its run function;
+it does not replace the stage, its semantic contract or RDF data model.
 
-The result status is **\`observed-not-proven\`**. The compiled WGSL,
-browser/driver and hardware are not established correct by these tests.
+`GpuDomainSpecificLanguage.DataflowAdapter` exposes
+`referenceStage` and `modeledFastStage` with the same exact-result
+contract, proved to return the same success or error for every request.
+A physical GPU-backed `Stage` still requires a separate soundness
+witness at the device boundary. RDF/SPARQL specialisation must also
+prove its encoding, active-graph identity, row multiplicities and
+ordering; a u32 buffer alone denotes none of those things.
 
-### Other backends (planned)
+## 9. Assurance and execution boundary
 
-Lean native, Lean/Wasm, Vulkan/Metal and other execution environments
-must consume the same typed graph or a separately proved encoding of it.
-They MUST NOT introduce an incompatible graph model.
+`GraphAdmission` checks whole-program structure and typed links.
+`GraphJson.decodeCertified?` admits the actual serialized document,
+not a separately handwritten mathematical proxy. `GraphWords` and
+`GraphEvaluate` supply pure Lean u32 semantics. Proofs include
+uniqueness, complete port binding, typed edges, registered core
+signatures and selected length/shape invariants. CI compiles the
+modules and checks actual exported Lean builder behaviour.
 
-## 6. Five cross-domain examples
+Lean's proofs are about Lean definitions. They do **not** prove
+correctness of the Lean-to-Wasm compiler, Wasm host runtime or
+JavaScript ABI. GPU lowering and WGSL/driver/hardware execution require
+further refinement and observational tests. The low-level
+`@factoidal/core/gpu-resident` session is a separate resource API,
+not a certified PVGraph GPU executor.
 
-All examples are built with the **same JavaScript constructor**,
-serializable in the **same S-expression format**, checked by the
-**same type verifier**, and evaluated on **both CPU and actual WebGPU**.
+The assured SPARQL GPU fast path remains subject to
+[issue #691](https://github.com/danbri/factoidal-core/issues/691).
 
-1. **Signal interference loom:** fan-out into multiplier and offset,
-   XOR-zip them, prefix-scan the result and reduce intensity.
-2. **Glyph pen positioning:** cumulative glyph advances and line
-   width. This is real basic numeric work; actual font shaping and
-   script-specific glyph selection remain future operators.
-3. **Particle motion:** vector of positions plus scaled velocities,
-   followed by a checksum.
-4. **Pixel channel mask:** XOR packed pixel words and reduce a checksum.
-   This is not colour-management correctness or rendering.
-5. **Scalar-to-buffer broadcast:** constant scalar wired to a
-   broadcast operator and then elementwise added.
+## Source
 
-These examples deliberately share computation primitives.
-The specialized knowledge belongs to the values and to future
-operator registrations, **not to alternative DSL syntaxes**.
-
-## 7. Formal methods and trust boundary
-
-The previous \`L4Factoidal.Paralliverse.Program\` Lean language
-provides typed \`identity/prim/seq/prod/fanout/map\` programs and a
-proven pure map-fusion theorem. \`GpuDomainSpecificLanguage\`
-has the generic primitive-agreement theorem. Both remain valid.
-
-**However**, the new explicit, named graph/edge representation is not
-definitionally identical to that older tree AST. A formalization of
-the graph's ports, edges, topological admission and evaluation—and
-a checked translation to those older typed programs—is a necessary
-follow-up. We do **not** inherit proofs merely by reusing their names.
-
-Likewise, the existing Lean \`GpuKernel.Resident\` planner and
-Veil GPU protocol describe no-reupload, memory budgets and fences,
-but do not automatically prove the new JavaScript graph interpreter
-or WGSL driver correct.
-
-What current CI establishes: syntax round trips, type-rejection
-cases, independent arithmetic reference tests, and actual
-Mesa/Deno WebGPU results for five graph examples, plus empty and
-high-bit cases and resource reuse. This is **test evidence**, not
-universal refinement or a verified compiler.
-
-## 8. Integer width is an execution encoding
-
-Global/long-lived 64-bit identifiers can pass through a
-\`(low32,high32)\` representation on portable WebGPU, or through a
-checked dense-u32 mapping, as separately implemented in GSSL.
-
-**Neither width is the definition of the common graph language.**
-A future \`buffer<u64>\` or \`buffer<id64>\` atom uses the same
-typed ports and dataflow links and requires explicit operator and
-backend admission. Shardborough/RDF semantics do not get built into
-the universal operator set.
-
-## 9. Release policy
-
-- The **exploratory GDSL Hub** may expose its checked common graph
-  syntax, reference CPU evaluation and experimental WebGPU observation,
-  with explicit source provenance and limitations.
-- The **assured SPARQL accelerator** remains separate and blocked by
-  issue #691 until WGSL/kernel refinement, authenticated data,
-  shipping evaluator integration, W3C conformance and performance
-  evidence are established.
-- Specialized "SPARQL worklet" protocols, cluster scheduling,
-  network access and authorization are **outside the GDSL language**.
-  Any later SPARQL plan or operation *inside GDSL* must conform to
-  the same graph syntax, ports and link kinds.
-
-## 10. Source index
-
-- [Canonical graph, JS builder, S-expressions, verifier, CPU](../../npm/factoidal/lib/gdsl-graph.mjs)
-- [Single common WGSL backend](../../npm/factoidal/lib/gdsl-webgpu.mjs)
-- [All five builder examples](../../npm/factoidal/lib/gdsl-examples.mjs)
-- [Generic GPU-resident device API](../../npm/factoidal/lib/gpu-resident.mjs)
-- [Lean typed composition theorem](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage.lean)
-- [Existing GPU residency model](../../formal/lean4/L4Factoidal/GpuKernel/Resident.lean)
-- [GDSL issue and domain release gate](https://github.com/danbri/factoidal-core/issues/691)
+- [PVGraph Lean builders](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/PVGraphBuilder.lean)
+- [Lean admission](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphJson.lean)
+- [Lean reference evaluation](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GraphEvaluate.lean)
+- [Wasm operations](../../formal/lean4/Wasm/Ops/PVGraph.lean)
+- [JavaScript binding](../../npm/factoidal/lib/gdsl-wasm-builder.mjs)
+- [Cross-domain examples](../../npm/factoidal/lib/gdsl-examples.mjs)

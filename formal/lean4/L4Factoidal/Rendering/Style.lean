@@ -215,6 +215,14 @@ structure Computed where
   /-- The element or an ancestor is clipped to nothing: none of it is painted (`visible`
   false), and its boxes stay in the layout. Inherited, never cleared by a descendant. -/
   clipHidden : Bool := false
+  /-- `background-image: url(...)` (CSS Backgrounds 3 §3.3), the first layer's URL as the page
+  wrote it after the engine resolved it against its sheet (`WebDocument`); none for `none` or a
+  gradient. Not inherited. -/
+  backgroundImage : Option String := none
+  /-- The decoded image of `backgroundImage` and its paint-table id, when the host gave its
+  bytes and they decoded (`WebDocument` sets it after the cascade); `Layout.background` tiles
+  it. None: only the colour (and a gradient) is painted, as before. -/
+  backgroundBitmap : Option (Nat × Bitmap) := none
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -345,10 +353,20 @@ def splitTopCommas (source : String) : List String := Id.run do
     else item := item.push c
   return (out.push item).toList
 
+/-- The generic family keywords of CSS Fonts 4 §2.1 and the CSS-wide keywords, lower case: an
+unquoted item spelled so is a keyword, a quoted one a family name (`familyNames`). -/
+def genericFamilyKeywords : List String :=
+  ["serif","sans-serif","monospace","cursive","fantasy","system-ui","ui-serif","ui-sans-serif",
+    "ui-monospace","ui-rounded","math","emoji","fangsong","generic","default","initial","inherit",
+    "unset","revert","revert-layer"]
+
 /-- CSS Fonts 4 §2.1 `<family-name>#`: a quoted string, or identifiers separated by
-white space (joined by one space). Generic family keywords stay as they are. `none`
-for a list this profile can not read: an empty item, a backslash escape, an
-unclosed quote, or an unquoted item that is not identifiers. -/
+white space (joined by one space). Generic family keywords stay as they are. A quoted
+string spelled like a generic or CSS-wide keyword is a family name, not the keyword
+(CSS Fonts 4 §5.1: `"monospace"` names a font called monospace), so it keeps its double
+quotes and no generic-family test matches it. `none` for a list this profile can not read:
+an empty item, a backslash escape, an unclosed quote, or an unquoted item that is not
+identifiers. -/
 def familyNames (value : String) : Option (List String) := do
   let items ← (splitTopCommas value).mapM fun item => do
     let raw := trim item
@@ -358,7 +376,7 @@ def familyNames (value : String) : Option (List String) := do
       if raw.length < 2 || !raw.endsWith q.toString then none
       let inner := ((raw.drop 1).dropEnd 1).toString
       if inner.contains q || inner.isEmpty then none
-      pure inner
+      if genericFamilyKeywords.contains inner.toLower then pure ("\"" ++ inner ++ "\"") else pure inner
     else
       let parts := words raw
       if parts.isEmpty || !parts.all ident then none
@@ -543,6 +561,26 @@ def fontLonghands (value : String) (important : Bool) : List Declaration :=
       (ls.lookup n).map fun v => (⟨n, v, important⟩ : Declaration)
   | none => []
 
+/-- The URL of the first `url(...)` of a value (CSS Values 4 §4.5: unquoted, or a quoted
+string), as written; none when the value has none or it is not closed. Case is kept. -/
+def firstUrl? (value : String) : Option String := do
+  let parts := value.toLower.splitOn "url("
+  if parts.length < 2 then none
+  let at_ := parts.head!.length
+  let rest := ((value.toList.drop (at_+4)).dropWhile Char.isWhitespace)
+  match rest with
+  | [] => none
+  | q :: more =>
+    if q == '"' || q == '\'' then
+      let inner := more.takeWhile (· != q)
+      if inner.length == more.length then none
+      some (String.ofList inner)
+    else
+      let inner := rest.takeWhile (· != ')')
+      if inner.length == rest.length then none
+      let url := String.ofList (inner.reverse.dropWhile Char.isWhitespace).reverse
+      if url.isEmpty then none else some url
+
 /-- The text inside the first `linear-gradient(` ... `)` of a value, to its matching
 parenthesis; none when the value has none. -/
 def gradientArgs (value : String) : Option String := do
@@ -573,12 +611,18 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     -- `tableDeclaration`); the shorthand stays for getComputedStyle's other longhands
     -- and its image, `none` unless it is a `linear-gradient()` (the one image drawn)
     if key == "background" then
-      let image := if (gradientArgs d.value).isSome then d.value else "none"
+      let image := if (gradientArgs d.value).isSome || (firstUrl? d.value).isSome then d.value else "none"
       (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
-      | some ls => (ls.map fun (n, v) => (⟨n, v, d.important⟩ : Declaration)) ++ acc
+      | some ls =>
+        -- CSS Backgrounds 3 §4.3: with style `none` or `hidden` the side's computed width is 0,
+        -- whatever width the shorthand gives (its initial `medium`, 3 px, since border widths
+        -- are read in every unit: `borderWidthPx`).
+        let hidden := ls.any fun (n, v) => n.endsWith "-style" && ["none","hidden"].contains (trim v).toLower
+        let ls := if hidden then ls.map (fun (n, v) => if n.endsWith "-width" then (n, "0") else (n, v)) else ls
+        (ls.map fun (n, v) => (⟨n, v, d.important⟩ : Declaration)) ++ acc
       | none => acc
     else
     -- a side shorthand that mentions `var()` is kept whole: its sides are known only
@@ -972,6 +1016,16 @@ private def color (source : String) : Except String Color := do
     | [r,g,b] => return ⟨← channel r,← channel g,← channel b⟩
     | _ => throw s!"unsupported CSS color: {source}"
   throw s!"unsupported CSS color: {source}"
+/-- A font size or other positive float as a rational, to a thousandth. -/
+def ratOfFloat (x : Float) : Rat :=
+  if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
+
+/-- The computed value of `value` for `property` by the property table, with lengths in px
+against font size `fontSize`; `none` when it is not a value of the property. -/
+def tableComputed (fontSize : Float) (property value : String) : Option String :=
+  (CssValues.specified property value).map fun s =>
+    CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
+
 private def edgeValues (s : String) : Except String Edges := do
   let vals ← (words s).mapM pixels
   if vals.any (· < 0) then throw "negative edges outside first CSS profile"
@@ -985,6 +1039,31 @@ private def edgePixel (source : String) : Except String Float := do
   let value ← pixels source
   if value < 0 then throw "negative edges outside first CSS profile"
   return value
+/-- One border width (CSS Backgrounds 3 §4.3 `<line-width>`): `thin`, `medium` and `thick`
+are 1, 3 and 5 px; a length in any unit is read by the property table, `em` against font
+size `fontSize`. Before 2026-11-22 only `px` was read, and a width such as `1in`, `6pt` or
+`1em` gave the initial 3 px (846 WPT reftests set a border width so, mostly in css/CSS2). -/
+def borderWidthPx (fontSize : Float) (source : String) : Except String Float := do
+  match edgePixel source with
+  | .ok v => return v
+  | .error e =>
+    match (trim source).toLower with
+    | "thin" => return 1
+    | "medium" => return 3
+    | "thick" => return 5
+    | _ =>
+      match tableComputed fontSize "border-top-width" source with
+      | some t => if t == source then throw e else edgePixel t
+      | none => throw e
+
+/-- The `border-width` shorthand: one to four `borderWidthPx` values. -/
+private def borderEdges (fontSize : Float) (s : String) : Except String Edges := do
+  match ← (words s).mapM (borderWidthPx fontSize) with
+  | [a] => return ⟨a,a,a,a⟩
+  | [a,b] => return ⟨a,b,a,b⟩
+  | [a,b,c] => return ⟨a,b,c,b⟩
+  | [a,b,c,d] => return ⟨a,b,c,d⟩
+  | _ => throw "CSS edge shorthand requires one to four values"
 /-- One margin: its length and its percentage part, a fraction of the containing block's
 width that the layout resolves (`Layout.percentEdges`). A margin may be negative. -/
 private def marginParts (source : String) : Except String (Float × Float) := do
@@ -1260,9 +1339,17 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
         | _ => throw "columns: not a count or a length"
     return {s with columnCount := count, columnWidth := width}
   | "background-image" =>
-    if (trim d.value).toLower == "none" then return {s with backgroundGradient := none}
-    let some args := gradientArgs d.value | throw "background-image: only linear-gradient() is drawn"
-    return {s with backgroundGradient := some (← parseLinearGradient args)}
+    if (trim d.value).toLower == "none" then return {s with backgroundGradient := none, backgroundImage := none}
+    -- The first layer: an image URL (`url(...)`) or a linear gradient, whichever comes first.
+    let urlFirst := match firstUrl? d.value, (d.value.toLower.splitOn "url(").head?, (d.value.toLower.splitOn "gradient(").head? with
+      | some _, some a, some g => decide (a.length < g.length)
+      | some _, _, _ => true
+      | none, _, _ => false
+    if urlFirst then
+      let some u := firstUrl? d.value | throw "background-image: url() not read"
+      return {s with backgroundImage := some u, backgroundGradient := none}
+    let some args := gradientArgs d.value | throw "background-image: only linear-gradient() and url() are drawn"
+    return {s with backgroundGradient := some (← parseLinearGradient args), backgroundImage := none}
   | "font-size" =>
     let v ← pixels d.value
     if v <= 0 then throw "font-size must be positive"
@@ -1305,10 +1392,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   -- side's style that is the first style an element gets also leaves the sides with no
   -- style of their own without a border (their width is 0); a side's style of none
   -- removes that side's border.
-  | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← edgePixel d.value}}
-  | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← edgePixel d.value}}
-  | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← edgePixel d.value}}
-  | "border-left-width" => return {s with borderWidth := {s.borderWidth with left := ← edgePixel d.value}}
+  | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← borderWidthPx s.fontSize d.value}}
+  | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← borderWidthPx s.fontSize d.value}}
+  | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← borderWidthPx s.fontSize d.value}}
+  | "border-left-width" => return {s with borderWidth := {s.borderWidth with left := ← borderWidthPx s.fontSize d.value}}
   | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
     let st ← borderStyle d.value
     let side := ((d.property.drop 7).takeWhile (· != '-')).toString
@@ -1327,14 +1414,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     else return {s with borderStyle := st}
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
     return {s with borderColor := some (← color d.value)}
-  | "border-width" => return {s with borderWidth := ← edgeValues d.value}
+  | "border-width" => return {s with borderWidth := ← borderEdges s.fontSize d.value}
   | "border-color" => return {s with borderColor := some (← color d.value)}
   | "border" =>
     -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
     let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := none}
     for part in words d.value do
       if let .ok style := borderStyle part then out := {out with borderStyle := style}
-      else if let .ok w := edgePixel part then out := {out with borderWidth := ⟨w,w,w,w⟩}
+      else if let .ok w := borderWidthPx s.fontSize part then out := {out with borderWidth := ⟨w,w,w,w⟩}
       else out := {out with borderColor := some (← color part)}
     return out
   | "border-spacing" =>
@@ -1425,16 +1512,6 @@ def colorHex (value : String) : Option String :=
       | "rgba", [r, g, b, a] => if a == 0 then some "transparent" else some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
       | _, _ => none
     | _ => none
-
-/-- A font size or other positive float as a rational, to a thousandth. -/
-def ratOfFloat (x : Float) : Rat :=
-  if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
-
-/-- The computed value of `value` for `property` by the property table, with lengths in px
-against font size `fontSize`; `none` when it is not a value of the property. -/
-def tableComputed (fontSize : Float) (property value : String) : Option String :=
-  (CssValues.specified property value).map fun s =>
-    CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
 
 /-- The absolute font size keywords (CSS Fonts 4 §3.5, medium 16px) in px. -/
 def fontSizeKeyword : String → Option Float
@@ -1659,7 +1736,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
-  | "background-image" => some {s with backgroundGradient := source.backgroundGradient}
+  | "background-image" => some {s with backgroundGradient := source.backgroundGradient, backgroundImage := source.backgroundImage}
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
@@ -2017,7 +2094,10 @@ parent's font size, CSS 2.1 §10.8.1, as other engines draw it) or lowered by it
 (`clippedAway`, the visually hidden pattern of skip links and screen reader text) it is
 `clipHidden` and not painted, whatever its own `visibility`. -/
 def finishEffects (parent s : Computed) : Computed :=
-  let own : Float := if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
+  -- Absolute and fixed boxes are out of flow. Their own vertical-align does not
+  -- move their text relative to the box (CSS 2.2 §10.8.1).
+  let own : Float := if s.pos.isAbsolute then 0
+    else if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
   let hidden := parent.clipHidden || s.clippedAway
   {s with rise := parent.rise + own, clipHidden := hidden, visible := s.visible && !hidden}
 
@@ -2037,6 +2117,11 @@ theorem finishEffects_hidden_parent (parent s : Computed) (hp : parent.clipHidde
 /-- Kind: property. Says: an element that is neither `sub` nor `super` raises its text as
 much as its parent does. Does not say: where the line box is (it is not grown). -/
 theorem finishEffects_rise_plain (parent s : Computed) (h : s.shift = 0) :
+    (finishEffects parent s).rise = parent.rise + 0 := by
+  simp [finishEffects, h]
+
+/-- A positioned element's own vertical alignment does not add to its baseline shift. -/
+theorem finishEffects_rise_positioned (parent s : Computed) (h : s.pos.isAbsolute = true) :
     (finishEffects parent s).rise = parent.rise + 0 := by
   simp [finishEffects, h]
 
@@ -3569,5 +3654,32 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
   match declarations (property ++ ":" ++ value) with
   | .ok ds => if ds.isEmpty then none else ds.foldlM (fun acc d => (apply acc d).toOption) s
   | .error _ => none
+
+-- `background-image: url(...)` (issue 704): the first layer's URL, case kept, quoted or not.
+#guard firstUrl? "url(a.png)" == some "a.png"
+#guard firstUrl? "URL( 'Images/B.PNG' ) no-repeat" == some "Images/B.PNG"
+#guard firstUrl? "url(\"x y.png\"), linear-gradient(red, blue)" == some "x y.png"
+#guard firstUrl? "linear-gradient(red, blue)" == none
+#guard firstUrl? "url(a.png" == none
+#guard (applyDeclaration ({} : Computed) "background-image" "url(/i/a.png)").map (·.backgroundImage) == some (some "/i/a.png")
+#guard (applyDeclaration ({} : Computed) "background-image" "none").map (·.backgroundImage) == some none
+#guard (applyDeclaration ({} : Computed) "background-image" "linear-gradient(red, blue), url(a.png)").map (·.backgroundImage) == some none
+
+-- Border widths in every length unit and keyword (`borderWidthPx`; WPT css/CSS2/borders).
+private def borderLeft (property value : String) : Option Float :=
+  (applyDeclaration ({} : Computed) property value).map (·.borderWidth.left)
+#guard borderLeft "border-left-width" "1in" == some 96
+#guard borderLeft "border-left-width" "2.54cm" == some 96
+#guard borderLeft "border-left-width" "25.4mm" == some 96
+#guard borderLeft "border-left-width" "72pt" == some 96
+#guard borderLeft "border-left-width" "+6pc" == some 96
+#guard borderLeft "border-left-width" "1em" == some 16
+#guard borderLeft "border-left-width" "-0pt" == some 0
+#guard borderLeft "border-left-width" "thin" == some 1
+#guard borderLeft "border-left-width" "thick" == some 5
+#guard borderLeft "border-left-width" "7px" == some 7
+#guard borderLeft "border-left-width" "-1pt" == none
+#guard borderLeft "border" "1in solid red" == some 96
+#guard borderLeft "border-width" "1pt 2pt 3pt 6pt" == some 8
 
 end L4Factoidal.Rendering.CSS
