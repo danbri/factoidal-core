@@ -901,7 +901,7 @@
   let htmlConstructing = false, ceActive = false;
   // A script element that a script made (section dynscripts): told when it is created.
   let noteFreshScript = () => {}, noteFrameMade = () => {};
-  let noteImg = () => {};   // section images: an img element made by script
+  let noteImg = () => {}, noteImageSubtree = () => {}; // section images
   // A parser-inserted script element with no src and no child text bailed out of "prepare
   // the script element" before it was started (HTML §4.12.1.1 step 7): text added later runs it.
   const noteEmptyScripts = () => {
@@ -7400,6 +7400,8 @@
   // 166). The request starts when the element gets a source (parsed with one, or a script sets
   // src, srcset, sizes, crossorigin or referrerpolicy); a page with no img pays nothing.
   const imgStates = new Map();   // node -> { gen, url, complete, w, h, waiters }
+  const preparedImages = new Set(); // cloned or parsed images waiting for insertion
+  const isImg = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'img';
   const imgAvailable = new Map(); // document + URL + request mode -> decoded intrinsic size
   let imgGen = 0, imgWatching = false;
   // HTML §4.8.4.3: the images of the page's start delay its load event (the window's `load`
@@ -7536,7 +7538,6 @@
     imgWatching = true;
     const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
     const insert0 = n.insert, remove0 = n.remove, replace0 = n.replace;
-    const isImg = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'img';
     const isSource = id => id >= 0 && info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'source';
     const isPicture = id => id >= 0 && info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'picture';
     const refreshPictureImage = id => {
@@ -7597,6 +7598,20 @@
         if (imgPendingUpdates.delete(id)) updateImage(id);
       }), 0, 0));
     };
+    const startPreparedImages = moved => {
+      if (preparedImages.size === 0) return;
+      for (const root of moved) {
+        if (!connectedId(root)) continue;
+        for (const id of [root, ...descendants(root)]) {
+          if (!preparedImages.delete(id) || imgStates.has(id)) continue;
+          const el = wrap(id);
+          // Insertion of an eager request before the main document load delays that load.
+          if (readyState !== 'complete' && info(id, 7) === 0 &&
+              String(el.getAttribute('loading') ?? '').toLowerCase() !== 'lazy') imgDelay.add(id);
+          schedule(id);
+        }
+      }
+    };
     const sourceAttrChanged = (id, name) => {
       name = String(name);
       const separator = name.indexOf('\u0000');
@@ -7624,7 +7639,10 @@
       const oldParent = info(node, 1);
       const moved = info(node, 0) === 11 ? kids(node) : [node];
       const r = insert0(parent, node, child);
-      if (r === 0) pictureTreeChanged(parent, moved, oldParent);
+      if (r === 0) {
+        startPreparedImages(moved);
+        pictureTreeChanged(parent, moved, oldParent);
+      }
       return r;
     };
     n.remove = (parent, child) => {
@@ -7636,11 +7654,19 @@
       const oldParent = info(node, 1);
       const moved = info(node, 0) === 11 ? kids(node) : [node];
       const r = replace0(parent, node, child);
-      if (r === 0) pictureTreeChanged(parent, moved, oldParent, [child]);
+      if (r === 0) {
+        startPreparedImages(moved);
+        pictureTreeChanged(parent, moved, oldParent, [child]);
+      }
       return r;
     };
   };
   noteImg = id => imgWatch();
+  noteImageSubtree = (root, inclusive) => {
+    if (inclusive && isImg(root)) preparedImages.add(root);
+    for (const id of elementsOf(root)) if (isImg(id)) preparedImages.add(id);
+    if (preparedImages.size > 0) imgWatch();
+  };
   // The page's own images: the first `imgStartMax` request at once (a host that draws the page
   // fetches them too, so a page with many does not fetch each twice up front); the rest when
   // a script reads their state (complete, naturalWidth, naturalHeight, decode()).
@@ -17756,6 +17782,7 @@
   // The event handler content attributes of the elements of a subtree (a page's, or a clone's:
   // a clone's attributes are set by Lean, not through setAttribute).
   const scanHandlers = (root, inclusive) => {
+    if (root !== 0) noteImageSubtree(root, inclusive);
     // only the elements with an attribute named `on…` (node_query 168, in tree order), not every element
     const found = n.query(root, 168, inclusive ? '1' : '');
     if (typeof found !== 'string' || found === '') return;
@@ -19172,6 +19199,7 @@
       const f = chk(n.create(14 + 16 * info(ctx, 7), (ns ?? '') + '\u0000' + name + '\u0000' + markup));
       if (o.config !== null) op(f, 193, (safe ? '1' : '0') + '\u0000' + o.config);
       if (!safe) scanHandlers(f, false);
+      else noteImageSubtree(f, false);
       // with runScripts the fragment's script elements are not "already started": they run
       // when the fragment is inserted into a document with a browsing context
       if (o.runScripts) for (const k of elementsOf(f)) if (str(k, 0) === 'script') noteFreshScript(k);

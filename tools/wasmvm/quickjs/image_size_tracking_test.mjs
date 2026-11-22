@@ -216,7 +216,7 @@ function mutationWatcher(htmlDocument=true){
   const updates=[];
   let lazy=false;
   const timers=[];
-  const context=vm.createContext({Set,String,imgPendingUpdates:new Set(),chk(){},register(f){return f;},
+  const context=vm.createContext({Set,String,imgPendingUpdates:new Set(),isImg:()=>true,chk(){},register(f){return f;},
     imgWatching:false,imgAttrs:new Set(['src','srcset','sizes','crossorigin','referrerpolicy','loading']),
     n:{setAttr(){return 0;},removeAttr(){return 0;},timer(f){timers.push(f);return ''; }},
     info(_id,k){return k===0?1:k===8?(htmlDocument?1:0):0;},
@@ -230,30 +230,42 @@ function pictureMutationWatcher(){
   const end=prelude.indexOf('  noteImg = id => imgWatch();',start);
   assert.ok(start>=0&&end>start);
   const elements=new Map(), selected=new Map(), states=new Map(), updates=[];
+  const prepared=new Set(), delay=new Set(), timers=[];
+  const readyState='loading';
   const add=(id,tag,parent=-1)=>{
     elements.set(id,{tag,parent,children:[]});
     if(parent>=0)elements.get(parent).children.push(id);
   };
+  const children=id=>elements.get(id)?.children.slice()??[];
+  const descendants=id=>children(id).flatMap(k=>[k,...descendants(k)]);
+  const connectedId=id=>id===0||((elements.get(id)?.parent??-1)>=0&&connectedId(elements.get(id).parent));
   const detach=id=>{
     const e=elements.get(id);
     if(e.parent>=0)elements.get(e.parent).children=elements.get(e.parent).children.filter(x=>x!==id);
     e.parent=-1;
   };
   const insert=(parent,node,child=-1)=>{
+    if(elements.get(node).tag==='fragment'){
+      for(const id of children(node))insert(parent,id,child);
+      return 0;
+    }
     detach(node);
     const kids=elements.get(parent).children, at=child<0?kids.length:kids.indexOf(child);
     kids.splice(at<0?kids.length:at,0,node);elements.get(node).parent=parent;return 0;
   };
   const remove=(parent,node)=>{elements.get(parent).children=elements.get(parent).children.filter(x=>x!==node);elements.get(node).parent=-1;return 0;};
   const replace=(parent,node,child)=>{remove(parent,child);return insert(parent,node,child);};
-  const context=vm.createContext({Set,String,Promise,imgPendingUpdates:new Set(),imgAttrs:new Set(['src','srcset','sizes','crossorigin','referrerpolicy','loading']),
+  const context=vm.createContext({preparedImages:prepared,imgDelay:delay,descendants,connectedId,
+    isImg:id=>elements.get(id)?.tag==='img',
+    wrap:id=>({getAttribute:name=>name==='loading'?elements.get(id)?.loading??null:null}),
+    get readyState(){return readyState;},Set,String,Promise,imgPendingUpdates:new Set(),imgAttrs:new Set(['src','srcset','sizes','crossorigin','referrerpolicy','loading']),
     imgWatching:false,imgStates:states,
-    register:f=>f,chk(){},wrap:()=>({getAttribute:()=>null}),kids:id=>elements.get(id)?.children??[],
-    htmlEl:()=>true,info(id,k){const e=elements.get(id);return k===0?1:k===1?(e?.parent??-1):k===8?1:0;},str:(id)=>elements.get(id)?.tag??'',
+    register:f=>f,chk(){},kids:id=>elements.get(id)?.children??[],
+    htmlEl:()=>true,info(id,k){const e=elements.get(id);return k===7?0:k===0?(elements.get(id)?.tag==='fragment'?11:1):k===1?(e?.parent??-1):k===8?1:0;},str:(id)=>elements.get(id)?.tag??'',
     imgSelection:id=>({url:selected.get(id)??''}),updateImage(id,force=false){updates.push([id,force]);states.set(id,{complete:false,url:selected.get(id)??''});},
-    n:{setAttr(){return 0;},removeAttr(){return 0;},insert,remove,replace,timer(){return '';}}});
+    n:{setAttr(){return 0;},removeAttr(){return 0;},insert,remove,replace,timer(f){timers.push(f);return '';}}});
   vm.runInContext(prelude.slice(start,end)+'\n imgWatch();',context);
-  return {n:context.n,add,selected,states,updates};
+  return {n:context.n,add,selected,states,updates,prepared,delay,flush(){for(const timer of timers.splice(0))timer();},setLoading(id,loading){elements.get(id).loading=loading;}};
 }
 test('null-namespace source removals trigger exactly one image update per script turn',()=>{
   const h=mutationWatcher();
@@ -367,6 +379,24 @@ test('the internal observer resumes an intersecting image with zero intersection
   assert.deepEqual(updates,[]);
   deliver([{target,isIntersecting:true,intersectionRatio:0}]);
   assert.deepEqual(updates,[[id,true]]);
+});
+
+test('connecting a prepared subtree starts eager and lazy images but only eager images hold load',()=>{
+  const h=pictureMutationWatcher();
+  h.add(0,'document');h.add(1,'fragment');h.add(2,'section',1);h.add(3,'img',2);
+  h.add(4,'section');h.add(5,'img',2);h.setLoading(5,'lazy');
+  h.prepared.add(3);h.prepared.add(5);
+  h.n.insert(4,1,-1);
+  assert.deepEqual([...h.prepared],[3,5]);
+  assert.deepEqual([...h.delay],[]);
+  h.n.insert(0,4,-1);
+  assert.deepEqual([...h.prepared],[]);
+  assert.deepEqual([...h.delay],[3]);
+  h.flush();
+  assert.deepEqual(h.updates,[[3,false],[5,false]]);
+  h.n.insert(0,2,-1);
+  h.flush();
+  assert.deepEqual(h.updates,[[3,false],[5,false]]);
 });
 
 test('inserting an in-flight image into an empty picture invalidates its same-URL request',async()=>{
