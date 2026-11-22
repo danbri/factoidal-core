@@ -64,6 +64,23 @@ def KernelTag.ofOperator? : Operator → Option KernelTag
   | .broadcast => some .broadcast
   | _ => none
 
+/-- The only meaning assigned to a GPU numeric tag in the Lean model. -/
+def KernelTag.operator : KernelTag → Operator
+  | .mapAdd => .mapAdd
+  | .mapMul => .mapMul
+  | .mapXor => .mapXor
+  | .zipAdd => .zipAdd
+  | .zipXor => .zipXor
+  | .scalarAdd => .scalarAdd
+  | .broadcast => .broadcast
+
+/-- An eligible PVGraph operator is not reinterpreted by numeric lowering. -/
+theorem KernelTag_ofOperator_sound (op : Operator) (tag : KernelTag)
+    (h : KernelTag.ofOperator? op = some tag) :
+    tag.operator = op := by
+  cases op <;> cases tag <;>
+    simp_all [KernelTag.ofOperator?, KernelTag.operator]
+
 /-- Recovering the selected operator from the encoded opcode cannot alias
     any other supported kernel. -/
 theorem KernelTag_decode_ofOperator (op : Operator) (tag : KernelTag)
@@ -257,6 +274,7 @@ theorem pvgraph_model_eq_reference (pv inputs : Json) :
 
 #print axioms KernelCall_dispatch_raceFree
 #print axioms KernelCall_schedule_independent
+#print axioms KernelTag_ofOperator_sound
 #print axioms KernelTag_decode_code
 #print axioms KernelCall_correct
 #print axioms modelOrCpu_eq_reference
