@@ -8,10 +8,10 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "a7fcdc1ee151b0678d0e35d1c16fe17fe471eda0",
+    "EVMCleanroom/Core.lean": "c26a1f9fc3d9ce6619473dc0af458f8093ea9be9",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
-    "EVMCleanroom/Frame.lean": "c8590d3ec21595f336fd51bce6c8dc71200a2f77",
+    "EVMCleanroom/Frame.lean": "1ca2b47801410a50edc5f57e2c000f5acc9aab6a",
     "EVMCleanroom/World.lean": "255f115cc6586e911bab142fcee60e2929b2ecf3",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
@@ -66,7 +66,7 @@
     "scripts/differential/fixtures/solidity-pure/PureCompare.sol": "54b9b9ef152b6c7d65f83d5c71ab8384364fdbaa",
     "scripts/differential/fixtures/solidity-pure/README.md": "67434fd985ee991564f528f9a475b7950457f3ba",
     "scripts/differential/fixtures/solidity-pure/fixture.json": "d41be2ef7c28a5c1c4690986ade30183b372afd6",
-    "scripts/differential/solidity-pure.mjs": "e9490cef563fe9e59f3e5b534c928954eda3c9bd",
+    "scripts/differential/solidity-pure.mjs": "58272290c260e6ca9edf65b4d229e778f5a7d80a",
     "scripts/rpc/evidence/op-sepolia-jovian-decimals-51771054.json": "45e3eec526801649e061cecff87c0f28dec98e7e",
     "scripts/rpc/evidence/op-sepolia-solidity-ge-51771081.json": "2d8c431338d2f34fb2179ac709b675190295364a",
     "scripts/rpc/evidence/polygon-solidity-ge-97759492.json": "68700c5c1ef0bd14089c11525a4663dbd4e918b2",
@@ -82,9 +82,23 @@
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
     "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
     "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
-    "EVMCleanroom/Tests.lean": "c3bf32b0dfb307c82a613fb67fa86f071310b4c4"
+    "EVMCleanroom/Tests.lean": "17bcf0b89ced408462706e14dd680cb7fb976f2d"
   },
   "theorem_inventory": [
+    {
+      "name": "EVMCleanroom.Word.signedGt_dual",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [],
+      "scope": "SGT helper is definitionally equal to SLT with reversed operands on all 256-bit words; not independent signed-ordering correctness.",
+      "provenance": "Expected axiom output for the new 2026-11-22 SGT implementation; requires fresh Lean 4.33.1 compiler audit and hosted oracle verification on exact PR head."
+    },
+    {
+      "name": "EVMCleanroom.step_sgt",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": ["propext"],
+      "scope": "Actual Core.step dispatch of SGT preserves pop order and routes the signed greater-than result to commit with three-gas cost; execution admission remains subject to gas and stack checks.",
+      "provenance": "Expected axiom output for the new 2026-11-22 SGT dispatcher; requires fresh Lean 4.33.1 compiler audit and hosted oracle verification on exact PR head."
+    },
     {
       "name": "EVMCleanroom.run_original_unchanged",
       "source": "EVMCleanroom/Proofs.lean",
