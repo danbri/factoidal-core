@@ -12,6 +12,10 @@ on:
       - ".github/workflows/evm-cleanroom.yml"
   workflow_dispatch:
 
+concurrency:
+  group: evm-cleanroom-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
