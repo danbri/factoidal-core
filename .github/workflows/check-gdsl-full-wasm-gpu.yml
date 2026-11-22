@@ -4,11 +4,21 @@ on:
     paths:
       - '.github/workflows/check-gdsl-full-wasm-gpu.yml'
       - 'tools/pvgraph-wasm-gpu-bench.mjs'
+      - 'tools/pvgraph-query-device-smoke.mjs'
+      - 'tools/pvgraph-evidence-provenance.mjs'
+      - 'tools/lean-wasm-runtime-closure.py'
       - 'formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/**'
+      - 'formal/lean4/L4Factoidal/SPARQL/GpuQuery*.lean'
+      - 'formal/lean4/L4Factoidal/Dataflow/GpuSparql*.lean'
+      - 'formal/lean4/L4Factoidal/Dataflow/Registry.lean'
       - 'formal/lean4/Wasm/Ops/PVGraph.lean'
+      - 'formal/lean4/Wasm/Ops/GpuSparql.lean'
       - 'formal/lean4/Wasm/Dispatch.lean'
       - 'formal/lean4/Wasm/CoreDispatch.lean'
+      - 'formal/lean4/Wasm/build-wasm.sh'
       - 'npm/factoidal/lib/gdsl-*.mjs'
+      - 'npm/factoidal/lib/api.mjs'
+      - 'npm/factoidal/lib/nodes.mjs'
   workflow_dispatch: {}
 permissions:
   contents: read
@@ -75,7 +85,8 @@ jobs:
           import {loadEngine} from "./npm/factoidal/index.mjs";
           const engine=await loadEngine();
           const available=new Set(engine.call("ops",[]).ops);
-          const names=["pvgraphBuild","pvgraphAdmit","pvgraphEvaluate","pvgraphGpuPlan"];
+          const names=["pvgraphBuild","pvgraphAdmit","pvgraphEvaluate","pvgraphGpuPlan",
+            "datasetQueryGpuBegin","datasetQueryGpuStep","datasetQueryGpuRestart","datasetQueryGpuClose"];
           for(const name of names)if(!available.has(name))throw Error("missing exact-source Wasm op "+name);
           console.log(JSON.stringify({status:"pass",ops:names}));
           JS
@@ -91,6 +102,10 @@ jobs:
           timeout --kill-after=10s 420s deno run -A --no-config --no-npm \
             --unstable-webgpu tools/pvgraph-wasm-gpu-bench.mjs \
             2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/benchmarks.json.log"
+          timeout --kill-after=10s 420s deno run -A --no-config --no-npm \
+            --unstable-webgpu tools/pvgraph-query-device-smoke.mjs \
+            --wasm npm/factoidal/l4-assets/l4factoidal.js "$SOURCE_COMMIT" \
+            2>&1 | tee "$RUNNER_TEMP/pvgraph-wasm-bench/sparql-query-device.json.log"
       - name: Preserve exact-source build, benchmark and provenance
         if: always()
         uses: actions/upload-artifact@v4

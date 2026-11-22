@@ -42,6 +42,61 @@ RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
 `@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
 and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
+## Mixed CPU/WebGPU SPARQL
+
+The ordinary `query(data, sparql, options)` and `dataset.query(sparql, options)`
+can place eligible joins on WebGPU. Lean owns the parser, placement decisions,
+RDF matching and complete query semantics; JavaScript transports Lean-generated
+plans and numeric readbacks. SELECT, ASK, CONSTRUCT and DESCRIBE keep their
+existing result shapes and modifier semantics.
+
+```js
+const sparql = `SELECT ?s ?value WHERE {
+  ?s <urn:relation> ?o . ?o <urn:value> ?value
+} ORDER BY ?s ?value`;
+
+const rows = await dataset.query(sparql); // execution: 'auto'
+const cpuRows = await dataset.query(sparql, { execution: 'cpu' });
+const gpuRows = await dataset.query(sparql, {
+  execution: 'gpu', gpuMinRows: 1, gpuMaxPairs: 1000000
+});
+console.log(gpuRows.execution); // observed joins, fallbacks and device phases
+```
+
+`auto` uses cached selectivity estimates and actual input sizes, and retains
+CPU execution for small or unsuitable joins. Known software/fallback adapters
+stay on the CPU automatically. `cpu` uses the existing CPU entry. `gpu`
+requires an observed GPU join and reports unavailable devices, unsuitable
+queries or exhausted capacities. It is useful for device validation as well
+as explicit placement.
+
+`gpuMinRows` applies to each input relation: its default is 1024 in `auto`
+and 1 in `gpu`, with a maximum of 1,000,000. `gpuMaxPairs` defaults to
+1,000,000 and can be at most 2,097,120; the candidate count is checked before
+GPU output allocation. Automatic execution falls back to Lean CPU operations
+on device or capacity failures, preserving the full answer.
+
+The mixed path adds non-enumerable `execution` metadata to row arrays and
+graph datasets. An ordinary CPU result may lack it; ASK remains a boolean
+and explicitly formatted results retain their existing shape. The registered
+`gpuSparqlStage` node invokes this same query path with required GPU execution
+and records its IO assumptions in pipeline evidence.
+
+Lean proves the pure composition of checked replies and the mixed plan returns
+the reference SPARQL answer for arbitrary raw device replies, using CPU
+continuations when validation refuses. The public strict GPU mode reports a
+refusal instead. The registry still names `GpuSparqlDeviceLaw` for the actual
+IO session: the theorem establishes it for the pure checked-reply function,
+while the stateful session and ABI correspondence is covered by integration
+tests.
+
+This requires a rebuilt engine exposing `datasetQueryGpuBegin`,
+`datasetQueryGpuStep`, `datasetQueryGpuRestart` and `datasetQueryGpuClose`;
+an older prebuilt engine does not acquire these entries
+from a JavaScript update alone. Placement is a conservative cardinality
+heuristic, not a calibrated timing model, and no physical-GPU speedup is
+claimed. See the [architecture, proof boundary and validation record](../../docs/designissues/2026-11-22-mixed-gpu-sparql.md).
+
 ## GDSL PVGraph (Lean/Wasm)
 
 The `@factoidal/core/gdsl` subpath exposes the typed PVGraph API.

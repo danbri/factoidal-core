@@ -33,7 +33,7 @@ private def inputValue (j : Json) (t : LinkType) : Except String Value := do
     return .scalar (← natU32 j)
   else if t.kind == .buffer && t.atom == "u32" then
     let arr ← j.getArr?
-    if arr.size > 262144 then refuse "Input buffer exceeds 262144 u32 words"
+    if arr.size > IndexedJoinOps.maxWords then refuse "Input buffer exceeds GPU word capacity"
     else
       let vals ← arr.toList.mapM natU32
       return .buffer vals
@@ -55,7 +55,9 @@ private def portArgs (d : Document) (done : List (String × Value))
 
 private def constant? (n : Node) (raw : Json) : Except String (Option UInt32) := do
   if n.op == "u32.map.add" || n.op == "u32.map.mul" ||
-     n.op == "u32.map.xor" || n.op == "u32.scalar.const" then
+     n.op == "u32.map.xor" || n.op == "u32.scalar.const" ||
+     n.op == "u64.tuple.lower" || n.op == "u64.tuple.upper" ||
+     n.op == "u32.segment.expand" then
     let params ← raw.getObjVal? "params"
     return some (← natU32 (← params.getObjVal? "value"))
   else pure none

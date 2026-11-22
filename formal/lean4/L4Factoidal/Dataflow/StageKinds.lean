@@ -83,6 +83,7 @@ def stageKinds : List (String × String) := [
   ("L4Factoidal.Storage.BackendRefinement.backendBgpStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Storage.BackendRefinement.fallbackWhereStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.shippedEvaluator", "L4Factoidal.Dataflow.LawfulEvaluator"),
+  ("L4Factoidal.Dataflow.gpuSparqlStage", "L4Factoidal.Dataflow.IOStage"),
   ("L4Factoidal.SPARQL.FromMerge.fromMergeStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.updateStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.selectStage", "L4Factoidal.Dataflow.Stage"),

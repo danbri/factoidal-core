@@ -1,6 +1,7 @@
 import Lean.Data.Json
 import L4Factoidal.GpuDomainSpecificLanguage.GpuPlan
 import L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
+import L4Factoidal.GpuDomainSpecificLanguage.IndexedJoin
 
 /-!
 Native Lean emits plans and reference answers for the actual device lane.
@@ -55,6 +56,14 @@ private def scanCpu : M Unit := do
   let positions ← scanSum x (some "scan")
   output "out" positions (some "result")
 
+private def tupleKeys : M Unit := do
+  let l ← input "left"
+  let r ← input "right"
+  let lo ← tupleLower l r 2 (some "lower")
+  let hi ← tupleUpper l r 2 (some "upper")
+  output "lower" lo (some "outLower")
+  output "upper" hi (some "outUpper")
+
 private def caseData : List (String × M Unit × Json × Json) := [
   ("map-highbits", mapWords,
     Json.mkObj [("words", toJson ([0,1,4294967295,2147483648,7,99] : List Nat))],
@@ -83,12 +92,30 @@ private def caseData : List (String × M Unit × Json × Json) := [
     Json.mkObj [
       ("leftLow", toJson (4 : Nat)), ("rightLow", toJson (4 : Nat)),
       ("leftHigh", toJson (4 : Nat)), ("rightHigh", toJson (4 : Nat))]),
-  ("scan-cpu-only", scanCpu,
+  ("scan-parallel", scanCpu,
     Json.mkObj [("words", toJson ([1,2,3,4,5] : List Nat))],
-    Json.mkObj [("words", toJson (5 : Nat))])
+    Json.mkObj [("words", toJson (5 : Nat))]),
+  ("u64-two-column-bounds", tupleKeys,
+    Json.mkObj [
+      ("left", toJson ([1,0,0,0, 0,0,0,0, 1,0,0,2147483648,
+        1,0,4294967295,4294967295, 0,1,0,0,
+        4294967295,4294967295,4294967295,4294967295] : List Nat)),
+      ("right", toJson ([0,0,1,2147483648, 1,0,0,0, 1,0,0,0,
+        1,0,7,2147483648, 1,0,4294967295,4294967295, 0,1,0,0] : List Nat))],
+    Json.mkObj [("left",toJson (24 : Nat)),("right",toJson (24 : Nat))])
 ]
 
 def main : IO Unit := do
+  -- The optimized streaming decoder must reject complete-length corruptions,
+  -- omitted pairs and surplus words, as well as accept the exact model.
+  let .ok validationIndex := IndexedJoin.prepare? #[7,7] #[7,7] |
+    throw (IO.userError "readback validation fixture refused")
+  let validationCounts : IndexedJoin.Counted := {
+    lower := #[0,0], upper := #[2,2], counts := #[2,2], total := 4 }
+  for words in ([[], [0,0,0,0,1,0,1,1], [0,0,1,0,0,1,1,1],
+      [0,0,0,1,1,0,1,2], [0,0,0,1,1,0,1,1,0,0]] : List (List UInt32)) do
+    if (IndexedJoin.acceptPacked? validationIndex validationCounts words).isOk then
+      throw (IO.userError "streaming decoder accepted corrupted pair readback")
   for (name, program, bindings, shapes) in caseData do
     let pv := build program
     let expected ← match PVGraph.evaluate? pv bindings with
@@ -97,10 +124,66 @@ def main : IO Unit := do
     let (plan,eligible) ← match GpuPlan.compile? pv shapes with
       | .ok output => pure (output,true)
       | .error _ => pure (Json.null,false)
-    if name == "scan-cpu-only" && eligible then
-      throw (IO.userError "scan incorrectly admitted to GPU direct fragment")
-    if name != "scan-cpu-only" && !eligible then
+    if !eligible then
       throw (IO.userError s!"{name}: GPU plan unexpectedly refused")
     IO.println ((Json.mkObj [
       ("case",toJson name),("pvgraph",pv),("input",bindings),
       ("plan",plan),("eligible",toJson eligible),("expected",expected)]).compress)
+  -- Cross-workgroup and recursive-scan boundaries, including zero lanes
+  -- in the final group and modulo-u32 overflow.
+  for n in [0,63,64,65,4095,4096,4097,16385,262145] do
+    let pv := build scanCpu
+    let values := (List.range n).map fun i => if i % 9 == 0 then 4294967295 else i % 17
+    let bindings := Json.mkObj [("words",toJson values)]
+    let shapes := Json.mkObj [("words",toJson n)]
+    let .ok expected := PVGraph.evaluate? pv bindings |
+      throw (IO.userError "scan reference refused")
+    let .ok plan := GpuPlan.compile? pv shapes |
+      throw (IO.userError "scan plan refused")
+    IO.println ((Json.mkObj [
+      ("case",toJson s!"scan-boundary-{n}"),("pvgraph",pv),("input",bindings),
+      ("plan",plan),("eligible",toJson true),("expected",expected)]).compress)
+  let joins : List (String × Array UInt64 × Array UInt64) := [
+    ("duplicates", #[3,1,3,9,1], #[3,3,1,5,1]),
+    ("high-half", #[0x100000001,0x900000001,0x100000001],
+      #[0x900000001,0x100000001,0x200000001]),
+    ("empty-left", #[], #[1,2,3]),
+    ("empty-right", #[1,2,3], #[]),
+    ("empty-both", #[], #[]),
+    ("no-match", #[1,3,5], #[2,4,6]),
+    ("skew", (List.replicate 65 (7 : UInt64)).toArray,
+      (List.replicate 65 (7 : UInt64)).toArray),
+    ("large-16385", ((List.range 16385).map UInt64.ofNat).toArray,
+      ((List.range 16385).reverse.map UInt64.ofNat).toArray)]
+  for (name,left,right) in joins do
+    let .ok prepared := IndexedJoin.prepare? left right |
+      throw (IO.userError s!"{name}: join preparation refused")
+    let pv1 := IndexedJoin.phase1PVGraph
+    let input1 := IndexedJoin.phase1Bindings prepared
+    let .ok expected1 := PVGraph.evaluate? pv1 input1 |
+      throw (IO.userError s!"{name}: join probe reference refused")
+    let .ok plan1 := IndexedJoin.phase1Plan? prepared |
+      throw (IO.userError s!"{name}: join probe plan refused")
+    let .ok counted := IndexedJoin.acceptRanges? prepared expected1 |
+      throw (IO.userError s!"{name}: reference ranges failed validation")
+    IO.println ((Json.mkObj [
+      ("case",toJson s!"join-{name}-probe"),("pvgraph",pv1),("input",input1),
+      ("plan",plan1),("eligible",toJson true),("expected",expected1)]).compress)
+    let pv2 := IndexedJoin.phase2PVGraph counted.total
+    let input2 := IndexedJoin.phase2Bindings counted
+    let .ok expected2 := PVGraph.evaluate? pv2 input2 |
+      throw (IO.userError s!"{name}: join expansion reference refused")
+    let .ok plan2 := IndexedJoin.phase2Plan? counted |
+      throw (IO.userError s!"{name}: join expansion plan refused")
+    let .ok decoded := IndexedJoin.acceptPairs? prepared counted expected2 |
+      throw (IO.userError s!"{name}: reference pairs failed validation")
+    if left.size * right.size < 100000 then
+      if decoded != IndexedJoin.referencePairs left right then
+        throw (IO.userError s!"{name}: indexed join disagrees with nested reference")
+    else if name == "large-16385" then
+      let expected := (List.range left.size).map fun i => (i,right.size-1-i)
+      if decoded != expected then
+        throw (IO.userError "large indexed join disagrees with independent arithmetic answer")
+    IO.println ((Json.mkObj [
+      ("case",toJson s!"join-{name}-expand"),("pvgraph",pv2),("input",input2),
+      ("plan",plan2),("eligible",toJson true),("expected",expected2)]).compress)

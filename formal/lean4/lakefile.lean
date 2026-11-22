@@ -464,6 +464,7 @@ lean_lib ClosureChecks where
   srcDir := "."
   roots := #[`Wasm.Abi, `Wasm.Exports, `Wasm.Dispatch,
              `Wasm.ExtHost, `Wasm.Ops.ExtFns, `Wasm.Ops.Clock,
+             `Wasm.Ops.GpuSparql,
              `Wasm.Ops.ErrorModel, `Wasm.ErrorModelTests,
              `Wasm.Ops.Support, `Wasm.Ops.Jwe, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
              `Wasm.Ops.Reason, `Wasm.Ops.Canon, `Wasm.Ops.CL,

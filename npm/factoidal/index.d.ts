@@ -337,6 +337,12 @@ export class Dataset implements Iterable<Quad> {
 export type ClosureRegime = 'rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus';
 
 export interface DatasetQueryOptions {
+  /** Automatic mixed CPU/WebGPU planning by default. 'gpu' requires an observed GPU join. */
+  execution?: 'auto' | 'cpu' | 'gpu';
+  /** Minimum rows per join input (default 1024 in auto mode; 1 in required GPU mode). */
+  gpuMinRows?: number;
+  /** Maximum candidate pairs, checked before output allocation (default 1000000). */
+  gpuMaxPairs?: number;
   sparql12?: boolean;
   version?: '1.1' | '1.2';
   /** Close the default graph under a regime before the query. */
@@ -2229,6 +2235,8 @@ export function capabilities(): Promise<{
   hdt: boolean;
   /** query()'s `sparql12` and Dataset.query's (queryDataset12, datasetQuery12). */
   sparql12: boolean;
+  /** The resumable mixed CPU/WebGPU query ops are present; device availability is separate. */
+  gpuSparql: boolean;
   /** openStore() and the Store methods (storeOpen, storeHandleQuery). */
   store: boolean;
   /** The deltaLog* functions (deltaLogEncode, deltaLogDecode, deltaLogMerge). */

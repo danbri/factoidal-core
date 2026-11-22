@@ -66,6 +66,31 @@ test("GPU call refuses missing Lean op instead of using JS semantics",async()=>{
     /needs Lean\/Wasm/);
 });
 
+test("Lean content preconditions are mandatory before GPU even without output verification",async()=>{
+  const calls=[];
+  const engine={call(op){
+    calls.push(op);
+    if(op==="ops")return {ops:["pvgraphGpuPlan","pvgraphEvaluate"]};
+    if(op==="pvgraphGpuPlan")return {ok:true,plan:{
+      version:"pvgraph-gpu/0.2",requiresInputValidation:true,shader:"unreachable",
+      steps:[{kind:"input",node:"words",name:"words",words:3},
+        {kind:"kernel",node:"map",a:"words",b:"words",words:3,workgroups:1,
+          shader:"word",config:[15,3,0,3,3]}],
+      outputs:[{name:"out",source:"map",kind:"buffer",words:3}]
+    }};
+    if(op==="pvgraphEvaluate")return {ok:false,error:"segment prefixes are not monotone"};
+    throw Error("unexpected engine operation");
+  }};
+  const neverDevice=new Proxy({}, {get(){throw Error("GPU touched before Lean validation");}});
+  for(const requireGPU of [false,true]){
+    calls.length=0;
+    await assert.rejects(runPVGraph({pvgraph,bindings:{words:[2,1,3]},
+      loadEngine:async()=>engine,session:neverDevice,requireGPU,minWords:0,
+      verifyWithLean:false}),/segment prefixes are not monotone/);
+    assert.deepEqual(calls,["ops","pvgraphGpuPlan","pvgraphEvaluate"]);
+  }
+});
+
 
 test("Lean GPU plan instructions wire WebGPU buffers without JS graph interpretation",async()=>{
   const allocations=new Map();

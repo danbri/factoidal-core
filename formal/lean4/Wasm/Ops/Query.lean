@@ -66,6 +66,24 @@ envelope is as it was. -/
 def datasetWarningMembers (ws : List DatasetWarning) : List (String × Json) :=
   if ws.isEmpty then [] else [("warnings", .array (ws.map datasetWarningJson))]
 
+/-- Render the ordinary query envelope after either synchronous evaluation
+or a suspended physical plan. Both paths use the same RDF serializers. -/
+def queryAnswerEnvelope (q : Query) (answer : L4Factoidal.Dataflow.Answer)
+    (extra : List (String × Json) := []) : String :=
+  match answer with
+  | .ask b => okWith (extra ++ [("kind", .string "ask"), ("boolean", .bool b)])
+  | .select vars rows =>
+      let srj := QueryResult.toSrj (.bindings vars rows)
+      "{\"ok\":true," ++ jsonMembers (extra ++ [("kind", .string "select")]) ++
+        ",\"srj\":" ++ srj ++ "}"
+  | .graph g =>
+      let kind := match q.form with
+        | .describe _ => "describe"
+        | _ => "construct"
+      match Graph.toNTriples g .rdf12 with
+      | .error e => errJson s!"{kind} serialisation: {e}"
+      | .ok lines => okWith (extra ++ [("kind", .string kind), ("nquads", .string lines)])
+
 /-- Evaluate over a dataset AND its indexed backend.  SELECT and ASK go
 through the optimized Lean physical-plan algorithm
 (`runSelectQueryBackendDataset` / `runAskQueryBackendDataset`, the same
@@ -165,29 +183,7 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option L4Factoidal.Dataflow.Law
     -- The evaluation is the `run` of a `LawfulEvaluator`
     -- (`Dataflow/Evaluator.lean`, issue 975 item 2): an evaluator cannot be
     -- used here without its contract against the foundation.
-    match ev.run { env, ds, backend := dsb.map (·.backend), query := q } with
-    | .ask b => okWith (extra ++ [("kind", .string "ask"), ("boolean", .bool b)])
-    | .select vars rows =>
-        let srj := QueryResult.toSrj (.bindings vars rows)
-        -- srj is a JSON object document; splice it in verbatim.
-        "{\"ok\":true," ++ jsonMembers (extra ++ [("kind", .string "select")]) ++
-          ",\"srj\":" ++ srj ++ "}"
-    | .graph g =>
-        -- CONSTRUCT (§16.2) and DESCRIBE (§16.4) answer one RDF graph.
-        -- RDF 1.2 N-Triples: a graph with no triple term and no directional
-        -- literal prints the same text in both modes (`Graph.toNTriples`); in
-        -- RDF 1.1 mode an answer with a triple term was an error, and the
-        -- dataset is read in RDF 1.2 mode (an SBM11 generation holds triple
-        -- terms since https://github.com/danbri/factoidal/issues/792 item 1).
-        -- The kind is `describe` for DESCRIBE, so a client can tell the two
-        -- forms apart; the member that carries the graph is `nquads` in both.
-        let kind := match q.form with
-          | .describe _ => "describe"
-          | _ => "construct"
-        match Graph.toNTriples g .rdf12 with
-        | .error e  => errJson s!"{kind} serialisation: {e}"
-        | .ok lines => okWith (extra ++ [("kind", .string kind),
-                                         ("nquads", .string lines)])
+    queryAnswerEnvelope q (ev.run { env, ds, backend := dsb.map (·.backend), query := q }) extra
 
 /-- The `queryDataset` envelope family over an ALREADY-PARSED dataset —
 shared by the stateless op below and the handle op `datasetQuery`

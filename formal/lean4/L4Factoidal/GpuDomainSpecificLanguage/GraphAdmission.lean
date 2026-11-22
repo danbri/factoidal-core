@@ -56,7 +56,8 @@ def coreSignature (n : Node) : Bool :=
   | "u32.reduce.sum" =>
       n.inputs == [ps "x" buf] &&
       n.outputs == [ps "out" scl]
-  | "u32.zip.add" | "u32.zip.xor" =>
+  | "u32.zip.add" | "u32.zip.xor" | "u32.zip.sub" |
+    "u64.tuple.lower" | "u64.tuple.upper" | "u32.segment.expand" =>
       n.inputs == [ps "a" buf, ps "b" buf] &&
       n.outputs == [ps "out" buf]
   | "u32.scalar.const" =>

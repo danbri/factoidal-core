@@ -2,8 +2,10 @@
 // Read source-authoritative JSONL fixtures from a native Lean executable.
 // No JavaScript PVGraph model, parser, operator registry or CPU evaluator.
 import {readFileSync} from "node:fs";
+import {executePVGraphGpuPlan} from "../npm/factoidal/lib/gdsl-gpu.mjs";
 import {createGsslResidentSession}
   from "../npm/factoidal/lib/gpu-resident.mjs";
+import {sourceProvenance} from "./pvgraph-evidence-provenance.mjs";
 
 const args=typeof Deno!=="undefined"?Deno.args:process.argv.slice(2);
 const inputPath=args[0],sha=args[1];
@@ -11,7 +13,15 @@ if(!inputPath||!/^[a-f0-9]{40}$/.test(sha??""))
   throw Error("Usage: pvgraph-gpu-device-smoke.mjs LEAN_FIXTURES HEAD_SHA");
 const fixtures=readFileSync(inputPath,"utf8").trim().split(/\r?\n/)
   .filter(Boolean).map(JSON.parse);
-if(fixtures.length!==8)throw Error("expected eight Lean-authored cases");
+const required=["map-highbits","fanout-zip","broadcast","scalar","empty",
+  "large-8192","u64-two-lane-equality","u64-two-column-bounds","scan-parallel",
+  ...[0,63,64,65,4095,4096,4097,16385,262145].map(n=>"scan-boundary-"+n),
+  ...["duplicates","high-half","empty-left","empty-right","empty-both",
+    "no-match","skew","large-16385"].flatMap(name=>
+      ["join-"+name+"-probe","join-"+name+"-expand"])];
+if(new Set(fixtures.map(r=>r.case)).size!==fixtures.length||
+   required.some(name=>!fixtures.some(r=>r.case===name)))
+  throw Error("missing or duplicate Lean-authored device case");
 const u64=fixtures.find(r=>r.case==="u64-two-lane-equality");
 if(!u64||u64.expected.differenceLow[0]!==0||
    u64.expected.differenceHigh[0]===0||
@@ -21,13 +31,15 @@ if(!u64||u64.expected.differenceLow[0]!==0||
 const adapter=await navigator.gpu?.requestAdapter();
 if(!adapter)throw Error("PVGraph GPU gate requires an actual WebGPU adapter.");
 const session=await createGsslResidentSession({
-  adapter,byteBudget:64*1024*1024,inspectMaxWords:16384
+  adapter,byteBudget:256*1024*1024,inspectMaxWords:16384
 });
-const data={commit:sha,status:"fail",backend:"Deno WebGPU",
-  adapter:adapter.info?.device||adapter.info?.description||"not reported",
+const data={commit:sha,provenance:sourceProvenance(sha),status:"fail",backend:"Deno WebGPU",
+  adapter:adapter.info?.description||adapter.info?.device||"not reported",
+  isSoftwareAdapter:adapter.info?.isFallbackAdapter===true||
+    /swiftshader|llvmpipe|lavapipe|software/i.test([
+      adapter.info?.vendor,adapter.info?.device,adapter.info?.description].join(" ")),
   trust:"observed GPU results, not a proof about the shader compiler or device",
   cases:[],benchmarks:[]};
-let seq=0;
 const same=(a,b)=>{
   // JSON object members are unordered, including those produced by Lean.
   // Array order is significant: it encodes SPARQL solution occurrences.
@@ -44,65 +56,27 @@ try{
       continue;
     }
     const plan=record.plan;
-    if(plan.version!=="pvgraph-gpu/0.1"||typeof plan.shader!=="string")
-      throw Error("invalid Lean GPU fixture plan");
-    await session.compile("pvgraph_u32",plan.shader);
-    const key="pv"+(++seq)+"_";
-    const refs=new Map(),allocated=[];
-    const buf=id=>key+id;
-    const upload=async(id,words)=>{
-      const target=buf(id);
-      await session.upload(target,new Uint32Array(words.length?words:[0]));
-      refs.set(id,target);allocated.push(target);
-    };
+    const bindings=Object.fromEntries(Object.entries(record.input).map(([name,value])=>
+      [name,Array.isArray(value)?value:[value]]));
     const started=now();
-    try{
-      for(const step of plan.steps){
-        if(step.kind==="input"){
-          const source=record.input[step.name];
-          if(step.words!== (Array.isArray(source)?source.length:1))
-            throw Error(record.case+": incorrect input length from Lean plan");
-          await upload(step.node,Array.isArray(source)?source:[source]);
-        }else if(step.kind==="const"){
-          await upload(step.node,[step.value]);
-        }else if(step.kind==="kernel"){
-          const dest=buf(step.node);
-          session.allocate(dest,Math.max(1,step.words)*4);
-          allocated.push(dest);
-          const config=buf(step.node+"_config");
-          await upload(step.node+"_config",[step.code,step.words,step.constant,0]);
-          await session.dispatch({kernel:"pvgraph_u32",bindings:[
-            {binding:0,id:refs.get(step.a)},
-            {binding:1,id:refs.get(step.b)},
-            {binding:2,id:dest},
-            {binding:3,id:config}
-          ],writes:[dest],workgroups:[step.workgroups,1,1]});
-          refs.set(step.node,dest);
-        }else throw Error("unknown Lean plan step "+step.kind);
-      }
-      const observed={};
-      for(const output of plan.outputs){
-        const words=await session.readWords(refs.get(output.source),
-          {countWords:output.words});
-        observed[output.name]=output.kind==="scalar"?words[0]:words;
-      }
-      if(!same(observed,record.expected))
-        throw Error(record.case+": actual GPU output differs from Lean: "+
-          JSON.stringify({observed,expected:record.expected}).slice(0,1000));
-      const elapsed=now()-started;
-      data.cases.push({name:record.case,correct:true,
-        inputWords:plan.steps.filter(s=>s.kind==="input").reduce((n,s)=>n+s.words,0),
-        dispatches:plan.steps.filter(s=>s.kind==="kernel").length,
-        ms:elapsed,readbacks:plan.outputs.length});
-      if(record.case.startsWith("large-"))
-        data.benchmarks.push({name:record.case,observedGpuWallMs:elapsed,
-          excludes:"Lean CPU execution and Wasm artifact generation",
-          includes:"GPU buffer uploads, dispatch and full output readback"});
-    }finally{
-      for(const id of allocated.reverse())session.release(id);
-    }
+    const result=await executePVGraphGpuPlan({plan,bindings,session});
+    const observed=result.outputs;
+    if(!same(observed,record.expected))
+      throw Error(record.case+": actual GPU output differs from Lean: "+
+        JSON.stringify({observed,expected:record.expected}).slice(0,1000));
+    const elapsed=now()-started;
+    data.cases.push({name:record.case,correct:true,
+      inputWords:plan.steps.filter(s=>s.kind==="input").reduce((n,s)=>n+s.words,0),
+      residentBytes:result.residentBytes,
+      dispatches:result.dispatches,timing:result.timing,
+      ms:elapsed,readbacks:plan.outputs.length});
+    if(record.case.includes("large-"))
+      data.benchmarks.push({name:record.case,observedGpuWallMs:elapsed,
+        residentBytes:result.residentBytes,
+        excludes:"Lean CPU execution and Wasm artifact generation",
+        includes:"Shader compilation, GPU buffer uploads, dispatch and full output readback"});
   }
-  if(data.cases.length!==8||data.cases.some(c=>!c.correct&&!c.correctlyRefused))
+  if(data.cases.length!==fixtures.length||data.cases.some(c=>!c.correct&&!c.correctlyRefused))
     throw Error("missing PVGraph GPU evidence");
   data.status="pass";
 }catch(error){

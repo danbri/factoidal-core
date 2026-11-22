@@ -44,6 +44,7 @@ import Wasm.Ops.Query
 import Wasm.Ops.Reason
 import Wasm.Ops.Canon
 import Wasm.Ops.Handles
+import Wasm.Ops.GpuSparql
 import Wasm.Ops.ExtFns
 import Wasm.Ops.ServiceReg
 import Wasm.Ops.QueryExtras
@@ -95,6 +96,7 @@ def coreIOOpNames : List String :=
   , "datasetQuery"
   , "datasetQuery12"
   , "datasetQuery12Entail"
+  , "datasetQueryGpuBegin", "datasetQueryGpuStep", "datasetQueryGpuRestart", "datasetQueryGpuClose"
   , "datasetUpdate"
   , "datasetSerialize"
   , "datasetSerializeWith"
@@ -352,6 +354,10 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "datasetOpen"      => some (arityIO3 op (Ops.datasetOpenBy extra) args)
   | "datasetQuery"     => some (arityIO2Base op (fun a b c => Ops.datasetQuery a b c) args)
   | "datasetQuery12"   => some (arityIO2Base op (fun a b c => Ops.datasetQuery12 a b c) args)
+  | "datasetQueryGpuBegin" => some (arityIO3 op Ops.datasetQueryGpuBegin args)
+  | "datasetQueryGpuStep" => some (arityIO2 op Ops.datasetQueryGpuStep args)
+  | "datasetQueryGpuRestart" => some (arityIO1 op Ops.datasetQueryGpuRestart args)
+  | "datasetQueryGpuClose" => some (arityIO1 op Ops.datasetQueryGpuClose args)
   | "datasetUpdate"    => some (arityIO2Base op (fun a b c => Ops.datasetUpdate a b c) args)
   | "datasetSerialize" => some (arityIO2 op Ops.datasetSerialize args)
   | "datasetSerializeWith" => some (arityIO3 op Ops.datasetSerializeWith args)

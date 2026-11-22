@@ -1,4 +1,4 @@
-import Init
+import L4Factoidal.GpuDomainSpecificLanguage.IndexedJoinOps
 
 /-!
 # GDSL 0.2 common u32 primitives: executable Lean reference semantics
@@ -20,9 +20,10 @@ inductive Value where
 
 inductive Operator where
   | mapAdd | mapMul | mapXor
-  | zipAdd | zipXor
+  | zipAdd | zipXor | zipSub
   | scanSum | reduceSum
   | scalarConst | scalarAdd | broadcast
+  | tupleLower | tupleUpper | segmentExpand
   deriving DecidableEq, Repr
 
 /-- Canonical operator names of the shared GDSL 0.2 registry. -/
@@ -32,19 +33,50 @@ def Operator.fromName? : String → Option Operator
   | "u32.map.xor" => some .mapXor
   | "u32.zip.add" => some .zipAdd
   | "u32.zip.xor" => some .zipXor
+  | "u32.zip.sub" => some .zipSub
   | "u32.scan.sum" => some .scanSum
   | "u32.reduce.sum" => some .reduceSum
   | "u32.scalar.const" => some .scalarConst
   | "u32.scalar.add" => some .scalarAdd
   | "u32.broadcast" => some .broadcast
+  | "u64.tuple.lower" => some .tupleLower
+  | "u64.tuple.upper" => some .tupleUpper
+  | "u32.segment.expand" => some .segmentExpand
   | _ => none
 
-/-- Inclusive prefix sums; each prefix is modulo 2^32. -/
+/-- Inclusive offsets sums; each offsets is modulo 2^32. -/
 def scanFrom (acc : UInt32) : List UInt32 → List UInt32
   | [] => []
   | x :: xs =>
       let next := acc + x
       next :: scanFrom next xs
+
+private def scanFromTR.go (acc : UInt32) (xs outRev : List UInt32) : List UInt32 :=
+  match xs with
+  | [] => outRev.reverse
+  | x :: rest =>
+      let next := acc + x
+      scanFromTR.go next rest (next :: outRev)
+
+def scanFromTR (acc : UInt32) (xs : List UInt32) : List UInt32 :=
+  scanFromTR.go acc xs []
+
+private theorem scanFromTR_go_eq (xs : List UInt32) (acc : UInt32)
+    (outRev : List UInt32) :
+    scanFromTR.go acc xs outRev = outRev.reverse ++ scanFrom acc xs := by
+  induction xs generalizing acc outRev with
+  | nil => simp [scanFromTR.go, scanFrom]
+  | cons x xs ih =>
+      simp only [scanFromTR.go, scanFrom]
+      rw [ih]
+      simp [List.reverse_cons, List.append_assoc]
+
+/-- Kind: executable optimisation.
+    Says: the tail-recursive CPU scan equals the existing wrapping-u32 scan.
+    Does not say: the GPU hierarchy or hardware is established by this lemma. -/
+@[csimp] theorem scanFrom_eq_scanFromTR : @scanFrom = @scanFromTR := by
+  funext acc xs
+  simpa [scanFromTR] using (scanFromTR_go_eq xs acc []).symm
 
 def scan (xs : List UInt32) : List UInt32 := scanFrom 0 xs
 
@@ -71,6 +103,10 @@ def execute (op : Operator) (inputs : List Value) (constant : Option UInt32 := n
       if xs.length == ys.length then
         .ok (.buffer (List.zipWith (· ^^^ ·) xs ys))
       else .error "GDSL zip lengths differ"
+  | .zipSub, [.buffer xs, .buffer ys], none =>
+      if xs.length == ys.length then
+        .ok (.buffer (List.zipWith (· - ·) xs ys))
+      else .error "GDSL zip lengths differ"
   | .scanSum, [.buffer xs], none =>
       .ok (.buffer (scan xs))
   | .reduceSum, [.buffer xs], none =>
@@ -81,6 +117,12 @@ def execute (op : Operator) (inputs : List Value) (constant : Option UInt32 := n
       .ok (.scalar (x + y))
   | .broadcast, [.scalar value, .buffer shape], none =>
       .ok (.buffer (List.replicate shape.length value))
+  | .tupleLower, [.buffer xs, .buffer ys], some arity =>
+      (IndexedJoinOps.tupleBounds false xs ys arity).map .buffer
+  | .tupleUpper, [.buffer xs, .buffer ys], some arity =>
+      (IndexedJoinOps.tupleBounds true xs ys arity).map .buffer
+  | .segmentExpand, [.buffer offsets, .buffer starts], some count =>
+      (IndexedJoinOps.expandSegments offsets starts count).map .buffer
   | _, _, _ => .error "GDSL invalid primitive arguments/parameter"
 
 /-- A fanout operation duplicates the *value reference*, not its semantics. -/
@@ -99,7 +141,7 @@ theorem mapXor_length (xs : List UInt32) (k : UInt32) :
     (xs.map (· ^^^ k)).length = xs.length := by
   simp
 
-/-- The prefix-scan emits one output per input, including the empty case. -/
+/-- The offsets-scan emits one output per input, including the empty case. -/
 theorem scanFrom_length (xs : List UInt32) :
     ∀ acc : UInt32, (scanFrom acc xs).length = xs.length := by
   induction xs with

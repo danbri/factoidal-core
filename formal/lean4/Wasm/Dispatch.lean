@@ -265,6 +265,7 @@ def handleOpNames : List String :=
   , "datasetQuery"
   , "datasetQuery12"
   , "datasetQuery12Entail"
+  , "datasetQueryGpuBegin", "datasetQueryGpuStep", "datasetQueryGpuRestart", "datasetQueryGpuClose"
   , "datasetUpdate"
   , "datasetSerialize"
   , "datasetSerializeWith"

@@ -1256,6 +1256,7 @@ inductive OptionDomain where
   | output
   | version
   | oneOf (values : List String)
+  | boundedNat (maximum : Nat)
 
 private def parseOpts : List (String × OptionDomain) :=
   [("format", .parseFormat), ("baseIRI", .any)]
@@ -1282,7 +1283,10 @@ def apiOptionTable : List (String × List (String × OptionDomain)) :=
   , ("owlIsConsistent", parseOpts ++ [("fuel", .any)])
   , ("owlEntails", parseOpts ++ [("fuel", .any)])
   , ("query", parseOpts ++ [("entail", .entail), ("sparql12", .any), ("version", .version),
-                            ("output", .output)])
+                            ("output", .output),
+                            ("execution", .oneOf ["auto", "cpu", "gpu"]),
+                            ("gpuMinRows", .boundedNat 1000000),
+                            ("gpuMaxPairs", .boundedNat 2097120)])
   , ("serialize", serializeOpts ++ [("inputFormat", .parseFormat), ("baseIRI", .any)])
   , ("csvwToRdf", [("mode", .any), ("base", .any), ("url", .any)])
   , ("jsonldToRdf", [("base", .any), ("rdfDirection", .any), ("expandContext", .any),
@@ -1291,7 +1295,9 @@ def apiOptionTable : List (String × List (String × OptionDomain)) :=
                        ("rdfDirection", .any), ("rdfstar", .any)] ++ parseOpts)
   , ("queryRaw", [("dataFormat", .rawFormat), ("entail", .entail), ("output", .output)])
   , ("Dataset.query", [("sparql12", .any), ("version", .version), ("entail", .entail),
-                       ("output", .output)])
+                       ("output", .output), ("execution", .oneOf ["auto", "cpu", "gpu"]),
+                       ("gpuMinRows", .boundedNat 1000000),
+                       ("gpuMaxPairs", .boundedNat 2097120)])
   , ("Dataset.update", [])
   , ("Dataset.closure", [("regime", .oneOf ["rdfs", "owl-rl", "rho-df", "rdfs-plus"])])
   , ("Dataset.validateShacl", parseOpts)
@@ -1308,6 +1314,12 @@ private def queryOutputNames : List String := ["json", "csv", "tsv", "xml", "xml
 /-- The refusal of `value` for option `key` of `who`, or `none`. -/
 def optionValueRefusal (who key value : String) : OptionDomain → Option String
   | .any => none
+  | .boundedNat maximum =>
+      match value.toNat? with
+      | some n => if n ≤ maximum then none else some (errCoded "option.invalid-value"
+          s!"{who}: {key} must be an integer from 0 to {maximum}")
+      | none => some (errCoded "option.invalid-value"
+          s!"{who}: {key} must be an integer from 0 to {maximum}")
   | .parseFormat =>
       if (parseFormatNames.lookup value.toLower).isSome then none
       else some (errCoded "format.unknown"
@@ -1396,7 +1408,11 @@ def apiCheck (who optionsJson : String) : String :=
             | some dom =>
                 match v with
                 | .string value => optionValueRefusal who k value dom
-                | _ => none
+                | .null => none
+                | _ => match dom with
+                  | .boundedNat maximum => some (errCoded "option.invalid-value"
+                      s!"{who}: {k} must be an integer from 0 to {maximum}")
+                  | _ => none
           match refusal with
           | some r => r
           | none => (optionConflict who fields).getD (okWith [])
@@ -1410,6 +1426,10 @@ def apiCheck (who optionsJson : String) : String :=
 #guard codeOf? (apiCheck "query" "{\"entail\":\"x-ikl-foo\"}") == some "regime.refused"
 #guard codeOf? (apiCheck "query" "{\"entail\":\"RDFS\",\"output\":\"csv\"}") == none
 #guard codeOf? (apiCheck "query" "{\"output\":\"pdf\"}") == some "option.invalid-value"
+#guard codeOf? (apiCheck "query" "{\"execution\":\"gpu\",\"gpuMinRows\":\"0\"}") == none
+#guard codeOf? (apiCheck "query" "{\"gpuMaxPairs\":\"2097121\"}") == some "option.invalid-value"
+#guard codeOf? (apiCheck "Dataset.query" "{\"gpuMinRows\":\"-1\"}") == some "option.invalid-value"
+#guard codeOf? (apiCheck "Dataset.query" "{\"gpuMaxPairs\":{}}") == some "option.invalid-value"
 #guard codeOf? (apiCheck "owlClosure" "{\"mode\":\"owlrl\"}") == none
 #guard codeOf? (apiCheck "owlClosure" "{\"mode\":\"rho-df\"}") == some "option.invalid-value"
 #guard codeOf? (apiCheck "Dataset.update" "{\"x\":null}") == some "option.unknown"

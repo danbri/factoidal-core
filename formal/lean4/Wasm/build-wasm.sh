@@ -249,6 +249,11 @@ done
   [ -n "$STD_DIRS" ] && find $STD_DIRS -name '*.lean'; \
   printf '%s\n' $STD_TIME_FILES; true; } \
   | xargs -P 8 -I{} bash -c 'gen_one "$@"' _ {}
+# GPU admission/plans and suspended query envelopes use Lean.Data.Json at
+# runtime. Init/Std alone cannot satisfy its symbols. Follow emitted runtime
+# initializer edges so meta-only elaborator imports stay out of the artifact.
+python3 "$REPO_ROOT/tools/lean-wasm-runtime-closure.py" \
+  --toolchain "$TOOLCHAIN" --c-dir "$CORE_C" Lean.Data.Json
 echo "  core C files: $(ls "$CORE_C"/*.c | wc -l | tr -d ' ')"
 
 # ---------------------------------------------------------------------

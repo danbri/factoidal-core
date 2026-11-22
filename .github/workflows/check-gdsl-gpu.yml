@@ -7,7 +7,10 @@ on:
       - 'npm/factoidal/lib/gdsl-gpu.mjs'
       - 'npm/factoidal/lib/gpu-resident.mjs'
       - 'tools/pvgraph-gpu-device-smoke.mjs'
+      - 'tools/pvgraph-evidence-provenance.mjs'
       - 'tests/gdsl_gpu.test.mjs'
+      - 'tests/gssl_gpu_resident_test.mjs'
+      - 'npm/factoidal/test/pvgraph-gpu-plan.test.mjs'
       - '.github/workflows/check-gdsl-gpu.yml'
   workflow_dispatch: {}
 permissions:
@@ -46,7 +49,8 @@ jobs:
           node --check npm/factoidal/lib/gdsl-gpu.mjs
           node --check npm/factoidal/lib/gpu-resident.mjs
           node --check tools/pvgraph-gpu-device-smoke.mjs
-          node --test tests/gdsl_gpu.test.mjs
+          node --test tests/gdsl_gpu.test.mjs tests/gssl_gpu_resident_test.mjs \
+            npm/factoidal/test/pvgraph-gpu-plan.test.mjs npm/factoidal/test/gpu-resident.test.mjs
           mkdir -p "$RUNNER_TEMP/pvgraph-gpu"
           git rev-parse HEAD > "$RUNNER_TEMP/pvgraph-gpu/commit.txt"
           sha256sum formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/GpuPlan.lean \

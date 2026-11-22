@@ -123,8 +123,17 @@ private def parseNode (j : Json) : Except String Node := do
     else if op == "u32.reduce.sum" then do
       exactFields params []
       pure ([portSig "x" b],[portSig "out" s])
-    else if op == "u32.zip.add" || op == "u32.zip.xor" then do
+    else if op == "u32.zip.add" || op == "u32.zip.xor" || op == "u32.zip.sub" then do
       exactFields params []
+      pure ([portSig "a" b,portSig "b" b],[portSig "out" b])
+    else if op == "u64.tuple.lower" || op == "u64.tuple.upper" ||
+        op == "u32.segment.expand" then do
+      checkedU32Param params
+      let value ← fieldNat params "value"
+      if op != "u32.segment.expand" && (value == 0 || value > 16) then
+        fail "Tuple key arity must be in 1..16"
+      if op == "u32.segment.expand" && value > IndexedJoinOps.maxWords / 2 then
+        fail "Segment expansion exceeds output capacity"
       pure ([portSig "a" b,portSig "b" b],[portSig "out" b])
     else if op == "u32.scalar.add" then do
       exactFields params []

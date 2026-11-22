@@ -136,6 +136,27 @@ def zipXor (a b : Wire .buffer)
     (id : Option String := none) : M (Wire .buffer) :=
   op "u32.zip.xor" .buffer [argument "a" a, argument "b" b] (obj []) id
 
+def zipSub (a b : Wire .buffer)
+    (id : Option String := none) : M (Wire .buffer) :=
+  op "u32.zip.sub" .buffer [argument "a" a, argument "b" b] (obj []) id
+
+/-- Binary-search lower bounds for complete low/high UInt64 tuple keys. -/
+def tupleLower (probes sorted : Wire .buffer) (arity : UInt32)
+    (id : Option String := none) : M (Wire .buffer) :=
+  op "u64.tuple.lower" .buffer [argument "a" probes, argument "b" sorted]
+    (paramU32 arity) id
+
+def tupleUpper (probes sorted : Wire .buffer) (arity : UInt32)
+    (id : Option String := none) : M (Wire .buffer) :=
+  op "u64.tuple.upper" .buffer [argument "a" probes, argument "b" sorted]
+    (paramU32 arity) id
+
+/-- Packed (segment, source position) pairs, after checked output sizing. -/
+def segmentExpand (offsets starts : Wire .buffer) (count : UInt32)
+    (id : Option String := none) : M (Wire .buffer) :=
+  op "u32.segment.expand" .buffer [argument "a" offsets, argument "b" starts]
+    (paramU32 count) id
+
 def scanSum (x : Wire .buffer)
     (id : Option String := none) : M (Wire .buffer) :=
   op "u32.scan.sum" .buffer [argument "x" x] (obj []) id
