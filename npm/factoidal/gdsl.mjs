@@ -3,3 +3,5 @@
 export {createPVGraphWasm} from "./lib/gdsl-wasm-builder.mjs";
 export {example,listExamples} from "./lib/gdsl-examples.mjs";
 export {createGsslResidentSession} from "./lib/gpu-resident.mjs";
+
+export {runPVGraph} from "./lib/gdsl-gpu.mjs";
