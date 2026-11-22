@@ -15,3 +15,18 @@ resolve its percentage margin against the selected viewport. The existing
 link-region theorem is generalised to the selected document. The guard
 also checks rejection of an element as the layout root. The browser still
 needs the document-aware hit-query path tracked in issue #803.
+
+
+The script host now sends the Document receiver for child point queries. It
+admits queries only for active, reachable frame documents. Each immutable
+measure keeps a lazy layout per frame. The frame's viewport comes from its
+owner's content box in the parent layout. CSSOM point and box reads share the
+same frame snapshot, and navigation invalidates it. The top document and native
+pointer dispatch keep their existing query format.
+
+The regression fixture gives two frames different widths and different target
+positions. It also checks a point outside a child's viewport, a detached
+document, the top page, and the child's measured width.
+The first frame layout path uses its existing inline/style-element cascade and
+the renderer's font. External child style sheets, SVG internals, image-map
+selection and the full overlapping-hit sequence require separate work.

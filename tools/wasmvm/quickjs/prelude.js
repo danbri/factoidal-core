@@ -124,10 +124,12 @@
     if (!Number.isFinite(Number(args[0])) || !Number.isFinite(Number(args[1]))) throw new TypeError(`Failed to execute '${what}' on 'Document': The provided double value is non-finite.`);
   };
   const inViewport = (x, y) => { const [w, h] = viewport(); return x >= 0 && y >= 0 && x < w && y < h; };
-  const pointHits = (x, y) => {
-    const px = Math.floor(Number(x)), py = Math.floor(Number(y)), [w, h] = viewport();
-    if (!(px >= 0 && py >= 0 && px < w && py < h && px < 65536 && py < 65536)) return [];
-    const s = n.query(px * 65536 + py, 35, '');
+  const pointHits = (doc, x, y) => {
+    const px = Math.floor(Number(x)), py = Math.floor(Number(y));
+    if (!(px >= 0 && py >= 0 && px < 65536 && py < 65536)) return [];
+    const point = px * 65536 + py;
+    if (doc === 0 && !inViewport(px, py)) return [];
+    const s = doc === 0 ? n.query(point, 35, '') : n.query(doc, 35, String(point));
     return typeof s === 'string' && s !== '' ? s.split(' ').map(k => wrap(Number(k))) : [];
   };
   const viewport = () => { const v = query(0, 19, 2); return v[0] > 0 ? v : [800, 600]; };
@@ -3730,8 +3732,13 @@
     }
     // CSSOM View §5.1: the hit test is Lean's (node_query 35 on the layout of the page;
     // the point as x × 65536 + y in whole CSS pixels). Off the viewport, none.
-    elementFromPoint(x, y) { pointArgs(arguments, 'elementFromPoint'); return pointHits(x, y)[0] ?? null; }
-    elementsFromPoint(x, y) { pointArgs(arguments, 'elementsFromPoint'); const r = pointHits(x, y); return r.length || !this.documentElement ? r : (inViewport(x, y) ? [this.documentElement] : []); }
+    elementFromPoint(x, y) { pointArgs(arguments, 'elementFromPoint'); return pointHits(nodeId(this), x, y)[0] ?? null; }
+    elementsFromPoint(x, y) {
+      pointArgs(arguments, 'elementsFromPoint');
+      const doc = nodeId(this), hits = pointHits(doc, x, y);
+      return hits.length || doc !== 0 || !this.documentElement ? hits :
+        (inViewport(x, y) ? [this.documentElement] : []);
+    }
     get implementation() { let i = implementations.get(this); if (!i) { i = Object.create(DOMImplementation.prototype); implDoc.set(i, nodeId(this)); implementations.set(this, i); } return i; }
   }
   // DOMImplementation (DOM §4.5.1): documents and doctypes made in the arena by Lean.
