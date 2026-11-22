@@ -554,6 +554,22 @@ def lineBreakMode (s : Computed) : Unicode.LineBreak.Mode :=
   | .normal => .normal
   | .loose => .loose
 
+/-- The visible fallback for control characters that reach the text shaper
+(CSS Text 3 §4). Control Pictures cover C0 and DEL. The replacement glyph
+represents C1. This changes the display string by one code point only. -/
+private def visibleControl (c : Char) : Char :=
+  let n := c.toNat
+  if n == 0x7F then Char.ofNat 0x2421
+  else if 0x80 ≤ n && n ≤ 0x9F then Char.ofNat 0xFFFD
+  else if n < 0x20 && n != 0x09 && n != 0x0A && n != 0x0D then Char.ofNat (0x2400+n)
+  else c
+
+#guard (visibleControl (Char.ofNat 0x01)).toNat == 0x2401
+#guard (visibleControl (Char.ofNat 0x7F)).toNat == 0x2421
+#guard (visibleControl (Char.ofNat 0x85)).toNat == 0xFFFD
+#guard visibleControl '\t' == '\t' && visibleControl '\n' == '\n' &&
+  visibleControl '\r' == '\r' && visibleControl (Char.ofNat 0x200D) == Char.ofNat 0x200D
+
 private def textItems (id : TextSource) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
   let mut word := ""
@@ -587,7 +603,7 @@ private def textItems (id : TextSource) (style : Computed) (text : String) : Lis
         | .uppercase => TextCase.upper c
         | .lowercase => TextCase.lower c
         | .capitalize => if word.isEmpty then TextCase.upper c else c
-      word := word.push shown
+      word := word.push (visibleControl shown)
       spaced := false
       column := column+1
     index := index+1
