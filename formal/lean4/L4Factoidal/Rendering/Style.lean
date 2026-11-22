@@ -588,7 +588,13 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
-      | some ls => (ls.map fun (n, v) => (⟨n, v, d.important⟩ : Declaration)) ++ acc
+      | some ls =>
+        -- CSS Backgrounds 3 §4.3: with style `none` or `hidden` the side's computed width is 0,
+        -- whatever width the shorthand gives (its initial `medium`, 3 px, since border widths
+        -- are read in every unit: `borderWidthPx`).
+        let hidden := ls.any fun (n, v) => n.endsWith "-style" && ["none","hidden"].contains (trim v).toLower
+        let ls := if hidden then ls.map (fun (n, v) => if n.endsWith "-width" then (n, "0") else (n, v)) else ls
+        (ls.map fun (n, v) => (⟨n, v, d.important⟩ : Declaration)) ++ acc
       | none => acc
     else
     -- a side shorthand that mentions `var()` is kept whole: its sides are known only
@@ -982,6 +988,16 @@ private def color (source : String) : Except String Color := do
     | [r,g,b] => return ⟨← channel r,← channel g,← channel b⟩
     | _ => throw s!"unsupported CSS color: {source}"
   throw s!"unsupported CSS color: {source}"
+/-- A font size or other positive float as a rational, to a thousandth. -/
+def ratOfFloat (x : Float) : Rat :=
+  if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
+
+/-- The computed value of `value` for `property` by the property table, with lengths in px
+against font size `fontSize`; `none` when it is not a value of the property. -/
+def tableComputed (fontSize : Float) (property value : String) : Option String :=
+  (CssValues.specified property value).map fun s =>
+    CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
+
 private def edgeValues (s : String) : Except String Edges := do
   let vals ← (words s).mapM pixels
   if vals.any (· < 0) then throw "negative edges outside first CSS profile"
@@ -995,6 +1011,31 @@ private def edgePixel (source : String) : Except String Float := do
   let value ← pixels source
   if value < 0 then throw "negative edges outside first CSS profile"
   return value
+/-- One border width (CSS Backgrounds 3 §4.3 `<line-width>`): `thin`, `medium` and `thick`
+are 1, 3 and 5 px; a length in any unit is read by the property table, `em` against font
+size `fontSize`. Before 2026-11-22 only `px` was read, and a width such as `1in`, `6pt` or
+`1em` gave the initial 3 px (846 WPT reftests set a border width so, mostly in css/CSS2). -/
+def borderWidthPx (fontSize : Float) (source : String) : Except String Float := do
+  match edgePixel source with
+  | .ok v => return v
+  | .error e =>
+    match (trim source).toLower with
+    | "thin" => return 1
+    | "medium" => return 3
+    | "thick" => return 5
+    | _ =>
+      match tableComputed fontSize "border-top-width" source with
+      | some t => if t == source then throw e else edgePixel t
+      | none => throw e
+
+/-- The `border-width` shorthand: one to four `borderWidthPx` values. -/
+private def borderEdges (fontSize : Float) (s : String) : Except String Edges := do
+  match ← (words s).mapM (borderWidthPx fontSize) with
+  | [a] => return ⟨a,a,a,a⟩
+  | [a,b] => return ⟨a,b,a,b⟩
+  | [a,b,c] => return ⟨a,b,c,b⟩
+  | [a,b,c,d] => return ⟨a,b,c,d⟩
+  | _ => throw "CSS edge shorthand requires one to four values"
 /-- One margin: its length and its percentage part, a fraction of the containing block's
 width that the layout resolves (`Layout.percentEdges`). A margin may be negative. -/
 private def marginParts (source : String) : Except String (Float × Float) := do
@@ -1315,10 +1356,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   -- side's style that is the first style an element gets also leaves the sides with no
   -- style of their own without a border (their width is 0); a side's style of none
   -- removes that side's border.
-  | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← edgePixel d.value}}
-  | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← edgePixel d.value}}
-  | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← edgePixel d.value}}
-  | "border-left-width" => return {s with borderWidth := {s.borderWidth with left := ← edgePixel d.value}}
+  | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← borderWidthPx s.fontSize d.value}}
+  | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← borderWidthPx s.fontSize d.value}}
+  | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← borderWidthPx s.fontSize d.value}}
+  | "border-left-width" => return {s with borderWidth := {s.borderWidth with left := ← borderWidthPx s.fontSize d.value}}
   | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
     let st ← borderStyle d.value
     let side := ((d.property.drop 7).takeWhile (· != '-')).toString
@@ -1337,14 +1378,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     else return {s with borderStyle := st}
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
     return {s with borderColor := some (← color d.value)}
-  | "border-width" => return {s with borderWidth := ← edgeValues d.value}
+  | "border-width" => return {s with borderWidth := ← borderEdges s.fontSize d.value}
   | "border-color" => return {s with borderColor := some (← color d.value)}
   | "border" =>
     -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
     let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := none}
     for part in words d.value do
       if let .ok style := borderStyle part then out := {out with borderStyle := style}
-      else if let .ok w := edgePixel part then out := {out with borderWidth := ⟨w,w,w,w⟩}
+      else if let .ok w := borderWidthPx s.fontSize part then out := {out with borderWidth := ⟨w,w,w,w⟩}
       else out := {out with borderColor := some (← color part)}
     return out
   | "border-spacing" =>
@@ -1435,16 +1476,6 @@ def colorHex (value : String) : Option String :=
       | "rgba", [r, g, b, a] => if a == 0 then some "transparent" else some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
       | _, _ => none
     | _ => none
-
-/-- A font size or other positive float as a rational, to a thousandth. -/
-def ratOfFloat (x : Float) : Rat :=
-  if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
-
-/-- The computed value of `value` for `property` by the property table, with lengths in px
-against font size `fontSize`; `none` when it is not a value of the property. -/
-def tableComputed (fontSize : Float) (property value : String) : Option String :=
-  (CssValues.specified property value).map fun s =>
-    CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
 
 /-- The absolute font size keywords (CSS Fonts 4 §3.5, medium 16px) in px. -/
 def fontSizeKeyword : String → Option Float
@@ -3579,5 +3610,22 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
   match declarations (property ++ ":" ++ value) with
   | .ok ds => if ds.isEmpty then none else ds.foldlM (fun acc d => (apply acc d).toOption) s
   | .error _ => none
+
+-- Border widths in every length unit and keyword (`borderWidthPx`; WPT css/CSS2/borders).
+private def borderLeft (property value : String) : Option Float :=
+  (applyDeclaration ({} : Computed) property value).map (·.borderWidth.left)
+#guard borderLeft "border-left-width" "1in" == some 96
+#guard borderLeft "border-left-width" "2.54cm" == some 96
+#guard borderLeft "border-left-width" "25.4mm" == some 96
+#guard borderLeft "border-left-width" "72pt" == some 96
+#guard borderLeft "border-left-width" "+6pc" == some 96
+#guard borderLeft "border-left-width" "1em" == some 16
+#guard borderLeft "border-left-width" "-0pt" == some 0
+#guard borderLeft "border-left-width" "thin" == some 1
+#guard borderLeft "border-left-width" "thick" == some 5
+#guard borderLeft "border-left-width" "7px" == some 7
+#guard borderLeft "border-left-width" "-1pt" == none
+#guard borderLeft "border" "1in solid red" == some 96
+#guard borderLeft "border-width" "1pt 2pt 3pt 6pt" == some 8
 
 end L4Factoidal.Rendering.CSS
