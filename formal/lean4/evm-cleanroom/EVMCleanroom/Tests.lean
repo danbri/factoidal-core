@@ -37,6 +37,13 @@ private def resultWord (result : Except Error State) : Option Nat :=
 -- PC and GAS push the current program counter and post-charge gas.
 #guard resultWord (run 3 (initial #[0x58, 0x00])) == some 0
 #guard resultWord (run 3 (initial #[0x5a, 0x00])) == some 98
+-- EIP-1344 reads an explicitly injected chain context and charges two gas.
+#guard resultWord (run 2 { (initial #[0x46,0x00] 2) with chainId := 1 }) == some 1
+#guard resultWord (run 2 { (initial #[0x46,0x00] 2) with chainId := 0 }) == some 0
+#guard resultWord (run 2 { (initial #[0x46,0x00] 2) with chainId := modulus + 5 }) == some 5
+#guard isError (step { (initial #[0x46] 1) with chainId := 1 }) .outOfGas
+#guard isError (step { (initial #[0x46] 100 .preShanghai) with chainId := 1 })
+  .unsupportedFork
 -- DUP1 retains the original element and pushes a copy.
 #guard resultWord (run 5 (initial #[0x60, 0x09, 0x80, 0x00])) == some 9
 -- A previously halted machine is not stepped again.
