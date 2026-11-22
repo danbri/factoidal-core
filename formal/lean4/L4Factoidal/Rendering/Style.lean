@@ -1804,10 +1804,17 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "visibility" => some {s with visible := source.visible}
   | "white-space" | "white-space-collapse" =>
     some {s with preformatted := source.preformatted, pos := {s.pos with nowrap := source.pos.nowrap}}
-  | "overflow" => some {s with clipOverflow := source.clipOverflow,
-      pos := {s.pos with scrolls := source.pos.scrolls, overflowYHidden := source.pos.overflowYHidden}}
-  | "align-content" => some {s with align := {s.align with alignContent := source.align.alignContent,
-      alignContentSafe := source.align.alignContentSafe, alignContentLastBaseline := source.align.alignContentLastBaseline}}
+  | "overflow" =>
+    let pos := {s.pos with
+      scrolls := source.pos.scrolls
+      overflowYHidden := source.pos.overflowYHidden}
+    some {s with clipOverflow := source.clipOverflow, pos}
+  | "align-content" =>
+    let align := {s.align with
+      alignContent := source.align.alignContent
+      alignContentSafe := source.align.alignContentSafe
+      alignContentLastBaseline := source.align.alignContentLastBaseline}
+    some {s with align}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
   | "border-width" => some {s with borderWidth := source.borderWidth}
   | "border-style" => some {s with borderStyle := source.borderStyle}
