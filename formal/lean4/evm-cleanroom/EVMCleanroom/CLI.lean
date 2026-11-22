@@ -451,8 +451,53 @@ private def callOpcodeMain (args : List String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"reason\":\"usage: --call-opcode PARENT_HEX CHILD_HEX GAS FUEL\"}"
     return 2
 
+/-- Fork-scoped pre-EIP-155 Frontier account transfer. The host supplies
+    true pre-transaction balances/nonce and must authenticate them if
+    historical state-root replay is claimed. Every integer is decimal;
+    this function does NOT assume the illustrative CI prebalances were
+    Ethereum's real 2015 balances. -/
+private def frontierTransferJSON (o : FrontierTransfer.Outcome) : String :=
+  "{\"schemaVersion\":1,\"status\":\"ok\",\"gasUsed\":\"" ++
+  toString o.gasUsed ++ "\",\"gasRemaining\":\"" ++
+  toString o.gasRemaining ++ "\",\"chargedFee\":\"" ++
+  toString o.chargedFee ++ "\",\"valueTransferred\":\"" ++
+  toString o.valueTransferred ++ "\",\"senderAfterBalance\":\"" ++
+  toString o.senderBalance ++ "\",\"receiverAfterBalance\":\"" ++
+  toString o.receiverBalance ++ "\",\"minerAfterBalance\":\"" ++
+  toString o.minerBalance ++ "\",\"senderAfterNonce\":\"" ++
+  toString o.senderNonce ++ "\"}"
+
+/-- Input order:
+    GAS_LIMIT BLOCK_GAS_REMAINING GAS_PRICE VALUE ZERO_BYTES NONZERO_BYTES
+    SENDER_BALANCE RECEIVER_BALANCE MINER_BALANCE SENDER_NONCE SIGNED_NONCE
+    RECIPIENT_CODE_EMPTY_FLAG (0/1). -/
+private def frontierTransferMain (args : List String) : IO UInt32 := do
+  match args.map String.toNat? with
+  | [some limit, some remaining, some price, some value, some zeros,
+     some nonzeros, some senderBalance, some receiverBalance, some minerBalance,
+     some senderNonce, some signedNonce, some empty] =>
+    if empty > 1 then
+      IO.println "{\"status\":\"inputError\",\"reason\":\"empty-code-flag-not-boolean\"}"
+      return 2
+    let input : FrontierTransfer.Input := {
+      gasLimit := limit, blockGasRemaining := remaining,
+      gasPrice := price, transferredValue := value,
+      zeros := zeros, nonzeros := nonzeros,
+      senderBalance := senderBalance, receiverBalance := receiverBalance,
+      minerBalance := minerBalance, senderNonce := senderNonce,
+      signedNonce := signedNonce, recipientHasNoCode := empty == 1 }
+    match FrontierTransfer.settle input with
+    | .ok result => IO.println (frontierTransferJSON result)
+    | .error reason =>
+      IO.println ("{\"status\":\"error\",\"reason\":\"" ++ reason ++ "\"}")
+    return 0
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"reason\":\"expected 12 decimal Frontier transfer fields\"}"
+    return 2
+
 def cliMain (args : List String) : IO UInt32 := do
   match args with
+  | "--frontier-transfer" :: rest => frontierTransferMain rest
   | "--prague-tx-fee" :: rest => pragueFeeMain rest
   | "--prague-authorize" :: rest => pragueAuthorizeMain rest
   | "--tx-fee" :: rest => txFeeMain rest
