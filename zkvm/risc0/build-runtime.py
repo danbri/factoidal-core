@@ -15,6 +15,8 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
+import struct
 import subprocess
 import tarfile
 
@@ -24,6 +26,14 @@ ROOT_SYMBOL = "l4factoidal_Harness_AskAttestationExports"
 DECL = re.compile(r"^lean_object\* initialize_([A-Za-z0-9_]+)\(uint8_t builtin\);", re.M)
 DEF = re.compile(r"LEAN_EXPORT lean_object\* initialize_([A-Za-z0-9_]+)\(uint8_t builtin\) \{")
 RUNTIME = "debug thread mpz utf8 object apply exception interrupt hash byteslice platform alloc allocprof sharecommon object_ref mpn mutex".split()
+GCC_OVERRIDE_VARIABLES = ("CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+                          "COMPILER_PATH", "GCC_EXEC_PREFIX", "LIBRARY_PATH")
+
+
+def require_clean_compiler_environment():
+    present = [name for name in GCC_OVERRIDE_VARIABLES if name in os.environ]
+    if present:
+        raise ValueError("unset GCC search-path overrides before building: " + ", ".join(present))
 
 
 def run(cmd, **kwargs):
@@ -32,6 +42,83 @@ def run(cmd, **kwargs):
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def digest_file(path):
+    state = hashlib.sha256()
+    with path.open("rb") as stream:
+        while block := stream.read(1024 * 1024):
+            state.update(block)
+    return state.hexdigest()
+
+
+def fingerprint_toolchain(root):
+    """Bind installed compiler inputs, without following directory symlinks.
+
+    The root's absolute location and timestamps do not enter the digest.
+    Each sorted entry contributes its type and length-framed relative path.
+    Files also contribute their executable bits, length and streamed bytes;
+    symlinks contribute their exact target spelling. Targets must stay inside
+    the tree, where their own entries are hashed. Special files are refused.
+    The installed toolchain must remain unchanged throughout the build.
+    """
+    root = root.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("C++ toolchain root is not a directory")
+    state = hashlib.sha256(b"factoidal.risc0.cpp-toolchain-tree.v1\0")
+    counts = {"files": 0, "directories": 0, "symlinks": 0, "regularBytes": 0}
+
+    def frame(data):
+        state.update(struct.pack(">Q", len(data)))
+        state.update(data)
+
+    def walk_error(error):
+        raise error
+
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=walk_error):
+        dirs.sort()
+        for name in sorted(dirs + files):
+            path = Path(directory) / name
+            info = path.lstat()
+            relative = os.fsencode(path.relative_to(root).as_posix())
+            if stat.S_ISLNK(info.st_mode):
+                if not path.resolve(strict=True).is_relative_to(root):
+                    raise ValueError("toolchain symlink escapes its root: " + str(path))
+                state.update(b"L")
+                frame(relative)
+                frame(os.fsencode(os.readlink(path)))
+                counts["symlinks"] += 1
+            elif stat.S_ISDIR(info.st_mode):
+                state.update(b"D")
+                frame(relative)
+                counts["directories"] += 1
+            elif stat.S_ISREG(info.st_mode):
+                state.update(b"F")
+                frame(relative)
+                state.update(struct.pack(">IQ", stat.S_IMODE(info.st_mode) & 0o111, info.st_size))
+                consumed = 0
+                with path.open("rb") as stream:
+                    opened = os.fstat(stream.fileno())
+                    if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                        raise ValueError("toolchain file replaced during scan: " + str(path))
+                    while block := stream.read(1024 * 1024):
+                        consumed += len(block)
+                        if consumed > info.st_size:
+                            raise ValueError("toolchain file grew during scan: " + str(path))
+                        state.update(block)
+                    after = os.fstat(stream.fileno())
+                before_state = (info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+                after_state = (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                if consumed != info.st_size or after_state != before_state:
+                    raise ValueError("toolchain file changed during scan: " + str(path))
+                counts["files"] += 1
+                counts["regularBytes"] += consumed
+            else:
+                raise ValueError("unsupported toolchain entry: " + str(path))
+    if not counts["files"]:
+        raise ValueError("toolchain contains no regular files")
+    return {"schema": "factoidal.risc0.cpp-toolchain-tree.v1", "root": str(root),
+            "sha256": state.hexdigest(), **counts}
 
 
 def replace_once(text, old, new):
@@ -201,9 +288,14 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.jobs <= 4:
         parser.error("jobs must be between 1 and 4")
+    require_clean_compiler_environment()
     repo = Path(__file__).resolve().parents[2]
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
+    cpp_toolchain = fingerprint_toolchain(args.cpp)
+    compiler = Path(cpp_toolchain["root"]) / "bin/riscv32-unknown-elf-"
+    compiler_hashes = {"c": digest_file(Path(str(compiler) + "gcc")),
+                       "cxx": digest_file(Path(str(compiler) + "g++"))}
     src, inc, runtime = prepare_runtime(args, repo, out)
     closure, lean_sources = generate_closure(args, repo, out)
     rewrite_spec = importlib.util.spec_from_file_location("nat32", repo / "tools/wasm32-nat-literals.py")
@@ -236,7 +328,6 @@ def main():
     common = ["-march=rv32im", "-mabi=ilp32", "-O2", "-DNDEBUG", "-ffunction-sections", "-fdata-sections",
               "-I" + str(inc), "-I" + str(src / "include"), "-I" + str(src),
               "-I" + str(repo / "third_party/hacl/include")]
-    compiler = args.cpp / "bin/riscv32-unknown-elf-"
     header_files = sorted({*src.rglob("*.h"), *inc.rglob("*.h"),
                            *(repo / "third_party/hacl/include").rglob("*.h")})
     headers = {str(path): digest(path.read_bytes()) for path in header_files}
@@ -254,7 +345,8 @@ def main():
         assemble = [str(compiler) + "gcc", "-march=rv32im", "-mabi=ilp32",
                     "-x", "assembler", "-c", str(lowered_asm), "-o", str(obj)]
         fingerprint = digest(path.read_bytes() + json.dumps(
-            [cmd, assemble, header_fingerprint, compiler_identity, lowering_hash]).encode())
+            [cmd, assemble, header_fingerprint, compiler_identity, compiler_hashes,
+             cpp_toolchain["sha256"], lowering_hash]).encode())
         stamp = obj.with_suffix(".inputs.json")
         expected_stamp = {"inputs": fingerprint,
                           "object": digest(obj.read_bytes()) if obj.exists() else "",
@@ -288,8 +380,9 @@ def main():
     manifest = {"sourceCommit": run(["git", "-C", repo, "rev-parse", "HEAD"]).decode().strip(),
         "leanSources": lean_sources,
         "leanCompilerSha256": digest((args.toolchain / "bin/lean").read_bytes()),
-        "cCompilerSha256": digest(Path(str(compiler) + "gcc").read_bytes()),
-        "cxxCompilerSha256": digest(Path(str(compiler) + "g++").read_bytes()),
+        "cCompilerSha256": compiler_hashes["c"],
+        "cxxCompilerSha256": compiler_hashes["cxx"],
+        "cppToolchain": cpp_toolchain,
         "leanRuntime": runtime, "rootInitializer": ROOT_SYMBOL,
         "compiler": compiler_identity, "headers": headers,
         "fenceLowering": {"scriptSha256": lowering_hash,

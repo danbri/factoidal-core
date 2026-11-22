@@ -54,6 +54,10 @@ is restricted to the single non-preemptive hart, with no threads, signal
 handlers, memory-mapped devices or self-modifying code. FENCE.I and other
 forms are refused. Original/lowered assembly and every edit are retained;
 the cache binds the helper hash and both compiler/assembler commands.
+It also binds the complete installed C/C++ toolchain tree and driver hashes.
+The guest linker consumes a private, immutable copy of the archive bytes
+that passed the manifest check. The [provenance review](../../docs/20261122-risc0-link-provenance.md)
+records the corresponding cache and linking controls.
 The final linked instruction gate also covers Rust and prebuilt libraries,
 which are never modified by this lowering.
 
@@ -140,6 +144,40 @@ Build outputs, private frames and receipts are ignored by Git. Keep the
 manifest, ELF inspection, exact image ID, input/output hashes and test
 results together when recording an attestation build.
 
+## Guest execution against native fixtures
+
+After `tools/check-ask-attestation.py` has completed in a fresh evidence
+directory, `check-guest.py` reuses its 24 input fixtures and independently
+checked native journals. Supply the already-built host tool, pinned local
+executor and packaged programme explicitly. The output directory must not
+already exist:
+
+```sh
+python3 zkvm/risc0/check-guest.py \
+  --host-tool "$ASK_TOOL" --r0vm "$R0VM" --program "$ASK_PROGRAM" \
+  --native-evidence "$NATIVE_EVIDENCE" --output-dir "$GUEST_EVIDENCE"
+```
+
+This runs 28 checks: all 24 native file cases, plus trailing-frame,
+truncated-field, invalid-regime and 257-retained-triple refusals. It requires
+the complete native result and source inventory to match the current
+checkout. Missing fixtures or journals, changed public byte commitments,
+unexpected refusal categories, non-JSON success and any refusal stdout fail
+the run. A valid false journal remains a successful execution.
+
+The runner never compiles or proves. It uses one executor thread and a
+180-second wall-clock limit per case; the host's cycle limits also apply.
+`result.json` records the supplied programme and tool hashes, native source
+record, input/journal hashes, reported image/cycles/time and measured wall
+time. Private frames, comparison journals and separate stdout/stderr logs
+are retained in the new private directory. A comparison journal supplied
+to a refusal case is not reported as an emitted journal. The result is
+execution evidence only, not a cryptographic receipt or a claim about the
+origin of a supplied binary.
+
+The lightweight refusal tests run without the zkVM:
+`python3 -m unittest discover -s zkvm/risc0 -p test_check_guest.py`.
+
 ## Execute, prove and verify
 
 Let `ASK_TOOL` be the absolute path of
@@ -178,7 +216,9 @@ RAYON_NUM_THREADS=2 "$ASK_TOOL" prove \
 `r0vm`, verifies its image and journal with the pinned SDK, checks the
 bounded receipt decoder, then writes a new private receipt file. It uses
 the shared local proving lock. Both commands enforce a 64 Mi-cycle
-session ceiling and 2^20-cycle segments. Development mode is refused,
+session ceiling and 2^18-cycle segments. The smaller segments bound local
+CPU prover memory while leaving the guest image and statement unchanged.
+Development mode is refused,
 and the Bonsai feature/default remote-prover selection is not used.
 
 The receipt transport accepts flat composite receipts of at most 1,024

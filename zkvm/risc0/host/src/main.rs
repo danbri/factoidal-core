@@ -64,7 +64,9 @@ fn run_local(args: &[String], prove: bool) -> Result<()> {
     let expected = bounded_read(&args[5], 128)?;
     let satisfied = journal_boolean(&expected)?;
     let mut builder = ExecutorEnv::builder();
-    builder.write_slice(&frame).segment_limit_po2(20).session_limit(Some(64 * 1024 * 1024));
+    // A smaller segment bounds CPU prover memory without changing the guest
+    // image or the verified statement. The session ceiling remains separate.
+    builder.write_slice(&frame).segment_limit_po2(18).session_limit(Some(64 * 1024 * 1024));
     let guest_env = builder.build()?;
     // An explicit local subprocess avoids the SDK's default prover selection.
     // The Bonsai feature is not compiled in.

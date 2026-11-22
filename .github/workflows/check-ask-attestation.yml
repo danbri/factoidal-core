@@ -80,6 +80,12 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal
       - name: Check bounded receipt transport and journal framing
         run: cargo +1.97.1 test --release --locked --manifest-path zkvm/risc0/host/Cargo.toml -j2
+      - name: Check immutable archive linking
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc +1.97.1 --edition=2021 --test zkvm/risc0/guest/runtime_snapshot.rs -o "${{ runner.temp }}/runtime-snapshot-tests"
+          "${{ runner.temp }}/runtime-snapshot-tests"
       - name: Fetch the exact official verifier fixture sources
         run: python3 zkvm/risc0/evm/bootstrap.py
       - name: Verify the real official Groth16 fixture with the pinned SDK
@@ -112,3 +118,5 @@ jobs:
           set -euo pipefail
           python3 zkvm/risc0/test_verify_elf.py
           python3 zkvm/risc0/test_lower_fences.py
+          python3 zkvm/risc0/test_toolchain_fingerprint.py
+          python3 zkvm/risc0/test_check_guest.py
