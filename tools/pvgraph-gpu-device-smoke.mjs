@@ -5,7 +5,8 @@ import {readFileSync} from "node:fs";
 import {createGsslResidentSession}
   from "../npm/factoidal/lib/gpu-resident.mjs";
 
-const inputPath=process.argv[2],sha=process.argv[3];
+const args=typeof Deno!=="undefined"?Deno.args:process.argv.slice(2);
+const inputPath=args[0],sha=args[1];
 if(!inputPath||!/^[a-f0-9]{40}$/.test(sha??""))
   throw Error("Usage: pvgraph-gpu-device-smoke.mjs LEAN_FIXTURES HEAD_SHA");
 const fixtures=readFileSync(inputPath,"utf8").trim().split(/\r?\n/)
@@ -94,9 +95,14 @@ try{
   data.status="pass";
 }catch(error){
   data.error=error?.stack||String(error);
-  process.exitCode=1;
+  if(typeof Deno!=="undefined")Deno.exitCode=1;
+  else process.exitCode=1;
 }finally{
   data.resources=session.status();
-  try{session.close();}catch(e){data.cleanupError=String(e);process.exitCode=1;}
+  try{session.close();}catch(e){
+    data.cleanupError=String(e);
+    if(typeof Deno!=="undefined")Deno.exitCode=1;
+    else process.exitCode=1;
+  }
   console.log(JSON.stringify(data,null,2));
 }
