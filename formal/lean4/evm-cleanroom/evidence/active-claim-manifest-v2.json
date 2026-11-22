@@ -8,11 +8,11 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "71da30eb2d4f59195c0eef322cb36a0a24bae200",
+    "EVMCleanroom/Core.lean": "3e60ae94c082b32cdb059ed9737ada424c4bc30d",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "db48e3382b8885f8c74b42a6d2b6cfb88b193da3",
-    "EVMCleanroom/World.lean": "7d2b5145d13fc92fba560933719aafd0b88e8362",
+    "EVMCleanroom/World.lean": "449b352fc05f50b298991fbb0c319bb0264fec02",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
     "EVMCleanroom/Call.lean": "e721f872271c6b6832dbc34422d836b2391dce98",
@@ -20,7 +20,7 @@
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
     "EVMCleanroom/CLI.lean": "62b45a77a8622a8526c60fb644f1826e1463ac1a",
-    "EVMCleanroom.lean": "f3d611fa11f6fc17697d3e934629d3fb922b0c40",
+    "EVMCleanroom.lean": "a1ccb0c3bb2f59de380f73d5410149e5a127d54e",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
@@ -33,10 +33,12 @@
     "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
-    "EVMCleanroom/CallOpcode.lean": "aeab151aa8c7222e77b3d13eb91d3f4aa0f90726",
+    "EVMCleanroom/CallOpcode.lean": "b89c4aa5672807702ccb8accb9d38bed9bd7a49d",
     "scripts/differential/call-opcode.mjs": "574af6316ccbba111cabfbed961b193aa884742e",
-    "EVMCleanroom/ValueCall.lean": "7841c1cfff09a83cc1b26574c329b47bfedae737",
-    "scripts/differential/value-call.mjs": "c8f984084b8ed39a81645f142734c167239b2858"
+    "EVMCleanroom/ValueCall.lean": "bcd67d82c400d03ab7058fdb829f99eb8d70f472",
+    "scripts/differential/value-call.mjs": "c8f984084b8ed39a81645f142734c167239b2858",
+    "EVMCleanroom/CallContextTests.lean": "b9daf2a0e1effbc62fc8052b589378120af2e79e",
+    "scripts/differential/call-context.mjs": "4347690149529a63d3b7090edf3b8126d4a1bd64"
   },
   "theorem_inventory": [
     {
@@ -455,6 +457,30 @@
         "dynamic bytecode loading",
         "full transaction/receipt state root"
       ]
+    },
+    "call_context_candidate": {
+      "status": "pending-current-head-ci",
+      "fork": "Cancun",
+      "reference": "EthereumJS 10.1.3 executing exactly the same parent/child bytecode",
+      "required": {
+        "compared": 128,
+        "passed": 128,
+        "failed": 0
+      },
+      "semantics": [
+        "actual 0x34 CALLVALUE from child transferred amount",
+        "actual 0x47 SELFBALANCE from child post-transfer account",
+        "actual 0x30 ADDRESS from executing account",
+        "parent 0x47 after debit/rollback",
+        "Core word/gas/stack update and real World.frameInput"
+      ],
+      "exclusions": [
+        "caller and origin context not yet supplied",
+        "arbitrary calldata/returndata",
+        "nested CALL",
+        "precompiles",
+        "whole blockchain state root"
+      ]
     }
   },
   "trust_boundaries": [
@@ -474,6 +500,6 @@
     "Independent expert review"
   ],
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
-  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text. Candidate Prague type3/4 extension is separate from the historical original 4/6 record; it requires fresh six-of-six CI. Do not claim six successes until all roots and mutations pass. New strict Prague six-state ledger checks all six pinned external roots and 6 negative report mutations; CI must be green on this exact source revision. Signed EIP-4844 RLP requires a KZG option for EthereumJS instantiation; a fail-closed sentinel rejects any sidecar proof operation. No KZG proof validity is claimed. The exact 6/6 Prague root and 9+6 adversarial gates succeeded at commit ff3251d231a1a5bc7328f458eb158b8ce57d4dab in CI 44940731780. Six new Lean Prague theorems now join the selected live axioms gate (20 total). A further CI run is needed to validate this manifest-only assurance update. Actual 0xf1 parent opcode executable and 330 independent EthereumJS oracle comparisons introduced after historical CI; no pass claim until current branch run is green. The selected theorem-axiom manifest remains 20 and will be expanded only after observing real printed axioms of the new two parent-journal proofs. Added public executable CallOpcode.run parent rollback theorems; axiom lists will be pinned after this new source revision successfully elaborates. Four actual CALL parent rollback theorems now selected and their printed axioms pinned from Lean log 44954398201. New current-head CI must pass 24/24 selected-axiom audit and 330/330 oracle comparisons before claiming active revision conformance. A new executable nonzero value CALL slice and 450-case independent differential are pending current-head CI. Four existing CallOpcode parent rollback proofs remain selected; the new ValueCall theorems need exact live axiom audit before being added to the active manifest. Seven new ValueCall proof axiom sets were actually printed in CI job 137122813344. Must re-elaborate and audit all 31 claims on a clean current-head run; do not mistake an earlier parent-scope parser failure for proved CALL conformance.",
+  "post_reference_evidence": "102-case CALL boundary matrix was added after the reference_implementation_commit and reference_ci_run. Those historical CI results do NOT validate this new matrix; inspect this PR's fresh differential job before asserting a pass. New live axiom-output gate was added after both historical CI runs and requires a fresh successful Lean job. Osaka EIP-7939 implementation, explicit --osaka CLI, and 1022-input oracle challenge are from a later source revision and need their own current-head CI. Historical Cancun/Prague counts remain isolated. The two Osaka CLZ theorem declarations are now selected for live axiom-output auditing (14 total); their axiom lists were taken from successful actual Lean stdout, not inferred from source text. Candidate Prague type3/4 extension is separate from the historical original 4/6 record; it requires fresh six-of-six CI. Do not claim six successes until all roots and mutations pass. New strict Prague six-state ledger checks all six pinned external roots and 6 negative report mutations; CI must be green on this exact source revision. Signed EIP-4844 RLP requires a KZG option for EthereumJS instantiation; a fail-closed sentinel rejects any sidecar proof operation. No KZG proof validity is claimed. The exact 6/6 Prague root and 9+6 adversarial gates succeeded at commit ff3251d231a1a5bc7328f458eb158b8ce57d4dab in CI 44940731780. Six new Lean Prague theorems now join the selected live axioms gate (20 total). A further CI run is needed to validate this manifest-only assurance update. Actual 0xf1 parent opcode executable and 330 independent EthereumJS oracle comparisons introduced after historical CI; no pass claim until current branch run is green. The selected theorem-axiom manifest remains 20 and will be expanded only after observing real printed axioms of the new two parent-journal proofs. Added public executable CallOpcode.run parent rollback theorems; axiom lists will be pinned after this new source revision successfully elaborates. Four actual CALL parent rollback theorems now selected and their printed axioms pinned from Lean log 44954398201. New current-head CI must pass 24/24 selected-axiom audit and 330/330 oracle comparisons before claiming active revision conformance. A new executable nonzero value CALL slice and 450-case independent differential are pending current-head CI. Four existing CallOpcode parent rollback proofs remain selected; the new ValueCall theorems need exact live axiom audit before being added to the active manifest. Seven new ValueCall proof axiom sets were actually printed in CI job 137122813344. Must re-elaborate and audit all 31 claims on a clean current-head run; do not mistake an earlier parent-scope parser failure for proved CALL conformance. Context-sensitive CALLVALUE, SELFBALANCE and ADDRESS inserted into the production Core dispatcher and World.frameInput path, with child nonzero value passed into Frame.run. 128 oracle comparisons and three frameInput theorem prints require fresh current-head verification; not a claim of general code execution conformance.",
   "fork_scope_note": "The Osaka profile only enables opcode 0x1e (EIP-7939) in the otherwise restricted interpreter. It is NOT a fork-complete Osaka/Fusaka EVM or an EL/CL node. Historical Shanghai-to-Prague profile tests stay on their original default; never relabel earlier EELS roots as Osaka conformance. The CLZ differential gate includes an input for every possible 0..256 leading-zero result and both sides of powers-of-two bit-length transitions."
 }
