@@ -90,6 +90,32 @@ add('slt-out-of-gas', push(maxWord) + push(signBit) + '1200', '', 8)
 add('slt-one-operand', '60011200', '', 6)
 add('slt-no-operands', '1200', '', 3)
 
+// Signed division and remainder use truncated magnitudes, and SAR uses
+// sign extension even when the full-width shift operand exceeds 255.
+// Every case runs a real Lean frame against the independent EthereumJS EVM.
+let newSignedCases = 0
+const signedAdd = (id, code, gas = 1000) => {
+  add(id, code, '', gas)
+  newSignedCases++
+}
+for (const [op, name] of [['05', 'sdiv'], ['07', 'smod']]) {
+  for (const [i, a] of words.entries()) {
+    for (const [j, b] of words.entries()) {
+      signedAdd(`${name}-${i}-${j}`, push(b) + push(a) + op + '00', 11)
+    }
+  }
+  signedAdd(`${name}-out-of-gas`, '60036002' + op + '00', 10)
+  signedAdd(`${name}-underflow`, '6001' + op + '00', 100)
+}
+const shifts = [0n, 1n, 31n, 128n, 255n, 256n, signBit, maxWord]
+for (const [i, shift] of shifts.entries()) {
+  for (const [j, value] of words.entries()) {
+    signedAdd(`sar-${i}-${j}`, push(value) + push(shift) + '1d00', 9)
+  }
+}
+signedAdd('sar-out-of-gas', '600360021d00', 8)
+signedAdd('sar-underflow', '60011d00', 100)
+
 // ADDMOD/MULMOD must retain full-precision intermediate values. Each triple
 // is executed by the pinned independent EthereumJS oracle and by actual Lean.
 const modularPairs = [
@@ -168,6 +194,6 @@ console.log(JSON.stringify({
   kind: 'solidity-pure-frame-differential', oracle: '@ethereumjs/evm@10.1.3 Shanghai runCode',
   compiler: fixture.compiler.version, runtimeSha256: fixture.runtimeSha256,
   compared: cases.length, matched: cases.length, mismatches: 0,
-  signedCases: words.length ** 2 + 3, modularCases, forbiddenRefusals: forbidden.length,
+  signedCases: words.length ** 2 + 3 + newSignedCases, modularCases, forbiddenRefusals: forbidden.length,
   compiledExactGas: baseline.gasUsed, legacyCompatibility: 1,
 }))
