@@ -575,8 +575,8 @@ def gradientArgs (value : String) : Option String := do
 /-- The URL layers of a raster `background-image`. Use CSS component values rather
 than splitting quoted strings or interpreting CSS escapes as URL characters. -/
 def backgroundURLLayers (value : String) : Option (List String) :=
-  (splitTopCommas value).mapM fun layer =>
-    match CssValues.stripWs (CssValues.CV.parse layer) with
+  (CssValues.commaItems value).mapM fun layer =>
+    match layer with
     | [.tok (.url url)] | [.fn "url" [.tok (.str url)]] =>
       if url.isEmpty then none else some url
     | _ => none
