@@ -190,10 +190,11 @@ private def embeddedAttributes (attrs : List XML.NamespaceAttribute) : Except St
   for attr in attrs do
     if attr.name.namespace_.isNone && attr.name.localPart == "style" then
       let declarations ← Rendering.CSS.declarations attr.value
-      -- `background-image` is a longhand that the `background` shorthand gives HTML layout
-      -- (`CSS.declarationsOf`); the SVG reader takes none of it
+      -- CSS.declarationsOf expands background into HTML box-paint longhands.
+      -- These declarations do not enter the SVG paint attribute reader.
       let declarations := declarations.filter (fun d =>
-        !Rendering.CSS.htmlProperties.contains d.property && d.property != "background-image")
+        !Rendering.CSS.htmlProperties.contains d.property &&
+        !["background-image", "background-size", "background-repeat"].contains d.property)
       if !declarations.isEmpty then
         let value := String.intercalate ";" (declarations.map fun d => d.property ++ ":" ++ d.value ++ if d.important then "!important" else "")
         out := {attr with value} :: out
