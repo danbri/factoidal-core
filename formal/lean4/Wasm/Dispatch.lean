@@ -141,6 +141,7 @@ def opNames : List String :=
   , "pvgraphBuild"
   , "pvgraphAdmit"
   , "pvgraphEvaluate"
+  , "pvgraphGpuPlan"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -533,6 +534,7 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "pvgraphBuild"         => arity1 op pvgraphBuild args
     | "pvgraphAdmit"         => arity1 op pvgraphAdmit args
     | "pvgraphEvaluate"      => arity2 op pvgraphEvaluate args
+    | "pvgraphGpuPlan"       => arity2 op pvgraphGpuPlan args
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args
