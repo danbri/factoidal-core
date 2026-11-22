@@ -1700,8 +1700,6 @@ private def cellContents (dom : Dom) : Table.Source → Nat × Array Nat
   | .element id => (id,(dom.get id).kids)
   | .anonymous parent kids => (parent,kids)
 
-/-- The width a cell asks of its columns (CSS 2.1 §17.5.2.2): its min-content and
-max-content widths with its padding, and its specified width. -/
 /-- The space between the content and border edges of a table or cell. The
   collapsing border model keeps its existing sizing until it resolves shared edges. -/
 private def tableInsets (s : Computed) (collapsed : Bool) : Edges :=
@@ -1709,6 +1707,7 @@ private def tableInsets (s : Computed) (collapsed : Bool) : Edges :=
   let b := s.borderEdges
   ⟨s.padding.top+b.top, s.padding.right+b.right, s.padding.bottom+b.bottom, s.padding.left+b.left⟩
 
+/-- Intrinsic column contributions include the cell's padding and separated borders. -/
 private def cellMeasure (s : Computed) (collapsed : Bool) (widths : Float × Float) : Table.Measure :=
   let insets := tableInsets s collapsed
   let pad := insets.left+insets.right
