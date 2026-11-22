@@ -277,27 +277,30 @@ jobs:
             --out .lake/eels/frontier-prestate-synthetic-mpt-test.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="synthetic-archive-proof-mutation-tests-pass" and x["syntheticOnly"] is True and x["completeTrieMatchesSparseProofTrie"] and x["forgedProofsRejected"]==10 and x["syntheticScenarios"]==2 and x["testedPresentAndAbsentRecipient"] and x["historicalPrestateAvailable"] is False and x["actualMainnetStateRootReplayed"] is False,x'
           node --check scripts/eels/fetch-frontier-account-witness.mjs
-      - name: Probe three free historical archive endpoints for REAL 2015 account proofs (separate from conformance)
-        continue-on-error: true
-        timeout-minutes: 4
+      - name: Decode exact immutable block-46146 archive witness (offline, content-addressed)
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          set -o pipefail
-          for endpoint in \
-            https://eth-mainnet.public.blastapi.io \
-            https://rpc.mevblocker.io/noreverts \
-            https://ethereum-rpc.blockreq.com/v1/rpc/public; do
-            echo "Archive candidate: ${endpoint}"
-            if node scripts/eels/fetch-frontier-account-witness.mjs \
-              --rpc "$endpoint" \
-              --historical evidence/frontier-mainnet-46147.json \
-              --out .lake/eels/first-frontier-archive-proof-bundle.json; then
-              echo "AUTHENTICATED HISTORICAL STATE REPLAY SUCCEEDED; inspect saved proof artifact"
-              exit 0
-            fi
-          done
-          echo "NO AUTHENTICATED 2015 ARCHIVE STATE WITNESS: not a mainnet state-root replay"
-          exit 1
+          mkdir -p .lake/eels
+          base64 --decode evidence/frontier-mainnet-46146-account-proofs.json.gz.b64 | \
+            gzip --decompress > .lake/eels/frontier-46146-archive-witness.json
+          printf '9c9286d7c9500aca5426b7bf44bc74b19f84d2b16761dfb10ea7948bbef17924  .lake/eels/frontier-46146-archive-witness.json\n' | sha256sum --check
+          python3 -c 'import json; x=json.load(open(".lake/eels/frontier-46146-archive-witness.json")); assert x["schemaVersion"]==1 and x["parentHeader"]["number"]=="0xb442" and x["parentHeader"]["hash"]=="0x5a41d0e66b4120775176c09fcf39e7c0520517a13d2b57b18d33d342df038bfc" and len(x["accounts"])==3,x'
+      - name: Require REAL authenticated 2015 transaction and block state roots via Lean and EthereumJS MPT
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/verify-frontier-account-witness.mjs \
+            --historical evidence/frontier-mainnet-46147.json \
+            --witness .lake/eels/frontier-46146-archive-witness.json \
+            --out .lake/eels/frontier-real-mainnet-state-root-replay.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="full-historical-three-account-root-replay-pass" and x["block"]=="46147" and x["witnessedAccounts"]==3 and x["derivedIntermediateStateRoot"]=="0x96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957" and x["derivedFinalBlockStateRoot"]=="0x0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169" and x["transactionGasUsed"]=="21000" and x["transactionFeeWei"]=="1050000000000000000",x'
+      - name: Independently recompute both REAL roots using pure Python Keccak/RLP/MPT
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/eels/independent-frontier-trie.py .lake/eels/frontier-46146-archive-witness.json \
+            | tee .lake/eels/frontier-independent-python-replay.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["accountsVerified"]==3 and x["recipientNonexistentBeforeTransaction"] and x["intermediateRoot"]=="96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957" and x["postBlockRoot"]=="0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169",x'
+          python3 scripts/eels/frontier-independent-negative.py .lake/eels/frontier-46146-archive-witness.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["mainnetReplayVerified"] and x["adversarialControlsRejected"]==6 and x["originalTransactionAndBlockRootsReplayed"]==2,x'
       - name: Preserve published fixture, host transition results and npm resolution
         if: always()
         uses: actions/upload-artifact@v4
