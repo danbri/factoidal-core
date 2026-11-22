@@ -37,7 +37,7 @@ def defaultOnlyStage : Stage String RDF.Dataset RDF.Graph where
     | nil =>
         simp only [defaultOnly, hn] at h
         cases h
-        exact ⟨hn, rfl⟩
+        exact ⟨rfl, rfl⟩
     | cons ng tail =>
         simp [defaultOnly, hn] at h
 
@@ -80,7 +80,7 @@ theorem ingestSourceStage_exact (name : WfIri) (source out : RDF.Dataset)
       simp only [ingestSourceStage, Stage.comp, defaultOnlyStage,
         assignNamedStage, defaultOnly, hn, Stage.ofFun] at h
       cases h
-      exact ⟨hn, rfl⟩
+      exact ⟨rfl, rfl⟩
   | cons ng rest =>
       simp [ingestSourceStage, Stage.comp, defaultOnlyStage,
         defaultOnly, hn] at h
