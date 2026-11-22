@@ -61,6 +61,30 @@ private def pushMax : Array UInt8 :=
 #guard isError (step (initial #[0x08])) .stackUnderflow
 #guard isError (step (initial #[0x09])) .stackUnderflow
 
+-- MOD is unsigned and zero divisor returns zero, not the dividend.
+#guard (word 7).modulo (word 3) == word 1
+#guard (word (modulus - 1)).modulo (word 3) == word 0
+#guard (word 123).modulo (word 0) == word 0
+#guard resultWord (run 5 (initial #[0x60, 0x03, 0x60, 0x07, 0x06, 0x00] 11)) == some 1
+#guard isError (step (initial #[0x06])) .stackUnderflow
+#guard isError (run 5 (initial #[0x60, 0x03, 0x60, 0x07, 0x06, 0x00] 10)) .outOfGas
+
+-- EXP uses a bounded square-and-multiply, not a full enormous Nat.pow.
+#guard (word 0).powMod (word 0) == word 1
+#guard (word 2).powMod (word 0) == word 1
+#guard (word 2).powMod (word 8) == word 256
+#guard (word 2).powMod (word 255) == word signBit
+#guard (word 2).powMod (word 256) == word 0
+#guard (word (modulus - 1)).powMod (word 2) == word 1
+#guard expGas (word 0) == 10
+#guard expGas (word 1) == 60
+#guard expGas (word 256) == 110
+#guard expGas (word signBit) == 1610
+#guard resultWord (run 5 (initial #[0x60, 0x03, 0x60, 0x02, 0x0a, 0x00] 66)) == some 8
+#guard isError (run 5 (initial #[0x60, 0x03, 0x60, 0x02, 0x0a, 0x00] 65)) .outOfGas
+#guard isError (step (initial #[0x0a])) .stackUnderflow
+#guard isError (step (initial #[0x0a] 100 .preShanghai)) .unsupportedFork
+
 -- SGT compares signed 256-bit words, not their Nat representations.
 #guard (word 0).signedGt (word (modulus - 1)) == word 1
 #guard (word (modulus - 1)).signedGt (word 0) == word 0
