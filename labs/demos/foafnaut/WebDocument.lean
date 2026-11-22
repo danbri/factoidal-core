@@ -2261,20 +2261,36 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- The SVG of the page is read here. In liberal mode a refusal of it (the SVG reader reads all
   -- inline `svg` roots of the document together) lays the page out with no inline `svg`.
   let documentURL := if url.isEmpty then none else some url
-  let (embedding,pictures,dom,d0,madeStore,madeWords) ← match graph with
-    | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none,({} : NativeSVGText.Words))
-    | none => match m with
-      | .strict => do
-        let (e,p,s,w) ← WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts
-        pure (e,p,dom,[],s,w)
-      | .liberal => pure (liberalSvg kept dom documentURL images svgFonts)
-  modify (·.merge {store := madeStore,words := madeWords})
-  -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
-  -- The cascade of the page, made before the fonts: the layout of `dom` below draws with it
-  -- (`renderWithStyles_made`), so it is made once, and it says whether any text resolves to
-  -- `serif` (`textWantsSerif`) before the first layout.
-  let made := Rendering.Generated.styled treeScope dom rules textScale state
+  let cascade := Rendering.Generated.styled treeScope dom rules textScale state
+  let keys := match cascade with
+    | .ok (_, styles) => (backgroundImageKeys styles documentURL).take maxDocumentImages
+    | .error _ => []
+  let (embedding,pictures,dom,d0,madeStore,madeWords,backgroundStore) ← match graph with
+    | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none,({} : NativeSVGText.Words),none)
+    | none =>
+      match WebRender.makeReplacedWithStore kept.stores kept.words dom documentURL images svgFonts keys with
+      | .ok (e,p,s,w,store) => pure (e,p,dom,[],s,w,if keys.isEmpty then none else some store)
+      | .error refusal =>
+        if m == .strict then throw refusal
+        let (e,p,bare,ds,s,w) := liberalSvg kept dom documentURL images svgFonts
+        pure (e,p,bare,ds,s,w,none)
+  modify (·.merge {store := madeStore,words := madeWords})
+  -- A liberal fallback can remove SVG roots and therefore needs a fresh cascade.
+  let state ← if d0.isEmpty then pure state else
+    pure (withPointer dom (← elementState dom url request) pointer)
+  let made := if d0.isEmpty then cascade else Rendering.Generated.styled treeScope dom rules textScale state
+  let made := match backgroundStore with
+    | none => made
+    | some store => made.map fun (flat, styles) =>
+      let styles := styles.map fun style =>
+        let layers := style.backgroundURLs.map fun raw => do
+          let key := NativeSVG.imageKey documentURL raw
+          let .ok (id,bitmap) ← store.get? key | none
+          let size := (store.natural key).getD (bitmap.width,bitmap.height)
+          some ({record := ⟨⟨1,0,0,1,0,0⟩,id,bitmap⟩,natural := size} : Rendering.CSS.BackgroundBitmap)
+        {style with backgroundBitmaps := layers}
+      (flat, styles)
   -- With the serif face held, the family lookup goes in only for a page that has serif text;
   -- a page with none lays out as with no face held (`familyFontsWith_first`), with no lookup
   -- for each word. A host that gives the face before the first page (run_html.ts, the Hub)
