@@ -215,6 +215,14 @@ structure Computed where
   /-- The element or an ancestor is clipped to nothing: none of it is painted (`visible`
   false), and its boxes stay in the layout. Inherited, never cleared by a descendant. -/
   clipHidden : Bool := false
+  /-- `background-image: url(...)` (CSS Backgrounds 3 §3.3), the first layer's URL as the page
+  wrote it after the engine resolved it against its sheet (`WebDocument`); none for `none` or a
+  gradient. Not inherited. -/
+  backgroundImage : Option String := none
+  /-- The decoded image of `backgroundImage` and its paint-table id, when the host gave its
+  bytes and they decoded (`WebDocument` sets it after the cascade); `Layout.background` tiles
+  it. None: only the colour (and a gradient) is painted, as before. -/
+  backgroundBitmap : Option (Nat × Bitmap) := none
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -553,6 +561,26 @@ def fontLonghands (value : String) (important : Bool) : List Declaration :=
       (ls.lookup n).map fun v => (⟨n, v, important⟩ : Declaration)
   | none => []
 
+/-- The URL of the first `url(...)` of a value (CSS Values 4 §4.5: unquoted, or a quoted
+string), as written; none when the value has none or it is not closed. Case is kept. -/
+def firstUrl? (value : String) : Option String := do
+  let parts := value.toLower.splitOn "url("
+  if parts.length < 2 then none
+  let at_ := parts.head!.length
+  let rest := ((value.toList.drop (at_+4)).dropWhile Char.isWhitespace)
+  match rest with
+  | [] => none
+  | q :: more =>
+    if q == '"' || q == '\'' then
+      let inner := more.takeWhile (· != q)
+      if inner.length == more.length then none
+      some (String.ofList inner)
+    else
+      let inner := rest.takeWhile (· != ')')
+      if inner.length == rest.length then none
+      let url := String.ofList (inner.reverse.dropWhile Char.isWhitespace).reverse
+      if url.isEmpty then none else some url
+
 /-- The text inside the first `linear-gradient(` ... `)` of a value, to its matching
 parenthesis; none when the value has none. -/
 def gradientArgs (value : String) : Option String := do
@@ -583,7 +611,7 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     -- `tableDeclaration`); the shorthand stays for getComputedStyle's other longhands
     -- and its image, `none` unless it is a `linear-gradient()` (the one image drawn)
     if key == "background" then
-      let image := if (gradientArgs d.value).isSome then d.value else "none"
+      let image := if (gradientArgs d.value).isSome || (firstUrl? d.value).isSome then d.value else "none"
       (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
@@ -1311,9 +1339,17 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
         | _ => throw "columns: not a count or a length"
     return {s with columnCount := count, columnWidth := width}
   | "background-image" =>
-    if (trim d.value).toLower == "none" then return {s with backgroundGradient := none}
-    let some args := gradientArgs d.value | throw "background-image: only linear-gradient() is drawn"
-    return {s with backgroundGradient := some (← parseLinearGradient args)}
+    if (trim d.value).toLower == "none" then return {s with backgroundGradient := none, backgroundImage := none}
+    -- The first layer: an image URL (`url(...)`) or a linear gradient, whichever comes first.
+    let urlFirst := match firstUrl? d.value, (d.value.toLower.splitOn "url(").head?, (d.value.toLower.splitOn "gradient(").head? with
+      | some _, some a, some g => decide (a.length < g.length)
+      | some _, _, _ => true
+      | none, _, _ => false
+    if urlFirst then
+      let some u := firstUrl? d.value | throw "background-image: url() not read"
+      return {s with backgroundImage := some u, backgroundGradient := none}
+    let some args := gradientArgs d.value | throw "background-image: only linear-gradient() and url() are drawn"
+    return {s with backgroundGradient := some (← parseLinearGradient args), backgroundImage := none}
   | "font-size" =>
     let v ← pixels d.value
     if v <= 0 then throw "font-size must be positive"
@@ -1700,7 +1736,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
-  | "background-image" => some {s with backgroundGradient := source.backgroundGradient}
+  | "background-image" => some {s with backgroundGradient := source.backgroundGradient, backgroundImage := source.backgroundImage}
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
@@ -3618,6 +3654,16 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
   match declarations (property ++ ":" ++ value) with
   | .ok ds => if ds.isEmpty then none else ds.foldlM (fun acc d => (apply acc d).toOption) s
   | .error _ => none
+
+-- `background-image: url(...)` (issue 704): the first layer's URL, case kept, quoted or not.
+#guard firstUrl? "url(a.png)" == some "a.png"
+#guard firstUrl? "URL( 'Images/B.PNG' ) no-repeat" == some "Images/B.PNG"
+#guard firstUrl? "url(\"x y.png\"), linear-gradient(red, blue)" == some "x y.png"
+#guard firstUrl? "linear-gradient(red, blue)" == none
+#guard firstUrl? "url(a.png" == none
+#guard (applyDeclaration ({} : Computed) "background-image" "url(/i/a.png)").map (·.backgroundImage) == some (some "/i/a.png")
+#guard (applyDeclaration ({} : Computed) "background-image" "none").map (·.backgroundImage) == some none
+#guard (applyDeclaration ({} : Computed) "background-image" "linear-gradient(red, blue), url(a.png)").map (·.backgroundImage) == some none
 
 -- Border widths in every length unit and keyword (`borderWidthPx`; WPT css/CSS2/borders).
 private def borderLeft (property value : String) : Option Float :=
