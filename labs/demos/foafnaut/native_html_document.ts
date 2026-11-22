@@ -290,7 +290,7 @@ export function setImagesAfterFirstFrame(after:boolean){imagesAfterFirstFrame=af
 `failed` hears of each image that was not read. `engine`: the engine that decides each
 transfer (readSubresource); with none, the page's own origin only. */
 export async function fetchImageBytes(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal,
-  failed?:(url:string,reason:string)=>void,engine?:SubresourceEngine) {
+  failed?:(url:string,reason:string)=>void,engine?:SubresourceEngine,bytesAlreadyRead=0) {
   const read:({bytes:Uint8Array}|{reason:string})[]=new Array(wanted.length);
   let next=0;
   const worker=async()=>{
@@ -305,7 +305,7 @@ export async function fetchImageBytes(wanted:{key:string;url:string}[],documentU
     }
   };
   await Promise.all(Array.from({length:Math.min(6,wanted.length)},worker));
-  const images:{key:string;bytes:Uint8Array}[]=[];let total=0;const limit=await pageImageLimit(engine);
+  const images:{key:string;bytes:Uint8Array}[]=[];let total=bytesAlreadyRead;const limit=await pageImageLimit(engine);
   for(const [index,{key,url}] of wanted.entries()) {
     const got=read[index];
     if("reason" in got){failed?.(url,got.reason);continue;}
@@ -452,7 +452,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   }):undefined;
   scriptsReading?.catch(()=>{});
   // So are the images' bytes (Lean lists them and decides each transfer; the host makes the requests).
-  const imageBytes=fetchImageBytes(inspection.images??[],document.url,signal,
+  let imageBytes=fetchImageBytes(inspection.images??[],document.url,signal,
     (imageURL,reason)=>fetchFailed("image",imageURL,`image not read: ${reason}`,"alt text shown"),engine as SubresourceEngine);
   imageBytes.catch(()=>{});
   const iconReading=inspection.icon?readSubresource(engine as SubresourceEngine,"image",inspection.icon,document.url,MAX_ICON_BYTES,signal):undefined;
@@ -509,6 +509,27 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     if(signal?.aborted)throw error;
     console.error(`Native HTML: imported style sheets: ${String(error instanceof Error?error.message:error)}`);
   }
+  let backgroundImages:{key:string;url:string}[]=[];
+  if(resources.length||imported.length||/\bstyle\b/i.test(document.source)){
+    try{
+      const result=await engine.inspect(document.source,{url:document.url,...mode,resources,imported,
+        resourceFailures,inspectBackgroundImages:true});
+      backgroundImages=(result as typeof result & {backgroundImages?:typeof backgroundImages}).backgroundImages??[];
+    }catch(error){
+      if(signal?.aborted)throw error;
+      console.error(`Native HTML background image inspection: ${String(error instanceof Error?error.message:error)}`);
+    }
+  }
+  if(backgroundImages.length){
+    imageBytes=imageBytes.then(async ordinary=>{
+      const bytesAlreadyRead=ordinary.reduce((total,image)=>total+image.bytes.length,0);
+      const backgrounds=await fetchImageBytes(backgroundImages,document.url,signal,
+        (imageURL,reason)=>fetchFailed("image",imageURL,`background image not read: ${reason}`,"background colour shown"),
+        engine as SubresourceEngine,bytesAlreadyRead);
+      return [...ordinary,...backgrounds];
+    });
+    imageBytes.catch(()=>{});
+  }
   // Lean lists the images it wants and decides each transfer (any origin: Net.Subresource);
   // the host makes the requests, with size caps. One that fails or is refused is left out, and the page shows its alt text.
   // An engine that holds images gets each one once, and renders name them.
@@ -518,7 +539,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // Only a page whose scripts do not run: a script session starts with the page's images (its
   // layout reads and the load event are of the page with them, in every host alike), so a
   // page with scripts waits for them as before.
-  const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&(inspection.images??[]).length>0;
+  const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&((inspection.images??[]).length>0||backgroundImages.length>0);
   let revision=0,imagesPending=later,imagesStarted=!later;
   const images:Record<string,unknown>=later?{}:await imageOptions(engine,await imageBytes);
   // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images. One that fails or is refused leaves the tab with no icon.
