@@ -92,13 +92,21 @@ calls and complete precompile support remain open.
 [CALL repair differential](scripts/differential/call-repairs.mjs) ·
 [Frame and storage proof scope](FRAME_STORAGE.md)
 
+`evm-subset --pure-frame-call HEX CALLDATA_HEX GAS FUEL` starts a read-only,
+zero-value frame and checks each fetched opcode before dispatch. This lets
+the interpreter run a compiler-produced Solidity runtime with its metadata
+intact and refuse context-dependent instructions if execution reaches them.
+The ordinary `--frame-call` command is also available.
+[Solidity fixture and reproduction](scripts/differential/fixtures/solidity-pure/README.md)
+
 The read-only RPC tool resolves the provider's canonical block hash for
 Polygon PoS Amoy, Polygon PoS mainnet or OP Sepolia and records provider
 assertions. Its optional local comparison covers halt kind and
 complete return or revert bytes for the admitted bytecode subset. Synthetic
 code overrides are labelled in the evidence. RPC capture leaves block
 authenticity, state roots, transaction execution and consensus unverified.
-[RPC capture commands and evidence scope](scripts/rpc/README.md)
+[RPC capture commands and evidence scope](scripts/rpc/README.md) ·
+[Direct deployed OP Sepolia call](../../../docs/20261122-evm-solidity-deployed-call.md#direct-deployed-runtime-comparison)
 
 ## External executable interface and first official-fixture integration
 

@@ -43,6 +43,7 @@ node scripts/rpc/capture.mjs --network op-sepolia \
 - Omit `--code-override` to call the deployed runtime at the address. The
   state override feature depends on the provider. An override is supplied
   only to the simulation and stored with the `synthetic-state-override` label.
+  Every `eth_call` includes an explicit zero value.
 - Use `--timeout-ms` to change the 10-second deadline for each RPC request and
   the local subprocess. Each RPC response has a 4 MiB body limit. The host
   records method and parameters, timing, transport details and body SHA-256 for
@@ -51,12 +52,15 @@ node scripts/rpc/capture.mjs --network op-sepolia \
   error text is discarded.
 
 With `--lean-exe`, the host compares the halt kind and complete return or revert
-bytes from `--frame-call`. It admits only a conservative context-free bytecode
-subset, scanning the runtime with PUSH data skipped. Contracts that read block
-or account context, storage, or call other code still yield provider evidence
-when the capture succeeds. Local comparison remains `unverified` for them,
-for exceptional or unsupported executions, or for truncated observations. The
-local executable has a 32 KiB stdout and stderr buffer limit. `--gas` and `--fuel`
+bytes from `--pure-frame-call`. Lean checks each opcode as it executes in a
+read-only frame with zero call value. The full runtime is passed through,
+including compiler metadata. A comparison requires the
+`zero-value-context-free-v1` marker from the executable. If the execution
+reaches a storage, external-call, or context-dependent opcode outside the policy,
+the provider observation can still be captured and the comparison remains
+`unverified`. Exceptional, unsupported and truncated executions also remain
+unverified. The local executable has a 32 KiB stdout and stderr buffer limit.
+`--gas` and `--fuel`
 set local budgets only. A match covers one call output and leaves protocol gas,
 state roots, block hashes, transaction execution, and chain consensus unverified.
 The provider supplies the chain observations and canonicality assertions.
@@ -73,16 +77,44 @@ EVM_RPC_TEST_LEAN_EXE="$PWD/.lake/build/bin/evm-subset" node --test scripts/rpc/
 ```
 
 The tests use a deterministic local mock. The second command exercises the
-local comparison with the built Lean executable as well as the test stubs.
+local comparison with the built Lean executable as well as the test stubs. The
+native test calls `ge(uint256,uint256)` at the `2^255` boundary and checks an
+unknown selector's empty revert. It uses the full compiled Solidity runtime
+and pins its SHA-256. [Source and compiler fixture](../differential/fixtures/solidity-pure/fixture.json)
 
-The suite also replays two captures from 22 November 2026 through the host
-without contacting the original providers. The saved assertions include the
-exact synthetic code, calldata, output and request times. The OP Sepolia
-capture includes a type-`0x7e` deposit transaction and its receipt. The replay
-checks the saved request IDs and parameters, block relationships, and comparison
-output. It pins the files by SHA-256. Local proxy loopback addresses were
-omitted from the saved samples. The receipts and block data remain provider
-assertions. [OP Sepolia block 51770430](evidence/op-sepolia-51770430.json) ·
+The suite pins two earlier captures from 22 November 2026 by SHA-256. The
+assertions include the exact synthetic code, calldata, output and request
+times. The OP Sepolia capture includes a type-`0x7e` deposit transaction and
+its receipt. Offline tests recheck the recorded output with the current
+comparison policy and verify the expected change from an implicit to an
+explicit zero value in the call parameters. The saved transcripts retain the
+original request parameters. Local proxy loopback addresses were omitted from
+the saved samples. The receipts and block data remain provider assertions.
+[OP Sepolia block 51770430](evidence/op-sepolia-51770430.json) ·
 [Polygon PoS block 97758671](evidence/polygon-97758671.json)
 
-[Ethereum implementation tracking](https://github.com/danbri/factoidal-core/issues/734)
+## Live Solidity calls
+
+On 22 November 2026, the OP Sepolia provider and guarded Lean executable
+returned the ABI word `6` for `decimals()` (`0x313ce567`) at the deployed
+Jovian GasPriceOracle implementation `0x4f1db3c6abd250ba86e0928471a8f7db3afd88f1`.
+The zero-value call used the runtime read from block `51771054`, hash
+`0x4fa96dd7ac9bac264d2dcad1399e5b2ed422cd8bd21a6d1fb56c51f928407bbe`.
+The full 7,848 bytes of captured code give Keccak-256
+`0xe9fc7c96c4db0d6078e3d359d7e8c982c350a513cb2c31121adf5e1e8a446614`
+using `@noble/hashes` 2.4.0, the runtime hash specified for the Jovian deployment.
+This compares one call and identifies the captured bytes. State authentication
+and the other methods of the contract are outside this check.
+[Capture](evidence/op-sepolia-jovian-decimals-51771054.json) ·
+[OP Stack Jovian specification](https://specs.optimism.io/protocol/jovian/derivation.html#gaspriceoracle-deployment)
+
+The same day, OP Sepolia block `51771081` and Polygon PoS block `97759492`
+returned the ABI word `1` for `ge(2^255 + 1, 2^255)` from the compiler fixture.
+Those calls used state overrides containing all 123 bytes of the compiled
+runtime, including metadata. Both outputs matched guarded Lean. The offline
+suite pins and replays all three capture files with their explicit zero-value
+parameters. [OP Sepolia override](evidence/op-sepolia-solidity-ge-51771081.json) ·
+[Polygon PoS override](evidence/polygon-solidity-ge-97759492.json)
+
+[RPC implementation tracking](https://github.com/danbri/factoidal-core/issues/734) ·
+[Solidity call tracking](https://github.com/danbri/factoidal-core/issues/736)

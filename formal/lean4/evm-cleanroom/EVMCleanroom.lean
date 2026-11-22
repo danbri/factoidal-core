@@ -1,5 +1,6 @@
 import EVMCleanroom.Core
 import EVMCleanroom.CalldataProofs
+import EVMCleanroom.SolidityProofs
 import EVMCleanroom.Storage
 import EVMCleanroom.Frame
 import EVMCleanroom.FrameTests

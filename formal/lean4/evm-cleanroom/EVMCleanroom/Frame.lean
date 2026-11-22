@@ -47,6 +47,7 @@ inductive Outcome where
 private def errorOutcome (e : Error) : RawOutcome :=
   match e with
   | .unsupportedFork => .unsupported e
+  | .framePolicyViolation _ => .unsupported e
   | .stepLimit => .unsupported e
   | .invalidOpcode byte =>
     if byte == 0xfe then .exceptional e
@@ -66,37 +67,54 @@ private def haltWithData (s : State) : Except Error (State × Nat × Nat) :=
     | .error e => .error e
   | _ => .error .stackUnderflow
 
-/-- Execute at most fuel instructions, collecting explicit halt outcomes.
-    Only supported instructions may be accepted as successful execution. -/
-def execute : Nat → State → RawOutcome
+/-- Admission predicate for the current frame and its fetched opcode. -/
+abbrev OpcodePolicy := State → Nat → Bool
+
+/-- Execute at most fuel instructions. The policy checks the current opcode
+    before either frame or core instruction handling. -/
+@[specialize] def executeWithPolicy (permits : OpcodePolicy) : Nat → State → RawOutcome
   | 0, _ => .unsupported .stepLimit
   | fuel + 1, s =>
     if s.halted then .stopped s
-    else if byteAt s s.pc == 0xf3 then
-      match haltWithData s with
-      | .ok (out, offset, length) => .returned out offset length
-      | .error e => errorOutcome e
-    else if byteAt s s.pc == 0xfd then
-      match haltWithData s with
-      | .ok (out, offset, length) => .reverted out offset length
-      | .error e => errorOutcome e
     else
-      match step s with
-      | .error e => errorOutcome e
-      | .ok next =>
-        if next.halted then .stopped next
-        else execute fuel next
+      let opcode := byteAt s s.pc
+      if !permits s opcode then .unsupported (.framePolicyViolation opcode)
+      else if opcode == 0xf3 then
+        match haltWithData s with
+        | .ok (out, offset, length) => .returned out offset length
+        | .error e => errorOutcome e
+      else if opcode == 0xfd then
+        match haltWithData s with
+        | .ok (out, offset, length) => .reverted out offset length
+        | .error e => errorOutcome e
+      else
+        match step s with
+        | .error e => errorOutcome e
+        | .ok next =>
+          if next.halted then .stopped next
+          else executeWithPolicy permits fuel next
+
+/-- Original frame runner, admitting all opcodes for the interpreter to decide. -/
+def execute : Nat → State → RawOutcome :=
+  executeWithPolicy (fun _ _ => true)
+
+/-- Context-free instructions plus CALLVALUE in an explicit zero-value,
+    read-only frame. Jump decoding still uses the entire runtime bytes. -/
+def zeroValueContextFree (s : State) (opcode : Nat) : Bool :=
+  s.readOnly && s.callValue == 0 &&
+    (match opcode with
+    | 0x00 | 0x01 | 0x02 | 0x03 | 0x04
+    | 0x10 | 0x11 | 0x12 | 0x14 | 0x15 | 0x16 | 0x17 | 0x18 | 0x19 | 0x1a | 0x1b | 0x1c
+    | 0x34 | 0x35 | 0x36 | 0x50 | 0x51 | 0x52 | 0x53
+    | 0x56 | 0x57 | 0x58 | 0x59 | 0x5b | 0xf3 | 0xfd => true
+    | _ => decide (0x5f ≤ opcode ∧ opcode ≤ 0x9f))
 
 /-- Revert all effects that belong to this frame's storage checkpoint.
     Preserve the terminal memory for reading REVERT's return payload. -/
 def restore (initial terminal : State) : State :=
   { terminal with storage := initial.storage }
 
-/-- Observable single-frame outcome after the storage checkpoint is settled.
-    Exceptional halts consume the frame gas. Unsupported execution yields
-    no authoritative protocol result and must not be classified as invalid. -/
-def run (fuel : Nat) (initial : State) : Outcome :=
-  match execute fuel initial with
+private def settle (initial : State) : RawOutcome → Outcome
   | .stopped out => .stopped out
   | .returned out offset length => .returned out offset length
   | .reverted out offset length =>
@@ -104,6 +122,78 @@ def run (fuel : Nat) (initial : State) : Outcome :=
   | .exceptional e =>
       .exceptional { initial with gas := 0, halted := true } e
   | .unsupported e => .unsupported e
+
+/-- Run an instruction-admitted frame with the usual storage checkpoint. -/
+def runWithPolicy (permits : OpcodePolicy) (fuel : Nat) (initial : State) : Outcome :=
+  settle initial (executeWithPolicy permits fuel initial)
+
+/-- Observable single-frame outcome after the storage checkpoint is settled.
+    Exceptional halts consume the frame gas. Unsupported execution yields
+    no authoritative protocol result and must not be classified as invalid. -/
+def run (fuel : Nat) (initial : State) : Outcome :=
+  settle initial (execute fuel initial)
+
+private def RawOutcome.conclusive : RawOutcome → Prop
+  | .unsupported _ => False
+  | _ => True
+
+/-- A status for which the interpreter reached an EVM outcome. -/
+def Outcome.conclusive : Outcome → Prop
+  | .unsupported _ => False
+  | _ => True
+
+/-- Kind: instruction-admission boundary.
+    Says: a rejected instruction at the current PC causes an explicit refusal
+    before either frame or core dispatch.
+    Does not say: the opcode is invalid on Ethereum. -/
+theorem executeWithPolicy_refuses (permits : OpcodePolicy) (fuel : Nat) (s : State)
+    (hRunning : s.halted = false) (hRejected : permits s (byteAt s s.pc) = false) :
+    executeWithPolicy permits (fuel + 1) s = .unsupported (.framePolicyViolation (byteAt s s.pc)) := by
+  simp [executeWithPolicy, hRunning, hRejected]
+
+/-- Kind: refinement helper.
+    Says: conclusive raw outcomes agree with unrestricted execution.
+    Does not say: an unrestricted opcode satisfies the caller's policy. -/
+private theorem executeWithPolicy_refines (permits : OpcodePolicy) (fuel : Nat) (s : State)
+    (h : (executeWithPolicy permits fuel s).conclusive) :
+    executeWithPolicy permits fuel s = execute fuel s := by
+  induction fuel generalizing s with
+  | zero => simp [executeWithPolicy, RawOutcome.conclusive] at h
+  | succ fuel ih =>
+    by_cases hHalted : s.halted = true
+    · simp [execute, executeWithPolicy, hHalted]
+    · by_cases hPermits : permits s (byteAt s s.pc) = true
+      · simp only [execute, executeWithPolicy, hHalted, hPermits, Bool.not_true,
+          Bool.false_eq_true, if_false] at h ⊢
+        split
+        · rfl
+        next hReturn =>
+          split
+          · rfl
+          next hRevert =>
+            split
+            · rfl
+            next next hStep =>
+              split
+              · rfl
+              next hNext =>
+                exact ih next (by
+                  simpa only [hReturn, hRevert, hStep, hNext, Bool.false_eq_true, if_false] using h)
+      · have hRejected : permits s (byteAt s s.pc) = false := Bool.eq_false_iff.mpr hPermits
+        simp [executeWithPolicy, hHalted, hRejected, RawOutcome.conclusive] at h
+
+/-- Kind: refinement.
+    Says: any conclusive outcome from an opcode-guarded frame equals unrestricted
+    execution from the same state, with the same fuel, memory and checkpoint.
+    Does not say: the unrestricted frame implements every Ethereum opcode. -/
+theorem runWithPolicy_refines (permits : OpcodePolicy) (fuel : Nat) (initial : State)
+    (h : (runWithPolicy permits fuel initial).conclusive) :
+    runWithPolicy permits fuel initial = run fuel initial := by
+  have hRaw : (executeWithPolicy permits fuel initial).conclusive := by
+    cases hRaw : executeWithPolicy permits fuel initial <;>
+      simp [runWithPolicy, hRaw, settle, Outcome.conclusive, RawOutcome.conclusive] at h ⊢
+  unfold runWithPolicy run
+  rw [executeWithPolicy_refines permits fuel initial hRaw]
 
 /-- Any REVERT restores ALL keys, not just those present in a fixture. -/
 theorem restore_current (initial terminal : State) (key : Nat) :
@@ -132,17 +222,17 @@ theorem run_revert_atomic (fuel : Nat) (initial final : State)
     final.storage.warm key = initial.storage.warm key ∧
     final.storage.refund = initial.storage.refund := by
   cases he : execute fuel initial with
-  | stopped state => simp [run, he] at h
-  | returned state off len => simp [run, he] at h
+  | stopped state => simp [run, settle, he] at h
+  | returned state off len => simp [run, settle, he] at h
   | reverted state off len =>
     have hh : Outcome.reverted (restore initial state) off len =
         Outcome.reverted final offset length := by
-      simpa [run, he] using h
+      simpa [run, settle, he] using h
     injection hh with hs _ _
     subst final
     exact ⟨rfl, rfl, rfl, rfl⟩
-  | exceptional e => simp [run, he] at h
-  | unsupported e => simp [run, he] at h
+  | exceptional e => simp [run, settle, he] at h
+  | unsupported e => simp [run, settle, he] at h
 
 /-- Exceptional execution has zero remaining frame gas, and cannot commit
     any frame-local persistent storage effects. This does not apply to an
@@ -154,17 +244,17 @@ theorem run_exception_atomic (fuel : Nat) (initial final : State)
     final.storage.current key = initial.storage.current key ∧
     final.storage.refund = initial.storage.refund := by
   cases he : execute fuel initial with
-  | stopped state => simp [run, he] at h
-  | returned state off len => simp [run, he] at h
-  | reverted state off len => simp [run, he] at h
+  | stopped state => simp [run, settle, he] at h
+  | returned state off len => simp [run, settle, he] at h
+  | reverted state off len => simp [run, settle, he] at h
   | exceptional e =>
     have hh : Outcome.exceptional { initial with gas := 0, halted := true } e =
         Outcome.exceptional final reason := by
-      simpa [run, he] using h
+      simpa [run, settle, he] using h
     injection hh with hs _
     subst final
     exact ⟨rfl, rfl, rfl⟩
-  | unsupported e => simp [run, he] at h
+  | unsupported e => simp [run, settle, he] at h
 
 #print axioms restore_current
 #print axioms restore_original
@@ -172,5 +262,7 @@ theorem run_exception_atomic (fuel : Nat) (initial final : State)
 #print axioms restore_refund
 #print axioms run_revert_atomic
 #print axioms run_exception_atomic
+#print axioms executeWithPolicy_refuses
+#print axioms runWithPolicy_refines
 
 end EVMCleanroom.Frame

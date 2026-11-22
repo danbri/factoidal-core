@@ -2,7 +2,7 @@ name: EVM cleanroom Lean seed
 
 on:
   push:
-    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121", "feat/lean-frontier-historical-mainnet-46147-20261122", "feat/lean-frontier-state-witness-20261122", "feat/lean-evm-value-call-20261122", "feat/lean-evm-call-context-20261122", "wip/ethereum-contract-rpc-20261122"]
+    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121", "feat/lean-frontier-historical-mainnet-46147-20261122", "feat/lean-frontier-state-witness-20261122", "feat/lean-evm-value-call-20261122", "feat/lean-evm-call-context-20261122", "wip/ethereum-contract-rpc-20261122", "wip/ethereum-solidity-integration-20261122"]
     paths:
       - "formal/lean4/evm-cleanroom/**"
       - ".github/workflows/evm-cleanroom.yml"
@@ -35,12 +35,12 @@ jobs:
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==51 and x["files"]>=54,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==60 and x["files"]>=62,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==3,x'
-          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==51 and x["sourceFiles"]>=10,x'
+          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==60 and x["sourceFiles"]>=14,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -125,7 +125,7 @@ jobs:
           node scripts/check-eels-memory.mjs /tmp/ethereum-eels-prague-gas.py /tmp/ethereum-eels-prague-memory.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==6 and x["mismatches"]==0, x'
   differential:
     # PR-only avoids installing a second Lean/npm toolchain for both push and PR.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122' || github.ref == 'refs/heads/feat/lean-frontier-state-witness-20261122' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122' || github.ref == 'refs/heads/feat/lean-evm-call-context-20261122' || github.ref == 'refs/heads/wip/ethereum-contract-rpc-20261122'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122' || github.ref == 'refs/heads/feat/lean-frontier-state-witness-20261122' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122' || github.ref == 'refs/heads/feat/lean-evm-call-context-20261122' || github.ref == 'refs/heads/wip/ethereum-contract-rpc-20261122' || github.ref == 'refs/heads/wip/ethereum-solidity-integration-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -200,13 +200,19 @@ jobs:
         run: |
           mkdir -p evm-cleanroom/.lake/differential
           node evm-cleanroom/scripts/differential/call-repairs.mjs | tee evm-cleanroom/.lake/differential/call-repairs.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==len(x["comparisons"])==5 and not x["failures"] and len(x["boundaries"])==1,x; b=x["boundaries"][0]; assert b["name"]=="identity-zero-gas" and b["actual"]["status"]=="indeterminate" and b["expected"]["stack"]==["0"],b'
-      - name: Test read-only RPC capture offline with the compiled Lean frame comparator
+      - name: Verify guarded Solidity runtime and signed word operations against EthereumJS
+        shell: bash
+        working-directory: formal/lean4
+        run: |
+          mkdir -p evm-cleanroom/.lake/differential
+          node evm-cleanroom/scripts/differential/solidity-pure.mjs | tee evm-cleanroom/.lake/differential/solidity-pure.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==83 and x["mismatches"]==0 and x["signedCases"]==67 and x["forbiddenRefusals"]==5 and x["legacyCompatibility"]==1,x'
+      - name: Replay read-only RPC captures offline with the compiled guarded frame comparator
         shell: bash
         working-directory: formal/lean4
         run: |
           mkdir -p evm-cleanroom/.lake/differential
           EVM_RPC_TEST_LEAN_EXE="$PWD/evm-cleanroom/.lake/build/bin/evm-subset" node --test --test-reporter=tap evm-cleanroom/scripts/rpc/capture.test.mjs | tee evm-cleanroom/.lake/differential/rpc-capture-tests.tap
-          python3 -c 'from pathlib import Path; report=Path("evm-cleanroom/.lake/differential/rpc-capture-tests.tap").read_text().splitlines(); assert {"# tests 34","# pass 34","# fail 0","# skipped 0"}.issubset(report),report'
+          python3 -c 'from pathlib import Path; report=Path("evm-cleanroom/.lake/differential/rpc-capture-tests.tap").read_text().splitlines(); assert {"# tests 42","# pass 42","# fail 0","# skipped 0"}.issubset(report),report'
       - name: Generate versioned synthetic corpus and compare independent runtimes
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -237,7 +243,7 @@ jobs:
             formal/lean4/evm-cleanroom/scripts/differential/package-lock.json
   eels-real-state:
     # Validate real EELS post-state roots, not merely JSON structure.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122' || github.ref == 'refs/heads/feat/lean-frontier-state-witness-20261122' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122' || github.ref == 'refs/heads/feat/lean-evm-call-context-20261122' || github.ref == 'refs/heads/wip/ethereum-contract-rpc-20261122'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122' || github.ref == 'refs/heads/feat/lean-frontier-state-witness-20261122' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122' || github.ref == 'refs/heads/feat/lean-evm-call-context-20261122' || github.ref == 'refs/heads/wip/ethereum-contract-rpc-20261122' || github.ref == 'refs/heads/wip/ethereum-solidity-integration-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

@@ -31,6 +31,17 @@ def Word.div (a b : Word) : Word := word (a.val / b.val)
 def Word.ofBool (b : Bool) : Word := if b then word 1 else word 0
 def Word.lt (a b : Word) : Word := Word.ofBool (decide (a.val < b.val))
 def Word.gt (a b : Word) : Word := Word.ofBool (decide (b.val < a.val))
+
+/-- Bit 255 is the sign bit of a 256-bit two's-complement word. -/
+def signBit : Nat := 2 ^ 255
+
+/-- Signed ordering by sign and unsigned value within the same sign class. -/
+def Word.signedLt (a b : Word) : Word :=
+  if a.val < signBit then
+    Word.ofBool (decide (b.val < signBit ∧ a.val < b.val))
+  else
+    Word.ofBool (decide (b.val < signBit ∨ a.val < b.val))
+
 def Word.eq (a b : Word) : Word := Word.ofBool (a.val == b.val)
 def Word.isZero (a : Word) : Word := Word.ofBool (a.val == 0)
 def Word.bitAnd (a b : Word) : Word := word (Nat.land a.val b.val)
@@ -74,6 +85,7 @@ inductive Error where
   | alreadyHalted
   | writeProtection
   | unsupportedFork
+  | framePolicyViolation (opcode : Nat)
   | stepLimit
   deriving Repr, DecidableEq
 
@@ -316,6 +328,7 @@ def planStep (s : State) : Except Error Plan :=
     | 0x04 => binary s Word.div 5                      -- DIV
     | 0x10 => binary s Word.lt 3                       -- LT
     | 0x11 => binary s Word.gt 3                       -- GT
+    | 0x12 => binary s Word.signedLt 3                 -- SLT
     | 0x14 => binary s Word.eq 3                       -- EQ
     | 0x15 => unary s Word.isZero 3                     -- ISZERO
     | 0x16 => binary s Word.bitAnd 3                   -- AND
@@ -389,6 +402,41 @@ theorem step_callDataSize (s : State) (hRun : s.halted = false)
     step s = commit s (s.pc + 1) (word s.callData.size :: s.stack.items) 2 := by
   simp [step, planStep, hRun, hOp, prepared]
 
+/-- Kind: dispatcher correspondence.
+    Says: SLT replaces the top two stack words in pop order and requests a
+    three-gas commit.
+    Does not say: insufficient gas can execute the comparison. -/
+theorem step_slt (s : State) (a b : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x12)
+    (hStack : s.stack.items = a :: b :: rest) :
+    step s = commit s (s.pc + 1) (a.signedLt b :: rest) 3 := by
+  simp [step, planStep, hRun, hOp, binary, hStack, prepared]
+
+/-- Kind: dispatcher boundary.
+    Says: SLT faults on stacks with fewer than two operands.
+    Does not say: a valid stack is sufficient to execute SLT. -/
+theorem step_slt_underflow (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x12) (hStack : s.stack.items.length < 2) :
+    step s = .error .stackUnderflow := by
+  cases hs : s.stack.items with
+  | nil => simp [step, planStep, hRun, hOp, binary, hs]
+  | cons a tail =>
+    cases tail with
+    | nil => simp [step, planStep, hRun, hOp, binary, hs]
+    | cons b rest =>
+      simp only [hs, List.length_cons] at hStack
+      have hMin : 2 ≤ rest.length + 1 + 1 := Nat.succ_le_succ (Nat.succ_le_succ (Nat.zero_le _))
+      exact (Nat.not_lt_of_ge hMin hStack).elim
+
+/-- Kind: dispatcher correspondence.
+    Says: CALLVALUE in the zero-value context pushes zero and requests a
+    two-gas commit.
+    Does not say: the caller or value of a remote call has been authenticated. -/
+theorem step_callValue_zero (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x34) (hValue : s.callValue = 0) :
+    step s = commit s (s.pc + 1) (word 0 :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, hValue, prepared]
+
 /-- Fuel-limited execution, terminating on STOP, error or exhausted fuel.
     Exceptional errors are reported; their outer transaction-level gas and
     rollback effects have not yet been formalized. -/
@@ -415,5 +463,8 @@ def run : Nat → State → Except Error State
 #print axioms Word.leadingZeros_zero
 #print axioms step_callDataLoad
 #print axioms step_callDataSize
+#print axioms step_slt
+#print axioms step_slt_underflow
+#print axioms step_callValue_zero
 
 end EVMCleanroom
