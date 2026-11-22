@@ -53,18 +53,25 @@ theorem modeledFastStage_run_eq (request : Request) :
     modeledFastStage.run request = referenceStage.run request :=
   GpuFastPath.pvgraph_model_eq_reference request.pvgraph request.bindings
 
-/-- GPU readback is a host boundary; its correctness must be established
-    independently before promoting it to a contract-preserving Stage. -/
-def DeviceResultCorrect (request : Request) (result : Json) : Prop :=
-  ExactResult request result
+/-- A physical WebGPU run is a Dataflow IOStage, *not* a proved
+    pure Stage. Its named assumption states exactly the observational
+    obligation on the host runtime and device. -/
+def webGpu : IOStage String Request Json :=
+  { assumption := ExactResult }
 
-/-- A future device implementation can be admitted into Dataflow.Stage only
-    by supplying its actual run function and the contract proof. -/
+/-- Promote an actual GPU host implementation to Stage only when a
+    concrete realisation of the IOStage assumption has been supplied. -/
 def stageOfVerifiedDevice (run : Request → Except String Json)
-    (sound : ∀ request output, run request = .ok output →
-      DeviceResultCorrect request output) : Stage String Request Json :=
-  { run, contract := ExactResult, sound }
+    (sound : webGpu.Realised run) : Stage String Request Json :=
+  webGpu.toStage run sound
+
+/-- The Dataflow framework preserves the device contract under its explicit
+    realisation premise. This is not a theorem about WebGPU hardware. -/
+theorem stageOfVerifiedDevice_contract (run : Request → Except String Json)
+    (h : webGpu.Realised run) :
+    (stageOfVerifiedDevice run h).contract = ExactResult := rfl
 
 #print axioms modeledFastStage_run_eq
+#print axioms stageOfVerifiedDevice_contract
 
 end L4Factoidal.GpuDomainSpecificLanguage.DataflowAdapter
