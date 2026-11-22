@@ -87,6 +87,7 @@
   "theorem_inventory": [
     {
       "name": "EVMCleanroom.Word.signedGt_dual",
+      "source_symbol": "Word.signedGt_dual",
       "source": "EVMCleanroom/Core.lean",
       "axioms_printed": [],
       "scope": "SGT helper is definitionally equal to SLT with reversed operands on all 256-bit words; not independent signed-ordering correctness.",
