@@ -8,7 +8,7 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "101de6f0e31e6c33a302ef4ec097f9ff87bd57e6",
+    "EVMCleanroom/Core.lean": "d4ed219c9d2ce77f66dc16c3f569be511bbc2923",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "f37bf4a2ece59c0ddfbb902d4536c0796694d803",
