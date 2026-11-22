@@ -56,11 +56,12 @@ its descendants, each of which is compared itself. -/
 def sameShape (a b : Computed) : Bool :=
   match a with
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
-    lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
+    lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,preserveSegmentBreaks,borderWidth,borderStyle,
     borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
-    masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundSize,_backgroundRepeat⟩ =>
+    masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundSize,_backgroundRepeat,
+     _backgroundPositionX,_backgroundPositionY⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
@@ -72,6 +73,7 @@ def sameShape (a b : Computed) : Bool :=
   lineHeight == b.lineHeight && optEq (· == ·) lineHeightFactor b.lineHeightFactor &&
   visible == b.visible && clipOverflow == b.clipOverflow && underline == b.underline &&
   decorationColor.isSome == b.decorationColor.isSome && preformatted == b.preformatted &&
+  preserveSegmentBreaks == b.preserveSegmentBreaks &&
   edgesEq borderWidth b.borderWidth && (borderStyle == .none) == (b.borderStyle == .none) &&
   (borderColor.resolve a.color).isSome == (b.borderColor.resolve b.color).isSome &&
   borderSpacingX == b.borderSpacingX && borderSpacingY == b.borderSpacingY &&

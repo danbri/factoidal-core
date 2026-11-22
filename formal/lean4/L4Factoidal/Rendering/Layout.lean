@@ -238,14 +238,17 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
   let iw := Float.ofNat b.width
   let ih := Float.ofNat b.height
   let e := s.borderEdges
-  let (tw,th) := backgroundTileSize s.backgroundSize iw ih (max 0 (w-e.left-e.right)) (max 0 (h-e.top-e.bottom))
+  let areaW := max 0 (w-e.left-e.right)
+  let areaH := max 0 (h-e.top-e.bottom)
+  let (tw,th) := backgroundTileSize s.backgroundSize iw ih areaW areaH
   if tw <= 0 || th <= 0 then return #[]
   let (repeatX,repeatY) := s.backgroundRepeat
   if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
     let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
     return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  let ox := x+e.left
-  let oy := y+e.top
+  -- CSS Backgrounds 3 §2.6 resolves each axis against the area minus the sized image.
+  let ox := x+e.left+(s.backgroundPositionX.resolve (areaW-tw)).getD 0
+  let oy := y+e.top+(s.backgroundPositionY.resolve (areaH-th)).getD 0
   let startX := if repeatX then ox-((ox-x)/tw).ceil*tw else ox
   let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
   let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1
@@ -1972,12 +1975,21 @@ def renderedLegend (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
           !(styles[k]!).pos.isAbsolute && (styles[k]!).pos.float == .none) == some id
   | none => false
 
+/-- Is the physical axis's logical start at its far edge? -/
+private def axisStartIsFar (s : Computed) (horizontal : Bool) : Bool :=
+  SelfPlace.startsAtEnd horizontal (s.pos.writingMode != .horizontalTb)
+    (s.pos.writingMode == .verticalRl) (s.direction == .rtl)
+
+#guard axisStartIsFar {pos := {writingMode := .verticalRl}} true
+#guard !(axisStartIsFar {pos := {writingMode := .verticalLr}, direction := .rtl} true)
+#guard axisStartIsFar {pos := {writingMode := .verticalLr}, direction := .rtl} false
+
 /-- The fraction of an anchor box's size, from its top or left edge, at which the side an
 `anchor()` names lies (CSS Anchor Positioning 1 §3.2), for an inset of the horizontal axis or
 the vertical one, on the far side (`right`, `bottom`) or not. `start` and `end` are of the
-containing block's direction (`rtl`), `self-start` and `self-end` of the box's own
-(`selfRtl`); a percentage is from the start side. `none`: a side of the other axis. -/
-def anchorFraction (side : AnchorSide) (horizontal far rtl selfRtl : Bool) : Option Float :=
+containing block's writing mode (`startFar`), `self-start` and `self-end` of
+its own writing mode (`selfStartFar`). A percentage is from the start side. `none`: a side of the other axis. -/
+def anchorFraction (side : AnchorSide) (horizontal far startFar selfStartFar : Bool) : Option Float :=
   let flip := fun (f : Float) (r : Bool) => if r then 1 - f else f
   match side with
   | .left => if horizontal then some 0 else none
@@ -1985,13 +1997,13 @@ def anchorFraction (side : AnchorSide) (horizontal far rtl selfRtl : Bool) : Opt
   | .top => if horizontal then none else some 0
   | .bottom => if horizontal then none else some 1
   | .center => some 0.5
-  | .start => some (flip 0 rtl)
-  | .end_ => some (flip 1 rtl)
-  | .selfStart => some (flip 0 selfRtl)
-  | .selfEnd => some (flip 1 selfRtl)
+  | .start => some (flip 0 startFar)
+  | .end_ => some (flip 1 startFar)
+  | .selfStart => some (flip 0 selfStartFar)
+  | .selfEnd => some (flip 1 selfStartFar)
   | .inside => some (if far then 1 else 0)
   | .outside => some (if far then 0 else 1)
-  | .fraction f => some (flip f rtl)
+  | .fraction f => some (flip f startFar)
 
 #guard anchorFraction .right true false false false == some 1 && anchorFraction .right false false false false == none
 #guard anchorFraction .start true false true false == some 1 && anchorFraction .outside false true false false == some 0
@@ -2360,10 +2372,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           (xs[x0]!, ys[y0]!, max 0 (xs[x1]!-xs[x0]!), max 0 (ys[y1]!-ys[y0]!))
       let (cx, cy, cw, ch) := area.getD (cx, cy, cw, ch)
       let autoInset : Option Float := if area.isSome then some 0 else none
-      let rtlCB := (absoluteContainer dom styles id).direction == .rtl
+      let containing := absoluteContainer dom styles id
       let anchored := fun (ref : Option AnchorRef) (horizontal far : Bool) => (show Option Float from
         ref.bind fun a => ((a.name.orElse fun _ => s.pos.positionAnchor).bind anchors).bind fun (ax, ay, aw, ah) =>
-          (anchorFraction a.side horizontal far (horizontal && rtlCB) (horizontal && s.direction == .rtl)).map fun f =>
+          (anchorFraction a.side horizontal far (axisStartIsFar containing horizontal) (axisStartIsFar s horizontal)).map fun f =>
             let (lo, size, cLo, cSize) := if horizontal then (ax, aw, cx, cw) else (ay, ah, cy, ch)
             let edge := lo + f * size
             if far then cLo + cSize - edge else edge - cLo)
@@ -2378,10 +2390,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- `align-self` for its block axis; `start` and `end` are sides of that writing mode,
       -- `self-start` and `self-end` of the box's own, `left` and `right` of the page.
       let plain := fun (a : CSS.ItemAlign) => a == .auto || a == .normal || a == .stretch
-      let container := if plain s.align.justifySelf && plain s.align.alignSelf then s else absoluteContainer dom styles id
-      let flowOf := fun (st : Computed) (horizontalAxis : Bool) =>
-        SelfPlace.startsAtEnd horizontalAxis (st.pos.writingMode != .horizontalTb) (st.pos.writingMode == .verticalRl)
-          (st.direction == .rtl)
+      let container := if plain s.align.justifySelf && plain s.align.alignSelf then s else containing
       let placeOn := fun (horizontalAxis : Bool) =>
         let inlineAxis := horizontalAxis != (container.pos.writingMode != .horizontalTb)
         let a := if inlineAxis then s.align.justifySelf else s.align.alignSelf
@@ -2397,12 +2406,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .auto, some t | .normal, some t => t
         | .auto, _ | .normal, _ | .stretch, _ => SelfPlace.Place.stretch
         | .center, _ => .center
-        | .end_, _ | .flexEnd, _ | .lastBaseline, _ => SelfPlace.Place.end_.physical (flowOf container horizontalAxis)
-        | .selfStart, _ => SelfPlace.Place.start.physical (flowOf s horizontalAxis)
-        | .selfEnd, _ => SelfPlace.Place.end_.physical (flowOf s horizontalAxis)
+        | .end_, _ | .flexEnd, _ | .lastBaseline, _ => SelfPlace.Place.end_.physical (axisStartIsFar container horizontalAxis)
+        | .selfStart, _ => SelfPlace.Place.start.physical (axisStartIsFar s horizontalAxis)
+        | .selfEnd, _ => SelfPlace.Place.end_.physical (axisStartIsFar s horizontalAxis)
         | .left, _ => .start
         | .right, _ => .end_
-        | _, _ => SelfPlace.Place.start.physical (flowOf container horizontalAxis)
+        | _, _ => SelfPlace.Place.start.physical (axisStartIsFar container horizontalAxis)
       let placeX := placeOn true
       let placeY := placeOn false
       -- §10.3.7: the width is given, or fills the room between `left` and `right`, or
@@ -2863,6 +2872,8 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
             backgroundSize := s.backgroundSize.atViewport vw vh,
+            backgroundPositionX := s.backgroundPositionX.atViewport vw vh,
+            backgroundPositionY := s.backgroundPositionY.atViewport vw vh,
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}
   -- Percentage margins and padding, where the containing block's width is definite.
