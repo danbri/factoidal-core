@@ -520,6 +520,20 @@ def autoMarginShift (s : Computed) (available outer : Float) : Float :=
   if free <= 0 || !s.autoMarginLeft then 0
   else if s.autoMarginRight then free/2 else free
 
+/-- Resolve the used left margin of a horizontal block in normal flow.
+With specified margins the containing block's direction selects the side that
+absorbs the remaining space. On overflow, auto margins first become zero
+(CSS 2.2 §10.3.3). -/
+def blockMarginShift (s : Computed) (rtl : Bool) (available outer : Float) : Float :=
+  let free := available-outer
+  if rtl && (free < 0 || (!s.autoMarginLeft && !s.autoMarginRight)) then free
+  else autoMarginShift s available outer
+
+#guard blockMarginShift {} true 100 52 == 48
+#guard blockMarginShift {} false 100 52 == 0
+#guard blockMarginShift {autoMarginLeft := true, autoMarginRight := true} true 100 40 == 30
+#guard blockMarginShift {autoMarginRight := true} true 100 120 == -20
+
 /-- The width that margins, borders and padding add to a box. -/
 private def horizontalEdges (s : Computed) : Float :=
   s.margin.left+s.margin.right+s.borderEdges.left+s.borderEdges.right+s.padding.left+s.padding.right
@@ -2508,8 +2522,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             | some m => min width m
             | none => width
           max 0 (max ((widthOf s.minWidth).getD 0) width)
-      -- §10.3.3: auto margins share the room the box leaves; an imposed box is placed by its parent.
-      let shift := if imposedWidth.isSome then 0 else autoMarginShift s available (margin.left+width+edgesX+margin.right)
+      -- The parent resolves an imposed box's margins. In horizontal normal flow,
+      -- use the containing block's direction, even when the child has its own.
+      let move := fun outer =>
+        if imposedWidth.isSome then 0 else
+        let containing := (n.parent.bind fun id => styles[id]?).getD s
+        let rtl := s.display.isBlockLevel && containing.pos.writingMode == .horizontalTb &&
+          containing.direction == .rtl
+        blockMarginShift s rtl available outer
+      let shift := move (margin.left+width+edgesX+margin.right)
       -- CSS 2.1 §8.3.1: a block in a block formatting context whose top margin adjoins its
       -- first child's shows the larger of the two, and the child starts at its top edge.
       let joinsTop := imposedWidth.isNone && !contentOnly && collapsesTop dom s id
@@ -2522,7 +2543,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- its auto margins put it.
       let replaced := fun (w h : Float) (content : Float → Float → List Node) (s : Computed) =>
         let (ow,oh,nodes) := replacedBox id s w h content
-        let dx := if imposedWidth.isSome then 0 else autoMarginShift s available ow
+        let dx := move ow
         ({nodes := #[.group none (translate (x+dx) y) nodes],
           boxes := #[⟨id,x+dx+margin.left,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh,
           marginBottom := margin.bottom} : Result)
