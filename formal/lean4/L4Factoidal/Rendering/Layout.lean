@@ -2516,7 +2516,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .auto => if renderedLegend dom styles id then {s with width := .fitContent} else s
         | _ => s
       if s.display.isTable then
-        -- Flex, grid and absolute placement pass used border-box dimensions.
+        -- Collapsed tables still size their grid without resolving shared border edges.
+        -- Keep their available-width input until the parent and table agree on those edges.
+        if s.borderCollapse then
+          match imposedWidth with
+          | none => return (← table (some id) (n.parent.getD 0) n.kids none none)
+          | some w =>
+            return (← layoutTask dom styles font embedding pictures fuel
+              (sub <| .table (some id) (n.parent.getD 0) n.kids) x y w)
+        -- Separated tables consume the used border-box dimensions chosen by placement.
         return (← table (some id) (n.parent.getD 0) n.kids imposedWidth imposedHeight)
       let margin := s.margin
       let padding := s.padding

@@ -15,4 +15,11 @@ existing collapsed-model insets. Collapsed border conflict resolution remains
 separate. The native table check and the full selected border pixel comparison
 are pending at WPT commit `4b26db8978f6024d3184ca483d74afbc354b35de`.
 
-The stretch follow-up retained both visual gains on the original baseline. This branch now includes the merged root stacking and transparent border changes. The paired follow-up isolates the table geometry against that main revision.
+
+The isolated follow-up restored the five separated-table stretch cases. It
+also exposed a collapsed-border regression. Flex sizing gives siblings with
+20px and 21px borders distinct minimum border-box heights of 40px and 42px.
+The current collapsed table model has no shared border edge geometry. Keep
+its available-width sizing contract and apply the new imposed border boxes
+only in the separated model. The next paired harness run checks all six
+stretch cases together.
