@@ -93,7 +93,7 @@ function graphSVG(doc){
 }
 
 function inputDocument(){
-  if(source.value.length>65536||bindings.value.length>65536)
+  if(source.value.length>8388608||bindings.value.length>8388608)
     throw new RangeError("PVGraph input exceeds editor limit");
   const doc=JSON.parse(source.value);
   const supplied=JSON.parse(bindings.value);
