@@ -5,8 +5,7 @@ import L4Factoidal.GpuDomainSpecificLanguage.PVGraph
 
 This is *notation over the existing PVGraph JSON*, not a second dataflow
 language. The builder produces the exact versioned {version,nodes,links}
-document accepted by the existing Lean JSON admission/evaluation boundary
-and by the JavaScript and S-expression front ends.
+document accepted by the Lean JSON admission/evaluation boundary.
 
 Lean's `do` notation, dependent wire types and u32 values provide a
 convenient compile-time authoring surface without parsing JS or Scheme.
@@ -85,7 +84,7 @@ private def chooseId (requested : Option String) (idPrefix : String := "n") : M 
       set { st with next := n }
       return s!"{idPrefix}{n}"
 
-/-- Named external binding, represented as the same core.input node as JS. -/
+/-- Named external binding, represented as a core.input node. -/
 def input (name : String) (kind : ValueKind := .buffer)
     (id : Option String := none) : M (Wire kind) := do
   let node := id.getD name
@@ -107,7 +106,6 @@ def op (opcode : String) (resultKind : ValueKind)
 /-- Named external result, with input port linked using the wire's type. -/
 def output {kind : ValueKind} (name : String) (source : Wire kind)
     (id : Option String := none) : M Unit := do
-  -- The generated resultN convention matches the JavaScript PVGraph builder.
   let node ← chooseId id "result"
   addNode node "core.output"
     (obj [("name", toJson name), ("type", toJson kind.typeName)])
@@ -159,10 +157,7 @@ def broadcast (value : Wire .scalar) (shape : Wire .buffer)
   op "u32.broadcast" .buffer
     [argument "value" value, argument "shape" shape] (obj []) id
 
-/-- Materialize one *canonical*, language-neutral PVGraph 0.2 document.
-    State stores node/link JSON only, not another semantic IR. -/
-/-- Materialize the common document from builder state. This function is
-    shared by native Lean programs and the Wasm-bound command interpreter. -/
+/-- Serialize the Lean PVGraph builder state to the canonical document. -/
 def State.document (st : State) : Json :=
   obj [("version", toJson ("gdsl/0.2" : String)),
        ("nodes", toJson st.nodes.reverse),
