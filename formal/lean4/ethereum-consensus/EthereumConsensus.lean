@@ -1,1 +1,2 @@
 import EthereumConsensus.SSZ.GIndex
+import EthereumConsensus.ForkChoice.LatestMessage
