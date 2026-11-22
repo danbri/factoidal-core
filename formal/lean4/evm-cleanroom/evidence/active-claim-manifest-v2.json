@@ -56,9 +56,9 @@
     "scripts/differential/CallRepairsProbe.lean": "53ff7f43feb1da53bc86e9b644dd482da1fe78fa",
     "scripts/differential/calldata.mjs": "63ad41b263dda18e324077201deb6bfcb43cc1c6",
     "scripts/differential/call-repairs.mjs": "7da80e271dfe8253ebd75a6312f39dbf6a28eeca",
-    "scripts/rpc/README.md": "42fe4a34ecbc2b8ebe3fc058ce89bb01582f9c9e",
-    "scripts/rpc/capture.mjs": "7f339e78704b4889adfb1a35860a0a23caa27147",
-    "scripts/rpc/capture.test.mjs": "34d7f0fee1976626fc63efb17b45c1a0d9db841f",
+    "scripts/rpc/README.md": "d6b01f4ab2abb68b79788d9011ecded643b14d3d",
+    "scripts/rpc/capture.mjs": "427d0f65b83fc195f17bc0a1cb1f021f89a2ee14",
+    "scripts/rpc/capture.test.mjs": "0371b1f998835f9ef9ce72840629bcd97e0bbcec",
     "scripts/rpc/compare.mjs": "40f75a2e9d3903188e47135bcbc4fa3e9eb7cf7e",
     "scripts/rpc/evidence/op-sepolia-51770430.json": "a0a0f86acd8efa2412e5c09b1d10175d550f14de",
     "scripts/rpc/evidence/polygon-97758671.json": "290bbd2fb91f00647ef152dcc9bb6d3c5923e92d",
@@ -88,7 +88,11 @@
     "scripts/differential/chain-id.mjs": "9639c8e6a837a4004e034e4253cee7b56c2788d8",
     "scripts/differential/block-environment.mjs": "9f812894cf211bccc4133926575f7d4f4ad0c45d",
     "scripts/differential/tx-env.mjs": "3e31e0e17f270ff46fa9286b028fb07eff9c8bb8",
-    "scripts/differential/blob-base-fee.mjs": "db42ea673778af7a14b6f7ca65a26c110853d046"
+    "scripts/differential/blob-base-fee.mjs": "db42ea673778af7a14b6f7ca65a26c110853d046",
+    "scripts/eels/verify-rpc-code-witness.mjs": "4a9bd1014efeb2c1a8f8e5fc62cb6ec172ad20a2",
+    "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-factory.json": "f65142e9ea2680bcae1f37a08474b0220b8e671f",
+    "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-code-proof.json": "63e3d0056f977342910b11b5977b0ba8081a6825",
+    "scripts/rpc/evidence/ethereum-sepolia-12191766-swaprouter02-factory.json": "a3ea5a1a4a2c118a32e92c9aeee7c05c4f2a9de2"
   },
   "theorem_inventory": [
     {
@@ -1882,6 +1886,61 @@
       "limits": "The Geth CALL subset excludes five static-entry, one Osaka, three nonzero-entry-depth and one raw-cold-parent cases. The explicit refusals and native shared-fuel boundary are separate from execution-match totals. Full EELS refinement, additional call variants, precompiles, CREATE and general world or chain transitions remain open.",
       "publishedImplementationCommit": "f9fec7cbc5213aef53c19b0561efd21abba7db0c",
       "implementationGitTree": "7d2cbe6bbd1ccf1bb1abd3fb485d415c1f7bf944"
+    },
+    "live_ethereum_l1_runtime_captures": {
+      "status": "local-live-provider-and-guarded-lean-match-remote-ci-pending",
+      "gate": "scripts/rpc/capture.test.mjs",
+      "required": {
+        "tests": 46,
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0
+      },
+      "publicLeanBaseline": "d3843c42d3b9c6fea8e96c3d0eebd65890dbea4b",
+      "publicBaselineTree": "8cefef908c65d6832363e52a9109d2ef51765f4d",
+      "localLeanSource": "254c8329a8cd7da95b51901ba2091fa3ce43a97e",
+      "localNativeSha256": "64a6f3a563bdec24a7516d5a2a6698891ee193efa843ed68bb9e838fca6aad77",
+      "captures": [
+        {
+          "network": "ethereum-mainnet",
+          "chainId": 1,
+          "block": 26473707,
+          "capture": "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-factory.json"
+        },
+        {
+          "network": "ethereum-sepolia",
+          "chainId": 11155111,
+          "block": 12191766,
+          "capture": "scripts/rpc/evidence/ethereum-sepolia-12191766-swaprouter02-factory.json"
+        }
+      ],
+      "mainnetCodeWitness": {
+        "gate": "scripts/eels/verify-rpc-code-witness.mjs",
+        "witness": "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-code-proof.json",
+        "status": "header-and-code-witness-match",
+        "blockHash": "0x46ec7e5fad2d4fe2588f1ea1ce8983156fbb7ab78a3fce0c56a46a61dbea06ef",
+        "stateRoot": "0x81c6d6079670c479b9674494dca2c1fe1fe79246d3907a1c16539bf8df02c0bf",
+        "codeHash": "0xbb90113d2f9a5e9b7feb15a1d1fff06c1ee1575b3f9b1181778ffd0cf633e7ea",
+        "codeBytes": 12070,
+        "accountProofNodes": 8,
+        "negativeControls": [
+          "changed-runtime-byte",
+          "changed-state-root"
+        ]
+      },
+      "fixtureSha256": {
+        "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-factory.json": "2a40386031a330cd31d32de1cb2c9d4f64264f3549e270cda7a1a748801686c8",
+        "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-code-proof.json": "d51ee24353b8dcc92728ca3a18a63c615f60ed37da10dc411ba779ead30865ba",
+        "scripts/rpc/evidence/ethereum-sepolia-12191766-swaprouter02-factory.json": "48218905f63ae4c2ca5ea089023668a0eb2998e9bbf74f5e5dfc00bfd7f84901"
+      },
+      "scope": [
+        "Both zero-value comparisons use full provider-supplied deployed code without an override.",
+        "The mainnet account witness independently binds the captured runtime to the header state root."
+      ],
+      "limits": [
+        "The providers supply canonical chain selection. The header, trie and Keccak checks use the pinned EthereumJS host dependencies.",
+        "The local comparison checks halt kind and full return bytes. Transaction replay, receipts, settlement and consensus remain separate."
+      ]
     }
   },
   "trust_boundaries": [

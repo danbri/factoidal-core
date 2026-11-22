@@ -8,10 +8,13 @@ metadata. A capture can be made without building the Lean executable.
 
 | `--network` | Chain ID | Chain type | Default RPC |
 | --- | ---: | --- | --- |
+| `ethereum-mainnet` | 1 | Ethereum L1 mainnet | `https://ethereum-rpc.publicnode.com` |
+| `ethereum-sepolia` | 11155111 | Ethereum L1 testnet | `https://ethereum-sepolia-rpc.publicnode.com` |
 | `amoy` | 80002 | Polygon PoS sidechain testnet | `https://polygon-amoy.drpc.org` |
 | `polygon` | 137 | Polygon PoS sidechain mainnet | `https://polygon.drpc.org` |
 | `op-sepolia` | 11155420 | OP Stack rollup testnet | `https://sepolia.optimism.io` |
 
+[Ethereum RPC endpoints](https://ethereum.publicnode.com/) ·
 [Polygon RPC endpoints](https://docs.polygon.technology/pos/reference/rpc-endpoints) ·
 [Optimism Superchain Registry](https://github.com/ethereum-optimism/superchain-registry/blob/main/chainList.json)
 
@@ -94,6 +97,54 @@ the saved samples. The receipts and block data remain provider assertions.
 [Polygon PoS block 97758671](evidence/polygon-97758671.json)
 
 ## Live Solidity calls
+
+On 22 November 2026, PublicNode and guarded Lean both returned the official
+Uniswap V3 factory address `0x1f98431c8ad98523631ae4a59f267346ea31f984` for
+`factory()` (`0xc45a0155`) on the deployed Ethereum mainnet SwapRouter
+`0xe592427a0aece92de3edee1f18e0157c05861564`. The call used zero value and
+the provider's deployed runtime at block `26473707`, hash
+`0x46ec7e5fad2d4fe2588f1ea1ce8983156fbb7ab78a3fce0c56a46a61dbea06ef`.
+The saved capture retains all 12,070 code bytes and the exact RPC response.
+[Mainnet capture](evidence/ethereum-mainnet-26473707-swaprouter-factory.json) ·
+[Uniswap deployment addresses](https://developers.uniswap.org/docs/protocols/v3/deployments/v3-ethereum-deployments)
+
+A separate dRPC EIP-1186 proof supplied eight account trie nodes for that
+block and address. The verifier re-encodes the header and checks its hash,
+verifies the account path from that header's state root, and matches the
+proven code hash to Keccak-256 of the captured runtime. The code hash is
+`0xbb90113d2f9a5e9b7feb15a1d1fff06c1ee1575b3f9b1181778ffd0cf633e7ea`.
+The check rejects a changed byte and a changed state root. The providers
+supply chain selection and canonicality. The local execution comparison
+covers the getter's return bytes.
+[Account proof](evidence/ethereum-mainnet-26473707-swaprouter-code-proof.json)
+
+On Ethereum Sepolia, PublicNode and guarded Lean returned
+`0x0227628f3f023bb0b980b67d528571c95c6dac1c` from `factory()` on the
+deployed SwapRouter02 at block `12191766`.
+[Ethereum Sepolia capture](evidence/ethereum-sepolia-12191766-swaprouter02-factory.json)
+
+Both captures used the native build at local source revision
+`254c8329a8cd7da95b51901ba2091fa3ce43a97e`, executable SHA-256
+`64a6f3a563bdec24a7516d5a2a6698891ee193efa843ed68bb9e838fca6aad77`,
+and capture source Git blob `427d0f65b83fc195f17bc0a1cb1f021f89a2ee14`.
+The public baseline uses the same Lean package sources and toolchain.
+The offline test suite replays the saved response parameters and complete
+runtime with the currently built executable. [Public Lean baseline](https://github.com/danbri/factoidal-core/commit/d3843c42d3b9c6fea8e96c3d0eebd65890dbea4b)
+
+```sh
+node scripts/rpc/capture.mjs --network ethereum-mainnet \
+  --address 0xe592427a0aece92de3edee1f18e0157c05861564 --data 0xc45a0155 \
+  --block 0x46ec7e5fad2d4fe2588f1ea1ce8983156fbb7ab78a3fce0c56a46a61dbea06ef \
+  --lean-exe "$PWD/.lake/build/bin/evm-subset" --out ethereum-mainnet-factory.json
+
+# Install the EELS witness dependencies with the resolution pinned by the CI workflow.
+node scripts/eels/verify-rpc-code-witness.mjs \
+  scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-factory.json \
+  scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-code-proof.json
+```
+
+See [the L1 replay issue](https://github.com/danbri/factoidal-core/issues/796)
+for work on signed contract transactions, receipts and state transitions.
 
 On 22 November 2026, the OP Sepolia provider and guarded Lean executable
 returned the ABI word `6` for `decimals()` (`0x313ce567`) at the deployed

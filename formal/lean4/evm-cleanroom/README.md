@@ -120,12 +120,14 @@ The ordinary `--frame-call` command is also available.
 [Solidity fixture and reproduction](scripts/differential/fixtures/solidity-pure/README.md)
 
 The read-only RPC tool resolves the provider's canonical block hash for
-Polygon PoS Amoy, Polygon PoS mainnet or OP Sepolia and records provider
-assertions. Its optional local comparison covers halt kind and
+Ethereum mainnet, Ethereum Sepolia, Polygon PoS Amoy, Polygon PoS mainnet or
+OP Sepolia and records provider assertions. Its optional local comparison covers halt kind and
 complete return or revert bytes for the admitted bytecode subset. Synthetic
-code overrides are labelled in the evidence. RPC capture leaves block
-authenticity, state roots, transaction execution and consensus unverified.
-[RPC capture commands and evidence scope](scripts/rpc/README.md) ·
+code overrides are labelled in the evidence. The separate mainnet witness
+gate binds the captured SwapRouter runtime to its pinned header's state root.
+Provider observations supply canonical chain selection and the capture leaves
+transaction execution and consensus unverified.
+[RPC capture commands, Ethereum L1 calls and proof scope](scripts/rpc/README.md) ·
 [Direct deployed OP Sepolia call](../../../docs/20261122-evm-solidity-deployed-call.md#direct-deployed-runtime-comparison)
 
 ## External executable interface and first official-fixture integration

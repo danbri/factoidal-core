@@ -81,6 +81,32 @@ async function stub(t, snapshot, code = FIXTURE.code, data = FIXTURE.data) {
   return executable
 }
 
+for (const [network, chainId, chainType, defaultRpc] of [
+  ['ethereum-mainnet', 1, 'ethereum-l1', 'https://ethereum-rpc.publicnode.com'],
+  ['ethereum-sepolia', 11155111, 'ethereum-l1-testnet', 'https://ethereum-sepolia-rpc.publicnode.com'],
+]) {
+  test(`checks ${network} chain identity before requesting block or call data`, async t => {
+    const flags = ['--network', network, '--address', FIXTURE.address, '--data', FIXTURE.data, '--out', 'fixture.json']
+    assert.equal(parseCli(flags).rpc, defaultRpc)
+    let providerChainId = `0x${chainId.toString(16)}`
+    const { url, requests } = await mock(t, request => request.method === 'eth_chainId'
+      ? rpcResult(request, providerChainId) : undefined)
+    const l1 = parseCli([...flags, '--rpc', url])
+    const observed = await capture(l1)
+    assert.equal(observed.expectedProfile.chainId, chainId)
+    assert.equal(observed.expectedProfile.chainType, chainType)
+    assert.equal(observed.provider.chainId, providerChainId)
+    assert.equal(observed.providerAssertions.call.executionCode.source, 'provider-chain-code')
+    assert.deepEqual(requests.find(request => request.method === 'eth_call').params,
+      [{ to: FIXTURE.address, data: FIXTURE.data, value: '0x0' }, BLOCK_SELECTOR])
+
+    providerChainId = FIXTURE.chainId
+    const completed = requests.length
+    await assert.rejects(capture(l1), /eth_chainId: expected .* received 11155420/)
+    assert.deepEqual(requests.slice(completed).map(request => request.method), ['eth_chainId'])
+  })
+}
+
 test('captures a deterministic call and keeps raw chain-specific fields', async t => {
   const { url, requests } = await mock(t)
   const executable = await stub(t, outcome('returned'))
@@ -517,6 +543,14 @@ const SAVED_CAPTURES = [
   {
     file: 'polygon-solidity-ge-97759492.json',
     sha256: '602af50c0d6a9e5e144fc7bea5a079118c0641d58869a334e2c7a5f12eb18e30',
+  },
+  {
+    file: 'ethereum-mainnet-26473707-swaprouter-factory.json',
+    sha256: '2a40386031a330cd31d32de1cb2c9d4f64264f3549e270cda7a1a748801686c8',
+  },
+  {
+    file: 'ethereum-sepolia-12191766-swaprouter02-factory.json',
+    sha256: '48218905f63ae4c2ca5ea089023668a0eb2998e9bbf74f5e5dfc00bfd7f84901',
   },
 ]
 

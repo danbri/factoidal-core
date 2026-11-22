@@ -6,7 +6,16 @@ import { compareCall, MAX_INPUT_BYTES } from './compare.mjs'
 import { CaptureError, createRpc, hexData, object } from './rpc-client.mjs'
 
 const POLYGON_DOCS = 'https://docs.polygon.technology/pos/reference/rpc-endpoints'
+const ETHEREUM_RPC_DOCS = 'https://ethereum.publicnode.com/'
 const PROFILES = new Map([
+  ['ethereum-mainnet', {
+    name: 'Ethereum mainnet', chainId: 1, chainType: 'ethereum-l1',
+    defaultRpc: 'https://ethereum-rpc.publicnode.com', source: ETHEREUM_RPC_DOCS,
+  }],
+  ['ethereum-sepolia', {
+    name: 'Ethereum Sepolia', chainId: 11155111, chainType: 'ethereum-l1-testnet',
+    defaultRpc: 'https://ethereum-sepolia-rpc.publicnode.com', source: ETHEREUM_RPC_DOCS,
+  }],
   ['amoy', {
     name: 'Polygon PoS Amoy', chainId: 80002, chainType: 'polygon-pos-sidechain',
     defaultRpc: 'https://polygon-amoy.drpc.org', source: POLYGON_DOCS,
@@ -22,7 +31,8 @@ const PROFILES = new Map([
   }],
 ])
 
-const USAGE = `Usage: node capture.mjs --network amoy|polygon|op-sepolia --address 0xADDRESS --data 0xBYTES --out FILE
+const NETWORKS = [...PROFILES.keys()]
+const USAGE = `Usage: node capture.mjs --network ${NETWORKS.join('|')} --address 0xADDRESS --data 0xBYTES --out FILE
   [--rpc URL] [--block latest|NUMBER|0xNUMBER|0xHASH] [--tx 0xHASH]
   [--code-override 0xBYTES] [--lean-exe /absolute/path --gas N --fuel N] [--timeout-ms N]
 
@@ -77,7 +87,7 @@ export function parseCli(args) {
   }
   const values = Object.fromEntries(Object.entries(parsed).map(([key, [value]]) => [key, value]))
   const profile = PROFILES.get(values.network)
-  if (!profile) throw new CaptureError('Use --network amoy, polygon or op-sepolia.')
+  if (!profile) throw new CaptureError(`Use --network with one of ${NETWORKS.join(', ')}.`)
   if (!address(values.address)) throw new CaptureError('Use --address with a 20-byte hexadecimal address.')
   if (values.tx !== undefined && !hash(values.tx)) throw new CaptureError('Use --tx with a 32-byte hexadecimal hash.')
   if (!values.out) throw new CaptureError('Use --out to name a new evidence file.')
