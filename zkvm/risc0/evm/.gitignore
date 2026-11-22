@@ -1,0 +1,6 @@
+/lib/
+/out/
+/cache/
+/fixtures/
+/receipt-tool/target/
+__pycache__/
