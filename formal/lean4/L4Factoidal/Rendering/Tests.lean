@@ -355,7 +355,11 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 #guard ((stateAt page "" "k").toOption.map fun s => (s.display == .inlineBlock,s.borderStyle == .outset,s.borderEdges.top,s.background.map rgb255)) == some (true,true,2,some (239,239,239))
 #guard ((stateAt page "" "k" (active := some "k")).toOption.map fun s => (s.borderStyle == .inset,s.background.map rgb255)) == some (true,some (200,200,200))
 #guard ((stateAt page "" "k" (hover := some "k")).toOption.map fun s => s.background.map rgb255) == some (some (229,229,229))
-#guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,s.borderColor.map rgb255)) == some (1,some (255,0,0))
+#guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,(s.borderColor.resolve s.color).map rgb255)) == some (1,some (255,0,0))
+#guard ((stateAt "<p id='x' style='border:8px solid transparent'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderEdges.left,(s.borderColor.resolve s.color).isNone)) == some (8,true)
+#guard ((stateAt "<p id='x' style='border:8px solid red; border-color:transparent'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderEdges.left,(s.borderColor.resolve s.color).isNone)) == some (8,true)
 #guard ((stateAt "<p id='x' style='border-width:4px'>A</p>" "" "x").toOption.map (·.borderEdges.left)) == some 0
 
 private def runState (html css : String) (active : Option String := none) : Except String (Scene × Array Box) := do

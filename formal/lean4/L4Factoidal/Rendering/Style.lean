@@ -93,6 +93,20 @@ inductive UnicodeBidi where | normal | embed | isolate | bidiOverride | isolateO
 /-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
 inductive BorderStyle where | none | solid | inset | outset
   deriving Repr, BEq
+/-- The border paint is independent of whether its widths take up space. -/
+inductive BorderColor where
+  | current
+  | transparent
+  | solid (color : Color)
+  deriving Repr
+
+/-- Substitute the element's computed text colour when the border uses currentcolor. -/
+def BorderColor.resolve (paint : BorderColor) (currentColor : Color) : Option Color :=
+  match paint with
+  | .current => some currentColor
+  | .transparent => none
+  | .solid c => some c
+
 /-- A `linear-gradient()` background image (CSS Images 3 §3.1): the direction as an angle in
 degrees (0 is up, 90 is right; `to bottom`, the default, is 180), or a corner (`to top
 right`: x and y each -1, 0 or 1), whose angle depends on the box; and the colour stops, each
@@ -143,7 +157,7 @@ structure Computed where
   borderWidth : Edges := ⟨3,3,3,3⟩
   borderStyle : BorderStyle := .none
   /-- None: `currentColor`. -/
-  borderColor : Option Color := none
+  borderColor : BorderColor := .current
   /-- `border-spacing`, horizontal and vertical (inherited). -/
   borderSpacingX : Float := 0
   borderSpacingY : Float := 0
@@ -1045,6 +1059,12 @@ def tableComputed (fontSize : Float) (property value : String) : Option String :
   (CssValues.specified property value).map fun s =>
     CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
 
+private def borderPaint (source : String) : Except String BorderColor :=
+  match (trim source).toLower with
+  | "transparent" => .ok .transparent
+  | "currentcolor" => .ok .current
+  | _ => .solid <$> color source
+
 private def edgeValues (s : String) : Except String Edges := do
   let vals ← (words s).mapM pixels
   if vals.any (· < 0) then throw "negative edges outside first CSS profile"
@@ -1461,16 +1481,16 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     else if s.borderStyle == .none then return {s with borderStyle := st, borderWidth := only}
     else return {s with borderStyle := st}
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
-    return {s with borderColor := some (← color d.value)}
+    return {s with borderColor := ← borderPaint d.value}
   | "border-width" => return {s with borderWidth := ← borderEdges s.fontSize d.value}
-  | "border-color" => return {s with borderColor := some (← color d.value)}
+  | "border-color" => return {s with borderColor := ← borderPaint d.value}
   | "border" =>
     -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
-    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := none}
+    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := .current}
     for part in words d.value do
       if let .ok style := borderStyle part then out := {out with borderStyle := style}
       else if let .ok w := borderWidthPx s.fontSize part then out := {out with borderWidth := ⟨w,w,w,w⟩}
-      else out := {out with borderColor := some (← color part)}
+      else out := {out with borderColor := ← borderPaint part}
     return out
   | "border-spacing" =>
     match ← (words d.value).mapM pixels with
@@ -2028,7 +2048,7 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   -- HTML §15.3.10: a `table`'s `bordercolor` maps to the four `border-*-color` properties
   if tag == "table" then
     let bc := attrValue n "bordercolor"
-    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColor := some c}
+    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColor := .solid c}
   if ["tr","td","th","thead","tbody","tfoot"].contains tag then
     match (attrValue n "valign").toLower with
     | "top" => s := {s with verticalAlign := .top}
@@ -3227,7 +3247,7 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     display := .inline, width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
     columnCount := none, columnWidth := none,
-    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
+    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := .current,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by
