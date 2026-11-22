@@ -1756,7 +1756,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
-  | "background-image" => some {s with backgroundGradient := source.backgroundGradient,
+  | "background-image" => some {s with
+      backgroundGradient := source.backgroundGradient
       backgroundURLs := source.backgroundURLs}
   | "background-size" => some {s with backgroundSizes := source.backgroundSizes}
   | "background-repeat" => some {s with backgroundRepeats := source.backgroundRepeats}
