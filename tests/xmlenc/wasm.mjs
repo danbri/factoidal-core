@@ -97,7 +97,31 @@ for (const c of w3c.cases) {
   test(`W3C ${c.id}: ${c.outcome}`, async () => {
     // `key` names the one key a case is given (the documents name RSA keys by certificate only).
     const caseKeys = c.key ? w3cKeys.filter((k) => k.kid === c.key) : w3cKeys;
-    const res = await decrypt({ document: readFileSync(join(w3cDir, c.file), 'utf8'), keys: caseKeys });
+    const document = readFileSync(join(w3cDir, c.file), 'utf8');
+    if (c.outcome === 'octets') {
+      // No Type (XML Encryption 1.1 §3.1): the plaintext octets (§4.4 step 3).
+      const r = await decrypt({ document, keys: caseKeys, octets: true });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(Buffer.from(r.octets, 'base64').toString('hex'), c.expectedHex);
+      return;
+    }
+    if (c.outcome === 'defective') {
+      // Defective test data (cases.json defectiveNote, c.issue): no §5.2
+      // padding block. The CBC requests use the key Node derives; the
+      // octets are not the stated plaintext. Red if they ever are.
+      const keysSeen = [];
+      const call = op('xmlDecrypt');
+      const r = await runWithCipher((a) => {
+        const out = call(a);
+        if (out.ok && out.need) keysSeen.push(Buffer.from(out.need.key, 'base64').toString('hex'));
+        return out;
+      }, { document, keys: caseKeys, octets: true, allowCbc: true });
+      assert.ok(keysSeen.length > 0 && keysSeen.every((k) => k === c.derivedKeyHex), keysSeen.join(','));
+      const got = r.ok ? Buffer.from(r.octets, 'base64').toString('hex') : null;
+      assert.notEqual(got, c.expectedHex, `STALE defective-data exclusion, now decrypts: ${c.issue}`);
+      return;
+    }
+    const res = await decrypt({ document, keys: caseKeys });
     if (c.outcome === 'ok') {
       assert.equal(res.ok, true, res.error);
       assert.equal(res.canonical, canonical(readFileSync(join(w3cDir, c.expected), 'utf8')));

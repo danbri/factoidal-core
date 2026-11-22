@@ -27,5 +27,20 @@
   "n": "3T7gwEXTyQznCr9KTjbEoqc_oCnfq9jV2cl83RTx8o2uLujRNBJW9Hb1ATajR4OJttBwKJQ7aBhnD7T7LteDhJrCEJCmGmypdiCw0tuX9n2K_tMnBQ70hqNb2sm7y4MBYdLCUxzmjp1SXWOO5r1esScp0ww_xWpWKiYk_4EnJYJc6f1AKwsHXXYpK3y9qMMyZGJyteooJte7Ic8M9VQ12RMNowJ5F2_-m7-ZNNmdoyiDZjVDcs3pkrqcwRJ7OmUZ1c9LIy2smKt9mtTVZPW30D0TWSEJUL9WlKQiKPoAmX_EKTbxtVUmwKVY0iCtHNxwDwEnwTOWMUIMDVrWLW2VziuSDSxOMoH2p90TKvsaZCL6jkb9GcTPRpuKBzIBiQGinnpwKhXuv9_thBokiM_f8pJBqd2-A7LGvAlliUyEcpIUXGp4WR9ifDreIYNDcI7klF8aDz3gezprwf4-ka53f7fwg1o_U_0YC8_CREgE4ZXw4-fj_MuNEry87gAbhsuzofjml0qJe61NyUr5NXtUQSTZ6xb1l2Z53CfxOCiFeHqvEjbvTUJHAtbWADyV0RhnO9MbDEgAjBSGq3xi6tIsNoNt-w_G6z9mIOMKoBuMNU8lZ6H-0ZIgzRoHuw-cKcykda4gZlZfB3L27JO_lw1rWB-yeIiIHOZMeaMRdb2n26s",
   "e": "AQAB",
   "d": "Knokf3XIlAygnS0d0IduWEYhDpiLg3xVjoNDMFURoL535zS22bb9r-DY6Ds7vQKxoYJCTmArSbCJtPfL0_H3o7Fsue5znZYoMPBU0p7rfZ0b3xHeJ3f4FZNuksJxhkCoNsZWnctqLo5g3mI7cOyBriR1QLpU0gu48E2zg8Shpe9x9FC1ja4H43dIrzs7VJfpaGGIYYnL3K1FldehRsa8sekZEKdsZUYQzYlLGlz_iXBBThHC2dtT0WJ3rw_jzdHUVHsAk4f037jpHB1pvQD6IgZf3RhdJ_4cWtxqXJCnJdFkcX9Fh8mJ76mvNGSmp-hgsVjI76x-VQW3t6atgTpNbNTbiqp0KSlnC2KvOe7jkXwVUk5k3vNO1nH6X1TaRCMiYhRRjDeriC4ibuaHm8YNRPaI3KvBWO5Uv_W4HgcPb9FY3fp5BqRCYzeGCVhaLF1YcDKoWk0O9lNMhi9caAs4VMGZahpr0NfXG9NeeLJmsWVgvRpbi_y8uMMZXFewC2lEUogKILqV05p7WW-OpQf0tDLX0efsFE58IREbt5a0Q3Pn3VpA_uwFS7kv-Pmm8IS83X0A_2tXN4rlEjop9xeAns1VmeXHx791JXj2LUI-VtH2gn61b5FXcwvETLhUK_IZIDvjlNnzpcX_nzPGERzm5RW5WRyzJupb0RaSq6ba_8k"
+ },
+ {
+  "kty": "oct",
+  "kid": "Test Key 1",
+  "k": "_v_pkoZlcxxtao-UZzCDCA"
+ },
+ {
+  "kty": "oct",
+  "kid": "Secret1",
+  "k": "AAECAwQFBgcQERITFBUWFyAhIiMkJSYnMDEyMzQ1Njc"
+ },
+ {
+  "kty": "oct",
+  "kid": "Our shared secret",
+  "k": "UEFTU1dPUkQ"
  }
 ]
