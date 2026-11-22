@@ -1,4 +1,5 @@
 import EVMCleanroom.Call
+import EVMCleanroom.ValueCall
 import EVMCleanroom.Proofs
 
 /-!
@@ -11,9 +12,11 @@ the parent machine state. Child effects are committed only if its frame
 succeeds; parent REVERT or exceptional failure restores the entire parent
 entry world, including any previously successful children.
 
-Exact admitted semantics, deliberately narrow: zero value, input size zero,
-output size zero, one child frame running existing Frame.run opcodes (no nested
-CALL), no precompiles, and no parent storage opcodes yet. Arbitrary zero-sized
+Exact admitted semantics, deliberately narrow: zero or nonzero value,
+input size zero, output size zero, one child frame running existing Frame.run
+opcodes (no nested CALL). Nonzero value uses EIP-161 account creation costs,
+9000 gas surcharge, 2300 stipend and checked balance transfers, including
+rollback; no precompiles, and no parent storage opcodes yet. Arbitrary zero-sized
 memory offsets are accepted without allocation. Stack addresses are truncated
 to the low 160 bits. Child exceptional outcome does not halt the parent.
 
@@ -37,47 +40,58 @@ inductive CallStep where
 -- Memory expansion of zero-byte ranges is zero, regardless of their offsets;
 -- all nonzero lengths are outside this first opcode slice.
 /-- One actual CALL instruction with a seven-word stack and checked state commit. -/
-def callStep (fuel : Nat) (world : TxWorld) (parent : State) : CallStep :=
+/-- A resumed parent with the actual EVM Boolean CALL success bit.
+    The charge is validated by Core.commit before committing any persistent
+    world-state side effects. -/
+private def finishCall (parent : State) (rest : List Word)
+    (out : TxWorld) (remaining : Nat) (succeeded : Bool) : CallStep :=
+  if remaining ≤ parent.gas then
+    match commit parent (parent.pc + 1)
+        (word (if succeeded then 1 else 0) :: rest)
+        (parent.gas - remaining) with
+    | .ok state =>
+      .committed out
+        { state with storage := { state.storage with refund := out.refund } }
+    | .error e => .exceptional e
+  else .indeterminate .unsupportedFork
+
+/-- Execute an actual parent CALL instruction with EIP-150/2929 gas and,
+    for positive value, EIP-161 new-account cost, 9000 transfer surcharge,
+    2300 stipend, checked World.pay and child-frame rollback. -/
+def callStep (fuel : Nat) (world : TxWorld)
+    (parentAddress : Nat) (parent : State) : CallStep :=
   match parent.stack.items with
   | requested :: target :: value :: _inputOffset :: inputSize ::
       _outputOffset :: outputSize :: rest =>
-    if value.val != 0 || inputSize.val != 0 || outputSize.val != 0 then
+    if inputSize.val != 0 || outputSize.val != 0 then
       .indeterminate .unsupportedFork
-    else
+    else if value.val == 0 then
       match WorldCall.callZeroValue fuel world
           (target.val % addressBound) parent.gas requested.val with
       | .childSuccess childWorld remaining =>
-        if h : remaining ≤ parent.gas then
-          match commit parent (parent.pc + 1) (word 1 :: rest)
-              (parent.gas - remaining) with
-          | .ok s =>
-            .committed childWorld
-              { s with storage := { s.storage with refund := childWorld.refund } }
-          | .error e => .exceptional e
-        else .indeterminate .unsupportedFork
+        finishCall parent rest childWorld remaining true
       | .childReverted childWorld remaining =>
-        if h : remaining ≤ parent.gas then
-          match commit parent (parent.pc + 1) (word 0 :: rest)
-              (parent.gas - remaining) with
-          | .ok s =>
-            .committed childWorld
-              { s with storage := { s.storage with refund := childWorld.refund } }
-          | .error e => .exceptional e
-        else .indeterminate .unsupportedFork
+        finishCall parent rest childWorld remaining false
       | .childExceptional childWorld remaining _ =>
-        if h : remaining ≤ parent.gas then
-          match commit parent (parent.pc + 1) (word 0 :: rest)
-              (parent.gas - remaining) with
-          | .ok s =>
-            .committed childWorld
-              { s with storage := { s.storage with refund := childWorld.refund } }
-          | .error e => .exceptional e
-        else .indeterminate .unsupportedFork
+        finishCall parent rest childWorld remaining false
       | .callerOutOfGas => .exceptional .outOfGas
       | .invalidAddress => .indeterminate .unsupportedFork
       | .invalidChildGas => .indeterminate .unsupportedFork
       | .unsupported e => .indeterminate e
-  | _ => .exceptional .stackUnderflow
+    else if parent.readOnly then .exceptional .writeProtection
+    else
+      match WorldCall.callWithValue fuel world parentAddress
+          (target.val % addressBound) parent.gas requested.val value.val with
+      | .childSuccess childWorld remaining =>
+        finishCall parent rest childWorld remaining true
+      | .childReverted childWorld remaining =>
+        finishCall parent rest childWorld remaining false
+      | .childExceptional childWorld remaining _ =>
+        finishCall parent rest childWorld remaining false
+      | .insufficientFunds childWorld remaining =>
+        finishCall parent rest childWorld remaining false
+      | .callerOutOfGas => .exceptional .outOfGas
+      | .indeterminate e => .indeterminate e
 
 /-- Intermediate outcomes retain a world on success, but not when an entire
     parent frame must revert or halt exceptionally. That choice forces the
@@ -106,7 +120,7 @@ def execute : Nat → TxWorld → Nat → State → RawOutcome
   | fuel + 1, world, parentAddress, s =>
     if s.halted then .stopped world s
     else if byteAt s s.pc == 0xf1 then
-      match callStep fuel world s with
+      match callStep fuel world parentAddress s with
       | .committed nextWorld nextParent =>
         execute fuel nextWorld parentAddress nextParent
       | .exceptional e => .exceptional e
