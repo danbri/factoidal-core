@@ -475,7 +475,7 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     else firstRows
   let rowGap := usedRowGap
   let rowFree : Int := Int.ofNat (gridUnits contentH) - Int.ofNat (gridExtent rowSizes rowCollapsed rowGap)
-  let rowSpread := Grid.contentOffsetsInt (gridDistribution s.align.alignContent false) rowFree (gridLive rowSizes rowCollapsed)
+  let rowSpread := Grid.contentOffsetsInt (gridDistribution s.align.alignContent flipY) rowFree (gridLive rowSizes rowCollapsed)
   let rowStarts := gridStarts rowSizes rowCollapsed rowGap rowSpread.1 rowSpread.2
   -- §7.2.6: the used tracks, kept in the fragment for `getComputedStyle` (an empty group).
   let mut out : Result := match box.source with
@@ -497,8 +497,10 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let areaH := gridPx extent.2
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
     let rowSubgrid := is.grid.templateRows.subgrid && is.display.isGrid
+    -- In a vertical RTL grid, row offsets run bottom-to-top before conversion to y.
+    let flipSelfY := (selfStartSides (gridFrame is)).2 != flipY
     let align : Grid.SelfAlign := if rowSubgrid then .stretch
-      else gridSelfAlign is.align.alignSelf s.align.alignItems false (selfStartSides (gridFrame is)).2
+      else gridSelfAlign is.align.alignSelf s.align.alignItems flipY flipSelfY
     let minH := (CSS.resolve areaH is.minHeight).getD 0
     let maxH := CSS.resolve areaH is.maxHeight
     let height := match CSS.resolve areaH is.height with
@@ -511,10 +513,13 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let shift := shifts.getD i 0
     let dy := if shift > 0 || (a.rowSpan == 1 && horizontal is && !rowSubgrid && gridBaselineSelf is.align.alignSelf s.align.alignItems) then gridPx shift
       else if let some up := lastShifts.getD i none then areaH-outerH-gridPx up
-      else match autoCrossOffset is.autoMarginTop is.autoMarginBottom (areaH-outerH) with
-      | some d => d
-      | none => LU.toPx (gridSelfOffset align (gridSafe is.align.alignSelf is.align.alignSelfSafe s.align.alignItemsSafe)
-          (gridUnits areaH) (gridUnits outerH))
+      else
+        let (autoStart, autoEnd) := if flipY then (is.autoMarginBottom, is.autoMarginTop)
+          else (is.autoMarginTop, is.autoMarginBottom)
+        match autoCrossOffset autoStart autoEnd (areaH-outerH) with
+        | some d => d
+        | none => LU.toPx (gridSelfOffset align (gridSafe is.align.alignSelf is.align.alignSelfSafe s.align.alignItemsSafe)
+            (gridUnits areaH) (gridUnits outerH))
     let y := box.y+LU.toPx extent.1+dy
     -- the inline axis of a right-to-left vertical grid runs bottom to top
     let y := if flipY then box.y+contentH-(y-box.y)-(height+m.top+m.bottom) else y

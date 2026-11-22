@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-22 | [Verified RISC Zero ASK attestation](20261122-ask-risc0-proof.md) | PR 759 | record — genuine composite, succinct, identity and Groth16 receipts; actual local Solidity verification, tampering controls and scoped gas measurement |
 | 2026-11-22 | [Native and ASK guest execution parity](20261122-ask-guest-parity.md) | PR 759 | current — reproducible 24 native fixtures and four guest framing/limit controls, with source and journal binding |
 | 2026-11-22 | [RISC Zero archive and compiler provenance](20261122-risc0-link-provenance.md) | PR 759 | current — exact verified archive snapshots and compiler-cache binding |
 | 2026-11-22 | [RV32 Lean scalar alignment audit](20261122-rv32-lean-runtime-alignment.md) | issue 745 | current — pinned allocator/accessor audit, reproduced alignment failures and bounded header repair |

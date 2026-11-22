@@ -73,6 +73,28 @@ fn encode_verified_seal(receipt: &Receipt) -> Result<Vec<u8>> {
     Ok(seal)
 }
 
+fn identity_verifier_parameters() -> SuccinctReceiptVerifierParameters {
+    let groth_params = Groth16ReceiptVerifierParameters::default();
+    let suite = Poseidon254HashSuite::new_suite();
+    // SDK 3.1.0 host/api/tests.rs verifies identity_p254 against
+    // MerkleGroup([BN254_IDENTITY_CONTROL_ID]).calc_root(Poseidon254).
+    // receipt/merkle.rs fixes that tree at depth eight, padding missing
+    // leaves with Digest::ZERO. MerkleGroup is only publicly exported with
+    // the prover feature; derive this fixed root using the SDK's hash_pair.
+    // All inputs are pinned SDK constants, never returned receipt metadata.
+    let mut root = groth_params.bn254_control_id;
+    let mut empty = Digest::ZERO;
+    for _ in 0..8 {
+        root = *suite.hashfn.hash_pair(&root, &empty);
+        empty = *suite.hashfn.hash_pair(&empty, &empty);
+    }
+    SuccinctReceiptVerifierParameters {
+        control_root: root,
+        inner_control_root: Some(groth_params.control_root),
+        ..Default::default()
+    }
+}
+
 fn prepare(image: Digest, receipt: &Receipt, expected: &[u8], r0vm: &Path, output: &Path) -> Result<()> {
     ensure!(!output.exists(), "prepare output directory already exists");
     let version = Command::new(r0vm).arg("--version").output()?;
@@ -86,6 +108,7 @@ fn prepare(image: Digest, receipt: &Receipt, expected: &[u8], r0vm: &Path, outpu
         .open("/tmp/factoidal-zk-prove.lock")?;
     println!("Waiting for shared local proving lock: /tmp/factoidal-zk-prove.lock");
     proof_lock.lock()?;
+    println!("Acquired shared proving lock; starting local succinct compression");
     let local = ExternalProver::new("pinned-local-r0vm", r0vm);
     let succinct = local.compress(&ProverOpts::succinct(), receipt)?;
     verify_binding(&succinct, image, expected)?;
@@ -97,16 +120,16 @@ fn prepare(image: Digest, receipt: &Receipt, expected: &[u8], r0vm: &Path, outpu
     }
     write_new(&output.join("succinct.receipt"), &bincode::serialize(&succinct)?)?;
     println!("Checkpointed verified succinct receipt at {}", output.join("succinct.receipt").display());
+    println!("Starting local identity_p254 conversion");
     let client = ApiClient::new_sub_process(r0vm)?;
     let identity = client.identity_p254(&ProverOpts::succinct(), inner.clone().try_into()?, AssetRequest::Inline)?;
 
     // identity_p254 has its own one-program control root and retains the trusted
     // inner recursion root. Derive both from pinned SDK constants, never receipt metadata.
-    let groth_params = Groth16ReceiptVerifierParameters::default();
-    let mut params = SuccinctReceiptVerifierParameters::default();
-    params.control_root = groth_params.bn254_control_id;
-    params.inner_control_root = Some(groth_params.control_root);
-    let mut context = VerifierContext::default().with_succinct_verifier_parameters(params);
+    let mut context = VerifierContext::empty()
+        .with_succinct_verifier_parameters(identity_verifier_parameters());
+    // identity_p254 serialises the wire name "poseidon_254". The suite's
+    // descriptive .name is "poseidon254", which is not this lookup key.
     context.suites.insert("poseidon_254".into(), Poseidon254HashSuite::new_suite());
     identity.verify_integrity_with_context(&context).context("identity_p254 verification failed")?;
     ensure!(identity.claim.digest() == receipt.claim()?.digest(), "identity_p254 changed the claim");
@@ -114,6 +137,7 @@ fn prepare(image: Digest, receipt: &Receipt, expected: &[u8], r0vm: &Path, outpu
     let identity_bytes = identity.get_seal_bytes();
     write_new(&output.join("identity.seal"), &identity_bytes)?;
     write_new(&output.join("identity.receipt"), &bincode::serialize(&identity)?)?;
+    println!("Checkpointed verified identity_p254 receipt at {}", output.join("identity.receipt").display());
     let inputs = risc0_groth16::prove::to_json(&identity_bytes)?;
     write_new(&output.join("input.json"), inputs.as_bytes())?;
     println!("Verified succinct and identity_p254 proofs; official CPU prover input prepared");
@@ -176,6 +200,17 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
     use risc0_zkvm::{FakeReceipt, ReceiptClaim};
+
+    #[test]
+    fn identity_context_uses_the_pinned_merkle_root_not_its_leaf() {
+        let params = identity_verifier_parameters();
+        assert_ne!(params.control_root, Groth16ReceiptVerifierParameters::default().bn254_control_id);
+        // Independently observed from the official 3.1.0 identity producer.
+        // The previous direct-leaf construction produced df670d44... and
+        // correctly failed integrity verification on the first real ASK run.
+        assert_eq!(params.digest().to_string(),
+            "8dfe5a6be7860f94a46ad4dd69483b3d2b11ea9bae656e86027e893879586b6b");
+    }
 
     #[test]
     fn true_gate_requires_exact_canonical_abi() {

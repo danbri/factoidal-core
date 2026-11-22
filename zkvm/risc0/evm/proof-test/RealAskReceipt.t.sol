@@ -17,7 +17,24 @@ contract RealAskReceiptTest is Test {
     bytes32 internal expectedContext;
 
     function setUp() public {
-        string memory expected = vm.readFile("fixtures/expected-statement.json");
+        string memory directory = vm.envOr("FACTOIDAL_EVM_FIXTURE_DIR", string("fixtures"));
+        bytes memory selected = bytes(directory);
+        if (keccak256(selected) != keccak256(bytes("fixtures"))) {
+            bytes memory prefix = bytes("fixtures/");
+            require(selected.length > prefix.length, "expected fixtures or a named child directory");
+            for (uint256 i; i < prefix.length; ++i) {
+                require(selected[i] == prefix[i], "fixture directory must be within fixtures");
+            }
+            for (uint256 i = prefix.length; i < selected.length; ++i) {
+                uint8 c = uint8(selected[i]);
+                require(
+                    (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+                        || c == 45 || c == 95,
+                    "fixture child name permits only letters, digits, hyphens and underscores"
+                );
+            }
+        }
+        string memory expected = vm.readFile(string.concat(directory, "/expected-statement.json"));
         expectedImage = vm.parseJsonBytes32(expected, ".imageId");
         bytes memory expectedJournal = vm.parseJsonBytes(expected, ".journal");
         require(expectedJournal.length == 128, "expected journal must have 128 bytes");
@@ -27,15 +44,24 @@ contract RealAskReceiptTest is Test {
         require(answer == 1, "expected statement must authorise true");
         gate = new FactoidalAskGate(expectedImage, expectedPolicy, expectedContext);
 
-        string memory proof = vm.readFile("fixtures/ask-proof.json");
+        string memory proof = vm.readFile(string.concat(directory, "/ask-proof.json"));
         require(vm.parseJsonBytes32(proof, ".imageId") == expectedImage, "proof image differs");
         seal = vm.parseJsonBytes(proof, ".seal");
         journal = vm.parseJsonBytes(proof, ".journal");
         assertEq(journal, expectedJournal, "proof journal differs from authorised statement");
     }
 
-    function testRealAskReceiptVerifies() public view {
-        assertEq(gate.verifyTrue(seal, journal), expectedGraph);
+    function testRealAskReceiptVerifies() public {
+        bytes memory submittedSeal = seal;
+        bytes memory submittedJournal = journal;
+        address target = address(gate);
+        uint256 beforeCall = gasleft();
+        bytes32 verifiedGraph = FactoidalAskGate(target).verifyTrue(submittedSeal, submittedJournal);
+        uint256 externalCallGas = beforeCall - gasleft();
+        // Local successful external-call cost, including ABI/STATICCALL
+        // overhead. This excludes deployment and transaction intrinsic gas.
+        emit log_named_uint("verifyTrue external-call gas", externalCallGas);
+        assertEq(verifiedGraph, expectedGraph);
     }
 
     function testRealAskReceiptRejectsChangedImage() public {
@@ -80,7 +106,7 @@ contract RealAskReceiptTest is Test {
     function testRealAskReceiptRejectsTamperedSeal() public {
         bytes memory changed = seal;
         changed[4] ^= bytes1(uint8(1));
-        vm.expectRevert();
+        vm.expectRevert(VerificationFailed.selector);
         gate.verifyTrue(changed, journal);
     }
 }

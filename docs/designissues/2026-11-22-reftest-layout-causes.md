@@ -295,6 +295,15 @@ By count of failing tests that Chrome passes, and by cost:
 - Before that, commits `05a5f192` to `a11b4bce`: Liberation Mono for `monospace`; a quoted
   generic family name is a family name; the reftest renderer gives the serif and monospace
   faces as the window does.
+- Item 4 of section 7, commits `0aae2280`, `89ab7d93`: background images drawn (natural size,
+  repeated from the padding box, clipped to the border box; sub-properties not read yet); an
+  image at 1:1 on whole pixels draws its exact pixels. `css/CSS2` 3,254 to 3,267, `svg` 327 to 335,
+  `css/css-backgrounds` 132 to 130, `css/css-images` 288 to 140. Every newly failing test drew no
+  background image on either side before (equal pictures); its own defect now shows. The same
+  kind of pass (test and reference equal because both lack what the engine does not draw) is
+  likely elsewhere; the runner does not check for it.
+- `line-height: normal` from the font's metrics: branch `wip/747-line-height-normal`, not landed
+  (needs box edges snapped to device pixels first; section 3.3).
 - Open, found while measuring: `line-height: normal` is a fixed 1.2 em, where browsers use the
   font's ascent, descent and line gap. With per-font metrics, a line that mixes fonts can grow,
   and `css/CSS2/fonts/font-family-013`, `fonts-013` and `font-applies-to-017` fail. Coptic

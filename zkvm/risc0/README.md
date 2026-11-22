@@ -114,6 +114,7 @@ python3 zkvm/risc0/build-runtime.py \
 Build the guest from `zkvm/risc0/guest`:
 
 ```sh
+export FACTOIDAL_ZK_RUNTIME
 export RUSTFLAGS='-C passes=lower-atomic -C link-arg=-Ttext=0x00200800 -C link-arg=--fatal-warnings -C panic=abort --cfg getrandom_backend="custom"'
 cargo +risc0 build --release --locked --target riscv32im-risc0-zkvm-elf -j2
 ```
@@ -185,7 +186,7 @@ Let `ASK_TOOL` be the absolute path of
 ELF with the exact SDK kernel; the command prints its image ID:
 
 ```sh
-"$ASK_TOOL" pack "$ASK_ELF" "$ASK_PROGRAM"
+ASK_IMAGE_ID="$("$ASK_TOOL" pack "$ASK_ELF" "$ASK_PROGRAM")"
 "$ASK_TOOL" frame 0 input.nt salt.bin query.rq rules.srl context.bin private.frame
 ```
 
@@ -215,12 +216,14 @@ RAYON_NUM_THREADS=2 "$ASK_TOOL" prove \
 `prove` requests a genuine composite receipt from the explicit local
 `r0vm`, verifies its image and journal with the pinned SDK, checks the
 bounded receipt decoder, then writes a new private receipt file. It uses
-the shared local proving lock. Both commands enforce a 64 Mi-cycle
-session ceiling and 2^18-cycle segments. The smaller segments bound local
-CPU prover memory while leaving the guest image and statement unchanged.
-`FACTOIDAL_ZK_SEGMENT_PO2=19` or `20` selects larger segments when the
-machine has enough memory; other values are refused. Larger segments
-reduce continuation overhead. `RAYON_NUM_THREADS` independently controls
+the shared local proving lock. Both commands enforce a 64 Mi user-cycle
+session ceiling. Paging and proving rows are additional; this is not a
+wall-clock or process-memory limit. The default segment size is 2^18 rows;
+`FACTOIDAL_ZK_SEGMENT_PO2` accepts 18, 19 or 20. Smaller segments reduce
+per-segment prover memory, while larger segments reduce continuation
+overhead. Address-space and wall-clock limits must be imposed by the
+invocation wrapper. The guest image and statement are unchanged by these
+resource settings. `RAYON_NUM_THREADS` independently controls
 the Rust polynomial/NTT work pool; the pinned C++ witness generator has
 its own hardware-sized pool. Measure memory and elapsed time on the actual
 machine before selecting a production proving budget. The parity runner

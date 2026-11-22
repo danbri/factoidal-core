@@ -13,17 +13,20 @@ not implement RDF or SPARQL semantics in the host or in Solidity.
 | --- | --- |
 | Official patched Solidity verifier | All five upstream tests passed in the local Foundry EVM, including its genuine Groth16 fixture |
 | `FactoidalAskGate` checks | 18 local EVM tests passed, including wrong image/journal, policy/context, size, Boolean, missing-proof and old/development-selector cases |
-| Rust receipt bridge | Eight tests passed, including SDK verification of the same official real Groth16 fixture, exact equality of its encoded EVM seal, shared-lock interoperability with Linux `flock`, and the shared receipt decoder's transport refusal controls |
-| Official CPU prover/setup | Downloaded from the pinned OCI image; every layer and all six selected files verified; both binaries start and show their actual usage |
-| ASK proof integration test | Compiles. Running without a real ASK proof/authorised statement fails setup; there is no skip or mock fallback |
-| New local succinct/identity/Groth16 generation through this bridge | Prepared, not yet executed in this validation record |
-| Lean ASK receipt verified in the EVM | Not yet recorded here |
+| Rust receipt bridge | Five bridge tests and four shared receipt-decoder tests passed; these include SDK verification of the same official real Groth16 fixture, exact equality of its encoded EVM seal, shared-lock interoperability with Linux `flock`, the pinned identity verifier root and transport refusal controls |
+| Official CPU prover/setup | Downloaded from the pinned OCI image; every layer and all six selected files verified; real ASK witness generation and gnark proving completed successfully |
+| ASK proof integration test | All seven tests passed against the genuine ASK receipt: acceptance and six rejection controls; absent fixtures fail setup |
+| New local succinct/identity/Groth16 generation through this bridge | Completed locally from the verified ASK composite receipt; verified intermediate checkpoints were retained |
+| Lean ASK receipt verified in the EVM | Verified for the recorded `rule-inference` case and independently authorised 128-byte journal; successful `verifyTrue` external-call cost was 230,839 gas with the scope below |
 
-The official smoke-test fixture proves its own short journal, `just a
+The upstream fixture proves its own short journal, `just a
 simple receipt`. It is not an ASK proof. The ASK gate explicitly rejects
 that journal, and a well-formed 128-byte ASK journal paired with that
 unrelated proof also fails. The separate `proof` test profile is the
-gate for recording actual ASK verification.
+gate for recording actual ASK verification. Its retained fixture is the
+newly generated proof of the Lean ASK execution, described in
+[fixtures/README.md](fixtures/README.md) with machine-readable
+[provenance](fixtures/provenance.json).
 
 No external-chain transaction, RPC call to a public chain, or remote
 proof request is part of these tools or the recorded tests.
@@ -147,7 +150,7 @@ replacement for the Docker path.
 The recorded environment has no Docker daemon or GPU. The following
 manual path uses the same official CPU binaries and setup directly.
 
-### Prepared native CPU path
+### Native CPU path
 
 The pinned upstream
 [Dockerfile](https://github.com/risc0/risc0/blob/22c5fb90522cb4d9427d4af6c05e747d20be2b7f/groth16_proof/docker/prover.Dockerfile)
@@ -168,8 +171,9 @@ layer before extracting the six selected regular files. The runner
 checks each file against the committed hashes in `cpu-prover-pins.json`.
 The binary dependencies observed on Linux are standard glibc, libstdc++,
 libgcc, libm and libgmp; the gnark binary itself is static. The witness
-generator and prover were both started only far enough to print their
-real usage during setup validation.
+generator and prover have both completed the recorded ASK proof. The
+setup-only `--check` path checks the witness generator's startup without
+starting a proof.
 
 Build and test the receipt bridge using the pinned lockfile:
 
@@ -203,6 +207,15 @@ official `identity_p254` API. It verifies that intermediate proof using
 the pinned SDK's BN254/inner control roots and checks preservation of the
 claim before calling the official `to_json` encoder.
 
+The identity verifier uses the fixed depth-eight Merkle root containing
+the pinned BN254 identity control ID and 255 zero leaves. The root is
+derived with the SDK's unmodified Poseidon254 `hash_pair`, following its
+[identity API test](https://github.com/risc0/risc0/blob/22c5fb90522cb4d9427d4af6c05e747d20be2b7f/risc0/zkvm/src/host/api/tests.rs)
+and [Merkle tree definition](https://github.com/risc0/risc0/blob/22c5fb90522cb4d9427d4af6c05e747d20be2b7f/risc0/zkvm/src/receipt/merkle.rs).
+The leaf ID alone is not that root. Its verifier context admits only the
+`poseidon_254` suite; no trusted parameter comes from returned receipt
+metadata. The parameter digest is pinned by a regression test.
+
 The verified succinct receipt is checkpointed before `identity_p254`
 starts. If a later stage fails, pass that `succinct.receipt` as the
 receipt input to `prepare`, with a new output directory. The pinned
@@ -214,8 +227,14 @@ The CPU runner uses the official witness generator and gnark prover
 sequentially, with a regular witness file instead of the container's
 FIFO. This avoids overlapping their memory use. Both `prepare` and the
 CPU runner acquire `/tmp/factoidal-zk-prove.lock` internally; do not wrap
-them in another lock on that same file. The runner defaults to two Go
-workers, an 8 GiB address-space cap and a 30-minute timeout per process.
+them in another lock on that same file. The runner defaults to
+`GOMAXPROCS=2`, an 8 GiB address-space limit, a 6 GiB soft Go memory
+limit, and a 30-minute timeout for each native child process. `--jobs`
+sets Go's execution concurrency; the pinned prover derives its internal
+task counts from `runtime.NumCPU()`. Increasing `--jobs` therefore does
+not multiply its main circuit/key/witness arrays, although peak memory
+can still change with scheduling and worker scratch use. This setting
+does not control the separate C++ witness generator.
 It preserves the 4 GiB disk reserve and reports process failure without
 accepting a receipt. Its proof JSON is untrusted until `finish` verifies
 the constructed receipt under the ordinary pinned SDK verifier, the
@@ -234,28 +253,70 @@ Intermediate files are created with private permissions. This path
 does not upload input, witness, proof or journal to a proving service.
 The downloaded image/setup are public; their retrieval sends no witness.
 
-## Verify an actual ASK receipt in the local EVM
+## Verify the recorded ASK fixture in the local EVM
+
+The `proof` profile reads `fixtures/expected-statement.json` and
+`fixtures/ask-proof.json`. Their provenance identifies the recorded guest
+image and source baseline. CI re-verifies that image/statement pair; it
+does not rebuild the current guest or generate a fresh proof. CI explicitly
+selects `fixtures`; absent or invalid files fail the job.
+
+```sh
+FOUNDRY_PROFILE=proof forge test -vv
+```
+
+The profile requires exact agreement with the independently authorised
+statement, checks the genuine proof, then rejects changed image,
+commitment, authorised policy, authorised context, false result and
+tampered seal. Missing fixtures fail setup.
+
+The existing successful test also reports local `verifyTrue` external-call
+gas, including ABI/STATICCALL and return overhead. Its measurement begins
+after copying the input bytes and gate address into locals. It excludes
+those copies, deployment/setup, log emission and intrinsic transaction gas.
+The recorded value is **230,839 gas** under the pinned compiler and local
+Cancun EVM. The complete positive Forge test used 273,492 gas. These are
+one fixture's measurements, not a general proving or transaction benchmark.
+
+The successful-call measurement is not a worst-case bound for malformed
+proofs. The pinned
+[`Groth16Verifier`](https://github.com/risc0/risc0-ethereum/blob/ff30da77ba4afdd496290ebebedb205348b15d83/contracts/src/groth16/Groth16Verifier.sol)
+requests `gas() - 2000` for its curve and pairing precompile calls, subject
+to EVM forwarding rules. The tampered-seal test reached a pairing
+`PrecompileError` and then reverted with `VerificationFailed`; under
+Forge's large test budget, that complete negative test used
+1,008,173,841 gas. An application must set its own verification-call
+budget policy. This reference view gate does not impose that policy.
+
+## Export a newly generated ASK proof
 
 After the preceding real proof and SDK verification have succeeded:
 
 ```sh
-mkdir -p fixtures
+FACTOIDAL_NEW_EXPORT="fixtures/new-ask"
+mkdir -m 0700 "$FACTOIDAL_NEW_EXPORT"
 
 receipt-tool/target/release/factoidal-evm-receipt statement \
-  "$FACTOIDAL_IMAGE_ID" "$FACTOIDAL_EXPECTED_JOURNAL" fixtures/expected-statement.json
+  "$FACTOIDAL_IMAGE_ID" "$FACTOIDAL_EXPECTED_JOURNAL" \
+  "$FACTOIDAL_NEW_EXPORT/expected-statement.json"
 
 receipt-tool/target/release/factoidal-evm-receipt export \
   "$FACTOIDAL_IMAGE_ID" "$FACTOIDAL_PROOF_WORK/groth16.receipt" \
-  "$FACTOIDAL_EXPECTED_JOURNAL" fixtures/ask-proof.json
+  "$FACTOIDAL_EXPECTED_JOURNAL" "$FACTOIDAL_NEW_EXPORT/ask-proof.json"
 
-FOUNDRY_PROFILE=proof forge test -vv
+FACTOIDAL_EVM_FIXTURE_DIR="$FACTOIDAL_NEW_EXPORT" \
+  FOUNDRY_PROFILE=proof forge test -vv
 ```
 
 The statement file is created from authorised inputs separately from
-the proof export. The proof profile requires exact agreement and checks
-the genuine proof, then rejects changed image, commitment, authorised
-policy, authorised context, false result and tampered seal. Missing
-fixtures fail setup. Existing output files are not silently replaced.
+the proof export. Both commands refuse existing output files, so a fresh
+export directory preserves the retained fixture. Choose an unused child
+directory name; it may contain only letters, digits, hyphens and underscores.
+`FACTOIDAL_EVM_FIXTURE_DIR` selects that exact child for the seven proof tests
+within the existing read-only `fixtures` permission. Empty, absolute,
+traversing or nested overrides are refused. When updating the retained
+fixture, replace its two JSON files and `provenance.json` together, record
+the new authorised source/image baseline, and run both test profiles.
 
 `disable-dev-mode` is compiled into the Rust SDK dependency; explicit
 variant checks also reject fake receipts. A composite or succinct receipt

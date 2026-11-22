@@ -1,6 +1,10 @@
 /lib/
 /out/
 /cache/
-/fixtures/
+/fixtures/*
+!/fixtures/ask-proof.json
+!/fixtures/expected-statement.json
+!/fixtures/provenance.json
+!/fixtures/README.md
 /receipt-tool/target/
 __pycache__/

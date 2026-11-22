@@ -3765,7 +3765,11 @@ private def sceneShader : String :=
   "let c=unpack4x8unorm(tiles[base+j*w+i]);return vec4f(c.rgb*c.a,c.a);}" ++
   "fn imageSample(r:u32,start:u32,p:vec2f,alpha:f32)->vec4f{" ++
   "let fx=word(r)*p.x+word(r+1u)*p.y+word(r+2u)-0.5;let fy=word(r+4u)*p.x+word(r+5u)*p.y+word(r+6u)-0.5;" ++
-  "let w=u32(word(r+3u));let h=u32(word(r+7u));let base=start+u32(word(r+8u));let x0=floor(fx);let y0=floor(fy);" ++
+  "let w=u32(word(r+3u));let h=u32(word(r+7u));let base=start+u32(word(r+8u));" ++
+  -- unit scale on whole pixels: the pixel each sample falls in (`ImageRecord.colorAt`)
+  "if(word(r)==1.0&&word(r+1u)==0.0&&word(r+4u)==0.0&&word(r+5u)==1.0&&fract(word(r+2u))==0.0&&fract(word(r+6u))==0.0){" ++
+  "let n=texel(base,w,h,floor(fx+0.5),floor(fy+0.5));if(n.a<=0.0){return vec4f(0.0);}return vec4f(n.rgb/n.a,n.a*alpha);}" ++
+  "let x0=floor(fx);let y0=floor(fy);" ++
   "let top=mix(texel(base,w,h,x0,y0),texel(base,w,h,x0+1.0,y0),fx-x0);" ++
   "let bottom=mix(texel(base,w,h,x0,y0+1.0),texel(base,w,h,x0+1.0,y0+1.0),fx-x0);" ++
   "let c=mix(top,bottom,fy-y0);if(c.a<=0.0){return vec4f(0.0);}return vec4f(c.rgb/c.a,c.a*alpha);}\n" ++
