@@ -3709,9 +3709,12 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
 #guard firstUrl? "url(a.png" == none
 #guard (applyDeclaration ({} : Computed) "background-image" "url(/i/a.png)").map (·.backgroundImage) == some (some "/i/a.png")
 #guard (applyDeclaration ({} : Computed) "background-image" "none").map (·.backgroundImage) == some none
-#guard match (applyDeclaration ({} : Computed) "background-size" "50% auto").map (·.backgroundSize) with
-  | some (.dimensions (.percent value) .auto) => value == 0.5
-  | _ => false
+#guard match applyDeclaration ({} : Computed) "background-size" "50% auto" with
+  | some style =>
+    match style.backgroundSize with
+    | BackgroundSize.dimensions (Length.percent value) Length.auto => value == 0.5
+    | _ => false
+  | none => false
 #guard (applyDeclaration ({} : Computed) "background-repeat" "repeat-y").map (·.backgroundRepeat) == some (false,true)
 #guard (applyDeclaration ({} : Computed) "background-image" "linear-gradient(red, blue), url(a.png)").map (·.backgroundImage) == some none
 
