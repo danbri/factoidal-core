@@ -25,7 +25,7 @@ import type {AccessibilityAnswer} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
-import {SERIF_FAMILY,serifFontHost,serifFontPath,wantsSerif} from "./serif_font.ts";
+import {MONO_FAMILY,SERIF_FAMILY,monoFontPath,serifFontHost,serifFontPath,wantsMono,wantsSerif} from "./serif_font.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
 type BuildInfo={commit?:string;commitFull?:string;dirty?:boolean;builtAt?:string;version?:string;release?:boolean};
@@ -282,6 +282,13 @@ async function main() {
     else await loadFontFile(engine,path,SERIF_FAMILY,"bytes","serif");
     console.log(JSON.stringify({type:"native-html-serif",t:Math.round(performance.now()),where,ms:Math.round((performance.now()-start)*10)/10}));
   });
+  // The monospace face (serif_font.ts), the same way: pre, code, kbd and samp text.
+  const mono=serifFontHost(async()=>{
+    const start=performance.now(),path=monoFontPath(),where=worker?.alive?"worker":"main";
+    if(worker?.alive)await worker.monoFont(path,MONO_FAMILY);
+    else await loadFontFile(engine,path,MONO_FAMILY,"bytes","mono");
+    console.log(JSON.stringify({type:"native-html-mono",t:Math.round(performance.now()),where,ms:Math.round((performance.now()-start)*10)/10}));
+  },"monospace");
   const useMainEngine=async(reason:string)=>{
     console.error("Native HTML: ENGINE WORKER UNAVAILABLE, so Lean runs on the main thread and the window can miss input:",reason);
     console.log(JSON.stringify({type:"native-html-worker",state:"main-thread-fallback",reason}));
@@ -292,6 +299,7 @@ async function main() {
       if(mainFallbacks&&workerFonts?.length)await mainFonts.add(workerFonts);
       // The serif face the worker held, so serif pages stay serif.
       if(serif.started)await loadFontFile(engine,serifFontPath(),SERIF_FAMILY,"bytes","serif").catch(()=>{});
+      if(mono.started)await loadFontFile(engine,monoFontPath(),MONO_FAMILY,"bytes","mono").catch(()=>{});
     }catch(error){if(fontFile)throw error;workerFont=undefined;}}
   };
   if(check){
@@ -317,6 +325,8 @@ async function main() {
   // session; a page whose text never resolves to serif draws as before. A render that still
   // answers wantsSerif (a failed load) does not start another (serifFontHost).
   if(workerFont){const loading=serif.want();if(!worker?.alive)await loading;}
+  // The monospace face too (320 KB, read once a session), so a page of code is laid out once.
+  if(workerFont){const loading=mono.want();if(!worker?.alive)await loading;}
   // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
@@ -1637,6 +1647,7 @@ async function main() {
       noteDiagnostics(nextDocument,nextLayers??next);
       // Text that resolves to serif while the engine holds no serif face: give it, draw again.
       if(wantsSerif(nextLayers??next))serif.want()?.then(ok=>{if(ok)dirty=true;});
+      if(wantsMono(nextLayers??next))mono.want()?.then(ok=>{if(ok)dirty=true;});
       const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.

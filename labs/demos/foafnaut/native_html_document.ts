@@ -720,13 +720,13 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
 /** Give the engine a font file. Lean reads it, shapes words and takes outlines; this only moves bytes.
 `via:"bytes"` (the default) copies the file into engine memory; `"text"` sends it as Base64
 in the JSON request, the reference path that tests compare with. */
-export async function loadFontFile(engine:HTMLEngine,path:string,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"=false) {
+export async function loadFontFile(engine:HTMLEngine,path:string,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"|"mono"=false) {
   return loadFontData(engine,await Deno.readFile(path),family,via,fallback);
 }
 /** As loadFontFile, for a file already in memory. */
 /** `fallback:true` adds the font after the fonts the engine holds, for characters they lack;
-`"serif"` holds it as the serif face (serif_font.ts). */
-export async function loadFontData(engine:HTMLEngine,bytes:Uint8Array<ArrayBuffer>,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"=false) {
+`"serif"` holds it as the serif face, `"mono"` as the monospace face (serif_font.ts). */
+export async function loadFontData(engine:HTMLEngine,bytes:Uint8Array<ArrayBuffer>,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"|"mono"=false) {
   const sha=[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("");
   if(via==="bytes")return engine.fontLoadBytes(bytes,family,sha,fallback);
   let text="";

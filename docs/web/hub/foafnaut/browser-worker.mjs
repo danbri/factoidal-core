@@ -276,13 +276,13 @@ function fontLoad(bytes,family,sha,fallback=false){
   if(!fontBytesTakeFallback||typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
     let text='';
     for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='serif'?{serif:true}:fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
+    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='serif'?{serif:true}:fallback==='mono'?{mono:true}:fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
   }
   const input=module._malloc(Math.max(1,bytes.length));
   if(!input)throw Error('Lean engine allocation failed');
   try{
     module.HEAPU8.set(bytes,input);
-    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='serif'?3:fallback==='web'?2:fallback?1:0]);
+    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='mono'?4:fallback==='serif'?3:fallback==='web'?2:fallback?1:0]);
     if(!pointer)throw Error('Lean engine allocation failed');
     try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
     finally{module.ccall('web_render_free',null,['number'],[pointer]);}
@@ -324,6 +324,21 @@ function giveSerif(){
     console.info(`foafnaut: serif face in ${Math.round(performance.now()-start)} ms`);
     if(serifWanted)request();
   }).catch(error=>console.warn('foafnaut: no serif face, serif text stays in Noto Sans:',String(error?.message??error)));
+}
+// The monospace face (serif_font.ts): `monospace` text (pre, code, kbd, samp) draws with
+// Liberation Mono. It is fetched only when a render answers wantsMono, which only an engine that
+// holds the face in mode 4 says, so an older published engine never gets mode 4. The page is
+// then drawn again with the face.
+const monoFont='./fonts/liberation-mono/LiberationMono-Regular.ttf';
+let monoLoading;
+function wantMono(){
+  if(monoLoading)return;
+  const start=performance.now();
+  monoLoading=fontFile(monoFont).then(({bytes,sha})=>{
+    fontLoad(bytes,'Liberation Mono',sha,'mono');
+    console.info(`foafnaut: monospace face in ${Math.round(performance.now()-start)} ms`);
+    request();
+  }).catch(error=>console.warn('foafnaut: no monospace face, monospace text stays in Noto Sans:',String(error?.message??error)));
 }
 // The fallback fonts a page needs, into the engine. Those that come within `wait` ms go in
 // before the page is laid out; the rest go in together when they have all come, and the
@@ -1547,6 +1562,7 @@ async function draw(){
         next=render(doc.source,wantLayers?{...options,layers:true}:options,width,height);
         noteDiagnostics(doc,next);
         if(next?.wantsSerif===true)wantSerif();
+        if(next?.wantsMono===true)wantMono();
         // An engine with no layers answers one frame: this page then draws frames as before.
         if(wantLayers){layers=L.layersOf(next);layered=!!layers;}
       }

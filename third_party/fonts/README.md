@@ -12,6 +12,7 @@ shapes and draws them; no font library runs.
 | `fruktur/` | Fruktur Regular, a blackletter display font: an asset of the web font demonstration, not a fallback font (`PROVENANCE.md`) | 1.008 | SIL OFL 1.1 (`OFL.txt`) | https://github.com/google/fonts/tree/a60a77e14f28abd4ef243a1b5dfc48df0cec5205/ofl/fruktur |
 | `noto-color-emoji/` | Slices of Noto Color Emoji (the COLRv1 build of googlefonts/noto-emoji, `Noto-COLRv1.ttf`), its SVG table and vertical metrics dropped, cut with fontTools pyftsubset | as published at the commit (`NotoColorEmoji-Regular.ttf`, 25,332,736 bytes, SHA-256 `4d82a18d8d95f60ba883ce242bbadbf84a576e987745dd7ba38d71c67cff2d73`) | SIL OFL 1.1 (`OFL.txt` of the google/fonts family) | https://github.com/google/fonts/tree/c08cd288696d8ca30bf0296dc214d80d33a65d8f/ofl/notocoloremoji |
 | `liberation-serif/` | Liberation Serif Regular, unchanged: the serif face (`serif` and the initial `font-family`), metric-compatible with Times New Roman | 2.1.5 | SIL OFL 1.1 (`OFL.txt`; `AUTHORS`) | https://github.com/liberationfonts/liberation-fonts/releases/tag/2.1.5 (`liberation-fonts-ttf-2.1.5.tar.gz`) |
+| `liberation-mono/` | Liberation Mono Regular: the monospace face (`monospace`; `pre`, `code`, `kbd`, `samp`, `tt` in the UA sheet), metric-compatible with Courier New. The Debian build of the 2.1.5 source (section "The monospace face") | 2.1.5 | SIL OFL 1.1 (`OFL.txt`; `AUTHORS`) | Ubuntu archive, `pool/main/f/fonts-liberation/fonts-liberation_2.1.5-3_all.deb` |
 | `noto-emoji/` | Noto Emoji, monochrome outlines, instanced at weight 400 and subset with fontTools | 3.002 (`NotoEmoji[wght].ttf`) | SIL OFL 1.1 (`OFL.txt` of the google/fonts family) | https://github.com/google/fonts/tree/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notoemoji |
 
 `NotoSans-Regular.ttf` SHA-256:
@@ -39,6 +40,34 @@ only when a render says that a page's text wants it (`wantsSerif`, `labs/demos/f
 once a session. Bold and italic serif text is made from the regular face, as for Noto Sans: the
 bold and italic files need the engine to stop synthesising for a face that is already bold or
 italic, which is the next step.
+
+## The monospace face
+
+`liberation-mono/LiberationMono-Regular.ttf` (319,624 bytes, SHA-256
+`395fa5ab8d40c8eba390ced528744ea75a7f69aabf3e68b6f925ca0e39a27370`) is Liberation Mono 2.1.5 as
+the Debian package `fonts-liberation` `1:2.1.5-3` ships it (Ubuntu archive
+`pool/main/f/fonts-liberation/fonts-liberation_2.1.5-3_all.deb`, SHA-256
+`065c2ab1abc9108b17d401016dc594b79750904390f095845c93bb06e1153acc`; file
+`usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf`), unchanged. The package's
+`copyright` gives SIL OFL 1.1; `OFL.txt` and `AUTHORS` here are those of the 2.1.5 release,
+copied from `liberation-serif/`.
+
+Debian builds the fonts from the 2.1.5 source, so this file is not byte-identical to the TTF of
+the upstream release tarball: the Debian Liberation Serif of the same package is 393,692 bytes
+(SHA-256 `705903ae...`), the upstream file in `liberation-serif/` is 393,576 bytes. The upstream
+release could not be fetched in the session that added this face (the GitHub host of
+`liberationfonts/liberation-fonts` is outside that session's network scope). To use the upstream
+file instead, take `LiberationMono-Regular.ttf` from `liberation-fonts-ttf-2.1.5.tar.gz`
+(SHA-256 `7191c669...`, the tarball of the serif face) and update the size and SHA-256 here.
+
+Browsers draw `monospace` with a Courier-like or DejaVu-like face; Liberation Mono has the
+advance widths of Courier New (1,229 of 2,048 units, 0.6 em), so a line of code is as long as
+in those browsers. The engine draws with it the text whose family list resolves to
+`monospace` (`FontFaceRule.genericOf`: `monospace`, `ui-monospace`, and the monospace families
+that systems install, such as Courier New, Menlo, Consolas). The window gives it before the
+first page (`labs/demos/foafnaut/serif_font.ts`, `run_html.ts`); the Hub fetches it only when a
+render answers `wantsMono`. Bold and italic monospace text is made from the regular face, as for
+the serif face.
 
 ## Fallback fonts on the Hub
 
