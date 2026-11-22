@@ -28,7 +28,13 @@ const data={commit:sha,status:"fail",backend:"Deno WebGPU",
   trust:"observed GPU results, not a proof about the shader compiler or device",
   cases:[],benchmarks:[]};
 let seq=0;
-const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const same=(a,b)=>{
+  // JSON object members are unordered, including those produced by Lean.
+  // Array order is significant: it encodes SPARQL solution occurrences.
+  const ka=Object.keys(a).sort(),kb=Object.keys(b).sort();
+  return JSON.stringify(ka)===JSON.stringify(kb) &&
+    ka.every(k=>JSON.stringify(a[k])===JSON.stringify(b[k]));
+};
 const now=()=>performance.now();
 try{
   for(const record of fixtures){
