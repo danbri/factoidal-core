@@ -29,8 +29,9 @@ PAR_SOURCES = {
     'docs/web/hub/paralliverse/gpu.mjs', 'docs/web/hub/paralliverse/word-gpu.mjs',
 }
 INPUT_ROOTS = ['formal/lean4', 'third_party/hacl', *sorted(EXTERNAL_INPUTS)]
-HOST_ROOTS = ['npm/factoidal', 'docs/web/hub/paralliverse', 'docs/.eleventy.js',
-              'docs/_includes/hub-app.njk', 'tools/paralliverse-browser-smoke.mjs']
+HOST_ROOTS = ['npm/factoidal', 'docs/web/hub/paralliverse', 'docs/web/hub/gdsl-app',
+              'docs/.eleventy.js', 'docs/_includes/hub-app.njk',
+              'tools/paralliverse-browser-smoke.mjs', 'tests/web-demos/gdsl_app_browser.mjs']
 NPM_PASSTHROUGH = ('browser.js', 'api.mjs', 'rdfjs.mjs', 'gdsl.mjs',
                    'lib/', 'l4-assets/', 'store-host/', 'store-http/')
 
@@ -107,7 +108,7 @@ def rendered_path(name):
         rel = name.removeprefix('npm/factoidal/')
         if any(rel.startswith(p) if p.endswith('/') else rel == p for p in NPM_PASSTHROUGH):
             return name
-    if name.startswith('docs/web/hub/paralliverse/') and Path(name).suffix in ('.mjs', '.css'):
+    if name.startswith(('docs/web/hub/paralliverse/', 'docs/web/hub/gdsl-app/')) and Path(name).suffix in ('.mjs', '.css'):
         return name.removeprefix('docs/')
     if name == 'docs/web/hub/assets/l4/l4factoidal.js':
         return name.removeprefix('docs/')

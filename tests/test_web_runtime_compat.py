@@ -42,6 +42,7 @@ class CompatibilityTests(unittest.TestCase):
         self.put('docs/.eleventy.js', '// build configuration\n')
         self.put('docs/web/hub/paralliverse/app.mjs', '// page host\n')
         self.put('docs/web/hub/paralliverse/index.njk', 'Page template\n')
+        self.put('docs/web/hub/gdsl-app/app.mjs', '// app host\n')
         self.git('init', '-q')
         self.commit()
         self.release = self.git('rev-parse', 'HEAD').strip()
@@ -135,6 +136,7 @@ class CompatibilityTests(unittest.TestCase):
         self.put('tests/host.test.mjs', '// new host test\n')
         self.put('formal/lean4/PORT_NOTES.md', 'Updated source notes.\n')
         self.put('formal/lean4/Harness/TestData/example.ttl', '<s> <p> <o> .\n')
+        self.put('docs/web/hub/gdsl-app/app.mjs', '// current independent app host\n')
         self.commit()
         site = self.render()
         report = CHECK.verify(self.root, site)
@@ -142,6 +144,8 @@ class CompatibilityTests(unittest.TestCase):
         self.assertEqual(report['runtimeCommit'], self.release)
         self.assertEqual(report['hostSource'][name], CHECK.facts(b'export const value = 2;\n'))
         self.assertEqual(report['renderedHostFiles'][name], report['hostSource'][name])
+        self.assertEqual(report['renderedHostFiles']['web/hub/gdsl-app/app.mjs'],
+                         CHECK.facts(b'// current independent app host\n'))
         subprocess.run(['node', '--input-type=module', '-e',
                         'import assert from "node:assert/strict"; const m = await import(' +
                         json.dumps((site / name).as_uri()) + '); assert.equal(m.value, 2);'], check=True)

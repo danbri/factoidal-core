@@ -35,8 +35,10 @@ producers and records the current host separately. It requires:
   Eleventy, the served host modules must match those current hashes; served
   runtime files must match the release. The report retains both source commits.
 
-The browser smoke then runs against that rendered site with its existing
-runtime checks and behavioural assertions. A changed host does not acquire the
+The Paralliverse smoke and independent GDSL app browser suite then run against
+that rendered site with their runtime checks and behavioural assertions. The
+GDSL page's current sources and rendered modules are included in the host hashes.
+A changed host does not acquire the
 runtime's provenance, and the released runtime is not labelled as rebuilt from
 the current commit. The separate full Lean/Wasm CI lane rebuilds the current
 source and runs the GDSL application checks against that output.

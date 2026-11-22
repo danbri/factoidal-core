@@ -243,9 +243,16 @@ try {
       record(`standalone-${mode}-execution`, {status: observed.status, wordsPerOutput: 2048});
     }
     const seen = requests.slice(requestStart).filter(request => request.page.includes(`/standalone-${mode}.html`));
-    assert.ok(seen.some(request => request.url.includes('/vendor/factoidal/l4-assets/') && request.url.endsWith('.wasm')));
+    const wasmRequests = seen.map(request => new URL(request.url)).filter(url =>
+      url.origin === origin && url.pathname === '/vendor/factoidal/l4-assets/l4factoidal.wasm');
+    assert.ok(wasmRequests.length > 0, `No local runtime request for ${mode}: ${JSON.stringify(seen)}`);
+    // The loader intentionally adds ?v=<wasm hash> to avoid stale browser caches.
+    // Check both the actual local asset and its content-hash query, not a URL suffix.
+    for (const url of wasmRequests)
+      assert.equal(url.searchParams.get('v'), runtime.wasmSha256.slice(0, 12), 'standalone runtime content hash');
     assert.equal(seen.some(request => request.url.includes('/web/hub/')), false);
     assert.equal(seen.some(request => !request.url.startsWith(origin + '/')), false);
+    record(`standalone-${mode}-runtime-request`, {urls: wasmRequests.map(url => url.href)});
     await independentPage.close();
   }
   record('standalone-local-package-only');
@@ -267,7 +274,7 @@ try {
   const report = {started, completed: new Date().toISOString(), origin,
     browser: 'Chromium headless with --disable-gpu', browserVersion,
     source, runtime, screenshots: screenshotDirectory, checks, passed: checks.length,
-    failed: fatal ? 1 : 0, error: fatal ?? null, pageErrors};
+    failed: fatal ? 1 : 0, error: fatal ?? null, pageErrors, requests};
   if (reportPath) await writeFile(reportPath, JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({passed: report.passed, failed: report.failed, reportPath}));
 }
