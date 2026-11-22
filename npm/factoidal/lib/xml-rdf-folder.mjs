@@ -121,6 +121,8 @@ export async function runXmlFolder(core,files,{
         if(xml.length>maxFileCharacters)
           throw new RangeError("XML source exceeds configured bound: "+path);
         const transformed=await core.xslt4Transform(extractStylesheet,xml);
+        if(transformed?.method!=="text")
+          throw new TypeError("XML extractor must serialize text JSON-LD: "+path);
         if(typeof transformed?.output!=="string"||
            transformed.output.length>maxFileCharacters)
           throw new TypeError("XSLT4 did not return bounded JSON-LD text");
@@ -159,8 +161,8 @@ export async function runXmlFolder(core,files,{
     step(onStage,"sparql","done",{backend:"lean-indexed"});
     step(onStage,"xslt4:html","running");
     const rendered=await core.xslt4Transform(renderStylesheet,xmlResult);
-    if(typeof rendered?.output!=="string")
-      throw new TypeError("XSLT4 did not produce HTML text");
+    if(rendered?.method!=="html"||typeof rendered?.output!=="string")
+      throw new TypeError("XSLT4 renderer must produce HTML text");
     step(onStage,"xslt4:html","done");
     return {html:rendered.output,queryXml:xmlResult,
       graphs:detail,sourceCount:detail.length,backend:"lean-indexed",
