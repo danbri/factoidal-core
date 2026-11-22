@@ -123,6 +123,8 @@ export async function runXmlFolder(core,files,{
         const transformed=await core.xslt4Transform(extractStylesheet,xml);
         if(transformed?.method!=="text")
           throw new TypeError("XML extractor must serialize text JSON-LD: "+path);
+        if(transformed.secondary?.length)
+          throw new TypeError("JSON-LD extraction produced unsupported secondary documents: "+path);
         if(typeof transformed?.output!=="string"||
            transformed.output.length>maxFileCharacters)
           throw new TypeError("XSLT4 did not return bounded JSON-LD text");
@@ -163,6 +165,8 @@ export async function runXmlFolder(core,files,{
     const rendered=await core.xslt4Transform(renderStylesheet,xmlResult);
     if(rendered?.method!=="html"||typeof rendered?.output!=="string")
       throw new TypeError("XSLT4 renderer must produce HTML text");
+    if(rendered.secondary?.length)
+      throw new TypeError("HTML renderer returned unsupported secondary documents");
     step(onStage,"xslt4:html","done");
     return {html:rendered.output,queryXml:xmlResult,
       graphs:detail,sourceCount:detail.length,backend:"lean-indexed",
