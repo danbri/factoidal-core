@@ -284,6 +284,22 @@ By count of failing tests that Chrome passes, and by cost:
    failures with no message get one (`Style.appliedName`).
 9. Run `css` reftests on every release, as `svg` runs (`reftests.yml`, input `suites`).
 
+## 7a. Done on 2026-11-22 (local measurements, Linux, WPT `fa649586`)
+
+- Items 1 to 3 of section 7, commits `ff19ccd1`, `25539a26`, `0c8eeb99`: border widths in every
+  unit; line boxes with the metrics of the text's own font; no note in the reftest pictures
+  (`"partialNote": false`; the window and the Hub still show it). `css/CSS2/`: 2,583 to 3,254 of
+  6,243 pass (676 newly pass, 5 newly fail). `svg/`: 328 to 327 of 685 (the note is gone from all
+  92 pictures; none of those tests passes yet; two mismatch tests against a blank page passed
+  only because of the note).
+- Before that, commits `05a5f192` to `a11b4bce`: Liberation Mono for `monospace`; a quoted
+  generic family name is a family name; the reftest renderer gives the serif and monospace
+  faces as the window does.
+- Open, found while measuring: `line-height: normal` is a fixed 1.2 em, where browsers use the
+  font's ascent, descent and line gap. With per-font metrics, a line that mixes fonts can grow,
+  and `css/CSS2/fonts/font-family-013`, `fonts-013` and `font-applies-to-017` fail. Coptic
+  letters are not case-mapped (`css/CSS2/text/text-transform-bicameral-009`, `-010`).
+
 ## 8. How to repeat
 
 - Records: branch `wpt-scores` of `danbri/factoidal-builds`: `runs.csv`,
