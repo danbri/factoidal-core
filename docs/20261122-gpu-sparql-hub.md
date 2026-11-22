@@ -91,3 +91,17 @@ per-module time, memory and stack limits, 22 requested modules and 67
 required theorem reports are unchanged. YAML validation confirms that only
 the caller's job budget changes; this repair does not change production
 code or claim a completed replacement CI run.
+
+The [replacement contract run](https://github.com/danbri/factoidal-core/actions/runs/45011928104)
+completed all 456 fresh source compilations successfully in about 26
+minutes. Its hygiene audit passed, but the individual-report check found
+one missing report: `L4Factoidal.SPARQL.GpuQuery.Plan.run_eq`. The theorem
+was already compiled; its module now explicitly prints its axioms alongside
+the existing reports. The same 67-report requirement remains in place.
+
+A single-module rebuild with the CI's strict warning, memory and stack
+settings prints that `Plan.run_eq` depends on no axioms. Generated C and
+`.olean` are byte-identical before and after this reporting-only edit:
+
+- C SHA-256: `f50f7d11753d8cbc0c6acfbf55b1fa68c943265a0e5ac0963f55292f2ede780c`
+- `.olean` SHA-256: `95602254c86acb07e39d9daf466d5c4cfd6502cda498c38bd948475a961e598c`
