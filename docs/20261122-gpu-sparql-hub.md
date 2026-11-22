@@ -75,3 +75,19 @@ the complete npm suite, actual WebGPU query/protocol tests, the Hub build
 and workbench smoke checks, and `tools/premerge.sh`. The source and runtime
 used for each execution are recorded by their test runners. npm publication
 is a separate later release action.
+
+## Cold-source CI budget
+
+The [SPARQL contract run on the integrated source](https://github.com/danbri/factoidal-core/actions/runs/45009630358)
+was cancelled after 20 minutes during its fresh dependency compilation,
+at the configured job limit. Its 456-module source closure had completed
+319 modules successfully, with no compiler errors or nonzero compile exits;
+`SPARQL/DatasetRestriction.lean` was compiling when it stopped. The theorem
+axiom-report gate had not yet run.
+
+The caller now allows 90 minutes, matching the existing full-source Wasm
+and cold registry/dataflow lanes. The reusable workflow's source isolation,
+per-module time, memory and stack limits, 22 requested modules and 67
+required theorem reports are unchanged. YAML validation confirms that only
+the caller's job budget changes; this repair does not change production
+code or claim a completed replacement CI run.
