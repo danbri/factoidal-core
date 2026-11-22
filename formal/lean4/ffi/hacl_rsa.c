@@ -185,3 +185,56 @@ LEAN_EXPORT lean_obj_res l4_hacl_rsa_private_op(b_lean_obj_arg n_ba,
   free(bn_c);
   return out;
 }
+
+/* Finite-field Diffie-Hellman (XML Encryption 1.1 section 5.6.3 dh-es;
+ * RFC 2631 section 2.1.1; NIST SP 800-56A Rev. 3 section 5.7.1.1):
+ * r = y^x mod p over big-endian octet strings, by
+ * Hacl_Bignum64_mod_exp_consttime (constant time over x).  Also used with
+ * the public exponent q for the subgroup check y^q mod p = 1.
+ *
+ * k = |p| must be 128 to 512 octets and a multiple of 8 (one 64-bit limb);
+ * |y| must be k (the caller right-aligns it); 0 < |x| <= k, and x is
+ * right-aligned into a k-octet buffer so that the bit bound passed to HACL*
+ * depends on the public k alone.  HACL* refuses an even p, p <= 1 and
+ * y >= p.  The empty array is every refusal.  Result: k octets. */
+LEAN_EXPORT lean_obj_res l4_hacl_dh_modexp(b_lean_obj_arg p_ba,
+                                           b_lean_obj_arg x_ba,
+                                           b_lean_obj_arg y_ba) {
+  size_t k = lean_sarray_size(p_ba);
+  if (k < 128 || k > 512 || (k % 8) != 0) return l4_rsa_empty();
+  if (lean_sarray_size(y_ba) != k) return l4_rsa_empty();
+  size_t xlen = lean_sarray_size(x_ba);
+  if (xlen == 0 || xlen > k) return l4_rsa_empty();
+
+  uint32_t n_limbs = (uint32_t)(k / 8);
+  uint32_t x_bits = (uint32_t)(k * 8U);
+
+  uint8_t *x_buf = (uint8_t *)calloc(k, 1);
+  if (x_buf == NULL) return l4_rsa_empty();
+  memcpy(x_buf + (k - xlen), lean_sarray_cptr(x_ba), xlen);
+
+  uint64_t *bn_p = Hacl_Bignum64_new_bn_from_bytes_be((uint32_t)k, lean_sarray_cptr(p_ba));
+  uint64_t *bn_y = Hacl_Bignum64_new_bn_from_bytes_be((uint32_t)k, lean_sarray_cptr(y_ba));
+  uint64_t *bn_x = Hacl_Bignum64_new_bn_from_bytes_be((uint32_t)k, x_buf);
+  uint64_t *bn_r = (uint64_t *)calloc(n_limbs, sizeof(uint64_t));
+
+  lean_obj_res out;
+  if (bn_p == NULL || bn_y == NULL || bn_x == NULL || bn_r == NULL) {
+    out = l4_rsa_empty();
+  } else if (!Hacl_Bignum64_mod_exp_consttime(n_limbs, bn_p, bn_y, x_bits, bn_x, bn_r)) {
+    out = l4_rsa_empty();
+  } else {
+    out = lean_alloc_sarray(1, k, k);
+    Hacl_Bignum64_bn_to_bytes_be((uint32_t)k, bn_r, lean_sarray_cptr(out));
+  }
+
+  Lib_Memzero0_memzero0(x_buf, (uint64_t)k);
+  free(x_buf);
+  if (bn_x != NULL) Lib_Memzero0_memzero0(bn_x, (uint64_t)n_limbs * sizeof(uint64_t));
+  free(bn_x);
+  if (bn_r != NULL) Lib_Memzero0_memzero0(bn_r, (uint64_t)n_limbs * sizeof(uint64_t));
+  free(bn_r);
+  free(bn_p);
+  free(bn_y);
+  return out;
+}

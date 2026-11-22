@@ -185,6 +185,31 @@ rulings):
   and DRV.4 (PBKDF2 in `xenc11:DerivedKey`): the derived key decrypts them,
   but their AES-256-CBC ciphertexts have no padding block, which §5.2
   requires. Microsoft DRV.1 (Concat KDF) has the same defect.
+* Finite-field Diffie-Hellman `xmlenc11#dh-es` (§5.6.3), since 2026-11-22
+  (track B item 5, part 5), reader only. Originator key `xenc:DHKeyValue`
+  (§5.6.1: `(P, Q, Generator)?, Public, (seed, pgenCounter)?`); recipient key
+  `DhKey` (`p`, `g`, `q`, `x`; the Wasm op takes `{"kty": "DH", …}`, because
+  RFC 7518 has no JWK type for it). Before `x` is used: the prime is 1024 to
+  4096 bits in 64-bit steps, and fewer than 2048 bits only with
+  `Opts.dh1024` (risk token `Risk.dh1024Agreement`, option
+  `dangerouslyAndRegrettablyAcceptDh1024`; NIST SP 800-131A Rev. 2); the
+  key must have `q`; the originator's `P`, `Q`, `Generator`, when present,
+  must be the key's; `2 ≤ y ≤ p − 2` and `y^q mod p = 1` (RFC 2631 §2.1.5,
+  NIST SP 800-56A Rev. 3 §5.6.2.3.1). Each is a refusal with a reason; none
+  depends on `x`. `Z = y^x mod p` as `|p|` octets by HACL*
+  `Hacl_Bignum64_mod_exp_consttime` (`ffi/hacl_rsa.c` `l4_hacl_dh_modexp`,
+  `Crypto/DhNative.lean`), with `Z ≤ 1` a decryption failure. Then the same
+  `agreeDerive` (Concat KDF or PBKDF2) as ECDH-ES. Theorems:
+  `xmlenc11_dhZ_eq_rfc2631` (given `Dh.ModExpAgrees`, HACL*'s correctness as
+  a hypothesis), `xmlenc11_dhZ_size`, `xmlenc11_dh1024_needs_token`,
+  `xmlenc11_dh1024_with_token`, `xmlenc11_dh_2048_no_token`,
+  `xmlenc11_dhes_concat`. W3C AGRMNT.7 (Oracle DH-1024, Concat KDF): the key
+  encryption key Lean derives equals Node's, and the case decrypts on the
+  host. W3C AGRMNT.10 (DH-1024, PBKDF2) does not decrypt, like AGRMNT.9
+  (https://github.com/danbri/factoidal/issues/1303). The legacy
+  `xmlenc#dh` (§5.6.2, with its own key derivation and `KA-Nonce`) is
+  refused, and `xmlEncrypt` does not write `dh-es`: both are listed as next
+  parts of item 5 in https://github.com/danbri/factoidal/issues/1165.
 * `xenc11:DerivedKey` (§5.4.3), since 2026-11-22 (track B item 5, part
   3): in `ds:KeyInfo` of `EncryptedData` (the content key) or of
   `EncryptedKey` (the key encryption key of AES Key Wrap; RSA-OAEP with a

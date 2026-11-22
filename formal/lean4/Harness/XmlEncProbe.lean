@@ -237,7 +237,17 @@ def main (args : List String) : IO UInt32 := do
         let caseKeys := match c.getString? "key", w3cKeys with
           | some k, .array ks => Json.array (ks.filter fun j => j.getString? "kid" == some k)
           | _, _ => w3cKeys
-        let r := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string doc), ("keys", caseKeys)])
+        -- `dh1024`: a 1024-bit Diffie-Hellman prime (AGRMNT.7, AGRMNT.10): refused
+        -- without the opt-in, which every other run of the case passes.
+        let dh1024 := c.field? "dh1024" == some (.bool true)
+        let optIn : List (String × Json) :=
+          if dh1024 then [("dangerouslyAndRegrettablyAcceptDh1024", .bool true)] else []
+        if dh1024 then
+          let plain := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string doc), ("keys", caseKeys)])
+          s := s.ok (errorHas plain "dangerouslyAndRegrettablyAcceptDh1024")
+            s!"W3C {id}: refused without the 1024-bit opt-in; got {(plain.getString? "error").getD "ok"}"
+        let r := run L4Wasm.Ops.XmlEnc.decryptWith
+          (.object ([("document", .string doc), ("keys", caseKeys)] ++ optIn))
         match c.getString? "outcome" with
         | some "octets" =>
             -- No Type (§3.1): the plaintext octets (§4.4 step 3).
@@ -261,7 +271,7 @@ def main (args : List String) : IO UInt32 := do
             -- An expected failure (its `issue`): the structure is accepted and
             -- the case reaches the AES Key Wrap request natively.
             let issue := (c.getString? "issue").getD "?"
-            let need := needOf (runReplay (.object [("document", .string doc), ("keys", caseKeys)]))
+            let need := needOf (runReplay (.object ([("document", .string doc), ("keys", caseKeys)] ++ optIn)))
             if need.map (·.1) == some "aes-kw-unwrap" then s := { s with xfail := s.xfail + 1 }
             else s := s.ok false s!"W3C {id}: expected failure ({issue}) did not reach the key wrap request"
         | some "ok" =>
@@ -269,12 +279,55 @@ def main (args : List String) : IO UInt32 := do
               let expected ← IO.FS.readFile (w3cDir / ((c.getString? "expected").getD "missing"))
               s := s.ok (sameDoc r expected) s!"W3C {id}: decrypt"
             else if isOk r then s := s.ok false s!"W3C {id}: a host-only case was answered natively"
-            else s := { s with hostOnly := s.hostOnly + 1 }
+            else match c.getString? "kek" with
+              | some kekHex =>
+                  -- AES Key Wrap is host-only: check the key encryption key
+                  -- Lean derived against the one Node derived (cases.json `kek`).
+                  let want := (L4Factoidal.VC.Multibase.byteArrayOfHex? kekHex).map base64
+                  let need := needOf (runReplay (.object ([("document", .string doc), ("keys", caseKeys)] ++ optIn)))
+                  s := s.ok (need.isSome && need.map (·.1) == some "aes-kw-unwrap" && need.map (·.2) == want)
+                    s!"W3C {id}: derived key encryption key; got {need.map (·.2)}"
+              | none => s := { s with hostOnly := s.hostOnly + 1 }
         | _ =>
             let why := (c.getString? "reason").getD "?"
             s := s.ok (errorHas r why && r.getString? "error" != some decryptionError)
               s!"W3C {id}: refused ({why}); got {(r.getString? "error").getD "ok"}"
   | _, _ => s := s.ok false "W3C cases: cases.json or keys.json is not JSON"
+  -- dh-es (§5.6.3): originator public values and domain parameters that the
+  -- checks before the private value must refuse, made from AGRMNT.7.
+  match parseJson w3cKeysText with
+  | .ok (.array ks) =>
+      let dhKeys := Json.array (ks.filter fun j => j.getString? "kid" == some "oracle-DH-1024")
+      let agr7 ← IO.FS.readFile (w3cDir / "cipherText__DH-1024__aes128-gcm__kw-aes128__dh-es__ConcatKDF.xml")
+      -- The text of element `t` replaced by `v`.
+      let setEl (doc t v : String) : String :=
+        match doc.splitOn s!"<xenc:{t}>" with
+        | [a, b] => match b.splitOn s!"</xenc:{t}>" with
+          | [_, c] => a ++ s!"<xenc:{t}>" ++ v ++ s!"</xenc:{t}>" ++ c
+          | _ => doc
+        | _ => doc
+      let textOf (doc t : String) : String :=
+        match doc.splitOn s!"<xenc:{t}>" with
+        | [_, b] => ((b.splitOn s!"</xenc:{t}>").headD "")
+        | _ => ""
+      let negs : List (String × String × String) :=
+        [("public value 1", setEl agr7 "Public" "AQ==", "[2, p - 2]"),
+         ("public value 2, outside the subgroup of order q", setEl agr7 "Public" "Ag==", "subgroup of order q"),
+         ("public value p", setEl agr7 "Public" (textOf agr7 "P"), "[2, p - 2]"),
+         ("another prime P", setEl agr7 "P" (textOf agr7 "Generator"), "domain parameters")]
+      for (name, doc, why) in negs do
+        let r := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string doc), ("keys", dhKeys),
+          ("dangerouslyAndRegrettablyAcceptDh1024", .bool true)])
+        s := s.ok (errorHas r why && r.getString? "error" != some decryptionError)
+          s!"dh-es {name}: refused ({why}); got {(r.getString? "error").getD "ok"}"
+      -- The legacy algorithm of §5.6.2 (its own key derivation) stays refused.
+      let legacy := "http://www.w3.org/2001/04/xmlenc#dh".intercalate
+        (agr7.splitOn "http://www.w3.org/2009/xmlenc11#dh-es")
+      let r := run L4Wasm.Ops.XmlEnc.decryptWith (.object [("document", .string legacy), ("keys", dhKeys),
+          ("dangerouslyAndRegrettablyAcceptDh1024", .bool true)])
+      s := s.ok (errorHas r "xmlenc#dh is not supported")
+        s!"dh-es legacy xmlenc#dh: refused; got {(r.getString? "error").getD "ok"}"
+  | _ => s := s.ok false "dh-es negative cases: keys.json is not an array"
   -- PBKDF2 key derivation (§5.4.2), Node-made documents (tests/xmlenc/make-pbkdf2.mjs).
   let pbText ← IO.FS.readFile ((path.parent.getD ".") / "pbkdf2.json")
   match parseJson pbText with
