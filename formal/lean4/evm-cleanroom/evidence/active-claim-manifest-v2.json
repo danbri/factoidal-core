@@ -48,7 +48,7 @@
     "evidence/frontier-keccak-vectors.json": "45eb0eeff0a5fe64df74c85e392571d36d10a157",
     "EVMCleanroom/ValueCall.lean": "c96d8c57bdbe6cde79c0d71d37834b9f0a9f67ac",
     "scripts/differential/value-call.mjs": "c8f984084b8ed39a81645f142734c167239b2858",
-    "EVMCleanroom/CallContextTests.lean": "205323331ddbecf2f188c8e74379beeefca1b1c2",
+    "EVMCleanroom/CallContextTests.lean": "024a0739e6db5e235f3b1f19c40b4e604698565e",
     "scripts/differential/call-context.mjs": "7518029373724316264afd3eb07d28a6c302883e",
     "EVMCleanroom/CallTests.lean": "2d6596346a7092cab12955e4b936303ab4d21473",
     "EVMCleanroom/CalldataProofs.lean": "381db0a2e577b236385f55cf94e9263183895fcd",

@@ -42,8 +42,10 @@ private def projected : State :=
 -- Explicit top-level context, distinct from the executable account's address.
 private def observeParticipants (op : UInt8) (origin caller : Nat) (gas : Nat := 100) :
     Option (Nat × Nat) :=
-  let input : State := { code := #[op, 0x00], gas := gas,
-    txOrigin := origin, callerAddress := caller }
+  let input : State := {
+    code := #[op, 0x00], gas := gas,
+    txOrigin := origin, callerAddress := caller
+  }
   match EVMCleanroom.run 4 input with
   | .ok out => out.stack.items.head?.map (fun w => (w.val, out.gas))
   | .error _ => none
