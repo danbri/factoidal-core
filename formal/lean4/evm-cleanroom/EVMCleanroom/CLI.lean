@@ -394,6 +394,33 @@ private def chainIdMain (hex gasStr fuelStr idStr : String) : IO UInt32 := do
     IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX GAS FUEL CHAIN_ID\"}"
     return 2
 
+/-- Explicit synthetic block environment for opcode-level comparisons. These
+    values are supplied by the caller and are not authenticated block fields. -/
+private def blockEnvironmentMain (args : List String) : IO UInt32 := do
+  match args with
+  | [hex, gasStr, fuelStr, coinbaseStr, timestampStr, numberStr, limitStr, baseFeeStr] =>
+    match parseBytecode hex, gasStr.toNat?, fuelStr.toNat?, coinbaseStr.toNat?,
+          timestampStr.toNat?, numberStr.toNat?, limitStr.toNat?, baseFeeStr.toNat? with
+    | .ok code, some gas, some fuel, some coinbase, some timestamp,
+      some number, some limit, some baseFee =>
+      if coinbase ≥ 2 ^ 160 || timestamp ≥ modulus || number ≥ modulus ||
+          limit ≥ modulus || baseFee ≥ modulus then
+        IO.println "{\"status\":\"inputError\",\"message\":\"block fields out of range\"}"
+        return 2
+      let s : State := {
+        code := code, gas := gas, profile := .shanghaiPlus
+        blockCoinbase := coinbase, blockTimestamp := timestamp,
+        blockNumber := number, blockGasLimit := limit, blockBaseFee := baseFee }
+      match EVMCleanroom.run fuel s with
+      | .ok out => IO.println (successJSON out); return 0
+      | .error e => IO.println (errorJSON e); return 0
+    | _, _, _, _, _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX GAS FUEL COINBASE TIMESTAMP NUMBER GASLIMIT BASEFEE\"}"
+      return 2
+  | _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"expected 8 block environment arguments\"}"
+    return 2
+
 /-- Explicit Prague envelope: type 0..4, blob fee at header excess=0,
     and EIP-7702 authorization count. All big integers are decimal strings.
     This does not read RLP or verify secp256k1, which are host boundaries. -/
@@ -624,6 +651,7 @@ def cliMain (args : List String) : IO UInt32 := do
   | ["--batch", path] => runBatchFile path
   | ["--osaka-batch", path] => runBatchFile path .osaka
   | ["--chainid", hex, gasStr, fuelStr, idStr] => chainIdMain hex gasStr fuelStr idStr
+  | "--block-env" :: rest => blockEnvironmentMain rest
   | ["--osaka", hex, gasStr, fuelStr] => opcodeMain .osaka hex gasStr fuelStr
   | [hex, gasStr, fuelStr] => opcodeMain .shanghaiPlus hex gasStr fuelStr
   | _ =>

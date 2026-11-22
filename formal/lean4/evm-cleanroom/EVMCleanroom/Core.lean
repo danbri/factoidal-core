@@ -259,6 +259,12 @@ structure State where
   /-- Chain identifier provided by the surrounding execution environment.
       It is not derived from or authenticated against a transaction here. -/
   chainId : Nat := 0
+  /-- Externally selected header values, not authenticated against consensus here. -/
+  blockCoinbase : Nat := 0
+  blockTimestamp : Nat := 0
+  blockNumber : Nat := 0
+  blockGasLimit : Nat := 0
+  blockBaseFee : Nat := 0
   /-- Immediate caller, set at each CALL entry. -/
   callerAddress : Nat := 0
   callValue : Nat := 0
@@ -544,6 +550,10 @@ def planStep (s : State) : Except Error Plan :=
     | 0x3e => -- RETURNDATACOPY (EIP-211)
       if s.profile = .preShanghai then .error .unsupportedFork
       else copyBytes s s.returnData true
+    | 0x41 => prepared (s.pc + 1) (word s.blockCoinbase :: s.stack.items) 2 -- COINBASE
+    | 0x42 => prepared (s.pc + 1) (word s.blockTimestamp :: s.stack.items) 2 -- TIMESTAMP
+    | 0x43 => prepared (s.pc + 1) (word s.blockNumber :: s.stack.items) 2 -- NUMBER
+    | 0x45 => prepared (s.pc + 1) (word s.blockGasLimit :: s.stack.items) 2 -- GASLIMIT
     | 0x46 => -- CHAINID (EIP-1344; Istanbul and later)
       -- preShanghai spans both sides of Istanbul: refuse to claim either.
       if s.profile = .preShanghai then .error .unsupportedFork
@@ -551,6 +561,10 @@ def planStep (s : State) : Except Error Plan :=
     | 0x47 =>                                           -- SELFBALANCE (Istanbul+)
       if s.profile = .preShanghai then .error .unsupportedFork
       else prepared (s.pc + 1) (word s.selfBalance :: s.stack.items) 5
+    | 0x48 => -- BASEFEE (EIP-3198; London and later)
+      -- preShanghai spans pre-/post-London: refuse the ambiguous old profile.
+      if s.profile = .preShanghai then .error .unsupportedFork
+      else prepared (s.pc + 1) (word s.blockBaseFee :: s.stack.items) 2
     | 0x50 => pop s                                    -- POP
     | 0x51 => mload s                                  -- MLOAD
     | 0x52 => mstore s                                 -- MSTORE
@@ -785,6 +799,48 @@ theorem step_slt_underflow (s : State) (hRun : s.halted = false)
       simp only [hs, List.length_cons] at hStack
       have hMin : 2 ≤ rest.length + 1 + 1 := Nat.succ_le_succ (Nat.succ_le_succ (Nat.zero_le _))
       exact (Nat.not_lt_of_ge hMin hStack).elim
+
+/-- Actual opcode COINBASE reads a supplied block-context value through the common charged commit. -/
+theorem step_blockCoinbase (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x41) :
+    step s = commit s (s.pc + 1) (word s.blockCoinbase :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, prepared]
+
+/-- Actual opcode TIMESTAMP reads a supplied block-context value through the common charged commit. -/
+theorem step_blockTimestamp (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x42) :
+    step s = commit s (s.pc + 1) (word s.blockTimestamp :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, prepared]
+
+/-- Actual opcode NUMBER reads a supplied block-context value through the common charged commit. -/
+theorem step_blockNumber (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x43) :
+    step s = commit s (s.pc + 1) (word s.blockNumber :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, prepared]
+
+/-- Actual opcode GASLIMIT reads a supplied block-context value through the common charged commit. -/
+theorem step_blockGasLimit (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x45) :
+    step s = commit s (s.pc + 1) (word s.blockGasLimit :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, prepared]
+
+/-- BASEFEE requires a post-London profile; the old coarse selector is ambiguous. -/
+theorem step_blockBaseFee (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x48) (hProfile : s.profile ≠ .preShanghai) :
+    step s = commit s (s.pc + 1) (word s.blockBaseFee :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, hProfile, prepared]
+
+theorem step_blockBaseFee_unknown_fork (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x48) (hProfile : s.profile = .preShanghai) :
+    step s = .error .unsupportedFork := by
+  simp [step, planStep, hRun, hOp, hProfile]
+
+#print axioms step_blockCoinbase
+#print axioms step_blockTimestamp
+#print axioms step_blockNumber
+#print axioms step_blockGasLimit
+#print axioms step_blockBaseFee
+#print axioms step_blockBaseFee_unknown_fork
 
 /-- EIP-1344 CHAINID executes through the actual gas-checked dispatcher.
     This proves propagation of the supplied context, not its authenticity. -/

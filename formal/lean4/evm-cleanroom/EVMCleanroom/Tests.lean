@@ -37,6 +37,19 @@ private def resultWord (result : Except Error State) : Option Nat :=
 -- PC and GAS push the current program counter and post-charge gas.
 #guard resultWord (run 3 (initial #[0x58, 0x00])) == some 0
 #guard resultWord (run 3 (initial #[0x5a, 0x00])) == some 98
+-- Header environment values are supplied, not authenticated; the real dispatcher
+-- charges two gas and reads the same fields that nested world frames receive.
+#guard resultWord (run 2 { (initial #[0x41,0x00] 2) with blockCoinbase := 0x1234 }) == some 0x1234
+#guard resultWord (run 2 { (initial #[0x42,0x00] 2) with blockTimestamp := 1700000000 }) == some 1700000000
+#guard resultWord (run 2 { (initial #[0x43,0x00] 2) with blockNumber := 19000000 }) == some 19000000
+#guard resultWord (run 2 { (initial #[0x45,0x00] 2) with blockGasLimit := 30000000 }) == some 30000000
+#guard resultWord (run 2 { (initial #[0x48,0x00] 2) with blockBaseFee := 1000000000 }) == some 1000000000
+#guard resultWord (run 2 { (initial #[0x42,0x00] 2) with blockTimestamp := modulus + 7 }) == some 7
+#guard isError (step { (initial #[0x42] 1) with blockTimestamp := 7 }) .outOfGas
+#guard isError (step { (initial #[0x48] 1) with blockBaseFee := 7 }) .outOfGas
+#guard isError (step { (initial #[0x48] 100 .preShanghai) with blockBaseFee := 7 })
+  .unsupportedFork
+
 -- EIP-1344 reads an explicitly injected chain context and charges two gas.
 #guard resultWord (run 2 { (initial #[0x46,0x00] 2) with chainId := 1 }) == some 1
 #guard resultWord (run 2 { (initial #[0x46,0x00] 2) with chainId := 0 }) == some 0

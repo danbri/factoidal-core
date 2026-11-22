@@ -33,6 +33,12 @@ structure TxWorld where
   /-- The chain identifier supplied by a selected chain environment. Not a
       signed-transaction or consensus-authenticated datum in this model. -/
   chainId : Nat := 0
+  /-- Supplied block header context, not yet authenticated by Lean state replay. -/
+  blockCoinbase : Nat := 0
+  blockTimestamp : Nat := 0
+  blockNumber : Nat := 0
+  blockGasLimit : Nat := 0
+  blockBaseFee : Nat := 0
 
 def beginTransaction (accounts : Nat → Account) : TxWorld :=
   { accounts := accounts
@@ -47,6 +53,11 @@ def frameInput (w : TxWorld) (address gas : Nat)
     currentAddress := address
     txOrigin := originAddress
     chainId := w.chainId
+    blockCoinbase := w.blockCoinbase
+    blockTimestamp := w.blockTimestamp
+    blockNumber := w.blockNumber
+    blockGasLimit := w.blockGasLimit
+    blockBaseFee := w.blockBaseFee
     callerAddress := callerAddress
     callValue := 0
     selfBalance := (w.accounts address).balance
@@ -75,6 +86,16 @@ theorem frameInput_chainId (w : TxWorld) (address gas : Nat)
     (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
     (frameInput w address gas readOnly profile originAddress callerAddress).chainId = w.chainId := rfl
 
+/-- Each world-to-frame projection supplies the same block fields, including for nested CALL. -/
+theorem frameInput_blockEnvironment (w : TxWorld) (address gas : Nat)
+    (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
+    (frameInput w address gas readOnly profile originAddress callerAddress).blockCoinbase = w.blockCoinbase ∧
+    (frameInput w address gas readOnly profile originAddress callerAddress).blockTimestamp = w.blockTimestamp ∧
+    (frameInput w address gas readOnly profile originAddress callerAddress).blockNumber = w.blockNumber ∧
+    (frameInput w address gas readOnly profile originAddress callerAddress).blockGasLimit = w.blockGasLimit ∧
+    (frameInput w address gas readOnly profile originAddress callerAddress).blockBaseFee = w.blockBaseFee :=
+  ⟨rfl, rfl, rfl, rfl, rfl⟩
+
 theorem frameInput_value_zero (w : TxWorld) (address gas : Nat) :
     (frameInput w address gas).callValue = 0 := rfl
 
@@ -96,6 +117,7 @@ theorem frameInput_participants (w : TxWorld) (address gas : Nat)
 
 #print axioms frameInput_address
 #print axioms frameInput_chainId
+#print axioms frameInput_blockEnvironment
 #print axioms frameInput_participants
 #print axioms frameInput_balance
 #print axioms frameInput_value_zero

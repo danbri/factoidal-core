@@ -8,18 +8,18 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "3626c44c19091ac1267827b2820cb5e6b4d804f8",
+    "EVMCleanroom/Core.lean": "9bc316006871083b45888e8dd0ce52c8c9b667a7",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "6a29b0ea0de533d5907ceb72ee79a5a05d6df5ad",
-    "EVMCleanroom/World.lean": "b4a96d65fa80c3e5a33add760dd4f17f2e79d0d4",
+    "EVMCleanroom/World.lean": "f86f034dd9329fb58446e134f5babd64d59b9ceb",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
     "EVMCleanroom/Call.lean": "dc93647332fefb33fd690a3ef298c39ae3baf89f",
     "EVMCleanroom/MemoryGas.lean": "f8fdb875e5be25954c7dbc7a9f67a733dc4dbecf",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "30c7383a8e415ed1802e5c6669c2cf23b47552df",
+    "EVMCleanroom/CLI.lean": "2b5056fe616471c7e7422f062081451ea831602c",
     "EVMCleanroom.lean": "687acb6099dda7d1a7efc4f180092a8dbef41ebf",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
@@ -84,8 +84,9 @@
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
     "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
     "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
-    "EVMCleanroom/Tests.lean": "6aa910eb3d78b90120fbf383a6178f8cb9baaa3f",
-    "scripts/differential/chain-id.mjs": "9639c8e6a837a4004e034e4253cee7b56c2788d8"
+    "EVMCleanroom/Tests.lean": "ca2f982c31fb8be78ab335b12160add30ec66756",
+    "scripts/differential/chain-id.mjs": "9639c8e6a837a4004e034e4253cee7b56c2788d8",
+    "scripts/differential/block-environment.mjs": "9f812894cf211bccc4133926575f7d4f4ad0c45d"
   },
   "theorem_inventory": [
     {
@@ -1173,6 +1174,74 @@
       "axioms_printed": [],
       "scope": "Actual world frame entry projects chainId for account execution and nested CALL; does not authenticate selected chain or preserve it through external consensus.",
       "provenance": "2026-11-22 issue #767; expected axiom set until exact-source Lean 4.33.1 CI prints it."
+    },
+    {
+      "name": "EVMCleanroom.step_blockCoinbase",
+      "source_symbol": "step_blockCoinbase",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual gas-checked Core.step COINBASE 0x41 pushes explicitly supplied State.blockCoinbase for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
+      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+    },
+    {
+      "name": "EVMCleanroom.step_blockTimestamp",
+      "source_symbol": "step_blockTimestamp",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual gas-checked Core.step TIMESTAMP 0x42 pushes explicitly supplied State.blockTimestamp for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
+      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+    },
+    {
+      "name": "EVMCleanroom.step_blockNumber",
+      "source_symbol": "step_blockNumber",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual gas-checked Core.step NUMBER 0x43 pushes explicitly supplied State.blockNumber for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
+      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+    },
+    {
+      "name": "EVMCleanroom.step_blockGasLimit",
+      "source_symbol": "step_blockGasLimit",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual gas-checked Core.step GASLIMIT 0x45 pushes explicitly supplied State.blockGasLimit for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
+      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+    },
+    {
+      "name": "EVMCleanroom.step_blockBaseFee",
+      "source_symbol": "step_blockBaseFee",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual gas-checked Core.step BASEFEE 0x48 pushes explicitly supplied State.blockBaseFee for 2 gas; only an executable model correspondence, not authenticated header or EELS refinement.",
+      "provenance": "2026-11-22 issue #774: expected axiom output; requires exact-head Lean 4.33.1 #print and all CI before a verified claim."
+    },
+    {
+      "name": "EVMCleanroom.step_blockBaseFee_unknown_fork",
+      "source_symbol": "step_blockBaseFee_unknown_fork",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "BASEFEE returns unsupportedFork under coarse preShanghai profile, spanning before and after London. This is a conservative refusal, not a statement that BASEFEE was absent throughout preShanghai.",
+      "provenance": "2026-11-22 issue #774: expected output; unverified until new CI."
+    },
+    {
+      "name": "EVMCleanroom.World.frameInput_blockEnvironment",
+      "source_symbol": "frameInput_blockEnvironment",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "Actual World.frameInput projects five externally supplied block values into a child or parent State, with no authentication of header or fork choice.",
+      "provenance": "2026-11-22 issue #774: expected axiom output; requires new CI audit."
     }
   ],
   "external_evidence": {
@@ -2133,6 +2202,28 @@
       "stack",
       "memorySizeBytes",
       "memoryHex"
+    ]
+  },
+  "block_environment_integration": {
+    "status": "source-published-hosted-verification-pending",
+    "issue": "https://github.com/danbri/factoidal-core/issues/774",
+    "base": "afd405fed0cba8f3762c121c88867ac2f324a34b",
+    "ops": [
+      "COINBASE",
+      "TIMESTAMP",
+      "NUMBER",
+      "GASLIMIT",
+      "BASEFEE"
+    ],
+    "expectedSelectedTheorems": 125,
+    "sourceFileCount": 79,
+    "oracle": "@ethereumjs/evm@10.1.3 on a synthetic Shanghai header",
+    "plannedCompared": 40,
+    "limitations": [
+      "Block and chain context externally supplied and unauthenticated.",
+      "Coarse preShanghai profile refuses BASEFEE.",
+      "DIFFICULTY/PREVRANDAO and BLOCKHASH are still missing.",
+      "No block validation, EELS refinement, Engine API or Lean consensus."
     ]
   }
 }
