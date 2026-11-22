@@ -29,7 +29,7 @@ npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
 node scripts/differential/chain-id.mjs
 ```
 
-The JavaScript oracle uses pinned `@ethereumjs/evm@10.1.3` with a synthetic Mainnet Shanghai context (chain ID 1). It compares execution status, the full EVM operand stack, and remaining gas across 30 cases with varying thresholds and instruction contexts. A false chain-ID negative control must be observed as different. The Lean source also contains direct guards for chain ID zero, one and values above `2^256`, out-of-gas, and preShanghai refusal; a real parent–child CALL guard stores the child's observed chain ID.
+The JavaScript oracle uses pinned `@ethereumjs/evm@10.1.3` with a synthetic Mainnet Shanghai context (chain ID 1). It compares execution status, the full EVM operand stack, allocated memory bytes and size, and remaining gas across 30 cases with varying thresholds and instruction contexts. A false chain-ID negative control must be observed as different. The Lean source also contains direct guards for chain ID zero, one and values above `2^256`, out-of-gas, and preShanghai refusal; a real parent–child CALL guard stores the child's observed chain ID.
 
 ## Assurance and outstanding work
 
