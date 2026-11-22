@@ -5,12 +5,15 @@ on:
     paths:
       - 'docs/web/hub/paralliverse/**'
       - 'docs/.eleventy.js'
+      - 'npm/factoidal/**'
+      - 'tools/check-web-runtime-compat.py'
+      - 'tests/test_web_runtime_compat.py'
       - 'tools/paralliverse-browser-smoke.mjs'
       - '.github/workflows/check-paralliverse-browser.yml'
   workflow_dispatch:
     inputs:
       core_ref:
-        description: Core ref with a matching published web release
+        description: Core ref whose runtime inputs match a published web release
         required: true
         type: string
         default: main
@@ -41,6 +44,9 @@ jobs:
         shell: bash
         run: tools/premerge.sh --changed --base origin/main
 
+      - name: Test runtime compatibility acceptance and refusals
+        run: python3 tests/test_web_runtime_compat.py
+
       - name: Record the exact page source
         shell: bash
         env:
@@ -55,13 +61,16 @@ jobs:
             docs/web/hub/paralliverse/{index.njk,style.css,app.mjs,execution-stepper.mjs,bgp-fixtures.mjs,bgp-worker.mjs,bgp-studio.mjs,bgp-comparison.mjs,integer-bgp-gpu.mjs,integer-bgp-compact-gpu.mjs,worker.mjs,gpu.mjs,word-gpu.mjs} \
             tools/paralliverse-browser-smoke.mjs | tee "$EVIDENCE/source.sha256"
 
-      - name: Install the matching published web release
+      - name: Install and verify the compatible published web release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tools/fetch-builds.sh --set web --strict 2>&1 | tee "$EVIDENCE/fetch-web.log"
+          # Releases publish from main only. Check the actual runtime producers
+          # separately from current host source, which this job builds and tests.
+          # fetch-builds still verifies the archive and every manifested file.
+          tools/fetch-builds.sh --set web 2>&1 | tee "$EVIDENCE/fetch-web.log"
           manifest=docs/web/hub/assets/l4/paralliverse/manifest.json
           if [ ! -s "$manifest" ]; then
             echo "The installed web release has no Paralliverse runtime manifest." >&2
@@ -69,10 +78,8 @@ jobs:
           fi
           cp "$manifest" "$EVIDENCE/manifest.json"
           cp .factoidal-builds/web.tag "$EVIDENCE/web-release.txt"
-          runtime_commit="$(jq -er '.sourceCommit | select(test("^[0-9a-f]{40}$"))' "$manifest")"
-          test "$(cat "$EVIDENCE/web-release.txt")" = "build-${runtime_commit:0:12}-web"
-          git merge-base --is-ancestor "$runtime_commit" HEAD
-          git diff --exit-code "$runtime_commit" HEAD -- formal/lean4 npm
+          cp .factoidal-builds/web.build-info.json "$EVIDENCE/web.build-info.json"
+          python3 tools/check-web-runtime-compat.py --evidence "$EVIDENCE/runtime-compatibility.json"
 
       - name: Install the scene runtimes used by Pages
         if: ${{ hashFiles('docs/web/hub/html-webgpu/index.njk', 'docs/web/hub/svg-webgpu/index.njk') != '' }}
@@ -94,11 +101,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Enable the route in this disposable checkout while the public route is gated.
-          sed -i 's@^permalink: false$@permalink: /web/hub/paralliverse/index.html@' web/hub/paralliverse/index.njk
           npx --offline @11ty/eleventy --quiet --output=_site 2>&1 | tee "$EVIDENCE/eleventy-build.log"
           test -s _site/web/hub/paralliverse/index.html
           cmp web/hub/assets/l4/paralliverse/manifest.json _site/web/hub/assets/l4/paralliverse/manifest.json
+
+      - name: Verify the rendered current host and released runtime bytes
+        run: |
+          python3 tools/check-web-runtime-compat.py --site docs/_site \
+            --evidence "$EVIDENCE/runtime-compatibility.json"
 
       - name: Check the compiled Wasm and Chrome WebGPU results
         shell: bash
