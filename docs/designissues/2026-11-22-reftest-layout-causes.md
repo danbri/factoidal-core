@@ -17,9 +17,14 @@ session can repeat the counts. Tracking issue: https://github.com/danbri/factoid
   693 (47.33%); 296 pass in Chrome and not in Foafnaut. The count has been 328 on every run
   since 2026-11-16 07:40 (about 60 runs).
 - The CSS reftests ran twice, both on 2026-11-16. `reftests.yml` runs `svg` only unless a
-  person asks for `css` (input `suites`, default `'svg'`). So no CSS reftest number exists
-  for the engine of the last six days. A run for engine `e0666850` was started on
-  2026-11-22: https://github.com/danbri/factoidal-builds/actions/runs/45028286099.
+  person asks for `css` (input `suites`, default `'svg'`). So no CSS reftest number existed
+  for the engine of the six days after 2026-11-16.
+- CSS reftests, run for this record, 2026-11-22, engine `e0666850`, WPT `4b26db89`: 9,559
+  pass of 25,813 (37.03%). Against 2026-11-16: 204 newly pass, 128 newly fail (css-break 24,
+  css-multicol 22, css-backgrounds 11, css-fonts 8, css-images 8, CSS2 7). The WPT commit
+  also changed, so this list mixes engine changes and test changes; section 1.1 separates
+  the engine changes for the CSS2 directories at one WPT commit. Run:
+  https://github.com/danbri/factoidal-builds/actions/runs/45028286099.
 - Local runs on engine `e0666850` (release `build-e0666850902b-foafnaut-linux-x86_64`, WPT
   `fa649586`), section 6 gives the method:
 
