@@ -1,4 +1,4 @@
-name: Lean beacon SSZ generalized-index foundation
+name: Lean beacon SSZ generalized-index and LMD latest-message foundations
 
 on:
   pull_request:
@@ -31,9 +31,16 @@ jobs:
         working-directory: formal/lean4/ethereum-consensus
         run: |
           lake env lean EthereumConsensus/SSZ/GIndex.lean
+          lake env lean EthereumConsensus/ForkChoice/LatestMessage.lean
       - name: Independent SSZ generalized-index reference over 1025 inputs
         shell: bash
         working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
           lake exe ssz-gindex | python3 scripts/check-gindex.py
+      - name: Independent LMD latest-message reference over 2048 inputs
+        shell: bash
+        working-directory: formal/lean4/ethereum-consensus
+        run: |
+          set -euo pipefail
+          lake exe lmd-latest | python3 scripts/check-lmd-latest.py
