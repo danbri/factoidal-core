@@ -2168,7 +2168,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- no block was laid out: `previous` is still `before`, which is not a margin of this flow
       return {content with marginBottom := if content.height <= 0 || previous >= unbounded/2 then 0 else previous}
     -- A table box (CSS 2.1 §17): captions, then the grid, then bottom captions.
-    let table (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String Result := do
+    let table (element : Option Nat) (container : Nat) (kids : Array Nat)
+        (imposedWidth imposedHeight : Option Float) : Except String Result := do
       let frame := tableFrame styles element container
       let ts := frame.style
       let grid := Table.build dom styles (element.getD container) kids
@@ -2184,20 +2185,24 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let padX := frame.insets.left+frame.insets.right
       let padY := frame.insets.top+frame.insets.bottom
       let lowest := Table.total (cols.map (·.min))+spacing
-      let specified := (CSS.resolve available ts.width).map fun w =>
-        if frame.borderBox then w-padX else w
+      let authoredWidth := CSS.resolve available ts.width
+      let specified := match imposedWidth with
+        | some w => some (w-padX)
+        | none => authoredWidth.map fun w => if frame.borderBox then w-padX else w
       let room := available-frame.margin.left-frame.margin.right-padX
       let contentWidth := match specified with
         | some w => max w lowest
         | none => max lowest (min room (Table.total ((Table.guesses cols room)[3]!)+spacing))
       let target := max 0 (contentWidth-spacing)
-      let widths := if ts.tableFixed && specified.isSome then
+      let widths := if ts.tableFixed && authoredWidth.isSome then
           let firstRow := (grid.cells.zip measures).filter (·.1.row == 0)
           Table.fixedWidths grid.columns firstRow elements target hs
         else Table.distribute cols target
       let contentWidth := max contentWidth (Table.extent widths hs)
       let borderWidth := contentWidth+padX
-      let outerX := x+autoMarginShift ts available (frame.margin.left+borderWidth+frame.margin.right)+frame.margin.left
+      let shift := if imposedWidth.isSome then 0
+        else autoMarginShift ts available (frame.margin.left+borderWidth+frame.margin.right)
+      let outerX := x+shift+frame.margin.left
       let innerX := outerX+frame.insets.left
       let colX := Table.offsets widths hs
       -- Each cell laid out once, at its column and at the top; moved down when the rows are known.
@@ -2218,8 +2223,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | none => 0
       let rows := Table.rowHeights minimum grid.cells (laid.map (·.2)) vs
       let gridHeight := Table.extent rows vs
-      let specifiedBorderHeight := (CSS.resolve 0 ts.height).map fun h =>
-        if frame.borderBox then h else h+padY
+      let specifiedBorderHeight := imposedHeight.orElse fun _ =>
+        (CSS.resolve 0 ts.height).map fun h => if frame.borderBox then h else h+padY
       let rows := match specifiedBorderHeight with
         | some h => Table.stretch rows (h-padY-gridHeight)
         | none => rows
@@ -2469,11 +2474,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .auto => if renderedLegend dom styles id then {s with width := .fitContent} else s
         | _ => s
       if s.display.isTable then
-        match imposedWidth with
-        | none => return (← table (some id) (n.parent.getD 0) n.kids)
-        | some w =>
-          -- A table sizes itself (CSS 2.1 §17.5.2) in the width it is given.
-          return (← layoutTask dom styles font embedding pictures fuel (sub <| .table (some id) (n.parent.getD 0) n.kids) x y w)
+        -- Flex, grid and absolute placement pass used border-box dimensions.
+        return (← table (some id) (n.parent.getD 0) n.kids imposedWidth imposedHeight)
       let margin := s.margin
       let padding := s.padding
       let border := s.borderEdges
@@ -2682,7 +2684,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     | .contents container kids =>
       let content ← flow (styles[container]!) container kids #[] x y available
       return {content with height := max content.height (floatsHeight content.floats y), floats := #[]}
-    | .table element container kids => table element container kids
+    | .table element container kids => table element container kids none none
     | .flowed id floats => box id none none false floats true
     | .box id => box id none none false
     | .sized id width height => box id (some width) height false
