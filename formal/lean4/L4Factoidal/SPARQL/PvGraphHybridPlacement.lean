@@ -1,4 +1,5 @@
 import L4Factoidal.SPARQL.GsslCertifiedFastPath
+import L4Factoidal.SPARQL.GsslSnapshotLease
 import L4Factoidal.Dataflow.Stage
 
 /-!
@@ -73,6 +74,36 @@ theorem chosen_eq_indexed (caps : Capabilities) (est : Estimates)
       evalBgpIdx bgp active :=
   run_eq_indexed _ _ _ _
 
+/-- The host must establish the active graph's snapshot identity and
+    validate it again before accepting an asynchronous GPU or persisted
+    candidate. A stale result, even one once certified, uses the CPU path. -/
+def runWithLease (backend : LocalBackend)
+    (bgp : Bgp) (active : RDF.Graph)
+    (expected : GsslSnapshotLease.Lease)
+    (offered : Option (GsslSnapshotLease.Lease ×
+      GsslCertifiedFastPath.CertifiedCandidate bgp active)) :
+    SolutionSeq :=
+  match backend with
+  | .leanIndexed => evalBgpIdx bgp active
+  | .gpu | .persistentStore =>
+      GsslSnapshotLease.resolveGuarded bgp active expected offered
+
+theorem runWithLease_eq_indexed (backend : LocalBackend)
+    (bgp : Bgp) (active : RDF.Graph)
+    (expected : GsslSnapshotLease.Lease)
+    (offered : Option (GsslSnapshotLease.Lease ×
+      GsslCertifiedFastPath.CertifiedCandidate bgp active)) :
+    runWithLease backend bgp active expected offered =
+      evalBgpIdx bgp active := by
+  cases backend with
+  | leanIndexed => rfl
+  | gpu =>
+      exact GsslSnapshotLease.resolveGuarded_eq_indexed
+        bgp active expected offered
+  | persistentStore =>
+      exact GsslSnapshotLease.resolveGuarded_eq_indexed
+        bgp active expected offered
+
 inductive RemoteProtocol where
   | sparqlService | restHttp | mcpTool
   deriving Repr, DecidableEq
@@ -108,6 +139,7 @@ theorem serviceStage_contract (meaning : RemoteRequest → SolutionSeq → Prop)
 #guard choose {gpuAvailable:=true,persistentStoreAvailable:=true}
   {comparisonPairs:=100000,indexedRows:=100000} [] == .persistentStore
 
+#print axioms runWithLease_eq_indexed
 #print axioms run_eq_indexed
 #print axioms chosen_eq_indexed
 #print axioms serviceStage_contract
