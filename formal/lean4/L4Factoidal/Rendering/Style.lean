@@ -2058,7 +2058,10 @@ parent's font size, CSS 2.1 §10.8.1, as other engines draw it) or lowered by it
 (`clippedAway`, the visually hidden pattern of skip links and screen reader text) it is
 `clipHidden` and not painted, whatever its own `visibility`. -/
 def finishEffects (parent s : Computed) : Computed :=
-  let own : Float := if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
+  -- Absolute and fixed boxes are out of flow. Their own vertical-align does not
+  -- move their text relative to the box (CSS 2.2 §10.8.1).
+  let own : Float := if s.pos.isAbsolute then 0
+    else if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
   let hidden := parent.clipHidden || s.clippedAway
   {s with rise := parent.rise + own, clipHidden := hidden, visible := s.visible && !hidden}
 
@@ -2078,6 +2081,11 @@ theorem finishEffects_hidden_parent (parent s : Computed) (hp : parent.clipHidde
 /-- Kind: property. Says: an element that is neither `sub` nor `super` raises its text as
 much as its parent does. Does not say: where the line box is (it is not grown). -/
 theorem finishEffects_rise_plain (parent s : Computed) (h : s.shift = 0) :
+    (finishEffects parent s).rise = parent.rise + 0 := by
+  simp [finishEffects, h]
+
+/-- A positioned element's own vertical alignment does not add to its baseline shift. -/
+theorem finishEffects_rise_positioned (parent s : Computed) (h : s.pos.isAbsolute = true) :
     (finishEffects parent s).rise = parent.rise + 0 := by
   simp [finishEffects, h]
 
