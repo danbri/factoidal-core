@@ -44,3 +44,23 @@ export function listExamples():Array<Pick<GdslExample,"id"|"title"|"description"
 export function example(id:string,loadEngine:()=>Promise<LeanPVGraphEngine>):
   Promise<GdslExample>;
 export {createGsslResidentSession} from "./gpu-resident.d.ts";
+
+/** GPU observations are separate from the Lean proof of pure model refinement. */
+export interface PVGraphRun {
+  status:"gpu-observed"|"lean-reference";
+  outputs:Record<string,number|number[]>;
+  dispatches:number;
+  reason?:string;
+  timing?:{planMs:number;deviceAndReadbackMs:number;totalMs:number};
+  assurance?:string;
+  gpuError?:string;
+  device?:Record<string,unknown>;
+}
+export function runPVGraph(options:{
+  pvgraph:PVGraphDocument;
+  bindings:Record<string,number|number[]|Uint32Array>;
+  loadEngine:()=>Promise<LeanPVGraphEngine>;
+  session?:unknown;
+  requireGPU?:boolean;
+  minWords?:number;
+}):Promise<PVGraphRun>;
