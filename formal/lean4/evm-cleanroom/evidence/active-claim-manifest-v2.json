@@ -85,7 +85,7 @@
     "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
     "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
     "EVMCleanroom/Tests.lean": "6aa910eb3d78b90120fbf383a6178f8cb9baaa3f",
-    "scripts/differential/chain-id.mjs": "73f5595931b7b020fd8e2b8e25bc30c9714297c5"
+    "scripts/differential/chain-id.mjs": "9639c8e6a837a4004e034e4253cee7b56c2788d8"
   },
   "theorem_inventory": [
     {
@@ -2126,6 +2126,13 @@
     "ethereumJsOracle": "@ethereumjs/evm@10.1.3; Mainnet Shanghai chainId=1",
     "independentCasesPlanned": 30,
     "negativeControl": "run same bytecode with false Lean chainId=2; comparator must detect mismatch",
-    "trustLimit": "Top-level State/TxWorld chainId is a synthetic external field, not authenticated chain selection, signed transaction or consensus context; no historical full-fork coverage."
+    "trustLimit": "Top-level State/TxWorld chainId is a synthetic external field, not authenticated chain selection, signed transaction or consensus context; no historical full-fork coverage.",
+    "independentOracleFields": [
+      "status",
+      "gasRemaining",
+      "stack",
+      "memorySizeBytes",
+      "memoryHex"
+    ]
   }
 }
