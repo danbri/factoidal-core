@@ -407,47 +407,70 @@ private def pragueAuthorizeMain (args : List String) : IO UInt32 := do
     frame model; no arbitrary transaction envelope/receipt is inferred.
     Usage: --call-opcode PARENT_HEX CHILD_HEX GAS FUEL.
     Parent address = 0xc1, child address = 0xc3, no initial storage. -/
+/-- Parent and child balances are optional for backward compatibility:
+    PARENT_HEX CHILD_HEX GAS FUEL [PARENT_BALANCE CHILD_BALANCE CHILD_NONCE].
+    The account values are explicit PRESTATE, not fetched from an archive. -/
 private def callOpcodeMain (args : List String) : IO UInt32 := do
-  match args with
-  | [parentHex, childHex, gasStr, fuelStr] =>
+  let expanded := match args with
+    | [p, c, g, f] => [p, c, g, f, "0", "0", "0"]
+    | otherwise => otherwise
+  match expanded with
+  | [parentHex, childHex, gasStr, fuelStr, parentBalanceStr,
+     childBalanceStr, childNonceStr] =>
     match parseBytecode parentHex, parseBytecode childHex,
-      gasStr.toNat?, fuelStr.toNat? with
-    | .ok parentCode, .ok childCode, some gas, some fuel =>
+      gasStr.toNat?, fuelStr.toNat?, parentBalanceStr.toNat?,
+      childBalanceStr.toNat?, childNonceStr.toNat? with
+    | .ok parentCode, .ok childCode, some gas, some fuel,
+        some parentBalance, some childBalance, some childNonce =>
+      if parentBalance ≥ modulus || childBalance ≥ modulus ||
+          childNonce ≥ 2 ^ 64 then
+        IO.println "{\"status\":\"inputError\",\"reason\":\"account-values-out-of-range\"}"
+        return 2
       let parentAddress : Nat := 0xc1
       let childAddress : Nat := 0xc3
       let accounts : Nat → World.Account := fun address =>
-        if address == parentAddress then { code := parentCode }
-        else if address == childAddress then { code := childCode }
+        if address == parentAddress then
+          { code := parentCode, balance := parentBalance }
+        else if address == childAddress then
+          { code := childCode, balance := childBalance, nonce := childNonce }
         else {}
       let world := World.beginTransaction accounts
       let serialize : String → World.TxWorld → State → String := fun status outcome s =>
         let stack := String.intercalate ","
           (s.stack.items.map (fun w => "\"" ++ toString w.val ++ "\""))
-        "{\"schemaVersion\":1,\"status\":\"" ++ status ++
+        "{\"schemaVersion\":2,\"status\":\"" ++ status ++
         "\",\"gasRemaining\":\"" ++ toString s.gas ++
         "\",\"pc\":\"" ++ toString s.pc ++
         "\",\"stack\":[" ++ stack ++
         "],\"slot0\":\"" ++ toString ((outcome.accounts childAddress).storage 0) ++
+        "\",\"parentBalance\":\"" ++
+          toString ((outcome.accounts parentAddress).balance) ++
+        "\",\"childBalance\":\"" ++
+          toString ((outcome.accounts childAddress).balance) ++
+        "\",\"childNonce\":\"" ++
+          toString ((outcome.accounts childAddress).nonce) ++
         "\",\"warmAddress\":" ++
         (if outcome.warmAddresses childAddress then "true" else "false") ++
         ",\"warmSlot\":" ++
         (if outcome.warmSlots childAddress 0 then "true" else "false") ++
         ",\"refund\":\"" ++ toString outcome.refund ++ "\"}"
       match CallOpcode.run fuel world parentAddress gas with
-      | .stopped final s => IO.println (serialize "stopped" final s)
-      | .returned final s => IO.println (serialize "returned" final s)
-      | .reverted final s => IO.println (serialize "reverted" final s)
-      | .exceptional final s reason =>
-        let state := serialize "exceptional" final s
-        IO.println ((state.dropEnd 1).toString ++ ",\"reason\":\"" ++ errorCode reason ++ "\"}")
+      | .stopped final st => IO.println (serialize "stopped" final st)
+      | .returned final st => IO.println (serialize "returned" final st)
+      | .reverted final st => IO.println (serialize "reverted" final st)
+      | .exceptional final st reason =>
+        let state := serialize "exceptional" final st
+        IO.println ((state.dropEnd 1).toString ++
+          ",\"reason\":\"" ++ errorCode reason ++ "\"}")
       | .indeterminate reason =>
-        IO.println ("{\"status\":\"indeterminate\",\"reason\":\"" ++ errorCode reason ++ "\"}")
+        IO.println ("{\"status\":\"indeterminate\",\"reason\":\"" ++
+          errorCode reason ++ "\"}")
       return 0
-    | _, _, _, _ =>
-      IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX GAS FUEL\"}"
+    | _, _, _, _, _, _, _ =>
+      IO.println "{\"status\":\"inputError\",\"reason\":\"bad CALL bytecode, gas or account fields\"}"
       return 2
   | _ =>
-    IO.println "{\"status\":\"inputError\",\"reason\":\"usage: --call-opcode PARENT_HEX CHILD_HEX GAS FUEL\"}"
+    IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX GAS FUEL [PARENT_BALANCE CHILD_BALANCE CHILD_NONCE]\"}"
     return 2
 
 def cliMain (args : List String) : IO UInt32 := do
