@@ -49,7 +49,11 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.PVGraph.admitted_sound
         L4Factoidal.GpuDomainSpecificLanguage.GraphEvaluate.evaluateWith_eq_of_primitives
         L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelTag_decode_code
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelTag_ofOperator_sound
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelCall_dispatch_raceFree
+        L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelCall_schedule_independent
         L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.KernelCall_correct
         L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.modelOrCpu_eq_reference
         L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath.pvgraph_model_eq_reference
         L4Factoidal.GpuDomainSpecificLanguage.DataflowAdapter.modeledFastStage_run_eq
+        L4Factoidal.GpuDomainSpecificLanguage.DataflowAdapter.stageOfVerifiedDevice_contract
