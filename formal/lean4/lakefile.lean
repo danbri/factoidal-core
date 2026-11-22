@@ -476,7 +476,7 @@ lean_lib ClosureChecks where
              `Wasm.Ops.Explain,
              `Wasm.Ops.StageList,
              `Wasm.Ops.PipelineNodes,
-             `Wasm.Ops.GraphNodes, `Wasm.Ops.PVGraph, `Wasm.GraphNodesTests,
+             `Wasm.Ops.GraphNodes, `Wasm.Ops.PVGraph, `L4Factoidal.GpuDomainSpecificLanguage.GpuPlan, `Wasm.GraphNodesTests,
              `Wasm.Ops.Handles,
              `Wasm.Ops.DatasetFull,
              `Wasm.Ops.Pack,
