@@ -270,10 +270,17 @@ def layout (args : List Arg) : Array Value × Array (Nat × ByteArray) × Nat ×
 /-- The signed i32 of an import's answer. -/
 def signed (r : HostResult) : Except String Int :=
   match r with
-  | .values #[.i32 v] => .ok (if v.toNat ≥ 2147483648 then (v.toNat : Int) - 4294967296 else v.toNat)
+  | .values #[.i32 v] => .ok (Hosts.Dom.signed32 v)
   | .values _ => .ok 0
   | .trap m => .error m
   | .exit _ => .error "exit"
+
+/-- Kind: equivalence. Says: the signed answer of an import is its i32 read as two's
+complement (`Dom.signed32_eq`). -/
+theorem signed_i32 (v : UInt32) :
+    signed (.values #[.i32 v]) = .ok (if v.toNat ≥ 2147483648 then (v.toNat : Int) - 4294967296 else v.toNat) := by
+  show (Except.ok (Hosts.Dom.signed32 v) : Except String Int) = _
+  rw [Hosts.Dom.signed32_eq]
 
 /-- Call import `nm` of `foafnaut_dom` on the page host: the host after it, the answer,
 and the bytes the import wrote in the output buffer. -/

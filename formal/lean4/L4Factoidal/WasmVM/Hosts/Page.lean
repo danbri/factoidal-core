@@ -1538,7 +1538,11 @@ theorem runP_local (s : Session) (fa : Nat) (args : Array Value) :
     (s.runP fa args).runLocal = s.run fa args := by
   simp only [Session.runP, Prog.runLocal, Session.serveAsk]
 
-def i32v (x : Int) : Value := .i32 (Int.toNat (x % 4294967296)).toUInt32
+def i32v (x : Int) : Value := .i32 (Hosts.Dom.wrap32 x)
+
+/-- Kind: equivalence. Says: `i32v` is the integer modulo 2^32, as an i32 (`Dom.wrap32_eq`). -/
+theorem i32v_eq (x : Int) : i32v x = .i32 (Int.toNat (x % 4294967296)).toUInt32 := by
+  simp only [i32v, Hosts.Dom.wrap32_eq]
 
 def Session.fail (s : Session) (what : String) : Session :=
   { s with errors := if s.errors.size < 256 then s.errors.push what else s.errors }
