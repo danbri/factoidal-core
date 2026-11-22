@@ -23,6 +23,9 @@ jobs:
   authenticated-mainnet:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,6 +43,14 @@ jobs:
         run: |
           npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
           printf '2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7  scripts/eels/package-lock.json\n' | sha256sum --check
+      - name: Reconstruct real Ethereum mainnet Frontier block 46147 transaction and receipt commitments
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/eels
+          node scripts/eels/replay-first-mainnet.mjs \
+            --fixture evidence/frontier-mainnet-46147.json \
+            --out .lake/eels/frontier-46147-commitments.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["hardfork"]=="Frontier" and x["block"]=="46147" and x["chargedGas"]=="21000" and x["chargedFeeWei"]=="1050000000000000000" and x["adversarialControlsRejected"]==6 and x["preStateAuthenticated"] is False and x["leanDerivedIntermediateStateRoot"] is None and x["fullMainnetStateReplay"] is False,x'
       - name: Decode and hash the committed authenticated prestate witness
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -62,7 +73,7 @@ jobs:
             | tee .lake/eels/frontier-46147-independent-replay.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["recipientNonexistentBeforeTransaction"] and x["intermediateRoot"]=="96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957" and x["postBlockRoot"]=="0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169",x'
           python3 scripts/eels/frontier-independent-negative.py .lake/eels/frontier-real-46146.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["adversarialControlsRejected"]==6 and x["mainnetReplayVerified"],x'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["adversarialControlsRejected"]==6 and x["mainnetReplayVerified"] and x["keccakVectorsChecked"]==24,x'
       - name: Preserve exact replay roots and artifact witness
         if: always()
         uses: actions/upload-artifact@v4

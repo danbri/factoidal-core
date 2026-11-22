@@ -51,9 +51,10 @@ def keccak256(blob):
     rate = 136
     pad = bytearray(blob)
     pad.append(0x01)             # Ethereum Keccak domain, not SHA3-256
-    while len(pad) % rate != rate-1:
+    while len(pad) % rate:
         pad.append(0)
-    pad.append(0x80)
+    # When the suffix occupies the final rate byte, both bits form 0x81.
+    pad[-1] |= 0x80
     state = [0]*25
     for start in range(0, len(pad), rate):
         block = pad[start:start+rate]

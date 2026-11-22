@@ -203,6 +203,9 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -300,7 +303,7 @@ jobs:
             | tee .lake/eels/frontier-independent-python-replay.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["accountsVerified"]==3 and x["recipientNonexistentBeforeTransaction"] and x["intermediateRoot"]=="96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957" and x["postBlockRoot"]=="0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169",x'
           python3 scripts/eels/frontier-independent-negative.py .lake/eels/frontier-46146-archive-witness.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["mainnetReplayVerified"] and x["adversarialControlsRejected"]==6 and x["originalTransactionAndBlockRootsReplayed"]==2,x'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["mainnetReplayVerified"] and x["adversarialControlsRejected"]==6 and x["originalTransactionAndBlockRootsReplayed"]==2 and x["keccakVectorsChecked"]==24,x'
       - name: Preserve published fixture, host transition results and npm resolution
         if: always()
         uses: actions/upload-artifact@v4

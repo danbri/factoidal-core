@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Falsify the independent historical Frontier account proof validator.
+"""Test Ethereum Keccak vectors and the independent Frontier witness validator.
 
-All expected pass/fail labels here apply only to the pinned block 46146
-witness; they are not a conformance census of the wider Ethereum protocol.
+The historical mutation checks apply to the pinned block 46146 witness.
 """
 import copy
 import importlib.util
@@ -19,12 +18,30 @@ spec.loader.exec_module(checker)
 def require(cond,message):
     if not cond:raise AssertionError(message)
 
+def check_keccak_vectors(hasher):
+    fixture = HERE.parents[1] / 'evidence' / 'frontier-keccak-vectors.json'
+    vectors = json.loads(fixture.read_text(encoding='utf-8'))['vectors']
+    patterns = {
+        'ascii-a': lambda length: b'a' * length,
+        'byte-ramp': lambda length: bytes(i % 256 for i in range(length)),
+    }
+    for vector in vectors:
+        length = vector['inputLengthBytes']
+        pattern = vector['pattern']
+        expected = vector['digestHex']
+        actual = hasher(patterns[pattern](length)).hex()
+        require(actual == expected,
+            f'Keccak-256 mismatch for {pattern} at {length} bytes: '
+            f'expected {expected}, got {actual}')
+    return len(vectors)
+
 def mutate_hex(s):
     return s[:-1]+('0' if s[-1]!='0' else '1')
 
 def main():
     if len(sys.argv)!=2:
         raise SystemExit('usage: frontier-independent-negative.py PINNED_WITNESS.json')
+    keccak_vectors_checked = check_keccak_vectors(checker.keccak256)
     baseline=json.loads(Path(sys.argv[1]).read_text())
     genuine=checker.verify_historical(baseline)
     require(genuine['status']=='pass' and genuine['accountsVerified']==3 and
@@ -56,6 +73,7 @@ def main():
     require(len(rejected)==len(bad_cases),
         'independent witness proof accepted one or more falsifications')
     print(json.dumps({'status':'pass','mainnetReplayVerified':True,
+      'keccakVectorsChecked':keccak_vectors_checked,
       'originalTransactionAndBlockRootsReplayed':2,
       'adversarialControlsRejected':len(rejected),
       'rejectedKinds':rejected,

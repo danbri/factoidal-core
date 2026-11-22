@@ -18,9 +18,11 @@
  * FULL post-block state root from block 46147's header. No uncle blocks are
  * allowed in this published historical block.
  *
- * No proof node is simply trusted. The proofs, signature, header and both
- * roots must all verify or exit nonzero. KZG, EIP-1559, EIP-150 and
- * post-Byzantium receipt status rules do NOT apply to this block.
+ * The parent header, account proofs and both derived roots must verify
+ * or this script exits nonzero. Use scripts/eels/replay-first-mainnet.mjs
+ * to verify the signed transaction and block 46147 header and commitments.
+ * KZG, EIP-1559, EIP-150 and post-Byzantium receipt status rules do NOT
+ * apply to this block.
  *
  * --selftest uses synthetic state solely to challenge the proof machinery
  * and mutations. It never claims historical replay.
@@ -208,7 +210,9 @@ async function verifyHistorical(bundle,historical) {
     transactionFeeWei:transition.chargedFee,
     genesisFrontierBlockSubsidyWei:FIVE_ETH.toString(),
     witnessedAccounts:actual.length,
-    codeHashesValidated:true,signatureAndTxHeaderValidatedBySeparateGate:true,
+    codeHashesValidated:true,
+    signatureAndTxHeaderValidation:'requires-separate-commitment-gate',
+    requiredCommitmentGate:'scripts/eels/replay-first-mainnet.mjs',
     trust:'EthereumJS RLP/MPT/Keccak and published block header, Lean arithmetic; PoW chain canonicality not independently proved',
   }
 }
