@@ -220,26 +220,39 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
 would need more paints its colour only. -/
 def maxBackgroundTiles : Nat := 4096
 
-/-- A background image at its natural size (CSS Backgrounds 3 initial values): tiles repeated in
-both directions from the padding box's top left corner (`background-origin: padding-box`,
-`background-position: 0% 0%`, `background-repeat: repeat`), clipped to the border box
-(`background-clip: border-box`). `(x,y,w,h)` is the border box. A 1 by 1 image is its one
-colour when it is opaque. The sizes, positions and repeats that pages set are not read yet (issue 747). -/
+private def backgroundTileSize (size : BackgroundSize) (iw ih w h : Float) : Float × Float :=
+  match size with
+  | .cover => let scale := max (w/iw) (h/ih); (iw*scale, ih*scale)
+  | .contain => let scale := min (w/iw) (h/ih); (iw*scale, ih*scale)
+  | .dimensions width height =>
+    match CSS.resolve w width, CSS.resolve h height with
+    | some tw, some th => (tw,th)
+    | some tw, none => (tw,ih*tw/iw)
+    | none, some th => (iw*th/ih,th)
+    | none, none => (iw,ih)
+
+/-- The first background layer is sized against the padding box and clipped to the
+border box. Repeated axes may need a tile before the origin to cover the border. -/
 def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   if b.width == 0 || b.height == 0 then return #[]
-  if b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
+  let iw := Float.ofNat b.width
+  let ih := Float.ofNat b.height
+  let e := s.borderEdges
+  let (tw,th) := backgroundTileSize s.backgroundSize iw ih (max 0 (w-e.left-e.right)) (max 0 (h-e.top-e.bottom))
+  if tw <= 0 || th <= 0 then return #[]
+  let (repeatX,repeatY) := s.backgroundRepeat
+  if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
     let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
     return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  let tw := Float.ofNat b.width
-  let th := Float.ofNat b.height
-  let e := s.borderEdges
   let ox := x+e.left
   let oy := y+e.top
-  let startX := ox-((ox-x)/tw).ceil*tw
-  let startY := oy-((oy-y)/th).ceil*th
-  let cols := ((x+w-startX)/tw).ceil.toUInt64.toNat
-  let rows := ((y+h-startY)/th).ceil.toUInt64.toNat
+  let startX := if repeatX then ox-((ox-x)/tw).ceil*tw else ox
+  let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
+  let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1
+  let rows := if repeatY then ((y+h-startY)/th).ceil.toUInt64.toNat else 1
   if cols*rows > maxBackgroundTiles then return #[]
+  let sx := iw/tw
+  let sy := ih/th
   let mut out := #[]
   for j in [0:rows] do
     for i in [0:cols] do
@@ -250,7 +263,8 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
       let r := min (x+w) (tx+tw)
       let bo := min (y+h) (ty+th)
       if r > l && bo > t then
-        out := out.push (.paint ⟨some id,{geometry := .rect l t (r-l) (bo-t),style := {fill := .image ⟨⟨1,0,0,1,-tx,-ty⟩,pic,b⟩}}⟩)
+        let image : ImageRecord := ⟨⟨sx,0,0,sy,-tx*sx,-ty*sy⟩,pic,b⟩
+        out := out.push (.paint ⟨some id,{geometry := .rect l t (r-l) (bo-t),style := {fill := .image image}}⟩)
   return out
 
 private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
@@ -2820,6 +2834,7 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
     {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
+            backgroundSize := s.backgroundSize.atViewport vw vh,
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}
   -- Percentage margins and padding, where the containing block's width is definite.
