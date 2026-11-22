@@ -35,7 +35,7 @@
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
     "EVMCleanroom/CallOpcode.lean": "ae46f712f1848eb9259b505cb3f8005204fd5720",
     "scripts/differential/call-opcode.mjs": "574af6316ccbba111cabfbed961b193aa884742e",
-    "EVMCleanroom/FrontierTransfer.lean": "3f14d60df976e860b2adfc36afc1ce326271e9dd",
+    "EVMCleanroom/FrontierTransfer.lean": "a85feceae4af9c1370d661f43ec8f7fcd4837531",
     "scripts/eels/replay-first-mainnet.mjs": "27bb7f161b209c644875aec883f86170f9b17161",
     "evidence/frontier-mainnet-46147.json": "3cea095d8700ffb3ea34f21c9a7741b881eabdc6"
   },
