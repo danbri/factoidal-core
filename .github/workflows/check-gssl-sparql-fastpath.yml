@@ -58,6 +58,7 @@ jobs:
         L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_indexed
         L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_evalIn
         L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_namedGraph
+        L4Factoidal.SPARQL.PvGraphBgpLowering.namedDecoded_eq_graphVariable
         L4Factoidal.SPARQL.PvGraphHybridPlacement.run_eq_indexed
         L4Factoidal.SPARQL.PvGraphHybridPlacement.chosen_eq_indexed
         L4Factoidal.SPARQL.PvGraphHybridPlacement.serviceStage_contract
