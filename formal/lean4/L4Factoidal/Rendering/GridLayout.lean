@@ -287,6 +287,11 @@ private def gridRatioWidth (s : Computed) (areaW : Float) (areaH : Option Float)
   let content := if s.pos.borderBox then max 0 (w-padH) else w
   return max 0 (clampOpt ((CSS.resolve areaW s.minWidth).getD 0) (CSS.resolve areaW s.maxWidth) content)+padH
 
+#guard gridRatioWidth {height := .percent 1, pos := {ratio := some (1, 2)}} 24 (some 32) false == some 16
+#guard gridRatioWidth {height := .percent 1, pos := {ratio := some (1, 2)}} 24 none false == none
+#guard gridRatioWidth {height := .px 30, pos := {ratio := some (2, 1)}, maxWidth := .px 40}
+    100 none false == some 40
+
 private def gridJustifyItem (item container : Computed) (rtl : Bool) : Grid.SelfAlign :=
   if item.grid.templateColumns.subgrid && item.display.isGrid then .stretch
   else gridSelfAlign item.align.justifySelf container.align.justifyItems rtl
