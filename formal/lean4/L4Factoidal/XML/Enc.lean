@@ -105,10 +105,13 @@ block; this code removes the §5.2 padding.
 ## Encryption
 
 `encryptNode` makes an `EncryptedData` (AES-GCM, IV first, tag last) with
-one `EncryptedKey` (RSA-OAEP, ECDH-ES with Concat KDF and AES Key Wrap, or
-AES Key Wrap under a named key). The content key, the IV, the OAEP seed and
-the ephemeral private key are octets the caller gives (`rand`); nothing
-here reads a clock or a random source.
+one `EncryptedKey` (RSA-OAEP; ECDH-ES or X25519 key agreement and AES Key
+Wrap; AES Key Wrap under a named key; or AES Key Wrap under an
+`xenc11:DerivedKey` from a named symmetric master key, §5.4.3). A key
+agreement or a derived key uses Concat KDF (§5.4.1) or PBKDF2 (§5.4.2) with
+a specified salt (`EncryptSpec.kdf`). The content key, the IV, the OAEP
+seed, the ephemeral private key and the PBKDF2 salt are octets the caller
+gives (`rand`); nothing here reads a clock or a random source.
 
 ## Loops
 
@@ -1280,6 +1283,24 @@ inductive Recipient where
   | agree (kid : Option String) (curve : Curve) (pub : ByteArray) (kwLen : Nat)
   /-- AES Key Wrap under a symmetric key named `kid`. -/
   | kek (kid : Option String) (k : ByteArray)
+  /-- AES Key Wrap (key of `kwLen` octets) under a key derived from the
+  symmetric master key `master` (§5.4.3), named by `kid` in
+  `xenc11:MasterKeyName`. -/
+  | derived (kid : Option String) (master : ByteArray) (kwLen : Nat)
+
+/-- The key derivation method the writer puts in an `xenc:AgreementMethod`
+or an `xenc11:DerivedKey` (§5.4). -/
+inductive WriteKdf where
+  /-- Concat KDF over SHA-256 (§5.4.1); `AlgorithmID` is the key wrap URI. -/
+  | concat
+  /-- PBKDF2 (§5.4.2): HMAC over `prf`, `iterations` rounds, and a
+  `xenc11:Specified` salt of `saltLen` random octets. -/
+  | pbkdf2 (prf : WebHacl.HashAlg) (iterations : Nat) (saltLen : Nat := 16)
+
+/-- How many random octets the method takes (the PBKDF2 salt). -/
+def WriteKdf.randLen : WriteKdf → Nat
+  | .concat => 0
+  | .pbkdf2 _ _ s => s
 
 structure EncryptSpec where
   /-- AES-GCM content key length: 16 or 32. -/
@@ -1287,6 +1308,8 @@ structure EncryptSpec where
   recipient : Recipient
   /-- `Type` Content (the element's children) instead of Element. -/
   content : Bool := false
+  /-- The key derivation method of an `agree` or `derived` recipient. -/
+  kdf : WriteKdf := .concat
 
 def mkAttrs (as : List (String × String)) : List Attribute := as.map fun (n, v) => { name := n, value := v }
 
@@ -1306,14 +1329,101 @@ def Recipient.randLen : Recipient → Nat
   | .rsa _ _ _ sha256 => if sha256 then 32 else 20
   | .agree .. => 32
   | .kek .. => 0
+  | .derived .. => 0
+
+/-- Random octets after the content key and the IV: the recipient's, then
+the PBKDF2 salt when the recipient derives a key. -/
+def EncryptSpec.restLen (spec : EncryptSpec) : Nat :=
+  match spec.recipient with
+  | .agree .. | .derived .. => spec.recipient.randLen + spec.kdf.randLen
+  | _ => spec.recipient.randLen
 
 def kwUri (len : Nat) : String := if len == 16 then kwAes128 else kwAes256
 
 /-- `00 || utf8(s)` as hexBinary: an octet string with no padding bits. -/
 def paddedHex (s : String) : String := "00" ++ hexOf s.toUTF8
 
-/-- The `xenc:EncryptedKey` holding `cek` for the recipient. -/
-def encryptedKeyNode (cipher : Cipher) (prims : Prims) (r : Recipient) (cek rand : ByteArray) : M Node := do
+/-- The `xenc11:PRF` URI of an HMAC hash (the inverse of `prfOf?`). -/
+def prfUri : WebHacl.HashAlg → String
+  | .sha1 => hmacSha1Prf
+  | .sha256 => hmacSha256Prf
+  | .sha384 => hmacSha384Prf
+  | .sha512 => hmacSha512Prf
+
+/-- The method the reader gets back from what the writer writes, for a key
+of `kwLen` octets and the salt `salt`. -/
+def WriteKdf.toKdf (kwLen : Nat) (salt : ByteArray) : WriteKdf → Kdf
+  | .concat => .concat { algorithmId := hexBytes? (paddedHex (kwUri kwLen)) }
+  | .pbkdf2 prf it _ => .pbkdf2 { salt, iterations := it, keyLength := kwLen, prf }
+
+/-- The writer's limits: PBKDF2 needs 1 to `maxIt` iterations (the reader's
+default limit is 1,000,000) and a salt of 8 to 64 octets (RFC 8018 §4.1
+asks for at least eight). -/
+def WriteKdf.check (maxIt : Nat := 1000000) : WriteKdf → M Unit
+  | .concat => pure ()
+  | .pbkdf2 _ it s => do
+      if it < 1 || it > maxIt then refuse s!"PBKDF2 iterations must be 1 to {maxIt}"
+      if s < 8 || s > 64 then refuse "the PBKDF2 salt must be 8 to 64 octets"
+
+/-- The `xenc11:KeyDerivationMethod` element for a key of `kwLen` octets. -/
+def kdfNode (kwLen : Nat) (salt : ByteArray) : WriteKdf → Node
+  | .concat =>
+      mkEl "xenc11:KeyDerivationMethod" [("xmlns:xenc11", xenc11Ns), ("Algorithm", concatKdfAlg)]
+        [mkEl "xenc11:ConcatKDFParams"
+          -- PartyUInfo and PartyVInfo absent (empty): Apache Santuario 4.0.4
+          -- refuses the one-octet value "00" ("ConcatKDF parameter is to short").
+          [("AlgorithmID", paddedHex (kwUri kwLen))]
+          [mkEl "ds:DigestMethod" [("Algorithm", sha256Digest)] []]]
+  | .pbkdf2 prf it _ =>
+      mkEl "xenc11:KeyDerivationMethod" [("xmlns:xenc11", xenc11Ns), ("Algorithm", pbkdf2Alg)]
+        [mkEl "xenc11:PBKDF2-params" []
+          [mkEl "xenc11:Salt" [] [mkEl "xenc11:Specified" [] [.text (base64 salt)]],
+           mkEl "xenc11:IterationCount" [] [.text (toString it)],
+           mkEl "xenc11:KeyLength" [] [.text (toString kwLen)],
+           mkEl "xenc11:PRF" [("Algorithm", prfUri prf)] []]]
+
+/-! ### Theorems relating the writer's §5.4 methods to the reader's
+
+Says: the PRF URI that the writer writes is read back as the same hash; the
+Concat KDF key that the writer uses is the §5.4.1 key with `AlgorithmID` the
+key wrap URI (as before PBKDF2 was added to the writer); the PBKDF2 key that
+the writer uses is RFC 8018 PBKDF2 as WebCrypto `deriveBits` specifies it,
+on the native primitives, given HACL*'s functional correctness.
+Does not say: that the reader parses every document the writer writes (the
+round-trip tests check that); that the chosen iteration count is strong. -/
+
+/-- `prfOf?` reads back every PRF URI the writer writes. -/
+theorem xmlenc11_prfOf_prfUri (a : WebHacl.HashAlg) : prfOf? (prfUri a) = some a := by
+  cases a <;> decide
+
+/-- The writer's Concat KDF is §5.4.1 over SHA-256 with `AlgorithmID` the
+key wrap URI. -/
+theorem xmlenc11_write_concat (prims : Prims) (z salt : ByteArray) (n : Nat) :
+    (WriteKdf.concat.toKdf n salt).derive? prims z n =
+      ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash z n { algorithmId := hexBytes? (paddedHex (kwUri n)) } :=
+  rfl
+
+/-- The writer's PBKDF2 key on the native primitives is RFC 8018 PBKDF2 (the
+function of WebCrypto `deriveBits`) over the same secret, salt, iterations
+and hash. -/
+theorem xmlenc11_write_pbkdf2_eq_rfc8018 (hh : WebHacl.HashAgrees) (hm : WebHacl.HmacAgrees)
+    (prf : WebHacl.HashAlg) (it s n : Nat) (z salt : ByteArray) :
+    ((WriteKdf.pbkdf2 prf it s).toKdf n salt).derive? nativePrims z n =
+      (let k := WebCrypto.pbkdf2 prf.pure z salt it n
+       if k.size == n then some k else none) :=
+  xmlenc11_derive_pbkdf2_eq_webcrypto hh hm z { salt, iterations := it, keyLength := n, prf }
+
+/-- A `DerivedKey` key encryption key that the writer uses is the one the
+reader's §5.4.3 derivation gives from the same master key, so it has the
+length of the key wrap key. -/
+theorem xmlenc11_write_derived_size (prims : Prims) (w : WriteKdf) (salt m k : ByteArray) (n : Nat)
+    (h : deriveFromMaster prims (w.toKdf n salt) m n = some k) : k.size = n :=
+  xmlenc11_deriveFromMaster_size prims _ m n k h
+
+/-- The `xenc:EncryptedKey` holding `cek` for the recipient. `rand`: the
+recipient's random octets, then the PBKDF2 salt. -/
+def encryptedKeyNode (cipher : Cipher) (prims : Prims) (r : Recipient) (cek rand : ByteArray)
+    (kdf : WriteKdf := .concat) : M Node := do
   match r with
   | .rsa kid n e sha256 =>
       let digest := prims.oaepProvider (if sha256 then .sha256 else .sha1)
@@ -1333,17 +1443,32 @@ def encryptedKeyNode (cipher : Cipher) (prims : Prims) (r : Recipient) (cek rand
       pure (mkEl "xenc:EncryptedKey" []
         ([mkEl "xenc:EncryptionMethod" [("Algorithm", kwUri k.size)] []] ++
          (if kid.isSome then [mkEl "ds:KeyInfo" [] (keyNameNodes kid)] else []) ++ [cipherDataNode wrapped]))
+  | .derived kid master kwLen =>
+      if kwLen != 16 && kwLen != 32 then refuse "the key wrap key must be 16 or 32 octets"
+      kdf.check
+      let salt := rand.extract 0 kdf.randLen
+      let kek ← (deriveFromMaster prims (kdf.toKdf kwLen salt) master kwLen).elim
+        (refuse "the key derivation was refused") pure
+      let wrapped ← ccallEnc cipher { op := .kwWrap, key := kek, data := cek }
+      let names := match kid with
+        | some n => [mkEl "xenc11:MasterKeyName" [] [.text n]]
+        | none => []
+      pure (mkEl "xenc:EncryptedKey" []
+        [mkEl "xenc:EncryptionMethod" [("Algorithm", kwUri kwLen)] [],
+         mkEl "ds:KeyInfo" []
+           [mkEl "xenc11:DerivedKey" [("xmlns:xenc11", xenc11Ns)] ([kdfNode kwLen salt kdf] ++ names)],
+         cipherDataNode wrapped])
   | .agree kid curve pub kwLen =>
       if kwLen != 16 && kwLen != 32 then refuse "the key wrap key must be 16 or 32 octets"
-      let eph := rand
+      kdf.check
+      let eph := rand.extract 0 32
+      let salt := rand.extract 32 (32 + kdf.randLen)
       let (ephPub?, z?) := match curve with
         | .p256 => (prims.p256Public eph, prims.p256Ecdh pub eph)
         | .x25519 => (prims.x25519Public eph, prims.x25519 eph pub)
       let ephPub ← ephPub?.elim (refuse "the ephemeral key was refused") pure
       let z ← z?.elim (refuse "the recipient's public key was refused") pure
-      let params : ConcatKdf.XmlEncParams :=
-        { algorithmId := hexBytes? (paddedHex (kwUri kwLen)) }
-      let kek ← (ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash z kwLen params).elim
+      let kek ← ((kdf.toKdf kwLen salt).derive? prims z kwLen).elim
         (refuse "the key derivation was refused") pure
       let wrapped ← ccallEnc cipher { op := .kwWrap, key := kek, data := cek }
       let origKey := match curve with
@@ -1356,12 +1481,7 @@ def encryptedKeyNode (cipher : Cipher) (prims : Prims) (r : Recipient) (cek rand
               [.text (base64 (x25519SpkiPrefix ++ ephPub))]
       let agreement := mkEl "xenc:AgreementMethod"
         [("Algorithm", if curve == .p256 then ecdhEs else x25519Agreement)]
-        [mkEl "xenc11:KeyDerivationMethod" [("xmlns:xenc11", xenc11Ns), ("Algorithm", concatKdfAlg)]
-          [mkEl "xenc11:ConcatKDFParams"
-            -- PartyUInfo and PartyVInfo absent (empty): Apache Santuario 4.0.4
-            -- refuses the one-octet value "00" ("ConcatKDF parameter is to short").
-            [("AlgorithmID", paddedHex (kwUri kwLen))]
-            [mkEl "ds:DigestMethod" [("Algorithm", sha256Digest)] []]],
+        [kdfNode kwLen salt kdf,
          mkEl "xenc:OriginatorKeyInfo" [] [origKey],
          mkEl "xenc:RecipientKeyInfo" [] (keyNameNodes kid)]
       pure (mkEl "xenc:EncryptedKey" []
@@ -1374,12 +1494,12 @@ Element or Content. `rand`: the content key, the 12-octet IV, then
 def encryptOctets (cipher : Cipher) (prims : Prims) (spec : EncryptSpec) (rand plaintext : ByteArray) :
     M Node := do
   if spec.keyLen != 16 && spec.keyLen != 32 then refuse "the content key must be 16 or 32 octets"
-  if rand.size < spec.keyLen + 12 + spec.recipient.randLen then
-    refuse s!"encryption needs {spec.keyLen + 12 + spec.recipient.randLen} random octets"
+  if rand.size < spec.keyLen + 12 + spec.restLen then
+    refuse s!"encryption needs {spec.keyLen + 12 + spec.restLen} random octets"
   let cek := rand.extract 0 spec.keyLen
   let iv := rand.extract spec.keyLen (spec.keyLen + 12)
-  let rest := rand.extract (spec.keyLen + 12) (spec.keyLen + 12 + spec.recipient.randLen)
-  let ek ← encryptedKeyNode cipher prims spec.recipient cek rest
+  let rest := rand.extract (spec.keyLen + 12) (spec.keyLen + 12 + spec.restLen)
+  let ek ← encryptedKeyNode cipher prims spec.recipient cek rest spec.kdf
   let ct ← ccallEnc cipher { op := .gcmEncrypt, key := cek, iv, data := plaintext }
   pure (mkEl "xenc:EncryptedData"
     [("xmlns:xenc", xencNs), ("Type", if spec.content then typeContent else typeElement)]

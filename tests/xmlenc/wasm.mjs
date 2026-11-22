@@ -17,6 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { pbkdf2Sync } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runWithCipher } from '../../npm/factoidal/lib/cipher-host.mjs';
@@ -196,12 +197,20 @@ const RECIPIENTS = [
   ['ECDH-ES P-256, kw-aes128, AES-128-GCM', { recipient: publicOf(byKid('ec-1')), algorithm: 'aes128-gcm' }],
   ['X25519, kw-aes256, AES-256-GCM', { recipient: publicOf(byKid('x-1')), algorithm: 'aes256-gcm' }],
   ['kw-aes256 under a named key, Content', { recipient: byKid('kek256'), algorithm: 'aes128-gcm', content: true }],
+  // XML Encryption 1.1 §5.4.2 and §5.4.3 in the writer.
+  ['ECDH-ES P-256, PBKDF2 HMAC-SHA-256', { recipient: publicOf(byKid('ec-1')), algorithm: 'aes128-gcm',
+    keyDerivation: { algorithm: 'pbkdf2', prf: 'hmac-sha256', iterations: 1000 } }],
+  ['X25519, PBKDF2 HMAC-SHA-512, AES-256-GCM', { recipient: publicOf(byKid('x-1')), algorithm: 'aes256-gcm',
+    keyDerivation: { algorithm: 'pbkdf2', prf: 'hmac-sha512', iterations: 20, saltLength: 32 } }],
+  ['DerivedKey from kek128, Concat KDF', { recipient: byKid('kek128'), derivedKey: true }],
+  ['DerivedKey from kek256, PBKDF2 HMAC-SHA-1, kw-aes256', { recipient: byKid('kek256'), derivedKey: true,
+    keyWrap: 'kw-aes256', keyDerivation: { algorithm: 'pbkdf2', prf: 'hmac-sha1', iterations: 10 } }],
 ];
 
 const dump = [];
 for (const [label, opts] of RECIPIENTS) {
   test(`Lean encrypts (${label}) and decrypts`, async () => {
-    const random = Buffer.from(crypto.getRandomValues(new Uint8Array(96))).toString('base64');
+    const random = Buffer.from(crypto.getRandomValues(new Uint8Array(112))).toString('base64');
     const enc = await encrypt({ document: PLAIN, random, ...opts });
     assert.equal(enc.ok, true, enc.error);
     assert.equal(enc.document.includes('4019'), false);
@@ -211,6 +220,25 @@ for (const [label, opts] of RECIPIENTS) {
     dump.push({ name: label, document: enc.document, expected: PLAIN });
   });
 }
+
+test('the PBKDF2 key of a DerivedKey that Lean writes is the one Node derives', async () => {
+  const random = Buffer.from(crypto.getRandomValues(new Uint8Array(112))).toString('base64');
+  const enc = await encrypt({ document: PLAIN, random, recipient: byKid('kek128'), derivedKey: true,
+    keyDerivation: { algorithm: 'pbkdf2', prf: 'hmac-sha256', iterations: 1000 } });
+  assert.equal(enc.ok, true, enc.error);
+  const salt = Buffer.from(enc.document.match(/<xenc11:Specified>([^<]*)</)[1], 'base64');
+  const master = Buffer.from(byKid('kek128').k, 'base64url');
+  const want = pbkdf2Sync(master, salt, 1000, 16, 'sha256').toString('base64');
+  let seen;
+  const call = op('xmlDecrypt');
+  const dec = await runWithCipher((a) => {
+    const r = call(a);
+    if (r.need?.op === 'aes-kw-unwrap') seen = r.need.key;
+    return r;
+  }, { document: enc.document, keys });
+  assert.equal(dec.ok, true, dec.error);
+  assert.equal(seen, want);
+});
 
 test('Lean encrypts a SAML EncryptedAssertion', async () => {
   const assertion = '<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_1" Version="2.0"/>';
