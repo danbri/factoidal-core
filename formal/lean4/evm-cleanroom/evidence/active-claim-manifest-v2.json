@@ -8,18 +8,18 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "cbe1f657d7cf5856e21d78f6517968857a8f3117",
+    "EVMCleanroom/Core.lean": "0a805cd57d0b40d4237eec0bf0475f69563c7dad",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "6a29b0ea0de533d5907ceb72ee79a5a05d6df5ad",
-    "EVMCleanroom/World.lean": "91d4227c9dbb9b1ec4be284843f07a3e1c511a80",
+    "EVMCleanroom/World.lean": "595af96de1462e31e13956b05c000b7544f452af",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
     "EVMCleanroom/Call.lean": "dc93647332fefb33fd690a3ef298c39ae3baf89f",
     "EVMCleanroom/MemoryGas.lean": "f8fdb875e5be25954c7dbc7a9f67a733dc4dbecf",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "46f77ab38634bee4468910de4c4bc1b18298ba36",
+    "EVMCleanroom/CLI.lean": "2d85c57f234b81d4765ff9e14f6189b8fd7f8fdc",
     "EVMCleanroom.lean": "687acb6099dda7d1a7efc4f180092a8dbef41ebf",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
@@ -84,10 +84,11 @@
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
     "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
     "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
-    "EVMCleanroom/Tests.lean": "c6f952d269a18daa2ecb6103794b325af7158dd6",
+    "EVMCleanroom/Tests.lean": "fa8df939bb72f1b735b5f256fdc9a67fce679ec6",
     "scripts/differential/chain-id.mjs": "9639c8e6a837a4004e034e4253cee7b56c2788d8",
     "scripts/differential/block-environment.mjs": "9f812894cf211bccc4133926575f7d4f4ad0c45d",
-    "scripts/differential/tx-env.mjs": "3e31e0e17f270ff46fa9286b028fb07eff9c8bb8"
+    "scripts/differential/tx-env.mjs": "3e31e0e17f270ff46fa9286b028fb07eff9c8bb8",
+    "scripts/differential/blob-base-fee.mjs": "6066173840db5bd346d3de922e5765e926d5dd77"
   },
   "theorem_inventory": [
     {
@@ -1281,6 +1282,44 @@
       "axioms_printed": [],
       "scope": "Executable World.frameInput projects effective transaction gas price and PREVRANDAO from the world to any frame; no transaction/header authenticity.",
       "provenance": "Candidate theorem for issue #781; real Lean 4.33.1 axiom output and current-head CI required."
+    },
+    {
+      "name": "EVMCleanroom.step_blobBaseFee_cancun",
+      "source_symbol": "step_blobBaseFee_cancun",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual Cancun Core.step requests a two-gas commit of supplied blob fee, not header derivation.",
+      "provenance": "Expected only; needs fresh Lean 4.33.1 compiler axiom print/audit at exact published source, issue #790."
+    },
+    {
+      "name": "EVMCleanroom.step_blobBaseFee_osaka",
+      "source_symbol": "step_blobBaseFee_osaka",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual Osaka Core.step requests same two-gas commit, not whole-fork refinement.",
+      "provenance": "Expected only; needs fresh Lean 4.33.1 compiler axiom print/audit at exact published source, issue #790."
+    },
+    {
+      "name": "EVMCleanroom.step_blobBaseFee_unknown_fork",
+      "source_symbol": "step_blobBaseFee_unknown_fork",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "PreShanghai and ambiguous shanghaiPlus profiles refuse opcode availability rather than claiming invalid EVM execution.",
+      "provenance": "Expected only; needs fresh Lean 4.33.1 compiler axiom print/audit at exact published source, issue #790."
+    },
+    {
+      "name": "EVMCleanroom.World.frameInput_blobBaseFee",
+      "source_symbol": "frameInput_blobBaseFee",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "Actual world-to-frame adapter preserves selected blob base fee for nested CALL.",
+      "provenance": "Expected only; needs fresh Lean 4.33.1 compiler axiom print/audit at exact published source, issue #790."
     }
   ],
   "external_evidence": {
@@ -2282,5 +2321,16 @@
       "fork activation",
       "full transaction/block replay"
     ]
+  },
+  "cancun_blobbasefee": {
+    "status": "source-published-awaiting-ci",
+    "issue": "https://github.com/danbri/factoidal-core/issues/790",
+    "baseCommit": "f541d27f8d88da96269ce2a0833e111aa6728821",
+    "scope": "EIP-7516 0x4a, two gas, synthetic block fee, Cancun/Osaka profile only, not full fork conformance",
+    "expectedTheoremSets": 133,
+    "sourceBlobCount": 81,
+    "independentReference": "@ethereumjs/evm@10.1.3 Cancun; synthetic getBlobGasPrice",
+    "plannedCases": 42,
+    "unverified": "no authenticated blob fee formula, typed blob transaction, BLOBHASH, KZG, EELS refinement, EL/CL node"
   }
 }

@@ -48,6 +48,19 @@ private def resultWord (result : Except Error State) : Option Nat :=
 #guard isError (step { (initial #[0x44] 100 .preShanghai) with blockPrevRandao := 7 })
   .unsupportedFork
 
+-- EIP-7516 is activated at Cancun, not Shanghai. The supplied fee is
+-- a synthetic input for this bounded opcode test, never an authenticated header.
+#guard resultWord (run 2 { (initial #[0x4a, 0x00] 2 .cancunPlus) with
+  blockBlobBaseFee := 7 }) == some 7
+#guard resultWord (run 2 { (initial #[0x4a, 0x00] 2 .osaka) with
+  blockBlobBaseFee := modulus + 11 }) == some 11
+#guard isError (step { (initial #[0x4a] 1 .cancunPlus) with
+  blockBlobBaseFee := 7 }) .outOfGas
+#guard isError (step { (initial #[0x4a] 100 .shanghaiPlus) with
+  blockBlobBaseFee := 7 }) .unsupportedFork
+#guard isError (step { (initial #[0x4a] 100 .preShanghai) with
+  blockBlobBaseFee := 7 }) .unsupportedFork
+
 -- Header environment values are supplied, not authenticated; the real dispatcher
 -- charges two gas and reads the same fields that nested world frames receive.
 #guard resultWord (run 2 { (initial #[0x41,0x00] 2) with blockCoinbase := 0x1234 }) == some 0x1234

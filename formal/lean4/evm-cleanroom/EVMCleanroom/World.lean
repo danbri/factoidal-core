@@ -43,6 +43,8 @@ structure TxWorld where
   blockPrevRandao : Nat := 0
   blockGasLimit : Nat := 0
   blockBaseFee : Nat := 0
+  /-- Unauthenticated externally selected blob base fee for a selected Cancun+ fork. -/
+  blockBlobBaseFee : Nat := 0
 
 def beginTransaction (accounts : Nat → Account) : TxWorld :=
   { accounts := accounts
@@ -64,6 +66,7 @@ def frameInput (w : TxWorld) (address gas : Nat)
     blockPrevRandao := w.blockPrevRandao
     blockGasLimit := w.blockGasLimit
     blockBaseFee := w.blockBaseFee
+    blockBlobBaseFee := w.blockBlobBaseFee
     callerAddress := callerAddress
     callValue := 0
     selfBalance := (w.accounts address).balance
@@ -102,6 +105,12 @@ theorem frameInput_feeAndRandao (w : TxWorld) (address gas : Nat)
     (frameInput w address gas readOnly profile originAddress callerAddress).blockPrevRandao =
       w.blockPrevRandao := ⟨rfl, rfl⟩
 
+/-- Actual nested-CALL frame projection preserves the supplied blob gas price. -/
+theorem frameInput_blobBaseFee (w : TxWorld) (address gas : Nat)
+    (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
+    (frameInput w address gas readOnly profile originAddress callerAddress).blockBlobBaseFee =
+      w.blockBlobBaseFee := rfl
+
 /-- Each world-to-frame projection supplies the same block fields, including for nested CALL. -/
 theorem frameInput_blockEnvironment (w : TxWorld) (address gas : Nat)
     (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
@@ -133,6 +142,7 @@ theorem frameInput_participants (w : TxWorld) (address gas : Nat)
 
 #print axioms frameInput_address
 #print axioms frameInput_chainId
+#print axioms frameInput_blobBaseFee
 #print axioms frameInput_blockEnvironment
 #print axioms frameInput_feeAndRandao
 #print axioms frameInput_participants

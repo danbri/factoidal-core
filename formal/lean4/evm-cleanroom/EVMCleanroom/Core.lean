@@ -238,6 +238,7 @@ def Stack.empty : Stack := ⟨[], by decide⟩
 inductive Profile where
   | preShanghai
   | shanghaiPlus
+  | cancunPlus
   | osaka
   deriving DecidableEq, Repr
 
@@ -270,6 +271,8 @@ structure State where
   blockPrevRandao : Nat := 0
   blockGasLimit : Nat := 0
   blockBaseFee : Nat := 0
+  /-- Selected EIP-7516 blob gas price; not yet authenticated from header state. -/
+  blockBlobBaseFee : Nat := 0
   /-- Immediate caller, set at each CALL entry. -/
   callerAddress : Nat := 0
   callValue : Nat := 0
@@ -575,6 +578,11 @@ def planStep (s : State) : Except Error Plan :=
       -- preShanghai spans pre-/post-London: refuse the ambiguous old profile.
       if s.profile = .preShanghai then .error .unsupportedFork
       else prepared (s.pc + 1) (word s.blockBaseFee :: s.stack.items) 2
+    | 0x4a => -- BLOBBASEFEE (EIP-7516; Cancun onwards)
+      -- shanghaiPlus spans the fork boundary, so it cannot decide activation.
+      if s.profile = .cancunPlus ∨ s.profile = .osaka then
+        prepared (s.pc + 1) (word s.blockBlobBaseFee :: s.stack.items) 2
+      else .error .unsupportedFork
     | 0x50 => pop s                                    -- POP
     | 0x51 => mload s                                  -- MLOAD
     | 0x52 => mstore s                                 -- MSTORE
@@ -809,6 +817,31 @@ theorem step_slt_underflow (s : State) (hRun : s.halted = false)
       simp only [hs, List.length_cons] at hStack
       have hMin : 2 ≤ rest.length + 1 + 1 := Nat.succ_le_succ (Nat.succ_le_succ (Nat.zero_le _))
       exact (Nat.not_lt_of_ge hMin hStack).elim
+
+/-- Actual Cancun EIP-7516 opcode requests a two-gas commit of the supplied
+    blob base fee. No theorem here derives the fee from excess blob gas. -/
+theorem step_blobBaseFee_cancun (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x4a) (hProfile : s.profile = .cancunPlus) :
+    step s = commit s (s.pc + 1) (word s.blockBlobBaseFee :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, hProfile, prepared]
+
+theorem step_blobBaseFee_osaka (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x4a) (hProfile : s.profile = .osaka) :
+    step s = commit s (s.pc + 1) (word s.blockBlobBaseFee :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, hProfile, prepared]
+
+/-- The ambiguous old profiles refuse to judge EIP-7516 availability. -/
+theorem step_blobBaseFee_unknown_fork (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x4a)
+    (hProfile : s.profile = .preShanghai ∨ s.profile = .shanghaiPlus) :
+    step s = .error .unsupportedFork := by
+  cases hProfile with
+  | inl h => simp [step, planStep, hRun, hOp, h]
+  | inr h => simp [step, planStep, hRun, hOp, h]
+
+#print axioms step_blobBaseFee_cancun
+#print axioms step_blobBaseFee_osaka
+#print axioms step_blobBaseFee_unknown_fork
 
 /-- GASPRICE reads the effective price supplied to the execution frame, not a fee cap. -/
 theorem step_effectiveGasPrice (s : State) (hRun : s.halted = false)
