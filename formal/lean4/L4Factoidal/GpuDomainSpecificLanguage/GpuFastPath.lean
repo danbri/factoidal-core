@@ -174,8 +174,8 @@ theorem modelOrCpu_eq_reference (op : Operator) (args : List Value)
       simp [modelOrCpu, hp]
   | some p =>
       simp only [modelOrCpu, hp]
-      rw [← p.operator_ok, ← p.inputs_ok, ← p.constant_ok]
-      exact (KernelCall_correct p.call).symm
+      simpa only [p.operator_ok, p.inputs_ok, p.constant_ok]
+        using (KernelCall_correct p.call).symm
 
 /-- Whole-program refinement for the actual serialized, checked PVGraph.
     This includes topology, fanout, named ports, inputs and output JSON:
@@ -193,7 +193,7 @@ theorem pvgraph_model_eq_reference (pv inputs : Json) :
   | none => false)
 #guard (prepare? .zipAdd [.buffer [1], .buffer [2,3]] none).isNone
 #guard (prepare? .scanSum [.buffer [1,2,3]] none).isNone
-#guard (modelOrCpu .reduceSum [.buffer [1,2,3]] none ==
+#guard decide (modelOrCpu .reduceSum [.buffer [1,2,3]] none =
   GraphWords.execute .reduceSum [.buffer [1,2,3]] none)
 
 #print axioms KernelTag_decode_code
