@@ -1,5 +1,6 @@
 import Lean.Data.Json
 import L4Factoidal.GpuDomainSpecificLanguage.PVGraphBuilder
+import L4Factoidal.GpuDomainSpecificLanguage.GpuPlan
 
 /-!
 # PVGraph's Lean-owned Wasm-facing API
@@ -131,7 +132,7 @@ private def envelope (name : String) (result : Except String Json) : String :=
   | .error msg => (Json.mkObj [("ok", toJson false), ("error", toJson msg)]).compress
 
 private def parseBounded (s : String) : Except String Json := do
-  if s.utf8ByteSize > 1048576 then fail "request exceeds 1 MiB"
+  if s.utf8ByteSize > 8388608 then fail "request exceeds 8 MiB"
   Json.parse s
 
 /-- Lean builds and admits a program from host-supplied builder calls. -/
@@ -153,6 +154,14 @@ def evaluate (pvgraphJson bindingsJson : String) : String :=
     let doc ← parseBounded pvgraphJson
     let inputs ← parseBounded bindingsJson
     PVGraph.evaluate? doc inputs
+
+/-- Lower a fully admitted PVGraph and its input shapes to the fixed
+    GPU kernel profile. Unsupported graphs refuse rather than guessing. -/
+def gpuPlan (pvgraphJson shapeJson : String) : String :=
+  envelope "plan" do
+    let doc ← parseBounded pvgraphJson
+    let sizes ← parseBounded shapeJson
+    L4Factoidal.GpuDomainSpecificLanguage.GpuPlan.compile? doc sizes
 
 private def exampleSteps : Json := Json.mkObj [("steps", toJson ([
   Json.mkObj [("cmd", toJson "input"), ("ref", toJson "r1"),
@@ -188,5 +197,6 @@ namespace L4Wasm.Ops
 def pvgraphBuild (steps : String) : String := PVGraphBridge.build steps
 def pvgraphAdmit (source : String) : String := PVGraphBridge.admit source
 def pvgraphEvaluate (source inputs : String) : String := PVGraphBridge.evaluate source inputs
+def pvgraphGpuPlan (source sizes : String) : String := PVGraphBridge.gpuPlan source sizes
 
 end L4Wasm.Ops
