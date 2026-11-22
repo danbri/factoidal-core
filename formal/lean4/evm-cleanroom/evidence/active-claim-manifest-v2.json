@@ -971,7 +971,7 @@
     {
       "name": "EVMCleanroom.Word.signedDivide_zero",
       "source": "EVMCleanroom/Core.lean",
-      "source_symbol": "signedDivide_zero",
+      "source_symbol": "Word.signedDivide_zero",
       "axioms_printed": [],
       "scope": "The actual signed division helper returns zero for a zero EVM divisor.",
       "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
@@ -979,7 +979,7 @@
     {
       "name": "EVMCleanroom.Word.signedMod_zero",
       "source": "EVMCleanroom/Core.lean",
-      "source_symbol": "signedMod_zero",
+      "source_symbol": "Word.signedMod_zero",
       "axioms_printed": [],
       "scope": "The actual signed remainder helper returns zero for a zero EVM divisor.",
       "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
@@ -987,7 +987,7 @@
     {
       "name": "EVMCleanroom.Word.shiftArithmetic_large_nonnegative",
       "source": "EVMCleanroom/Core.lean",
-      "source_symbol": "shiftArithmetic_large_nonnegative",
+      "source_symbol": "Word.shiftArithmetic_large_nonnegative",
       "axioms_printed": [
         "propext"
       ],
@@ -997,7 +997,7 @@
     {
       "name": "EVMCleanroom.Word.shiftArithmetic_large_negative",
       "source": "EVMCleanroom/Core.lean",
-      "source_symbol": "shiftArithmetic_large_negative",
+      "source_symbol": "Word.shiftArithmetic_large_negative",
       "axioms_printed": [
         "propext"
       ],
