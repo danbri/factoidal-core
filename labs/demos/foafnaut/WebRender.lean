@@ -277,7 +277,29 @@ theorem imageSource_plain (dom : DOM.Dom) (id : Nat) (h : plainImage dom id = tr
     imageSource dom id = plainSource dom id := by
   simp [imageSource, h]
 
-/-- HTML images and video posters, keyed by the node that displays them.
+/-- An image handled by the static decoder in an `object` or `embed`. An explicit type
+takes precedence over a filename; the URL can also be a typed data URL. -/
+private def embeddedImageSource (n : DOM.Node) : Option String := do
+  let attribute ←
+    if DOM.Dom.isHtmlElement n "object" then some "data"
+    else if DOM.Dom.isHtmlElement n "embed" then some "src"
+    else none
+  let url := (Rendering.CSS.attrValue n attribute).trimAscii.toString
+  if url.isEmpty then none else do
+    let mimeType := fun s : String => ((s.splitOn ";").headD "").trimAscii.toString.toLower
+    let declared := mimeType (Rendering.CSS.attrValue n "type")
+    let types := ["image/png", "image/jpeg", "image/gif", "image/svg+xml"]
+    let supported :=
+      if !declared.isEmpty then types.contains declared
+      else if url.toLower.startsWith "data:" then
+        let header := (((url.drop 5).toString).splitOn ",").headD ""
+        types.contains (mimeType header)
+      else
+        let path := (((url.splitOn "#").headD "").splitOn "?").headD ""
+        [".png", ".jpg", ".jpeg", ".gif", ".svg"].any fun e => path.toLower.endsWith e
+    if supported then some url else none
+
+/-- HTML images, image embeds and video posters, keyed by the node that displays them.
 Resolve each nonempty source with the same image-store key as SVG images. -/
 def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) := Id.run do
   let mut out : Array (Nat × String) := #[]
@@ -288,6 +310,7 @@ def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) 
     else if DOM.Dom.isHtmlElement n "video" then
       let poster := (Rendering.CSS.attrValue n "poster").trimAscii.toString
       if !poster.isEmpty then out := out.push (id,NativeSVG.imageKey base poster)
+    else if let some src := embeddedImageSource n then out := out.push (id,NativeSVG.imageKey base src)
   return out.toList
 
 /-! ### An SVG document as the image of an `img` (2026-11-14)
