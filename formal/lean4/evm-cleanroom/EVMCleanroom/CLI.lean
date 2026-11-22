@@ -374,6 +374,26 @@ private def opcodeMain (profile : Profile) (hex gasStr fuelStr : String) : IO UI
     IO.println "{\"status\":\"inputError\",\"message\":\"gas and fuel must be nonnegative integers\"}"
     return 2
 
+/-- Deliberately synthetic chain-context probe; only the caller supplies the
+    chain ID. No transaction signature, block header or consensus validation
+    occurs here. The supported instruction profile is post-Istanbul. -/
+private def chainIdMain (hex gasStr fuelStr idStr : String) : IO UInt32 := do
+  match parseBytecode hex, gasStr.toNat?, fuelStr.toNat?, idStr.toNat? with
+  | .ok code, some gas, some fuel, some selectedId =>
+    let s : State := {
+      code := code, gas := gas, profile := .shanghaiPlus,
+      chainId := selectedId }
+    match EVMCleanroom.run fuel s with
+    | .ok out =>
+      IO.println (successJSON out)
+      return 0
+    | .error e =>
+      IO.println (errorJSON e)
+      return 0
+  | _, _, _, _ =>
+    IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX GAS FUEL CHAIN_ID\"}"
+    return 2
+
 /-- Explicit Prague envelope: type 0..4, blob fee at header excess=0,
     and EIP-7702 authorization count. All big integers are decimal strings.
     This does not read RLP or verify secp256k1, which are host boundaries. -/
@@ -603,6 +623,7 @@ def cliMain (args : List String) : IO UInt32 := do
   | ["--storage-batch", path] => storageBatchMain path
   | ["--batch", path] => runBatchFile path
   | ["--osaka-batch", path] => runBatchFile path .osaka
+  | ["--chainid", hex, gasStr, fuelStr, idStr] => chainIdMain hex gasStr fuelStr idStr
   | ["--osaka", hex, gasStr, fuelStr] => opcodeMain .osaka hex gasStr fuelStr
   | [hex, gasStr, fuelStr] => opcodeMain .shanghaiPlus hex gasStr fuelStr
   | _ =>
