@@ -62,6 +62,8 @@ structure Grid where
   captions : Array Nat := #[]
   /-- The `col` or `colgroup` element of each column that has one, by column index. -/
   columnElements : Array (Option Nat) := #[]
+  /-- The parent column group for each declared column, including a group's own span. -/
+  columnGroups : Array (Option Nat) := #[]
   deriving Repr, Inhabited
 
 /-- The grid of these rows and cells. Its column count is the end of the last cell, or the
@@ -228,6 +230,7 @@ def build (dom : Dom) (styles : Array Computed) (table : Nat) (kids : Array Nat)
   let mut bodies : Array GroupSpec := #[]
   let mut captions : Array Nat := #[]
   let mut columns : Array (Option Nat) := #[]
+  let mut columnGroups : Array (Option Nat) := #[]
   let mut run : Array Nat := #[]
   for k in kids do
     let d := displayOf styles k
@@ -242,15 +245,18 @@ def build (dom : Dom) (styles : Array Computed) (table : Nat) (kids : Array Nat)
     | .tableColumn =>
       let span := max 1 (min 1000 ((integerAttribute (dom.get k) "span").getD 1))
       columns := columns ++ Array.replicate span (some k)
+      columnGroups := columnGroups ++ Array.replicate span none
     | .tableColumnGroup =>
       let cols := (dom.get k).kids.filter fun c => displayOf styles c == .tableColumn
       if cols.isEmpty then
         let span := max 1 (min 1000 ((integerAttribute (dom.get k) "span").getD 1))
         columns := columns ++ Array.replicate span (some k)
+        columnGroups := columnGroups ++ Array.replicate span (some k)
       else
         for c in cols do
           let span := max 1 (min 1000 ((integerAttribute (dom.get c) "span").getD 1))
           columns := columns ++ Array.replicate span (some c)
+          columnGroups := columnGroups ++ Array.replicate span (some k)
     | .tableHeaderGroup =>
       let g : GroupSpec := ⟨some k,groupRows dom styles k (dom.get k).kids⟩
       if header.isNone then header := some g else bodies := bodies.push g
@@ -265,7 +271,7 @@ def build (dom : Dom) (styles : Array Computed) (table : Nat) (kids : Array Nat)
     if !rows.isEmpty then bodies := bodies.push ⟨none,rows⟩
   let groups := (header.toArray ++ bodies ++ footer.toArray)
   let (rows,cells) := place dom groups
-  return Grid.ofCells rows cells captions columns
+  return {Grid.ofCells rows cells captions columns with columnGroups}
 
 /-! ### Widths -/
 

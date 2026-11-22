@@ -295,6 +295,16 @@ extern_lib libl4hostread pkg := do
 
 @[default_target] lean_lib L4Factoidal
 
+-- Checked local ASK attestation, including the exhaustion/resource proofs.
+-- The native and zkVM edges call the same exported Lean computation (#745).
+lean_lib AskAttestation where
+  roots := #[`L4Factoidal.RDFS.CheckedTheorems, `L4Factoidal.RDFS.CheckedTests,
+    `L4Factoidal.SPARQLRL.CheckedTheorems, `L4Factoidal.SPARQLRL.CheckedSemanticTheorems,
+    `L4Factoidal.SPARQLRL.CheckedTests,
+    `L4Factoidal.Attestation.Tests, `Harness.AskAttestationExports]
+
+lean_exe «l4-ask-attest» where root := `Harness.AskAttestation
+
 -- Persistence proofs stay outside the browser's runtime import closure.
 lean_lib CookieWireProofs where
   roots := #[`L4Factoidal.Net.CookieWireTheorems]

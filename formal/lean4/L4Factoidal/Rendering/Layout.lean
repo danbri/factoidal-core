@@ -220,26 +220,39 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
 would need more paints its colour only. -/
 def maxBackgroundTiles : Nat := 4096
 
-/-- A background image at its natural size (CSS Backgrounds 3 initial values): tiles repeated in
-both directions from the padding box's top left corner (`background-origin: padding-box`,
-`background-position: 0% 0%`, `background-repeat: repeat`), clipped to the border box
-(`background-clip: border-box`). `(x,y,w,h)` is the border box. A 1 by 1 image is its one
-colour when it is opaque. The sizes, positions and repeats that pages set are not read yet (issue 747). -/
+private def backgroundTileSize (size : BackgroundSize) (iw ih w h : Float) : Float × Float :=
+  match size with
+  | .cover => let scale := max (w/iw) (h/ih); (iw*scale, ih*scale)
+  | .contain => let scale := min (w/iw) (h/ih); (iw*scale, ih*scale)
+  | .dimensions width height =>
+    match CSS.resolve w width, CSS.resolve h height with
+    | some tw, some th => (tw,th)
+    | some tw, none => (tw,ih*tw/iw)
+    | none, some th => (iw*th/ih,th)
+    | none, none => (iw,ih)
+
+/-- The first background layer is sized against the padding box and clipped to the
+border box. Repeated axes may need a tile before the origin to cover the border. -/
 def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   if b.width == 0 || b.height == 0 then return #[]
-  if b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
+  let iw := Float.ofNat b.width
+  let ih := Float.ofNat b.height
+  let e := s.borderEdges
+  let (tw,th) := backgroundTileSize s.backgroundSize iw ih (max 0 (w-e.left-e.right)) (max 0 (h-e.top-e.bottom))
+  if tw <= 0 || th <= 0 then return #[]
+  let (repeatX,repeatY) := s.backgroundRepeat
+  if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
     let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
     return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  let tw := Float.ofNat b.width
-  let th := Float.ofNat b.height
-  let e := s.borderEdges
   let ox := x+e.left
   let oy := y+e.top
-  let startX := ox-((ox-x)/tw).ceil*tw
-  let startY := oy-((oy-y)/th).ceil*th
-  let cols := ((x+w-startX)/tw).ceil.toUInt64.toNat
-  let rows := ((y+h-startY)/th).ceil.toUInt64.toNat
+  let startX := if repeatX then ox-((ox-x)/tw).ceil*tw else ox
+  let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
+  let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1
+  let rows := if repeatY then ((y+h-startY)/th).ceil.toUInt64.toNat else 1
   if cols*rows > maxBackgroundTiles then return #[]
+  let sx := iw/tw
+  let sy := ih/th
   let mut out := #[]
   for j in [0:rows] do
     for i in [0:cols] do
@@ -250,14 +263,20 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
       let r := min (x+w) (tx+tw)
       let bo := min (y+h) (ty+th)
       if r > l && bo > t then
-        out := out.push (.paint ⟨some id,{geometry := .rect l t (r-l) (bo-t),style := {fill := .image ⟨⟨1,0,0,1,-tx,-ty⟩,pic,b⟩}}⟩)
+        let image : ImageRecord := ⟨⟨sx,0,0,sy,-tx*sx,-ty*sy⟩,pic,b⟩
+        out := out.push (.paint ⟨some id,{geometry := .rect l t (r-l) (bo-t),style := {fill := .image image}}⟩)
   return out
+
+private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
+  if !s.visible || w <= 0 || h <= 0 then #[] else
+  match s.background with
+  | none => #[]
+  | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+
 
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
-  let colour := match s.background with
-    | none => #[]
-    | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  let colour := backgroundColour id s x y w h
   -- CSS Backgrounds 3 §3.2: the image over the colour
   let withGradient := match s.backgroundGradient with
     | none => colour
@@ -277,7 +296,7 @@ dark at the bottom and right; `inset` is the reverse. -/
 def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
   if !s.visible || w <= 0 || h <= 0 || s.borderStyle == .none then return #[]
-  let c := s.borderColor.getD s.color
+  let some c := s.borderColor.resolve s.color | return #[]
   let (near,far) := match s.borderStyle with
     | .outset => (lighter c,darker c)
     | .inset => (darker c,lighter c)
@@ -500,6 +519,20 @@ def autoMarginShift (s : Computed) (available outer : Float) : Float :=
   let free := available-outer
   if free <= 0 || !s.autoMarginLeft then 0
   else if s.autoMarginRight then free/2 else free
+
+/-- Resolve the used left margin of a horizontal block in normal flow.
+With specified margins the containing block's direction selects the side that
+absorbs the remaining space. On overflow, auto margins first become zero
+(CSS 2.2 §10.3.3). -/
+def blockMarginShift (s : Computed) (rtl : Bool) (available outer : Float) : Float :=
+  let free := available-outer
+  if rtl && (free < 0 || (!s.autoMarginLeft && !s.autoMarginRight)) then free
+  else autoMarginShift s available outer
+
+#guard blockMarginShift {} true 100 52 == 48
+#guard blockMarginShift {} false 100 52 == 0
+#guard blockMarginShift {autoMarginLeft := true, autoMarginRight := true} true 100 40 == 30
+#guard blockMarginShift {autoMarginRight := true} true 100 120 == -20
 
 /-- The width that margins, borders and padding add to a box. -/
 private def horizontalEdges (s : Computed) : Float :=
@@ -1482,7 +1515,7 @@ inductive Task where
   | inner (id : Nat) (width : Float)
   /-- Absolutely positioned boxes laid out in the containing block `(cx,cy,cw,ch)`: for
   the root, whose containing block is the viewport (`render`). -/
-  | positioned (pending : Array Pending) (cx cy cw ch : Float)
+  | positioned (content : Result) (cx cy cw ch : Float)
   /-- `box id` in a block formatting context that has `floats` already (CSS 2.1 §9.5): the
   lines of the box and of its descendants are beside them. -/
   | flowed (id : Nat) (floats : Array Floats.Box)
@@ -2255,7 +2288,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let cy := innerY+rowY.getD cell.row 0
         let w := Table.spanSize widths cell.col cell.colSpan hs
         let h := Table.spanSize rows cell.row cell.rowSpan vs
-        -- Row group, row and cell backgrounds, each in the cell's area (CSS 2.1 §17.5.1).
+        -- The originating column and group paint under the row layers, within the
+        -- cell's area even for a spanning cell (CSS 2.2 §17.5.1). A group with
+        -- no child columns supplies the sizing ID; paint its colour only once.
+        let columnGroup := grid.columnGroups.getD cell.col none
+        let column := grid.columnElements.getD cell.col none
+        if let some id := columnGroup then
+          nodes := nodes ++ backgroundColour id styles[id]! cx cy w h
+        if column != columnGroup then
+          if let some id := column then
+            nodes := nodes ++ backgroundColour id styles[id]! cx cy w h
         let row := grid.rows.getD cell.row ⟨none,none⟩
         for layer in [row.group,row.element] do
           if let some id := layer then nodes := nodes ++ background id (styles[id]!) cx cy w h
@@ -2502,8 +2544,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             | some m => min width m
             | none => width
           max 0 (max ((widthOf s.minWidth).getD 0) width)
-      -- §10.3.3: auto margins share the room the box leaves; an imposed box is placed by its parent.
-      let shift := if imposedWidth.isSome then 0 else autoMarginShift s available (margin.left+width+edgesX+margin.right)
+      -- The parent resolves an imposed box's margins. In horizontal normal flow,
+      -- use the containing block's direction, even when the child has its own.
+      let move := fun outer =>
+        if imposedWidth.isSome then 0 else
+        let containing := (n.parent.bind fun id => styles[id]?).getD s
+        let rtl := s.display.isBlockLevel && containing.pos.writingMode == .horizontalTb &&
+          containing.direction == .rtl
+        blockMarginShift s rtl available outer
+      let shift := move (margin.left+width+edgesX+margin.right)
       -- CSS 2.1 §8.3.1: a block in a block formatting context whose top margin adjoins its
       -- first child's shows the larger of the two, and the child starts at its top edge.
       let joinsTop := imposedWidth.isNone && !contentOnly && collapsesTop dom s id
@@ -2516,7 +2565,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- its auto margins put it.
       let replaced := fun (w h : Float) (content : Float → Float → List Node) (s : Computed) =>
         let (ow,oh,nodes) := replacedBox id s w h content
-        let dx := if imposedWidth.isSome then 0 else autoMarginShift s available ow
+        let dx := move ow
         ({nodes := #[.group none (translate (x+dx) y) nodes],
           boxes := #[⟨id,x+dx+margin.left,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh,
           marginBottom := margin.bottom} : Result)
@@ -2689,7 +2738,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     | .box id => box id none none false
     | .sized id width height => box id (some width) height false
     | .inner id width => box id (some width) none true
-    | .positioned pending cx cy cw ch => place {pending} cx cy cw ch true fun _ => none
+    | .positioned content cx cy cw ch => place content cx cy cw ch true fun _ => none
     | .rough inner => layoutTask dom styles font embedding pictures fuel (.rough inner) x y available
 
 /-- An element's block box: `layoutTask` of `.box id`. -/
@@ -2709,9 +2758,8 @@ def layoutRoot (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
   let mut laid ← block dom styles font embedding pictures 64 0 0 0 vw
   for _ in [0:4] do
     if laid.pending.isEmpty then break
-    let placed ← layoutTask dom styles font embedding pictures 64 (.positioned laid.pending 0 0 vw vh) 0 0 vw
-    laid := {laid with nodes := laid.nodes ++ placed.nodes, boxes := laid.boxes ++ placed.boxes,
-                       runs := laid.runs ++ placed.runs, pending := placed.pending, work := laid.work+placed.work}
+    -- The same paint ordering used for a local containing block applies at the root.
+    laid ← layoutTask dom styles font embedding pictures 64 (.positioned laid 0 0 vw vh) 0 0 vw
   return laid
 
 /-- The nearest HTML anchor with an href attribute, including href="". -/
@@ -2828,6 +2876,7 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
     {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
+            backgroundSize := s.backgroundSize.atViewport vw vh,
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}
   -- Percentage margins and padding, where the containing block's width is definite.

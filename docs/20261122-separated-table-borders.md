@@ -14,3 +14,5 @@ An extracted Lean check confirmed the four cell insets and preservation of the
 existing collapsed-model insets. Collapsed border conflict resolution remains
 separate. The native table check and the full selected border pixel comparison
 are pending at WPT commit `4b26db8978f6024d3184ca483d74afbc354b35de`.
+
+The stretch follow-up retained both visual gains on the original baseline. This branch now includes the merged root stacking and transparent border changes. The paired follow-up isolates the table geometry against that main revision.

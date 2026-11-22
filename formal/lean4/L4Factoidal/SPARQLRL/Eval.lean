@@ -321,6 +321,25 @@ def freshPrefix (ids : List String) : String :=
 def termBound (ge : IGraph) (rules : List Rule) : Nat :=
   3 * ge.size + 3 * (rules.foldl (fun n r => n + r.head.length) 0) + 1
 
+/-- One existing general-rule round, returning its newly derived triples and
+the next blank-node counter. Shared by the ordinary and checked runners.
+`first = true` evaluates every rule against the full evaluation graph.
+Issue: https://github.com/danbri/factoidal-core/issues/745. -/
+@[inline] def generalRound (cx : Ctx) (pfx : String) (rules : List Rule)
+    (first : Bool) (ge delta : IGraph) (ctr : Nat) : IGraph × Nat :=
+  let full : Nat → Src := fun _ => ⟨ge, none⟩
+  let (out, ctr') := rules.foldl (fun (acc, c) r =>
+    let sols :=
+      if first then evalBody cx r ge full
+      else if !r.evaldata then []
+      else (List.range (countTriples r.body)).flatMap fun k =>
+        evalBody cx r ge (fun i =>
+          if i < k then ⟨ge, some delta⟩ else if i == k then ⟨delta, none⟩ else ⟨ge, none⟩)
+    let (ts, c') := instHead r pfx c sols
+    (acc ++ ts, c')) (#[], ctr)
+  let delta' : IGraph := out.foldl (fun d t => if ge.contains t then d else d.insert t) {}
+  (delta', ctr')
+
 /-- The general rules of one layer to a fixpoint (semi-naive; see the module
 header). `delta` is what the previous round added; `first` marks the naive
 first round. -/
@@ -328,17 +347,7 @@ def generalLoop (cx : Ctx) (pfx : String) (rules : List Rule) :
     Nat → Bool → IGraph → IGraph → Nat → IGraph × Nat
   | 0, _, ge, _, ctr => (ge, ctr)
   | f + 1, first, ge, delta, ctr =>
-    let full : Nat → Src := fun _ => ⟨ge, none⟩
-    let (out, ctr') := rules.foldl (fun (acc, c) r =>
-      let sols :=
-        if first then evalBody cx r ge full
-        else if !r.evaldata then []
-        else (List.range (countTriples r.body)).flatMap fun k =>
-          evalBody cx r ge (fun i =>
-            if i < k then ⟨ge, some delta⟩ else if i == k then ⟨delta, none⟩ else ⟨ge, none⟩)
-      let (ts, c') := instHead r pfx c sols
-      (acc ++ ts, c')) (#[], ctr)
-    let delta' : IGraph := out.foldl (fun d t => if ge.contains t then d else d.insert t) {}
+    let (delta', ctr') := generalRound cx pfx rules first ge delta ctr
     if delta'.size == 0 then (ge, ctr')
     else generalLoop cx pfx rules f false (ge.insertAll delta'.all) delta' ctr'
 

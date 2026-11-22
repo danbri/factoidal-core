@@ -56,7 +56,7 @@ async function main() {
   }
   let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
-  let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
+  let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=100;
   let accessibilityOn=false;
   let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
@@ -468,7 +468,7 @@ async function main() {
         // for its scripts' layout reads; an engine without them ignores the fields.
         // (The first page starts before the window's size and chrome are set: then 1280 by 800.)
         const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100,zoomUnit:view.zoomUnit??100};}
-          catch{return {width:1280,height:800,textScalePercent:150,zoomUnit:100};}})();
+          catch{return {width:1280,height:800,textScalePercent:100,zoomUnit:100};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
@@ -745,9 +745,9 @@ async function main() {
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
-  // Text zoom 200 (WebSelection.defaultPercent; it was 150) until the window's backing scale is
-  // known; then zoom unit 100*scale and zoom 200*scale, which the settings page shows as 200%.
-  const view:PageView={textScalePercent:200};
+  // Text zoom 100 (WebSelection.defaultPercent) until the window's backing scale is
+  // known; the zoom unit and the normal text size then both use 100*scale.
+  const view:PageView={textScalePercent:100};
   let press:NativePress<typeof document>|undefined,lastCopied:string|undefined,loading=false;
   // The press on screen (issue 1268): Lean's `press` answer (a chrome control, or the link's
   // node for `:active`, and the rectangles that the composite darkens), the time its event was
@@ -1144,7 +1144,7 @@ async function main() {
   let zoomOps:boolean|undefined;
   const textZoom=(argument="")=>{
     if(zoomOps===false)return undefined;
-    try{const answer=engine.textZoom(argument,view.textScalePercent??200,view.zoomUnit??100);zoomOps=true;return answer;}
+    try{const answer=engine.textZoom(argument,view.textScalePercent??100,view.zoomUnit??100);zoomOps=true;return answer;}
     catch{zoomOps=false;return undefined;}
   };
   const zoomTo=(next:number)=>{
@@ -1558,8 +1558,8 @@ async function main() {
     }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
     // Layout in points, drawn at the backing scale (WebDocument, Device pixels): Lean lays the page
-    // out width/scale CSS px wide. The starting text zoom is 200% of a usual browser's text at this
-    // scale (WebSelection.unitPercent), as on the Hub; a saved zoom (read above, applied later) wins.
+    // out width/scale CSS px wide. Start at the usual CSS text size at this backing scale
+    // (WebSelection.unitPercent); a saved zoom (read above, applied later) wins.
     view.zoomUnit=scale*100;view.textScalePercent=Math.max(50,Math.round(textSize*scale/5)*5);
     if(commands)native.testRaise();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});

@@ -93,6 +93,20 @@ inductive UnicodeBidi where | normal | embed | isolate | bidiOverride | isolateO
 /-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
 inductive BorderStyle where | none | solid | inset | outset
   deriving Repr, BEq
+/-- The border paint is independent of whether its widths take up space. -/
+inductive BorderColor where
+  | current
+  | transparent
+  | solid (color : Color)
+  deriving Repr
+
+/-- Substitute the element's computed text colour when the border uses currentcolor. -/
+def BorderColor.resolve (paint : BorderColor) (currentColor : Color) : Option Color :=
+  match paint with
+  | .current => some currentColor
+  | .transparent => none
+  | .solid c => some c
+
 /-- A `linear-gradient()` background image (CSS Images 3 §3.1): the direction as an angle in
 degrees (0 is up, 90 is right; `to bottom`, the default, is 180), or a corner (`to top
 right`: x and y each -1, 0 or 1), whose angle depends on the box; and the colour stops, each
@@ -102,6 +116,13 @@ structure BackgroundGradient where
   angle : Float := 180
   corner : Option (Int × Int) := none
   stops : List (Color × Float × Option (Float × Bool)) := []
+  deriving Repr
+
+/-- Size of the first raster background layer (CSS Backgrounds 3 §2.9). -/
+inductive BackgroundSize where
+  | dimensions (width height : Length)
+  | cover
+  | contain
   deriving Repr
 
 structure Computed where
@@ -136,7 +157,7 @@ structure Computed where
   borderWidth : Edges := ⟨3,3,3,3⟩
   borderStyle : BorderStyle := .none
   /-- None: `currentColor`. -/
-  borderColor : Option Color := none
+  borderColor : BorderColor := .current
   /-- `border-spacing`, horizontal and vertical (inherited). -/
   borderSpacingX : Float := 0
   borderSpacingY : Float := 0
@@ -223,6 +244,8 @@ structure Computed where
   bytes and they decoded (`WebDocument` sets it after the cascade); `Layout.background` tiles
   it. None: only the colour (and a gradient) is painted, as before. -/
   backgroundBitmap : Option (Nat × Bitmap) := none
+  backgroundSize : BackgroundSize := .dimensions .auto .auto
+  backgroundRepeat : Bool × Bool := (true, true)
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -237,7 +260,7 @@ def htmlProperties : List String :=
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
    "min-width","max-width","min-height","max-height","object-fit","text-align",
-   "direction","unicode-bidi"]
+   "direction","unicode-bidi","background-size","background-repeat"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
@@ -612,7 +635,11 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     -- and its image, `none` unless it is a `linear-gradient()` (the one image drawn)
     if key == "background" then
       let image := if (gradientArgs d.value).isSome || (firstUrl? d.value).isSome then d.value else "none"
-      (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
+      let expanded := CssValues.expand key d.value
+      let rasterPlacement : List Declaration := ["background-size", "background-repeat"].filterMap fun name =>
+        (expanded.bind (·.lookup name)).map fun value => ⟨name,value,d.important⟩
+      (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ ::
+        rasterPlacement ++ (whole :: acc) else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
@@ -990,6 +1017,12 @@ def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
   | .vh n => .px (n*height).floor
   | other => other
+
+def BackgroundSize.atViewport (vw vh : Float) : BackgroundSize → BackgroundSize
+  | .dimensions w h => .dimensions (w.atViewport vw vh) (h.atViewport vw vh)
+  | .cover => .cover
+  | .contain => .contain
+
 private def pixels (s : String) : Except String Float := do
   match ← length s with | .px n => return n | _ => throw "box edges require px in this CSS profile"
 private def color (source : String) : Except String Color := do
@@ -1025,6 +1058,12 @@ against font size `fontSize`; `none` when it is not a value of the property. -/
 def tableComputed (fontSize : Float) (property value : String) : Option String :=
   (CssValues.specified property value).map fun s =>
     CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
+
+private def borderPaint (source : String) : Except String BorderColor :=
+  match (trim source).toLower with
+  | "transparent" => .ok .transparent
+  | "currentcolor" => .ok .current
+  | _ => .solid <$> color source
 
 private def edgeValues (s : String) : Except String Edges := do
   let vals ← (words s).mapM pixels
@@ -1338,6 +1377,31 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
         | some (.px x) => width := some (max 0 x)
         | _ => throw "columns: not a count or a length"
     return {s with columnCount := count, columnWidth := width}
+  | "background-size" =>
+    let parts := (CssValues.commaItems d.value).headD []
+    let word := CssValues.serialize parts
+    if word == "cover" then return {s with backgroundSize := .cover}
+    if word == "contain" then return {s with backgroundSize := .contain}
+    let read := fun cv =>
+      let value := CssValues.serialize [cv]
+      (length value).toOption.orElse fun _ => tableLength s.fontSize "width" value
+    let size := match parts with
+      | [a] => (read a).map fun x => BackgroundSize.dimensions x .auto
+      | [a,b] => (read a).bind fun x => (read b).map fun y => BackgroundSize.dimensions x y
+      | _ => none
+    match size with
+    | some v => return {s with backgroundSize := v}
+    | none => throw "unsupported background size"
+  | "background-repeat" =>
+    let parts := (CssValues.commaItems d.value).headD []
+    let value := String.intercalate " " (parts.map fun cv => CssValues.serialize [cv])
+    let axes ← match value with
+      | "repeat" | "repeat repeat" => pure (true,true)
+      | "repeat-x" | "repeat no-repeat" => pure (true,false)
+      | "repeat-y" | "no-repeat repeat" => pure (false,true)
+      | "no-repeat" | "no-repeat no-repeat" => pure (false,false)
+      | _ => throw "unsupported background repeat mode"
+    return {s with backgroundRepeat := axes}
   | "background-image" =>
     if (trim d.value).toLower == "none" then return {s with backgroundGradient := none, backgroundImage := none}
     -- The first layer: an image URL (`url(...)`) or a linear gradient, whichever comes first.
@@ -1355,10 +1419,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if v <= 0 then throw "font-size must be positive"
     return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
   | "line-height" =>
+    if d.value == "0px" then
+      return {s with lineHeight := 0, lineHeightFactor := none}
     let factor ← if d.value.endsWith "px" then pure none
       else some <$> (if d.value == "normal" then pure 1.2 else number d.value)
     let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
-    if v <= 0 then throw "line-height must be positive"
+    if v < 0 then throw "line-height must be non-negative"
     return {s with lineHeight := v, lineHeightFactor := factor}
   -- `white-space` and `white-space-collapse` (CSS Text 4 §3): white space and line breaks
   -- kept (`pre`, `pre-wrap`, `pre-line`, `break-spaces`, `preserve`) or collapsed
@@ -1413,16 +1479,16 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     else if s.borderStyle == .none then return {s with borderStyle := st, borderWidth := only}
     else return {s with borderStyle := st}
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
-    return {s with borderColor := some (← color d.value)}
+    return {s with borderColor := ← borderPaint d.value}
   | "border-width" => return {s with borderWidth := ← borderEdges s.fontSize d.value}
-  | "border-color" => return {s with borderColor := some (← color d.value)}
+  | "border-color" => return {s with borderColor := ← borderPaint d.value}
   | "border" =>
     -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
-    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := none}
+    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := .current}
     for part in words d.value do
       if let .ok style := borderStyle part then out := {out with borderStyle := style}
       else if let .ok w := borderWidthPx s.fontSize part then out := {out with borderWidth := ⟨w,w,w,w⟩}
-      else out := {out with borderColor := some (← color part)}
+      else out := {out with borderColor := ← borderPaint part}
     return out
   | "border-spacing" =>
     match ← (words d.value).mapM pixels with
@@ -1642,7 +1708,7 @@ def ownProperties : List String :=
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
-   "font-family","background-image","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
+   "font-family","background-image","background-size","background-repeat","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
 alignment, position and grid readers take, `content`, and the prefixed names those readers
@@ -1737,6 +1803,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
   | "background-image" => some {s with backgroundGradient := source.backgroundGradient, backgroundImage := source.backgroundImage}
+  | "background-size" => some {s with backgroundSize := source.backgroundSize}
+  | "background-repeat" => some {s with backgroundRepeat := source.backgroundRepeat}
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
@@ -1803,6 +1871,21 @@ private def applyWinner (parent start s : Computed) (d : Declaration) : Computed
   match wideSource parent start d with
   | some source => (copyProperty d.property source s).getD s
   | none => applyOrKeep s d
+
+/-- The ordinary winning-declaration path sets a zero pixel line height and
+clears the inherited unitless factor, preserving the remaining style fields. -/
+theorem applyWinner_lineHeight_zeroPx (parent start s : Computed) :
+    applyWinner parent start s ⟨"line-height", "0px", false⟩ =
+      {s with lineHeight := 0, lineHeightFactor := none} := by
+  have wide : wideSource parent start ⟨"line-height", "0px", false⟩ = none := by
+    have spelling : (trim "0px").toLower = "0px" := by cbv
+    simp [wideSource, spelling]
+  have supported : appliedName "line-height" = true := by simp [appliedName, ownProperties]
+  have value : apply s ⟨"line-height", "0px", false⟩ =
+      .ok {s with lineHeight := 0, lineHeightFactor := none} := rfl
+  simp only [applyWinner, wide, applyOrKeep, supported, if_true, applyOrKeepSlow, value]
+
+#print axioms applyWinner_lineHeight_zeroPx
 
 /-- `inherit` gives the parent's value. -/
 theorem copyProperty_color (source s : Computed) :
@@ -1955,7 +2038,7 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   -- HTML §15.3.10: a `table`'s `bordercolor` maps to the four `border-*-color` properties
   if tag == "table" then
     let bc := attrValue n "bordercolor"
-    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColor := some c}
+    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColor := .solid c}
   if ["tr","td","th","thead","tbody","tfoot"].contains tag then
     match (attrValue n "valign").toLower with
     | "top" => s := {s with verticalAlign := .top}
@@ -1983,7 +2066,8 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
   let sized := imageInput || ["img","video","canvas","iframe","embed","object","marquee"].contains tag
   if !sized && tag != "hr" then return s
-  let mut s := s
+  -- HTML §15.4.1: the video box contains its poster at its intrinsic ratio.
+  let mut s := if tag == "video" then {s with objectFit := .contain} else s
   if let some w := dimensionAttribute (attrValue n "width") then s := {s with width := w}
   if sized then
     if let some h := dimensionAttribute (attrValue n "height") then s := {s with height := h}
@@ -3153,7 +3237,7 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     display := .inline, width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
     columnCount := none, columnWidth := none,
-    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
+    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := .current,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by
@@ -3665,6 +3749,13 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
 #guard firstUrl? "url(a.png" == none
 #guard (applyDeclaration ({} : Computed) "background-image" "url(/i/a.png)").map (·.backgroundImage) == some (some "/i/a.png")
 #guard (applyDeclaration ({} : Computed) "background-image" "none").map (·.backgroundImage) == some none
+#guard match applyDeclaration ({} : Computed) "background-size" "50% auto" with
+  | some style =>
+    match style.backgroundSize with
+    | BackgroundSize.dimensions (Length.percent value) Length.auto => value == 0.5
+    | _ => false
+  | none => false
+#guard (applyDeclaration ({} : Computed) "background-repeat" "repeat-y").map (·.backgroundRepeat) == some (false,true)
 #guard (applyDeclaration ({} : Computed) "background-image" "linear-gradient(red, blue), url(a.png)").map (·.backgroundImage) == some none
 
 -- Border widths in every length unit and keyword (`borderWidthPx`; WPT css/CSS2/borders).

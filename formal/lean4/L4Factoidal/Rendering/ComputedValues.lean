@@ -75,7 +75,7 @@ def values (c : Computed) : List (String × String) :=
   let edges := fun (name : String) (e : Edges) (f : Float → String) =>
     [(s!"{name}-top", f e.top), (s!"{name}-right", f e.right), (s!"{name}-bottom", f e.bottom), (s!"{name}-left", f e.left)]
   let bw := c.borderEdges
-  let bc := color (c.borderColor.getD c.color)
+  let bc := ((c.borderColor.resolve c.color).map color).getD "rgba(0, 0, 0, 0)"
   [("display", display c.display), ("width", length c.width), ("height", length c.height)] ++
   edges "margin" c.margin px ++ edges "padding" c.padding px ++
   [("color", color c.color),
