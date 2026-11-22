@@ -35,12 +35,12 @@ jobs:
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==107 and x["files"]==77,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==112 and x["files"]==77,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==3,x'
-          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==107 and x["sourceFiles"]==17,x'
+          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==112 and x["sourceFiles"]==17,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -226,7 +226,7 @@ jobs:
         working-directory: formal/lean4
         run: |
           mkdir -p evm-cleanroom/.lake/differential
-          node evm-cleanroom/scripts/differential/solidity-pure.mjs | tee evm-cleanroom/.lake/differential/solidity-pure.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==594 and x["mismatches"]==0 and x["signedCases"]==332 and x["sgtCases"]==67 and x["signExtendCases"]==146 and x["modularCases"]==100 and x["forbiddenRefusals"]==5 and x["legacyCompatibility"]==1,x'
+          node evm-cleanroom/scripts/differential/solidity-pure.mjs | tee evm-cleanroom/.lake/differential/solidity-pure.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==763 and x["mismatches"]==0 and x["signedCases"]==332 and x["sgtCases"]==67 and x["signExtendCases"]==146 and x["modularCases"]==100 and x["modExpCases"]==169 and x["forbiddenRefusals"]==5 and x["legacyCompatibility"]==1,x'
       - name: Replay read-only RPC captures offline with the compiled guarded frame comparator
         shell: bash
         working-directory: formal/lean4
