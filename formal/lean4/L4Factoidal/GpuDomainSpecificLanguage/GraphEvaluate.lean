@@ -109,7 +109,7 @@ def evaluateWith? (primitive : Operator → List Value → Option UInt32 → Exc
 
 /-- Default evaluator: the actual Lean reference primitives. -/
 def evaluate? (rawGraph rawBindings : Json) : Except String Json :=
-  evaluateWith? GraphWords.execute rawGraph rawBindings
+  evaluateWith? (fun op args k => GraphWords.execute op args k) rawGraph rawBindings
 
 /-- All admitted PVGraphs are parametric in their primitive interpreter.
     Primitive-level equivalence yields full-program equivalence, including
