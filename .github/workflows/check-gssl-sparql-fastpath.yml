@@ -23,6 +23,7 @@ jobs:
         L4Factoidal.GpuDomainSpecificLanguage.RdfTermCodebook
         L4Factoidal.SPARQL.GsslEncodedBgpRefinement
         L4Factoidal.SPARQL.PvGraphBgpLowering
+        L4Factoidal.SPARQL.PvGraphHybridPlacement
         L4Factoidal.Dataflow.XmlSourceGraphStage
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec
         L4Factoidal.GpuDomainSpecificLanguage.Sbm11U64Lanes
@@ -57,6 +58,9 @@ jobs:
         L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_indexed
         L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_evalIn
         L4Factoidal.SPARQL.PvGraphBgpLowering.reconstructed_eq_namedGraph
+        L4Factoidal.SPARQL.PvGraphHybridPlacement.run_eq_indexed
+        L4Factoidal.SPARQL.PvGraphHybridPlacement.chosen_eq_indexed
+        L4Factoidal.SPARQL.PvGraphHybridPlacement.serviceStage_contract
         L4Factoidal.Dataflow.XmlSourceGraphStage.sourceDataset_lookup
         L4Factoidal.Dataflow.XmlSourceGraphStage.ingestSourceStage_exact
         L4Factoidal.GpuDomainSpecificLanguage.RdfCanonicalCodec.admitted_identity
