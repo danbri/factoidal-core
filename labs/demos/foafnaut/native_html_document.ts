@@ -493,12 +493,18 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // them, with the fetched sheets in hand, and reads each in place of its @import rule. A page
   // whose sheets import nothing costs one inspect more only if it has a sheet at all.
   const imported:{url:string;source:string}[]=[];
+  // The last inspect made with the sheets in hand: it lists the background images of the sheets.
+  let sheetsInspection:{backgroundImages?:{key:string;url:string}[]}|undefined;
   const importsNow=async()=>{
     const hasSheet=resources.length>0||/<style/i.test(document.source);
     if(!hasSheet&&!options?.commands)return;
     const before=imported.length;
-    await loadImports((list:{url:string;source:string}[])=>engine.inspect(document.source,{url:document.url,...mode,resources,
-        ...(list.length?{imported:list}:{}),...(options?.commands?{commands:options.commands}:{})}),
+    await loadImports(async(list:{url:string;source:string}[])=>{
+        const answer=await engine.inspect(document.source,{url:document.url,...mode,resources,
+          ...(list.length?{imported:list}:{}),...(options?.commands?{commands:options.commands}:{})});
+        sheetsInspection=answer as {backgroundImages?:{key:string;url:string}[]};
+        return answer;
+      },
       async(sheetURL:string)=>{navigationURL(sheetURL,document.url,document.url);return readSheet(sheetURL);},imported,
       (sheetURL:string,reason:string)=>fetchFailed("style sheet",sheetURL,`imported style sheet not read: ${reason}`,"page drawn without it"));
     if(imported.length&&options)options.imported=imported;
@@ -518,9 +524,20 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // Only a page whose scripts do not run: a script session starts with the page's images (its
   // layout reads and the load event are of the page with them, in every host alike), so a
   // page with scripts waits for them as before.
-  const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&(inspection.images??[]).length>0;
+  // Background images (CSS `url()` in background declarations, WebDocument.backgroundImageRequests):
+  // listed by the first inspect for style elements and attributes, and by the inspect made with
+  // the sheets for the sheets; fetched with the rules of images and given with them. An engine
+  // that does not list them gets none.
+  const listedImages=new Set((inspection.images??[]).map(image=>image.key));
+  const backgroundWanted=[...((inspection as {backgroundImages?:{key:string;url:string}[]}).backgroundImages??[]),...(sheetsInspection?.backgroundImages??[])]
+    .filter(image=>!listedImages.has(image.key)&&(listedImages.add(image.key),true));
+  const pageImageBytes=backgroundWanted.length?Promise.all([imageBytes,fetchImageBytes(backgroundWanted,document.url,signal,
+    (imageURL,reason)=>fetchFailed("background image",imageURL,`image not read: ${reason}`,"background colour shown"),engine as SubresourceEngine)])
+    .then(([a,b])=>[...a,...b]):imageBytes;
+  pageImageBytes.catch(()=>{});
+  const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&((inspection.images??[]).length>0||backgroundWanted.length>0);
   let revision=0,imagesPending=later,imagesStarted=!later;
-  const images:Record<string,unknown>=later?{}:await imageOptions(engine,await imageBytes);
+  const images:Record<string,unknown>=later?{}:await imageOptions(engine,await pageImageBytes);
   // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images. One that fails or is refused leaves the tab with no icon.
   let iconBase64:string|undefined;
   if(inspection.icon&&iconReading)try{
@@ -612,7 +629,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   const startImages=()=>{
     if(imagesStarted)return;
     imagesStarted=true;
-    imageBytes.then(bytes=>imageOptions(engine,bytes)).then(more=>{
+    pageImageBytes.then(bytes=>imageOptions(engine,bytes)).then(more=>{
       for(const key of ["images","heldImages"] as const)
         if(Array.isArray(more[key])&&options)options[key]=[...((options[key] as unknown[]|undefined)??[]),...(more[key] as unknown[])];
       lateChange=true;

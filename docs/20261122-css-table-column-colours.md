@@ -13,6 +13,11 @@ group and track rectangles as separate positioning areas. Collapsed border
 conflict handling remains separate.
 
 Local Lean 4.33.1 compiled the changed table grid module with warnings treated
-as errors against the available compiled Style module. Native compilation and
-paired pixel checks will exercise the complete engine at WPT commit
-`4b26db8978f6024d3184ca483d74afbc354b35de`.
+as errors against the available compiled Style module. Native compilation passed. The paired check at WPT commit
+`4b26db8978f6024d3184ca483d74afbc354b35de` reduced the focused fixture from
+3,200 differing pixels to zero. Four of the twelve official reftests also
+reduced their difference, and all twelve still fail. CSS table testharness
+results were unchanged at 534/951 across 141 cases.
+
+[Pixel results](https://github.com/danbri/factoidal-builds/actions/runs/45060069514)
+· [Table testharness results](https://github.com/danbri/factoidal-builds/actions/runs/45059938354)

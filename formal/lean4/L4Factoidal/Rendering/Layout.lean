@@ -216,19 +216,60 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
   .gradient {shape := .linear (cx-dx*length/2) (cy-dy*length/2) (cx+dx*length/2) (cy+dy*length/2),
              boundingBoxUnits := false,stops}
 
+/-- Most tiles of one background image that a box paints (`backgroundTiles`); a box that
+would need more paints its colour only. -/
+def maxBackgroundTiles : Nat := 4096
+
+/-- A background image at its natural size (CSS Backgrounds 3 initial values): tiles repeated in
+both directions from the padding box's top left corner (`background-origin: padding-box`,
+`background-position: 0% 0%`, `background-repeat: repeat`), clipped to the border box
+(`background-clip: border-box`). `(x,y,w,h)` is the border box. A 1 by 1 image is its one
+colour when it is opaque. The sizes, positions and repeats that pages set are not read yet (issue 747). -/
+def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float) : Array Node := Id.run do
+  if b.width == 0 || b.height == 0 then return #[]
+  if b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
+    let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
+    return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  let tw := Float.ofNat b.width
+  let th := Float.ofNat b.height
+  let e := s.borderEdges
+  let ox := x+e.left
+  let oy := y+e.top
+  let startX := ox-((ox-x)/tw).ceil*tw
+  let startY := oy-((oy-y)/th).ceil*th
+  let cols := ((x+w-startX)/tw).ceil.toUInt64.toNat
+  let rows := ((y+h-startY)/th).ceil.toUInt64.toNat
+  if cols*rows > maxBackgroundTiles then return #[]
+  let mut out := #[]
+  for j in [0:rows] do
+    for i in [0:cols] do
+      let tx := startX+Float.ofNat i*tw
+      let ty := startY+Float.ofNat j*th
+      let l := max x tx
+      let t := max y ty
+      let r := min (x+w) (tx+tw)
+      let bo := min (y+h) (ty+th)
+      if r > l && bo > t then
+        out := out.push (.paint ⟨some id,{geometry := .rect l t (r-l) (bo-t),style := {fill := .image ⟨⟨1,0,0,1,-tx,-ty⟩,pic,b⟩}}⟩)
+  return out
+
 private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
   match s.background with
   | none => #[]
   | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
 
+
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
   let colour := backgroundColour id s x y w h
   -- CSS Backgrounds 3 §3.2: the image over the colour
-  match s.backgroundGradient with
-  | none => colour
-  | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
+  let withGradient := match s.backgroundGradient with
+    | none => colour
+    | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
+  match s.backgroundBitmap with
+  | none => withGradient
+  | some (pic,b) => withGradient ++ backgroundTiles id pic b s x y w h
 
 /-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
 agent): the colour moved 60% of the way to white, and 60% of the colour. -/
@@ -558,6 +599,21 @@ def lineBreakMode (s : Computed) : Unicode.LineBreak.Mode :=
   | .normal => .normal
   | .loose => .loose
 
+/-- The visible fallback for controls that reach the text shaper (CSS Text 3 §4).
+Use the replacement glyph so a font without Control Pictures still draws them.
+The one-code-point substitution retains text offsets. -/
+private def visibleControl (c : Char) : Char :=
+  let n := c.toNat
+  if (0x7F ≤ n && n ≤ 0x9F) || (n < 0x20 && n != 0x09 && n != 0x0A && n != 0x0D) then
+    Char.ofNat 0xFFFD
+  else c
+
+#guard (visibleControl (Char.ofNat 0x01)).toNat == 0xFFFD
+#guard (visibleControl (Char.ofNat 0x7F)).toNat == 0xFFFD
+#guard (visibleControl (Char.ofNat 0x85)).toNat == 0xFFFD
+#guard visibleControl '\t' == '\t' && visibleControl '\n' == '\n' &&
+  visibleControl '\r' == '\r' && visibleControl (Char.ofNat 0x200D) == Char.ofNat 0x200D
+
 private def textItems (id : TextSource) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
   let mut word := ""
@@ -591,7 +647,7 @@ private def textItems (id : TextSource) (style : Computed) (text : String) : Lis
         | .uppercase => TextCase.upper c
         | .lowercase => TextCase.lower c
         | .capitalize => if word.isEmpty then TextCase.upper c else c
-      word := word.push shown
+      word := word.push (visibleControl shown)
       spaced := false
       column := column+1
     index := index+1
