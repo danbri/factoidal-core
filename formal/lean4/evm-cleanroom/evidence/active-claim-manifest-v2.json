@@ -8,18 +8,18 @@
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "9bc316006871083b45888e8dd0ce52c8c9b667a7",
+    "EVMCleanroom/Core.lean": "cbe1f657d7cf5856e21d78f6517968857a8f3117",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85bd5a29e209f41b6b25aa148b2ce35b9c2ddd3e",
     "EVMCleanroom/Frame.lean": "6a29b0ea0de533d5907ceb72ee79a5a05d6df5ad",
-    "EVMCleanroom/World.lean": "f86f034dd9329fb58446e134f5babd64d59b9ceb",
+    "EVMCleanroom/World.lean": "91d4227c9dbb9b1ec4be284843f07a3e1c511a80",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
     "EVMCleanroom/Call.lean": "dc93647332fefb33fd690a3ef298c39ae3baf89f",
     "EVMCleanroom/MemoryGas.lean": "f8fdb875e5be25954c7dbc7a9f67a733dc4dbecf",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "a59c752f39821e0105cb04b345fc1002fa39890a",
+    "EVMCleanroom/CLI.lean": "46f77ab38634bee4468910de4c4bc1b18298ba36",
     "EVMCleanroom.lean": "687acb6099dda7d1a7efc4f180092a8dbef41ebf",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",
@@ -84,9 +84,10 @@
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
     "lakefile.toml": "a71fd5cce8daa60d17ea8c65f822b41c0238eddd",
     "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
-    "EVMCleanroom/Tests.lean": "ca2f982c31fb8be78ab335b12160add30ec66756",
+    "EVMCleanroom/Tests.lean": "c6f952d269a18daa2ecb6103794b325af7158dd6",
     "scripts/differential/chain-id.mjs": "9639c8e6a837a4004e034e4253cee7b56c2788d8",
-    "scripts/differential/block-environment.mjs": "9f812894cf211bccc4133926575f7d4f4ad0c45d"
+    "scripts/differential/block-environment.mjs": "9f812894cf211bccc4133926575f7d4f4ad0c45d",
+    "scripts/differential/tx-env.mjs": "3e31e0e17f270ff46fa9286b028fb07eff9c8bb8"
   },
   "theorem_inventory": [
     {
@@ -1242,6 +1243,44 @@
       "axioms_printed": [],
       "scope": "Actual World.frameInput projects five externally supplied block values into a child or parent State, with no authentication of header or fork choice.",
       "provenance": "2026-11-22 issue #774: expected axiom output; requires new CI audit."
+    },
+    {
+      "name": "EVMCleanroom.step_effectiveGasPrice",
+      "source_symbol": "step_effectiveGasPrice",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual GASPRICE opcode loads supplied effective transaction gas price (not a cap) through commit with two-gas charge, for any running state.",
+      "provenance": "Candidate theorem for issue #781; real Lean 4.33.1 axiom output and current-head CI required."
+    },
+    {
+      "name": "EVMCleanroom.step_prevRandao",
+      "source_symbol": "step_prevRandao",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual 0x44 opcode under shanghaiPlus or osaka loads the externally supplied post-Merge RANDAO mix with two-gas charging.",
+      "provenance": "Candidate theorem for issue #781; real Lean 4.33.1 axiom output and current-head CI required."
+    },
+    {
+      "name": "EVMCleanroom.step_prevRandao_unknown_fork",
+      "source_symbol": "step_prevRandao_unknown_fork",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual 0x44 dispatch refuses ambiguous preShanghai profile, where PoW DIFFICULTY vs PoS PREVRANDAO cannot be selected safely.",
+      "provenance": "Candidate theorem for issue #781; real Lean 4.33.1 axiom output and current-head CI required."
+    },
+    {
+      "name": "EVMCleanroom.World.frameInput_feeAndRandao",
+      "source_symbol": "frameInput_feeAndRandao",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "Executable World.frameInput projects effective transaction gas price and PREVRANDAO from the world to any frame; no transaction/header authenticity.",
+      "provenance": "Candidate theorem for issue #781; real Lean 4.33.1 axiom output and current-head CI required."
     }
   ],
   "external_evidence": {
@@ -2224,6 +2263,24 @@
       "Coarse preShanghai profile refuses BASEFEE.",
       "DIFFICULTY/PREVRANDAO and BLOCKHASH are still missing.",
       "No block validation, EELS refinement, Engine API or Lean consensus."
+    ]
+  },
+  "fee_and_prevrandao_integration": {
+    "issue": "https://github.com/danbri/factoidal-core/issues/781",
+    "base_commit": "e2827387abc6ae907d0d75e2a2daae0a06977524",
+    "scope": "Actual opcode 0x3a and post-Merge 0x44 via Core.step, World.frameInput projection, bounded CLI and independent synthetic Shanghai oracle. PreShanghai 0x44 is a refusal, not an invalid-opcode claim.",
+    "targeted_oracle_cases": 45,
+    "negative_control_fields": [
+      "effectiveGasPrice",
+      "blockPrevRandao"
+    ],
+    "new_theorem_count": 4,
+    "exact_head_verification": "pending CI",
+    "remaining_untrusted_inputs": [
+      "signed transaction effective price calculation",
+      "beacon-prevRandao header validation",
+      "fork activation",
+      "full transaction/block replay"
     ]
   }
 }
