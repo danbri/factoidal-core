@@ -364,6 +364,73 @@ theorem reconstructed_eq_namedGraph (dataset : RDF.Dataset) (name : WfIri)
     reconstructed_eq_indexed code person colleague knows works object
       active different checked
 
+/-- The ordered per-source solution list for GRAPH ?source. The graph-name
+    RDF term is bound by the *existing* SPARQL Binding.bindIfCompatible. -/
+def namedDecoded (code : RDF.Term → UInt64) (graphVar person colleague : VarName)
+    (knows works object : WfIri) (named : List RDF.NamedGraph) :
+    SolutionSeq :=
+  named.flatMap fun ng =>
+    (matchingBindings (comparisons code
+      (leftRows person colleague knows ng.graph)
+      (rightRows works object ng.graph))).filterMap fun mu =>
+        mu.bindIfCompatible graphVar ng.name.toTerm
+
+private theorem namedRows_eq (code : RDF.Term → UInt64)
+    (graphVar person colleague : VarName) (knows works object : WfIri)
+    (different : person ≠ colleague)
+    (named : List RDF.NamedGraph)
+    (checks : ∀ ng ∈ named, checkCode64 code
+      (leftRows person colleague knows ng.graph)
+      (rightRows works object ng.graph) = true) :
+    namedDecoded code graphVar person colleague knows works object named =
+    named.flatMap fun ng =>
+      (evalBgpIdx [⟨.var person, .iri knows, .var colleague⟩,
+        ⟨.var colleague, .iri works, .iri object⟩] ng.graph).filterMap
+        (fun mu => mu.bindIfCompatible graphVar ng.name.toTerm) := by
+  induction named with
+  | nil => rfl
+  | cons ng rest ih =>
+      have hc : checkCode64 code
+          (leftRows person colleague knows ng.graph)
+          (rightRows works object ng.graph) = true :=
+        checks ng (by simp)
+      have hr : ∀ item ∈ rest, checkCode64 code
+          (leftRows person colleague knows item.graph)
+          (rightRows works object item.graph) = true := by
+        intro item hi
+        exact checks item (by simp [hi])
+      have hsol :
+          matchingBindings (comparisons code
+            (leftRows person colleague knows ng.graph)
+            (rightRows works object ng.graph)) =
+          evalBgpIdx [⟨.var person, .iri knows, .var colleague⟩,
+            ⟨.var colleague, .iri works, .iri object⟩] ng.graph :=
+        (matching_eq_encodedJoin64 code
+          (leftRows person colleague knows ng.graph)
+          (rightRows works object ng.graph)).trans
+        (encodedJoin64_eq_indexed code person colleague knows works object
+          ng.graph different hc)
+      simp only [namedDecoded, List.flatMap_cons] at ih ⊢
+      rw [hsol, ih hr]
+
+/-- GRAPH ?source enumerates precisely the actual named graphs, in their
+    existing order, binding each source IRI or blank-node graph name.
+    No cross-source union is silently substituted for a named graph. -/
+theorem namedDecoded_eq_graphVariable (dataset : RDF.Dataset)
+    (code : RDF.Term → UInt64) (graphVar person colleague : VarName)
+    (knows works object : WfIri) (different : person ≠ colleague)
+    (checks : ∀ ng ∈ dataset.named, checkCode64 code
+      (leftRows person colleague knows ng.graph)
+      (rightRows works object ng.graph) = true) :
+    namedDecoded code graphVar person colleague knows works object dataset.named =
+      (GraphPattern.graph (.var graphVar)
+        (.bgp [⟨.var person, .iri knows, .var colleague⟩,
+          ⟨.var colleague, .iri works, .iri object⟩])).evalIn
+            dataset dataset.default := by
+  simpa only [GraphPattern.evalIn] using
+    (namedRows_eq code graphVar person colleague knows works object
+      different dataset.named checks)
+
 /-- One genuine serialized PVGraph with two generic XOR operators,
     four input buffers and two output buffers. -/
 def pvgraph : Json := build do
@@ -408,5 +475,6 @@ private def sample : List Comparison :=
 #print axioms reconstructed_eq_indexed
 #print axioms reconstructed_eq_evalIn
 #print axioms reconstructed_eq_namedGraph
+#print axioms namedDecoded_eq_graphVariable
 
 end L4Factoidal.SPARQL.PvGraphBgpLowering
