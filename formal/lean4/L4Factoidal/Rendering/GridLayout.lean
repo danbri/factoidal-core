@@ -342,6 +342,30 @@ group whose id is this name, the resolved columns and the resolved rows, separat
 tabs. -/
 def gridRecordName (source : Nat) : String := s!"grid-tracks {source}"
 
+private structure GridBaselineChoice where
+  row : Nat
+  column : Nat
+  priority : Nat
+  y : Float
+
+/-- Choose an item from the first or last occupied row. Shared alignment baselines
+precede fallback items in the same row (CSS Grid 2 §11.6). Equal coordinates and
+priority use the respective edge of the order-modified document order. -/
+private def chooseGridBaseline (last : Bool) (previous : Option GridBaselineChoice)
+    (item : GridBaselineChoice) : GridBaselineChoice :=
+  match previous with
+  | none => item
+  | some old =>
+    if item.row != old.row then
+      if (if last then item.row > old.row else item.row < old.row) then item else old
+    else if item.priority != old.priority then
+      if item.priority > old.priority then item else old
+    else if (if last then item.column >= old.column else item.column < old.column) then item else old
+
+#guard (chooseGridBaseline false (some ⟨1,0,0,25⟩) ⟨1,1,2,39⟩).y == 39
+#guard (chooseGridBaseline false (some ⟨1,0,0,25⟩) ⟨2,0,2,80⟩).y == 25
+#guard (chooseGridBaseline true (some ⟨4,1,0,90⟩) ⟨4,2,0,100⟩).y == 100
+
 /-- The contents of a grid container in its content box `box`: the grid formatting
 context. The result's `height` is the height of the content box. -/
 def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : ContentBox)
@@ -374,10 +398,8 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
   let mut baselined : Array (Nat × Nat × Nat) := #[]
   -- the last-baseline-aligned items: index, row, last baseline up from the margin box's bottom
   let mut lastBaselined : Array (Nat × Nat × Nat) := #[]
-  -- baselines are horizontal ones: in a vertical writing mode (container or item) the item
-  -- keeps its start alignment
-  let horizontal := fun (is : Computed) =>
-    s.pos.writingMode == .horizontalTb && is.pos.writingMode == .horizontalTb
+  -- The fragment carries page-y baselines for horizontal grids.
+  let horizontal := s.pos.writingMode == .horizontalTb
   let mut rowItems : Array Grid.Contribution := #[]
   let rowFns := gridTrackFns plan.rowAxis g.autoRows plan.rowLead plan.rows availH
   for i in [0:n] do
@@ -428,18 +450,23 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let outerH := gridUnits (natural+m.top+m.bottom)
     rowItems := rowItems.push {start := a.row, span := a.rowSpan, minimum := outerH, minContent := outerH, maxContent := outerH}
     laid := laid.push (r,x,width,natural,areaW)
-    if a.rowSpan == 1 && horizontal is && gridBaselineSelf is.align.alignSelf s.align.alignItems && !(is.grid.templateRows.subgrid && is.display.isGrid) then
-      -- no line box: the baseline is synthesized from the border box's bottom edge
-      baselined := baselined.push (i, a.row, gridUnits ((r.baseline.map (·-box.y)).getD (m.top+natural)))
-    if a.rowSpan == 1 && horizontal is && gridLastBaselineSelf is.align.alignSelf s.align.alignItems && !(is.grid.templateRows.subgrid && is.display.isGrid) then
-      let bottom := m.top+natural+m.bottom
-      lastBaselined := lastBaselined.push (i, a.row, gridUnits (max 0 (bottom-((r.lastBaseline.map (·-box.y)).getD (m.top+natural)))))
+    if horizontal && a.rowSpan == 1 && !is.autoMarginTop && !is.autoMarginBottom &&
+        !(is.grid.templateRows.subgrid && is.display.isGrid) then
+      -- An orthogonal item and a box with no line box use the border box's bottom.
+      let parallel := is.pos.writingMode == .horizontalTb
+      if gridBaselineSelf is.align.alignSelf s.align.alignItems then
+        let baseline := if parallel then r.baseline.map (·-box.y) else none
+        baselined := baselined.push (i, a.row, gridUnits (baseline.getD (m.top+natural)))
+      if gridLastBaselineSelf is.align.alignSelf s.align.alignItems then
+        let bottom := m.top+natural+m.bottom
+        let baseline := if parallel then r.lastBaseline.map (·-box.y) else none
+        lastBaselined := lastBaselined.push (i, a.row, gridUnits (max 0 (bottom-baseline.getD (m.top+natural))))
   -- §11.6: a baseline-aligned item asks of its row its height and its shift.
   let aligned := baselined.toList.map fun (_,row,b) => (row,b)
-  let mut shifts : Array Nat := Array.replicate n 0
+  let mut shifts : Array (Option Nat) := Array.replicate n none
   for (i,row,b) in baselined do
     let shift := Grid.baselineShift aligned row b
-    shifts := shifts.modify i fun _ => shift
+    shifts := shifts.modify i fun _ => some shift
     rowItems := rowItems.modify i fun c => {c with minimum := c.minimum+shift, minContent := c.minContent+shift,
                                                    maxContent := c.maxContent+shift}
   let lastAligned := lastBaselined.toList.map fun (_,row,b) => (row,b)
@@ -487,6 +514,8 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
         ⟨1,0,0,1,0,0⟩ []]}
     | none => {}
   -- §11: each item in its area.
+  let mut firstBaseline : Option GridBaselineChoice := none
+  let mut lastBaseline : Option GridBaselineChoice := none
   for i in [0:n] do
     let item := items[i]!
     let is := styles[i]!
@@ -510,9 +539,10 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
           max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (areaH-m.top-m.bottom))
         else natural
     let outerH := height+m.top+m.bottom
-    let shift := shifts.getD i 0
-    let dy := if shift > 0 || (a.rowSpan == 1 && horizontal is && !rowSubgrid && gridBaselineSelf is.align.alignSelf s.align.alignItems) then gridPx shift
-      else if let some up := lastShifts.getD i none then areaH-outerH-gridPx up
+    let firstShift := shifts.getD i none
+    let lastShift := lastShifts.getD i none
+    let dy := if let some shift := firstShift then gridPx shift
+      else if let some up := lastShift then areaH-outerH-gridPx up
       else
         let (autoStart, autoEnd) := if flipY then (is.autoMarginBottom, is.autoMarginTop)
           else (is.autoMarginTop, is.autoMarginBottom)
@@ -532,8 +562,21 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
           -- the measuring pass is work done too
           pure {again with work := again.work+r.work}
       else pure (kids.frame item x y width height (r.shift 0 (y-box.y)))
+    if horizontal then
+      let bottom := y+m.top+height
+      let parallel := is.pos.writingMode == .horizontalTb
+      let firstY := if parallel then done.baseline.getD bottom else bottom
+      let lastY := if parallel then done.lastBaseline.getD bottom else bottom
+      let firstPriority := if firstShift.isSome then 2 else if lastShift.isSome then 1 else 0
+      let lastPriority := if lastShift.isSome then 2 else if firstShift.isSome then 1 else 0
+      firstBaseline := some (chooseGridBaseline false firstBaseline
+        ⟨a.row, a.col, firstPriority, if firstPriority == 1 then lastY else firstY⟩)
+      lastBaseline := some (chooseGridBaseline true lastBaseline
+        ⟨a.row+a.rowSpan-1, a.col+a.colSpan-1, lastPriority, if lastPriority == 1 then firstY else lastY⟩)
     out := out.over done
   return {out with height := contentH, rough := out.rough || box.measure,
+                   baseline := if horizontal then firstBaseline.map (·.y) else out.baseline,
+                   lastBaseline := if horizontal then lastBaseline.map (·.y) else out.lastBaseline,
                    grid := some {x := box.x, y := box.y, width := box.width, height := contentH, rtl,
                                  colNames := plan.colNames, rowNames := plan.rowNames,
                                  colLead := plan.colLead, rowLead := plan.rowLead,
