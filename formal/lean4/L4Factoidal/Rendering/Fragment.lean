@@ -560,10 +560,12 @@ def percentEdgesLoop (dom : Dom) : Nat → List (Nat × Option Float) → Array 
 width of its containing block, where the styles make that width definite (`definiteWidth`:
 the viewport `width` for the root, then down through blocks in the flow and boxes with a
 length for a width); elsewhere a percentage part stays out, as before it was read. A page
-with no percentage margin or padding pays one pass over its styles. -/
-def percentEdges (dom : Dom) (styles : Array Computed) (width : Float) : Array Computed :=
+with no percentage margin or padding pays one pass over its styles. A nested document
+starts the walk at its own document node with its own viewport width. -/
+def percentEdges (dom : Dom) (styles : Array Computed) (width : Float)
+    (document : Nat := 0) : Array Computed :=
   if !(styles.any fun s => s.pos.percentEdges) then styles
-  else percentEdgesLoop dom (dom.size+1) [(0,some width)] styles
+  else percentEdgesLoop dom (dom.size+1) [(document,some width)] styles
 
 /-- Kind: frame. Says: a page with no percentage margin or padding is left as it is. -/
 theorem percentEdges_unused (dom : Dom) (styles : Array Computed) (width : Float)

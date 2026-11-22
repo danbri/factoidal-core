@@ -106,14 +106,16 @@ private theorem throw_bind_ne {ε α β : Type} {e : ε} {f : α → Except ε �
 it answers are `linkRegions` over the boxes it answers, at the viewport width and at
 `linkHeight vh doc`, where `doc` is the height of the layout those boxes come from. -/
 theorem renderStyled_links {dom : Dom} {computed : Array Computed} {font : FontProfile} {embedding : Embedding}
-    {width height : Nat} {pictures : Pictures} {scene : Scene} {boxes : Array Box}
-    (ok : renderStyled dom computed font embedding width height pictures = .ok (scene,boxes)) :
+    {width height document : Nat} {pictures : Pictures} {scene : Scene} {boxes : Array Box}
+    (ok : renderStyled dom computed font embedding width height pictures document = .ok (scene,boxes)) :
     ∃ (styles : Array Computed) (result : Result),
-      layoutRoot dom styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
+      layoutRoot dom styles font embedding pictures (Float.ofNat width) (Float.ofNat height) document = .ok result ∧
       boxes = result.boxes ∧
       scene.links = linkRegions dom styles (linkSources dom styles boxes) (Float.ofNat width)
         (linkHeight (Float.ofNat height) result.height) := by
   unfold renderStyled at ok
+  split at ok
+  · exact absurd ok throw_bind_ne
   split at ok
   · exact absurd ok throw_bind_ne
   obtain ⟨result, made, ok⟩ := bind_ok ok

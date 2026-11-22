@@ -2739,10 +2739,10 @@ containing block is the initial one, the viewport (CSS 2.1 §10.1). A box laid o
 may leave `fixed` descendants pending: a few rounds. A document with no such box is
 `block` alone. -/
 def layoutRoot (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
-    (pictures : Pictures) (vw vh : Float) : Except String Result := do
+    (pictures : Pictures) (vw vh : Float) (document : Nat := 0) : Except String Result := do
   -- CSS 2.1 §10.5: percentage heights against heights that the styles make definite.
   let styles := percentHeights dom styles
-  let mut laid ← block dom styles font embedding pictures 64 0 0 0 vw
+  let mut laid ← block dom styles font embedding pictures 64 document 0 0 vw
   for _ in [0:4] do
     if laid.pending.isEmpty then break
     -- The same paint ordering used for a local containing block applies at the root.
@@ -2844,8 +2844,9 @@ def linkHeight (viewport document : Float) : Float := max viewport document
 
 /-- CSS 2.1 §14.2: the background of the root element, or of `body` when the root
 has none, paints the whole canvas, and not the element's own box. -/
-def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Color) := Id.run do
-  let some root := (dom.get 0).kids.find? (fun k => (dom.get k).type == .element) | return none
+def canvasBackground (dom : Dom) (styles : Array Computed) (document : Nat := 0) :
+    Option (Nat × Color) := Id.run do
+  let some root := dom.documentElement document | return none
   if let some c := (styles[root]?).bind (·.background) then return some (root,c)
   if (dom.get root).lname != "html" then return none
   let some body := (dom.get root).kids.find? (fun k => (dom.get k).lname == "body") | return none
@@ -2853,9 +2854,13 @@ def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Colo
 
 /-- The scene of a tree whose styles are computed: existing DOM input, explicit viewport
 and font data, immutable scene output. `pictures` holds the decoded content of replaced
-elements. -/
+elements. `document` selects a document already in the arena. Layout keeps the arena's node
+numbers in its boxes, including for a nested document. -/
 def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (embedding : Embedding)
-    (width height : Nat) (pictures : Pictures := noPictures) : Except String (Scene × Array Box) := do
+    (width height : Nat) (pictures : Pictures := noPictures) (document : Nat := 0) :
+    Except String (Scene × Array Box) := do
+  if document != 0 && (document ≥ dom.size || (dom.get document).type != .document) then
+    throw "layout root is not a document"
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
   let vw := Float.ofNat width
   let vh := Float.ofNat height
@@ -2869,14 +2874,14 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}
   -- Percentage margins and padding, where the containing block's width is definite.
-  let styles := percentEdges dom styles vw
+  let styles := percentEdges dom styles vw document
   -- `box-sizing: border-box`: the layout reads content-box sizes.
   let styles := styles.map contentBoxed
-  let canvas := canvasBackground dom styles
+  let canvas := canvasBackground dom styles document
   let styles := match canvas with
     | some (id,_) => styles.modify id fun s => {s with background := none}
     | none => styles
-  let result ← layoutRoot dom styles font embedding pictures vw vh
+  let result ← layoutRoot dom styles font embedding pictures vw vh document
   let result : Result := match canvas with
     | some (id,c) => {result with nodes := #[Node.paint ⟨some id,{geometry := .rect 0 0 vw (max vh result.height),style := {fill := .solid c}}⟩] ++ result.nodes}
     | none => result
