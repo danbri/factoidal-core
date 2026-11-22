@@ -967,6 +967,72 @@
         "propext"
       ],
       "provenance": "Actual Lean 4.33.1 #print axioms at published implementation f9fec7cbc5213aef53c19b0561efd21abba7db0c (same Git tree as local 0573815601f6c0db6833bdf4a2409fab2044b123)."
+    },
+    {
+      "name": "EVMCleanroom.Word.signedDivide_zero",
+      "source": "EVMCleanroom/Core.lean",
+      "source_symbol": "signedDivide_zero",
+      "axioms_printed": [],
+      "scope": "The actual signed division helper returns zero for a zero EVM divisor.",
+      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+    },
+    {
+      "name": "EVMCleanroom.Word.signedMod_zero",
+      "source": "EVMCleanroom/Core.lean",
+      "source_symbol": "signedMod_zero",
+      "axioms_printed": [],
+      "scope": "The actual signed remainder helper returns zero for a zero EVM divisor.",
+      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+    },
+    {
+      "name": "EVMCleanroom.Word.shiftArithmetic_large_nonnegative",
+      "source": "EVMCleanroom/Core.lean",
+      "source_symbol": "shiftArithmetic_large_nonnegative",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "For a nonnegative EVM value, the actual SAR helper returns zero for all shifts >= 256.",
+      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+    },
+    {
+      "name": "EVMCleanroom.Word.shiftArithmetic_large_negative",
+      "source": "EVMCleanroom/Core.lean",
+      "source_symbol": "shiftArithmetic_large_negative",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "For a negative EVM value, the actual SAR helper returns 2^256 - 1 for all shifts >= 256.",
+      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+    },
+    {
+      "name": "EVMCleanroom.step_sdiv",
+      "source": "EVMCleanroom/Core.lean",
+      "source_symbol": "step_sdiv",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "For running frame/SDIV opcode and a 2-element stack prefix, real Core.step calls commit with signedDivide and charge 5.",
+      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+    },
+    {
+      "name": "EVMCleanroom.step_smod",
+      "source": "EVMCleanroom/Core.lean",
+      "source_symbol": "step_smod",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "For running frame/SMOD opcode and a 2-element stack prefix, real Core.step calls commit with signedMod and charge 5.",
+      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
+    },
+    {
+      "name": "EVMCleanroom.step_sar",
+      "source": "EVMCleanroom/Core.lean",
+      "source_symbol": "step_sar",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "For running frame/non-preShanghai/SAR opcode and a 2-element stack prefix, real Core.step calls commit with shiftArithmetic and charge 3.",
+      "provenance": "Actual pinned Lean 4.33.1 #print axioms in job 137235635080, EVM CI https://github.com/danbri/factoidal-core/actions/runs/45031418855 at 41242a3fc0dce267742b5ec571c50af1d3afb60e; Core source blob d4ed219c9d2ce77f66dc16c3f569be511bbc2923. This is executable helper/dispatch proof only; not independent EELS refinement."
     }
   ],
   "external_evidence": {
@@ -1838,7 +1904,7 @@
     "issue": "https://github.com/danbri/factoidal-core/issues/749",
     "scope": "SDIV SMOD and SAR executable helpers and opcode dispatch; not fork-exact transaction/block conformance",
     "independent_reference": "@ethereumjs/evm@10.1.3 Shanghai; 198 additional generated cases",
-    "theorem_status": "Seven statements in Core.lean printed by compiler; do not claim axiom audit until CI or local Lean 4.33.1 outputs are inspected",
+    "theorem_status": "Seven additional theorem axiom sets compiled and actually printed at pinned Lean 4.33.1 in EVM CI run 45031418855, commit 41242a3fc0dce267742b5ec571c50af1d3afb60e; 2 no axioms, 5 propext only. Now selected as 103 total for future fail-closed auditing.",
     "limits": "PreShanghai coarse profile does not distinguish EIP-145 Istanbul activation, full-client and consensus checks remain open"
   }
 }
