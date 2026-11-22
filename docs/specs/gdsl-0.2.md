@@ -164,6 +164,54 @@ scalar-broadcast examples. Domain semantics must be introduced through
 registered operators with separately checked contracts, never by
 creating a second GDSL parser or evaluator.
 
+## 7. GPU fast path
+
+`runPVGraph({pvgraph,bindings,loadEngine})` asks the Lean/Wasm engine
+for a shape-checked `pvgraphGpuPlan`. Lean selects the supported
+`u32` map/zip/scalar-add/broadcast operations, their numeric kernel
+tags, buffer shapes, and dispatch sizes. The host submits a fixed WGSL
+shader to WebGPU, retains intermediate buffers, and reads named outputs.
+No JavaScript operator registry or reference evaluator exists.
+
+`GpuFastPath` proves the pure kernel model agrees with the actual
+Lean `GraphWords.execute` semantics and that the whole admitted
+PVGraph interpreter has the same result under that model. The per-lane
+dispatch also has disjoint writes and schedule-independent results.
+The `GpuPlan` and fixed shader are **not yet a verified WGSL compiler**;
+a correct GPU driver is an explicit implementation assumption. Device
+testing compares complete WebGPU outputs with native Lean outputs,
+including high-bit arithmetic, zero-length buffers, fanout and broadcast.
+
+The GPU branch refuses unsupported operations, including the current
+sequential scan/reduce; `runPVGraph` uses the same Lean/Wasm evaluator as
+fallback, never JavaScript arithmetic. `requireGPU:true` instead fails
+when no admitted device execution can run. Capacity is 262,144 u32
+words per buffer. The benchmark `tools/pvgraph-wasm-gpu-bench.mjs`
+measures end-to-end Lean/Wasm versus WebGPU, including transfer and
+readback. The name *fast path* describes its intended role, not an
+unmeasured universal speedup.
+
+## 8. Relationship with Factoidal Dataflow
+
+`L4Factoidal.Dataflow.Stage` and `Dataflow.Graph` are the original
+**application-level orchestration and contract layer**, connecting
+readers, RDF datasets, SPARQL evaluators, reasoners, stores and writers.
+They have typed wires, error propagation, stage guarantees, and named IO
+assumptions. That `Graph` is distinct from both RDF `Graph` and PVGraph.
+
+PVGraph is an **internal computation program**, currently carrying
+scalar and buffer words between small typed GPU-eligible operations. A
+Dataflow stage may use PVGraph to implement part of its run function;
+it does not replace the stage, its semantic contract or RDF data model.
+
+`GpuDomainSpecificLanguage.DataflowAdapter` exposes
+`referenceStage` and `modeledFastStage` with the same exact-result
+contract, proved to return the same success or error for every request.
+A physical GPU-backed `Stage` still requires a separate soundness
+witness at the device boundary. RDF/SPARQL specialisation must also
+prove its encoding, active-graph identity, row multiplicities and
+ordering; a u32 buffer alone denotes none of those things.
+
 ## 7. Assurance and execution boundary
 
 `GraphAdmission` checks whole-program structure and typed links.
