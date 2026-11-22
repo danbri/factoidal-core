@@ -19,7 +19,7 @@
     "EVMCleanroom/MemoryGas.lean": "f8fdb875e5be25954c7dbc7a9f67a733dc4dbecf",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "2b5056fe616471c7e7422f062081451ea831602c",
+    "EVMCleanroom/CLI.lean": "a59c752f39821e0105cb04b345fc1002fa39890a",
     "EVMCleanroom.lean": "687acb6099dda7d1a7efc4f180092a8dbef41ebf",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "2b2b392afd963788d6b61ed96be8be17f1e270d5",

@@ -403,8 +403,8 @@ private def blockEnvironmentMain (args : List String) : IO UInt32 := do
           timestampStr.toNat?, numberStr.toNat?, limitStr.toNat?, baseFeeStr.toNat? with
     | .ok code, some gas, some fuel, some coinbase, some timestamp,
       some number, some limit, some baseFee =>
-      if coinbase ≥ 2 ^ 160 || timestamp ≥ modulus || number ≥ modulus ||
-          limit ≥ modulus || baseFee ≥ modulus then
+      if coinbase ≥ 2 ^ 160 ∨ timestamp ≥ modulus ∨ number ≥ modulus ∨
+          limit ≥ modulus ∨ baseFee ≥ modulus then
         IO.println "{\"status\":\"inputError\",\"message\":\"block fields out of range\"}"
         return 2
       let s : State := {
