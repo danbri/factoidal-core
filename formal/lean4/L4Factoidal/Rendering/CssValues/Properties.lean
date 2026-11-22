@@ -128,7 +128,8 @@ def env (ctx : Option ComputeCtx) : Env :=
 
 /-- The canonical text of `cvs` as a value of property `p` (a name of the table). -/
 def matchText (ctx : Option ComputeCtx) (p : String) (cvs : List CV) : Option String :=
-  (propG p).bind fun g => (matchAll (env ctx) g cvs).map fun o => serialize (untag 16 o)
+  let matcher := {env ctx with deferPctMath := ["background-position-x", "background-position-y"].contains p}
+  (propG p).bind fun g => (matchAll matcher g cvs).map fun o => serialize (untag 16 o)
 
 /-- The single CSS-wide keyword that the values are, if they are one. -/
 def wideKeyword (top : List CV) : Option String :=
@@ -1453,6 +1454,7 @@ def edgeOffset (k : String) (off : CV) : Option String :=
     | .tok (.dim x _ u) =>
       if x < 0 then some ("calc(100% + " ++ fmtRat (-x) ++ u ++ ")")
       else some ("calc(100% - " ++ fmtRat x ++ u ++ ")")
+    | .fn name args => some ("calc(100% - " ++ serialize [.fn name args] ++ ")")
     | _ => none
 
 #guard edgeOffset "right" (.tok (.pct 7)) == some "93%" && edgeOffset "left" (.tok (.pct (-20))) == some "-20%"
