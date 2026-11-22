@@ -2,7 +2,7 @@ name: EVM cleanroom Lean seed
 
 on:
   push:
-    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121"]
+    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121", "feat/lean-frontier-historical-mainnet-46147-20261122"]
     paths:
       - "formal/lean4/evm-cleanroom/**"
       - ".github/workflows/evm-cleanroom.yml"
@@ -51,6 +51,14 @@ jobs:
           lake exe evm-subset --call-opcode 5f5f5f5f5f60c3617530f100 600160005500 50000 100 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="stopped" and x["stack"]==["1"] and x["gasRemaining"]=="25278" and x["slot0"]=="1" and x["warmAddress"] is True,x'
           lake exe evm-subset --call-opcode 5f5f5f5f5f60c3617530f15f5ffd 600160005500 50000 100 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="reverted" and x["gasRemaining"]=="25274" and x["slot0"]=="0" and x["warmAddress"] is False,x'
           lake exe evm-subset --call-opcode 5f5f5f5f5f60c3617530f1fe 600160005500 50000 100 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="exceptional" and x["gasRemaining"]=="0" and x["slot0"]=="0" and x["warmAddress"] is False,x'
+      - name: Verify fork-exact Frontier transaction gas, wei conservation and fail-closed validation
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --frontier-transfer 21000 21003 50000000000000 31337 0 0 2000000000000000000 0 0 0 0 1 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["senderAfterBalance"]=="949999999999968663" and x["receiverAfterBalance"]=="31337" and x["minerAfterBalance"]=="1050000000000000000" and x["gasUsed"]=="21000" and x["senderAfterNonce"]=="1",x'
+          lake exe evm-subset --frontier-transfer 21000 21003 50000000000000 31337 0 0 2000000000000000000 0 0 0 1 1 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="nonce-mismatch",x'
+          lake exe evm-subset --frontier-transfer 21000 21003 50000000000000 31337 0 0 2000000000000000000 0 0 0 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="recipient-code-execution-not-modelled",x'
+          lake exe evm-subset --frontier-transfer 20999 21003 50000000000000 31337 0 0 2000000000000000000 0 0 0 0 1 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="below-frontier-intrinsic",x'
+          lake exe evm-subset --frontier-transfer 21000 21003 50000000000000 31337 0 0 1 0 0 0 0 1 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="insufficient-upfront-balance",x'
       - name: Execute restricted EVM CLI and check emitted JSON
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -106,7 +114,7 @@ jobs:
           node scripts/check-eels-memory.mjs /tmp/ethereum-eels-prague-gas.py /tmp/ethereum-eels-prague-memory.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==6 and x["mismatches"]==0, x'
   differential:
     # PR-only avoids installing a second Lean/npm toolchain for both push and PR.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -186,7 +194,7 @@ jobs:
             formal/lean4/evm-cleanroom/scripts/differential/package-lock.json
   eels-real-state:
     # Validate real EELS post-state roots, not merely JSON structure.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -247,6 +255,15 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           node scripts/eels/prague-all-selftest.mjs .lake/eels/eip7623.json .lake/eels/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==9 and all(c["rejected"] for c in x["checks"]),x'
+      - name: Reconstruct real Ethereum mainnet Frontier block 46147 transaction and receipt commitments
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/eels
+          npm ls --prefix scripts/eels @ethereumjs/mpt @ethereumjs/rlp
+          node scripts/eels/replay-first-mainnet.mjs \
+            --fixture evidence/frontier-mainnet-46147.json \
+            --out .lake/eels/first-real-mainnet.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["hardfork"]=="Frontier" and x["block"]=="46147" and x["chargedGas"]=="21000" and x["chargedFeeWei"]=="1050000000000000000" and x["adversarialControlsRejected"]==6 and x["preStateAuthenticated"] is False and x["leanDerivedIntermediateStateRoot"] is None and x["fullMainnetStateReplay"] is False,x'
       - name: Preserve published fixture, host transition results and npm resolution
         if: always()
         uses: actions/upload-artifact@v4
