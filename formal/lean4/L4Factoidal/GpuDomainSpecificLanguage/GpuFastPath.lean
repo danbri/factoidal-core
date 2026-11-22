@@ -84,7 +84,7 @@ theorem KernelTag_ofOperator_sound (op : Operator) (tag : KernelTag)
 /-- Recovering the selected operator from the encoded opcode cannot alias
     any other supported kernel. -/
 theorem KernelTag_decode_ofOperator (op : Operator) (tag : KernelTag)
-    (h : KernelTag.ofOperator? op = some tag) :
+    (_h : KernelTag.ofOperator? op = some tag) :
     KernelTag.decode tag.code = some tag :=
   KernelTag_decode_code tag
 
@@ -181,12 +181,14 @@ theorem KernelCall_dispatch_raceFree (c : KernelCall) :
   change i ∉ GpuKernel.keys (c.laneWrites u)
   have ht' : t < c.words.length := ht
   have hu' : u < c.words.length := hu
-  simp only [GpuKernel.keys, KernelCall.laneWrites, if_pos ht',
-    List.map_cons, List.map_nil, List.mem_singleton] at hi
-  simp only [GpuKernel.keys, KernelCall.laneWrites, if_pos hu',
-    List.map_cons, List.map_nil, List.mem_singleton]
-  intro hii
-  exact hne (hi.symm.trans hii)
+  have hiEq : i = t := by
+    change i ∈ GpuKernel.keys (c.laneWrites t) at hi
+    simpa [GpuKernel.keys, KernelCall.laneWrites, ht'] using hi
+  have hneq : i ≠ u := by
+    intro eq
+    exact hne (hiEq.symm.trans eq)
+  change i ∉ GpuKernel.keys (c.laneWrites u)
+  simpa [GpuKernel.keys, KernelCall.laneWrites, hu'] using hneq
 
 /-- Under any permutation of valid invocation IDs, the kernel's writes
     yield the same memory as the sequential reference execution. -/
@@ -269,8 +271,9 @@ theorem pvgraph_model_eq_reference (pv inputs : Json) :
   | none => false)
 #guard (prepare? .zipAdd [.buffer [1], .buffer [2,3]] none).isNone
 #guard (prepare? .scanSum [.buffer [1,2,3]] none).isNone
-#guard decide (modelOrCpu .reduceSum [.buffer [1,2,3]] none =
-  GraphWords.execute .reduceSum [.buffer [1,2,3]] none)
+#guard (match modelOrCpu .reduceSum [.buffer [1,2,3]] none with
+  | .ok (.scalar n) => n == (6 : UInt32)
+  | _ => false)
 
 #print axioms KernelCall_dispatch_raceFree
 #print axioms KernelCall_schedule_independent
