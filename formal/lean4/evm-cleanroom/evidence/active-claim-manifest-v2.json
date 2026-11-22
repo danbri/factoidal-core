@@ -70,7 +70,7 @@
     "scripts/rpc/evidence/op-sepolia-jovian-decimals-51771054.json": "45e3eec526801649e061cecff87c0f28dec98e7e",
     "scripts/rpc/evidence/op-sepolia-solidity-ge-51771081.json": "2d8c431338d2f34fb2179ac709b675190295364a",
     "scripts/rpc/evidence/polygon-solidity-ge-97759492.json": "68700c5c1ef0bd14089c11525a4663dbd4e918b2",
-    "EVMCleanroom/ModularProofs.lean": "2eadb7c2a35da21c9f94c2a1c9881699af55446f"
+    "EVMCleanroom/ModularProofs.lean": "4a7bb12ab2ffead0f1d87fe26e203bc8413b0730"
   },
   "theorem_inventory": [
     {
@@ -1248,6 +1248,7 @@
     "sourceStatus": "proposed-unvalidated",
     "oraclePlanned": "@ethereumjs/evm@10.1.3 Shanghai, 100 new comparisons",
     "preservedSelectedAxiomSet": 60,
-    "limits": "Not official state tests, protocol gas accounting, signed arithmetic, byte windows or full execution client"
+    "limits": "Not official state tests, protocol gas accounting, signed arithmetic, byte windows or full execution client",
+    "previousCIFailure": "Initial CI build found undeclared lt_trans (now qualified Nat.lt_trans); new revision requires full fresh gates."
   }
 }

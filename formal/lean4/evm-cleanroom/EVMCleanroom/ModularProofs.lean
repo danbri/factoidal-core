@@ -25,7 +25,7 @@ theorem Word.addMod_correct (a b m : Word) :
   · simp [Word.addMod, hZero, word]
   · have hPos : 0 < m.val := by omega
     have hSmall : (a.val + b.val) % m.val < modulus :=
-      lt_trans (Nat.mod_lt _ hPos) m.isLt
+      Nat.lt_trans (Nat.mod_lt _ hPos) m.isLt
     simp [Word.addMod, hZero, word, Nat.mod_eq_of_lt hSmall]
 
 /-- Kind: mathematical correspondence.
@@ -37,7 +37,7 @@ theorem Word.mulMod_correct (a b m : Word) :
   · simp [Word.mulMod, hZero, word]
   · have hPos : 0 < m.val := by omega
     have hSmall : (a.val * b.val) % m.val < modulus :=
-      lt_trans (Nat.mod_lt _ hPos) m.isLt
+      Nat.lt_trans (Nat.mod_lt _ hPos) m.isLt
     simp [Word.mulMod, hZero, word, Nat.mod_eq_of_lt hSmall]
 
 #print axioms Word.addMod_correct
