@@ -264,14 +264,14 @@ jobs:
             --fixture evidence/frontier-mainnet-46147.json \
             --out .lake/eels/first-real-mainnet.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["hardfork"]=="Frontier" and x["block"]=="46147" and x["chargedGas"]=="21000" and x["chargedFeeWei"]=="1050000000000000000" and x["adversarialControlsRejected"]==6 and x["preStateAuthenticated"] is False and x["leanDerivedIntermediateStateRoot"] is None and x["fullMainnetStateReplay"] is False,x'
-      - name: Verify secure MPT account proofs, sparse state updates and five adversarial changes
+      - name: Verify present/absent secure-account proofs, sparse state updates and ten adversarial changes
         working-directory: formal/lean4/evm-cleanroom
         run: |
           node scripts/eels/verify-frontier-account-witness.mjs \
             --historical evidence/frontier-mainnet-46147.json \
             --selftest \
             --out .lake/eels/frontier-prestate-synthetic-mpt-test.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="synthetic-archive-proof-mutation-tests-pass" and x["syntheticOnly"] is True and x["completeTrieMatchesSparseProofTrie"] and x["forgedProofsRejected"]==5 and x["historicalPrestateAvailable"] is False and x["actualMainnetStateRootReplayed"] is False,x'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="synthetic-archive-proof-mutation-tests-pass" and x["syntheticOnly"] is True and x["completeTrieMatchesSparseProofTrie"] and x["forgedProofsRejected"]==10 and x["syntheticScenarios"]==2 and x["testedPresentAndAbsentRecipient"] and x["historicalPrestateAvailable"] is False and x["actualMainnetStateRootReplayed"] is False,x'
           node --check scripts/eels/fetch-frontier-account-witness.mjs
       - name: Probe three free historical archive endpoints for REAL 2015 account proofs (separate from conformance)
         continue-on-error: true
