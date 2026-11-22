@@ -53,6 +53,7 @@ private def errorCode : EVMCleanroom.Error → String
   | .alreadyHalted => "alreadyHalted"
   | .writeProtection => "writeProtection"
   | .unsupportedFork => "unsupportedFork"
+  | .framePolicyViolation _ => "framePolicyViolation"
   | .stepLimit => "stepLimit"
 
 /-- Bounded, lossless memory snapshot. The result records whether the snapshot
@@ -271,32 +272,39 @@ private def frameStorageMain (args : List String) : IO UInt32 := do
     return 2
 
 /-- Frame-call snapshot with explicit total return length and bounded byte output. -/
-private def frameCallJSON (outcome : Frame.Outcome) : String :=
+private def frameCallJSON (outcome : Frame.Outcome) (guarded : Bool) : String :=
+  let context := if guarded then ",\"comparisonContext\":\"zero-value-context-free-v1\"" else ""
   let report (status : String) (s : State) (offset length : Nat) (extra : String := "") :=
     frameStateJSON status s 0
       (",\"stack\":" ++ stackJSON s ++ memoryFieldsJSON s ++
         ",\"returnDataHex\":\"" ++ frameDataHex s offset (min length byteObservationLimit) ++
         "\",\"returnDataLength\":\"" ++ toString length ++
-        "\",\"returnDataTruncated\":" ++ (if length > byteObservationLimit then "true" else "false") ++ extra)
+        "\",\"returnDataTruncated\":" ++ (if length > byteObservationLimit then "true" else "false") ++
+        extra ++ context)
   match outcome with
   | .stopped s => report "stopped" s 0 0
   | .returned s offset length => report "returned" s offset length
   | .reverted s offset length => report "reverted" s offset length
   | .exceptional s e => report "exceptional" s 0 0 (",\"error\":\"" ++ errorCode e ++ "\"")
-  | .unsupported e => "{\"status\":\"unsupported\",\"error\":\"" ++ errorCode e ++ "\"}"
+  | .unsupported e => "{\"status\":\"unsupported\",\"error\":\"" ++ errorCode e ++ "\"" ++ context ++ "}"
 
-private def frameCallMain (args : List String) : IO UInt32 := do
+private def frameCallMain (args : List String) (guarded : Bool := false) : IO UInt32 := do
   match args with
   | [hex, dataHex, gasStr, fuelStr] =>
     match parseBytecode hex, parseBytecode dataHex, gasStr.toNat?, fuelStr.toNat? with
     | .ok code, .ok callData, some gas, some fuel =>
-      IO.println (frameCallJSON (Frame.run fuel { code := code, gas := gas, callData := callData }))
+      let input : State := {
+        code := code, gas := gas, callData := callData, callValue := 0, readOnly := guarded }
+      let outcome := if guarded then Frame.runWithPolicy Frame.zeroValueContextFree fuel input
+        else Frame.run fuel input
+      IO.println (frameCallJSON outcome guarded)
       return 0
     | _, _, _, _ =>
       IO.println "{\"status\":\"inputError\",\"message\":\"expected HEX CALLDATA_HEX GAS FUEL\"}"
       return 2
   | _ =>
-    IO.println "{\"status\":\"inputError\",\"message\":\"usage: --frame-call HEX CALLDATA_HEX GAS FUEL\"}"
+    let command := if guarded then "--pure-frame-call" else "--frame-call"
+    IO.println ("{\"status\":\"inputError\",\"message\":\"usage: " ++ command ++ " HEX CALLDATA_HEX GAS FUEL\"}")
     return 2
 
 /-- Zero-value child-call slice, *not* actual CALL opcode dispatch. The
@@ -562,6 +570,7 @@ def cliMain (args : List String) : IO UInt32 := do
   | "--storage" :: rest => storageMain rest
   | "--frame-storage" :: rest => frameStorageMain rest
   | "--frame-call" :: rest => frameCallMain rest
+  | "--pure-frame-call" :: rest => frameCallMain rest true
   | "--call-opcode" :: rest => callOpcodeMain rest
   | "--call-slice" :: rest => callSliceMain rest
   | ["--storage-batch", path] => storageBatchMain path

@@ -15,6 +15,9 @@ import { createRpc } from './rpc-client.mjs'
 const invoke = promisify(execFile)
 const FIXTURE = JSON.parse(await readFile(new URL('./mock-fixture.json', import.meta.url), 'utf8'))
 const CLI = fileURLToPath(new URL('./capture.mjs', import.meta.url))
+const PURE_CONTEXT = 'zero-value-context-free-v1'
+const LEAN_EXE = process.env.EVM_RPC_TEST_LEAN_EXE
+const LEAN_TEST = { skip: LEAN_EXE ? false : 'set EVM_RPC_TEST_LEAN_EXE to exercise --pure-frame-call' }
 
 function defaultResult(request) {
   switch (request.method) {
@@ -61,7 +64,7 @@ const rpcError = (request, error) => ({ jsonrpc: '2.0', id: request.id, error })
 const BLOCK_SELECTOR = { blockHash: FIXTURE.block.hash, requireCanonical: true }
 const outcome = (status, dataHex = FIXTURE.returnData.slice(2)) => ({
   schemaVersion: 1, status, returnDataHex: dataHex, returnDataLength: String(dataHex.length / 2),
-  returnDataTruncated: false, memoryTruncated: false,
+  returnDataTruncated: false, memoryTruncated: false, comparisonContext: PURE_CONTEXT,
 })
 
 async function scratch(t) {
@@ -70,10 +73,11 @@ async function scratch(t) {
   return directory
 }
 
-async function stub(t, snapshot, code = FIXTURE.code) {
+async function stub(t, snapshot, code = FIXTURE.code, data = FIXTURE.data) {
   const executable = join(await scratch(t), 'evm-subset')
-  const expected = ['--frame-call', code, FIXTURE.data, '1000000', '10000']
-  await writeFile(executable, `#!${process.execPath}\nif (JSON.stringify(process.argv.slice(2)) !== ${JSON.stringify(JSON.stringify(expected))}) process.exit(9)\nconsole.log(${JSON.stringify(JSON.stringify(snapshot))})\n`, { mode: 0o700 })
+  const expected = ['--pure-frame-call', code, data, '1000000', '10000']
+  const output = typeof snapshot === 'string' ? snapshot : JSON.stringify(snapshot)
+  await writeFile(executable, `#!${process.execPath}\nif (JSON.stringify(process.argv.slice(2)) !== ${JSON.stringify(JSON.stringify(expected))}) process.exit(9)\nconsole.log(${JSON.stringify(output)})\n`, { mode: 0o700 })
   return executable
 }
 
@@ -91,15 +95,16 @@ test('captures a deterministic call and keeps raw chain-specific fields', async 
   assert.equal(observed.verification.stateRoot, 'unverified')
   assert.equal(observed.verification.consensus, 'unverified')
   assert.deepEqual(observed.verification.localComparison, {
-    status: 'match', engine: 'evm-subset --frame-call', codeSource: 'provider-chain-code',
-    gas: '1000000', fuel: '10000', local: { kind: 'return', dataHex: FIXTURE.returnData },
+    status: 'match', engine: 'evm-subset --pure-frame-call', codeSource: 'provider-chain-code',
+    gas: '1000000', fuel: '10000', comparisonContext: PURE_CONTEXT,
+    local: { kind: 'return', dataHex: FIXTURE.returnData },
   })
   assert.deepEqual(requests.map(({ method, params }) => [method, params]), [
     ['eth_chainId', []], ['eth_getBlockByNumber', ['latest', false]],
     ['eth_getBlockByNumber', [FIXTURE.block.number, false]],
     ['eth_getBlockByHash', [FIXTURE.parent.hash, false]],
     ['eth_getCode', [FIXTURE.address, BLOCK_SELECTOR]],
-    ['eth_call', [{ to: FIXTURE.address, data: FIXTURE.data }, BLOCK_SELECTOR]],
+    ['eth_call', [{ to: FIXTURE.address, data: FIXTURE.data, value: '0x0' }, BLOCK_SELECTOR]],
     ['eth_getTransactionByHash', [FIXTURE.transaction.hash]],
     ['eth_getTransactionReceipt', [FIXTURE.transaction.hash]],
     ['eth_getBlockByNumber', [FIXTURE.block.number, false]],
@@ -123,8 +128,8 @@ test('resolves explicit hashes and confirms their canonical height before readin
   ])
 })
 
-test('passes synthetic runtime to both processes and skips PUSH immediates in the admission scan', async t => {
-  const code = '0x605460005260206000f3' // 0x54 as data, rather than executing SLOAD.
+test('passes the whole synthetic runtime, including bytes after RETURN, to the provider and Lean', async t => {
+  const code = '0x605460005260206000f354fe' // PUSH1 data 0x54, then unreachable SLOAD and INVALID.
   const data = `0x${'54'.padStart(64, '0')}`
   const { url, requests } = await mock(t, request =>
     request.method === 'eth_call' ? rpcResult(request, data) : undefined)
@@ -134,6 +139,7 @@ test('passes synthetic runtime to both processes and skips PUSH immediates in th
     [FIXTURE.address]: { code },
   })
   assert.equal(observed.providerAssertions.call.chainCodeHex, FIXTURE.code)
+  assert.equal(observed.providerAssertions.call.valueHex, '0x0')
   assert.deepEqual(observed.providerAssertions.call.executionCode, { source: 'synthetic-state-override', dataHex: code })
   assert.equal(observed.verification.localComparison.status, 'match')
 })
@@ -177,12 +183,37 @@ test('detects a false expected eth_call and saves the evidence with exit 2', asy
   assert.equal(await readFile(file, 'utf8'), saved)
 })
 
-test('refuses captured runtime that needs contract context', async t => {
+test('reports a policy refusal from Lean as an unverified comparison', async t => {
+  const code = '0x60005460005260206000f3'
   const { url } = await mock(t, request =>
-    request.method === 'eth_getCode' ? rpcResult(request, '0x60005460005260206000f3') : undefined)
-  const observed = await capture(options(url, ['--lean-exe', '/not-run']))
+    request.method === 'eth_getCode' ? rpcResult(request, code) : undefined)
+  const executable = await stub(t, {
+    status: 'unsupported', error: 'framePolicyViolation', comparisonContext: PURE_CONTEXT,
+  }, code)
+  const observed = await capture(options(url, ['--lean-exe', executable]))
   assert.equal(observed.captureStatus, 'captured')
-  assert.equal(observed.verification.localComparison.reason, 'opcode-outside-context-free-subset')
+  assert.equal(observed.verification.localComparison.status, 'unverified')
+  assert.equal(observed.verification.localComparison.reason, 'frame-policy-violation')
+})
+
+test('rejects missing, incorrect or non-string comparison context markers', async t => {
+  const { url } = await mock(t)
+  for (const comparisonContext of [undefined, 'zero-value-context-free-v0', { name: PURE_CONTEXT }]) {
+    const executable = await stub(t, { ...outcome('returned'), comparisonContext })
+    const observed = await capture(options(url, ['--lean-exe', executable]))
+    assert.equal(observed.verification.localComparison.status, 'unverified')
+    assert.equal(observed.verification.localComparison.reason, 'frame-comparison-context-unrecognised')
+    assert.equal(Object.hasOwn(observed.verification.localComparison, 'comparisonContext'), false)
+  }
+})
+
+test('rejects an ambiguous Lean result that repeats the comparison context marker', async t => {
+  const { url } = await mock(t)
+  const duplicate = `{"comparisonContext":"old",${JSON.stringify(outcome('returned')).slice(1)}`
+  const executable = await stub(t, duplicate)
+  const observed = await capture(options(url, ['--lean-exe', executable]))
+  assert.equal(observed.verification.localComparison.status, 'unverified')
+  assert.equal(observed.verification.localComparison.reason, 'frame-command-failed-or-malformed-output')
 })
 
 test('rejects malformed, unsupported, exceptional or truncated Lean observations', async t => {
@@ -194,8 +225,8 @@ test('rejects malformed, unsupported, exceptional or truncated Lean observations
     [{ ...outcome('returned'), returnDataLength: '33' }, 'frame-output-incomplete-or-unrecognised'],
     [outcome('returned', '123'), 'frame-output-incomplete-or-unrecognised'],
     [{ ...outcome('returned'), schemaVersion: 2 }, 'frame-output-incomplete-or-unrecognised'],
-    [{ status: 'unsupported' }, 'frame-execution-unsupported'],
-    [{ status: 'exceptional' }, 'frame-execution-exceptional'],
+    [{ status: 'unsupported', comparisonContext: PURE_CONTEXT }, 'frame-execution-unsupported'],
+    [{ status: 'exceptional', comparisonContext: PURE_CONTEXT }, 'frame-execution-exceptional'],
   ]
   for (const [snapshot, reason] of cases) {
     const executable = await stub(t, snapshot)
@@ -221,6 +252,20 @@ test('refuses a comparison over the exact observation bound', async t => {
   const observed = await capture(options(url, ['--lean-exe', '/not-run']))
   assert.equal(observed.captureStatus, 'captured')
   assert.equal(observed.verification.localComparison.reason, 'provider-data-exceeds-comparison-limit')
+})
+
+test('keeps empty runtimes, oversized runtimes and low precompile addresses outside local comparison', async t => {
+  for (const [code, address, reason] of [
+    ['0x', FIXTURE.address, 'empty-runtime-code'],
+    [`0x${'00'.repeat(48 * 1024 + 1)}`, FIXTURE.address, 'runtime-code-exceeds-comparison-limit'],
+    [FIXTURE.code, '0x0000000000000000000000000000000000000001', 'address-in-low-precompile-range'],
+  ]) {
+    const { url } = await mock(t, request => request.method === 'eth_getCode' ? rpcResult(request, code) : undefined)
+    const observed = await capture(parseCli(args(url, ['--lean-exe', '/not-run'])
+      .map(argument => argument === FIXTURE.address ? address : argument)))
+    assert.equal(observed.captureStatus, 'captured')
+    assert.equal(observed.verification.localComparison.reason, reason)
+  }
 })
 
 test('checks the expected chain ID before making any state read', async t => {
@@ -403,29 +448,87 @@ test('refuses methods outside the read-only allowlist before sending requests', 
   assert.deepEqual(requests, [])
 })
 
-test('compares the deterministic calldata fixture with the Lean executable', {
-  skip: process.env.EVM_RPC_TEST_LEAN_EXE ? false : 'set EVM_RPC_TEST_LEAN_EXE to exercise --frame-call',
-}, async t => {
+test('compares the deterministic calldata fixture with the guarded Lean executable', LEAN_TEST, async t => {
   const { url } = await mock(t)
-  const observed = await capture(options(url, ['--lean-exe', process.env.EVM_RPC_TEST_LEAN_EXE]))
+  const observed = await capture(options(url, ['--lean-exe', LEAN_EXE]))
   assert.deepEqual(observed.verification.localComparison.local, { kind: 'return', dataHex: FIXTURE.returnData })
   assert.equal(observed.verification.localComparison.status, 'match')
 })
 
+test('the guarded Lean executable refuses reachable storage and caller context', LEAN_TEST, async t => {
+  for (const code of ['0x60005460005260206000f3', '0x3360005260206000f3']) {
+    const { url } = await mock(t, request => request.method === 'eth_getCode' ? rpcResult(request, code) : undefined)
+    const observed = await capture(options(url, ['--lean-exe', LEAN_EXE]))
+    assert.equal(observed.captureStatus, 'captured')
+    assert.deepEqual(observed.verification.localComparison, {
+      status: 'unverified', reason: 'frame-policy-violation', comparisonContext: PURE_CONTEXT,
+      engine: 'evm-subset --pure-frame-call', codeSource: 'provider-chain-code', gas: '1000000', fuel: '10000',
+    })
+  }
+})
+
+test('compares Solidity ABI outcomes through the full compiler-produced runtime', LEAN_TEST, async t => {
+  const { methodIdentifier, runtimeHex, runtimeSha256 } = JSON.parse(await readFile(
+    new URL('../differential/fixtures/solidity-pure/fixture.json', import.meta.url), 'utf8'))
+  assert.equal(createHash('sha256').update(Buffer.from(runtimeHex, 'hex')).digest('hex'), runtimeSha256)
+  const code = `0x${runtimeHex}`
+  const word = value => value.toString(16).padStart(64, '0')
+  const high = 1n << 255n
+  const cases = [
+    [`0x${methodIdentifier}${word(high + 1n)}${word(high)}`, { kind: 'return', dataHex: `0x${word(1n)}` }],
+    [`0x${methodIdentifier}${word(high)}${word(high + 1n)}`, { kind: 'return', dataHex: `0x${word(0n)}` }],
+    ['0x12345678', { kind: 'revert', dataHex: '0x' }],
+  ]
+  for (const [data, expected] of cases) {
+    const { url, requests } = await mock(t, request => {
+      if (request.method !== 'eth_call') return undefined
+      return expected.kind === 'return' ? rpcResult(request, expected.dataHex) :
+        rpcError(request, { code: 3, message: 'execution reverted', data: expected.dataHex })
+    })
+    const options = parseCli(args(url, ['--code-override', code, '--lean-exe', LEAN_EXE])
+      .map(argument => argument === FIXTURE.data ? data : argument))
+    const observed = await capture(options)
+    assert.deepEqual(requests.find(request => request.method === 'eth_call').params, [
+      { to: FIXTURE.address, data, value: '0x0' }, BLOCK_SELECTOR, { [FIXTURE.address]: { code } },
+    ])
+    assert.equal(observed.providerAssertions.call.executionCode.dataHex, code)
+    assert.equal(observed.verification.localComparison.status, 'match')
+    assert.deepEqual(observed.verification.localComparison.local, expected)
+  }
+})
+
 const SAVED_CAPTURES = [
-  ['op-sepolia-51770430.json', '43c1c9702ed4fa11478781955099c7f170a55bdc13408e3eb4edd44b5f7e2557'],
-  ['polygon-97758671.json', '9afb228dcd84b4b4e361bd8b1adf4a86479672ab1c0ef2ea46012cc15c3b9322'],
+  {
+    file: 'op-sepolia-51770430.json', sha256: '43c1c9702ed4fa11478781955099c7f170a55bdc13408e3eb4edd44b5f7e2557',
+    historical: true,
+  },
+  {
+    file: 'polygon-97758671.json', sha256: '9afb228dcd84b4b4e361bd8b1adf4a86479672ab1c0ef2ea46012cc15c3b9322',
+    historical: true,
+  },
+  {
+    file: 'op-sepolia-jovian-decimals-51771054.json',
+    sha256: 'd7e3e43b352edcc7236cb35dfbb36bfa5eba7597af5401e4622ffe3d7e4ceebe',
+  },
+  {
+    file: 'op-sepolia-solidity-ge-51771081.json',
+    sha256: '443d647866e986890dcebaac86d9eb2923742e83c4c460aa6e405134493f0d44',
+  },
+  {
+    file: 'polygon-solidity-ge-97759492.json',
+    sha256: '602af50c0d6a9e5e144fc7bea5a079118c0641d58869a334e2c7a5f12eb18e30',
+  },
 ]
 
-for (const [file, sha256] of SAVED_CAPTURES) {
-  test(`replays the recorded provider assertions in ${file} through the capture host`, async t => {
+for (const { file, sha256, historical = false } of SAVED_CAPTURES) {
+  test(`rechecks the ${historical ? 'historical' : 'recorded'} output in ${file} with the explicit zero-value policy`, async t => {
     const raw = await readFile(new URL(`./evidence/${file}`, import.meta.url))
     assert.equal(createHash('sha256').update(raw).digest('hex'), sha256)
     const saved = JSON.parse(raw)
     const { provider, providerAssertions: chain, acquisition } = saved
     const { address, dataHex, executionCode } = chain.call
-    assert.equal(executionCode.source, 'synthetic-state-override')
-    assert.equal(chain.call.chainCodeHex, '0x')
+    const synthetic = executionCode.source === 'synthetic-state-override'
+    assert.equal(chain.call.chainCodeHex, synthetic ? '0x' : executionCode.dataHex)
     const { url, requests } = await mock(t, request => {
       const snapshots = {
         eth_chainId: provider.chainId, eth_getBlockByNumber: chain.block,
@@ -435,20 +538,31 @@ for (const [file, sha256] of SAVED_CAPTURES) {
       }
       return rpcResult(request, snapshots[request.method])
     })
-    const executable = process.env.EVM_RPC_TEST_LEAN_EXE ?? await stub(t, outcome('returned'))
+    const executable = LEAN_EXE ?? await stub(t, outcome('returned', chain.call.outcome.dataHex.slice(2)),
+      executionCode.dataHex, dataHex)
     const options = parseCli([
       '--network', saved.expectedProfile.id, '--rpc', url, '--address', address, '--data', dataHex,
-      '--out', 'fixture.json', '--block', acquisition.blockSelector, '--code-override', executionCode.dataHex,
+      '--out', 'fixture.json', '--block', acquisition.blockSelector,
+      ...(synthetic ? ['--code-override', executionCode.dataHex] : []),
       '--lean-exe', executable, ...(chain.transaction ? ['--tx', chain.transaction.hash] : []),
     ])
     const replayed = await capture(options)
     assert.deepEqual(replayed.expectedProfile, saved.expectedProfile)
-    assert.deepEqual(replayed.providerAssertions, chain)
+    assert.deepEqual(replayed.providerAssertions, historical ? { ...chain, call: { ...chain.call, valueHex: '0x0' } } : chain)
     assert.deepEqual(replayed.acquisition.before, acquisition.before)
     assert.deepEqual(replayed.acquisition.after, acquisition.after)
-    assert.deepEqual(requests.map(({ id, method, params }) => ({ id, method, params })),
-      acquisition.requests.map(({ id, method, params }) => ({ id, method, params })))
-    assert.equal(replayed.verification.localComparison.status, 'match')
-    assert.deepEqual(replayed.verification, saved.verification)
+    const savedRequests = acquisition.requests.map(({ id, method, params }) => ({ id, method, params }))
+    const { params: [savedCall] } = savedRequests.find(request => request.method === 'eth_call')
+    assert.equal(Object.hasOwn(savedCall, 'value'), !historical)
+    const expectedRequests = savedRequests.map(request => historical && request.method === 'eth_call'
+      ? { ...request, params: [{ ...savedCall, value: '0x0' }, ...request.params.slice(1)] } : request)
+    assert.deepEqual(requests.map(({ id, method, params }) => ({ id, method, params })), expectedRequests)
+    assert.equal(saved.verification.localComparison.engine, historical ? 'evm-subset --frame-call' : 'evm-subset --pure-frame-call')
+    assert.deepEqual(replayed.verification, historical ? {
+      ...saved.verification,
+      localComparison: {
+        ...saved.verification.localComparison, engine: 'evm-subset --pure-frame-call', comparisonContext: PURE_CONTEXT,
+      },
+    } : saved.verification)
   })
 }

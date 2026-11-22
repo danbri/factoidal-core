@@ -160,7 +160,8 @@ async function call(rpc, snapshot, options) {
   const selector = { blockHash: snapshot.hash, requireCanonical: true }
   const code = await result(rpc, 'eth_getCode', [options.address, selector])
   if (!hexData(code)) throw new CaptureError('eth_getCode: malformed runtime bytecode')
-  const params = [{ to: options.address, data: options.data }, selector]
+  const transaction = { to: options.address, data: options.data, value: '0x0' }
+  const params = [transaction, selector]
   if (options.codeOverride !== undefined) params.push({ [options.address]: { code: options.codeOverride } })
   const response = await rpc.read('eth_call', params)
   const { result: returnData, error } = response
@@ -174,7 +175,7 @@ async function call(rpc, snapshot, options) {
     outcome = { kind: 'return', dataHex: returnData }
   }
   return {
-    address: options.address, dataHex: options.data, chainCodeHex: code,
+    address: options.address, dataHex: options.data, valueHex: transaction.value, chainCodeHex: code,
     executionCode: options.codeOverride === undefined
       ? { source: 'provider-chain-code', dataHex: code }
       : { source: 'synthetic-state-override', dataHex: options.codeOverride },

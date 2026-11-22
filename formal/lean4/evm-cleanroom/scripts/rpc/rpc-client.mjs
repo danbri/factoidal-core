@@ -180,7 +180,7 @@ function checkJsonNames(json) {
   }
 }
 
-function parse(body) {
+export function parseUniqueJson(body) {
   try {
     const json = new TextDecoder('utf-8', { fatal: true }).decode(body)
     checkJsonNames(json)
@@ -222,7 +222,7 @@ export function createRpc(value, timeoutMs) {
       const begin = performance.now()
       try {
         const { body, retrieval } = await post(remote, JSON.stringify({ jsonrpc: '2.0', id, method, params }), timeoutMs)
-        const envelope = parse(body)
+        const envelope = parseUniqueJson(body)
         if (!object(envelope) || envelope.jsonrpc !== '2.0' || envelope.id !== id ||
             Object.hasOwn(envelope, 'result') === Object.hasOwn(envelope, 'error')) {
           throw new CaptureError('Malformed JSON-RPC response envelope or mismatched id')

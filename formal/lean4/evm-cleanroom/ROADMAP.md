@@ -1,10 +1,9 @@
 # From Lean EVM seed to independently reviewed Ethereum execution
 
-**Project state: 2026-11-19.** This is a *dependency graph with exit gates*, not a claim
-that any downstream milestone is complete. This repository contains a limited
-opcode interpreter with internally checked Lean theorems. Upstream current
-reference: https://github.com/ethereum/execution-specs .
-The older ethereum/execution-spec-tests repository was archived in July 2026.
+**Project state as of 22 November 2026.** The acceptance gates below describe
+the full execution-layer goal. The Lean interpreter and replay tools now
+cover specific parts of that goal, with independent comparisons and formal
+results scoped to each implementation. [Ethereum execution specification](https://github.com/ethereum/execution-specs)
 
 ## Scope: three promises that must remain distinct
 
@@ -20,25 +19,52 @@ the declared EVM, compiler, environmental and external-call assumptions.
 **C. Conform to Ethereum execution-layer consensus.** For every claimed
 historical/mainnet fork, implement the state transition accurately, including
 exceptional execution, precompiles, fee and account rules, state roots and
-receipts. This does **not** automatically verify beacon-chain PoS consensus:
-a production node pairs with an independently validated consensus client.
+receipts. For proof-of-stake operation, issue #652 scopes the node to the
+execution layer and its Engine API integration with an independently
+validated consensus client. Beacon-chain validation belongs to that client.
+[Execution client and assurance tracker](https://github.com/danbri/factoidal-core/issues/652)
 
 Do not promote any success in A to B or C without separate evidence.
 
-## Current completed sub-milestone: official Prague state roots
+## Current partial milestones
+
+- **Official fixtures.** Six of six selected Prague EIP-7623 cases and
+  six of six selected Cancun nonempty-contract cases reproduced the
+  published state roots. Eighteen other-fork cases in the Cancun input
+  remain unexecuted. The runners use Lean execution and EthereumJS
+  signature recovery and trie serialisation. [Active evidence ledger](evidence/active-claim-manifest-v2.json)
+- **Authenticated Frontier replay.** One ETH transfer in Ethereum mainnet
+  block 46,147 uses account proofs anchored at the parent state root.
+  The Lean-driven replay and independent Python checker reproduced both
+  the intermediate transaction and final block roots. Canonical chain
+  selection and the headers are supplied externally. [Replay scope](README.md#authenticated-historical-frontier-replay)
+- **Executable frames and CALL.** The CLI covers fuel-bound STOP, memory,
+  RETURN/REVERT and scoped storage rollback. Standalone frames accept
+  calldata, and the restricted zero- or nonzero-value CALL path carries
+  context and updates the world for one child depth. CALL input and
+  output windows, nested CALL, CREATE and precompile execution remain
+  open. [CALL and calldata scope](README.md#calldata-and-bounded-call-execution)
+- **Read-only RPC capture.** The capture and comparison tool supports
+  Polygon PoS and OP Sepolia profiles. The saved Polygon mainnet and OP
+  Sepolia samples matched local output with synthetic code overrides.
+  Amoy returned an RPC error for the override call. Provider assertions
+  are recorded and independent block, root, receipt and consensus
+  validation remain open for these captures. [RPC evidence](scripts/rpc/README.md)
+
+## Historical milestone on 19 November 2026
 
 On 19 November 2026 the restricted EELS runner passed **4/6** published
 EIP-7623 Prague state tests, with the remaining two explicitly unsupported.
-Lean now computes the empty-code EVM result and scoped transaction fee/nonce/
-balance transitions. The host validates signed transaction metadata and uses
+Lean computed the empty-code EVM result and scoped transaction fee/nonce/
+balance transitions. The host validated signed transaction metadata and used
 EthereumJS MPT serialization; the resulting official EELS post-state root
-and account-set expectations match for the supported inputs.
+and account-set expectations matched for the supported inputs.
 
-The two negative controls (altered expected root and sender balance) are
-rejected. This is a *first slice of G1*, not completion of G1/G2/G3:
-nonempty contract code, persistent storage, exceptional outcomes, actual
-historical mainnet state witnesses, official receipts and EELS semantic
-refinement remain open. See [scripts/eels/README.md](scripts/eels/README.md).
+The run rejected two negative controls (altered expected root and sender
+balance). It established the first slice of G1. At that checkpoint,
+nonempty contract execution, persistent storage, exceptional outcomes,
+authenticated historical witnesses, official receipts and EELS semantic
+refinement were still open. [EELS runner and original evidence](scripts/eels/README.md)
 
 ## Acceptance gates (ordered by dependencies, not by excitement)
 
@@ -111,18 +137,22 @@ that a contract meets a financial or security invariant.
 
 ## Immediate implementation priorities
 
-1. Keep the standalone CLI executable under GitHub Actions, with a
-   machine-readable schema, strict parse errors, and deterministic outputs.
-2. Fix fuel termination semantics so STOP with the last available step
-   succeeds; add tests and adjust the actual-run trace proof accordingly.
-3. Implement the official fixture adapter using the maintained EELS
-   state-test schema; always preserve unsupported tests in the denominator.
-4. Add a genuinely separate reference transition relation (do not reuse
-   our current opcode dispatch to define the reference's result).
-5. The first fork-scoped memory slice now executes MLOAD, MSTORE, MSTORE8 and MSIZE, with narrow external EELS gas checks. Next implement RETURN/REVERT and exceptional gas handling, storage, CALL and accounts; prove EELS refinement for each supported operation.
-6. Select fixed public mainnet transactions with small reproducible
-   state witnesses, advance first to genuine state-test replay, then
-   mainnet block/transaction replay.
+1. Finish the guarded zero-value frame path for a reproducibly compiled
+   Solidity runtime. Check ABI dispatch, compare guarded execution against
+   the ordinary interpreter, and preserve compiler and bytecode provenance.
+   G4 still requires a proven property for an identified deployment.
+   [Active work, #736](https://github.com/danbri/factoidal-core/issues/736)
+2. Implement CALL input and output windows and nested frame checkpoints, then
+   CREATE and precompile execution. Extend independent coverage of frame
+   effects, exceptional halts, gas and rollback. [Machine semantics, #649](https://github.com/danbri/factoidal-core/issues/649)
+3. Advance fork-exact transaction and block transitions. Expand authenticated
+   mainnet replay to successful, reverted and storage-mutating contract
+   calls. Use an independent reference transition relation, and preserve
+   unsupported cases in fixture totals. [Transaction replay, #650](https://github.com/danbri/factoidal-core/issues/650)
+4. Complete the execution client and check Engine API integration with an
+   independent consensus client. Obtain external review of Ethereum
+   semantics, Lean proofs and systems security against the exact revisions
+   and claims. [Execution client and assurance, #652](https://github.com/danbri/factoidal-core/issues/652)
 
 ## Independent external specifications
 
