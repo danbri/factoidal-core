@@ -43,10 +43,14 @@ async function reference(code, gas) {
       throw Error('unexpected oracle exception ' + error)
     return { status: 'error', error: 'outOfGas' }
   }
+  const size = Number(r.runState.memoryWordCount * 32n)
+  if (size > 4096) throw Error('unexpected oracle memory size > 4 KiB')
   return {
     status: 'ok',
     stack: r.runState.stack.getStack().map(String).reverse(),
     gasRemaining: String(BigInt(gas) - r.executionGasUsed),
+    memorySizeBytes: String(size),
+    memoryHex: Buffer.from(r.runState.memory.read(0, size)).toString('hex'),
   }
 }
 
@@ -60,7 +64,7 @@ for (const example of examples) {
       const actual = lean(example.hex, gas)
       const expected = await reference(example.hex, gas)
       const fields = expected.status === 'error'
-        ? ['status', 'error'] : ['status', 'gasRemaining', 'stack']
+        ? ['status', 'error'] : ['status', 'gasRemaining', 'stack', 'memorySizeBytes', 'memoryHex']
       const diffs = fields.filter(f =>
         JSON.stringify(actual[f]) !== JSON.stringify(expected[f]))
       if (diffs.length) failures.push({ id, diffs, expected, actual })
@@ -83,7 +87,7 @@ const report = {
   oracle: '@ethereumjs/evm@10.1.3',
   compared, matched: compared - failures.length, mismatches: failures.length,
   negativeControl,
-  fields: ['status', 'exception kind', 'full stack', 'remaining gas'],
+  fields: ['status', 'exception kind', 'full stack', 'remaining gas', 'full allocated memory'],
   limitations: 'Frame CHAINID is externally supplied; no signed transaction or block/consensus authentication; preShanghai profile refuses CHAINID.',
   firstFailures: failures.slice(0, 8),
 }
