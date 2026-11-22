@@ -134,8 +134,9 @@ def countPart (env : Environment) (inPart : Name → Bool) : Part := Id.run do
           p := { p with implementedBy := p.implementedBy + 1 }
       | none => pure ()
       if let some data := getExternAttrData? env n then
-        p := { p with extern := p.extern + 1,
-          haclExtern := p.haclExtern + (if isHaclExtern data then 1 else 0) }
+        p := { p with extern := p.extern + 1 }
+        if isHaclExtern data then
+          p := { p with haclExtern := p.haclExtern + 1 }
       if c matches .opaqueInfo _ then
         if !isPartial && !isExtern env n && !compilerMade n then
           p := { p with opaques := p.opaques + 1 }
