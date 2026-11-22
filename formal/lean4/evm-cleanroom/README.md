@@ -1,19 +1,16 @@
 # Lean 4 EVM — independently authored, machine-checked seed
 
-**Status: prototype, not a complete Ethereum Virtual Machine or mainnet
-client.** This stand-alone project develops a deliberately restricted EVM
-interpreter and checks its internal correctness properties in Lean 4.
-Correctness with respect to Ethereum's external specifications is the next,
-separate obligation.
+**Restricted Lean 4 EVM prototype.** This stand-alone project
+executes selected opcode, frame, transaction and block replay cases. Full
+execution, fork coverage, Ethereum peer networking and consensus, and formal
+refinement to EELS remain open.
 
-Read **[SOUNDNESS.md](SOUNDNESS.md)** before making any security or
-compatibility claim. It is an explicit ledger of theorem scope, tested
-examples, trusted boundaries and missing proof obligations.
-
-**Updated stacked implementation (20 Nov 2026):** see
-[FRAME_STORAGE.md](FRAME_STORAGE.md) for the new one-account SLOAD/SSTORE,
-RETURN/REVERT frame runner, storage rollback theorems and EthereumJS
-differential gates. SOUNDNESS.md retains the earlier PR #642 scope.
+The original proof record covers the initial interpreter and its trust
+boundaries. The active evidence ledger records subsequent claims with their
+source revisions, checks and limitations.
+[Original proof scope](SOUNDNESS.md) ·
+[PR #642 (initial interpreter proofs)](https://github.com/danbri/factoidal-core/pull/642) ·
+[Active evidence ledger](evidence/active-claim-manifest-v2.json)
 
 The code is isolated under `formal/lean4/evm-cleanroom` and uses the same
 Lean 4.33.1 release as Factoidal without depending on its large Lean library.
@@ -34,28 +31,74 @@ builds the default library and runs an axiom audit.
 `#guard` executes examples during the Lean build; `#print axioms`
 reports theorem dependencies. These are distinct forms of evidence.
 
-## First verified-machine EELS state-test replay
+## Published EELS state-test replay
 
-The [restricted EELS replay lab](scripts/eels/README.md) now **executes**
-four genuine EELS-generated Prague state tests, using Lean for both the
-empty-code frame and type-0/1/2 EIP-7623 transaction fee, balance and nonce
-arithmetic. The JavaScript host checks signed transaction metadata and uses
-EthereumJS only for transaction decoding and Merkle Patricia trie account
-serialization. All four calculated state roots and complete expected account
-sets match the pinned official fixture; the EIP-4844 and EIP-7702 cases
-are explicitly unsupported (4 pass, 0 fail, 2 unsupported).
+- **Prague.** Six of six official EIP-7623 fixture cases reproduced the
+  published state roots, with zero failures and zero unsupported cases. They
+  cover protected and unprotected type-0 transactions and one envelope each
+  of types 1–4. Lean executes the empty-code frame and computes the restricted
+  fee, balance, nonce and EIP-7702 delegation updates. The blob fixture has
+  zero excess blob gas. The authorisation fixture covers a single new
+  authority and its delegation state. The host uses EthereumJS for signed
+  transaction decoding, sender recovery and account-trie serialization.
+  [Prague CI evidence at `ff3251d`](https://github.com/danbri/factoidal-core/actions/runs/44940731780)
+- **Cancun.** Six of six official `test_push0_contracts` cases reproduced
+  the published state roots for nonempty bytecode, storage changes and
+  stack-overflow rollback. The same fixture contains 18 cases for other forks
+  that this gate leaves unexecuted.
+  [Fixture and prior Cancun CI evidence](CONTRACT_EELS.md)
 
 Axiom-audited Lean theorems cover zero-gas empty-code termination, exact
 sender debit accounting, gas bounds, nonce advancement and fee conservation
-**relative to our model**. No external Ethereum semantic-refinement theorem
-or verified trie implementation is claimed.
+relative to the model. The EthereumJS trie and specification correspondence
+remain outside those proofs.
 
-CI also modifies the expected EELS state root and an account balance in
-negative controls: both tampered fixtures must be rejected. The fixture and
-generated npm dependency lock are pinned to SHA-256 values in the workflow.
+The Prague evidence run rejected nine tampered fixture controls and six
+tampered result-ledger controls. Fixture and dependency digests are pinned
+in the [workflow](../../../.github/workflows/evm-cleanroom.yml).
 
-This is **not** historical mainnet replay, nonempty deployed-contract
-execution, Solidity correctness or general EELS conformance.
+## Authenticated historical Frontier replay
+
+The restricted replay of Ethereum mainnet block **46,147** checks the signed
+transaction, header and published transaction and receipt commitments. Pinned
+account paths authenticate the transfer prestate against parent block 46,146's
+state root. Lean settles the transfer and miner fee. A separate 5 ETH Frontier
+reward is applied to reach the final block state. The Lean-driven replay with
+an EthereumJS trie host and the independent Python checker both reproduced
+the receipt's intermediate state root and the final block state root. The
+evidence ledger records the exact hashes, proof mutations and subsequent
+Keccak padding fix. The published headers and canonical chain selection
+remain external inputs.
+[Historical CI run at `e59416f5`](https://github.com/danbri/factoidal-core/actions/runs/44995444945) ·
+[Evidence ledger](evidence/active-claim-manifest-v2.json)
+
+## Calldata and bounded CALL execution
+
+`evm-subset --frame-call HEX CALLDATA_HEX GAS FUEL` executes one frame with ABI
+input. `CALLDATALOAD` reads a zero-padded big-endian word at the full-width
+offset and `CALLDATASIZE` gives the input size. Unsigned comparisons, Boolean
+and bitwise operations, byte extraction and logical shifts run in the core
+dispatcher. Frame output includes exact gas and stack words, allocated memory,
+return or revert bytes, and truncation flags for the 4,096-byte observation
+limits. The calldata slice matched 331 independent Shanghai EthereumJS cases
+in the local run of [the differential script](scripts/differential/calldata.mjs).
+
+The restricted parent `CALL` runner covers zero and nonzero value with one
+child depth. Its repairs preserve static and fork context in the child, retain
+successful self-call storage changes, and stop with an explicit unsupported
+result for precompile targets. Child calldata and return-data copying, nested
+calls and complete precompile support remain open.
+[CALL implementation](EVMCleanroom/CallOpcode.lean) ·
+[CALL repair differential](scripts/differential/call-repairs.mjs) ·
+[Frame and storage proof scope](FRAME_STORAGE.md)
+
+The read-only RPC tool resolves the provider's canonical block hash for
+Polygon PoS Amoy, Polygon PoS mainnet or OP Sepolia and records provider
+assertions. Its optional local comparison covers halt kind and
+complete return or revert bytes for the admitted bytecode subset. Synthetic
+code overrides are labelled in the evidence. RPC capture leaves block
+authenticity, state roots, transaction execution and consensus unverified.
+[RPC capture commands and evidence scope](scripts/rpc/README.md)
 
 ## External executable interface and first official-fixture integration
 
@@ -192,14 +235,17 @@ charging. This does not prove EELS equivalence or world-state rollback.
 
 ## Opcode coverage
 
-`STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `POP`,
+`STOP`, `ADD`, `MUL`, `SUB`, unsigned `DIV`, `LT`, `GT`, `EQ`, `ISZERO`,
+`AND`, `OR`, `XOR`, `NOT`, `BYTE`, `SHL`, `SHR`, `CLZ`, `ADDRESS`, `CALLVALUE`,
+`CALLDATALOAD`, `CALLDATASIZE`, `SELFBALANCE`, `POP`,
 `JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`, `MLOAD`, `MSTORE`, `MSTORE8`, `MSIZE`,
 `PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`.
-A separate `Frame.run` handles `RETURN` and `REVERT`; those opcodes are
-not yet dispatched by the legacy `Core.run` interface.
+A separate `Frame.run` handles `RETURN` and `REVERT` and `CallOpcode.run`
+handles the restricted `CALL` path.
 
-`PUSH0` is gated by a coarse pre-/post-Shanghai profile. Unsupported
-opcodes return explicit errors rather than executing as NOPs.
+`PUSH0` is gated by the coarse pre-/post-Shanghai profiles. The pre-Shanghai
+profile leaves activation of `SHL` and `SHR` indeterminate. `CLZ` requires
+the Osaka profile. Unsupported opcodes return explicit errors.
 
 The arithmetic tests include expected values from the official
 [execution-spec-tests `addFiller.yml`](https://github.com/ethereum/execution-spec-tests/blob/main/tests/static/state_tests/VMTests/vmArithmeticTest/addFiller.yml).

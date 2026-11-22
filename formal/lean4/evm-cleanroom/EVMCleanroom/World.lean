@@ -41,15 +41,48 @@ def beginTransaction (accounts : Nat → Account) : TxWorld :=
     original := fun address slot => (accounts address).storage slot }
 
 /-- Project one account's transaction-scoped storage into Frame.run. -/
-def frameInput (w : TxWorld) (address gas : Nat) : State :=
+def frameInput (w : TxWorld) (address gas : Nat)
+    (readOnly : Bool := false) (profile : Profile := .shanghaiPlus) : State :=
   { code := (w.accounts address).code
     gas := gas
+    currentAddress := address
+    callValue := 0
+    selfBalance := (w.accounts address).balance
+    readOnly := readOnly
+    profile := profile
     storage := {
       original := w.original address
       current := (w.accounts address).storage
       warm := w.warmSlots address
       refund := w.refund
     } }
+
+/-- The executing address and its pre-instruction balance come from the
+    supplied transaction world. This is the actual executable projection
+    consumed by the CALL context opcodes, not a detached specification. -/
+theorem frameInput_address (w : TxWorld) (address gas : Nat) :
+    (frameInput w address gas).currentAddress = address := rfl
+
+theorem frameInput_balance (w : TxWorld) (address gas : Nat) :
+    (frameInput w address gas).selfBalance =
+      (w.accounts address).balance := rfl
+
+theorem frameInput_value_zero (w : TxWorld) (address gas : Nat) :
+    (frameInput w address gas).callValue = 0 := rfl
+
+/-- Projection.
+    Says: the executable frame receives the supplied static flag and opcode profile.
+    Does not say: which opcode or fork rules the frame interpreter implements. -/
+theorem frameInput_context (w : TxWorld) (address gas : Nat)
+    (readOnly : Bool) (profile : Profile) :
+    (frameInput w address gas readOnly profile).readOnly = readOnly ∧
+    (frameInput w address gas readOnly profile).profile = profile :=
+  ⟨rfl, rfl⟩
+
+#print axioms frameInput_address
+#print axioms frameInput_balance
+#print axioms frameInput_value_zero
+#print axioms frameInput_context
 
 /-- Commit a successfully completed frame. All other accounts retain the
     exact same account records, including code, balance, nonce and storage. -/
@@ -73,8 +106,9 @@ inductive Outcome where
   | exceptional (world : TxWorld) (gasRemaining : Nat) (reason : Error)
   | unsupported (reason : Error)
 
-def runAt (fuel : Nat) (world : TxWorld) (address gas : Nat) : Outcome :=
-  match Frame.run fuel (frameInput world address gas) with
+def runAt (fuel : Nat) (world : TxWorld) (address gas : Nat)
+    (readOnly : Bool := false) (profile : Profile := .shanghaiPlus) : Outcome :=
+  match Frame.run fuel (frameInput world address gas readOnly profile) with
   | .stopped out => .stopped (commitFrame world address out) out.gas
   | .returned out offset length =>
       .returned (commitFrame world address out) out.gas offset length

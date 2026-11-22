@@ -126,14 +126,20 @@ for(const child of children) {
       program(requested,'00',2),child.code,available+16*2)
   }
 }
-// Fail closed for nonzero value; the first slice does NOT claim value transfer.
-const nonzeroValue='5f5f5f5f600160c3617530f100'
+// The parent writes one input byte; the reference child can load and store it.
+// The Lean CALL slice still excludes a nonempty input window.
+const nonemptyInput='602a5f535f5f60015f5f60c3617530f100'
+const inputReadingChild='5f355f5500'
+const validReference=await ethereumjs(nonemptyInput,inputReadingChild,50000)
 const refused=spawnSync('lake',[
-  'exe','evm-subset','--call-opcode',nonzeroValue,'00','50000','100',
+  'exe','evm-subset','--call-opcode',nonemptyInput,inputReadingChild,'50000','100',
 ],{encoding:'utf8',timeout:60000})
 if(refused.error||refused.status!==0)throw Error('Lean invalid scope probe failed')
 const outOfScope=JSON.parse(refused.stdout.trim().split('\n').at(-1))
-const invalidScopeRefused=outOfScope.status==='indeterminate' &&
+const invalidScopeRefused=validReference.status==='stopped' &&
+  validReference.stack.length===1 && validReference.stack[0]==='1' &&
+  validReference.slot0===(0x2an<<248n).toString() &&
+  outOfScope.status==='indeterminate' &&
   outOfScope.reason==='unsupportedFork'
 
 const report={
