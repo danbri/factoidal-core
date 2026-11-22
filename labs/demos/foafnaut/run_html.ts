@@ -734,7 +734,7 @@ async function main() {
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
   // Text zoom 100 (WebSelection.defaultPercent) until the window's backing scale is
-  // known; then zoom unit 100*scale and zoom 200*scale, which the settings page shows as 200%.
+  // known; the zoom unit and the normal text size then both use 100*scale.
   const view:PageView={textScalePercent:100};
   let press:NativePress<typeof document>|undefined,lastCopied:string|undefined,loading=false;
   // The press on screen (issue 1268): Lean's `press` answer (a chrome control, or the link's
