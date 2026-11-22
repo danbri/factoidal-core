@@ -39,6 +39,17 @@ private def scalarPair : M Unit := do
   let s ← scalarAdd a b (some "sum")
   output "answer" s (some "result")
 
+/-- Standard 64-bit IDs occupy two u32 words. Both halves must match. -/
+private def compareU64Lanes : M Unit := do
+  let llo ← input "leftLow"
+  let rlo ← input "rightLow"
+  let lhi ← input "leftHigh"
+  let rhi ← input "rightHigh"
+  let dlo ← zipXor llo rlo (some "compareLow")
+  let dhi ← zipXor lhi rhi (some "compareHigh")
+  output "differenceLow" dlo (some "outLow")
+  output "differenceHigh" dhi (some "outHigh")
+
 private def scanCpu : M Unit := do
   let x ← input "words"
   let positions ← scanSum x (some "scan")
@@ -63,6 +74,15 @@ private def caseData : List (String × M Unit × Json × Json) := [
   ("large-8192", mapWords,
     Json.mkObj [("words", toJson ((List.range 8192).map (fun n => (n*11939) % 4294967296)))],
     Json.mkObj [("words", toJson (8192 : Nat))]),
+  ("u64-two-lane-equality", compareU64Lanes,
+    Json.mkObj [
+      ("leftLow", toJson ([1,1,4294967295,3] : List Nat)),
+      ("rightLow", toJson ([1,1,4294967295,4] : List Nat)),
+      ("leftHigh", toJson ([536870912,536870912,2415919104,1] : List Nat)),
+      ("rightHigh", toJson ([2415919104,536870912,2415919104,1] : List Nat))],
+    Json.mkObj [
+      ("leftLow", toJson (4 : Nat)), ("rightLow", toJson (4 : Nat)),
+      ("leftHigh", toJson (4 : Nat)), ("rightHigh", toJson (4 : Nat))]),
   ("scan-cpu-only", scanCpu,
     Json.mkObj [("words", toJson ([1,2,3,4,5] : List Nat))],
     Json.mkObj [("words", toJson (5 : Nat))])
