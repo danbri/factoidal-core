@@ -216,6 +216,67 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
   .gradient {shape := .linear (cx-dx*length/2) (cy-dy*length/2) (cx+dx*length/2) (cy+dy*length/2),
              boundingBoxUnits := false,stops}
 
+private def backgroundTileSize (size : String) (iw ih w h : Float) : Float × Float :=
+  if size == "cover" || size == "contain" then
+    let scale := if size == "cover" then max (w/iw) (h/ih) else min (w/iw) (h/ih)
+    (iw*scale, ih*scale)
+  else
+    let parts := CssValues.stripWs (CssValues.CV.parse size)
+    let dim := fun basis (part : Option CssValues.CV) => do
+      let cv ← part
+      let len ← (CSS.length (CssValues.serialize [cv])).toOption
+      CSS.resolve basis len
+    match dim w parts.head?, dim h (parts[1]?) with
+    | some x, some y => (x,y)
+    | some x, none => (x,ih*x/iw)
+    | none, some y => (iw*y/ih,y)
+    | none, none => (iw,ih)
+
+private def backgroundRepeatAxes (value : String) : Option (Bool × Bool) :=
+  match value with
+  | "repeat" | "repeat repeat" => some (true,true)
+  | "repeat-x" | "repeat no-repeat" => some (true,false)
+  | "repeat-y" | "no-repeat repeat" => some (false,true)
+  | "no-repeat" | "no-repeat no-repeat" => some (false,false)
+  | _ => none
+
+/-- Raster background layers in reverse paint order. Each tile is clipped to the box and
+shares its decoded bitmap with the element and SVG image paths. -/
+private def backgroundRasterNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
+  let mut nodes := #[]
+  let border := s.borderEdges
+  let areaW := max 0 (w-border.left-border.right)
+  let areaH := max 0 (h-border.top-border.bottom)
+  for (layer,index) in s.backgroundBitmaps.zipIdx.reverse do
+    let some img := layer | continue
+    let (iw,ih) := (Float.ofNat img.natural.1, Float.ofNat img.natural.2)
+    if iw <= 0 || ih <= 0 then continue
+    let size := s.backgroundSizes[index % max 1 s.backgroundSizes.length]?.getD "auto"
+    let repeat := s.backgroundRepeats[index % max 1 s.backgroundRepeats.length]?.getD "repeat"
+    let some (repeatX,repeatY) := backgroundRepeatAxes repeat | continue
+    let (tw,th) := backgroundTileSize size iw ih areaW areaH
+    if tw <= 0 || th <= 0 then continue
+    let ox := if repeatX then border.left-(border.left/tw).ceil*tw else border.left
+    let oy := if repeatY then border.top-(border.top/th).ceil*th else border.top
+    let nx := if repeatX then ((w-ox)/tw).ceil.toUInt64.toNat else 1
+    let ny := if repeatY then ((h-oy)/th).ceil.toUInt64.toNat else 1
+    if nodes.size + nx*ny > 4096 then continue
+    let sx := Float.ofNat img.record.bitmap.width/tw
+    let sy := Float.ofNat img.record.bitmap.height/th
+    for row in [:ny] do
+      for column in [:nx] do
+        let tx := x+ox+Float.ofNat column*tw
+        let ty := y+oy+Float.ofNat row*th
+        let left := max x tx
+        let top := max y ty
+        let right := min (x+w) (tx+tw)
+        let bottom := min (y+h) (ty+th)
+        if right > left && bottom > top then
+          let record := {img.record with map := ⟨sx,0,0,sy,-tx*sx,-ty*sy⟩}
+          nodes := nodes.push (.paint ⟨some id,
+            {geometry := .rect left top (right-left) (bottom-top), style := {fill := .image record}}⟩)
+  return nodes
+
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
   let colour := match s.background with
@@ -223,7 +284,7 @@ private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node 
     | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
   -- CSS Backgrounds 3 §3.2: the image over the colour
   match s.backgroundGradient with
-  | none => colour
+  | none => if s.backgroundBitmaps.isEmpty then colour else colour ++ backgroundRasterNodes id s x y w h
   | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
 
 /-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
