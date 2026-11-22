@@ -9,6 +9,14 @@ open L4Factoidal.Rendering FontFaceRule
 #guard CSS.familyNames "Noto  Sans" == some ["Noto Sans"]
 #guard CSS.familyNames "'A', B C, monospace" == some ["A","B C","monospace"]
 #guard CSS.familyNames "a,,b" == none
+-- A quoted generic name is a family name (CSS Fonts 4 §5.1): it keeps its quotes, and the list
+-- resolves past it (WPT css/css-fonts/quoted-generic-ignored.html).
+#guard CSS.familyNames "\"fantasy\", serif" == some ["\"fantasy\"","serif"]
+#guard CSS.familyNames "'monospace', sans-serif" == some ["\"monospace\"","sans-serif"]
+#guard FontFaceRule.genericOfValue [] (CSS.familyValue ["\"fantasy\"","serif"]) == .serif
+#guard FontFaceRule.genericOfValue [] (CSS.familyValue ["\"cursive\"","monospace"]) == .monospace
+#guard FontFaceRule.genericOfValue [] (CSS.familyValue ["\"monospace\"","sans-serif"]) == .first
+#guard FontFaceRule.genericOfValue [] (CSS.familyValue ["\"monospace\""]) == .serif
 #guard CSS.familyNames "\"open" == none
 #guard CSS.familyNames "x\\y" == none
 #guard CSS.familyList (CSS.familyValue ["Spinal Tap","serif"]) == ["Spinal Tap","serif"]

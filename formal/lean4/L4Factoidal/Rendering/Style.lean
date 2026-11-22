@@ -345,10 +345,20 @@ def splitTopCommas (source : String) : List String := Id.run do
     else item := item.push c
   return (out.push item).toList
 
+/-- The generic family keywords of CSS Fonts 4 §2.1 and the CSS-wide keywords, lower case: an
+unquoted item spelled so is a keyword, a quoted one a family name (`familyNames`). -/
+def genericFamilyKeywords : List String :=
+  ["serif","sans-serif","monospace","cursive","fantasy","system-ui","ui-serif","ui-sans-serif",
+    "ui-monospace","ui-rounded","math","emoji","fangsong","generic","default","initial","inherit",
+    "unset","revert","revert-layer"]
+
 /-- CSS Fonts 4 §2.1 `<family-name>#`: a quoted string, or identifiers separated by
-white space (joined by one space). Generic family keywords stay as they are. `none`
-for a list this profile can not read: an empty item, a backslash escape, an
-unclosed quote, or an unquoted item that is not identifiers. -/
+white space (joined by one space). Generic family keywords stay as they are. A quoted
+string spelled like a generic or CSS-wide keyword is a family name, not the keyword
+(CSS Fonts 4 §5.1: `"monospace"` names a font called monospace), so it keeps its double
+quotes and no generic-family test matches it. `none` for a list this profile can not read:
+an empty item, a backslash escape, an unclosed quote, or an unquoted item that is not
+identifiers. -/
 def familyNames (value : String) : Option (List String) := do
   let items ← (splitTopCommas value).mapM fun item => do
     let raw := trim item
@@ -358,7 +368,7 @@ def familyNames (value : String) : Option (List String) := do
       if raw.length < 2 || !raw.endsWith q.toString then none
       let inner := ((raw.drop 1).dropEnd 1).toString
       if inner.contains q || inner.isEmpty then none
-      pure inner
+      if genericFamilyKeywords.contains inner.toLower then pure ("\"" ++ inner ++ "\"") else pure inner
     else
       let parts := words raw
       if parts.isEmpty || !parts.all ident then none
