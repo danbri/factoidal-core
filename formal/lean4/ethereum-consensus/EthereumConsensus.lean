@@ -5,3 +5,4 @@ import EthereumConsensus.ForkChoice.VoteStore
 import EthereumConsensus.ForkChoice.AttestationScore
 
 import EthereumConsensus.ForkChoice.ProposerScore
+import EthereumConsensus.ForkChoice.CheckedAncestry
