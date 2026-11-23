@@ -53,3 +53,7 @@ root = "MultiProofMain"
 [[lean_exe]]
 name = "ssz-byte-proofs"
 root = "ByteProofMain"
+
+[[lean_exe]]
+name = "ssz-basic-types"
+root = "BasicMain"
