@@ -424,6 +424,23 @@ private def clearfix := "<div id=a><div id=f style='float:left;height:30px;width
   let (tree,_) ← (Generated.styled none dom (← (CSS.parse "*::before{box-sizing:border-box} #a{color:red}").toOption)).toOption
   pure (tree.size == dom.size)) == some true
 
+-- Counters (CSS 2.1 §12.4): the texts of the `::before` boxes, in tree order.
+private def beforeTexts (page sheet : String) : Option (List String) := do
+  let dom := DOM.parseHtmlDocument page
+  let (tree,styles) ← (Generated.styled none dom (← (CSS.parse sheet).toOption)).toOption
+  pure ((List.range tree.size).filterMap fun i =>
+    if (tree.get i).lname == "::before" && ((styles[i]?).map (·.display != .none)).getD false then
+      ((tree.get i).kids[0]?).map fun t => (tree.get t).data else none)
+#guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>"
+  "ol{counter-reset:item} li{counter-increment:item} li::before{content:counter(item) '. '}" == some ["1. ", "2. ", "3. "]
+#guard beforeTexts "<ol><li>a<ol><li>b</li><li>c</li></ol></li><li>d</li></ol>"
+  "ol{counter-reset:item} li{counter-increment:item} li::before{content:counters(item, '.')}" == some ["1", "1.1", "1.2", "2"]
+#guard beforeTexts "<p>a</p><p>b</p>"
+  "body{counter-reset:n 4} p{counter-increment:n -2} p::before{content:counter(n, upper-roman)}" == some ["II", "0"]
+#guard beforeTexts "<p>a</p><p style='display:none'>b</p><p>c</p>"
+  "p{counter-increment:n} p::before{content:counter(n, lower-alpha)}" == some ["a", "b"]
+#guard beforeTexts "<p>a</p>" "p::before{content:counter(x)}" == some ["0"]
+
 -- `::first-letter` (CSS Pseudo-Elements 4 §2.3): the letter and its punctuation in an element
 -- of their own, with the rule's style; the rest stays in the page's text node.
 private def letterOf (page sheet : String) : Option (String × String × Float) := do

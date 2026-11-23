@@ -19,8 +19,14 @@ inductive Piece where
   | text (s : String)
   /-- `attr(name)`: the value of that attribute of the originating element. -/
   | attr (name : String)
-  /-- An image, a counter, `no-open-quote`: nothing in this profile. -/
+  /-- An image, `no-open-quote`: nothing in this profile. -/
   | blank
+  /-- `counter(name, style)` (CSS 2.1 §12.4; CSS Lists 3 §4.3): the innermost counter of
+  that name, in that style (`decimal` when none is given). -/
+  | counter (name style : String)
+  /-- `counters(name, separator, style)`: every counter of that name in scope, outermost
+  first, joined with the separator. -/
+  | counters (name sep style : String)
   deriving Repr, BEq, DecidableEq
 
 /-- What a `content` value says. -/
@@ -41,6 +47,17 @@ def imageFunctions : List String :=
   ["url", "image", "image-set", "cross-fade", "element", "linear-gradient", "radial-gradient",
    "conic-gradient", "repeating-linear-gradient", "repeating-radial-gradient", "repeating-conic-gradient"]
 
+private def isComma : CssValues.CV → Bool
+  | .tok .comma => true
+  | _ => false
+
+/-- The arguments of a function split at its commas, white space left out. -/
+def commaParts (args : List CssValues.CV) : List (List CssValues.CV) :=
+  (args.foldr (fun a (acc : List (List CssValues.CV)) =>
+    if isComma a then [] :: acc else match acc with
+      | [] => [[a]]
+      | c :: rest => (a :: c) :: rest) [[]]).map CssValues.stripWs
+
 /-- One component of the value as a part; `none` when it is not one. -/
 def piece : CssValues.CV → Option Piece
   | .tok (.str s) => some (.text s)
@@ -57,7 +74,17 @@ def piece : CssValues.CV → Option Piece
       match CssValues.stripWs args with
       | .tok (.ident a) :: _ => some (.attr a)
       | _ => none
-    else if name == "counter" || name == "counters" || imageFunctions.contains name then some .blank
+    else if name == "counter" then
+      match commaParts args with
+      | [[.tok (.ident n)]] => some (.counter n "decimal")
+      | [[.tok (.ident n)], [.tok (.ident st)]] => some (.counter n (CssValues.lower st))
+      | _ => none
+    else if name == "counters" then
+      match commaParts args with
+      | [[.tok (.ident n)], [.tok (.str sep)]] => some (.counters n sep "decimal")
+      | [[.tok (.ident n)], [.tok (.str sep)], [.tok (.ident st)]] => some (.counters n sep (CssValues.lower st))
+      | _ => none
+    else if imageFunctions.contains name then some .blank
     else none
   | _ => none
 
@@ -89,7 +116,7 @@ def chars (attr : String → String) : List Piece → List Char → List Char
     let more := match p with
       | .text s => s.toList
       | .attr name => (attr name).toList
-      | .blank => []
+      | .blank | .counter .. | .counters .. => []
     chars attr rest ((acc ++ more).take maxChars)
 
 /-- The text of a box with these parts. -/
@@ -119,7 +146,7 @@ theorem chars_prefix (attr : String → String) (ps : List Piece) (acc : List Ch
       have keep : acc <+: (acc ++ (match p with
           | .text s => s.toList
           | .attr name => (attr name).toList
-          | .blank => [])).take maxChars := by
+          | .blank | .counter .. | .counters .. => [])).take maxChars := by
         rw [List.prefix_take_iff]
         exact ⟨List.prefix_append _ _, h⟩
       exact List.IsPrefix.trans keep (ih _ (by simp [List.length_take]; omega))
@@ -181,7 +208,11 @@ theorem read_parts_le (value : String) (ps : List Piece) (h : read value = some 
 #guard read "attr(title)" == some (.parts [.attr "title"])
 #guard read "\"(\" attr(href) \")\"" == some (.parts [.text "(", .attr "href", .text ")"])
 #guard read "open-quote" == some (.parts [.text "\u201C"])
-#guard read "counter(item) \". \"" == some (.parts [.blank, .text ". "])
+#guard read "counter(item) \". \"" == some (.parts [.counter "item" "decimal", .text ". "])
+#guard read "counter(item, upper-roman)" == some (.parts [.counter "item" "upper-roman"])
+#guard read "counters(item, \".\")" == some (.parts [.counters "item" "." "decimal"])
+#guard read "counters(item, \".\", lower-alpha)" == some (.parts [.counters "item" "." "lower-alpha"])
+#guard read "counter(1)" == none
 #guard read "url(a.png)" == some (.parts [.blank])
 #guard read "url(a.png) / \"alt\"" == some (.parts [.blank])
 #guard read "\"x\" / \"alt\"" == some (.parts [.text "x"])
@@ -192,5 +223,107 @@ theorem read_parts_le (value : String) (ps : List Piece) (h : read value = some 
 #guard text (fun _ => "v") [.text "a", .attr "x", .blank, .text "b"] == "avb"
 #guard text (fun _ => "") [] == ""
 #guard (text (fun _ => String.ofList (List.replicate 70000 'x')) [.attr "a", .attr "a"]).length == maxChars
+
+/-! ### Counters (CSS 2.1 §12.4, CSS Lists 3 §4)
+
+`counter-reset`, `counter-increment` and `counter-set` name counters with an optional integer;
+`counter()` and `counters()` show their values in a counter style. -/
+
+/-- The names and integers of a `counter-reset`, `counter-increment` or `counter-set` value;
+`dflt` for a name with no integer. `none` gives no pair; `none` as the answer: not a value. -/
+def counterPairs (dflt : Int) : List CssValues.CV → Option (List (String × Int))
+  | [] => some []
+  | .tok (.ident n) :: .tok (.num v true) :: rest =>
+    if bad n then none else (counterPairs dflt rest).map ((n, v.num) :: ·)
+  | .tok (.ident n) :: rest => if bad n then none else (counterPairs dflt rest).map ((n, dflt) :: ·)
+  | _ => none
+where bad (n : String) : Bool :=
+  ["none", "initial", "inherit", "unset", "default", "revert", "revert-layer"].contains (CssValues.lower n)
+
+/-- A counter declaration's value: `none` gives no pairs. -/
+def counterList (value : String) (dflt : Int) : Option (List (String × Int)) :=
+  match CssValues.stripWs (CssValues.CV.parse value) with
+  | [.tok (.ident k)] => if CssValues.lower k == "none" then some [] else counterPairs dflt [.tok (.ident k)]
+  | cvs => counterPairs dflt cvs
+
+#guard counterList "none" 0 == some []
+#guard counterList "item" 0 == some [("item", 0)]
+#guard counterList "a 2 b" 1 == some [("a", 2), ("b", 1)]
+#guard counterList "a -3" 0 == some [("a", -3)]
+#guard counterList "a 1.5" 0 == none
+#guard counterList "inherit" 0 == none
+
+private def romanDigits : List (Nat × String) :=
+  [(1000,"m"),(900,"cm"),(500,"d"),(400,"cd"),(100,"c"),(90,"xc"),(50,"l"),(40,"xl"),(10,"x"),(9,"ix"),(5,"v"),(4,"iv"),(1,"i")]
+
+/-- Lower-case Roman numerals of `n` (1 to 3999). -/
+def roman (n : Nat) : String := Id.run do
+  let mut k := n
+  let mut out := ""
+  for (v, d) in romanDigits do
+    for _ in [0:4] do
+      if k ≥ v then
+        out := out ++ d
+        k := k - v
+  return out
+
+/-- `n` (at least 1) in the alphabetic system of `letters` (CSS Counter Styles 3 §3.1.3). -/
+def alphabetic (letters : Array Char) (n : Nat) : String := Id.run do
+  if letters.isEmpty then return toString n
+  let mut k := n
+  let mut out : List Char := []
+  for _ in [0:64] do
+    if k > 0 then
+      k := k - 1
+      out := letters[k % letters.size]! :: out
+      k := k / letters.size
+  return String.ofList out
+
+private def latin : Array Char := "abcdefghijklmnopqrstuvwxyz".toList.toArray
+private def greek : Array Char := "αβγδεζηθικλμνξοπρστυφχψω".toList.toArray
+
+/-- `n` in the counter style `style` (CSS Counter Styles 3 §6, the predefined styles this
+profile draws). An unknown style, and a value outside a style's range, is `decimal`. -/
+def formatCounter (style : String) (n : Int) : String :=
+  let pos := n.toNat
+  match style with
+  | "none" => ""
+  | "disc" => "\u2022"
+  | "circle" => "\u25E6"
+  | "square" => "\u25AA"
+  | "decimal-leading-zero" =>
+    if 0 ≤ n && n < 10 then "0" ++ toString n
+    else if -10 < n && n < 0 then "-0" ++ toString n.natAbs else toString n
+  | "lower-roman" => if 1 ≤ n && n ≤ 3999 then roman pos else toString n
+  | "upper-roman" => if 1 ≤ n && n ≤ 3999 then (roman pos).toUpper else toString n
+  | "lower-alpha" | "lower-latin" => if 1 ≤ n then alphabetic latin pos else toString n
+  | "upper-alpha" | "upper-latin" => if 1 ≤ n then (alphabetic latin pos).toUpper else toString n
+  | "lower-greek" => if 1 ≤ n then alphabetic greek pos else toString n
+  | _ => toString n
+
+#guard formatCounter "decimal" 12 == "12"
+#guard formatCounter "decimal" (-3) == "-3"
+#guard formatCounter "upper-roman" 1994 == "MCMXCIV"
+#guard formatCounter "lower-roman" 4 == "iv"
+#guard formatCounter "lower-alpha" 1 == "a"
+#guard formatCounter "lower-alpha" 27 == "aa"
+#guard formatCounter "upper-alpha" 52 == "AZ"
+#guard formatCounter "lower-greek" 2 == "β"
+#guard formatCounter "decimal-leading-zero" 7 == "07"
+#guard formatCounter "lower-roman" 0 == "0"
+#guard formatCounter "none" 5 == ""
+
+/-- The parts with each counter written as text: `values name` are the counters of that name
+in scope, outermost first; a name with none is 0. -/
+def withCounters (values : String → List Int) (ps : List Piece) : List Piece :=
+  ps.map fun p => match p with
+    | .counter n st => .text (formatCounter st ((values n).getLast?.getD 0))
+    | .counters n sep st =>
+      let vs := values n
+      .text (sep.intercalate ((if vs.isEmpty then [0] else vs).map (formatCounter st)))
+    | other => other
+
+#guard withCounters (fun _ => [1, 2]) [.counter "a" "decimal", .counters "a" "." "decimal"] ==
+  [.text "2", .text "1.2"]
 
 end L4Factoidal.Rendering.CSS.Content

@@ -140,22 +140,73 @@ def bare : List String :=
   ["img", "br", "hr", "input", "textarea", "select", "canvas", "video", "audio", "iframe", "embed", "object",
    "svg", "math", "head", "style", "script", "title", "meta", "link", "template", "base", "col", "colgroup"]
 
+/-- `l` with the first counter named `name` (the innermost) changed by `f`. -/
+def bumpFirst (name : String) (f : Int → Int) : List (String × Int × Nat) → List (String × Int × Nat)
+  | [] => []
+  | (n, v, o) :: rest => if n == name then (n, f v, o) :: rest else (n, v, o) :: bumpFirst name f rest
+
+/-- The counters in scope at each node where `record` holds (CSS 2.1 §12.4.1): `d` is walked
+in tree order (a `::before` is its element's first child, an `::after` its last). An element
+that makes a box (`makesBox`, and not `display: none`) applies its `counter-reset` (a new
+counter), then `counter-increment` and `counter-set` (to the innermost counter of the name,
+or to a new one at 0 when none is in scope). A counter's scope is the element's parent: it
+ends when the parent ends. Each entry: name, value, the node whose end ends it; innermost
+first. At most `2 * d.size + 2` steps. -/
+def counterScopes (d : Dom) (styles : Array Computed) (makesBox record : Nat → Bool) :
+    Array (List (String × Int × Nat)) := Id.run do
+  let mut out : Array (List (String × Int × Nat)) := Array.replicate d.size []
+  let mut inst : List (String × Int × Nat) := []
+  let mut stack : List (Bool × Nat) := [(true, 0)]
+  for _ in [0:2 * d.size + 2] do
+    match stack with
+    | [] => pure ()
+    | (enter, k) :: rest =>
+      stack := rest
+      if !enter then
+        inst := inst.filter (·.2.2 != k)
+      else
+        let n := d.get k
+        let s := (styles[k]?).getD {}
+        let skip := n.type == .element && (s.display == .none || !makesBox k)
+        if !skip && (n.type == .element || n.type == .document || n.type == .fragment) then
+          if n.type == .element then
+            let owner := n.parent.getD 0
+            for (name, v) in s.pos.counterReset do
+              inst := (name, v, owner) :: inst
+            for (name, v) in s.pos.counterIncrement do
+              inst := if inst.any (·.1 == name) then bumpFirst name (· + v) inst else (name, v, owner) :: inst
+            for (name, v) in s.pos.counterSet do
+              inst := if inst.any (·.1 == name) then bumpFirst name (fun _ => v) inst else (name, v, owner) :: inst
+            if record k then out := out.set! k inst
+          stack := n.kids.toList.map ((true, ·)) ++ [(false, k)] ++ stack
+  return out
+
 /-- After the cascade: each pseudo-element whose `content` makes a box gets its text; the
 others are `display: none`. `base` is the size of the page's tree; `owners` the spots in
 the order `derive` added them. -/
 def fill (base : Nat) (owners : Array Spot) (dom : Dom) (styles : Array Computed) : Dom × Array Computed := Id.run do
+  let partsOf := fun (k : Nat) => match (styles[k]?).bind (·.pos.content) with
+    | some value => match Content.read value with
+      | some (.parts ps) => some ps
+      | _ => none
+    | none => none
+  -- counters only when a box shows one (most pages: none)
+  let counting := owners.size > 0 && (List.range owners.size).any fun i =>
+    ((partsOf (base + 2*i)).getD []).any fun p => match p with
+      | .counter .. | .counters .. => true
+      | _ => false
+  let scopes := if counting then
+      counterScopes dom styles (fun k => k < base || (k - base) % 2 == 1 || (partsOf k).isSome) (· ≥ base)
+    else #[]
   let mut dom := dom
   let mut styles := styles
   for h : i in [:owners.size] do
     let pe := base + 2*i
-    let parts := match (styles[pe]?).bind (·.pos.content) with
-      | some value => match Content.read value with
-        | some (.parts ps) => some ps
-        | _ => none
-      | none => none
-    match parts with
+    match partsOf pe with
     | some ps =>
-      let text := Content.text (attrValue (dom.get owners[i].owner)) ps
+      let values := fun (name : String) =>
+        (((scopes[pe]?).getD []).filter (·.1 == name)).reverse.map (·.2.1)
+      let text := Content.text (attrValue (dom.get owners[i].owner)) (Content.withCounters values ps)
       dom := {nodes := dom.nodes.modify (pe+1) fun n => {n with data := text}}
     | none => styles := styles.modify pe fun s => {s with display := .none}
   return (dom,styles)

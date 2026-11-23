@@ -189,6 +189,11 @@ structure PositionStyle where
   /-- `content` of a `::before` or `::after` (`Content.read`): the text of a value that
   makes a box; `none` for `none` and `normal`, which make no box. -/
   content : Option String := none
+  /-- `counter-reset`, `counter-increment` and `counter-set` (CSS 2.1 §12.4, CSS Lists 3 §4;
+  not inherited): counter names with their integers (`Content.counterList`). -/
+  counterReset : List (String × Int) := []
+  counterIncrement : List (String × Int) := []
+  counterSet : List (String × Int) := []
   /-- `white-space: nowrap` (CSS Text 3 §3; inherited): lines do not break at the spaces
   of this text. -/
   nowrap : Bool := false
@@ -305,6 +310,16 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
     | some .noBox => some {p with content := none}
     | none => if ["initial", "inherit", "unset", "revert", "revert-layer"].contains value.trimAscii.toString.toLower
         then some {p with content := none} else none
+  else
+  if name == "counter-reset" || name == "counter-increment" || name == "counter-set" then
+    let dflt : Int := if name == "counter-increment" then 1 else 0
+    let put := fun (l : List (String × Int)) =>
+      if name == "counter-reset" then {p with counterReset := l}
+      else if name == "counter-increment" then {p with counterIncrement := l} else {p with counterSet := l}
+    match Content.counterList value dflt with
+    | some l => some (put l)
+    | none => if ["initial", "inherit", "unset", "revert", "revert-layer"].contains value.trimAscii.toString.toLower
+        then some (put []) else none
   else
   if !positionProperties.contains name then none else
   match CssValues.specified name value with
@@ -476,6 +491,9 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {content := some "''"} "content" "none").map (·.content)) == some none
 #guard ((PositionStyle.set 10 {content := some "''"} "content" "unset").map (·.content)) == some none
 #guard ((PositionStyle.set 10 {} "content" "12px").map (·.content)) == none
+#guard ((PositionStyle.set 10 {} "counter-reset" "a 2 b").map (·.counterReset)) == some [("a", 2), ("b", 0)]
+#guard ((PositionStyle.set 10 {} "counter-increment" "a").map (·.counterIncrement)) == some [("a", 1)]
+#guard ((PositionStyle.set 10 {} "counter-increment" "12px").map (·.counterIncrement)) == none
 #guard ((PositionStyle.set 10 {} "transform" "translate(1em, 50%) scale(2)").map (·.transform.length)) == some 2
 #guard ((PositionStyle.set 10 {} "transform" "translate(1em, 50%)").map fun p => sameSteps p.transform [.translate 10 0 0 0.5]) == some true
 #guard ((PositionStyle.set 10 {transform := [.translate 1 0 0 0]} "transform" "none").map (·.transform.length)) == some 0

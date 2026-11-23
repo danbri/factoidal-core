@@ -1938,6 +1938,7 @@ map to a standard one (`-webkit-`, `-moz-`, `grid-`). For any other property `ap
 refuses every value (`apply_other`). -/
 def appliedName (p : String) : Bool :=
   p.startsWith "-webkit-" || p.startsWith "-moz-" || p.startsWith "grid-" || p == "content" ||
+    p == "counter-reset" || p == "counter-increment" || p == "counter-set" ||
     ownProperties.contains p || flexProperties.contains p || alignProperties.contains p ||
     positionProperties.contains p || gridProperties.contains p
 
