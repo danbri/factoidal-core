@@ -166,7 +166,7 @@ private def pageT := "<div class=a><p id=t class=b>x</p></div>"
 #guard marginOf pageT ":root { --m: 1px } p { margin-top: 9px; margin: var(--m) }" == some [1, 1, 1, 1]
 -- invalid at computed-value time: as if not declared (this profile starts a `p` with the
 -- user agent's margins, which are not declarations, so they stand where CSS says 0)
-#guard marginOf pageT "p { margin: 3px } #t { margin: var(--none) }" == some [8, 0, 8, 0]
+#guard marginOf pageT "p { margin: 3px } #t { margin: var(--none) }" == some [16, 0, 16, 0]
 #guard marginOf pageT "p { margin: calc(1px + 2px) 0 }" == some [3, 0, 3, 0]
 -- flow-relative properties (CSS Logical 1): one cascade with the physical ones, by direction
 private def paddingOf (html css : String) : Option (List Float) :=
@@ -195,7 +195,7 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard widthOf pageT ".a { width: 50px } p { width: 20px } #t { width: unset }" == some (-1)
 #guard widthOf pageT ".a { width: 50px } p { width: 20px } #t { width: initial }" == some (-1)
 #guard marginOf pageT "p { margin: 3px } #t { margin: initial }" == some [0, 0, 0, 0]
-#guard marginOf pageT "p { margin: 3px } #t { margin: revert }" == some [8, 0, 8, 0]
+#guard marginOf pageT "p { margin: 3px } #t { margin: revert }" == some [16, 0, 16, 0]
 #guard marginOf pageT ".a { margin: 3px } p { margin: inherit }" == some [3, 3, 3, 3]
 #guard (styleAt pageT ".a { font-size: 30px; font-family: Foo } p { font-size: 10px; font-family: Bar } #t { font: inherit }").map
   (fun s => (s.fontSize, s.fontFamily)) == some (30, "Foo")
@@ -396,4 +396,13 @@ private def gradientAt (html css : String) : Option Bool := do
 #guard gradientAt "<div></div>" "div{background:linear-gradient(#fed,#fff)} div{background:#eee}" == some false
 #guard gradientAt "<div></div>" "div{background-color:red}" == some false
 
+-- HTML §15.3.3 and §15.3.8: the user agent's block margins are 1em of the element's own font
+-- size, and 0 for a list in a list (`Style.startMargin`, `Style.insideList`).
+#guard marginOf pageT "" == some [16, 0, 16, 0]
+#guard marginOf pageT "p { font-size: 20px }" == some [20, 0, 20, 0]
+#guard marginOf pageT "p { font-size: 20px; margin-top: 3px }" == some [3, 0, 20, 0]
+#guard hinted "<ul><li><ul><li>x</ul></ul>" "" "ul" fun s => s.margin.top == 16 && s.margin.left == 40
+#guard hinted "<h1>x</h1>" "" "h1" fun s => (s.margin.top - 0.67*32).abs < 0.001
+
 end L4Factoidal.Rendering.CascadeTests
+
