@@ -57,7 +57,22 @@ structure TxWorld where
 
 def beginTransaction (accounts : Nat → Account) : TxWorld :=
   { accounts := accounts
-    original := fun address slot => (accounts address).storage slot }
+    original := fun address slot => (accounts address).storage slot
+    -- EIP-2929's fixed precompile list belongs to the initial access set.
+    -- This execution subset still models historical forks incompletely.
+    warmAddresses := fun address => decide (1 ≤ address ∧ address ≤ 9) }
+
+/-- The identity precompile is initially warm on EIP-2929-era transactions,
+    independent of whether any CALL has yet executed. -/
+theorem beginTransaction_identity_warm (accounts : Nat → Account) :
+    (beginTransaction accounts).warmAddresses 4 = true := rfl
+
+/-- Ordinary fixture contract addresses are not implicitly warmed. -/
+theorem beginTransaction_ordinary_cold (accounts : Nat → Account) :
+    (beginTransaction accounts).warmAddresses 0xc3 = false := rfl
+
+#print axioms beginTransaction_identity_warm
+#print axioms beginTransaction_ordinary_cold
 
 def TxWorld.hasAccount (w : TxWorld) (address : Nat) : Bool :=
   match w.witnessed with
