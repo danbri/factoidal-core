@@ -71,23 +71,24 @@ def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
    cssFamilies := [face.family],fontSha256 := some face.fontSha256,faceIndex := face.faceIndex,
    shapedWord := some face.lookup}
 
-/-- CSS Text 3 §8.2: `extra` font units after each character of `word` (its letter spacing).
-A glyph moves by the extra of the characters of the clusters before it on the line, and the
-word's advance grows by the extra of all its characters. Before 2026-11-23 `letter-spacing`
-was not read. -/
+/-- CSS Text 3 §8.2: `extra` font units after each typographic character unit of `word` (its
+letter spacing), here each cluster of the shaped word, so that a base and its combining marks
+are one unit. A glyph moves by the extra of the clusters before it on the line, and the word's
+advance grows by the extra of all its clusters. Before 2026-11-23 `letter-spacing` was not
+read. -/
 def letterSpaced (word : FontProvider.Word) (extra : Float) : FontProvider.Word := Id.run do
   if extra == 0 || !extra.isFinite then return word
   let mut glyphs : Array FontProvider.Glyph := #[]
   let mut shift := 0.0
   let mut cluster : Option Nat := none
-  let mut last := 0
+  let mut clusters := 0
   for g in word.glyphs do
     if cluster != some g.clusterStart then
-      if cluster.isSome then shift := shift+extra*Float.ofNat last
+      if cluster.isSome then shift := shift+extra
       cluster := some g.clusterStart
-      last := g.clusterEnd-g.clusterStart
+      clusters := clusters+1
     glyphs := glyphs.push {g with x := g.x+shift}
-  return {word with glyphs, advance := word.advance+extra*Float.ofNat word.text.length}
+  return {word with glyphs, advance := word.advance+extra*Float.ofNat clusters}
 
 /-- A word shaped by the font. `rtl`: the direction of its bidi level, when that is
 not the direction of its script (see `shapedWordDir`). -/
@@ -2031,10 +2032,13 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     Nat → Task → Except String (Float × Float)
   | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
   | fuel+1, task => do
-    let inlineWidths (items : Array Inline) : Except String (Float × Float) := do
+    -- CSS Text 3 §8.3: the first line's `text-indent` counts in both widths (a percentage
+    -- counts as 0 here, CSS Sizing 3 §5.2.1, cyclic percentages)
+    let inlineWidths (items : Array Inline) (indent : Float := 0) : Except String (Float × Float) := do
       if items.isEmpty then return (0,0)
-      let narrow ← inlineLayout font (← atomize font (items.map compressInline) 0) 0 0 0
-      let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9
+      let strut : Option Computed := if indent == 0 then none else some {textIndent := .px indent, textAlign := .left}
+      let narrow ← inlineLayout font (← atomize font (items.map compressInline) 0) 0 0 0 strut
+      let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9 strut
       return (lineExtent narrow,lineExtent wide)
     let flowWidths (container : Nat) (kids : Array Nat) (lead : Array Inline) : Except String (Float × Float) := do
       let mut widths : Float × Float := (0,0)
@@ -2046,7 +2050,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       for seg in Table.segments dom styles kids do
         match seg with
         | .run run =>
-          let (a,b) ← inlineWidths inline
+          let (a,b) ← inlineWidths inline (match (styles[container]?.map (·.textIndent)) with | some (CSS.Length.px n) => n | _ => 0)
           inline := #[]
           let (c,d) ← intrinsic dom styles font embedding pictures fuel (.table none container run)
           widths := (max widths.1 (max a c),max widths.2 (max (b+beside) (d+beside)))
@@ -2060,7 +2064,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
             widths := (max widths.1 c,widths.2)
             beside := beside+d
           else if (styles[k]!).display.isBlockLevel || (styles[k]!).display.isInlineContainer then
-            let (a,b) ← inlineWidths inline
+            let (a,b) ← inlineWidths inline (match (styles[container]?.map (·.textIndent)) with | some (CSS.Length.px n) => n | _ => 0)
             inline := #[]
             widths := (max widths.1 a,max widths.2 (b+beside))
             if (styles[k]!).pos.clear != .none then beside := 0
@@ -2068,7 +2072,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
             widths := (max widths.1 c,max widths.2 (d+beside))
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures 0 fuel k)
-      let (a,b) ← inlineWidths inline
+      let (a,b) ← inlineWidths inline (match (styles[container]?.map (·.textIndent)) with | some (CSS.Length.px n) => n | _ => 0)
       return (max widths.1 a,max widths.2 (b+beside))
     let tableWidths (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String (Float × Float) := do
       let frame := tableFrame styles element container

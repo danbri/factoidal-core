@@ -1441,8 +1441,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     return {s with margin := {s.margin with left := px}, autoMarginLeft := false, pos := s.pos.withMarginOf 3 of}
   | "letter-spacing" | "word-spacing" =>
     let v := (trim d.value).toLower
+    -- a percentage is of the font size (CSS Text 4 §8.1, §8.2)
     let n ← if v == "normal" then pure 0 else match ← length v with
       | .px n => pure n
+      | .percent f => pure (f*s.fontSize)
       | _ => throw "letter-spacing and word-spacing require a length"
     return if d.property == "letter-spacing" then {s with letterSpacing := n} else {s with wordSpacing := n}
   | "text-indent" =>
