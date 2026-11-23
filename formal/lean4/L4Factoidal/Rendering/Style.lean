@@ -212,10 +212,11 @@ structure Computed where
   objectPosition : Option (Length × Length) := none
   /-- `text-align` (inherited): where the lines of a block container sit. -/
   textAlign : TextAlign := .start
-  /-- `letter-spacing` and `word-spacing` in px (inherited, CSS Text 3 §8.1, §8.2): added after
-  each character, and to each word separator. `normal` is 0. -/
-  letterSpacing : Float := 0
-  wordSpacing : Float := 0
+  /-- `letter-spacing` and `word-spacing` (inherited, CSS Text 3 §8.1, §8.2): added after each
+  character, and to each word separator. `normal` is 0. A percentage is of the font size of the
+  element that uses it, so it inherits as a percentage (`letterSpacingPx`). -/
+  letterSpacing : Length := .px 0
+  wordSpacing : Length := .px 0
   /-- `text-indent` (inherited, CSS Text 3 §8.3): the indent of the first line of a block
   container; a percentage is of the container's width. -/
   textIndent : Length := .px 0
@@ -291,11 +292,18 @@ structure Computed where
   backgroundRepeat : Bool × Bool := (true, true)
   backgroundPositionX : BackgroundOffset := .length (.percent 0)
   backgroundPositionY : BackgroundOffset := .length (.percent 0)
-  /-- `background-clip` (CSS Backgrounds 3 §3.7): the box the background is painted in, as
-  0 border box, 1 padding box, 2 content box. -/
-  backgroundClip : Nat := 0
+  /-- `background-clip` (CSS Backgrounds 3 §3.7): the box each layer is painted in, as
+  0 border box, 1 padding box, 2 content box; one item per comma-separated value. -/
+  backgroundClip : List Nat := [0]
+  /-- The number of background layers: the comma-separated items of `background-image`
+  (CSS Backgrounds 3 §3.1). -/
+  backgroundLayers : Nat := 1
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
+/-- The clip of the final layer, which the background colour uses (CSS Backgrounds 3 §3.7):
+the `background-clip` list repeats to the number of layers. -/
+def Computed.colorClip (s : Computed) : Nat :=
+  s.backgroundClip.getD ((s.backgroundLayers - 1) % max 1 s.backgroundClip.length) 0
 
 /-- Properties consumed by HTML style/layout, including an embedded SVG root.
 The DOM-to-SVG adapter uses this same list to avoid a second interpretation. -/
@@ -1108,6 +1116,10 @@ def resolve (basis : Float) : Length → Option Float
   | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
   | .calc p n => some (basis*p+n)
   | .minContent | .maxContent | .fitContent | .stretch => none
+/-- The used `letter-spacing` and `word-spacing` in px: a percentage is of this element's font
+size (CSS Text 4 §8.1, §8.2). -/
+def Computed.letterSpacingPx (s : Computed) : Float := (resolve s.fontSize s.letterSpacing).getD 0
+def Computed.wordSpacingPx (s : Computed) : Float := (resolve s.fontSize s.wordSpacing).getD 0
 /-- CSS Values 4 §6.2: viewport units, computed once the viewport is known. -/
 def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
@@ -1211,18 +1223,24 @@ private def edgePixel (source : String) : Except String Float := do
 are 1, 3 and 5 px; a length in any unit is read by the property table, `em` against font
 size `fontSize`. Before 2026-11-22 only `px` was read, and a width such as `1in`, `6pt` or
 `1em` gave the initial 3 px (846 WPT reftests set a border width so, mostly in css/CSS2). -/
-def borderWidthPx (fontSize : Float) (source : String) : Except String Float := do
-  match edgePixel source with
-  | .ok v => return v
-  | .error e =>
-    match (trim source).toLower with
-    | "thin" => return 1
-    | "medium" => return 3
-    | "thick" => return 5
-    | _ =>
-      match tableComputed fontSize "border-top-width" source with
-      | some t => if t == source then throw e else edgePixel t
-      | none => throw e
+def borderWidthPx (fontSize : Float) (source : String) : Except String Float :=
+  snapBorderWidth <$> borderWidthRaw fontSize source
+where
+  /-- CSS Values 4 §"snap as a border width", at one device pixel per px: a width above 1 is
+  rounded down to whole pixels, a width between 0 and 1 is rounded up to 1. -/
+  snapBorderWidth (w : Float) : Float := if w <= 0 then 0 else if w < 1 then 1 else w.floor
+  borderWidthRaw (fontSize : Float) (source : String) : Except String Float := do
+    match edgePixel source with
+    | .ok v => return v
+    | .error e =>
+      match (trim source).toLower with
+      | "thin" => return 1
+      | "medium" => return 3
+      | "thick" => return 5
+      | _ =>
+        match tableComputed fontSize "border-top-width" source with
+        | some t => if t == source then throw e else edgePixel t
+        | none => throw e
 
 /-- The `border-width` shorthand: one to four `borderWidthPx` values. -/
 private def borderEdges (fontSize : Float) (s : String) : Except String Edges := do
@@ -1442,9 +1460,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "letter-spacing" | "word-spacing" =>
     let v := (trim d.value).toLower
     -- a percentage is of the font size (CSS Text 4 §8.1, §8.2)
-    let n ← if v == "normal" then pure 0 else match ← length v with
-      | .px n => pure n
-      | .percent f => pure (f*s.fontSize)
+    -- em values become px here (`tableComputed`); a percentage stays relative
+    let parsed := match length v with
+      | .ok l => some l
+      | .error _ => (tableComputed s.fontSize d.property v).bind fun t => (length t).toOption
+    let n ← if v == "normal" then pure (Length.px 0) else match parsed with
+      | some (.px n) => pure (Length.px n)
+      | some (.percent f) => pure (Length.percent f)
+      | some (.calc p n) => pure (Length.calc p n)
       | _ => throw "letter-spacing and word-spacing require a length"
     return if d.property == "letter-spacing" then {s with letterSpacing := n} else {s with wordSpacing := n}
   | "text-indent" =>
@@ -1541,11 +1564,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | some v => return {s with backgroundSize := v}
     | none => throw "unsupported background size"
   | "background-clip" =>
-    match (trim d.value).toLower with
-    | "border-box" => return {s with backgroundClip := 0}
-    | "padding-box" => return {s with backgroundClip := 1}
-    | "content-box" => return {s with backgroundClip := 2}
-    | _ => throw "unsupported background clip"
+    let clip : String → Except String Nat := fun v => match (trim v).toLower with
+      | "border-box" => pure 0
+      | "padding-box" => pure 1
+      | "content-box" => pure 2
+      | _ => throw "unsupported background clip"
+    return {s with backgroundClip := ← ((trim d.value).splitOn ",").mapM clip}
   | "background-repeat" =>
     let parts := (CssValues.commaItems d.value).headD []
     let value := String.intercalate " " (parts.map fun cv => CssValues.serialize [cv])
@@ -1571,7 +1595,9 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if d.property == "background-position-x" then return {s with backgroundPositionX := offset}
     return {s with backgroundPositionY := offset}
   | "background-image" =>
-    if (trim d.value).toLower == "none" then return {s with backgroundGradient := none, backgroundImage := none}
+    let s := {s with backgroundLayers := max 1 (CssValues.commaItems d.value).length}
+    if ((trim d.value).toLower.splitOn ",").all (fun v => trim v == "none") then
+      return {s with backgroundGradient := none, backgroundImage := none}
     -- The first layer: an image URL (`url(...)`) or a linear gradient, whichever comes first.
     let urlFirst := match firstUrl? d.value, (d.value.toLower.splitOn "url(").head?, (d.value.toLower.splitOn "gradient(").head? with
       | some _, some a, some g => decide (a.length < g.length)

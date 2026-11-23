@@ -114,18 +114,18 @@ private def FontProfile.word (font : FontProfile) (style : Computed) (text : Str
         word.faceIndex != font.faceIndex || word.family != font.family ||
         word.unitsPerEm != font.unitsPerEm || word.ascent != font.ascent || word.descent != font.descent then
       throw "font profile: shaped word identity, size or metrics mismatch"
-    return some (letterSpaced word (style.letterSpacing*word.unitsPerEm/style.fontSize))
+    return some (letterSpaced word (style.letterSpacingPx*word.unitsPerEm/style.fontSize))
 
 
 private def spaceWidth (font : FontProfile) (style : Computed) : Except String Float := do
   -- CSS Text 3 §8.1: `word-spacing` is added to each word separator (its letter spacing is
   -- in the shaped space's advance)
   match ← font.word style " " with
-  | none => return (font.advance*style.fontSize/font.unitsPerEm+style.letterSpacing+style.wordSpacing)
+  | none => return (font.advance*style.fontSize/font.unitsPerEm+style.letterSpacingPx+style.wordSpacingPx)
   | some word =>
     if word.glyphs.any (fun glyph => !glyph.geometry.isEmpty) then
       throw "unsupported painted whitespace glyph in collapsed space profile"
-    return word.advance*style.fontSize/font.unitsPerEm+style.wordSpacing
+    return word.advance*style.fontSize/font.unitsPerEm+style.wordSpacingPx
 
 /-- The ascent and descent, in the profile's units, of the font of `style`'s text: its family's
 first font (`familyMetrics`), else the profile's. Before 2026-11-22 every line box used the
@@ -303,9 +303,9 @@ private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array
 `(x,y)`, `w` by `h`: the border box, or that less the border (padding box), or less the
 border and the padding (content box). -/
 def backgroundArea (s : Computed) (x y w h : Float) : Float × Float × Float × Float :=
-  if s.backgroundClip == 0 then (x,y,w,h) else
+  if s.colorClip == 0 then (x,y,w,h) else
   let b := s.borderEdges
-  let p := if s.backgroundClip == 2 then s.padding else {}
+  let p := if s.colorClip == 2 then s.padding else {}
   let l := b.left+p.left
   let t := b.top+p.top
   (x+l,y+t,w-l-b.right-p.right,h-t-b.bottom-p.bottom)
@@ -323,7 +323,7 @@ private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node 
   | none => withGradient
   | some (pic,b) =>
     let tiles := backgroundTiles id pic b s x y w h
-    if s.backgroundClip == 0 then withGradient ++ tiles
+    if s.colorClip == 0 then withGradient ++ tiles
     else withGradient.push (.clipped none identity ⟨cx,cy,cw,ch,identity⟩ tiles.toList)
 
 /-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
@@ -1014,7 +1014,7 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
 private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline → Except String Float
   | .word _ s text _ => do
     match ← font.word s text rtl with
-    | none => return (font.advance*s.fontSize/font.unitsPerEm+s.letterSpacing)*Float.ofNat text.length
+    | none => return (font.advance*s.fontSize/font.unitsPerEm+s.letterSpacingPx)*Float.ofNat text.length
     | some word => return word.advance*s.fontSize/font.unitsPerEm
   | .replaced _ _ w _ _ | .atomic _ _ w _ _ => pure w
   | .openInline _ s continued => pure (if continued then 0 else inlineLead s)
@@ -1180,7 +1180,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       | none =>
         -- A character this font has no glyph for shows as a question mark.
         let chars := text.toList.map fun c => if font.admits c.toNat then c else '?'
-        let advance := font.advance*s.fontSize/font.unitsPerEm+s.letterSpacing
+        let advance := font.advance*s.fontSize/font.unitsPerEm+s.letterSpacingPx
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩

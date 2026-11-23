@@ -195,6 +195,14 @@ private def wordsAt (html : String) : Except String (List (String × Float)) :=
 -- each separator, text-indent on the first line only (a percentage of the line's room).
 #guard wordsAt "<p style='letter-spacing:10px'>a b</p>" == .ok [("a",0),("b",32)]
 #guard wordsAt "<p style='word-spacing:5px'>a b</p>" == .ok [("a",0),("b",17)]
+-- a percentage inherits as a percentage, of the font size where it is used; an em value
+-- inherits as px (CSS Text 4 §8.1). The test face's default size is 7 px.
+#guard wordsAt "<div style='font-size:32px;letter-spacing:62.5%'><p style='font-size:16px'>a b</p></div>"
+  == wordsAt "<p style='font-size:16px;letter-spacing:10px'>a b</p>"
+#guard wordsAt "<div style='font-size:32px;letter-spacing:0.3125em'><p style='font-size:16px'>a b</p></div>"
+  == wordsAt "<p style='font-size:16px;letter-spacing:10px'>a b</p>"
+#guard wordsAt "<div style='letter-spacing:10px'><p>a b</p></div>" == .ok [("a",0),("b",32)]
+#guard wordsAt "<p style='letter-spacing:calc(5px + 31.25%)'>a b</p>" == .ok [("a",0),("b",26.375)]
 #guard wordsAt "<p style='text-indent:7px'>a b</p>" == .ok [("a",7),("b",19)]
 #guard wordsAt "<div style='text-indent:7px'><p>a b</p></div>" == .ok [("a",7),("b",19)]
 #guard wordsAt "<p style='text-indent:7px'>a<br>b</p>" == .ok [("a",7),("b",0)]

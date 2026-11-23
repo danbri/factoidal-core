@@ -61,7 +61,7 @@ def sameShape (a b : Computed) : Bool :=
     minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,letterSpacing,wordSpacing,textIndent,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
     masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundSize,_backgroundRepeat,
-     _backgroundPositionX,_backgroundPositionY,backgroundClip⟩ =>
+     _backgroundPositionX,_backgroundPositionY,backgroundClip,backgroundLayers⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
@@ -85,8 +85,8 @@ def sameShape (a b : Computed) : Bool :=
   lengthEq minHeight b.minHeight && lengthEq maxHeight b.maxHeight && objectFit == b.objectFit &&
   optEq (fun left right => lengthEq left.1 right.1 && lengthEq left.2 right.2) objectPosition b.objectPosition &&
   textAlign == b.textAlign && direction == b.direction && unicodeBidi == b.unicodeBidi &&
-  letterSpacing == b.letterSpacing && wordSpacing == b.wordSpacing && lengthEq textIndent b.textIndent &&
-  backgroundClip == b.backgroundClip &&
+  lengthEq letterSpacing b.letterSpacing && lengthEq wordSpacing b.wordSpacing && lengthEq textIndent b.textIndent &&
+  backgroundClip == b.backgroundClip && backgroundLayers == b.backgroundLayers &&
   autoMarginLeft == b.autoMarginLeft && autoMarginRight == b.autoMarginRight &&
   autoMarginTop == b.autoMarginTop && autoMarginBottom == b.autoMarginBottom &&
   align.same b.align && flex.same b.flex && pos.same b.pos && grid.same b.grid &&
