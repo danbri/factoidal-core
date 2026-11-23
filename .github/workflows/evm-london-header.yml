@@ -34,7 +34,7 @@ jobs:
           MIMALLOC_ARENA_RESERVE: "67108864"
         run: |
           ulimit -v 8388608
-          lake build evm-header-fees
+          lake -f lakefile-london.toml build evm-header-fees
       - name: Audit actually printed theorem axioms and input guards
         working-directory: formal/lean4/evm-cleanroom
         env:
@@ -50,18 +50,18 @@ jobs:
             exit 1
           fi
           python3 scripts/check-london-claims.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["rejected"]==3 and x["status"]=="negative-controls-pass", x'
-          python3 scripts/check-london-claims.py --report /tmp/london-header-axioms.txt | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["selectedTheorems"]==6 and x["sourceBlobs"]==5 and x["status"]=="printed-axioms-source-pinned", x'
+          python3 scripts/check-london-claims.py --report /tmp/london-header-axioms.txt | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["selectedTheorems"]==6 and x["sourceBlobs"]==6 and x["status"]=="printed-axioms-source-pinned", x'
       - name: Execute independent EIP-1559 header reference comparison
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-london-header-fees.py --generate /tmp/london-input.tsv /tmp/london-expected.jsonl
-          lake exe evm-header-fees --batch /tmp/london-input.tsv > /tmp/london-observed.jsonl
+          lake -f lakefile-london.toml exe evm-header-fees --batch /tmp/london-input.tsv > /tmp/london-observed.jsonl
           python3 scripts/check-london-header-fees.py --check /tmp/london-expected.jsonl /tmp/london-observed.jsonl
       - name: Invalid-transport guard
         working-directory: formal/lean4/evm-cleanroom
         run: |
           printf 'invalid\t30000000\t15000000\t1000000000\t30000000\t0\t1000000000\n' >/tmp/london-malformed.tsv
-          if lake exe evm-header-fees --batch /tmp/london-malformed.tsv >/tmp/london-malformed-out.jsonl; then
+          if lake -f lakefile-london.toml exe evm-header-fees --batch /tmp/london-malformed.tsv >/tmp/london-malformed-out.jsonl; then
             echo "Malformed input incorrectly accepted"
             exit 1
           fi
