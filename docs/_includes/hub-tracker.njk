@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="{{ description }}">
+  <title>{{ title }} — Factoidal Hub</title>
+  <style>
+    :root { color-scheme: light dark; --paper: #fff; --ink: #25312c; --muted: #58665e; --link: #235d44; --line: #ccd6cf; --panel: #f3f6f3; }
+    * { box-sizing: border-box; }
+    body { max-width: 68rem; margin: 0 auto; padding: 1rem; color: var(--ink); background: var(--paper); font: 1rem/1.65 system-ui, -apple-system, sans-serif; overflow-wrap: anywhere; }
+    a { color: var(--link); text-underline-offset: .15em; }
+    a:focus-visible { outline: 3px solid #c08a00; outline-offset: 3px; }
+    .skip-link { position: absolute; left: -999rem; }
+    .skip-link:focus { left: 1rem; top: .5rem; padding: .5rem; background: var(--paper); }
+    nav { display: flex; flex-wrap: wrap; gap: .2rem 1.1rem; padding-bottom: .8rem; border-bottom: 1px solid var(--line); }
+    nav a { display: inline-block; min-height: 44px; padding: .55rem 0; }
+    h1 { max-width: 28ch; margin: 1.4rem 0 1rem; font-size: clamp(1.75rem, 4.8vw, 2.7rem); line-height: 1.15; }
+    h2 { margin-top: 2.6rem; padding-bottom: .4rem; border-bottom: 1px solid var(--line); font-size: 1.6rem; line-height: 1.25; }
+    h3 { margin-top: 1.8rem; line-height: 1.3; }
+    h2, h3, h4 { scroll-margin-top: 1rem; }
+    p, li { max-width: 78ch; }
+    li + li { margin-top: .4rem; }
+    blockquote { margin: 1.2rem 0; padding: .2rem 1rem; border-left: 4px solid #a47916; background: var(--panel); }
+    table { display: block; max-width: 100%; margin: 1.3rem 0; border-collapse: collapse; overflow-x: auto; font-size: .92rem; line-height: 1.5; }
+    th, td { min-width: 8rem; padding: .65rem .8rem; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: var(--panel); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .9em; }
+    code { padding: .1em .25em; background: var(--panel); border-radius: .2rem; }
+    pre { max-width: 100%; padding: 1rem; overflow-x: auto; border: 1px solid var(--line); border-radius: .3rem; background: var(--panel); line-height: 1.5; }
+    pre code { padding: 0; background: none; }
+    .heading-anchor { margin-left: .25em; font-size: .65em; }
+    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }
+    @media (min-width: 720px) { body { padding: 2rem; } }
+    @media (prefers-color-scheme: dark) { :root { --paper: #121815; --ink: #e0e8e2; --muted: #acbcb0; --link: #8bd3ad; --line: #405348; --panel: #1c2921; } }
+    @media print { :root { --paper: #fff; --ink: #000; --muted: #333; --link: #000; --line: #aaa; --panel: #fafafa; } body { max-width: none; font-size: 10pt; padding: 0; } nav, .skip-link, .heading-anchor { display: none; } h2, h3 { break-after: avoid; } table { display: table; width: 100%; font-size: 8pt; } th, td { min-width: 0; padding: .4rem; } pre { white-space: pre-wrap; overflow-wrap: anywhere; } }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to tracker</a>
+  <nav aria-label="Factoidal navigation">
+    <a href="{{ '/web/hub/' | url }}">Factoidal Hub</a>
+    <a href="{{ '/web/hub/ethereum-wasm-sparql/' | url }}">Ethereum WASM and SPARQL demo</a>
+    <a href="https://github.com/danbri/factoidal-core/issues/725">Full Ethereum acceptance criteria</a>
+    <a href="https://github.com/danbri/factoidal-core/blob/main/docs/web/hub/ethereum-implementation.md">Tracker source</a>
+  </nav>
+  <main id="main">{{ content | safe }}</main>
+  <footer>Factoidal Ethereum development. Evidence is scoped to the linked commits, fixtures and recorded runs.</footer>
+</body>
+</html>
