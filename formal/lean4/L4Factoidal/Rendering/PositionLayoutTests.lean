@@ -440,6 +440,10 @@ private def letterOf (page sheet : String) : Option (String × String × Float) 
 -- none in an inline block, nor for an inline originating element
 #guard letterOf "<p><span style='display:inline-block'>A</span>b</p>" "p::first-letter{font-size:20px}" == none
 #guard letterOf "<span>Ab</span>" "span::first-letter{font-size:20px}" == none
+#guard letterOf "<div><div></div>X</div>" "div::first-letter{font-size:20px}" == none
+#guard letterOf "<div style='white-space:pre'>\n  The</div>" "div::first-letter{font-size:20px}" == none
+#guard letterOf "<div>عا</div>" "div::first-letter{font-size:20px}" == none
+#guard letterOf "<div><div>Ab</div></div>" "div div::first-letter{font-size:20px}" == some ("A", "b", 20)
 
 -- Intrinsic contributions are within `min-width` and `max-width` (CSS Sizing 3 §5.1):
 -- four empty items of min-width 20 and margins 10 make a 160 px inline-flex container

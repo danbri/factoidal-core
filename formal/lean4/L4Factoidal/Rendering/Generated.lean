@@ -333,23 +333,38 @@ def firstLetterRange (text : String) : Option (Option (Nat × Nat)) := Id.run do
 by the styles of the laid out tree. Children in tree order, depth first, as the first
 line would hold them; at most `d.size` steps. -/
 def firstLetterText (d : Dom) (styles : Array Computed) (owner : Nat) : Option (Nat × Nat × Nat) := Id.run do
-  let mut pending := (d.get owner).kids.toList
-  for _ in [0:d.size + 1] do
+  -- `none` in the list ends a block child: a first letter is not after a block (CSS Pseudo 4 §2.3).
+  let mut pending : List (Option Nat) := (d.get owner).kids.toList.map some
+  let within (c lo hi : Nat) : Bool := lo <= c && c <= hi
+  -- Letters of the cursive scripts join their neighbours; a split would break the shaping
+  -- (CSS Text 3 §7.3), so they take no first letter here.
+  let cursive (c : Nat) : Bool :=
+    within c 0x0600 0x077F || within c 0x07C0 0x07FF || within c 0x0840 0x08FF || within c 0xFB50 0xFDFF ||
+    within c 0xFE70 0xFEFE || within c 0x1800 0x18AF || within c 0x1E900 0x1E95F
+  for _ in [0:2 * d.size + 2] do
     match pending with
     | [] => return none
-    | k :: rest =>
+    | none :: _ => return none
+    | some k :: rest =>
       pending := rest
       let n := d.get k
       if n.type == .text then
         match firstLetterRange n.data with
         | none => pure ()
         | some none => return none
-        | some (some (a, b)) => return some (k, a, b)
+        | some (some (a, b)) =>
+          let cs := n.data.toList.toArray
+          let ps := n.parent.bind (styles[·]?) |>.getD {}
+          -- A preserved line feed before the letter puts it on a later line.
+          if (ps.preformatted || ps.preserveSegmentBreaks) && (cs.extract 0 a).any (· == '\n') then return none
+          if (cs.extract a b).any (fun c => cursive c.toNat) then return none
+          return some (k, a, b)
       else if n.type == .element then
         let s := (styles[k]?).getD {}
         if s.display == .none || s.pos.float != .none || s.pos.position == .absolute || s.pos.position == .fixed then pure ()
         else if bare.contains n.lname || n.ns == some svgNS then return none
-        else if s.display == .inline || s.display == .block then pending := n.kids.toList ++ pending
+        else if s.display == .inline then pending := n.kids.toList.map some ++ pending
+        else if s.display == .block then pending := n.kids.toList.map some ++ [none]
         else return none
   return none
 
