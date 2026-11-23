@@ -1947,7 +1947,7 @@ property that `appliedName` does not name, whatever its value and the style. -/
 theorem apply_other (s : Computed) (d : Declaration) (h : appliedName d.property = false) :
     ∃ e, apply s d = .error e := by
   simp only [appliedName, Bool.or_eq_false_iff] at h
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨hw, hm⟩, hg⟩, hc⟩, hown⟩, hflex⟩, halign⟩, hpos⟩, hgrid⟩ := h
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hw, hm⟩, hg⟩, hc⟩, hcr⟩, hci⟩, hcs⟩, hown⟩, hflex⟩, halign⟩, hpos⟩, hgrid⟩ := h
   have h1 : FlexStyle.set s.fontSize s.flex d.property d.value = none := by
     unfold FlexStyle.set
     simp only [hw, Bool.false_eq_true, if_false]
@@ -1958,7 +1958,7 @@ theorem apply_other (s : Computed) (d : Declaration) (h : appliedName d.property
     rw [if_pos (by simpa using halign)]
   have h3 : PositionStyle.set s.fontSize s.pos d.property d.value = none := by
     unfold PositionStyle.set
-    simp only [hw, hm, Bool.or_false, Bool.false_eq_true, if_false, hc]
+    simp only [hw, hm, Bool.or_false, Bool.false_eq_true, if_false, hc, hcr, hci, hcs]
     rw [if_pos (by simpa using hpos)]
   have h4 : GridStyle.set s.fontSize s.grid d.property d.value = none := by
     unfold GridStyle.set

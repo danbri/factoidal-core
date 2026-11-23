@@ -429,7 +429,8 @@ private def beforeTexts (page sheet : String) : Option (List String) := do
   let dom := DOM.parseHtmlDocument page
   let (tree,styles) ← (Generated.styled none dom (← (CSS.parse sheet).toOption)).toOption
   pure ((List.range tree.size).filterMap fun i =>
-    if (tree.get i).lname == "::before" && ((styles[i]?).map (·.display != .none)).getD false then
+    let shown := fun (k : Nat) => ((styles[k]?).map (·.display != .none)).getD false
+    if (tree.get i).lname == "::before" && shown i && ((tree.get i).parent.map shown).getD false then
       ((tree.get i).kids[0]?).map fun t => (tree.get t).data else none)
 #guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>"
   "ol{counter-reset:item} li{counter-increment:item} li::before{content:counter(item) '. '}" == some ["1. ", "2. ", "3. "]
