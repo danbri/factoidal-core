@@ -1,6 +1,7 @@
 import EVMCleanroom.Call
 import EVMCleanroom.ValueCall
 import EVMCleanroom.Proofs
+import EVMCleanroom.IdentityPrecompile
 
 /-!
 # World-aware execution of the EVM call family
@@ -171,6 +172,14 @@ def stepError (e : Error) : RawOutcome :=
 /-- Entry depth 0 allows child depths through 1024, as in EELS. -/
 def maxDepth : Nat := 1024
 
+/-- Only identity (0x04) is currently executable in the actual world-aware
+    CALL family. All other reserved precompile addresses still refuse. -/
+def unimplementedPrecompile (profile : Profile) (target : Nat) : Bool :=
+  WorldCall.unsupportedPrecompile profile target && target != 4
+
+/-- A local memory policy, not a fork rule or transaction-validity limit. -/
+def maxIdentityCallBytes : Nat := 1_048_576
+
 structure ActiveFrame where
   world : TxWorld
   address : Nat
@@ -215,7 +224,7 @@ def beginCall (active : ActiveFrame) : Except Error CallEntry :=
             ⟨active.address, active.depth, { parent with memory, returnData := {} }, rest, checkpoint, budget, ranges⟩
           if value.val > (callerWorld.accounts active.address).balance || active.depth ≥ maxDepth then
             .ok (.failed continuation)
-          else if WorldCall.unsupportedPrecompile parent.profile target then .error .unsupportedFork
+          else if unimplementedPrecompile parent.profile target then .error .unsupportedFork
           else
             let transfer := if value.val = 0 then .ok checkpoint else
               (pay checkpoint active.address target value.val).mapError fun _ => .unsupportedFork
@@ -302,7 +311,7 @@ private def prepareVariant (active : ActiveFrame) (kind : CallVariant)
   if active.depth ≥ maxDepth ∨
       (args.stackValue ≠ 0 ∧ args.stackValue > (checkpoint.accounts active.address).balance) then
     .ok (.failed continuation)
-  else if WorldCall.unsupportedPrecompile parent.profile args.codeAddress then .error .unsupportedFork
+  else if unimplementedPrecompile parent.profile args.codeAddress then .error .unsupportedFork
   else .ok (.entered (variantFrame active kind args continuation) continuation)
 
 /-- CALLCODE, DELEGATECALL and STATICCALL share the CALL continuation.
@@ -362,10 +371,57 @@ private def afterCall (k : Continuation) : CallStep → Transition
   | .exceptional e => .terminal (.exceptional e)
   | .indeterminate e => .terminal (.indeterminate e)
 
+/-- The stack on the suspended caller retains the code target for every
+    CALL-family variant (requested gas, target, then its other operands). -/
+def Continuation.codeTarget (k : Continuation) : Nat :=
+  match k.parent.stack.items with
+  | _ :: target :: _ => target.val % addressBound
+  | _ => addressBound
+
+/-- Enter an already budgeted identity precompile without running account code.
+    The success world includes any CALL value transfer; the checkpoint is
+    used on child out-of-gas. Missing witnesses and local resource limits
+    are never turned into EVM failure. -/
 private def dispatchCall : Except Error CallEntry → Transition
   | .error e => .terminal (stepError e)
-  | .ok (.entered child k) => .enter child k
+  | .ok (.entered child k) =>
+      if k.codeTarget == 4 then
+        match IdentityPrecompile.executeView maxIdentityCallBytes k.budget.childGas
+            child.state.callData with
+        | .ok (data, remaining) => afterCall k (resumeCall k child.world remaining data true)
+        | .error .outOfGas => afterCall k (resumeCall k k.checkpoint 0 {} false)
+        | .error reason => .terminal (.indeterminate reason)
+      else .enter child k
   | .ok (.failed k) => afterCall k (resumeFailedCall k)
+
+/-- Actual dispatch delegates the complete identity byte window and child gas
+    to our native Lean precompile, then resumes the same caller continuation. -/
+theorem dispatchCall_identity_exact (child : ActiveFrame) (k : Continuation)
+    (bytes : ByteView) (remaining : Nat)
+    (hTarget : k.codeTarget = 4)
+    (hResult : IdentityPrecompile.executeView maxIdentityCallBytes k.budget.childGas
+      child.state.callData = .ok (bytes, remaining)) :
+    dispatchCall (.ok (.entered child k)) =
+      afterCall k (resumeCall k child.world remaining bytes true) := by
+  simp [dispatchCall, hTarget, hResult]
+
+/-- An admitted but underfunded identity child loses its forwarded gas and
+    its value transfer, while the parent continuation retains the checkpoint. -/
+theorem dispatchCall_identity_outOfGas (child : ActiveFrame) (k : Continuation)
+    (hTarget : k.codeTarget = 4)
+    (hResult : IdentityPrecompile.executeView maxIdentityCallBytes k.budget.childGas
+      child.state.callData = .error .outOfGas) :
+    dispatchCall (.ok (.entered child k)) =
+      afterCall k (resumeCall k k.checkpoint 0 {} false) := by
+  simp [dispatchCall, hTarget, hResult]
+
+/-- Resource refusal is not an EVM failure bit or a completed receipt. -/
+theorem dispatchCall_identity_resourceLimit (child : ActiveFrame) (k : Continuation)
+    (hTarget : k.codeTarget = 4)
+    (hResult : IdentityPrecompile.executeView maxIdentityCallBytes k.budget.childGas
+      child.state.callData = .error .resourceLimit) :
+    dispatchCall (.ok (.entered child k)) = .terminal (.indeterminate .resourceLimit) := by
+  simp [dispatchCall, hTarget, hResult]
 
 /-- The only storage-reading opcodes admitted by Core use the top word as key. -/
 private def missingStorage (active : ActiveFrame) (opcode : Nat) : Option Nat :=
@@ -558,7 +614,7 @@ theorem beginCall_entered_context (active child : ActiveFrame) (k : Continuation
       by_cases hFunds : ((commitFrame active.world active.address active.state).accounts active.address).balance < value.val
       · simp [hFunds] at h
       simp only [hDepth, hFunds, decide_false, Bool.or_self, Bool.false_eq_true, if_false] at h
-      by_cases hPrecompile : WorldCall.unsupportedPrecompile active.state.profile (targetWord.val % addressBound) = true
+      by_cases hPrecompile : unimplementedPrecompile active.state.profile (targetWord.val % addressBound) = true
       · simp [hPrecompile] at h
       simp only [hPrecompile] at h
       have hChildDepth : active.depth + 1 ≤ maxDepth := by omega
@@ -871,10 +927,11 @@ theorem beginVariant_missing_execution_account (active : ActiveFrame) (kind : Ca
 private theorem executeLoop_enters_child (fuel : Nat) (active child : ActiveFrame)
     (callers : List Continuation) (k : Continuation) (hRunning : active.state.halted = false)
     (hOpcode : byteAt active.state active.state.pc = 0xf1)
-    (hEntry : beginCall active = .ok (.entered child k)) :
+    (hEntry : beginCall active = .ok (.entered child k))
+    (hOrdinary : k.codeTarget ≠ 4) :
     executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
   rw [executeLoop]
-  simp [dispatch, dispatchCall, hRunning, hOpcode, hEntry]
+  simp [dispatch, dispatchCall, hRunning, hOpcode, hEntry, hOrdinary]
 
 /-- Kind: correspondence.
     Says: all three new opcode bytes enter the same continuation loop as CALL.
@@ -883,10 +940,12 @@ private theorem executeLoop_enters_variant (fuel : Nat) (active child : ActiveFr
     (callers : List Continuation) (k : Continuation) (kind : CallVariant)
     (hRunning : active.state.halted = false)
     (hOpcode : byteAt active.state active.state.pc = kind.opcode)
-    (hEntry : beginVariant active kind = .ok (.entered child k)) :
+    (hEntry : beginVariant active kind = .ok (.entered child k))
+    (hOrdinary : k.codeTarget ≠ 4) :
     executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
   rw [executeLoop]
-  cases kind <;> simp [dispatch, dispatchCall, CallVariant.opcode, hRunning, hOpcode, hEntry]
+  cases kind <;> simp [dispatch, dispatchCall, CallVariant.opcode, hRunning, hOpcode, hEntry,
+    hOrdinary]
 
 /-- Kind: boundary.
     Says: the public dispatcher propagates missing code coverage as an
@@ -926,6 +985,9 @@ private theorem executeLoop_resumes_caller (fuel : Nat) (active : ActiveFrame)
 theorem executeAtDepth_no_fuel (world : TxWorld) (address depth : Nat) (s : State) :
     executeAtDepth 0 world address depth s = .indeterminate .stepLimit := rfl
 
+#print axioms dispatchCall_identity_exact
+#print axioms dispatchCall_identity_outOfGas
+#print axioms dispatchCall_identity_resourceLimit
 #print axioms beginCall_entered_context
 #print axioms beginCall_entered_output_paid
 #print axioms beginCall_entered_input_byte
