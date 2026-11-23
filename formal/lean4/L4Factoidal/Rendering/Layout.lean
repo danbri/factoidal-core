@@ -2901,42 +2901,43 @@ elements. `document` selects a document already in the arena. Layout keeps the a
 numbers in its boxes, including for a nested document. -/
 def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (embedding : Embedding)
     (width height : Nat) (pictures : Pictures := noPictures) (document : Nat := 0) :
-    Except String (Scene × Array Box) := do
+    Except String (Scene × Array Box) :=
   if document != 0 && (document ≥ dom.size || (dom.get document).type != .document) then
-    throw "layout root is not a document"
-  if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
-  let vw := Float.ofNat width
-  let vh := Float.ofNat height
-  let styles := computed.map fun s =>
-    {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
-            minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
-            minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
-            backgroundSize := s.backgroundSize.atViewport vw vh,
-            backgroundPositionX := s.backgroundPositionX.atViewport vw vh,
-            backgroundPositionY := s.backgroundPositionY.atViewport vw vh,
-            objectPosition := s.objectPosition.map fun (x,y) => (x.atViewport vw vh, y.atViewport vw vh),
-            align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
-            pos := (flexAtViewport vw vh s).pos}
-  -- Percentage margins and padding, where the containing block's width is definite.
-  let styles := percentEdges dom styles vw document
-  -- `box-sizing: border-box`: the layout reads content-box sizes.
-  let styles := styles.map contentBoxed
-  let canvas := canvasBackground dom styles document
-  let styles := match canvas with
-    | some (id,_) => styles.modify id fun s => {s with background := none}
-    | none => styles
-  let result ← layoutRoot dom styles font embedding pictures vw vh document
-  let result : Result := match canvas with
-    | some (id,c) => {result with nodes := #[Node.paint ⟨some id,{geometry := .rect 0 0 vw (max vh result.height),style := {fill := .solid c}}⟩] ++ result.nodes}
-    | none => result
-  if result.nodes.size > 1048576 then throw "HTML paint count exceeds 1048576"
-  -- Links are kept down to the foot of the document, not the viewport: a host that scrolls
-  -- a band of the page with no new layout (the Hub, issue 1268) hit-tests links below the
-  -- first screen with this list.
-  let links := linkRegions dom styles (linkSources dom styles result.boxes) (Float.ofNat width) (linkHeight vh result.height)
-  if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then
-    throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
-  return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)
+    .error "layout root is not a document"
+  else do
+    if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
+    let vw := Float.ofNat width
+    let vh := Float.ofNat height
+    let styles := computed.map fun s =>
+      {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
+              minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
+              minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
+              backgroundSize := s.backgroundSize.atViewport vw vh,
+              backgroundPositionX := s.backgroundPositionX.atViewport vw vh,
+              backgroundPositionY := s.backgroundPositionY.atViewport vw vh,
+              objectPosition := s.objectPosition.map fun (x,y) => (x.atViewport vw vh, y.atViewport vw vh),
+              align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
+              pos := (flexAtViewport vw vh s).pos}
+    -- Percentage margins and padding, where the containing block's width is definite.
+    let styles := percentEdges dom styles vw document
+    -- `box-sizing: border-box`: the layout reads content-box sizes.
+    let styles := styles.map contentBoxed
+    let canvas := canvasBackground dom styles document
+    let styles := match canvas with
+      | some (id,_) => styles.modify id fun s => {s with background := none}
+      | none => styles
+    let result ← layoutRoot dom styles font embedding pictures vw vh document
+    let result : Result := match canvas with
+      | some (id,c) => {result with nodes := #[Node.paint ⟨some id,{geometry := .rect 0 0 vw (max vh result.height),style := {fill := .solid c}}⟩] ++ result.nodes}
+      | none => result
+    if result.nodes.size > 1048576 then throw "HTML paint count exceeds 1048576"
+    -- Links are kept down to the foot of the document, not the viewport: a host that scrolls
+    -- a band of the page with no new layout (the Hub, issue 1268) hit-tests links below the
+    -- first screen with this list.
+    let links := linkRegions dom styles (linkSources dom styles result.boxes) (Float.ofNat width) (linkHeight vh result.height)
+    if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then
+      throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
+    return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)
 
 /-- The boxes of the original page's nodes, used by script geometry and frame
 answers. The limit also excludes generated content and anonymous control text. -/

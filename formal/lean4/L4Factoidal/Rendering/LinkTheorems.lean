@@ -115,7 +115,7 @@ theorem renderStyled_links {dom : Dom} {computed : Array Computed} {font : FontP
         (linkHeight (Float.ofNat height) result.height) := by
   unfold renderStyled at ok
   split at ok
-  · exact absurd ok throw_bind_ne
+  · cases ok
   split at ok
   · exact absurd ok throw_bind_ne
   obtain ⟨result, made, ok⟩ := bind_ok ok
