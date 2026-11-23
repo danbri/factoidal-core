@@ -2,3 +2,4 @@ import EthereumConsensus.SSZ.GIndex
 import EthereumConsensus.SSZ.CheckedBranch
 import EthereumConsensus.ForkChoice.LatestMessage
 import EthereumConsensus.ForkChoice.VoteStore
+import EthereumConsensus.ForkChoice.AttestationScore
