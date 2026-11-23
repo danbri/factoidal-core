@@ -94,6 +94,9 @@ jobs:
           lake -d ethereum-consensus build ssz-basic-types
           lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/BasicTypes.lean" |
             tee "$RUNNER_TEMP/ethereum-ssz-basic-axioms.log"
+          python3 ethereum-consensus/scripts/check-byte-proof-axioms.py \
+            ethereum-consensus/evidence/2026-11-23-basic-type-claim-ledger.json \
+            "$RUNNER_TEMP/ethereum-ssz-basic-axioms.log"
           python3 ethereum-consensus/scripts/check-basic-types.py \
             ethereum-consensus/.lake/build/bin/ssz-basic-types \
             --report "$RUNNER_TEMP/ethereum-ssz-basic-results.json"
