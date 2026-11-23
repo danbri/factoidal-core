@@ -1,0 +1,151 @@
+{
+  "compiled_modules": [
+    "AncestryMain",
+    "BoostMain",
+    "ByteProofMain",
+    "CheckedMain",
+    "ChildMain",
+    "EthereumConsensus",
+    "EthereumConsensus.ForkChoice.AttestationScore",
+    "EthereumConsensus.ForkChoice.CheckedAncestry",
+    "EthereumConsensus.ForkChoice.ChildSelection",
+    "EthereumConsensus.ForkChoice.LatestMessage",
+    "EthereumConsensus.ForkChoice.ProposerScore",
+    "EthereumConsensus.ForkChoice.StoredHead",
+    "EthereumConsensus.ForkChoice.VoteStore",
+    "EthereumConsensus.SSZ.ByteProof",
+    "EthereumConsensus.SSZ.ByteProofTheorems",
+    "EthereumConsensus.SSZ.CheckedBranch",
+    "EthereumConsensus.SSZ.GIndex",
+    "EthereumConsensus.SSZ.MultiProofHelpers",
+    "L4Factoidal.Crypto.SHA2",
+    "L4Factoidal.Crypto.SHA2Tests",
+    "L4Factoidal.Crypto.SHA2Theorems",
+    "LatestMain",
+    "Main",
+    "MultiProofMain",
+    "StoreMain",
+    "StoredHeadMain",
+    "WeightMain"
+  ],
+  "lake_packages": [],
+  "lean_toolchain": "leanprover/lean4:v4.33.1",
+  "native_binary": {
+    "sha256_symbol": "lp_ethereum__consensus_L4Factoidal_Crypto_sha256",
+    "shared_libraries": [
+      "libc.so.6",
+      "ld-linux-x86-64.so.2",
+      "libpthread.so.0",
+      "libdl.so.2",
+      "librt.so.1",
+      "libm.so.6"
+    ],
+    "toolchain_archives_with_no_shared_global_symbols": [
+      "libcrypto.a",
+      "libssl.a"
+    ]
+  },
+  "native_link": {
+    "bundled_crypto_flags": [
+      "-lcrypto",
+      "-lssl"
+    ],
+    "response_files": 1,
+    "sha256_object": [
+      "SHA2.c.o.export"
+    ]
+  },
+  "schema": "factoidal.ethereum-consensus.dependency-audit.v1",
+  "source_imports": {
+    "AncestryMain": [
+      "EthereumConsensus.ForkChoice.CheckedAncestry"
+    ],
+    "BoostMain": [
+      "EthereumConsensus.ForkChoice.ProposerScore"
+    ],
+    "ByteProofMain": [
+      "EthereumConsensus.SSZ.ByteProof"
+    ],
+    "CheckedMain": [
+      "EthereumConsensus.SSZ.CheckedBranch"
+    ],
+    "ChildMain": [
+      "EthereumConsensus.ForkChoice.ChildSelection"
+    ],
+    "EthereumConsensus": [
+      "EthereumConsensus.ForkChoice.AttestationScore",
+      "EthereumConsensus.ForkChoice.CheckedAncestry",
+      "EthereumConsensus.ForkChoice.ChildSelection",
+      "EthereumConsensus.ForkChoice.LatestMessage",
+      "EthereumConsensus.ForkChoice.ProposerScore",
+      "EthereumConsensus.ForkChoice.StoredHead",
+      "EthereumConsensus.ForkChoice.VoteStore",
+      "EthereumConsensus.SSZ.ByteProofTheorems",
+      "EthereumConsensus.SSZ.CheckedBranch",
+      "EthereumConsensus.SSZ.GIndex",
+      "EthereumConsensus.SSZ.MultiProofHelpers"
+    ],
+    "EthereumConsensus.ForkChoice.AttestationScore": [
+      "EthereumConsensus.ForkChoice.VoteStore"
+    ],
+    "EthereumConsensus.ForkChoice.CheckedAncestry": [
+      "EthereumConsensus.ForkChoice.ProposerScore"
+    ],
+    "EthereumConsensus.ForkChoice.ChildSelection": [
+      "EthereumConsensus.ForkChoice.CheckedAncestry"
+    ],
+    "EthereumConsensus.ForkChoice.LatestMessage": [
+      "Lean"
+    ],
+    "EthereumConsensus.ForkChoice.ProposerScore": [
+      "EthereumConsensus.ForkChoice.AttestationScore"
+    ],
+    "EthereumConsensus.ForkChoice.StoredHead": [
+      "EthereumConsensus.ForkChoice.ChildSelection"
+    ],
+    "EthereumConsensus.ForkChoice.VoteStore": [
+      "EthereumConsensus.ForkChoice.LatestMessage"
+    ],
+    "EthereumConsensus.SSZ.ByteProof": [
+      "EthereumConsensus.SSZ.MultiProofHelpers",
+      "L4Factoidal.Crypto.SHA2Theorems"
+    ],
+    "EthereumConsensus.SSZ.ByteProofTheorems": [
+      "EthereumConsensus.SSZ.ByteProof"
+    ],
+    "EthereumConsensus.SSZ.CheckedBranch": [
+      "EthereumConsensus.SSZ.GIndex"
+    ],
+    "EthereumConsensus.SSZ.GIndex": [
+      "Lean"
+    ],
+    "EthereumConsensus.SSZ.MultiProofHelpers": [
+      "EthereumConsensus.SSZ.CheckedBranch"
+    ],
+    "L4Factoidal.Crypto.SHA2": [],
+    "L4Factoidal.Crypto.SHA2Tests": [
+      "L4Factoidal.Crypto.SHA2"
+    ],
+    "L4Factoidal.Crypto.SHA2Theorems": [
+      "L4Factoidal.Crypto.SHA2"
+    ],
+    "LatestMain": [
+      "EthereumConsensus.ForkChoice.LatestMessage"
+    ],
+    "Main": [
+      "EthereumConsensus"
+    ],
+    "MultiProofMain": [
+      "EthereumConsensus"
+    ],
+    "StoreMain": [
+      "EthereumConsensus.ForkChoice.VoteStore"
+    ],
+    "StoredHeadMain": [
+      "EthereumConsensus.ForkChoice.StoredHead"
+    ],
+    "WeightMain": [
+      "EthereumConsensus.ForkChoice.AttestationScore"
+    ]
+  }
+}

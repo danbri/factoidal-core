@@ -1,9 +1,13 @@
-name: Lean beacon SSZ generalized-index and LMD latest-message foundations
+name: Lean beacon SSZ proofs and LMD foundations
 
 on:
   pull_request:
     paths:
       - "formal/lean4/ethereum-consensus/**"
+      - "formal/lean4/L4Factoidal/Crypto/SHA2.lean"
+      - "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean"
+      - "formal/lean4/L4Factoidal/Crypto/SHA2Tests.lean"
+      - "formal/lean4/lean-toolchain"
       - ".github/workflows/ethereum-consensus.yml"
   workflow_dispatch:
 
@@ -18,8 +22,18 @@ jobs:
   ssz:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: formal/lean4
+    env:
+      LEAN_NUM_THREADS: "2"
+      LEAN_STACK_SIZE_KB: "65536"
+      LAKE_ARTIFACT_CACHE: "false"
     steps:
       - uses: actions/checkout@v4
+      - name: Audit standalone source dependencies
+        run: python3 ethereum-consensus/scripts/check-pure-lean-dependencies.py --self-test
       - name: Compile Lean 4.33.1 definitions, guards and axiom audit
         uses: leanprover/lean-action@v1
         with:
@@ -27,78 +41,100 @@ jobs:
           build: true
           axiom-audit: true
           axiom-audit-root: EthereumConsensus
+          use-github-cache: false
+          use-mathlib-cache: false
       - name: Re-run exact theorem files through Lean for printed axiom evidence
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake env lean EthereumConsensus/SSZ/GIndex.lean
-          lake env lean EthereumConsensus/SSZ/CheckedBranch.lean
-          lake env lean EthereumConsensus/SSZ/MultiProofHelpers.lean | tee "$RUNNER_TEMP/ethereum-ssz-multiproof-axioms.log"
-          python3 scripts/check-multiproof-axiom-ledger.py evidence/2026-11-23-ssz-multiproof-claim-ledger.json "$RUNNER_TEMP/ethereum-ssz-multiproof-axioms.log"
-          lake env lean EthereumConsensus/ForkChoice/LatestMessage.lean
-          lake env lean EthereumConsensus/ForkChoice/VoteStore.lean
-          lake env lean EthereumConsensus/ForkChoice/AttestationScore.lean
-          lake env lean EthereumConsensus/ForkChoice/ProposerScore.lean
-          lake env lean EthereumConsensus/ForkChoice/CheckedAncestry.lean
-          lake env lean EthereumConsensus/ForkChoice/ChildSelection.lean
-          lake env lean EthereumConsensus/ForkChoice/StoredHead.lean
+          check_lean() {
+            lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/$1"
+          }
+          check_lean EthereumConsensus/SSZ/GIndex.lean
+          check_lean EthereumConsensus/SSZ/CheckedBranch.lean
+          check_lean EthereumConsensus/SSZ/MultiProofHelpers.lean | tee "$RUNNER_TEMP/ethereum-ssz-multiproof-axioms.log"
+          (
+            cd ethereum-consensus
+            python3 scripts/check-multiproof-axiom-ledger.py evidence/2026-11-23-ssz-multiproof-claim-ledger.json "$RUNNER_TEMP/ethereum-ssz-multiproof-axioms.log"
+          )
+          check_lean EthereumConsensus/ForkChoice/LatestMessage.lean
+          check_lean EthereumConsensus/ForkChoice/VoteStore.lean
+          check_lean EthereumConsensus/ForkChoice/AttestationScore.lean
+          check_lean EthereumConsensus/ForkChoice/ProposerScore.lean
+          check_lean EthereumConsensus/ForkChoice/CheckedAncestry.lean
+          check_lean EthereumConsensus/ForkChoice/ChildSelection.lean
+          check_lean EthereumConsensus/ForkChoice/StoredHead.lean
+          {
+            check_lean EthereumConsensus/SSZ/ByteProof.lean
+            lake -d ethereum-consensus env lean "$PWD/L4Factoidal/Crypto/SHA2Theorems.lean"
+            check_lean EthereumConsensus/SSZ/ByteProofTheorems.lean
+          } | tee "$RUNNER_TEMP/ethereum-byte-proof-axioms.log"
+          python3 ethereum-consensus/scripts/check-byte-proof-axioms.py \
+            ethereum-consensus/evidence/2026-11-23-byte-proof-claim-ledger.json \
+            "$RUNNER_TEMP/ethereum-byte-proof-axioms.log"
+      - name: Compile and inspect the native SSZ byte-proof executable
+        run: |
+          set -euo pipefail
+          unset LEAN_PATH LEAN_SRC_PATH
+          lake -d ethereum-consensus -v build ssz-byte-proofs 2>&1 | tee "$RUNNER_TEMP/ethereum-byte-proof-build.log"
+          python3 ethereum-consensus/scripts/check-pure-lean-dependencies.py \
+            --build-dir ethereum-consensus/.lake/build \
+            --toolchain-root "$(lean --print-prefix)" \
+            --binary ethereum-consensus/.lake/build/bin/ssz-byte-proofs \
+            --link-log "$RUNNER_TEMP/ethereum-byte-proof-build.log" \
+            --report "$RUNNER_TEMP/ethereum-byte-proof-dependencies.json"
+      - name: Check native SSZ byte proofs against the independent reference
+        run: |
+          python3 ethereum-consensus/scripts/check-byte-proofs.py \
+            ethereum-consensus/.lake/build/bin/ssz-byte-proofs \
+            --report "$RUNNER_TEMP/ethereum-byte-proof-report.json"
       - name: Independent SSZ generalized-index reference over 1025 inputs
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe ssz-gindex | python3 scripts/check-gindex.py
+          lake -d ethereum-consensus exe ssz-gindex | python3 ethereum-consensus/scripts/check-gindex.py
       - name: Independent checked SSZ branch policy and fold (1025 inputs)
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe ssz-checked-branch | python3 scripts/check-checked-branch.py
+          lake -d ethereum-consensus exe ssz-checked-branch | python3 ethereum-consensus/scripts/check-checked-branch.py
       - name: Independent LMD latest-message reference over 2048 inputs
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe lmd-latest | python3 scripts/check-lmd-latest.py
+          lake -d ethereum-consensus exe lmd-latest | python3 ethereum-consensus/scripts/check-lmd-latest.py
       - name: Independent guarded vote-store sequential trace (1024 rows)
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe lmd-store | python3 scripts/check-lmd-store.py
+          lake -d ethereum-consensus exe lmd-store | python3 ethereum-consensus/scripts/check-lmd-store.py
       - name: Independent LMD attestation score and proposer boost (1024 rows)
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe lmd-score | python3 scripts/check-attestation-score.py
+          lake -d ethereum-consensus exe lmd-score | python3 ethereum-consensus/scripts/check-attestation-score.py
       - name: Independent two-stage proposer score and LMD bridge (1024 rows)
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe lmd-computed-boost | python3 scripts/check-proposer-score.py
+          lake -d ethereum-consensus exe lmd-computed-boost | python3 ethereum-consensus/scripts/check-proposer-score.py
       - name: Independent bounded ancestry and LMD checked score (1024 rows)
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe lmd-checked-ancestry | python3 scripts/check-ancestry.py
+          lake -d ethereum-consensus exe lmd-checked-ancestry | python3 ethereum-consensus/scripts/check-ancestry.py
       - name: Independent fail-closed weighted child selector (1024 rows)
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe lmd-checked-child | python3 scripts/check-child-selection.py
+          lake -d ethereum-consensus exe lmd-checked-child | python3 ethereum-consensus/scripts/check-child-selection.py
       - name: Independent finite-inventory bounded get_head (1024 rows)
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe lmd-stored-head | python3 scripts/check-stored-head.py
+          lake -d ethereum-consensus exe lmd-stored-head | python3 ethereum-consensus/scripts/check-stored-head.py
       - name: Independent bounded SSZ multiproof helper indices (2048 rows)
-        shell: bash
-        working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
-          lake exe ssz-multiproof-helpers | python3 scripts/check-multiproof-helpers.py
+          lake -d ethereum-consensus exe ssz-multiproof-helpers | python3 ethereum-consensus/scripts/check-multiproof-helpers.py
+      - name: Upload SSZ byte-proof evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethereum-ssz-byte-proof-evidence
+          path: |
+            ${{ runner.temp }}/ethereum-byte-proof-axioms.log
+            ${{ runner.temp }}/ethereum-byte-proof-build.log
+            ${{ runner.temp }}/ethereum-byte-proof-dependencies.json
+            ${{ runner.temp }}/ethereum-byte-proof-report.json
+          if-no-files-found: warn

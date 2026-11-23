@@ -101,33 +101,22 @@ The caller-supplied resource caps are not SSZ consensus parameters.
 The Python reference is a *test*, not a normative refinement proof.
 The full acceptance epic remains open. No main merge is intended.
 
-## Upstream Lean SSZ evaluation and integration decision
+## External-library adoption recommendation withdrawn
 
-Before promoting this standalone 4.33.1 position helper to any production
-consensus code, bridge to the substantially more complete upstream model.
-The pinned official `ethereum/ssz-specs@4c2f08805080c6b4b12ede7bf48ad6a80229f4b1/lean/lakefile.toml`
-uses `ethereum/EthLib@6b87b0d4951766864af432455c44344fd12b5cdc`.
-Its package has `EthLib.Consensus.Ssz.Merkle.Gindex.getHelperIndices`,
-`rejectRelated`, concrete 32-byte-checked
-`Merkle.Verify.calculateMultiMerkleRoot` and
-`verifyMerkleMultiproof`, a Lean SHA-256 implementation,
-and mature `Proofs.Ssz.Merkle.Multiproof` and
-`MultiproofBinding` results. See
-https://github.com/ethereum/EthLib/blob/6b87b0d4951766864af432455c44344fd12b5cdc/EthLib/Consensus/Ssz/README.md .
-The upstream `ssz-specs/lean` harness already checks released vectors
-for encoding/roots, invalid declarations, generalized indices, JSON,
-single branches and multiproofs, plus generated Python differential
-and hash tests. This is a **better assurance base** for full SSZ than
-continuing to copy its semantics.
+The previous revision recommended adopting EthLib and changing the
+compiler/package configuration for that integration. That recommendation
+had no user approval. The proposal in
+https://github.com/danbri/factoidal-core/issues/830 and dependency-adding
+https://github.com/danbri/factoidal-core/pull/832 were withdrawn without
+merging. The earlier recommendation is superseded; it is not authority to
+import, vendor, copy, translate or wrap the external implementation.
 
-Both pinned upstream SSZ and EthLib toolchain files specify
-`leanprover/lean4:v4.35.0`, while the Factoidal isolated package
-currently pins `v4.33.1`. The existing positional module is therefore
-an independently checked, deliberately small compatibility prototype,
-**not a substitute for EthLib's codec, multiproof verification or
-proofs**. Upstream integration and an executable-path equality/refinement
-bridge are tracked in
-https://github.com/danbri/factoidal-core/issues/830 .
-That work must resolve the compiler pin in an isolated lane, preserve
-resource and error semantics, and run upstream's declared *complete*
-fixture manifest before using an end-to-end SSZ conformance claim.
+Continue the independent pure Lean 4 Ethereum system. The positional
+helper remains limited to the claims and evidence above. Its next
+byte-level verification step uses the repository's own pure SHA-256
+module and unchanged Lean 4.33.1 toolchain, tracked in
+https://github.com/danbri/factoidal-core/issues/834. The external package
+manifest remains empty. Normative specifications and published test
+vectors are reference material; no other implementation supplies runtime
+answers. Full SSZ codecs, layouts and consensus conformance remain open
+under https://github.com/danbri/factoidal-core/issues/725.

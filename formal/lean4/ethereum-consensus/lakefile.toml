@@ -1,9 +1,14 @@
 name = "ethereum_consensus"
 version = "0.1.0"
-defaultTargets = ["EthereumConsensus"]
+defaultTargets = ["EthereumConsensus", "FactoidalSHA2"]
 
 [[lean_lib]]
 name = "EthereumConsensus"
+
+[[lean_lib]]
+name = "FactoidalSHA2"
+srcDir = ".."
+roots = ["L4Factoidal.Crypto.SHA2", "L4Factoidal.Crypto.SHA2Theorems", "L4Factoidal.Crypto.SHA2Tests"]
 
 [[lean_exe]]
 name = "ssz-gindex"
@@ -44,3 +49,7 @@ root = "StoredHeadMain"
 [[lean_exe]]
 name = "ssz-multiproof-helpers"
 root = "MultiProofMain"
+
+[[lean_exe]]
+name = "ssz-byte-proofs"
+root = "ByteProofMain"

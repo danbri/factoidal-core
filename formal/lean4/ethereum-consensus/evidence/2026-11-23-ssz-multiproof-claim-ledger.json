@@ -70,10 +70,10 @@
     "No SHA-256 pair or concrete digest bytes in this local module"
   ],
   "nonclaims": [
-    "Normative executable refinement to upstream EthLib unproved",
-    "SSZ cryptographic multiproof verification not implemented here",
+    "Normative Ethereum SSZ refinement remains open",
+    "SSZ cryptographic multiproof verification is not implemented by this positional helper",
     "No BeaconState typing, BLS, fork choice finality or networking claim",
-    "Upstream EthLib uses Lean 4.35.0; Factoidal uses 4.33.1",
+    "Independent byte-level verification continues in issue834; external implementation adoption is withdrawn",
     "Independent human review and broad premerge unverified"
   ]
 }
