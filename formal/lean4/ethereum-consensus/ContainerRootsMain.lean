@@ -1,4 +1,4 @@
-import EthereumConsensus.SSZ.ContainerRoots
+import EthereumConsensus.SSZ.SigningDomains
 import Lean
 
 /-! JSONL transport for four concrete fixed-shape SSZ beacon containers.
@@ -55,6 +55,21 @@ private def fromContainer {α : Type} (result : Except ContainerError α) :
     | .versionWidth => "version_width"
     | .basicRoot => "basic_root_error")
 
+private def getForkContext (request : Json) : Except String ForkContext := do
+  let previous ← getHex request "previous_version" 4
+  let current ← getHex request "current_version" 4
+  let activation ← getUInt64 request "activation_epoch"
+  let genesis ← getHex request "genesis_validators_root" 32
+  return ⟨previous, current, activation, genesis⟩
+
+private def fromDomain {α : Type} (result : Except DomainError α) :
+    Except String α :=
+  result.mapError (fun error =>
+    match error with
+    | .domainTypeWidth => "domain_type_width"
+    | .versionWidth => "version_width"
+    | .container _ => "container_error")
+
 private def dispatch (request : Json) : Except String Json := do
   let op ← request.getObjValAs? String "op"
   match op with
@@ -88,6 +103,31 @@ private def dispatch (request : Json) : Except String Json := do
     let domain ← getHex request "domain" 32
     let data ← fromContainer (checkedSigningData object domain)
     return success (signingDataWire data) (signingDataRoot data).bytes
+  | "signing_domain" =>
+    checkKeys request ["op", "domain_type", "epoch", "previous_version",
+      "current_version", "activation_epoch", "genesis_validators_root"]
+    let context ← getForkContext request
+    let t ← getHex request "domain_type" 4
+    let epoch ← getUInt64 request "epoch"
+    let domain ← fromDomain (getSigningDomain context t epoch)
+    return Json.mkObj [("status", .str "ok"),
+      ("domain", .str (L4Factoidal.Crypto.bytesToHex domain.bytes))]
+  | "proposer_header_signing" =>
+    checkKeys request ["op", "slot", "proposer_index", "parent_root",
+      "state_root", "body_root", "previous_version", "current_version",
+      "activation_epoch", "genesis_validators_root"]
+    let context ← getForkContext request
+    let slot ← getUInt64 request "slot"
+    let proposer ← getUInt64 request "proposer_index"
+    let parent ← getHex request "parent_root" 32
+    let state ← getHex request "state_root" 32
+    let body ← getHex request "body_root" 32
+    let header ← fromContainer (checkedBeaconBlockHeader slot proposer parent state body)
+    let result ← fromDomain (headerProposerSigningRoot context header)
+    return Json.mkObj [("status", .str "ok"),
+      ("object_root", .str (L4Factoidal.Crypto.bytesToHex result.objectRoot.bytes)),
+      ("domain", .str (L4Factoidal.Crypto.bytesToHex result.domain.bytes)),
+      ("signing_root", .str (L4Factoidal.Crypto.bytesToHex result.signingRoot.bytes))]
   | _ => throw "unknown_operation"
 
 /-- Compare raw, unquoted field separators with the parser's final key

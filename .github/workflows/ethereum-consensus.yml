@@ -123,6 +123,16 @@ jobs:
           python3 ethereum-consensus/scripts/check-container-roots.py \
             ethereum-consensus/.lake/build/bin/ssz-container-roots \
             --report "$RUNNER_TEMP/ethereum-ssz-containers-results.json"
+      - name: Audit fork-aware signing domains and native header signing
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/SigningDomains.lean" |
+            tee "$RUNNER_TEMP/ethereum-signing-axioms.log"
+          python3 ethereum-consensus/scripts/check-signing-domain-axioms.py \
+            "$RUNNER_TEMP/ethereum-signing-axioms.log" | tee "$RUNNER_TEMP/ethereum-signing-ledger.json"
+          python3 ethereum-consensus/scripts/check-signing-domains.py \
+            ethereum-consensus/.lake/build/bin/ssz-container-roots | tee "$RUNNER_TEMP/ethereum-signing-results.json"
       - name: Independent SSZ generalized-index reference over 1025 inputs
         run: |
           set -euo pipefail
@@ -179,4 +189,7 @@ jobs:
             ${{ runner.temp }}/ethereum-ssz-vector-results.json
             ${{ runner.temp }}/ethereum-ssz-containers-axioms.log
             ${{ runner.temp }}/ethereum-ssz-containers-results.json
+            ${{ runner.temp }}/ethereum-signing-axioms.log
+            ${{ runner.temp }}/ethereum-signing-ledger.json
+            ${{ runner.temp }}/ethereum-signing-results.json
           if-no-files-found: warn
