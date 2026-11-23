@@ -37,6 +37,12 @@ already used by the retained ASK proof. It authorises that demonstration only;
 its context text does not confer application authority. Replace the public
 query/rules/context and their independently established native/HACL hashes for a
 different policy. Do not derive the expected hashes from an untrusted receipt.
+For a different policy, the relying party can run the pinned native CLI with
+those public query/rules/context bytes and a separate public test graph and test
+salt, then take the second and third journal words as the policy/context hashes.
+Those two words are independent of the test graph and salt; the dummy ASK may
+be false while still producing a successful native journal. Review the public
+policy text and those hashes before using the configuration with private data.
 Before any proving, native output must match the configured policy/context
 words. Python does not implement RDF semantics or private commitment hashing.
 
@@ -72,6 +78,18 @@ resume refuses changed orchestration source or tool bytes. This records the
 software used without putting private paths into public provenance. The host
 OS, Python, dynamic loader/runtime libraries and independently supplied
 configuration remain trusted prerequisites.
+
+The local host must also have no hostile local co-tenants. The pinned SDK's
+[`ParentProcessConnector`](https://github.com/risc0/risc0/blob/22c5fb90522cb4d9427d4af6c05e747d20be2b7f/risc0/zkvm/src/host/api/mod.rs)
+binds an ephemeral `127.0.0.1` TCP listener, launches `r0vm --port`, and accepts
+the first connection. Its
+[`Hello` exchange](https://github.com/risc0/risc0/blob/22c5fb90522cb4d9427d4af6c05e747d20be2b7f/risc0/zkvm/src/host/api/client.rs)
+checks version compatibility; it does not authenticate that local peer before
+requests and private input are transmitted. Mode 0700/0600 file permissions do
+not isolate this transport from another local process racing the connection.
+The workflow therefore assumes a trusted local execution environment, rather
+than providing a sandbox for mutually hostile tenants. The SDK and its transport
+are unchanged here.
 
 ## One invocation, or a cheap preparation first
 
@@ -203,3 +221,30 @@ private input bytes can change execution/proving cost. A successful cheap
 preparation is not a proof, and a previous retained proof is not proof of the new
 private witness. Record a new private run's completion separately; publish only
 its allowlisted public package.
+
+## Retained private-witness proof
+
+[`fixtures/20261123`](fixtures/20261123) contains exactly the two public export
+files from a newly proved private synthetic witness with a fresh OS salt. The
+public-only verifier and all seven existing local Solidity proof-profile cases
+accepted the valid proof and passed their refusal controls. The native-derived
+expected statement used for the independent checks stays outside this package.
+The witness, salt and intermediate proof material are not retained in Git.
+
+To replay the public package, use the public-only verification command above
+with `--policy zkvm/risc0/private/authorisation.example.json` and
+`--package zkvm/risc0/private/fixtures/20261123`, supplying a verifier built from
+reviewed locked source and its independently checked executable hash. The normal
+receipt-boundary CI job performs this replay. The fixture records the historical
+reviewed guest image; CI does not regenerate its private proof or infer a guest
+rebuild from the current source.
+
+The first private run exposed a stage-name logging defect after the CPU prover
+succeeded, before SDK finalisation or export. The saved proof was subsequently
+verified through the pinned helper and separate host verifier, then the original
+frozen workflow resumed from the verified final receipt. Original input, salt,
+prepared state and source hashes were preserved. The separate stage-name fix
+passes 17 lifecycle tests, including the actual digit-bearing production labels
+and refusal before child launch. Its complete proving path was not rerun.
+The [dated worknote](../../../docs/20261122-private-ask-workflow.md) records the
+manual recovery, independent verification and exact public file hashes.

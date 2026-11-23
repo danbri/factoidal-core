@@ -94,6 +94,16 @@ it does not authorize publishing, messaging, or changes outside the task.
   See [the PR integration record](../../docs/20261022-pr-integration.md) and
   [preserved independent review](../../docs/audits/pr1-review-20261022/REVIEW-PR-1.md).
 
+## Private ASK attestations
+
+Read the [private ASK workflow design](../../docs/designissues/2026-11-22-private-ask-workflow.md)
+and [dated validation record](../../docs/20261122-private-ask-workflow.md).
+Take verifier authority independently of submitted proof/provenance fields;
+bind the complete native, guest and receipt journal, and verify a checkpoint
+before reuse. Keep the strict two-file public package separate from private
+work and EVM test fixtures. State the trusted-local-host transport assumption
+and the remaining source-authenticity, replay and whole-application boundaries.
+
 ## Before reporting a repair or release
 
 Run focused source checks, then the affected public tests with a rebuilt
