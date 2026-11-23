@@ -49,6 +49,8 @@ jobs:
           if grep -E '(sorryAx|native_decide|unsafe)' /tmp/london-header-axioms.txt; then
             exit 1
           fi
+          python3 scripts/check-london-claims.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["rejected"]==3 and x["status"]=="negative-controls-pass", x'
+          python3 scripts/check-london-claims.py --report /tmp/london-header-axioms.txt | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["selectedTheorems"]==6 and x["sourceBlobs"]==5 and x["status"]=="printed-axioms-source-pinned", x'
       - name: Execute independent EIP-1559 header reference comparison
         working-directory: formal/lean4/evm-cleanroom
         run: |
