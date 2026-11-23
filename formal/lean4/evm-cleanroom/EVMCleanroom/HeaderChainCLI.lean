@@ -34,12 +34,32 @@ private def parseFee (s : String) : Except String (Option Nat) :=
 private def parse (line : String) : Except String Pair := do
   match line.splitOn "\t" with
   | [pn, pt, ph, pl, pu, pf, cn, ct, ch, cl, cu, cf] =>
-    return { parentNumber := ← parseNat pn, parentTimestamp := ← parseNat pt,
-      parentHash := ← parseNat ph, parentGasLimit := ← parseNat pl,
-      parentGasUsed := ← parseNat pu, parentBaseFee := ← parseFee pf,
-      childNumber := ← parseNat cn, childTimestamp := ← parseNat ct,
-      childParentHash := ← parseNat ch, childGasLimit := ← parseNat cl,
-      childGasUsed := ← parseNat cu, childBaseFee := ← parseNat cf }
+    let parentNumber ← parseNat pn
+    let parentTimestamp ← parseNat pt
+    let parentHash ← parseNat ph
+    let parentGasLimit ← parseNat pl
+    let parentGasUsed ← parseNat pu
+    let parentBaseFee ← parseFee pf
+    let childNumber ← parseNat cn
+    let childTimestamp ← parseNat ct
+    let childParentHash ← parseNat ch
+    let childGasLimit ← parseNat cl
+    let childGasUsed ← parseNat cu
+    let childBaseFee ← parseNat cf
+    return {
+      parentNumber := parentNumber
+      parentTimestamp := parentTimestamp
+      parentHash := parentHash
+      parentGasLimit := parentGasLimit
+      parentGasUsed := parentGasUsed
+      parentBaseFee := parentBaseFee
+      childNumber := childNumber
+      childTimestamp := childTimestamp
+      childParentHash := childParentHash
+      childGasLimit := childGasLimit
+      childGasUsed := childGasUsed
+      childBaseFee := childBaseFee
+    }
   | _ => throw "expected-twelve-fields"
 
 private def emit (p : Pair) : IO Unit :=
