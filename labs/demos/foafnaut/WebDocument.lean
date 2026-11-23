@@ -2331,6 +2331,38 @@ def redrawVectorBackgrounds (images : List (String × ByteArray)) (styles : Arra
     out := out.set! i {st with backgroundBitmap := some (2*backgroundPictureBase+i,bitmap)}
   return out
 
+/-- The pictures of `img` elements with an SVG image shown larger than its picture, drawn
+again at the size they are shown (`Layout.fitScale` of the box and `object-fit`), as SVG
+backgrounds are (`redrawVectorBackgrounds`): for a box whose width and height are lengths
+in px (content box sizing), at most `maxVectorRedraws`, each with its own paint-table id.
+The picture keeps the image's natural size, so it is placed as before. -/
+def redrawVectorPictures (images : List (String × ByteArray)) (keys : List (Nat × String))
+    (styles : Array Rendering.CSS.Computed) (pictures : Rendering.Layout.Pictures) : Rendering.Layout.Pictures := Id.run do
+  let mut found : Std.TreeMap Nat Rendering.Layout.Picture := {}
+  for (id,key) in keys do
+    if found.size ≥ maxVectorRedraws then break
+    let some picture := pictures id | continue
+    let some bytes := images.lookup key | continue
+    if (WebRender.vectorNatural bytes).isNone then continue
+    let some st := styles[id]? | continue
+    if st.pos.borderBox then continue
+    let .px w := st.width | continue
+    let .px h := st.height | continue
+    let (iw,ih) := picture.size
+    if iw <= 0 || ih <= 0 then continue
+    let (sx,sy) := Rendering.Layout.fitScale st.objectFit iw ih w h
+    let (dw,dh) := (iw*sx,ih*sy)
+    if !(dw.isFinite && dh.isFinite) || dw < 1 || dh < 1 || dw > 4096 || dh > 4096 then continue
+    let (dw,dh) := (dw.round.toUInt32.toNat,dh.round.toUInt32.toNat)
+    if dw ≤ picture.bitmap.width && dh ≤ picture.bitmap.height then continue
+    let some bitmap := WebRender.vectorPictureAt bytes dw dh | continue
+    found := found.insert id {id := 3*backgroundPictureBase+id, bitmap,
+      natural := some (iw.round.toUInt32.toNat,ih.round.toUInt32.toNat)}
+  if found.isEmpty then return pictures
+  return fun id => match found.get? id with
+    | some p => some p
+    | none => pictures id
+
 /-- The cascade with each element's background image decoded from the supplied images (a
 `data:` URL from itself), and the store made for them, for the engine to keep. A page with no
 background image gives its cascade back as it is. -/
@@ -2444,6 +2476,10 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- The layout with the styles it was made with (`Layout.renderWithStyles`): the one cascade
   -- of a layout also answers the SVG refusals below and `Laid.styles` (each cascaded the
   -- document again before). The page's own tree takes the cascade made above.
+  -- SVG images of `img` shown larger than their pictures, drawn again at their size
+  let pictures := match made with
+    | .ok (_,styles) => redrawVectorPictures images (WebRender.htmlImageKeys dom documentURL) styles pictures
+    | .error _ => pictures
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.renderWithStyles d rules font e width rows textScale state pictures treeScope
   let drawPage := fun (e : Rendering.Layout.Embedding) => made.bind fun m => drawMade dom m font e width rows pictures
   -- Inline SVG is a skip point, checked so that liberal mode lays the page out once
