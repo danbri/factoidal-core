@@ -2,13 +2,16 @@ import EVMCleanroom.HeaderChain
 import EVMCleanroom.Keccak
 
 /-! Bounded canonical RLP encoding of mainnet legacy and London-family
-headers before Shanghai. The header fields are untrusted byte strings,
+headers through Prague (before Osaka). The header fields are untrusted byte strings,
 not an authenticated block. The same checked fields supply the link,
 gas and fee data. No external hashing implementation is used. -/
 namespace EVMCleanroom.HeaderRLP
 
 abbrev Fields := Array (Array UInt8)
 def shanghaiTime : Nat := 1681338455
+def cancunTime : Nat := 1710338135
+def pragueTime : Nat := 1746612311
+def osakaTime : Nat := 1764798551
 
 inductive Error where
   | unsupportedLayout
@@ -26,7 +29,22 @@ def readNat (h : Fields) (i : Nat) : Nat :=
 def minimal (b : Array UInt8) (maxBytes : Nat) : Bool :=
   b.size <= maxBytes && (b.isEmpty || (b[0]?).getD 0 != 0)
 
-def layout (h : Fields) : Bool := h.size == 15 || h.size == 16
+def layout (h : Fields) : Bool :=
+  h.size == 15 || h.size == 16 || h.size == 17 ||
+  h.size == 20 || h.size == 21
+
+/-- The execution header field count follows mainnet activation, not the
+caller-supplied count. Osaka and later are refused separately. -/
+def expectedFieldCount (number timestamp : Nat) : Nat :=
+  if timestamp >= pragueTime then 21
+  else if timestamp >= cancunTime then 20
+  else if timestamp >= shanghaiTime then 17
+  else if number >= HeaderChain.londonHeight then 16
+  else 15
+
+def forkShape (h : Fields) : Bool :=
+  h.size == expectedFieldCount (readNat h 8) (readNat h 11) &&
+    (readNat h 11 < shanghaiTime || readNat h 8 >= HeaderChain.londonHeight)
 
 def validShape (h : Fields) : Bool :=
   (field h 0).size == 32 && (field h 1).size == 32 &&
@@ -37,7 +55,11 @@ def validShape (h : Fields) : Bool :=
   minimal (field h 10) 8 && minimal (field h 11) 8 &&
   (field h 12).size <= 32 && (field h 13).size == 32 &&
   (field h 14).size == 8 &&
-  (h.size == 15 || minimal (field h 15) 32)
+  (h.size < 16 || minimal (field h 15) 32) &&
+  (h.size < 17 || (field h 16).size == 32) &&
+  (h.size < 20 || (minimal (field h 17) 8 &&
+    minimal (field h 18) 8 && (field h 19).size == 32)) &&
+  (h.size < 21 || (field h 20).size == 32)
 
 /-- Only used after the fixed header layout and widths are checked:
 every string and the complete payload fit in two length bytes. -/
@@ -57,8 +79,8 @@ private def encodeFlat (h : Fields) : Array UInt8 :=
 def wire (h : Fields) : Except Error (Array UInt8) :=
   if !layout h then .error .unsupportedLayout
   else if !validShape h then .error .invalidShape
-  else if readNat h 11 >= shanghaiTime then .error .laterFork
-  else if (h.size == 16) != decide (HeaderChain.londonHeight <= readNat h 8) then
+  else if readNat h 11 >= osakaTime then .error .laterFork
+  else if !forkShape h then
     .error .wrongForkShape
   else .ok (encodeFlat h)
 
@@ -77,7 +99,7 @@ def pairInput (parent child : Fields) (digest : Nat) : HeaderChain.Pair :=
     parentHash := digest
     parentGasLimit := readNat parent 9
     parentGasUsed := readNat parent 10
-    parentBaseFee := if parent.size == 16 then some (readNat parent 15) else none
+    parentBaseFee := if parent.size >= 16 then some (readNat parent 15) else none
     childNumber := readNat child 8
     childTimestamp := readNat child 11
     childParentHash := readNat child 0
@@ -157,6 +179,32 @@ theorem pair_connected (a : Keccak.Acceptance) (parent child : Fields)
       pairResult (pairInput parent child (hashWire a pb)) := by
   simp [checkPair, hp, hc]
 
+/-- Kind: admission. Says: a supported-width pre-Osaka header with
+the wrong fork field count cannot produce wire bytes.
+Does not say: its timestamp belongs to an authenticated chain. -/
+theorem fork_shape_refused (h : Fields) (hl : layout h = true)
+    (hs : validShape h = true) (ht : readNat h 11 < osakaTime)
+    (hf : forkShape h = false) :
+    wire h = .error .wrongForkShape := by
+  simp [wire, hl, hs, Nat.not_le.mpr ht, hf]
+
+/-- Kind: executable connection. Says: every London-family layout
+passes the original fee field to the actual pair checker.
+Does not say: the supplied base fee satisfies the recurrence. -/
+theorem parent_fee_present (parent child : Fields) (digest : Nat)
+    (h : 16 <= parent.size) :
+    (pairInput parent child digest).parentBaseFee = some (readNat parent 15) := by
+  simp [pairInput, h]
+
+#guard expectedFieldCount 12965000 1681338454 == 16
+#guard expectedFieldCount 17034870 1681338455 == 17
+#guard expectedFieldCount 19426587 1710338134 == 17
+#guard expectedFieldCount 19426589 1710338135 == 20
+#guard expectedFieldCount 22431083 1746612310 == 20
+#guard expectedFieldCount 22431084 1746612311 == 21
+
+#print axioms fork_shape_refused
+#print axioms parent_fee_present
 #print axioms layout_refused
 #print axioms shape_refused
 #print axioms wire_exact
