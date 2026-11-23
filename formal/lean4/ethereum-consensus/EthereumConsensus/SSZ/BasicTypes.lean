@@ -143,17 +143,17 @@ private def expectedError {α : Type}
 #guard (encodeUInt64 256)[0]! == 0
 #guard (encodeUInt64 256)[1]! == 1
 #guard (encodeUInt64 65536)[2]! == 1
-#guard expectedOk decodeUInt64 (encodeUInt64 0) 0
-#guard expectedOk decodeUInt64 (encodeUInt64 1) 1
-#guard expectedOk decodeUInt64 (encodeUInt64 255) 255
-#guard expectedOk decodeUInt64 (encodeUInt64 256) 256
+#guard expectedOk (decodeUInt64 (encodeUInt64 0)) 0
+#guard expectedOk (decodeUInt64 (encodeUInt64 1)) 1
+#guard expectedOk (decodeUInt64 (encodeUInt64 255)) 255
+#guard expectedOk (decodeUInt64 (encodeUInt64 256)) 256
 #guard expectedOk (decodeUInt64 (encodeUInt64 18446744073709551615)) 18446744073709551615
-#guard expectedError decodeUInt64 ByteArray.empty .invalidLength
-#guard expectedOk decodeBool (encodeBool false) false
-#guard expectedOk decodeBool (encodeBool true) true
-#guard expectedError decodeBool (ByteArray.empty.push 2) .noncanonicalBoolean
-#guard expectedError decodeBool (ByteArray.empty.push 255) .noncanonicalBoolean
-#guard expectedError decodeBool ByteArray.empty .invalidLength
+#guard expectedError (decodeUInt64 ByteArray.empty) .invalidLength
+#guard expectedOk (decodeBool (encodeBool false)) false
+#guard expectedOk (decodeBool (encodeBool true)) true
+#guard expectedError (decodeBool (ByteArray.empty.push 2)) .noncanonicalBoolean
+#guard expectedError (decodeBool (ByteArray.empty.push 255)) .noncanonicalBoolean
+#guard expectedError (decodeBool ByteArray.empty) .invalidLength
 #guard (uint64Root 256).toOption.map (fun chunk => chunk.bytes.size) == some 32
 #guard (boolRoot true).toOption.map (fun chunk => chunk.bytes.size) == some 32
 
